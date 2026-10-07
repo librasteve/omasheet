@@ -1,0 +1,96 @@
+# numerics
+
+The OMX numeric tower, lifted from Raku: exact by default, approximate by
+explicit choice.
+
+## ADDED Requirements
+
+### Requirement: Numeric tower
+OMX SHALL provide the numeric types `Int` (arbitrary-precision integer), `Rat`
+(arbitrary-precision rational, numerator and denominator both unbounded, always
+in lowest terms), `Num` (IEEE 754 double) and `Complex` (pair of `Num`). OMX SHALL
+NOT expose fixed-width integer types.
+
+#### Scenario: Large integers do not overflow
+- **WHEN** `10**1000` is evaluated
+- **THEN** the result is an `Int` with 1001 digits
+
+#### Scenario: Large rationals stay exact
+- **WHEN** `999999999999999999999 / 7` is evaluated
+- **THEN** the result is the exact `Rat` `999999999999999999999/7`
+
+### Requirement: Literal types
+An integer literal SHALL be an `Int`. A decimal literal SHALL be the exactly
+equal `Rat`. A literal with an exponent (`1e-100`) SHALL be a `Num`. Digits MAY
+be grouped with `_`. A number immediately followed by `%` SHALL be that number
+divided by 100, exactly.
+
+#### Scenario: Decimal literal is exact
+- **WHEN** `42.5` is evaluated
+- **THEN** the result is the `Rat` `85/2`
+
+#### Scenario: Digit separators
+- **WHEN** `1_000_000.50` is evaluated
+- **THEN** the result is the `Rat` `2000001/2`
+
+#### Scenario: Percent literal
+- **WHEN** `20%` is evaluated
+- **THEN** the result is exactly `1/5`
+
+#### Scenario: Exponent literal is approximate
+- **WHEN** `1e-100` is evaluated
+- **THEN** the result is a `Num`
+
+### Requirement: Exact arithmetic
+`+`, `-`, `*` and `/` over `Int` and `Rat` operands SHALL be exact. Division of
+two `Int`s SHALL yield a `Rat` (or an `Int` when the division is exact) and SHALL
+NOT truncate or produce a `Num`.
+
+#### Scenario: Decimal sum
+- **WHEN** `0.1 + 0.2` is evaluated
+- **THEN** the result is exactly `3/10` and `0.1 + 0.2 == 0.3` is true
+
+#### Scenario: Thirds round-trip
+- **WHEN** `1 / 3 * 3` is evaluated
+- **THEN** the result is exactly `1`
+
+#### Scenario: Money arithmetic
+- **WHEN** `19.99 * 3` is evaluated
+- **THEN** the result is exactly `5997/100`
+
+### Requirement: No silent loss of exactness
+The engine SHALL NOT convert an `Int` or `Rat` to a `Num` implicitly, regardless
+of the size of the numerator or denominator. Conversion to `Num` SHALL happen
+only through `approx(x)` or `Num(x)`, or when an operand is already a `Num`. Any
+operation with a `Num` operand SHALL yield a `Num`.
+
+#### Scenario: Explicit approximation
+- **WHEN** `approx(1/3)` is evaluated
+- **THEN** the result is a `Num` close to `0.3333333333333333`
+
+#### Scenario: Num is contagious
+- **WHEN** `Num(1) / 3` is evaluated
+- **THEN** the result is a `Num`
+
+#### Scenario: Growing denominators stay rational
+- **WHEN** `1/3 + 1/7 + 1/11 + 1/13 + 1/17` is evaluated
+- **THEN** the result is an exact `Rat`
+
+### Requirement: Value is independent of display
+The stored value of a number SHALL NOT be altered by how it is displayed.
+A `Rat` whose decimal expansion terminates SHALL display as a decimal by default;
+any other `Rat` SHALL display as a fraction by default.
+
+#### Scenario: Terminating rational
+- **WHEN** the exact value `175/4` is displayed with default formatting
+- **THEN** it is shown as `43.75`
+
+#### Scenario: Non-terminating rational
+- **WHEN** `omasheet eval '1/3 + 1/6'` is run
+- **THEN** the output is `1/2`
+- **AND** `omasheet eval '1/3'` outputs `1/3`
+
+#### Scenario: Rounded display keeps exact value
+- **GIVEN** a cell holding `100/3` displayed to two decimal places as `33.33`
+- **WHEN** another cell multiplies it by `3`
+- **THEN** the result is exactly `100`
