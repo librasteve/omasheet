@@ -1,17 +1,17 @@
 # sheet-format
 
-The `.sheet` plain-text file format.
+The `.omx` plain-text file format.
 
 ## ADDED Requirements
 
 ### Requirement: Plain-text source file
-A sheet SHALL be a UTF-8 plain-text file with the extension `.sheet` that is the
+A sheet SHALL be a UTF-8 plain-text file with the extension `.omx` that is the
 complete source of truth for its data, schema and formulas. The format SHALL be
 line-oriented so that adding, removing or changing one row produces a one-line
 diff.
 
 #### Scenario: Row change is a one-line diff
-- **GIVEN** a `.sheet` file under version control containing a table of ten rows
+- **GIVEN** an `.omx` file under version control containing a table of ten rows
 - **WHEN** one cell in one row is edited
 - **THEN** the textual diff contains exactly one changed line
 
@@ -24,7 +24,7 @@ aligned for readability.
 
 #### Scenario: Minimal table
 - **GIVEN** the source
-  ```sheet
+  ```omx
   table Sales
 
   Month | Revenue | Cost
@@ -60,24 +60,23 @@ in any other table of the same sheet.
 ### Requirement: Column schema
 A table SHALL be able to declare the type of each column with lines of the form
 `<Column> : <Type>` placed between the `table` line and the header row. A type
-SHALL be a base type (`Int`, `Rat`, `Num`, `Text`, `Date`, `Bool`), a unit (which
-implies `Rat` with that unit), or `Uncertain<…>`. A column with no declaration
-SHALL have its type inferred from its cells.
+SHALL be a base type (`Int`, `Rat`, `Num`, `Text`, `Date`, `Bool`). A column
+with no declaration SHALL have its type inferred from its cells.
 
-#### Scenario: Unit-typed columns
+#### Scenario: Typed columns
 - **GIVEN** the source
-  ```sheet
-  table Runs
+  ```omx
+  table Items
 
-  Distance : m
-  Time     : s
+  Qty   : Int
+  Price : Rat
 
-  Distance | Time
-  100      | 10
-  200      | 20
+  Qty | Price
+  2   | 19.99
+  5   | 0.50
   ```
 - **WHEN** the file is parsed
-- **THEN** `Runs.Distance` has type `Rat<m>` and the first row's `Distance` is `100m`
+- **THEN** `Items.Qty` has type `Int`, `Items.Price` has type `Rat`, and the first row's `Price` is exactly `1999/100`
 
 #### Scenario: Schema names a column not in the header
 - **WHEN** a schema line declares a column that does not appear in the header and is not a computed column
@@ -114,7 +113,7 @@ non-empty cell SHALL be text.
 - **THEN** its value is the text `Jan`
 
 #### Scenario: Per-cell formula in a typed column
-- **GIVEN** a column declared `Tax : GBP` and a constant `TaxRate`
+- **GIVEN** a column declared `Tax : Rat` and a constant `TaxRate`
 - **WHEN** a cell in `Tax` contains `Revenue * TaxRate`
 - **THEN** its value is that row's `Revenue` multiplied by `TaxRate`
 
@@ -133,7 +132,7 @@ any expression in the sheet and SHALL NOT depend on any row cursor.
 - **THEN** every row uses the same `TaxRate` value of exactly `1/5`
 
 ### Requirement: No grid coordinates in authored files
-The `.sheet` format SHALL NOT define A1-style or `$A$1`-style cell references.
+The `.omx` format SHALL NOT define A1-style or `$A$1`-style cell references.
 All references SHALL be by table name, column name, row position, cursor offset
 or predicate.
 

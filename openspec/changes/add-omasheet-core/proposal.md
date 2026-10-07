@@ -1,46 +1,51 @@
-# Proposal: Omasheet foundation
+# Proposal: Omasheet core (Phase 1)
 
 ## Why
 
 Spreadsheets have no plain-text source format. XLSX is opaque to editors, diffs,
 Git and LLMs, and its formula language is built around grid coordinates
 (`$B$2:B2`), which are fragile under edits and hide intent. Its numeric model is
-IEEE floating point (`0.1 + 0.2 ≠ 0.3`) and it has no notion of units, so
-`Revenue + Weight` is legal.
+IEEE floating point (`0.1 + 0.2 ≠ 0.3`).
 
 Omarchy has small focused text-first apps (Omawrite, Omacalc) but nothing for
 tabular calculation. Omasheet fills that gap.
 
+This is Phase 1 of the roadmap in `project.md`: the smallest useful tool — write
+an `.omx` file in a text editor, check it and evaluate it exactly from the
+command line. It has no dataframe, XLSX or Markdown dependency.
+
 ## What Changes
 
-This change establishes the whole product baseline. Nothing exists yet, so every
-requirement is ADDED.
+Nothing exists yet, so every requirement is ADDED.
 
-- **sheet-format** — the `.sheet` plain-text file format: tables, column
-  schemas, computed columns, constants, unit declarations
+- **sheet-format** — the `.omx` plain-text file format: tables, column
+  schemas over the base types, computed columns, constants
 - **omx-expressions** — the OMX formula language: references, `[ ; ]` indexing,
   ranges, slices, the `*` cursor, filtering, aggregation, conditionals, pipes
+  with `filter` and `select`
 - **numerics** — `Int` / `Rat` / `Num` / `Complex` tower, exact by default
-- **units** — unit literals, dimensional analysis, currencies and `%` as units,
-  column-level units, user-defined units
-- **uncertainty** — `±` values with automatic propagation
-- **evaluation** — compile pipeline, static checking before execution,
-  dependency-ordered calculation, table operations (group, join)
-- **cli** — the `omasheet` command: view, eval, lint, import, export, render
-- **xlsx-interop** — XLSX as a lossy compatibility format, both directions
-- **markdown-integration** — `{{ expr }}` interpolation and `sheet` blocks in
-  Markdown, rendered by `omasheet render`
+- **evaluation** — compile pipeline, static checking of types and shapes before
+  execution, dependency-ordered calculation, cycle detection
+- **cli** — the `omasheet` command: read-only view, `eval`, `lint`, diagnostics
 
 ## Impact
 
-- New Rust workspace (`omasheet-omx`, `omasheet-engine`, `omasheet-xlsx`,
-  `omasheet-cli`); see `project.md`
-- New file type `.sheet`
+- New Rust workspace (`omasheet-omx`, `omasheet-engine`, `omasheet-cli`); see
+  `project.md`
+- New file type `.omx`
 - No existing code or users affected
 
 ## Out of Scope (for this change)
 
-Discussed in the source conversation but deliberately deferred:
+Delivered by later changes, in roadmap order:
+
+- `add-table-operations` (Phase 2) — group, join, the `group` pipe stage,
+  partitioned cursor offsets, incremental recalculation
+- `add-interop` (Phase 3) — XLSX import/export and Markdown integration
+- `add-units` (Phase 4) — units, currencies, dimensional analysis
+- `add-uncertainty` (Phase 5) — `±` values and propagation
+
+Discussed in the source conversation and not yet in any change:
 
 - Charts and pivot-table declarations
 - Sheet directives from the early brainstorm (`@format`, `@validate`, `@freeze`,
@@ -50,7 +55,7 @@ Discussed in the source conversation but deliberately deferred:
 - Probabilistic values (`Normal(...)`, `Uniform(...)`)
 - Interactive editing UI, TUI, LSP server, Neovim plugin
 - Markdown tables as OMX data sources (`import "report.md"`)
-- SQLite / DuckDB / DataFusion backends (Polars was chosen instead)
+- Polars, SQLite, DuckDB or DataFusion backends
 
 ## Status of Decisions
 

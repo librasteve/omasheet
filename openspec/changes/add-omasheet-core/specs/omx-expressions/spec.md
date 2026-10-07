@@ -6,7 +6,7 @@ OMX (Omasheet Expressions): the Raku-inspired formula language.
 
 ### Requirement: Standalone expression language
 OMX SHALL be a self-contained expression language with its own grammar,
-independent of the `.sheet` file syntax, so that the same expression is valid in
+independent of the `.omx` file syntax, so that the same expression is valid in
 a cell, a computed column, a constant, a Markdown interpolation and on the
 command line. OMX SHALL NOT embed or delegate to another language.
 
@@ -117,16 +117,6 @@ that dimension.
 - **WHEN** a new row is inserted in the middle of the table source
 - **THEN** every row still refers to its own immediate predecessor, with no formula edits
 
-### Requirement: Partitioned cursor offsets
-A cursor offset SHALL accept a `by <Column>` clause that restricts the offset to
-rows sharing the current row's value of that column.
-
-#### Scenario: Previous row within the same region
-- **GIVEN** `Sales` rows ordered UK-Jan, UK-Feb, US-Jan, US-Feb
-- **WHEN** `Sales[*-1 by Region; Revenue]` is evaluated for US-Jan
-- **THEN** the result is empty, because there is no earlier US row
-- **AND** for US-Feb the result is US-Jan's `Revenue`
-
 ### Requirement: Predicate selection
 A row slot SHALL accept a boolean expression, selecting the rows for which it is
 true. Inside the predicate, bare column names of the indexed table SHALL refer to
@@ -225,7 +215,7 @@ unequal length SHALL be an error.
 ### Requirement: Pipe operator
 OMX SHALL provide `|>`, which passes its left operand as the first argument of
 the call on its right, with at least the stages `filter(<predicate>)`,
-`select(<columns>)`, `group(<columns>)` and the aggregation functions.
+`select(<columns>)` and the aggregation functions.
 
 #### Scenario: Pipeline equals bracket form
 - **WHEN** the following is evaluated

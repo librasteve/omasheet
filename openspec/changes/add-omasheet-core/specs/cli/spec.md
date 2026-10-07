@@ -14,14 +14,14 @@ that needs no language runtime to be installed.
 - **THEN** the version is printed and the exit status is zero
 
 ### Requirement: View a sheet
-`omasheet <file.sheet>` SHALL evaluate the sheet and present its tables with
+`omasheet <file.omx>` SHALL evaluate the sheet and present its tables with
 computed values in a read-only view. It SHALL NOT modify the file.
 
 #### Scenario: Open a sheet
-- **GIVEN** `budget.sheet` with a computed column `Profit := Revenue - Cost`
-- **WHEN** `omasheet budget.sheet` is run
+- **GIVEN** `budget.omx` with a computed column `Profit := Revenue - Cost`
+- **WHEN** `omasheet budget.omx` is run
 - **THEN** each table is shown with `Profit` values calculated and formatted
-- **AND** `budget.sheet` is unchanged on disk
+- **AND** `budget.omx` is unchanged on disk
 
 ### Requirement: Evaluate an expression
 `omasheet eval '<expr>'` SHALL evaluate one OMX expression and print its value.
@@ -34,23 +34,23 @@ standard input.
 - **THEN** the output is `1/2`
 
 #### Scenario: Against a sheet
-- **WHEN** `omasheet eval --sheet sales.sheet 'Sales[Region == "UK"; Revenue].sum()'` is run
+- **WHEN** `omasheet eval --sheet sales.omx 'Sales[Region == "UK"; Revenue].sum()'` is run
 - **THEN** the total UK revenue is printed
 
 #### Scenario: From standard input
-- **WHEN** `echo 'Sales.Revenue.avg()' | omasheet eval --sheet sales.sheet` is run
+- **WHEN** `echo 'Sales.Revenue.avg()' | omasheet eval --sheet sales.omx` is run
 - **THEN** the average is printed
 
 ### Requirement: Lint a sheet
-`omasheet lint <file.sheet>` SHALL parse and statically check a sheet without
+`omasheet lint <file.omx>` SHALL parse and statically check a sheet without
 executing it, print every diagnostic, and exit non-zero if any error was found.
 
 #### Scenario: Clean sheet
 - **WHEN** `omasheet lint` is run on a valid sheet
 - **THEN** nothing is reported and the exit status is zero
 
-#### Scenario: Unit error
-- **WHEN** `omasheet lint` is run on a sheet containing `Revenue + Weight` with incompatible units
+#### Scenario: Type error
+- **WHEN** `omasheet lint` is run on a sheet containing `Revenue + Month` where `Month` is `Text`
 - **THEN** the error is printed and the exit status is non-zero
 
 ### Requirement: Diagnostics
@@ -60,20 +60,3 @@ offending source excerpt.
 #### Scenario: Located error
 - **WHEN** a type error occurs in a cell on line 14
 - **THEN** the message begins with `<file>:14:<col>` and shows line 14 with the faulty span marked
-
-### Requirement: Import and export subcommands
-`omasheet import <file.xlsx>` SHALL produce `.sheet` source from a workbook, and
-`omasheet export <file.sheet> --xlsx` SHALL produce an XLSX workbook, as specified
-in `xlsx-interop`.
-
-#### Scenario: Export
-- **WHEN** `omasheet export budget.sheet --xlsx` is run
-- **THEN** `budget.xlsx` is written
-
-### Requirement: Render subcommand
-`omasheet render <file.md>` SHALL render a Markdown document with its Omasheet
-content evaluated, as specified in `markdown-integration`.
-
-#### Scenario: Render a report
-- **WHEN** `omasheet render report.md` is run
-- **THEN** the rendered document is written with every interpolation replaced by its value

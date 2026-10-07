@@ -16,14 +16,14 @@ calculation.
 - **THEN** an error is reported at that source location and no calculation is performed
 
 ### Requirement: Static checking before execution
-Types, units and shapes SHALL be checked for the whole sheet before any
+Types and shapes SHALL be checked for the whole sheet before any
 calculation runs. If checking reports any error, the system SHALL NOT execute any
 part of the sheet.
 
-#### Scenario: One unit error blocks execution
-- **GIVEN** a sheet with ten valid computed columns and one defined as `Revenue + Weight` where units are `GBP` and `kg`
+#### Scenario: One type error blocks execution
+- **GIVEN** a sheet with ten valid computed columns and one defined as `Revenue + Month` where `Revenue` is `Rat` and `Month` is `Text`
 - **WHEN** the sheet is evaluated
-- **THEN** the unit error is reported and no column is calculated
+- **THEN** the type error is reported and no column is calculated
 
 #### Scenario: All errors reported together
 - **WHEN** a sheet contains three independent type errors
@@ -52,40 +52,3 @@ the cycle.
 - **GIVEN** `A := B + 1` and `B := A + 1` in the same table
 - **WHEN** the sheet is checked
 - **THEN** an error reports the cycle `A → B → A`
-
-### Requirement: Recalculation
-When an input changes, the system SHALL be able to recalculate only the values
-that depend on it, and the result SHALL be identical to a full recalculation.
-
-#### Scenario: Unrelated table untouched
-- **GIVEN** tables `Sales` and `Inventory` with no references between them
-- **WHEN** a `Sales` cell changes
-- **THEN** no `Inventory` value is recalculated
-
-### Requirement: Grouping
-The system SHALL support grouping a table by one or more columns and aggregating
-each group, yielding a table with one row per distinct key.
-
-#### Scenario: Revenue by region
-- **WHEN** `Sales |> group(Region) |> sum(Revenue)` is evaluated
-- **THEN** the result is a table with one row per distinct `Region` and that region's total `Revenue`
-
-### Requirement: Joining
-The system SHALL support joining two tables on a key column, at minimum as inner
-and left joins.
-
-#### Scenario: Left join on key
-- **WHEN** `Sales.join(Customers, CustomerID)` is evaluated as a left join
-- **THEN** the result has one row per `Sales` row with the matching `Customers` columns, empty where no customer matches
-
-### Requirement: Table operations preserve exactness and units
-Selection, sorting, grouping, joining and aggregation SHALL preserve the exact
-numeric values, units and uncertainties of the data they operate on, whatever
-library executes them.
-
-> This constrains how Polars may be used — see design Q2.
-
-#### Scenario: Exact group sum
-- **GIVEN** a `Rat<GBP>` column with values `0.1`, `0.2` in one group
-- **WHEN** the group is summed
-- **THEN** the result is exactly `3/10 GBP`
