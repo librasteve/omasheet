@@ -1372,7 +1372,7 @@ ApplicationWindow {
             var category = "";
             for (var i = 0; i < all.length; i++) {
                 var f = all[i];
-                var text = (f.name + " " + f.category + " " + f.usage + " " + f.summary).toLowerCase();
+                var text = (f.name + " " + f.category + " " + f.usage + " " + f.summary + " " + f.code).toLowerCase();
                 if (!words.every(function(w) { return text.indexOf(w) >= 0; }))
                     continue;
                 if (f.category !== category) {
@@ -1455,8 +1455,20 @@ ApplicationWindow {
                             font.pixelSize: win.fontSize
                             elide: Text.ElideRight
                         }
+                        // The expression a function of the sheet's own stands for.
                         Text {
                             width: parent.width
+                            visible: text.length > 0
+                            text: entry.item.code || ""
+                            color: win.accentColor
+                            wrapMode: Text.Wrap
+                            font.family: win.font.family
+                            font.features: win.font.features
+                            font.pixelSize: win.fontSize - 1
+                        }
+                        Text {
+                            width: parent.width
+                            visible: text.length > 0
                             text: entry.item.summary || ""
                             color: win.mutedColor
                             wrapMode: Text.Wrap

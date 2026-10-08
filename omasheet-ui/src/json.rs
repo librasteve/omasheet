@@ -88,27 +88,29 @@ pub fn snapshot(snap: &Snapshot) -> String {
     out
 }
 
-/// The function directory: `[{name, category, usage, summary}]`. The
-/// functions the sheet defines come first, under `Custom`.
+/// The function directory: `[{name, category, usage, summary, code}]`. The
+/// functions the sheet defines come first, under `Custom`, each with the
+/// expression it stands for as its `code`.
 pub fn functions(custom: &[FuncSnap], docs: &[FuncDoc]) -> String {
-    let mut entries: Vec<[String; 4]> = Vec::new();
+    let mut entries: Vec<[String; 5]> = Vec::new();
     for f in custom {
-        // What it does, in the author's words if there are any.
-        let summary = if f.doc.is_empty() {
-            format!("= {}", f.source)
-        } else {
-            f.doc.clone()
-        };
-        entries.push([f.name.clone(), "Custom".into(), f.usage.clone(), summary]);
+        let code = format!("= {}", f.source);
+        entries.push([
+            f.name.clone(),
+            "Custom".into(),
+            f.usage.clone(),
+            f.doc.clone(),
+            code,
+        ]);
     }
     for f in docs {
-        entries.push([f.name, f.category, f.usage, f.summary].map(String::from));
+        entries.push([f.name, f.category, f.usage, f.summary, ""].map(String::from));
     }
     let mut out = String::new();
     list(
         &mut out,
         &entries,
-        |out, [name, category, usage, summary]| {
+        |out, [name, category, usage, summary, code]| {
             out.push('{');
             field(out, "name", name);
             out.push(',');
@@ -117,6 +119,8 @@ pub fn functions(custom: &[FuncSnap], docs: &[FuncDoc]) -> String {
             field(out, "usage", usage);
             out.push(',');
             field(out, "summary", summary);
+            out.push(',');
+            field(out, "code", code);
             out.push('}');
         },
     );
@@ -147,8 +151,13 @@ mod tests {
             omasheet_engine::omx::funcs::FUNCTIONS,
         );
         assert!(json.starts_with(
-            "[{\"name\":\"Twice\",\"category\":\"Custom\",\"usage\":\"Twice(x)\",\"summary\":\"Twice over.\"},"
+            "[{\"name\":\"Twice\",\"category\":\"Custom\",\"usage\":\"Twice(x)\",\"summary\":\"Twice over.\",\"code\":\"= x * 2\"},"
         ));
-        assert!(json.contains("\"usage\":\"Half(x)\",\"summary\":\"= x / 2\"},{\"name\":\"sum\""));
+        // The code is there with or without a comment, and only for these.
+        assert!(json.contains(
+            "\"usage\":\"Half(x)\",\"summary\":\"\",\"code\":\"= x / 2\"},{\"name\":\"sum\""
+        ));
+        assert!(json.contains("\"name\":\"sum\",\"category\":"));
+        assert!(json.ends_with("\"code\":\"\"}]"));
     }
 }
