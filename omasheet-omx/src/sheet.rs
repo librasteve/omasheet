@@ -2,6 +2,7 @@
 //!
 //! ```omx
 //! # a comment
+//! zone Europe/London
 //! const TaxRate = 20%
 //!
 //! table Sales
@@ -24,6 +25,8 @@ use crate::types::S;
 
 #[derive(Debug, Default)]
 pub struct SheetAst {
+    /// The time zone the sheet's date-times are in, if it names one.
+    pub zone: Option<(String, Span)>,
     pub consts: Vec<ConstDecl>,
     pub tables: Vec<TableDecl>,
 }
@@ -161,6 +164,14 @@ fn is_separator(line: &str) -> bool {
             .all(|c| matches!(c, '-' | '|' | ':' | ' ' | '\t'))
 }
 
+/// Whether `s` could be the name of a time zone, such as `Europe/London`,
+/// `UTC` or `Etc/GMT+5`. Whether there is such a zone is for the engine.
+pub fn is_zone_name(s: &str) -> bool {
+    s.starts_with(|c: char| c.is_ascii_alphabetic())
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/_-+".contains(c))
+}
+
 pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAst {
     let mut lines = Vec::new();
     let mut offset = 0;
@@ -242,6 +253,23 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
             }
         }
 
+        // zone <Area/City>, before the first table
+        if let Some(rest) = after_keyword(trimmed, "zone").filter(|_| table.is_none())
+            && ast.tables.is_empty()
+            && is_zone_name(rest.trim())
+        {
+            let name = rest.trim();
+            let name_at = at + (trimmed.len() - rest.len());
+            let span = Span::new(src, name_at, name_at + name.len());
+            if ast.zone.is_some() {
+                diags.push(Diagnostic::new(span, "the sheet already has a `zone`"));
+            } else {
+                ast.zone = Some((name.to_string(), span));
+            }
+            i += 1;
+            continue;
+        }
+
         // const <Name> = <expr>
         if let Some(rest) = after_keyword(trimmed, "const") {
             let n = ident_len(rest);
@@ -266,7 +294,7 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
             diags.push(
                 Diagnostic::new(
                     Span::new(src, at, at + trimmed.len()),
-                    "expected `table <Name>` or `const <Name> = <expression>`",
+                    "expected `table <Name>`, `const <Name> = <expression>` or `zone <Area/City>`",
                 )
                 .with_help("rows of data belong under a `table` line"),
             );
@@ -310,7 +338,7 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
                         Span::new(src, ty_at, ty_at + ty_text.len()),
                         format!("unknown type `{ty_text}`"),
                     )
-                    .with_help("the types are Int, Rat, Num, Text, Date, DateTime and Bool"),
+                    .with_help("the types are Int, Rat, Num, Text, Date, Time, DateTime and Bool"),
                 ),
             }
             i += 1;

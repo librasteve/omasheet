@@ -13,6 +13,7 @@ pub enum Tok {
     Num(f64),
     Str(String),
     Date(i32),
+    Time(i32),
     DateTime(i64),
     Ident(String),
     If,
@@ -56,6 +57,7 @@ impl Tok {
             Tok::Int(_) | Tok::Rat(_) | Tok::Num(_) => "a number".into(),
             Tok::Str(_) => "a string".into(),
             Tok::Date(_) => "a date".into(),
+            Tok::Time(_) => "a time".into(),
             Tok::DateTime(_) => "a date-time".into(),
             Tok::Ident(name) => format!("`{name}`"),
             Tok::Eof => "the end of the expression".into(),
@@ -267,7 +269,7 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
 
 type NumErr = (String, usize, usize);
 
-/// Lex a number, date or date-time starting at `i`. Returns the token and its
+/// Lex a number, date, time or date-time starting at `i`. Returns the token and its
 /// end.
 fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
     let b = text.as_bytes();
@@ -310,6 +312,20 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
                 end,
             )),
         };
+    }
+
+    // A time: hh:mm or hh:mm:ss.
+    if pair(i) && at(i + 2, b':') && pair(i + 3) {
+        let seconds = at(i + 5, b':') && pair(i + 6);
+        let end = i + if seconds { 8 } else { 5 };
+        if !word(end) && !at(end, b':') {
+            let part = |s: usize| text[i + s..i + s + 2].parse::<i64>().unwrap();
+            let secs = if seconds { part(6) } else { 0 };
+            return match date::time_from(part(0), part(3), secs) {
+                Some(t) => Ok((Tok::Time(t), end)),
+                None => Err((format!("`{}` is not a real time", &text[i..end]), i, end)),
+            };
+        }
     }
 
     let mut j = i;
@@ -423,6 +439,11 @@ mod tests {
         assert!(lex("2025-01-01T24:00", 0, 0).is_err());
         assert!(lex("2025-01-01T09", 0, 0).is_err());
         assert!(lex("2025-01-01T09:30:1", 0, 0).is_err());
+        assert_eq!(toks("09:30")[0], Tok::Time(9 * 3600 + 30 * 60));
+        assert_eq!(toks("23:59:59")[0], Tok::Time(86_399));
+        assert!(lex("24:00", 0, 0).is_err());
+        assert!(lex("9:30", 0, 0).is_err());
+        assert!(lex("09:30:1", 0, 0).is_err());
         assert_eq!(toks("a // b |> c ..^ d # note").len(), 8);
     }
 }

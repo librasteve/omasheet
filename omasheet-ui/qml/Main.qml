@@ -26,10 +26,16 @@ ApplicationWindow {
     readonly property color panelColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.05)
     readonly property color computedTint: Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.07)
 
-    readonly property int fontSize: 14
-    readonly property int rowHeight: 28
-    readonly property int headerHeight: 46
-    readonly property int gutterWidth: 48
+    // Ctrl+plus and Ctrl+minus change the size; everything scales from it.
+    property int fontSize: 14
+    readonly property int rowHeight: fontSize * 2
+    readonly property int headerHeight: Math.round(fontSize * 3.3)
+    readonly property int gutterWidth: Math.round(fontSize * 3.4)
+    onFontSizeChanged: Qt.callLater(function() { win.measure(); win.reveal(); })
+
+    function zoom(step) {
+        fontSize = step === 0 ? 14 : Math.max(8, Math.min(40, fontSize + step));
+    }
 
     Material.theme: sheet.darkMode ? Material.Dark : Material.Light
     Material.accent: accentColor
@@ -248,18 +254,29 @@ ApplicationWindow {
     }
 
     function insertRow(below) {
-        if (table.isConsts)
+        insertRows(below, 1);
+    }
+
+    function insertRows(below, count) {
+        if (table.isConsts || count < 1)
             return;
         var at = table.rows.length === 0 ? 0 : (below ? selBottom + 1 : selTop);
-        sheet.insertRows(tab, at, 1);
-        selectCell(at, curCol, false);
+        // The left of the selection: a whole-row selection ends at the last
+        // column, and following it would pan the view to the right.
+        var col = selLeft;
+        sheet.insertRows(tab, at, count);
+        // Leave the new rows selected.
+        selectCell(at, col, false);
+        selectCell(at + count - 1, col, true);
     }
 
     function deleteRows() {
         if (table.isConsts || table.rows.length === 0)
             return;
         sheet.deleteRows(tab, selTop, selBottom - selTop + 1);
-        selectCell(selTop, curCol, false);
+        // Back to the first column, with the view panned fully left.
+        selectCell(selTop, 0, false);
+        hflick.contentX = 0;
     }
 
     // Right-click: keep a selection that contains the cell, otherwise move
@@ -375,6 +392,9 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+N"; context: Qt.ApplicationShortcut; onActivated: win.guard("new") }
     Shortcut { sequence: "Ctrl+Z"; enabled: !win.typing; onActivated: sheet.undo() }
     Shortcut { sequences: ["Ctrl+Shift+Z", "Ctrl+Y"]; enabled: !win.typing; onActivated: sheet.redo() }
+    Shortcut { sequences: ["Ctrl++", "Ctrl+="]; context: Qt.ApplicationShortcut; onActivated: win.zoom(1) }
+    Shortcut { sequence: "Ctrl+-"; context: Qt.ApplicationShortcut; onActivated: win.zoom(-1) }
+    Shortcut { sequence: "Ctrl+0"; context: Qt.ApplicationShortcut; onActivated: win.zoom(0) }
     Shortcut { sequence: "Ctrl+PgDown"; onActivated: win.switchTab(win.tab + 1) }
     Shortcut { sequence: "Ctrl+PgUp"; onActivated: win.switchTab(win.tab - 1) }
     Shortcut { sequence: "Ctrl+?"; context: Qt.ApplicationShortcut; onActivated: helpDialog.open() }
@@ -397,7 +417,7 @@ ApplicationWindow {
         // The entry box: the source of the current cell.
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 44
+            Layout.preferredHeight: win.fontSize * 3 + 2
             color: win.panelColor
 
             RowLayout {
@@ -450,6 +470,20 @@ ApplicationWindow {
                     text: "column formula"
                     color: win.accentColor
                     font: win.font
+                }
+
+                // What the column accepts, in the locale's way of writing it.
+                Text {
+                    readonly property var column: win.table.columns[win.curCol]
+                    readonly property string hint: column && column.type && !win.table.isConsts
+                        ? sheet.entryHint(column.type) : ""
+                    visible: hint.length > 0
+                    text: hint
+                    color: win.mutedColor
+                    font.family: win.font.family
+                    font.pixelSize: win.fontSize - 1
+                    Layout.maximumWidth: win.width * 0.45
+                    elide: Text.ElideRight
                 }
             }
 
@@ -817,7 +851,7 @@ ApplicationWindow {
         // Footer: table tabs on the left, actions and status on the right.
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 38
+            Layout.preferredHeight: win.fontSize * 2 + 10
             color: win.panelColor
 
             Rectangle { width: parent.width; height: 1; color: win.lineColor }
@@ -840,6 +874,27 @@ ApplicationWindow {
                 FooterButton { label: "+ Table"; quiet: true; onClicked: promptDialog.ask("table") }
 
                 Item { Layout.fillWidth: true }
+
+                // The locale, and how it writes a date.
+                Text {
+                    id: localeLabel
+                    text: sheet.localeHint()
+                    color: win.mutedColor
+                    font.family: win.font.family
+                    font.pixelSize: win.fontSize - 2
+                    rightPadding: 10
+                    MouseArea {
+                        id: localeArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        ToolTip.visible: containsMouse
+                        ToolTip.delay: 400
+                        ToolTip.text: "Type dates and times this way, or the ISO way.\n"
+                            + sheet.entryHint("Date") + "\n"
+                            + sheet.entryHint("Time") + "\n"
+                            + sheet.entryHint("DateTime")
+                    }
+                }
 
                 Text {
                     visible: sheet.status.length > 0
@@ -873,7 +928,7 @@ ApplicationWindow {
         property color textColor: win.textColor
         signal clicked()
         implicitWidth: buttonText.implicitWidth + 22
-        implicitHeight: 28
+        implicitHeight: win.fontSize * 2
         Layout.alignment: Qt.AlignVCenter
         radius: 4
         opacity: enabled ? 1 : 0.35
@@ -915,14 +970,28 @@ ApplicationWindow {
         MenuSeparator {}
         MenuItem { text: "Edit cell"; enabled: win.table.rows.length > 0; onTriggered: win.startEditing(null) }
         MenuSeparator {}
-        MenuItem { text: "Insert row above"; enabled: cellMenu.editable; onTriggered: win.insertRow(false) }
-        MenuItem { text: "Insert row below"; enabled: cellMenu.editable; onTriggered: win.insertRow(true) }
+        MenuItem {
+            text: cellMenu.rowCount > 1 ? "Insert " + cellMenu.rowCount + " rows above" : "Insert row above"
+            enabled: cellMenu.editable
+            onTriggered: win.insertRows(false, cellMenu.rowCount)
+        }
+        MenuItem {
+            text: cellMenu.rowCount > 1 ? "Insert " + cellMenu.rowCount + " rows below" : "Insert row below"
+            enabled: cellMenu.editable
+            onTriggered: win.insertRows(true, cellMenu.rowCount)
+        }
+        MenuItem { text: "Insert rows…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("rows") }
         MenuItem {
             text: cellMenu.rowCount > 1 ? "Delete " + cellMenu.rowCount + " rows" : "Delete row"
             enabled: cellMenu.hasRows
             onTriggered: win.deleteRows()
         }
         MenuSeparator {}
+        MenuItem {
+            text: "Rename column…"
+            enabled: cellMenu.editable && win.selLeft === win.selRight && win.table.columns.length > 0
+            onTriggered: promptDialog.ask("rename")
+        }
         MenuItem { text: "Add column…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("column") }
         MenuItem { text: "Add formula column…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("computed") }
         MenuSeparator {}
@@ -996,8 +1065,11 @@ ApplicationWindow {
         modal: true
         width: 460
         property string kind: ""
+        property int column: 0
         readonly property bool needsExpr: kind === "computed" || kind === "const"
         title: kind === "table" ? "New table"
+             : kind === "rows" ? "Insert rows in " + win.table.name
+             : kind === "rename" ? "Rename column " + (win.table.columns[column] ? win.table.columns[column].name : "")
              : kind === "column" ? "New column in " + win.table.name
              : kind === "computed" ? "New formula column in " + win.table.name
              : "New constant"
@@ -1005,15 +1077,28 @@ ApplicationWindow {
 
         function ask(what) {
             kind = what;
-            nameField.text = "";
+            column = win.curCol;
+            nameField.text = what === "rename" && win.table.columns[column] ? win.table.columns[column].name : "";
             exprField.text = "";
             problem.text = "";
             open();
             nameField.forceActiveFocus();
+            nameField.selectAll();
+        }
+
+        // Add the rows below the selection.
+        function addRows() {
+            var count = Number(nameField.text.trim());
+            if (!Number.isInteger(count) || count < 1 || count > 10000)
+                return "Enter a number of rows from 1 to 10000";
+            win.insertRows(true, count);
+            return "";
         }
 
         function submit() {
-            var message = kind === "table" ? sheet.addTable(nameField.text)
+            var message = kind === "rows" ? addRows()
+                : kind === "rename" ? sheet.renameColumn(win.tab, column, nameField.text)
+                : kind === "table" ? sheet.addTable(nameField.text)
                 : kind === "column" ? sheet.addColumn(win.tab, nameField.text)
                 : kind === "computed" ? sheet.addComputed(win.tab, nameField.text, exprField.text)
                 : sheet.addConst(nameField.text, exprField.text);
@@ -1034,7 +1119,7 @@ ApplicationWindow {
             TextField {
                 id: nameField
                 Layout.fillWidth: true
-                placeholderText: "Name"
+                placeholderText: promptDialog.kind === "rows" ? "How many rows" : "Name"
                 font: win.font
                 onAccepted: promptDialog.needsExpr ? exprField.forceActiveFocus() : promptDialog.accept()
             }
@@ -1096,7 +1181,7 @@ ApplicationWindow {
             font: win.font
             text: "Arrows, Tab          Move\n"
                 + "Shift+Arrows, drag   Select a block\n"
-                + "Right click          Menu for the selection\n"
+                + "Right click          Menu: insert rows, rename a column, …\n"
                 + "Enter, F2, typing    Edit the cell\n"
                 + "Enter / Tab          Commit and move down / right\n"
                 + "Esc                  Cancel the edit\n"
@@ -1109,8 +1194,11 @@ ApplicationWindow {
                 + "Ctrl+O / S           Open / save\n"
                 + "Ctrl+Shift+S         Save as\n"
                 + "Ctrl+N               New sheet\n"
+                + "Ctrl++ / Ctrl+-      Larger / smaller text (Ctrl+0 resets)\n"
                 + "F11                  Fullscreen\n\n"
                 + "A cell starting with = is a formula.\n"
+                + "The entry box shows what the column accepts.\n"
+                + "Dates and times: " + sheet.localeHint() + "\n"
                 + "Editing a shaded column changes its formula for every row."
         }
     }

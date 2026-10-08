@@ -303,6 +303,7 @@ impl Parser {
             Tok::Num(f) => lit(Lit::Num(f)),
             Tok::Str(s) => lit(Lit::Text(s)),
             Tok::Date(d) => lit(Lit::Date(d)),
+            Tok::Time(t) => lit(Lit::Time(t)),
             Tok::DateTime(t) => lit(Lit::DateTime(t)),
             Tok::True => lit(Lit::Bool(true)),
             Tok::False => lit(Lit::Bool(false)),

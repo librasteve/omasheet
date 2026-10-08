@@ -122,3 +122,51 @@ fn missing_file_is_a_usage_error() {
     let out = omasheet(&["no-such-file.omx"]);
     assert_eq!(out.status.code(), Some(2));
 }
+
+#[test]
+fn now_can_be_given() {
+    let out = omasheet(&["eval", "--now", "2026-10-08T17:47", "now() + 60"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "2026-10-08T17:48\n");
+    let out = omasheet(&["eval", "--now", "2026-10-08", "today().weekday()"]);
+    assert_eq!(stdout(&out), "4\n");
+    let out = omasheet(&["eval", "--now", "tomorrow", "today()"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("is not a date-time"));
+}
+
+#[test]
+fn dates_are_iso_unless_the_locale_is_asked_for() {
+    let run = |locale: &str, args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_omasheet"))
+            .args(args)
+            .env("LC_ALL", locale)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        stdout(&out)
+    };
+    let expr = "2026-10-08 + 17:47";
+    assert_eq!(run("en_US.UTF-8", &["eval", expr]), "2026-10-08T17:47\n");
+    // The C locale has no style of its own.
+    assert_eq!(run("C", &["eval", "--locale", expr]), "2026-10-08T17:47\n");
+    // Other locales are only there if the machine has them installed.
+    let shown = run("en_GB.UTF-8", &["eval", "--locale", expr]);
+    assert!(
+        ["08/10/2026 17:47\n", "2026-10-08T17:47\n"].contains(&shown.as_str()),
+        "{shown}"
+    );
+}
+
+#[test]
+fn time_zones_can_be_given() {
+    let expr = "2025-07-15T12:00.to_zone(\"Asia/Tokyo\")";
+    let out = omasheet(&["eval", "--zone", "Europe/London", expr]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "2025-07-15T20:00+09:00\n");
+    let out = omasheet(&["eval", "--zone", "America/New_York", expr]);
+    assert_eq!(stdout(&out), "2025-07-16T01:00+09:00\n");
+    let out = omasheet(&["eval", "--zone", "Mars/Base", "1"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("there is no time zone `Mars/Base`"));
+}

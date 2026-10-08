@@ -45,6 +45,39 @@ entry box, or in the cell itself, SHALL replace the cell's source.
 - **WHEN** `Revenue - Cost - Tax` is committed
 - **THEN** the column's expression changes and every row of `Profit` is recalculated
 
+### Requirement: Dates and times follow the locale
+The grid SHALL show `Date`, `Time` and `DateTime` values the way the locale of
+the operating system writes them, with a four-digit year. A date or time
+committed into a cell of such a column, or of a column with no type yet, SHALL
+be accepted in the locale's form as well as the ISO form, and SHALL be stored in
+the file in the ISO form. The entry box SHALL show the stored ISO form.
+
+#### Scenario: A British date
+- **GIVEN** a British locale and a cell whose source is `2026-10-08`
+- **THEN** the grid shows `08/10/2026`
+
+#### Scenario: Typing a date the local way
+- **GIVEN** a British locale and a column declared `Date`
+- **WHEN** `9/10/2026` is committed into a cell of it
+- **THEN** the file holds `2026-10-09` and the grid shows `09/10/2026`
+
+#### Scenario: The same keys elsewhere
+- **GIVEN** a United States locale and a column declared `Date`
+- **WHEN** `9/10/2026` is committed into a cell of it
+- **THEN** the file holds `2026-09-10`
+
+### Requirement: Date-times on local clocks
+The grid SHALL show the `DateTime` values of a sheet in another time zone on the
+clocks of the machine. A `DateTime` moved to a zone with `.to_zone()` or `.utc()`
+SHALL be shown in that zone with its offset. The entry box SHALL show, and what
+is committed SHALL be taken in, the sheet's zone; the file SHALL NOT change
+because of where it is opened.
+
+#### Scenario: A New York sheet in London
+- **GIVEN** a sheet that begins `zone America/New_York`, opened in London
+- **WHEN** a cell holds `2025-03-03T09:12`
+- **THEN** the grid shows 14:12 and the entry box shows `2025-03-03T09:12`
+
 ### Requirement: Selection and clipboard
 The app SHALL allow a rectangular block of cells to be selected with the keyboard
 and with the mouse, and SHALL support copy, cut, paste and clear on the

@@ -4,11 +4,12 @@
 //! arbitrary-precision fraction that is not a whole number). Nothing here
 //! turns an exact number into a `Num` unless the other operand already is one.
 
+use crate::zone::{Zoned, format_offset};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use omasheet_omx::ast::{BinOp, Lit};
-use omasheet_omx::date;
+use omasheet_omx::date::Style;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
@@ -25,7 +26,11 @@ pub enum Value {
     Text(Rc<str>),
     Bool(bool),
     Date(i32),
+    Time(i32),
+    /// What the clocks of the sheet's time zone show.
     DateTime(i64),
+    /// A date-time moved to another time zone.
+    Zoned(Rc<Zoned>),
     Range {
         lo: i64,
         hi: i64,
@@ -74,6 +79,7 @@ impl Value {
             Lit::Text(s) => Value::text(s),
             Lit::Bool(b) => Value::Bool(*b),
             Lit::Date(d) => Value::Date(*d),
+            Lit::Time(t) => Value::Time(*t),
             Lit::DateTime(t) => Value::DateTime(*t),
         }
     }
@@ -90,7 +96,8 @@ impl Value {
             Value::Text(_) => "Text",
             Value::Bool(_) => "Bool",
             Value::Date(_) => "Date",
-            Value::DateTime(_) => "DateTime",
+            Value::Time(_) => "Time",
+            Value::DateTime(_) | Value::Zoned(_) => "DateTime",
             Value::Range { .. } => "a range",
             Value::Vector(_) => "a vector",
             Value::Table(_) => "a table",
@@ -153,6 +160,9 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     if matches!(a, Value::Empty) || matches!(b, Value::Empty) {
         return Ok(Value::Empty);
     }
+    if let Some(shifted) = shift(op, a, b) {
+        return shifted;
+    }
     let (Some(x), Some(y)) = (number(a), number(b)) else {
         return Err(format!(
             "cannot apply `{}` to {} and {}",
@@ -199,6 +209,65 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     }
 }
 
+/// `+` and `-` where a side is a date or time: a whole number counts days
+/// next to a `Date` and seconds next to a `Time` or `DateTime`. `None` if
+/// neither side is one, or the two do not combine.
+fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
+    let minus = match op {
+        BinOp::Add => false,
+        BinOp::Sub => true,
+        _ => return None,
+    };
+    let count = |n: &BigInt| {
+        n.to_i64()
+            .ok_or_else(|| "the number is too large".to_string())
+    };
+    let signed = |n: i64| if minus { n.checked_neg() } else { Some(n) };
+    let date = |d: i32, n: &BigInt| {
+        let days = signed(count(n)?).and_then(|n| (d as i64).checked_add(n));
+        match days.and_then(|d| i32::try_from(d).ok()) {
+            Some(d) => Ok(Value::Date(d)),
+            None => Err("the date is out of range".to_string()),
+        }
+    };
+    let datetime = |t: i64, n: &BigInt| match signed(count(n)?).and_then(|n| t.checked_add(n)) {
+        // Every date-time must have a day that is a valid date.
+        Some(t) if i32::try_from(t.div_euclid(86_400)).is_ok() => Ok(Value::DateTime(t)),
+        _ => Err("the date-time is out of range".to_string()),
+    };
+    let zoned = |z: &Zoned, n: &BigInt| match signed(count(n)?).and_then(|n| z.shifted(n)) {
+        Some(z) => Ok(Value::Zoned(Rc::new(z))),
+        None => Err("the date-time is out of range".to_string()),
+    };
+    // A time of day wraps round midnight.
+    let time = |t: i32, n: &BigInt| {
+        let n = (n % BigInt::from(86_400)).to_i64().unwrap_or(0);
+        let n = if minus { -n } else { n };
+        Ok(Value::Time((t as i64 + n).rem_euclid(86_400) as i32))
+    };
+    let int = |n: i64| Ok(Value::Int(BigInt::from(n)));
+    Some(match (a, b) {
+        (Value::Date(d), Value::Int(n)) => date(*d, n),
+        (Value::DateTime(t), Value::Int(n)) => datetime(*t, n),
+        (Value::Zoned(z), Value::Int(n)) => zoned(z, n),
+        (Value::Time(t), Value::Int(n)) => time(*t, n),
+        (Value::Int(n), Value::Date(d)) if !minus => date(*d, n),
+        (Value::Int(n), Value::DateTime(t)) if !minus => datetime(*t, n),
+        (Value::Int(n), Value::Zoned(z)) if !minus => zoned(z, n),
+        (Value::Int(n), Value::Time(t)) if !minus => time(*t, n),
+        (Value::Date(d), Value::Time(t)) | (Value::Time(t), Value::Date(d)) if !minus => {
+            Ok(Value::DateTime(*d as i64 * 86_400 + *t as i64))
+        }
+        (Value::Date(x), Value::Date(y)) if minus => int(*x as i64 - *y as i64),
+        (Value::Time(x), Value::Time(y)) if minus => int(*x as i64 - *y as i64),
+        (Value::DateTime(x), Value::DateTime(y)) if minus => int(x - y),
+        (Value::Zoned(x), Value::Zoned(y)) if minus => int(x.utc - y.utc),
+        (Value::DateTime(x), Value::Zoned(y)) if minus => int(x - y.home_wall()),
+        (Value::Zoned(x), Value::DateTime(y)) if minus => int(x.home_wall() - y),
+        _ => return None,
+    })
+}
+
 fn exact_arith(op: BinOp, x: &BigRational, y: &BigRational) -> Result<Value, String> {
     Ok(Value::exact(match op {
         BinOp::Add => x + y,
@@ -234,7 +303,12 @@ pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
         (Value::Empty, _) | (_, Value::Empty) => return Ok(None),
         (Value::Text(x), Value::Text(y)) => x.cmp(y),
         (Value::Date(x), Value::Date(y)) => x.cmp(y),
+        (Value::Time(x), Value::Time(y)) => x.cmp(y),
         (Value::DateTime(x), Value::DateTime(y)) => x.cmp(y),
+        // Across time zones it is the instant that counts.
+        (Value::Zoned(x), Value::Zoned(y)) => x.utc.cmp(&y.utc),
+        (Value::DateTime(x), Value::Zoned(y)) => x.cmp(&y.home_wall()),
+        (Value::Zoned(x), Value::DateTime(y)) => x.home_wall().cmp(y),
         (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
         _ => match (number(a), number(b)) {
             (Some(N::Exact(x)), Some(N::Exact(y))) => x.cmp(&y),
@@ -295,8 +369,14 @@ pub fn format_rat(r: &BigRational) -> String {
     }
 }
 
-/// A single value as text. `quoted` puts text in quotes, as inside a vector.
+/// A single value as text, the way a sheet writes it. `quoted` puts text in
+/// quotes, as inside a vector.
 pub fn format_scalar(v: &Value, quoted: bool) -> String {
+    format_styled(v, quoted, &Style::ISO)
+}
+
+/// A single value as text, with dates and times in `style`.
+pub fn format_styled(v: &Value, quoted: bool, style: &Style) -> String {
     match v {
         Value::Empty => String::new(),
         Value::Error => "#ERROR".into(),
@@ -313,8 +393,16 @@ pub fn format_scalar(v: &Value, quoted: bool) -> String {
         Value::Text(s) if quoted => format!("{s:?}"),
         Value::Text(s) => s.to_string(),
         Value::Bool(b) => b.to_string(),
-        Value::Date(d) => date::format(*d),
-        Value::DateTime(t) => date::format_datetime(*t),
+        Value::Date(d) => style.date(*d),
+        Value::Time(t) => style.time(*t),
+        Value::DateTime(t) => style.datetime(*t),
+        // `2025-01-31T09:30+09:00`, to tell it from the sheet's own zone.
+        Value::Zoned(z) => format!(
+            "{}{}{}",
+            style.datetime(z.wall),
+            if style.is_iso() { "" } else { " " },
+            format_offset(z.offset())
+        ),
         Value::Range { lo, hi, exclusive } => {
             format!("{lo}{}{hi}", if *exclusive { "..^" } else { ".." })
         }
@@ -323,7 +411,7 @@ pub fn format_scalar(v: &Value, quoted: bool) -> String {
                 .iter()
                 .map(|x| match x {
                     Value::Empty => "empty".to_string(),
-                    other => format_scalar(other, true),
+                    other => format_styled(other, true, style),
                 })
                 .collect();
             format!("[{}]", parts.join(", "))
@@ -336,6 +424,7 @@ pub fn format_scalar(v: &Value, quoted: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use omasheet_omx::date;
 
     fn rat(n: i64, d: i64) -> BigRational {
         BigRational::new(n.into(), d.into())
@@ -357,6 +446,34 @@ mod tests {
         let one = arith(BinOp::Mul, &third, &Value::Int(3.into())).unwrap();
         assert!(matches!(one, Value::Int(n) if n.is_one()));
         assert!(arith(BinOp::Div, &Value::Int(1.into()), &Value::Int(0.into())).is_err());
+    }
+
+    #[test]
+    fn dates_and_times_shift() {
+        let int = |n: i64| Value::Int(n.into());
+        let day = date::from_ymd(2025, 1, 31).unwrap();
+        let shown = |op, a: &Value, b: &Value| format_scalar(&arith(op, a, b).unwrap(), false);
+        assert_eq!(shown(BinOp::Add, &Value::Date(day), &int(1)), "2025-02-01");
+        assert_eq!(
+            shown(BinOp::Add, &int(-31), &Value::Date(day)),
+            "2024-12-31"
+        );
+        assert_eq!(
+            shown(BinOp::Sub, &Value::Date(day), &Value::Date(0)),
+            "20119"
+        );
+        assert_eq!(shown(BinOp::Sub, &Value::Time(60), &int(120)), "23:59");
+        assert_eq!(
+            shown(BinOp::Add, &Value::Date(day), &Value::Time(34_200)),
+            "2025-01-31T09:30"
+        );
+        let noon = arith(BinOp::Add, &Value::Date(day), &Value::Time(43_200)).unwrap();
+        assert_eq!(shown(BinOp::Add, &noon, &int(86_400)), "2025-02-01T12:00");
+        assert_eq!(shown(BinOp::Sub, &noon, &noon), "0");
+        assert!(arith(BinOp::Sub, &int(1), &Value::Date(day)).is_err());
+        assert!(arith(BinOp::Mul, &Value::Date(day), &int(2)).is_err());
+        assert!(arith(BinOp::Sub, &noon, &Value::Date(day)).is_err());
+        assert!(arith(BinOp::Add, &Value::Date(i32::MAX), &int(1)).is_err());
     }
 
     #[test]

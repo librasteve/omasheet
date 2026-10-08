@@ -12,17 +12,24 @@ use crate::lexer::{Tok, lex};
 use crate::parser::parse_expr;
 use crate::sheet::{SheetAst, parse_sheet};
 use crate::types::{DepKind, S, TableTy, Ty};
-use num_traits::ToPrimitive;
+use num_bigint::BigInt;
+use num_rational::BigRational;
+use num_traits::{ToPrimitive, Zero};
 use std::mem;
 use std::rc::Rc;
 
 /// A checked sheet, ready to evaluate.
 #[derive(Debug, Default)]
 pub struct Program {
+    /// The time zone the sheet names for its date-times, and where.
+    pub zone: Option<(String, Span)>,
     pub tables: Vec<Table>,
     pub consts: Vec<Const>,
     /// Calculation order: each group only reads groups before it.
     pub order: Vec<Group>,
+    /// Where the source names a column of a table: `(span, table, column)`.
+    /// A formula checked more than once is listed more than once.
+    pub col_refs: Vec<(Span, usize, usize)>,
 }
 
 #[derive(Debug)]
@@ -169,6 +176,7 @@ struct Checker<'a> {
     cur: Vec<Diagnostic>,
     deps: Vec<Dep>,
     done: Vec<Diagnostic>,
+    col_refs: Vec<(Span, usize, usize)>,
 }
 
 /// Compile a sheet. If any diagnostic is returned the program must not be
@@ -258,6 +266,7 @@ fn lit_type(l: &Lit) -> S {
         Lit::Text(_) => S::Text,
         Lit::Bool(_) => S::Bool,
         Lit::Date(_) => S::Date,
+        Lit::Time(_) => S::Time,
         Lit::DateTime(_) => S::DateTime,
     }
 }
@@ -307,6 +316,7 @@ impl<'a> Checker<'a> {
             cur: Vec::new(),
             deps: Vec::new(),
             done: Vec::new(),
+            col_refs: Vec::new(),
         }
     }
 
@@ -674,6 +684,7 @@ impl<'a> Checker<'a> {
             (Some(Lit::Rat(r)), S::Num) => r.to_f64().map(Lit::Num),
             (Some(l @ Lit::Num(_)), S::Num) => Some(l),
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
+            (Some(l @ Lit::Time(_)), S::Time) => Some(l),
             (Some(l @ Lit::DateTime(_)), S::DateTime) => Some(l),
             (Some(l @ Lit::Bool(_)), S::Bool) => Some(l),
             _ => None,
@@ -683,7 +694,16 @@ impl<'a> Checker<'a> {
             self.err_help(
                 span,
                 format!("`{text}` is not {article} `{want}` literal"),
-                "a formula cell starts with `=`",
+                match want {
+                    S::Int => "enter a whole number such as `42`, or start the cell with `=` for a formula",
+                    S::Rat => "enter a number such as `19.99`, `20%` or `1/7`, or start the cell with `=` for a formula",
+                    S::Num => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
+                    S::Bool => "enter `true` or `false`, or start the cell with `=` for a formula",
+                    S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
+                    S::Time => "enter a time such as `09:30` or `09:30:15`, or start the cell with `=` for a formula",
+                    S::DateTime => "enter a date-time such as `2025-01-31T09:30`, or start the cell with `=` for a formula",
+                    _ => "a formula cell starts with `=`",
+                },
             );
         }
         fitted
@@ -692,7 +712,13 @@ impl<'a> Checker<'a> {
     fn parse_literal(&self, text: &str) -> Option<Lit> {
         let toks = lex(text, self.src, 0).ok()?;
         let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
+        // A fraction of two whole numbers, `1/7`, is an exact number.
+        let fraction = |n: &BigInt, d: &BigInt| {
+            (!d.is_zero()).then(|| Lit::Rat(BigRational::new(n.clone(), d.clone())))
+        };
         Some(match toks.as_slice() {
+            [Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(n, d)?,
+            [Tok::Minus, Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(&-n, d)?,
             [Tok::Int(n), Tok::Eof] => Lit::Int(n.clone()),
             [Tok::Rat(r), Tok::Eof] => Lit::Rat(r.clone()),
             [Tok::Num(f), Tok::Eof] => Lit::Num(*f),
@@ -701,6 +727,7 @@ impl<'a> Checker<'a> {
             [Tok::Minus, Tok::Num(f), Tok::Eof] => Lit::Num(-*f),
             [Tok::Str(s), Tok::Eof] => Lit::Text(s.clone()),
             [Tok::Date(d), Tok::Eof] => Lit::Date(*d),
+            [Tok::Time(t), Tok::Eof] => Lit::Time(*t),
             [Tok::DateTime(t), Tok::Eof] => Lit::DateTime(*t),
             [Tok::True, Tok::Eof] => Lit::Bool(true),
             [Tok::False, Tok::Eof] => Lit::Bool(false),
@@ -833,6 +860,7 @@ impl<'a> Checker<'a> {
                     }
                     Ty::Table(tt) => {
                         let c = self.col_in(&tt, name).unwrap();
+                        self.col_refs.push((*name_span, tt.table, c));
                         self.deps.push((DepNode::Col(tt.table, c), tt.kind));
                         let s = self.col_type(tt.table, c);
                         let kind = if matches!(b.kind, Ir::Table(_)) {
@@ -850,6 +878,7 @@ impl<'a> Checker<'a> {
                     }
                     Ty::Row(tt) => {
                         let c = self.col_in(&tt, name).unwrap();
+                        self.col_refs.push((*name_span, tt.table, c));
                         self.deps.push((DepNode::Col(tt.table, c), tt.kind));
                         let s = self.col_type(tt.table, c);
                         (
@@ -906,6 +935,7 @@ impl<'a> Checker<'a> {
         for i in (0..sc.frames.len()).rev() {
             let t = sc.frames[i];
             if let Some(c) = self.find_col(t, name) {
+                self.col_refs.push((span, t, c));
                 let kind = if i == 0 && sc.own {
                     DepKind::Same
                 } else {
@@ -1092,7 +1122,23 @@ impl<'a> Checker<'a> {
         }
         let ((a, av), (b, bv)) = (parts[0], parts[1]);
         let unknown = a == S::Any || b == S::Any;
-        let elem = if op.is_arithmetic() {
+        let elem = if op.is_arithmetic() && (a.is_temporal() || b.is_temporal()) {
+            let shifted = match op {
+                BinOp::Add => a.shift(false, b),
+                BinOp::Sub => a.shift(true, b),
+                _ => None,
+            };
+            let Some(s) = shifted else {
+                self.err_help(
+                    span,
+                    format!("cannot apply `{sym}` to {a} and {b}"),
+                    "add or subtract whole days with a Date, whole seconds with a Time or \
+                     DateTime; subtract two of the same kind; add a Date and a Time",
+                );
+                return fail;
+            };
+            s
+        } else if op.is_arithmetic() {
             if !(a.is_numeric() && b.is_numeric()) {
                 self.err(span, format!("cannot apply `{sym}` to {a} and {b}"));
                 return fail;
@@ -1280,6 +1326,108 @@ impl<'a> Checker<'a> {
                     Ty::Scalar(S::Complex),
                 )
             }
+            "today" | "now" => {
+                if !arity(self, 0, &format!("{name}()")) {
+                    return fail;
+                }
+                let (func, s) = if name == "today" {
+                    (Func::Today, S::Date)
+                } else {
+                    (Func::Now, S::DateTime)
+                };
+                (Node::new(Ir::Call(func, Vec::new()), span), Ty::Scalar(s))
+            }
+            "year" | "month" | "day" | "weekday" | "hour" | "minute" | "second" | "date"
+            | "time" => {
+                if !arity(self, 1, &format!("Orders.Placed.{name}()")) {
+                    return fail;
+                }
+                let (func, from, out) = match name {
+                    "year" => (Func::Year, S::Date, S::Int),
+                    "month" => (Func::Month, S::Date, S::Int),
+                    "day" => (Func::Day, S::Date, S::Int),
+                    "weekday" => (Func::Weekday, S::Date, S::Int),
+                    "hour" => (Func::Hour, S::Time, S::Int),
+                    "minute" => (Func::Minute, S::Time, S::Int),
+                    "second" => (Func::Second, S::Time, S::Int),
+                    "date" => (Func::DateOf, S::Date, S::Date),
+                    _ => (Func::TimeOf, S::Time, S::Time),
+                };
+                let (arg, aty) = self.lower(&args[0], sc);
+                let fits = |s: S| matches!(s, S::Any | S::DateTime) || s == from;
+                let ty = match aty {
+                    Ty::Any | Ty::Scalar(S::Any) => Ty::Scalar(out),
+                    Ty::Scalar(s) if fits(s) => Ty::Scalar(out),
+                    Ty::Vector(s, n) if fits(s) => Ty::Vector(out, n),
+                    other => {
+                        if !matches!(arg.kind, Ir::Error) {
+                            self.err(
+                                args[0].span,
+                                format!(
+                                    "`{name}` needs a {from} or a DateTime, but this is {}",
+                                    other.describe()
+                                ),
+                            );
+                        }
+                        return fail;
+                    }
+                };
+                (Node::new(Ir::Call(func, vec![arg]), span), ty)
+            }
+            "to_zone" | "utc" | "local" | "offset" | "zone" => {
+                let takes_zone = name == "to_zone";
+                let usage = if takes_zone {
+                    "Orders.Placed.to_zone(\"Asia/Tokyo\")".to_string()
+                } else {
+                    format!("Orders.Placed.{name}()")
+                };
+                if !arity(self, if takes_zone { 2 } else { 1 }, &usage) {
+                    return fail;
+                }
+                let (func, out) = match name {
+                    "to_zone" => (Func::ToZone, S::DateTime),
+                    "utc" => (Func::Utc, S::DateTime),
+                    "local" => (Func::Local, S::DateTime),
+                    "offset" => (Func::Offset, S::Int),
+                    _ => (Func::ZoneName, S::Text),
+                };
+                let (arg, aty) = self.lower(&args[0], sc);
+                let ty = match aty {
+                    Ty::Any | Ty::Scalar(S::Any | S::DateTime) => Ty::Scalar(out),
+                    Ty::Vector(S::Any | S::DateTime, n) => Ty::Vector(out, n),
+                    other => {
+                        if !matches!(arg.kind, Ir::Error) {
+                            self.err_help(
+                                args[0].span,
+                                format!(
+                                    "`{name}` needs a DateTime, but this is {}",
+                                    other.describe()
+                                ),
+                                "a Date or a Time alone is in no time zone; add them to make a \
+                                 DateTime",
+                            );
+                        }
+                        return fail;
+                    }
+                };
+                let mut nodes = vec![arg];
+                if takes_zone {
+                    let (zone, zty) = self.lower(&args[1], sc);
+                    if !matches!(zty, Ty::Any | Ty::Scalar(S::Any | S::Text)) {
+                        self.err_help(
+                            args[1].span,
+                            format!(
+                                "`to_zone` needs the name of a time zone, but this is {}",
+                                zty.describe()
+                            ),
+                            "for example `\"Europe/London\"`",
+                        );
+                        return fail;
+                    }
+                    nodes.push(zone);
+                }
+                (Node::new(Ir::Call(func, nodes), span), ty)
+            }
             "filter" => {
                 if !arity(self, 2, "Sales |> filter(Region == \"UK\")") {
                     return fail;
@@ -1320,7 +1468,10 @@ impl<'a> Checker<'a> {
                         return fail;
                     };
                     match self.col_in(&tt, col) {
-                        Some(c) => cols.push(c),
+                        Some(c) => {
+                            self.col_refs.push((a.span, tt.table, c));
+                            cols.push(c)
+                        }
                         None => {
                             self.no_column(&tt, col, a.span);
                             return fail;
@@ -1348,7 +1499,8 @@ impl<'a> Checker<'a> {
             _ => {
                 let known = [
                     "sum", "avg", "min", "max", "count", "filter", "select", "approx", "Num",
-                    "Complex",
+                    "Complex", "today", "now", "year", "month", "day", "weekday", "hour", "minute",
+                    "second", "date", "time", "to_zone", "utc", "local", "offset", "zone",
                 ];
                 let mut d = Diagnostic::new(name_span, format!("unknown function `{name}`"));
                 d = match closest(name, known.into_iter()) {
@@ -1672,6 +1824,7 @@ impl<'a> Checker<'a> {
         if let ExprKind::Name(name) = &e.kind
             && let Some(c) = self.col_in(tt, name)
         {
+            self.col_refs.push((e.span, tt.table, c));
             return Some(ColSel::One(c));
         }
         let n = tt.cols.len() as i64;
@@ -1831,9 +1984,11 @@ impl<'a> Checker<'a> {
             });
         }
         Program {
+            zone: self.ast.and_then(|ast| ast.zone.clone()),
             tables,
             consts,
             order,
+            col_refs: mem::take(&mut self.col_refs),
         }
     }
 }

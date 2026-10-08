@@ -107,4 +107,25 @@ pub enum Func {
     Count,
     Approx,
     Complex,
+    Today,
+    Now,
+    Year,
+    Month,
+    Day,
+    Weekday,
+    Hour,
+    Minute,
+    Second,
+    /// The day of a date-time.
+    DateOf,
+    /// The time of day of a date-time.
+    TimeOf,
+    /// The same instant on the clocks of a named time zone.
+    ToZone,
+    Utc,
+    /// The same instant on the clocks of this machine.
+    Local,
+    /// Seconds ahead of UTC.
+    Offset,
+    ZoneName,
 }

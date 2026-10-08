@@ -171,6 +171,87 @@ operand. `=` SHALL NOT be a comparison operator.
 - **WHEN** `Sales[Region = "UK"]` is parsed
 - **THEN** a syntax error suggests `==`
 
+### Requirement: Dates and times
+OMX SHALL provide the types `Date`, `Time` (a time of day) and `DateTime`,
+written with no time zone or offset as `2025-01-31`, `09:30` or `09:30:15`, and
+`2025-01-31T09:30` or `2025-01-31T09:30:15`. Each SHALL compare only with its
+own kind. `+` and `-` SHALL combine them as follows, and no other arithmetic
+SHALL apply to them:
+
+- a `Date` plus or minus an `Int` is the `Date` that many days away;
+- a `Time` or `DateTime` plus or minus an `Int` is the value that many seconds
+  away, a `Time` going round midnight;
+- the difference of two `Date` values is an `Int` number of days, and of two
+  `Time` or two `DateTime` values an `Int` number of seconds;
+- a `Date` plus a `Time` is a `DateTime`.
+
+The methods `.year()`, `.month()`, `.day()` and `.weekday()` (1 for Monday to 7
+for Sunday) SHALL apply to a `Date` or `DateTime`; `.hour()`, `.minute()` and
+`.second()` to a `Time` or `DateTime`; `.date()` and `.time()` SHALL give the two
+halves of a `DateTime`. `today()` SHALL give the `Date` and `now()` the
+`DateTime` at the time of evaluation.
+
+#### Scenario: Days between dates
+- **WHEN** `2025-03-01 - 2024-03-01` is evaluated
+- **THEN** the result is `365`
+
+#### Scenario: Adding days crosses a month
+- **WHEN** `2025-01-31 + 1` is evaluated
+- **THEN** the result is `2025-02-01`
+
+#### Scenario: A time goes round midnight
+- **WHEN** `23:30 + 3600` is evaluated
+- **THEN** the result is `00:30`
+
+#### Scenario: Date and time make a date-time
+- **WHEN** `2025-01-31 + 09:30` is evaluated
+- **THEN** the result is `2025-01-31T09:30`
+
+#### Scenario: Kinds do not mix
+- **WHEN** `2025-01-31T09:30 - 2025-01-31` is checked
+- **THEN** a type error says `-` cannot be applied to DateTime and Date
+
+#### Scenario: Parts of a date
+- **WHEN** `2026-10-08.weekday()` is evaluated
+- **THEN** the result is `4`
+
+### Requirement: Time zones
+A `DateTime` SHALL be a time on the clocks of the sheet's time zone: the zone
+the sheet names, or else the zone of the machine. `.to_zone("<name>")` SHALL give
+the same instant on the clocks of the named zone, `.utc()` on those of UTC and
+`.local()` on those of the machine, each following the daylight saving rules of
+the time zone database. The result SHALL be a `DateTime` that keeps its zone and
+is printed with its offset from UTC, unless the zone is the sheet's own.
+`.offset()` SHALL give the seconds a `DateTime` is ahead of UTC and `.zone()` the
+name of its zone. Two `DateTime` values in different zones SHALL compare and
+subtract as instants; two in the sheet's own zone as the clocks show them. A
+zone the time zone database does not have SHALL be an error. `now()` SHALL be on
+the clocks of the sheet's zone.
+
+#### Scenario: Convert to another zone
+- **GIVEN** the sheet's zone is `Europe/London`
+- **WHEN** `2025-07-15T12:00.to_zone("Asia/Tokyo")` is evaluated
+- **THEN** the result is `2025-07-15T20:00+09:00`
+
+#### Scenario: Daylight saving
+- **GIVEN** the sheet's zone is `Europe/London`
+- **WHEN** `2025-07-15T12:00.offset()` and `2025-01-15T12:00.offset()` are evaluated
+- **THEN** the results are `3600` and `0`
+
+#### Scenario: The same instant is equal
+- **GIVEN** the sheet's zone is `Europe/London`
+- **WHEN** `2025-07-15T12:00.to_zone("Asia/Tokyo") == 2025-07-15T12:00` is evaluated
+- **THEN** the result is true
+
+#### Scenario: Elapsed time across a clock change
+- **GIVEN** the sheet's zone is `Europe/London`
+- **WHEN** `2025-03-30T12:00 - 2025-03-29T12:00` and `2025-03-30T12:00.utc() - 2025-03-29T12:00.utc()` are evaluated
+- **THEN** the results are `86400` and `82800`
+
+#### Scenario: Unknown zone
+- **WHEN** `now().to_zone("Mars/Base")` is evaluated
+- **THEN** an error says there is no time zone `Mars/Base`
+
 ### Requirement: Conditional expression
 OMX SHALL provide `if <cond> then <a> else <b>` as an expression that may span
 multiple lines.

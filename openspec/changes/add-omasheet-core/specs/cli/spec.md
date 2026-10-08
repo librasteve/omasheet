@@ -41,6 +41,33 @@ standard input.
 - **WHEN** `echo 'Sales.Revenue.avg()' | omasheet eval --sheet sales.omx` is run
 - **THEN** the average is printed
 
+### Requirement: Dates, times and the clock
+Dates and times SHALL be printed in their ISO forms unless `--locale` is given,
+in which case they SHALL be printed the way the locale of the machine
+(`LC_TIME`) writes them, with a four-digit year. `--now <datetime>` SHALL set
+what `today()` and `now()` give, in place of the clock. `--zone <name>` SHALL set
+the time zone of the machine, in place of the one it is set to. With `--locale`
+the date-times of a sheet in another time zone SHALL be printed on the clocks of
+the machine. These options SHALL apply to viewing a sheet and to `eval`.
+
+#### Scenario: ISO by default
+- **GIVEN** a machine whose locale is British
+- **WHEN** `omasheet eval '2026-10-08 + 17:47'` is run
+- **THEN** the output is `2026-10-08T17:47`
+
+#### Scenario: Locale on request
+- **GIVEN** a machine whose locale is British
+- **WHEN** `omasheet eval --locale '2026-10-08 + 17:47'` is run
+- **THEN** the output is `08/10/2026 17:47`
+
+#### Scenario: A fixed clock
+- **WHEN** `omasheet eval --now 2026-10-08T17:47 'today()'` is run
+- **THEN** the output is `2026-10-08`
+
+#### Scenario: A given zone
+- **WHEN** `omasheet eval --zone America/New_York '2025-07-15T12:00.utc()'` is run
+- **THEN** the output is `2025-07-15T16:00+00:00`
+
 ### Requirement: Lint a sheet
 `omasheet lint <file.omx>` SHALL parse and statically check a sheet without
 executing it, print every diagnostic, and exit non-zero if any error was found.

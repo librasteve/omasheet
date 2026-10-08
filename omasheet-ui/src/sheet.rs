@@ -4,9 +4,11 @@ use crate::{json, theme};
 use core::pin::Pin;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QString, QUrl};
-use omasheet_engine::Document;
-use omasheet_engine::doc::BLANK;
+use omasheet_engine::doc::{BLANK, entry_hint};
+use omasheet_engine::omx::date::Style;
+use omasheet_engine::{Document, locale};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 #[cxx_qt::bridge]
 pub mod qobject {
@@ -102,6 +104,8 @@ pub mod qobject {
             expr: &QString,
         ) -> QString;
         #[qinvokable]
+        fn rename_column(self: Pin<&mut Sheet>, table: i32, col: i32, name: &QString) -> QString;
+        #[qinvokable]
         fn add_table(self: Pin<&mut Sheet>, name: &QString) -> QString;
         #[qinvokable]
         fn add_const(self: Pin<&mut Sheet>, name: &QString, expr: &QString) -> QString;
@@ -114,6 +118,13 @@ pub mod qobject {
         fn redo(self: Pin<&mut Sheet>);
         #[qinvokable]
         fn reload_theme(self: Pin<&mut Sheet>);
+
+        /// The locale and how it writes a date and a time.
+        #[qinvokable]
+        fn locale_hint(self: &Sheet) -> QString;
+        /// What can be typed into a column of the named type.
+        #[qinvokable]
+        fn entry_hint(self: &Sheet, ty: &QString) -> QString;
     }
 }
 
@@ -160,11 +171,22 @@ impl Default for SheetRust {
             theme_muted: QString::from(&theme.muted),
             theme_error: QString::from(&theme.error),
             snapshot_path: QString::from(std::env::var("OMASHEET_UI_SNAPSHOT").unwrap_or_default()),
-            doc: Document::default(),
+            doc: document(BLANK),
             path: None,
             saved: BLANK.to_string(),
         }
     }
+}
+
+/// How the user's locale writes dates and times.
+fn style() -> Style {
+    static STYLE: OnceLock<Style> = OnceLock::new();
+    *STYLE.get_or_init(locale::os_style)
+}
+
+/// A document that shows dates and times the way the user's locale does.
+fn document(text: &str) -> Document {
+    Document::with_style(text, style())
 }
 
 fn index(n: i32) -> usize {
@@ -223,7 +245,7 @@ impl qobject::Sheet {
     fn new_document(mut self: Pin<&mut Self>) {
         {
             let mut rust = self.as_mut().rust_mut();
-            rust.doc = Document::default();
+            rust.doc = document(BLANK);
             rust.saved = BLANK.to_string();
         }
         self.as_mut().set_path(None);
@@ -235,7 +257,7 @@ impl qobject::Sheet {
             Ok(text) => {
                 {
                     let mut rust = self.as_mut().rust_mut();
-                    rust.doc = Document::from_text(&text);
+                    rust.doc = document(&text);
                     rust.saved = text;
                 }
                 self.as_mut().set_path(Some(path));
@@ -425,6 +447,11 @@ impl qobject::Sheet {
         self.try_edit(|doc| doc.add_computed(index(table), &name, &expr))
     }
 
+    fn rename_column(self: Pin<&mut Self>, table: i32, col: i32, name: &QString) -> QString {
+        let name = name.to_string();
+        self.try_edit(|doc| doc.rename_column(index(table), index(col), &name))
+    }
+
     fn add_table(self: Pin<&mut Self>, name: &QString) -> QString {
         let name = name.to_string();
         self.try_edit(|doc| doc.add_table(&name))
@@ -446,6 +473,21 @@ impl qobject::Sheet {
 
     fn redo(self: Pin<&mut Self>) {
         self.edit(|doc| doc.redo());
+    }
+
+    fn locale_hint(&self) -> QString {
+        let style = style();
+        let name = match locale::os_name() {
+            _ if style.is_iso() => "ISO".to_string(),
+            name if name.is_empty() => "Locale".to_string(),
+            name => name,
+        };
+        let clock = if style.hour12 { "12h" } else { "24h" };
+        QString::from(&format!("{name}: {} {clock}", style.date_pattern()))
+    }
+
+    fn entry_hint(&self, ty: &QString) -> QString {
+        QString::from(&entry_hint(&style(), &ty.to_string()))
     }
 
     fn reload_theme(mut self: Pin<&mut Self>) {

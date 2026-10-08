@@ -13,6 +13,9 @@ pub enum Lit {
     Bool(bool),
     /// Days since 1970-01-01.
     Date(i32),
+    /// Seconds since midnight.
+    Time(i32),
+    /// Seconds since the start of 1970-01-01.
     DateTime(i64),
 }
 

@@ -14,6 +14,7 @@ pub enum S {
     Text,
     Bool,
     Date,
+    Time,
     DateTime,
 }
 
@@ -26,6 +27,7 @@ impl S {
             "Num" => S::Num,
             "Text" => S::Text,
             "Date" => S::Date,
+            "Time" => S::Time,
             "DateTime" => S::DateTime,
             "Bool" => S::Bool,
             _ => return None,
@@ -34,6 +36,26 @@ impl S {
 
     pub fn is_numeric(self) -> bool {
         matches!(self, S::Any | S::Int | S::Rat | S::Num | S::Complex)
+    }
+
+    /// A date, a time of day, or both.
+    pub fn is_temporal(self) -> bool {
+        matches!(self, S::Date | S::Time | S::DateTime)
+    }
+
+    /// The type of `self + other`, or of `self - other` when `minus`, where
+    /// at least one side is a date or time. A whole number counts days next
+    /// to a `Date` and seconds next to a `Time` or `DateTime`. `None` if the
+    /// two cannot be combined.
+    pub fn shift(self, minus: bool, other: S) -> Option<S> {
+        Some(match (self, other) {
+            (S::Any, t) | (t, S::Any) if t.is_temporal() => S::Any,
+            (t, S::Int) if t.is_temporal() => t,
+            (S::Int, t) if t.is_temporal() && !minus => t,
+            (S::Date, S::Time) | (S::Time, S::Date) if !minus => S::DateTime,
+            (a, b) if a == b && a.is_temporal() && minus => S::Int,
+            _ => return None,
+        })
     }
 
     fn rank(self) -> u8 {
@@ -84,6 +106,7 @@ impl fmt::Display for S {
             S::Text => "Text",
             S::Bool => "Bool",
             S::Date => "Date",
+            S::Time => "Time",
             S::DateTime => "DateTime",
         })
     }

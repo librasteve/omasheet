@@ -57,10 +57,27 @@ in any other table of the same sheet.
 - **WHEN** two tables in one sheet are both named `Sales`
 - **THEN** parsing reports an error at the second declaration
 
+### Requirement: Sheet time zone
+A sheet SHALL be able to name the time zone its `DateTime` values are in with a
+line `zone <Area/City>`, using a name from the time zone database, placed before
+its first table. A sheet with no such line SHALL be in the zone of the machine
+that evaluates it. A second `zone` line, or a zone that does not exist, SHALL be
+an error.
+
+#### Scenario: A sheet in New York
+- **GIVEN** a sheet that begins `zone America/New_York` and holds `2025-03-03T09:12`
+- **WHEN** it is evaluated on a machine in London
+- **THEN** that cell is 09:12 in New York, which is 14:12 in London
+
+#### Scenario: Unknown zone
+- **GIVEN** a sheet that begins `zone Mars/Base`
+- **WHEN** it is linted
+- **THEN** an error at that line says there is no time zone `Mars/Base`
+
 ### Requirement: Column schema
 A table SHALL be able to declare the type of each column with lines of the form
 `<Column> : <Type>` placed between the `table` line and the header row. A type
-SHALL be a base type (`Int`, `Rat`, `Num`, `Text`, `Date`, `DateTime`, `Bool`).
+SHALL be a base type (`Int`, `Rat`, `Num`, `Text`, `Date`, `Time`, `DateTime`, `Bool`).
 A column with no declaration SHALL have its type inferred from its cells.
 
 #### Scenario: Typed columns
@@ -106,6 +123,8 @@ literal cell in a column declared `Text` SHALL be read as literal text. A litera
 cell in a column of any other declared type SHALL be a literal of that type, and
 SHALL be an error otherwise. In an undeclared column, a cell that is a valid OMX
 literal SHALL take that literal's type and any other literal cell SHALL be text.
+A cell holding two whole numbers separated by `/`, such as `1/7`, optionally
+negated and with a non-zero denominator, SHALL be a `Rat` literal.
 Text that itself begins with `=` SHALL be written as a quoted string.
 
 #### Scenario: Text cell
@@ -117,6 +136,11 @@ Text that itself begins with `=` SHALL be written as a quoted string.
 - **GIVEN** a column declared `Tax : Rat` and a constant `TaxRate`
 - **WHEN** a cell in `Tax` contains `= Revenue * TaxRate`
 - **THEN** its value is that row's `Revenue` multiplied by `TaxRate`
+
+#### Scenario: Fraction cell
+- **GIVEN** an undeclared column `Share`
+- **WHEN** a cell contains `1/7`
+- **THEN** its value is the exact `Rat` one seventh
 
 #### Scenario: Unmarked expression in a typed column
 - **GIVEN** a column declared `Tax : Rat`

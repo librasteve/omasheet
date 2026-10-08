@@ -1,7 +1,8 @@
 //! The scenarios of the Phase 1 specs (`openspec/changes/add-omasheet-core`),
 //! one test per scenario where it can be checked from the outside.
 
-use omasheet_engine::{eval, lint, view};
+use omasheet_engine::omx::date::{Order, Style};
+use omasheet_engine::{Options, eval, eval_with, lint, view, view_with};
 
 const SALES: &str = "\
 table Sales
@@ -188,6 +189,279 @@ fn datetime_columns() {
 }
 
 #[test]
+fn time_columns() {
+    let sheet = "table Log\n\nAt : Time\n\nAt | N\n09:30 | 1\n17:45:10 | 10\n00:00 | 100\n";
+    assert_eq!(ask(sheet, "Log[At >= 09:30 and At < 18:00].N.sum()"), "11");
+    assert_eq!(ask(sheet, "Log.At.max()"), "17:45:10");
+    assert_eq!(ask(sheet, "Log[0; At]"), "09:30");
+    // An undeclared column infers Time from its cells.
+    let inferred = sheet.replace("At : Time\n\n", "");
+    assert_eq!(ask(&inferred, "Log.At.min()"), "00:00");
+    let err = calc_err(Some(sheet), "Log[At >= 2025-03-01].N.sum()");
+    assert!(err.contains("cannot compare Time and Date"), "{err}");
+    let errs = lint_errors("table Log\n\nAt : Time\n\nAt\n9.30\n");
+    assert!(errs[0].contains("is not a `Time` literal"), "{errs:?}");
+    assert!(errs[0].contains("such as `09:30`"), "{errs:?}");
+    assert!(calc_err(None, "24:00").contains("is not a real time"));
+}
+
+#[test]
+fn date_and_time_arithmetic() {
+    // A whole number is days next to a Date, seconds next to the others.
+    assert_eq!(calc("2025-01-31 + 1"), "2025-02-01");
+    assert_eq!(calc("7 + 2024-02-23"), "2024-03-01");
+    assert_eq!(calc("2025-03-01 - 1"), "2025-02-28");
+    assert_eq!(calc("2025-03-01 - 2024-03-01"), "365");
+    assert_eq!(calc("2025-01-31T23:59 + 60"), "2025-02-01T00:00");
+    assert_eq!(calc("2025-01-31T09:30 - 2025-01-30T09:00"), "88200");
+    assert_eq!(calc("17:05 - 09:00"), "29100");
+    // A time of day goes round midnight.
+    assert_eq!(calc("23:30 + 3600"), "00:30");
+    assert_eq!(calc("00:15 - 1800"), "23:45");
+    assert_eq!(calc("2025-01-31 + 09:30"), "2025-01-31T09:30");
+    assert_eq!(calc("09:30 + 2025-01-31"), "2025-01-31T09:30");
+    assert_eq!(
+        calc("[2025-01-01, 2025-12-31] + 1"),
+        "[2025-01-02, 2026-01-01]"
+    );
+
+    for (expr, message) in [
+        ("2025-01-31 * 2", "cannot apply `*` to Date and Int"),
+        (
+            "2025-01-31 + 2025-01-31",
+            "cannot apply `+` to Date and Date",
+        ),
+        ("1 - 2025-01-31", "cannot apply `-` to Int and Date"),
+        ("2025-01-31 + 1.5", "cannot apply `+` to Date and Rat"),
+        ("2025-01-31 - 09:30", "cannot apply `-` to Date and Time"),
+        (
+            "2025-01-31T09:30 - 2025-01-31",
+            "cannot apply `-` to DateTime and Date",
+        ),
+    ] {
+        let err = calc_err(None, expr);
+        assert!(err.contains(message), "{expr}: {err}");
+    }
+
+    let sheet = "table Jobs\n\nDue : Date\n\nStart | Days | Due\n2025-01-30 | 3 | = Start + Days\n";
+    assert_eq!(ask(sheet, "Jobs[0; Due]"), "2025-02-02");
+    let bad = sheet.replace("Due : Date", "Due : DateTime");
+    assert!(lint_errors(&bad)[0].contains("declared `DateTime` but this is `Date`"));
+}
+
+#[test]
+fn date_and_time_parts() {
+    assert_eq!(calc("2026-10-08.year()"), "2026");
+    assert_eq!(calc("2026-10-08.month()"), "10");
+    assert_eq!(calc("2026-10-08.day()"), "8");
+    // Monday is 1 and Sunday is 7.
+    assert_eq!(calc("2026-10-08.weekday()"), "4");
+    assert_eq!(calc("weekday(2026-10-11)"), "7");
+    assert_eq!(calc("17:47:09.hour()"), "17");
+    assert_eq!(calc("17:47:09.minute()"), "47");
+    assert_eq!(calc("17:47:09.second()"), "9");
+    assert_eq!(calc("2026-10-08T17:47.date()"), "2026-10-08");
+    assert_eq!(calc("2026-10-08T17:47.time()"), "17:47");
+    assert_eq!(calc("2026-10-08T17:47.year()"), "2026");
+    assert_eq!(calc("2026-10-08T17:47.hour()"), "17");
+    assert_eq!(calc("[2025-01-31, 2026-02-28].month()"), "[1, 2]");
+    assert!(calc_err(None, "09:30.year()").contains("`year` needs a Date or a DateTime"));
+    assert!(calc_err(None, "2026-10-08.hour()").contains("`hour` needs a Time or a DateTime"));
+    assert!(calc_err(None, "year(2026)").contains("but this is Int"));
+}
+
+#[test]
+fn today_and_now_come_from_the_options() {
+    let options = Options {
+        now: Some(20_734 * 86_400 + 17 * 3600 + 47 * 60),
+        ..Options::default()
+    };
+    let at = |expr: &str, options: &Options| {
+        let options = options.clone();
+        let out = eval_with(None, "<expression>", expr, options);
+        assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
+        out.output.trim_end().to_string()
+    };
+    assert_eq!(at("today()", &options), "2026-10-08");
+    assert_eq!(at("now()", &options), "2026-10-08T17:47");
+    assert_eq!(at("today() - 2026-01-01", &options), "280");
+    assert_eq!(at("now() - (today() + 00:00)", &options), "64020");
+    assert!(calc_err(None, "today(1)").contains("`today` takes 0 arguments"));
+    // The clock of this machine otherwise.
+    assert_eq!(calc("now().date() == today()"), "true");
+
+    // The style changes how dates are shown, never how they are written.
+    let gb = Options {
+        style: Style::new(Order::Dmy, '/', false),
+        ..options.clone()
+    };
+    let us = Options {
+        style: Style::new(Order::Mdy, '/', true),
+        ..options.clone()
+    };
+    assert_eq!(at("today()", &gb), "08/10/2026");
+    assert_eq!(at("now()", &gb), "08/10/2026 17:47");
+    assert_eq!(at("[today(), 2025-01-31]", &gb), "[08/10/2026, 31/01/2025]");
+    assert_eq!(at("now()", &us), "10/08/2026 5:47 PM");
+    assert_eq!(at("2026-10-08 + 00:00:05", &us), "10/08/2026 12:00:05 AM");
+    let sheet = "const Start = 2025-01-31\n\ntable T\n\nAt\n09:30\n";
+    assert_eq!(
+        view_with("test.omx", sheet, gb).output,
+        "const Start = 31/01/2025\n\ntable T\n\nAt\n-----\n09:30\n"
+    );
+    assert_eq!(
+        shown(sheet),
+        "const Start = 2025-01-31\n\ntable T\n\nAt\n-----\n09:30\n"
+    );
+}
+
+#[test]
+fn time_zones() {
+    use omasheet_engine::zone::Zone;
+    // A machine in London, whatever this one is set to.
+    let london = Options {
+        zone: Zone::named("Europe/London"),
+        ..Options::default()
+    };
+    let with = |options: &Options, sheet: Option<&str>, expr: &str| {
+        let sheet = sheet.map(|s| ("test.omx", s));
+        let out = eval_with(sheet, "<expression>", expr, options.clone());
+        assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
+        out.output.trim_end().to_string()
+    };
+    let at = |expr: &str| with(&london, None, expr);
+
+    // The same instant on other clocks, with daylight saving.
+    assert_eq!(
+        at("2025-07-15T12:00.to_zone(\"Asia/Tokyo\")"),
+        "2025-07-15T20:00+09:00"
+    );
+    assert_eq!(at("2025-07-15T12:00.utc()"), "2025-07-15T11:00+00:00");
+    assert_eq!(at("2025-01-15T12:00.utc()"), "2025-01-15T12:00+00:00");
+    assert_eq!(
+        at("2025-07-15T12:00.to_zone(\"America/St_Johns\")"),
+        "2025-07-15T08:30-02:30"
+    );
+    assert_eq!(at("2025-07-15T12:00.offset()"), "3600");
+    assert_eq!(at("2025-01-15T12:00.offset()"), "0");
+    assert_eq!(at("2025-07-15T12:00.zone()"), "Europe/London");
+    assert_eq!(at("2025-07-15T12:00.utc().zone()"), "UTC");
+    assert_eq!(at("2025-07-15T12:00.utc().offset()"), "0");
+    // Back to the sheet's own zone it is an ordinary date-time again.
+    assert_eq!(
+        at("2025-07-15T12:00.to_zone(\"Asia/Tokyo\").to_zone(\"Europe/London\")"),
+        "2025-07-15T12:00"
+    );
+    assert_eq!(at("2025-07-15T12:00.utc().local()"), "2025-07-15T12:00");
+
+    // The parts are those of the zone it is in.
+    assert_eq!(at("2025-07-15T20:00.to_zone(\"Asia/Tokyo\").hour()"), "4");
+    assert_eq!(
+        at("2025-07-15T20:00.to_zone(\"Asia/Tokyo\").date()"),
+        "2025-07-16"
+    );
+    // Seconds are added on its own clocks.
+    assert_eq!(
+        at("2025-07-15T12:00.to_zone(\"Asia/Tokyo\") + 3600"),
+        "2025-07-15T21:00+09:00"
+    );
+    // Across zones it is the instant that is compared and subtracted.
+    assert_eq!(
+        at("2025-07-15T12:00.to_zone(\"Asia/Tokyo\") == 2025-07-15T12:00"),
+        "true"
+    );
+    assert_eq!(
+        at("2025-07-15T12:00.utc() < 2025-07-15T12:00:01.to_zone(\"Asia/Tokyo\")"),
+        "true"
+    );
+    assert_eq!(
+        at("2025-07-15T13:00.to_zone(\"Asia/Tokyo\") - 2025-07-15T12:00.utc()"),
+        "3600"
+    );
+    assert_eq!(at("2025-07-15T13:00 - 2025-07-15T12:00.utc()"), "3600");
+    // In one zone the clocks are taken at their word: the night the clocks go
+    // forward has 24 hours on the wall and 23 in fact.
+    assert_eq!(at("2025-03-30T12:00 - 2025-03-29T12:00"), "86400");
+    assert_eq!(
+        at("2025-03-30T12:00.utc() - 2025-03-29T12:00.utc()"),
+        "82800"
+    );
+    assert_eq!(
+        at("[2025-01-15T12:00, 2025-07-15T12:00].utc()"),
+        "[2025-01-15T12:00+00:00, 2025-07-15T11:00+00:00]"
+    );
+
+    let out = eval_with(
+        None,
+        "<expression>",
+        "2025-07-15T12:00.to_zone(\"Mars/Base\")",
+        london.clone(),
+    );
+    assert!(out.errors[0].contains("there is no time zone `Mars/Base`"));
+    assert!(calc_err(None, "2025-07-15.utc()").contains("`utc` needs a DateTime"));
+    assert!(calc_err(None, "now().to_zone(3)").contains("needs the name of a time zone"));
+
+    // A sheet names the zone its date-times are in.
+    let sheet = "zone America/New_York\n\ntable Calls\n\nAt\n2025-03-03T09:12\n\n\
+                 Tokyo := At.to_zone(\"Asia/Tokyo\")\n";
+    let ny = |expr: &str| with(&london, Some(sheet), expr);
+    assert_eq!(ny("Calls[0; At]"), "2025-03-03T09:12");
+    assert_eq!(ny("Calls[0; At].zone()"), "America/New_York");
+    assert_eq!(ny("Calls[0; At].offset()"), "-18000");
+    assert_eq!(ny("Calls[0; Tokyo]"), "2025-03-03T23:12+09:00");
+    assert_eq!(ny("Calls[0; At].local()"), "2025-03-03T14:12+00:00");
+    assert_eq!(ny("Calls[0; At].utc() == Calls[0; At]"), "true");
+    // `now()` is on the sheet's clocks: five hours behind London in winter.
+    assert_eq!(ny("now().zone()"), "America/New_York");
+    assert_eq!(ny("now().local() == now()"), "true");
+    let fixed = Options {
+        now: Some(20_734 * 86_400),
+        ..london.clone()
+    };
+    assert_eq!(with(&fixed, Some(sheet), "now()"), "2026-10-08T00:00");
+    assert_eq!(
+        with(&fixed, Some(sheet), "now().local()"),
+        "2026-10-08T05:00+01:00"
+    );
+
+    // Shown on this machine's clocks only when that is asked for.
+    let local = Options {
+        local: true,
+        ..london.clone()
+    };
+    assert_eq!(
+        with(&local, Some(sheet), "Calls[0; At]"),
+        "2025-03-03T14:12"
+    );
+    assert_eq!(with(&local, Some(sheet), "Calls.At"), "[2025-03-03T14:12]");
+    assert_eq!(
+        with(&local, Some(sheet), "Calls[0; Tokyo]"),
+        "2025-03-03T23:12+09:00"
+    );
+    assert_eq!(with(&local, Some(sheet), "Calls[0; At].hour()"), "9");
+    assert_eq!(
+        view_with("test.omx", sheet, local).output,
+        "table Calls\n\nAt               | Tokyo\n-----------------|-----------------------\n\
+         2025-03-03T14:12 | 2025-03-03T23:12+09:00\n"
+    );
+
+    // The zone line is checked, and belongs before the first table.
+    let errs = lint_errors("zone Mars/Base\n\ntable T\n\nA\n1\n");
+    assert!(
+        errs[0].contains("test.omx:1:6: error: there is no time zone `Mars/Base`"),
+        "{errs:?}"
+    );
+    assert!(!view("test.omx", "zone Mars/Base\n\ntable T\n\nA\n1\n").ok());
+    let errs = lint_errors("zone UTC\nzone Asia/Tokyo\n\ntable T\n\nA\n1\n");
+    assert!(
+        errs[0].contains("the sheet already has a `zone`"),
+        "{errs:?}"
+    );
+    assert!(lint_errors("zone UTC\n\ntable T\n\nA\n1\n").is_empty());
+    assert_eq!(ask("table T\n\nA\nzone UTC\n", "T[0; A]"), "zone UTC");
+}
+
+#[test]
 fn lookup_from_another_table() {
     let sheet = "\
 table Customers
@@ -321,6 +595,12 @@ fn cell_content() {
     let sheet =
         "const TaxRate = 20%\n\ntable T\n\nTax : Rat\n\nRevenue | Tax\n100 | = Revenue * TaxRate\n";
     assert_eq!(ask(sheet, "T[0; Tax]"), "20");
+    // A fraction of two whole numbers is a Rat literal, declared or not.
+    let thirds = "table T\n\nA : Rat\n\nA | B\n1/7 | 2/3\n-3/6 | 1/3\n4/2 | x\n";
+    assert_eq!(ask(thirds, "T.A"), "[1/7, -0.5, 2]");
+    assert_eq!(ask(thirds, "T[0..1; B].sum()"), "1");
+    assert!(lint_errors("table T\n\nA : Rat\n\nA\n1/0\n")[0].contains("is not a `Rat` literal"));
+    assert_eq!(ask("table T\n\nA\n1/0\n", "T[0; A]"), "1/0");
     // An unmarked expression in a typed column is an error.
     let errors = lint_errors("table T\n\nTax : Rat\n\nRevenue | Tax\n100 | Revenue * 2\n");
     assert!(

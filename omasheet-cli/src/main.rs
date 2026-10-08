@@ -1,7 +1,9 @@
 //! The `omasheet` command.
 
-use clap::{Parser, Subcommand};
-use omasheet_engine::Outcome;
+use clap::{Args, Parser, Subcommand};
+use omasheet_engine::omx::date::Style;
+use omasheet_engine::zone::Zone;
+use omasheet_engine::{Options, Outcome, locale};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -19,6 +21,54 @@ struct Cli {
 
     /// A sheet to evaluate and show (read-only)
     file: Option<PathBuf>,
+
+    #[command(flatten)]
+    env: Env,
+}
+
+#[derive(Args)]
+struct Env {
+    /// Show dates and times the way this machine's locale writes them,
+    /// rather than as the sheet does (2025-01-31, 17:05), and date-times on
+    /// this machine's clocks rather than those of the sheet's time zone
+    #[arg(long)]
+    locale: bool,
+
+    /// What `today()` and `now()` give, in place of the clock
+    #[arg(long, value_name = "DATETIME")]
+    now: Option<String>,
+
+    /// The time zone of this machine, in place of the one it is set to; it
+    /// is also the zone of a sheet that names none
+    #[arg(long, value_name = "ZONE")]
+    zone: Option<String>,
+}
+
+impl Env {
+    fn options(&self) -> Result<Options, ExitCode> {
+        let mut options = Options::default();
+        if self.locale {
+            options.style = locale::os_style();
+            options.local = true;
+        }
+        if let Some(name) = &self.zone {
+            options.zone = Some(Zone::named(name).ok_or_else(|| {
+                eprintln!(
+                    "omasheet: there is no time zone `{name}`; use a name such as Europe/London"
+                );
+                ExitCode::from(2)
+            })?);
+        }
+        if let Some(text) = &self.now {
+            let iso = Style::ISO;
+            let day = || Some(iso.parse_date(text)? as i64 * 86_400);
+            options.now = Some(iso.parse_datetime(text).or_else(day).ok_or_else(|| {
+                eprintln!("omasheet: `{text}` is not a date-time; write it like 2025-01-31T17:05");
+                ExitCode::from(2)
+            })?);
+        }
+        Ok(options)
+    }
 }
 
 #[derive(Subcommand)]
@@ -34,6 +84,9 @@ enum Command {
         /// [FILE] EXPRESSION
         #[arg(value_name = "ARGS", num_args = 0..=2)]
         args: Vec<String>,
+
+        #[command(flatten)]
+        env: Env,
     },
     /// Check a sheet without evaluating it
     Lint {
@@ -73,7 +126,12 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
                 &text,
             )))
         }
-        Some(Command::Eval { sheet, mut args }) => {
+        Some(Command::Eval {
+            sheet,
+            mut args,
+            env,
+        }) => {
+            let options = env.options()?;
             // `eval FILE EXPR` is the same as `eval --sheet FILE EXPR`.
             let sheet = match (sheet, args.len()) {
                 (None, 2) => Some(PathBuf::from(args.remove(0))),
@@ -101,17 +159,21 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
                 None => None,
             };
             let sheet_ref = loaded.as_ref().map(|(n, t)| (n.as_str(), t.as_str()));
-            Ok(finish(omasheet_engine::eval(sheet_ref, expr_name, &expr)))
+            Ok(finish(omasheet_engine::eval_with(
+                sheet_ref, expr_name, &expr, options,
+            )))
         }
         None => {
             let Some(file) = cli.file else {
                 eprintln!("omasheet: give a sheet to view, or see `omasheet --help`");
                 return Err(ExitCode::from(2));
             };
+            let options = cli.env.options()?;
             let text = read(&file)?;
-            Ok(finish(omasheet_engine::view(
+            Ok(finish(omasheet_engine::view_with(
                 &file.to_string_lossy(),
                 &text,
+                options,
             )))
         }
     }

@@ -5,14 +5,18 @@
 //! calculation order so that long chains (a running balance) are filled in
 //! row by row rather than by deep recursion.
 
-use crate::value::{RowRef, Value, View, arith, compare, equal, format_scalar, to_f64};
+use crate::Options;
+use crate::value::{RowRef, Value, View, arith, compare, equal, format_styled, to_f64};
+use crate::zone::{Zone, Zoned, utc_now};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use omasheet_omx::ast::{BinOp, UnOp};
+use omasheet_omx::date;
 use omasheet_omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_omx::{Cell, ColKind, Column, Diagnostic, Group, Program, S, Span};
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// Why an evaluation stopped.
@@ -47,6 +51,25 @@ pub struct Engine<'p> {
     all_rows: Vec<Rc<Vec<usize>>>,
     all_cols: Vec<Rc<Vec<usize>>>,
     diags: RefCell<Vec<Diagnostic>>,
+    options: Options,
+    /// The zone the sheet's date-times are in.
+    home: Rc<Zone>,
+    /// The zone of this machine.
+    local: Rc<Zone>,
+    zones: RefCell<HashMap<String, Option<Rc<Zone>>>>,
+    /// What `now()` gives.
+    now: i64,
+}
+
+/// The complaint about a sheet that names a time zone there is none of.
+pub fn unknown_zone(prog: &Program) -> Option<Diagnostic> {
+    let (name, span) = prog.zone.as_ref()?;
+    Zone::named(name).is_none().then(|| no_zone(name, *span))
+}
+
+fn no_zone(name: &str, span: Span) -> Diagnostic {
+    Diagnostic::new(span, format!("there is no time zone `{name}`"))
+        .with_help("use a name from the time zone database, such as `Europe/London` or `UTC`")
 }
 
 fn fail<T>(span: Span, message: impl Into<String>) -> R<T> {
@@ -55,6 +78,19 @@ fn fail<T>(span: Span, message: impl Into<String>) -> R<T> {
 
 impl<'p> Engine<'p> {
     pub fn new(prog: &'p Program) -> Engine<'p> {
+        Engine::with_options(prog, Options::default())
+    }
+
+    /// A sheet that names a time zone there is none of is evaluated in the
+    /// zone of this machine, with a diagnostic to take before running.
+    pub fn with_options(prog: &'p Program, options: Options) -> Engine<'p> {
+        let local = Rc::new(options.zone.clone().unwrap_or_else(Zone::system));
+        let named = prog.zone.as_ref().and_then(|(name, _)| Zone::named(name));
+        let home = named.map_or_else(|| local.clone(), Rc::new);
+        let now = options
+            .now
+            .or_else(|| home.from_utc(utc_now()))
+            .unwrap_or(0);
         Engine {
             prog,
             cells: RefCell::new(
@@ -74,7 +110,12 @@ impl<'p> Engine<'p> {
                 .iter()
                 .map(|t| Rc::new((0..t.cols.len()).collect()))
                 .collect(),
-            diags: RefCell::new(Vec::new()),
+            diags: RefCell::new(unknown_zone(prog).into_iter().collect()),
+            options,
+            home,
+            local,
+            zones: RefCell::new(HashMap::new()),
+            now,
         }
     }
 
@@ -201,7 +242,8 @@ impl<'p> Engine<'p> {
                     | (Value::Text(_), S::Text)
                     | (Value::Bool(_), S::Bool)
                     | (Value::Date(_), S::Date)
-                    | (Value::DateTime(_), S::DateTime)
+                    | (Value::Time(_), S::Time)
+                    | (Value::DateTime(_) | Value::Zoned(_), S::DateTime)
             );
         if ok {
             Ok(v)
@@ -493,7 +535,126 @@ impl<'p> Engine<'p> {
                 }
                 Ok(Value::Complex(parts[0], parts[1]))
             }
-            _ => {
+            Func::Today => Ok(Value::Date(date::split_datetime(self.now).0)),
+            Func::Now => Ok(Value::DateTime(self.now)),
+            Func::ToZone | Func::Utc | Func::Local | Func::Offset | Func::ZoneName => {
+                let target = match func {
+                    Func::ToZone => match self.eval(&args[1], fr)? {
+                        Value::Empty => return Ok(Value::Empty),
+                        Value::Text(name) => Some(self.zone(&name, args[1].span)?),
+                        other => {
+                            return fail(
+                                args[1].span,
+                                format!("expected the name of a time zone, found {}", other.kind()),
+                            );
+                        }
+                    },
+                    Func::Utc => Some(self.zone("UTC", span)?),
+                    Func::Local => Some(self.local.clone()),
+                    _ => None,
+                };
+                let out_of_range = || fail(span, "the date-time is out of range");
+                let one = |v: &Value| -> R {
+                    // The instant, and the zone the value is in.
+                    let (utc, wall, zone) = match v {
+                        Value::Empty => return Ok(Value::Empty),
+                        Value::DateTime(t) => match self.home.to_utc(*t) {
+                            Some(utc) => (utc, *t, &self.home),
+                            None => return out_of_range(),
+                        },
+                        Value::Zoned(z) => (z.utc, z.wall, &z.zone),
+                        other => {
+                            return fail(
+                                args[0].span,
+                                format!("expected a DateTime, found {}", other.kind()),
+                            );
+                        }
+                    };
+                    match (&target, func) {
+                        // The sheet's own zone needs no label.
+                        (Some(target), _) if **target == *self.home => self
+                            .home
+                            .from_utc(utc)
+                            .map(Value::DateTime)
+                            .map_or_else(out_of_range, Ok),
+                        (Some(target), _) => Zoned::at(utc, target, &self.home)
+                            .map(|z| Value::Zoned(Rc::new(z)))
+                            .map_or_else(out_of_range, Ok),
+                        (None, Func::Offset) => Ok(Value::Int(BigInt::from(wall - utc))),
+                        (None, _) => Ok(Value::text(zone.name())),
+                    }
+                };
+                match self.eval(&args[0], fr)? {
+                    Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                        items.iter().map(one).collect::<R<Vec<_>>>()?,
+                    ))),
+                    single => one(&single),
+                }
+            }
+            Func::Year
+            | Func::Month
+            | Func::Day
+            | Func::Weekday
+            | Func::Hour
+            | Func::Minute
+            | Func::Second
+            | Func::DateOf
+            | Func::TimeOf => {
+                let part = |v: &Value| -> R {
+                    let (days, time) = match v {
+                        Value::Empty => return Ok(Value::Empty),
+                        Value::Date(d) => (Some(*d), None),
+                        Value::Time(t) => (None, Some(*t)),
+                        Value::DateTime(t) => {
+                            let (days, time) = date::split_datetime(*t);
+                            (Some(days), Some(time))
+                        }
+                        Value::Zoned(z) => {
+                            let (days, time) = date::split_datetime(z.wall);
+                            (Some(days), Some(time))
+                        }
+                        other => {
+                            return fail(
+                                args[0].span,
+                                format!("expected a date or time, found {}", other.kind()),
+                            );
+                        }
+                    };
+                    let ymd = days.map(|d| date::civil_from_days(d as i64));
+                    let found = match func {
+                        Func::Year => ymd.map(|(y, _, _)| y),
+                        Func::Month => ymd.map(|(_, m, _)| m),
+                        Func::Day => ymd.map(|(_, _, d)| d),
+                        Func::Weekday => days.map(date::weekday),
+                        Func::Hour => time.map(|t| t as i64 / 3600),
+                        Func::Minute => time.map(|t| t as i64 / 60 % 60),
+                        Func::Second => time.map(|t| t as i64 % 60),
+                        Func::DateOf => {
+                            return days
+                                .map(Value::Date)
+                                .ok_or(())
+                                .or_else(|_| fail(args[0].span, "a Time has no date"));
+                        }
+                        _ => {
+                            return time
+                                .map(Value::Time)
+                                .ok_or(())
+                                .or_else(|_| fail(args[0].span, "a Date has no time"));
+                        }
+                    };
+                    match found {
+                        Some(n) => Ok(Value::Int(BigInt::from(n))),
+                        None => fail(args[0].span, format!("{} has no such part", v.kind())),
+                    }
+                };
+                match self.eval(&args[0], fr)? {
+                    Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                        items.iter().map(part).collect::<R<Vec<_>>>()?,
+                    ))),
+                    single => part(&single),
+                }
+            }
+            Func::Sum | Func::Avg | Func::Min | Func::Max | Func::Count => {
                 let items: Rc<Vec<Value>> = match self.eval(&args[0], fr)? {
                     Value::Vector(items) => items,
                     Value::Table(v) if func == Func::Count => {
@@ -721,6 +882,52 @@ impl<'p> Engine<'p> {
 
     // ---- display -----------------------------------------------------------
 
+    /// The time zone called `name`, looked up once.
+    fn zone(&self, name: &str, span: Span) -> R<Rc<Zone>> {
+        let found = self
+            .zones
+            .borrow_mut()
+            .entry(name.to_string())
+            .or_insert_with(|| Zone::named(name).map(Rc::new))
+            .clone();
+        found.ok_or_else(|| Fail::Diag(no_zone(name, span)))
+    }
+
+    /// The sheet's own date-times in `v` on the clocks of this machine, when
+    /// that was asked for and they differ.
+    fn localised(&self, v: &Value) -> Option<Value> {
+        if !self.options.local || *self.home == *self.local {
+            return None;
+        }
+        match v {
+            Value::DateTime(t) => {
+                let wall = self.local.from_utc(self.home.to_utc(*t)?)?;
+                Some(Value::DateTime(wall))
+            }
+            Value::Vector(items) => Some(Value::Vector(Rc::new(
+                items
+                    .iter()
+                    .map(|x| self.localised(x).unwrap_or_else(|| x.clone()))
+                    .collect(),
+            ))),
+            _ => None,
+        }
+    }
+
+    /// A single value as text, with dates and times in the style asked for.
+    pub fn show(&self, v: &Value, quoted: bool) -> String {
+        let style = &self.options.style;
+        match self.localised(v) {
+            Some(local) => format_styled(&local, quoted, style),
+            None => format_styled(v, quoted, style),
+        }
+    }
+
+    /// The name of the time zone the sheet's date-times are in.
+    pub fn zone_name(&self) -> &str {
+        self.home.name()
+    }
+
     /// A table as aligned text, in the same shape as `.omx` source.
     pub fn render_view(&self, v: &View) -> String {
         let table = &self.prog.tables[v.table];
@@ -734,7 +941,7 @@ impl<'p> Engine<'p> {
                 if !matches!(value, Value::Empty | Value::Error) && !value.is_numeric() {
                     numeric[k] = false;
                 }
-                line.push(format_scalar(&value, false));
+                line.push(self.show(&value, false));
             }
             grid.push(line);
         }
@@ -785,7 +992,7 @@ impl<'p> Engine<'p> {
                 cols: row.cols.clone(),
             }),
             Value::Empty => "empty\n".to_string(),
-            other => format!("{}\n", format_scalar(other, false)),
+            other => format!("{}\n", self.show(other, false)),
         }
     }
 }

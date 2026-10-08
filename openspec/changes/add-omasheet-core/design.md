@@ -42,7 +42,7 @@ D/P/Q numbers are shared across all five changes, so gaps here are intentional.
 | P9 | Pipe operator `|>` for multi-step table transforms | Method chaining only |
 | P10 | Computed column syntax `Name := expr` | Per-cell repeated formulas |
 | P15 | First app is a read-only viewer; editing stays in the text editor | Superseded by D16 in `add-interactive-app`: the app is an interactive grid |
-| P17 | Lexical choices made while building: `#` comments to end of line; `"…"` strings with `\" \\ \n \t`; `true` / `false`; dates as `2025-01-01` and date-times as `2025-01-01T09:30` or `2025-01-01T09:30:15` (no time zone); a `const` or `:=` expression continues onto following indented lines, or while a bracket is open | Not discussed in the source — was Q13. No `null` literal: an empty cell is the only way to write "empty" |
+| P17 | Lexical choices made while building: `#` comments to end of line; `"…"` strings with `\" \\ \n \t`; `true` / `false`; dates as `2025-01-01`, times of day as `09:30` or `09:30:15`, and date-times as `2025-01-01T09:30` or `2025-01-01T09:30:15` (no time zone), always in these ISO forms whatever the locale; a `const` or `:=` expression continues onto following indented lines, or while a bracket is open | Not discussed in the source — was Q13. No `null` literal: an empty cell is the only way to write "empty" |
 | P18 | Inside a cell, `|` is not a separator when it is inside a quoted string or is the `|>` operator | Not discussed in the source — was Q14. An escape such as `\|` |
 | P19 | A lookup that yields a vector of one value fills a cell with that value; no match gives empty; several matches is an error | Relates to Q10 in `add-table-operations` |
 
@@ -96,8 +96,35 @@ Not built in this phase, though the specs mention them:
   no matrix literal.
 - **Complex literals.** `Complex` values exist and do arithmetic, built with
   `Complex(re, im)`; there is no literal syntax and no `Complex` column type.
-- **Date arithmetic.** Dates and date-times can be compared with their own
-  kind, not added or subtracted, and a `Date` does not mix with a `DateTime`.
+- **Date arithmetic.** `Date`, `Time` and `DateTime` compare only with their
+  own kind. A whole number added or subtracted counts days for a `Date` and
+  seconds for a `Time` or `DateTime`; the difference of two of a kind is that
+  whole number; `Date + Time` is a `DateTime`. A `Time` goes round midnight.
+  There is no `Duration` type yet: seconds are a plain `Int` until units
+  arrive (`add-units`), when this is worth revisiting.
+- **Locale.** The file is always ISO, because `03/04/2026` is a different day
+  in Britain and the United States. The locale changes only what a person
+  sees and types: the interactive app follows the operating system
+  (`LC_TIME`), the command line does so only with `--locale`. From the locale
+  come the order of the date, its separator and the 12 or 24 hour clock; the
+  year always has four digits.
+- **Time zones.** A `DateTime` is a wall clock in the sheet's zone: the one a
+  `zone <Area/City>` line names, or else the zone of the machine. Literals
+  carry no offset. `.to_zone("Asia/Tokyo")`, `.utc()` and `.local()` give the
+  same instant on other clocks, as a `DateTime` that remembers its zone and
+  prints its offset (`2025-07-15T20:00+09:00`); `.offset()` and `.zone()` read
+  it back. Within the sheet's zone, comparison and subtraction take the
+  clocks at their word, so a day in which the clocks change is still 86400
+  seconds; as soon as another zone is involved it is the instants that are
+  compared, and `a.utc() - b.utc()` is the elapsed time. Zones come from the
+  time zone database of the operating system (the `jiff` crate reads it), so
+  a zone the machine does not know is an error. The file keeps what was
+  written; only the interactive app, and the command line with `--locale`,
+  show the sheet's date-times on the clocks of the machine. What is typed
+  into a cell is in the sheet's zone, as the entry box shows it.
+- **`today()` and `now()`** read the clock once per evaluation, in the sheet's
+  zone, so a sheet that uses them gives different results on different days. `--now`
+  fixes the clock for a repeatable run.
 
 ## Open Questions
 

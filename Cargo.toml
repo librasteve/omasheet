@@ -13,5 +13,7 @@ num-bigint = "0.4"
 num-rational = "0.4"
 num-traits = "0.2"
 clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+jiff = "0.2"
 omasheet-omx = { path = "omasheet-omx" }
 omasheet-engine = { path = "omasheet-engine" }

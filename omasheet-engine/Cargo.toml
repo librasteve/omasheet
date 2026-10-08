@@ -11,3 +11,7 @@ omasheet-omx.workspace = true
 num-bigint.workspace = true
 num-rational.workspace = true
 num-traits.workspace = true
+jiff.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
