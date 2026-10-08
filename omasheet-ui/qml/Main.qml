@@ -44,11 +44,14 @@ ApplicationWindow {
     color: pageColor
     font.family: "monospace"
     font.pixelSize: fontSize
+    // No ligatures: `|>`, `==` and `:=` are shown as they are typed.
+    font.features: { "calt": 0, "liga": 0 }
 
     FontMetrics {
         id: metrics
         font.family: "monospace"
         font.pixelSize: win.fontSize
+        font.features: win.font.features
     }
 
     // ---- document state ----------------------------------------------------
@@ -623,6 +626,7 @@ ApplicationWindow {
                     text: hint
                     color: win.mutedColor
                     font.family: win.font.family
+                    font.features: win.font.features
                     font.pixelSize: win.fontSize - 1
                     Layout.maximumWidth: win.width * 0.45
                     elide: Text.ElideRight
@@ -755,6 +759,7 @@ ApplicationWindow {
                                         text: headCell.column ? headCell.column.name : ""
                                         color: win.textColor
                                         font.family: win.font.family
+                                        font.features: win.font.features
                                         font.pixelSize: win.fontSize
                                         font.bold: true
                                         elide: Text.ElideRight
@@ -770,6 +775,7 @@ ApplicationWindow {
                                         color: headCell.column && headCell.column.computed
                                             ? win.accentColor : win.mutedColor
                                         font.family: win.font.family
+                                        font.features: win.font.features
                                         font.pixelSize: win.fontSize - 3
                                         elide: Text.ElideRight
                                     }
@@ -824,6 +830,7 @@ ApplicationWindow {
                                     text: rowItem.index
                                     color: win.mutedColor
                                     font.family: win.font.family
+                                    font.features: win.font.features
                                     font.pixelSize: win.fontSize - 2
                                 }
                                 Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: win.lineColor }
@@ -873,6 +880,7 @@ ApplicationWindow {
                                         color: cellItem.cell && cellItem.cell.e ? win.errorColor : win.textColor
                                         opacity: cellItem.cell && cellItem.cell.f && cellItem.column && !cellItem.column.computed ? 0.92 : 1
                                         font.family: win.font.family
+                                        font.features: win.font.features
                                         font.pixelSize: win.fontSize
                                         font.italic: !!cellItem.cell && cellItem.cell.f && !!cellItem.column && !cellItem.column.computed
                                         verticalAlignment: Text.AlignVCenter
@@ -941,6 +949,7 @@ ApplicationWindow {
                                         active: win.editing && cellItem.current
                                         sourceComponent: TextField {
                                             font.family: win.font.family
+                                            font.features: win.font.features
                                             font.pixelSize: win.fontSize
                                             color: win.textColor
                                             leftPadding: 7
@@ -1052,6 +1061,7 @@ ApplicationWindow {
                     elide: Text.ElideRight
                     Layout.maximumWidth: 520
                     font.family: win.font.family
+                    font.features: win.font.features
                     font.pixelSize: win.fontSize - 2
                     rightPadding: 10
                 }
@@ -1061,6 +1071,7 @@ ApplicationWindow {
                     text: sheet.status
                     color: win.mutedColor
                     font.family: win.font.family
+                    font.features: win.font.features
                     font.pixelSize: win.fontSize - 2
                     elide: Text.ElideMiddle
                     Layout.maximumWidth: 320
@@ -1101,6 +1112,7 @@ ApplicationWindow {
             text: button.label
             color: button.quiet ? win.mutedColor : button.textColor
             font.family: win.font.family
+            font.features: win.font.features
             font.pixelSize: win.fontSize - 1
             font.bold: button.active
         }
@@ -1307,6 +1319,7 @@ ApplicationWindow {
                 color: win.errorColor
                 wrapMode: Text.Wrap
                 font.family: win.font.family
+                font.features: win.font.features
                 font.pixelSize: win.fontSize - 1
             }
         }
@@ -1333,6 +1346,7 @@ ApplicationWindow {
                 color: win.textColor
                 wrapMode: Text.Wrap
                 font.family: win.font.family
+                font.features: win.font.features
                 font.pixelSize: win.fontSize - 1
             }
         }
@@ -1413,6 +1427,7 @@ ApplicationWindow {
                         text: entry.item.category || ""
                         color: win.accentColor
                         font.family: win.font.family
+                        font.features: win.font.features
                         font.pixelSize: win.fontSize
                         font.bold: true
                     }
@@ -1436,6 +1451,7 @@ ApplicationWindow {
                                 + (functionsDialog.copied === entry.item.name ? "   copied" : "")
                             color: win.textColor
                             font.family: win.font.family
+                            font.features: win.font.features
                             font.pixelSize: win.fontSize
                             elide: Text.ElideRight
                         }
@@ -1445,6 +1461,7 @@ ApplicationWindow {
                             color: win.mutedColor
                             wrapMode: Text.Wrap
                             font.family: win.font.family
+                            font.features: win.font.features
                             font.pixelSize: win.fontSize - 2
                         }
                     }
@@ -1467,6 +1484,7 @@ ApplicationWindow {
                     : "Click a function to copy it."
                 color: win.mutedColor
                 font.family: win.font.family
+                font.features: win.font.features
                 font.pixelSize: win.fontSize - 2
             }
         }
