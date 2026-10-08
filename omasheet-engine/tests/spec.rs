@@ -165,6 +165,29 @@ fn predicate_selection() {
 }
 
 #[test]
+fn datetime_columns() {
+    let sheet = "table Log\n\nAt : DateTime\n\nAt | N\n2025-03-01T09:30 | 1\n2025-03-01T17:45:10 | 10\n2025-03-02T00:00 | 100\n";
+    assert_eq!(
+        ask(
+            sheet,
+            "Log[At >= 2025-03-01T12:00 and At < 2025-03-02T00:00].N.sum()"
+        ),
+        "10"
+    );
+    assert_eq!(ask(sheet, "Log.At.max()"), "2025-03-02T00:00");
+    assert_eq!(ask(sheet, "Log[1; At]"), "2025-03-01T17:45:10");
+    // An undeclared column infers DateTime from its cells.
+    let inferred = sheet.replace("At : DateTime\n\n", "");
+    assert_eq!(ask(&inferred, "Log.At.min()"), "2025-03-01T09:30");
+    // A Date is not a DateTime.
+    let err = calc_err(Some(sheet), "Log[At >= 2025-03-01].N.sum()");
+    assert!(err.contains("cannot compare DateTime and Date"), "{err}");
+    let bad = "table Log\n\nAt : DateTime\n\nAt\n2025-03-01\n";
+    let errs = lint_errors(bad);
+    assert!(errs[0].contains("is not a `DateTime` literal"), "{errs:?}");
+}
+
+#[test]
 fn lookup_from_another_table() {
     let sheet = "\
 table Customers

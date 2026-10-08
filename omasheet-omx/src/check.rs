@@ -258,6 +258,7 @@ fn lit_type(l: &Lit) -> S {
         Lit::Text(_) => S::Text,
         Lit::Bool(_) => S::Bool,
         Lit::Date(_) => S::Date,
+        Lit::DateTime(_) => S::DateTime,
     }
 }
 
@@ -673,6 +674,7 @@ impl<'a> Checker<'a> {
             (Some(Lit::Rat(r)), S::Num) => r.to_f64().map(Lit::Num),
             (Some(l @ Lit::Num(_)), S::Num) => Some(l),
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
+            (Some(l @ Lit::DateTime(_)), S::DateTime) => Some(l),
             (Some(l @ Lit::Bool(_)), S::Bool) => Some(l),
             _ => None,
         };
@@ -699,6 +701,7 @@ impl<'a> Checker<'a> {
             [Tok::Minus, Tok::Num(f), Tok::Eof] => Lit::Num(-*f),
             [Tok::Str(s), Tok::Eof] => Lit::Text(s.clone()),
             [Tok::Date(d), Tok::Eof] => Lit::Date(*d),
+            [Tok::DateTime(t), Tok::Eof] => Lit::DateTime(*t),
             [Tok::True, Tok::Eof] => Lit::Bool(true),
             [Tok::False, Tok::Eof] => Lit::Bool(false),
             _ => return None,

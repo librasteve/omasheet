@@ -201,6 +201,7 @@ impl<'p> Engine<'p> {
                     | (Value::Text(_), S::Text)
                     | (Value::Bool(_), S::Bool)
                     | (Value::Date(_), S::Date)
+                    | (Value::DateTime(_), S::DateTime)
             );
         if ok {
             Ok(v)

@@ -42,7 +42,7 @@ D/P/Q numbers are shared across all five changes, so gaps here are intentional.
 | P9 | Pipe operator `|>` for multi-step table transforms | Method chaining only |
 | P10 | Computed column syntax `Name := expr` | Per-cell repeated formulas |
 | P15 | First app is a read-only viewer; editing stays in the text editor | Superseded by D16 in `add-interactive-app`: the app is an interactive grid |
-| P17 | Lexical choices made while building: `#` comments to end of line; `"…"` strings with `\" \\ \n \t`; `true` / `false`; dates as `2025-01-01`; a `const` or `:=` expression continues onto following indented lines, or while a bracket is open | Not discussed in the source — was Q13. No `null` literal: an empty cell is the only way to write "empty" |
+| P17 | Lexical choices made while building: `#` comments to end of line; `"…"` strings with `\" \\ \n \t`; `true` / `false`; dates as `2025-01-01` and date-times as `2025-01-01T09:30` or `2025-01-01T09:30:15` (no time zone); a `const` or `:=` expression continues onto following indented lines, or while a bracket is open | Not discussed in the source — was Q13. No `null` literal: an empty cell is the only way to write "empty" |
 | P18 | Inside a cell, `|` is not a separator when it is inside a quoted string or is the `|>` operator | Not discussed in the source — was Q14. An escape such as `\|` |
 | P19 | A lookup that yields a vector of one value fills a cell with that value; no match gives empty; several matches is an error | Relates to Q10 in `add-table-operations` |
 
@@ -96,7 +96,8 @@ Not built in this phase, though the specs mention them:
   no matrix literal.
 - **Complex literals.** `Complex` values exist and do arithmetic, built with
   `Complex(re, im)`; there is no literal syntax and no `Complex` column type.
-- **Date arithmetic.** Dates can be compared, not added or subtracted.
+- **Date arithmetic.** Dates and date-times can be compared with their own
+  kind, not added or subtracted, and a `Date` does not mix with a `DateTime`.
 
 ## Open Questions
 

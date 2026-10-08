@@ -4,10 +4,12 @@ const TaxRate = 20%
 
 table Sales
 
-Month | Revenue                      | Cost
-Jan   | 10000                        | 6000
-Feb   | 12000                        | 7000
-Mar   | = Sales[*-1; Revenue] * 1.1  | 7500
+Closed : DateTime
+
+Month | Closed           | Revenue                      | Cost
+Jan   | 2025-02-03T17:30 | 10000                        | 6000
+Feb   | 2025-03-04T12:00 | 12000                        | 7000
+Mar   | 2025-04-02T09:45 | = Sales[*-1; Revenue] * 1.1  | 7500
 
 Profit := Revenue - Cost
 Tax    := Profit * TaxRate
@@ -21,3 +23,4 @@ Revenue        | = Sales.Revenue.sum()
 Profit         | = Sales.Profit.sum()
 Best month     | = Sales[Profit == Sales.Profit.max()].Month // "none"
 Average margin | = Sales.Margin.avg()
+Books closed   | = Sales.Closed.max()

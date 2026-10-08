@@ -8,12 +8,12 @@ ID | Name      | Region
 
 table Orders
 
-CustomerID | Qty | Price | Customer  | Region | Total | Discount
------------|-----|-------|-----------|--------|-------|---------
-         2 |   3 | 19.99 | Grace Inc | US     | 59.97 |    5.997
-         1 |  10 |   4.5 | Ada Ltd   | UK     |    45 |        0
-         9 |   1 |   100 | Unknown   | ?      |   100 |        0
-         2 |   2 |  7.25 | Grace Inc | US     |  14.5 |        0
+Placed           | CustomerID | Qty | Price | Customer  | Region | Total | Discount | Rush
+-----------------|------------|-----|-------|-----------|--------|-------|----------|------
+2025-03-03T09:12 |          2 |   3 | 19.99 | Grace Inc | US     | 59.97 |    5.997 | true
+2025-03-03T16:40 |          1 |  10 |   4.5 | Ada Ltd   | UK     |    45 |        0 | true
+2025-03-04T11:05 |          9 |   1 |   100 | Unknown   | ?      |   100 |        0 | false
+2025-03-05T08:30 |          2 |   2 |  7.25 | Grace Inc | US     |  14.5 |        0 | false
 
 table ByRegion
 

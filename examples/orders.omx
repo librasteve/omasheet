@@ -1,4 +1,5 @@
-# Two tables: a lookup from one into the other, and conditional sums.
+# Two tables: a lookup from one into the other, conditional sums, and a
+# date-time cutoff.
 
 table Customers
 
@@ -9,16 +10,19 @@ ID | Name      | Region
 
 table Orders
 
-CustomerID | Qty | Price
-2          | 3   | 19.99
-1          | 10  | 4.50
-9          | 1   | 100
-2          | 2   | 7.25
+Placed : DateTime
+
+Placed           | CustomerID | Qty | Price
+2025-03-03T09:12 | 2          | 3   | 19.99
+2025-03-03T16:40 | 1          | 10  | 4.50
+2025-03-04T11:05 | 9          | 1   | 100
+2025-03-05T08:30 | 2          | 2   | 7.25
 
 Customer := Customers[ID == CustomerID].Name // "Unknown"
 Region   := Customers[ID == CustomerID].Region // "?"
 Total    := Qty * Price
 Discount := if Total > 50 and Region in ["UK", "US"] then Total * 10% else 0
+Rush     := Placed < 2025-03-04T00:00
 
 table ByRegion
 

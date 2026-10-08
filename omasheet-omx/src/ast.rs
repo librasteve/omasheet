@@ -13,6 +13,7 @@ pub enum Lit {
     Bool(bool),
     /// Days since 1970-01-01.
     Date(i32),
+    DateTime(i64),
 }
 
 #[derive(Clone, Debug)]

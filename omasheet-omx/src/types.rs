@@ -14,6 +14,7 @@ pub enum S {
     Text,
     Bool,
     Date,
+    DateTime,
 }
 
 impl S {
@@ -25,6 +26,7 @@ impl S {
             "Num" => S::Num,
             "Text" => S::Text,
             "Date" => S::Date,
+            "DateTime" => S::DateTime,
             "Bool" => S::Bool,
             _ => return None,
         })
@@ -82,6 +84,7 @@ impl fmt::Display for S {
             S::Text => "Text",
             S::Bool => "Bool",
             S::Date => "Date",
+            S::DateTime => "DateTime",
         })
     }
 }

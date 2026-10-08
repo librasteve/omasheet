@@ -25,6 +25,7 @@ pub enum Value {
     Text(Rc<str>),
     Bool(bool),
     Date(i32),
+    DateTime(i64),
     Range {
         lo: i64,
         hi: i64,
@@ -73,6 +74,7 @@ impl Value {
             Lit::Text(s) => Value::text(s),
             Lit::Bool(b) => Value::Bool(*b),
             Lit::Date(d) => Value::Date(*d),
+            Lit::DateTime(t) => Value::DateTime(*t),
         }
     }
 
@@ -88,6 +90,7 @@ impl Value {
             Value::Text(_) => "Text",
             Value::Bool(_) => "Bool",
             Value::Date(_) => "Date",
+            Value::DateTime(_) => "DateTime",
             Value::Range { .. } => "a range",
             Value::Vector(_) => "a vector",
             Value::Table(_) => "a table",
@@ -231,6 +234,7 @@ pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
         (Value::Empty, _) | (_, Value::Empty) => return Ok(None),
         (Value::Text(x), Value::Text(y)) => x.cmp(y),
         (Value::Date(x), Value::Date(y)) => x.cmp(y),
+        (Value::DateTime(x), Value::DateTime(y)) => x.cmp(y),
         (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
         _ => match (number(a), number(b)) {
             (Some(N::Exact(x)), Some(N::Exact(y))) => x.cmp(&y),
@@ -310,6 +314,7 @@ pub fn format_scalar(v: &Value, quoted: bool) -> String {
         Value::Text(s) => s.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Date(d) => date::format(*d),
+        Value::DateTime(t) => date::format_datetime(*t),
         Value::Range { lo, hi, exclusive } => {
             format!("{lo}{}{hi}", if *exclusive { "..^" } else { ".." })
         }

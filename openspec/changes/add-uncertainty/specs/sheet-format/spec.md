@@ -7,9 +7,9 @@
 ### Requirement: Column schema
 A table SHALL be able to declare the type of each column with lines of the form
 `<Column> : <Type>` placed between the `table` line and the header row. A type
-SHALL be a base type (`Int`, `Rat`, `Num`, `Text`, `Date`, `Bool`), a unit (which
-implies `Rat` with that unit), or `Uncertain<…>`. A column with no declaration
-SHALL have its type inferred from its cells.
+SHALL be a base type (`Int`, `Rat`, `Num`, `Text`, `Date`, `DateTime`, `Bool`), a
+unit (which implies `Rat` with that unit), or `Uncertain<…>`. A column with no
+declaration SHALL have its type inferred from its cells.
 
 #### Scenario: Typed columns
 - **GIVEN** the source

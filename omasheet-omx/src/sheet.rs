@@ -310,7 +310,7 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
                         Span::new(src, ty_at, ty_at + ty_text.len()),
                         format!("unknown type `{ty_text}`"),
                     )
-                    .with_help("the types are Int, Rat, Num, Text, Date and Bool"),
+                    .with_help("the types are Int, Rat, Num, Text, Date, DateTime and Bool"),
                 ),
             }
             i += 1;

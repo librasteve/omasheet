@@ -13,6 +13,7 @@ pub enum Tok {
     Num(f64),
     Str(String),
     Date(i32),
+    DateTime(i64),
     Ident(String),
     If,
     Then,
@@ -55,6 +56,7 @@ impl Tok {
             Tok::Int(_) | Tok::Rat(_) | Tok::Num(_) => "a number".into(),
             Tok::Str(_) => "a string".into(),
             Tok::Date(_) => "a date".into(),
+            Tok::DateTime(_) => "a date-time".into(),
             Tok::Ident(name) => format!("`{name}`"),
             Tok::Eof => "the end of the expression".into(),
             other => format!("`{}`", other.text()),
@@ -265,25 +267,47 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
 
 type NumErr = (String, usize, usize);
 
-/// Lex a number or date starting at `i`. Returns the token and its end.
+/// Lex a number, date or date-time starting at `i`. Returns the token and its
+/// end.
 fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
     let b = text.as_bytes();
     let digit = |k: usize| k < b.len() && b[k].is_ascii_digit();
     let word = |k: usize| k < b.len() && (b[k].is_ascii_alphanumeric() || b[k] == b'_');
 
-    // A date: dddd-dd-dd.
+    // A date: dddd-dd-dd, or a date-time: dddd-dd-ddThh:mm or …Thh:mm:ss.
     let is_date = (0..10).all(|k| match k {
         4 | 7 => i + k < b.len() && b[i + k] == b'-',
         _ => digit(i + k),
-    }) && !word(i + 10);
-    if is_date {
+    });
+    let at = |k: usize, c: u8| k < b.len() && b[k] == c;
+    let pair = |k: usize| digit(k) && digit(k + 1);
+    let time_end =
+        if is_date && at(i + 10, b'T') && pair(i + 11) && at(i + 13, b':') && pair(i + 14) {
+            let seconds = at(i + 16, b':') && pair(i + 17);
+            Some(i + if seconds { 19 } else { 16 })
+        } else {
+            None
+        };
+    let end = time_end.unwrap_or(i + 10);
+    if is_date && !word(end) {
         let part = |s: usize, e: usize| text[i + s..i + e].parse::<i64>().unwrap();
-        return match date::from_ymd(part(0, 4), part(5, 7), part(8, 10)) {
-            Some(days) => Ok((Tok::Date(days), i + 10)),
-            None => Err((
+        let Some(days) = date::from_ymd(part(0, 4), part(5, 7), part(8, 10)) else {
+            return Err((
                 format!("`{}` is not a real date", &text[i..i + 10]),
                 i,
                 i + 10,
+            ));
+        };
+        if time_end.is_none() {
+            return Ok((Tok::Date(days), end));
+        }
+        let secs = if end == i + 19 { part(17, 19) } else { 0 };
+        return match date::datetime_from(days, part(11, 13), part(14, 16), secs) {
+            Some(t) => Ok((Tok::DateTime(t), end)),
+            None => Err((
+                format!("`{}` is not a real time", &text[i + 11..end]),
+                i + 11,
+                end,
             )),
         };
     }
@@ -387,6 +411,18 @@ mod tests {
             Tok::Date(date::from_ymd(2025, 1, 1).unwrap())
         );
         assert!(lex("2025-02-30", 0, 0).is_err());
+        let day = date::from_ymd(2025, 1, 1).unwrap();
+        assert_eq!(
+            toks("2025-01-01T09:30")[0],
+            Tok::DateTime(date::datetime_from(day, 9, 30, 0).unwrap())
+        );
+        assert_eq!(
+            toks("2025-01-01T09:30:15")[0],
+            Tok::DateTime(date::datetime_from(day, 9, 30, 15).unwrap())
+        );
+        assert!(lex("2025-01-01T24:00", 0, 0).is_err());
+        assert!(lex("2025-01-01T09", 0, 0).is_err());
+        assert!(lex("2025-01-01T09:30:1", 0, 0).is_err());
         assert_eq!(toks("a // b |> c ..^ d # note").len(), 8);
     }
 }
