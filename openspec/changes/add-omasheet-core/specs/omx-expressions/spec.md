@@ -38,8 +38,9 @@ name denotes the constant.
 `[]` SHALL be the single selection operator. Within `[]`, `;` SHALL separate
 dimensions: the first slot selects rows, the second selects columns, and further
 slots select further dimensions of N-dimensional values. A column slot SHALL
-accept a column name or a 0-based position. `Table[rows].Column` SHALL be
-equivalent to `Table[rows; Column]`.
+accept a column name or a 0-based position. An empty slot SHALL select the whole
+of that dimension, and trailing slots MAY be omitted with the same meaning.
+`Table[rows].Column` SHALL be equivalent to `Table[rows; Column]`.
 
 #### Scenario: Single cell by position and name
 - **WHEN** `Sales[1; Revenue]` is evaluated
@@ -52,6 +53,10 @@ equivalent to `Table[rows; Column]`.
 #### Scenario: Two-dimensional slice
 - **WHEN** `Sales[2..5; 3..7]` is evaluated
 - **THEN** the result is a 4 × 5 matrix of rows 2–5 and columns 3–7
+
+#### Scenario: Empty slot selects the whole dimension
+- **WHEN** `Sales[; Revenue]` and `Sales[2; ]` are evaluated
+- **THEN** the first equals `Sales.Revenue` and the second is every column of the third row
 
 ### Requirement: Positional indexing
 Row and column positions SHALL be 0-based. A negative integer position SHALL
@@ -77,14 +82,13 @@ names and used in any index slot.
 - **THEN** it is equivalent to `Sales[2..100; 3..7]`
 
 ### Requirement: Row cursor `*`
-In an expression with a row context, `*` in a row slot SHALL denote the current
-row, and `*+n` / `*-n` SHALL denote the row `n` positions after / before the
-current row *of the indexed table*. `*` SHALL be usable as a range endpoint. A
-cursor offset SHALL be an error in an expression with no row context. In an
-expression with no row context, a bare `*` in a slot SHALL select the whole of
-that dimension.
-
-> Provisional — the dual meaning of bare `*` is design Q1.
+`*` in a row slot SHALL always denote the cursor, the current row, and `*+n` /
+`*-n` SHALL denote the row `n` positions after / before the current row *of the
+indexed table*. `*` SHALL be usable as a range endpoint. `*` SHALL NOT mean "the
+whole dimension"; that is written as an empty slot. The current row SHALL be the
+row of the cell or computed column that contains the expression, including
+inside a row condition, where it SHALL NOT mean the candidate row. A cursor, with
+or without an offset, SHALL be an error in an expression with no row context.
 
 #### Scenario: Previous row
 - **GIVEN** a computed column `Growth := Revenue / Sales[*-1; Revenue] - 1` in `Sales`
@@ -111,6 +115,15 @@ that dimension.
 #### Scenario: Cursor offset without row context
 - **WHEN** `omasheet eval 'Sales[*-1; Revenue]'` is run
 - **THEN** an error states that `*-1` needs a current row
+
+#### Scenario: Cursor inside a row condition
+- **GIVEN** a computed column `Count := Orders[Region == ByRegion[*; Region]].count()` in `ByRegion`
+- **WHEN** it is evaluated for a row
+- **THEN** `ByRegion[*; Region]` is that row's `Region`, compared with the `Region` of each `Orders` row
+
+#### Scenario: Bare cursor without row context
+- **WHEN** `omasheet eval 'Sales[*; Revenue]'` is run
+- **THEN** an error states that `*` needs a current row
 
 #### Scenario: Semantics survive row insertion
 - **GIVEN** a column defined with `Sales[*-1; Revenue]`

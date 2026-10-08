@@ -1,0 +1,23 @@
+# A monthly budget: computed columns, a constant, and one-off formula cells.
+
+const TaxRate = 20%
+
+table Sales
+
+Month | Revenue                      | Cost
+Jan   | 10000                        | 6000
+Feb   | 12000                        | 7000
+Mar   | = Sales[*-1; Revenue] * 1.1  | 7500
+
+Profit := Revenue - Cost
+Tax    := Profit * TaxRate
+Margin := Profit / Revenue
+Growth := Revenue / Sales[*-1; Revenue] - 1
+
+table Summary
+
+Item           | Value
+Revenue        | = Sales.Revenue.sum()
+Profit         | = Sales.Profit.sum()
+Best month     | = Sales[Profit == Sales.Profit.max()].Month // "none"
+Average margin | = Sales.Margin.avg()

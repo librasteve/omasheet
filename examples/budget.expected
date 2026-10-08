@@ -1,0 +1,18 @@
+const TaxRate = 0.2
+
+table Sales
+
+Month | Revenue | Cost | Profit | Tax  | Margin | Growth
+------|---------|------|--------|------|--------|-------
+Jan   |   10000 | 6000 |   4000 |  800 |    0.4 |
+Feb   |   12000 | 7000 |   5000 | 1000 |   5/12 |    0.2
+Mar   |   13200 | 7500 |   5700 | 1140 |  19/44 |    0.1
+
+table Summary
+
+Item           | Value
+---------------|--------
+Revenue        | 35200
+Profit         | 14700
+Best month     | Mar
+Average margin | 206/495

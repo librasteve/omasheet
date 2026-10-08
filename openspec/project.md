@@ -25,7 +25,8 @@ that conversation).
 1. **Tables, not grids.** Named tables and named columns; A1 notation exists
    only at the XLSX import/export boundary.
 2. **One indexing model.** `[]` selects, `;` separates dimensions, `..` builds
-   ranges, `*` is the cursor. Scalars, vectors, tables and N-d arrays all use it.
+   ranges, `*` is the cursor, an empty slot is "all". Scalars, vectors, tables
+   and N-d arrays all use it.
 3. **Exact numerics.** `Int` is arbitrary precision, `Rat` is an
    arbitrary-precision rational. Floating point (`Num`) only on request.
 4. **Meaning lives in types.** Units, currencies, percentages and uncertainty
@@ -52,24 +53,29 @@ verified and archived before the next begins.
 | 4 | `add-units` | Unit literals, dimension checking, currencies, column units, user-defined units, display units | `Revenue + Weight` is rejected by `lint`; unit columns export to XLSX |
 | 5 | `add-uncertainty` | `±` values, propagation, `Uncertain<…>` columns, display | `10 ± 0.1 m` propagates through arithmetic and aggregation |
 
+Alongside the phases, `add-interactive-app` adds the desktop window: an editable
+grid over the same engine. It needs only Phase 1 and gains each later phase's
+features as they land.
+
 Dependencies: every phase needs Phase 1. Phase 3 does not need Phase 2. Phase 4
 adds deltas to Phases 2 and 3 (units through group/join, units on export), and
 Phase 5 builds on Phase 4.
 
-Not yet in any phase: REPL, LSP server, Neovim plugin, TUI viewer, charts,
+Not yet in any change: REPL, LSP server, Neovim plugin, TUI viewer, charts,
 pivots, formatting syntax.
 
 ## Tech Stack
 
 - Language: Rust, shipped as a single static binary `omasheet`
-- Parsing: `chumsky` (candidate; `winnow` acceptable)
+- Parsing: hand-written lexer and recursive-descent parser (no parser library)
 - Numerics: `num-bigint` / `num-rational` (`BigInt`, `BigRational`)
 - Table operations (group, join, sort): implemented natively in
   `omasheet-engine` from Phase 2. Polars and other dataframe libraries are out
   of scope — none has an arbitrary-precision rational type
 - XLSX (Phase 3): `calamine` (read), `rust_xlsxwriter` (write)
 - CLI: `clap`
-- Later: `tower-lsp` (LSP), `ratatui` (viewer), Neovim plugin
+- App: Qt 6 Quick (QML) with `cxx-qt`; needs `qt6-base` and `qt6-declarative`
+- Later: `tower-lsp` (LSP), Neovim plugin
 
 ## Workspace Layout (planned)
 
@@ -80,7 +86,7 @@ omasheet/
 │                     recalc (2); units (4); uncertainty (5)
 ├── omasheet-xlsx     XLSX import/export (Phase 3)
 ├── omasheet-cli      the `omasheet` binary
-├── omasheet-ui       viewer (later)
+├── omasheet-ui       the interactive window: Qt Quick, driven from Rust (cxx-qt)
 └── omasheet-lsp      language server (later)
 ```
 
@@ -102,6 +108,6 @@ omasheet/
 | Table | Named, ordered collection of rows with a typed column schema |
 | Computed column | A column defined once by an OMX expression (`Name := expr`) |
 | OMX | Omasheet Expressions — the formula language |
-| Cursor (`*`) | The current row (or current position in a dimension) while an expression is evaluated in row context |
+| Cursor (`*`) | The current row while an expression is evaluated in row context |
 | Quantity | A numeric magnitude with a unit (Phase 4) |
 | Uncertain | A quantity with an attached measurement uncertainty (`±`) (Phase 5) |

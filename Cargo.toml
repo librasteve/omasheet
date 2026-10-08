@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["omasheet-omx", "omasheet-engine", "omasheet-cli", "omasheet-ui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/librasteve/omasheet"
+
+[workspace.dependencies]
+num-bigint = "0.4"
+num-rational = "0.4"
+num-traits = "0.2"
+clap = { version = "4", features = ["derive"] }
+omasheet-omx = { path = "omasheet-omx" }
+omasheet-engine = { path = "omasheet-engine" }

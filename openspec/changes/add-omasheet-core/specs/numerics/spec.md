@@ -86,8 +86,8 @@ any other `Rat` SHALL display as a fraction by default.
 - **THEN** it is shown as `43.75`
 
 #### Scenario: Non-terminating rational
-- **WHEN** `omasheet eval '1/3 + 1/6'` is run
-- **THEN** the output is `1/2`
+- **WHEN** `omasheet eval '1/3 + 1/3'` is run
+- **THEN** the output is `2/3`
 - **AND** `omasheet eval '1/3'` outputs `1/3`
 
 #### Scenario: Rounded display keeps exact value

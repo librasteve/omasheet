@@ -1,0 +1,15 @@
+[package]
+name = "omasheet-cli"
+description = "The omasheet command: view, evaluate and lint .omx sheets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "omasheet"
+path = "src/main.rs"
+
+[dependencies]
+omasheet-engine.workspace = true
+clap.workspace = true

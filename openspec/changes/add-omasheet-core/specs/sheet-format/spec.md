@@ -50,7 +50,7 @@ in any other table of the same sheet.
 
 #### Scenario: Cross-table reference
 - **GIVEN** a sheet with tables `Sales` and `Summary`
-- **WHEN** a cell in `Summary` contains `Sales.Revenue.sum()`
+- **WHEN** a cell in `Summary` contains `= Sales.Revenue.sum()`
 - **THEN** it evaluates to the sum of the `Revenue` column of `Sales`
 
 #### Scenario: Duplicate table name
@@ -98,14 +98,15 @@ the header row.
 - **THEN** parsing reports an error
 
 ### Requirement: Cell content
-A cell SHALL be either empty, a literal, or an OMX expression. Formulas SHALL NOT
-require a leading `=`. A cell in a column declared `Text` SHALL be read as literal
-text. A cell in a column of any other declared type SHALL be parsed as an OMX
-expression evaluated with its row as the cursor. In an undeclared column, a cell
-that is a valid OMX literal SHALL take that literal's type and any other
-non-empty cell SHALL be text.
-
-> Provisional — see design Q4.
+A cell SHALL be either empty, a literal, or a formula. A cell whose first
+non-whitespace character is `=` SHALL be a formula: the rest of the cell SHALL be
+parsed as an OMX expression and evaluated with its row as the cursor. Every other
+non-empty cell SHALL be a literal and SHALL NOT be evaluated as an expression. A
+literal cell in a column declared `Text` SHALL be read as literal text. A literal
+cell in a column of any other declared type SHALL be a literal of that type, and
+SHALL be an error otherwise. In an undeclared column, a cell that is a valid OMX
+literal SHALL take that literal's type and any other literal cell SHALL be text.
+Text that itself begins with `=` SHALL be written as a quoted string.
 
 #### Scenario: Text cell
 - **GIVEN** an undeclared column `Month`
@@ -114,8 +115,23 @@ non-empty cell SHALL be text.
 
 #### Scenario: Per-cell formula in a typed column
 - **GIVEN** a column declared `Tax : Rat` and a constant `TaxRate`
-- **WHEN** a cell in `Tax` contains `Revenue * TaxRate`
+- **WHEN** a cell in `Tax` contains `= Revenue * TaxRate`
 - **THEN** its value is that row's `Revenue` multiplied by `TaxRate`
+
+#### Scenario: Unmarked expression in a typed column
+- **GIVEN** a column declared `Tax : Rat`
+- **WHEN** a cell in `Tax` contains `Revenue * TaxRate` with no leading `=`
+- **THEN** an error reports that the cell is not a `Rat` literal
+
+#### Scenario: Unmarked expression in a text column
+- **GIVEN** a column declared `Note : Text`
+- **WHEN** a cell in `Note` contains `Revenue - Cost`
+- **THEN** its value is the text `Revenue - Cost`
+
+#### Scenario: Text beginning with an equals sign
+- **GIVEN** a column declared `Note : Text`
+- **WHEN** a cell in `Note` contains `"= see appendix"`
+- **THEN** its value is the text `= see appendix`
 
 #### Scenario: Empty cell
 - **WHEN** a cell contains only whitespace

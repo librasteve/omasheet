@@ -1,0 +1,16 @@
+# A running balance: each row reads the row before it.
+
+table Ledger
+
+Date : Date
+Memo : Text
+
+Date       | Memo            | Amount
+2025-01-03 | Opening deposit | 2500
+2025-01-09 | Rent            | -1200
+2025-01-15 | Groceries       | -86.40
+2025-01-28 | Salary          | 3100
+2025-02-02 | Electricity     | -64.15
+
+Balance := (Ledger[*-1; Balance] // 0) + Amount
+Average := Ledger[0..*; Amount].avg()

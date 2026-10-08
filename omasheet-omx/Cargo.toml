@@ -1,0 +1,12 @@
+[package]
+name = "omasheet-omx"
+description = "OMX: the Omasheet expression language and .omx file format (lexer, parser, checker)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+num-bigint.workspace = true
+num-rational.workspace = true
+num-traits.workspace = true

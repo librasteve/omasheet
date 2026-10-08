@@ -30,8 +30,8 @@ to that sheet's tables and constants. The expression SHALL also be readable from
 standard input.
 
 #### Scenario: Pure arithmetic
-- **WHEN** `omasheet eval '1/3 + 1/6'` is run
-- **THEN** the output is `1/2`
+- **WHEN** `omasheet eval '1/3 + 1/3'` is run
+- **THEN** the output is `2/3`
 
 #### Scenario: Against a sheet
 - **WHEN** `omasheet eval --sheet sales.omx 'Sales[Region == "UK"; Revenue].sum()'` is run

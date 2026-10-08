@@ -25,21 +25,26 @@ D/P/Q numbers are shared across all five changes, so gaps here are intentional.
 | D9 | Types are expressed over an entire column | Column-typed first, cell-typed second; units per column arrive in `add-units` |
 | D10 | XLSX via existing crates | Later phase — see `add-interop`. The dataframe-library half of this decision was withdrawn: see D11 in `add-table-operations` |
 | D12 | File extension is `.omx` | Owner decision, 2026-10-07. Replaces the provisional `.sheet`; also seen: `.sd`, `.sheetdown`, `.omasheet` |
+| D13 | `*` is always the cursor (current row); the whole dimension is an empty slot: `A[; 3]`, `A[2; ]` | Owner decision, 2026-10-07. Bare `*` is an error with no row context. Unlike Raku, `[*-1]` is the previous row; the last row is `[-1]` |
+| D14 | A leading `=` marks a formula cell; every other cell is a literal | Owner decision, 2026-10-07. Replaces the provisional "no leading `=`". Computed columns (`Name := expr`) and `const` take no marker |
+| D15 | Fallback operator is `//` (Raku defined-or) | Owner decision, 2026-10-07. Chosen over `??`. `//` therefore cannot mean integer division or begin a comment |
 
 ### Provisional (proposed, not objected to, or chosen here for coherence)
 
 | # | Choice | Alternative(s) seen |
 |---|--------|---------------------|
-| P2 | No leading `=` on formulas; no A1 references in authored files | Excel-style `=B2-C2` |
-| P3 | Equality is `==`; `=` is binding only | Early examples used `Region="UK"` |
+| P2 | No A1 references in authored files | Excel-style `=B2-C2` |
+| P3 | Equality is `==`; `=` is binding (`const`) and the formula-cell marker (D14), never comparison | Early examples used `Region="UK"` |
 | P4 | Bare column name in a predicate or cell means "this row's value" | `.Revenue`, `*.Revenue` |
 | P5 | `.Field` and `; Field` are equivalent: `T[r].C` ≡ `T[r; C]` | Only one of the two |
-| P6 | Fallback operator is `//` (Raku defined-or) | `??` — see Q3 |
 | P7 | Conditional is `if … then … else …` | `c ? a : b` ternary |
 | P8 | Aggregations are methods: `.sum() .avg() .min() .max() .count()` | Function form `sum(x)` |
 | P9 | Pipe operator `|>` for multi-step table transforms | Method chaining only |
 | P10 | Computed column syntax `Name := expr` | Per-cell repeated formulas |
-| P15 | First app is a read-only viewer; editing stays in the text editor | Live spreadsheet editor |
+| P15 | First app is a read-only viewer; editing stays in the text editor | Superseded by D16 in `add-interactive-app`: the app is an interactive grid |
+| P17 | Lexical choices made while building: `#` comments to end of line; `"…"` strings with `\" \\ \n \t`; `true` / `false`; dates as `2025-01-01`; a `const` or `:=` expression continues onto following indented lines, or while a bracket is open | Not discussed in the source — was Q13. No `null` literal: an empty cell is the only way to write "empty" |
+| P18 | Inside a cell, `|` is not a separator when it is inside a quoted string or is the `|>` operator | Not discussed in the source — was Q14. An escape such as `\|` |
+| P19 | A lookup that yields a vector of one value fills a cell with that value; no match gives empty; several matches is an error | Relates to Q10 in `add-table-operations` |
 
 ## Architecture
 
@@ -66,30 +71,34 @@ D/P/Q numbers are shared across all five changes, so gaps here are intentional.
   beside the kernel (Phase 2), XLSX and Markdown at the edges (Phase 3), units
   and uncertainty in semantic analysis and the value model (Phases 4 and 5).
 
+## Implementation Notes (as built)
+
+- **Parser.** Hand-written recursive descent rather than `chumsky`: the grammar
+  is small, the cursor and empty-slot forms need context-dependent handling, and
+  it keeps the dependency list to `num-*` and `clap`. A syntax error stops that
+  one expression; other declarations are still checked.
+- **Checking is gradual.** Types and shapes are checked statically wherever they
+  are known. Where they are not (a column that reads itself, mixed-type columns)
+  the type is `Any` and the check happens during evaluation, with the same
+  located diagnostic. Vector lengths are compared statically only when both are
+  known (literals and whole columns).
+- **Cycles.** A cycle is reported only if a cell could reach itself: a column
+  that reads its own earlier rows (`[*-1]`, `[0..*-1]`) is not circular.
+- **Evaluation.** Cells are calculated once, on demand, and visited in
+  dependency order, row by row, so a running balance over 200,000 rows does not
+  recurse deeply. A cell that fails shows `#ERROR`; cells that read it also
+  show `#ERROR` without a second diagnostic.
+
+Not built in this phase, though the specs mention them:
+
+- **A distinct matrix shape.** `Sales[2..5; 3..7]` returns a table (rows and
+  named columns) with those dimensions rather than an unnamed matrix; there is
+  no matrix literal.
+- **Complex literals.** `Complex` values exist and do arithmetic, built with
+  `Complex(re, im)`; there is no literal syntax and no `Complex` column type.
+- **Date arithmetic.** Dates can be compared, not added or subtracted.
+
 ## Open Questions
-
-**Q1 — `*` is overloaded three ways.** The conversation uses bare `*` as both
-"the current row" (`Sales[*].Revenue`, `Sheet[*; *]` = current cell) and "the
-whole dimension" (`A[*; 3]` = all rows of column 3, `A[*; *]` = entire array).
-Separately, Raku readers will expect `[*-1]` to mean *last element* (Whatever
-= end of dimension), whereas D2 makes it *previous row*, with plain `[-1]` for
-last. The spec adopts: `*` is the cursor when the expression has a row context;
-with no row context a bare `*` means the whole dimension; `*±n` is always
-cursor-relative and is an error without a row context. This needs an explicit
-owner decision — a distinct "all" token (e.g. empty slot `A[; 3]`, or `**`)
-would remove the ambiguity.
-
-**Q3 — Fallback operator spelling.** `//` and `??` were both floated. In Raku
-`//` is defined-or and `??` is half of the ternary `?? !!`. `//` is adopted (P6);
-note it then cannot mean integer division or begin a comment.
-
-**Q4 — Text vs formula in a cell.** "No `=` prefix" (P2) means `Jan` (text) and
-`Revenue - Cost` (formula) must be told apart by context. Provisional rule in
-`sheet-format`: the column's declared type decides — a `Text` column's cells are
-literal text; any other declared column's cells are OMX expressions; an
-undeclared column's type is inferred from its cells, falling back to `Text`.
-Computed columns (`:=`) are the recommended way to write formulas. An explicit
-marker for one-off formula cells may still be wanted.
 
 **Q8 — Rat growth.** Long chains of exact operations can grow denominators
 without bound. Decided: never convert silently. Not decided: whether to warn
@@ -100,18 +109,16 @@ ranges, `in` / `∈` membership, `%` as modulo vs percent, and `.map/.filter/
 .reduce/.sort/.unique` were all listed without detail. Membership (`in`) is
 specified because an example depends on it; the rest are deferred.
 
-**Q13 — Comments and literals not discussed.** No comment syntax, string
-escaping rules, date literal grammar beyond `2025-01-01`, or boolean/null
-literal spelling was settled (`null` appears once).
-
 ## Risks
 
 - **Scope.** Exact numerics plus a new language is already a large surface. The
   roadmap in `project.md` keeps units, uncertainty, table operations and
   XLSX out of this phase so that a useful tool (parse, evaluate, print) exists
   first.
-- **Ambiguity debt.** Q1 and Q4 affect the grammar; settle them before the
-  parser is written, not after.
+- **Ambiguity debt.** The three grammar-shaping questions are settled (D13–D15).
+  P17 and P18 were chosen during implementation and still need the owner's
+  confirmation; changing them later means changing the lexer and the cell
+  splitter, not the engine.
 - **Later phases reopen the type system.** Units and uncertainty will extend
   column types and static checking. Keep the type representation open to
   parameters (`Rat<unit>`) even though Phase 1 has none.
