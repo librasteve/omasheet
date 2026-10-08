@@ -3,6 +3,7 @@
 
 use crate::ast::{BinOp, Lit, UnOp};
 use crate::diag::Span;
+use crate::funcs::MathFn;
 
 #[derive(Clone, Debug)]
 pub struct Node {
@@ -55,6 +56,15 @@ pub enum Ir {
         col: usize,
     },
     Call(Func, Vec<Node>),
+    /// A call of a function the sheet defines: its body, in which `Arg(i)`
+    /// stands for `args[i]`.
+    Apply {
+        name: String,
+        args: Vec<Node>,
+        body: Box<Node>,
+    },
+    /// An argument of the innermost `Apply`.
+    Arg(usize),
     /// A vector used where one value is needed: empty gives empty, one
     /// element gives that element, more is an error.
     Single(Box<Node>),
@@ -128,4 +138,7 @@ pub enum Func {
     /// Seconds ahead of UTC.
     Offset,
     ZoneName,
+    /// A function of one real number, such as `sqrt`.
+    Math(MathFn),
+    Pi,
 }

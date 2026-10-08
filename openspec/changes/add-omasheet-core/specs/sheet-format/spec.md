@@ -77,7 +77,7 @@ an error.
 ### Requirement: Column schema
 A table SHALL be able to declare the type of each column with lines of the form
 `<Column> : <Type>` placed between the `table` line and the header row. A type
-SHALL be a base type (`Int`, `Rat`, `Num`, `Text`, `Date`, `Time`, `DateTime`, `Bool`).
+SHALL be a base type (`Int`, `Rational`, `Num`, `Complex`, `Text`, `Date`, `Time`, `DateTime`, `Bool`).
 A column with no declaration SHALL have its type inferred from its cells.
 
 #### Scenario: Typed columns
@@ -86,14 +86,14 @@ A column with no declaration SHALL have its type inferred from its cells.
   table Items
 
   Qty   : Int
-  Price : Rat
+  Price : Rational
 
   Qty | Price
   2   | 19.99
   5   | 0.50
   ```
 - **WHEN** the file is parsed
-- **THEN** `Items.Qty` has type `Int`, `Items.Price` has type `Rat`, and the first row's `Price` is exactly `1999/100`
+- **THEN** `Items.Qty` has type `Int`, `Items.Price` has type `Rational`, and the first row's `Price` is exactly `1999/100`
 
 #### Scenario: Schema names a column not in the header
 - **WHEN** a schema line declares a column that does not appear in the header and is not a computed column
@@ -124,7 +124,7 @@ cell in a column of any other declared type SHALL be a literal of that type, and
 SHALL be an error otherwise. In an undeclared column, a cell that is a valid OMX
 literal SHALL take that literal's type and any other literal cell SHALL be text.
 A cell holding two whole numbers separated by `/`, such as `1/7`, optionally
-negated and with a non-zero denominator, SHALL be a `Rat` literal.
+negated and with a non-zero denominator, SHALL be a `Rational` literal.
 Text that itself begins with `=` SHALL be written as a quoted string.
 
 #### Scenario: Text cell
@@ -133,19 +133,19 @@ Text that itself begins with `=` SHALL be written as a quoted string.
 - **THEN** its value is the text `Jan`
 
 #### Scenario: Per-cell formula in a typed column
-- **GIVEN** a column declared `Tax : Rat` and a constant `TaxRate`
+- **GIVEN** a column declared `Tax : Rational` and a constant `TaxRate`
 - **WHEN** a cell in `Tax` contains `= Revenue * TaxRate`
 - **THEN** its value is that row's `Revenue` multiplied by `TaxRate`
 
 #### Scenario: Fraction cell
 - **GIVEN** an undeclared column `Share`
 - **WHEN** a cell contains `1/7`
-- **THEN** its value is the exact `Rat` one seventh
+- **THEN** its value is the exact `Rational` one seventh
 
 #### Scenario: Unmarked expression in a typed column
-- **GIVEN** a column declared `Tax : Rat`
+- **GIVEN** a column declared `Tax : Rational`
 - **WHEN** a cell in `Tax` contains `Revenue * TaxRate` with no leading `=`
-- **THEN** an error reports that the cell is not a `Rat` literal
+- **THEN** an error reports that the cell is not a `Rational` literal
 
 #### Scenario: Unmarked expression in a text column
 - **GIVEN** a column declared `Note : Text`
@@ -170,6 +170,31 @@ any expression in the sheet and SHALL NOT depend on any row cursor.
 - **GIVEN** `const TaxRate = 20%`
 - **WHEN** a computed column is defined as `Tax := Revenue * TaxRate`
 - **THEN** every row uses the same `TaxRate` value of exactly `1/5`
+
+### Requirement: Functions
+A sheet SHALL be able to define a function with `func <Name>(<parameters>) =
+<OMX expression>` outside any table, with zero or more comma-separated
+parameter names. The expression SHALL be able to refer to its parameters, the
+sheet's constants and tables, and the sheet's other functions, and SHALL NOT see
+the row it is called from. A parameter SHALL take a value of any shape, a table
+included, and a parameter's name SHALL come before a column, constant or table
+of the same name. A function SHALL NOT take the name of a built-in function or
+of another function of the sheet, and SHALL NOT be defined in terms of itself,
+directly or through other functions. The comment lines directly above a
+definition SHALL be kept as its description.
+
+#### Scenario: A function in a computed column
+- **GIVEN** `func Margin(revenue, cost) = (revenue - cost) / revenue`
+- **WHEN** a computed column is defined as `Margin := Margin(Revenue, Cost)`
+- **THEN** each row holds that row's exact margin
+
+#### Scenario: A function does not see the caller's row
+- **GIVEN** `func Bad(x) = x + Cost` and a table with a column `Cost`
+- **THEN** `lint` reports that `Cost` is an unknown name
+
+#### Scenario: A function that calls itself
+- **GIVEN** `func F(x) = F(x) + 1`
+- **THEN** `lint` reports that `F` calls itself
 
 ### Requirement: No grid coordinates in authored files
 The `.omx` format SHALL NOT define A1-style or `$A$1`-style cell references.

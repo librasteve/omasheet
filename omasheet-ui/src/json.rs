@@ -1,6 +1,7 @@
 //! The document snapshot as JSON, for the QML side to parse.
 
-use omasheet_engine::doc::Snapshot;
+use omasheet_engine::doc::{FuncSnap, Snapshot};
+use omasheet_engine::omx::funcs::FuncDoc;
 
 fn string(out: &mut String, s: &str) {
     out.push('"');
@@ -87,6 +88,41 @@ pub fn snapshot(snap: &Snapshot) -> String {
     out
 }
 
+/// The function directory: `[{name, category, usage, summary}]`. The
+/// functions the sheet defines come first, under `Custom`.
+pub fn functions(custom: &[FuncSnap], docs: &[FuncDoc]) -> String {
+    let mut entries: Vec<[String; 4]> = Vec::new();
+    for f in custom {
+        // What it does, in the author's words if there are any.
+        let summary = if f.doc.is_empty() {
+            format!("= {}", f.source)
+        } else {
+            f.doc.clone()
+        };
+        entries.push([f.name.clone(), "Custom".into(), f.usage.clone(), summary]);
+    }
+    for f in docs {
+        entries.push([f.name, f.category, f.usage, f.summary].map(String::from));
+    }
+    let mut out = String::new();
+    list(
+        &mut out,
+        &entries,
+        |out, [name, category, usage, summary]| {
+            out.push('{');
+            field(out, "name", name);
+            out.push(',');
+            field(out, "category", category);
+            out.push(',');
+            field(out, "usage", usage);
+            out.push(',');
+            field(out, "summary", summary);
+            out.push('}');
+        },
+    );
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use omasheet_engine::Document;
@@ -100,5 +136,19 @@ mod tests {
         assert!(json.contains("\"formula\":\"B * 2\",\"computed\":true"));
         assert!(json.contains("\"d\":\"4\""));
         assert!(json.ends_with("\"consts\":[],\"problems\":[]}"));
+    }
+
+    #[test]
+    fn the_sheets_own_functions_lead_the_directory() {
+        let doc =
+            Document::from_text("# Twice over.\nfunc Twice(x) = x * 2\nfunc Half(x) = x / 2\n");
+        let json = super::functions(
+            &doc.snapshot().funcs,
+            omasheet_engine::omx::funcs::FUNCTIONS,
+        );
+        assert!(json.starts_with(
+            "[{\"name\":\"Twice\",\"category\":\"Custom\",\"usage\":\"Twice(x)\",\"summary\":\"Twice over.\"},"
+        ));
+        assert!(json.contains("\"usage\":\"Half(x)\",\"summary\":\"= x / 2\"},{\"name\":\"sum\""));
     }
 }

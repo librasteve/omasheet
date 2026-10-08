@@ -11,7 +11,7 @@ Who    : Text
 On     : Date
 Start  : Time
 End    : Time
-Rate   : Rat
+Rate   : Rational
 Paid   : Bool
 Logged : DateTime
 

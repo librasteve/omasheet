@@ -7,6 +7,7 @@
 use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use crate::deps;
 use crate::diag::{Diagnostic, Span};
+use crate::funcs::{FUNCTIONS, MathFn};
 use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use crate::lexer::{Tok, lex};
 use crate::parser::parse_expr;
@@ -25,6 +26,8 @@ pub struct Program {
     pub zone: Option<(String, Span)>,
     pub tables: Vec<Table>,
     pub consts: Vec<Const>,
+    /// The functions the sheet defines.
+    pub funcs: Vec<UserFn>,
     /// Calculation order: each group only reads groups before it.
     pub order: Vec<Group>,
     /// Where the source names a column of a table: `(span, table, column)`.
@@ -70,6 +73,28 @@ pub struct Const {
     pub node: Node,
     pub ty: Ty,
     stat: Option<Static>,
+}
+
+/// A function defined in the sheet with `func`. It is checked afresh at
+/// each call, for the types of that call's arguments.
+#[derive(Clone, Debug)]
+pub struct UserFn {
+    pub name: String,
+    pub span: Span,
+    pub params: Vec<String>,
+    /// `None` if the body did not parse.
+    pub body: Option<Rc<Expr>>,
+    /// The source text of the body.
+    pub source: String,
+    /// The comment written above the definition.
+    pub doc: String,
+}
+
+impl UserFn {
+    /// How it is called, such as `Margin(revenue, cost)`.
+    pub fn usage(&self) -> String {
+        format!("{}({})", self.name, self.params.join(", "))
+    }
 }
 
 #[derive(Debug)]
@@ -140,6 +165,8 @@ struct Scope {
     frames: Vec<usize>,
     /// `frames[0]` is the row that owns the expression (a cell's own row).
     own: bool,
+    /// The column that owns the expression, in the table of `frames[0]`.
+    col: Option<usize>,
 }
 
 struct RowPick {
@@ -150,6 +177,21 @@ struct RowPick {
 }
 
 impl RowPick {
+    /// Rows that cannot be told until a function is called: the selector
+    /// rests on a parameter. Nothing that depends on them is checked.
+    fn unknown(span: Span) -> RowPick {
+        RowPick {
+            sel: RowSel::Pred(Box::new(Node::error(span))),
+            one: false,
+            len: None,
+            kind: DepKind::Whole,
+        }
+    }
+
+    fn is_unknown(&self) -> bool {
+        matches!(&self.sel, RowSel::Pred(node) if matches!(node.kind, Ir::Error))
+    }
+
     fn all(len: Option<usize>) -> RowPick {
         RowPick {
             sel: RowSel::All,
@@ -166,6 +208,12 @@ struct Checker<'a> {
     ast: Option<&'a SheetAst>,
     tables: Vec<TableInfo>,
     consts: Vec<ConstInfo>,
+    funcs: Vec<UserFn>,
+    /// The parameters of the function whose body is being checked: each
+    /// name and the type of its argument, or `None` to check the body alone.
+    params: Vec<(String, Option<Ty>)>,
+    /// The functions whose bodies are being checked, outermost first.
+    calling: Vec<usize>,
     col_state: Vec<Vec<St<S>>>,
     col_out: Vec<Vec<Option<ColKind>>>,
     col_deps: Vec<Vec<Vec<Dep>>>,
@@ -185,6 +233,9 @@ pub fn compile(text: &str, src: u32) -> (Program, Vec<Diagnostic>) {
     let mut diags = Vec::new();
     let ast = parse_sheet(text, src, &mut diags);
     let mut ck = Checker::for_sheet(&ast, text, src);
+    for i in 0..ck.funcs.len() {
+        ck.check_func(i);
+    }
     for i in 0..ck.consts.len() {
         ck.ensure_const(i);
     }
@@ -207,6 +258,7 @@ pub fn compile_expr(prog: &Program, text: &str, src: u32) -> Result<(Node, Ty), 
     let mut scope = Scope {
         frames: Vec::new(),
         own: false,
+        col: None,
     };
     let out = ck.lower(&expr, &mut scope);
     if ck.cur.is_empty() {
@@ -235,7 +287,7 @@ fn static_of(e: &Expr) -> Option<Static> {
 fn has_cursor(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Cursor => true,
-        ExprKind::Lit(_) | ExprKind::Name(_) => false,
+        ExprKind::Lit(_) | ExprKind::Name(_) | ExprKind::Own => false,
         ExprKind::Unary(_, a) | ExprKind::Field(a, ..) => has_cursor(a),
         ExprKind::Binary(_, a, b) => has_cursor(a) || has_cursor(b),
         ExprKind::If(a, b, c) => has_cursor(a) || has_cursor(b) || has_cursor(c),
@@ -263,6 +315,7 @@ fn lit_type(l: &Lit) -> S {
         Lit::Int(_) => S::Int,
         Lit::Rat(_) => S::Rat,
         Lit::Num(_) => S::Num,
+        Lit::Complex(..) => S::Complex,
         Lit::Text(_) => S::Text,
         Lit::Bool(_) => S::Bool,
         Lit::Date(_) => S::Date,
@@ -307,6 +360,9 @@ impl<'a> Checker<'a> {
             ast: None,
             tables: Vec::new(),
             consts: Vec::new(),
+            funcs: Vec::new(),
+            params: Vec::new(),
+            calling: Vec::new(),
             col_state: Vec::new(),
             col_out: Vec::new(),
             col_deps: Vec::new(),
@@ -350,6 +406,7 @@ impl<'a> Checker<'a> {
                 stat: c.stat,
             });
         }
+        ck.funcs = prog.funcs.clone();
         ck
     }
 
@@ -456,6 +513,39 @@ impl<'a> Checker<'a> {
             ck.const_out.push(None);
             ck.const_deps.push(Vec::new());
         }
+
+        for f in &ast.funcs {
+            if FUNCTIONS.iter().any(|b| b.name == f.name) {
+                ck.done.push(Diagnostic::new(
+                    f.span,
+                    format!("`{}` is a built-in function", f.name),
+                ));
+                continue;
+            }
+            if ck.funcs.iter().any(|x| x.name == f.name) {
+                ck.done.push(Diagnostic::new(
+                    f.span,
+                    format!("function `{}` is already defined", f.name),
+                ));
+                continue;
+            }
+            for (k, (name, span)) in f.params.iter().enumerate() {
+                if f.params[..k].iter().any(|p| &p.0 == name) {
+                    ck.done.push(Diagnostic::new(
+                        *span,
+                        format!("function `{}` has two parameters named `{name}`", f.name),
+                    ));
+                }
+            }
+            ck.funcs.push(UserFn {
+                name: f.name.clone(),
+                span: f.span,
+                params: f.params.iter().map(|p| p.0.clone()).collect(),
+                body: f.expr.clone().map(Rc::new),
+                source: text[f.expr_span.start as usize..f.expr_span.end as usize].to_string(),
+                doc: f.doc.clone(),
+            });
+        }
         ck
     }
 
@@ -521,6 +611,7 @@ impl<'a> Checker<'a> {
                 let mut scope = Scope {
                     frames: Vec::new(),
                     own: false,
+                    col: None,
                 };
                 self.lower(e, &mut scope)
             }
@@ -549,7 +640,7 @@ impl<'a> Checker<'a> {
                 let cd = &decl.computed[k];
                 match &cd.expr {
                     Some(e) => {
-                        let (node, s) = self.lower_cell(e, t);
+                        let (node, s) = self.lower_cell(e, t, c);
                         let s = self.fit_declared(s, declared, e.span, &cd.name);
                         (ColKind::Computed(node), s)
                     }
@@ -595,7 +686,7 @@ impl<'a> Checker<'a> {
                     let at = cell.span.start as usize + 1;
                     match parse_expr(&cell.text[1..], self.src, at) {
                         Ok(e) => {
-                            let (node, s) = self.lower_cell(&e, t);
+                            let (node, s) = self.lower_cell(&e, t, c);
                             if declared.is_some() {
                                 self.fit_declared(s, declared, e.span, &name);
                             } else if s != S::Any || inferred.is_none() {
@@ -623,11 +714,124 @@ impl<'a> Checker<'a> {
         self.done.append(&mut found);
     }
 
+    /// Check the body of a function on its own, for what is wrong with it
+    /// whatever it is called with. Nothing is kept: each call checks it again.
+    fn check_func(&mut self, f: usize) {
+        let Some(body) = self.funcs[f].body.clone() else {
+            return;
+        };
+        let saved = (mem::take(&mut self.cur), mem::take(&mut self.deps));
+        let params = self.funcs[f]
+            .params
+            .iter()
+            .map(|p| (p.clone(), None))
+            .collect();
+        let outer = mem::replace(&mut self.params, params);
+        self.calling.push(f);
+        let mut scope = Scope {
+            frames: Vec::new(),
+            own: false,
+            col: None,
+        };
+        self.lower(&body, &mut scope);
+        self.calling.pop();
+        self.params = outer;
+        self.deps = saved.1;
+        let mut found = mem::replace(&mut self.cur, saved.0);
+        self.done.append(&mut found);
+    }
+
+    /// A call of function `f`: its body, checked for these arguments. What
+    /// is wrong inside the body is reported at the call.
+    fn apply(
+        &mut self,
+        f: usize,
+        name_span: Span,
+        args: &[Expr],
+        span: Span,
+        sc: &mut Scope,
+    ) -> (Node, Ty) {
+        let fail = (Node::error(span), Ty::Any);
+        let func = self.funcs[f].clone();
+        if args.len() != func.params.len() {
+            let want = func.params.len();
+            self.err_help(
+                span,
+                format!(
+                    "`{}` takes {want} argument{}, found {}",
+                    func.name,
+                    if want == 1 { "" } else { "s" },
+                    args.len()
+                ),
+                format!("usage: `{}`", func.usage()),
+            );
+            return fail;
+        }
+        if self.calling.contains(&f) {
+            self.err_help(
+                name_span,
+                format!("function `{}` calls itself", func.name),
+                "a function cannot be defined in terms of itself",
+            );
+            return fail;
+        }
+        let mut nodes = Vec::new();
+        let mut params = Vec::new();
+        for (arg, param) in args.iter().zip(&func.params) {
+            let (node, ty) = self.lower(arg, sc);
+            // An argument that failed to check is unknown to the body.
+            let known = !matches!(node.kind, Ir::Error);
+            params.push((param.clone(), known.then_some(ty)));
+            nodes.push(node);
+        }
+        // The definition already carries the complaint.
+        let Some(body) = func.body else { return fail };
+
+        let outer = mem::replace(&mut self.params, params);
+        let reported = mem::take(&mut self.cur);
+        self.calling.push(f);
+        let mut scope = Scope {
+            frames: Vec::new(),
+            own: false,
+            col: None,
+        };
+        let (body, ty) = self.lower(&body, &mut scope);
+        self.calling.pop();
+        self.params = outer;
+        let inside = mem::replace(&mut self.cur, reported);
+        for d in &inside {
+            let mut at = Diagnostic::new(name_span, format!("in `{}`: {}", func.name, d.message));
+            at.help = d.help.clone();
+            if !self
+                .cur
+                .iter()
+                .any(|x| x.span == at.span && x.message == at.message)
+            {
+                self.cur.push(at);
+            }
+        }
+        if !inside.is_empty() {
+            return fail;
+        }
+        (
+            Node::new(
+                Ir::Apply {
+                    name: func.name,
+                    args: nodes,
+                    body: Box::new(body),
+                },
+                span,
+            ),
+            ty,
+        )
+    }
+
     /// Lower an expression that produces one cell of table `t`.
-    fn lower_cell(&mut self, e: &Expr, t: usize) -> (Node, S) {
+    fn lower_cell(&mut self, e: &Expr, t: usize, c: usize) -> (Node, S) {
         let mut scope = Scope {
             frames: vec![t],
             own: true,
+            col: Some(c),
         };
         let (node, ty) = self.lower(e, &mut scope);
         match ty {
@@ -653,7 +857,7 @@ impl<'a> Checker<'a> {
         if !found.assignable_to(want) {
             let help = match (found, want) {
                 (S::Int | S::Rat, S::Num) => "use `approx(...)` to convert to Num",
-                (S::Rat, S::Int) => "declare the column as `Rat`",
+                (S::Rat, S::Int) => "declare the column as `Rational`",
                 _ => "change the declared type or the formula",
             };
             self.err_help(
@@ -683,6 +887,10 @@ impl<'a> Checker<'a> {
             (Some(Lit::Int(n)), S::Num) => n.to_f64().map(Lit::Num),
             (Some(Lit::Rat(r)), S::Num) => r.to_f64().map(Lit::Num),
             (Some(l @ Lit::Num(_)), S::Num) => Some(l),
+            (Some(l @ Lit::Complex(..)), S::Complex) => Some(l),
+            (Some(Lit::Int(n)), S::Complex) => n.to_f64().map(|x| Lit::Complex(x, 0.0)),
+            (Some(Lit::Rat(r)), S::Complex) => r.to_f64().map(|x| Lit::Complex(x, 0.0)),
+            (Some(Lit::Num(x)), S::Complex) => Some(Lit::Complex(x, 0.0)),
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
             (Some(l @ Lit::DateTime(_)), S::DateTime) => Some(l),
@@ -698,6 +906,9 @@ impl<'a> Checker<'a> {
                     S::Int => "enter a whole number such as `42`, or start the cell with `=` for a formula",
                     S::Rat => "enter a number such as `19.99`, `20%` or `1/7`, or start the cell with `=` for a formula",
                     S::Num => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
+                    S::Complex => {
+                        "enter a complex number such as `3+4i`, or start the cell with `=` for a formula"
+                    }
                     S::Bool => "enter `true` or `false`, or start the cell with `=` for a formula",
                     S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
                     S::Time => "enter a time such as `09:30` or `09:30:15`, or start the cell with `=` for a formula",
@@ -716,6 +927,26 @@ impl<'a> Checker<'a> {
         let fraction = |n: &BigInt, d: &BigInt| {
             (!d.is_zero()).then(|| Lit::Rat(BigRational::new(n.clone(), d.clone())))
         };
+        // A complex number: `4i`, `3+4i`, `-1.5-2i`.
+        let real = |t: &Tok| match t {
+            Tok::Int(n) => n.to_f64(),
+            Tok::Rat(r) => r.to_f64(),
+            Tok::Num(f) => Some(*f),
+            _ => None,
+        };
+        let (negative, rest) = match toks.as_slice() {
+            [Tok::Minus, rest @ ..] => (true, rest),
+            rest => (false, rest),
+        };
+        let sign = if negative { -1.0 } else { 1.0 };
+        match rest {
+            [Tok::Imag(im), Tok::Eof] => return Some(Lit::Complex(0.0, sign * im)),
+            [re, op @ (Tok::Plus | Tok::Minus), Tok::Imag(im), Tok::Eof] => {
+                let im = if **op == Tok::Minus { -im } else { *im };
+                return Some(Lit::Complex(sign * real(re)?, im));
+            }
+            _ => {}
+        }
         Some(match toks.as_slice() {
             [Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(n, d)?,
             [Tok::Minus, Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(&-n, d)?,
@@ -743,6 +974,24 @@ impl<'a> Checker<'a> {
         match &e.kind {
             ExprKind::Lit(l) => (Node::new(Ir::Lit(l.clone()), span), Ty::Scalar(lit_type(l))),
             ExprKind::Name(name) => self.lower_name(name, span, sc),
+            ExprKind::Own => {
+                if !sc.own || sc.frames.is_empty() {
+                    self.err_help(
+                        span,
+                        "an index with no table name needs a current table",
+                        "name the table, for example `Sales[0; Revenue]`",
+                    );
+                    return fail;
+                }
+                let t = sc.frames[0];
+                let ty = Ty::Table(TableTy {
+                    table: t,
+                    cols: self.all_cols(t),
+                    rows: Some(self.tables[t].nrows),
+                    kind: DepKind::Whole,
+                });
+                (Node::new(Ir::Table(t), span), ty)
+            }
             ExprKind::Cursor => {
                 self.err_help(
                     span,
@@ -932,6 +1181,14 @@ impl<'a> Checker<'a> {
     }
 
     fn lower_name(&mut self, name: &str, span: Span, sc: &mut Scope) -> (Node, Ty) {
+        if let Some(i) = self.params.iter().position(|p| p.0 == name) {
+            return match self.params[i].1.clone() {
+                Some(ty) => (Node::new(Ir::Arg(i), span), ty),
+                // Unknown until the function is called: nothing that
+                // depends on it is checked.
+                None => (Node::error(span), Ty::Any),
+            };
+        }
         for i in (0..sc.frames.len()).rev() {
             let t = sc.frames[i];
             if let Some(c) = self.find_col(t, name) {
@@ -977,6 +1234,7 @@ impl<'a> Checker<'a> {
             let names = frames
                 .iter()
                 .flat_map(|&t| self.tables[t].cols.iter().map(|c| c.name.as_str()))
+                .chain(self.params.iter().map(|p| p.0.as_str()))
                 .chain(self.consts.iter().map(|c| c.name.as_str()))
                 .chain(self.tables.iter().map(|t| t.name.as_str()));
             if let Some(c) = closest(name, names) {
@@ -1496,16 +1754,63 @@ impl<'a> Checker<'a> {
                     ty,
                 )
             }
+            "pi" => {
+                if !arity(self, 0, "pi()") {
+                    return fail;
+                }
+                (
+                    Node::new(Ir::Call(Func::Pi, Vec::new()), span),
+                    Ty::Scalar(S::Num),
+                )
+            }
+            _ if MathFn::from_name(name).is_some() => {
+                if !arity(self, 1, &format!("{name}(x)")) {
+                    return fail;
+                }
+                let Some(m) = MathFn::from_name(name) else {
+                    return fail;
+                };
+                // An exact number stays exact where the function allows it.
+                let out = |s: S| match s {
+                    S::Any => Some(S::Any),
+                    S::Complex => m.of_complex(),
+                    S::Int | S::Rat if m.is_whole() => Some(S::Int),
+                    S::Int | S::Rat if m.is_exact() => Some(s),
+                    S::Int | S::Rat | S::Num => Some(S::Num),
+                    _ => None,
+                };
+                let (arg, aty) = self.lower(&args[0], sc);
+                let ty = match aty {
+                    Ty::Any => Ty::Any,
+                    Ty::Scalar(s) if out(s).is_some() => Ty::Scalar(out(s).unwrap_or(S::Any)),
+                    Ty::Vector(s, n) if out(s).is_some() => Ty::Vector(out(s).unwrap_or(S::Any), n),
+                    other => {
+                        if !matches!(arg.kind, Ir::Error) {
+                            self.err(
+                                args[0].span,
+                                format!("`{name}` cannot be applied to {}", other.describe()),
+                            );
+                        }
+                        return fail;
+                    }
+                };
+                (Node::new(Ir::Call(Func::Math(m), vec![arg]), span), ty)
+            }
+            _ if self.funcs.iter().any(|f| f.name == name) => {
+                let Some(f) = self.funcs.iter().position(|f| f.name == name) else {
+                    return fail;
+                };
+                self.apply(f, name_span, args, span, sc)
+            }
             _ => {
-                let known = [
-                    "sum", "avg", "min", "max", "count", "filter", "select", "approx", "Num",
-                    "Complex", "today", "now", "year", "month", "day", "weekday", "hour", "minute",
-                    "second", "date", "time", "to_zone", "utc", "local", "offset", "zone",
-                ];
+                let known = FUNCTIONS
+                    .iter()
+                    .map(|f| f.name)
+                    .chain(self.funcs.iter().map(|f| f.name.as_str()));
                 let mut d = Diagnostic::new(name_span, format!("unknown function `{name}`"));
-                d = match closest(name, known.into_iter()) {
+                d = match closest(name, known) {
                     Some(c) => d.with_help(format!("did you mean `{c}`?")),
-                    None => d.with_help(format!("the functions are {}", known.join(", "))),
+                    None => d.with_help("the function directory lists every function"),
                 };
                 self.cur.push(d);
                 fail
@@ -1537,8 +1842,12 @@ impl<'a> Checker<'a> {
                     tt.rows,
                     sc,
                 );
+                if pick.is_unknown() {
+                    return fail;
+                }
                 let kind = if direct { pick.kind } else { DepKind::Whole };
-                let Some(cols) = self.colsel(slots.get(1).copied().flatten(), &tt) else {
+                let own = sc.col.filter(|_| sc.own).map(|c| (sc.frames[0], c));
+                let Some(cols) = self.colsel(slots.get(1).copied().flatten(), &tt, own) else {
                     return fail;
                 };
                 let sub = |cols: Rc<Vec<usize>>, rows| TableTy {
@@ -1580,6 +1889,9 @@ impl<'a> Checker<'a> {
                     return fail;
                 }
                 let pick = self.rowsel(slots[0], None, n, sc);
+                if pick.is_unknown() {
+                    return fail;
+                }
                 let ty = if pick.one {
                     Ty::Scalar(s)
                 } else {
@@ -1738,6 +2050,9 @@ impl<'a> Checker<'a> {
                     kind: DepKind::Whole,
                 };
             }
+            if ty == Ty::Any && self.cur.len() == dmark && self.unknown_params() {
+                return RowPick::unknown(e.span);
+            }
             trial_errors = self.cur.split_off(dmark);
             self.deps.truncate(pmark);
         }
@@ -1796,6 +2111,7 @@ impl<'a> Checker<'a> {
                     kind: DepKind::Whole,
                 }
             }
+            Ty::Any if self.unknown_params() => RowPick::unknown(e.span),
             other => {
                 self.err_help(
                     e.span,
@@ -1810,17 +2126,70 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Whether a function body is being checked for arguments not all known.
+    fn unknown_params(&self) -> bool {
+        self.params.iter().any(|p| p.1.is_none())
+    }
+
     fn static_in(&self, e: &Expr) -> Option<Static> {
         if let ExprKind::Name(name) = &e.kind {
+            if self.params.iter().any(|p| &p.0 == name) {
+                return None;
+            }
             return self.consts.iter().find(|c| &c.name == name)?.stat;
         }
         static_of(e)
     }
 
-    fn colsel(&mut self, slot: Option<&Expr>, tt: &TableTy) -> Option<ColSel> {
+    /// `own` is the table and column of the formula being checked, if it
+    /// is in a cell.
+    fn colsel(
+        &mut self,
+        slot: Option<&Expr>,
+        tt: &TableTy,
+        own: Option<(usize, usize)>,
+    ) -> Option<ColSel> {
         let Some(e) = slot else {
             return Some(ColSel::All);
         };
+        // `*`, `*+1`, `*-2`: a column counted from the formula's own.
+        if let Some(form) = cursor_form(e) {
+            let here = own
+                .filter(|(t, _)| *t == tt.table)
+                .and_then(|(_, c)| tt.cols.iter().position(|&x| x == c));
+            let Some(here) = here else {
+                self.err_help(
+                    e.span,
+                    "`*` as a column is the column of the formula, in its own table",
+                    "name the column, for example `[*-1; Revenue]`",
+                );
+                return None;
+            };
+            let offset = match form {
+                None => Some(0),
+                Some((negative, by)) => match self.static_in(by) {
+                    Some(Static::Int(k)) => Some(if negative { -k } else { k }),
+                    _ => None,
+                },
+            };
+            let Some(offset) = offset else {
+                self.err(e.span, "a column offset must be a whole number");
+                return None;
+            };
+            let at = here as i64 + offset;
+            if at < 0 || at >= tt.cols.len() as i64 {
+                self.err(
+                    e.span,
+                    format!(
+                        "there is no column {} to the {} of this one",
+                        offset.abs(),
+                        if offset < 0 { "left" } else { "right" }
+                    ),
+                );
+                return None;
+            }
+            return Some(ColSel::One(tt.cols[at as usize]));
+        }
         if let ExprKind::Name(name) = &e.kind
             && let Some(c) = self.col_in(tt, name)
         {
@@ -1987,6 +2356,7 @@ impl<'a> Checker<'a> {
             zone: self.ast.and_then(|ast| ast.zone.clone()),
             tables,
             consts,
+            funcs: mem::take(&mut self.funcs),
             order,
             col_refs: mem::take(&mut self.col_refs),
         }

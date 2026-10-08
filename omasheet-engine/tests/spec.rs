@@ -76,8 +76,8 @@ fn exact_arithmetic() {
 
 #[test]
 fn no_silent_loss_of_exactness() {
-    assert_eq!(calc("approx(1/3)"), "0.3333333333333333");
-    assert_eq!(calc("Num(1) / 3"), "0.3333333333333333");
+    assert_eq!(calc("approx(1/3)"), "3.333333333333333e-1");
+    assert_eq!(calc("Num(1) / 3"), "3.333333333333333e-1");
     assert_eq!(calc("1/3 + 1/7 + 1/11 + 1/13 + 1/17"), "35881/51051");
     assert!(calc_err(None, "2 ** 0.5").contains("approx"));
 }
@@ -232,7 +232,7 @@ fn date_and_time_arithmetic() {
             "cannot apply `+` to Date and Date",
         ),
         ("1 - 2025-01-31", "cannot apply `-` to Int and Date"),
-        ("2025-01-31 + 1.5", "cannot apply `+` to Date and Rat"),
+        ("2025-01-31 + 1.5", "cannot apply `+` to Date and Rational"),
         ("2025-01-31 - 09:30", "cannot apply `-` to Date and Time"),
         (
             "2025-01-31T09:30 - 2025-01-31",
@@ -313,6 +313,104 @@ fn today_and_now_come_from_the_options() {
         shown(sheet),
         "const Start = 2025-01-31\n\ntable T\n\nAt\n-----\n09:30\n"
     );
+}
+
+#[test]
+fn index_with_no_table_name() {
+    // In a table, `[...]` with a `;` or a row cursor is that table.
+    let sheet = "table T\n\nV\n1\n5\n2\n\nPrev := [*-1; V]\nRun := [0..*; V].sum()\nSame := [*; V]\nFirst := [0; V]\nAll := [; V].sum()\nRow := [*-1].V // 0\n";
+    assert_eq!(ask(sheet, "T.Prev"), "[empty, 1, 5]");
+    assert_eq!(ask(sheet, "T.Run"), "[1, 6, 8]");
+    assert_eq!(ask(sheet, "T.Same"), "[1, 5, 2]");
+    assert_eq!(ask(sheet, "T.First"), "[1, 1, 1]");
+    assert_eq!(ask(sheet, "T.All"), "[8, 8, 8]");
+    assert_eq!(ask(sheet, "T.Row"), "[0, 1, 5]");
+    // `*` as a column is the formula's own column, and counts from it.
+    let grid = "table G\n\nA | B | C\n1 | = [*; *-1] + 1 | = [*; *-1] * 10\n5 | = [*-1; *] + [*; A] | = [*-1; *+0]\n";
+    assert_eq!(ask(grid, "G.B"), "[2, 7]");
+    assert_eq!(ask(grid, "G.C"), "[20, 20]");
+    let off = lint_errors("table G\n\nA | B\n= [*; *-1] | 2\n");
+    assert!(off[0].contains("no column 1 to the left"), "{off:?}");
+    let err = calc_err(Some(grid), "G[0; *]");
+    assert!(err.contains("`*` as a column"), "{err}");
+    // A vector literal is still a vector.
+    assert_eq!(calc("[1, 2, 3].sum()"), "6");
+    assert_eq!(calc("[4]"), "[4]");
+    // Outside a table there is no table to mean.
+    let err = calc_err(Some(sheet), "[0; V]");
+    assert!(err.contains("needs a current table"), "{err}");
+}
+
+#[test]
+fn complex_numbers() {
+    // Written with `i`, and built from parts.
+    assert_eq!(calc("3+4i"), "3.0+4.0i");
+    assert_eq!(calc("(1+2i) * (3-1i)"), "5.0+5.0i");
+    assert_eq!(calc("2i * 2i"), "-4.0+0.0i");
+    assert_eq!(calc("Complex(3, 4) == 3+4i"), "true");
+    assert_eq!(calc("[re(3+4i), im(3+4i), abs(3+4i)]"), "[3e0, 4e0, 5e0]");
+    assert_eq!(calc("conj(3+4i)"), "3.0-4.0i");
+    assert_eq!(calc("degrees(arg(2i))"), "9e1");
+    assert_eq!(calc("sqrt(-4+0i)"), "0.0+2.0i");
+    assert_eq!(calc("ln(exp(1+1i))"), "1.0+1.0i");
+    // Real numbers have the same parts.
+    assert_eq!(calc("[re(5/2), im(7), conj(3)]"), "[2.5, 0, 3]");
+    assert!(calc_err(None, "sin(1i)").contains("`sin` cannot be applied to Complex"));
+    assert!(calc_err(None, "1i < 2i").contains("cannot compare"));
+    // A column of them: literal cells, a real number, and a formula.
+    let sheet =
+        "table Z\n\nV : Complex\n\nV\n3+4i\n-2i\n5\n-1.5-2i\n= [*-4; V] * 1i\n\nSize := abs(V)\n";
+    assert_eq!(
+        ask(sheet, "Z.V"),
+        "[3.0+4.0i, 0.0-2.0i, 5.0+0.0i, -1.5-2.0i, -4.0+3.0i]"
+    );
+    assert_eq!(ask(sheet, "Z.Size"), "[5e0, 2e0, 5e0, 2.5e0, 5e0]");
+    assert_eq!(ask(sheet, "Z.V.sum()"), "2.5+3.0i");
+    // Undeclared, a column of them is still Complex.
+    let inferred = sheet.replace("V : Complex\n\n", "");
+    assert_eq!(ask(&inferred, "Z[1; V]"), "0.0-2.0i");
+    let bad = lint_errors("table Z\n\nV : Complex\n\nV\nfour\n");
+    assert!(bad[0].contains("such as `3+4i`"), "{bad:?}");
+}
+
+#[test]
+fn math_functions() {
+    // Exact numbers stay exact where they can.
+    assert_eq!(calc("abs(-7/2)"), "3.5");
+    assert_eq!(
+        calc("[round(5/2), round(-5/2), floor(-7/2), ceil(7/2)]"),
+        "[3, -3, -4, 4]"
+    );
+    assert_eq!(calc("[sign(-3), sign(0), sign(1/2)]"), "[-1, 0, 1]");
+    assert_eq!(calc("round(2.5e0)"), "3e0");
+    // The rest give a Num.
+    assert_eq!(calc("sqrt(16)"), "4e0");
+    assert_eq!(calc("exp(0)"), "1e0");
+    assert_eq!(calc("ln(exp(2))"), "2e0");
+    assert_eq!(calc("[log10(1000), log2(8)]"), "[3e0, 3e0]");
+    assert_eq!(calc("sin(0) + cos(0)"), "1e0");
+    assert_eq!(calc("degrees(pi())"), "1.8e2");
+    assert_eq!(calc("round(sin(radians(30)) * 1000)"), "5e2");
+    assert_eq!(calc("round(degrees(atan(1)))"), "4.5e1");
+    // Over a column, and as a method.
+    assert_eq!(
+        ask(SALES, "Sales.Revenue.sqrt().floor()"),
+        "[1e1, 1e1, 1.2e1]"
+    );
+    // Outside the domain, and on the wrong kind of value.
+    assert!(calc_err(None, "sqrt(-1)").contains("`sqrt` is not defined for -1.0"));
+    assert!(calc_err(None, "ln(0)").contains("`ln` is not defined"));
+    assert!(calc_err(None, "sin(\"x\")").contains("`sin` cannot be applied to Text"));
+    assert!(calc_err(None, "sqr(4)").contains("did you mean `sqrt`?"));
+    // Every function in the directory is one the checker knows.
+    for f in omasheet_engine::omx::funcs::FUNCTIONS {
+        let out = eval(None, "<expression>", &format!("{}()", f.name));
+        assert!(
+            !out.errors.join("\n").contains("unknown function"),
+            "{}",
+            f.name
+        );
+    }
 }
 
 #[test]
@@ -568,10 +666,11 @@ fn multiple_tables() {
 
 #[test]
 fn column_schema() {
-    let sheet = "table Items\n\nQty   : Int\nPrice : Rat\n\nQty | Price\n2   | 19.99\n5   | 0.50\n";
+    let sheet =
+        "table Items\n\nQty   : Int\nPrice : Rational\n\nQty | Price\n2   | 19.99\n5   | 0.50\n";
     assert_eq!(ask(sheet, "Items[0; Price] == 1999/100"), "true");
     assert_eq!(ask(sheet, "Items[0; Qty] * Items[0; Price]"), "39.98");
-    let errors = lint_errors("table Items\n\nPrise : Rat\n\nQty | Price\n2 | 1\n");
+    let errors = lint_errors("table Items\n\nPrise : Rational\n\nQty | Price\n2 | 1\n");
     assert!(errors[0].contains("no column `Prise`"), "{}", errors[0]);
 }
 
@@ -592,19 +691,21 @@ fn cell_content() {
     // Text in an undeclared column.
     assert_eq!(ask(SALES, "Sales[0; Month]"), "Jan");
     // A marked formula in a typed column.
-    let sheet =
-        "const TaxRate = 20%\n\ntable T\n\nTax : Rat\n\nRevenue | Tax\n100 | = Revenue * TaxRate\n";
+    let sheet = "const TaxRate = 20%\n\ntable T\n\nTax : Rational\n\nRevenue | Tax\n100 | = Revenue * TaxRate\n";
     assert_eq!(ask(sheet, "T[0; Tax]"), "20");
-    // A fraction of two whole numbers is a Rat literal, declared or not.
-    let thirds = "table T\n\nA : Rat\n\nA | B\n1/7 | 2/3\n-3/6 | 1/3\n4/2 | x\n";
+    // A fraction of two whole numbers is a Rational literal, declared or not.
+    let thirds = "table T\n\nA : Rational\n\nA | B\n1/7 | 2/3\n-3/6 | 1/3\n4/2 | x\n";
     assert_eq!(ask(thirds, "T.A"), "[1/7, -0.5, 2]");
     assert_eq!(ask(thirds, "T[0..1; B].sum()"), "1");
-    assert!(lint_errors("table T\n\nA : Rat\n\nA\n1/0\n")[0].contains("is not a `Rat` literal"));
+    assert!(
+        lint_errors("table T\n\nA : Rational\n\nA\n1/0\n")[0]
+            .contains("is not a `Rational` literal")
+    );
     assert_eq!(ask("table T\n\nA\n1/0\n", "T[0; A]"), "1/0");
     // An unmarked expression in a typed column is an error.
-    let errors = lint_errors("table T\n\nTax : Rat\n\nRevenue | Tax\n100 | Revenue * 2\n");
+    let errors = lint_errors("table T\n\nTax : Rational\n\nRevenue | Tax\n100 | Revenue * 2\n");
     assert!(
-        errors[0].contains("is not a `Rat` literal"),
+        errors[0].contains("is not a `Rational` literal"),
         "{}",
         errors[0]
     );
@@ -726,4 +827,94 @@ fn diagnostics_are_located() {
     );
     assert!(errors[0].contains("14 | Bad := N + Name"), "{}", errors[0]);
     assert!(errors[0].contains("^^^^^^^^"), "{}", errors[0]);
+}
+
+// ---- custom functions ----------------------------------------------------
+
+const FUNCS: &str = "\
+const Rate = 20%
+
+func Margin(revenue, cost) = (revenue - cost) / revenue
+func WithTax(x) = x * (1 + Rate)
+func Twice(x) = WithTax(WithTax(x))
+func Total(t) = t.Revenue.sum()
+func NameOf(id) = Customers[ID == id].Name // \"Unknown\"
+
+table Customers
+
+ID | Name
+1  | Ada
+2  | Grace
+
+table Sales
+
+Month | Revenue | Cost | Who
+Jan   | 100     | 60   | 1
+Feb   | 120     | 90   | 9
+
+Margin  := Margin(Revenue, Cost)
+Gross   := Revenue.WithTax()
+Twice   := Revenue |> Twice()
+Buyer   := NameOf(Who)
+";
+
+#[test]
+fn custom_function_in_a_computed_column() {
+    assert_eq!(ask(FUNCS, "Sales.Margin"), "[0.4, 0.25]");
+    assert_eq!(ask(FUNCS, "Sales.Buyer"), "[\"Ada\", \"Unknown\"]");
+}
+
+#[test]
+fn custom_function_as_method_and_pipe_stage() {
+    assert_eq!(ask(FUNCS, "Sales.Gross"), "[120, 144]");
+    assert_eq!(ask(FUNCS, "Sales.Twice"), "[144, 172.8]");
+    assert_eq!(ask(FUNCS, "100.WithTax()"), ask(FUNCS, "WithTax(100)"));
+}
+
+#[test]
+fn custom_function_takes_tables_and_vectors() {
+    assert_eq!(ask(FUNCS, "Total(Sales)"), "220");
+    assert_eq!(ask(FUNCS, "Total(Sales |> filter(Cost > 60))"), "120");
+    assert_eq!(ask(FUNCS, "WithTax(Sales.Revenue)"), "[120, 144]");
+}
+
+#[test]
+fn custom_function_does_not_see_the_callers_row() {
+    let sheet = "func Bad(x) = x + Cost\n\ntable T\n\nRevenue | Cost\n1 | 2\n\nA := Bad(Revenue)\n";
+    let errors = lint_errors(sheet).join("\n");
+    assert!(errors.contains("unknown name `Cost`"), "{errors}");
+}
+
+#[test]
+fn custom_function_is_checked_for_each_call() {
+    let err = calc_err(Some(FUNCS), "WithTax(\"ten\")");
+    assert!(
+        err.contains("in `WithTax`: cannot apply `*` to Text"),
+        "{err}"
+    );
+    let err = calc_err(Some(FUNCS), "Margin(1)");
+    assert!(err.contains("`Margin` takes 2 arguments, found 1"), "{err}");
+    assert!(err.contains("Margin(revenue, cost)"), "{err}");
+    let err = calc_err(Some(FUNCS), "Margin(0, 1)");
+    assert!(err.contains("in `Margin`: division by zero"), "{err}");
+}
+
+#[test]
+fn custom_function_definitions_are_checked() {
+    let errors = lint_errors("func sum(x) = x\n").join("\n");
+    assert!(errors.contains("`sum` is a built-in function"), "{errors}");
+    let errors = lint_errors("func F(x) = x\nfunc F(y) = y\n").join("\n");
+    assert!(
+        errors.contains("function `F` is already defined"),
+        "{errors}"
+    );
+    let errors = lint_errors("func F(x, x) = x\n").join("\n");
+    assert!(errors.contains("two parameters named `x`"), "{errors}");
+    let errors = lint_errors("func F(x) = F(x) + 1\n").join("\n");
+    assert!(errors.contains("function `F` calls itself"), "{errors}");
+    let errors = lint_errors("func A(x) = B(x)\nfunc B(x) = A(x)\n").join("\n");
+    assert!(errors.contains("calls itself"), "{errors}");
+    let errors = lint_errors("func F(x) = x + Nope\n").join("\n");
+    assert!(errors.contains("unknown name `Nope`"), "{errors}");
+    assert!(lint_errors("func F(t, n) = t[n].Revenue + t[Revenue > n].Cost.sum()\n").is_empty());
 }

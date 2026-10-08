@@ -40,7 +40,23 @@ dimensions: the first slot selects rows, the second selects columns, and further
 slots select further dimensions of N-dimensional values. A column slot SHALL
 accept a column name or a 0-based position. An empty slot SHALL select the whole
 of that dimension, and trailing slots MAY be omitted with the same meaning.
-`Table[rows].Column` SHALL be equivalent to `Table[rows; Column]`.
+`Table[rows].Column` SHALL be equivalent to `Table[rows; Column]`. Inside a
+table, a selection written with no table name SHALL select from that table when
+it has a `;` or its row slot is a cursor; any other `[...]` with no table name
+SHALL be a vector. Outside a table it SHALL be an error.
+
+In a formula's own table, a column slot of `*`, `*+n` or `*-n` SHALL be the
+column of the formula, or the one `n` columns to its right or left.
+
+#### Scenario: Column counted from the formula
+- **GIVEN** a cell formula in the second column of a table
+- **WHEN** it contains `[*; *-1]`
+- **THEN** it is the cell to its left
+
+#### Scenario: Selection with no table name
+- **GIVEN** a formula in table `Sales`
+- **WHEN** it contains `[*-1; Revenue]`
+- **THEN** it means `Sales[*-1; Revenue]`
 
 #### Scenario: Single cell by position and name
 - **WHEN** `Sales[1; Revenue]` is evaluated
@@ -251,6 +267,64 @@ the clocks of the sheet's zone.
 #### Scenario: Unknown zone
 - **WHEN** `now().to_zone("Mars/Base")` is evaluated
 - **THEN** an error says there is no time zone `Mars/Base`
+
+### Requirement: Mathematical functions
+OMX SHALL provide functions of one real number, each usable as `f(x)` or
+`x.f()` and applied to each element of a vector. `abs`, `sign`, `round`, `floor`
+and `ceil` SHALL give an exact result for an exact number, `round` taking a half
+away from zero. `sqrt`, `exp`, `ln`, `log10`, `log2`, `sin`, `cos`, `tan`,
+`asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, `radians` and `degrees` SHALL
+give a `Num`, with angles in radians, and `pi()` SHALL give π as a `Num`. A
+number outside a function's domain SHALL be an error. `re`, `im`, `conj` and
+`arg` SHALL give the real part, imaginary part, conjugate and angle of a
+`Complex`, and `abs`, `sqrt`, `exp` and `ln` SHALL accept one; the other
+functions SHALL NOT. Every function SHALL be
+listed, with its category, usage and a summary, in one function directory. The
+usage SHALL be written with placeholders, such as `Table.Column.sum()`, rather
+than with the names of any particular sheet.
+
+#### Scenario: Exact rounding
+- **WHEN** `round(5/2)` and `floor(-7/2)` are evaluated
+- **THEN** the results are the `Int` values `3` and `-4`
+
+#### Scenario: Square root
+- **WHEN** `sqrt(16)` is evaluated
+- **THEN** the result is the `Num` `4.0`
+
+#### Scenario: Outside the domain
+- **WHEN** `sqrt(-1)` is evaluated
+- **THEN** an error says `sqrt` is not defined for that number
+
+### Requirement: Calling a sheet's functions
+A function a sheet defines SHALL be called like a built-in one: as `F(a, b)`,
+as `a.F(b)`, and as `a |> F(b)`. Each call SHALL be checked before execution
+for the types and shapes of its own arguments, so one function serves numbers,
+vectors and tables alike. A call with the wrong number of arguments SHALL be an
+error that shows the function's usage. What is wrong inside a function for the
+arguments of a call, before or during execution, SHALL be reported at that call
+and SHALL name the function. The sheet's functions SHALL be listed in the
+function directory, ahead of the built-in ones, with the description written
+above each or else its expression.
+
+#### Scenario: Three ways to call
+- **GIVEN** `func WithTax(x) = x * 120%`
+- **WHEN** `WithTax(100)`, `100.WithTax()` and `100 |> WithTax()` are evaluated
+- **THEN** each result is `120`
+
+#### Scenario: A table as an argument
+- **GIVEN** `func Total(t) = t.Revenue.sum()`
+- **WHEN** `Total(Sales |> filter(Region == "UK"))` is evaluated
+- **THEN** the result is the sum of the UK rows' `Revenue`
+
+#### Scenario: A type error is reported at the call
+- **GIVEN** `func WithTax(x) = x * 120%`
+- **WHEN** `WithTax("ten")` is checked
+- **THEN** an error at the call says that in `WithTax` `*` cannot be applied to Text
+
+#### Scenario: Wrong number of arguments
+- **GIVEN** `func Margin(revenue, cost) = (revenue - cost) / revenue`
+- **WHEN** `Margin(1)` is checked
+- **THEN** an error says `Margin` takes 2 arguments and shows `Margin(revenue, cost)`
 
 ### Requirement: Conditional expression
 OMX SHALL provide `if <cond> then <a> else <b>` as an expression that may span

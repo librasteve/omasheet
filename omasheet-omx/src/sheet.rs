@@ -4,10 +4,11 @@
 //! # a comment
 //! zone Europe/London
 //! const TaxRate = 20%
+//! func Margin(revenue, cost) = (revenue - cost) / revenue
 //!
 //! table Sales
 //!
-//! Revenue : Rat
+//! Revenue : Rational
 //!
 //! Month | Revenue | Cost
 //! Jan   | 10000   | 6000
@@ -28,6 +29,7 @@ pub struct SheetAst {
     /// The time zone the sheet's date-times are in, if it names one.
     pub zone: Option<(String, Span)>,
     pub consts: Vec<ConstDecl>,
+    pub funcs: Vec<FuncDecl>,
     pub tables: Vec<TableDecl>,
 }
 
@@ -39,6 +41,19 @@ pub struct ConstDecl {
     pub expr: Option<Expr>,
     /// The source text of the expression, parsed or not.
     pub expr_span: Span,
+}
+
+/// `func <Name>(<parameters>) = <expr>`
+#[derive(Debug)]
+pub struct FuncDecl {
+    pub name: String,
+    pub span: Span,
+    pub params: Vec<(String, Span)>,
+    /// `None` if the expression did not parse.
+    pub expr: Option<Expr>,
+    pub expr_span: Span,
+    /// The comment lines directly above the definition, joined.
+    pub doc: String,
 }
 
 #[derive(Debug)]
@@ -157,6 +172,22 @@ pub fn split_cells(line: &str, start: usize, src: u32) -> Vec<CellSrc> {
     cells
 }
 
+/// Split a parameter list at `,`.
+fn split_params(inner: &str, start: usize, src: u32) -> Vec<CellSrc> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    for part in inner.split(',') {
+        let lead = part.len() - part.trim_start().len();
+        let text = part.trim();
+        out.push(CellSrc {
+            text: text.to_string(),
+            span: Span::new(src, start + from + lead, start + from + lead + text.len()),
+        });
+        from += part.len() + 1;
+    }
+    out
+}
+
 fn is_separator(line: &str) -> bool {
     line.contains('-')
         && line
@@ -188,6 +219,8 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
     let mut in_body = false; // the header row has been read
     let mut after_header = false; // the next line may be a separator row
     let mut i = 0;
+    // The comment lines directly above the line being read.
+    let mut doc: Vec<&str> = Vec::new();
 
     // An expression that starts at `from` on line `i`, plus continuation
     // lines: indented lines, and any lines while a bracket is still open.
@@ -224,7 +257,13 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
         let trimmed = line.text.trim();
         let lead = line.text.len() - line.text.trim_start().len();
         let at = line.start + lead;
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        if let Some(comment) = trimmed.strip_prefix('#') {
+            doc.push(comment.trim());
+            i += 1;
+            continue;
+        }
+        let above = std::mem::take(&mut doc);
+        if trimmed.is_empty() {
             i += 1;
             continue;
         }
@@ -290,11 +329,62 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
             }
         }
 
+        // func <Name>(<parameters>) = <expr>
+        if let Some(rest) = after_keyword(trimmed, "func") {
+            let n = ident_len(rest);
+            if n > 0 && rest[n..].trim_start().starts_with('(') {
+                let name_at = at + (trimmed.len() - rest.len());
+                let open = name_at + n + rest[n..].find('(').unwrap_or(0);
+                let close = rest[n..].find(')').map(|k| name_at + n + k);
+                let tail = close.map_or("", |k| {
+                    text[k + 1..line.start + line.text.len()].trim_start()
+                });
+                let mut params = Vec::new();
+                let mut ok = tail.starts_with('=') && !tail.starts_with("==");
+                if let Some(close) = close.filter(|_| ok) {
+                    let inner = &text[open + 1..close];
+                    if !inner.trim().is_empty() {
+                        for cell in split_params(inner, open + 1, src) {
+                            ok &= ident_len(&cell.text) == cell.text.len() && !cell.text.is_empty();
+                            params.push((cell.text, cell.span));
+                        }
+                    }
+                }
+                if !ok {
+                    diags.push(
+                        Diagnostic::new(
+                            Span::new(src, at, at + trimmed.len()),
+                            "expected `func <Name>(<parameters>) = <expression>`",
+                        )
+                        .with_help(
+                            "for example `func Margin(revenue, cost) = (revenue - cost) / revenue`",
+                        ),
+                    );
+                    i += 1;
+                    continue;
+                }
+                ast.tables.extend(table.take());
+                let expr_at = line.start + line.text.len() - tail.len() + 1;
+                let (expr, expr_span) = expression(&mut i, expr_at, diags);
+                ast.funcs.push(FuncDecl {
+                    name: rest[..n].to_string(),
+                    span: Span::new(src, name_at, name_at + n),
+                    params,
+                    expr,
+                    expr_span,
+                    doc: above.join(" "),
+                });
+                i += 1;
+                continue;
+            }
+        }
+
         let Some(t) = table.as_mut() else {
             diags.push(
                 Diagnostic::new(
                     Span::new(src, at, at + trimmed.len()),
-                    "expected `table <Name>`, `const <Name> = <expression>` or `zone <Area/City>`",
+                    "expected `table <Name>`, `const <Name> = <expression>`, \
+                     `func <Name>(<parameters>) = <expression>` or `zone <Area/City>`",
                 )
                 .with_help("rows of data belong under a `table` line"),
             );
@@ -338,7 +428,9 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
                         Span::new(src, ty_at, ty_at + ty_text.len()),
                         format!("unknown type `{ty_text}`"),
                     )
-                    .with_help("the types are Int, Rat, Num, Text, Date, Time, DateTime and Bool"),
+                    .with_help(
+                        "the types are Int, Rational, Num, Complex, Text, Date, Time, DateTime and Bool",
+                    ),
                 ),
             }
             i += 1;
@@ -415,13 +507,36 @@ mod tests {
     #[test]
     fn parses_a_table() {
         let mut diags = Vec::new();
-        let src = "const Rate = 20%\n\ntable Sales\n\nRevenue : Rat\n\nMonth | Revenue\n------|--------\nJan | 100\nFeb | 120\n\nTax := Revenue * Rate\n";
+        let src = "const Rate = 20%\n\ntable Sales\n\nRevenue : Rational\n\nMonth | Revenue\n------|--------\nJan | 100\nFeb | 120\n\nTax := Revenue * Rate\n";
         let ast = parse_sheet(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         assert_eq!(ast.consts.len(), 1);
         let t = &ast.tables[0];
         assert_eq!((t.header.len(), t.rows.len(), t.computed.len()), (2, 2, 1));
         assert_eq!(t.schema[0].ty, S::Rat);
+    }
+
+    #[test]
+    fn parses_a_function() {
+        let mut diags = Vec::new();
+        let src = "# Profit as a share\n# of revenue.\nfunc Margin(revenue, cost) =\n  (revenue - cost) / revenue\nfunc Vat() = 20%\n";
+        let ast = parse_sheet(src, 0, &mut diags);
+        assert!(diags.is_empty(), "{diags:?}");
+        let f = &ast.funcs[0];
+        assert_eq!(f.name, "Margin");
+        assert_eq!(f.doc, "Profit as a share of revenue.");
+        let names: Vec<_> = f.params.iter().map(|p| p.0.as_str()).collect();
+        assert_eq!(names, ["revenue", "cost"]);
+        assert_eq!(
+            &src[f.params[1].1.start as usize..f.params[1].1.end as usize],
+            "cost"
+        );
+        assert!(f.expr.is_some());
+        assert!(ast.funcs[1].params.is_empty() && ast.funcs[1].doc.is_empty());
+
+        parse_sheet("func Bad(a b) = 1\n", 0, &mut diags);
+        parse_sheet("func Bad(a) 1\n", 0, &mut diags);
+        assert_eq!(diags.len(), 2);
     }
 
     #[test]

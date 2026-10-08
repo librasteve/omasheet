@@ -25,12 +25,12 @@ export SHALL report which lossy rules were applied.
 - **THEN** the workbook has worksheets `Sales` and `Customers`
 
 #### Scenario: Lossy export is reported
-- **GIVEN** a sheet containing a non-terminating `Rat`
+- **GIVEN** a sheet containing a non-terminating `Rational`
 - **WHEN** it is exported
 - **THEN** a notice states that exact rationals were written as floating point
 
 ### Requirement: Lossy mapping of exact numbers
-An `Int` or `Rat` that cannot be represented exactly as an XLSX number SHALL be
+An `Int` or `Rational` that cannot be represented exactly as an XLSX number SHALL be
 exported as the nearest double.
 
 #### Scenario: One third
@@ -39,7 +39,7 @@ exported as the nearest double.
 
 ### Requirement: Import from XLSX
 Importing SHALL produce `.omx` source with one table per worksheet, taking the
-first row as the header. Numeric cells SHALL be imported as exact `Rat` or `Int`
+first row as the header. Numeric cells SHALL be imported as exact `Rational` or `Int`
 values from their shortest decimal representation. A1-style cell references SHALL
 NOT appear in the generated source.
 

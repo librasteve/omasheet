@@ -6,7 +6,7 @@
 //! row by row rather than by deep recursion.
 
 use crate::Options;
-use crate::value::{RowRef, Value, View, arith, compare, equal, format_styled, to_f64};
+use crate::value::{RowRef, Value, View, arith, compare, equal, format_styled, math, to_f64};
 use crate::zone::{Zone, Zoned, utc_now};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -48,6 +48,9 @@ pub struct Engine<'p> {
     prog: &'p Program,
     cells: RefCell<Vec<Vec<Vec<Slot>>>>,
     consts: RefCell<Vec<Slot>>,
+    /// The arguments of the sheet's own functions being evaluated, the
+    /// innermost call last.
+    args: RefCell<Vec<Vec<Value>>>,
     all_rows: Vec<Rc<Vec<usize>>>,
     all_cols: Vec<Rc<Vec<usize>>>,
     diags: RefCell<Vec<Diagnostic>>,
@@ -100,6 +103,7 @@ impl<'p> Engine<'p> {
                     .collect(),
             ),
             consts: RefCell::new(vec![Slot::Pending; prog.consts.len()]),
+            args: RefCell::new(Vec::new()),
             all_rows: prog
                 .tables
                 .iter()
@@ -366,6 +370,28 @@ impl<'p> Engine<'p> {
                 ),
             },
             Ir::Call(func, args) => self.call(*func, args, span, fr),
+            Ir::Apply { name, args, body } => {
+                let mut values = Vec::with_capacity(args.len());
+                for arg in args {
+                    values.push(self.eval(arg, fr)?);
+                }
+                self.args.borrow_mut().push(values);
+                let result = self.eval(body, fr);
+                self.args.borrow_mut().pop();
+                // A failure inside the function is reported where it is called.
+                result.map_err(|f| match f {
+                    Fail::Diag(d) => Fail::Diag(Diagnostic {
+                        span,
+                        message: format!("in `{name}`: {}", d.message),
+                        help: d.help,
+                    }),
+                    Fail::Poison => Fail::Poison,
+                })
+            }
+            Ir::Arg(i) => match self.args.borrow().last().and_then(|a| a.get(*i)) {
+                Some(v) => Ok(v.clone()),
+                None => Err(Fail::Poison),
+            },
             Ir::Single(inner) => match self.eval(inner, fr)? {
                 Value::Vector(items) => match items.len() {
                     0 => Ok(Value::Empty),
@@ -537,6 +563,17 @@ impl<'p> Engine<'p> {
             }
             Func::Today => Ok(Value::Date(date::split_datetime(self.now).0)),
             Func::Now => Ok(Value::DateTime(self.now)),
+            Func::Pi => Ok(Value::Num(std::f64::consts::PI)),
+            Func::Math(m) => {
+                let apply =
+                    |v: &Value| -> R { math(m, v).or_else(|message| fail(args[0].span, message)) };
+                match self.eval(&args[0], fr)? {
+                    Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                        items.iter().map(apply).collect::<R<Vec<_>>>()?,
+                    ))),
+                    single => apply(&single),
+                }
+            }
             Func::ToZone | Func::Utc | Func::Local | Func::Offset | Func::ZoneName => {
                 let target = match func {
                     Func::ToZone => match self.eval(&args[1], fr)? {

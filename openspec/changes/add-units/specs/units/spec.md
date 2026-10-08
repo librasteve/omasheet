@@ -11,7 +11,7 @@ of a quantity SHALL obey the `numerics` rules, so quantities are exact by defaul
 
 #### Scenario: Unit literals
 - **WHEN** `10m`, `5kg`, `100ms` and `12.5USD` are evaluated
-- **THEN** each is a quantity with an exact `Rat` or `Int` magnitude and the named unit
+- **THEN** each is a quantity with an exact `Rational` or `Int` magnitude and the named unit
 
 ### Requirement: Addition and comparison need compatible dimensions
 Adding, subtracting or comparing two quantities SHALL require that they have the

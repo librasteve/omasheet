@@ -23,8 +23,9 @@ impl S {
     pub fn from_name(name: &str) -> Option<S> {
         Some(match name {
             "Int" => S::Int,
-            "Rat" => S::Rat,
+            "Rational" => S::Rat,
             "Num" => S::Num,
+            "Complex" => S::Complex,
             "Text" => S::Text,
             "Date" => S::Date,
             "Time" => S::Time,
@@ -100,7 +101,7 @@ impl fmt::Display for S {
         f.write_str(match self {
             S::Any => "Any",
             S::Int => "Int",
-            S::Rat => "Rat",
+            S::Rat => "Rational",
             S::Num => "Num",
             S::Complex => "Complex",
             S::Text => "Text",

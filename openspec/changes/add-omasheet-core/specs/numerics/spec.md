@@ -6,7 +6,7 @@ explicit choice.
 ## ADDED Requirements
 
 ### Requirement: Numeric tower
-OMX SHALL provide the numeric types `Int` (arbitrary-precision integer), `Rat`
+OMX SHALL provide the numeric types `Int` (arbitrary-precision integer), `Rational`
 (arbitrary-precision rational, numerator and denominator both unbounded, always
 in lowest terms), `Num` (IEEE 754 double) and `Complex` (pair of `Num`). OMX SHALL
 NOT expose fixed-width integer types.
@@ -17,21 +17,29 @@ NOT expose fixed-width integer types.
 
 #### Scenario: Large rationals stay exact
 - **WHEN** `999999999999999999999 / 7` is evaluated
-- **THEN** the result is the exact `Rat` `999999999999999999999/7`
+- **THEN** the result is the exact `Rational` `999999999999999999999/7`
 
 ### Requirement: Literal types
 An integer literal SHALL be an `Int`. A decimal literal SHALL be the exactly
-equal `Rat`. A literal with an exponent (`1e-100`) SHALL be a `Num`. Digits MAY
+equal `Rational`. A literal with an exponent (`1e-100`) SHALL be a `Num`. Digits MAY
 be grouped with `_`. A number immediately followed by `%` SHALL be that number
-divided by 100, exactly.
+divided by 100, exactly. A number immediately followed by `i` SHALL be an
+imaginary `Complex`, so that `3+4i` is the `Complex` with real part 3 and
+imaginary part 4. A cell holding such a number, with no `=`, SHALL be a `Complex`
+literal, and a real number in a column declared `Complex` SHALL be that number
+with no imaginary part.
+
+#### Scenario: Complex literal
+- **WHEN** `(1+2i) * (3-1i)` is evaluated
+- **THEN** the result is the `Complex` `5+5i`
 
 #### Scenario: Decimal literal is exact
 - **WHEN** `42.5` is evaluated
-- **THEN** the result is the `Rat` `85/2`
+- **THEN** the result is the `Rational` `85/2`
 
 #### Scenario: Digit separators
 - **WHEN** `1_000_000.50` is evaluated
-- **THEN** the result is the `Rat` `2000001/2`
+- **THEN** the result is the `Rational` `2000001/2`
 
 #### Scenario: Percent literal
 - **WHEN** `20%` is evaluated
@@ -42,8 +50,8 @@ divided by 100, exactly.
 - **THEN** the result is a `Num`
 
 ### Requirement: Exact arithmetic
-`+`, `-`, `*` and `/` over `Int` and `Rat` operands SHALL be exact. Division of
-two `Int`s SHALL yield a `Rat` (or an `Int` when the division is exact) and SHALL
+`+`, `-`, `*` and `/` over `Int` and `Rational` operands SHALL be exact. Division of
+two `Int`s SHALL yield a `Rational` (or an `Int` when the division is exact) and SHALL
 NOT truncate or produce a `Num`.
 
 #### Scenario: Decimal sum
@@ -59,14 +67,14 @@ NOT truncate or produce a `Num`.
 - **THEN** the result is exactly `5997/100`
 
 ### Requirement: No silent loss of exactness
-The engine SHALL NOT convert an `Int` or `Rat` to a `Num` implicitly, regardless
+The engine SHALL NOT convert an `Int` or `Rational` to a `Num` implicitly, regardless
 of the size of the numerator or denominator. Conversion to `Num` SHALL happen
 only through `approx(x)` or `Num(x)`, or when an operand is already a `Num`. Any
 operation with a `Num` operand SHALL yield a `Num`.
 
 #### Scenario: Explicit approximation
 - **WHEN** `approx(1/3)` is evaluated
-- **THEN** the result is a `Num` close to `0.3333333333333333`
+- **THEN** the result is a `Num` close to `3.333333333333333e-1`
 
 #### Scenario: Num is contagious
 - **WHEN** `Num(1) / 3` is evaluated
@@ -74,16 +82,21 @@ operation with a `Num` operand SHALL yield a `Num`.
 
 #### Scenario: Growing denominators stay rational
 - **WHEN** `1/3 + 1/7 + 1/11 + 1/13 + 1/17` is evaluated
-- **THEN** the result is an exact `Rat`
+- **THEN** the result is an exact `Rational`
 
 ### Requirement: Value is independent of display
 The stored value of a number SHALL NOT be altered by how it is displayed.
-A `Rat` whose decimal expansion terminates SHALL display as a decimal by default;
-any other `Rat` SHALL display as a fraction by default.
+A `Rational` whose decimal expansion terminates SHALL display as a decimal by default;
+any other `Rational` SHALL display as a fraction by default. A `Num` SHALL
+display with an exponent, so that it is never taken for an exact number.
 
 #### Scenario: Terminating rational
 - **WHEN** the exact value `175/4` is displayed with default formatting
 - **THEN** it is shown as `43.75`
+
+#### Scenario: A Num shows its exponent
+- **WHEN** `omasheet eval 'approx(3/2)'` is run
+- **THEN** the output is `1.5e0`
 
 #### Scenario: Non-terminating rational
 - **WHEN** `omasheet eval '1/3 + 1/3'` is run

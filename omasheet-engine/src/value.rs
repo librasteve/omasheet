@@ -1,6 +1,6 @@
 //! Runtime values and exact arithmetic.
 //!
-//! Exact numbers are `Int` (arbitrary precision) or `Rat` (an
+//! Exact numbers are `Int` (arbitrary precision) or `Rational` (an
 //! arbitrary-precision fraction that is not a whole number). Nothing here
 //! turns an exact number into a `Num` unless the other operand already is one.
 
@@ -10,12 +10,14 @@ use num_rational::BigRational;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use omasheet_omx::ast::{BinOp, Lit};
 use omasheet_omx::date::Style;
+use omasheet_omx::funcs::MathFn;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum Value {
     /// No value: a blank cell, or a row offset outside the table.
+    #[default]
     Empty,
     /// A cell whose calculation failed; the diagnostic was already reported.
     Error,
@@ -76,6 +78,7 @@ impl Value {
             Lit::Int(n) => Value::Int(n.clone()),
             Lit::Rat(r) => Value::exact(r.clone()),
             Lit::Num(f) => Value::Num(*f),
+            Lit::Complex(re, im) => Value::Complex(*re, *im),
             Lit::Text(s) => Value::text(s),
             Lit::Bool(b) => Value::Bool(*b),
             Lit::Date(d) => Value::Date(*d),
@@ -90,7 +93,7 @@ impl Value {
             Value::Empty => "empty",
             Value::Error => "an error",
             Value::Int(_) => "Int",
-            Value::Rat(_) => "Rat",
+            Value::Rat(_) => "Rational",
             Value::Num(_) => "Num",
             Value::Complex(..) => "Complex",
             Value::Text(_) => "Text",
@@ -297,6 +300,62 @@ fn exact_arith(op: BinOp, x: &BigRational, y: &BigRational) -> Result<Value, Str
     }))
 }
 
+/// A function of one real number. An exact number stays exact where the
+/// function allows it; otherwise the result is a `Num`.
+pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
+    let whole = |r: BigRational| Value::Int(r.to_integer());
+    let x = match (v, m) {
+        (Value::Empty, _) => return Ok(Value::Empty),
+        (Value::Int(n), MathFn::Abs) => return Ok(Value::Int(n.abs())),
+        (Value::Int(n), MathFn::Sign) => return Ok(Value::Int(n.signum())),
+        (Value::Int(_) | Value::Rat(_), MathFn::Im) => return Ok(Value::Int(BigInt::from(0))),
+        (Value::Rat(_), MathFn::Re | MathFn::Conj) => return Ok(v.clone()),
+        (Value::Complex(re, im), _) => return complex_math(m, *re, *im),
+        (Value::Int(_), _) if m.is_exact() => return Ok(v.clone()),
+        (Value::Rat(r), MathFn::Abs) => return Ok(Value::Rat(r.abs())),
+        (Value::Rat(r), MathFn::Sign) => return Ok(Value::Int(r.numer().signum())),
+        (Value::Rat(r), MathFn::Round) => return Ok(whole(r.round())),
+        (Value::Rat(r), MathFn::Floor) => return Ok(whole(r.floor())),
+        (Value::Rat(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
+        (Value::Int(n), _) => n.to_f64().unwrap_or(f64::NAN),
+        (Value::Rat(r), _) => to_f64(r),
+        (Value::Num(f), _) => *f,
+        (other, _) => {
+            return Err(format!(
+                "`{}` cannot be applied to {}",
+                m.name(),
+                other.kind()
+            ));
+        }
+    };
+    let y = m.apply(x);
+    // Outside the function's domain, such as `sqrt(-1)` or `ln(0)`.
+    if x.is_finite() && !y.is_finite() {
+        return Err(format!("`{}` is not defined for {x:?}", m.name()));
+    }
+    Ok(Value::Num(y))
+}
+
+fn complex_math(m: MathFn, re: f64, im: f64) -> Result<Value, String> {
+    let r = re.hypot(im);
+    Ok(match m {
+        MathFn::Abs => Value::Num(r),
+        MathFn::Re => Value::Num(re),
+        MathFn::Im => Value::Num(im),
+        MathFn::Arg => Value::Num(im.atan2(re)),
+        MathFn::Conj => Value::Complex(re, -im),
+        // The root with a real part that is not negative.
+        MathFn::Sqrt => {
+            let half = ((r - re) / 2.0).sqrt();
+            Value::Complex(((r + re) / 2.0).sqrt(), if im < 0.0 { -half } else { half })
+        }
+        MathFn::Exp => Value::Complex(re.exp() * im.cos(), re.exp() * im.sin()),
+        MathFn::Ln if r == 0.0 => return Err("`ln` is not defined for zero".into()),
+        MathFn::Ln => Value::Complex(r.ln(), im.atan2(re)),
+        _ => return Err(format!("`{}` is not defined for Complex", m.name())),
+    })
+}
+
 /// Order two single values. `None` if either is empty.
 pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
     Ok(Some(match (a, b) {
@@ -382,6 +441,8 @@ pub fn format_styled(v: &Value, quoted: bool, style: &Style) -> String {
         Value::Error => "#ERROR".into(),
         Value::Int(n) => n.to_string(),
         Value::Rat(r) => format_rat(r),
+        // Always with an exponent, to tell it from an exact number.
+        Value::Num(f) if f.is_finite() => format!("{f:e}"),
         Value::Num(f) => format!("{f:?}"),
         Value::Complex(re, im) => {
             if *im < 0.0 || (*im == 0.0 && im.is_sign_negative()) {

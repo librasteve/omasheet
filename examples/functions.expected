@@ -1,0 +1,19 @@
+const VatRate = 0.2
+const Everything = 105
+const Large = 45
+const Diagonal = 5e0
+
+table Customers
+
+ID | Name
+---|----------
+ 1 | Ada Ltd
+ 2 | Grace Inc
+
+table Orders
+
+CustomerID | Qty | Price | Cost | Customer  | Net | Gross | Margin
+-----------|-----|-------|------|-----------|-----|-------|-------
+         2 |   3 |    20 |   45 | Grace Inc |  60 |    72 |   0.25
+         1 |  10 |   4.5 |   45 | Ada Ltd   |  45 |    54 |      0
+         9 |   0 |   100 |    0 | Unknown   |   0 |     0 |      0

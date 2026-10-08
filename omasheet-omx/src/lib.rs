@@ -9,12 +9,15 @@ pub mod check;
 pub mod date;
 pub mod deps;
 pub mod diag;
+pub mod funcs;
 pub mod ir;
 pub mod lexer;
 pub mod parser;
 pub mod sheet;
 pub mod types;
 
-pub use check::{Cell, ColKind, Column, Const, Group, Program, Table, compile, compile_expr};
+pub use check::{
+    Cell, ColKind, Column, Const, Group, Program, Table, UserFn, compile, compile_expr,
+};
 pub use diag::{Diagnostic, Sources, Span};
 pub use types::{S, Ty};

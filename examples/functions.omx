@@ -1,0 +1,46 @@
+# Functions of your own: `func Name(parameters) = expression`, anywhere
+# outside a table. A function sees its parameters, the sheet's constants and
+# tables and the other functions, but not the row it is called from: what it
+# needs from the row, it is given.
+#
+# The comment above a function is what the function directory says about it.
+
+const VatRate = 20%
+
+# A price with VAT added.
+func WithVat(price) = price * (1 + VatRate)
+
+# Profit as a share of revenue; nothing where there is no revenue.
+func Margin(revenue, cost) = if revenue == 0 then 0 else (revenue - cost) / revenue
+
+# A customer's name from their ID.
+func CustomerName(id) = Customers[ID == id].Name // "Unknown"
+
+# What a table of orders comes to. A parameter can be a whole table.
+func Worth(orders) = (orders.Qty * orders.Price).sum()
+
+# The length of the long side of a right-angled triangle.
+func Hypotenuse(a, b) = sqrt(a ** 2 + b ** 2)
+
+table Customers
+
+ID | Name
+1  | Ada Ltd
+2  | Grace Inc
+
+table Orders
+
+CustomerID | Qty | Price | Cost
+2          | 3   | 20    | 45
+1          | 10  | 4.50  | 45
+9          | 0   | 100   | 0
+
+# A function is called like a built-in one: by name, as a method, or in a pipe.
+Customer := CustomerName(CustomerID)
+Net      := Qty * Price
+Gross    := Net.WithVat()
+Margin   := Margin(Net, Cost)
+
+const Everything = Worth(Orders)
+const Large = Orders |> filter(Qty >= 5) |> Worth()
+const Diagonal = Hypotenuse(3, 4)

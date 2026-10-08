@@ -301,6 +301,7 @@ impl Parser {
             Tok::Int(n) => lit(Lit::Int(n)),
             Tok::Rat(r) => lit(Lit::Rat(r)),
             Tok::Num(f) => lit(Lit::Num(f)),
+            Tok::Imag(f) => lit(Lit::Complex(0.0, f)),
             Tok::Str(s) => lit(Lit::Text(s)),
             Tok::Date(d) => lit(Lit::Date(d)),
             Tok::Time(t) => lit(Lit::Time(t)),
@@ -334,16 +335,47 @@ impl Parser {
             Tok::LBracket => {
                 self.bump();
                 let mut items = Vec::new();
-                if !self.eat(&Tok::RBracket) {
-                    loop {
+                // `[*-1; Revenue]`, with a `;` or a row cursor, is an index
+                // into the current table; anything else is a vector.
+                let mut first = None;
+                if !matches!(self.peek(), Tok::Semi | Tok::RBracket) {
+                    first = Some(self.expr()?);
+                }
+                let cursor = first.as_ref().is_some_and(|e| match &e.kind {
+                    ExprKind::Cursor => true,
+                    ExprKind::Binary(BinOp::Add | BinOp::Sub, l, _) => {
+                        matches!(l.kind, ExprKind::Cursor)
+                    }
+                    _ => false,
+                });
+                if matches!(self.peek(), Tok::Semi)
+                    || (cursor && !matches!(self.peek(), Tok::Comma))
+                {
+                    let mut slots = vec![first];
+                    while self.eat(&Tok::Semi) {
+                        slots.push(if matches!(self.peek(), Tok::Semi | Tok::RBracket) {
+                            None
+                        } else {
+                            Some(self.expr()?)
+                        });
+                    }
+                    self.expect(Tok::RBracket, "`;` or `]`")?;
+                    let own = Expr {
+                        kind: ExprKind::Own,
+                        span: Span::new(span.src, span.start as usize, span.start as usize),
+                    };
+                    return Ok(Expr {
+                        kind: ExprKind::Index(Box::new(own), slots),
+                        span: span.to(self.prev_span()),
+                    });
+                }
+                if let Some(e) = first {
+                    items.push(e);
+                    while self.eat(&Tok::Comma) {
                         items.push(self.expr()?);
-                        if self.eat(&Tok::Comma) {
-                            continue;
-                        }
-                        self.expect(Tok::RBracket, "`,` or `]`")?;
-                        break;
                     }
                 }
+                self.expect(Tok::RBracket, "`,` or `]`")?;
                 return Ok(Expr {
                     kind: ExprKind::VecLit(items),
                     span: span.to(self.prev_span()),

@@ -105,6 +105,19 @@ pub mod qobject {
         ) -> QString;
         #[qinvokable]
         fn rename_column(self: Pin<&mut Sheet>, table: i32, col: i32, name: &QString) -> QString;
+        /// Move `count` rows from `first` so the first becomes row `to`.
+        #[qinvokable]
+        fn move_rows(self: Pin<&mut Sheet>, table: i32, first: i32, count: i32, to: i32)
+        -> QString;
+        /// Move `count` columns from `first` so the first becomes column `to`.
+        #[qinvokable]
+        fn move_columns(
+            self: Pin<&mut Sheet>,
+            table: i32,
+            first: i32,
+            count: i32,
+            to: i32,
+        ) -> QString;
         #[qinvokable]
         fn add_table(self: Pin<&mut Sheet>, name: &QString) -> QString;
         #[qinvokable]
@@ -122,9 +135,22 @@ pub mod qobject {
         /// The locale and how it writes a date and a time.
         #[qinvokable]
         fn locale_hint(self: &Sheet) -> QString;
+        /// The function directory as JSON.
+        #[qinvokable]
+        fn functions_json(self: &Sheet) -> QString;
         /// What can be typed into a column of the named type.
         #[qinvokable]
         fn entry_hint(self: &Sheet, ty: &QString) -> QString;
+        /// The count, sum and average of a block of cells, for the footer.
+        #[qinvokable]
+        fn selection_summary(
+            self: &Sheet,
+            table: i32,
+            row0: i32,
+            col0: i32,
+            row1: i32,
+            col1: i32,
+        ) -> QString;
     }
 }
 
@@ -452,6 +478,14 @@ impl qobject::Sheet {
         self.try_edit(|doc| doc.rename_column(index(table), index(col), &name))
     }
 
+    fn move_rows(self: Pin<&mut Self>, table: i32, first: i32, count: i32, to: i32) -> QString {
+        self.try_edit(|doc| doc.move_rows(index(table), index(first), index(count), index(to)))
+    }
+
+    fn move_columns(self: Pin<&mut Self>, table: i32, first: i32, count: i32, to: i32) -> QString {
+        self.try_edit(|doc| doc.move_columns(index(table), index(first), index(count), index(to)))
+    }
+
     fn add_table(self: Pin<&mut Self>, name: &QString) -> QString {
         let name = name.to_string();
         self.try_edit(|doc| doc.add_table(&name))
@@ -486,8 +520,33 @@ impl qobject::Sheet {
         QString::from(&format!("{name}: {} {clock}", style.date_pattern()))
     }
 
+    fn functions_json(&self) -> QString {
+        QString::from(&json::functions(
+            &self.rust().doc.snapshot().funcs,
+            omasheet_engine::omx::funcs::FUNCTIONS,
+        ))
+    }
+
     fn entry_hint(&self, ty: &QString) -> QString {
-        QString::from(&entry_hint(&style(), &ty.to_string()))
+        // Only where the way to write a value is not plain from its type.
+        let ty = ty.to_string();
+        if !matches!(ty.as_str(), "Date" | "Time" | "DateTime" | "Bool") {
+            return QString::default();
+        }
+        QString::from(&entry_hint(&style(), &ty))
+    }
+
+    fn selection_summary(&self, table: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {
+        let doc = &self.rust().doc;
+        let from = (index(row0), index(col0));
+        let Some(summary) = doc.summary(index(table), from, (index(row1), index(col1))) else {
+            return QString::default();
+        };
+        let mut text = format!("Count {}", summary.count);
+        if let Some((sum, average)) = summary.numbers {
+            text.push_str(&format!("   Sum {sum}   Average {average}"));
+        }
+        QString::from(&text)
     }
 
     fn reload_theme(mut self: Pin<&mut Self>) {

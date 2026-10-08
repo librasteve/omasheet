@@ -12,11 +12,11 @@
 - [x] 1.3 Add a `examples/` corpus of `.omx` files used as golden tests
 
 ## 2. Numerics (`numerics`)
-- [x] 2.1 `Int` on `BigInt`, `Rat` on `BigRational`, `Num` on `f64`
+- [x] 2.1 `Int` on `BigInt`, `Rational` on `BigRational`, `Num` on `f64`
 - [x] 2.2 Literal lexing: integers, decimals, `_` separators, exponent form, `%`
-- [x] 2.3 Arithmetic and coercion rules; `Int / Int → Rat`
-- [x] 2.4 `approx()` / `Num()` conversions; verify no implicit Rat → Num path
-- [x] 2.5 Rat display: decimal when terminating, fraction otherwise
+- [x] 2.3 Arithmetic and coercion rules; `Int / Int → Rational`
+- [x] 2.4 `approx()` / `Num()` conversions; verify no implicit Rational → Num path
+- [x] 2.5 Rational display: decimal when terminating, fraction otherwise
 
 ## 3. OMX core (`omx-expressions`)
 - [x] 3.1 Lexer and hand-written expression parser; a syntax error in one declaration does not hide errors in the others
@@ -37,6 +37,7 @@
 - [x] 4.3 Computed columns `Name := expr`
 - [x] 4.4 Cell rule (`=` formula, otherwise literal) and diagnostics for ragged rows / unknown columns
 - [x] 4.5 Multiple tables per file and cross-table references
+- [x] 4.6 `func` definitions, checked at each call, and listed in the function directory
 
 ## 5. Evaluation (`evaluation`)
 - [x] 5.1 Name resolution and semantic analysis to typed IR

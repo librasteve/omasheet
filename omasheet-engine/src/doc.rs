@@ -10,7 +10,8 @@
 
 use crate::Options;
 use crate::eval::Engine;
-use crate::value::Value;
+use crate::value::{Value, arith, format_scalar};
+use omasheet_omx::ast::BinOp;
 use omasheet_omx::date::{self, Style};
 use omasheet_omx::sheet::{SheetAst, TableDecl, ident_len, parse_sheet, split_cells};
 use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile};
@@ -24,6 +25,7 @@ pub const BLANK: &str = "table Sheet1\n\nA | B | C\n  |   |\n  |   |\n  |   |\n 
 pub struct Snapshot {
     pub tables: Vec<TableSnap>,
     pub consts: Vec<ConstSnap>,
+    pub funcs: Vec<FuncSnap>,
     pub problems: Vec<Problem>,
 }
 
@@ -45,7 +47,9 @@ pub struct ColumnSnap {
 
 #[derive(Debug, Clone, Default)]
 pub struct CellSnap {
-    /// The calculated value, as shown in the grid.
+    /// The calculated value.
+    pub value: Value,
+    /// The value as shown in the grid.
     pub display: String,
     /// What the cell holds in the file: a literal, or `= expression`. For a
     /// computed column, the column's expression.
@@ -54,6 +58,28 @@ pub struct CellSnap {
     pub formula: bool,
     /// Why the cell could not be calculated, if it could not.
     pub error: Option<String>,
+}
+
+/// What a block of cells adds up to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Summary {
+    /// How many of the cells hold a value.
+    pub count: usize,
+    /// The sum and the average of the numbers among them, as text; `None`
+    /// if there are no numbers.
+    pub numbers: Option<(String, String)>,
+}
+
+/// A function the sheet defines.
+#[derive(Debug, Clone)]
+pub struct FuncSnap {
+    pub name: String,
+    /// How it is called, such as `Margin(revenue, cost)`.
+    pub usage: String,
+    /// The expression it stands for.
+    pub source: String,
+    /// The comment written above it.
+    pub doc: String,
 }
 
 #[derive(Debug, Clone)]
@@ -124,8 +150,9 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
     let also_iso = if style.is_iso() { "" } else { " or ISO" };
     match ty {
         "Int" => "Int: a whole number, e.g. 42".into(),
-        "Rat" => "Rat: an exact number, e.g. 19.99, 20% or 1/7".into(),
+        "Rational" => "Rational: an exact number, e.g. 19.99, 20% or 1/7".into(),
         "Num" => "Num: a floating-point number, e.g. 1.5 or 2e-3".into(),
+        "Complex" => "Complex: e.g. 3+4i or 2.5i".into(),
         "Bool" => "Bool: true or false".into(),
         "Text" => "Text".into(),
         "Date" => format!(
@@ -140,6 +167,31 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
         ),
         _ => String::new(),
     }
+}
+
+/// Every value of a sheet under the name of its column or constant, to tell
+/// whether a rearrangement changed any. The clock is held still.
+fn values_by_name(text: &str) -> Vec<(String, Vec<String>)> {
+    let (program, _) = compile(text, 0);
+    let options = Options {
+        now: Some(0),
+        ..Options::default()
+    };
+    let engine = Engine::with_options(&program, options);
+    engine.run();
+    let mut out = Vec::new();
+    for (t, table) in program.tables.iter().enumerate() {
+        for (c, col) in table.cols.iter().enumerate() {
+            let cells = (0..table.nrows).map(|r| engine.show(&engine.cell_shown(t, c, r), true));
+            out.push((format!("{}.{}", table.name, col.name), cells.collect()));
+        }
+    }
+    for (i, c) in program.consts.iter().enumerate() {
+        let value = engine.const_value(i).unwrap_or(Value::Error);
+        out.push((c.name.clone(), vec![engine.show(&value, true)]));
+    }
+    out.sort();
+    out
 }
 
 /// Make arbitrary input safe to store as one cell: a single line that does
@@ -408,6 +460,41 @@ impl Document {
         })
     }
 
+    /// The count, sum and average of the block of cells from `(top, left)`
+    /// to `(bottom, right)`. Numbers add up exactly, as they do in a formula.
+    pub fn summary(
+        &self,
+        table: usize,
+        (top, left): (usize, usize),
+        (bottom, right): (usize, usize),
+    ) -> Option<Summary> {
+        let rows = &self.snapshot.tables.get(table)?.rows;
+        let values = rows
+            .iter()
+            .take(bottom + 1)
+            .skip(top)
+            .flat_map(|row| row.iter().take(right + 1).skip(left))
+            .map(|cell| &cell.value);
+        let (mut count, mut numbers) = (0, 0);
+        let mut sum = Value::Int(0.into());
+        for value in values {
+            if !matches!(value, Value::Empty | Value::Error) {
+                count += 1;
+            }
+            if value.is_numeric() {
+                numbers += 1;
+                sum = arith(BinOp::Add, &sum, value).ok()?;
+            }
+        }
+        let numbers = if numbers == 0 {
+            None
+        } else {
+            let avg = arith(BinOp::Div, &sum, &Value::Int(numbers.into())).ok()?;
+            Some((format_scalar(&sum, false), format_scalar(&avg, false)))
+        };
+        Some(Summary { count, numbers })
+    }
+
     pub fn set_cell(&mut self, table: usize, row: usize, col: usize, text: &str) -> bool {
         let is_computed = self
             .snapshot
@@ -564,6 +651,125 @@ impl Document {
             if let Some(decl) = ast.tables.iter().find(|t| t.name == name) {
                 text = Grid::of(decl).write(decl, &text);
             }
+        }
+        self.commit(text);
+        Ok(())
+    }
+
+    /// Move `count` rows starting at `first` so that the first of them
+    /// becomes row `to`, in one undoable step. The rows keep their cells,
+    /// formulas included; whatever counts rows is then calculated afresh.
+    pub fn move_rows(
+        &mut self,
+        table: usize,
+        first: usize,
+        count: usize,
+        to: usize,
+    ) -> Result<(), String> {
+        let Some(snap) = self.snapshot.tables.get(table) else {
+            return Err("there is no such table".into());
+        };
+        let n = snap.rows.len();
+        if count == 0 || first + count > n || to + count > n {
+            return Err("there is no such row".into());
+        }
+        if to == first {
+            return Ok(());
+        }
+        let mut order: Vec<usize> = (0..n).collect();
+        let block: Vec<usize> = order.drain(first..first + count).collect();
+        order.splice(to..to, block);
+        self.edit_grid(table, |grid| {
+            // Each line of the table keeps its place and takes the cells of
+            // the row that now belongs there.
+            let cells: Vec<Vec<String>> = grid.rows.iter().map(|(_, row)| row.clone()).collect();
+            for (slot, &from) in grid.rows.iter_mut().zip(&order) {
+                if let Some(row) = cells.get(from) {
+                    slot.1 = row.clone();
+                }
+            }
+        });
+        Ok(())
+    }
+
+    /// Move `count` columns starting at `first` so that the first of them
+    /// becomes column `to`, in one undoable step. Data columns move among the
+    /// data columns and formula columns among the formula columns. Refused
+    /// if any value would change, as when a formula names columns by position.
+    pub fn move_columns(
+        &mut self,
+        table: usize,
+        first: usize,
+        count: usize,
+        to: usize,
+    ) -> Result<(), String> {
+        let Some(snap) = self.snapshot.tables.get(table) else {
+            return Err("there is no such table".into());
+        };
+        let n = snap.columns.len();
+        if count == 0 || first + count > n || to + count > n {
+            return Err("there is no such column".into());
+        }
+        if to == first {
+            return Ok(());
+        }
+        // The data columns come first, in the order of the header row.
+        let data = snap.columns.iter().filter(|c| c.formula.is_none()).count();
+        let among_data = first + count <= data && to + count <= data;
+        let among_formulas = first >= data && to >= data;
+        if !among_data && !among_formulas {
+            return Err("data columns stay before the formula columns".into());
+        }
+        let mut order: Vec<usize> = (0..n).collect();
+        let block: Vec<usize> = order.drain(first..first + count).collect();
+        order.splice(to..to, block);
+        let names: Vec<String> = snap.columns.iter().map(|c| c.name.clone()).collect();
+
+        let ast = self.ast();
+        let Some(decl) = self.table_decl(&ast, table) else {
+            return Err("there is no such table".into());
+        };
+        let text = if among_data {
+            let mut grid = Grid::of(decl);
+            let pick = |cells: &[String]| -> Vec<String> {
+                order[..data]
+                    .iter()
+                    .map(|&k| cells.get(k).cloned().unwrap_or_default())
+                    .collect()
+            };
+            grid.header = pick(&grid.header);
+            for (_, row) in &mut grid.rows {
+                *row = pick(row);
+            }
+            grid.write(decl, &self.text)
+        } else {
+            // Each `Name := expression` keeps its place in the text and takes
+            // the declaration that now belongs there.
+            let range = |name: &str| {
+                let c = decl.computed.iter().find(|c| c.name == name)?;
+                Some((c.span.start as usize, c.expr_span.end as usize))
+            };
+            let slots: Option<Vec<(usize, usize)>> =
+                names[data..].iter().map(|name| range(name)).collect();
+            let Some(mut slots) = slots else {
+                return Err("the formula columns cannot be moved".into());
+            };
+            let blocks: Option<Vec<&str>> = order[data..]
+                .iter()
+                .map(|&k| range(&names[k]).map(|(s, e)| &self.text[s..e]))
+                .collect();
+            let Some(blocks) = blocks else {
+                return Err("the formula columns cannot be moved".into());
+            };
+            slots.sort_unstable();
+            let mut text = self.text.clone();
+            for (&(s, e), block) in slots.iter().zip(&blocks).rev() {
+                text.replace_range(s..e, block);
+            }
+            text
+        };
+        if values_by_name(&text) != values_by_name(&self.text) {
+            return Err("a formula names columns by position, so moving would change it".into());
         }
         self.commit(text);
         Ok(())
@@ -802,6 +1008,7 @@ impl Document {
                     row.push(CellSnap {
                         display: show(&value),
                         numeric: value.is_numeric(),
+                        value: value.clone(),
                         formula: source.starts_with('='),
                         error: error.or_else(|| {
                             failed.then(|| "this cell could not be calculated".to_string())
@@ -831,6 +1038,14 @@ impl Document {
                     other => show(other),
                 },
                 error: decl.and_then(|d| within(d.expr_span)),
+            });
+        }
+        for f in &program.funcs {
+            snapshot.funcs.push(FuncSnap {
+                name: f.name.clone(),
+                usage: f.usage(),
+                source: f.source.clone(),
+                doc: f.doc.clone(),
             });
         }
         snapshot.problems = diags
@@ -1015,6 +1230,27 @@ mod tests {
     }
 
     #[test]
+    fn functions_are_listed_and_follow_a_renamed_column() {
+        let text =
+            "# Everything sold.\nfunc Sold() = Sales.Revenue.sum()\nfunc Net(a, b) = a - b\n\n"
+                .to_string()
+                + "table Sales\n\nMonth | Revenue | Cost\nJan   | 100     | 60\n\nProfit := Net(Revenue, Cost)\n";
+        let mut doc = Document::from_text(&text);
+        assert!(doc.snapshot().problems.is_empty());
+        let funcs = &doc.snapshot().funcs;
+        assert_eq!(funcs[0].usage, "Sold()");
+        assert_eq!(funcs[0].doc, "Everything sold.");
+        assert_eq!(funcs[1].usage, "Net(a, b)");
+        assert_eq!(funcs[1].source, "a - b");
+        assert_eq!(col(&doc, 0, 3), ["40"]);
+
+        doc.rename_column(0, 1, "Income").unwrap();
+        assert!(doc.text().contains("func Sold() = Sales.Income.sum()"));
+        assert!(doc.text().contains("Profit := Net(Income, Cost)"));
+        assert!(doc.snapshot().problems.is_empty());
+    }
+
+    #[test]
     fn errors_do_not_blank_the_grid() {
         let mut doc = Document::from_text(SALES);
         doc.set_cell(0, 0, 1, "= Revnue + 1");
@@ -1164,6 +1400,113 @@ mod tests {
         let bad = Document::from_text("zone Mars/Base\n\ntable T\n\nA\n1\n");
         assert!(bad.snapshot().problems[0].message.contains("no time zone"));
         assert_eq!(bad.snapshot().tables[0].rows[0][0].display, "1");
+    }
+
+    #[test]
+    fn a_block_of_cells_is_summed_exactly() {
+        let text = "table T\n\nName | A | B\nx | 1 | 0.5\ny | 2 |\nz | = 1/3 | 1e2\n";
+        let doc = Document::from_text(text);
+        let sum = |from, to| doc.summary(0, from, to).unwrap();
+        let numbers = |s: &str, a: &str| Some((s.to_string(), a.to_string()));
+        // Exact numbers stay exact.
+        let a = sum((0, 1), (2, 1));
+        assert_eq!((a.count, a.numbers), (3, numbers("10/3", "10/9")));
+        // Text counts but does not add; an empty cell does neither.
+        let top = sum((0, 0), (1, 2));
+        assert_eq!((top.count, top.numbers), (5, numbers("3.5", "7/6")));
+        // One Num makes the total a Num.
+        let b = sum((0, 2), (2, 2));
+        assert_eq!((b.count, b.numbers), (2, numbers("1.005e2", "5.025e1")));
+        let names = sum((0, 0), (2, 0));
+        assert_eq!((names.count, names.numbers), (3, None));
+        // A block that runs off the table is cut to it.
+        assert_eq!(sum((2, 1), (9, 9)).count, 2);
+        assert!(doc.summary(5, (0, 0), (1, 1)).is_none());
+    }
+
+    #[test]
+    fn columns_can_be_moved() {
+        let mut doc = Document::from_text(SALES);
+        let names = |doc: &Document| -> Vec<String> {
+            let columns = &doc.snapshot().tables[0].columns;
+            columns.iter().map(|c| c.name.clone()).collect()
+        };
+        assert_eq!(names(&doc), ["Month", "Revenue", "Cost", "Profit", "Tax"]);
+
+        // A data column, with its cells, and the table lined up again.
+        doc.move_columns(0, 0, 1, 2).unwrap();
+        assert_eq!(names(&doc), ["Revenue", "Cost", "Month", "Profit", "Tax"]);
+        assert!(
+            doc.text()
+                .contains("Revenue | Cost | Month\n100     | 60   | Jan\n120     | 70   | Feb\n")
+        );
+        assert_eq!(col(&doc, 0, 2), ["Jan", "Feb"]);
+        assert_eq!(col(&doc, 0, 3), ["40", "50"]);
+        // Two at once, back to the left.
+        doc.move_columns(0, 1, 2, 0).unwrap();
+        assert_eq!(names(&doc), ["Cost", "Month", "Revenue", "Profit", "Tax"]);
+        // One step to undo.
+        assert!(doc.undo());
+        assert_eq!(names(&doc), ["Revenue", "Cost", "Month", "Profit", "Tax"]);
+
+        // A formula column, among the formula columns.
+        doc.move_columns(0, 4, 1, 3).unwrap();
+        assert_eq!(names(&doc), ["Revenue", "Cost", "Month", "Tax", "Profit"]);
+        assert!(
+            doc.text()
+                .contains("\nTax := Profit * Rate\nProfit := Revenue - Cost\n")
+        );
+        assert_eq!(col(&doc, 0, 3), ["8", "10"]);
+        assert!(doc.snapshot().problems.is_empty());
+
+        // Not across the two kinds, and not off the table.
+        let before = doc.text().to_string();
+        assert!(
+            doc.move_columns(0, 0, 1, 3)
+                .unwrap_err()
+                .contains("stay before the formula columns")
+        );
+        assert!(doc.move_columns(0, 3, 1, 1).is_err());
+        assert!(doc.move_columns(0, 1, 2, 2).is_err());
+        assert!(doc.move_columns(0, 9, 1, 0).is_err());
+        assert!(doc.move_columns(0, 1, 1, 1).is_ok());
+        assert_eq!(doc.text(), before);
+
+        // A formula that counts columns from itself would read another one.
+        let by_place = "table T\n\nA | B | C\n1 | 2 | = [*; *-1] * 10\n";
+        let mut doc = Document::from_text(by_place);
+        let refused = doc.move_columns(0, 0, 1, 1).unwrap_err();
+        assert!(refused.contains("names columns by position"), "{refused}");
+        assert_eq!(doc.text(), by_place);
+        assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn rows_can_be_moved() {
+        let text = "table T\n\nName | N\na | 1\nb | 2\nc | = [*-1; N] + 10\nd | 4\n\n\
+                    Sum := N + ([*-1; N] // 0)\n";
+        let mut doc = Document::from_text(text);
+        assert_eq!(col(&doc, 0, 2), ["1", "3", "14", "16"]);
+        // One row down, with its formula; the running column follows.
+        doc.move_rows(0, 0, 1, 2).unwrap();
+        assert_eq!(col(&doc, 0, 0), ["b", "c", "a", "d"]);
+        assert!(
+            doc.text()
+                .contains("Name | N\nb    | 2\nc    | = [*-1; N] + 10\na    | 1\nd    | 4\n")
+        );
+        assert_eq!(col(&doc, 0, 1), ["2", "12", "1", "4"]);
+        assert_eq!(col(&doc, 0, 2), ["2", "14", "13", "5"]);
+        // Two at once, to the top; and one step to undo.
+        doc.move_rows(0, 2, 2, 0).unwrap();
+        assert_eq!(col(&doc, 0, 0), ["a", "d", "b", "c"]);
+        assert!(doc.undo());
+        assert_eq!(col(&doc, 0, 0), ["b", "c", "a", "d"]);
+        // Not off the table.
+        let before = doc.text().to_string();
+        assert!(doc.move_rows(0, 3, 2, 0).is_err());
+        assert!(doc.move_rows(0, 0, 2, 3).is_err());
+        assert!(doc.move_rows(0, 1, 1, 1).is_ok());
+        assert_eq!(doc.text(), before);
     }
 
     #[test]

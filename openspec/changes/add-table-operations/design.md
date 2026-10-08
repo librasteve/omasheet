@@ -15,9 +15,9 @@ D/P/Q numbers continue that change's numbering.
 
 ## Why not Polars
 
-D7 (arbitrary-precision `Int` and `Rat`) and the earlier D10 conflicted: Polars
+D7 (arbitrary-precision `Int` and `Rational`) and the earlier D10 conflicted: Polars
 has no arbitrary-precision integer or rational dtype (its Decimal is
-fixed-width), so `Rat` columns cannot be native Polars series. It could only
+fixed-width), so `Rational` columns cannot be native Polars series. It could only
 have computed row indices (group keys, join indices, sort permutations) while
 Omasheet gathered the exact values itself — a large dependency for hashing and
 sorting.

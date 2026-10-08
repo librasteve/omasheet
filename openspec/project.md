@@ -27,7 +27,7 @@ that conversation).
 2. **One indexing model.** `[]` selects, `;` separates dimensions, `..` builds
    ranges, `*` is the cursor, an empty slot is "all". Scalars, vectors, tables
    and N-d arrays all use it.
-3. **Exact numerics.** `Int` is arbitrary precision, `Rat` is an
+3. **Exact numerics.** `Int` is arbitrary precision, `Rational` is an
    arbitrary-precision rational. Floating point (`Num`) only on request.
 4. **Meaning lives in types.** Units, currencies, percentages and uncertainty
    are part of a value's type, declared per column, checked before execution.
@@ -52,6 +52,7 @@ verified and archived before the next begins.
 | 3 | `add-interop` | XLSX import and export; Markdown `{{ }}` and `omx` blocks; `import`, `export`, `render` | A workbook imports to `.omx` and exports back; `omasheet render report.md` produces HTML |
 | 4 | `add-units` | Unit literals, dimension checking, currencies, column units, user-defined units, display units | `Revenue + Weight` is rejected by `lint`; unit columns export to XLSX |
 | 5 | `add-uncertainty` | `±` values, propagation, `Uncertain<…>` columns, display | `10 ± 0.1 m` propagates through arithmetic and aggregation |
+| 6 | `add-matrix-multiplication` | Matrix values and literals, tables as matrices, the matrix product `@`, `transpose` | `[[1, 2], [3, 4]] @ [[5, 6], [7, 8]]` gives `[[19, 22], [43, 50]]` exactly, and a mismatch of shapes is rejected by `lint` |
 
 Alongside the phases, `add-interactive-app` adds the desktop window: an editable
 grid over the same engine. It needs only Phase 1 and gains each later phase's
@@ -59,7 +60,8 @@ features as they land.
 
 Dependencies: every phase needs Phase 1. Phase 3 does not need Phase 2. Phase 4
 adds deltas to Phases 2 and 3 (units through group/join, units on export), and
-Phase 5 builds on Phase 4.
+Phase 5 builds on Phase 4. Phase 6 needs only Phase 1; units and uncertainty
+through a matrix product are later deltas to Phases 4 and 5.
 
 Not yet in any change: REPL, LSP server, Neovim plugin, TUI viewer, charts,
 pivots, formatting syntax.
@@ -83,7 +85,7 @@ pivots, formatting syntax.
 omasheet/
 ├── omasheet-omx      lexer, parser, AST, type checker, dependency analysis
 ├── omasheet-engine   values, numerics, execution (Phase 1); table operations,
-│                     recalc (2); units (4); uncertainty (5)
+│                     recalc (2); units (4); uncertainty (5); matrices (6)
 ├── omasheet-xlsx     XLSX import/export (Phase 3)
 ├── omasheet-cli      the `omasheet` binary
 ├── omasheet-ui       the interactive window: Qt Quick, driven from Rust (cxx-qt)
@@ -109,5 +111,6 @@ omasheet/
 | Computed column | A column defined once by an OMX expression (`Name := expr`) |
 | OMX | Omasheet Expressions — the formula language |
 | Cursor (`*`) | The current row while an expression is evaluated in row context |
+| Matrix | A rectangle of numbers addressed by position, without column names (Phase 6) |
 | Quantity | A numeric magnitude with a unit (Phase 4) |
 | Uncertain | A quantity with an attached measurement uncertainty (`±`) (Phase 5) |

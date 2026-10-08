@@ -9,6 +9,8 @@ pub enum Lit {
     Int(BigInt),
     Rat(BigRational),
     Num(f64),
+    /// Real and imaginary parts.
+    Complex(f64, f64),
     Text(String),
     Bool(bool),
     /// Days since 1970-01-01.
@@ -31,6 +33,9 @@ pub enum ExprKind {
     Name(String),
     /// `*`, the current row.
     Cursor,
+    /// The table of the current row: the base of `[*-1; Revenue]`, an index
+    /// written with no table name.
+    Own,
     Unary(UnOp, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
