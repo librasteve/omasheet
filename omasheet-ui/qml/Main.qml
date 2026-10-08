@@ -262,6 +262,24 @@ ApplicationWindow {
         selectCell(selTop, curCol, false);
     }
 
+    // Right-click: keep a selection that contains the cell, otherwise move
+    // to it. A negative row or column means the whole column or row.
+    function openMenu(row, col) {
+        stopEditing();
+        grid.forceActiveFocus();
+        var maxRow = Math.max(0, table.rows.length - 1);
+        var maxCol = Math.max(0, table.columns.length - 1);
+        var inRows = row < 0 || (row >= selTop && row <= selBottom);
+        var inCols = col < 0 || (col >= selLeft && col <= selRight);
+        if (!(inRows && inCols)) {
+            anchorRow = row < 0 ? 0 : row;
+            curRow = row < 0 ? maxRow : row;
+            anchorCol = col < 0 ? 0 : col;
+            curCol = col < 0 ? maxCol : col;
+        }
+        cellMenu.popup();
+    }
+
     // ---- files -------------------------------------------------------------
 
     function guard(action) {
@@ -579,7 +597,12 @@ ApplicationWindow {
                                 Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: win.lineColor }
                                 MouseArea {
                                     anchors.fill: parent
+                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
                                     onClicked: function(mouse) {
+                                        if (mouse.button === Qt.RightButton) {
+                                            win.openMenu(-1, headCell.index);
+                                            return;
+                                        }
                                         // Select the whole column.
                                         win.stopEditing();
                                         win.anchorRow = 0;
@@ -624,7 +647,12 @@ ApplicationWindow {
                                 Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: win.lineColor }
                                 MouseArea {
                                     anchors.fill: parent
+                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
                                     onClicked: function(mouse) {
+                                        if (mouse.button === Qt.RightButton) {
+                                            win.openMenu(rowItem.index, -1);
+                                            return;
+                                        }
                                         // Select the whole row.
                                         win.stopEditing();
                                         win.anchorCol = 0;
@@ -681,17 +709,22 @@ ApplicationWindow {
                                     MouseArea {
                                         anchors.fill: parent
                                         hoverEnabled: true
-                                        ToolTip.visible: containsMouse && !!cellItem.cell && cellItem.cell.e.length > 0
+                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                        ToolTip.visible: containsMouse && !cellMenu.visible && !!cellItem.cell && cellItem.cell.e.length > 0
                                         ToolTip.delay: 400
                                         ToolTip.text: cellItem.cell ? cellItem.cell.e : ""
                                         onPressed: function(mouse) {
+                                            if (mouse.button === Qt.RightButton) {
+                                                win.openMenu(cellItem.row, cellItem.index);
+                                                return;
+                                            }
                                             if (win.editing)
                                                 win.stopEditing();
                                             grid.forceActiveFocus();
                                             win.selectCell(cellItem.row, cellItem.index, mouse.modifiers & Qt.ShiftModifier);
                                         }
                                         onPositionChanged: function(mouse) {
-                                            if (!pressed)
+                                            if (!(pressedButtons & Qt.LeftButton))
                                                 return;
                                             // Drag to extend the selection.
                                             var p = mapToItem(rowsView.contentItem, mouse.x, mouse.y);
@@ -704,7 +737,10 @@ ApplicationWindow {
                                             }
                                             win.selectCell(r, c, true);
                                         }
-                                        onDoubleClicked: win.startEditing(null)
+                                        onDoubleClicked: function(mouse) {
+                                            if (mouse.button === Qt.LeftButton)
+                                                win.startEditing(null);
+                                        }
                                     }
 
                                     Loader {
@@ -861,6 +897,37 @@ ApplicationWindow {
                 grid.forceActiveFocus();
             }
         }
+    }
+
+    // ---- context menu ------------------------------------------------------
+
+    Menu {
+        id: cellMenu
+        readonly property bool editable: !win.table.isConsts
+        readonly property bool hasRows: editable && win.table.rows.length > 0
+        readonly property int rowCount: win.selBottom - win.selTop + 1
+        onClosed: grid.forceActiveFocus()
+
+        MenuItem { text: "Cut"; enabled: cellMenu.hasRows; onTriggered: { win.copySelection(); win.clearSelection(); } }
+        MenuItem { text: "Copy"; enabled: win.table.rows.length > 0; onTriggered: win.copySelection() }
+        MenuItem { text: "Paste"; enabled: win.table.rows.length > 0; onTriggered: win.pasteSelection() }
+        MenuItem { text: "Clear"; enabled: cellMenu.hasRows; onTriggered: win.clearSelection() }
+        MenuSeparator {}
+        MenuItem { text: "Edit cell"; enabled: win.table.rows.length > 0; onTriggered: win.startEditing(null) }
+        MenuSeparator {}
+        MenuItem { text: "Insert row above"; enabled: cellMenu.editable; onTriggered: win.insertRow(false) }
+        MenuItem { text: "Insert row below"; enabled: cellMenu.editable; onTriggered: win.insertRow(true) }
+        MenuItem {
+            text: cellMenu.rowCount > 1 ? "Delete " + cellMenu.rowCount + " rows" : "Delete row"
+            enabled: cellMenu.hasRows
+            onTriggered: win.deleteRows()
+        }
+        MenuSeparator {}
+        MenuItem { text: "Add column…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("column") }
+        MenuItem { text: "Add formula column…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("computed") }
+        MenuSeparator {}
+        MenuItem { text: "Undo"; enabled: sheet.canUndo; onTriggered: sheet.undo() }
+        MenuItem { text: "Redo"; enabled: sheet.canRedo; onTriggered: sheet.redo() }
     }
 
     // ---- dialogs -----------------------------------------------------------
@@ -1029,6 +1096,7 @@ ApplicationWindow {
             font: win.font
             text: "Arrows, Tab          Move\n"
                 + "Shift+Arrows, drag   Select a block\n"
+                + "Right click          Menu for the selection\n"
                 + "Enter, F2, typing    Edit the cell\n"
                 + "Enter / Tab          Commit and move down / right\n"
                 + "Esc                  Cancel the edit\n"
