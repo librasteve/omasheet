@@ -10,8 +10,8 @@ Needs Qt 6 (`qt6-base`, `qt6-declarative`). The file is the sheet: every edit
 rewrites the text, and saving writes exactly that.
 
 - One tab per table, plus the constants.
-- Ctrl+Shift+N, or a right-click on a tab, opens another window on the same
-  sheet: two tables side by side, and an edit in one shows in the other.
+- Two tables can be shown [side by side](#two-tables-side-by-side), each in
+  a window of its own.
 - The box at the top shows the source of the current cell; the grid shows
   the value.
 - Selecting several cells shows their count, sum and average in the footer.
@@ -32,6 +32,26 @@ rewrites the text, and saving writes exactly that.
 | F1 | functions |
 | F2 | view the source |
 | Ctrl+? | all shortcuts |
+
+### Two tables side by side
+
+1. Open the sheet and go to the first table.
+2. Right-click the tab of the second table and choose **Open in new window**.
+   Or press Ctrl+Shift+N for a second window on the same table, and pick the
+   other tab there.
+3. On Omarchy the new window tiles beside the first. Elsewhere, place the two
+   windows next to each other yourself.
+
+Both windows show the same sheet, so an edit in one shows in the other at
+once, and undo and save work from either. Each window has its own table,
+cursor and text size. Cells cut or copied in one can be pasted in the other.
+
+Closing one window leaves the sheet open in the other; the last one asks
+about unsaved changes. Opening another file, or a new sheet, changes every
+window.
+
+Starting the app twice on the same file is not the same thing: those are two
+separate copies, and the one saved last overwrites the other.
 
 ## The command line
 
