@@ -2,9 +2,10 @@
 
 //! Omasheet: an interactive grid for `.omx` sheets.
 //!
-//! The window is Qt Quick (`qml/Main.qml`); everything it shows and every
-//! edit goes through the `Sheet` object in `sheet.rs`, which wraps the
-//! engine's editable [`Document`](omasheet_engine::Document).
+//! The windows are Qt Quick (`qml/Main.qml`, opened by `qml/App.qml`);
+//! everything they show and every edit goes through the one `Sheet` object
+//! in `sheet.rs`, which wraps the engine's editable
+//! [`Document`](omasheet_engine::Document).
 
 mod json;
 mod sheet;
@@ -31,7 +32,7 @@ fn main() {
 
     let mut engine = QQmlApplicationEngine::new();
     if let Some(engine) = engine.as_mut() {
-        engine.load(&QUrl::from("qrc:/qt/qml/io/omacom/omasheet/qml/Main.qml"));
+        engine.load(&QUrl::from("qrc:/qt/qml/io/omacom/omasheet/qml/App.qml"));
     }
     if let Some(app) = app.as_mut() {
         std::process::exit(app.exec());

@@ -10,6 +10,8 @@ Needs Qt 6 (`qt6-base`, `qt6-declarative`). The file is the sheet: every edit
 rewrites the text, and saving writes exactly that.
 
 - One tab per table, plus the constants.
+- Ctrl+Shift+N, or a right-click on a tab, opens another window on the same
+  sheet: two tables side by side, and an edit in one shows in the other.
 - The box at the top shows the source of the current cell; the grid shows
   the value.
 - Selecting several cells shows their count, sum and average in the footer.
@@ -25,6 +27,7 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+Delete | delete the selected rows |
 | Ctrl+Z / Ctrl+Y | undo / redo |
 | Ctrl+PgUp / PgDn | previous / next table |
+| Ctrl+Shift+N | another window on this sheet |
 | Ctrl+O / S, Ctrl+Shift+S | open / save, save as |
 | F1 | functions |
 | F2 | view the source |

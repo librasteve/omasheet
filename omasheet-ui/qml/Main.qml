@@ -58,9 +58,14 @@ ApplicationWindow {
 
     // ---- document state ----------------------------------------------------
 
-    Sheet {
-        id: sheet
-    }
+    // The sheet, shared with every other window open on it.
+    required property Sheet sheet
+    // Whether this is the only window on the sheet.
+    property bool alone: true
+    // Asks for another window on the same sheet, showing the table `tab`.
+    signal newWindow(int tab)
+    // The window has closed for good.
+    signal dismissed()
 
     // The parsed snapshot, and the tabs made from it: one per table, plus
     // the constants shown as a table of their own.
@@ -95,6 +100,8 @@ ApplicationWindow {
     function reload() {
         // Any edit may renumber the columns that were cut.
         grabbed = null;
+        // Stay on the same table when another window adds or removes one.
+        var name = table.name, consts = table.isConsts;
         var parsed = JSON.parse(sheet.snapshotJson());
         var list = [];
         for (var i = 0; i < parsed.tables.length; i++) {
@@ -124,6 +131,12 @@ ApplicationWindow {
         }
         snap = parsed;
         tabs = list;
+        for (var t = 0; t < list.length; t++) {
+            if (list[t].name === name && list[t].isConsts === consts) {
+                tab = t;
+                break;
+            }
+        }
         if (tab >= tabs.length)
             tab = Math.max(0, tabs.length - 1);
         measure();
@@ -505,8 +518,11 @@ ApplicationWindow {
     }
 
     onClosing: function(close) {
-        if (closeConfirmed || !sheet.modified)
+        // Nothing is lost while another window still shows the sheet.
+        if (closeConfirmed || !sheet.modified || !alone) {
+            dismissed();
             return;
+        }
         close.accepted = false;
         guard("close");
     }
@@ -518,9 +534,6 @@ ApplicationWindow {
 
     Component.onCompleted: {
         reload();
-        var args = Qt.application.arguments;
-        if (args.length > 1 && sheet.openPath(args[1]))
-            switchTab(0);
         grid.forceActiveFocus();
     }
 
@@ -559,22 +572,23 @@ ApplicationWindow {
 
     readonly property bool typing: editing || formulaField.activeFocus || promptDialog.opened
 
-    Shortcut { sequence: "Ctrl+S"; context: Qt.ApplicationShortcut; onActivated: win.save() }
-    Shortcut { sequence: "Ctrl+Shift+S"; context: Qt.ApplicationShortcut; onActivated: saveDialog.open() }
-    Shortcut { sequence: "Ctrl+O"; context: Qt.ApplicationShortcut; onActivated: win.guard("open") }
-    Shortcut { sequence: "Ctrl+N"; context: Qt.ApplicationShortcut; onActivated: win.guard("new") }
+    Shortcut { sequence: "Ctrl+S"; onActivated: win.save() }
+    Shortcut { sequence: "Ctrl+Shift+S"; onActivated: saveDialog.open() }
+    Shortcut { sequence: "Ctrl+O"; onActivated: win.guard("open") }
+    Shortcut { sequence: "Ctrl+N"; onActivated: win.guard("new") }
+    Shortcut { sequence: "Ctrl+Shift+N"; onActivated: win.newWindow(win.tab) }
     Shortcut { sequence: "Ctrl+Z"; enabled: !win.typing; onActivated: sheet.undo() }
     Shortcut { sequences: ["Ctrl+Shift+Z", "Ctrl+Y"]; enabled: !win.typing; onActivated: sheet.redo() }
-    Shortcut { sequences: ["Ctrl++", "Ctrl+="]; context: Qt.ApplicationShortcut; onActivated: win.zoom(1) }
-    Shortcut { sequence: "Ctrl+-"; context: Qt.ApplicationShortcut; onActivated: win.zoom(-1) }
-    Shortcut { sequence: "Ctrl+0"; context: Qt.ApplicationShortcut; onActivated: win.zoom(0) }
+    Shortcut { sequences: ["Ctrl++", "Ctrl+="]; onActivated: win.zoom(1) }
+    Shortcut { sequence: "Ctrl+-"; onActivated: win.zoom(-1) }
+    Shortcut { sequence: "Ctrl+0"; onActivated: win.zoom(0) }
     Shortcut { sequence: "Ctrl+PgDown"; onActivated: win.switchTab(win.tab + 1) }
     Shortcut { sequence: "Ctrl+PgUp"; onActivated: win.switchTab(win.tab - 1) }
-    Shortcut { sequence: "Ctrl+?"; context: Qt.ApplicationShortcut; onActivated: helpDialog.open() }
-    Shortcut { sequence: "F1"; context: Qt.ApplicationShortcut; onActivated: functionsDialog.open() }
-    Shortcut { sequence: "F2"; context: Qt.ApplicationShortcut
+    Shortcut { sequence: "Ctrl+?"; onActivated: helpDialog.open() }
+    Shortcut { sequence: "F1"; onActivated: functionsDialog.open() }
+    Shortcut { sequence: "F2"
         onActivated: sourceDialog.visible ? sourceDialog.close() : sourceDialog.open() }
-    Shortcut { sequences: ["Meta+F", "F11"]; context: Qt.ApplicationShortcut
+    Shortcut { sequences: ["Meta+F", "F11"]
         onActivated: win.visibility = win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen }
 
     // ---- layout ------------------------------------------------------------
@@ -1104,6 +1118,10 @@ ApplicationWindow {
                         label: win.tabs[index].name
                         active: index === win.tab
                         onClicked: win.switchTab(index)
+                        onRightClicked: {
+                            tabMenu.index = index;
+                            tabMenu.popup();
+                        }
                     }
                 }
                 FooterButton { label: "+ Table"; quiet: true; onClicked: promptDialog.ask("table") }
@@ -1184,6 +1202,7 @@ ApplicationWindow {
         property bool quiet: false
         property color textColor: win.textColor
         signal clicked()
+        signal rightClicked()
         implicitWidth: buttonText.implicitWidth + 22
         implicitHeight: win.fontSize * 2
         Layout.alignment: Qt.AlignVCenter
@@ -1205,7 +1224,12 @@ ApplicationWindow {
             id: area
             anchors.fill: parent
             hoverEnabled: true
-            onClicked: {
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            onClicked: function(mouse) {
+                if (mouse.button === Qt.RightButton) {
+                    button.rightClicked();
+                    return;
+                }
                 button.clicked();
                 grid.forceActiveFocus();
             }
@@ -1298,6 +1322,18 @@ ApplicationWindow {
         MenuRule {}
         MenuEntry { text: "Undo"; enabled: sheet.canUndo; onTriggered: sheet.undo() }
         MenuEntry { text: "Redo"; enabled: sheet.canRedo; onTriggered: sheet.redo() }
+    }
+
+    // Right-click on a table's tab.
+    Menu {
+        id: tabMenu
+        property int index: 0
+        onClosed: grid.forceActiveFocus()
+        topPadding: 4
+        bottomPadding: 4
+        width: Math.round(win.fontSize * 15)
+
+        MenuEntry { text: "Open in new window"; onTriggered: win.newWindow(tabMenu.index) }
     }
 
     // ---- dialogs -----------------------------------------------------------
@@ -1738,6 +1774,7 @@ ApplicationWindow {
                 + "Ctrl+O / S           Open / save\n"
                 + "Ctrl+Shift+S         Save as\n"
                 + "Ctrl+N               New sheet\n"
+                + "Ctrl+Shift+N         New window on this sheet\n"
                 + "Ctrl++ / Ctrl+-      Larger / smaller text (Ctrl+0 resets)\n"
                 + "F1                   Functions\n"
                 + "F2                   View the source\n"
