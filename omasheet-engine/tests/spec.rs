@@ -127,6 +127,15 @@ fn positional_indexing() {
 fn ranges() {
     assert_eq!(ask(SALES, "Sales[; 0..2].count()"), "3");
     assert_eq!(ask(SALES, "Sales[; 0..^2].count()"), "2");
+    assert_eq!(ask(SALES, "Sales[; 0^..2].count()"), "2");
+    assert_eq!(ask(SALES, "Sales[; 0^..^2].count()"), "1");
+    assert_eq!(ask(SALES, "Sales[; ^2].count()"), "2");
+    assert_eq!(calc("sum(0^..10)"), "55");
+    assert_eq!(calc("sum(^5)"), "10");
+    assert_eq!(
+        calc("[0 in 0^..10, 10 in 0^..10, 0 in ^5, 5 in ^5]"),
+        "[false, true, true, false]"
+    );
     let sheet = format!("const Rows = 1..2\nconst Cols = 2..3\n\n{SALES}");
     assert_eq!(
         ask(&sheet, "Sales[Cols; Rows]"),

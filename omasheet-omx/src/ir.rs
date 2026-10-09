@@ -93,6 +93,8 @@ pub enum RowSel {
     Range {
         lo: Bound,
         hi: Bound,
+        /// Leaves out its first end: `lo^..hi`.
+        after: bool,
         exclusive: bool,
     },
     /// A range value, such as a constant bound to `2..100`.

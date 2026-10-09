@@ -317,6 +317,12 @@ impl<'p> Engine<'p> {
                 let (t, r) = fr[fr.len() - 1 - depth];
                 self.cell(t, *col, r)
             }
+            Ir::Unary(UnOp::UpTo, operand) => Ok(Value::Range {
+                lo: 0,
+                hi: self.int(operand, fr)?,
+                after: false,
+                exclusive: true,
+            }),
             Ir::Unary(op, operand) => {
                 let v = self.eval(operand, fr)?;
                 let apply = |v: &Value| -> R {
@@ -329,6 +335,7 @@ impl<'p> Engine<'p> {
                         }
                         (UnOp::Not, v) => fail(span, format!("cannot apply `not` to {}", v.kind())),
                         (UnOp::Neg, v) => fail(span, format!("cannot negate {}", v.kind())),
+                        (UnOp::UpTo, v) => fail(span, format!("cannot count up to {}", v.kind())),
                     }
                 };
                 match &v {
@@ -435,13 +442,15 @@ impl<'p> Engine<'p> {
                     v => Ok(v),
                 }
             }
-            BinOp::Range | BinOp::RangeEx => {
+            BinOp::Range | BinOp::RangeEx | BinOp::RangeFrom | BinOp::RangeBoth => {
                 let lo = self.int(l, fr)?;
                 let hi = self.int(r, fr)?;
+                let (after, exclusive) = op.range_ends().unwrap_or_default();
                 Ok(Value::Range {
                     lo,
                     hi,
-                    exclusive: op == BinOp::RangeEx,
+                    after,
+                    exclusive,
                 })
             }
             BinOp::In => {
@@ -458,8 +467,15 @@ impl<'p> Engine<'p> {
                         }
                         Ok(Value::Bool(false))
                     }
-                    Value::Range { lo, hi, exclusive } => Ok(Value::Bool(match needle.as_i64() {
-                        Some(n) => n >= lo && (n < hi || (n == hi && !exclusive)),
+                    Value::Range {
+                        lo,
+                        hi,
+                        after,
+                        exclusive,
+                    } => Ok(Value::Bool(match needle.as_i64() {
+                        Some(n) => {
+                            (n > lo || (n == lo && !after)) && (n < hi || (n == hi && !exclusive))
+                        }
                         None => false,
                     })),
                     other => fail(
@@ -700,7 +716,13 @@ impl<'p> Engine<'p> {
                     Value::Table(v) if func == Func::Count => {
                         return Ok(Value::Int(BigInt::from(v.rows.len())));
                     }
-                    Value::Range { lo, hi, exclusive } => {
+                    Value::Range {
+                        lo,
+                        hi,
+                        after,
+                        exclusive,
+                    } => {
+                        let lo = if after { lo + 1 } else { lo };
                         let hi = if exclusive { hi - 1 } else { hi };
                         Rc::new((lo..=hi).map(|n| Value::Int(BigInt::from(n))).collect())
                     }
@@ -809,7 +831,12 @@ impl<'p> Engine<'p> {
                 let at = cursor(fr)? + self.offset(off, fr)?;
                 Rows::One((at >= 0 && at < n).then_some(at as usize))
             }
-            RowSel::Range { lo, hi, exclusive } => {
+            RowSel::Range {
+                lo,
+                hi,
+                after,
+                exclusive,
+            } => {
                 let bound = |b: &Bound, fr: &mut Frames| -> R<i64> {
                     Ok(match b {
                         Bound::Abs(node) => from_end(self.int(node, fr)?),
@@ -818,12 +845,23 @@ impl<'p> Engine<'p> {
                 };
                 let lo = bound(lo, fr)?;
                 let hi = bound(hi, fr)?;
-                range(lo, if *exclusive { hi - 1 } else { hi })
+                range(
+                    if *after { lo + 1 } else { lo },
+                    if *exclusive { hi - 1 } else { hi },
+                )
             }
             RowSel::RangeVal(node) => match self.eval(node, fr)? {
-                Value::Range { lo, hi, exclusive } => {
-                    let hi = from_end(hi);
-                    range(from_end(lo), if exclusive { hi - 1 } else { hi })
+                Value::Range {
+                    lo,
+                    hi,
+                    after,
+                    exclusive,
+                } => {
+                    let (lo, hi) = (from_end(lo), from_end(hi));
+                    range(
+                        if after { lo + 1 } else { lo },
+                        if exclusive { hi - 1 } else { hi },
+                    )
                 }
                 other => {
                     return fail(

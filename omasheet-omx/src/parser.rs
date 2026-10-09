@@ -3,7 +3,7 @@
 //! Recursive-descent parser for OMX expressions.
 //!
 //! Precedence, loosest first:
-//! `|>`, `or`, `and`, `not`, `//`, comparison and `in`, `..`, `+ -`, `* /`,
+//! `|>`, `or`, `and`, `not`, `//`, comparison and `in`, `..` and `^n`, `+ -`, `* /`,
 //! unary `-`, `**`, then postfix `[ ]`, `.Name` and calls.
 
 use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
@@ -189,10 +189,22 @@ impl Parser {
     }
 
     fn range(&mut self) -> R<Expr> {
+        // `^5`: the first five, 0 to 4.
+        if self.peek() == &Tok::Caret {
+            let start = self.bump().span;
+            let operand = self.additive()?;
+            let span = start.to(operand.span);
+            return Ok(Expr {
+                kind: ExprKind::Unary(UnOp::UpTo, Box::new(operand)),
+                span,
+            });
+        }
         let lhs = self.additive()?;
         let op = match self.peek() {
             Tok::DotDot => BinOp::Range,
             Tok::DotDotCaret => BinOp::RangeEx,
+            Tok::CaretDotDot => BinOp::RangeFrom,
+            Tok::CaretDotDotCaret => BinOp::RangeBoth,
             _ => return Ok(lhs),
         };
         self.bump();
@@ -428,6 +440,14 @@ mod tests {
         assert!(matches!(
             parse("-2 ** 2").unwrap().kind,
             ExprKind::Unary(UnOp::Neg, _)
+        ));
+        assert!(matches!(
+            parse("0^..10").unwrap().kind,
+            ExprKind::Binary(BinOp::RangeFrom, ..)
+        ));
+        assert!(matches!(
+            parse("3 in ^5").unwrap().kind,
+            ExprKind::Binary(BinOp::In, _, r) if matches!(r.kind, ExprKind::Unary(UnOp::UpTo, _))
         ));
     }
 

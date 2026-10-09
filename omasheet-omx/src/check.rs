@@ -109,11 +109,12 @@ pub enum Group {
     },
 }
 
-/// A constant whose value is plain from its source: `3` or `3..7`.
+/// A constant whose value is plain from its source: `3` or `3..7`. A range
+/// says whether it leaves out its first end, and its last.
 #[derive(Clone, Copy, Debug)]
 enum Static {
     Int(i64),
-    Range(i64, i64, bool),
+    Range(i64, i64, bool, bool),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -279,9 +280,11 @@ fn static_of(e: &Expr) -> Option<Static> {
         }
     }
     match &e.kind {
-        ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeEx), lo, hi) => {
-            Some(Static::Range(int(lo)?, int(hi)?, *op == BinOp::RangeEx))
+        ExprKind::Binary(op, lo, hi) if op.range_ends().is_some() => {
+            let (after, exclusive) = op.range_ends()?;
+            Some(Static::Range(int(lo)?, int(hi)?, after, exclusive))
         }
+        ExprKind::Unary(UnOp::UpTo, n) => Some(Static::Range(0, int(n)?, false, true)),
         _ => int(e).map(Static::Int),
     }
 }
@@ -1002,6 +1005,20 @@ impl<'a> Checker<'a> {
                 );
                 fail
             }
+            ExprKind::Unary(UnOp::UpTo, operand) => {
+                let (node, ty) = self.lower(operand, sc);
+                if !matches!(ty, Ty::Any | Ty::Scalar(S::Int | S::Any)) {
+                    self.err(
+                        operand.span,
+                        format!("the end of a range must be Int, found {}", ty.describe()),
+                    );
+                    return fail;
+                }
+                (
+                    Node::new(Ir::Unary(UnOp::UpTo, Box::new(node)), span),
+                    Ty::Range,
+                )
+            }
             ExprKind::Unary(op, operand) => {
                 let (node, ty) = self.lower(operand, sc);
                 let (s, vector) = match &ty {
@@ -1019,6 +1036,7 @@ impl<'a> Checker<'a> {
                 let ok = match op {
                     UnOp::Neg => s.is_numeric(),
                     UnOp::Not => matches!(s, S::Bool | S::Any),
+                    UnOp::UpTo => false,
                 };
                 if !ok {
                     self.err(span, format!("cannot apply `{}` to {s}", unop_text(*op)));
@@ -1266,7 +1284,7 @@ impl<'a> Checker<'a> {
         let sym = op.symbol();
 
         match op {
-            BinOp::Range | BinOp::RangeEx => {
+            BinOp::Range | BinOp::RangeEx | BinOp::RangeFrom | BinOp::RangeBoth => {
                 for (ty, e) in [(&lty, l), (&rty, r)] {
                     if !matches!(ty, Ty::Any | Ty::Scalar(S::Int | S::Any)) {
                         self.err(
@@ -2005,14 +2023,14 @@ impl<'a> Checker<'a> {
             };
         }
 
-        if let ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeEx), lo, hi) = &e.kind
+        if let ExprKind::Binary(op, lo, hi) = &e.kind
+            && let Some((after, exclusive)) = op.range_ends()
             && (cursor_form(lo).is_some() || cursor_form(hi).is_some())
         {
             {
                 if !need_row(self, e) {
                     return RowPick::all(nrows);
                 }
-                let exclusive = *op == BinOp::RangeEx;
                 let mut bound = |ck: &mut Checker, e: &Expr| match cursor_form(e) {
                     Some(form) => {
                         let (off, known) = ck.offset(form, sc);
@@ -2031,6 +2049,7 @@ impl<'a> Checker<'a> {
                 };
                 let (lo_b, lo_off) = bound(self, lo);
                 let (hi_b, hi_off) = bound(self, hi);
+                let lo_off = lo_off.map(|n| if after { n + 1 } else { n });
                 let last = hi_off.map(|n| if exclusive { n - 1 } else { n });
                 let kind = match (lo_off, last) {
                     (_, Some(n)) if own && n < 0 => DepKind::Back,
@@ -2041,6 +2060,7 @@ impl<'a> Checker<'a> {
                     sel: RowSel::Range {
                         lo: lo_b,
                         hi: hi_b,
+                        after,
                         exclusive,
                     },
                     one: false,
@@ -2178,7 +2198,8 @@ impl<'a> Checker<'a> {
         };
         // `*-4..*-1`: a range with an end counted from the formula's own
         // column.
-        if let ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeEx), lo, hi) = &e.kind
+        if let ExprKind::Binary(op, lo, hi) = &e.kind
+            && let Some((after, exclusive)) = op.range_ends()
             && (cursor_form(lo).is_some() || cursor_form(hi).is_some())
         {
             let here = own
@@ -2211,11 +2232,8 @@ impl<'a> Checker<'a> {
                 at
             };
             let (first, last) = (end(self, lo)?, end(self, hi)?);
-            let last = if *op == BinOp::RangeEx {
-                last - 1
-            } else {
-                last
-            };
+            let first = if after { first + 1 } else { first };
+            let last = if exclusive { last - 1 } else { last };
             if first < 0 || last >= n {
                 self.err(
                     e.span,
@@ -2294,8 +2312,9 @@ impl<'a> Checker<'a> {
                 }
                 Some(ColSel::One(tt.cols[at(k) as usize]))
             }
-            Some(Static::Range(lo, hi, exclusive)) => {
-                let (lo_at, hi_at) = (at(lo), if exclusive { at(hi) - 1 } else { at(hi) });
+            Some(Static::Range(lo, hi, after, exclusive)) => {
+                let lo_at = if after { at(lo) + 1 } else { at(lo) };
+                let hi_at = if exclusive { at(hi) - 1 } else { at(hi) };
                 if lo_at < 0 || lo_at >= n {
                     return out_of_range(self, lo);
                 }
@@ -2445,5 +2464,6 @@ fn unop_text(op: UnOp) -> &'static str {
     match op {
         UnOp::Neg => "-",
         UnOp::Not => "not",
+        UnOp::UpTo => "^",
     }
 }

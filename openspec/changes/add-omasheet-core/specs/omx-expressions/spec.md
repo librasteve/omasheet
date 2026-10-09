@@ -92,12 +92,17 @@ count from the end, so `[-1]` is the last element.
 
 ### Requirement: Ranges
 `a..b` SHALL denote the inclusive range from `a` to `b`. `a..^b` SHALL denote the
-range excluding `b`. Ranges SHALL be first-class values that can be bound to
+range excluding `b`, `a^..b` the range excluding `a`, and `a^..^b` the range
+excluding both. `^n` SHALL denote `0..^n`. Ranges SHALL be first-class values that can be bound to
 names and used in any index slot.
 
 #### Scenario: Inclusive and exclusive
 - **WHEN** `Sales[; 0..2]` and `Sales[; 0..^2]` are evaluated
 - **THEN** the first has three rows and the second has two
+
+#### Scenario: Excluding the start
+- **WHEN** `sum(0^..10)` and `sum(^5)` are evaluated
+- **THEN** the results are `55` and `10`
 
 #### Scenario: Range bound to a name
 - **GIVEN** `const Rows = 2..100` and `const Cols = 3..7`

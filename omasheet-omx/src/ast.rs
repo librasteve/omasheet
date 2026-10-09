@@ -55,6 +55,8 @@ pub enum ExprKind {
 pub enum UnOp {
     Neg,
     Not,
+    /// `^n`: the range of the first `n`, from 0 to `n - 1`.
+    UpTo,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,6 +78,8 @@ pub enum BinOp {
     Fallback,
     Range,
     RangeEx,
+    RangeFrom,
+    RangeBoth,
 }
 
 impl BinOp {
@@ -98,6 +102,19 @@ impl BinOp {
             BinOp::Fallback => "//",
             BinOp::Range => "..",
             BinOp::RangeEx => "..^",
+            BinOp::RangeFrom => "^..",
+            BinOp::RangeBoth => "^..^",
+        }
+    }
+
+    /// For a range: whether it leaves out its first end, and its last.
+    pub fn range_ends(self) -> Option<(bool, bool)> {
+        match self {
+            BinOp::Range => Some((false, false)),
+            BinOp::RangeEx => Some((false, true)),
+            BinOp::RangeFrom => Some((true, false)),
+            BinOp::RangeBoth => Some((true, true)),
+            _ => None,
         }
     }
 

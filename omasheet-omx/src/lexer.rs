@@ -44,6 +44,9 @@ pub enum Tok {
     SlashSlash,
     DotDot,
     DotDotCaret,
+    CaretDotDot,
+    CaretDotDotCaret,
+    Caret,
     Pipe,
     LParen,
     RParen,
@@ -95,6 +98,9 @@ impl Tok {
             Tok::SlashSlash => "//",
             Tok::DotDot => "..",
             Tok::DotDotCaret => "..^",
+            Tok::CaretDotDot => "^..",
+            Tok::CaretDotDotCaret => "^..^",
+            Tok::Caret => "^",
             Tok::Pipe => "|>",
             Tok::LParen => "(",
             Tok::RParen => ")",
@@ -214,7 +220,11 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
             continue;
         }
         let rest = &text[i..];
-        let (tok, len) = if rest.starts_with("..^") {
+        let (tok, len) = if rest.starts_with("^..^") {
+            (Tok::CaretDotDotCaret, 4)
+        } else if rest.starts_with("^..") {
+            (Tok::CaretDotDot, 3)
+        } else if rest.starts_with("..^") {
             (Tok::DotDotCaret, 3)
         } else if rest.starts_with("..") {
             (Tok::DotDot, 2)
@@ -248,6 +258,7 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                 b',' => Tok::Comma,
                 b';' => Tok::Semi,
                 b'.' => Tok::Dot,
+                b'^' => Tok::Caret,
                 _ => {
                     let ch = rest.chars().next().unwrap();
                     return Err(Diagnostic::new(

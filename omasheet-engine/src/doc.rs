@@ -233,11 +233,13 @@ fn offset_text(by: i64) -> String {
     }
 }
 
-/// The two ends of a range, and whether it stops short of the second.
-fn range_ends(e: &Expr) -> Option<(&Expr, &Expr, bool)> {
+/// The two ends of a range, and whether it starts after the first and stops
+/// short of the second.
+fn range_ends(e: &Expr) -> Option<(&Expr, &Expr, bool, bool)> {
     match &e.kind {
-        ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeEx), lo, hi) => {
-            Some((lo, hi, *op == BinOp::RangeEx))
+        ExprKind::Binary(op, lo, hi) => {
+            let (after, exclusive) = op.range_ends()?;
+            Some((lo, hi, after, exclusive))
         }
         _ => None,
     }
@@ -464,12 +466,15 @@ fn follow_slot(
     let n = place.len();
     let moved = |k: i64| usize::try_from(k).ok().and_then(|k| place.get(k)).copied();
     let new_own = own.and_then(|k| place.get(k)).copied();
-    if let Some((lo, hi, exclusive)) = range_ends(slot) {
+    if let Some((lo, hi, after, exclusive)) = range_ends(slot) {
         let (Some(first), Some(last)) = (Pick::of(lo), Pick::of(hi)) else {
             return;
         };
-        let past = i64::from(exclusive);
-        let ends = first.at(own, n).zip(last.at(own, n).map(|k| k - past));
+        let (skip, past) = (i64::from(after), i64::from(exclusive));
+        let ends = first
+            .at(own, n)
+            .map(|k| k + skip)
+            .zip(last.at(own, n).map(|k| k - past));
         let Some((a, b)) = ends.filter(|(a, b)| a <= b) else {
             return;
         };
@@ -477,8 +482,16 @@ fn follow_slot(
             return;
         };
         let (a, b) = (a.min(b) as i64, a.max(b) as i64);
-        put(edits, text, lo.span, first.write(a, new_own, count));
-        put(edits, text, hi.span, last.write(b + past, new_own, count));
+        let to = last.write(b + past, new_own, count);
+        if matches!(first, Pick::At(_)) && a < skip {
+            // Nothing comes before the first to start after: start on it.
+            let op = if exclusive { "..^" } else { ".." };
+            let from = first.write(a, new_own, count);
+            put(edits, text, slot.span, format!("{from}{op}{to}"));
+        } else {
+            put(edits, text, lo.span, first.write(a - skip, new_own, count));
+            put(edits, text, hi.span, to);
+        }
     } else if let Some(pick) = Pick::of(slot).filter(|p| *p != Pick::Here)
         && let Some(to) = pick.at(own, n).and_then(moved)
     {
@@ -653,7 +666,7 @@ fn shift_slot(slot: &Expr, by: i64, text: &str, edits: &mut Vec<Edit>) {
         }
     };
     match range_ends(slot) {
-        Some((lo, hi, _)) => {
+        Some((lo, hi, ..)) => {
             let here = |e: &Expr| Pick::of(e) == Some(Pick::Here);
             if !here(lo) && !here(hi) {
                 shift(lo, edits);
@@ -2513,6 +2526,27 @@ mod tests {
         assert!(doc.paste_cut(0, (0, 1), (0, 0), &[vec!["= [*-1; *]".to_string()]]));
         assert!(doc.text().contains("\n= [*; *] |\n"), "{}", doc.text());
         assert!(!doc.snapshot().problems.is_empty());
+    }
+
+    #[test]
+    fn moved_rows_keep_a_range_that_starts_after() {
+        let text = "table T\n\nName | N | M\na | 1 |\nb | 2 |\nc | 3 |\n\
+                    d | 4 | = sum([N; 0^..2]) + sum([N; ^2])\n";
+        let mut doc = Document::from_text(text);
+        assert_eq!(col(&doc, 0, 2), ["", "", "", "8"]);
+        // `b` to the bottom: the range still starts after `a`, and the
+        // first two are whichever rows are first.
+        doc.move_rows(0, 1, 1, 3).unwrap();
+        let now = doc.text();
+        assert!(
+            now.contains("| = sum([N; 0^..3]) + sum([N; ^2])\n"),
+            "{now}"
+        );
+        // `a` to the bottom: there is no row left to start after.
+        doc.move_rows(0, 0, 1, 3).unwrap();
+        let now = doc.text();
+        assert!(now.contains("| = sum([N; 0..2]) + sum([N; ^2])\n"), "{now}");
+        assert!(doc.snapshot().problems.is_empty());
     }
 
     #[test]

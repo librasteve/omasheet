@@ -27,6 +27,8 @@ is empty). `if c then a else b`.
 | `Sales[Revenue; 1]` | one cell; positions count from 0 |
 | `Sales[Revenue; -1]` | the last row |
 | `Sales[; 0..2]` | rows 0 to 2, every column; `0..^2` leaves out the end |
+| `Sales[; 0^..2]` | rows 1 to 2: `^..` leaves out the start, `^..^` both ends |
+| `Sales[; ^2]` | the first two rows: `^n` is `0..^n` |
 | `Sales[Revenue]` | the whole column: a missing or empty slot is all of it |
 | `Sales[; Revenue > 11000]` | the rows where it is true |
 | `Sales[Revenue; *-1]` | the row before this one; `*` is this row |

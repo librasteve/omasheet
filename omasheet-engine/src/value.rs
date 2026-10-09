@@ -38,6 +38,8 @@ pub enum Value {
     Range {
         lo: i64,
         hi: i64,
+        /// Leaves out its first end: `lo^..hi`.
+        after: bool,
         exclusive: bool,
     },
     Vector(Rc<Vec<Value>>),
@@ -466,8 +468,19 @@ pub fn format_styled(v: &Value, quoted: bool, style: &Style) -> String {
             if style.is_iso() { "" } else { " " },
             format_offset(z.offset())
         ),
-        Value::Range { lo, hi, exclusive } => {
-            format!("{lo}{}{hi}", if *exclusive { "..^" } else { ".." })
+        Value::Range {
+            lo,
+            hi,
+            after,
+            exclusive,
+        } => {
+            let op = match (after, exclusive) {
+                (false, false) => "..",
+                (false, true) => "..^",
+                (true, false) => "^..",
+                (true, true) => "^..^",
+            };
+            format!("{lo}{op}{hi}")
         }
         Value::Vector(items) => {
             let parts: Vec<String> = items
