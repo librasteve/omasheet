@@ -12,5 +12,5 @@ When                | Memo            | Amount
 2025-01-28T00:05    | Salary          | 3100
 2025-02-02T13:30    | Electricity     | -64.15
 
-Balance := (Ledger[*-1; Balance] // 0) + Amount
-Average := Ledger[0..*; Amount].avg()
+Balance := (Ledger[Balance; *-1] // 0) + Amount
+Average := Ledger[Amount; 0..*].avg()

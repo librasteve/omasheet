@@ -16,7 +16,7 @@ Mar   | 15000   | 8000
 
 Profit  := Revenue - Cost
 Tax     := Profit * TaxRate
-Running := [0..*; Revenue].sum()
+Running := [Revenue; 0..*].sum()
 ```
 
 ## Run

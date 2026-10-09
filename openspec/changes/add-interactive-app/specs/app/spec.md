@@ -37,7 +37,7 @@ entry box, or in the cell itself, SHALL replace the cell's source.
 - **THEN** the cell shows `12500` and every value that depends on it is recalculated
 
 #### Scenario: Enter a formula
-- **WHEN** `= Sales[*-1; Revenue] * 1.1` is committed into a cell
+- **WHEN** `= Sales[Revenue; *-1] * 1.1` is committed into a cell
 - **THEN** the cell shows the calculated value and the entry box shows the formula
 
 #### Scenario: Edit a computed column

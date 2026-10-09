@@ -65,7 +65,7 @@ fn eval_pure_arithmetic() {
 
 #[test]
 fn eval_against_a_sheet() {
-    let expr = "Orders[Region == \"US\"; Total].sum()";
+    let expr = "Orders[Total; Region == \"US\"].sum()";
     let flag = omasheet(&["eval", "--sheet", "examples/orders.omx", expr]);
     let positional = omasheet(&["eval", "examples/orders.omx", expr]);
     assert_eq!(stdout(&flag), "74.47\n");

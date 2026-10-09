@@ -16,68 +16,68 @@
 #   order  a formula column that reads the row before: recalculated for the
 #          new order of rows
 
-const Corner  = Grid[0; 1]
-const LastApr = Grid[-1; Apr]
+const Corner  = Grid[1; 0]
+const LastApr = Grid[Apr; -1]
 
 table Grid
 
 Item | Jan | Feb | Mar | Apr | Total                                       | Prev                | Mix
-r00  | 1   | 10  | 100 | 1   | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = 0                 | = [*; *-2]
-r01  | 2   | 20  | 101 | 3   | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = [*-1; *-2]
-r02  | 3   | 30  | 102 | 5   | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = [0; 1]
-r03  | 4   | 40  | 103 | 7   | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = [0; Jan]
-r04  | 5   | 50  | 104 | 9   | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = Grid[3; 2]
-r05  | 6   | 60  | 105 | 11  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = [*; 1] * 2
-r06  | 7   | 70  | 106 | 13  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = [5; *-3]
-r07  | 8   | 80  | 107 | 15  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = [-1; Apr]
-r08  | 9   | 90  | 108 | 17  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = [*+1; Jan]
-r09  | 10  | 100 | 109 | 19  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = Jan + Feb
-r10  | 11  | 110 | 110 | 21  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = [*-1; *] + 1
-r11  | 12  | 120 | 111 | 23  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = sum([0..*; Jan])
-r12  | 13  | 130 | 112 | 25  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = sum([*-2..*-1; Feb])
-r13  | 14  | 140 | 113 | 27  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = sum([*; *-6..*-3])
-r14  | 15  | 150 | 114 | 29  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = [*; -6]
-r15  | 16  | 160 | 115 | 31  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = Grid.Jan[15]
-r16  | 17  | 170 | 116 | 33  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = Grid[16].Feb
-r17  | 18  | 180 | 117 | 35  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = [*-3; *-4] + [*-2; *-3]
-r18  | 19  | 190 | 118 | 37  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = if [*; Jan] > 10 then [*-1; Total] else 0
-r19  | 20  | 200 | 119 | 39  | = [*; *-4] + [*; *-3] + [*; *-2] + [*; *-1] | = [*-1; Total] // 0 | = [0; *-1]
+r00  | 1   | 10  | 100 | 1   | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = 0                 | = [*-2; *]
+r01  | 2   | 20  | 101 | 3   | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = [*-2; *-1]
+r02  | 3   | 30  | 102 | 5   | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = [1; 0]
+r03  | 4   | 40  | 103 | 7   | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = [Jan; 0]
+r04  | 5   | 50  | 104 | 9   | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = Grid[2; 3]
+r05  | 6   | 60  | 105 | 11  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = [1; *] * 2
+r06  | 7   | 70  | 106 | 13  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = [*-3; 5]
+r07  | 8   | 80  | 107 | 15  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = [Apr; -1]
+r08  | 9   | 90  | 108 | 17  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = [Jan; *+1]
+r09  | 10  | 100 | 109 | 19  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = Jan + Feb
+r10  | 11  | 110 | 110 | 21  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = [*; *-1] + 1
+r11  | 12  | 120 | 111 | 23  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = sum([Jan; 0..*])
+r12  | 13  | 130 | 112 | 25  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = sum([Feb; *-2..*-1])
+r13  | 14  | 140 | 113 | 27  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = sum([*-6..*-3; *])
+r14  | 15  | 150 | 114 | 29  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = [-6; *]
+r15  | 16  | 160 | 115 | 31  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = Grid.Jan[15]
+r16  | 17  | 170 | 116 | 33  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = Grid[; 16].Feb
+r17  | 18  | 180 | 117 | 35  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = [*-4; *-3] + [*-3; *-2]
+r18  | 19  | 190 | 118 | 37  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = if [Jan; *] > 10 then [Total; *-1] else 0
+r19  | 20  | 200 | 119 | 39  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [Total; *-1] // 0 | = [*-1; 0]
 
-Run    := Jan + ([*-1; Run] // 0)
-Scaled := [*; 1] * Grid[0; 2]
+Run    := Jan + ([Run; *-1] // 0)
+Scaled := [1; *] * Grid[2; 0]
 
 table Checks
 
 Kind  | Reads                      | Expect | Actual
-own   | "Mix of r00"               | 112    | = Grid[0; Mix]
-cell  | "Mix of r01"               | 112    | = Grid[1; Mix]
-cell  | "Mix of r02"               | 1      | = Grid[2; Mix]
-cell  | "Mix of r03"               | 1      | = Grid[3; Mix]
-cell  | "Mix of r04"               | 40     | = Grid[4; Mix]
-own   | "Mix of r05"               | 12     | = Grid[5; Mix]
-cell  | "Mix of r06"               | 11     | = Grid[6; Mix]
-cell  | "Mix of r07"               | 39     | = Grid[7; Mix]
-cell  | "Mix of r08"               | 10     | = Grid[8; Mix]
-own   | "Mix of r09"               | 110    | = Grid[9; Mix]
-own   | "Mix of r10"               | 111    | = Grid[10; Mix]
-range | "Mix of r11"               | 78     | = Grid[11; Mix]
-range | "Mix of r12"               | 230    | = Grid[12; Mix]
-range | "Mix of r13"               | 294    | = Grid[13; Mix]
-own   | "Mix of r14"               | 29     | = Grid[14; Mix]
-cell  | "Mix of r15"               | 16     | = Grid[15; Mix]
-cell  | "Mix of r16"               | 170    | = Grid[16; Mix]
-cell  | "Mix of r17"               | 145    | = Grid[17; Mix]
-own   | "Mix of r18"               | 350    | = Grid[18; Mix]
-cell  | "Mix of r19"               | 0      | = Grid[19; Mix]
-own   | "Total of r04"             | 168    | = Grid[4; Total]
-cell  | "Prev of r09"              | 224    | = Grid[9; Prev]
-cell  | "Prev of r09, by number"   | 224    | = Grid[9; 6]
-own   | "Scaled of r06"            | 70     | = Grid[6; Scaled]
+own   | "Mix of r00"               | 112    | = Grid[Mix; 0]
+cell  | "Mix of r01"               | 112    | = Grid[Mix; 1]
+cell  | "Mix of r02"               | 1      | = Grid[Mix; 2]
+cell  | "Mix of r03"               | 1      | = Grid[Mix; 3]
+cell  | "Mix of r04"               | 40     | = Grid[Mix; 4]
+own   | "Mix of r05"               | 12     | = Grid[Mix; 5]
+cell  | "Mix of r06"               | 11     | = Grid[Mix; 6]
+cell  | "Mix of r07"               | 39     | = Grid[Mix; 7]
+cell  | "Mix of r08"               | 10     | = Grid[Mix; 8]
+own   | "Mix of r09"               | 110    | = Grid[Mix; 9]
+own   | "Mix of r10"               | 111    | = Grid[Mix; 10]
+range | "Mix of r11"               | 78     | = Grid[Mix; 11]
+range | "Mix of r12"               | 230    | = Grid[Mix; 12]
+range | "Mix of r13"               | 294    | = Grid[Mix; 13]
+own   | "Mix of r14"               | 29     | = Grid[Mix; 14]
+cell  | "Mix of r15"               | 16     | = Grid[Mix; 15]
+cell  | "Mix of r16"               | 170    | = Grid[Mix; 16]
+cell  | "Mix of r17"               | 145    | = Grid[Mix; 17]
+own   | "Mix of r18"               | 350    | = Grid[Mix; 18]
+cell  | "Mix of r19"               | 0      | = Grid[Mix; 19]
+own   | "Total of r04"             | 168    | = Grid[Total; 4]
+cell  | "Prev of r09"              | 224    | = Grid[Prev; 9]
+cell  | "Prev of r09, by number"   | 224    | = Grid[6; 9]
+own   | "Scaled of r06"            | 70     | = Grid[Scaled; 6]
 cell  | "Corner"                   | 1      | = Corner
 cell  | "LastApr"                  | 39     | = LastApr
 cell  | "Jan of r19, from the end" | 20     | = Grid.Jan[-1]
-range | "Feb, rows 5 to 9"         | 400    | = sum(Grid[5..9; Feb])
-order | "Run of r19"               | 210    | = Grid[19; Run]
+range | "Feb, rows 5 to 9"         | 400    | = sum(Grid[Feb; 5..9])
+order | "Run of r19"               | 210    | = Grid[Run; 19]
 order | "Run, at its largest"      | 210    | = Grid.Run.max()
 
 OK := Expect == Actual
@@ -90,5 +90,5 @@ own
 range
 order
 
-Count  := Checks[Kind == Verdict[*; Kind]].count()
-Failed := Checks[Kind == Verdict[*; Kind] and not OK].count()
+Count  := Checks[; Kind == Verdict[Kind; *]].count()
+Failed := Checks[; Kind == Verdict[Kind; *] and not OK].count()

@@ -12,7 +12,7 @@ which Phase 1 leaves out to keep the first deliverable small.
 - **evaluation** — ADDED: grouping, joining, table operations preserve
   exactness, incremental recalculation
 - **omx-expressions** — ADDED: partitioned cursor offsets
-  (`Sales[*-1 by Region]`); MODIFIED: the pipe operator gains the `group` stage
+  (`Sales[; *-1 by Region]`); MODIFIED: the pipe operator gains the `group` stage
 
 ## Impact
 
@@ -26,4 +26,4 @@ which Phase 1 leaves out to keep the first deliverable small.
 - Polars or any other dataframe backend (design D11)
 
 - Pivot-table declarations, sort and window functions beyond the cursor
-- Relationship-following references (`Sales[*; CustomerID.Name]`) — design Q9
+- Relationship-following references (`Sales[CustomerID.Name; *]`) — design Q9

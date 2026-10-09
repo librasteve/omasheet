@@ -33,7 +33,7 @@ pub enum ExprKind {
     Name(String),
     /// `*`, the current row.
     Cursor,
-    /// The table of the current row: the base of `[*-1; Revenue]`, an index
+    /// The table of the current row: the base of `[Revenue; *-1]`, an index
     /// written with no table name.
     Own,
     Unary(UnOp, Box<Expr>),

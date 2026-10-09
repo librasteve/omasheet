@@ -152,7 +152,7 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
     let also_iso = if style.is_iso() { "" } else { " or ISO" };
     match ty {
         "Int" => "Int: a whole number, e.g. 42".into(),
-        "Rational" => "Rational: an exact number, e.g. 19.99, 20% or 1/7".into(),
+        "Ratio" => "Ratio: an exact number, e.g. 19.99, 20% or 1/7".into(),
         "Num" => "Num: a floating-point number, e.g. 1.5 or 2e-3".into(),
         "Complex" => "Complex: e.g. 3+4i or 2.5i".into(),
         "Bool" => "Bool: true or false".into(),
@@ -245,13 +245,13 @@ fn range_ends(e: &Expr) -> Option<(&Expr, &Expr, bool)> {
 enum ColPart<'a> {
     /// Every column.
     All,
-    /// The second slot of `[rows; columns]`.
+    /// The first slot of `[columns; rows]`.
     Slot(&'a Expr),
     /// A name after the index or before it: `T[0].Name`, `T.Name[0]`.
     Field(&'a str, Span),
 }
 
-/// One index into a table: `T[rows; columns]` and its other spellings.
+/// One index into a table: `T[columns; rows]` and its other spellings.
 struct Site<'a> {
     /// The table as written; `None` for an index with no table name.
     table: Option<&'a str>,
@@ -299,14 +299,16 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
         }
         ExprKind::Field(a, name, span) => match &a.kind {
             // `T[0].Name`
-            ExprKind::Index(base, slots) if slots.len() == 1 && base_table(base).is_some() => {
+            ExprKind::Index(base, slots)
+                if slots.len() == 2 && slots[0].is_none() && base_table(base).is_some() =>
+            {
                 out.push(Site {
                     table: base_table(base).flatten(),
-                    row: slots[0].as_ref(),
+                    row: slots[1].as_ref(),
                     col: ColPart::Field(name, *span),
                     nested,
                 });
-                if let Some(slot) = &slots[0] {
+                if let Some(slot) = &slots[1] {
                     sites(slot, true, out, names);
                 }
             }
@@ -318,8 +320,8 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
             if let Some(table) = base_table(base) {
                 out.push(Site {
                     table,
-                    row: slots.first().and_then(Option::as_ref),
-                    col: match slots.get(1) {
+                    row: slots.get(1).and_then(Option::as_ref),
+                    col: match slots.first() {
                         Some(Some(slot)) => ColPart::Slot(slot),
                         _ => ColPart::All,
                     },
@@ -629,7 +631,7 @@ fn follow_cut(ast: &SheetAst, text: &str, t: usize, block: &Block, by: (i64, i64
             if let Some(new) = cut.and_then(column) {
                 let new = match by.0 {
                     0 => new.to_string(),
-                    rows => format!("[{}; {new}]", offset_text(rows)),
+                    rows => format!("[{new}; {}]", offset_text(rows)),
                 };
                 put(&mut edits, text, span, new);
             }
@@ -1462,7 +1464,7 @@ impl Document {
     /// Move `count` columns starting at `first` so that the first of them
     /// becomes column `to`, in one undoable step. Data columns move among the
     /// data columns and formula columns among the formula columns. A column
-    /// that a formula picks by counting, from its own (`[*; *-1]`) or by
+    /// that a formula picks by counting, from its own (`[*-1; *]`) or by
     /// number, is still the column it was.
     pub fn move_columns(
         &mut self,
@@ -1879,7 +1881,7 @@ mod tests {
     #[test]
     fn formula_cells_and_wider_cells() {
         let mut doc = Document::from_text(SALES);
-        doc.set_cell(0, 1, 1, "= Sales[*-1; Revenue] * 2");
+        doc.set_cell(0, 1, 1, "= Sales[Revenue; *-1] * 2");
         assert_eq!(col(&doc, 0, 1), ["100", "200"]);
         assert!(
             doc.text()
@@ -1957,7 +1959,7 @@ mod tests {
     #[test]
     fn renaming_a_column_follows_its_references() {
         let text = format!(
-            "{SALES}\ntable Top\n\nKind | Value\nSum  | = Sales.Revenue.sum()\nBig  | = Sales[Revenue > 100; Revenue].sum()\n\nRevenue := Value\n"
+            "{SALES}\ntable Top\n\nKind | Value\nSum  | = Sales.Revenue.sum()\nBig  | = Sales[Revenue; Revenue > 100].sum()\n\nRevenue := Value\n"
         );
         let mut doc = Document::from_text(&text);
         let before = col(&doc, 0, 3);
@@ -1966,7 +1968,7 @@ mod tests {
         assert!(renamed.contains("Month | Income | Cost\nJan   | 100    | 60\n"));
         assert!(renamed.contains("Profit := Income - Cost"));
         assert!(renamed.contains("= Sales.Income.sum()"));
-        assert!(renamed.contains("= Sales[Income > 100; Income].sum()"));
+        assert!(renamed.contains("= Sales[Income; Income > 100].sum()"));
         // Another table's own column of the same name is left alone.
         assert!(renamed.contains("Revenue := Value"));
         assert!(
@@ -1990,7 +1992,7 @@ mod tests {
         assert!(doc.rename_column(0, 1, "bad name").is_err());
         // `Value` inside `Sales[...]` would be captured by the renamed column.
         let capture =
-            format!("{SALES}\ntable Top\n\nValue\n100\n\nN := Sales[Revenue > Value].count()\n");
+            format!("{SALES}\ntable Top\n\nValue\n100\n\nN := Sales[; Revenue > Value].count()\n");
         let mut other = Document::from_text(&capture);
         assert!(other.rename_column(0, 1, "Value").is_err());
         assert_eq!(other.text(), capture);
@@ -2247,18 +2249,18 @@ mod tests {
         // A formula that counts columns from its own still reads the same
         // ones, wherever it and they end up.
         let mut doc =
-            Document::from_text("table T\n\nA | B | C\n1 | 2 | = [*; *-1] * 10 + [*; *-2]\n");
+            Document::from_text("table T\n\nA | B | C\n1 | 2 | = [*-1; *] * 10 + [*-2; *]\n");
         assert_eq!(col(&doc, 0, 2), ["21"]);
         doc.move_columns(0, 0, 1, 1).unwrap();
         assert!(
             doc.text()
-                .contains("B | A | C\n2 | 1 | = [*; *-2] * 10 + [*; *-1]\n")
+                .contains("B | A | C\n2 | 1 | = [*-2; *] * 10 + [*-1; *]\n")
         );
         assert_eq!(col(&doc, 0, 2), ["21"]);
         doc.move_columns(0, 2, 1, 0).unwrap();
         assert!(
             doc.text()
-                .contains("\n= [*; *+1] * 10 + [*; *+2] | 2 | 1\n")
+                .contains("\n= [*+1; *] * 10 + [*+2; *] | 2 | 1\n")
         );
         assert_eq!(col(&doc, 0, 0), ["21"]);
         assert!(doc.snapshot().problems.is_empty());
@@ -2266,8 +2268,8 @@ mod tests {
         // So does one that picks a column by its number, wherever it is; a
         // range follows its two ends.
         let mut doc = Document::from_text(
-            "const K = T[0; 1]\n\ntable T\n\nA | B | C | D\n1 | 2 | 4 | = [*; 1] * 10 + [*; -3] + [*; 0..1].A\n\n\
-             E := [*; 0] + T[0; 2]\n",
+            "const K = T[1; 0]\n\ntable T\n\nA | B | C | D\n1 | 2 | 4 | = [1; *] * 10 + [-3; *] + [0..1; *].A\n\n\
+             E := [0; *] + T[2; 0]\n",
         );
         assert_eq!(col(&doc, 0, 3), ["25"]);
         assert_eq!(col(&doc, 0, 4), ["5"]);
@@ -2276,9 +2278,9 @@ mod tests {
         assert!(doc.text().contains("const K = T[0; 0]\n"));
         assert!(
             doc.text()
-                .contains("| = [*; 0] * 10 + [*; -4] + [*; 0..2].A\n")
+                .contains("| = [0; *] * 10 + [-4; *] + [0..2; *].A\n")
         );
-        assert!(doc.text().contains("E := [*; 2] + T[0; 1]\n"));
+        assert!(doc.text().contains("E := [2; *] + T[1; 0]\n"));
         assert_eq!(col(&doc, 0, 3), ["25"]);
         assert_eq!(col(&doc, 0, 4), ["5"]);
         assert!(doc.snapshot().problems.is_empty());
@@ -2291,64 +2293,64 @@ mod tests {
             |cell: &str, from, block: Block, by| moved_cell(cell, from, &block, by, "T", 6, &cols);
         // Sideways counts the columns again, and up or down the rows.
         assert_eq!(
-            moved("= [*; *-2] * 10", (2, 3), (2..3, 3..4), (0, -3)),
-            "= [*; *+1] * 10"
+            moved("= [*-2; *] * 10", (2, 3), (2..3, 3..4), (0, -3)),
+            "= [*+1; *] * 10"
         );
         assert_eq!(
-            moved("= [*-1; B] + 10", (2, 3), (2..3, 3..4), (2, 0)),
-            "= [*-3; B] + 10"
+            moved("= [B; *-1] + 10", (2, 3), (2..3, 3..4), (2, 0)),
+            "= [B; *-3] + 10"
         );
         assert_eq!(
             moved("= T[*-1; *-1]", (2, 3), (2..3, 3..4), (1, -1)),
-            "= T[*-2; *]"
+            "= T[*; *-2]"
         );
         // A plain `*` is the cell's own, and a range ending on one goes as it is.
         assert_eq!(
-            moved("= [*-1; *]", (2, 3), (2..3, 3..4), (0, -2)),
-            "= [*-1; *]"
+            moved("= [*; *-1]", (2, 3), (2..3, 3..4), (0, -2)),
+            "= [*; *-1]"
         );
         assert_eq!(
-            moved("= sum([*-2..*; B])", (2, 3), (2..3, 3..4), (2, 0)),
-            "= sum([*-2..*; B])"
+            moved("= sum([B; *-2..*])", (2, 3), (2..3, 3..4), (2, 0)),
+            "= sum([B; *-2..*])"
         );
         assert_eq!(
-            moved("= sum([*-2..*-1; B])", (2, 3), (2..3, 3..4), (2, 0)),
-            "= sum([*-4..*-3; B])"
+            moved("= sum([B; *-2..*-1])", (2, 3), (2..3, 3..4), (2, 0)),
+            "= sum([B; *-4..*-3])"
         );
         // Numbers and names say where they mean already.
         assert_eq!(
-            moved("= [0; 1] + [*; B] + B", (2, 3), (2..3, 3..4), (2, -2)),
-            "= [0; 1] + [*; B] + B"
+            moved("= [1; 0] + [B; *] + B", (2, 3), (2..3, 3..4), (2, -2)),
+            "= [1; 0] + [B; *] + B"
         );
         // Cells cut together stay as far apart; a number or a name follows.
         assert_eq!(
             moved(
-                "= [*; *-1] + [*; *-3] + [2; C]",
+                "= [*-1; *] + [*-3; *] + [C; 2]",
                 (2, 3),
                 (2..3, 2..4),
                 (1, -2)
             ),
-            "= [*; *-1] + [*; *-1] + [3; A]"
+            "= [*-1; *] + [*-1; *] + [A; 3]"
         );
         assert_eq!(moved("*-1", (2, 3), (2..3, 3..4), (0, -2)), "*-1");
     }
 
     #[test]
     fn formulas_follow_a_cut_cell() {
-        let text = "const K = T[1; C]\n\ntable T\n\nA | B | C | D\n  |   | 1 | = [*; *-1] + C\n  |   | 5 | = [*; *-1] * 10 + [*-1; 2] + T[*; C]\n  |   |   | = sum(T.C)\n\n\
-                    E := C * 2\n\ntable U\n\nX\n= T[1; 2] + T[1].C + T.C[1]\n";
+        let text = "const K = T[C; 1]\n\ntable T\n\nA | B | C | D\n  |   | 1 | = [*-1; *] + C\n  |   | 5 | = [*-1; *] * 10 + [2; *-1] + T[C; *]\n  |   |   | = sum(T.C)\n\n\
+                    E := C * 2\n\ntable U\n\nX\n= T[2; 1] + T[; 1].C + T.C[1]\n";
         let mut doc = Document::from_text(text);
         assert_eq!(col(&doc, 0, 3), ["2", "56", "6"]);
         // The 5 goes from C to A and down a row, as a cut and a paste do it.
         doc.set_cell(0, 1, 2, "");
         doc.paste_cut(0, (1, 2), (2, 0), &[vec!["5".to_string()]]);
         let now = doc.text();
-        assert!(now.contains("const K = T[2; A]\n"), "{now}");
+        assert!(now.contains("const K = T[A; 2]\n"), "{now}");
         assert!(
-            now.contains("| = [*+1; *-3] * 10 + [*-1; 2] + T[*+1; A]\n"),
+            now.contains("| = [*-3; *+1] * 10 + [2; *-1] + T[A; *+1]\n"),
             "{now}"
         );
-        assert!(now.contains("= T[2; 0] + T[2].A + T.A[2]\n"), "{now}");
+        assert!(now.contains("= T[0; 2] + T[; 2].A + T.A[2]\n"), "{now}");
         // A formula column and a whole column read the place.
         assert!(now.contains("E := C * 2\n"), "{now}");
         assert!(now.contains("= sum(T.C)\n"), "{now}");
@@ -2360,21 +2362,21 @@ mod tests {
         let mut doc = Document::from_text("table T\n\nA | B | C\n  | 5 | = B * 2\n  |   |\n");
         doc.set_cell(0, 0, 1, "");
         doc.paste_cut(0, (0, 1), (1, 0), &[vec!["5".to_string()]]);
-        assert!(doc.text().contains("| = [*+1; A] * 2\n"), "{}", doc.text());
+        assert!(doc.text().contains("| = [A; *+1] * 2\n"), "{}", doc.text());
         assert_eq!(col(&doc, 0, 2), ["10", ""]);
 
         // Put down on the cell it reads, a formula is an error, not refused.
-        let mut doc = Document::from_text("table T\n\nA | B\n1 | = [*; *-1]\n");
+        let mut doc = Document::from_text("table T\n\nA | B\n1 | = [*-1; *]\n");
         doc.set_cell(0, 0, 1, "");
-        assert!(doc.paste_cut(0, (0, 1), (0, 0), &[vec!["= [*; *-1]".to_string()]]));
+        assert!(doc.paste_cut(0, (0, 1), (0, 0), &[vec!["= [*-1; *]".to_string()]]));
         assert!(doc.text().contains("\n= [*; *] |\n"), "{}", doc.text());
         assert!(!doc.snapshot().problems.is_empty());
     }
 
     #[test]
     fn moved_rows_keep_what_reads_them() {
-        let text = "const First = T[0; N]\n\ntable T\n\nName | N | M\na | 1 |\nb | 2 |\nc | 3 | = [*-1; N] + 10\n\
-                    d | 4 | = [0; N] + sum([0..1; N]) + [-3; N]\n\nSum := N + ([*-1; N] // 0)\n";
+        let text = "const First = T[N; 0]\n\ntable T\n\nName | N | M\na | 1 |\nb | 2 |\nc | 3 | = [N; *-1] + 10\n\
+                    d | 4 | = [N; 0] + sum([N; 0..1]) + [N; -3]\n\nSum := N + ([N; *-1] // 0)\n";
         let mut doc = Document::from_text(text);
         assert_eq!(col(&doc, 0, 2), ["", "", "12", "6"]);
         assert_eq!(col(&doc, 0, 3), ["1", "3", "5", "7"]);
@@ -2383,32 +2385,32 @@ mod tests {
         doc.move_rows(0, 1, 1, 3).unwrap();
         assert_eq!(col(&doc, 0, 0), ["a", "c", "d", "b"]);
         let now = doc.text();
-        assert!(now.contains("| = [*+2; N] + 10\n"), "{now}");
+        assert!(now.contains("| = [N; *+2] + 10\n"), "{now}");
         assert!(
-            now.contains("| = [0; N] + sum([0..3; N]) + [-1; N]\n"),
+            now.contains("| = [N; 0] + sum([N; 0..3]) + [N; -1]\n"),
             "{now}"
         );
-        assert!(now.contains("const First = T[0; N]\n"), "{now}");
+        assert!(now.contains("const First = T[N; 0]\n"), "{now}");
         assert_eq!(col(&doc, 0, 2), ["", "12", "13", ""]);
         // The formula column still reads the row before, in the new order.
-        assert!(now.contains("Sum := N + ([*-1; N] // 0)\n"), "{now}");
+        assert!(now.contains("Sum := N + ([N; *-1] // 0)\n"), "{now}");
         assert_eq!(col(&doc, 0, 3), ["1", "4", "7", "6"]);
         assert!(doc.snapshot().problems.is_empty());
         // `a` down one: the number follows it, in the constant too.
         doc.move_rows(0, 0, 1, 1).unwrap();
         assert!(
-            doc.text().contains("const First = T[1; N]\n"),
+            doc.text().contains("const First = T[N; 1]\n"),
             "{}",
             doc.text()
         );
         assert!(
             doc.text()
-                .contains("| = [1; N] + sum([1..3; N]) + [-1; N]\n"),
+                .contains("| = [N; 1] + sum([N; 1..3]) + [N; -1]\n"),
             "{}",
             doc.text()
         );
         assert!(doc.undo());
-        assert!(doc.text().contains("const First = T[0; N]\n"));
+        assert!(doc.text().contains("const First = T[N; 0]\n"));
     }
 
     #[test]
@@ -2441,11 +2443,11 @@ mod tests {
         // formula, into the gap it left.
         let mut doc = Document::from_text(text);
         cut(&mut doc, (0, 1), (10, 3));
-        assert!(doc.text().contains("const Corner  = Grid[10; 3]\n"));
+        assert!(doc.text().contains("const Corner  = Grid[3; 10]\n"));
         assert_eq!(failed(&doc), "0 0", "{}", doc.text());
         cut(&mut doc, (17, 7), (0, 1));
         assert!(
-            doc.text().contains("= [*+14; *+2] + [*+15; *+3]"),
+            doc.text().contains("= [*+2; *+14] + [*+3; *+15]"),
             "{}",
             doc.text()
         );
@@ -2458,8 +2460,8 @@ mod tests {
 
     #[test]
     fn columns_can_be_put_in_and_copied() {
-        let text = "const K = T[0; 1] + T[0; -1]\n\ntable T\n\nA | B | C\n1 | 2 | = [*; *-1] * 10 + [*; 0] + [*; -3]\n3 | 4 | = [*; *-2]\n\n\
-                    S := A + [*; 1]\n";
+        let text = "const K = T[1; 0] + T[-1; 0]\n\ntable T\n\nA | B | C\n1 | 2 | = [*-1; *] * 10 + [0; *] + [-3; *]\n3 | 4 | = [*-2; *]\n\n\
+                    S := A + [1; *]\n";
         let names = |doc: &Document| -> Vec<String> {
             let columns = &doc.snapshot().tables[0].columns;
             columns.iter().map(|c| c.name.clone()).collect()
@@ -2470,13 +2472,13 @@ mod tests {
         doc.insert_column(0, 1, "N").unwrap();
         assert_eq!(names(&doc), ["A", "N", "B", "C", "S"]);
         let now = doc.text();
-        assert!(now.contains("const K = T[0; 2] + T[0; -1]\n"), "{now}");
+        assert!(now.contains("const K = T[2; 0] + T[-1; 0]\n"), "{now}");
         assert!(
-            now.contains("| = [*; *-1] * 10 + [*; 0] + [*; -3]\n"),
+            now.contains("| = [*-1; *] * 10 + [0; *] + [-3; *]\n"),
             "{now}"
         );
-        assert!(now.contains("| = [*; *-3]\n"), "{now}");
-        assert!(now.contains("S := A + [*; 2]\n"), "{now}");
+        assert!(now.contains("| = [*-3; *]\n"), "{now}");
+        assert!(now.contains("S := A + [2; *]\n"), "{now}");
         assert_eq!(col(&doc, 0, 3), ["23", "3"]);
         assert_eq!(col(&doc, 0, 4), ["3", "7"]);
         // One step to undo.
@@ -2487,7 +2489,7 @@ mod tests {
         // A formula column, before the others or among them.
         doc.insert_computed(0, 0, "D", "A * 2").unwrap();
         assert_eq!(names(&doc), ["A", "B", "C", "D", "S"]);
-        assert!(doc.text().contains("const K = T[0; 1] + T[0; -1]\n"));
+        assert!(doc.text().contains("const K = T[1; 0] + T[-1; 0]\n"));
         assert_eq!(col(&doc, 0, 3), ["2", "6"]);
         assert!(doc.undo());
 
@@ -2497,7 +2499,7 @@ mod tests {
         assert_eq!(names(&doc), ["C_copy001", "A", "B", "C", "S_copy001", "S"]);
         let now = doc.text();
         assert!(
-            now.contains("S_copy001 := A + [*; 2]\nS := A + [*; 2]\n"),
+            now.contains("S_copy001 := A + [2; *]\nS := A + [2; *]\n"),
             "{now}"
         );
         assert_eq!(col(&doc, 0, 4), ["3", "7"]);
@@ -2506,7 +2508,7 @@ mod tests {
         assert!(
             doc.snapshot().tables[0].rows[1][0]
                 .source
-                .contains("[*; *-2]")
+                .contains("[*-2; *]")
         );
         doc.insert_copies(0, &[3], 4).unwrap();
         assert_eq!(names(&doc)[3..5], ["C", "C_copy002"]);
@@ -2524,8 +2526,8 @@ mod tests {
 
     #[test]
     fn rows_can_be_moved() {
-        let text = "table T\n\nName | N\na | 1\nb | 2\nc | = [*-1; N] + 10\nd | 4\n\n\
-                    Sum := N + ([*-1; N] // 0)\n";
+        let text = "table T\n\nName | N\na | 1\nb | 2\nc | = [N; *-1] + 10\nd | 4\n\n\
+                    Sum := N + ([N; *-1] // 0)\n";
         let mut doc = Document::from_text(text);
         assert_eq!(col(&doc, 0, 2), ["1", "3", "14", "16"]);
         // One row down, with its formula; the running column follows.
@@ -2533,7 +2535,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 0), ["b", "c", "a", "d"]);
         assert!(
             doc.text()
-                .contains("Name | N\nb    | 2\nc    | = [*-1; N] + 10\na    | 1\nd    | 4\n")
+                .contains("Name | N\nb    | 2\nc    | = [N; *-1] + 10\na    | 1\nd    | 4\n")
         );
         assert_eq!(col(&doc, 0, 1), ["2", "12", "1", "4"]);
         assert_eq!(col(&doc, 0, 2), ["2", "14", "13", "5"]);

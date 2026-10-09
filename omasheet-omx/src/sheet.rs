@@ -8,7 +8,7 @@
 //!
 //! table Sales
 //!
-//! Revenue : Rational
+//! Revenue : Ratio
 //!
 //! Month | Revenue | Cost
 //! Jan   | 10000   | 6000
@@ -429,7 +429,7 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
                         format!("unknown type `{ty_text}`"),
                     )
                     .with_help(
-                        "the types are Int, Rational, Num, Complex, Text, Date, Time, DateTime and Bool",
+                        "the types are Int, Ratio, Num, Complex, Text, Date, Time, DateTime and Bool",
                     ),
                 ),
             }
@@ -507,7 +507,7 @@ mod tests {
     #[test]
     fn parses_a_table() {
         let mut diags = Vec::new();
-        let src = "const Rate = 20%\n\ntable Sales\n\nRevenue : Rational\n\nMonth | Revenue\n------|--------\nJan | 100\nFeb | 120\n\nTax := Revenue * Rate\n";
+        let src = "const Rate = 20%\n\ntable Sales\n\nRevenue : Ratio\n\nMonth | Revenue\n------|--------\nJan | 100\nFeb | 120\n\nTax := Revenue * Rate\n";
         let ast = parse_sheet(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         assert_eq!(ast.consts.len(), 1);

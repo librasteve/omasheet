@@ -34,7 +34,7 @@ standard input.
 - **THEN** the output is `2/3`
 
 #### Scenario: Against a sheet
-- **WHEN** `omasheet eval --sheet sales.omx 'Sales[Region == "UK"; Revenue].sum()'` is run
+- **WHEN** `omasheet eval --sheet sales.omx 'Sales[Revenue; Region == "UK"].sum()'` is run
 - **THEN** the total UK revenue is printed
 
 #### Scenario: From standard input

@@ -12,7 +12,7 @@ command line. OMX SHALL NOT embed or delegate to another language.
 
 #### Scenario: Same expression, different hosts
 - **GIVEN** a sheet defining table `Sales`
-- **WHEN** `Sales[Revenue > 1000].Revenue.sum()` is used in a `const` declaration and passed to `omasheet eval`
+- **WHEN** `Sales[; Revenue > 1000].Revenue.sum()` is used in a `const` declaration and passed to `omasheet eval`
 - **THEN** both produce the same value
 
 ### Requirement: Reference forms
@@ -36,13 +36,16 @@ name denotes the constant.
 
 ### Requirement: Selection with `[]` and dimension separator `;`
 `[]` SHALL be the single selection operator. Within `[]`, `;` SHALL separate
-dimensions: the first slot selects rows, the second selects columns, and further
+dimensions: the first slot selects columns, the second selects rows, and further
 slots select further dimensions of N-dimensional values. A column slot SHALL
 accept a column name or a 0-based position. An empty slot SHALL select the whole
-of that dimension, and trailing slots MAY be omitted with the same meaning.
-`Table[rows].Column` SHALL be equivalent to `Table[rows; Column]`. Inside a
+of that dimension, and trailing slots MAY be omitted with the same meaning, so a
+table index with one slot selects columns: `Table[Column]` is the whole column,
+and rows alone are selected with `Table[; rows]`. A vector has one dimension,
+and its single slot selects elements.
+`Table[; rows].Column` SHALL be equivalent to `Table[Column; rows]`. Inside a
 table, a selection written with no table name SHALL select from that table when
-it has a `;` or its row slot is a cursor; any other `[...]` with no table name
+it has a `;` or its first slot is a cursor; any other `[...]` with no table name
 SHALL be a vector. Outside a table it SHALL be an error.
 
 In a formula's own table, a column slot of `*`, `*+n` or `*-n` SHALL be the
@@ -50,29 +53,33 @@ column of the formula, or the one `n` columns to its right or left.
 
 #### Scenario: Column counted from the formula
 - **GIVEN** a cell formula in the second column of a table
-- **WHEN** it contains `[*; *-1]`
+- **WHEN** it contains `[*-1; *]`
 - **THEN** it is the cell to its left
 
 #### Scenario: Selection with no table name
 - **GIVEN** a formula in table `Sales`
-- **WHEN** it contains `[*-1; Revenue]`
-- **THEN** it means `Sales[*-1; Revenue]`
+- **WHEN** it contains `[Revenue; *-1]`
+- **THEN** it means `Sales[Revenue; *-1]`
 
 #### Scenario: Single cell by position and name
-- **WHEN** `Sales[1; Revenue]` is evaluated
+- **WHEN** `Sales[Revenue; 1]` is evaluated
 - **THEN** the result is the scalar `Revenue` of the second row of `Sales`
 
 #### Scenario: Field access equivalence
-- **WHEN** `Sales[1].Revenue` and `Sales[1; Revenue]` are evaluated
+- **WHEN** `Sales[; 1].Revenue` and `Sales[Revenue; 1]` are evaluated
 - **THEN** both yield the same value
 
 #### Scenario: Two-dimensional slice
-- **WHEN** `Sales[2..5; 3..7]` is evaluated
+- **WHEN** `Sales[3..7; 2..5]` is evaluated
 - **THEN** the result is a 4 × 5 matrix of rows 2–5 and columns 3–7
 
-#### Scenario: Empty slot selects the whole dimension
-- **WHEN** `Sales[; Revenue]` and `Sales[2; ]` are evaluated
-- **THEN** the first equals `Sales.Revenue` and the second is every column of the third row
+#### Scenario: Empty or missing slot selects the whole dimension
+- **WHEN** `Sales[Revenue]`, `Sales[Revenue; ]` and `Sales[; 2]` are evaluated
+- **THEN** the first two equal `Sales.Revenue` and the third is every column of the third row
+
+#### Scenario: One slot is columns
+- **WHEN** `Sales[Region == "UK"]` is checked
+- **THEN** an error says a column selector must be a column name, a position or a range
 
 ### Requirement: Positional indexing
 Row and column positions SHALL be 0-based. A negative integer position SHALL
@@ -89,13 +96,13 @@ range excluding `b`. Ranges SHALL be first-class values that can be bound to
 names and used in any index slot.
 
 #### Scenario: Inclusive and exclusive
-- **WHEN** `Sales[0..2]` and `Sales[0..^2]` are evaluated
+- **WHEN** `Sales[; 0..2]` and `Sales[; 0..^2]` are evaluated
 - **THEN** the first has three rows and the second has two
 
 #### Scenario: Range bound to a name
 - **GIVEN** `const Rows = 2..100` and `const Cols = 3..7`
-- **WHEN** `Sales[Rows; Cols]` is evaluated
-- **THEN** it is equivalent to `Sales[2..100; 3..7]`
+- **WHEN** `Sales[Cols; Rows]` is evaluated
+- **THEN** it is equivalent to `Sales[3..7; 2..100]`
 
 ### Requirement: Row cursor `*`
 `*` in a row slot SHALL always denote the cursor, the current row, and `*+n` /
@@ -107,42 +114,42 @@ inside a row condition, where it SHALL NOT mean the candidate row. A cursor, wit
 or without an offset, SHALL be an error in an expression with no row context.
 
 #### Scenario: Previous row
-- **GIVEN** a computed column `Growth := Revenue / Sales[*-1; Revenue] - 1` in `Sales`
+- **GIVEN** a computed column `Growth := Revenue / Sales[Revenue; *-1] - 1` in `Sales`
 - **WHEN** it is evaluated for the third row
-- **THEN** `Sales[*-1; Revenue]` is the second row's `Revenue`
+- **THEN** `Sales[Revenue; *-1]` is the second row's `Revenue`
 
 #### Scenario: Year-over-year
-- **WHEN** `Revenue / Sales[*-12; Revenue] - 1` is evaluated on monthly data
+- **WHEN** `Revenue / Sales[Revenue; *-12] - 1` is evaluated on monthly data
 - **THEN** each row is compared with the row twelve positions earlier
 
 #### Scenario: Running total
-- **GIVEN** `Running := Sales[0..*; Revenue].sum()`
+- **GIVEN** `Running := Sales[Revenue; 0..*].sum()`
 - **WHEN** it is evaluated for row `i`
 - **THEN** the result is the sum of `Revenue` over rows `0` through `i` inclusive
 
 #### Scenario: Trailing window
-- **WHEN** `Sales[*-2..*; Revenue].avg()` is evaluated for row `i ≥ 2`
+- **WHEN** `Sales[Revenue; *-2..*].avg()` is evaluated for row `i ≥ 2`
 - **THEN** the result is the mean of `Revenue` over rows `i-2`, `i-1`, `i`
 
 #### Scenario: Offset falls outside the table
-- **WHEN** `Sales[*-1; Revenue]` is evaluated for the first row
+- **WHEN** `Sales[Revenue; *-1]` is evaluated for the first row
 - **THEN** the result is empty (undefined), not an error
 
 #### Scenario: Cursor offset without row context
-- **WHEN** `omasheet eval 'Sales[*-1; Revenue]'` is run
+- **WHEN** `omasheet eval 'Sales[Revenue; *-1]'` is run
 - **THEN** an error states that `*-1` needs a current row
 
 #### Scenario: Cursor inside a row condition
-- **GIVEN** a computed column `Count := Orders[Region == ByRegion[*; Region]].count()` in `ByRegion`
+- **GIVEN** a computed column `Count := Orders[; Region == ByRegion[Region; *]].count()` in `ByRegion`
 - **WHEN** it is evaluated for a row
-- **THEN** `ByRegion[*; Region]` is that row's `Region`, compared with the `Region` of each `Orders` row
+- **THEN** `ByRegion[Region; *]` is that row's `Region`, compared with the `Region` of each `Orders` row
 
 #### Scenario: Bare cursor without row context
-- **WHEN** `omasheet eval 'Sales[*; Revenue]'` is run
+- **WHEN** `omasheet eval 'Sales[Revenue; *]'` is run
 - **THEN** an error states that `*` needs a current row
 
 #### Scenario: Semantics survive row insertion
-- **GIVEN** a column defined with `Sales[*-1; Revenue]`
+- **GIVEN** a column defined with `Sales[Revenue; *-1]`
 - **WHEN** a new row is inserted in the middle of the table source
 - **THEN** every row still refers to its own immediate predecessor, with no formula edits
 
@@ -156,7 +163,7 @@ with `and`, `or` and `not`.
 #### Scenario: Conditional sum (replaces SUMIFS)
 - **WHEN** the following is evaluated
   ```
-  Sales[
+  Sales[;
       Region == "UK" and
       Date >= 2025-01-01 and
       Date < 2026-01-01
@@ -166,7 +173,7 @@ with `and`, `or` and `not`.
 
 #### Scenario: Lookup from another table (replaces XLOOKUP)
 - **GIVEN** `Customers` with columns `ID`, `Name` and `Sales` with column `CustomerID`
-- **WHEN** a computed column in `Sales` is `Customers[ID == CustomerID].Name // "Unknown"`
+- **WHEN** a computed column in `Sales` is `Customers[; ID == CustomerID].Name // "Unknown"`
 - **THEN** each row gets the matching customer's `Name`, or `"Unknown"` when no customer matches
 
 ### Requirement: Operators
@@ -176,7 +183,7 @@ left operand unless that operand is empty, in which case it yields its right
 operand. `=` SHALL NOT be a comparison operator.
 
 #### Scenario: Fallback on empty
-- **WHEN** `Sales[*-1; Revenue] // 0` is evaluated for the first row
+- **WHEN** `Sales[Revenue; *-1] // 0` is evaluated for the first row
 - **THEN** the result is `0`
 
 #### Scenario: Membership
@@ -184,7 +191,7 @@ operand. `=` SHALL NOT be a comparison operator.
 - **THEN** the result is true
 
 #### Scenario: Single equals in a predicate
-- **WHEN** `Sales[Region = "UK"]` is parsed
+- **WHEN** `Sales[; Region = "UK"]` is parsed
 - **THEN** a syntax error suggests `==`
 
 ### Requirement: Dates and times
@@ -347,7 +354,7 @@ predictably: a table with a row predicate or row range is a table; a table with 
 single column is a vector; a single row and single column is a scalar.
 
 #### Scenario: Shape reduction chain
-- **WHEN** `Sales[Region == "UK"]`, `Sales[Region == "UK"].Revenue` and `Sales[Region == "UK"].Revenue.sum()` are evaluated
+- **WHEN** `Sales[; Region == "UK"]`, `Sales[; Region == "UK"].Revenue` and `Sales[; Region == "UK"].Revenue.sum()` are evaluated
 - **THEN** the results are respectively a table, a vector and a scalar
 
 ### Requirement: Aggregation methods
@@ -374,7 +381,7 @@ unequal length SHALL be an error.
 - **THEN** the result is a vector of per-row differences
 
 #### Scenario: Boolean mask
-- **WHEN** `Sales[Sales.Revenue > 1000]` is evaluated
+- **WHEN** `Sales[; Sales.Revenue > 1000]` is evaluated
 - **THEN** the result is the table of rows whose `Revenue` exceeds 1000
 
 #### Scenario: Length mismatch
@@ -394,4 +401,4 @@ the call on its right, with at least the stages `filter(<predicate>)`,
     |> select(Revenue)
     |> sum()
   ```
-- **THEN** the result equals `Sales[Region == "UK"].Revenue.sum()`
+- **THEN** the result equals `Sales[; Region == "UK"].Revenue.sum()`

@@ -17,13 +17,13 @@
 - [ ] 2.2 Matrix–matrix, matrix–vector, vector–matrix and vector–vector products
 - [ ] 2.3 Shape checking before execution where the shapes are known, at execution otherwise
 - [ ] 2.4 `transpose()`
-- [ ] 2.5 Verify exactness for `Int` and `Rational`, and widening for `Num` and `Complex`
+- [ ] 2.5 Verify exactness for `Int` and `Ratio`, and widening for `Num` and `Complex`
 
 ## 3. Inverse and determinant (`omx-expressions`, `evaluation`)
-- [ ] 3.1 `det()` by fraction-free elimination, exact for `Int` and `Rational`
+- [ ] 3.1 `det()` by fraction-free elimination, exact for `Int` and `Ratio`
 - [ ] 3.2 `inverse()` by exact elimination, with an error for a singular matrix
 - [ ] 3.3 A matrix that is not square rejected before execution where its shape is known
-- [ ] 3.4 Verify `m @ m.inverse()` is exactly the identity for `Int` and `Rational` matrices
+- [ ] 3.4 Verify `m @ m.inverse()` is exactly the identity for `Int` and `Ratio` matrices
 
 ## 4. Directory
 - [ ] 4.1 List `transpose`, `inverse`, `det` and `matrix` in the function directory

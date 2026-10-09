@@ -25,7 +25,7 @@ Selection, sorting, grouping, joining and aggregation SHALL preserve the exact
 numeric values of the data they operate on.
 
 #### Scenario: Exact group sum
-- **GIVEN** a `Rational` column with values `0.1`, `0.2` in one group
+- **GIVEN** a `Ratio` column with values `0.1`, `0.2` in one group
 - **WHEN** the group is summed
 - **THEN** the result is exactly `3/10`
 

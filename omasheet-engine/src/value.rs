@@ -1,6 +1,6 @@
 //! Runtime values and exact arithmetic.
 //!
-//! Exact numbers are `Int` (arbitrary precision) or `Rational` (an
+//! Exact numbers are `Int` (arbitrary precision) or `Ratio` (an
 //! arbitrary-precision fraction that is not a whole number). Nothing here
 //! turns an exact number into a `Num` unless the other operand already is one.
 
@@ -93,7 +93,7 @@ impl Value {
             Value::Empty => "empty",
             Value::Error => "an error",
             Value::Int(_) => "Int",
-            Value::Rat(_) => "Rational",
+            Value::Rat(_) => "Ratio",
             Value::Num(_) => "Num",
             Value::Complex(..) => "Complex",
             Value::Text(_) => "Text",

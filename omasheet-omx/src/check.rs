@@ -857,7 +857,7 @@ impl<'a> Checker<'a> {
         if !found.assignable_to(want) {
             let help = match (found, want) {
                 (S::Int | S::Rat, S::Num) => "use `approx(...)` to convert to Num",
-                (S::Rat, S::Int) => "declare the column as `Rational`",
+                (S::Rat, S::Int) => "declare the column as `Ratio`",
                 _ => "change the declared type or the formula",
             };
             self.err_help(
@@ -979,7 +979,7 @@ impl<'a> Checker<'a> {
                     self.err_help(
                         span,
                         "an index with no table name needs a current table",
-                        "name the table, for example `Sales[0; Revenue]`",
+                        "name the table, for example `Sales[Revenue; 0]`",
                     );
                     return fail;
                 }
@@ -996,7 +996,7 @@ impl<'a> Checker<'a> {
                 self.err_help(
                     span,
                     "`*` is the current row and can only be used as a row position",
-                    "for example `Sales[*-1; Revenue]`; multiplication needs a value on both sides",
+                    "for example `Sales[Revenue; *-1]`; multiplication needs a value on both sides",
                 );
                 fail
             }
@@ -1495,7 +1495,7 @@ impl<'a> Checker<'a> {
                             Ty::Scalar(S::Int),
                         );
                     }
-                    // The cells of one row, such as `[*; *-4..*-1]`.
+                    // The cells of one row, such as `[*-4..*-1; *]`.
                     Ty::Row(tt) => {
                         let mut s: Option<Option<S>> = None;
                         for &c in tt.cols.iter() {
@@ -1513,7 +1513,7 @@ impl<'a> Checker<'a> {
                                 self.err_help(
                                     args[0].span,
                                     format!("`{name}` needs values of one type, but the columns of this row differ"),
-                                    "select columns of the same type, for example `[*; 1..3]`",
+                                    "select columns of the same type, for example `[1..3; *]`",
                                 );
                                 return fail;
                             }
@@ -1722,7 +1722,7 @@ impl<'a> Checker<'a> {
                     );
                     return fail;
                 }
-                self.index(b, bty, &[Some(&args[1])], span, sc)
+                self.index(b, bty, &[None, Some(&args[1])], span, sc)
             }
             "select" => {
                 if args.len() < 2 {
@@ -1857,22 +1857,19 @@ impl<'a> Checker<'a> {
         match bty {
             Ty::Table(tt) => {
                 if slots.len() > 2 {
-                    self.err(span, "a table has two dimensions: `[rows; columns]`");
+                    self.err(span, "a table has two dimensions: `[columns; rows]`");
                     return fail;
                 }
                 let direct = matches!(b.kind, Ir::Table(_));
-                let pick = self.rowsel(
-                    slots.first().copied().flatten(),
-                    Some(tt.table),
-                    tt.rows,
-                    sc,
-                );
+                // `[columns; rows]`: the columns come first.
+                let pick =
+                    self.rowsel(slots.get(1).copied().flatten(), Some(tt.table), tt.rows, sc);
                 if pick.is_unknown() {
                     return fail;
                 }
                 let kind = if direct { pick.kind } else { DepKind::Whole };
                 let own = sc.col.filter(|_| sc.own).map(|c| (sc.frames[0], c));
-                let Some(cols) = self.colsel(slots.get(1).copied().flatten(), &tt, own) else {
+                let Some(cols) = self.colsel(slots.first().copied().flatten(), &tt, own) else {
                     return fail;
                 };
                 let sub = |cols: Rc<Vec<usize>>, rows| TableTy {
@@ -2055,7 +2052,7 @@ impl<'a> Checker<'a> {
             self.err_help(
                 e.span,
                 "`*` can only be a row position, an offset from it, or the end of a range",
-                "for example `[*]`, `[*-1]` or `[0..*]`",
+                "for example `[; *]`, `[; *-1]` or `[; 0..*]`",
             );
             return RowPick::all(nrows);
         }
@@ -2144,7 +2141,7 @@ impl<'a> Checker<'a> {
                         "a row selector must be a position, a range or a condition, found {}",
                         other.describe()
                     ),
-                    "for example `[0]`, `[0..2]`, `[*-1]` or `[Region == \"UK\"]`",
+                    "for example `[; 0]`, `[; 0..2]`, `[; *-1]` or `[; Region == \"UK\"]`",
                 );
                 RowPick::all(nrows)
             }
@@ -2189,7 +2186,7 @@ impl<'a> Checker<'a> {
                 self.err_help(
                     e.span,
                     "`*` as a column is the column of the formula, in its own table",
-                    "name the columns, or count them from the first: `[*; 1..3]`",
+                    "name the columns, or count them from the first: `[1..3; *]`",
                 );
                 return None;
             };
@@ -2240,7 +2237,7 @@ impl<'a> Checker<'a> {
                 self.err_help(
                     e.span,
                     "`*` as a column is the column of the formula, in its own table",
-                    "name the column, for example `[*-1; Revenue]`",
+                    "name the column, for example `[Revenue; *-1]`",
                 );
                 return None;
             };
@@ -2314,7 +2311,7 @@ impl<'a> Checker<'a> {
                     self.err_help(
                         e.span,
                         "a column selector must be a column name, a position or a range",
-                        "for example `[; Revenue]`, `[; 0]` or `[; 1..3]`",
+                        "for example `[Revenue]`, `[0]` or `[1..3]`, before any `;`",
                     );
                 }
                 None
@@ -2372,7 +2369,7 @@ impl<'a> Checker<'a> {
                 };
                 self.done.push(
                     Diagnostic::new(span, format!("circular reference: {}", path.join(" → ")))
-                        .with_help("a column may read its own earlier rows, such as `[*-1]`, but not itself in the same row"),
+                        .with_help("a column may read its own earlier rows, such as `[; *-1]`, but not itself in the same row"),
                 );
             }
             match nodes[scc.nodes[0]] {

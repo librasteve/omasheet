@@ -10,7 +10,7 @@ rows sharing the current row's value of that column.
 
 #### Scenario: Previous row within the same region
 - **GIVEN** `Sales` rows ordered UK-Jan, UK-Feb, US-Jan, US-Feb
-- **WHEN** `Sales[*-1 by Region; Revenue]` is evaluated for US-Jan
+- **WHEN** `Sales[Revenue; *-1 by Region]` is evaluated for US-Jan
 - **THEN** the result is empty, because there is no earlier US row
 - **AND** for US-Feb the result is US-Jan's `Revenue`
 
@@ -29,7 +29,7 @@ the call on its right, with at least the stages `filter(<predicate>)`,
     |> select(Revenue)
     |> sum()
   ```
-- **THEN** the result equals `Sales[Region == "UK"].Revenue.sum()`
+- **THEN** the result equals `Sales[; Region == "UK"].Revenue.sum()`
 
 #### Scenario: Group stage
 - **WHEN** `Sales |> group(Region) |> sum(Revenue)` is evaluated

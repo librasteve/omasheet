@@ -24,18 +24,18 @@ a filtered table, the mismatch SHALL be reported when the product is evaluated.
 - **THEN** an error at the product states the two shapes
 
 ### Requirement: The matrix product preserves exactness
-A product of matrices or vectors of `Int` and `Rational` elements SHALL be exact.
+A product of matrices or vectors of `Int` and `Ratio` elements SHALL be exact.
 An element of type `Num` in either operand SHALL make the result `Num`, and one
 of type `Complex` SHALL make it `Complex`.
 
-#### Scenario: Rational elements
+#### Scenario: Ratio elements
 - **WHEN** `[[1/3, 1/6]] @ [[3], [6]]` is evaluated
 - **THEN** the result is the 1 × 1 matrix holding exactly `2`
 
 ### Requirement: The inverse and determinant preserve exactness
 The determinant of a matrix of `Int` elements SHALL be an `Int`, and of `Int`
-and `Rational` elements an exact `Rational`. The inverse of a matrix of `Int`
-and `Rational` elements SHALL be exact, so that its product with the matrix is
+and `Ratio` elements an exact `Ratio`. The inverse of a matrix of `Int`
+and `Ratio` elements SHALL be exact, so that its product with the matrix is
 exactly the identity, and such a matrix SHALL be singular only when its
 determinant is exactly `0`. An element of type `Num` SHALL make either result
 `Num`, and one of type `Complex` SHALL make it `Complex`.

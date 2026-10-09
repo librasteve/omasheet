@@ -21,7 +21,7 @@ calculation runs. If checking reports any error, the system SHALL NOT execute an
 part of the sheet.
 
 #### Scenario: One type error blocks execution
-- **GIVEN** a sheet with ten valid computed columns and one defined as `Revenue + Month` where `Revenue` is `Rational` and `Month` is `Text`
+- **GIVEN** a sheet with ten valid computed columns and one defined as `Revenue + Month` where `Revenue` is `Ratio` and `Month` is `Text`
 - **WHEN** the sheet is evaluated
 - **THEN** the type error is reported and no column is calculated
 
@@ -40,7 +40,7 @@ order of declarations in the file.
 - **THEN** `Profit` is calculated first and `Margin` is correct
 
 #### Scenario: Row-wise self reference is allowed
-- **GIVEN** `Balance := (Ledger[*-1; Balance] // 0) + Amount`
+- **GIVEN** `Balance := (Ledger[Balance; *-1] // 0) + Amount`
 - **WHEN** the sheet is evaluated
 - **THEN** each row's `Balance` is calculated after the previous row's, yielding a running balance
 

@@ -18,8 +18,8 @@ Placed           | CustomerID | Qty | Price
 2025-03-04T11:05 | 9          | 1   | 100
 2025-03-05T08:30 | 2          | 2   | 7.25
 
-Customer := Customers[ID == CustomerID].Name // "Unknown"
-Region   := Customers[ID == CustomerID].Region // "?"
+Customer := Customers[; ID == CustomerID].Name // "Unknown"
+Region   := Customers[; ID == CustomerID].Region // "?"
 Total    := Qty * Price
 Discount := if Total > 50 and Region in ["UK", "US"] then Total * 10% else 0
 Rush     := Placed < 2025-03-04T00:00
@@ -31,5 +31,5 @@ UK
 US
 FI
 
-Count := Orders[Region == ByRegion[*; Region]].count()
-Sales := Orders[Region == ByRegion[*; Region]].Total.sum()
+Count := Orders[; Region == ByRegion[Region; *]].count()
+Sales := Orders[; Region == ByRegion[Region; *]].Total.sum()

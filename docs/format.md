@@ -14,7 +14,7 @@ func WithTax(x) = x * (1 + TaxRate)
 table Sales
 
 # Optional: the type of a column.
-Revenue : Rational
+Revenue : Ratio
 
 # A cell that starts with = is a formula.
 Month | Revenue | Cost
@@ -35,14 +35,14 @@ Gross  := WithTax(Revenue)
 
 ## Types
 
-`Int`, `Rational`, `Num`, `Complex`, `Text`, `Bool`, `Date`, `Time`, `DateTime`.
+`Int`, `Ratio`, `Num`, `Complex`, `Text`, `Bool`, `Date`, `Time`, `DateTime`.
 A column with no `Name : Type` line takes its type from its cells.
 
 | Type | Written |
 |---|---|
 | `Int` | `42`, `1_000_000` |
-| `Rational` | `19.99`, `20%`, `1/7` — exact |
-| `Num` | `1.5e3` — floating point, only when asked for |
+| `Ratio` | `19.99`, `20%`, `1/7` — exact |
+| `Num` | `1.5e3` — floating point |
 | `Text` | `hello`, or `"with | a pipe"` |
 | `Bool` | `true`, `false` |
 | `Date` | `2025-01-31` |

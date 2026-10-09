@@ -12,11 +12,11 @@
 - [x] 1.3 Add a `examples/` corpus of `.omx` files used as golden tests
 
 ## 2. Numerics (`numerics`)
-- [x] 2.1 `Int` on `BigInt`, `Rational` on `BigRational`, `Num` on `f64`
+- [x] 2.1 `Int` on `BigInt`, `Ratio` on `BigRational`, `Num` on `f64`
 - [x] 2.2 Literal lexing: integers, decimals, `_` separators, exponent form, `%`
-- [x] 2.3 Arithmetic and coercion rules; `Int / Int → Rational`
-- [x] 2.4 `approx()` / `Num()` conversions; verify no implicit Rational → Num path
-- [x] 2.5 Rational display: decimal when terminating, fraction otherwise
+- [x] 2.3 Arithmetic and coercion rules; `Int / Int → Ratio`
+- [x] 2.4 `approx()` / `Num()` conversions; verify no implicit Ratio → Num path
+- [x] 2.5 Ratio display: decimal when terminating, fraction otherwise
 
 ## 3. OMX core (`omx-expressions`)
 - [x] 3.1 Lexer and hand-written expression parser; a syntax error in one declaration does not hide errors in the others
@@ -26,7 +26,7 @@
 - [x] 3.5 Ranges `a..b`, `a..^b`
 - [x] 3.6 Indexing `[ ]`, dimension separator `;`, empty slot, `.Field` access
 - [x] 3.7 Cursor `*`, `*±n`, cursor-bounded ranges; error when there is no row context
-- [x] 3.8 Predicate selection `T[cond]`
+- [x] 3.8 Predicate selection `T[; cond]`
 - [x] 3.9 Aggregation methods
 - [x] 3.10 Broadcasting for scalar⊗vector and vector⊗vector
 - [x] 3.11 Pipe `|>` with `filter`, `select`, `sum`

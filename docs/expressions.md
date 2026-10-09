@@ -20,20 +20,20 @@ is empty). `if c then a else b`.
 | `Revenue` | inside the table: this row's value |
 | `TaxRate` | a constant |
 
-## Selecting with `[rows; columns]`
+## Selecting with `[columns; rows]`
 
 | Written | Means |
 |---|---|
-| `Sales[1; Revenue]` | one cell; positions count from 0 |
-| `Sales[-1; Revenue]` | the last row |
-| `Sales[0..2]` | rows 0 to 2; `0..^2` leaves out the end |
-| `Sales[; Revenue]` | an empty slot is all of it |
-| `Sales[Revenue > 11000]` | the rows where it is true |
-| `Sales[*-1; Revenue]` | the row before this one; `*` is this row |
-| `Sales[0..*; Revenue]` | from the top down to this row |
+| `Sales[Revenue; 1]` | one cell; positions count from 0 |
+| `Sales[Revenue; -1]` | the last row |
+| `Sales[; 0..2]` | rows 0 to 2, every column; `0..^2` leaves out the end |
+| `Sales[Revenue]` | the whole column: a missing or empty slot is all of it |
+| `Sales[; Revenue > 11000]` | the rows where it is true |
+| `Sales[Revenue; *-1]` | the row before this one; `*` is this row |
+| `Sales[Revenue; 0..*]` | from the top down to this row |
 
-Inside its own table the name can be dropped: `[*-1; Revenue]`. A row
-outside the table is empty, so `[*-1; Revenue] // 0` starts a running value.
+Inside its own table the name can be dropped: `[Revenue; *-1]`. A row
+outside the table is empty, so `[Revenue; *-1] // 0` starts a running value.
 
 ## Functions
 

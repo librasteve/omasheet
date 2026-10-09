@@ -77,7 +77,7 @@ an error.
 ### Requirement: Column schema
 A table SHALL be able to declare the type of each column with lines of the form
 `<Column> : <Type>` placed between the `table` line and the header row. A type
-SHALL be a base type (`Int`, `Rational`, `Num`, `Complex`, `Text`, `Date`, `Time`, `DateTime`, `Bool`).
+SHALL be a base type (`Int`, `Ratio`, `Num`, `Complex`, `Text`, `Date`, `Time`, `DateTime`, `Bool`).
 A column with no declaration SHALL have its type inferred from its cells.
 
 #### Scenario: Typed columns
@@ -86,14 +86,14 @@ A column with no declaration SHALL have its type inferred from its cells.
   table Items
 
   Qty   : Int
-  Price : Rational
+  Price : Ratio
 
   Qty | Price
   2   | 19.99
   5   | 0.50
   ```
 - **WHEN** the file is parsed
-- **THEN** `Items.Qty` has type `Int`, `Items.Price` has type `Rational`, and the first row's `Price` is exactly `1999/100`
+- **THEN** `Items.Qty` has type `Int`, `Items.Price` has type `Ratio`, and the first row's `Price` is exactly `1999/100`
 
 #### Scenario: Schema names a column not in the header
 - **WHEN** a schema line declares a column that does not appear in the header and is not a computed column
@@ -124,7 +124,7 @@ cell in a column of any other declared type SHALL be a literal of that type, and
 SHALL be an error otherwise. In an undeclared column, a cell that is a valid OMX
 literal SHALL take that literal's type and any other literal cell SHALL be text.
 A cell holding two whole numbers separated by `/`, such as `1/7`, optionally
-negated and with a non-zero denominator, SHALL be a `Rational` literal.
+negated and with a non-zero denominator, SHALL be a `Ratio` literal.
 Text that itself begins with `=` SHALL be written as a quoted string.
 
 #### Scenario: Text cell
@@ -133,19 +133,19 @@ Text that itself begins with `=` SHALL be written as a quoted string.
 - **THEN** its value is the text `Jan`
 
 #### Scenario: Per-cell formula in a typed column
-- **GIVEN** a column declared `Tax : Rational` and a constant `TaxRate`
+- **GIVEN** a column declared `Tax : Ratio` and a constant `TaxRate`
 - **WHEN** a cell in `Tax` contains `= Revenue * TaxRate`
 - **THEN** its value is that row's `Revenue` multiplied by `TaxRate`
 
 #### Scenario: Fraction cell
 - **GIVEN** an undeclared column `Share`
 - **WHEN** a cell contains `1/7`
-- **THEN** its value is the exact `Rational` one seventh
+- **THEN** its value is the exact `Ratio` one seventh
 
 #### Scenario: Unmarked expression in a typed column
-- **GIVEN** a column declared `Tax : Rational`
+- **GIVEN** a column declared `Tax : Ratio`
 - **WHEN** a cell in `Tax` contains `Revenue * TaxRate` with no leading `=`
-- **THEN** an error reports that the cell is not a `Rational` literal
+- **THEN** an error reports that the cell is not a `Ratio` literal
 
 #### Scenario: Unmarked expression in a text column
 - **GIVEN** a column declared `Note : Text`

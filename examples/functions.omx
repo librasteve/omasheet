@@ -14,7 +14,7 @@ func WithVat(price) = price * (1 + VatRate)
 func Margin(revenue, cost) = if revenue == 0 then 0 else (revenue - cost) / revenue
 
 # A customer's name from their ID.
-func CustomerName(id) = Customers[ID == id].Name // "Unknown"
+func CustomerName(id) = Customers[; ID == id].Name // "Unknown"
 
 # What a table of orders comes to. A parameter can be a whole table.
 func Worth(orders) = (orders.Qty * orders.Price).sum()

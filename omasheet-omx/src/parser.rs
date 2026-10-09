@@ -335,7 +335,7 @@ impl Parser {
             Tok::LBracket => {
                 self.bump();
                 let mut items = Vec::new();
-                // `[*-1; Revenue]`, with a `;` or a row cursor, is an index
+                // `[Revenue; *-1]`, with a `;` or a row cursor, is an index
                 // into the current table; anything else is a vector.
                 let mut first = None;
                 if !matches!(self.peek(), Tok::Semi | Tok::RBracket) {
@@ -412,11 +412,11 @@ mod tests {
     #[test]
     fn shapes() {
         assert!(matches!(
-            parse("Sales[*-1; Revenue] // 0").unwrap().kind,
+            parse("Sales[Revenue; *-1] // 0").unwrap().kind,
             ExprKind::Binary(BinOp::Fallback, ..)
         ));
         assert!(matches!(
-            parse("Sales[; Revenue]").unwrap().kind,
+            parse("Sales[; 1]").unwrap().kind,
             ExprKind::Index(_, slots) if slots.len() == 2 && slots[0].is_none()
         ));
         assert!(matches!(
@@ -431,7 +431,7 @@ mod tests {
 
     #[test]
     fn single_equals_suggests_double() {
-        let err = parse("Sales[Region = \"UK\"]").unwrap_err();
+        let err = parse("Sales[; Region = \"UK\"]").unwrap_err();
         assert!(err.help.unwrap().contains("=="));
     }
 }

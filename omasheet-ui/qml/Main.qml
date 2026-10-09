@@ -232,13 +232,13 @@ ApplicationWindow {
         var step = function(n) { return n === 0 ? "*" : "*" + (n > 0 ? "+" : "-") + Math.abs(n); };
         var ref;
         if (absolute) {
-            ref = "[" + row + "; " + name + "]";
+            ref = "[" + name + "; " + row + "]";
         } else if (table.columns[curCol] && table.columns[curCol].computed) {
             // A column formula names columns: it is the same for every row.
-            ref = offset === 0 ? name : "[" + step(offset) + "; " + name + "]";
+            ref = offset === 0 ? name : "[" + name + "; " + step(offset) + "]";
         } else {
             // A formula in one cell counts rows and columns from itself.
-            ref = "[" + step(offset) + "; " + step(col - curCol) + "]";
+            ref = "[" + step(col - curCol) + "; " + step(offset) + "]";
         }
         var at = editor.selectionStart;
         editor.remove(at, editor.selectionEnd);
@@ -591,7 +591,7 @@ ApplicationWindow {
                     readonly property var column: win.table.columns[win.curCol]
                     text: column
                         ? (win.table.isConsts ? win.table.rows[win.curRow][0].d
-                           : win.table.name + "[" + win.curRow + "; " + column.name + "]")
+                           : win.table.name + "[" + column.name + "; " + win.curRow + "]")
                         : ""
                     color: win.mutedColor
                     font: win.font

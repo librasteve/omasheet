@@ -102,15 +102,15 @@ fn reference_forms() {
 
 #[test]
 fn selection() {
-    assert_eq!(ask(SALES, "Sales[1; Revenue]"), "120");
-    assert_eq!(ask(SALES, "Sales[1].Revenue"), "120");
-    assert_eq!(ask(SALES, "Sales[; Revenue]"), "[100, 120, 150]");
+    assert_eq!(ask(SALES, "Sales[Revenue; 1]"), "120");
+    assert_eq!(ask(SALES, "Sales[; 1].Revenue"), "120");
+    assert_eq!(ask(SALES, "Sales[Revenue]"), "[100, 120, 150]");
     assert_eq!(
-        ask(SALES, "Sales[2; ]"),
+        ask(SALES, "Sales[; 2]"),
         "Month | Region | Revenue | Cost\n------|--------|---------|-----\nMar   | UK     |     150 |   80"
     );
     assert_eq!(
-        ask(SALES, "Sales[1..2; 2..3]"),
+        ask(SALES, "Sales[2..3; 1..2]"),
         "Revenue | Cost\n--------|-----\n    120 |   70\n    150 |   80"
     );
 }
@@ -123,19 +123,19 @@ fn positional_indexing() {
 
 #[test]
 fn ranges() {
-    assert_eq!(ask(SALES, "Sales[0..2].count()"), "3");
-    assert_eq!(ask(SALES, "Sales[0..^2].count()"), "2");
+    assert_eq!(ask(SALES, "Sales[; 0..2].count()"), "3");
+    assert_eq!(ask(SALES, "Sales[; 0..^2].count()"), "2");
     let sheet = format!("const Rows = 1..2\nconst Cols = 2..3\n\n{SALES}");
     assert_eq!(
-        ask(&sheet, "Sales[Rows; Cols]"),
-        ask(SALES, "Sales[1..2; 2..3]")
+        ask(&sheet, "Sales[Cols; Rows]"),
+        ask(SALES, "Sales[2..3; 1..2]")
     );
 }
 
 #[test]
 fn row_cursor() {
     let sheet = format!(
-        "{SALES}\nPrev := Sales[*-1; Revenue]\nGrowth := Revenue / Sales[*-1; Revenue] - 1\nRunning := Sales[0..*; Revenue].sum()\nWindow := Sales[*-1..*; Revenue].avg()\n"
+        "{SALES}\nPrev := Sales[Revenue; *-1]\nGrowth := Revenue / Sales[Revenue; *-1] - 1\nRunning := Sales[Revenue; 0..*].sum()\nWindow := Sales[Revenue; *-1..*].avg()\n"
     );
     assert_eq!(ask(&sheet, "Sales.Prev"), "[empty, 100, 120]");
     assert_eq!(ask(&sheet, "Sales.Growth"), "[empty, 0.2, 0.25]");
@@ -145,23 +145,23 @@ fn row_cursor() {
 
 #[test]
 fn cursor_needs_a_row() {
-    let err = calc_err(Some(SALES), "Sales[*-1; Revenue]");
+    let err = calc_err(Some(SALES), "Sales[Revenue; *-1]");
     assert!(err.contains("`*-1` needs a current row"), "{err}");
-    let err = calc_err(Some(SALES), "Sales[*; Revenue]");
+    let err = calc_err(Some(SALES), "Sales[Revenue; *]");
     assert!(err.contains("`*` needs a current row"), "{err}");
 }
 
 #[test]
 fn cursor_survives_row_insertion() {
-    let sheet = "table T\n\nV\n1\n5\n2\n\nPrev := T[*-1; V]\n";
+    let sheet = "table T\n\nV\n1\n5\n2\n\nPrev := T[V; *-1]\n";
     assert_eq!(ask(sheet, "T.Prev"), "[empty, 1, 5]");
 }
 
 #[test]
 fn predicate_selection() {
-    assert_eq!(ask(SALES, "Sales[Region == \"UK\"].Revenue.sum()"), "250");
+    assert_eq!(ask(SALES, "Sales[; Region == \"UK\"].Revenue.sum()"), "250");
     let dated = "table Sales\n\nDate | Region | Revenue\n2024-12-31 | UK | 1\n2025-03-01 | UK | 10\n2025-06-01 | US | 100\n2026-01-01 | UK | 1000\n";
-    let expr = "Sales[\n    Region == \"UK\" and\n    Date >= 2025-01-01 and\n    Date < 2026-01-01\n].Revenue.sum()";
+    let expr = "Sales[;\n    Region == \"UK\" and\n    Date >= 2025-01-01 and\n    Date < 2026-01-01\n].Revenue.sum()";
     assert_eq!(ask(dated, expr), "10");
 }
 
@@ -171,17 +171,17 @@ fn datetime_columns() {
     assert_eq!(
         ask(
             sheet,
-            "Log[At >= 2025-03-01T12:00 and At < 2025-03-02T00:00].N.sum()"
+            "Log[; At >= 2025-03-01T12:00 and At < 2025-03-02T00:00].N.sum()"
         ),
         "10"
     );
     assert_eq!(ask(sheet, "Log.At.max()"), "2025-03-02T00:00");
-    assert_eq!(ask(sheet, "Log[1; At]"), "2025-03-01T17:45:10");
+    assert_eq!(ask(sheet, "Log[At; 1]"), "2025-03-01T17:45:10");
     // An undeclared column infers DateTime from its cells.
     let inferred = sheet.replace("At : DateTime\n\n", "");
     assert_eq!(ask(&inferred, "Log.At.min()"), "2025-03-01T09:30");
     // A Date is not a DateTime.
-    let err = calc_err(Some(sheet), "Log[At >= 2025-03-01].N.sum()");
+    let err = calc_err(Some(sheet), "Log[; At >= 2025-03-01].N.sum()");
     assert!(err.contains("cannot compare DateTime and Date"), "{err}");
     let bad = "table Log\n\nAt : DateTime\n\nAt\n2025-03-01\n";
     let errs = lint_errors(bad);
@@ -191,13 +191,16 @@ fn datetime_columns() {
 #[test]
 fn time_columns() {
     let sheet = "table Log\n\nAt : Time\n\nAt | N\n09:30 | 1\n17:45:10 | 10\n00:00 | 100\n";
-    assert_eq!(ask(sheet, "Log[At >= 09:30 and At < 18:00].N.sum()"), "11");
+    assert_eq!(
+        ask(sheet, "Log[; At >= 09:30 and At < 18:00].N.sum()"),
+        "11"
+    );
     assert_eq!(ask(sheet, "Log.At.max()"), "17:45:10");
-    assert_eq!(ask(sheet, "Log[0; At]"), "09:30");
+    assert_eq!(ask(sheet, "Log[At; 0]"), "09:30");
     // An undeclared column infers Time from its cells.
     let inferred = sheet.replace("At : Time\n\n", "");
     assert_eq!(ask(&inferred, "Log.At.min()"), "00:00");
-    let err = calc_err(Some(sheet), "Log[At >= 2025-03-01].N.sum()");
+    let err = calc_err(Some(sheet), "Log[; At >= 2025-03-01].N.sum()");
     assert!(err.contains("cannot compare Time and Date"), "{err}");
     let errs = lint_errors("table Log\n\nAt : Time\n\nAt\n9.30\n");
     assert!(errs[0].contains("is not a `Time` literal"), "{errs:?}");
@@ -232,7 +235,7 @@ fn date_and_time_arithmetic() {
             "cannot apply `+` to Date and Date",
         ),
         ("1 - 2025-01-31", "cannot apply `-` to Int and Date"),
-        ("2025-01-31 + 1.5", "cannot apply `+` to Date and Rational"),
+        ("2025-01-31 + 1.5", "cannot apply `+` to Date and Ratio"),
         ("2025-01-31 - 09:30", "cannot apply `-` to Date and Time"),
         (
             "2025-01-31T09:30 - 2025-01-31",
@@ -244,7 +247,7 @@ fn date_and_time_arithmetic() {
     }
 
     let sheet = "table Jobs\n\nDue : Date\n\nStart | Days | Due\n2025-01-30 | 3 | = Start + Days\n";
-    assert_eq!(ask(sheet, "Jobs[0; Due]"), "2025-02-02");
+    assert_eq!(ask(sheet, "Jobs[Due; 0]"), "2025-02-02");
     let bad = sheet.replace("Due : Date", "Due : DateTime");
     assert!(lint_errors(&bad)[0].contains("declared `DateTime` but this is `Date`"));
 }
@@ -318,7 +321,7 @@ fn today_and_now_come_from_the_options() {
 #[test]
 fn index_with_no_table_name() {
     // In a table, `[...]` with a `;` or a row cursor is that table.
-    let sheet = "table T\n\nV\n1\n5\n2\n\nPrev := [*-1; V]\nRun := [0..*; V].sum()\nSame := [*; V]\nFirst := [0; V]\nAll := [; V].sum()\nRow := [*-1].V // 0\n";
+    let sheet = "table T\n\nV\n1\n5\n2\n\nPrev := [V; *-1]\nRun := [V; 0..*].sum()\nSame := [V; *]\nFirst := [V; 0]\nAll := [V; ].sum()\nRow := [; *-1].V // 0\n";
     assert_eq!(ask(sheet, "T.Prev"), "[empty, 1, 5]");
     assert_eq!(ask(sheet, "T.Run"), "[1, 6, 8]");
     assert_eq!(ask(sheet, "T.Same"), "[1, 5, 2]");
@@ -326,18 +329,18 @@ fn index_with_no_table_name() {
     assert_eq!(ask(sheet, "T.All"), "[8, 8, 8]");
     assert_eq!(ask(sheet, "T.Row"), "[0, 1, 5]");
     // `*` as a column is the formula's own column, and counts from it.
-    let grid = "table G\n\nA | B | C\n1 | = [*; *-1] + 1 | = [*; *-1] * 10\n5 | = [*-1; *] + [*; A] | = [*-1; *+0]\n";
+    let grid = "table G\n\nA | B | C\n1 | = [*-1; *] + 1 | = [*-1; *] * 10\n5 | = [*; *-1] + [A; *] | = [*+0; *-1]\n";
     assert_eq!(ask(grid, "G.B"), "[2, 7]");
     assert_eq!(ask(grid, "G.C"), "[20, 20]");
-    let off = lint_errors("table G\n\nA | B\n= [*; *-1] | 2\n");
+    let off = lint_errors("table G\n\nA | B\n= [*-1; *] | 2\n");
     assert!(off[0].contains("no column 1 to the left"), "{off:?}");
-    let err = calc_err(Some(grid), "G[0; *]");
+    let err = calc_err(Some(grid), "G[*; 0]");
     assert!(err.contains("`*` as a column"), "{err}");
     // A vector literal is still a vector.
     assert_eq!(calc("[1, 2, 3].sum()"), "6");
     assert_eq!(calc("[4]"), "[4]");
     // Outside a table there is no table to mean.
-    let err = calc_err(Some(sheet), "[0; V]");
+    let err = calc_err(Some(sheet), "[V; 0]");
     assert!(err.contains("needs a current table"), "{err}");
 }
 
@@ -359,7 +362,7 @@ fn complex_numbers() {
     assert!(calc_err(None, "1i < 2i").contains("cannot compare"));
     // A column of them: literal cells, a real number, and a formula.
     let sheet =
-        "table Z\n\nV : Complex\n\nV\n3+4i\n-2i\n5\n-1.5-2i\n= [*-4; V] * 1i\n\nSize := abs(V)\n";
+        "table Z\n\nV : Complex\n\nV\n3+4i\n-2i\n5\n-1.5-2i\n= [V; *-4] * 1i\n\nSize := abs(V)\n";
     assert_eq!(
         ask(sheet, "Z.V"),
         "[3.0+4.0i, 0.0-2.0i, 5.0+0.0i, -1.5-2.0i, -4.0+3.0i]"
@@ -368,7 +371,7 @@ fn complex_numbers() {
     assert_eq!(ask(sheet, "Z.V.sum()"), "2.5+3.0i");
     // Undeclared, a column of them is still Complex.
     let inferred = sheet.replace("V : Complex\n\n", "");
-    assert_eq!(ask(&inferred, "Z[1; V]"), "0.0-2.0i");
+    assert_eq!(ask(&inferred, "Z[V; 1]"), "0.0-2.0i");
     let bad = lint_errors("table Z\n\nV : Complex\n\nV\nfour\n");
     assert!(bad[0].contains("such as `3+4i`"), "{bad:?}");
 }
@@ -507,12 +510,12 @@ fn time_zones() {
     let sheet = "zone America/New_York\n\ntable Calls\n\nAt\n2025-03-03T09:12\n\n\
                  Tokyo := At.to_zone(\"Asia/Tokyo\")\n";
     let ny = |expr: &str| with(&london, Some(sheet), expr);
-    assert_eq!(ny("Calls[0; At]"), "2025-03-03T09:12");
-    assert_eq!(ny("Calls[0; At].zone()"), "America/New_York");
-    assert_eq!(ny("Calls[0; At].offset()"), "-18000");
-    assert_eq!(ny("Calls[0; Tokyo]"), "2025-03-03T23:12+09:00");
-    assert_eq!(ny("Calls[0; At].local()"), "2025-03-03T14:12+00:00");
-    assert_eq!(ny("Calls[0; At].utc() == Calls[0; At]"), "true");
+    assert_eq!(ny("Calls[At; 0]"), "2025-03-03T09:12");
+    assert_eq!(ny("Calls[At; 0].zone()"), "America/New_York");
+    assert_eq!(ny("Calls[At; 0].offset()"), "-18000");
+    assert_eq!(ny("Calls[Tokyo; 0]"), "2025-03-03T23:12+09:00");
+    assert_eq!(ny("Calls[At; 0].local()"), "2025-03-03T14:12+00:00");
+    assert_eq!(ny("Calls[At; 0].utc() == Calls[At; 0]"), "true");
     // `now()` is on the sheet's clocks: five hours behind London in winter.
     assert_eq!(ny("now().zone()"), "America/New_York");
     assert_eq!(ny("now().local() == now()"), "true");
@@ -532,15 +535,15 @@ fn time_zones() {
         ..london.clone()
     };
     assert_eq!(
-        with(&local, Some(sheet), "Calls[0; At]"),
+        with(&local, Some(sheet), "Calls[At; 0]"),
         "2025-03-03T14:12"
     );
     assert_eq!(with(&local, Some(sheet), "Calls.At"), "[2025-03-03T14:12]");
     assert_eq!(
-        with(&local, Some(sheet), "Calls[0; Tokyo]"),
+        with(&local, Some(sheet), "Calls[Tokyo; 0]"),
         "2025-03-03T23:12+09:00"
     );
-    assert_eq!(with(&local, Some(sheet), "Calls[0; At].hour()"), "9");
+    assert_eq!(with(&local, Some(sheet), "Calls[At; 0].hour()"), "9");
     assert_eq!(
         view_with("test.omx", sheet, local).output,
         "table Calls\n\nAt               | Tokyo\n-----------------|-----------------------\n\
@@ -560,7 +563,31 @@ fn time_zones() {
         "{errs:?}"
     );
     assert!(lint_errors("zone UTC\n\ntable T\n\nA\n1\n").is_empty());
-    assert_eq!(ask("table T\n\nA\nzone UTC\n", "T[0; A]"), "zone UTC");
+    assert_eq!(ask("table T\n\nA\nzone UTC\n", "T[A; 0]"), "zone UTC");
+}
+
+#[test]
+fn one_slot_selects_columns() {
+    assert_eq!(ask(SALES, "Sales[Revenue]"), ask(SALES, "Sales.Revenue"));
+    assert_eq!(ask(SALES, "Sales[Revenue; ]"), "[100, 120, 150]");
+    assert_eq!(ask(SALES, "Sales[2]"), "[100, 120, 150]");
+    assert_eq!(ask(SALES, "Sales[Revenue; 1]"), "120");
+    assert_eq!(ask(SALES, "Sales[2; -1]"), "150");
+    assert_eq!(ask(SALES, "Sales[; 1].Revenue"), "120");
+    assert_eq!(
+        ask(SALES, "Sales[2..3; 0]"),
+        "Revenue | Cost\n--------|-----\n    100 |   60"
+    );
+    // Rows alone need the `;`.
+    let err = calc_err(Some(SALES), "Sales[Region == \"UK\"]");
+    assert!(
+        err.contains("a column selector must be a column name"),
+        "{err}"
+    );
+    assert_eq!(ask(SALES, "Sales[; Region == \"UK\"].Revenue.sum()"), "250");
+    // A vector has one dimension, so its one slot is the element.
+    assert_eq!(ask(SALES, "Sales.Revenue[1]"), "120");
+    assert_eq!(ask(SALES, "Sales[Revenue][1]"), "120");
 }
 
 #[test]
@@ -579,7 +606,7 @@ CustomerID | Amount
 7          | 20
 1          | 10
 
-Customer := Customers[ID == CustomerID].Name // \"Unknown\"
+Customer := Customers[; ID == CustomerID].Name // \"Unknown\"
 ";
     assert_eq!(
         ask(sheet, "Sales.Customer"),
@@ -590,10 +617,10 @@ Customer := Customers[ID == CustomerID].Name // \"Unknown\"
 #[test]
 fn operators() {
     let sheet =
-        format!("{SALES}\nPrev := Sales[*-1; Revenue] // 0\nHome := Region in [\"UK\", \"IE\"]\n");
+        format!("{SALES}\nPrev := Sales[Revenue; *-1] // 0\nHome := Region in [\"UK\", \"IE\"]\n");
     assert_eq!(ask(&sheet, "Sales.Prev"), "[0, 100, 120]");
     assert_eq!(ask(&sheet, "Sales.Home"), "[true, false, true]");
-    let err = calc_err(Some(SALES), "Sales[Region = \"UK\"]");
+    let err = calc_err(Some(SALES), "Sales[; Region = \"UK\"]");
     assert!(err.contains("=="), "{err}");
 }
 
@@ -605,9 +632,12 @@ fn conditional_expression() {
 
 #[test]
 fn value_shapes() {
-    assert!(ask(SALES, "Sales[Region == \"UK\"]").starts_with("Month | Region"));
-    assert_eq!(ask(SALES, "Sales[Region == \"UK\"].Revenue"), "[100, 150]");
-    assert_eq!(ask(SALES, "Sales[Region == \"UK\"].Revenue.sum()"), "250");
+    assert!(ask(SALES, "Sales[; Region == \"UK\"]").starts_with("Month | Region"));
+    assert_eq!(
+        ask(SALES, "Sales[; Region == \"UK\"].Revenue"),
+        "[100, 150]"
+    );
+    assert_eq!(ask(SALES, "Sales[; Region == \"UK\"].Revenue.sum()"), "250");
 }
 
 #[test]
@@ -624,7 +654,7 @@ fn broadcasting() {
     assert_eq!(calc("[100, 200, 300] * 20%"), "[20, 40, 60]");
     assert_eq!(ask(SALES, "Sales.Revenue - Sales.Cost"), "[40, 50, 70]");
     assert_eq!(
-        ask(SALES, "Sales[Sales.Revenue > 110].Month"),
+        ask(SALES, "Sales[; Sales.Revenue > 110].Month"),
         "[\"Feb\", \"Mar\"]"
     );
     let err = calc_err(None, "[1, 2, 3] + [1, 2, 3, 4]");
@@ -636,7 +666,7 @@ fn pipe_operator() {
     let piped = "Sales\n  |> filter(Region == \"UK\")\n  |> select(Revenue)\n  |> sum()";
     assert_eq!(
         ask(SALES, piped),
-        ask(SALES, "Sales[Region == \"UK\"].Revenue.sum()")
+        ask(SALES, "Sales[; Region == \"UK\"].Revenue.sum()")
     );
 }
 
@@ -662,7 +692,7 @@ fn ragged_row() {
 #[test]
 fn multiple_tables() {
     let sheet = format!("{SALES}\ntable Summary\n\nLabel | Value\nTotal | = Sales.Revenue.sum()\n");
-    assert_eq!(ask(&sheet, "Summary[0; Value]"), "370");
+    assert_eq!(ask(&sheet, "Summary[Value; 0]"), "370");
     let errors = lint_errors("table Sales\n\nA\n1\n\ntable Sales\n\nA\n2\n");
     assert_eq!(errors.len(), 1);
     assert!(errors[0].starts_with("test.omx:6:"), "{}", errors[0]);
@@ -671,10 +701,10 @@ fn multiple_tables() {
 #[test]
 fn column_schema() {
     let sheet =
-        "table Items\n\nQty   : Int\nPrice : Rational\n\nQty | Price\n2   | 19.99\n5   | 0.50\n";
-    assert_eq!(ask(sheet, "Items[0; Price] == 1999/100"), "true");
-    assert_eq!(ask(sheet, "Items[0; Qty] * Items[0; Price]"), "39.98");
-    let errors = lint_errors("table Items\n\nPrise : Rational\n\nQty | Price\n2 | 1\n");
+        "table Items\n\nQty   : Int\nPrice : Ratio\n\nQty | Price\n2   | 19.99\n5   | 0.50\n";
+    assert_eq!(ask(sheet, "Items[Price; 0] == 1999/100"), "true");
+    assert_eq!(ask(sheet, "Items[Qty; 0] * Items[Price; 0]"), "39.98");
+    let errors = lint_errors("table Items\n\nPrise : Ratio\n\nQty | Price\n2 | 1\n");
     assert!(errors[0].contains("no column `Prise`"), "{}", errors[0]);
 }
 
@@ -693,23 +723,22 @@ fn computed_columns() {
 #[test]
 fn cell_content() {
     // Text in an undeclared column.
-    assert_eq!(ask(SALES, "Sales[0; Month]"), "Jan");
+    assert_eq!(ask(SALES, "Sales[Month; 0]"), "Jan");
     // A marked formula in a typed column.
-    let sheet = "const TaxRate = 20%\n\ntable T\n\nTax : Rational\n\nRevenue | Tax\n100 | = Revenue * TaxRate\n";
-    assert_eq!(ask(sheet, "T[0; Tax]"), "20");
-    // A fraction of two whole numbers is a Rational literal, declared or not.
-    let thirds = "table T\n\nA : Rational\n\nA | B\n1/7 | 2/3\n-3/6 | 1/3\n4/2 | x\n";
+    let sheet = "const TaxRate = 20%\n\ntable T\n\nTax : Ratio\n\nRevenue | Tax\n100 | = Revenue * TaxRate\n";
+    assert_eq!(ask(sheet, "T[Tax; 0]"), "20");
+    // A fraction of two whole numbers is a Ratio literal, declared or not.
+    let thirds = "table T\n\nA : Ratio\n\nA | B\n1/7 | 2/3\n-3/6 | 1/3\n4/2 | x\n";
     assert_eq!(ask(thirds, "T.A"), "[1/7, -0.5, 2]");
-    assert_eq!(ask(thirds, "T[0..1; B].sum()"), "1");
+    assert_eq!(ask(thirds, "T[B; 0..1].sum()"), "1");
     assert!(
-        lint_errors("table T\n\nA : Rational\n\nA\n1/0\n")[0]
-            .contains("is not a `Rational` literal")
+        lint_errors("table T\n\nA : Ratio\n\nA\n1/0\n")[0].contains("is not a `Ratio` literal")
     );
-    assert_eq!(ask("table T\n\nA\n1/0\n", "T[0; A]"), "1/0");
+    assert_eq!(ask("table T\n\nA\n1/0\n", "T[A; 0]"), "1/0");
     // An unmarked expression in a typed column is an error.
-    let errors = lint_errors("table T\n\nTax : Rational\n\nRevenue | Tax\n100 | Revenue * 2\n");
+    let errors = lint_errors("table T\n\nTax : Ratio\n\nRevenue | Tax\n100 | Revenue * 2\n");
     assert!(
-        errors[0].contains("is not a `Rational` literal"),
+        errors[0].contains("is not a `Ratio` literal"),
         "{}",
         errors[0]
     );
@@ -720,7 +749,7 @@ fn cell_content() {
         "[\"Revenue - Cost\", \"= see appendix\"]"
     );
     // An empty cell.
-    assert_eq!(ask("table T\n\nA | B\n1 |\n", "T[0; B]"), "empty");
+    assert_eq!(ask("table T\n\nA | B\n1 |\n", "T[B; 0]"), "empty");
 }
 
 #[test]
@@ -783,7 +812,7 @@ fn declaration_order_does_not_matter() {
 #[test]
 fn row_wise_self_reference() {
     let sheet =
-        "table Ledger\n\nAmount\n10\n-3\n5\n\nBalance := (Ledger[*-1; Balance] // 0) + Amount\n";
+        "table Ledger\n\nAmount\n10\n-3\n5\n\nBalance := (Ledger[Balance; *-1] // 0) + Amount\n";
     assert_eq!(ask(sheet, "Ledger.Balance"), "[10, 7, 12]");
 }
 
@@ -842,7 +871,7 @@ func Margin(revenue, cost) = (revenue - cost) / revenue
 func WithTax(x) = x * (1 + Rate)
 func Twice(x) = WithTax(WithTax(x))
 func Total(t) = t.Revenue.sum()
-func NameOf(id) = Customers[ID == id].Name // \"Unknown\"
+func NameOf(id) = Customers[; ID == id].Name // \"Unknown\"
 
 table Customers
 
@@ -920,23 +949,25 @@ fn custom_function_definitions_are_checked() {
     assert!(errors.contains("calls itself"), "{errors}");
     let errors = lint_errors("func F(x) = x + Nope\n").join("\n");
     assert!(errors.contains("unknown name `Nope`"), "{errors}");
-    assert!(lint_errors("func F(t, n) = t[n].Revenue + t[Revenue > n].Cost.sum()\n").is_empty());
+    assert!(
+        lint_errors("func F(t, n) = t[; n].Revenue + t[; Revenue > n].Cost.sum()\n").is_empty()
+    );
 }
 
 #[test]
 fn a_column_range_counts_from_the_formulas_own_column() {
     let sheet = "table T\n\nN | A | B   | C | D | E | F\n\
-                 x | 1 | 2   | 3 | 4 | = sum([*; *-4..*-1])     | = [*; *-5..^*-2].max()\n\
-                 y | 1 | 2.5 | 3 | 4 | = sum([*; 1..*-1])       | = avg([*; *-5..-4])\n\
-                 z | 1 | 2   | 3 | 4 | = [*; *-4..*-1].count()  | = min([*; *-3..*-2])\n";
+                 x | 1 | 2   | 3 | 4 | = sum([*-4..*-1; *])     | = [*-5..^*-2; *].max()\n\
+                 y | 1 | 2.5 | 3 | 4 | = sum([1..*-1; *])       | = avg([*-5..-4; *])\n\
+                 z | 1 | 2   | 3 | 4 | = [*-4..*-1; *].count()  | = min([*-3..*-2; *])\n";
     assert_eq!(ask(sheet, "T.E"), "[10, 10.5, 4]");
     assert_eq!(ask(sheet, "T.F"), "[3, 13/6, 3]");
 
     let errors = |cell: &str| {
         lint_errors(&format!("table T\n\nN | A | B | C\nx | 1 | 2 | {cell}\n")).join("\n")
     };
-    assert!(errors("= sum([*; *-9..*-1])").contains("runs past the first column"));
-    assert!(errors("= sum([*; *-1..*+1])").contains("runs past the last column"));
-    assert!(errors("= sum([*; *-3..*-1])").contains("the columns of this row differ"));
-    assert!(errors("= sum([*; *-1..*])").contains("circular reference"));
+    assert!(errors("= sum([*-9..*-1; *])").contains("runs past the first column"));
+    assert!(errors("= sum([*-1..*+1; *])").contains("runs past the last column"));
+    assert!(errors("= sum([*-3..*-1; *])").contains("the columns of this row differ"));
+    assert!(errors("= sum([*-1..*; *])").contains("circular reference"));
 }

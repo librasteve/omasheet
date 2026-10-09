@@ -27,7 +27,7 @@ that conversation).
 2. **One indexing model.** `[]` selects, `;` separates dimensions, `..` builds
    ranges, `*` is the cursor, an empty slot is "all". Scalars, vectors, tables
    and N-d arrays all use it.
-3. **Exact numerics.** `Int` is arbitrary precision, `Rational` is an
+3. **Exact numerics.** `Int` is arbitrary precision, `Ratio` is an
    arbitrary-precision rational. Floating point (`Num`) only on request.
 4. **Meaning lives in types.** Units, currencies, percentages and uncertainty
    are part of a value's type, declared per column, checked before execution.
