@@ -43,7 +43,7 @@ A column with no `Name : Type` line takes its type from its cells.
 | `Int` | `42`, `1_000_000` |
 | `Ratio` | `19.99`, `20%`, `1/7` — exact |
 | `Num` | `1.5e3` — floating point |
-| `Text` | `hi` or `"hi"`  (use `\``|`) |
+| `Text` | `hi` or `"hi"`  (escape `|`) |
 | `Bool` | `true`, `false` |
 | `Date` | `2025-01-31` |
 | `Time` | `09:30`, `09:30:15` |
