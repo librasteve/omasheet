@@ -68,6 +68,21 @@ pub mod qobject {
             row1: i32,
             col1: i32,
         ) -> QString;
+        /// Copy a block of cells as `copy_cells` does, and clear it. Pasted
+        /// next in the same table, the cells are moved: formulas go on
+        /// reading what they read.
+        #[qinvokable]
+        fn cut_cells(
+            self: Pin<&mut Sheet>,
+            table: i32,
+            row0: i32,
+            col0: i32,
+            row1: i32,
+            col1: i32,
+        ) -> QString;
+        /// Forget the cells that were cut: the clipboard now holds a copy.
+        #[qinvokable]
+        fn forget_cut(self: Pin<&mut Sheet>);
         /// Paste tab-separated text at a block; a single value fills the block.
         #[qinvokable]
         fn paste_cells(
@@ -176,6 +191,20 @@ pub struct SheetRust {
     path: Option<PathBuf>,
     /// The text as last opened or saved, to tell whether there are changes.
     saved: String,
+    /// The cells last cut, until they are pasted.
+    cut: Option<Cut>,
+}
+
+/// A block of cells that was cut, to be moved by the next paste.
+struct Cut {
+    table: usize,
+    /// The top left cell: its row and column.
+    at: (usize, usize),
+    /// What went to the clipboard.
+    text: String,
+    /// The sheet once the cells were cleared: a paste moves them only if
+    /// nothing else has changed since.
+    after: String,
 }
 
 impl Default for SheetRust {
@@ -200,6 +229,7 @@ impl Default for SheetRust {
             doc: document(BLANK),
             path: None,
             saved: BLANK.to_string(),
+            cut: None,
         }
     }
 }
@@ -395,8 +425,32 @@ impl qobject::Sheet {
         QString::from(&lines.join("\n"))
     }
 
+    fn cut_cells(
+        mut self: Pin<&mut Self>,
+        table: i32,
+        row0: i32,
+        col0: i32,
+        row1: i32,
+        col1: i32,
+    ) -> QString {
+        let text = self.copy_cells(table, row0, col0, row1, col1);
+        self.as_mut().clear_cells(table, row0, col0, row1, col1);
+        let after = self.rust().doc.text().to_string();
+        self.as_mut().rust_mut().cut = Some(Cut {
+            table: index(table),
+            at: (index(row0), index(col0)),
+            text: text.to_string(),
+            after,
+        });
+        text
+    }
+
+    fn forget_cut(mut self: Pin<&mut Self>) {
+        self.as_mut().rust_mut().cut = None;
+    }
+
     fn paste_cells(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         table: i32,
         row0: i32,
         col0: i32,
@@ -404,8 +458,19 @@ impl qobject::Sheet {
         col1: i32,
         text: &QString,
     ) {
-        let block = parse_block(&text.to_string());
+        let text = text.to_string();
+        let block = parse_block(&text);
         let (row0, col0) = (index(row0), index(col0));
+        // Cells cut from this table, with nothing done since, are moved.
+        let cut = self.as_mut().rust_mut().cut.take();
+        if let Some(cut) = cut
+            && cut.table == index(table)
+            && parse_block(&cut.text) == block
+            && cut.after == self.rust().doc.text()
+        {
+            self.edit(|doc| doc.paste_cut(cut.table, cut.at, (row0, col0), &block));
+            return;
+        }
         let single = block.len() == 1 && block[0].len() == 1;
         let computed: Vec<bool> = self
             .rust()

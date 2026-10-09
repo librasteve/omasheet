@@ -288,10 +288,15 @@ ApplicationWindow {
     }
 
     // Cut: whole rows or columns are picked up to be moved; cells are copied
-    // and cleared.
+    // and cleared, and the next paste in this table moves them.
     function cutSelection() {
         notice = "";
         var kind = grabKind;
+        if (kind === "" && !table.isConsts) {
+            grabbed = null;
+            clipboard.put(sheet.cutCells(tab, selTop, selLeft, selBottom, selRight));
+            return;
+        }
         copySelection();
         if (kind === "row")
             grabbed = { tab: tab, rows: true, first: selTop, count: selBottom - selTop + 1 };
@@ -333,6 +338,7 @@ ApplicationWindow {
 
     function copySelection() {
         grabbed = null;
+        sheet.forgetCut();
         if (table.isConsts) {
             var lines = [];
             for (var r = selTop; r <= selBottom; r++) {
@@ -1254,7 +1260,14 @@ ApplicationWindow {
              : kind === "column" ? "New column in " + win.table.name
              : kind === "computed" ? "New formula column in " + win.table.name
              : "New constant"
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        focus: true
+        // Not `standardButtons`: Ok would close the dialog before a refused
+        // entry could be reported, so the buttons go through `tryAccept`.
+        footer: DialogButtonBox {
+            standardButtons: DialogButtonBox.Ok | DialogButtonBox.Cancel
+            onAccepted: promptDialog.tryAccept()
+            onRejected: promptDialog.reject()
+        }
 
         function ask(what) {
             kind = what;
@@ -1263,6 +1276,11 @@ ApplicationWindow {
             exprField.text = "";
             problem.text = "";
             open();
+        }
+
+        // Focus is taken once the dialog is up: asked for any sooner, it is
+        // lost to the dialog opening.
+        onOpened: {
             nameField.forceActiveFocus();
             nameField.selectAll();
         }
@@ -1292,17 +1310,29 @@ ApplicationWindow {
             return true;
         }
 
-        onAccepted: if (!submit()) open()
+        // Close on success; otherwise stay open, on the field to correct.
+        function tryAccept() {
+            if (submit()) {
+                accept();
+                return;
+            }
+            if (!exprField.activeFocus) {
+                nameField.forceActiveFocus();
+                nameField.selectAll();
+            }
+        }
+
         onClosed: grid.forceActiveFocus()
 
         contentItem: ColumnLayout {
             spacing: 6
             TextField {
                 id: nameField
+                focus: true
                 Layout.fillWidth: true
                 placeholderText: promptDialog.kind === "rows" ? "How many rows" : "Name"
                 font: win.font
-                onAccepted: promptDialog.needsExpr ? exprField.forceActiveFocus() : promptDialog.accept()
+                onAccepted: promptDialog.needsExpr ? exprField.forceActiveFocus() : promptDialog.tryAccept()
             }
             TextField {
                 id: exprField
@@ -1310,7 +1340,7 @@ ApplicationWindow {
                 visible: promptDialog.needsExpr
                 placeholderText: promptDialog.kind === "computed" ? "Expression, e.g. Revenue - Cost" : "Expression, e.g. 20%"
                 font: win.font
-                onAccepted: promptDialog.accept()
+                onAccepted: promptDialog.tryAccept()
             }
             Label {
                 id: problem

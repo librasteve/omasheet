@@ -922,3 +922,21 @@ fn custom_function_definitions_are_checked() {
     assert!(errors.contains("unknown name `Nope`"), "{errors}");
     assert!(lint_errors("func F(t, n) = t[n].Revenue + t[Revenue > n].Cost.sum()\n").is_empty());
 }
+
+#[test]
+fn a_column_range_counts_from_the_formulas_own_column() {
+    let sheet = "table T\n\nN | A | B   | C | D | E | F\n\
+                 x | 1 | 2   | 3 | 4 | = sum([*; *-4..*-1])     | = [*; *-5..^*-2].max()\n\
+                 y | 1 | 2.5 | 3 | 4 | = sum([*; 1..*-1])       | = avg([*; *-5..-4])\n\
+                 z | 1 | 2   | 3 | 4 | = [*; *-4..*-1].count()  | = min([*; *-3..*-2])\n";
+    assert_eq!(ask(sheet, "T.E"), "[10, 10.5, 4]");
+    assert_eq!(ask(sheet, "T.F"), "[3, 13/6, 3]");
+
+    let errors = |cell: &str| {
+        lint_errors(&format!("table T\n\nN | A | B | C\nx | 1 | 2 | {cell}\n")).join("\n")
+    };
+    assert!(errors("= sum([*; *-9..*-1])").contains("runs past the first column"));
+    assert!(errors("= sum([*; *-1..*+1])").contains("runs past the last column"));
+    assert!(errors("= sum([*; *-3..*-1])").contains("the columns of this row differ"));
+    assert!(errors("= sum([*; *-1..*])").contains("circular reference"));
+}

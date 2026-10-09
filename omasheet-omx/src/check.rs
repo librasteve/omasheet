@@ -1495,6 +1495,30 @@ impl<'a> Checker<'a> {
                             Ty::Scalar(S::Int),
                         );
                     }
+                    // The cells of one row, such as `[*; *-4..*-1]`.
+                    Ty::Row(tt) => {
+                        let mut s: Option<Option<S>> = None;
+                        for &c in tt.cols.iter() {
+                            self.deps.push((DepNode::Col(tt.table, c), tt.kind));
+                            let ty = self.col_type(tt.table, c);
+                            s = Some(match s {
+                                None => Some(ty),
+                                Some(so_far) => so_far.and_then(|x| x.join(ty)),
+                            });
+                        }
+                        match s {
+                            Some(Some(s)) => (arg, s),
+                            None => (arg, S::Any),
+                            Some(None) => {
+                                self.err_help(
+                                    args[0].span,
+                                    format!("`{name}` needs values of one type, but the columns of this row differ"),
+                                    "select columns of the same type, for example `[*; 1..3]`",
+                                );
+                                return fail;
+                            }
+                        }
+                    }
                     Ty::Table(tt) if tt.cols.len() == 1 => {
                         let c = tt.cols[0];
                         self.deps.push((DepNode::Col(tt.table, c), tt.kind));
@@ -2153,6 +2177,60 @@ impl<'a> Checker<'a> {
         let Some(e) = slot else {
             return Some(ColSel::All);
         };
+        // `*-4..*-1`: a range with an end counted from the formula's own
+        // column.
+        if let ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeEx), lo, hi) = &e.kind
+            && (cursor_form(lo).is_some() || cursor_form(hi).is_some())
+        {
+            let here = own
+                .filter(|(t, _)| *t == tt.table)
+                .and_then(|(_, c)| tt.cols.iter().position(|&x| x == c));
+            let Some(here) = here else {
+                self.err_help(
+                    e.span,
+                    "`*` as a column is the column of the formula, in its own table",
+                    "name the columns, or count them from the first: `[*; 1..3]`",
+                );
+                return None;
+            };
+            let n = tt.cols.len() as i64;
+            let end = |ck: &mut Checker, e: &Expr| {
+                let at = match cursor_form(e) {
+                    Some(None) => Some(here as i64),
+                    Some(Some((negative, by))) => match ck.static_in(by) {
+                        Some(Static::Int(k)) => Some(here as i64 + if negative { -k } else { k }),
+                        _ => None,
+                    },
+                    None => match ck.static_in(e) {
+                        Some(Static::Int(k)) => Some(if k < 0 { k + n } else { k }),
+                        _ => None,
+                    },
+                };
+                if at.is_none() {
+                    ck.err(e.span, "the ends of a column range must be whole numbers");
+                }
+                at
+            };
+            let (first, last) = (end(self, lo)?, end(self, hi)?);
+            let last = if *op == BinOp::RangeEx {
+                last - 1
+            } else {
+                last
+            };
+            if first < 0 || last >= n {
+                self.err(
+                    e.span,
+                    format!(
+                        "this range runs past the {} column",
+                        if first < 0 { "first" } else { "last" }
+                    ),
+                );
+                return None;
+            }
+            return Some(ColSel::Many(
+                (first..=last).map(|k| tt.cols[k as usize]).collect(),
+            ));
+        }
         // `*`, `*+1`, `*-2`: a column counted from the formula's own.
         if let Some(form) = cursor_form(e) {
             let here = own

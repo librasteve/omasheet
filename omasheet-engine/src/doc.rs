@@ -11,8 +11,10 @@
 use crate::Options;
 use crate::eval::Engine;
 use crate::value::{Value, arith, format_scalar};
-use omasheet_omx::ast::BinOp;
+use num_traits::ToPrimitive;
+use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use omasheet_omx::date::{self, Style};
+use omasheet_omx::parser::parse_expr;
 use omasheet_omx::sheet::{SheetAst, TableDecl, ident_len, parse_sheet, split_cells};
 use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile};
 
@@ -169,28 +171,544 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
     }
 }
 
-/// Every value of a sheet under the name of its column or constant, to tell
-/// whether a rearrangement changed any. The clock is held still.
-fn values_by_name(text: &str) -> Vec<(String, Vec<String>)> {
-    let (program, _) = compile(text, 0);
-    let options = Options {
-        now: Some(0),
-        ..Options::default()
-    };
-    let engine = Engine::with_options(&program, options);
-    engine.run();
-    let mut out = Vec::new();
-    for (t, table) in program.tables.iter().enumerate() {
-        for (c, col) in table.cols.iter().enumerate() {
-            let cells = (0..table.nrows).map(|r| engine.show(&engine.cell_shown(t, c, r), true));
-            out.push((format!("{}.{}", table.name, col.name), cells.collect()));
+/// A row or column picked by counting, as a formula writes it.
+#[derive(Clone, Copy, PartialEq)]
+enum Pick {
+    /// `*`: the formula's own row or column.
+    Here,
+    /// `*+n` or `*-n`.
+    Off(i64),
+    /// A number; a negative one counts from the end.
+    At(i64),
+}
+
+impl Pick {
+    fn of(e: &Expr) -> Option<Pick> {
+        let int = |e: &Expr| match &e.kind {
+            ExprKind::Lit(Lit::Int(k)) => k.to_i64(),
+            _ => None,
+        };
+        match &e.kind {
+            ExprKind::Cursor => Some(Pick::Here),
+            ExprKind::Binary(op @ (BinOp::Add | BinOp::Sub), l, r)
+                if matches!(l.kind, ExprKind::Cursor) =>
+            {
+                let by = int(r)?;
+                Some(Pick::Off(if *op == BinOp::Sub { -by } else { by }))
+            }
+            ExprKind::Unary(UnOp::Neg, a) => int(a).map(|k| Pick::At(-k)),
+            _ => int(e).map(Pick::At),
         }
     }
-    for (i, c) in program.consts.iter().enumerate() {
-        let value = engine.const_value(i).unwrap_or(Value::Error);
-        out.push((c.name.clone(), vec![engine.show(&value, true)]));
+
+    /// The position picked out of `n`, from a formula at `own`. It may be
+    /// off either end.
+    fn at(self, own: Option<usize>, n: usize) -> Option<i64> {
+        Some(match self {
+            Pick::Here => own? as i64,
+            Pick::Off(d) => own? as i64 + d,
+            Pick::At(k) if k < 0 => k + n as i64,
+            Pick::At(k) => k,
+        })
     }
-    out.sort();
+
+    /// Position `to` of `n`, written the way this pick was, from a formula
+    /// at `own`.
+    fn write(self, to: i64, own: Option<usize>, n: usize) -> String {
+        match self {
+            Pick::At(k) if k < 0 && to < n as i64 => (to - n as i64).to_string(),
+            Pick::At(_) => to.to_string(),
+            Pick::Here | Pick::Off(_) => offset_text(to - own.unwrap_or(0) as i64),
+        }
+    }
+}
+
+/// `*`, `*+2` or `*-1`.
+fn offset_text(by: i64) -> String {
+    match by {
+        0 => "*".to_string(),
+        _ => format!("*{by:+}"),
+    }
+}
+
+/// The two ends of a range, and whether it stops short of the second.
+fn range_ends(e: &Expr) -> Option<(&Expr, &Expr, bool)> {
+    match &e.kind {
+        ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeEx), lo, hi) => {
+            Some((lo, hi, *op == BinOp::RangeEx))
+        }
+        _ => None,
+    }
+}
+
+/// How an index names its columns.
+enum ColPart<'a> {
+    /// Every column.
+    All,
+    /// The second slot of `[rows; columns]`.
+    Slot(&'a Expr),
+    /// A name after the index or before it: `T[0].Name`, `T.Name[0]`.
+    Field(&'a str, Span),
+}
+
+/// One index into a table: `T[rows; columns]` and its other spellings.
+struct Site<'a> {
+    /// The table as written; `None` for an index with no table name.
+    table: Option<&'a str>,
+    row: Option<&'a Expr>,
+    col: ColPart<'a>,
+    /// Inside a slot of another index, where the current row is a row of
+    /// that index and not the formula's own.
+    nested: bool,
+}
+
+/// The table an index is into, if its base says so: `Some(None)` for an
+/// index with no table name.
+fn base_table(e: &Expr) -> Option<Option<&str>> {
+    match &e.kind {
+        ExprKind::Own => Some(None),
+        ExprKind::Name(name) => Some(Some(name)),
+        _ => None,
+    }
+}
+
+/// Every index into a table in `e`, and every name that stands alone, which
+/// in a cell may be a column of the cell's own row.
+fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec<(&'a str, Span)>) {
+    match &e.kind {
+        ExprKind::Lit(_) | ExprKind::Cursor | ExprKind::Own => {}
+        ExprKind::Name(name) => {
+            if !nested {
+                names.push((name, e.span));
+            }
+        }
+        ExprKind::Unary(_, a) => sites(a, nested, out, names),
+        ExprKind::Binary(_, a, b) => {
+            sites(a, nested, out, names);
+            sites(b, nested, out, names);
+        }
+        ExprKind::If(a, b, c) => {
+            sites(a, nested, out, names);
+            sites(b, nested, out, names);
+            sites(c, nested, out, names);
+        }
+        ExprKind::VecLit(items) | ExprKind::Call(_, _, items) => {
+            for item in items {
+                sites(item, nested, out, names);
+            }
+        }
+        ExprKind::Field(a, name, span) => match &a.kind {
+            // `T[0].Name`
+            ExprKind::Index(base, slots) if slots.len() == 1 && base_table(base).is_some() => {
+                out.push(Site {
+                    table: base_table(base).flatten(),
+                    row: slots[0].as_ref(),
+                    col: ColPart::Field(name, *span),
+                    nested,
+                });
+                if let Some(slot) = &slots[0] {
+                    sites(slot, true, out, names);
+                }
+            }
+            // `T.Name`: a table and its column, not a name on its own.
+            ExprKind::Name(_) => {}
+            _ => sites(a, nested, out, names),
+        },
+        ExprKind::Index(base, slots) => {
+            if let Some(table) = base_table(base) {
+                out.push(Site {
+                    table,
+                    row: slots.first().and_then(Option::as_ref),
+                    col: match slots.get(1) {
+                        Some(Some(slot)) => ColPart::Slot(slot),
+                        _ => ColPart::All,
+                    },
+                    nested,
+                });
+            } else if let ExprKind::Field(inner, name, span) = &base.kind
+                && let ExprKind::Name(table) = &inner.kind
+                && slots.len() == 1
+            {
+                // `T.Name[0]`
+                out.push(Site {
+                    table: Some(table),
+                    row: slots[0].as_ref(),
+                    col: ColPart::Field(name, *span),
+                    nested,
+                });
+            } else {
+                sites(base, nested, out, names);
+            }
+            for slot in slots.iter().flatten() {
+                sites(slot, true, out, names);
+            }
+        }
+    }
+}
+
+/// Where a formula is: its table, and its row and column if it is in a cell.
+#[derive(Clone, Copy)]
+struct Place {
+    table: Option<usize>,
+    cell: Option<(usize, usize)>,
+}
+
+/// Every formula of a sheet, with spans into the text of the sheet.
+fn formulas(ast: &SheetAst) -> Vec<(Place, Expr)> {
+    let mut out = Vec::new();
+    let nowhere = Place {
+        table: None,
+        cell: None,
+    };
+    for c in &ast.consts {
+        out.extend(c.expr.clone().map(|e| (nowhere, e)));
+    }
+    for f in &ast.funcs {
+        out.extend(f.expr.clone().map(|e| (nowhere, e)));
+    }
+    for (t, decl) in ast.tables.iter().enumerate() {
+        for (r, row) in decl.rows.iter().enumerate() {
+            for (c, cell) in row.iter().enumerate() {
+                if let Some(body) = cell.text.strip_prefix('=')
+                    && let Ok(e) = parse_expr(body, 0, cell.span.start as usize + 1)
+                {
+                    let cell = Some((r, c));
+                    out.push((
+                        Place {
+                            table: Some(t),
+                            cell,
+                        },
+                        e,
+                    ));
+                }
+            }
+        }
+        let place = Place {
+            table: Some(t),
+            cell: None,
+        };
+        for c in &decl.computed {
+            out.extend(c.expr.clone().map(|e| (place, e)));
+        }
+    }
+    out
+}
+
+/// Whether `site`, in a formula at `place`, is an index into table `t`; and
+/// if so, whether a `*` in it is the formula's own cell.
+fn into_table(site: &Site, place: Place, t: usize, name: &str) -> Option<bool> {
+    let home = place.table == Some(t) && !site.nested;
+    match site.table {
+        Some(table) if table == name => Some(home && place.cell.is_some()),
+        None if home => Some(place.cell.is_some()),
+        _ => None,
+    }
+}
+
+/// The names of the columns of a table, data columns first.
+fn column_names(decl: &TableDecl) -> Vec<&str> {
+    let data = decl.header.iter().map(|h| h.0.as_str());
+    data.chain(decl.computed.iter().map(|c| c.name.as_str()))
+        .collect()
+}
+
+/// `(start, end, replacement)` in the text of a sheet.
+type Edit = (usize, usize, String);
+
+/// Note that `e` is to read `new`, unless it does already.
+fn put(edits: &mut Vec<Edit>, text: &str, span: Span, new: String) {
+    let (s, e) = (span.start as usize, span.end as usize);
+    if text.get(s..e).is_some_and(|old| old != new) {
+        edits.push((s, e, new));
+    }
+}
+
+/// `text` with `edits` made, and the tables they fall in lined up again.
+fn rewritten(text: &str, ast: &SheetAst, mut edits: Vec<Edit>) -> String {
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    edits.dedup_by_key(|e| e.0);
+    let mut out = text.to_string();
+    let mut touched: Vec<&str> = Vec::new();
+    for (s, e, new) in &edits {
+        let owner = ast.tables.iter().rfind(|t| t.span.start as usize <= *s);
+        if let Some(t) = owner.filter(|t| !touched.contains(&t.name.as_str())) {
+            touched.push(&t.name);
+        }
+        out.replace_range(*s..*e, new);
+    }
+    for name in touched {
+        let ast = parse_sheet(&out, 0, &mut Vec::new());
+        if let Some(decl) = ast.tables.iter().find(|t| t.name == name) {
+            out = Grid::of(decl).write(decl, &out);
+        }
+    }
+    out
+}
+
+/// Keep one slot on the rows or columns it picks while they are rearranged:
+/// `place[k]` is where the k-th ends up, and `own` is where the formula is.
+/// A single pick stays on its row or column; a range follows its two ends.
+fn follow_slot(
+    slot: &Expr,
+    own: Option<usize>,
+    place: &[usize],
+    text: &str,
+    edits: &mut Vec<Edit>,
+) {
+    let n = place.len();
+    let moved = |k: i64| usize::try_from(k).ok().and_then(|k| place.get(k)).copied();
+    let new_own = own.and_then(|k| place.get(k)).copied();
+    if let Some((lo, hi, exclusive)) = range_ends(slot) {
+        let (Some(first), Some(last)) = (Pick::of(lo), Pick::of(hi)) else {
+            return;
+        };
+        let past = i64::from(exclusive);
+        let ends = first.at(own, n).zip(last.at(own, n).map(|k| k - past));
+        let Some((a, b)) = ends.filter(|(a, b)| a <= b) else {
+            return;
+        };
+        let (Some(a), Some(b)) = (moved(a), moved(b)) else {
+            return;
+        };
+        let (a, b) = (a.min(b) as i64, a.max(b) as i64);
+        put(edits, text, lo.span, first.write(a, new_own, n));
+        put(edits, text, hi.span, last.write(b + past, new_own, n));
+    } else if let Some(pick) = Pick::of(slot).filter(|p| *p != Pick::Here)
+        && let Some(to) = pick.at(own, n).and_then(moved)
+    {
+        put(edits, text, slot.span, pick.write(to as i64, new_own, n));
+    }
+}
+
+/// The edits that keep every row or column picked by counting on the row or
+/// column it was, when those of table `t` are rearranged so that `place[k]`
+/// is where the k-th ends up. An offset in a formula column is left alone:
+/// one formula serves every row, so `*-1` goes on meaning the row before.
+fn follow_move(ast: &SheetAst, text: &str, t: usize, rows: bool, place: &[usize]) -> Vec<Edit> {
+    let mut edits = Vec::new();
+    let name = ast.tables[t].name.as_str();
+    for (at, expr) in formulas(ast) {
+        let mut found = Vec::new();
+        sites(&expr, false, &mut found, &mut Vec::new());
+        for site in found {
+            let Some(relative) = into_table(&site, at, t, name) else {
+                continue;
+            };
+            let slot = match (rows, &site.col) {
+                (true, _) => site.row,
+                (false, ColPart::Slot(slot)) => Some(*slot),
+                (false, _) => None,
+            };
+            let own = at
+                .cell
+                .filter(|_| relative)
+                .map(|(r, c)| if rows { r } else { c });
+            if let Some(slot) = slot {
+                follow_slot(slot, own, place, text, &mut edits);
+            }
+        }
+    }
+    edits
+}
+
+/// A block of cells: its rows and its columns.
+type Block = (std::ops::Range<usize>, std::ops::Range<usize>);
+
+/// The column a site names, if it names one: its index, how it is written
+/// (`None` for a name) and where.
+fn one_column(
+    site: &Site,
+    own: Option<usize>,
+    cols: &[&str],
+) -> Option<(usize, Option<Pick>, Span)> {
+    let named = |name: &str, span: Span| Some((cols.iter().position(|c| *c == name)?, None, span));
+    match &site.col {
+        ColPart::All => None,
+        ColPart::Field(name, span) => named(name, *span),
+        ColPart::Slot(slot) => match &slot.kind {
+            ExprKind::Name(name) => named(name, slot.span),
+            _ => {
+                let pick = Pick::of(slot)?;
+                let at = usize::try_from(pick.at(own, cols.len())?).ok()?;
+                (at < cols.len()).then_some((at, Some(pick), slot.span))
+            }
+        },
+    }
+}
+
+/// The one cell of a table that `site` reads, if it reads just one: its row
+/// and column, each with how it is written and where.
+#[allow(clippy::type_complexity)]
+fn one_cell(
+    site: &Site,
+    own: Option<(usize, usize)>,
+    nrows: usize,
+    cols: &[&str],
+) -> Option<((usize, Pick, Span), (usize, Option<Pick>, Span))> {
+    let slot = site.row?;
+    let pick = Pick::of(slot)?;
+    let row = usize::try_from(pick.at(own.map(|o| o.0), nrows)?).ok()?;
+    let col = one_column(site, own.map(|o| o.1), cols)?;
+    Some(((row, pick, slot.span), col))
+}
+
+/// The edits that keep each formula reading a cell of `block`, cut from
+/// table `t`, on that cell once it is `by` rows and columns away. Only a
+/// reference to one cell follows it: a range or a whole column reads the
+/// place, and so does a formula column.
+fn follow_cut(ast: &SheetAst, text: &str, t: usize, block: &Block, by: (i64, i64)) -> Vec<Edit> {
+    let mut edits = Vec::new();
+    let decl = &ast.tables[t];
+    let cols = column_names(decl);
+    let nrows = decl.rows.len();
+    let inside = |r: usize, c: usize| block.0.contains(&r) && block.1.contains(&c);
+    let column = |c: usize| {
+        usize::try_from(c as i64 + by.1)
+            .ok()
+            .and_then(|c| cols.get(c))
+    };
+    for (at, expr) in formulas(ast) {
+        let (mut found, mut names) = (Vec::new(), Vec::new());
+        sites(&expr, false, &mut found, &mut names);
+        for site in found {
+            let Some(relative) = into_table(&site, at, t, &decl.name) else {
+                continue;
+            };
+            let own = at.cell.filter(|_| relative);
+            let Some(((r, row, row_span), (c, col, col_span))) = one_cell(&site, own, nrows, &cols)
+            else {
+                continue;
+            };
+            if !inside(r, c) {
+                continue;
+            }
+            if by.0 != 0 {
+                let to = r as i64 + by.0;
+                put(
+                    &mut edits,
+                    text,
+                    row_span,
+                    row.write(to, own.map(|o| o.0), nrows),
+                );
+            }
+            if by.1 != 0 {
+                let to = c as i64 + by.1;
+                let new = match col {
+                    Some(pick) => Some(pick.write(to, own.map(|o| o.1), cols.len())),
+                    None => column(c).map(|name| name.to_string()),
+                };
+                if let Some(new) = new {
+                    put(&mut edits, text, col_span, new);
+                }
+            }
+        }
+        // A column named on its own in a cell is that column of its row.
+        let Some((r, _)) = at.cell.filter(|_| at.table == Some(t)) else {
+            continue;
+        };
+        for (name, span) in names {
+            let cut = cols
+                .iter()
+                .position(|c| *c == name)
+                .filter(|c| inside(r, *c));
+            if let Some(new) = cut.and_then(column) {
+                let new = match by.0 {
+                    0 => new.to_string(),
+                    rows => format!("[{}; {new}]", offset_text(rows)),
+                };
+                put(&mut edits, text, span, new);
+            }
+        }
+    }
+    edits
+}
+
+/// One slot of a formula that has moved `by` along its rows or columns: an
+/// offset is counted again so that it is the row or column it was. A plain
+/// `*` is the formula's own, wherever it is, and a range that ends on one
+/// goes with the formula as it is.
+fn shift_slot(slot: &Expr, by: i64, text: &str, edits: &mut Vec<Edit>) {
+    let shift = |e: &Expr, edits: &mut Vec<Edit>| {
+        if let Some(Pick::Off(d)) = Pick::of(e) {
+            put(edits, text, e.span, offset_text(d - by));
+        }
+    };
+    match range_ends(slot) {
+        Some((lo, hi, _)) => {
+            let here = |e: &Expr| Pick::of(e) == Some(Pick::Here);
+            if !here(lo) && !here(hi) {
+                shift(lo, edits);
+                shift(hi, edits);
+            }
+        }
+        None => shift(slot, edits),
+    }
+}
+
+/// The source of a cell of `block`, cut from `from` in a table and put down
+/// `by` rows and columns away. What its formula reads by an offset it still
+/// reads: a move sideways counts the columns again, and a move up or down
+/// the rows. A cell that was cut along with it is as far away as it was.
+fn moved_cell(
+    cell: &str,
+    from: (usize, usize),
+    block: &Block,
+    by: (i64, i64),
+    table: &str,
+    nrows: usize,
+    cols: &[&str],
+) -> String {
+    let Some(Ok(expr)) = cell.strip_prefix('=').map(|body| parse_expr(body, 0, 1)) else {
+        return cell.to_string();
+    };
+    let mut found = Vec::new();
+    sites(&expr, false, &mut found, &mut Vec::new());
+    let mut edits = Vec::new();
+    for site in found {
+        if site.nested || site.table.is_some_and(|name| name != table) {
+            continue;
+        }
+        let one = one_cell(&site, Some(from), nrows, cols);
+        if let Some(((r, row, row_span), (c, col, col_span))) = one
+            && block.0.contains(&r)
+            && block.1.contains(&c)
+        {
+            // Cut together: an offset is right as it is, and a number or a
+            // name follows the cell.
+            if let Pick::At(_) = row {
+                put(
+                    &mut edits,
+                    cell,
+                    row_span,
+                    row.write(r as i64 + by.0, None, nrows),
+                );
+            }
+            let to = c as i64 + by.1;
+            match col {
+                Some(pick @ Pick::At(_)) => {
+                    put(&mut edits, cell, col_span, pick.write(to, None, cols.len()));
+                }
+                None => {
+                    if let Some(name) = usize::try_from(to).ok().and_then(|c| cols.get(c)) {
+                        put(&mut edits, cell, col_span, name.to_string());
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        if let Some(slot) = site.row {
+            shift_slot(slot, by.0, cell, &mut edits);
+        }
+        if let ColPart::Slot(slot) = site.col {
+            shift_slot(slot, by.1, cell, &mut edits);
+        }
+    }
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = cell.to_string();
+    for (s, e, new) in edits {
+        out.replace_range(s..e, &new);
+    }
     out
 }
 
@@ -417,21 +935,44 @@ impl Document {
         ast.tables.iter().find(|t| &t.name == name)
     }
 
-    fn edit_grid(&mut self, table: usize, change: impl FnOnce(&mut Grid)) -> bool {
-        let ast = self.ast();
-        let Some(decl) = self.table_decl(&ast, table) else {
-            return false;
-        };
+    /// `text` with the grid of table `table` changed.
+    fn grid_edited(
+        &self,
+        text: &str,
+        table: usize,
+        change: impl FnOnce(&mut Grid),
+    ) -> Option<String> {
+        let ast = parse_sheet(text, 0, &mut Vec::new());
+        let decl = self.table_decl(&ast, table)?;
         let mut grid = Grid::of(decl);
         change(&mut grid);
-        let text = grid.write(decl, &self.text);
-        self.commit(text)
+        Some(grid.write(decl, text))
+    }
+
+    fn edit_grid(&mut self, table: usize, change: impl FnOnce(&mut Grid)) -> bool {
+        match self.grid_edited(&self.text, table, change) {
+            Some(text) => self.commit(text),
+            None => false,
+        }
     }
 
     /// Set cells of one table in a single undoable step. Cells are
     /// `(row, column, text)`; rows past the end are added. Cells in computed
     /// columns are skipped.
     pub fn set_cells(&mut self, table: usize, cells: &[(usize, usize, String)]) -> bool {
+        match self.cells_set(&self.text, table, cells) {
+            Some(text) => self.commit(text),
+            None => false,
+        }
+    }
+
+    /// `text` with cells of one table set, as `set_cells` sets them.
+    fn cells_set(
+        &self,
+        text: &str,
+        table: usize,
+        cells: &[(usize, usize, String)],
+    ) -> Option<String> {
         let style = self.style;
         let types: Vec<String> = self
             .snapshot
@@ -439,7 +980,7 @@ impl Document {
             .get(table)
             .map(|t| t.columns.iter().map(|c| c.ty.clone()).collect())
             .unwrap_or_default();
-        self.edit_grid(table, |grid| {
+        self.grid_edited(text, table, |grid| {
             for (row, col, text) in cells {
                 if *col >= grid.header.len() {
                     continue;
@@ -458,6 +999,45 @@ impl Document {
                 };
             }
         })
+    }
+
+    /// Put down `block`, the sources of cells cut from `from` in a table, at
+    /// `to` in the same table, in one undoable step. Formulas go on reading
+    /// what they read: those put down count their offsets again, and those
+    /// that read a cell that was cut follow it to where it now is.
+    pub fn paste_cut(
+        &mut self,
+        table: usize,
+        from: (usize, usize),
+        to: (usize, usize),
+        block: &[Vec<String>],
+    ) -> bool {
+        let ast = self.ast();
+        let Some(name) = self.snapshot.tables.get(table).map(|t| t.name.clone()) else {
+            return false;
+        };
+        let Some(t) = ast.tables.iter().position(|t| t.name == name) else {
+            return false;
+        };
+        let width = block.iter().map(Vec::len).max().unwrap_or(0);
+        let cut: Block = (from.0..from.0 + block.len(), from.1..from.1 + width);
+        let by = (to.0 as i64 - from.0 as i64, to.1 as i64 - from.1 as i64);
+        let decl = &ast.tables[t];
+        let cols = column_names(decl);
+        let mut cells = Vec::new();
+        for (i, line) in block.iter().enumerate() {
+            for (j, cell) in line.iter().enumerate() {
+                let at = (from.0 + i, from.1 + j);
+                let moved = moved_cell(cell, at, &cut, by, &name, decl.rows.len(), &cols);
+                cells.push((to.0 + i, to.1 + j, moved));
+            }
+        }
+        let edits = follow_cut(&ast, &self.text, t, &cut, by);
+        let followed = rewritten(&self.text, &ast, edits);
+        match self.cells_set(&followed, table, &cells) {
+            Some(text) => self.commit(text),
+            None => false,
+        }
     }
 
     /// The count, sum and average of the block of cells from `(top, left)`
@@ -656,9 +1236,33 @@ impl Document {
         Ok(())
     }
 
+    /// The text with every row or column of table `table` that a formula
+    /// picks by counting still the one it was, once they are rearranged so
+    /// that the k-th is `order[k]`.
+    fn followed(&self, table: usize, rows: bool, order: &[usize]) -> String {
+        let ast = self.ast();
+        let name = self.snapshot.tables.get(table).map(|t| t.name.as_str());
+        let Some(t) = ast
+            .tables
+            .iter()
+            .position(|t| Some(t.name.as_str()) == name)
+        else {
+            return self.text.clone();
+        };
+        let mut place = vec![0; order.len()];
+        for (new, &old) in order.iter().enumerate() {
+            place[old] = new;
+        }
+        let edits = follow_move(&ast, &self.text, t, rows, &place);
+        rewritten(&self.text, &ast, edits)
+    }
+
     /// Move `count` rows starting at `first` so that the first of them
-    /// becomes row `to`, in one undoable step. The rows keep their cells,
-    /// formulas included; whatever counts rows is then calculated afresh.
+    /// becomes row `to`, in one undoable step. The rows keep their cells.
+    /// A row that a formula picks by counting is still the row it was: a
+    /// cell's `*-1` is counted again, and so is a number anywhere in the
+    /// sheet. A formula column goes on reading the row before, in the new
+    /// order.
     pub fn move_rows(
         &mut self,
         table: usize,
@@ -679,7 +1283,8 @@ impl Document {
         let mut order: Vec<usize> = (0..n).collect();
         let block: Vec<usize> = order.drain(first..first + count).collect();
         order.splice(to..to, block);
-        self.edit_grid(table, |grid| {
+        let followed = self.followed(table, true, &order);
+        let text = self.grid_edited(&followed, table, |grid| {
             // Each line of the table keeps its place and takes the cells of
             // the row that now belongs there.
             let cells: Vec<Vec<String>> = grid.rows.iter().map(|(_, row)| row.clone()).collect();
@@ -689,13 +1294,17 @@ impl Document {
                 }
             }
         });
+        if let Some(text) = text {
+            self.commit(text);
+        }
         Ok(())
     }
 
     /// Move `count` columns starting at `first` so that the first of them
     /// becomes column `to`, in one undoable step. Data columns move among the
-    /// data columns and formula columns among the formula columns. Refused
-    /// if any value would change, as when a formula names columns by position.
+    /// data columns and formula columns among the formula columns. A column
+    /// that a formula picks by counting, from its own (`[*; *-1]`) or by
+    /// number, is still the column it was.
     pub fn move_columns(
         &mut self,
         table: usize,
@@ -725,7 +1334,8 @@ impl Document {
         order.splice(to..to, block);
         let names: Vec<String> = snap.columns.iter().map(|c| c.name.clone()).collect();
 
-        let ast = self.ast();
+        let followed = self.followed(table, false, &order);
+        let ast = parse_sheet(&followed, 0, &mut Vec::new());
         let Some(decl) = self.table_decl(&ast, table) else {
             return Err("there is no such table".into());
         };
@@ -741,7 +1351,7 @@ impl Document {
             for (_, row) in &mut grid.rows {
                 *row = pick(row);
             }
-            grid.write(decl, &self.text)
+            grid.write(decl, &followed)
         } else {
             // Each `Name := expression` keeps its place in the text and takes
             // the declaration that now belongs there.
@@ -756,21 +1366,18 @@ impl Document {
             };
             let blocks: Option<Vec<&str>> = order[data..]
                 .iter()
-                .map(|&k| range(&names[k]).map(|(s, e)| &self.text[s..e]))
+                .map(|&k| range(&names[k]).map(|(s, e)| &followed[s..e]))
                 .collect();
             let Some(blocks) = blocks else {
                 return Err("the formula columns cannot be moved".into());
             };
             slots.sort_unstable();
-            let mut text = self.text.clone();
+            let mut text = followed.clone();
             for (&(s, e), block) in slots.iter().zip(&blocks).rev() {
                 text.replace_range(s..e, block);
             }
             text
         };
-        if values_by_name(&text) != values_by_name(&self.text) {
-            return Err("a formula names columns by position, so moving would change it".into());
-        }
         self.commit(text);
         Ok(())
     }
@@ -1472,13 +2079,216 @@ mod tests {
         assert!(doc.move_columns(0, 1, 1, 1).is_ok());
         assert_eq!(doc.text(), before);
 
-        // A formula that counts columns from itself would read another one.
-        let by_place = "table T\n\nA | B | C\n1 | 2 | = [*; *-1] * 10\n";
-        let mut doc = Document::from_text(by_place);
-        let refused = doc.move_columns(0, 0, 1, 1).unwrap_err();
-        assert!(refused.contains("names columns by position"), "{refused}");
-        assert_eq!(doc.text(), by_place);
-        assert!(!doc.can_undo());
+        // A formula that counts columns from its own still reads the same
+        // ones, wherever it and they end up.
+        let mut doc =
+            Document::from_text("table T\n\nA | B | C\n1 | 2 | = [*; *-1] * 10 + [*; *-2]\n");
+        assert_eq!(col(&doc, 0, 2), ["21"]);
+        doc.move_columns(0, 0, 1, 1).unwrap();
+        assert!(
+            doc.text()
+                .contains("B | A | C\n2 | 1 | = [*; *-2] * 10 + [*; *-1]\n")
+        );
+        assert_eq!(col(&doc, 0, 2), ["21"]);
+        doc.move_columns(0, 2, 1, 0).unwrap();
+        assert!(
+            doc.text()
+                .contains("\n= [*; *+1] * 10 + [*; *+2] | 2 | 1\n")
+        );
+        assert_eq!(col(&doc, 0, 0), ["21"]);
+        assert!(doc.snapshot().problems.is_empty());
+
+        // So does one that picks a column by its number, wherever it is; a
+        // range follows its two ends.
+        let mut doc = Document::from_text(
+            "const K = T[0; 1]\n\ntable T\n\nA | B | C | D\n1 | 2 | 4 | = [*; 1] * 10 + [*; -3] + [*; 0..1].A\n\n\
+             E := [*; 0] + T[0; 2]\n",
+        );
+        assert_eq!(col(&doc, 0, 3), ["25"]);
+        assert_eq!(col(&doc, 0, 4), ["5"]);
+        doc.move_columns(0, 0, 1, 2).unwrap();
+        assert_eq!(names(&doc), ["B", "C", "A", "D", "E"]);
+        assert!(doc.text().contains("const K = T[0; 0]\n"));
+        assert!(
+            doc.text()
+                .contains("| = [*; 0] * 10 + [*; -4] + [*; 0..2].A\n")
+        );
+        assert!(doc.text().contains("E := [*; 2] + T[0; 1]\n"));
+        assert_eq!(col(&doc, 0, 3), ["25"]);
+        assert_eq!(col(&doc, 0, 4), ["5"]);
+        assert!(doc.snapshot().problems.is_empty());
+    }
+
+    #[test]
+    fn cut_cells_keep_what_they_read() {
+        let cols = ["A", "B", "C", "D"];
+        let moved =
+            |cell: &str, from, block: Block, by| moved_cell(cell, from, &block, by, "T", 6, &cols);
+        // Sideways counts the columns again, and up or down the rows.
+        assert_eq!(
+            moved("= [*; *-2] * 10", (2, 3), (2..3, 3..4), (0, -3)),
+            "= [*; *+1] * 10"
+        );
+        assert_eq!(
+            moved("= [*-1; B] + 10", (2, 3), (2..3, 3..4), (2, 0)),
+            "= [*-3; B] + 10"
+        );
+        assert_eq!(
+            moved("= T[*-1; *-1]", (2, 3), (2..3, 3..4), (1, -1)),
+            "= T[*-2; *]"
+        );
+        // A plain `*` is the cell's own, and a range ending on one goes as it is.
+        assert_eq!(
+            moved("= [*-1; *]", (2, 3), (2..3, 3..4), (0, -2)),
+            "= [*-1; *]"
+        );
+        assert_eq!(
+            moved("= sum([*-2..*; B])", (2, 3), (2..3, 3..4), (2, 0)),
+            "= sum([*-2..*; B])"
+        );
+        assert_eq!(
+            moved("= sum([*-2..*-1; B])", (2, 3), (2..3, 3..4), (2, 0)),
+            "= sum([*-4..*-3; B])"
+        );
+        // Numbers and names say where they mean already.
+        assert_eq!(
+            moved("= [0; 1] + [*; B] + B", (2, 3), (2..3, 3..4), (2, -2)),
+            "= [0; 1] + [*; B] + B"
+        );
+        // Cells cut together stay as far apart; a number or a name follows.
+        assert_eq!(
+            moved(
+                "= [*; *-1] + [*; *-3] + [2; C]",
+                (2, 3),
+                (2..3, 2..4),
+                (1, -2)
+            ),
+            "= [*; *-1] + [*; *-1] + [3; A]"
+        );
+        assert_eq!(moved("*-1", (2, 3), (2..3, 3..4), (0, -2)), "*-1");
+    }
+
+    #[test]
+    fn formulas_follow_a_cut_cell() {
+        let text = "const K = T[1; C]\n\ntable T\n\nA | B | C | D\n  |   | 1 | = [*; *-1] + C\n  |   | 5 | = [*; *-1] * 10 + [*-1; 2] + T[*; C]\n  |   |   | = sum(T.C)\n\n\
+                    E := C * 2\n\ntable U\n\nX\n= T[1; 2] + T[1].C + T.C[1]\n";
+        let mut doc = Document::from_text(text);
+        assert_eq!(col(&doc, 0, 3), ["2", "56", "6"]);
+        // The 5 goes from C to A and down a row, as a cut and a paste do it.
+        doc.set_cell(0, 1, 2, "");
+        doc.paste_cut(0, (1, 2), (2, 0), &[vec!["5".to_string()]]);
+        let now = doc.text();
+        assert!(now.contains("const K = T[2; A]\n"), "{now}");
+        assert!(
+            now.contains("| = [*+1; *-3] * 10 + [*-1; 2] + T[*+1; A]\n"),
+            "{now}"
+        );
+        assert!(now.contains("= T[2; 0] + T[2].A + T.A[2]\n"), "{now}");
+        // A formula column and a whole column read the place.
+        assert!(now.contains("E := C * 2\n"), "{now}");
+        assert!(now.contains("= sum(T.C)\n"), "{now}");
+        assert_eq!(col(&doc, 0, 3), ["2", "56", "1"]);
+        assert_eq!(col(&doc, 1, 0), ["15"]);
+        assert!(doc.snapshot().problems.is_empty());
+
+        // A column named on its own follows too.
+        let mut doc = Document::from_text("table T\n\nA | B | C\n  | 5 | = B * 2\n  |   |\n");
+        doc.set_cell(0, 0, 1, "");
+        doc.paste_cut(0, (0, 1), (1, 0), &[vec!["5".to_string()]]);
+        assert!(doc.text().contains("| = [*+1; A] * 2\n"), "{}", doc.text());
+        assert_eq!(col(&doc, 0, 2), ["10", ""]);
+
+        // Put down on the cell it reads, a formula is an error, not refused.
+        let mut doc = Document::from_text("table T\n\nA | B\n1 | = [*; *-1]\n");
+        doc.set_cell(0, 0, 1, "");
+        assert!(doc.paste_cut(0, (0, 1), (0, 0), &[vec!["= [*; *-1]".to_string()]]));
+        assert!(doc.text().contains("\n= [*; *] |\n"), "{}", doc.text());
+        assert!(!doc.snapshot().problems.is_empty());
+    }
+
+    #[test]
+    fn moved_rows_keep_what_reads_them() {
+        let text = "const First = T[0; N]\n\ntable T\n\nName | N | M\na | 1 |\nb | 2 |\nc | 3 | = [*-1; N] + 10\n\
+                    d | 4 | = [0; N] + sum([0..1; N]) + [-3; N]\n\nSum := N + ([*-1; N] // 0)\n";
+        let mut doc = Document::from_text(text);
+        assert_eq!(col(&doc, 0, 2), ["", "", "12", "6"]);
+        assert_eq!(col(&doc, 0, 3), ["1", "3", "5", "7"]);
+        // `b` to the bottom: what read it still does, and the range follows
+        // its ends, taking in the rows now between them.
+        doc.move_rows(0, 1, 1, 3).unwrap();
+        assert_eq!(col(&doc, 0, 0), ["a", "c", "d", "b"]);
+        let now = doc.text();
+        assert!(now.contains("| = [*+2; N] + 10\n"), "{now}");
+        assert!(
+            now.contains("| = [0; N] + sum([0..3; N]) + [-1; N]\n"),
+            "{now}"
+        );
+        assert!(now.contains("const First = T[0; N]\n"), "{now}");
+        assert_eq!(col(&doc, 0, 2), ["", "12", "13", ""]);
+        // The formula column still reads the row before, in the new order.
+        assert!(now.contains("Sum := N + ([*-1; N] // 0)\n"), "{now}");
+        assert_eq!(col(&doc, 0, 3), ["1", "4", "7", "6"]);
+        assert!(doc.snapshot().problems.is_empty());
+        // `a` down one: the number follows it, in the constant too.
+        doc.move_rows(0, 0, 1, 1).unwrap();
+        assert!(
+            doc.text().contains("const First = T[1; N]\n"),
+            "{}",
+            doc.text()
+        );
+        assert!(
+            doc.text()
+                .contains("| = [1; N] + sum([1..3; N]) + [-1; N]\n"),
+            "{}",
+            doc.text()
+        );
+        assert!(doc.undo());
+        assert!(doc.text().contains("const First = T[0; N]\n"));
+    }
+
+    #[test]
+    fn the_example_of_references_holds_through_moves_and_cuts() {
+        // The checks that must hold through anything: `cell` and `own`.
+        let failed = |doc: &Document| col(doc, 2, 2)[..2].join(" ");
+        let cut = |doc: &mut Document, from: (usize, usize), to: (usize, usize)| {
+            let source = doc.snapshot().tables[0].rows[from.0][from.1].source.clone();
+            doc.set_cell(0, from.0, from.1, "");
+            doc.paste_cut(0, from, to, &[vec![source]]);
+        };
+        let text = include_str!("../../examples/refs.omx");
+        let mut doc = Document::from_text(text);
+        assert_eq!(col(&doc, 2, 2), ["0", "0", "0", "0"]);
+
+        // Rows and columns, moved about.
+        doc.move_rows(0, 3, 4, 10).unwrap();
+        assert_eq!(failed(&doc), "0 0", "{}", doc.text());
+        doc.move_rows(0, 0, 1, 19).unwrap();
+        doc.move_rows(0, 15, 5, 2).unwrap();
+        assert_eq!(failed(&doc), "0 0", "{}", doc.text());
+        doc.move_columns(0, 1, 2, 5).unwrap();
+        assert_eq!(failed(&doc), "0 0", "{}", doc.text());
+        doc.move_columns(0, 7, 1, 0).unwrap();
+        doc.move_columns(0, 8, 1, 9).unwrap();
+        assert_eq!(failed(&doc), "0 0", "{}", doc.text());
+        assert!(doc.snapshot().problems.is_empty());
+
+        // A number that much else reads, cut and put down elsewhere; then a
+        // formula, into the gap it left.
+        let mut doc = Document::from_text(text);
+        cut(&mut doc, (0, 1), (10, 3));
+        assert!(doc.text().contains("const Corner  = Grid[10; 3]\n"));
+        assert_eq!(failed(&doc), "0 0", "{}", doc.text());
+        cut(&mut doc, (17, 7), (0, 1));
+        assert!(
+            doc.text().contains("= [*+14; *+2] + [*+15; *+3]"),
+            "{}",
+            doc.text()
+        );
+        assert_eq!(failed(&doc), "0 0", "{}", doc.text());
+        // And all of it moved again.
+        doc.move_rows(0, 0, 3, 12).unwrap();
+        doc.move_columns(0, 3, 1, 1).unwrap();
+        assert_eq!(failed(&doc), "0 0", "{}", doc.text());
     }
 
     #[test]

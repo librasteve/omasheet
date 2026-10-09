@@ -702,6 +702,10 @@ impl<'p> Engine<'p> {
                         let hi = if exclusive { hi - 1 } else { hi };
                         Rc::new((lo..=hi).map(|n| Value::Int(BigInt::from(n))).collect())
                     }
+                    Value::Row(row) => {
+                        let cells = row.cols.iter().map(|&c| self.cell(row.table, c, row.row));
+                        Rc::new(cells.collect::<R<Vec<_>>>()?)
+                    }
                     Value::Empty => Rc::new(Vec::new()),
                     other => {
                         return fail(
