@@ -45,6 +45,9 @@ pub mod qobject {
         /// The whole sheet as JSON: tables, constants and problems.
         #[qinvokable]
         fn snapshot_json(self: &Sheet) -> QString;
+        /// The sheet as it is written: the text that saving would write.
+        #[qinvokable]
+        fn source_text(self: &Sheet) -> QString;
 
         #[qinvokable]
         fn new_document(self: Pin<&mut Sheet>);
@@ -359,6 +362,10 @@ impl qobject::Sheet {
 
     fn snapshot_json(&self) -> QString {
         QString::from(&json::snapshot(self.rust().doc.snapshot()))
+    }
+
+    fn source_text(&self) -> QString {
+        QString::from(self.rust().doc.text())
     }
 
     fn new_document(mut self: Pin<&mut Self>) {

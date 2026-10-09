@@ -572,6 +572,8 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+PgUp"; onActivated: win.switchTab(win.tab - 1) }
     Shortcut { sequence: "Ctrl+?"; context: Qt.ApplicationShortcut; onActivated: helpDialog.open() }
     Shortcut { sequence: "F1"; context: Qt.ApplicationShortcut; onActivated: functionsDialog.open() }
+    Shortcut { sequence: "F2"; context: Qt.ApplicationShortcut
+        onActivated: sourceDialog.visible ? sourceDialog.close() : sourceDialog.open() }
     Shortcut { sequences: ["Meta+F", "F11"]; context: Qt.ApplicationShortcut
         onActivated: win.visibility = win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen }
 
@@ -726,7 +728,6 @@ ApplicationWindow {
                     if (ctrl) { if (win.actsOnRows) win.insertRow(!shift); }
                     else win.startEditing(null);
                     break;
-                case Qt.Key_F2: win.startEditing(null); break;
                 case Qt.Key_Delete:
                     if (ctrl) {
                         // Whole columns are deleted as columns, not as every row.
@@ -1151,6 +1152,7 @@ ApplicationWindow {
                 FooterButton { label: "+ Formula"; quiet: true; enabled: !win.table.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("computed") }
                 FooterButton { label: "+ Constant"; quiet: true; onClicked: promptDialog.ask("const") }
                 FooterButton { label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
+                FooterButton { label: "</>"; quiet: true; onClicked: sourceDialog.open() }
                 FooterButton { label: "?"; quiet: true; onClicked: helpDialog.open() }
             }
         }
@@ -1675,6 +1677,40 @@ ApplicationWindow {
         }
     }
 
+    // The source: the sheet as it is written, to read and to copy from.
+    Dialog {
+        id: sourceDialog
+        anchors.centerIn: parent
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        Shortcut { sequence: "Esc"; enabled: sourceDialog.visible; onActivated: sourceDialog.close() }
+        width: Math.min(win.width - 60, 960)
+        height: Math.min(win.height - 60, 720)
+        title: "Source: " + sheet.fileName
+        standardButtons: Dialog.Close
+        onOpened: {
+            // Read afresh each time: every edit rewrites the text.
+            sourceText.text = sheet.sourceText();
+            sourceText.forceActiveFocus();
+        }
+        onClosed: grid.forceActiveFocus()
+
+        contentItem: ScrollView {
+            clip: true
+            TextArea {
+                id: sourceText
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.NoWrap
+                textFormat: TextEdit.PlainText
+                color: win.textColor
+                font: win.font
+                background: null
+            }
+        }
+    }
+
     Dialog {
         id: helpDialog
         anchors.centerIn: parent
@@ -1690,13 +1726,11 @@ ApplicationWindow {
             font: win.font
             text: "Arrows, Tab          Move\n"
                 + "Shift+Arrows, drag   Select a block\n"
-                + "Right click          Menu: insert rows, rename or delete a column, …\n"
-                + "Enter, F2, typing    Edit the cell\n"
+                + "Enter, typing        Edit the cell\n"
                 + "Enter / Tab          Commit and move down / right\n"
                 + "Esc                  Cancel the edit\n"
                 + "Delete               Clear the selection\n"
                 + "Ctrl+C / X / V       Copy / cut / paste\n"
-                + "Ctrl+X on a row or column   Pick it up; Ctrl+V on another moves it there\n"
                 + "Ctrl+Enter           Insert a row below (Shift: above)\n"
                 + "Ctrl+Delete          Delete the selected rows\n"
                 + "Ctrl+Z / Ctrl+Y      Undo / redo\n"
@@ -1706,6 +1740,7 @@ ApplicationWindow {
                 + "Ctrl+N               New sheet\n"
                 + "Ctrl++ / Ctrl+-      Larger / smaller text (Ctrl+0 resets)\n"
                 + "F1                   Functions\n"
+                + "F2                   View the source\n"
                 + "F11                  Fullscreen\n\n"
                 + "A cell starting with = is a formula.\n"
                 + "While typing a formula, click a cell to refer to it\n"

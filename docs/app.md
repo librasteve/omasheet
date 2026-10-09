@@ -18,7 +18,7 @@ rewrites the text, and saving writes exactly that.
 
 | Keys | |
 |---|---|
-| Enter, F2, typing | edit the cell |
+| Enter, typing | edit the cell |
 | Ctrl+C / X / V | copy / cut / paste |
 | Ctrl+X on a row or column | pick it up; Ctrl+V on another moves it there |
 | Ctrl+Enter | insert a row below (Shift: above) |
@@ -27,6 +27,7 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+PgUp / PgDn | previous / next table |
 | Ctrl+O / S, Ctrl+Shift+S | open / save, save as |
 | F1 | functions |
+| F2 | view the source |
 | Ctrl+? | all shortcuts |
 
 ## The command line
