@@ -161,8 +161,10 @@ ApplicationWindow {
     function selectCell(row, col, extend) {
         if (table.rows.length === 0 || table.columns.length === 0)
             return;
-        if (!extend)
+        if (!extend) {
             byRow = false;
+            byCol = false;
+        }
         curRow = Math.max(0, Math.min(table.rows.length - 1, row));
         curCol = Math.max(0, Math.min(table.columns.length - 1, col));
         if (!extend) {
@@ -270,16 +272,32 @@ ApplicationWindow {
     property var grabbed: null
     // Why the last move was refused, shown in the footer.
     property string notice: ""
-    // Whether the selection was last made from a row number, to tell a row
-    // from a column where one selection is both.
+    // Whether the selection was last made from a row number or a column
+    // header, to tell a row from a column where one selection is both.
     property bool byRow: false
+    property bool byCol: false
     readonly property bool wholeColumns: !table.isConsts && table.columns.length > 0
         && selTop === 0 && selBottom >= table.rows.length - 1
     readonly property bool wholeRows: !table.isConsts && table.rows.length > 0
         && selLeft === 0 && selRight >= table.columns.length - 1
-    // What a cut would pick up: "row", "column", or "" for plain cells.
-    readonly property string grabKind: wholeRows && (byRow || !wholeColumns) ? "row"
-        : wholeColumns ? "column" : ""
+    // What is selected: whole "row"s, whole "column"s, "all" of the table,
+    // or a block of "cells". The menu and the keys act on rows only for rows
+    // and cells, and on columns only for columns and cells.
+    readonly property string selKind: {
+        if (table.isConsts || table.rows.length === 0)
+            return "cells";
+        // One cell of a table with one row is a cell, unless its header or
+        // row number was what was clicked.
+        var cols = wholeColumns && (byCol || table.rows.length > 1);
+        var rows = wholeRows && (byRow || table.columns.length > 1);
+        if (cols && rows)
+            return byRow ? "row" : byCol ? "column" : "all";
+        return rows ? "row" : cols ? "column" : "cells";
+    }
+    readonly property bool actsOnRows: selKind === "row" || selKind === "cells"
+    readonly property bool actsOnColumns: selKind === "column" || selKind === "cells"
+    // What a cut would pick up: "row", "column", or "" for anything else.
+    readonly property string grabKind: selKind === "row" || selKind === "column" ? selKind : ""
     readonly property bool grabbedHere: grabbed !== null && grabbed.tab === tab && !table.isConsts
 
     function isGrabbed(row, col) {
@@ -329,12 +347,14 @@ ApplicationWindow {
             curCol = Math.max(0, table.columns.length - 1);
             curRow = to + g.count - 1;
             byRow = true;
+            byCol = false;
         } else {
             anchorRow = 0;
             anchorCol = to;
             curRow = Math.max(0, table.rows.length - 1);
             curCol = to + g.count - 1;
             byRow = false;
+            byCol = true;
         }
     }
 
@@ -445,6 +465,7 @@ ApplicationWindow {
             anchorCol = col < 0 ? 0 : col;
             curCol = col < 0 ? maxCol : col;
             byRow = col < 0 && row >= 0;
+            byCol = row < 0 && col >= 0;
         }
         cellMenu.popup();
     }
@@ -702,13 +723,18 @@ ApplicationWindow {
                 case Qt.Key_Backtab: win.selectCell(win.curRow, win.curCol - 1, false); break;
                 case Qt.Key_Return:
                 case Qt.Key_Enter:
-                    if (ctrl) win.insertRow(!shift);
+                    if (ctrl) { if (win.actsOnRows) win.insertRow(!shift); }
                     else win.startEditing(null);
                     break;
                 case Qt.Key_F2: win.startEditing(null); break;
                 case Qt.Key_Delete:
-                    if (ctrl) win.deleteRows();
-                    else win.clearSelection();
+                    if (ctrl) {
+                        // Whole columns are deleted as columns, not as every row.
+                        if (win.selKind === "column") win.deleteColumns();
+                        else if (win.actsOnRows) win.deleteRows();
+                    } else {
+                        win.clearSelection();
+                    }
                     break;
                 case Qt.Key_Backspace: win.clearSelection(); break;
                 case Qt.Key_Escape:
@@ -725,6 +751,8 @@ ApplicationWindow {
                     } else if (ctrl && event.key === Qt.Key_V) {
                         win.pasteSelection();
                     } else if (ctrl && event.key === Qt.Key_A) {
+                        win.byRow = false;
+                        win.byCol = false;
                         win.anchorRow = 0;
                         win.anchorCol = 0;
                         win.curRow = Math.max(0, win.table.rows.length - 1);
@@ -827,6 +855,7 @@ ApplicationWindow {
                                         // Select the whole column.
                                         win.stopEditing();
                                         win.byRow = false;
+                                        win.byCol = true;
                                         win.anchorRow = 0;
                                         win.anchorCol = (mouse.modifiers & Qt.ShiftModifier) ? win.anchorCol : headCell.index;
                                         win.curRow = Math.max(0, win.table.rows.length - 1);
@@ -879,6 +908,7 @@ ApplicationWindow {
                                         // Select the whole row.
                                         win.stopEditing();
                                         win.byRow = true;
+                                        win.byCol = false;
                                         win.anchorCol = 0;
                                         win.anchorRow = (mouse.modifiers & Qt.ShiftModifier) ? win.anchorRow : rowItem.index;
                                         win.curCol = Math.max(0, win.table.columns.length - 1);
@@ -1128,6 +1158,8 @@ ApplicationWindow {
 
     // The entries of the right-click menu, close set.
     component MenuEntry: MenuItem {
+        // An entry that does not apply takes no room.
+        height: visible ? implicitHeight : 0
         implicitHeight: Math.round(win.fontSize * 1.75)
         topPadding: 0
         bottomPadding: 0
@@ -1138,6 +1170,7 @@ ApplicationWindow {
         font.pixelSize: win.fontSize - 1
     }
     component MenuRule: MenuSeparator {
+        height: visible ? implicitHeight : 0
         topPadding: 3
         bottomPadding: 3
     }
@@ -1184,6 +1217,14 @@ ApplicationWindow {
         readonly property bool editable: !win.table.isConsts
         readonly property bool hasRows: editable && win.table.rows.length > 0
         readonly property int rowCount: win.selBottom - win.selTop + 1
+        readonly property int columnCount: win.selRight - win.selLeft + 1
+        // Which of its sections fit what is selected: whole rows, whole
+        // columns, or one cell, which stands for its row and its column. A
+        // block of several cells is neither.
+        readonly property bool oneCell: win.selKind === "cells"
+            && win.selTop === win.selBottom && win.selLeft === win.selRight
+        readonly property bool rows: win.selKind === "row" || oneCell
+        readonly property bool columns: win.selKind === "column" || oneCell
         onClosed: grid.forceActiveFocus()
         // Close set, to fit a long menu on a small window.
         topPadding: 4
@@ -1204,49 +1245,54 @@ ApplicationWindow {
         MenuEntry { text: "Paste values"; enabled: cellMenu.hasRows; onTriggered: win.pasteValues() }
         MenuEntry { text: "Insert copied cells"; enabled: cellMenu.editable && win.tabs.length > 0; onTriggered: win.insertCopied() }
         MenuEntry { text: "Clear"; enabled: cellMenu.hasRows; onTriggered: win.clearSelection() }
-        MenuRule {}
-        MenuEntry { text: "Edit cell"; enabled: win.table.rows.length > 0; onTriggered: win.startEditing(null) }
-        MenuRule {}
+        MenuRule { visible: win.selKind === "cells" }
+        MenuEntry {
+            text: "Edit cell"
+            visible: win.selKind === "cells"
+            enabled: win.table.rows.length > 0
+            onTriggered: win.startEditing(null)
+        }
+        // Rows, when rows or one cell are selected.
+        MenuRule { visible: cellMenu.rows }
         MenuEntry {
             text: cellMenu.rowCount > 1 ? "Insert " + cellMenu.rowCount + " rows above" : "Insert row above"
+            visible: cellMenu.rows
             enabled: cellMenu.editable
             onTriggered: win.insertRows(false, cellMenu.rowCount)
         }
         MenuEntry {
             text: cellMenu.rowCount > 1 ? "Insert " + cellMenu.rowCount + " rows below" : "Insert row below"
+            visible: cellMenu.rows
             enabled: cellMenu.editable
             onTriggered: win.insertRows(true, cellMenu.rowCount)
         }
-        MenuEntry { text: "Insert rows…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("rows") }
+        MenuEntry {
+            text: "Insert rows…"
+            visible: cellMenu.rows
+            enabled: cellMenu.editable
+            onTriggered: promptDialog.ask("rows")
+        }
         MenuEntry {
             text: cellMenu.rowCount > 1 ? "Delete " + cellMenu.rowCount + " rows" : "Delete row"
+            visible: cellMenu.rows
             enabled: cellMenu.hasRows
             onTriggered: win.deleteRows()
         }
-        MenuRule {}
+        // Columns, when columns or one cell are selected. New columns are
+        // added from the footer.
+        MenuRule { visible: cellMenu.columns }
         MenuEntry {
             text: "Rename column…"
+            visible: cellMenu.columns
             enabled: cellMenu.editable && win.selLeft === win.selRight && win.table.columns.length > 0
             onTriggered: promptDialog.ask("rename")
         }
         MenuEntry {
-            readonly property int count: win.selRight - win.selLeft + 1
-            text: count > 1 ? "Delete " + count + " columns" : "Delete column"
+            text: cellMenu.columnCount > 1 ? "Delete " + cellMenu.columnCount + " columns" : "Delete column"
+            visible: cellMenu.columns
             enabled: cellMenu.editable && win.table.columns.length > 1
             onTriggered: win.deleteColumns()
         }
-        MenuEntry {
-            text: "Insert column left…"
-            enabled: cellMenu.editable && win.table.columns.length > 0
-            onTriggered: promptDialog.askAt(win.selLeft, win.selLeft)
-        }
-        MenuEntry {
-            text: "Insert column right…"
-            enabled: cellMenu.editable && win.table.columns.length > 0
-            onTriggered: promptDialog.askAt(win.selRight, win.selRight + 1)
-        }
-        MenuEntry { text: "Add column…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("column") }
-        MenuEntry { text: "Add formula column…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("computed") }
         MenuRule {}
         MenuEntry { text: "Undo"; enabled: sheet.canUndo; onTriggered: sheet.undo() }
         MenuEntry { text: "Redo"; enabled: sheet.canRedo; onTriggered: sheet.redo() }
@@ -1337,20 +1383,14 @@ ApplicationWindow {
             onRejected: promptDialog.reject()
         }
 
-        // Ask for a column next to column `beside`, to be column `where`: a
-        // formula column if that one is.
-        function askAt(beside, where) {
-            var column = win.table.columns[beside];
-            ask(column && column.computed ? "computed" : "column");
-            at = where;
-        }
-
         function ask(what) {
             kind = what;
             at = -1;
             column = win.curCol;
             nameField.text = what === "rename" && win.table.columns[column] ? win.table.columns[column].name : "";
             exprField.text = "";
+            countBox.currentIndex = 0;
+            countBox.editText = "1";
             problem.text = "";
             open();
         }
@@ -1358,13 +1398,18 @@ ApplicationWindow {
         // Focus is taken once the dialog is up: asked for any sooner, it is
         // lost to the dialog opening.
         onOpened: {
-            nameField.forceActiveFocus();
-            nameField.selectAll();
+            if (kind === "rows") {
+                countBox.forceActiveFocus();
+                countBox.selectAll();
+            } else {
+                nameField.forceActiveFocus();
+                nameField.selectAll();
+            }
         }
 
         // Add the rows below the selection.
         function addRows() {
-            var count = Number(nameField.text.trim());
+            var count = Number(countBox.editText.trim());
             if (!Number.isInteger(count) || count < 1 || count > 10000)
                 return "Enter a number of rows from 1 to 10000";
             win.insertRows(true, count);
@@ -1395,7 +1440,10 @@ ApplicationWindow {
                 accept();
                 return;
             }
-            if (!exprField.activeFocus) {
+            if (kind === "rows") {
+                countBox.forceActiveFocus();
+                countBox.selectAll();
+            } else if (!exprField.activeFocus) {
                 nameField.forceActiveFocus();
                 nameField.selectAll();
             }
@@ -1405,11 +1453,23 @@ ApplicationWindow {
 
         contentItem: ColumnLayout {
             spacing: 6
+            // How many rows: pick a usual number, or type any other.
+            ComboBox {
+                id: countBox
+                visible: promptDialog.kind === "rows"
+                Layout.fillWidth: true
+                editable: true
+                model: [1, 2, 3, 5, 10, 20, 50, 100]
+                validator: IntValidator { bottom: 1; top: 10000 }
+                font: win.font
+                onAccepted: promptDialog.tryAccept()
+            }
             TextField {
                 id: nameField
+                visible: promptDialog.kind !== "rows"
                 focus: true
                 Layout.fillWidth: true
-                placeholderText: promptDialog.kind === "rows" ? "How many rows" : "Name"
+                placeholderText: "Name"
                 font: win.font
                 onAccepted: promptDialog.needsExpr ? exprField.forceActiveFocus() : promptDialog.tryAccept()
             }
