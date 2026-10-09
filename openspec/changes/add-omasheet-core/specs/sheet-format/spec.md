@@ -102,17 +102,28 @@ A column with no declaration SHALL have its type inferred from its cells.
 ### Requirement: Computed columns
 A table SHALL be able to define a column once for all rows with
 `<Column> := <OMX expression>`. The expression SHALL be evaluated once per row
-with that row as the cursor. A computed column SHALL NOT also appear with data in
-the header row.
+with that row as the cursor. The header row SHALL name every computed column,
+which gives its place among the other columns, and each of its cells SHALL be
+written `*`. A definition with no column of its name in the header row SHALL be
+an error, and so SHALL anything but `*` in a cell of a computed column.
 
 #### Scenario: Profit column
-- **GIVEN** a table `Sales` with data columns `Revenue` and `Cost` and the line `Profit := Revenue - Cost`
+- **GIVEN** a table `Sales` with data columns `Revenue` and `Cost`, a column `Profit` whose cells are `*`, and the line `Profit := Revenue - Cost`
 - **WHEN** the sheet is evaluated
 - **THEN** every row has a `Profit` equal to that row's `Revenue` minus that row's `Cost`
 
+#### Scenario: A computed column among data columns
+- **GIVEN** the header row `Month | Revenue | Profit | Cost | Tax`, rows with `*` under `Profit` and `Tax`, and the lines `Profit := Revenue - Cost` and `Tax := Profit * TaxRate`
+- **WHEN** the sheet is evaluated
+- **THEN** the columns are `Month`, `Revenue`, `Profit`, `Cost`, `Tax` in that order, and `Sales[2; 0]` is the first row's `Profit`
+
+#### Scenario: Computed column not in the header row
+- **WHEN** `Profit := Revenue - Cost` is declared and the header row has no column `Profit`
+- **THEN** an error reports that the formula column is not in the header row
+
 #### Scenario: Computed column redeclared as data
-- **WHEN** `Profit := Revenue - Cost` is declared and `Profit` also appears in the header row
-- **THEN** parsing reports an error
+- **WHEN** `Profit := Revenue - Cost` is declared, `Profit` also appears in the header row, and a cell under it is not `*`
+- **THEN** an error reports that the cells of a formula column are written `*`
 
 ### Requirement: Cell content
 A cell SHALL be either empty, a literal, or a formula. A cell whose first

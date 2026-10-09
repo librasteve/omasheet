@@ -12,11 +12,11 @@ table Orders
 
 Placed : DateTime
 
-Placed           | CustomerID | Qty | Price
-2025-03-03T09:12 | 2          | 3   | 19.99
-2025-03-03T16:40 | 1          | 10  | 4.50
-2025-03-04T11:05 | 9          | 1   | 100
-2025-03-05T08:30 | 2          | 2   | 7.25
+Placed           | CustomerID | Qty | Price | Customer | Region | Total | Discount | Rush
+2025-03-03T09:12 | 2          | 3   | 19.99 | *        | *      | *     | *        | *
+2025-03-03T16:40 | 1          | 10  | 4.50  | *        | *      | *     | *        | *
+2025-03-04T11:05 | 9          | 1   | 100   | *        | *      | *     | *        | *
+2025-03-05T08:30 | 2          | 2   | 7.25  | *        | *      | *     | *        | *
 
 Customer := Customers[; ID == CustomerID].Name // "Unknown"
 Region   := Customers[; ID == CustomerID].Region // "?"
@@ -26,10 +26,10 @@ Rush     := Placed < 2025-03-04T00:00
 
 table ByRegion
 
-Region
-UK
-US
-FI
+Region | Count | Sales
+UK     | *     | *
+US     | *     | *
+FI     | *     | *
 
 Count := Orders[; Region == ByRegion[Region; *]].count()
 Sales := Orders[; Region == ByRegion[Region; *]].Total.sum()

@@ -107,7 +107,7 @@ fn lint_reports_a_located_type_error() {
     let path = std::env::temp_dir().join(format!("omasheet-lint-{}.omx", std::process::id()));
     std::fs::write(
         &path,
-        "table Sales\n\nMonth | Revenue\nJan | 100\n\nBad := Revenue + Month\n",
+        "table Sales\n\nMonth | Revenue | Bad\nJan | 100 | *\n\nBad := Revenue + Month\n",
     )
     .unwrap();
     let out = omasheet(&["lint", path.to_str().unwrap()]);

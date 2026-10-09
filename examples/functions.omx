@@ -30,10 +30,10 @@ ID | Name
 
 table Orders
 
-CustomerID | Qty | Price | Cost
-2          | 3   | 20    | 45
-1          | 10  | 4.50  | 45
-9          | 0   | 100   | 0
+CustomerID | Qty | Price | Cost | Customer | Net | Gross | Margin
+2          | 3   | 20    | 45   | *        | *   | *     | *
+1          | 10  | 4.50  | 45   | *        | *   | *     | *
+9          | 0   | 100   | 0    | *        | *   | *     | *
 
 # A function is called like a built-in one: by name, as a method, or in a pipe.
 Customer := CustomerName(CustomerID)

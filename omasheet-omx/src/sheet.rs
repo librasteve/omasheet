@@ -12,14 +12,15 @@
 //!
 //! Revenue : Ratio
 //!
-//! Month | Revenue | Cost
-//! Jan   | 10000   | 6000
+//! Month | Revenue | Cost | Profit
+//! Jan   | 10000   | 6000 | *
 //!
 //! Profit := Revenue - Cost
 //! ```
 //!
 //! Cells are kept as raw text here; whether a cell is a literal or a formula
-//! depends on the column type and is decided by the checker.
+//! depends on the column type and is decided by the checker, as is whether a
+//! column of the header row is a formula column, with `*` for its cells.
 
 use crate::ast::Expr;
 use crate::diag::{Diagnostic, Span};
@@ -509,12 +510,12 @@ mod tests {
     #[test]
     fn parses_a_table() {
         let mut diags = Vec::new();
-        let src = "const Rate = 20%\n\ntable Sales\n\nRevenue : Ratio\n\nMonth | Revenue\n------|--------\nJan | 100\nFeb | 120\n\nTax := Revenue * Rate\n";
+        let src = "const Rate = 20%\n\ntable Sales\n\nRevenue : Ratio\n\nMonth | Revenue | Tax\n------|---------|----\nJan | 100 | *\nFeb | 120 | *\n\nTax := Revenue * Rate\n";
         let ast = parse_sheet(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         assert_eq!(ast.consts.len(), 1);
         let t = &ast.tables[0];
-        assert_eq!((t.header.len(), t.rows.len(), t.computed.len()), (2, 2, 1));
+        assert_eq!((t.header.len(), t.rows.len(), t.computed.len()), (3, 2, 1));
         assert_eq!(t.schema[0].ty, S::Ratio);
     }
 

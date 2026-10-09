@@ -415,12 +415,17 @@ fn into_table(site: &Site, place: Place, t: usize, name: &str) -> Option<bool> {
     }
 }
 
-/// The names of the columns of a table, data columns first.
+/// The names of the columns of a table, in order: those of the header row,
+/// then any formula column it fails to name.
 fn column_names(decl: &TableDecl) -> Vec<&str> {
-    let data = decl.header.iter().map(|h| h.0.as_str());
-    data.chain(decl.computed.iter().map(|c| c.name.as_str()))
-        .collect()
+    let named = |name: &str| decl.header.iter().any(|h| h.0 == name);
+    let header = decl.header.iter().map(|h| h.0.as_str());
+    let rest = decl.computed.iter().map(|c| c.name.as_str());
+    header.chain(rest.filter(|name| !named(name))).collect()
 }
+
+/// What a row holds for a formula column.
+const FORMULA_CELL: &str = "*";
 
 /// `(start, end, replacement)` in the text of a sheet.
 type Edit = (usize, usize, String);
@@ -775,14 +780,19 @@ fn valid_name(name: &str) -> Result<&str, String> {
 /// The header and rows of a table as text, plus where each row came from.
 struct Grid {
     header: Vec<String>,
+    /// Which columns of the header row are formula columns: their cells
+    /// are `*`.
+    formula: Vec<bool>,
     /// `(original row index, cells)`; `None` for a new row.
     rows: Vec<(Option<usize>, Vec<String>)>,
 }
 
 impl Grid {
     fn of(t: &TableDecl) -> Grid {
+        let formula = |name: &String| t.computed.iter().any(|c| &c.name == name);
         Grid {
             header: t.header.iter().map(|(name, _)| name.clone()).collect(),
+            formula: t.header.iter().map(|(name, _)| formula(name)).collect(),
             rows: t
                 .rows
                 .iter()
@@ -795,7 +805,8 @@ impl Grid {
     fn blank_row(&self) -> Vec<String> {
         // A lone empty cell would be a blank line, which is not a row.
         let cell = if self.header.len() == 1 { "\"\"" } else { "" };
-        vec![cell.to_string(); self.header.len()]
+        let blank = |formula: &bool| if *formula { FORMULA_CELL } else { cell };
+        self.formula.iter().map(|f| blank(f).to_string()).collect()
     }
 
     /// Rewrite the table's lines in `text`, aligned, touching nothing else.
@@ -1018,7 +1029,7 @@ impl Document {
             .unwrap_or_default();
         self.grid_edited(text, table, |grid| {
             for (row, col, text) in cells {
-                if *col >= grid.header.len() {
+                if *col >= grid.header.len() || grid.formula[*col] {
                     continue;
                 }
                 while grid.rows.len() <= *row {
@@ -1145,10 +1156,10 @@ impl Document {
     }
 
     /// Delete `count` columns starting at `first`, with their cells or
-    /// formulas and their type lines, in one undoable step. The columns must
-    /// be all data columns or all formula columns, and a table keeps at least
-    /// one data column. A formula that reads a deleted column is left as it
-    /// is, to be shown as an error.
+    /// formulas and their type lines, in one undoable step. A table keeps at
+    /// least one data column. A column that a formula picks by counting is
+    /// still the column it was; a formula that reads a deleted column is
+    /// left to be shown as an error.
     pub fn delete_columns(
         &mut self,
         table: usize,
@@ -1162,66 +1173,82 @@ impl Document {
         if count == 0 || first + count > n {
             return Err("there is no such column".into());
         }
-        let data = snap.columns.iter().filter(|c| c.formula.is_none()).count();
-        let among_data = first + count <= data;
-        if !among_data && first < data {
-            return Err("delete data columns and formula columns separately".into());
-        }
-        if among_data && count >= data {
+        let gone = first..first + count;
+        let kept = |k: &usize| !gone.contains(k);
+        if !(0..n)
+            .filter(kept)
+            .any(|k| snap.columns[k].formula.is_none())
+        {
             return Err("a table keeps at least one data column".into());
         }
-        let names: Vec<String> = snap.columns[first..first + count]
-            .iter()
-            .map(|c| c.name.clone())
+        let name = |k: usize| snap.columns[k].name.clone();
+        let names: Vec<String> = gone.clone().map(name).collect();
+        let order: Vec<String> = (0..n).filter(kept).map(name).collect();
+        // Those that stay close up; those that go are past the end.
+        let place: Vec<usize> = (0..n)
+            .map(|k| match k {
+                k if k < first => k,
+                k if gone.contains(&k) => n - count + (k - first),
+                k => k - count,
+            })
             .collect();
-        // Last among their own kind first, so that formulas which count
-        // columns keep reading the ones that stay.
-        let mark = self.undo.len();
-        let end = if among_data { data } else { n };
-        self.move_columns(table, first, count, end - count)?;
+        let mut text = self.followed_to(table, false, &place, n - count);
 
-        let ast = self.ast();
+        let ast = parse_sheet(&text, 0, &mut Vec::new());
         let Some(decl) = self.table_decl(&ast, table) else {
             return Err("there is no such table".into());
         };
         // Whole lines to take out: type lines, and `Name := expression`.
         let line = |s: usize, e: usize| {
-            let start = self.text[..s].rfind('\n').map_or(0, |k| k + 1);
-            let end = self.text[e..]
-                .find('\n')
-                .map_or(self.text.len(), |k| e + k + 1);
+            let start = text[..s].rfind('\n').map_or(0, |k| k + 1);
+            let end = text[e..].find('\n').map_or(text.len(), |k| e + k + 1);
             (start, end)
         };
         let schema = decl.schema.iter().filter(|l| names.contains(&l.name));
+        let formulas = decl.computed.iter().filter(|c| names.contains(&c.name));
         let mut cuts: Vec<(usize, usize)> = schema
             .map(|l| line(l.span.start as usize, l.span.end as usize))
+            .chain(formulas.map(|c| line(c.span.start as usize, c.expr_span.end as usize)))
             .collect();
-        let mut text = if among_data {
-            let mut grid = Grid::of(decl);
-            let keep = data - count;
-            grid.header.truncate(keep);
-            for (_, row) in &mut grid.rows {
-                row.truncate(keep);
-                // A lone empty cell would be a blank line, which is not a row.
-                if keep == 1 && row[0].is_empty() {
-                    row[0] = "\"\"".to_string();
-                }
-            }
-            grid.write(decl, &self.text)
-        } else {
-            let gone = decl.computed.iter().filter(|c| names.contains(&c.name));
-            cuts.extend(gone.map(|c| line(c.span.start as usize, c.expr_span.end as usize)));
-            self.text.clone()
-        };
-        // The lines to take out come before the rows, or are the whole
-        // change, so their places in the text still hold.
         cuts.sort_unstable();
         for (s, e) in cuts.into_iter().rev() {
             text.replace_range(s..e, "");
         }
+        let Some(text) = self.arranged(&text, table, &order) else {
+            return Err("there is no such table".into());
+        };
         self.commit(text);
-        self.squash(mark);
         Ok(())
+    }
+
+    /// `text` with the columns of table `table` in the order of `order`,
+    /// their names; a column of the header row that is not among them is
+    /// taken out. The header row names every column, and the cells of a
+    /// formula column are `*`.
+    fn arranged(&self, text: &str, table: usize, order: &[String]) -> Option<String> {
+        let ast = parse_sheet(text, 0, &mut Vec::new());
+        let decl = self.table_decl(&ast, table)?;
+        let formula = |name: &String| decl.computed.iter().any(|c| &c.name == name);
+        let column = |name: &String| decl.header.iter().position(|h| &h.0 == name);
+
+        let mut grid = Grid::of(decl);
+        let pick = |cells: &[String]| -> Vec<String> {
+            let cell = |name: &String| match column(name) {
+                Some(k) => cells.get(k).cloned().unwrap_or_default(),
+                None => FORMULA_CELL.to_string(),
+            };
+            order.iter().map(cell).collect()
+        };
+        for (_, row) in &mut grid.rows {
+            *row = pick(row);
+            // A lone empty cell would be a blank line, which is not a row.
+            if row.len() == 1 && row[0].is_empty() {
+                row[0] = "\"\"".to_string();
+            }
+        }
+        grid.header = order.to_vec();
+        grid.formula = order.iter().map(formula).collect();
+        Some(grid.write(decl, text))
     }
 
     /// Add an empty data column at the end of the header row.
@@ -1236,10 +1263,11 @@ impl Document {
                 snap.name
             ));
         }
-        // The formula columns each move along one.
+        // A formula column that the header row fails to name moves along one.
         let n = snap.columns.len();
-        let data = snap.columns.iter().filter(|c| c.formula.is_none()).count();
-        let place: Vec<usize> = (0..n).map(|k| if k < data { k } else { k + 1 }).collect();
+        let ast = self.ast();
+        let named = self.table_decl(&ast, table).map_or(n, |d| d.header.len());
+        let place: Vec<usize> = (0..n).map(|k| if k < named { k } else { k + 1 }).collect();
         let followed = self.followed_to(table, false, &place, n + 1);
         let text = self.grid_edited(&followed, table, |grid| {
             // A lone column stored its empty cells as `""`.
@@ -1251,6 +1279,7 @@ impl Document {
                 }
             }
             grid.header.push(name);
+            grid.formula.push(false);
             for (_, row) in &mut grid.rows {
                 row.push(String::new());
             }
@@ -1409,20 +1438,21 @@ impl Document {
             .unwrap_or_default()
     }
 
-    /// Add an empty data column as column `at`, or as the last data column
-    /// if `at` is among the formula columns, in one undoable step.
+    /// Add an empty data column as column `at`, in one undoable step.
     pub fn insert_column(&mut self, table: usize, at: usize, name: &str) -> Result<(), String> {
         let mark = self.undo.len();
+        let ast = self.ast();
+        let named = self.table_decl(&ast, table).map(|d| d.header.len());
         self.add_column(table, name)?;
-        let columns = &self.snapshot.tables[table].columns;
-        let last = columns.iter().filter(|c| c.formula.is_none()).count() - 1;
-        self.move_columns(table, last, 1, at.min(last))?;
+        // It was put at the end of the header row.
+        let last = self.snapshot.tables[table].columns.len() - 1;
+        let from = named.unwrap_or(last).min(last);
+        self.move_columns(table, from, 1, at.min(last))?;
         self.squash(mark);
         Ok(())
     }
 
-    /// Add `Name := expression` as column `at`, or as the first formula
-    /// column if `at` is among the data columns, in one undoable step.
+    /// Add `Name := expression` as column `at`, in one undoable step.
     pub fn insert_computed(
         &mut self,
         table: usize,
@@ -1432,18 +1462,16 @@ impl Document {
     ) -> Result<(), String> {
         let mark = self.undo.len();
         self.add_computed(table, name, expr)?;
-        let columns = &self.snapshot.tables[table].columns;
-        let data = columns.iter().filter(|c| c.formula.is_none()).count();
-        let last = columns.len() - 1;
-        self.move_columns(table, last, 1, at.clamp(data, last))?;
+        let last = self.snapshot.tables[table].columns.len() - 1;
+        self.move_columns(table, last, 1, at.min(last))?;
         self.squash(mark);
         Ok(())
     }
 
     /// Put copies of the columns `cols` of a table in at column `at`, in one
     /// undoable step. A data column is copied with its cells as they are
-    /// written, and a formula column with its formula; each goes among its
-    /// own kind, under a name like `Name_copy001`.
+    /// written, and a formula column with its formula, each under a name
+    /// like `Name_copy001`.
     pub fn insert_copies(&mut self, table: usize, cols: &[usize], at: usize) -> Result<(), String> {
         let Some(snap) = self.snapshot.tables.get(table) else {
             return Err("there is no such table".into());
@@ -1452,27 +1480,16 @@ impl Document {
             return Err("there is no such column".into());
         }
         let mark = self.undo.len();
-        let (mut cols, mut at) = (cols.to_vec(), at);
+        let mut cols = cols.to_vec();
+        let start = at.min(snap.columns.len());
         for k in 0..cols.len() {
+            let to = start + k;
             let column = self.snapshot.tables[table].columns[cols[k]].clone();
             let name = self.copy_name(table, &column.name);
-            let data = |doc: &Document| {
-                let columns = &doc.snapshot.tables[table].columns;
-                columns.iter().filter(|c| c.formula.is_none()).count()
-            };
-            // Where the copy goes, among its own kind.
-            let to = match &column.formula {
-                None => {
-                    let to = at.min(data(self));
-                    self.insert_column(table, to, &name)?;
-                    to
-                }
-                Some(expr) => {
-                    let to = at.max(data(self));
-                    self.insert_computed(table, to, &name, expr)?;
-                    to
-                }
-            };
+            match &column.formula {
+                None => self.insert_column(table, to, &name)?,
+                Some(expr) => self.insert_computed(table, to, &name, expr)?,
+            }
             for col in &mut cols {
                 if *col >= to {
                     *col += 1;
@@ -1482,13 +1499,14 @@ impl Document {
                 let from = cols[k];
                 self.edit_grid(table, |grid| {
                     for (_, row) in &mut grid.rows {
-                        if let Some(cell) = row.get(from).cloned() {
-                            row[to] = cell;
+                        if let Some(cell) = row.get(from).cloned()
+                            && let Some(copy) = row.get_mut(to)
+                        {
+                            *copy = cell;
                         }
                     }
                 });
             }
-            at = to + 1;
         }
         self.squash(mark);
         Ok(())
@@ -1561,10 +1579,10 @@ impl Document {
     }
 
     /// Move `count` columns starting at `first` so that the first of them
-    /// becomes column `to`, in one undoable step. Data columns move among the
-    /// data columns and formula columns among the formula columns. A column
-    /// that a formula picks by counting, from its own (`[*-1; *]`) or by
-    /// number, is still the column it was.
+    /// becomes column `to`, in one undoable step. Data columns and formula
+    /// columns go anywhere among each other. A column that a formula picks
+    /// by counting, from its own (`[*-1; *]`) or by number, is still the
+    /// column it was.
     pub fn move_columns(
         &mut self,
         table: usize,
@@ -1582,67 +1600,24 @@ impl Document {
         if to == first {
             return Ok(());
         }
-        // The data columns come first, in the order of the header row.
-        let data = snap.columns.iter().filter(|c| c.formula.is_none()).count();
-        let among_data = first + count <= data && to + count <= data;
-        let among_formulas = first >= data && to >= data;
-        if !among_data && !among_formulas {
-            return Err("data columns stay before the formula columns".into());
-        }
         let mut order: Vec<usize> = (0..n).collect();
         let block: Vec<usize> = order.drain(first..first + count).collect();
         order.splice(to..to, block);
-        let names: Vec<String> = snap.columns.iter().map(|c| c.name.clone()).collect();
+        let names: Vec<String> = order
+            .iter()
+            .map(|&k| snap.columns[k].name.clone())
+            .collect();
 
         let followed = self.followed(table, false, &order);
-        let ast = parse_sheet(&followed, 0, &mut Vec::new());
-        let Some(decl) = self.table_decl(&ast, table) else {
-            return Err("there is no such table".into());
-        };
-        let text = if among_data {
-            let mut grid = Grid::of(decl);
-            let pick = |cells: &[String]| -> Vec<String> {
-                order[..data]
-                    .iter()
-                    .map(|&k| cells.get(k).cloned().unwrap_or_default())
-                    .collect()
-            };
-            grid.header = pick(&grid.header);
-            for (_, row) in &mut grid.rows {
-                *row = pick(row);
-            }
-            grid.write(decl, &followed)
-        } else {
-            // Each `Name := expression` keeps its place in the text and takes
-            // the declaration that now belongs there.
-            let range = |name: &str| {
-                let c = decl.computed.iter().find(|c| c.name == name)?;
-                Some((c.span.start as usize, c.expr_span.end as usize))
-            };
-            let slots: Option<Vec<(usize, usize)>> =
-                names[data..].iter().map(|name| range(name)).collect();
-            let Some(mut slots) = slots else {
-                return Err("the formula columns cannot be moved".into());
-            };
-            let blocks: Option<Vec<&str>> = order[data..]
-                .iter()
-                .map(|&k| range(&names[k]).map(|(s, e)| &followed[s..e]))
-                .collect();
-            let Some(blocks) = blocks else {
-                return Err("the formula columns cannot be moved".into());
-            };
-            slots.sort_unstable();
-            let mut text = followed.clone();
-            for (&(s, e), block) in slots.iter().zip(&blocks).rev() {
-                text.replace_range(s..e, block);
-            }
-            text
+        let Some(text) = self.arranged(&followed, table, &names) else {
+            return Err("the columns cannot be moved".into());
         };
         self.commit(text);
         Ok(())
     }
 
-    /// Add `Name := expression` to a table.
+    /// Add `Name := expression` to a table, as its last column: the header
+    /// row names it, with `*` for its cells.
     pub fn add_computed(&mut self, table: usize, name: &str, expr: &str) -> Result<(), String> {
         let name = valid_name(name)?.to_string();
         let expr = expr.trim().trim_start_matches('=').trim();
@@ -1669,6 +1644,26 @@ impl Document {
                 decl.name
             ));
         }
+        let mut grid = Grid::of(decl);
+        // A lone column stored its empty cells as `""`.
+        if grid.header.len() == 1 {
+            for (_, row) in &mut grid.rows {
+                if row[0] == "\"\"" {
+                    row[0].clear();
+                }
+            }
+        }
+        grid.header.push(name.clone());
+        grid.formula.push(true);
+        for (_, row) in &mut grid.rows {
+            row.push(FORMULA_CELL.to_string());
+        }
+        let mut text = grid.write(decl, &followed);
+
+        let ast = parse_sheet(&text, 0, &mut Vec::new());
+        let Some(decl) = self.table_decl(&ast, table) else {
+            return Err("there is no such table".into());
+        };
         let rows_end = decl
             .row_lines
             .last()
@@ -1679,7 +1674,6 @@ impl Document {
             Some(end) if end > rows_end => (end, "\n"),
             _ => (rows_end, "\n\n"),
         };
-        let mut text = followed.clone();
         text.insert_str(at, &format!("{gap}{name} := {}", expr.replace('\n', " ")));
         self.commit(text);
         Ok(())
@@ -1954,7 +1948,7 @@ impl Document {
 mod tests {
     use super::*;
 
-    const SALES: &str = "# sales\nconst Rate = 20%\n\ntable Sales\n\nMonth | Revenue | Cost\nJan   | 100     | 60\nFeb   | 120     | 70\n\nProfit := Revenue - Cost\nTax := Profit * Rate\n";
+    const SALES: &str = "# sales\nconst Rate = 20%\n\ntable Sales\n\nMonth | Revenue | Cost | Profit | Tax\nJan   | 100     | 60   | *      | *\nFeb   | 120     | 70   | *      | *\n\nProfit := Revenue - Cost\nTax := Profit * Rate\n";
 
     fn col(doc: &Document, table: usize, col: usize) -> Vec<String> {
         doc.snapshot().tables[table]
@@ -2023,14 +2017,17 @@ mod tests {
         assert_eq!(col(&doc, 0, 3), ["40", "50", "70", ""]);
         assert!(
             doc.text().contains(
-                "Feb   | 120     | 70\nMar   | 150     | 80\nApr   |         |\n\nProfit"
+                "Feb   | 120     | 70   | *      | *\nMar   | 150     | 80   | *      | *\nApr   |         |      | *      | *\n\nProfit"
             )
         );
         doc.insert_rows(0, 0, 1);
         assert_eq!(col(&doc, 0, 0), ["", "Jan", "Feb", "Mar", "Apr"]);
         doc.delete_rows(0, 0, 2);
         assert_eq!(col(&doc, 0, 0), ["Feb", "Mar", "Apr"]);
-        assert!(doc.text().contains("Month | Revenue | Cost\nFeb"));
+        assert!(
+            doc.text()
+                .contains("Month | Revenue | Cost | Profit | Tax\nFeb")
+        );
     }
 
     #[test]
@@ -2039,8 +2036,9 @@ mod tests {
         doc.add_column(0, "Note").unwrap();
         assert!(doc.add_column(0, "Note").is_err());
         assert!(doc.add_column(0, "bad name").is_err());
-        doc.set_cell(0, 0, 3, "a | b");
-        assert_eq!(doc.snapshot().tables[0].rows[0][3].display, "a | b");
+        // A new column is the last one.
+        doc.set_cell(0, 0, 5, "a | b");
+        assert_eq!(doc.snapshot().tables[0].rows[0][5].display, "a | b");
         doc.add_computed(0, "Margin", "Profit / Revenue").unwrap();
         let names: Vec<_> = doc.snapshot().tables[0]
             .columns
@@ -2050,7 +2048,7 @@ mod tests {
         assert_eq!(
             names,
             [
-                "Month", "Revenue", "Cost", "Note", "Profit", "Tax", "Margin"
+                "Month", "Revenue", "Cost", "Profit", "Tax", "Note", "Margin"
             ]
         );
         assert_eq!(col(&doc, 0, 6), ["0.4", "0.41667…"]);
@@ -2059,7 +2057,7 @@ mod tests {
         doc.set_cell(0, 0, 6, "Profit / Cost");
         assert_eq!(col(&doc, 0, 6), ["0.66667…", "0.71429…"]);
         doc.set_const(0, "50%");
-        assert_eq!(col(&doc, 0, 5), ["20", "25"]);
+        assert_eq!(col(&doc, 0, 4), ["20", "25"]);
         doc.add_const("Extra", "Sales.Revenue.sum()").unwrap();
         assert_eq!(doc.snapshot().consts[1].display, "220");
         doc.add_table("Notes").unwrap();
@@ -2074,13 +2072,15 @@ mod tests {
     #[test]
     fn renaming_a_column_follows_its_references() {
         let text = format!(
-            "{SALES}\ntable Top\n\nKind | Value\nSum  | = Sales.Revenue.sum()\nBig  | = Sales[Revenue; Revenue > 100].sum()\n\nRevenue := Value\n"
+            "{SALES}\ntable Top\n\nKind | Value                                 | Revenue\nSum  | = Sales.Revenue.sum()                 | *\nBig  | = Sales[Revenue; Revenue > 100].sum() | *\n\nRevenue := Value\n"
         );
         let mut doc = Document::from_text(&text);
         let before = col(&doc, 0, 3);
         doc.rename_column(0, 1, "Income").unwrap();
         let renamed = doc.text().to_string();
-        assert!(renamed.contains("Month | Income | Cost\nJan   | 100    | 60\n"));
+        assert!(renamed.contains(
+            "Month | Income | Cost | Profit | Tax\nJan   | 100    | 60   | *      | *\n"
+        ));
         assert!(renamed.contains("Profit := Income - Cost"));
         assert!(renamed.contains("= Sales.Income.sum()"));
         assert!(renamed.contains("= Sales[Income; Income > 100].sum()"));
@@ -2122,7 +2122,7 @@ mod tests {
     fn functions_are_listed_and_follow_a_renamed_column() {
         let text = "# Everything sold.\nfn Sold() = Sales.Revenue.sum()\nfn Net(a, b) = a - b\n\n"
             .to_string()
-            + "table Sales\n\nMonth | Revenue | Cost\nJan   | 100     | 60\n\nProfit := Net(Revenue, Cost)\n";
+            + "table Sales\n\nMonth | Revenue | Cost | Profit\nJan   | 100     | 60   | *\n\nProfit := Net(Revenue, Cost)\n";
         let mut doc = Document::from_text(&text);
         assert!(doc.snapshot().problems.is_empty());
         let funcs = &doc.snapshot().funcs;
@@ -2141,7 +2141,7 @@ mod tests {
     #[test]
     fn columns_can_be_deleted() {
         let text = "const Rate = 20%\n\ntable Sales\n\nCost : Int\nRevenue : Int\n\n\
-                    Month | Revenue | Cost | Note\nJan   | 100     | 60   | a\nFeb   | 120     | 70   | = [*-1; *]\n\n\
+                    Month | Revenue | Cost | Note       | Profit | Tax\nJan   | 100     | 60   | a          | *      | *\nFeb   | 120     | 70   | = [*-1; *] | *      | *\n\n\
                     Profit := Revenue - Cost\nTax := Profit * Rate\n";
         let mut doc = Document::from_text(text);
         let names = |doc: &Document| -> Vec<String> {
@@ -2154,7 +2154,7 @@ mod tests {
         assert_eq!(names(&doc), ["Revenue", "Cost", "Note", "Profit", "Tax"]);
         assert!(
             doc.text().contains(
-                "Revenue | Cost | Note\n100     | 60   | a\n120     | 70   | = [*-1; *]\n"
+                "Revenue | Cost | Note       | Profit | Tax\n100     | 60   | a          | *      | *\n120     | 70   | = [*-1; *] | *      | *\n"
             ),
             "{}",
             doc.text()
@@ -2179,12 +2179,14 @@ mod tests {
         assert!(doc.undo());
         assert_eq!(doc.text(), text);
 
-        // Not both kinds at once, not every data column, not off the table.
-        assert!(
-            doc.delete_columns(0, 3, 2)
-                .unwrap_err()
-                .contains("separately")
-        );
+        // Both kinds at once.
+        doc.delete_columns(0, 3, 2).unwrap();
+        assert_eq!(names(&doc), ["Month", "Revenue", "Cost", "Tax"]);
+        assert!(!doc.text().contains("Note") && !doc.text().contains("Profit :="));
+        assert!(doc.undo());
+        assert_eq!(doc.text(), text);
+
+        // Not every data column, and not off the table.
         assert!(
             doc.delete_columns(0, 0, 4)
                 .unwrap_err()
@@ -2387,7 +2389,7 @@ mod tests {
         assert_eq!(names(&doc), ["Revenue", "Cost", "Month", "Profit", "Tax"]);
         assert!(
             doc.text()
-                .contains("Revenue | Cost | Month\n100     | 60   | Jan\n120     | 70   | Feb\n")
+                .contains("Revenue | Cost | Month | Profit | Tax\n100     | 60   | Jan   | *      | *\n120     | 70   | Feb   | *      | *\n")
         );
         assert_eq!(col(&doc, 0, 2), ["Jan", "Feb"]);
         assert_eq!(col(&doc, 0, 3), ["40", "50"]);
@@ -2402,63 +2404,146 @@ mod tests {
         doc.move_columns(0, 4, 1, 3).unwrap();
         assert_eq!(names(&doc), ["Revenue", "Cost", "Month", "Tax", "Profit"]);
         assert!(
-            doc.text()
-                .contains("\nTax := Profit * Rate\nProfit := Revenue - Cost\n")
+            doc.text().contains(
+                "Revenue | Cost | Month | Tax | Profit\n100     | 60   | Jan   | *   | *\n"
+            )
         );
         assert_eq!(col(&doc, 0, 3), ["8", "10"]);
         assert!(doc.snapshot().problems.is_empty());
 
-        // Not across the two kinds, and not off the table.
+        // Not off the table.
         let before = doc.text().to_string();
-        assert!(
-            doc.move_columns(0, 0, 1, 3)
-                .unwrap_err()
-                .contains("stay before the formula columns")
-        );
-        assert!(doc.move_columns(0, 3, 1, 1).is_err());
-        assert!(doc.move_columns(0, 1, 2, 2).is_err());
+        assert!(doc.move_columns(0, 3, 2, 4).is_err());
         assert!(doc.move_columns(0, 9, 1, 0).is_err());
         assert!(doc.move_columns(0, 1, 1, 1).is_ok());
         assert_eq!(doc.text(), before);
+    }
 
-        // A formula that counts columns from its own still reads the same
-        // ones, wherever it and they end up.
-        let mut doc =
-            Document::from_text("table T\n\nA | B | C\n1 | 2 | = [*-1; *] * 10 + [*-2; *]\n");
-        assert_eq!(col(&doc, 0, 2), ["21"]);
-        doc.move_columns(0, 0, 1, 1).unwrap();
-        assert!(
-            doc.text()
-                .contains("B | A | C\n2 | 1 | = [*-2; *] * 10 + [*-1; *]\n")
-        );
-        assert_eq!(col(&doc, 0, 2), ["21"]);
-        doc.move_columns(0, 2, 1, 0).unwrap();
-        assert!(
-            doc.text()
-                .contains("\n= [*+1; *] * 10 + [*+2; *] | 2 | 1\n")
-        );
-        assert_eq!(col(&doc, 0, 0), ["21"]);
+    #[test]
+    fn formula_columns_go_among_data_columns() {
+        let text = "const Rate = 20%\n\ntable Sales\n\n\
+                    Month | Revenue | Cost | Left                  | Profit | Tax\n\
+                    Jan   | 100     | 60   | = [*-1; *] + [*+1; *] | *      | *\n\
+                    Feb   | 120     | 70   | 5                     | *      | *\n\n\
+                    Profit := Revenue - Cost\nTax := Profit * Rate\n";
+        let mut doc = Document::from_text(text);
+        let names = |doc: &Document| -> Vec<String> {
+            let columns = &doc.snapshot().tables[0].columns;
+            columns.iter().map(|c| c.name.clone()).collect()
+        };
         assert!(doc.snapshot().problems.is_empty());
+        assert_eq!(col(&doc, 0, 3), ["100", "5"]);
 
-        // So does one that picks a column by its number, wherever it is; a
-        // range follows its two ends.
-        let mut doc = Document::from_text(
-            "const K = T[1; 0]\n\ntable T\n\nA | B | C | D\n1 | 2 | 4 | = [1; *] * 10 + [-3; *] + [0..1; *].A\n\n\
-             E := [0; *] + T[2; 0]\n",
+        // A formula column to the left of a data column. The cell that
+        // counted columns from itself still reads the two it read, and the
+        // `Name := expression` lines stay as they are.
+        doc.move_columns(0, 4, 1, 2).unwrap();
+        assert_eq!(
+            names(&doc),
+            ["Month", "Revenue", "Profit", "Cost", "Left", "Tax"]
         );
-        assert_eq!(col(&doc, 0, 3), ["25"]);
-        assert_eq!(col(&doc, 0, 4), ["5"]);
-        doc.move_columns(0, 0, 1, 2).unwrap();
-        assert_eq!(names(&doc), ["B", "C", "A", "D", "E"]);
-        assert!(doc.text().contains("const K = T[0; 0]\n"));
+        let now = doc.text();
+        assert!(
+            now.contains(
+                "Month | Revenue | Profit | Cost | Left                  | Tax\n\
+                 Jan   | 100     | *      | 60   | = [*-1; *] + [*-2; *] | *\n\
+                 Feb   | 120     | *      | 70   | 5                     | *\n"
+            ),
+            "{now}"
+        );
+        assert!(now.contains("\nProfit := Revenue - Cost\nTax := Profit * Rate\n"));
+        assert_eq!(col(&doc, 0, 2), ["40", "50"]);
+        assert_eq!(col(&doc, 0, 4), ["100", "5"]);
+        assert!(doc.snapshot().problems.is_empty());
+        // Its cells show its formula, and typing in one changes the formula.
+        assert_eq!(
+            doc.snapshot().tables[0].rows[1][2].source,
+            "= Revenue - Cost"
+        );
+        doc.set_cell(0, 1, 2, "= Revenue - Cost - 1");
+        assert!(doc.text().contains("Profit := Revenue - Cost - 1\n"));
+        assert_eq!(col(&doc, 0, 2), ["39", "49"]);
+        assert!(doc.undo());
+
+        // A new row has `*` there, and pasting over the column leaves it.
+        doc.insert_rows(0, 2, 1);
         assert!(
             doc.text()
-                .contains("| = [0; *] * 10 + [-4; *] + [0..2; *].A\n")
+                .contains("\n      |         | *      |      |                       | *\n")
         );
-        assert!(doc.text().contains("E := [2; *] + T[1; 0]\n"));
-        assert_eq!(col(&doc, 0, 3), ["25"]);
-        assert_eq!(col(&doc, 0, 4), ["5"]);
-        assert!(doc.snapshot().problems.is_empty());
+        doc.set_cells(
+            0,
+            &[(2, 1, "9".into()), (2, 2, "7".into()), (2, 3, "4".into())],
+        );
+        assert_eq!(col(&doc, 0, 2), ["40", "50", "5"]);
+        assert!(doc.undo() && doc.undo());
+
+        // A data column to the right of every formula column.
+        doc.move_columns(0, 0, 1, 5).unwrap();
+        assert_eq!(
+            names(&doc),
+            ["Revenue", "Profit", "Cost", "Left", "Tax", "Month"]
+        );
+        assert_eq!(col(&doc, 0, 4), ["8", "10"]);
+        assert_eq!(col(&doc, 0, 5), ["Jan", "Feb"]);
+        assert!(doc.undo());
+
+        // A new column is the last, and a new formula column is named in
+        // the header row, with its `*`s.
+        let among = doc.text().to_string();
+        doc.add_column(0, "Note").unwrap();
+        doc.add_computed(0, "Net", "Profit - Tax").unwrap();
+        assert_eq!(
+            names(&doc),
+            [
+                "Month", "Revenue", "Profit", "Cost", "Left", "Tax", "Note", "Net"
+            ]
+        );
+        assert!(doc.text().contains("| Tax | Note | Net\n"));
+        assert!(doc.text().contains("| *   |      | *\n"));
+        assert!(
+            doc.text()
+                .contains("\nTax := Profit * Rate\nNet := Profit - Tax\n")
+        );
+        assert_eq!(col(&doc, 0, 7), ["32", "40"]);
+        // Renamed with its formula, and deleted with it.
+        doc.rename_column(0, 2, "Gain").unwrap();
+        assert!(doc.text().contains("| Revenue | Gain | Cost |"));
+        assert!(
+            doc.text()
+                .contains("\nGain := Revenue - Cost\nTax := Gain * Rate\n")
+        );
+        doc.delete_columns(0, 2, 1).unwrap();
+        assert_eq!(
+            names(&doc),
+            ["Month", "Revenue", "Cost", "Left", "Tax", "Note", "Net"]
+        );
+        assert!(!doc.text().contains("Gain :=") && !doc.text().contains("| Gain"));
+        assert!(doc.undo() && doc.undo() && doc.undo() && doc.undo());
+        assert_eq!(doc.text(), among);
+        assert!(doc.undo());
+        assert_eq!(doc.text(), text);
+
+        // Written by hand: a cell of a formula column that is not `*`, and
+        // a formula column that the header row does not name.
+        let bad = Document::from_text("table T\n\nA | B\n1 | 2\n\nB := A + 1\n");
+        let problems = &bad.snapshot().problems;
+        assert!(
+            problems[0].message.contains("its cells are written `*`"),
+            "{problems:?}"
+        );
+        let unnamed = Document::from_text("table T\n\nA\n1\n\nB := A + 1\n");
+        let problems = &unnamed.snapshot().problems;
+        assert!(
+            problems[0].message.contains("is not in the header row"),
+            "{problems:?}"
+        );
+        // It is still shown, and moving any column names it.
+        assert_eq!(col(&unnamed, 0, 1), ["2"]);
+        let mut fixed = unnamed;
+        fixed.move_columns(0, 1, 1, 0).unwrap();
+        assert_eq!(fixed.text(), "table T\n\nB | A\n* | 1\n\nB := A + 1\n");
+        assert!(fixed.snapshot().problems.is_empty());
     }
 
     #[test]
@@ -2512,7 +2597,7 @@ mod tests {
 
     #[test]
     fn formulas_follow_a_cut_cell() {
-        let text = "const K = T[C; 1]\n\ntable T\n\nA | B | C | D\n  |   | 1 | = [*-1; *] + C\n  |   | 5 | = [*-1; *] * 10 + [2; *-1] + T[C; *]\n  |   |   | = sum(T.C)\n\n\
+        let text = "const K = T[C; 1]\n\ntable T\n\nA | B | C | D                                    | E\n  |   | 1 | = [*-1; *] + C                       | *\n  |   | 5 | = [*-1; *] * 10 + [2; *-1] + T[C; *] | *\n  |   |   | = sum(T.C)                           | *\n\n\
                     E := C * 2\n\ntable U\n\nX\n= T[2; 1] + T[; 1].C + T.C[1]\n";
         let mut doc = Document::from_text(text);
         assert_eq!(col(&doc, 0, 3), ["2", "56", "6"]);
@@ -2522,13 +2607,13 @@ mod tests {
         let now = doc.text();
         assert!(now.contains("const K = T[A; 2]\n"), "{now}");
         assert!(
-            now.contains("| = [*-3; *+1] * 10 + [2; *-1] + T[A; *+1]\n"),
+            now.contains("| = [*-3; *+1] * 10 + [2; *-1] + T[A; *+1]"),
             "{now}"
         );
-        assert!(now.contains("= T[0; 2] + T[; 2].A + T.A[2]\n"), "{now}");
+        assert!(now.contains("= T[0; 2] + T[; 2].A + T.A[2]"), "{now}");
         // A formula column and a whole column read the place.
         assert!(now.contains("E := C * 2\n"), "{now}");
-        assert!(now.contains("= sum(T.C)\n"), "{now}");
+        assert!(now.contains("= sum(T.C)"), "{now}");
         assert_eq!(col(&doc, 0, 3), ["2", "56", "1"]);
         assert_eq!(col(&doc, 1, 0), ["15"]);
         assert!(doc.snapshot().problems.is_empty());
@@ -2537,7 +2622,7 @@ mod tests {
         let mut doc = Document::from_text("table T\n\nA | B | C\n  | 5 | = B * 2\n  |   |\n");
         doc.set_cell(0, 0, 1, "");
         doc.paste_cut(0, (0, 1), (1, 0), &[vec!["5".to_string()]]);
-        assert!(doc.text().contains("| = [A; *+1] * 2\n"), "{}", doc.text());
+        assert!(doc.text().contains("| = [A; *+1] * 2"), "{}", doc.text());
         assert_eq!(col(&doc, 0, 2), ["10", ""]);
 
         // Put down on the cell it reads, a formula is an error, not refused.
@@ -2558,21 +2643,18 @@ mod tests {
         // first two are whichever rows are first.
         doc.move_rows(0, 1, 1, 3).unwrap();
         let now = doc.text();
-        assert!(
-            now.contains("| = sum([N; 0^..3]) + sum([N; ^2])\n"),
-            "{now}"
-        );
+        assert!(now.contains("| = sum([N; 0^..3]) + sum([N; ^2])"), "{now}");
         // `a` to the bottom: there is no row left to start after.
         doc.move_rows(0, 0, 1, 3).unwrap();
         let now = doc.text();
-        assert!(now.contains("| = sum([N; 0..2]) + sum([N; ^2])\n"), "{now}");
+        assert!(now.contains("| = sum([N; 0..2]) + sum([N; ^2])"), "{now}");
         assert!(doc.snapshot().problems.is_empty());
     }
 
     #[test]
     fn moved_rows_keep_what_reads_them() {
-        let text = "const First = T[N; 0]\n\ntable T\n\nName | N | M\na | 1 |\nb | 2 |\nc | 3 | = [N; *-1] + 10\n\
-                    d | 4 | = [N; 0] + sum([N; 0..1]) + [N; -3]\n\nSum := N + ([N; *-1] // 0)\n";
+        let text = "const First = T[N; 0]\n\ntable T\n\nName | N | M                                   | Sum\na    | 1 |                                     | *\nb    | 2 |                                     | *\nc    | 3 | = [N; *-1] + 10                     | *\n\
+                    d    | 4 | = [N; 0] + sum([N; 0..1]) + [N; -3] | *\n\nSum := N + ([N; *-1] // 0)\n";
         let mut doc = Document::from_text(text);
         assert_eq!(col(&doc, 0, 2), ["", "", "12", "6"]);
         assert_eq!(col(&doc, 0, 3), ["1", "3", "5", "7"]);
@@ -2581,9 +2663,9 @@ mod tests {
         doc.move_rows(0, 1, 1, 3).unwrap();
         assert_eq!(col(&doc, 0, 0), ["a", "c", "d", "b"]);
         let now = doc.text();
-        assert!(now.contains("| = [N; *+2] + 10\n"), "{now}");
+        assert!(now.contains("| = [N; *+2] + 10"), "{now}");
         assert!(
-            now.contains("| = [N; 0] + sum([N; 0..3]) + [N; -1]\n"),
+            now.contains("| = [N; 0] + sum([N; 0..3]) + [N; -1]"),
             "{now}"
         );
         assert!(now.contains("const First = T[N; 0]\n"), "{now}");
@@ -2600,8 +2682,7 @@ mod tests {
             doc.text()
         );
         assert!(
-            doc.text()
-                .contains("| = [N; 1] + sum([N; 1..3]) + [N; -1]\n"),
+            doc.text().contains("| = [N; 1] + sum([N; 1..3]) + [N; -1]"),
             "{}",
             doc.text()
         );
@@ -2656,7 +2737,7 @@ mod tests {
 
     #[test]
     fn columns_can_be_put_in_and_copied() {
-        let text = "const K = T[1; 0] + T[-1; 0]\n\ntable T\n\nA | B | C\n1 | 2 | = [*-1; *] * 10 + [0; *] + [-3; *]\n3 | 4 | = [*-2; *]\n\n\
+        let text = "const K = T[1; 0] + T[-1; 0]\n\ntable T\n\nA | B | C                                  | S\n1 | 2 | = [*-1; *] * 10 + [0; *] + [-3; *] | *\n3 | 4 | = [*-2; *]                         | *\n\n\
                     S := A + [1; *]\n";
         let names = |doc: &Document| -> Vec<String> {
             let columns = &doc.snapshot().tables[0].columns;
@@ -2670,10 +2751,10 @@ mod tests {
         let now = doc.text();
         assert!(now.contains("const K = T[2; 0] + T[-1; 0]\n"), "{now}");
         assert!(
-            now.contains("| = [*-1; *] * 10 + [0; *] + [-3; *]\n"),
+            now.contains("| = [*-1; *] * 10 + [0; *] + [-3; *]"),
             "{now}"
         );
-        assert!(now.contains("| = [*-3; *]\n"), "{now}");
+        assert!(now.contains("| = [*-3; *]"), "{now}");
         assert!(now.contains("S := A + [2; *]\n"), "{now}");
         assert_eq!(col(&doc, 0, 3), ["23", "3"]);
         assert_eq!(col(&doc, 0, 4), ["3", "7"]);
@@ -2682,32 +2763,39 @@ mod tests {
         assert_eq!(doc.text(), text);
         assert!(!doc.can_undo());
 
-        // A formula column, before the others or among them.
+        // A formula column, before the others.
         doc.insert_computed(0, 0, "D", "A * 2").unwrap();
-        assert_eq!(names(&doc), ["A", "B", "C", "D", "S"]);
-        assert!(doc.text().contains("const K = T[1; 0] + T[-1; 0]\n"));
-        assert_eq!(col(&doc, 0, 3), ["2", "6"]);
+        assert_eq!(names(&doc), ["D", "A", "B", "C", "S"]);
+        let now = doc.text();
+        assert!(now.contains("const K = T[2; 0] + T[-1; 0]\n"), "{now}");
+        assert!(now.contains("\nD | A | B | C "), "{now}");
+        assert!(now.contains("\n* | 1 | 2 | = "), "{now}");
+        assert_eq!(col(&doc, 0, 0), ["2", "6"]);
+        assert_eq!(col(&doc, 0, 3), ["23", "3"]);
+        assert_eq!(col(&doc, 0, 4), ["3", "7"]);
         assert!(doc.undo());
+        assert_eq!(doc.text(), text);
 
         // Copies: a data column with its cells as written, and a formula
-        // column with its formula, each among its own kind.
+        // column with its formula, where they are put.
         doc.insert_copies(0, &[2, 3], 0).unwrap();
-        assert_eq!(names(&doc), ["C_copy001", "A", "B", "C", "S_copy001", "S"]);
+        assert_eq!(names(&doc), ["C_copy001", "S_copy001", "A", "B", "C", "S"]);
         let now = doc.text();
         assert!(
-            now.contains("S_copy001 := A + [2; *]\nS := A + [2; *]\n"),
+            now.contains("S := A + [3; *]\nS_copy001 := A + [3; *]\n"),
             "{now}"
         );
-        assert_eq!(col(&doc, 0, 4), ["3", "7"]);
+        assert_eq!(col(&doc, 0, 1), ["3", "7"]);
+        assert_eq!(col(&doc, 0, 5), ["3", "7"]);
         // The copy counts from where it is, so it reads other cells.
-        assert_eq!(col(&doc, 0, 3), ["23", "3"]);
+        assert_eq!(col(&doc, 0, 4), ["23", "3"]);
         assert!(
             doc.snapshot().tables[0].rows[1][0]
                 .source
                 .contains("[*-2; *]")
         );
-        doc.insert_copies(0, &[3], 4).unwrap();
-        assert_eq!(names(&doc)[3..5], ["C", "C_copy002"]);
+        doc.insert_copies(0, &[4], 5).unwrap();
+        assert_eq!(names(&doc)[4..6], ["C", "C_copy002"]);
         assert!(doc.undo());
         assert!(doc.undo());
         assert_eq!(doc.text(), text);
@@ -2722,7 +2810,7 @@ mod tests {
 
     #[test]
     fn rows_can_be_moved() {
-        let text = "table T\n\nName | N\na | 1\nb | 2\nc | = [N; *-1] + 10\nd | 4\n\n\
+        let text = "table T\n\nName | N               | Sum\na    | 1               | *\nb    | 2               | *\nc    | = [N; *-1] + 10 | *\nd    | 4               | *\n\n\
                     Sum := N + ([N; *-1] // 0)\n";
         let mut doc = Document::from_text(text);
         assert_eq!(col(&doc, 0, 2), ["1", "3", "14", "16"]);
@@ -2731,7 +2819,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 0), ["b", "c", "a", "d"]);
         assert!(
             doc.text()
-                .contains("Name | N\nb    | 2\nc    | = [N; *-1] + 10\na    | 1\nd    | 4\n")
+                .contains("Name | N               | Sum\nb    | 2               | *\nc    | = [N; *-1] + 10 | *\na    | 1               | *\nd    | 4               | *\n")
         );
         assert_eq!(col(&doc, 0, 1), ["2", "12", "1", "4"]);
         assert_eq!(col(&doc, 0, 2), ["2", "14", "13", "5"]);

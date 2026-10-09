@@ -420,25 +420,60 @@ impl<'a> Checker<'a> {
                         format!("column `{name}` appears twice in table `{}`", t.name),
                     ));
                 }
+                // A formula column is named in the header row, where it sits
+                // among the others, and its cells are written `*`.
+                let src = match t.computed.iter().position(|cd| &cd.name == name) {
+                    Some(k) => {
+                        for cell in t.rows.iter().filter_map(|row| row.get(h)) {
+                            if cell.text != "*" {
+                                ck.done.push(
+                                    Diagnostic::new(
+                                        cell.span,
+                                        format!("`{name}` is a formula column: its cells are written `*`"),
+                                    )
+                                    .with_help(format!(
+                                        "the formula is `{name} := ...` below the rows"
+                                    )),
+                                );
+                            }
+                        }
+                        ColSrc::Computed(k)
+                    }
+                    None => ColSrc::Data(h),
+                };
                 cols.push(ColInfo {
                     name: name.clone(),
                     span: *span,
                     declared: None,
-                    src: ColSrc::Data(h),
+                    src,
                 });
             }
             for (k, cd) in t.computed.iter().enumerate() {
                 if let Some(other) = cols.iter().find(|c| c.name == cd.name) {
-                    let what = match other.src {
-                        ColSrc::Data(_) => "also has data in the header row",
-                        _ => "is defined twice",
-                    };
-                    ck.done.push(Diagnostic::new(
-                        cd.span,
-                        format!("computed column `{}` {what}", cd.name),
-                    ));
+                    // Its place is the one the header row gave it.
+                    if !matches!(other.src, ColSrc::Computed(j) if j == k) {
+                        ck.done.push(Diagnostic::new(
+                            cd.span,
+                            format!("computed column `{}` is defined twice", cd.name),
+                        ));
+                    }
                     continue;
                 }
+                ck.done.push(
+                    Diagnostic::new(
+                        cd.span,
+                        format!(
+                            "formula column `{}` is not in the header row of table `{}`",
+                            cd.name, t.name
+                        ),
+                    )
+                    .with_help(format!(
+                        "name `{}` in the header row where it goes, and write `*` in its cells",
+                        cd.name
+                    )),
+                );
+                // It is still a column, so that what reads it is not also
+                // reported.
                 cols.push(ColInfo {
                     name: cd.name.clone(),
                     span: cd.span,

@@ -22,10 +22,10 @@ table Calls
 
 Placed : DateTime
 
-Placed           | With
-2025-03-03T09:12 | Ada
-2025-07-15T16:30 | Grace
-2025-12-31T20:00 | Linus
+Placed           | With  | Offset | UTC | London | Tokyo | TokyoOn | Zone | Back | Same
+2025-03-03T09:12 | Ada   | *      | *   | *      | *     | *       | *    | *    | *
+2025-07-15T16:30 | Grace | *      | *   | *      | *     | *       | *    | *    | *
+2025-12-31T20:00 | Linus | *      | *   | *      | *     | *       | *    | *    | *
 
 # The same instant on other clocks. New York is 5 hours behind UTC in winter
 # and 4 in summer; Tokyo keeps no daylight saving.
@@ -46,10 +46,10 @@ table Clocks
 
 # Noon to noon over three nights in New York: an ordinary one, the night the
 # clocks go forward, and the night they go back.
-Night   | From             | To
-Plain   | 2025-06-01T12:00 | 2025-06-02T12:00
-Forward | 2025-03-08T12:00 | 2025-03-09T12:00
-Back    | 2025-11-01T12:00 | 2025-11-02T12:00
+Night   | From             | To               | Wall | Elapsed
+Plain   | 2025-06-01T12:00 | 2025-06-02T12:00 | *    | *
+Forward | 2025-03-08T12:00 | 2025-03-09T12:00 | *    | *
+Back    | 2025-11-01T12:00 | 2025-11-02T12:00 | *    | *
 
 # On the wall every one of them is 24 hours...
 Wall    := (To - From) / 3600

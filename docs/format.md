@@ -17,11 +17,12 @@ table Sales
 Revenue : Ratio
 
 # A cell that starts with = is a formula.
-Month | Revenue | Cost
-Jan   | 10000   | 6000
-Feb   | 12000   | = 7000 + 500
+Month | Revenue | Cost         | Profit | Gross
+Jan   | 10000   | 6000         | *      | *
+Feb   | 12000   | = 7000 + 500 | *      | *
 
-# A computed column: one formula, every row.
+# A computed column: one formula, every row. The header row names it where
+# it goes, and its cells are *.
 Profit := Revenue - Cost
 Gross  := WithTax(Revenue)
 ```
@@ -30,8 +31,25 @@ Gross  := WithTax(Revenue)
 
 - `table Name`, then a header row and data rows, cells separated by `|`.
 - A `---|---` line under the header is allowed and ignored.
-- `Name := expression` after the rows adds a computed column.
+- `Name := expression` after the rows is the formula of a computed column.
+  The header row names the column, anywhere among the others, and each of
+  its cells is `*`.
 - An empty cell is empty: there is no `null`.
+
+```omx
+table Sales
+
+Month | Revenue | Profit | Cost | Tax
+Jan   | 10000   | *      | 6000 | *
+Feb   | 12000   | *      | 7000 | *
+
+Profit := Revenue - Cost
+Tax    := Profit * 20%
+```
+
+`Profit` is the third column and `Tax` the fifth. A formula with no column
+of its name in the header row is an error, and so is anything but `*` in a
+cell of a computed column.
 
 ## Types
 

@@ -15,10 +15,10 @@ Rate   : Ratio
 Paid   : Bool
 Logged : DateTime
 
-Who   | On         | Start | End   | Rate  | Paid  | Logged
-Ada   | 2025-01-31 | 09:00 | 17:30 | 21.50 | true  | 2025-01-31T17:42
-Grace | 2025-02-01 | 22:00 | 06:00 | 24    | false | 2025-02-03T08:05:30
-Linus | 2025-02-28 | 13:15 | 18:00 | 19.75 | true  | 2025-02-28T18:00
+Who   | On         | Start | End   | Rate  | Paid  | Logged              | Begins | Seconds | Hours | Pay | Due | Weekday | Month | Delay | Late | Sydney
+Ada   | 2025-01-31 | 09:00 | 17:30 | 21.50 | true  | 2025-01-31T17:42    | *      | *       | *     | *   | *   | *       | *     | *     | *    | *
+Grace | 2025-02-01 | 22:00 | 06:00 | 24    | false | 2025-02-03T08:05:30 | *      | *       | *     | *   | *   | *       | *     | *     | *    | *
+Linus | 2025-02-28 | 13:15 | 18:00 | 19.75 | true  | 2025-02-28T18:00    | *      | *       | *     | *   | *   | *       | *     | *     | *    | *
 
 Begins  := On + Start
 Seconds := if End > Start then End - Start else End - Start + Day
@@ -33,8 +33,8 @@ Sydney  := Logged.to_zone("Australia/Sydney")
 
 table Totals
 
-Label
-All
+Label | Hours | Pay | First | Span
+All   | *     | *   | *     | *
 
 Hours := Shifts.Hours.sum()
 Pay   := Shifts.Pay.sum()

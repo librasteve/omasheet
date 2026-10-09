@@ -24,7 +24,7 @@ rewrites the text, and saving writes exactly that.
 |---|---|
 | Enter, typing | edit the cell |
 | Ctrl+C / X / V | copy / cut / paste |
-| Ctrl+X on a row or column | pick it up; Ctrl+V on another moves it there |
+| Ctrl+X on a row or column | pick it up; Ctrl+V on another moves it there: a formula column can go among the data columns |
 | Ctrl+Enter | insert a row below (Shift: above) |
 | Ctrl+Delete | delete the selected rows |
 | Ctrl+Z / Ctrl+Y | undo / redo |

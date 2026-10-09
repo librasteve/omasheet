@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn escapes_and_structure() {
-        let doc = Document::from_text("table T\n\nA | B\n\"say \\\"hi\\\"\" | 2\n\nC := B * 2\n");
+        let doc = Document::from_text("table T\n\nA | B | C\n\"say \\\"hi\\\"\" | 2 | *\n\nC := B * 2\n");
         let json = super::snapshot(doc.snapshot());
         assert!(json.starts_with("{\"tables\":[{\"name\":\"T\",\"columns\":[{\"name\":\"A\""));
         assert!(json.contains("\"d\":\"say \\\"hi\\\"\""), "{json}");

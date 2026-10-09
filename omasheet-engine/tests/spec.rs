@@ -23,6 +23,27 @@ fn exact() -> Options {
     }
 }
 
+/// `SALES` with formula columns, each `Name := expression` on a line of
+/// `formulas`: the header row names them, with `*` for their cells.
+fn sales_with(formulas: &str) -> String {
+    let names: Vec<&str> = formulas
+        .lines()
+        .filter_map(|line| line.split_once(":=").map(|(name, _)| name.trim()))
+        .collect();
+    let mut sheet = String::new();
+    for (i, line) in SALES.lines().enumerate() {
+        sheet.push_str(line);
+        if line.contains('|') {
+            for name in &names {
+                sheet.push_str(" | ");
+                sheet.push_str(if i == 2 { name } else { "*" });
+            }
+        }
+        sheet.push('\n');
+    }
+    format!("{sheet}\n{formulas}")
+}
+
 /// Evaluate an expression with no sheet.
 fn calc(expr: &str) -> String {
     let out = eval_with(None, "<expression>", expr, exact());
@@ -221,8 +242,8 @@ fn ranges() {
 
 #[test]
 fn row_cursor() {
-    let sheet = format!(
-        "{SALES}\nPrev := Sales[Revenue; *-1]\nGrowth := Revenue / Sales[Revenue; *-1] - 1\nRunning := Sales[Revenue; 0..*].sum()\nWindow := Sales[Revenue; *-1..*].avg()\n"
+    let sheet = sales_with(
+        "Prev := Sales[Revenue; *-1]\nGrowth := Revenue / Sales[Revenue; *-1] - 1\nRunning := Sales[Revenue; 0..*].sum()\nWindow := Sales[Revenue; *-1..*].avg()\n",
     );
     assert_eq!(ask(&sheet, "Sales.Prev"), "[empty, 100, 120]");
     assert_eq!(ask(&sheet, "Sales.Growth"), "[empty, 0.2, 0.25]");
@@ -240,7 +261,7 @@ fn cursor_needs_a_row() {
 
 #[test]
 fn cursor_survives_row_insertion() {
-    let sheet = "table T\n\nV\n1\n5\n2\n\nPrev := T[V; *-1]\n";
+    let sheet = "table T\n\nV | Prev\n1 | *\n5 | *\n2 | *\n\nPrev := T[V; *-1]\n";
     assert_eq!(ask(sheet, "T.Prev"), "[empty, 1, 5]");
 }
 
@@ -411,7 +432,7 @@ fn today_and_now_come_from_the_options() {
 #[test]
 fn index_with_no_table_name() {
     // In a table, `[...]` with a `;` or a row cursor is that table.
-    let sheet = "table T\n\nV\n1\n5\n2\n\nPrev := [V; *-1]\nRun := [V; 0..*].sum()\nSame := [V; *]\nFirst := [V; 0]\nAll := [V; ].sum()\nRow := [; *-1].V // 0\n";
+    let sheet = "table T\n\nV | Prev | Run | Same | First | All | Row\n1 | * | * | * | * | * | *\n5 | * | * | * | * | * | *\n2 | * | * | * | * | * | *\n\nPrev := [V; *-1]\nRun := [V; 0..*].sum()\nSame := [V; *]\nFirst := [V; 0]\nAll := [V; ].sum()\nRow := [; *-1].V // 0\n";
     assert_eq!(ask(sheet, "T.Prev"), "[empty, 1, 5]");
     assert_eq!(ask(sheet, "T.Run"), "[1, 6, 8]");
     assert_eq!(ask(sheet, "T.Same"), "[1, 5, 2]");
@@ -451,8 +472,7 @@ fn complex_numbers() {
     assert!(calc_err(None, "sin(1i)").contains("`sin` cannot be applied to Complex"));
     assert!(calc_err(None, "1i < 2i").contains("cannot compare"));
     // A column of them: literal cells, a real number, and a formula.
-    let sheet =
-        "table Z\n\nV : Complex\n\nV\n3+4i\n-2i\n5\n-1.5-2i\n= [V; *-4] * 1i\n\nSize := abs(V)\n";
+    let sheet = "table Z\n\nV : Complex\n\nV | Size\n3+4i | *\n-2i | *\n5 | *\n-1.5-2i | *\n= [V; *-4] * 1i | *\n\nSize := abs(V)\n";
     assert_eq!(ask(sheet, "Z.V"), "[3+4i, 0-2i, 5+0i, -1.5-2i, -4+3i]");
     assert_eq!(ask(sheet, "Z.Size"), "[5, 2, 5, 2.5, 5]");
     assert_eq!(ask(sheet, "Z.V.sum()"), "2.5+3i");
@@ -591,7 +611,7 @@ fn time_zones() {
     assert!(calc_err(None, "now().to_zone(3)").contains("needs the name of a time zone"));
 
     // A sheet names the zone its date-times are in.
-    let sheet = "zone America/New_York\n\ntable Calls\n\nAt\n2025-03-03T09:12\n\n\
+    let sheet = "zone America/New_York\n\ntable Calls\n\nAt | Tokyo\n2025-03-03T09:12 | *\n\n\
                  Tokyo := At.to_zone(\"Asia/Tokyo\")\n";
     let ny = |expr: &str| with(&london, Some(sheet), expr);
     assert_eq!(ny("Calls[At; 0]"), "2025-03-03T09:12");
@@ -685,10 +705,10 @@ ID | Name
 
 table Sales
 
-CustomerID | Amount
-2          | 50
-7          | 20
-1          | 10
+CustomerID | Amount | Customer
+2          | 50     | *
+7          | 20     | *
+1          | 10     | *
 
 Customer := Customers[; ID == CustomerID].Name // \"Unknown\"
 ";
@@ -701,7 +721,7 @@ Customer := Customers[; ID == CustomerID].Name // \"Unknown\"
 #[test]
 fn operators() {
     let sheet =
-        format!("{SALES}\nPrev := Sales[Revenue; *-1] // 0\nHome := Region in [\"UK\", \"IE\"]\n");
+        sales_with("Prev := Sales[Revenue; *-1] // 0\nHome := Region in [\"UK\", \"IE\"]\n");
     assert_eq!(ask(&sheet, "Sales.Prev"), "[0, 100, 120]");
     assert_eq!(ask(&sheet, "Sales.Home"), "[true, false, true]");
     let err = calc_err(Some(SALES), "Sales[; Region = \"UK\"]");
@@ -710,7 +730,7 @@ fn operators() {
 
 #[test]
 fn conditional_expression() {
-    let sheet = "table T\n\nRevenue | Region\n2000 | UK\n500 | UK\n\nNet :=\n  if Revenue > 1000 and Region in [\"UK\", \"US\"]\n  then Revenue * 90%\n  else Revenue\n";
+    let sheet = "table T\n\nRevenue | Region | Net\n2000 | UK | *\n500 | UK | *\n\nNet :=\n  if Revenue > 1000 and Region in [\"UK\", \"US\"]\n  then Revenue * 90%\n  else Revenue\n";
     assert_eq!(ask(sheet, "T.Net"), "[1800, 500]");
 }
 
@@ -775,7 +795,7 @@ fn ragged_row() {
 
 #[test]
 fn multiple_tables() {
-    let sheet = format!("{SALES}\ntable Summary\n\nLabel | Value\nTotal | = Sales.Revenue.sum()\n");
+    let sheet = sales_with("table Summary\n\nLabel | Value\nTotal | = Sales.Revenue.sum()\n");
     assert_eq!(ask(&sheet, "Summary[Value; 0]"), "370");
     let errors = lint_errors("table Sales\n\nA\n1\n\ntable Sales\n\nA\n2\n");
     assert_eq!(errors.len(), 1);
@@ -794,13 +814,41 @@ fn column_schema() {
 
 #[test]
 fn computed_columns() {
-    let sheet = format!("{SALES}\nProfit := Revenue - Cost\n");
+    let sheet = sales_with("Profit := Revenue - Cost\n");
     assert_eq!(ask(&sheet, "Sales.Profit"), "[40, 50, 70]");
+    // The header row may name a formula column, to say where it goes among
+    // the others. Its cells are written `*`.
+    let among = "table T\n\nA | Twice | B | Sum\n1 | * | 10 | *\n2 | * | 20 | *\n\nTwice := A * 2\nSum := Twice + B\n";
+    assert_eq!(lint_errors(among), Vec::<String>::new());
+    assert_eq!(
+        shown(among),
+        "table T\n\nA | Twice | B  | Sum\n--|-------|----|----\n1 |     2 | 10 |  12\n2 |     4 | 20 |  24\n"
+    );
+    // Counting columns counts it where it is.
+    assert_eq!(ask(among, "T[1; 1]"), "4");
     let errors = lint_errors("table T\n\nA | Profit\n1 | 2\n\nProfit := A\n");
     assert!(
-        errors[0].contains("computed column `Profit`"),
+        errors[0].contains("`Profit` is a formula column: its cells are written `*`"),
         "{}",
         errors[0]
+    );
+    // The header row has to name it.
+    let unnamed = lint_errors("table T\n\nA\n1\n\nP := A\n");
+    assert!(
+        unnamed[0].contains("formula column `P` is not in the header row of table `T`"),
+        "{}",
+        unnamed[0]
+    );
+    assert!(
+        unnamed[0].contains("write `*` in its cells"),
+        "{}",
+        unnamed[0]
+    );
+    let twice = lint_errors("table T\n\nA | P\n1 | *\n\nP := A\nP := A + 1\n");
+    assert!(
+        twice[0].contains("computed column `P` is defined twice"),
+        "{}",
+        twice[0]
     );
 }
 
@@ -838,15 +886,14 @@ fn cell_content() {
 
 #[test]
 fn constants() {
-    let sheet =
-        "const TaxRate = 20%\n\ntable Sales\n\nRevenue\n100\n250\n\nTax := Revenue * TaxRate\n";
+    let sheet = "const TaxRate = 20%\n\ntable Sales\n\nRevenue | Tax\n100 | *\n250 | *\n\nTax := Revenue * TaxRate\n";
     assert_eq!(ask(sheet, "Sales.Tax"), "[20, 50]");
     assert_eq!(ask(sheet, "TaxRate == 1/5"), "true");
 }
 
 #[test]
 fn a1_reference_is_not_special() {
-    let errors = lint_errors("table T\n\nA\n1\n\nB := B2\n");
+    let errors = lint_errors("table T\n\nA | B\n1 | *\n\nB := B2\n");
     assert!(errors[0].contains("unknown name `B2`"), "{}", errors[0]);
 }
 
@@ -854,7 +901,9 @@ fn a1_reference_is_not_special() {
 
 #[test]
 fn unresolved_name_is_a_compile_error() {
-    let errors = lint_errors("table Sales\n\nRevenue | Cost\n1 | 2\n\nProfit := Revnue - Cost\n");
+    let errors = lint_errors(
+        "table Sales\n\nRevenue | Cost | Profit\n1 | 2 | *\n\nProfit := Revnue - Cost\n",
+    );
     assert_eq!(errors.len(), 1);
     assert!(errors[0].starts_with("test.omx:6:11:"), "{}", errors[0]);
     assert!(
@@ -866,7 +915,7 @@ fn unresolved_name_is_a_compile_error() {
 
 #[test]
 fn one_type_error_blocks_execution() {
-    let sheet = "table Sales\n\nMonth | Revenue\nJan | 100\n\nDouble := Revenue * 2\nBad := Revenue + Month\n";
+    let sheet = "table Sales\n\nMonth | Revenue | Double | Bad\nJan | 100 | * | *\n\nDouble := Revenue * 2\nBad := Revenue + Month\n";
     let out = view("test.omx", sheet);
     assert_eq!(out.errors.len(), 1);
     assert!(
@@ -883,26 +932,25 @@ fn one_type_error_blocks_execution() {
 
 #[test]
 fn all_errors_reported_together() {
-    let sheet = "table T\n\nName | N\nx | 1\n\nA := N + Name\nB := Name * 2\nC := not N\n";
+    let sheet = "table T\n\nName | N | A | B | C\nx | 1 | * | * | *\n\nA := N + Name\nB := Name * 2\nC := not N\n";
     assert_eq!(lint_errors(sheet).len(), 3);
 }
 
 #[test]
 fn declaration_order_does_not_matter() {
-    let sheet = "table T\n\nRevenue | Cost\n100 | 60\n\nMargin := Profit / Revenue\nProfit := Revenue - Cost\n";
+    let sheet = "table T\n\nRevenue | Cost | Margin | Profit\n100 | 60 | * | *\n\nMargin := Profit / Revenue\nProfit := Revenue - Cost\n";
     assert_eq!(ask(sheet, "T.Margin"), "[0.4]");
 }
 
 #[test]
 fn row_wise_self_reference() {
-    let sheet =
-        "table Ledger\n\nAmount\n10\n-3\n5\n\nBalance := (Ledger[Balance; *-1] // 0) + Amount\n";
+    let sheet = "table Ledger\n\nAmount | Balance\n10 | *\n-3 | *\n5 | *\n\nBalance := (Ledger[Balance; *-1] // 0) + Amount\n";
     assert_eq!(ask(sheet, "Ledger.Balance"), "[10, 7, 12]");
 }
 
 #[test]
 fn cycle_detection() {
-    let errors = lint_errors("table T\n\nX\n1\n\nA := B + 1\nB := A + 1\n");
+    let errors = lint_errors("table T\n\nX | A | B\n1 | * | *\n\nA := B + 1\nB := A + 1\n");
     assert_eq!(errors.len(), 1);
     assert!(errors[0].contains("A → B → A"), "{}", errors[0]);
 }
@@ -911,7 +959,7 @@ fn cycle_detection() {
 
 #[test]
 fn view_shows_computed_values() {
-    let sheet = format!("{SALES}\nProfit := Revenue - Cost\n");
+    let sheet = sales_with("Profit := Revenue - Cost\n");
     assert_eq!(
         shown(&sheet),
         "\
@@ -929,13 +977,13 @@ Mar   | UK     |     150 |   80 |     70
 #[test]
 fn lint_clean_and_type_error() {
     assert!(lint_errors(SALES).is_empty());
-    let errors = lint_errors(&format!("{SALES}\nBad := Revenue + Month\n"));
+    let errors = lint_errors(&sales_with("Bad := Revenue + Month\n"));
     assert_eq!(errors.len(), 1);
 }
 
 #[test]
 fn diagnostics_are_located() {
-    let sheet = "table T\n\nName | N\nx | 1\n\n\n\n\n\n\n\n\n\nBad := N + Name\n";
+    let sheet = "table T\n\nName | N | Bad\nx | 1 | *\n\n\n\n\n\n\n\n\n\nBad := N + Name\n";
     let errors = lint_errors(sheet);
     assert!(
         errors[0].starts_with("test.omx:14:8: error:"),
@@ -965,9 +1013,9 @@ ID | Name
 
 table Sales
 
-Month | Revenue | Cost | Who
-Jan   | 100     | 60   | 1
-Feb   | 120     | 90   | 9
+Month | Revenue | Cost | Who | Margin | Gross | Twice | Buyer
+Jan   | 100     | 60   | 1   | *      | *     | *     | *
+Feb   | 120     | 90   | 9   | *      | *     | *     | *
 
 Margin  := Margin(Revenue, Cost)
 Gross   := Revenue.WithTax()
@@ -997,7 +1045,8 @@ fn custom_function_takes_tables_and_vectors() {
 
 #[test]
 fn custom_function_does_not_see_the_callers_row() {
-    let sheet = "fn Bad(x) = x + Cost\n\ntable T\n\nRevenue | Cost\n1 | 2\n\nA := Bad(Revenue)\n";
+    let sheet =
+        "fn Bad(x) = x + Cost\n\ntable T\n\nRevenue | Cost | A\n1 | 2 | *\n\nA := Bad(Revenue)\n";
     let errors = lint_errors(sheet).join("\n");
     assert!(errors.contains("unknown name `Cost`"), "{errors}");
 }

@@ -19,11 +19,11 @@ Reading : Num
 Wave    : Complex
 Checked : Bool
 
-Name  | Count                      | Share | Reading | Wave    | Checked
-seven | 7                          | 1/7   | 1.5     | 3+4i    | true
-cent  | 100                        | 20%   | 100     | 2i      | false
-minus | -3                         | 19.99 | 1.6e-19 | -1.5-2i | true
-huge  | 10_000_000_000_000_000_000 | 0.125 | 6.02e23 | 1       | false
+Name  | Count                      | Share | Reading | Wave    | Checked | Square | Inverse | Whole | Scaled | Root | Size | Turned | Likely
+seven | 7                          | 1/7   | 1.5     | 3+4i    | true    | *      | *       | *     | *      | *    | *    | *      | *
+cent  | 100                        | 20%   | 100     | 2i      | false   | *      | *       | *     | *      | *    | *    | *      | *
+minus | -3                         | 19.99 | 1.6e-19 | -1.5-2i | true    | *      | *       | *     | *      | *    | *    | *      | *
+huge  | 10_000_000_000_000_000_000 | 0.125 | 6.02e23 | 1       | false   | *      | *       | *     | *      | *    | *    | *      | *
 
 # Exact stays exact: an Int does not overflow, and a division is a Ratio.
 Square  := Count ** 2
@@ -45,12 +45,12 @@ table Converted
 
 Value : Ratio
 
-Value
-19.99
--19.99
-1/3
-0.5
-0
+Value  | AsInt | Rounded | AsNum | AsComplex | AsBool | AsText | Back
+19.99  | *     | *       | *     | *         | *      | *      | *
+-19.99 | *     | *       | *     | *         | *      | *      | *
+1/3    | *     | *       | *     | *         | *      | *      | *
+0.5    | *     | *       | *     | *         | *      | *      | *
+0      | *     | *       | *     | *         | *      | *      | *
 
 AsInt     := Value.Int
 Rounded   := round(Value)
@@ -65,11 +65,11 @@ table Written
 
 Text : Text
 
-Text
-42
-20%
-1/8
-1.5e3
+Text  | Number | Doubled | Whole
+42    | *      | *       | *
+20%   | *      | *       | *
+1/8   | *      | *       | *
+1.5e3 | *      | *       | *
 
 Number  := Text.Ratio
 Doubled := Number * 2
