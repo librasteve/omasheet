@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(ast.consts.len(), 1);
         let t = &ast.tables[0];
         assert_eq!((t.header.len(), t.rows.len(), t.computed.len()), (2, 2, 1));
-        assert_eq!(t.schema[0].ty, S::Rat);
+        assert_eq!(t.schema[0].ty, S::Ratio);
     }
 
     #[test]

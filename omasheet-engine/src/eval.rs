@@ -8,7 +8,9 @@
 //! row by row rather than by deep recursion.
 
 use crate::Options;
-use crate::value::{RowRef, Value, View, arith, compare, equal, format_styled, math, to_f64};
+use crate::value::{
+    RowRef, Value, View, arith, compare, equal, format_exact, format_styled, math, to_f64,
+};
 use crate::zone::{Zone, Zoned, utc_now};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -241,8 +243,8 @@ impl<'p> Engine<'p> {
                 (&v, col.ty),
                 (Value::Empty, _)
                     | (_, S::Any)
-                    | (Value::Int(_), S::Int | S::Rat)
-                    | (Value::Rat(_), S::Rat)
+                    | (Value::Int(_), S::Int | S::Ratio)
+                    | (Value::Ratio(_), S::Ratio)
                     | (Value::Num(_), S::Num)
                     | (Value::Complex(..), S::Complex)
                     | (Value::Text(_), S::Text)
@@ -542,23 +544,14 @@ impl<'p> Engine<'p> {
 
     fn call(&self, func: Func, args: &[Node], span: Span, fr: &mut Frames) -> R {
         match func {
-            Func::Approx => {
-                let approx = |v: &Value| -> R {
-                    Ok(match v {
-                        Value::Empty => Value::Empty,
-                        Value::Int(n) => Value::Num(n.to_f64().unwrap_or(f64::NAN)),
-                        Value::Rat(r) => Value::Num(to_f64(r)),
-                        Value::Num(f) => Value::Num(*f),
-                        other => {
-                            return fail(span, format!("cannot approximate {}", other.kind()));
-                        }
-                    })
-                };
+            Func::To(to) => {
+                let convert =
+                    |v: &Value| -> R { v.converted(to).or_else(|message| fail(span, message)) };
                 match self.eval(&args[0], fr)? {
                     Value::Vector(items) => Ok(Value::Vector(Rc::new(
-                        items.iter().map(approx).collect::<R<Vec<_>>>()?,
+                        items.iter().map(convert).collect::<R<Vec<_>>>()?,
                     ))),
-                    single => approx(&single),
+                    single => convert(&single),
                 }
             }
             Func::Complex => {
@@ -567,7 +560,7 @@ impl<'p> Engine<'p> {
                     *part = match self.eval(arg, fr)? {
                         Value::Empty => return Ok(Value::Empty),
                         Value::Int(n) => n.to_f64().unwrap_or(f64::NAN),
-                        Value::Rat(r) => to_f64(&r),
+                        Value::Ratio(r) => to_f64(&r),
                         Value::Num(f) => f,
                         other => {
                             return fail(
@@ -999,9 +992,14 @@ impl<'p> Engine<'p> {
     /// A single value as text, with dates and times in the style asked for.
     pub fn show(&self, v: &Value, quoted: bool) -> String {
         let style = &self.options.style;
+        let format = if self.options.exact {
+            format_exact
+        } else {
+            format_styled
+        };
         match self.localised(v) {
-            Some(local) => format_styled(&local, quoted, style),
-            None => format_styled(v, quoted, style),
+            Some(local) => format(&local, quoted, style),
+            None => format(v, quoted, style),
         }
     }
 

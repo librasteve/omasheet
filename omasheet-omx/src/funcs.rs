@@ -170,6 +170,7 @@ const fn doc(
 
 const AGG: &str = "Aggregate";
 const TABLE: &str = "Table";
+const CONVERT: &str = "Convert";
 const MATH: &str = "Math";
 const LOG: &str = "Log & Exp";
 const TRIG: &str = "Trigonometry";
@@ -257,16 +258,53 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "The square root, as a Num. A negative x needs a complex number: sqrt(-4+0i).",
     ),
     doc(
-        MATH,
-        "approx",
-        "approx(1/3)",
-        "An exact number as a floating-point Num.",
+        CONVERT,
+        "Int",
+        "x.Int",
+        "A whole number: a fraction loses its fractional part, so 19.99 gives 19 and -19.99 \
+         gives -19. Also written Int(x).",
     ),
     doc(
-        MATH,
+        CONVERT,
+        "Ratio",
+        "x.Ratio",
+        "An exact number: a Num as the decimal it is shown as. Also written Ratio(x).",
+    ),
+    doc(
+        CONVERT,
         "Num",
-        "Num(1/3)",
-        "The same as approx: an exact number as a floating-point Num.",
+        "x.Num",
+        "A floating-point Num from an exact number. Also written Num(x).",
+    ),
+    doc(
+        CONVERT,
+        "Text",
+        "x.Text",
+        "Any value as text, written the way a sheet writes it. Also written Text(x).",
+    ),
+    doc(
+        CONVERT,
+        "Bool",
+        "x.Bool",
+        "true for a number that is not zero, false for zero. Also written Bool(x).",
+    ),
+    doc(
+        CONVERT,
+        "Date",
+        "x.Date",
+        "The Date of a DateTime, or of text such as \"2025-01-31\". Also written Date(x).",
+    ),
+    doc(
+        CONVERT,
+        "Time",
+        "x.Time",
+        "The Time of a DateTime, or of text such as \"09:30\". Also written Time(x).",
+    ),
+    doc(
+        CONVERT,
+        "DateTime",
+        "x.DateTime",
+        "A Date at midnight, or text such as \"2025-01-31T09:30\". Also written DateTime(x).",
     ),
     doc(LOG, "exp", "exp(x)", "e raised to the power x."),
     doc(
@@ -339,7 +377,8 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         COMPLEX,
         "Complex",
         "Complex(re, im)",
-        "A complex number from its real and imaginary parts. Also written 3+4i.",
+        "A complex number from its real and imaginary parts, or from a real number: x.Complex. \
+         Also written 3+4i.",
     ),
     doc(COMPLEX, "re", "re(z)", "The real part of a complex number."),
     doc(

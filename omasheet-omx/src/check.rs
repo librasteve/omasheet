@@ -7,17 +7,15 @@
 //! orders the calculation. Nothing is evaluated here.
 
 use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
+use crate::convert::{lit_type, parse_literal};
 use crate::deps;
 use crate::diag::{Diagnostic, Span};
 use crate::funcs::{FUNCTIONS, MathFn};
 use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
-use crate::lexer::{Tok, lex};
 use crate::parser::parse_expr;
 use crate::sheet::{SheetAst, parse_sheet};
 use crate::types::{DepKind, S, TableTy, Ty};
-use num_bigint::BigInt;
-use num_rational::BigRational;
-use num_traits::{ToPrimitive, Zero};
+use num_traits::ToPrimitive;
 use std::mem;
 use std::rc::Rc;
 
@@ -312,20 +310,6 @@ fn cursor_form(e: &Expr) -> Option<Option<(bool, &Expr)>> {
             Some(Some((*op == BinOp::Sub, r)))
         }
         _ => None,
-    }
-}
-
-fn lit_type(l: &Lit) -> S {
-    match l {
-        Lit::Int(_) => S::Int,
-        Lit::Rat(_) => S::Rat,
-        Lit::Num(_) => S::Num,
-        Lit::Complex(..) => S::Complex,
-        Lit::Text(_) => S::Text,
-        Lit::Bool(_) => S::Bool,
-        Lit::Date(_) => S::Date,
-        Lit::Time(_) => S::Time,
-        Lit::DateTime(_) => S::DateTime,
     }
 }
 
@@ -861,8 +845,8 @@ impl<'a> Checker<'a> {
         let Some(want) = declared else { return found };
         if !found.assignable_to(want) {
             let help = match (found, want) {
-                (S::Int | S::Rat, S::Num) => "use `approx(...)` to convert to Num",
-                (S::Rat, S::Int) => "declare the column as `Ratio`",
+                (S::Int | S::Ratio, S::Num) => "use `.Num` to convert to Num",
+                (S::Ratio, S::Int) => "declare the column as `Ratio`, or use `.Int`",
                 _ => "change the declared type or the formula",
             };
             self.err_help(
@@ -876,7 +860,7 @@ impl<'a> Checker<'a> {
 
     /// A cell without a leading `=`: a literal, never an expression.
     fn literal_cell(&mut self, text: &str, span: Span, declared: Option<S>) -> Option<Lit> {
-        let parsed = self.parse_literal(text);
+        let parsed = parse_literal(text);
         let Some(want) = declared else {
             return Some(parsed.unwrap_or_else(|| Lit::Text(text.to_string())));
         };
@@ -887,14 +871,14 @@ impl<'a> Checker<'a> {
             });
         }
         let fitted = match (parsed, want) {
-            (Some(l @ Lit::Int(_)), S::Int | S::Rat) => Some(l),
-            (Some(l @ Lit::Rat(_)), S::Rat) => Some(l),
+            (Some(l @ Lit::Int(_)), S::Int | S::Ratio) => Some(l),
+            (Some(l @ Lit::Ratio(_)), S::Ratio) => Some(l),
             (Some(Lit::Int(n)), S::Num) => n.to_f64().map(Lit::Num),
-            (Some(Lit::Rat(r)), S::Num) => r.to_f64().map(Lit::Num),
+            (Some(Lit::Ratio(r)), S::Num) => r.to_f64().map(Lit::Num),
             (Some(l @ Lit::Num(_)), S::Num) => Some(l),
             (Some(l @ Lit::Complex(..)), S::Complex) => Some(l),
             (Some(Lit::Int(n)), S::Complex) => n.to_f64().map(|x| Lit::Complex(x, 0.0)),
-            (Some(Lit::Rat(r)), S::Complex) => r.to_f64().map(|x| Lit::Complex(x, 0.0)),
+            (Some(Lit::Ratio(r)), S::Complex) => r.to_f64().map(|x| Lit::Complex(x, 0.0)),
             (Some(Lit::Num(x)), S::Complex) => Some(Lit::Complex(x, 0.0)),
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
@@ -909,7 +893,7 @@ impl<'a> Checker<'a> {
                 format!("`{text}` is not {article} `{want}` literal"),
                 match want {
                     S::Int => "enter a whole number such as `42`, or start the cell with `=` for a formula",
-                    S::Rat => "enter a number such as `19.99`, `20%` or `1/7`, or start the cell with `=` for a formula",
+                    S::Ratio => "enter a number such as `19.99`, `20%` or `1/7`, or start the cell with `=` for a formula",
                     S::Num => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
                     S::Complex => {
                         "enter a complex number such as `3+4i`, or start the cell with `=` for a formula"
@@ -923,52 +907,6 @@ impl<'a> Checker<'a> {
             );
         }
         fitted
-    }
-
-    fn parse_literal(&self, text: &str) -> Option<Lit> {
-        let toks = lex(text, self.src, 0).ok()?;
-        let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
-        // A fraction of two whole numbers, `1/7`, is an exact number.
-        let fraction = |n: &BigInt, d: &BigInt| {
-            (!d.is_zero()).then(|| Lit::Rat(BigRational::new(n.clone(), d.clone())))
-        };
-        // A complex number: `4i`, `3+4i`, `-1.5-2i`.
-        let real = |t: &Tok| match t {
-            Tok::Int(n) => n.to_f64(),
-            Tok::Rat(r) => r.to_f64(),
-            Tok::Num(f) => Some(*f),
-            _ => None,
-        };
-        let (negative, rest) = match toks.as_slice() {
-            [Tok::Minus, rest @ ..] => (true, rest),
-            rest => (false, rest),
-        };
-        let sign = if negative { -1.0 } else { 1.0 };
-        match rest {
-            [Tok::Imag(im), Tok::Eof] => return Some(Lit::Complex(0.0, sign * im)),
-            [re, op @ (Tok::Plus | Tok::Minus), Tok::Imag(im), Tok::Eof] => {
-                let im = if **op == Tok::Minus { -im } else { *im };
-                return Some(Lit::Complex(sign * real(re)?, im));
-            }
-            _ => {}
-        }
-        Some(match toks.as_slice() {
-            [Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(n, d)?,
-            [Tok::Minus, Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(&-n, d)?,
-            [Tok::Int(n), Tok::Eof] => Lit::Int(n.clone()),
-            [Tok::Rat(r), Tok::Eof] => Lit::Rat(r.clone()),
-            [Tok::Num(f), Tok::Eof] => Lit::Num(*f),
-            [Tok::Minus, Tok::Int(n), Tok::Eof] => Lit::Int(-n.clone()),
-            [Tok::Minus, Tok::Rat(r), Tok::Eof] => Lit::Rat(-r.clone()),
-            [Tok::Minus, Tok::Num(f), Tok::Eof] => Lit::Num(-*f),
-            [Tok::Str(s), Tok::Eof] => Lit::Text(s.clone()),
-            [Tok::Date(d), Tok::Eof] => Lit::Date(*d),
-            [Tok::Time(t), Tok::Eof] => Lit::Time(*t),
-            [Tok::DateTime(t), Tok::Eof] => Lit::DateTime(*t),
-            [Tok::True, Tok::Eof] => Lit::Bool(true),
-            [Tok::False, Tok::Eof] => Lit::Bool(false),
-            _ => return None,
-        })
     }
 
     // ---- expressions -------------------------------------------------------
@@ -1162,6 +1100,11 @@ impl<'a> Checker<'a> {
                         )
                     }
                     Ty::Any if matches!(b.kind, Ir::Error) => fail,
+                    // The name of a type converts to it: `x.Int`.
+                    other if S::from_name(name).is_some() => {
+                        let to = S::from_name(name).unwrap_or(S::Any);
+                        self.convert(name, to, b, other, base.span, span)
+                    }
                     other => {
                         self.err(
                             *name_span,
@@ -1178,6 +1121,34 @@ impl<'a> Checker<'a> {
                 self.lower_call(name, *name_span, args, span, sc)
             }
         }
+    }
+
+    /// `Int(x)`, `x.Int()` or `x.Int`: a value, or each value of a vector,
+    /// as the type `to`.
+    fn convert(
+        &mut self,
+        name: &str,
+        to: S,
+        arg: Node,
+        aty: Ty,
+        arg_span: Span,
+        span: Span,
+    ) -> (Node, Ty) {
+        let ty = match aty {
+            Ty::Any => Ty::Any,
+            Ty::Scalar(s) if s.converts_to(to) => Ty::Scalar(to),
+            Ty::Vector(s, n) if s.converts_to(to) => Ty::Vector(to, n),
+            other => {
+                if !matches!(arg.kind, Ir::Error) {
+                    self.err(
+                        arg_span,
+                        format!("`{name}` cannot be applied to {}", other.describe()),
+                    );
+                }
+                return (Node::error(span), Ty::Any);
+            }
+        };
+        (Node::new(Ir::Call(Func::To(to), vec![arg]), span), ty)
     }
 
     fn col_in(&self, tt: &TableTy, name: &str) -> Option<usize> {
@@ -1425,7 +1396,7 @@ impl<'a> Checker<'a> {
                 S::Any
             } else {
                 match (op, a.wider(b)) {
-                    (BinOp::Div | BinOp::Pow, S::Int) => S::Rat,
+                    (BinOp::Div | BinOp::Pow, S::Int) => S::Ratio,
                     (_, w) => w,
                 }
             }
@@ -1573,7 +1544,7 @@ impl<'a> Checker<'a> {
                         );
                         return fail;
                     }
-                    Func::Avg if s == S::Int => S::Rat,
+                    Func::Avg if s == S::Int => S::Ratio,
                     Func::Min | Func::Max if matches!(s, S::Bool | S::Complex) => {
                         self.err(
                             args[0].span,
@@ -1585,33 +1556,14 @@ impl<'a> Checker<'a> {
                 };
                 (Node::new(Ir::Call(func, vec![arg]), span), Ty::Scalar(out))
             }
-            "approx" | "Num" => {
-                if !arity(self, 1, &format!("{name}(1/3)")) {
-                    return fail;
-                }
-                let (arg, aty) = self.lower(&args[0], sc);
-                let ty = match aty {
-                    Ty::Any => Ty::Any,
-                    Ty::Scalar(s) if s.is_numeric() && s != S::Complex => Ty::Scalar(S::Num),
-                    Ty::Vector(s, n) if s.is_numeric() && s != S::Complex => Ty::Vector(S::Num, n),
-                    other => {
-                        self.err(
-                            args[0].span,
-                            format!("`{name}` needs a number, but this is {}", other.describe()),
-                        );
-                        return fail;
-                    }
-                };
-                (Node::new(Ir::Call(Func::Approx, vec![arg]), span), ty)
-            }
-            "Complex" => {
-                if !arity(self, 2, "Complex(re, im)") {
-                    return fail;
-                }
+            "Complex" if args.len() == 2 => {
                 let mut nodes = Vec::new();
                 for a in args {
                     let (node, ty) = self.lower(a, sc);
-                    if !matches!(ty, Ty::Any | Ty::Scalar(S::Any | S::Int | S::Rat | S::Num)) {
+                    if !matches!(
+                        ty,
+                        Ty::Any | Ty::Scalar(S::Any | S::Int | S::Ratio | S::Num)
+                    ) {
                         self.err(
                             a.span,
                             format!(
@@ -1808,6 +1760,14 @@ impl<'a> Checker<'a> {
                     Ty::Scalar(S::Num),
                 )
             }
+            _ if S::from_name(name).is_some() => {
+                if !arity(self, 1, &format!("{name}(x)")) {
+                    return fail;
+                }
+                let to = S::from_name(name).unwrap_or(S::Any);
+                let (arg, aty) = self.lower(&args[0], sc);
+                self.convert(name, to, arg, aty, args[0].span, span)
+            }
             _ if MathFn::from_name(name).is_some() => {
                 if !arity(self, 1, &format!("{name}(x)")) {
                     return fail;
@@ -1819,9 +1779,9 @@ impl<'a> Checker<'a> {
                 let out = |s: S| match s {
                     S::Any => Some(S::Any),
                     S::Complex => m.of_complex(),
-                    S::Int | S::Rat if m.is_whole() => Some(S::Int),
-                    S::Int | S::Rat if m.is_exact() => Some(s),
-                    S::Int | S::Rat | S::Num => Some(S::Num),
+                    S::Int | S::Ratio if m.is_whole() => Some(S::Int),
+                    S::Int | S::Ratio if m.is_exact() => Some(s),
+                    S::Int | S::Ratio | S::Num => Some(S::Num),
                     _ => None,
                 };
                 let (arg, aty) = self.lower(&args[0], sc);

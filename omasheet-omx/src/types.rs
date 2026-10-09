@@ -10,7 +10,7 @@ use std::rc::Rc;
 pub enum S {
     Any,
     Int,
-    Rat,
+    Ratio,
     Num,
     Complex,
     Text,
@@ -25,7 +25,7 @@ impl S {
     pub fn from_name(name: &str) -> Option<S> {
         Some(match name {
             "Int" => S::Int,
-            "Ratio" => S::Rat,
+            "Ratio" => S::Ratio,
             "Num" => S::Num,
             "Complex" => S::Complex,
             "Text" => S::Text,
@@ -38,7 +38,7 @@ impl S {
     }
 
     pub fn is_numeric(self) -> bool {
-        matches!(self, S::Any | S::Int | S::Rat | S::Num | S::Complex)
+        matches!(self, S::Any | S::Int | S::Ratio | S::Num | S::Complex)
     }
 
     /// A date, a time of day, or both.
@@ -64,7 +64,7 @@ impl S {
     fn rank(self) -> u8 {
         match self {
             S::Int => 0,
-            S::Rat => 1,
+            S::Ratio => 1,
             S::Num => 2,
             _ => 3,
         }
@@ -92,9 +92,24 @@ impl S {
         }
     }
 
+    /// Whether the conversion named `to` takes a value of type `self`. Text
+    /// is read as whatever is asked for, and anything can be written as text.
+    pub fn converts_to(self, to: S) -> bool {
+        let number = matches!(self, S::Int | S::Ratio | S::Num);
+        self == to
+            || matches!(self, S::Any | S::Text)
+            || match to {
+                S::Any | S::Text => true,
+                S::Int | S::Ratio | S::Num => number || self == S::Bool,
+                S::Complex | S::Bool => number,
+                S::Date | S::Time => self == S::DateTime,
+                S::DateTime => self == S::Date,
+            }
+    }
+
     /// Whether a value of type `self` may be stored where `to` is declared.
     pub fn assignable_to(self, to: S) -> bool {
-        self == to || self == S::Any || to == S::Any || (self == S::Int && to == S::Rat)
+        self == to || self == S::Any || to == S::Any || (self == S::Int && to == S::Ratio)
     }
 }
 
@@ -103,7 +118,7 @@ impl fmt::Display for S {
         f.write_str(match self {
             S::Any => "Any",
             S::Int => "Int",
-            S::Rat => "Ratio",
+            S::Ratio => "Ratio",
             S::Num => "Num",
             S::Complex => "Complex",
             S::Text => "Text",

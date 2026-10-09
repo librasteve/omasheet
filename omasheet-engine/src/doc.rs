@@ -12,7 +12,7 @@
 
 use crate::Options;
 use crate::eval::Engine;
-use crate::value::{Value, arith, format_scalar};
+use crate::value::{Value, arith, format_exact, format_scalar};
 use num_traits::ToPrimitive;
 use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use omasheet_omx::date::{self, Style};
@@ -55,6 +55,8 @@ pub struct CellSnap {
     pub value: Value,
     /// The value as shown in the grid.
     pub display: String,
+    /// The value in full, when it is shown with fewer digits than it has.
+    pub exact: Option<String>,
     /// What the cell holds in the file: a literal, or `= expression`. For a
     /// computed column, the column's expression.
     pub source: String,
@@ -91,6 +93,8 @@ pub struct ConstSnap {
     pub name: String,
     pub source: String,
     pub display: String,
+    /// The value in full, when it is shown with fewer digits than it has.
+    pub exact: Option<String>,
     pub error: Option<String>,
 }
 
@@ -1833,6 +1837,14 @@ impl Document {
             Value::Row(_) => "<row>".to_string(),
             other => engine.show(other, false),
         };
+        // What a number shown with fewer digits than it has is in full.
+        let exact = |v: &Value, quoted: bool, shown: &str| {
+            let full = match v {
+                Value::Ratio(_) | Value::Vector(_) => format_exact(v, quoted, &self.style),
+                _ => return None,
+            };
+            (full != shown).then_some(full)
+        };
 
         let mut snapshot = Snapshot::default();
         for (t, table) in program.tables.iter().enumerate() {
@@ -1874,8 +1886,10 @@ impl Document {
                         (None, Some(cell)) => (cell.text.clone(), within(cell.span)),
                         (None, None) => (String::new(), None),
                     };
+                    let display = show(&value);
                     row.push(CellSnap {
-                        display: show(&value),
+                        exact: exact(&value, false, &display),
+                        display,
                         numeric: value.is_numeric(),
                         value: value.clone(),
                         formula: source.starts_with('='),
@@ -1896,16 +1910,18 @@ impl Document {
         for (i, c) in program.consts.iter().enumerate() {
             let decl = ast.consts.iter().find(|d| d.name == c.name);
             let value = engine.const_value(i).unwrap_or(Value::Error);
+            let display = match &value {
+                Value::Empty => "empty".to_string(),
+                Value::Vector(_) | Value::Text(_) => engine.show(&value, true),
+                other => show(other),
+            };
             snapshot.consts.push(ConstSnap {
                 name: c.name.clone(),
                 source: decl.map_or(String::new(), |d| {
                     self.text[d.expr_span.start as usize..d.expr_span.end as usize].to_string()
                 }),
-                display: match &value {
-                    Value::Empty => "empty".to_string(),
-                    Value::Vector(_) | Value::Text(_) => engine.show(&value, true),
-                    other => show(other),
-                },
+                exact: exact(&value, true, &display),
+                display,
                 error: decl.and_then(|d| within(d.expr_span)),
             });
         }
@@ -2035,9 +2051,11 @@ mod tests {
                 "Month", "Revenue", "Cost", "Note", "Profit", "Tax", "Margin"
             ]
         );
-        assert_eq!(col(&doc, 0, 6), ["0.4", "5/12"]);
+        assert_eq!(col(&doc, 0, 6), ["0.4", "0.41667…"]);
+        let exact = |doc: &Document| doc.snapshot().tables[0].rows[1][6].exact.clone();
+        assert_eq!(exact(&doc).as_deref(), Some("5/12"));
         doc.set_cell(0, 0, 6, "Profit / Cost");
-        assert_eq!(col(&doc, 0, 6), ["2/3", "5/7"]);
+        assert_eq!(col(&doc, 0, 6), ["0.66667…", "0.71429…"]);
         doc.set_const(0, "50%");
         assert_eq!(col(&doc, 0, 5), ["20", "25"]);
         doc.add_const("Extra", "Sales.Revenue.sum()").unwrap();
@@ -2337,12 +2355,12 @@ mod tests {
         let doc = Document::from_text(text);
         let sum = |from, to| doc.summary(0, from, to).unwrap();
         let numbers = |s: &str, a: &str| Some((s.to_string(), a.to_string()));
-        // Exact numbers stay exact.
+        // Exact numbers add up exactly, and are shown as cells are.
         let a = sum((0, 1), (2, 1));
-        assert_eq!((a.count, a.numbers), (3, numbers("10/3", "10/9")));
+        assert_eq!((a.count, a.numbers), (3, numbers("3.33333…", "1.11111…")));
         // Text counts but does not add; an empty cell does neither.
         let top = sum((0, 0), (1, 2));
-        assert_eq!((top.count, top.numbers), (5, numbers("3.5", "7/6")));
+        assert_eq!((top.count, top.numbers), (5, numbers("3.5", "1.16667…")));
         // One Num makes the total a Num.
         let b = sum((0, 2), (2, 2));
         assert_eq!((b.count, b.numbers), (2, numbers("1.005e2", "5.025e1")));

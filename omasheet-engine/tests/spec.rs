@@ -15,16 +15,24 @@ Feb   | US     | 120     | 70
 Mar   | UK     | 150     | 80
 ";
 
+/// Exact numbers in full: these tests are about values, not their display.
+fn exact() -> Options {
+    Options {
+        exact: true,
+        ..Options::default()
+    }
+}
+
 /// Evaluate an expression with no sheet.
 fn calc(expr: &str) -> String {
-    let out = eval(None, "<expression>", expr);
+    let out = eval_with(None, "<expression>", expr, exact());
     assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
     out.output.trim_end().to_string()
 }
 
 /// Evaluate an expression against a sheet.
 fn ask(sheet: &str, expr: &str) -> String {
-    let out = eval(Some(("test.omx", sheet)), "<expression>", expr);
+    let out = eval_with(Some(("test.omx", sheet)), "<expression>", expr, exact());
     assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
     out.output.trim_end().to_string()
 }
@@ -37,7 +45,7 @@ fn calc_err(sheet: Option<&str>, expr: &str) -> String {
 }
 
 fn shown(sheet: &str) -> String {
-    let out = view("test.omx", sheet);
+    let out = view_with("test.omx", sheet, exact());
     assert!(out.ok(), "view failed:\n{}", out.errors.join("\n"));
     out.output
 }
@@ -78,18 +86,79 @@ fn exact_arithmetic() {
 
 #[test]
 fn no_silent_loss_of_exactness() {
-    assert_eq!(calc("approx(1/3)"), "3.333333333333333e-1");
+    assert_eq!(calc("(1/3).Num"), "3.333333333333333e-1");
     assert_eq!(calc("Num(1) / 3"), "3.333333333333333e-1");
     assert_eq!(calc("1/3 + 1/7 + 1/11 + 1/13 + 1/17"), "35881/51051");
-    assert!(calc_err(None, "2 ** 0.5").contains("approx"));
+    assert!(calc_err(None, "2 ** 0.5").contains("`.Num`"));
+    assert!(calc_err(None, "approx(1/3)").contains("unknown function `approx`"));
 }
 
 #[test]
-fn display_of_rationals() {
+fn rationals_in_full() {
     assert_eq!(calc("175/4"), "43.75");
     assert_eq!(calc("1/3 + 1/3"), "2/3");
     assert_eq!(calc("1/3"), "1/3");
     assert_eq!(calc("100/3 * 3"), "100");
+}
+
+#[test]
+fn display_of_rationals() {
+    let show = |expr: &str| {
+        let out = eval(None, "<expression>", expr);
+        assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
+        out.output.trim_end().to_string()
+    };
+    // Up to five digits after the point, as they are.
+    assert_eq!(show("175/4"), "43.75");
+    assert_eq!(show("1/100000"), "0.00001");
+    assert_eq!(show("100/3 * 3"), "100");
+    // More are rounded, and marked.
+    assert_eq!(show("1/3"), "0.33333…");
+    assert_eq!(show("2/3"), "0.66667…");
+    assert_eq!(show("-1/64"), "-0.01563…");
+    assert_eq!(show("[1/3, 0.5]"), "[0.33333…, 0.5]");
+    // Only the display: the value is exact still.
+    assert_eq!(show("1/3 * 3 == 1"), "true");
+    assert_eq!(show("(1/3).Text"), "1/3");
+}
+
+#[test]
+fn conversions() {
+    // Every type name converts to that type, written three ways.
+    assert_eq!(calc("Int(19.99)"), "19");
+    assert_eq!(calc("19.99.Int()"), "19");
+    assert_eq!(calc("(-19.99).Int"), "-19");
+    assert_eq!(calc("(10/4).Int + 1"), "3");
+    assert_eq!(calc("Int(1.5e3)"), "1500");
+    assert_eq!(calc("Int(true) + Int(false)"), "1");
+    assert_eq!(calc("Ratio(1e-1)"), "0.1");
+    assert_eq!(calc("Ratio(Num(1/3)) == 1/3"), "false");
+    assert_eq!(calc("7.Ratio / 2"), "3.5");
+    assert_eq!(calc("(1/4).Num"), "2.5e-1");
+    assert_eq!(calc("3.Complex"), "3.0+0.0i");
+    assert_eq!(calc("Complex(3, 4)"), "3.0+4.0i");
+    assert_eq!(calc("(1/3).Text"), "1/3");
+    assert_eq!(calc("Text(2025-01-31)"), "2025-01-31");
+    assert_eq!(calc("Bool(0)"), "false");
+    assert_eq!(calc("0.5.Bool"), "true");
+    // Text is read the way a cell is.
+    assert_eq!(calc("Int(\"42\") + 1"), "43");
+    assert_eq!(calc("\"20%\".Ratio"), "0.2");
+    assert_eq!(calc("Date(\"2025-01-31\") + 1"), "2025-02-01");
+    assert_eq!(calc("Bool(\"true\")"), "true");
+    assert!(calc_err(None, "Int(\"abc\")").contains("`abc` is not an Int"));
+    // Dates and times.
+    assert_eq!(calc("2025-01-31T09:30.Date"), "2025-01-31");
+    assert_eq!(calc("2025-01-31T09:30.Time"), "09:30");
+    assert_eq!(calc("2025-01-31.DateTime"), "2025-01-31T00:00");
+    // Each value of a vector, and empty stays empty.
+    assert_eq!(ask(SALES, "(Sales.Revenue / 7).Int"), "[14, 17, 21]");
+    assert_eq!(ask(SALES, "Sales.Revenue.Num.sum()"), "3.7e2");
+    assert_eq!(ask("table T\n\nA | B\n1.5 |\n", "T.B.Int"), "[empty]");
+    // What cannot be converted is caught before anything is calculated.
+    assert!(calc_err(None, "Int(2025-01-31)").contains("`Int` cannot be applied to Date"));
+    assert!(calc_err(None, "(3+4i).Int").contains("`Int` cannot be applied to Complex"));
+    assert!(calc_err(Some(SALES), "Sales.Int").contains("has no column `Int`"));
 }
 
 // ---- omx-expressions -------------------------------------------------------
@@ -261,6 +330,9 @@ fn date_and_time_arithmetic() {
     assert_eq!(ask(sheet, "Jobs[Due; 0]"), "2025-02-02");
     let bad = sheet.replace("Due : Date", "Due : DateTime");
     assert!(lint_errors(&bad)[0].contains("declared `DateTime` but this is `Date`"));
+    // A conversion makes it fit.
+    let fixed = bad.replace("= Start + Days", "= (Start + Days).DateTime");
+    assert_eq!(ask(&fixed, "Jobs[Due; 0]"), "2025-02-02T00:00");
 }
 
 #[test]

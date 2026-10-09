@@ -44,11 +44,19 @@ struct Env {
     /// is also the zone of a sheet that names none
     #[arg(long, value_name = "ZONE")]
     zone: Option<String>,
+
+    /// Show every exact number in full (1/3), rather than rounded to five
+    /// digits after the decimal point (0.33333…)
+    #[arg(long)]
+    exact: bool,
 }
 
 impl Env {
     fn options(&self) -> Result<Options, ExitCode> {
-        let mut options = Options::default();
+        let mut options = Options {
+            exact: self.exact,
+            ..Options::default()
+        };
         if self.locale {
             options.style = locale::os_style();
             options.local = true;

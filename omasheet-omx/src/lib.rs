@@ -8,6 +8,7 @@
 
 pub mod ast;
 pub mod check;
+pub mod convert;
 pub mod date;
 pub mod deps;
 pub mod diag;

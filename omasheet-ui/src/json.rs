@@ -38,7 +38,8 @@ fn list<T>(out: &mut String, items: &[T], mut each: impl FnMut(&mut String, &T))
     out.push(']');
 }
 
-/// Cells are `{d: display, s: source, n: numeric, f: formula, e: error}`.
+/// Cells are `{d: display, s: source, n: numeric, f: formula, e: error,
+/// x: the value in full when the display is shortened}`.
 pub fn snapshot(snap: &Snapshot) -> String {
     let mut out = String::from("{\"tables\":");
     list(&mut out, &snap.tables, |out, t| {
@@ -63,6 +64,8 @@ pub fn snapshot(snap: &Snapshot) -> String {
                 field(out, "s", &cell.source);
                 out.push(',');
                 field(out, "e", cell.error.as_deref().unwrap_or(""));
+                out.push(',');
+                field(out, "x", cell.exact.as_deref().unwrap_or(""));
                 out.push_str(&format!(",\"n\":{},\"f\":{}}}", cell.numeric, cell.formula));
             });
         });
@@ -76,6 +79,8 @@ pub fn snapshot(snap: &Snapshot) -> String {
         field(out, "source", &c.source);
         out.push(',');
         field(out, "display", &c.display);
+        out.push(',');
+        field(out, "exact", c.exact.as_deref().unwrap_or(""));
         out.push(',');
         field(out, "error", c.error.as_deref().unwrap_or(""));
         out.push('}');

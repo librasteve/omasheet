@@ -11,8 +11,10 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use omasheet_omx::ast::{BinOp, Lit};
+use omasheet_omx::convert;
 use omasheet_omx::date::Style;
 use omasheet_omx::funcs::MathFn;
+use omasheet_omx::types::S;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
@@ -24,7 +26,7 @@ pub enum Value {
     /// A cell whose calculation failed; the diagnostic was already reported.
     Error,
     Int(BigInt),
-    Rat(BigRational),
+    Ratio(BigRational),
     Num(f64),
     Complex(f64, f64),
     Text(Rc<str>),
@@ -73,14 +75,14 @@ impl Value {
         if r.is_integer() {
             Value::Int(r.to_integer())
         } else {
-            Value::Rat(r)
+            Value::Ratio(r)
         }
     }
 
     pub fn from_lit(l: &Lit) -> Value {
         match l {
             Lit::Int(n) => Value::Int(n.clone()),
-            Lit::Rat(r) => Value::exact(r.clone()),
+            Lit::Ratio(r) => Value::exact(r.clone()),
             Lit::Num(f) => Value::Num(*f),
             Lit::Complex(re, im) => Value::Complex(*re, *im),
             Lit::Text(s) => Value::text(s),
@@ -97,7 +99,7 @@ impl Value {
             Value::Empty => "empty",
             Value::Error => "an error",
             Value::Int(_) => "Int",
-            Value::Rat(_) => "Ratio",
+            Value::Ratio(_) => "Ratio",
             Value::Num(_) => "Num",
             Value::Complex(..) => "Complex",
             Value::Text(_) => "Text",
@@ -115,8 +117,48 @@ impl Value {
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
-            Value::Int(_) | Value::Rat(_) | Value::Num(_) | Value::Complex(..)
+            Value::Int(_) | Value::Ratio(_) | Value::Num(_) | Value::Complex(..)
         )
+    }
+
+    /// A single value as a literal. A date-time in another zone is what its
+    /// clocks show. `None` for empty, an error, or more than one value.
+    fn to_lit(&self) -> Option<Lit> {
+        Some(match self {
+            Value::Int(n) => Lit::Int(n.clone()),
+            Value::Ratio(r) => Lit::Ratio(r.clone()),
+            Value::Num(f) => Lit::Num(*f),
+            Value::Complex(re, im) => Lit::Complex(*re, *im),
+            Value::Text(s) => Lit::Text(s.to_string()),
+            Value::Bool(b) => Lit::Bool(*b),
+            Value::Date(d) => Lit::Date(*d),
+            Value::Time(t) => Lit::Time(*t),
+            Value::DateTime(t) => Lit::DateTime(*t),
+            Value::Zoned(z) => Lit::DateTime(z.wall),
+            _ => return None,
+        })
+    }
+
+    /// This value as the type `to`: what `Int(x)`, `Text(x)` and the rest
+    /// give. Empty stays empty.
+    pub fn converted(&self, to: S) -> Result<Value, String> {
+        let fits = match (self, to) {
+            (Value::Empty, _) | (_, S::Any) => true,
+            (Value::Zoned(_), S::DateTime) | (Value::Text(_), S::Text) => true,
+            // A whole `Ratio` is held as an `Int`.
+            (Value::Int(_), S::Int | S::Ratio) => true,
+            _ => false,
+        };
+        if fits {
+            return Ok(self.clone());
+        }
+        let Some(lit) = self.to_lit() else {
+            return Err(format!("{} cannot be made a `{to}`", self.kind()));
+        };
+        if to == S::Text {
+            return Ok(Value::text(&format_exact(self, false, &Style::ISO)));
+        }
+        convert::convert(&lit, to).map(|l| Value::from_lit(&l))
     }
 
     pub fn as_i64(&self) -> Option<i64> {
@@ -136,7 +178,7 @@ enum N {
 fn number(v: &Value) -> Option<N> {
     Some(match v {
         Value::Int(n) => N::Exact(BigRational::from_integer(n.clone())),
-        Value::Rat(r) => N::Exact(r.clone()),
+        Value::Ratio(r) => N::Exact(r.clone()),
         Value::Num(f) => N::Num(*f),
         Value::Complex(re, im) => N::Complex(*re, *im),
         _ => return None,
@@ -289,8 +331,7 @@ fn exact_arith(op: BinOp, x: &BigRational, y: &BigRational) -> Result<Value, Str
         _ => {
             if !y.is_integer() {
                 return Err(
-                    "`**` with a fractional exponent is not exact; use `approx(...)` on an operand"
-                        .into(),
+                    "`**` with a fractional exponent is not exact; use `.Num` on an operand".into(),
                 );
             }
             let Some(e) = y.to_integer().to_i32().filter(|e| e.abs() <= 1_000_000) else {
@@ -312,17 +353,17 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
         (Value::Empty, _) => return Ok(Value::Empty),
         (Value::Int(n), MathFn::Abs) => return Ok(Value::Int(n.abs())),
         (Value::Int(n), MathFn::Sign) => return Ok(Value::Int(n.signum())),
-        (Value::Int(_) | Value::Rat(_), MathFn::Im) => return Ok(Value::Int(BigInt::from(0))),
-        (Value::Rat(_), MathFn::Re | MathFn::Conj) => return Ok(v.clone()),
+        (Value::Int(_) | Value::Ratio(_), MathFn::Im) => return Ok(Value::Int(BigInt::from(0))),
+        (Value::Ratio(_), MathFn::Re | MathFn::Conj) => return Ok(v.clone()),
         (Value::Complex(re, im), _) => return complex_math(m, *re, *im),
         (Value::Int(_), _) if m.is_exact() => return Ok(v.clone()),
-        (Value::Rat(r), MathFn::Abs) => return Ok(Value::Rat(r.abs())),
-        (Value::Rat(r), MathFn::Sign) => return Ok(Value::Int(r.numer().signum())),
-        (Value::Rat(r), MathFn::Round) => return Ok(whole(r.round())),
-        (Value::Rat(r), MathFn::Floor) => return Ok(whole(r.floor())),
-        (Value::Rat(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
+        (Value::Ratio(r), MathFn::Abs) => return Ok(Value::Ratio(r.abs())),
+        (Value::Ratio(r), MathFn::Sign) => return Ok(Value::Int(r.numer().signum())),
+        (Value::Ratio(r), MathFn::Round) => return Ok(whole(r.round())),
+        (Value::Ratio(r), MathFn::Floor) => return Ok(whole(r.floor())),
+        (Value::Ratio(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
         (Value::Int(n), _) => n.to_f64().unwrap_or(f64::NAN),
-        (Value::Rat(r), _) => to_f64(r),
+        (Value::Ratio(r), _) => to_f64(r),
         (Value::Num(f), _) => *f,
         (other, _) => {
             return Err(format!(
@@ -399,7 +440,28 @@ pub fn equal(a: &Value, b: &Value) -> Result<Option<bool>, String> {
     Ok(compare(a, b)?.map(|o| o == Ordering::Equal))
 }
 
-/// A terminating fraction as a decimal, anything else as `n/d`.
+/// How many digits a `Ratio` is shown with after the decimal point.
+pub const RATIO_DIGITS: usize = 5;
+
+/// What follows a number that is shown with fewer digits than it has.
+pub const MORE: char = '…';
+
+/// A whole number of `10 ** -scale`s as a decimal with `scale` digits after
+/// the point.
+fn decimal(scaled: &BigInt, negative: bool, scale: usize) -> String {
+    let digits = scaled.abs().to_string();
+    let digits = format!("{digits:0>width$}", width = scale + 1);
+    let (whole, frac) = digits.split_at(digits.len() - scale);
+    let sign = if negative { "-" } else { "" };
+    if scale == 0 {
+        format!("{sign}{whole}")
+    } else {
+        format!("{sign}{whole}.{frac}")
+    }
+}
+
+/// An exact number in full: a terminating fraction as a decimal, anything
+/// else as `n/d`.
 pub fn format_rat(r: &BigRational) -> String {
     let (two, five, ten) = (BigInt::from(2), BigInt::from(5), BigInt::from(10));
     let mut rest = r.denom().clone();
@@ -421,18 +483,23 @@ pub fn format_rat(r: &BigRational) -> String {
         scaled *= &ten;
     }
     scaled /= r.denom();
-    let digits = scaled.abs().to_string();
-    let digits = format!("{digits:0>width$}", width = scale + 1);
-    let (whole, frac) = digits.split_at(digits.len() - scale);
-    let sign = if scaled.is_negative() { "-" } else { "" };
-    if scale == 0 {
-        format!("{sign}{whole}")
-    } else {
-        format!("{sign}{whole}.{frac}")
-    }
+    decimal(&scaled, r.is_negative(), scale)
 }
 
-/// A single value as text, the way a sheet writes it. `quoted` puts text in
+/// An exact number as it is shown: a decimal with up to [`RATIO_DIGITS`]
+/// digits after the point. One with more is rounded to that many, a half
+/// away from zero, and marked with [`MORE`].
+pub fn format_ratio(r: &BigRational) -> String {
+    let unit = num_traits::pow(BigInt::from(10), RATIO_DIGITS);
+    let scaled = r * BigRational::from_integer(unit);
+    if scaled.is_integer() {
+        return format_rat(r);
+    }
+    let rounded = scaled.round().to_integer();
+    format!("{}{MORE}", decimal(&rounded, r.is_negative(), RATIO_DIGITS))
+}
+
+/// A single value as text, the way a sheet shows it. `quoted` puts text in
 /// quotes, as inside a vector.
 pub fn format_scalar(v: &Value, quoted: bool) -> String {
     format_styled(v, quoted, &Style::ISO)
@@ -440,11 +507,22 @@ pub fn format_scalar(v: &Value, quoted: bool) -> String {
 
 /// A single value as text, with dates and times in `style`.
 pub fn format_styled(v: &Value, quoted: bool, style: &Style) -> String {
+    format_value(v, quoted, style, false)
+}
+
+/// As [`format_styled`], with every exact number in full: `1/3`, where it
+/// is shown as `0.33333…`.
+pub fn format_exact(v: &Value, quoted: bool, style: &Style) -> String {
+    format_value(v, quoted, style, true)
+}
+
+fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
     match v {
         Value::Empty => String::new(),
         Value::Error => "#ERROR".into(),
         Value::Int(n) => n.to_string(),
-        Value::Rat(r) => format_rat(r),
+        Value::Ratio(r) if exact => format_rat(r),
+        Value::Ratio(r) => format_ratio(r),
         // Always with an exponent, to tell it from an exact number.
         Value::Num(f) if f.is_finite() => format!("{f:e}"),
         Value::Num(f) => format!("{f:?}"),
@@ -487,7 +565,7 @@ pub fn format_styled(v: &Value, quoted: bool, style: &Style) -> String {
                 .iter()
                 .map(|x| match x {
                     Value::Empty => "empty".to_string(),
-                    other => format_styled(other, true, style),
+                    other => format_value(other, true, style, exact),
                 })
                 .collect();
             format!("[{}]", parts.join(", "))
@@ -516,9 +594,43 @@ mod tests {
     }
 
     #[test]
+    fn shows_rationals() {
+        assert_eq!(format_ratio(&rat(175, 4)), "43.75");
+        assert_eq!(format_ratio(&rat(1, 100_000)), "0.00001");
+        assert_eq!(format_ratio(&rat(1, 3)), "0.33333…");
+        assert_eq!(format_ratio(&rat(2, 3)), "0.66667…");
+        assert_eq!(format_ratio(&rat(-7, 3)), "-2.33333…");
+        assert_eq!(format_ratio(&rat(1, 64)), "0.01563…");
+        assert_eq!(format_ratio(&rat(-1, 1_000_000)), "-0.00000…");
+        assert_eq!(format_ratio(&rat(1_999_999, 1_000_000)), "2.00000…");
+    }
+
+    #[test]
+    fn converts() {
+        let third = Value::Ratio(rat(-7, 3));
+        let shown = |v: Result<Value, String>| format_exact(&v.unwrap(), true, &Style::ISO);
+        assert_eq!(shown(third.converted(S::Int)), "-2");
+        assert_eq!(shown(third.converted(S::Ratio)), "-7/3");
+        assert_eq!(shown(third.converted(S::Text)), "\"-7/3\"");
+        assert_eq!(shown(Value::Num(0.1).converted(S::Ratio)), "0.1");
+        assert_eq!(shown(Value::text("1/8").converted(S::Ratio)), "0.125");
+        assert_eq!(
+            shown(Value::Date(1).converted(S::DateTime)),
+            "1970-01-02T00:00"
+        );
+        assert_eq!(shown(Value::Empty.converted(S::Int)), "");
+        assert!(Value::Date(1).converted(S::Int).is_err());
+        assert!(
+            Value::Vector(Rc::new(Vec::new()))
+                .converted(S::Int)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn division_is_exact() {
         let third = arith(BinOp::Div, &Value::Int(1.into()), &Value::Int(3.into())).unwrap();
-        assert!(matches!(third, Value::Rat(_)));
+        assert!(matches!(third, Value::Ratio(_)));
         let one = arith(BinOp::Mul, &third, &Value::Int(3.into())).unwrap();
         assert!(matches!(one, Value::Int(n) if n.is_one()));
         assert!(arith(BinOp::Div, &Value::Int(1.into()), &Value::Int(0.into())).is_err());

@@ -11,7 +11,7 @@ use num_traits::pow::Pow;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
     Int(BigInt),
-    Rat(BigRational),
+    Ratio(BigRational),
     Num(f64),
     /// An imaginary number, `4i`.
     Imag(f64),
@@ -61,7 +61,7 @@ pub enum Tok {
 impl Tok {
     pub fn describe(&self) -> String {
         match self {
-            Tok::Int(_) | Tok::Rat(_) | Tok::Num(_) | Tok::Imag(_) => "a number".into(),
+            Tok::Int(_) | Tok::Ratio(_) | Tok::Num(_) | Tok::Imag(_) => "a number".into(),
             Tok::Str(_) => "a string".into(),
             Tok::Date(_) => "a date".into(),
             Tok::Time(_) => "a time".into(),
@@ -400,7 +400,7 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
         let digits: String = raw.chars().filter(|&c| c != '.').collect();
         let numer: BigInt = digits.parse().unwrap();
         let scale = frac_digits + if percent { 2 } else { 0 };
-        Tok::Rat(BigRational::new(
+        Tok::Ratio(BigRational::new(
             numer,
             Pow::pow(BigInt::from(10), scale as u32),
         ))
@@ -423,11 +423,11 @@ mod tests {
         assert_eq!(toks("42")[0], Tok::Int(42.into()));
         assert_eq!(
             toks("1_000_000.50")[0],
-            Tok::Rat(BigRational::new(2_000_001.into(), 2.into()))
+            Tok::Ratio(BigRational::new(2_000_001.into(), 2.into()))
         );
         assert_eq!(
             toks("20%")[0],
-            Tok::Rat(BigRational::new(1.into(), 5.into()))
+            Tok::Ratio(BigRational::new(1.into(), 5.into()))
         );
         assert_eq!(toks("1e-100")[0], Tok::Num(1e-100));
         assert_eq!(

@@ -5,11 +5,36 @@ Try any of these with `omasheet eval [sheet.omx] '<expression>'`.
 ## Numbers
 
 Arithmetic is exact: `1/3 + 1/6` is `0.5`, `0.1 + 0.2` is `0.3`, and integers
-do not overflow. `approx(x)` gives a floating-point `Num`, shown with an
+do not overflow. `x.Num` gives a floating-point `Num`, shown with an
 exponent (`3.333333333333333e-1`).
+
+An exact number is shown as a decimal with up to five digits after the point.
+One with more is rounded and marked: `1/3` is shown as `0.33333…`. Only the
+display is rounded: `1/3 * 3` is still `1`. `omasheet eval --exact` and
+`x.Text` give it in full, `1/3`.
 
 `+ - * / **`, `== != < > <= >=`, `and or not`, `in`, and `a // b` (b when a
 is empty). `if c then a else b`.
+
+## Converting
+
+The name of a type converts to it, written `x.Int`, `x.Int()` or `Int(x)`. A
+vector is converted value by value.
+
+| Written | Gives |
+|---|---|
+| `x.Int` | a whole number: `19.99` gives `19`, `-19.99` gives `-19` |
+| `x.Ratio` | an exact number: a `Num` as the decimal it is shown as |
+| `x.Num` | a floating-point number |
+| `x.Complex` | a complex number from a real one |
+| `x.Text` | any value as text, written the way a sheet writes it |
+| `x.Bool` | `false` for zero, `true` for any other number |
+| `x.Date`, `x.Time` | that half of a `DateTime` |
+| `x.DateTime` | a `Date` at midnight |
+
+Text is read the way a cell is: `"42".Int` is `42`, `"20%".Ratio` is `0.2`,
+`"2025-01-31".Date` is that date, and `"abc".Int` is an error. `true.Int` is
+`1`. To round rather than drop the fraction, use `round(x)`.
 
 ## Names
 
@@ -44,6 +69,7 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 - Vectors: `sum avg min max count`
 - Tables: `filter(condition)`, `select(columns)`
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
+- Converting: `Int Ratio Num Complex Text Bool Date Time DateTime`
 - Dates: `today() now() year month day weekday hour minute second date time`
 - Time zones: `to_zone("Asia/Tokyo") utc() local() offset() zone()`
 - Your own: `fn` in the sheet

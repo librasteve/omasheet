@@ -15,7 +15,7 @@
 - [x] 2.1 `Int` on `BigInt`, `Ratio` on `BigRational`, `Num` on `f64`
 - [x] 2.2 Literal lexing: integers, decimals, `_` separators, exponent form, `%`
 - [x] 2.3 Arithmetic and coercion rules; `Int / Int → Ratio`
-- [x] 2.4 `approx()` / `Num()` conversions; verify no implicit Ratio → Num path
+- [x] 2.4 `Num()` conversion; verify no implicit Ratio → Num path
 - [x] 2.5 Ratio display: decimal when terminating, fraction otherwise
 
 ## 3. OMX core (`omx-expressions`)

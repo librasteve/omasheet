@@ -62,6 +62,8 @@ fn examples_match_their_expected_output() {
 fn eval_pure_arithmetic() {
     let out = omasheet(&["eval", "1/3 + 1/3"]);
     assert!(out.status.success());
+    assert_eq!(stdout(&out), "0.66667…\n");
+    let out = omasheet(&["eval", "--exact", "1/3 + 1/3"]);
     assert_eq!(stdout(&out), "2/3\n");
 }
 
@@ -90,7 +92,7 @@ fn eval_from_standard_input() {
         .write_all(b"Sales.Revenue.avg()\n")
         .unwrap();
     let out = child.wait_with_output().unwrap();
-    assert_eq!(stdout(&out), "35200/3\n");
+    assert_eq!(stdout(&out), "11733.33333…\n");
 }
 
 #[test]

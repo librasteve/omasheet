@@ -9,7 +9,7 @@ use num_rational::BigRational;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Lit {
     Int(BigInt),
-    Rat(BigRational),
+    Ratio(BigRational),
     Num(f64),
     /// Real and imaginary parts.
     Complex(f64, f64),

@@ -313,7 +313,7 @@ impl Parser {
         let lit = |kind: Lit| ExprKind::Lit(kind);
         let kind = match self.peek().clone() {
             Tok::Int(n) => lit(Lit::Int(n)),
-            Tok::Rat(r) => lit(Lit::Rat(r)),
+            Tok::Ratio(r) => lit(Lit::Ratio(r)),
             Tok::Num(f) => lit(Lit::Num(f)),
             Tok::Imag(f) => lit(Lit::Complex(0.0, f)),
             Tok::Str(s) => lit(Lit::Text(s)),

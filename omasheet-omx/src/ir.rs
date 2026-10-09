@@ -6,6 +6,7 @@
 use crate::ast::{BinOp, Lit, UnOp};
 use crate::diag::Span;
 use crate::funcs::MathFn;
+use crate::types::S;
 
 #[derive(Clone, Debug)]
 pub struct Node {
@@ -119,7 +120,8 @@ pub enum Func {
     Min,
     Max,
     Count,
-    Approx,
+    /// A value as another type: `Int(x)`, `Num(x)` and the rest.
+    To(S),
     Complex,
     Today,
     Now,

@@ -113,9 +113,9 @@ ApplicationWindow {
             for (var k = 0; k < parsed.consts.length; k++) {
                 var c = parsed.consts[k];
                 rows.push([
-                    { d: c.name, s: c.name, e: "", n: false, f: false },
-                    { d: c.source, s: c.source, e: c.error, n: false, f: true },
-                    { d: c.error ? "#ERROR" : c.display, s: c.source, e: c.error, n: false, f: false }
+                    { d: c.name, s: c.name, e: "", x: "", n: false, f: false },
+                    { d: c.source, s: c.source, e: c.error, x: "", n: false, f: true },
+                    { d: c.error ? "#ERROR" : c.display, s: c.source, e: c.error, x: c.exact, n: false, f: false }
                 ]);
             }
             list.push({
@@ -149,9 +149,6 @@ ApplicationWindow {
         var cols = table.columns;
         for (var c = 0; c < cols.length; c++) {
             var chars = Math.max(cols[c].name.length, cols[c].type.length + 2);
-            // Leave room to read a short column formula in the header.
-            if (cols[c].computed && !table.isConsts)
-                chars = Math.max(chars, Math.round(Math.min(24, cols[c].type.length + cols[c].formula.length + 4) * 0.8));
             for (var r = 0; r < table.rows.length; r++)
                 chars = Math.max(chars, table.rows[r][c].d.length);
             var w = Math.round(Math.min(46, Math.max(7, chars + 2)) * metrics.averageCharacterWidth) + 14;
@@ -843,14 +840,8 @@ ApplicationWindow {
                                     }
                                     Text {
                                         width: parent.width
-                                        text: !headCell.column ? ""
-                                            : headCell.column.computed && !win.table.isConsts
-                                                // The type a formula gives, then the formula.
-                                                ? (headCell.column.type ? headCell.column.type + " " : "")
-                                                  + ":= " + headCell.column.formula
-                                                : headCell.column.type
-                                        color: headCell.column && headCell.column.computed
-                                            ? win.accentColor : win.mutedColor
+                                        text: headCell.column ? headCell.column.type : ""
+                                        color: win.mutedColor
                                         font.family: win.font.family
                                         font.features: win.font.features
                                         font.pixelSize: win.fontSize - 3
@@ -861,7 +852,13 @@ ApplicationWindow {
                                 Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: win.lineColor }
                                 MouseArea {
                                     anchors.fill: parent
+                                    hoverEnabled: true
                                     acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                    // The formula of a formula column, in full.
+                                    readonly property bool hasFormula: !!headCell.column && headCell.column.computed && !win.table.isConsts
+                                    ToolTip.visible: containsMouse && !cellMenu.visible && hasFormula
+                                    ToolTip.delay: 400
+                                    ToolTip.text: hasFormula ? headCell.column.name + " := " + headCell.column.formula : ""
                                     onClicked: function(mouse) {
                                         if (mouse.button === Qt.RightButton) {
                                             win.openMenu(-1, headCell.index);
@@ -982,9 +979,12 @@ ApplicationWindow {
                                         hoverEnabled: true
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         property bool picking: false
-                                        ToolTip.visible: containsMouse && !cellMenu.visible && !!cellItem.cell && cellItem.cell.e.length > 0
+                                        // Why the cell failed, or a number shown
+                                        // with fewer digits than it has, in full.
+                                        readonly property string tip: cellItem.cell ? cellItem.cell.e || cellItem.cell.x : ""
+                                        ToolTip.visible: containsMouse && !cellMenu.visible && tip.length > 0
                                         ToolTip.delay: 400
-                                        ToolTip.text: cellItem.cell ? cellItem.cell.e : ""
+                                        ToolTip.text: tip
                                         onPressed: function(mouse) {
                                             if (mouse.button === Qt.RightButton) {
                                                 win.openMenu(cellItem.row, cellItem.index);

@@ -69,11 +69,11 @@ NOT truncate or produce a `Num`.
 ### Requirement: No silent loss of exactness
 The engine SHALL NOT convert an `Int` or `Ratio` to a `Num` implicitly, regardless
 of the size of the numerator or denominator. Conversion to `Num` SHALL happen
-only through `approx(x)` or `Num(x)`, or when an operand is already a `Num`. Any
-operation with a `Num` operand SHALL yield a `Num`.
+only through `Num(x)`, also written `x.Num`, or when an operand is already a
+`Num`. Any operation with a `Num` operand SHALL yield a `Num`.
 
 #### Scenario: Explicit approximation
-- **WHEN** `approx(1/3)` is evaluated
+- **WHEN** `(1/3).Num` is evaluated
 - **THEN** the result is a `Num` close to `3.333333333333333e-1`
 
 #### Scenario: Num is contagious
@@ -84,10 +84,41 @@ operation with a `Num` operand SHALL yield a `Num`.
 - **WHEN** `1/3 + 1/7 + 1/11 + 1/13 + 1/17` is evaluated
 - **THEN** the result is an exact `Ratio`
 
+### Requirement: Conversions
+The name of each type SHALL be a conversion to that type, written `Int(x)`,
+`x.Int()` or `x.Int`, applied to one value or to each value of a vector, with
+empty staying empty. `Int` SHALL drop the fractional part. `Ratio` of a `Num`
+SHALL be the decimal the `Num` is shown as. `Text` SHALL write a value in full,
+the way a sheet writes it. Text SHALL be read the way a cell is, and SHALL be an
+error when it is not a value of the type. `Bool` of a number SHALL be whether it
+is not zero, and a number of a `Bool` SHALL be `1` or `0`. `Date` and `Time`
+SHALL take that half of a `DateTime`, and `DateTime` of a `Date` SHALL be its
+midnight. A conversion between types that have none SHALL be reported before
+anything is calculated.
+
+#### Scenario: A fraction as a whole number
+- **WHEN** `(-19.99).Int` is evaluated
+- **THEN** the result is the `Int` `-19`
+
+#### Scenario: A Num as an exact number
+- **WHEN** `Ratio(1e-1)` is evaluated
+- **THEN** the result is exactly `1/10`
+
+#### Scenario: Text read as a number
+- **WHEN** `"20%".Ratio` is evaluated
+- **THEN** the result is exactly `1/5`
+- **AND** `"abc".Int` is an error
+
+#### Scenario: No conversion
+- **WHEN** `Int(2025-01-31)` is checked
+- **THEN** an error reports that `Int` cannot be applied to a `Date`
+
 ### Requirement: Value is independent of display
 The stored value of a number SHALL NOT be altered by how it is displayed.
-A `Ratio` whose decimal expansion terminates SHALL display as a decimal by default;
-any other `Ratio` SHALL display as a fraction by default. A `Num` SHALL
+A `Ratio` SHALL display by default as a decimal with up to five digits after the
+point. One with more SHALL be rounded to five, a half away from zero, and
+marked with `…`. On request a `Ratio` SHALL display in full: as a decimal when
+its expansion terminates, otherwise as a fraction. A `Num` SHALL
 display with an exponent, so that it is never taken for an exact number.
 
 #### Scenario: Terminating rational
@@ -95,13 +126,13 @@ display with an exponent, so that it is never taken for an exact number.
 - **THEN** it is shown as `43.75`
 
 #### Scenario: A Num shows its exponent
-- **WHEN** `omasheet eval 'approx(3/2)'` is run
+- **WHEN** `omasheet eval '(3/2).Num'` is run
 - **THEN** the output is `1.5e0`
 
 #### Scenario: Non-terminating rational
 - **WHEN** `omasheet eval '1/3 + 1/3'` is run
-- **THEN** the output is `2/3`
-- **AND** `omasheet eval '1/3'` outputs `1/3`
+- **THEN** the output is `0.66667…`
+- **AND** `omasheet eval --exact '1/3 + 1/3'` outputs `2/3`
 
 #### Scenario: Rounded display keeps exact value
 - **GIVEN** a cell holding `100/3` displayed to two decimal places as `33.33`

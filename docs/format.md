@@ -41,7 +41,7 @@ A column with no `Name : Type` line takes its type from its cells.
 | Type | Written |
 |---|---|
 | `Int` | `42`, `1_000_000` |
-| `Ratio` | `19.99`, `20%`, `1/7` — exact |
+| `Ratio` | `19.99`, `20%`, `1/7` — exact; shown to five digits, `0.14286…` |
 | `Num` | `1.5e3` — floating point |
 | `Text` | `hi` or `"hi"`  (escape \|) |
 | `Bool` | `true`, `false` |

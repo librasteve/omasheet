@@ -489,10 +489,11 @@ impl qobject::Sheet {
                 .enumerate()
                 .take(index(col1) + 1)
                 .skip(index(col0))
-                // A computed cell has no source of its own, so copy its value.
+                // A computed cell has no source of its own, so copy its value:
+                // in full, where it is shown with fewer digits than it has.
                 .map(|(c, cell)| {
                     if values || t.columns[c].formula.is_some() {
-                        cell.display.as_str()
+                        cell.exact.as_deref().unwrap_or(&cell.display)
                     } else {
                         cell.source.as_str()
                     }
