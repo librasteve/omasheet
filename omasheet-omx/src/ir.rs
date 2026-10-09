@@ -141,4 +141,6 @@ pub enum Func {
     /// A function of one real number, such as `sqrt`.
     Math(MathFn),
     Pi,
+    /// The base of the natural logarithm.
+    E,
 }

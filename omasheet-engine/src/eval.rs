@@ -564,6 +564,7 @@ impl<'p> Engine<'p> {
             Func::Today => Ok(Value::Date(date::split_datetime(self.now).0)),
             Func::Now => Ok(Value::DateTime(self.now)),
             Func::Pi => Ok(Value::Num(std::f64::consts::PI)),
+            Func::E => Ok(Value::Num(std::f64::consts::E)),
             Func::Math(m) => {
                 let apply =
                     |v: &Value| -> R { math(m, v).or_else(|message| fail(args[0].span, message)) };

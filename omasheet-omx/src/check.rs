@@ -1754,12 +1754,13 @@ impl<'a> Checker<'a> {
                     ty,
                 )
             }
-            "pi" => {
-                if !arity(self, 0, "pi()") {
+            "pi" | "e" => {
+                if !arity(self, 0, &format!("{name}()")) {
                     return fail;
                 }
+                let func = if name == "pi" { Func::Pi } else { Func::E };
                 (
-                    Node::new(Ir::Call(Func::Pi, Vec::new()), span),
+                    Node::new(Ir::Call(func, Vec::new()), span),
                     Ty::Scalar(S::Num),
                 )
             }

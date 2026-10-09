@@ -269,6 +269,12 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     doc(LOG, "exp", "exp(x)", "e raised to the power x."),
     doc(
         LOG,
+        "e",
+        "e()",
+        "The base of the natural logarithm, 2.71828...",
+    ),
+    doc(
+        LOG,
         "ln",
         "ln(x)",
         "The natural logarithm. x must be positive.",

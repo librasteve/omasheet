@@ -274,7 +274,8 @@ OMX SHALL provide functions of one real number, each usable as `f(x)` or
 and `ceil` SHALL give an exact result for an exact number, `round` taking a half
 away from zero. `sqrt`, `exp`, `ln`, `log10`, `log2`, `sin`, `cos`, `tan`,
 `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, `radians` and `degrees` SHALL
-give a `Num`, with angles in radians, and `pi()` SHALL give π as a `Num`. A
+give a `Num`, with angles in radians, and `pi()` SHALL give π and `e()` the
+base of the natural logarithm, each as a `Num`. A
 number outside a function's domain SHALL be an error. `re`, `im`, `conj` and
 `arg` SHALL give the real part, imaginary part, conjugate and angle of a
 `Complex`, and `abs`, `sqrt`, `exp` and `ln` SHALL accept one; the other

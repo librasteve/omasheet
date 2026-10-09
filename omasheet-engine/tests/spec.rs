@@ -390,6 +390,10 @@ fn math_functions() {
     assert_eq!(calc("[log10(1000), log2(8)]"), "[3e0, 3e0]");
     assert_eq!(calc("sin(0) + cos(0)"), "1e0");
     assert_eq!(calc("degrees(pi())"), "1.8e2");
+    assert_eq!(calc("e()"), "2.718281828459045e0");
+    assert_eq!(calc("ln(e())"), "1e0");
+    assert_eq!(calc("e() == exp(1)"), "true");
+    assert!(calc_err(None, "e(1)").contains("`e` takes 0 arguments"));
     assert_eq!(calc("round(sin(radians(30)) * 1000)"), "5e2");
     assert_eq!(calc("round(degrees(atan(1)))"), "4.5e1");
     // Over a column, and as a method.
