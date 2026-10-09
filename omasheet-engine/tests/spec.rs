@@ -86,8 +86,8 @@ fn exact_arithmetic() {
 
 #[test]
 fn no_silent_loss_of_exactness() {
-    assert_eq!(calc("(1/3).Num"), "3.333333333333333e-1");
-    assert_eq!(calc("Num(1) / 3"), "3.333333333333333e-1");
+    assert_eq!(calc("(1/3).Num"), "0.3333333333333333");
+    assert_eq!(calc("Num(1) / 3"), "0.3333333333333333");
     assert_eq!(calc("1/3 + 1/7 + 1/11 + 1/13 + 1/17"), "35881/51051");
     assert!(calc_err(None, "2 ** 0.5").contains("`.Num`"));
     assert!(calc_err(None, "approx(1/3)").contains("unknown function `approx`"));
@@ -117,6 +117,13 @@ fn display_of_rationals() {
     assert_eq!(show("2/3"), "0.66667…");
     assert_eq!(show("-1/64"), "-0.01563…");
     assert_eq!(show("[1/3, 0.5]"), "[0.33333…, 0.5]");
+    // A Num and each part of a Complex are rounded the same way.
+    assert_eq!(show("4.Num"), "4");
+    assert_eq!(show("(1/3).Num"), "0.33333…");
+    assert_eq!(show("sqrt(2)"), "1.41421…");
+    assert_eq!(show("sqrt(2) * 1e20"), "1.41421…e+20");
+    assert_eq!(show("sqrt(-2+0i)"), "0+1.41421…i");
+    assert_eq!(show("sqrt(2).Text"), "1.4142135623730951");
     // Only the display: the value is exact still.
     assert_eq!(show("1/3 * 3 == 1"), "true");
     assert_eq!(show("(1/3).Text"), "1/3");
@@ -134,9 +141,9 @@ fn conversions() {
     assert_eq!(calc("Ratio(1e-1)"), "0.1");
     assert_eq!(calc("Ratio(Num(1/3)) == 1/3"), "false");
     assert_eq!(calc("7.Ratio / 2"), "3.5");
-    assert_eq!(calc("(1/4).Num"), "2.5e-1");
-    assert_eq!(calc("3.Complex"), "3.0+0.0i");
-    assert_eq!(calc("Complex(3, 4)"), "3.0+4.0i");
+    assert_eq!(calc("(1/4).Num"), "0.25");
+    assert_eq!(calc("3.Complex"), "3+0i");
+    assert_eq!(calc("Complex(3, 4)"), "3+4i");
     assert_eq!(calc("(1/3).Text"), "1/3");
     assert_eq!(calc("Text(2025-01-31)"), "2025-01-31");
     assert_eq!(calc("Bool(0)"), "false");
@@ -153,7 +160,7 @@ fn conversions() {
     assert_eq!(calc("2025-01-31.DateTime"), "2025-01-31T00:00");
     // Each value of a vector, and empty stays empty.
     assert_eq!(ask(SALES, "(Sales.Revenue / 7).Int"), "[14, 17, 21]");
-    assert_eq!(ask(SALES, "Sales.Revenue.Num.sum()"), "3.7e2");
+    assert_eq!(ask(SALES, "Sales.Revenue.Num.sum()"), "370");
     assert_eq!(ask("table T\n\nA | B\n1.5 |\n", "T.B.Int"), "[empty]");
     // What cannot be converted is caught before anything is calculated.
     assert!(calc_err(None, "Int(2025-01-31)").contains("`Int` cannot be applied to Date"));
@@ -430,15 +437,15 @@ fn index_with_no_table_name() {
 #[test]
 fn complex_numbers() {
     // Written with `i`, and built from parts.
-    assert_eq!(calc("3+4i"), "3.0+4.0i");
-    assert_eq!(calc("(1+2i) * (3-1i)"), "5.0+5.0i");
-    assert_eq!(calc("2i * 2i"), "-4.0+0.0i");
+    assert_eq!(calc("3+4i"), "3+4i");
+    assert_eq!(calc("(1+2i) * (3-1i)"), "5+5i");
+    assert_eq!(calc("2i * 2i"), "-4+0i");
     assert_eq!(calc("Complex(3, 4) == 3+4i"), "true");
-    assert_eq!(calc("[re(3+4i), im(3+4i), abs(3+4i)]"), "[3e0, 4e0, 5e0]");
-    assert_eq!(calc("conj(3+4i)"), "3.0-4.0i");
-    assert_eq!(calc("degrees(arg(2i))"), "9e1");
-    assert_eq!(calc("sqrt(-4+0i)"), "0.0+2.0i");
-    assert_eq!(calc("ln(exp(1+1i))"), "1.0+1.0i");
+    assert_eq!(calc("[re(3+4i), im(3+4i), abs(3+4i)]"), "[3, 4, 5]");
+    assert_eq!(calc("conj(3+4i)"), "3-4i");
+    assert_eq!(calc("degrees(arg(2i))"), "90");
+    assert_eq!(calc("sqrt(-4+0i)"), "0+2i");
+    assert_eq!(calc("ln(exp(1+1i))"), "1+1i");
     // Real numbers have the same parts.
     assert_eq!(calc("[re(5/2), im(7), conj(3)]"), "[2.5, 0, 3]");
     assert!(calc_err(None, "sin(1i)").contains("`sin` cannot be applied to Complex"));
@@ -446,15 +453,12 @@ fn complex_numbers() {
     // A column of them: literal cells, a real number, and a formula.
     let sheet =
         "table Z\n\nV : Complex\n\nV\n3+4i\n-2i\n5\n-1.5-2i\n= [V; *-4] * 1i\n\nSize := abs(V)\n";
-    assert_eq!(
-        ask(sheet, "Z.V"),
-        "[3.0+4.0i, 0.0-2.0i, 5.0+0.0i, -1.5-2.0i, -4.0+3.0i]"
-    );
-    assert_eq!(ask(sheet, "Z.Size"), "[5e0, 2e0, 5e0, 2.5e0, 5e0]");
-    assert_eq!(ask(sheet, "Z.V.sum()"), "2.5+3.0i");
+    assert_eq!(ask(sheet, "Z.V"), "[3+4i, 0-2i, 5+0i, -1.5-2i, -4+3i]");
+    assert_eq!(ask(sheet, "Z.Size"), "[5, 2, 5, 2.5, 5]");
+    assert_eq!(ask(sheet, "Z.V.sum()"), "2.5+3i");
     // Undeclared, a column of them is still Complex.
     let inferred = sheet.replace("V : Complex\n\n", "");
-    assert_eq!(ask(&inferred, "Z[V; 1]"), "0.0-2.0i");
+    assert_eq!(ask(&inferred, "Z[V; 1]"), "0-2i");
     let bad = lint_errors("table Z\n\nV : Complex\n\nV\nfour\n");
     assert!(bad[0].contains("such as `3+4i`"), "{bad:?}");
 }
@@ -468,27 +472,24 @@ fn math_functions() {
         "[3, -3, -4, 4]"
     );
     assert_eq!(calc("[sign(-3), sign(0), sign(1/2)]"), "[-1, 0, 1]");
-    assert_eq!(calc("round(2.5e0)"), "3e0");
+    assert_eq!(calc("round(2.5e0)"), "3");
     // The rest give a Num.
-    assert_eq!(calc("sqrt(16)"), "4e0");
-    assert_eq!(calc("exp(0)"), "1e0");
-    assert_eq!(calc("ln(exp(2))"), "2e0");
-    assert_eq!(calc("[log10(1000), log2(8)]"), "[3e0, 3e0]");
-    assert_eq!(calc("sin(0) + cos(0)"), "1e0");
-    assert_eq!(calc("degrees(pi())"), "1.8e2");
-    assert_eq!(calc("e()"), "2.718281828459045e0");
-    assert_eq!(calc("ln(e())"), "1e0");
+    assert_eq!(calc("sqrt(16)"), "4");
+    assert_eq!(calc("exp(0)"), "1");
+    assert_eq!(calc("ln(exp(2))"), "2");
+    assert_eq!(calc("[log10(1000), log2(8)]"), "[3, 3]");
+    assert_eq!(calc("sin(0) + cos(0)"), "1");
+    assert_eq!(calc("degrees(pi())"), "180");
+    assert_eq!(calc("e()"), "2.718281828459045");
+    assert_eq!(calc("ln(e())"), "1");
     assert_eq!(calc("e() == exp(1)"), "true");
     assert!(calc_err(None, "e(1)").contains("`e` takes 0 arguments"));
-    assert_eq!(calc("round(sin(radians(30)) * 1000)"), "5e2");
-    assert_eq!(calc("round(degrees(atan(1)))"), "4.5e1");
+    assert_eq!(calc("round(sin(radians(30)) * 1000)"), "500");
+    assert_eq!(calc("round(degrees(atan(1)))"), "45");
     // Over a column, and as a method.
-    assert_eq!(
-        ask(SALES, "Sales.Revenue.sqrt().floor()"),
-        "[1e1, 1e1, 1.2e1]"
-    );
+    assert_eq!(ask(SALES, "Sales.Revenue.sqrt().floor()"), "[10, 10, 12]");
     // Outside the domain, and on the wrong kind of value.
-    assert!(calc_err(None, "sqrt(-1)").contains("`sqrt` is not defined for -1.0"));
+    assert!(calc_err(None, "sqrt(-1)").contains("`sqrt` is not defined for -1"));
     assert!(calc_err(None, "ln(0)").contains("`ln` is not defined"));
     assert!(calc_err(None, "sin(\"x\")").contains("`sin` cannot be applied to Text"));
     assert!(calc_err(None, "sqr(4)").contains("did you mean `sqrt`?"));

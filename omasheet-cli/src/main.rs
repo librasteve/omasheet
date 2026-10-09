@@ -45,7 +45,7 @@ struct Env {
     #[arg(long, value_name = "ZONE")]
     zone: Option<String>,
 
-    /// Show every exact number in full (1/3), rather than rounded to five
+    /// Show every number in full (1/3), rather than rounded to five
     /// digits after the decimal point (0.33333…)
     #[arg(long)]
     exact: bool,

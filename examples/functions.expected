@@ -1,7 +1,7 @@
 const VatRate = 0.2
 const Everything = 105
 const Large = 45
-const Diagonal = 5e0
+const Diagonal = 5
 
 table Customers
 

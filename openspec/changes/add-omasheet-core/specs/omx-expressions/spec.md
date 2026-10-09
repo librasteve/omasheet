@@ -302,7 +302,7 @@ than with the names of any particular sheet.
 
 #### Scenario: Square root
 - **WHEN** `sqrt(16)` is evaluated
-- **THEN** the result is the `Num` `4.0`
+- **THEN** the result is the `Num` `4`
 
 #### Scenario: Outside the domain
 - **WHEN** `sqrt(-1)` is evaluated

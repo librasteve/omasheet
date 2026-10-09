@@ -1840,7 +1840,9 @@ impl Document {
         // What a number shown with fewer digits than it has is in full.
         let exact = |v: &Value, quoted: bool, shown: &str| {
             let full = match v {
-                Value::Ratio(_) | Value::Vector(_) => format_exact(v, quoted, &self.style),
+                Value::Ratio(_) | Value::Num(_) | Value::Complex(..) | Value::Vector(_) => {
+                    format_exact(v, quoted, &self.style)
+                }
                 _ => return None,
             };
             (full != shown).then_some(full)
@@ -2363,7 +2365,7 @@ mod tests {
         assert_eq!((top.count, top.numbers), (5, numbers("3.5", "1.16667…")));
         // One Num makes the total a Num.
         let b = sum((0, 2), (2, 2));
-        assert_eq!((b.count, b.numbers), (2, numbers("1.005e2", "5.025e1")));
+        assert_eq!((b.count, b.numbers), (2, numbers("100.5", "50.25")));
         let names = sum((0, 0), (2, 0));
         assert_eq!((names.count, names.numbers), (3, None));
         // A block that runs off the table is cut to it.

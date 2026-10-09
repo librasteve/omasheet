@@ -74,7 +74,7 @@ only through `Num(x)`, also written `x.Num`, or when an operand is already a
 
 #### Scenario: Explicit approximation
 - **WHEN** `(1/3).Num` is evaluated
-- **THEN** the result is a `Num` close to `3.333333333333333e-1`
+- **THEN** the result is a `Num` close to `0.3333333333333333`
 
 #### Scenario: Num is contagious
 - **WHEN** `Num(1) / 3` is evaluated
@@ -118,16 +118,29 @@ The stored value of a number SHALL NOT be altered by how it is displayed.
 A `Ratio` SHALL display by default as a decimal with up to five digits after the
 point. One with more SHALL be rounded to five, a half away from zero, and
 marked with `…`. On request a `Ratio` SHALL display in full: as a decimal when
-its expansion terminates, otherwise as a fraction. A `Num` SHALL
-display with an exponent, so that it is never taken for an exact number.
+its expansion terminates, otherwise as a fraction. A `Num` SHALL display as
+Raku displays one: a whole number with no decimal point, any other as a decimal,
+and one of magnitude `1e15` or more, or less than `1e-4`, with a signed exponent
+of at least two digits. By default more than five digits after the point, or
+after the point of the part before the exponent, SHALL be rounded and marked as
+a `Ratio`'s are; on request a `Num` SHALL display in full, with the fewest
+digits that give the same `Num` back. Not-a-number and the infinities SHALL display as `NaN`, `Inf` and
+`-Inf`. A `Complex` SHALL display each part as a `Num`, as `3+4i`. How a number
+is displayed SHALL NOT change its type.
 
 #### Scenario: Terminating rational
 - **WHEN** the exact value `175/4` is displayed with default formatting
 - **THEN** it is shown as `43.75`
 
-#### Scenario: A Num shows its exponent
+#### Scenario: A Num is shown as Raku shows it
 - **WHEN** `omasheet eval '(3/2).Num'` is run
-- **THEN** the output is `1.5e0`
+- **THEN** the output is `1.5`
+- **AND** `omasheet eval '4.Num'` outputs `4`, and `omasheet eval '1e21'` outputs `1e+21`
+
+#### Scenario: A Num with many digits
+- **WHEN** `omasheet eval 'sqrt(2)'` is run
+- **THEN** the output is `1.41421…`
+- **AND** `omasheet eval --exact 'sqrt(2)'` outputs `1.4142135623730951`
 
 #### Scenario: Non-terminating rational
 - **WHEN** `omasheet eval '1/3 + 1/3'` is run

@@ -1,42 +1,76 @@
-# Every column type, with dates and times: a Date counts in days, a Time and
-# a DateTime in seconds. A sheet always writes them the ISO way, and may say
-# which time zone its date-times are in.
+# The numbers, Bool and Text: what each type holds and how it is shown.
+#
+# Int and Ratio are exact, a Num is floating point, and a Complex is a pair
+# of Nums. A number is shown with up to five digits after the point; one
+# with more is rounded and marked with …, and is still held in full.
+# `omasheet --exact examples/types.omx` shows every number in full.
 
-zone Europe/London
-const Day = 86400
+const Half = 50%
+const Third = 1/3
+const Root2 = sqrt(2)
+const Turn = 1i
 
-table Shifts
+table Numbers
 
-Who    : Text
-On     : Date
-Start  : Time
-End    : Time
-Rate   : Ratio
-Paid   : Bool
-Logged : DateTime
+Name    : Text
+Count   : Int
+Share   : Ratio
+Reading : Num
+Wave    : Complex
+Checked : Bool
 
-Who   | On         | Start | End   | Rate  | Paid  | Logged
-Ada   | 2025-01-31 | 09:00 | 17:30 | 21.50 | true  | 2025-01-31T17:42
-Grace | 2025-02-01 | 22:00 | 06:00 | 24    | false | 2025-02-03T08:05:30
-Linus | 2025-02-28 | 13:15 | 18:00 | 19.75 | true  | 2025-02-28T18:00
+Name  | Count                      | Share | Reading | Wave    | Checked
+seven | 7                          | 1/7   | 1.5     | 3+4i    | true
+cent  | 100                        | 20%   | 100     | 2i      | false
+minus | -3                         | 19.99 | 1.6e-19 | -1.5-2i | true
+huge  | 10_000_000_000_000_000_000 | 0.125 | 6.02e23 | 1       | false
 
-Begins  := On + Start
-Seconds := if End > Start then End - Start else End - Start + Day
-Hours   := Seconds / 3600
-Pay     := Hours * Rate
-Due     := On + 30
-Weekday := On.weekday()
-Month   := On.month()
-Delay   := (Logged - Begins) / 3600
-Late    := Logged.date() > On
-Sydney  := Logged.to_zone("Australia/Sydney")
+# Exact stays exact: an Int does not overflow, and a division is a Ratio.
+Square  := Count ** 2
+Inverse := 1 / Count
+Whole   := Inverse * Count
 
-table Totals
+# One Num makes the result a Num.
+Scaled  := Share * Reading
+Root    := sqrt(Reading)
 
-Label
-All
+# A Complex shows each part as a Num.
+Size    := abs(Wave)
+Turned  := Wave * Turn
 
-Hours := Shifts.Hours.sum()
-Pay   := Shifts.Pay.sum()
-First := Shifts.On.min()
-Span  := Shifts.On.max() - Shifts.On.min()
+Likely  := Checked and Share < Half
+
+# The name of a type converts to it: `x.Int`, `x.Int()` or `Int(x)`.
+table Converted
+
+Value : Ratio
+
+Value
+19.99
+-19.99
+1/3
+0.5
+0
+
+AsInt     := Value.Int
+Rounded   := round(Value)
+AsNum     := Value.Num
+AsComplex := Value.Complex
+AsBool    := Value.Bool
+AsText    := Value.Text
+Back      := Value.Num.Ratio == Value
+
+# Text is read the way a cell is.
+table Written
+
+Text : Text
+
+Text
+42
+20%
+1/8
+1.5e3
+
+Number  := Text.Ratio
+Doubled := Number * 2
+Whole   := Text.Int

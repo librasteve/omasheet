@@ -376,7 +376,11 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
     let y = m.apply(x);
     // Outside the function's domain, such as `sqrt(-1)` or `ln(0)`.
     if x.is_finite() && !y.is_finite() {
-        return Err(format!("`{}` is not defined for {x:?}", m.name()));
+        return Err(format!(
+            "`{}` is not defined for {}",
+            m.name(),
+            format_num(x, true)
+        ));
     }
     Ok(Value::Num(y))
 }
@@ -499,6 +503,43 @@ pub fn format_ratio(r: &BigRational) -> String {
     format!("{}{MORE}", decimal(&rounded, r.is_negative(), RATIO_DIGITS))
 }
 
+/// A `Num` as Raku writes one: a whole number as `100`, one with a fraction
+/// as `1.5`, and a very large or very small one with an exponent, `1e+21`
+/// or `1.5e-07`. In full when `exact`, with the fewest digits that give the
+/// same `Num` back; otherwise more than [`RATIO_DIGITS`] digits after the
+/// point are rounded and marked with [`MORE`], as an exact number's are.
+pub fn format_num(f: f64, exact: bool) -> String {
+    if f.is_nan() {
+        return "NaN".into();
+    }
+    if f.is_infinite() {
+        return if f > 0.0 { "Inf" } else { "-Inf" }.into();
+    }
+    // A decimal with too many digits to show, rounded.
+    let short = |text: &str| {
+        let digits = text.split_once('.').map_or(0, |(_, frac)| frac.len());
+        if exact || digits <= RATIO_DIGITS {
+            return None;
+        }
+        Some(format_ratio(&convert::ratio_of(text.parse().ok()?)?))
+    };
+    let scientific = format!("{f:e}");
+    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
+    let mut exponent: i32 = exponent.parse().unwrap_or(0);
+    if (-4..15).contains(&exponent) {
+        let full = format!("{f}");
+        return short(&full).unwrap_or(full);
+    }
+    let mut mantissa = short(mantissa).unwrap_or_else(|| mantissa.to_string());
+    // `9.999999` rounds to ten, which is one of the next power.
+    if mantissa.trim_start_matches('-').starts_with("10.") {
+        mantissa = mantissa.replacen("10.", "1.", 1);
+        exponent += 1;
+    }
+    let sign = if exponent < 0 { '-' } else { '+' };
+    format!("{mantissa}e{sign}{:02}", exponent.abs())
+}
+
 /// A single value as text, the way a sheet shows it. `quoted` puts text in
 /// quotes, as inside a vector.
 pub fn format_scalar(v: &Value, quoted: bool) -> String {
@@ -523,15 +564,14 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         Value::Int(n) => n.to_string(),
         Value::Ratio(r) if exact => format_rat(r),
         Value::Ratio(r) => format_ratio(r),
-        // Always with an exponent, to tell it from an exact number.
-        Value::Num(f) if f.is_finite() => format!("{f:e}"),
-        Value::Num(f) => format!("{f:?}"),
+        Value::Num(f) => format_num(*f, exact),
+        // Each part as a `Num` is written: `3+4i`, `1.5-2i`.
         Value::Complex(re, im) => {
-            if *im < 0.0 || (*im == 0.0 && im.is_sign_negative()) {
-                format!("{re:?}-{:?}i", -im)
-            } else {
-                format!("{re:?}+{im:?}i")
-            }
+            let (re, part) = (format_num(*re, exact), format_num(*im, exact));
+            let plus = if part.starts_with('-') { "" } else { "+" };
+            // As Raku does, to keep the `i` apart from `Inf` and `NaN`.
+            let i = if im.is_finite() { "i" } else { "\\i" };
+            format!("{re}{plus}{part}{i}")
         }
         Value::Text(s) if quoted => format!("{s:?}"),
         Value::Text(s) => s.to_string(),
@@ -603,6 +643,70 @@ mod tests {
         assert_eq!(format_ratio(&rat(1, 64)), "0.01563…");
         assert_eq!(format_ratio(&rat(-1, 1_000_000)), "-0.00000…");
         assert_eq!(format_ratio(&rat(1_999_999, 1_000_000)), "2.00000…");
+    }
+
+    #[test]
+    fn shows_nums_as_raku_does() {
+        let shown: Vec<String> = [
+            1.0,
+            1.5,
+            -0.25,
+            0.1 + 0.2,
+            1.0 / 3.0,
+            1e14,
+            1e15,
+            123_456_789_012_345_678.0,
+            1e-4,
+            1e-5,
+            1.5e-7,
+            1e100,
+            -0.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ]
+        .iter()
+        .map(|f| format_num(*f, true))
+        .collect();
+        assert_eq!(
+            shown,
+            [
+                "1",
+                "1.5",
+                "-0.25",
+                "0.30000000000000004",
+                "0.3333333333333333",
+                "100000000000000",
+                "1e+15",
+                "1.2345678901234568e+17",
+                "0.0001",
+                "1e-05",
+                "1.5e-07",
+                "1e+100",
+                "-0",
+                "Inf",
+                "-Inf",
+                "NaN",
+            ]
+        );
+        let complex = |re, im| format_scalar(&Value::Complex(re, im), false);
+        assert_eq!(complex(3.0, 4.0), "3+4i");
+        assert_eq!(complex(1.5, -2.0), "1.5-2i");
+        assert_eq!(complex(1e20, 1e-7), "1e+20+1e-07i");
+        assert_eq!(complex(0.0, f64::INFINITY), "0+Inf\\i");
+
+        // More than five digits after the point are rounded, and marked.
+        let shown = |f| format_num(f, false);
+        assert_eq!(shown(1.5), "1.5");
+        assert_eq!(shown(0.00015), "0.00015");
+        assert_eq!(shown(0.1 + 0.2), "0.30000…");
+        assert_eq!(shown(-2.0 / 3.0), "-0.66667…");
+        assert_eq!(shown(123456.789012), "123456.78901…");
+        assert_eq!(shown(1e15), "1e+15");
+        assert_eq!(shown(123_456_789_012_345_678.0), "1.23457…e+17");
+        assert_eq!(shown(-1.5e-7), "-1.5e-07");
+        assert_eq!(shown(9.9999999e20), "1.00000…e+21");
+        assert_eq!(complex(1.0 / 3.0, -2.0 / 3.0), "0.33333…-0.66667…i");
     }
 
     #[test]

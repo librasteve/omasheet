@@ -5,13 +5,23 @@ Try any of these with `omasheet eval [sheet.omx] '<expression>'`.
 ## Numbers
 
 Arithmetic is exact: `1/3 + 1/6` is `0.5`, `0.1 + 0.2` is `0.3`, and integers
-do not overflow. `x.Num` gives a floating-point `Num`, shown with an
-exponent (`3.333333333333333e-1`).
+do not overflow. `x.Num` gives a floating-point `Num`.
 
-An exact number is shown as a decimal with up to five digits after the point.
-One with more is rounded and marked: `1/3` is shown as `0.33333…`. Only the
-display is rounded: `1/3 * 3` is still `1`. `omasheet eval --exact` and
-`x.Text` give it in full, `1/3`.
+A number is shown with up to five digits after the point. One with more is
+rounded and marked: `1/3` is shown as `0.33333…`. Only the display is
+rounded: `1/3 * 3` is still `1`. `omasheet eval --exact` and `x.Text` give it
+in full, `1/3`.
+
+Numbers are shown the way Raku shows them:
+
+| Type | Shown |
+|---|---|
+| `Int` | `101` |
+| `Ratio` | `1.01`; `0.33333…` when it has more than five digits |
+| `Num` | `100`, `1.5`, `1.41421…`; `1e+21` or `1.41421…e-07` when very large or small |
+| `Complex` | each part as a `Num`: `3+4i`, `1.5-2i`, `0+1.41421…i` |
+
+A `Num` that is a whole number looks like an `Int`, but it is still a `Num`.
 
 `+ - * / **`, `== != < > <= >=`, `and or not`, `in`, and `a // b` (b when a
 is empty). `if c then a else b`.
