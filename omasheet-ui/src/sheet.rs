@@ -166,6 +166,9 @@ pub mod qobject {
         ) -> QString;
         #[qinvokable]
         fn rename_column(self: Pin<&mut Sheet>, table: i32, col: i32, name: &QString) -> QString;
+        /// Delete `count` columns from `first`.
+        #[qinvokable]
+        fn delete_columns(self: Pin<&mut Sheet>, table: i32, first: i32, count: i32) -> QString;
         /// Move `count` rows from `first` so the first becomes row `to`.
         #[qinvokable]
         fn move_rows(self: Pin<&mut Sheet>, table: i32, first: i32, count: i32, to: i32)
@@ -718,6 +721,10 @@ impl qobject::Sheet {
     fn rename_column(self: Pin<&mut Self>, table: i32, col: i32, name: &QString) -> QString {
         let name = name.to_string();
         self.try_edit(|doc| doc.rename_column(index(table), index(col), &name))
+    }
+
+    fn delete_columns(self: Pin<&mut Self>, table: i32, first: i32, count: i32) -> QString {
+        self.try_edit(|doc| doc.delete_columns(index(table), index(first), index(count)))
     }
 
     fn move_rows(self: Pin<&mut Self>, table: i32, first: i32, count: i32, to: i32) -> QString {

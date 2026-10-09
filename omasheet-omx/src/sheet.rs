@@ -6,7 +6,7 @@
 //! # a comment
 //! zone Europe/London
 //! const TaxRate = 20%
-//! func Margin(revenue, cost) = (revenue - cost) / revenue
+//! fn Margin(revenue, cost) = (revenue - cost) / revenue
 //!
 //! table Sales
 //!
@@ -45,7 +45,7 @@ pub struct ConstDecl {
     pub expr_span: Span,
 }
 
-/// `func <Name>(<parameters>) = <expr>`
+/// `fn <Name>(<parameters>) = <expr>`
 #[derive(Debug)]
 pub struct FuncDecl {
     pub name: String,
@@ -331,8 +331,8 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
             }
         }
 
-        // func <Name>(<parameters>) = <expr>
-        if let Some(rest) = after_keyword(trimmed, "func") {
+        // fn <Name>(<parameters>) = <expr>
+        if let Some(rest) = after_keyword(trimmed, "fn") {
             let n = ident_len(rest);
             if n > 0 && rest[n..].trim_start().starts_with('(') {
                 let name_at = at + (trimmed.len() - rest.len());
@@ -356,10 +356,10 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
                     diags.push(
                         Diagnostic::new(
                             Span::new(src, at, at + trimmed.len()),
-                            "expected `func <Name>(<parameters>) = <expression>`",
+                            "expected `fn <Name>(<parameters>) = <expression>`",
                         )
                         .with_help(
-                            "for example `func Margin(revenue, cost) = (revenue - cost) / revenue`",
+                            "for example `fn Margin(revenue, cost) = (revenue - cost) / revenue`",
                         ),
                     );
                     i += 1;
@@ -386,7 +386,7 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
                 Diagnostic::new(
                     Span::new(src, at, at + trimmed.len()),
                     "expected `table <Name>`, `const <Name> = <expression>`, \
-                     `func <Name>(<parameters>) = <expression>` or `zone <Area/City>`",
+                     `fn <Name>(<parameters>) = <expression>` or `zone <Area/City>`",
                 )
                 .with_help("rows of data belong under a `table` line"),
             );
@@ -521,7 +521,7 @@ mod tests {
     #[test]
     fn parses_a_function() {
         let mut diags = Vec::new();
-        let src = "# Profit as a share\n# of revenue.\nfunc Margin(revenue, cost) =\n  (revenue - cost) / revenue\nfunc Vat() = 20%\n";
+        let src = "# Profit as a share\n# of revenue.\nfn Margin(revenue, cost) =\n  (revenue - cost) / revenue\nfn Vat() = 20%\n";
         let ast = parse_sheet(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         let f = &ast.funcs[0];
@@ -536,8 +536,8 @@ mod tests {
         assert!(f.expr.is_some());
         assert!(ast.funcs[1].params.is_empty() && ast.funcs[1].doc.is_empty());
 
-        parse_sheet("func Bad(a b) = 1\n", 0, &mut diags);
-        parse_sheet("func Bad(a) 1\n", 0, &mut diags);
+        parse_sheet("fn Bad(a b) = 1\n", 0, &mut diags);
+        parse_sheet("fn Bad(a) 1\n", 0, &mut diags);
         assert_eq!(diags.len(), 2);
     }
 

@@ -1,4 +1,4 @@
-# Proposal: XLSX and Markdown interop (Phase 3)
+# Proposal: XLSX and Markdown interop (Phase 2)
 
 ## Why
 

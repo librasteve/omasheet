@@ -146,8 +146,7 @@ mod tests {
 
     #[test]
     fn the_sheets_own_functions_lead_the_directory() {
-        let doc =
-            Document::from_text("# Twice over.\nfunc Twice(x) = x * 2\nfunc Half(x) = x / 2\n");
+        let doc = Document::from_text("# Twice over.\nfn Twice(x) = x * 2\nfn Half(x) = x / 2\n");
         let json = super::functions(
             &doc.snapshot().funcs,
             omasheet_engine::omx::funcs::FUNCTIONS,

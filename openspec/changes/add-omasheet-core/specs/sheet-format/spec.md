@@ -172,7 +172,7 @@ any expression in the sheet and SHALL NOT depend on any row cursor.
 - **THEN** every row uses the same `TaxRate` value of exactly `1/5`
 
 ### Requirement: Functions
-A sheet SHALL be able to define a function with `func <Name>(<parameters>) =
+A sheet SHALL be able to define a function with `fn <Name>(<parameters>) =
 <OMX expression>` outside any table, with zero or more comma-separated
 parameter names. The expression SHALL be able to refer to its parameters, the
 sheet's constants and tables, and the sheet's other functions, and SHALL NOT see
@@ -184,16 +184,16 @@ directly or through other functions. The comment lines directly above a
 definition SHALL be kept as its description.
 
 #### Scenario: A function in a computed column
-- **GIVEN** `func Margin(revenue, cost) = (revenue - cost) / revenue`
+- **GIVEN** `fn Margin(revenue, cost) = (revenue - cost) / revenue`
 - **WHEN** a computed column is defined as `Margin := Margin(Revenue, Cost)`
 - **THEN** each row holds that row's exact margin
 
 #### Scenario: A function does not see the caller's row
-- **GIVEN** `func Bad(x) = x + Cost` and a table with a column `Cost`
+- **GIVEN** `fn Bad(x) = x + Cost` and a table with a column `Cost`
 - **THEN** `lint` reports that `Cost` is an unknown name
 
 #### Scenario: A function that calls itself
-- **GIVEN** `func F(x) = F(x) + 1`
+- **GIVEN** `fn F(x) = F(x) + 1`
 - **THEN** `lint` reports that `F` calls itself
 
 ### Requirement: No grid coordinates in authored files

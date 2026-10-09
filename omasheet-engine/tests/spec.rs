@@ -869,11 +869,11 @@ fn diagnostics_are_located() {
 const FUNCS: &str = "\
 const Rate = 20%
 
-func Margin(revenue, cost) = (revenue - cost) / revenue
-func WithTax(x) = x * (1 + Rate)
-func Twice(x) = WithTax(WithTax(x))
-func Total(t) = t.Revenue.sum()
-func NameOf(id) = Customers[; ID == id].Name // \"Unknown\"
+fn Margin(revenue, cost) = (revenue - cost) / revenue
+fn WithTax(x) = x * (1 + Rate)
+fn Twice(x) = WithTax(WithTax(x))
+fn Total(t) = t.Revenue.sum()
+fn NameOf(id) = Customers[; ID == id].Name // \"Unknown\"
 
 table Customers
 
@@ -915,7 +915,7 @@ fn custom_function_takes_tables_and_vectors() {
 
 #[test]
 fn custom_function_does_not_see_the_callers_row() {
-    let sheet = "func Bad(x) = x + Cost\n\ntable T\n\nRevenue | Cost\n1 | 2\n\nA := Bad(Revenue)\n";
+    let sheet = "fn Bad(x) = x + Cost\n\ntable T\n\nRevenue | Cost\n1 | 2\n\nA := Bad(Revenue)\n";
     let errors = lint_errors(sheet).join("\n");
     assert!(errors.contains("unknown name `Cost`"), "{errors}");
 }
@@ -936,24 +936,22 @@ fn custom_function_is_checked_for_each_call() {
 
 #[test]
 fn custom_function_definitions_are_checked() {
-    let errors = lint_errors("func sum(x) = x\n").join("\n");
+    let errors = lint_errors("fn sum(x) = x\n").join("\n");
     assert!(errors.contains("`sum` is a built-in function"), "{errors}");
-    let errors = lint_errors("func F(x) = x\nfunc F(y) = y\n").join("\n");
+    let errors = lint_errors("fn F(x) = x\nfn F(y) = y\n").join("\n");
     assert!(
         errors.contains("function `F` is already defined"),
         "{errors}"
     );
-    let errors = lint_errors("func F(x, x) = x\n").join("\n");
+    let errors = lint_errors("fn F(x, x) = x\n").join("\n");
     assert!(errors.contains("two parameters named `x`"), "{errors}");
-    let errors = lint_errors("func F(x) = F(x) + 1\n").join("\n");
+    let errors = lint_errors("fn F(x) = F(x) + 1\n").join("\n");
     assert!(errors.contains("function `F` calls itself"), "{errors}");
-    let errors = lint_errors("func A(x) = B(x)\nfunc B(x) = A(x)\n").join("\n");
+    let errors = lint_errors("fn A(x) = B(x)\nfn B(x) = A(x)\n").join("\n");
     assert!(errors.contains("calls itself"), "{errors}");
-    let errors = lint_errors("func F(x) = x + Nope\n").join("\n");
+    let errors = lint_errors("fn F(x) = x + Nope\n").join("\n");
     assert!(errors.contains("unknown name `Nope`"), "{errors}");
-    assert!(
-        lint_errors("func F(t, n) = t[; n].Revenue + t[; Revenue > n].Cost.sum()\n").is_empty()
-    );
+    assert!(lint_errors("fn F(t, n) = t[; n].Revenue + t[; Revenue > n].Cost.sum()\n").is_empty());
 }
 
 #[test]

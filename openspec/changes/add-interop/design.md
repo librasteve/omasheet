@@ -1,4 +1,4 @@
-# Design: XLSX and Markdown interop (Phase 3)
+# Design: XLSX and Markdown interop (Phase 2)
 
 ## Context
 

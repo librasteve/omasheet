@@ -1,4 +1,4 @@
-# Tasks: Table operations (Phase 2)
+# Tasks: Table operations (Phase 3)
 
 ## 0. Settle the open questions
 - [ ] 0.1 Decide the join surface syntax (design Q9) and multiple-match behaviour (design Q10)

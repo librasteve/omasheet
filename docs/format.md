@@ -9,7 +9,7 @@ zone Europe/London
 
 # A named value, and a function.
 const TaxRate = 20%
-func WithTax(x) = x * (1 + TaxRate)
+fn WithTax(x) = x * (1 + TaxRate)
 
 table Sales
 
@@ -55,7 +55,7 @@ accepts them in your locale's form.
 ## Constants, functions, zone
 
 - `const Name = expression`
-- `func Name(a, b) = expression` — sees its parameters, constants and tables,
+- `fn Name(a, b) = expression` — sees its parameters, constants and tables,
   not the row it is called from. The comment above it is its description.
 - `zone Area/City` before the first table says which time zone the sheet's
   date-times are in. Without it, they are in the zone of the machine.

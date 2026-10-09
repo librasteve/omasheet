@@ -67,8 +67,8 @@ D/P/Q numbers are shared across all five changes, so gaps here are intentional.
   `LoadCell { table_id, row_offset: -1, col_id }`, not a runtime name lookup.
 - Storage is column-oriented. MVP may use plain `Vec<T>` per column with
   hand-written slicing; views should not copy.
-- Later phases extend this pipeline without replacing it: table operations
-  beside the kernel (Phase 2), XLSX and Markdown at the edges (Phase 3), units
+- Later phases extend this pipeline without replacing it: XLSX and Markdown
+  at the edges (Phase 2), table operations beside the kernel (Phase 3), units
   and uncertainty in semantic analysis and the value model (Phases 4 and 5).
 
 ## Implementation Notes (as built)

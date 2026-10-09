@@ -1,4 +1,4 @@
-# Functions of your own: `func Name(parameters) = expression`, anywhere
+# Functions of your own: `fn Name(parameters) = expression`, anywhere
 # outside a table. A function sees its parameters, the sheet's constants and
 # tables and the other functions, but not the row it is called from: what it
 # needs from the row, it is given.
@@ -8,19 +8,19 @@
 const VatRate = 20%
 
 # A price with VAT added.
-func WithVat(price) = price * (1 + VatRate)
+fn WithVat(price) = price * (1 + VatRate)
 
 # Profit as a share of revenue; nothing where there is no revenue.
-func Margin(revenue, cost) = if revenue == 0 then 0 else (revenue - cost) / revenue
+fn Margin(revenue, cost) = if revenue == 0 then 0 else (revenue - cost) / revenue
 
 # A customer's name from their ID.
-func CustomerName(id) = Customers[; ID == id].Name // "Unknown"
+fn CustomerName(id) = Customers[; ID == id].Name // "Unknown"
 
 # What a table of orders comes to. A parameter can be a whole table.
-func Worth(orders) = (orders.Qty * orders.Price).sum()
+fn Worth(orders) = (orders.Qty * orders.Price).sum()
 
 # The length of the long side of a right-angled triangle.
-func Hypotenuse(a, b) = sqrt(a ** 2 + b ** 2)
+fn Hypotenuse(a, b) = sqrt(a ** 2 + b ** 2)
 
 table Customers
 

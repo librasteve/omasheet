@@ -315,22 +315,22 @@ function directory, ahead of the built-in ones, with the description written
 above each or else its expression.
 
 #### Scenario: Three ways to call
-- **GIVEN** `func WithTax(x) = x * 120%`
+- **GIVEN** `fn WithTax(x) = x * 120%`
 - **WHEN** `WithTax(100)`, `100.WithTax()` and `100 |> WithTax()` are evaluated
 - **THEN** each result is `120`
 
 #### Scenario: A table as an argument
-- **GIVEN** `func Total(t) = t.Revenue.sum()`
+- **GIVEN** `fn Total(t) = t.Revenue.sum()`
 - **WHEN** `Total(Sales |> filter(Region == "UK"))` is evaluated
 - **THEN** the result is the sum of the UK rows' `Revenue`
 
 #### Scenario: A type error is reported at the call
-- **GIVEN** `func WithTax(x) = x * 120%`
+- **GIVEN** `fn WithTax(x) = x * 120%`
 - **WHEN** `WithTax("ten")` is checked
 - **THEN** an error at the call says that in `WithTax` `*` cannot be applied to Text
 
 #### Scenario: Wrong number of arguments
-- **GIVEN** `func Margin(revenue, cost) = (revenue - cost) / revenue`
+- **GIVEN** `fn Margin(revenue, cost) = (revenue - cost) / revenue`
 - **WHEN** `Margin(1)` is checked
 - **THEN** an error says `Margin` takes 2 arguments and shows `Margin(revenue, cost)`
 

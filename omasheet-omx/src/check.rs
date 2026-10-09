@@ -77,7 +77,7 @@ pub struct Const {
     stat: Option<Static>,
 }
 
-/// A function defined in the sheet with `func`. It is checked afresh at
+/// A function defined in the sheet with `fn`. It is checked afresh at
 /// each call, for the types of that call's arguments.
 #[derive(Clone, Debug)]
 pub struct UserFn {

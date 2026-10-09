@@ -1,4 +1,4 @@
-# Proposal: Table operations (Phase 2)
+# Proposal: Table operations (Phase 3)
 
 ## Why
 

@@ -396,6 +396,14 @@ ApplicationWindow {
             notice = sheet.insertCopied(tab, selTop, selLeft, text);
     }
 
+    function deleteColumns() {
+        if (table.isConsts)
+            return;
+        notice = sheet.deleteColumns(tab, selLeft, selRight - selLeft + 1);
+        if (notice.length === 0)
+            selectCell(curRow, selLeft, false);
+    }
+
     function insertRow(below) {
         insertRows(below, 1);
     }
@@ -1112,10 +1120,26 @@ ApplicationWindow {
                 FooterButton { label: "+ Column"; quiet: true; enabled: !win.table.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
                 FooterButton { label: "+ Formula"; quiet: true; enabled: !win.table.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("computed") }
                 FooterButton { label: "+ Constant"; quiet: true; onClicked: promptDialog.ask("const") }
-                FooterButton { label: "f(x)"; quiet: true; onClicked: functionsDialog.open() }
+                FooterButton { label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
                 FooterButton { label: "?"; quiet: true; onClicked: helpDialog.open() }
             }
         }
+    }
+
+    // The entries of the right-click menu, close set.
+    component MenuEntry: MenuItem {
+        implicitHeight: Math.round(win.fontSize * 1.75)
+        topPadding: 0
+        bottomPadding: 0
+        leftPadding: 12
+        rightPadding: 12
+        font.family: win.font.family
+        font.features: win.font.features
+        font.pixelSize: win.fontSize - 1
+    }
+    component MenuRule: MenuSeparator {
+        topPadding: 3
+        bottomPadding: 3
     }
 
     component FooterButton: Rectangle {
@@ -1161,61 +1185,71 @@ ApplicationWindow {
         readonly property bool hasRows: editable && win.table.rows.length > 0
         readonly property int rowCount: win.selBottom - win.selTop + 1
         onClosed: grid.forceActiveFocus()
+        // Close set, to fit a long menu on a small window.
+        topPadding: 4
+        bottomPadding: 4
+        width: Math.round(win.fontSize * 15)
 
-        MenuItem {
+        MenuEntry {
             text: win.grabKind.length > 0 ? "Cut to move" : "Cut"
             enabled: cellMenu.hasRows || win.grabKind.length > 0
             onTriggered: win.cutSelection()
         }
-        MenuItem { text: "Copy"; enabled: win.table.rows.length > 0; onTriggered: win.copySelection() }
-        MenuItem {
+        MenuEntry { text: "Copy"; enabled: win.table.rows.length > 0; onTriggered: win.copySelection() }
+        MenuEntry {
             text: win.grabbedHere ? "Move " + (win.grabbed.rows ? "row" : "column") + " here" : "Paste"
             enabled: win.table.rows.length > 0 || win.grabbedHere
             onTriggered: win.pasteSelection()
         }
-        MenuItem { text: "Paste values"; enabled: cellMenu.hasRows; onTriggered: win.pasteValues() }
-        MenuItem { text: "Insert copied cells"; enabled: cellMenu.editable && win.tabs.length > 0; onTriggered: win.insertCopied() }
-        MenuItem { text: "Clear"; enabled: cellMenu.hasRows; onTriggered: win.clearSelection() }
-        MenuSeparator {}
-        MenuItem { text: "Edit cell"; enabled: win.table.rows.length > 0; onTriggered: win.startEditing(null) }
-        MenuSeparator {}
-        MenuItem {
+        MenuEntry { text: "Paste values"; enabled: cellMenu.hasRows; onTriggered: win.pasteValues() }
+        MenuEntry { text: "Insert copied cells"; enabled: cellMenu.editable && win.tabs.length > 0; onTriggered: win.insertCopied() }
+        MenuEntry { text: "Clear"; enabled: cellMenu.hasRows; onTriggered: win.clearSelection() }
+        MenuRule {}
+        MenuEntry { text: "Edit cell"; enabled: win.table.rows.length > 0; onTriggered: win.startEditing(null) }
+        MenuRule {}
+        MenuEntry {
             text: cellMenu.rowCount > 1 ? "Insert " + cellMenu.rowCount + " rows above" : "Insert row above"
             enabled: cellMenu.editable
             onTriggered: win.insertRows(false, cellMenu.rowCount)
         }
-        MenuItem {
+        MenuEntry {
             text: cellMenu.rowCount > 1 ? "Insert " + cellMenu.rowCount + " rows below" : "Insert row below"
             enabled: cellMenu.editable
             onTriggered: win.insertRows(true, cellMenu.rowCount)
         }
-        MenuItem { text: "Insert rows…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("rows") }
-        MenuItem {
+        MenuEntry { text: "Insert rows…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("rows") }
+        MenuEntry {
             text: cellMenu.rowCount > 1 ? "Delete " + cellMenu.rowCount + " rows" : "Delete row"
             enabled: cellMenu.hasRows
             onTriggered: win.deleteRows()
         }
-        MenuSeparator {}
-        MenuItem {
+        MenuRule {}
+        MenuEntry {
             text: "Rename column…"
             enabled: cellMenu.editable && win.selLeft === win.selRight && win.table.columns.length > 0
             onTriggered: promptDialog.ask("rename")
         }
-        MenuItem {
+        MenuEntry {
+            readonly property int count: win.selRight - win.selLeft + 1
+            text: count > 1 ? "Delete " + count + " columns" : "Delete column"
+            enabled: cellMenu.editable && win.table.columns.length > 1
+            onTriggered: win.deleteColumns()
+        }
+        MenuEntry {
             text: "Insert column left…"
             enabled: cellMenu.editable && win.table.columns.length > 0
             onTriggered: promptDialog.askAt(win.selLeft, win.selLeft)
         }
-        MenuItem {
+        MenuEntry {
             text: "Insert column right…"
             enabled: cellMenu.editable && win.table.columns.length > 0
             onTriggered: promptDialog.askAt(win.selRight, win.selRight + 1)
         }
-        MenuItem { text: "Add column…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("column") }
-        MenuItem { text: "Add formula column…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("computed") }
-        MenuSeparator {}
-        MenuItem { text: "Undo"; enabled: sheet.canUndo; onTriggered: sheet.undo() }
-        MenuItem { text: "Redo"; enabled: sheet.canRedo; onTriggered: sheet.redo() }
+        MenuEntry { text: "Add column…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("column") }
+        MenuEntry { text: "Add formula column…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("computed") }
+        MenuRule {}
+        MenuEntry { text: "Undo"; enabled: sheet.canUndo; onTriggered: sheet.undo() }
+        MenuEntry { text: "Redo"; enabled: sheet.canRedo; onTriggered: sheet.redo() }
     }
 
     // ---- dialogs -----------------------------------------------------------
@@ -1432,6 +1466,9 @@ ApplicationWindow {
         id: functionsDialog
         anchors.centerIn: parent
         modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        Shortcut { sequence: "Esc"; enabled: functionsDialog.visible; onActivated: functionsDialog.close() }
         width: Math.min(win.width - 60, 720)
         height: Math.min(win.height - 60, 640)
         title: "Functions"
@@ -1477,6 +1514,7 @@ ApplicationWindow {
                 placeholderText: "Search, e.g. sqrt, date, zone, custom"
                 font: win.font
                 onTextChanged: functionsDialog.refresh()
+                Keys.onEscapePressed: functionsDialog.close()
             }
             ListView {
                 id: functionsView
@@ -1581,6 +1619,9 @@ ApplicationWindow {
         id: helpDialog
         anchors.centerIn: parent
         modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        Shortcut { sequence: "Esc"; enabled: helpDialog.visible; onActivated: helpDialog.close() }
         width: 560
         title: "Keyboard shortcuts"
         standardButtons: Dialog.Close
@@ -1589,7 +1630,7 @@ ApplicationWindow {
             font: win.font
             text: "Arrows, Tab          Move\n"
                 + "Shift+Arrows, drag   Select a block\n"
-                + "Right click          Menu: insert rows, rename a column, …\n"
+                + "Right click          Menu: insert rows, rename or delete a column, …\n"
                 + "Enter, F2, typing    Edit the cell\n"
                 + "Enter / Tab          Commit and move down / right\n"
                 + "Esc                  Cancel the edit\n"

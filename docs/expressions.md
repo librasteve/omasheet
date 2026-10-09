@@ -44,9 +44,9 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
 - Dates: `today() now() year month day weekday hour minute second date time`
 - Time zones: `to_zone("Asia/Tokyo") utc() local() offset() zone()`
-- Your own: `func` in the sheet
+- Your own: `fn` in the sheet
 
-The app lists them all under `f(x)` (F1).
+The app lists them all under `fn()` (F1).
 
 ## Dates and times
 

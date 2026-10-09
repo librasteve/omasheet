@@ -1,4 +1,4 @@
-# Design: Table operations (Phase 2)
+# Design: Table operations (Phase 3)
 
 ## Context
 

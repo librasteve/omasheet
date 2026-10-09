@@ -39,9 +39,9 @@ Nothing exists yet, so every requirement is ADDED.
 
 Delivered by later changes, in roadmap order:
 
-- `add-table-operations` (Phase 2) — group, join, the `group` pipe stage,
+- `add-interop` (Phase 2) — XLSX import/export and Markdown integration
+- `add-table-operations` (Phase 3) — group, join, the `group` pipe stage,
   partitioned cursor offsets, incremental recalculation
-- `add-interop` (Phase 3) — XLSX import/export and Markdown integration
 - `add-units` (Phase 4) — units, currencies, dimensional analysis
 - `add-uncertainty` (Phase 5) — `±` values and propagation
 

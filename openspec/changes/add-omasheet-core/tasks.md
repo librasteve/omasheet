@@ -37,7 +37,7 @@
 - [x] 4.3 Computed columns `Name := expr`
 - [x] 4.4 Cell rule (`=` formula, otherwise literal) and diagnostics for ragged rows / unknown columns
 - [x] 4.5 Multiple tables per file and cross-table references
-- [x] 4.6 `func` definitions, checked at each call, and listed in the function directory
+- [x] 4.6 `fn` definitions, checked at each call, and listed in the function directory
 
 ## 5. Evaluation (`evaluation`)
 - [x] 5.1 Name resolution and semantic analysis to typed IR

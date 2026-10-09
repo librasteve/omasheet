@@ -1,4 +1,4 @@
-# Tasks: XLSX and Markdown interop (Phase 3)
+# Tasks: XLSX and Markdown interop (Phase 2)
 
 ## 1. XLSX (`xlsx-interop`)
 - [ ] 1.1 `omasheet-xlsx` crate; import via calamine

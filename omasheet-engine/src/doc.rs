@@ -1127,6 +1127,86 @@ impl Document {
         })
     }
 
+    /// Delete `count` columns starting at `first`, with their cells or
+    /// formulas and their type lines, in one undoable step. The columns must
+    /// be all data columns or all formula columns, and a table keeps at least
+    /// one data column. A formula that reads a deleted column is left as it
+    /// is, to be shown as an error.
+    pub fn delete_columns(
+        &mut self,
+        table: usize,
+        first: usize,
+        count: usize,
+    ) -> Result<(), String> {
+        let Some(snap) = self.snapshot.tables.get(table) else {
+            return Err("there is no such table".into());
+        };
+        let n = snap.columns.len();
+        if count == 0 || first + count > n {
+            return Err("there is no such column".into());
+        }
+        let data = snap.columns.iter().filter(|c| c.formula.is_none()).count();
+        let among_data = first + count <= data;
+        if !among_data && first < data {
+            return Err("delete data columns and formula columns separately".into());
+        }
+        if among_data && count >= data {
+            return Err("a table keeps at least one data column".into());
+        }
+        let names: Vec<String> = snap.columns[first..first + count]
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        // Last among their own kind first, so that formulas which count
+        // columns keep reading the ones that stay.
+        let mark = self.undo.len();
+        let end = if among_data { data } else { n };
+        self.move_columns(table, first, count, end - count)?;
+
+        let ast = self.ast();
+        let Some(decl) = self.table_decl(&ast, table) else {
+            return Err("there is no such table".into());
+        };
+        // Whole lines to take out: type lines, and `Name := expression`.
+        let line = |s: usize, e: usize| {
+            let start = self.text[..s].rfind('\n').map_or(0, |k| k + 1);
+            let end = self.text[e..]
+                .find('\n')
+                .map_or(self.text.len(), |k| e + k + 1);
+            (start, end)
+        };
+        let schema = decl.schema.iter().filter(|l| names.contains(&l.name));
+        let mut cuts: Vec<(usize, usize)> = schema
+            .map(|l| line(l.span.start as usize, l.span.end as usize))
+            .collect();
+        let mut text = if among_data {
+            let mut grid = Grid::of(decl);
+            let keep = data - count;
+            grid.header.truncate(keep);
+            for (_, row) in &mut grid.rows {
+                row.truncate(keep);
+                // A lone empty cell would be a blank line, which is not a row.
+                if keep == 1 && row[0].is_empty() {
+                    row[0] = "\"\"".to_string();
+                }
+            }
+            grid.write(decl, &self.text)
+        } else {
+            let gone = decl.computed.iter().filter(|c| names.contains(&c.name));
+            cuts.extend(gone.map(|c| line(c.span.start as usize, c.expr_span.end as usize)));
+            self.text.clone()
+        };
+        // The lines to take out come before the rows, or are the whole
+        // change, so their places in the text still hold.
+        cuts.sort_unstable();
+        for (s, e) in cuts.into_iter().rev() {
+            text.replace_range(s..e, "");
+        }
+        self.commit(text);
+        self.squash(mark);
+        Ok(())
+    }
+
     /// Add an empty data column at the end of the header row.
     pub fn add_column(&mut self, table: usize, name: &str) -> Result<(), String> {
         let name = valid_name(name)?.to_string();
@@ -2007,10 +2087,9 @@ mod tests {
 
     #[test]
     fn functions_are_listed_and_follow_a_renamed_column() {
-        let text =
-            "# Everything sold.\nfunc Sold() = Sales.Revenue.sum()\nfunc Net(a, b) = a - b\n\n"
-                .to_string()
-                + "table Sales\n\nMonth | Revenue | Cost\nJan   | 100     | 60\n\nProfit := Net(Revenue, Cost)\n";
+        let text = "# Everything sold.\nfn Sold() = Sales.Revenue.sum()\nfn Net(a, b) = a - b\n\n"
+            .to_string()
+            + "table Sales\n\nMonth | Revenue | Cost\nJan   | 100     | 60\n\nProfit := Net(Revenue, Cost)\n";
         let mut doc = Document::from_text(&text);
         assert!(doc.snapshot().problems.is_empty());
         let funcs = &doc.snapshot().funcs;
@@ -2021,9 +2100,70 @@ mod tests {
         assert_eq!(col(&doc, 0, 3), ["40"]);
 
         doc.rename_column(0, 1, "Income").unwrap();
-        assert!(doc.text().contains("func Sold() = Sales.Income.sum()"));
+        assert!(doc.text().contains("fn Sold() = Sales.Income.sum()"));
         assert!(doc.text().contains("Profit := Net(Income, Cost)"));
         assert!(doc.snapshot().problems.is_empty());
+    }
+
+    #[test]
+    fn columns_can_be_deleted() {
+        let text = "const Rate = 20%\n\ntable Sales\n\nCost : Int\nRevenue : Int\n\n\
+                    Month | Revenue | Cost | Note\nJan   | 100     | 60   | a\nFeb   | 120     | 70   | = [*-1; *]\n\n\
+                    Profit := Revenue - Cost\nTax := Profit * Rate\n";
+        let mut doc = Document::from_text(text);
+        let names = |doc: &Document| -> Vec<String> {
+            let columns = &doc.snapshot().tables[0].columns;
+            columns.iter().map(|c| c.name.clone()).collect()
+        };
+        // A data column goes with its cells and its type line; the formula
+        // that counts columns still reads the one to its left.
+        doc.delete_columns(0, 0, 1).unwrap();
+        assert_eq!(names(&doc), ["Revenue", "Cost", "Note", "Profit", "Tax"]);
+        assert!(
+            doc.text().contains(
+                "Revenue | Cost | Note\n100     | 60   | a\n120     | 70   | = [*-1; *]\n"
+            ),
+            "{}",
+            doc.text()
+        );
+        assert_eq!(col(&doc, 0, 2), ["a", "70"]);
+        assert!(doc.snapshot().problems.is_empty());
+        // A formula column goes with its line. What read it shows an error.
+        doc.delete_columns(0, 3, 1).unwrap();
+        assert_eq!(names(&doc), ["Revenue", "Cost", "Note", "Tax"]);
+        assert!(!doc.text().contains("Profit :="));
+        assert!(doc.snapshot().problems[0].message.contains("Profit"));
+        // One step each to undo.
+        assert!(doc.undo());
+        assert!(doc.snapshot().problems.is_empty());
+        assert!(doc.undo());
+        assert_eq!(doc.text(), text);
+
+        // Several at once, with their type lines, from the middle.
+        doc.delete_columns(0, 1, 2).unwrap();
+        assert_eq!(names(&doc), ["Month", "Note", "Profit", "Tax"]);
+        assert!(!doc.text().contains("Cost : Int") && !doc.text().contains("Revenue : Int"));
+        assert!(doc.undo());
+        assert_eq!(doc.text(), text);
+
+        // Not both kinds at once, not every data column, not off the table.
+        assert!(
+            doc.delete_columns(0, 3, 2)
+                .unwrap_err()
+                .contains("separately")
+        );
+        assert!(
+            doc.delete_columns(0, 0, 4)
+                .unwrap_err()
+                .contains("at least one")
+        );
+        assert!(doc.delete_columns(0, 5, 2).is_err());
+        assert_eq!(doc.text(), text);
+        // Down to one column, an empty cell is still a row.
+        let mut two = Document::from_text("table T\n\nA | B\n  | 1\nx | 2\n");
+        two.delete_columns(0, 1, 1).unwrap();
+        assert_eq!(two.text(), "table T\n\nA\n\"\"\nx\n");
+        assert_eq!(two.snapshot().tables[0].rows.len(), 2);
     }
 
     #[test]
