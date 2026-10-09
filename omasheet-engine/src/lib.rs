@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! The Omasheet engine: evaluates sheets compiled by `omasheet-omx`.
 //!
 //! [`view`], [`lint`] and [`eval`] are the three things the command line

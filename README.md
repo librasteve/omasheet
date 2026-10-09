@@ -35,4 +35,6 @@ cargo run -p omasheet-cli -- eval '1/3 + 1/6'        # 0.5, exactly
 - [`examples/`](examples) — worked sheets, each with its expected output
 - [`openspec/`](openspec) — the design and the specs
 
-Early and changing. MIT licence.
+Early and changing. MAY CONTAIN ERRORS.
+
+Copyright (c) 2026 Stephen Roe. MIT licence; see [LICENSE](LICENSE).

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! Calendar dates as a count of days since 1970-01-01 (proleptic Gregorian),
 //! times of day as a count of seconds since midnight, and date-times as a
 //! count of seconds since the start of 1970-01-01. None has a time zone.

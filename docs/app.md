@@ -45,3 +45,7 @@ omasheet lint sheet.omx               # check without calculating
 | `--zone Europe/London` | stand in for this machine's time zone |
 
 From the source tree, `omasheet` is `cargo run -p omasheet-cli --`.
+
+---
+
+Copyright (c) 2026 Stephen Roe. MIT licence.

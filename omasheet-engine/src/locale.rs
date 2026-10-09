@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! How the user's locale writes dates and times, as the operating system
 //! has it.
 

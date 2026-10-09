@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! OMX: the Omasheet expression language and the `.omx` sheet format.
 //!
 //! This crate turns source text into a checked [`Program`]: lexing, parsing,

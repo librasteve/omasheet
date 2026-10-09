@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! The functions of OMX: what each is called, and what a person browsing
 //! them is told. The checker and the function directory both read this.
 

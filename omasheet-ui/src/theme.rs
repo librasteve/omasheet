@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! Colours from the current Omarchy theme, with fallbacks elsewhere.
 
 #[derive(Debug, Clone, PartialEq)]

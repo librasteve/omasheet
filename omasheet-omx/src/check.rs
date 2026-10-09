@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! Semantic analysis: from syntax to a checked [`Program`].
 //!
 //! Resolves every name, checks types and shapes, decides what each cell is

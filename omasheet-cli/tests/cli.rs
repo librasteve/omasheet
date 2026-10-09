@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! The `omasheet` binary, end to end: the `cli` spec scenarios and the
 //! `examples/` corpus compared with its expected output.
 

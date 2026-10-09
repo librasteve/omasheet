@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material

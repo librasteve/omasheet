@@ -93,7 +93,7 @@ Not built in this phase, though the specs mention them:
 
 - **A distinct matrix shape.** `Sales[3..7; 2..5]` returns a table (rows and
   named columns) with those dimensions rather than an unnamed matrix; there is
-  no matrix literal. Matrices arrive in Phase 6 (`add-matrix-multiplication`).
+  no matrix literal. Matrices are not in any planned change.
 - **Complex numbers.** A number followed by `i` is imaginary, so `3+4i` is a
   `Complex`; `Complex(re, im)` builds one from parts, and `Complex` is a column
   type. They are pairs of `Num`, never exact, and have no order.

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! Evaluation of a checked program.
 //!
 //! Cells are calculated on demand and remembered, so each is calculated once

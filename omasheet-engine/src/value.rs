@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! Runtime values and exact arithmetic.
 //!
 //! Exact numbers are `Int` (arbitrary precision) or `Ratio` (an

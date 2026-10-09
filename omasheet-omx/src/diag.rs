@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! Source locations and diagnostics.
 
 /// A byte range in one source text.

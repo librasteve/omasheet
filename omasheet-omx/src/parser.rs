@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! Recursive-descent parser for OMX expressions.
 //!
 //! Precedence, loosest first:

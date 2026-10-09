@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! Tokens for OMX expressions.
 
 use crate::date;

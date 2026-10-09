@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! Dependency analysis: calculation order and cycle detection.
 //!
 //! Nodes are constants and columns. An edge `a -> b` means "a reads b", with a

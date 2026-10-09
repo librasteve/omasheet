@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! An editable sheet for interactive front ends.
 //!
 //! The `.omx` text stays the single source of truth: every edit rewrites the

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! The checked form of an expression: every name is resolved to an index, so
 //! evaluation never looks anything up by text.
 

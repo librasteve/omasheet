@@ -71,7 +71,7 @@ column of the formula, or the one `n` columns to its right or left.
 
 #### Scenario: Two-dimensional slice
 - **WHEN** `Sales[3..7; 2..5]` is evaluated
-- **THEN** the result is a 4 × 5 matrix of rows 2–5 and columns 3–7
+- **THEN** the result is an array of cells, rows 2–5 by columns 3–7: four rows by five columns
 
 #### Scenario: Empty or missing slot selects the whole dimension
 - **WHEN** `Sales[Revenue]`, `Sales[Revenue; ]` and `Sales[; 2]` are evaluated
@@ -348,8 +348,8 @@ multiple lines.
 - **THEN** the result is `1800`
 
 ### Requirement: Value shapes
-Every OMX value SHALL have a shape that is one of scalar, vector, matrix
-(2-D), or table (2-D with named, typed columns). Selection SHALL reduce shape
+Every OMX value SHALL have a shape that is one of scalar, vector, or table
+(2-D with named, typed columns). Selection SHALL reduce shape
 predictably: a table with a row predicate or row range is a table; a table with a
 single column is a vector; a single row and single column is a scalar.
 

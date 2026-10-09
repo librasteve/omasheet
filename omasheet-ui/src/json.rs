@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! The document snapshot as JSON, for the QML side to parse.
 
 use omasheet_engine::doc::{FuncSnap, Snapshot};

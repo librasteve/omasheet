@@ -59,3 +59,7 @@ accepts them in your locale's form.
   not the row it is called from. The comment above it is its description.
 - `zone Area/City` before the first table says which time zone the sheet's
   date-times are in. Without it, they are in the zone of the machine.
+
+---
+
+Copyright (c) 2026 Stephen Roe. MIT licence.

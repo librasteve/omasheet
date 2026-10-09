@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! Omasheet: an interactive grid for `.omx` sheets.
 //!
 //! The window is Qt Quick (`qml/Main.qml`); everything it shows and every

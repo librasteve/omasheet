@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! Syntax trees for OMX expressions.
 
 use crate::diag::Span;

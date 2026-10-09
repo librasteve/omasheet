@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! The `omasheet` command.
 
 use clap::{Args, Parser, Subcommand};

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! Time zones, from the time zone database of the operating system.
 //!
 //! A date-time is kept as a wall clock: the seconds since the start of

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! The scenarios of the Phase 1 specs (`openspec/changes/add-omasheet-core`),
 //! one test per scenario where it can be checked from the outside.
 

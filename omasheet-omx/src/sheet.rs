@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! Parser for the line-oriented `.omx` sheet format.
 //!
 //! ```omx

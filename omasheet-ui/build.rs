@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 use cxx_qt_build::{CxxQtBuilder, QmlModule};
 
 fn main() {

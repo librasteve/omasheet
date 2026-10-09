@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! Static types and shapes.
 
 use std::fmt;

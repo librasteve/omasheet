@@ -55,3 +55,7 @@ The app lists them all under `f(x)` (F1).
 - Two of a kind subtract to a number: `2025-03-01 - 2024-03-01` is `365`.
 - `Date + Time` is a `DateTime`.
 - Across time zones, comparison and subtraction use the instant.
+
+---
+
+Copyright (c) 2026 Stephen Roe. MIT licence.

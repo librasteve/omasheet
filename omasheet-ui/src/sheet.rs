@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Stephen Roe
+
 //! The `Sheet` object the QML window talks to.
 
 use crate::{json, theme};
