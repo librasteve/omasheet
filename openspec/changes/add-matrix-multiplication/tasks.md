@@ -2,6 +2,7 @@
 
 ## 0. Settle the open questions
 - [ ] 0.1 Confirm the operator (design Q13) and the 1 × 1 rule (design Q14)
+- [ ] 0.2 Decide how a nearly singular `Num` matrix is treated (design Q15)
 
 ## 1. Matrix values (`omx-expressions`)
 - [ ] 1.1 Matrix value in the engine and matrix shape in the checker
@@ -18,5 +19,11 @@
 - [ ] 2.4 `transpose()`
 - [ ] 2.5 Verify exactness for `Int` and `Rational`, and widening for `Num` and `Complex`
 
-## 3. Directory
-- [ ] 3.1 List `transpose` and `matrix` in the function directory
+## 3. Inverse and determinant (`omx-expressions`, `evaluation`)
+- [ ] 3.1 `det()` by fraction-free elimination, exact for `Int` and `Rational`
+- [ ] 3.2 `inverse()` by exact elimination, with an error for a singular matrix
+- [ ] 3.3 A matrix that is not square rejected before execution where its shape is known
+- [ ] 3.4 Verify `m @ m.inverse()` is exactly the identity for `Int` and `Rational` matrices
+
+## 4. Directory
+- [ ] 4.1 List `transpose`, `inverse`, `det` and `matrix` in the function directory

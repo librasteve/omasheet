@@ -446,12 +446,14 @@ fn rewritten(text: &str, ast: &SheetAst, mut edits: Vec<Edit>) -> String {
 }
 
 /// Keep one slot on the rows or columns it picks while they are rearranged:
-/// `place[k]` is where the k-th ends up, and `own` is where the formula is.
+/// `place[k]` is where the k-th ends up, of `count` in all once any are
+/// added, and `own` is where the formula is.
 /// A single pick stays on its row or column; a range follows its two ends.
 fn follow_slot(
     slot: &Expr,
     own: Option<usize>,
     place: &[usize],
+    count: usize,
     text: &str,
     edits: &mut Vec<Edit>,
 ) {
@@ -471,20 +473,33 @@ fn follow_slot(
             return;
         };
         let (a, b) = (a.min(b) as i64, a.max(b) as i64);
-        put(edits, text, lo.span, first.write(a, new_own, n));
-        put(edits, text, hi.span, last.write(b + past, new_own, n));
+        put(edits, text, lo.span, first.write(a, new_own, count));
+        put(edits, text, hi.span, last.write(b + past, new_own, count));
     } else if let Some(pick) = Pick::of(slot).filter(|p| *p != Pick::Here)
         && let Some(to) = pick.at(own, n).and_then(moved)
     {
-        put(edits, text, slot.span, pick.write(to as i64, new_own, n));
+        put(
+            edits,
+            text,
+            slot.span,
+            pick.write(to as i64, new_own, count),
+        );
     }
 }
 
 /// The edits that keep every row or column picked by counting on the row or
 /// column it was, when those of table `t` are rearranged so that `place[k]`
-/// is where the k-th ends up. An offset in a formula column is left alone:
+/// is where the k-th ends up, of `count` in all. An offset in a formula column
+/// is left alone:
 /// one formula serves every row, so `*-1` goes on meaning the row before.
-fn follow_move(ast: &SheetAst, text: &str, t: usize, rows: bool, place: &[usize]) -> Vec<Edit> {
+fn follow_move(
+    ast: &SheetAst,
+    text: &str,
+    t: usize,
+    rows: bool,
+    place: &[usize],
+    count: usize,
+) -> Vec<Edit> {
     let mut edits = Vec::new();
     let name = ast.tables[t].name.as_str();
     for (at, expr) in formulas(ast) {
@@ -504,7 +519,7 @@ fn follow_move(ast: &SheetAst, text: &str, t: usize, rows: bool, place: &[usize]
                 .filter(|_| relative)
                 .map(|(r, c)| if rows { r } else { c });
             if let Some(slot) = slot {
-                follow_slot(slot, own, place, text, &mut edits);
+                follow_slot(slot, own, place, count, text, &mut edits);
             }
         }
     }
@@ -1120,7 +1135,12 @@ impl Document {
                 snap.name
             ));
         }
-        self.edit_grid(table, |grid| {
+        // The formula columns each move along one.
+        let n = snap.columns.len();
+        let data = snap.columns.iter().filter(|c| c.formula.is_none()).count();
+        let place: Vec<usize> = (0..n).map(|k| if k < data { k } else { k + 1 }).collect();
+        let followed = self.followed_to(table, false, &place, n + 1);
+        let text = self.grid_edited(&followed, table, |grid| {
             // A lone column stored its empty cells as `""`.
             if grid.header.len() == 1 {
                 for (_, row) in &mut grid.rows {
@@ -1134,6 +1154,9 @@ impl Document {
                 row.push(String::new());
             }
         });
+        if let Some(text) = text {
+            self.commit(text);
+        }
         Ok(())
     }
 
@@ -1240,6 +1263,16 @@ impl Document {
     /// picks by counting still the one it was, once they are rearranged so
     /// that the k-th is `order[k]`.
     fn followed(&self, table: usize, rows: bool, order: &[usize]) -> String {
+        let mut place = vec![0; order.len()];
+        for (new, &old) in order.iter().enumerate() {
+            place[old] = new;
+        }
+        self.followed_to(table, rows, &place, order.len())
+    }
+
+    /// The same, for the k-th going to `place[k]` of `count` in all: more
+    /// than there were, when some are being added.
+    fn followed_to(&self, table: usize, rows: bool, place: &[usize], count: usize) -> String {
         let ast = self.ast();
         let name = self.snapshot.tables.get(table).map(|t| t.name.as_str());
         let Some(t) = ast
@@ -1249,12 +1282,138 @@ impl Document {
         else {
             return self.text.clone();
         };
-        let mut place = vec![0; order.len()];
-        for (new, &old) in order.iter().enumerate() {
-            place[old] = new;
-        }
-        let edits = follow_move(&ast, &self.text, t, rows, &place);
+        let edits = follow_move(&ast, &self.text, t, rows, place, count);
         rewritten(&self.text, &ast, edits)
+    }
+
+    /// Make the steps taken since there were `mark` to undo into one.
+    fn squash(&mut self, mark: usize) {
+        self.undo.truncate(mark + 1);
+    }
+
+    /// A name for a copy of column `name`: `Name_copy001`, or the first
+    /// after it that is free.
+    fn copy_name(&self, table: usize, name: &str) -> String {
+        let snap = &self.snapshot;
+        let taken = |n: &str| {
+            snap.tables
+                .get(table)
+                .is_some_and(|t| t.columns.iter().any(|c| c.name == n))
+                || snap.consts.iter().any(|c| c.name == n)
+                || snap.tables.iter().any(|t| t.name == n)
+        };
+        (1..)
+            .map(|k| format!("{name}_copy{k:03}"))
+            .find(|n| !taken(n))
+            .unwrap_or_default()
+    }
+
+    /// Add an empty data column as column `at`, or as the last data column
+    /// if `at` is among the formula columns, in one undoable step.
+    pub fn insert_column(&mut self, table: usize, at: usize, name: &str) -> Result<(), String> {
+        let mark = self.undo.len();
+        self.add_column(table, name)?;
+        let columns = &self.snapshot.tables[table].columns;
+        let last = columns.iter().filter(|c| c.formula.is_none()).count() - 1;
+        self.move_columns(table, last, 1, at.min(last))?;
+        self.squash(mark);
+        Ok(())
+    }
+
+    /// Add `Name := expression` as column `at`, or as the first formula
+    /// column if `at` is among the data columns, in one undoable step.
+    pub fn insert_computed(
+        &mut self,
+        table: usize,
+        at: usize,
+        name: &str,
+        expr: &str,
+    ) -> Result<(), String> {
+        let mark = self.undo.len();
+        self.add_computed(table, name, expr)?;
+        let columns = &self.snapshot.tables[table].columns;
+        let data = columns.iter().filter(|c| c.formula.is_none()).count();
+        let last = columns.len() - 1;
+        self.move_columns(table, last, 1, at.clamp(data, last))?;
+        self.squash(mark);
+        Ok(())
+    }
+
+    /// Put copies of the columns `cols` of a table in at column `at`, in one
+    /// undoable step. A data column is copied with its cells as they are
+    /// written, and a formula column with its formula; each goes among its
+    /// own kind, under a name like `Name_copy001`.
+    pub fn insert_copies(&mut self, table: usize, cols: &[usize], at: usize) -> Result<(), String> {
+        let Some(snap) = self.snapshot.tables.get(table) else {
+            return Err("there is no such table".into());
+        };
+        if cols.iter().any(|c| *c >= snap.columns.len()) {
+            return Err("there is no such column".into());
+        }
+        let mark = self.undo.len();
+        let (mut cols, mut at) = (cols.to_vec(), at);
+        for k in 0..cols.len() {
+            let column = self.snapshot.tables[table].columns[cols[k]].clone();
+            let name = self.copy_name(table, &column.name);
+            let data = |doc: &Document| {
+                let columns = &doc.snapshot.tables[table].columns;
+                columns.iter().filter(|c| c.formula.is_none()).count()
+            };
+            // Where the copy goes, among its own kind.
+            let to = match &column.formula {
+                None => {
+                    let to = at.min(data(self));
+                    self.insert_column(table, to, &name)?;
+                    to
+                }
+                Some(expr) => {
+                    let to = at.max(data(self));
+                    self.insert_computed(table, to, &name, expr)?;
+                    to
+                }
+            };
+            for col in &mut cols {
+                if *col >= to {
+                    *col += 1;
+                }
+            }
+            if column.formula.is_none() {
+                let from = cols[k];
+                self.edit_grid(table, |grid| {
+                    for (_, row) in &mut grid.rows {
+                        if let Some(cell) = row.get(from).cloned() {
+                            row[to] = cell;
+                        }
+                    }
+                });
+            }
+            at = to + 1;
+        }
+        self.squash(mark);
+        Ok(())
+    }
+
+    /// Add rows at row `row` of a table and put `block` in them from column
+    /// `col`, in one undoable step.
+    pub fn insert_cells(
+        &mut self,
+        table: usize,
+        (row, col): (usize, usize),
+        block: &[Vec<String>],
+    ) -> bool {
+        let mark = self.undo.len();
+        if !self.insert_rows(table, row, block.len()) {
+            return false;
+        }
+        let mut cells = Vec::new();
+        for (i, line) in block.iter().enumerate() {
+            for (j, text) in line.iter().enumerate() {
+                cells.push((row + i, col + j, text.clone()));
+            }
+        }
+        self.set_cells(table, &cells);
+        self.squash(mark);
+        true
     }
 
     /// Move `count` rows starting at `first` so that the first of them
@@ -1389,7 +1548,13 @@ impl Document {
         if expr.is_empty() {
             return Err("a computed column needs an expression".into());
         }
-        let ast = self.ast();
+        let Some(n) = self.snapshot.tables.get(table).map(|t| t.columns.len()) else {
+            return Err("there is no such table".into());
+        };
+        // A column counted from the end is one further from it.
+        let place: Vec<usize> = (0..n).collect();
+        let followed = self.followed_to(table, false, &place, n + 1);
+        let ast = parse_sheet(&followed, 0, &mut Vec::new());
         let Some(decl) = self.table_decl(&ast, table) else {
             return Err("there is no such table".into());
         };
@@ -1413,7 +1578,7 @@ impl Document {
             Some(end) if end > rows_end => (end, "\n"),
             _ => (rows_end, "\n\n"),
         };
-        let mut text = self.text.clone();
+        let mut text = followed.clone();
         text.insert_str(at, &format!("{gap}{name} := {}", expr.replace('\n', " ")));
         self.commit(text);
         Ok(())
@@ -2289,6 +2454,72 @@ mod tests {
         doc.move_rows(0, 0, 3, 12).unwrap();
         doc.move_columns(0, 3, 1, 1).unwrap();
         assert_eq!(failed(&doc), "0 0", "{}", doc.text());
+    }
+
+    #[test]
+    fn columns_can_be_put_in_and_copied() {
+        let text = "const K = T[0; 1] + T[0; -1]\n\ntable T\n\nA | B | C\n1 | 2 | = [*; *-1] * 10 + [*; 0] + [*; -3]\n3 | 4 | = [*; *-2]\n\n\
+                    S := A + [*; 1]\n";
+        let names = |doc: &Document| -> Vec<String> {
+            let columns = &doc.snapshot().tables[0].columns;
+            columns.iter().map(|c| c.name.clone()).collect()
+        };
+        let mut doc = Document::from_text(text);
+        assert_eq!(col(&doc, 0, 2), ["23", "3"]);
+        // A new column to the left of B: what counted B or S still does.
+        doc.insert_column(0, 1, "N").unwrap();
+        assert_eq!(names(&doc), ["A", "N", "B", "C", "S"]);
+        let now = doc.text();
+        assert!(now.contains("const K = T[0; 2] + T[0; -1]\n"), "{now}");
+        assert!(
+            now.contains("| = [*; *-1] * 10 + [*; 0] + [*; -3]\n"),
+            "{now}"
+        );
+        assert!(now.contains("| = [*; *-3]\n"), "{now}");
+        assert!(now.contains("S := A + [*; 2]\n"), "{now}");
+        assert_eq!(col(&doc, 0, 3), ["23", "3"]);
+        assert_eq!(col(&doc, 0, 4), ["3", "7"]);
+        // One step to undo.
+        assert!(doc.undo());
+        assert_eq!(doc.text(), text);
+        assert!(!doc.can_undo());
+
+        // A formula column, before the others or among them.
+        doc.insert_computed(0, 0, "D", "A * 2").unwrap();
+        assert_eq!(names(&doc), ["A", "B", "C", "D", "S"]);
+        assert!(doc.text().contains("const K = T[0; 1] + T[0; -1]\n"));
+        assert_eq!(col(&doc, 0, 3), ["2", "6"]);
+        assert!(doc.undo());
+
+        // Copies: a data column with its cells as written, and a formula
+        // column with its formula, each among its own kind.
+        doc.insert_copies(0, &[2, 3], 0).unwrap();
+        assert_eq!(names(&doc), ["C_copy001", "A", "B", "C", "S_copy001", "S"]);
+        let now = doc.text();
+        assert!(
+            now.contains("S_copy001 := A + [*; 2]\nS := A + [*; 2]\n"),
+            "{now}"
+        );
+        assert_eq!(col(&doc, 0, 4), ["3", "7"]);
+        // The copy counts from where it is, so it reads other cells.
+        assert_eq!(col(&doc, 0, 3), ["23", "3"]);
+        assert!(
+            doc.snapshot().tables[0].rows[1][0]
+                .source
+                .contains("[*; *-2]")
+        );
+        doc.insert_copies(0, &[3], 4).unwrap();
+        assert_eq!(names(&doc)[3..5], ["C", "C_copy002"]);
+        assert!(doc.undo());
+        assert!(doc.undo());
+        assert_eq!(doc.text(), text);
+
+        // Copied cells, put in as new rows.
+        doc.insert_cells(0, (1, 0), &[vec!["8".into(), "9".into()]]);
+        assert_eq!(col(&doc, 0, 0), ["1", "8", "3"]);
+        assert_eq!(col(&doc, 0, 1), ["2", "9", "4"]);
+        assert!(doc.undo());
+        assert_eq!(doc.text(), text);
     }
 
     #[test]

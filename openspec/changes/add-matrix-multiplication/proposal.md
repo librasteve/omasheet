@@ -7,14 +7,17 @@ only three: there is no matrix literal and no matrix value. Weighted totals,
 input–output and transition models, rotations and linear maps are all one matrix
 product, which in a grid spreadsheet is `MMULT` over hand-counted ranges and in
 Phase 1 OMX cannot be written at all. `*` is already element-wise, so the
-product needs its own operator.
+product needs its own operator. Undoing a product needs the inverse, and telling
+whether it can be undone needs the determinant — `MINVERSE` and `MDETERM` in a
+grid spreadsheet, there in floating point and here exact.
 
 ## What Changes
 
 - **omx-expressions** — ADDED: matrix values and literals, a table as a matrix,
-  the matrix product `@`, `transpose`; MODIFIED: broadcasting covers matrices
-- **evaluation** — ADDED: matrix shapes are checked before execution, the
-  product preserves exactness
+  the matrix product `@`, `transpose`, `inverse`, `det`; MODIFIED:
+  broadcasting covers matrices
+- **evaluation** — ADDED: matrix shapes are checked before execution; the
+  product, inverse and determinant preserve exactness
 
 ## Impact
 
@@ -28,7 +31,8 @@ product needs its own operator.
 
 ## Out of Scope
 
-- Inverse, determinant, solving linear systems, decompositions, matrix powers
+- A dedicated solver for linear systems (`inverse(A) @ b` serves),
+  decompositions, matrix powers, pseudo-inverses
 - Arrays of more than two dimensions
 - Sparse or lazily evaluated matrices
 - Units and uncertainty through a product: deltas for `add-units` and

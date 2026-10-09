@@ -338,7 +338,6 @@ ApplicationWindow {
 
     function copySelection() {
         grabbed = null;
-        sheet.forgetCut();
         if (table.isConsts) {
             var lines = [];
             for (var r = selTop; r <= selBottom; r++) {
@@ -349,7 +348,7 @@ ApplicationWindow {
             }
             clipboard.put(lines.join("\n"));
         } else {
-            clipboard.put(sheet.copyCells(tab, selTop, selLeft, selBottom, selRight));
+            clipboard.put(sheet.copyBlock(tab, selTop, selLeft, selBottom, selRight, grabKind === "column"));
         }
     }
 
@@ -374,6 +373,25 @@ ApplicationWindow {
             return;
         }
         sheet.pasteCells(tab, selTop, selLeft, selBottom, selRight, text);
+    }
+
+    // Paste what the copied cells showed, not their formulas.
+    function pasteValues() {
+        notice = "";
+        grabbed = null;
+        var text = clipboard.take();
+        if (text.length > 0 && !table.isConsts)
+            sheet.pasteValues(tab, selTop, selLeft, selBottom, selRight, text);
+    }
+
+    // Make room for what was copied: copied columns become new columns to
+    // the left of the selection, and anything else new rows above it.
+    function insertCopied() {
+        notice = "";
+        grabbed = null;
+        var text = clipboard.take();
+        if (text.length > 0 && !table.isConsts)
+            notice = sheet.insertCopied(tab, selTop, selLeft, text);
     }
 
     function insertRow(below) {
@@ -1153,6 +1171,8 @@ ApplicationWindow {
             enabled: win.table.rows.length > 0 || win.grabbedHere
             onTriggered: win.pasteSelection()
         }
+        MenuItem { text: "Paste values"; enabled: cellMenu.hasRows; onTriggered: win.pasteValues() }
+        MenuItem { text: "Insert copied cells"; enabled: cellMenu.editable && win.tabs.length > 0; onTriggered: win.insertCopied() }
         MenuItem { text: "Clear"; enabled: cellMenu.hasRows; onTriggered: win.clearSelection() }
         MenuSeparator {}
         MenuItem { text: "Edit cell"; enabled: win.table.rows.length > 0; onTriggered: win.startEditing(null) }
@@ -1178,6 +1198,16 @@ ApplicationWindow {
             text: "Rename column…"
             enabled: cellMenu.editable && win.selLeft === win.selRight && win.table.columns.length > 0
             onTriggered: promptDialog.ask("rename")
+        }
+        MenuItem {
+            text: "Insert column left…"
+            enabled: cellMenu.editable && win.table.columns.length > 0
+            onTriggered: promptDialog.askAt(win.selLeft, win.selLeft)
+        }
+        MenuItem {
+            text: "Insert column right…"
+            enabled: cellMenu.editable && win.table.columns.length > 0
+            onTriggered: promptDialog.askAt(win.selRight, win.selRight + 1)
         }
         MenuItem { text: "Add column…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("column") }
         MenuItem { text: "Add formula column…"; enabled: cellMenu.editable; onTriggered: promptDialog.ask("computed") }
@@ -1253,6 +1283,8 @@ ApplicationWindow {
         width: 460
         property string kind: ""
         property int column: 0
+        // Where a new column goes; -1 for the end.
+        property int at: -1
         readonly property bool needsExpr: kind === "computed" || kind === "const"
         title: kind === "table" ? "New table"
              : kind === "rows" ? "Insert rows in " + win.table.name
@@ -1269,8 +1301,17 @@ ApplicationWindow {
             onRejected: promptDialog.reject()
         }
 
+        // Ask for a column next to column `beside`, to be column `where`: a
+        // formula column if that one is.
+        function askAt(beside, where) {
+            var column = win.table.columns[beside];
+            ask(column && column.computed ? "computed" : "column");
+            at = where;
+        }
+
         function ask(what) {
             kind = what;
+            at = -1;
             column = win.curCol;
             nameField.text = what === "rename" && win.table.columns[column] ? win.table.columns[column].name : "";
             exprField.text = "";
@@ -1298,8 +1339,10 @@ ApplicationWindow {
             var message = kind === "rows" ? addRows()
                 : kind === "rename" ? sheet.renameColumn(win.tab, column, nameField.text)
                 : kind === "table" ? sheet.addTable(nameField.text)
-                : kind === "column" ? sheet.addColumn(win.tab, nameField.text)
-                : kind === "computed" ? sheet.addComputed(win.tab, nameField.text, exprField.text)
+                : kind === "column" ? (at < 0 ? sheet.addColumn(win.tab, nameField.text)
+                                              : sheet.insertColumn(win.tab, at, nameField.text))
+                : kind === "computed" ? (at < 0 ? sheet.addComputed(win.tab, nameField.text, exprField.text)
+                                                : sheet.insertComputed(win.tab, at, nameField.text, exprField.text))
                 : sheet.addConst(nameField.text, exprField.text);
             if (message.length > 0) {
                 problem.text = message;

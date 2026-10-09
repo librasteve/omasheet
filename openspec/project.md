@@ -52,7 +52,7 @@ verified and archived before the next begins.
 | 3 | `add-interop` | XLSX import and export; Markdown `{{ }}` and `omx` blocks; `import`, `export`, `render` | A workbook imports to `.omx` and exports back; `omasheet render report.md` produces HTML |
 | 4 | `add-units` | Unit literals, dimension checking, currencies, column units, user-defined units, display units | `Revenue + Weight` is rejected by `lint`; unit columns export to XLSX |
 | 5 | `add-uncertainty` | `±` values, propagation, `Uncertain<…>` columns, display | `10 ± 0.1 m` propagates through arithmetic and aggregation |
-| 6 | `add-matrix-multiplication` | Matrix values and literals, tables as matrices, the matrix product `@`, `transpose` | `[[1, 2], [3, 4]] @ [[5, 6], [7, 8]]` gives `[[19, 22], [43, 50]]` exactly, and a mismatch of shapes is rejected by `lint` |
+| 6 | `add-matrix-multiplication` | Matrix values and literals, tables as matrices, the matrix product `@`, `transpose`, `inverse`, `det` | `[[1, 2], [3, 4]] @ [[5, 6], [7, 8]]` gives `[[19, 22], [43, 50]]` and `M @ M.inverse()` the identity, both exactly; a mismatch of shapes is rejected by `lint` |
 
 Alongside the phases, `add-interactive-app` adds the desktop window: an editable
 grid over the same engine. It needs only Phase 1 and gains each later phase's

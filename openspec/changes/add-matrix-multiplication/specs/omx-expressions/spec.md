@@ -1,6 +1,6 @@
 # omx-expressions
 
-Matrix values, the matrix product and `transpose`.
+Matrix values, the matrix product, `transpose`, `inverse` and `det`.
 
 ## ADDED Requirements
 
@@ -81,6 +81,43 @@ function directory.
 #### Scenario: Transpose
 - **WHEN** `[[1, 2, 3], [4, 5, 6]].transpose()` is evaluated
 - **THEN** the result is `[[1, 4], [2, 5], [3, 6]]`
+
+### Requirement: Determinant
+OMX SHALL provide `det`, usable as `det(m)` or `m.det()`, giving the determinant
+of a square matrix as a scalar, and SHALL list it in the function directory. A
+matrix that is not square SHALL be an error that states its shape.
+
+#### Scenario: Determinant
+- **WHEN** `det([[1, 2], [3, 4]])` is evaluated
+- **THEN** the result is the `Int` `-2`
+
+#### Scenario: Singular matrix
+- **WHEN** `[[1, 2], [2, 4]].det()` is evaluated
+- **THEN** the result is `0`
+
+#### Scenario: Not square
+- **WHEN** `det([[1, 2, 3], [4, 5, 6]])` is checked
+- **THEN** an error says a 2 × 3 matrix has no determinant
+
+### Requirement: Inverse
+OMX SHALL provide `inverse`, usable as `inverse(m)` or `m.inverse()`, giving the
+matrix that multiplied by `m` with `@`, on either side, is the identity, and
+SHALL list it in the function directory. A matrix that is not square SHALL be an
+error that states its shape, and a matrix whose determinant is zero SHALL be an
+error that says it is singular.
+
+#### Scenario: Inverse
+- **WHEN** `inverse([[1, 2], [3, 4]])` is evaluated
+- **THEN** the result is exactly `[[-2, 1], [3/2, -1/2]]`
+
+#### Scenario: Undoing a product
+- **GIVEN** `const A = [[2, 1], [1, 3]]` and `const B = [3, 5]`
+- **WHEN** `A.inverse() @ B` is evaluated
+- **THEN** the result is exactly `[4/5, 7/5]`, the `x` for which `A @ x` is `B`
+
+#### Scenario: Singular matrix
+- **WHEN** `inverse([[1, 2], [2, 4]])` is evaluated
+- **THEN** an error says the matrix is singular and has no inverse
 
 ## MODIFIED Requirements
 

@@ -80,9 +80,41 @@ pub mod qobject {
             row1: i32,
             col1: i32,
         ) -> QString;
-        /// Forget the cells that were cut: the clipboard now holds a copy.
+        /// Copy a block of cells as `copy_cells` does, remembering where it
+        /// came from: `columns` says that it is whole columns.
         #[qinvokable]
-        fn forget_cut(self: Pin<&mut Sheet>);
+        fn copy_block(
+            self: Pin<&mut Sheet>,
+            table: i32,
+            row0: i32,
+            col0: i32,
+            row1: i32,
+            col1: i32,
+            columns: bool,
+        ) -> QString;
+        /// Paste as `paste_cells` does, but what the copied cells showed and
+        /// not their formulas.
+        #[qinvokable]
+        fn paste_values(
+            self: Pin<&mut Sheet>,
+            table: i32,
+            row0: i32,
+            col0: i32,
+            row1: i32,
+            col1: i32,
+            text: &QString,
+        );
+        /// Make room for what was copied and put it there: copied columns
+        /// become new columns at `col0`, and anything else new rows at
+        /// `row0`. Returns an error message, or an empty string.
+        #[qinvokable]
+        fn insert_copied(
+            self: Pin<&mut Sheet>,
+            table: i32,
+            row0: i32,
+            col0: i32,
+            text: &QString,
+        ) -> QString;
         /// Paste tab-separated text at a block; a single value fills the block.
         #[qinvokable]
         fn paste_cells(
@@ -115,6 +147,18 @@ pub mod qobject {
         fn add_computed(
             self: Pin<&mut Sheet>,
             table: i32,
+            name: &QString,
+            expr: &QString,
+        ) -> QString;
+        /// Add an empty column as column `at`.
+        #[qinvokable]
+        fn insert_column(self: Pin<&mut Sheet>, table: i32, at: i32, name: &QString) -> QString;
+        /// Add a formula column as column `at`.
+        #[qinvokable]
+        fn insert_computed(
+            self: Pin<&mut Sheet>,
+            table: i32,
+            at: i32,
             name: &QString,
             expr: &QString,
         ) -> QString;
@@ -193,6 +237,19 @@ pub struct SheetRust {
     saved: String,
     /// The cells last cut, until they are pasted.
     cut: Option<Cut>,
+    /// The cells last copied.
+    copied: Option<Copied>,
+}
+
+/// A block of cells that was copied.
+struct Copied {
+    table: usize,
+    /// What went to the clipboard: the cells as they are written.
+    text: String,
+    /// The same cells as they were shown.
+    values: String,
+    /// The names of the columns, if whole columns were copied.
+    columns: Option<Vec<String>>,
 }
 
 /// A block of cells that was cut, to be moved by the next paste.
@@ -230,6 +287,7 @@ impl Default for SheetRust {
             path: None,
             saved: BLANK.to_string(),
             cut: None,
+            copied: None,
         }
     }
 }
@@ -400,9 +458,17 @@ impl qobject::Sheet {
         self.edit(|doc| doc.set_cell(index(table), index(row), index(col), &text));
     }
 
-    fn copy_cells(&self, table: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {
+    /// A block of cells as tab-separated text: what they showed if `values`,
+    /// otherwise what they hold.
+    fn block_text(
+        &self,
+        table: i32,
+        (row0, col0): (i32, i32),
+        (row1, col1): (i32, i32),
+        values: bool,
+    ) -> String {
         let Some(t) = self.rust().doc.snapshot().tables.get(index(table)) else {
-            return QString::default();
+            return String::new();
         };
         let mut lines = Vec::new();
         for row in t.rows.iter().take(index(row1) + 1).skip(index(row0)) {
@@ -413,7 +479,7 @@ impl qobject::Sheet {
                 .skip(index(col0))
                 // A computed cell has no source of its own, so copy its value.
                 .map(|(c, cell)| {
-                    if t.columns[c].formula.is_some() {
+                    if values || t.columns[c].formula.is_some() {
                         cell.display.as_str()
                     } else {
                         cell.source.as_str()
@@ -422,7 +488,93 @@ impl qobject::Sheet {
                 .collect();
             lines.push(cells.join("\t"));
         }
-        QString::from(&lines.join("\n"))
+        lines.join("\n")
+    }
+
+    fn copy_cells(&self, table: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {
+        QString::from(&self.block_text(table, (row0, col0), (row1, col1), false))
+    }
+
+    fn copy_block(
+        mut self: Pin<&mut Self>,
+        table: i32,
+        row0: i32,
+        col0: i32,
+        row1: i32,
+        col1: i32,
+        columns: bool,
+    ) -> QString {
+        let text = self.block_text(table, (row0, col0), (row1, col1), false);
+        let values = self.block_text(table, (row0, col0), (row1, col1), true);
+        let names: Option<Vec<String>> =
+            self.rust()
+                .doc
+                .snapshot()
+                .tables
+                .get(index(table))
+                .map(|t| {
+                    let picked = t.columns.iter().take(index(col1) + 1).skip(index(col0));
+                    picked.map(|c| c.name.clone()).collect()
+                });
+        let mut rust = self.as_mut().rust_mut();
+        rust.cut = None;
+        rust.copied = Some(Copied {
+            table: index(table),
+            text: text.clone(),
+            values,
+            columns: names.filter(|_| columns),
+        });
+        QString::from(&text)
+    }
+
+    /// What was last copied, if `text` from the clipboard is still that.
+    fn copied(&self, text: &str) -> Option<&Copied> {
+        let copied = self.rust().copied.as_ref()?;
+        (parse_block(&copied.text) == parse_block(text)).then_some(copied)
+    }
+
+    fn paste_values(
+        mut self: Pin<&mut Self>,
+        table: i32,
+        row0: i32,
+        col0: i32,
+        row1: i32,
+        col1: i32,
+        text: &QString,
+    ) {
+        let text = text.to_string();
+        let values = self.copied(&text).map(|c| c.values.clone());
+        self.as_mut().rust_mut().cut = None;
+        let block = parse_block(values.as_deref().unwrap_or(&text));
+        self.put_block(table, (index(row0), index(col0)), (row1, col1), block);
+    }
+
+    fn insert_copied(
+        mut self: Pin<&mut Self>,
+        table: i32,
+        row0: i32,
+        col0: i32,
+        text: &QString,
+    ) -> QString {
+        let text = text.to_string();
+        self.as_mut().rust_mut().cut = None;
+        // Whole columns copied from this table go in as columns, if they
+        // are all still there.
+        let columns = self.copied(&text).and_then(|copied| {
+            let names = copied.columns.as_ref()?;
+            let t = self.rust().doc.snapshot().tables.get(copied.table)?;
+            let at = |name: &String| t.columns.iter().position(|c| &c.name == name);
+            let cols: Option<Vec<usize>> = names.iter().map(at).collect();
+            cols.filter(|_| copied.table == index(table))
+        });
+        match columns {
+            Some(cols) => self.try_edit(|doc| doc.insert_copies(index(table), &cols, index(col0))),
+            None => {
+                let block = parse_block(&text);
+                self.edit(|doc| doc.insert_cells(index(table), (index(row0), index(col0)), &block));
+                QString::default()
+            }
+        }
     }
 
     fn cut_cells(
@@ -443,10 +595,6 @@ impl qobject::Sheet {
             after,
         });
         text
-    }
-
-    fn forget_cut(mut self: Pin<&mut Self>) {
-        self.as_mut().rust_mut().cut = None;
     }
 
     fn paste_cells(
@@ -471,6 +619,17 @@ impl qobject::Sheet {
             self.edit(|doc| doc.paste_cut(cut.table, cut.at, (row0, col0), &block));
             return;
         }
+        self.put_block(table, (row0, col0), (row1, col1), block);
+    }
+
+    /// Put a block of cells down at a block; a single cell fills it.
+    fn put_block(
+        self: Pin<&mut Self>,
+        table: i32,
+        (row0, col0): (usize, usize),
+        (row1, col1): (i32, i32),
+        block: Vec<Vec<String>>,
+    ) {
         let single = block.len() == 1 && block[0].len() == 1;
         let computed: Vec<bool> = self
             .rust()
@@ -531,6 +690,22 @@ impl qobject::Sheet {
     fn add_column(self: Pin<&mut Self>, table: i32, name: &QString) -> QString {
         let name = name.to_string();
         self.try_edit(|doc| doc.add_column(index(table), &name))
+    }
+
+    fn insert_column(self: Pin<&mut Self>, table: i32, at: i32, name: &QString) -> QString {
+        let name = name.to_string();
+        self.try_edit(|doc| doc.insert_column(index(table), index(at), &name))
+    }
+
+    fn insert_computed(
+        self: Pin<&mut Self>,
+        table: i32,
+        at: i32,
+        name: &QString,
+        expr: &QString,
+    ) -> QString {
+        let (name, expr) = (name.to_string(), expr.to_string());
+        self.try_edit(|doc| doc.insert_computed(index(table), index(at), &name, &expr))
     }
 
     fn add_computed(self: Pin<&mut Self>, table: i32, name: &QString, expr: &QString) -> QString {
