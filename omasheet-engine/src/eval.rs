@@ -238,13 +238,17 @@ impl<'p> Engine<'p> {
                 format!("a cell holds one value, but this is {}", v.kind()),
             );
         }
+        // A `Decimal` column holds only what ends as a decimal.
+        let decimal = matches!(&v, Value::Ratio(r) if omasheet_omx::convert::is_decimal(r));
         let ok = !col.declared
+            || (decimal && col.ty == S::Decimal)
             || matches!(
                 (&v, col.ty),
                 (Value::Empty, _)
                     | (_, S::Any)
-                    | (Value::Int(_), S::Int | S::Ratio)
+                    | (Value::Int(_), S::Int | S::Decimal | S::Ratio)
                     | (Value::Ratio(_), S::Ratio)
+                    | (Value::Percent(_), S::Percent)
                     | (Value::Num(_), S::Num)
                     | (Value::Complex(..), S::Complex)
                     | (Value::Text(_), S::Text)
@@ -255,6 +259,11 @@ impl<'p> Engine<'p> {
             );
         if ok {
             Ok(v)
+        } else if col.ty == S::Percent && matches!(v, Value::Int(_) | Value::Ratio(_)) {
+            // Any exact number in a `Percent` column is a percentage.
+            Ok(v.percent())
+        } else if col.ty == S::Ratio && matches!(v, Value::Percent(_)) {
+            Ok(v.plain())
         } else {
             fail(
                 span,
@@ -331,6 +340,7 @@ impl<'p> Engine<'p> {
                     match (op, v) {
                         (_, Value::Empty) => Ok(Value::Empty),
                         (UnOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
+                        (UnOp::Neg, Value::Percent(r)) => Ok(Value::Percent(-r)),
                         (UnOp::Neg, v) if v.is_numeric() => {
                             arith(BinOp::Sub, &Value::Int(BigInt::from(0)), v)
                                 .or_else(|m| fail(span, m))
@@ -560,7 +570,7 @@ impl<'p> Engine<'p> {
                     *part = match self.eval(arg, fr)? {
                         Value::Empty => return Ok(Value::Empty),
                         Value::Int(n) => n.to_f64().unwrap_or(f64::NAN),
-                        Value::Ratio(r) => to_f64(&r),
+                        Value::Ratio(r) | Value::Percent(r) => to_f64(&r),
                         Value::Num(f) => f,
                         other => {
                             return fail(
@@ -742,15 +752,20 @@ impl<'p> Engine<'p> {
                     }
                     Ok(total)
                 };
+                // The sum and the average of percentages are percentages.
+                let percent =
+                    !present.is_empty() && present.iter().all(|v| matches!(v, Value::Percent(_)));
+                let kept = |v: Value| if percent { v.percent() } else { v };
                 match func {
                     Func::Count => Ok(Value::Int(BigInt::from(present.len()))),
-                    Func::Sum => sum(),
+                    Func::Sum => sum().map(kept),
                     Func::Avg if present.is_empty() => Ok(Value::Empty),
                     Func::Avg => arith(
                         BinOp::Div,
                         &sum()?,
                         &Value::Int(BigInt::from(present.len())),
                     )
+                    .map(kept)
                     .or_else(|m| fail(span, m)),
                     _ => {
                         let want = if func == Func::Min {

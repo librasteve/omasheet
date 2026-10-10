@@ -9,7 +9,12 @@ use num_rational::BigRational;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Lit {
     Int(BigInt),
+    /// Written with a decimal point: `19.99`.
+    Decimal(BigRational),
+    /// Written as a fraction: `1/7`.
     Ratio(BigRational),
+    /// Written with a `%`: `20%`, held as `1/5`.
+    Percent(BigRational),
     Num(f64),
     /// Real and imaginary parts.
     Complex(f64, f64),

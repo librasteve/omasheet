@@ -1,9 +1,13 @@
 # The numbers, Bool and Text: what each type holds and how it is shown.
 #
-# Int and Ratio are exact, a Num is floating point, and a Complex is a pair
-# of Nums. A number is shown with up to five digits after the point; one
-# with more is rounded and marked with …, and is still held in full.
-# `omasheet --exact examples/types.omx` shows every number in full.
+# Int, Decimal, Ratio and Percent are exact, a Num is floating point, and a
+# Complex is a pair of Nums. An Int is a Decimal and a Decimal is a Ratio; a
+# Percent holds what a Ratio does and shows it as so many in a hundred.
+#
+# An exact number is shown in full, as a decimal if it ends and as a
+# fraction if not. A Percent that does not end is rounded to two digits and
+# marked with …, and a Num to five; both are still held in full.
+# `omasheet --exact examples/types.omx` shows them in full.
 
 const Half = 50%
 const Third = 1/3
@@ -14,46 +18,75 @@ table Numbers
 
 Name    : Text
 Count   : Int
+Price   : Decimal
 Share   : Ratio
+Rate    : Percent
 Reading : Num
 Wave    : Complex
 Checked : Bool
 
-Name  | Count                      | Share | Reading | Wave    | Checked | Square | Inverse | Whole | Scaled | Root | Size | Turned | Likely
-seven | 7                          | 1/7   | 1.5     | 3+4i    | true    | *      | *       | *     | *      | *    | *    | *      | *
-cent  | 100                        | 20%   | 100     | 2i      | false   | *      | *       | *     | *      | *    | *    | *      | *
-minus | -3                         | 19.99 | 1.6e-19 | -1.5-2i | true    | *      | *       | *     | *      | *    | *    | *      | *
-huge  | 10_000_000_000_000_000_000 | 0.125 | 6.02e23 | 1       | false   | *      | *       | *     | *      | *    | *    | *      | *
+Name  | Count                      | Price  | Share | Rate  | Reading | Wave    | Checked
+seven | 7                          | 19.99  | 1/7   | 20%   | 1.5     | 3+4i    | true
+cent  | 100                        | 0.125  | 2/3   | 12.5% | 100     | 2i      | false
+minus | -3                         | -4.5   | 19.99 | -5%   | 1.6e-19 | -1.5-2i | true
+huge  | 10_000_000_000_000_000_000 | 1000   | 3     | 0.5   | 6.02e23 | 1       | false
+
+# What is done with the numbers above. A column with no type takes the type
+# of its formula.
+table Arithmetic
+
+Name  | Square | Inverse | Whole | Taxed | Split | Raised | Part | Scaled | Root | Size | Turned | Likely
+seven | *      | *       | *     | *     | *     | *      | *    | *      | *    | *    | *      | *
+cent  | *      | *       | *     | *     | *     | *      | *    | *      | *    | *    | *      | *
+minus | *      | *       | *     | *     | *     | *      | *    | *      | *    | *    | *      | *
+huge  | *      | *       | *     | *     | *     | *      | *    | *      | *    | *    | *      | *
 
 # Exact stays exact: an Int does not overflow, and a division is a Ratio.
-Square  := Count ** 2
-Inverse := 1 / Count
-Whole   := Inverse * Count
+Square  := Numbers[Count; *] ** 2
+Inverse := 1 / Numbers[Count; *]
+Whole   := Inverse * Numbers[Count; *]
+
+# Sums and products of Decimals are Decimal; a division is a Ratio, since
+# it need not end.
+Taxed   := Numbers[Price; *] * 1.2
+Split   := Numbers[Price; *] / 3
+
+# Percents add up to a Percent. Anything else done with one gives the plain
+# number, so a price times a rate is a price.
+Raised  := Numbers[Rate; *] + 5%
+Part    := Numbers[Price; *] * Numbers[Rate; *]
 
 # One Num makes the result a Num.
-Scaled  := Share * Reading
-Root    := sqrt(Reading)
+Scaled  := Numbers[Share; *] * Numbers[Reading; *]
+Root    := sqrt(Numbers[Reading; *])
 
 # A Complex shows each part as a Num.
-Size    := abs(Wave)
-Turned  := Wave * Turn
+Size    := abs(Numbers[Wave; *])
+Turned  := Numbers[Wave; *] * Turn
 
-Likely  := Checked and Share < Half
+Likely  := Numbers[Checked; *] and Numbers[Share; *] < Half
 
 # The name of a type converts to it: `x.Int`, `x.Int()` or `Int(x)`.
 table Converted
 
 Value : Ratio
 
-Value  | AsInt | Rounded | AsNum | AsComplex | AsBool | AsText | Back
-19.99  | *     | *       | *     | *         | *      | *      | *
--19.99 | *     | *       | *     | *         | *      | *      | *
-1/3    | *     | *       | *     | *         | *      | *      | *
-0.5    | *     | *       | *     | *         | *      | *      | *
-0      | *     | *       | *     | *         | *      | *      | *
+Value  | AsInt | Rounded | AsDecimal | AsPercent | AsNum | AsComplex | AsBool | AsText | Back
+19.99  | *     | *       | *         | *         | *     | *         | *      | *      | *
+-19.99 | *     | *       | *         | *         | *     | *         | *      | *      | *
+1/3    | *     | *       | *         | *         | *     | *         | *      | *      | *
+1/8    | *     | *       | *         | *         | *     | *         | *      | *      | *
+0.5    | *     | *       | *         | *         | *     | *         | *      | *      | *
+0      | *     | *       | *         | *         | *     | *         | *      | *      | *
 
 AsInt     := Value.Int
 Rounded   := round(Value)
+
+# A Ratio that ends is a Decimal as it stands, and `(1/3).Decimal` is an
+# error, as 1/3 does not end. A Num always has a Decimal: the one it is
+# shown as.
+AsDecimal := Value.Num.Decimal
+AsPercent := Value.Percent
 AsNum     := Value.Num
 AsComplex := Value.Complex
 AsBool    := Value.Bool
@@ -65,12 +98,14 @@ table Written
 
 Text : Text
 
-Text  | Number | Doubled | Whole
-42    | *      | *       | *
-20%   | *      | *       | *
-1/8   | *      | *       | *
-1.5e3 | *      | *       | *
+Text  | Number | Doubled | Whole | Decimal | Percent
+42    | *      | *       | *     | *       | *
+20%   | *      | *       | *     | *       | *
+1/8   | *      | *       | *     | *       | *
+1.5e3 | *      | *       | *     | *       | *
 
 Number  := Text.Ratio
 Doubled := Number * 2
 Whole   := Text.Int
+Decimal := Text.Decimal
+Percent := Text.Percent

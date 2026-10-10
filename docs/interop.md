@@ -34,7 +34,8 @@ What is written is the calculated values: no formulas, and no constants.
 
 | | XLSX | CSV |
 |---|---|---|
-| `Int`, `Ratio` | the nearest floating-point number | in full; one that does not end, such as `1/3`, as `0.3333333333333333` |
+| `Int`, `Decimal`, `Ratio` | the nearest floating-point number | in full; one that does not end, such as `1/3`, as `0.3333333333333333` |
+| `Percent` | that number, formatted as a percentage | `40%`; one that does not end as `33.33333333333333%` |
 | `Date`, `Time`, `DateTime` | a date or time cell | `2025-01-31`, `09:30`, `2025-01-31T09:30` |
 | `Complex` | text | `3+4i` |
 | a cell that failed | empty | empty |

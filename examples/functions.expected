@@ -1,4 +1,4 @@
-const VatRate = 0.2
+const VatRate = 20%
 const Everything = 105
 const Large = 45
 const Diagonal = 5

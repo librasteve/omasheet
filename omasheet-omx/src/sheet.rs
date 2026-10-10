@@ -432,7 +432,7 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
                         format!("unknown type `{ty_text}`"),
                     )
                     .with_help(
-                        "the types are Int, Ratio, Num, Complex, Text, Date, Time, DateTime and Bool",
+                        "the types are Int, Decimal, Ratio, Percent, Num, Complex, Text, Date, Time, DateTime and Bool",
                     ),
                 ),
             }

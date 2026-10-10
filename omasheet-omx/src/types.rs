@@ -10,7 +10,13 @@ use std::rc::Rc;
 pub enum S {
     Any,
     Int,
+    /// An exact number that ends when written as a decimal: `19.99`. Every
+    /// `Int` is one, and every `Decimal` is a `Ratio`.
+    Decimal,
     Ratio,
+    /// An exact number shown as so many in a hundred: `20%` is `1/5`. It
+    /// holds whatever a `Ratio` does.
+    Percent,
     Num,
     Complex,
     Text,
@@ -25,7 +31,9 @@ impl S {
     pub fn from_name(name: &str) -> Option<S> {
         Some(match name {
             "Int" => S::Int,
+            "Decimal" => S::Decimal,
             "Ratio" => S::Ratio,
+            "Percent" => S::Percent,
             "Num" => S::Num,
             "Complex" => S::Complex,
             "Text" => S::Text,
@@ -38,7 +46,15 @@ impl S {
     }
 
     pub fn is_numeric(self) -> bool {
-        matches!(self, S::Any | S::Int | S::Ratio | S::Num | S::Complex)
+        matches!(
+            self,
+            S::Any | S::Int | S::Decimal | S::Ratio | S::Percent | S::Num | S::Complex
+        )
+    }
+
+    /// An exact number: `Int`, `Decimal`, `Ratio` or `Percent`.
+    pub fn is_exact(self) -> bool {
+        matches!(self, S::Int | S::Decimal | S::Ratio | S::Percent)
     }
 
     /// A date, a time of day, or both.
@@ -64,15 +80,20 @@ impl S {
     fn rank(self) -> u8 {
         match self {
             S::Int => 0,
-            S::Ratio => 1,
-            S::Num => 2,
-            _ => 3,
+            S::Decimal => 1,
+            S::Ratio | S::Percent => 2,
+            S::Num => 3,
+            _ => 4,
         }
     }
 
-    /// The wider of two numeric types.
+    /// The wider of two numeric types. A `Percent` next to another exact
+    /// number is a `Ratio`.
     pub fn wider(self, other: S) -> S {
-        if self.rank() >= other.rank() {
+        let percent = self == S::Percent || other == S::Percent;
+        if self != other && percent && self.is_exact() && other.is_exact() {
+            S::Ratio
+        } else if self.rank() >= other.rank() {
             self
         } else {
             other
@@ -95,13 +116,13 @@ impl S {
     /// Whether the conversion named `to` takes a value of type `self`. Text
     /// is read as whatever is asked for, and anything can be written as text.
     pub fn converts_to(self, to: S) -> bool {
-        let number = matches!(self, S::Int | S::Ratio | S::Num);
+        let number = self.is_exact() || self == S::Num;
         self == to
             || matches!(self, S::Any | S::Text)
             || match to {
                 S::Any | S::Text => true,
-                S::Int | S::Ratio | S::Num => number || self == S::Bool,
-                S::Complex | S::Bool => number,
+                S::Int | S::Decimal | S::Ratio | S::Num => number || self == S::Bool,
+                S::Percent | S::Complex | S::Bool => number,
                 S::Date | S::Time => self == S::DateTime,
                 S::DateTime => self == S::Date,
             }
@@ -109,7 +130,12 @@ impl S {
 
     /// Whether a value of type `self` may be stored where `to` is declared.
     pub fn assignable_to(self, to: S) -> bool {
-        self == to || self == S::Any || to == S::Any || (self == S::Int && to == S::Ratio)
+        self == to
+            || self == S::Any
+            || to == S::Any
+            // An `Int` is a `Decimal`, and a `Decimal` is a `Ratio`. A
+            // `Percent` holds any of them, and is a `Ratio`.
+            || (self.is_exact() && to.is_exact() && self.rank() <= to.rank())
     }
 }
 
@@ -118,7 +144,9 @@ impl fmt::Display for S {
         f.write_str(match self {
             S::Any => "Any",
             S::Int => "Int",
+            S::Decimal => "Decimal",
             S::Ratio => "Ratio",
+            S::Percent => "Percent",
             S::Num => "Num",
             S::Complex => "Complex",
             S::Text => "Text",

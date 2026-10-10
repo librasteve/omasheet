@@ -36,7 +36,7 @@ fn a1(row: u32, col: u32) -> String {
 fn number(f: f64) -> Datum {
     match ratio_of(f) {
         Some(r) if r.is_integer() => Datum::Lit(r.to_integer().to_string(), S::Int),
-        Some(r) => Datum::Lit(format_rat(&r), S::Ratio),
+        Some(r) => Datum::Lit(format_rat(&r), S::Decimal),
         None => Datum::Empty,
     }
 }
@@ -160,6 +160,7 @@ struct Formats {
     date: Format,
     time: Format,
     datetime: Format,
+    percent: Format,
 }
 
 fn write_cell(
@@ -190,6 +191,13 @@ fn write_cell(
                 lose(ROUNDED);
             }
             sheet.write_number(row, col, f)?;
+        }
+        Value::Percent(r) => {
+            let (f, same) = double(r);
+            if !same {
+                lose(ROUNDED);
+            }
+            sheet.write_number_with_format(row, col, f, &formats.percent)?;
         }
         Value::Num(f) if f.is_finite() => {
             sheet.write_number(row, col, *f)?;
@@ -239,6 +247,7 @@ pub fn export(
             date: Format::new().set_num_format("yyyy-mm-dd"),
             time: Format::new().set_num_format("hh:mm:ss"),
             datetime: Format::new().set_num_format("yyyy-mm-dd hh:mm:ss"),
+            percent: Format::new().set_num_format("0.00%"),
         };
         let mut book = Workbook::new();
         let mut losses = Losses::default();

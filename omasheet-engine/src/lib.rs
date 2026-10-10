@@ -35,8 +35,9 @@ pub struct Options {
     /// Show date-times on the clocks of this machine rather than of the
     /// sheet's zone.
     pub local: bool,
-    /// Show every number in full, `1/3`, rather than as the decimal
-    /// it is rounded to for display, `0.33333…`.
+    /// Show every `Num` in full, `1.4142135623730951`, rather than as the
+    /// decimal it is rounded to for display, `1.41421…`. An exact number
+    /// is always shown in full: `19.99`, `1/3`.
     pub exact: bool,
 }
 

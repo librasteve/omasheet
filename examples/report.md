@@ -10,7 +10,7 @@ Revenue for the quarter was {{ Sales.Revenue.sum() }}, and profit
 {{ Sales[; Profit == Sales.Profit.max()].Month }}, and the books closed on
 {{ Sales.Closed.max().date() }}.
 
-Tax is charged at {{ TaxRate * 100 }}%, which comes to
+Tax is charged at {{ TaxRate }}, which comes to
 {{ Sales.Tax.sum() }}.
 
 ## Months over target

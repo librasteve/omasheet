@@ -11,7 +11,7 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use omasheet_omx::ast::{BinOp, Lit};
-use omasheet_omx::convert;
+use omasheet_omx::convert::{self, is_decimal};
 use omasheet_omx::date::Style;
 use omasheet_omx::funcs::MathFn;
 use omasheet_omx::types::S;
@@ -27,6 +27,9 @@ pub enum Value {
     Error,
     Int(BigInt),
     Ratio(BigRational),
+    /// An exact number shown as a percentage: `1/5` for `20%`. It may be
+    /// whole, `100%`.
+    Percent(BigRational),
     Num(f64),
     Complex(f64, f64),
     Text(Rc<str>),
@@ -79,10 +82,29 @@ impl Value {
         }
     }
 
+    /// An exact number as a percentage; anything else as it is.
+    pub fn percent(self) -> Value {
+        match self {
+            Value::Int(n) => Value::Percent(BigRational::from_integer(n)),
+            Value::Ratio(r) => Value::Percent(r),
+            other => other,
+        }
+    }
+
+    /// A percentage as the plain number it stands for; anything else as it
+    /// is.
+    pub fn plain(self) -> Value {
+        match self {
+            Value::Percent(r) => Value::exact(r),
+            other => other,
+        }
+    }
+
     pub fn from_lit(l: &Lit) -> Value {
         match l {
             Lit::Int(n) => Value::Int(n.clone()),
-            Lit::Ratio(r) => Value::exact(r.clone()),
+            Lit::Decimal(r) | Lit::Ratio(r) => Value::exact(r.clone()),
+            Lit::Percent(r) => Value::Percent(r.clone()),
             Lit::Num(f) => Value::Num(*f),
             Lit::Complex(re, im) => Value::Complex(*re, *im),
             Lit::Text(s) => Value::text(s),
@@ -99,7 +121,10 @@ impl Value {
             Value::Empty => "empty",
             Value::Error => "an error",
             Value::Int(_) => "Int",
+            // A fraction that ends as a decimal is a `Decimal`.
+            Value::Ratio(r) if is_decimal(r) => "Decimal",
             Value::Ratio(_) => "Ratio",
+            Value::Percent(_) => "Percent",
             Value::Num(_) => "Num",
             Value::Complex(..) => "Complex",
             Value::Text(_) => "Text",
@@ -117,7 +142,11 @@ impl Value {
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
-            Value::Int(_) | Value::Ratio(_) | Value::Num(_) | Value::Complex(..)
+            Value::Int(_)
+                | Value::Ratio(_)
+                | Value::Percent(_)
+                | Value::Num(_)
+                | Value::Complex(..)
         )
     }
 
@@ -126,7 +155,9 @@ impl Value {
     fn to_lit(&self) -> Option<Lit> {
         Some(match self {
             Value::Int(n) => Lit::Int(n.clone()),
+            Value::Ratio(r) if is_decimal(r) => Lit::Decimal(r.clone()),
             Value::Ratio(r) => Lit::Ratio(r.clone()),
+            Value::Percent(r) => Lit::Percent(r.clone()),
             Value::Num(f) => Lit::Num(*f),
             Value::Complex(re, im) => Lit::Complex(*re, *im),
             Value::Text(s) => Lit::Text(s.to_string()),
@@ -145,8 +176,9 @@ impl Value {
         let fits = match (self, to) {
             (Value::Empty, _) | (_, S::Any) => true,
             (Value::Zoned(_), S::DateTime) | (Value::Text(_), S::Text) => true,
-            // A whole `Ratio` is held as an `Int`.
-            (Value::Int(_), S::Int | S::Ratio) => true,
+            // A whole `Decimal` or `Ratio` is held as an `Int`.
+            (Value::Int(_), S::Int | S::Decimal | S::Ratio) => true,
+            (Value::Ratio(_), S::Ratio) | (Value::Percent(_), S::Percent) => true,
             _ => false,
         };
         if fits {
@@ -178,7 +210,7 @@ enum N {
 fn number(v: &Value) -> Option<N> {
     Some(match v {
         Value::Int(n) => N::Exact(BigRational::from_integer(n.clone())),
-        Value::Ratio(r) => N::Exact(r.clone()),
+        Value::Ratio(r) | Value::Percent(r) => N::Exact(r.clone()),
         Value::Num(f) => N::Num(*f),
         Value::Complex(re, im) => N::Complex(*re, *im),
         _ => return None,
@@ -211,6 +243,11 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     }
     if let Some(shifted) = shift(op, a, b) {
         return shifted;
+    }
+    // Percentages add up to a percentage; anything else done with one gives
+    // the plain number.
+    if let (Value::Percent(x), Value::Percent(y), BinOp::Add | BinOp::Sub) = (a, b, op) {
+        return Ok(Value::Percent(if op == BinOp::Add { x + y } else { x - y }));
     }
     let (Some(x), Some(y)) = (number(a), number(b)) else {
         return Err(format!(
@@ -351,6 +388,9 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
     let whole = |r: BigRational| Value::Int(r.to_integer());
     let x = match (v, m) {
         (Value::Empty, _) => return Ok(Value::Empty),
+        (Value::Percent(r), MathFn::Abs) => return Ok(Value::Percent(r.abs())),
+        (Value::Percent(_), MathFn::Re | MathFn::Conj) => return Ok(v.clone()),
+        (Value::Percent(_), _) => return math(m, &v.clone().plain()),
         (Value::Int(n), MathFn::Abs) => return Ok(Value::Int(n.abs())),
         (Value::Int(n), MathFn::Sign) => return Ok(Value::Int(n.signum())),
         (Value::Int(_) | Value::Ratio(_), MathFn::Im) => return Ok(Value::Int(BigInt::from(0))),
@@ -464,8 +504,8 @@ fn decimal(scaled: &BigInt, negative: bool, scale: usize) -> String {
     }
 }
 
-/// An exact number in full: a terminating fraction as a decimal, anything
-/// else as `n/d`.
+/// An exact number as it is shown and written: a `Decimal`, a fraction
+/// that ends, as that decimal in full, and any other `Ratio` as `n/d`.
 pub fn format_rat(r: &BigRational) -> String {
     let (two, five, ten) = (BigInt::from(2), BigInt::from(5), BigInt::from(10));
     let mut rest = r.denom().clone();
@@ -490,8 +530,29 @@ pub fn format_rat(r: &BigRational) -> String {
     decimal(&scaled, r.is_negative(), scale)
 }
 
-/// An exact number as it is shown: a decimal with up to [`RATIO_DIGITS`]
-/// digits after the point. One with more is rounded to that many, a half
+/// How many digits a `Percent` that does not end is shown with after the
+/// decimal point.
+pub const PERCENT_DIGITS: usize = 2;
+
+/// A `Percent` as it is shown: so many in a hundred, `40%`. One that does
+/// not end is in full as a fraction when `exact`, `125/3%`, and otherwise
+/// rounded to [`PERCENT_DIGITS`] digits, a half away from zero, and marked
+/// with [`MORE`]: `41.67…%`.
+pub fn format_percent(r: &BigRational, exact: bool) -> String {
+    let hundred = r * BigRational::from_integer(BigInt::from(100));
+    if exact || is_decimal(&hundred) {
+        return format!("{}%", format_rat(&hundred));
+    }
+    let unit = num_traits::pow(BigInt::from(10), PERCENT_DIGITS);
+    let rounded = (&hundred * BigRational::from_integer(unit))
+        .round()
+        .to_integer();
+    let shown = decimal(&rounded, hundred.is_negative(), PERCENT_DIGITS);
+    format!("{shown}{MORE}%")
+}
+
+/// An exact number rounded for a `Num` to be shown as: a decimal with up to
+/// [`RATIO_DIGITS`] digits after the point. One with more is rounded to that many, a half
 /// away from zero, and marked with [`MORE`].
 pub fn format_ratio(r: &BigRational) -> String {
     let unit = num_traits::pow(BigInt::from(10), RATIO_DIGITS);
@@ -551,8 +612,8 @@ pub fn format_styled(v: &Value, quoted: bool, style: &Style) -> String {
     format_value(v, quoted, style, false)
 }
 
-/// As [`format_styled`], with every exact number in full: `1/3`, where it
-/// is shown as `0.33333…`.
+/// As [`format_styled`], with every `Num` in full: `1.4142135623730951`,
+/// where it is shown as `1.41421…`. An exact number is always in full.
 pub fn format_exact(v: &Value, quoted: bool, style: &Style) -> String {
     format_value(v, quoted, style, true)
 }
@@ -562,8 +623,9 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         Value::Empty => String::new(),
         Value::Error => "#ERROR".into(),
         Value::Int(n) => n.to_string(),
-        Value::Ratio(r) if exact => format_rat(r),
-        Value::Ratio(r) => format_ratio(r),
+        // A `Decimal` in full, `19.99`, and any other `Ratio` as `x/y`.
+        Value::Ratio(r) => format_rat(r),
+        Value::Percent(r) => format_percent(r, exact),
         Value::Num(f) => format_num(*f, exact),
         // Each part as a `Num` is written: `3+4i`, `1.5-2i`.
         Value::Complex(re, im) => {

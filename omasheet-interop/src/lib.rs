@@ -201,7 +201,7 @@ fn column_type(cells: &[&Datum]) -> (Option<S>, bool) {
             seen.push(ty);
         }
     }
-    let exact = |s: &S| matches!(s, S::Int | S::Ratio);
+    let exact = |s: &S| s.is_exact();
     match seen.as_slice() {
         [] | [S::Text] => (None, false),
         all if all.iter().all(exact) => (None, false),

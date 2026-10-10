@@ -880,8 +880,18 @@ impl<'a> Checker<'a> {
         let Some(want) = declared else { return found };
         if !found.assignable_to(want) {
             let help = match (found, want) {
-                (S::Int | S::Ratio, S::Num) => "use `.Num` to convert to Num",
+                (S::Int | S::Decimal | S::Ratio | S::Percent, S::Num) => {
+                    "use `.Num` to convert to Num"
+                }
+                (S::Percent, S::Int) => "declare the column as `Percent`, or use `.Int`",
+                (S::Percent, S::Decimal) => {
+                    "declare the column as `Percent` or `Ratio`, or use `.Decimal` if the number ends as a decimal"
+                }
+                (S::Decimal, S::Int) => "declare the column as `Decimal`, or use `.Int`",
                 (S::Ratio, S::Int) => "declare the column as `Ratio`, or use `.Int`",
+                (S::Ratio, S::Decimal) => {
+                    "declare the column as `Ratio`, or use `.Decimal` if the number ends as a decimal"
+                }
                 _ => "change the declared type or the formula",
             };
             self.err_help(
@@ -906,14 +916,29 @@ impl<'a> Checker<'a> {
             });
         }
         let fitted = match (parsed, want) {
-            (Some(l @ Lit::Int(_)), S::Int | S::Ratio) => Some(l),
+            (Some(l @ Lit::Int(_)), S::Int | S::Decimal | S::Ratio) => Some(l),
+            (Some(l @ Lit::Decimal(_)), S::Decimal | S::Ratio) => Some(l),
             (Some(l @ Lit::Ratio(_)), S::Ratio) => Some(l),
+            // Any exact number in a `Percent` column is a percentage: `0.4`
+            // is `40%`. A `20%` elsewhere is the number it stands for.
+            (Some(l @ Lit::Percent(_)), S::Percent) => Some(l),
+            (Some(Lit::Int(n)), S::Percent) => {
+                Some(Lit::Percent(num_rational::BigRational::from_integer(n)))
+            }
+            (Some(Lit::Decimal(r) | Lit::Ratio(r)), S::Percent) => Some(Lit::Percent(r)),
+            (Some(l @ Lit::Percent(_)), S::Decimal | S::Ratio) => {
+                crate::convert::convert(&l, want).ok()
+            }
             (Some(Lit::Int(n)), S::Num) => n.to_f64().map(Lit::Num),
-            (Some(Lit::Ratio(r)), S::Num) => r.to_f64().map(Lit::Num),
+            (Some(Lit::Decimal(r) | Lit::Ratio(r) | Lit::Percent(r)), S::Num) => {
+                r.to_f64().map(Lit::Num)
+            }
             (Some(l @ Lit::Num(_)), S::Num) => Some(l),
             (Some(l @ Lit::Complex(..)), S::Complex) => Some(l),
             (Some(Lit::Int(n)), S::Complex) => n.to_f64().map(|x| Lit::Complex(x, 0.0)),
-            (Some(Lit::Ratio(r)), S::Complex) => r.to_f64().map(|x| Lit::Complex(x, 0.0)),
+            (Some(Lit::Decimal(r) | Lit::Ratio(r) | Lit::Percent(r)), S::Complex) => {
+                r.to_f64().map(|x| Lit::Complex(x, 0.0))
+            }
             (Some(Lit::Num(x)), S::Complex) => Some(Lit::Complex(x, 0.0)),
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
@@ -928,7 +953,9 @@ impl<'a> Checker<'a> {
                 format!("`{text}` is not {article} `{want}` literal"),
                 match want {
                     S::Int => "enter a whole number such as `42`, or start the cell with `=` for a formula",
+                    S::Decimal => "enter a number such as `19.99` or `20%`, or start the cell with `=` for a formula; a fraction such as `1/7` needs a `Ratio` column",
                     S::Ratio => "enter a number such as `19.99`, `20%` or `1/7`, or start the cell with `=` for a formula",
+                    S::Percent => "enter a percentage such as `20%`, or start the cell with `=` for a formula",
                     S::Num => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
                     S::Complex => {
                         "enter a complex number such as `3+4i`, or start the cell with `=` for a formula"
@@ -1431,7 +1458,12 @@ impl<'a> Checker<'a> {
                 S::Any
             } else {
                 match (op, a.wider(b)) {
-                    (BinOp::Div | BinOp::Pow, S::Int) => S::Ratio,
+                    // A quotient or a power of decimals need not end.
+                    (BinOp::Div | BinOp::Pow, S::Int | S::Decimal) => S::Ratio,
+                    // Percentages add up to a percentage; anything else
+                    // done with one gives the plain number.
+                    (BinOp::Add | BinOp::Sub, S::Percent) => S::Percent,
+                    (_, S::Percent) => S::Ratio,
                     (_, w) => w,
                 }
             }
@@ -1579,7 +1611,7 @@ impl<'a> Checker<'a> {
                         );
                         return fail;
                     }
-                    Func::Avg if s == S::Int => S::Ratio,
+                    Func::Avg if matches!(s, S::Int | S::Decimal) => S::Ratio,
                     Func::Min | Func::Max if matches!(s, S::Bool | S::Complex) => {
                         self.err(
                             args[0].span,
@@ -1597,7 +1629,10 @@ impl<'a> Checker<'a> {
                     let (node, ty) = self.lower(a, sc);
                     if !matches!(
                         ty,
-                        Ty::Any | Ty::Scalar(S::Any | S::Int | S::Ratio | S::Num)
+                        Ty::Any
+                            | Ty::Scalar(
+                                S::Any | S::Int | S::Decimal | S::Ratio | S::Percent | S::Num
+                            )
                     ) {
                         self.err(
                             a.span,
@@ -1814,9 +1849,9 @@ impl<'a> Checker<'a> {
                 let out = |s: S| match s {
                     S::Any => Some(S::Any),
                     S::Complex => m.of_complex(),
-                    S::Int | S::Ratio if m.is_whole() => Some(S::Int),
-                    S::Int | S::Ratio if m.is_exact() => Some(s),
-                    S::Int | S::Ratio | S::Num => Some(S::Num),
+                    S::Int | S::Decimal | S::Ratio | S::Percent if m.is_whole() => Some(S::Int),
+                    S::Int | S::Decimal | S::Ratio | S::Percent if m.is_exact() => Some(s),
+                    S::Int | S::Decimal | S::Ratio | S::Percent | S::Num => Some(S::Num),
                     _ => None,
                 };
                 let (arg, aty) = self.lower(&args[0], sc);

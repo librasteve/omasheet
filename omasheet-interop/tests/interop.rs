@@ -96,6 +96,31 @@ fn csv_keeps_exact_what_ends() {
 }
 
 #[test]
+fn csv_keeps_percentages() {
+    let sheet = "table T\n\nB : Percent\n\nA | B\n20% | = 2/5\n12.5% | = 1/3\n";
+    let out = csv_of(sheet, None);
+    let text = text_of(&out, 0);
+    assert!(
+        text.starts_with("A,B\n20%,40%\n12.5%,33.33333333333333"),
+        "{text}"
+    );
+    assert_eq!(out.notices.len(), 1);
+    // And reads them back as percentages.
+    let back = csv::import("t", text.as_bytes()).unwrap();
+    lints(&back.source);
+    assert_eq!(eval(&back.source, "t.A.sum()"), "32.5%");
+}
+
+#[test]
+fn xlsx_writes_a_percentage_as_its_number() {
+    let sheet = "table T\n\nA | B\n25% | 0.5\n";
+    let out = xlsx::export("t.omx", sheet, None, options()).unwrap();
+    let rows = cells(&out.files[0].bytes, "T");
+    assert_eq!(rows[1][0], Data::Float(0.25));
+    assert!(out.notices.is_empty(), "{:?}", out.notices);
+}
+
+#[test]
 fn csv_quotes_as_rfc_4180() {
     let sheet = "table T\n\nWho : Text\n\nWho\n\"Smith, J \\\"Jay\\\"\"\n";
     assert_eq!(

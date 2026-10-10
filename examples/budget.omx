@@ -5,6 +5,8 @@ const TaxRate = 20%
 table Sales
 
 Closed : DateTime
+Margin : Percent
+Growth : Percent
 
 Month | Closed           | Revenue                     | Cost | Profit | Tax | Margin | Growth
 Jan   | 2025-02-03T17:30 | 10000                       | 6000 | *      | *   | *      | *

@@ -8,8 +8,18 @@ explicit choice.
 ### Requirement: Numeric tower
 OMX SHALL provide the numeric types `Int` (arbitrary-precision integer), `Ratio`
 (arbitrary-precision rational, numerator and denominator both unbounded, always
-in lowest terms), `Num` (IEEE 754 double) and `Complex` (pair of `Num`). OMX SHALL
-NOT expose fixed-width integer types.
+in lowest terms), `Decimal` (a `Ratio` whose decimal expansion terminates),
+`Percent` (a `Ratio` displayed as a percentage), `Num` (IEEE 754 double) and
+`Complex` (pair of `Num`). OMX SHALL NOT expose fixed-width integer types.
+
+`Decimal` SHALL be a subtype of `Ratio`, and `Int` of `Decimal`: an `Int` SHALL
+be accepted where a `Decimal` is declared, and a `Decimal` where a `Ratio` is.
+A `Decimal` SHALL have no fixed number of digits.
+
+A `Percent` SHALL hold any exact number. An `Int`, a `Decimal` or a `Ratio`
+SHALL be accepted where a `Percent` is declared, and SHALL become a `Percent`
+of the same value; a `Percent` SHALL be accepted where a `Ratio` is declared,
+and SHALL become the plain number.
 
 #### Scenario: Large integers do not overflow
 - **WHEN** `10**1000` is evaluated
@@ -20,10 +30,11 @@ NOT expose fixed-width integer types.
 - **THEN** the result is the exact `Ratio` `999999999999999999999/7`
 
 ### Requirement: Literal types
-An integer literal SHALL be an `Int`. A decimal literal SHALL be the exactly
-equal `Ratio`. A literal with an exponent (`1e-100`) SHALL be a `Num`. Digits MAY
+An integer literal SHALL be an `Int`. A literal with a decimal point SHALL be
+the exactly equal `Decimal`. A fraction of two whole numbers written in a cell,
+`1/7`, SHALL be a `Ratio`. A literal with an exponent (`1e-100`) SHALL be a `Num`. Digits MAY
 be grouped with `_`. A number immediately followed by `%` SHALL be that number
-divided by 100, exactly. A number immediately followed by `i` SHALL be an
+divided by 100, exactly, as a `Percent`. A number immediately followed by `i` SHALL be an
 imaginary `Complex`, so that `3+4i` is the `Complex` with real part 3 and
 imaginary part 4. A cell holding such a number, with no `=`, SHALL be a `Complex`
 literal, and a real number in a column declared `Complex` SHALL be that number
@@ -35,24 +46,60 @@ with no imaginary part.
 
 #### Scenario: Decimal literal is exact
 - **WHEN** `42.5` is evaluated
-- **THEN** the result is the `Ratio` `85/2`
+- **THEN** the result is the `Decimal` `42.5`, exactly `85/2`
 
 #### Scenario: Digit separators
 - **WHEN** `1_000_000.50` is evaluated
-- **THEN** the result is the `Ratio` `2000001/2`
+- **THEN** the result is the `Decimal` exactly equal to `2000001/2`
 
 #### Scenario: Percent literal
 - **WHEN** `20%` is evaluated
-- **THEN** the result is exactly `1/5`
+- **THEN** the result is the `Percent` exactly equal to `1/5`, displayed as `20%`
+
+#### Scenario: A fraction in a cell
+- **WHEN** a cell holds `1/7`
+- **THEN** it is a `Ratio`, and is an error in a column declared `Decimal`
 
 #### Scenario: Exponent literal is approximate
 - **WHEN** `1e-100` is evaluated
 - **THEN** the result is a `Num`
 
 ### Requirement: Exact arithmetic
-`+`, `-`, `*` and `/` over `Int` and `Ratio` operands SHALL be exact. Division of
-two `Int`s SHALL yield a `Ratio` (or an `Int` when the division is exact) and SHALL
-NOT truncate or produce a `Num`.
+`+`, `-`, `*` and `/` over `Int`, `Decimal` and `Ratio` operands SHALL be exact.
+Division of two `Int`s SHALL yield a `Ratio` (or an `Int` when the division is
+exact) and SHALL NOT truncate or produce a `Num`.
+
+The type of a sum, difference or product SHALL be the wider of its operands'
+types, so that decimals stay `Decimal`. A quotient or a power of `Int`s or
+`Decimal`s need not terminate, and SHALL be a `Ratio`; so SHALL an average of
+them. A formula whose type is `Ratio` SHALL NOT be accepted in a column declared
+`Decimal` without a conversion.
+
+The sum or difference of two `Percent`s, the negation or absolute value of
+one, and the sum, average, least or greatest of a vector of them SHALL be a
+`Percent`. Any other arithmetic with a `Percent` SHALL treat it as the number
+it stands for, and SHALL give a `Ratio` next to an exact operand.
+
+#### Scenario: Percentages add up
+- **WHEN** `20% + 5%` is evaluated
+- **THEN** the result is the `Percent` `25%`
+
+#### Scenario: A percentage of a number
+- **WHEN** `100 * 20%` is evaluated
+- **THEN** the result is `20`, not a `Percent`
+- **AND** `20% == 0.2` is true
+
+#### Scenario: A Percent column
+- **WHEN** a column declared `Percent` has the formula `Profit / Revenue`, with `Profit` 5000 and `Revenue` 12000
+- **THEN** the cell is the `Percent` exactly equal to `5/12`, displayed as `41.67…%`
+
+#### Scenario: Decimals stay decimal
+- **WHEN** `19.99 * 3 - 0.5` is checked
+- **THEN** its type is `Decimal`
+
+#### Scenario: A quotient is a Ratio
+- **WHEN** `19.99 / 3` is checked
+- **THEN** its type is `Ratio`, and a column declared `Decimal` rejects it
 
 #### Scenario: Decimal sum
 - **WHEN** `0.1 + 0.2` is evaluated
@@ -87,8 +134,9 @@ only through `Num(x)`, also written `x.Num`, or when an operand is already a
 ### Requirement: Conversions
 The name of each type SHALL be a conversion to that type, written `Int(x)`,
 `x.Int()` or `x.Int`, applied to one value or to each value of a vector, with
-empty staying empty. `Int` SHALL drop the fractional part. `Ratio` of a `Num`
-SHALL be the decimal the `Num` is shown as. `Text` SHALL write a value in full,
+empty staying empty. `Int` SHALL drop the fractional part. `Ratio` or `Decimal`
+of a `Num` SHALL be the decimal the `Num` is shown as. `Decimal` of a `Ratio`
+SHALL be that number when it terminates, and an error when it does not. `Text` SHALL write a value in full,
 the way a sheet writes it. Text SHALL be read the way a cell is, and SHALL be an
 error when it is not a value of the type. `Bool` of a number SHALL be whether it
 is not zero, and a number of a `Bool` SHALL be `1` or `0`. `Date` and `Time`
@@ -104,6 +152,16 @@ anything is calculated.
 - **WHEN** `Ratio(1e-1)` is evaluated
 - **THEN** the result is exactly `1/10`
 
+#### Scenario: A number as a Percent
+- **WHEN** `(1/8).Percent` is evaluated
+- **THEN** the result is the `Percent` `12.5%`
+- **AND** `(1/3).Percent` is the `Percent` exactly equal to `1/3`, not an error
+
+#### Scenario: A Ratio as a Decimal
+- **WHEN** `(1/8).Decimal` is evaluated
+- **THEN** the result is the `Decimal` `0.125`
+- **AND** `(1/3).Decimal` is an error saying that `1/3` does not end as a decimal
+
 #### Scenario: Text read as a number
 - **WHEN** `"20%".Ratio` is evaluated
 - **THEN** the result is exactly `1/5`
@@ -115,15 +173,17 @@ anything is calculated.
 
 ### Requirement: Value is independent of display
 The stored value of a number SHALL NOT be altered by how it is displayed.
-A `Ratio` SHALL display by default as a decimal with up to five digits after the
-point. One with more SHALL be rounded to five, a half away from zero, and
-marked with `…`. On request a `Ratio` SHALL display in full: as a decimal when
-its expansion terminates, otherwise as a fraction. A `Num` SHALL display as
+An exact number SHALL always display in full: a `Decimal`, a `Ratio` whose
+expansion terminates, as that decimal, and any other `Ratio` as a fraction
+`x/y` in lowest terms. A `Percent` SHALL display as its value times 100
+followed by `%`: in full when that terminates, and otherwise rounded to two
+digits after the point, a half away from zero, and marked with `…` before the
+`%`; on request it SHALL display in full as a fraction followed by `%`. A `Num` SHALL display as
 Raku displays one: a whole number with no decimal point, any other as a decimal,
 and one of magnitude `1e15` or more, or less than `1e-4`, with a signed exponent
 of at least two digits. By default more than five digits after the point, or
-after the point of the part before the exponent, SHALL be rounded and marked as
-a `Ratio`'s are; on request a `Num` SHALL display in full, with the fewest
+after the point of the part before the exponent, SHALL be rounded to five, a
+half away from zero, and marked with `…`; on request a `Num` SHALL display in full, with the fewest
 digits that give the same `Num` back. Not-a-number and the infinities SHALL display as `NaN`, `Inf` and
 `-Inf`. A `Complex` SHALL display each part as a `Num`, as `3+4i`. How a number
 is displayed SHALL NOT change its type.
@@ -131,6 +191,15 @@ is displayed SHALL NOT change its type.
 #### Scenario: Terminating rational
 - **WHEN** the exact value `175/4` is displayed with default formatting
 - **THEN** it is shown as `43.75`
+
+#### Scenario: A rational that does not end
+- **WHEN** `omasheet eval '1/3 + 1/3'` is run
+- **THEN** the output is `2/3`
+
+#### Scenario: A Percent that does not end
+- **WHEN** `omasheet eval '(5/12).Percent'` is run
+- **THEN** the output is `41.67…%`
+- **AND** `omasheet eval --exact '(5/12).Percent'` outputs `125/3%`
 
 #### Scenario: A Num is shown as Raku shows it
 - **WHEN** `omasheet eval '(3/2).Num'` is run

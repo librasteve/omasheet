@@ -15,8 +15,9 @@ rewrites the text, and saving writes exactly that.
 - The box at the top shows the source of the current cell; the grid shows
   the value.
 - Selecting several cells shows their count, sum and average in the footer.
-- A number is shown to five digits after the point; `0.33333…` has more, and
-  pointing at it shows the value in full.
+- An exact number is shown in full, `19.99` or `1/3`. A `Num` is shown to
+  five digits after the point; `1.41421…` has more, and pointing at it shows
+  the value in full.
 - Dates and times follow your locale; the file stays ISO.
 - A sheet in another time zone is shown on your clocks.
 
@@ -73,7 +74,7 @@ omasheet lint sheet.omx               # check without calculating
 | `--locale` | show dates and times as this machine's locale writes them |
 | `--now 2025-01-31T09:30` | fix what `today()` and `now()` give |
 | `--zone Europe/London` | stand in for this machine's time zone |
-| `--exact` | show numbers in full, `1/3`, not rounded, `0.33333…` |
+| `--exact` | show a `Num` in full, `1.4142135623730951`, not rounded, `1.41421…` |
 
 From the source tree, `omasheet` is `cargo run -p omasheet-cli --`.
 

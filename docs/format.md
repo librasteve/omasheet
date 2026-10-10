@@ -53,19 +53,30 @@ cell of a computed column.
 
 ## Types
 
-`Int`, `Ratio`, `Num`, `Complex`, `Text`, `Bool`, `Date`, `Time`, `DateTime`.
+`Int`, `Decimal`, `Ratio`, `Percent`, `Num`, `Complex`, `Text`, `Bool`,
+`Date`, `Time`, `DateTime`.
 A column with no `Name : Type` line takes its type from its cells.
 
 | Type | Written |
 |---|---|
 | `Int` | `42`, `1_000_000` |
-| `Ratio` | `19.99`, `20%`, `1/7` — exact; shown to five digits, `0.14286…` |
+| `Decimal` | `19.99` — exact |
+| `Ratio` | `1/7` — exact |
+| `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
 | `Num` | `1.5e3` — floating point |
 | `Text` | `hi` or `"hi"`  (escape \|) |
 | `Bool` | `true`, `false` |
 | `Date` | `2025-01-31` |
 | `Time` | `09:30`, `09:30:15` |
 | `DateTime` | `2025-01-31T09:30` |
+
+An `Int` is a `Decimal`, and a `Decimal` is a `Ratio`: a `Ratio` column takes
+all three, a `Decimal` column takes whole numbers and decimals, but not `1/7`.
+
+A `Percent` column takes any exact number and shows it as a percentage: `0.4`
+there is `40%`, and so is `= Profit / Revenue` when it comes to two fifths.
+A `20%` in a `Decimal` or `Ratio` column is the number it stands for, `0.2`.
+See `examples/types.omx` for every type at work.
 
 Dates and times are always written this way in the file. The app shows and
 accepts them in your locale's form.

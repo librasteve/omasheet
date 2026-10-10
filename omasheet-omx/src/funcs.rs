@@ -266,9 +266,24 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     ),
     doc(
         CONVERT,
+        "Decimal",
+        "x.Decimal",
+        "An exact number that ends as a decimal: a Num as the decimal it is shown as, and a \
+         Ratio such as 1/8 as 0.125. One that does not end, such as 1/3, is an error. Also \
+         written Decimal(x).",
+    ),
+    doc(
+        CONVERT,
         "Ratio",
         "x.Ratio",
         "An exact number: a Num as the decimal it is shown as. Also written Ratio(x).",
+    ),
+    doc(
+        CONVERT,
+        "Percent",
+        "x.Percent",
+        "The same number as a percentage: 0.4 gives 40% and 5/12 gives 41.67…%. Also written \
+         Percent(x).",
     ),
     doc(
         CONVERT,

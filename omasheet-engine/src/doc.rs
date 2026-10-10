@@ -158,7 +158,9 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
     let also_iso = if style.is_iso() { "" } else { " or ISO" };
     match ty {
         "Int" => "Int: a whole number, e.g. 42".into(),
-        "Ratio" => "Ratio: an exact number, e.g. 19.99, 20% or 1/7".into(),
+        "Decimal" => "Decimal: an exact decimal number, e.g. 19.99 or 20%".into(),
+        "Ratio" => "Ratio: an exact number, e.g. 1/7, 19.99 or 20%".into(),
+        "Percent" => "Percent: an exact number shown as a percentage, e.g. 20%".into(),
         "Num" => "Num: a floating-point number, e.g. 1.5 or 2e-3".into(),
         "Complex" => "Complex: e.g. 3+4i or 2.5i".into(),
         "Bool" => "Bool: true or false".into(),
@@ -1834,9 +1836,11 @@ impl Document {
         // What a number shown with fewer digits than it has is in full.
         let exact = |v: &Value, quoted: bool, shown: &str| {
             let full = match v {
-                Value::Ratio(_) | Value::Num(_) | Value::Complex(..) | Value::Vector(_) => {
-                    format_exact(v, quoted, &self.style)
-                }
+                Value::Ratio(_)
+                | Value::Percent(_)
+                | Value::Num(_)
+                | Value::Complex(..)
+                | Value::Vector(_) => format_exact(v, quoted, &self.style),
                 _ => return None,
             };
             (full != shown).then_some(full)
@@ -1969,7 +1973,7 @@ mod tests {
         assert_eq!(t.rows[0][1].source, "100");
         assert_eq!(t.rows[0][3].source, "= Revenue - Cost");
         assert!(t.rows[0][1].numeric && !t.rows[0][0].numeric);
-        assert_eq!(doc.snapshot().consts[0].display, "0.2");
+        assert_eq!(doc.snapshot().consts[0].display, "20%");
         assert!(doc.snapshot().problems.is_empty());
     }
 
@@ -2051,11 +2055,13 @@ mod tests {
                 "Month", "Revenue", "Cost", "Profit", "Tax", "Note", "Margin"
             ]
         );
-        assert_eq!(col(&doc, 0, 6), ["0.4", "0.41667…"]);
+        assert_eq!(col(&doc, 0, 6), ["0.4", "5/12"]);
+        // An exact number is shown in full, so there is no more of it to
+        // show.
         let exact = |doc: &Document| doc.snapshot().tables[0].rows[1][6].exact.clone();
-        assert_eq!(exact(&doc).as_deref(), Some("5/12"));
+        assert_eq!(exact(&doc), None);
         doc.set_cell(0, 0, 6, "Profit / Cost");
-        assert_eq!(col(&doc, 0, 6), ["0.66667…", "0.71429…"]);
+        assert_eq!(col(&doc, 0, 6), ["2/3", "5/7"]);
         doc.set_const(0, "50%");
         assert_eq!(col(&doc, 0, 4), ["20", "25"]);
         doc.add_const("Extra", "Sales.Revenue.sum()").unwrap();
@@ -2361,10 +2367,10 @@ mod tests {
         let numbers = |s: &str, a: &str| Some((s.to_string(), a.to_string()));
         // Exact numbers add up exactly, and are shown as cells are.
         let a = sum((0, 1), (2, 1));
-        assert_eq!((a.count, a.numbers), (3, numbers("3.33333…", "1.11111…")));
+        assert_eq!((a.count, a.numbers), (3, numbers("10/3", "10/9")));
         // Text counts but does not add; an empty cell does neither.
         let top = sum((0, 0), (1, 2));
-        assert_eq!((top.count, top.numbers), (5, numbers("3.5", "1.16667…")));
+        assert_eq!((top.count, top.numbers), (5, numbers("3.5", "7/6")));
         // One Num makes the total a Num.
         let b = sum((0, 2), (2, 2));
         assert_eq!((b.count, b.numbers), (2, numbers("100.5", "50.25")));

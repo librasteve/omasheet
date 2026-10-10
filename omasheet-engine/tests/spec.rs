@@ -114,6 +114,177 @@ fn no_silent_loss_of_exactness() {
     assert!(calc_err(None, "approx(1/3)").contains("unknown function `approx`"));
 }
 
+/// `Decimal` is an exact number that ends as a decimal: every `Int` is one,
+/// and every `Decimal` is a `Ratio`.
+#[test]
+fn decimals() {
+    // The literal says which: a decimal point is a Decimal, a fraction a
+    // Ratio and a `%` a Percent.
+    for (expr, message) in [
+        ("19.99 + true", "cannot apply `+` to Decimal and Bool"),
+        ("20% + true", "cannot apply `+` to Percent and Bool"),
+        ("(1/7) + true", "cannot apply `+` to Ratio and Bool"),
+        // Sums, differences and products of decimals are decimals; a
+        // quotient need not end, and is a Ratio.
+        (
+            "19.99 * 3 - 0.5 + true",
+            "cannot apply `+` to Decimal and Bool",
+        ),
+        ("19.99 / 3 + true", "cannot apply `+` to Ratio and Bool"),
+        ("19.99 + 1/7 + true", "cannot apply `+` to Ratio and Bool"),
+    ] {
+        let err = calc_err(None, expr);
+        assert!(err.contains(message), "{expr}: {err}");
+    }
+
+    // A column of decimals and whole numbers is a Decimal column, and
+    // takes them, but not a fraction, nor a formula that may not end.
+    let prices = "table P\n\nPrice : Decimal\n\nItem | Price | Half\n";
+    assert!(
+        lint_errors(&format!(
+            "{prices}Tea | 4.50 | 1\nMug | 9 | 2\nTin | 20% | 3\n"
+        ))
+        .is_empty()
+    );
+    let errors = lint_errors(&format!("{prices}Tea | 1/7 | 1\n"));
+    assert!(
+        errors[0].contains("`1/7` is not a `Decimal` literal"),
+        "{errors:?}"
+    );
+    let errors = lint_errors(&format!("{prices}Tea | = Half / 3 | 1\n"));
+    assert!(
+        errors[0].contains("declared `Decimal` but this is `Ratio`"),
+        "{errors:?}"
+    );
+    assert!(errors[0].contains("use `.Decimal`"), "{errors:?}");
+    assert!(lint_errors(&format!("{prices}Tea | = Half * 1.5 | 1\n")).is_empty());
+
+    // A Decimal goes where a Ratio is declared.
+    let ratios = "table R\n\nShare : Ratio\n\nShare\n0.25\n1/7\n3\n= 0.5 * 0.5\n";
+    assert!(lint_errors(ratios).is_empty());
+
+    // `.Decimal` takes a Ratio that ends, and refuses one that does not.
+    assert_eq!(calc("(1/8).Decimal"), "0.125");
+    assert_eq!(calc("(1.5e3).Decimal + 0.5"), "1500.5");
+    assert_eq!(calc("\"20%\".Decimal"), "0.2");
+    assert!(calc_err(None, "(1/3).Decimal").contains("1/3 does not end as a decimal"));
+    let sheet =
+        "table P\n\nHalf : Decimal\n\nN | Half\n8 | = (1 / N).Decimal\n3 | = (1 / N).Decimal\n";
+    assert_eq!(ask(sheet, "P[Half; 0]"), "0.125");
+    assert!(calc_err(Some(sheet), "P[Half; 1]").contains("does not end as a decimal"));
+
+    // An average of decimals is a Ratio; their sum, least and greatest are
+    // decimals.
+    let sheet = "table P\n\nPrice\n4.50\n9\n0.25\n";
+    assert!(calc_err(Some(sheet), "P.Price.sum() + true").contains("Decimal and Bool"));
+    assert!(calc_err(Some(sheet), "P.Price.max() + true").contains("Decimal and Bool"));
+    assert!(calc_err(Some(sheet), "P.Price.avg() + true").contains("Ratio and Bool"));
+    assert_eq!(ask(sheet, "P.Price.sum()"), "13.75");
+}
+
+/// A `Percent` is an exact number shown as so many in a hundred.
+#[test]
+fn percents() {
+    assert_eq!(calc("20%"), "20%");
+    assert_eq!(calc("-12.5%"), "-12.5%");
+    assert_eq!(calc("20% == 0.2"), "true");
+
+    // Percents add up to a Percent; anything else done with one gives the
+    // plain number.
+    assert_eq!(calc("20% + 5%"), "25%");
+    assert_eq!(calc("20% - 5%"), "15%");
+    assert_eq!(calc("-(20%)"), "-20%");
+    assert_eq!(calc("abs(-20%)"), "20%");
+    assert_eq!(calc("100 * 20%"), "20");
+    assert_eq!(calc("20% * 50%"), "0.1");
+    assert_eq!(calc("1 + 20%"), "1.2");
+    assert_eq!(calc("20% / 3"), "1/15");
+    assert_eq!(calc("[20%, 10%].sum()"), "30%");
+    assert_eq!(calc("[20%, 10%, 10%].avg()"), "40/3%");
+    assert_eq!(calc("[20%, 10%].max()"), "20%");
+    assert_eq!(calc("[20%, 1/3].sum()"), "8/15");
+    for (expr, message) in [
+        ("20% + 5% + true", "cannot apply `+` to Percent and Bool"),
+        ("20% * 2 + true", "cannot apply `+` to Ratio and Bool"),
+        ("20% + 0.5 + true", "cannot apply `+` to Ratio and Bool"),
+        ("20% + 1.5e0 + true", "cannot apply `+` to Num and Bool"),
+    ] {
+        let err = calc_err(None, expr);
+        assert!(err.contains(message), "{expr}: {err}");
+    }
+
+    // `.Percent` takes any number. One that does not end is rounded to two
+    // digits to be shown, and is still held in full.
+    let show = |expr: &str| {
+        let out = eval(None, "<expression>", expr);
+        assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
+        out.output.trim_end().to_string()
+    };
+    assert_eq!(show("(5/12).Percent"), "41.67…%");
+    assert_eq!(show("(-5/12).Percent"), "-41.67…%");
+    assert_eq!(show("(1/3).Percent"), "33.33…%");
+    assert_eq!(show("(2/3).Percent"), "66.67…%");
+    assert_eq!(show("[20%, 10%, 10%].avg()"), "13.33…%");
+    assert_eq!(show("(1/8).Percent"), "12.5%");
+    assert_eq!(show("0.12345%"), "0.12345%");
+    assert_eq!(calc("(0.4).Percent"), "40%");
+    assert_eq!(calc("2.Percent"), "200%");
+    assert_eq!(calc("(1/8).Percent"), "12.5%");
+    assert_eq!(calc("(5/12).Percent"), "125/3%");
+    assert_eq!(calc("(5/12).Percent * 12"), "5");
+    assert_eq!(calc("(5/12).Percent.Text"), "125/3%");
+    assert_eq!(calc("(1.5e-1).Percent"), "15%");
+    assert_eq!(calc("\"20%\".Percent"), "20%");
+    assert_eq!(calc("20%.Decimal"), "0.2");
+    assert_eq!(calc("20%.Ratio"), "0.2");
+    assert_eq!(calc("150%.Int"), "1");
+    assert_eq!(calc("20%.Num"), "0.2");
+
+    // A Percent column takes any exact number, and shows it as a percentage.
+    let sheet = "table S\n\nMargin : Percent\nShare : Ratio\n\n\
+                 Cost | Price | Rate | Margin | Share\n\
+                 7 | 12 | 20% | * | 20%\n3 | 5 | 0.5 | * | 1/3\n\n\
+                 Margin := (Price - Cost) / Price\n";
+    assert!(lint_errors(sheet).is_empty());
+    assert_eq!(ask(sheet, "S.Margin"), "[125/3%, 40%]");
+    assert_eq!(ask(sheet, "S.Margin.avg()"), "245/6%");
+    // A column of percentages is a Percent column; one with a plain number
+    // among them is a Ratio column.
+    assert!(calc_err(Some(sheet), "S[Rate; 0] + true").contains("Ratio and Bool"));
+    assert_eq!(ask(sheet, "S.Rate"), "[20%, 0.5]");
+    // In a Ratio column a percentage is the number it stands for.
+    assert_eq!(ask(sheet, "S.Share"), "[0.2, 1/3]");
+
+    // What does not go in one.
+    let rates = "table R\n\nRate : Percent\nWhole : Int\nEnds : Decimal\n\nRate | Whole | Ends\n";
+    assert!(
+        lint_errors(&format!(
+            "{rates}20% | 1 | 20%\n0.4 | 2 | 0.5\n1/3 | 3 | 1\n"
+        ))
+        .is_empty()
+    );
+    let errors = lint_errors(&format!("{rates}hello | 1 | 1\n"));
+    assert!(
+        errors[0].contains("`hello` is not a `Percent` literal"),
+        "{errors:?}"
+    );
+    let errors = lint_errors(&format!("{rates}= 1.5e0 | 1 | 1\n"));
+    assert!(
+        errors[0].contains("declared `Percent` but this is `Num`"),
+        "{errors:?}"
+    );
+    let errors = lint_errors(&format!("{rates}20% | 20% | 1\n"));
+    assert!(
+        errors[0].contains("`20%` is not an `Int` literal"),
+        "{errors:?}"
+    );
+    let errors = lint_errors(&format!("{rates}20% | 1 | = Rate + 5%\n"));
+    assert!(
+        errors[0].contains("declared `Decimal` but this is `Percent`"),
+        "{errors:?}"
+    );
+}
+
 #[test]
 fn rationals_in_full() {
     assert_eq!(calc("175/4"), "43.75");
@@ -129,16 +300,18 @@ fn display_of_rationals() {
         assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
         out.output.trim_end().to_string()
     };
-    // Up to five digits after the point, as they are.
+    // A Decimal, a fraction that ends, is shown as that decimal in full.
     assert_eq!(show("175/4"), "43.75");
     assert_eq!(show("1/100000"), "0.00001");
+    assert_eq!(show("-1/64"), "-0.015625");
+    assert_eq!(show("19.99 * 3"), "59.97");
     assert_eq!(show("100/3 * 3"), "100");
-    // More are rounded, and marked.
-    assert_eq!(show("1/3"), "0.33333…");
-    assert_eq!(show("2/3"), "0.66667…");
-    assert_eq!(show("-1/64"), "-0.01563…");
-    assert_eq!(show("[1/3, 0.5]"), "[0.33333…, 0.5]");
-    // A Num and each part of a Complex are rounded the same way.
+    // Any other Ratio is shown as x/y, in lowest terms.
+    assert_eq!(show("1/3"), "1/3");
+    assert_eq!(show("2/6 + 1/3"), "2/3");
+    assert_eq!(show("-7/3"), "-7/3");
+    assert_eq!(show("[1/3, 0.5]"), "[1/3, 0.5]");
+    // A Num and each part of a Complex are rounded to five digits, and marked.
     assert_eq!(show("4.Num"), "4");
     assert_eq!(show("(1/3).Num"), "0.33333…");
     assert_eq!(show("sqrt(2)"), "1.41421…");
@@ -343,7 +516,7 @@ fn date_and_time_arithmetic() {
             "cannot apply `+` to Date and Date",
         ),
         ("1 - 2025-01-31", "cannot apply `-` to Int and Date"),
-        ("2025-01-31 + 1.5", "cannot apply `+` to Date and Ratio"),
+        ("2025-01-31 + 1.5", "cannot apply `+` to Date and Decimal"),
         ("2025-01-31 - 09:30", "cannot apply `-` to Date and Time"),
         (
             "2025-01-31T09:30 - 2025-01-31",

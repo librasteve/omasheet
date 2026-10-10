@@ -49,6 +49,15 @@ fn field(v: &Value) -> (String, bool) {
                 (exact, false)
             }
         }
+        // A percentage that does not end is written as near as a double is.
+        Value::Percent(r) => {
+            let exact = format_exact(v, false, &Style::ISO);
+            if exact.contains('/') {
+                (format!("{}%", to_f64(r) * 100.0), true)
+            } else {
+                (exact, false)
+            }
+        }
         v => (format_exact(v, false, &Style::ISO), false),
     }
 }
