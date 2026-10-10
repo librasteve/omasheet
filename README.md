@@ -35,27 +35,13 @@ cargo run -p omasheet-cli -- render examples/report.md --html
 cargo install --git https://github.com/librasteve/omasheet omasheet-cli   # the omasheet command
 ```
 
-## With Claude
+## AI Skill
 
-Omasheet comes with a [skill](.claude/skills/omasheet/SKILL.md) that teaches
-[Claude Code](https://claude.com/claude-code) to write, check and convert
-sheets. In this repository it is there already. Anywhere else, ask Claude to
-install it:
+Prompt your favorite AI with:
 
-> Install the omasheet skill: save
-> https://raw.githubusercontent.com/librasteve/omasheet/main/.claude/skills/omasheet/SKILL.md
-> as ~/.claude/skills/omasheet/SKILL.md
-
-or do it yourself:
-
-```sh
-mkdir -p ~/.claude/skills/omasheet
-curl -fsSL https://raw.githubusercontent.com/librasteve/omasheet/main/.claude/skills/omasheet/SKILL.md \
-  -o ~/.claude/skills/omasheet/SKILL.md
+```text
+Please load the Omasheet skill from https://raw.githubusercontent.com/librasteve/omasheet/main/.claude/skills/omasheet/SKILL.md and follow its instructions when creating, checking, or converting spreadsheets.
 ```
-
-Start a new Claude session, and ask for a sheet: "make me a budget as an
-omasheet". `/omasheet` calls the skill by name.
 
 ## Docs
 
