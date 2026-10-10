@@ -87,6 +87,12 @@ ApplicationWindow {
     readonly property int selRight: Math.max(curCol, anchorCol)
 
     property bool editing: false
+    // The source takes the place of the grid while it is shown.
+    property bool showSource: false
+    onShowSourceChanged: Qt.callLater(function() {
+        if (showSource) sourceText.forceActiveFocus();
+        else grid.forceActiveFocus();
+    })
     property string editSeed: ""
     property bool closeConfirmed: false
     property string pendingAction: ""
@@ -416,6 +422,15 @@ ApplicationWindow {
             sheet.pasteValues(tab, selTop, selLeft, selBottom, selRight, text);
     }
 
+    // Paste what was copied turned about: its rows as columns.
+    function pasteTransposed() {
+        notice = "";
+        grabbed = null;
+        var text = clipboard.take();
+        if (text.length > 0 && !table.isConsts)
+            sheet.pasteTransposed(tab, selTop, selLeft, selBottom, selRight, text);
+    }
+
     // Make room for what was copied: copied columns become new columns to
     // the left of the selection, and anything else new rows above it.
     function insertCopied() {
@@ -501,8 +516,12 @@ ApplicationWindow {
         } else if (action === "open") {
             openDialog.open();
         } else if (action === "openUrl") {
-            if (sheet.openUrl(pendingUrl))
+            if (sheet.openUrl(pendingUrl)) {
                 switchTab(0);
+                // What an import changed or left behind.
+                if (sheet.notes.length > 0)
+                    notesDialog.open();
+            }
         }
     }
 
@@ -572,6 +591,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+S"; onActivated: win.save() }
     Shortcut { sequence: "Ctrl+Shift+S"; onActivated: saveDialog.open() }
     Shortcut { sequence: "Ctrl+O"; onActivated: win.guard("open") }
+    Shortcut { sequence: "Ctrl+E"; onActivated: exportChoice.open() }
     Shortcut { sequence: "Ctrl+N"; onActivated: win.guard("new") }
     Shortcut { sequence: "Ctrl+Shift+N"; onActivated: win.newWindow(win.tab) }
     Shortcut { sequence: "Ctrl+Z"; enabled: !win.typing; onActivated: sheet.undo() }
@@ -583,8 +603,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+PgUp"; onActivated: win.switchTab(win.tab - 1) }
     Shortcut { sequence: "Ctrl+?"; onActivated: helpDialog.open() }
     Shortcut { sequence: "F1"; onActivated: functionsDialog.open() }
-    Shortcut { sequence: "F2"
-        onActivated: sourceDialog.visible ? sourceDialog.close() : sourceDialog.open() }
+    Shortcut { sequence: "F2"; onActivated: win.showSource = !win.showSource }
     Shortcut { sequences: ["Meta+F", "F11"]
         onActivated: win.visibility = win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen }
 
@@ -714,6 +733,7 @@ ApplicationWindow {
             id: grid
             Layout.fillWidth: true
             Layout.fillHeight: true
+            visible: !win.showSource
             focus: true
 
             Keys.onPressed: function(event) {
@@ -761,7 +781,12 @@ ApplicationWindow {
                     } else if (ctrl && event.key === Qt.Key_X) {
                         win.cutSelection();
                     } else if (ctrl && event.key === Qt.Key_V) {
-                        win.pasteSelection();
+                        if (event.modifiers & Qt.AltModifier)
+                            win.pasteTransposed();
+                        else if (shift)
+                            win.pasteValues();
+                        else
+                            win.pasteSelection();
                     } else if (ctrl && event.key === Qt.Key_A) {
                         win.byRow = false;
                         win.byCol = false;
@@ -1097,6 +1122,69 @@ ApplicationWindow {
             }
         }
 
+        // The source: the sheet as it is written, to read and to copy from.
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: win.showSource
+            spacing: 0
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: win.fontSize * 2 + 10
+                color: win.panelColor
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 6
+                    spacing: 10
+
+                    Text {
+                        text: "Source: " + sheet.fileName
+                        color: win.mutedColor
+                        font: win.font
+                        elide: Text.ElideMiddle
+                        Layout.fillWidth: true
+                    }
+                    FooterButton { label: "\u00d7"; onClicked: win.showSource = false }
+                }
+
+                Rectangle {
+                    anchors.bottom: parent.bottom
+                    width: parent.width
+                    height: 1
+                    color: win.lineColor
+                }
+            }
+
+            Flickable {
+                id: sourceFlick
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                TextArea.flickable: TextArea {
+                    id: sourceText
+                    // `win.snap` is read so that an edit rewrites the text.
+                    text: win.showSource && win.snap ? sheet.sourceText() : ""
+                    readOnly: true
+                    selectByMouse: true
+                    wrapMode: TextEdit.NoWrap
+                    textFormat: TextEdit.PlainText
+                    color: win.textColor
+                    font: win.font
+                    leftPadding: 12
+                    rightPadding: 12
+                    background: null
+                    Keys.onEscapePressed: win.showSource = false
+                }
+            }
+        }
+
         // Footer: table tabs on the left, actions and status on the right.
         Rectangle {
             Layout.fillWidth: true
@@ -1116,8 +1204,11 @@ ApplicationWindow {
                     FooterButton {
                         required property int index
                         label: win.tabs[index].name
-                        active: index === win.tab
-                        onClicked: win.switchTab(index)
+                        active: index === win.tab && !win.showSource
+                        onClicked: {
+                            win.showSource = false;
+                            win.switchTab(index);
+                        }
                         onRightClicked: {
                             tabMenu.index = index;
                             tabMenu.popup();
@@ -1160,6 +1251,12 @@ ApplicationWindow {
                     Layout.maximumWidth: 320
                 }
                 FooterButton {
+                    readonly property int count: sheet.notes.length > 0 ? sheet.notes.split("\n").length : 0
+                    visible: count > 0
+                    label: count + (count === 1 ? " note" : " notes")
+                    onClicked: notesDialog.open()
+                }
+                FooterButton {
                     visible: win.snap.problems.length > 0
                     label: win.snap.problems.length + (win.snap.problems.length === 1 ? " problem" : " problems")
                     textColor: win.errorColor
@@ -1170,7 +1267,7 @@ ApplicationWindow {
                 FooterButton { label: "+ Formula"; quiet: true; enabled: !win.table.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("computed") }
                 FooterButton { label: "+ Constant"; quiet: true; onClicked: promptDialog.ask("const") }
                 FooterButton { label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
-                FooterButton { label: "</>"; quiet: true; onClicked: sourceDialog.open() }
+                FooterButton { label: "</>"; quiet: true; active: win.showSource; onClicked: win.showSource = !win.showSource }
                 FooterButton { label: "?"; quiet: true; onClicked: helpDialog.open() }
             }
         }
@@ -1269,6 +1366,7 @@ ApplicationWindow {
             onTriggered: win.pasteSelection()
         }
         MenuEntry { text: "Paste values"; enabled: cellMenu.hasRows; onTriggered: win.pasteValues() }
+        MenuEntry { text: "Paste transposed"; enabled: cellMenu.hasRows; onTriggered: win.pasteTransposed() }
         MenuEntry { text: "Insert copied cells"; enabled: cellMenu.editable && win.tabs.length > 0; onTriggered: win.insertCopied() }
         MenuEntry { text: "Clear"; enabled: cellMenu.hasRows; onTriggered: win.clearSelection() }
         MenuRule { visible: win.selKind === "cells" }
@@ -1342,7 +1440,8 @@ ApplicationWindow {
         id: openDialog
         title: "Open sheet"
         fileMode: Dialogs.FileDialog.OpenFile
-        nameFilters: ["Omasheet (*.omx)", "All files (*)"]
+        // A workbook or a CSV file is imported: it opens as a new sheet.
+        nameFilters: ["Sheets, workbooks and CSV (*.omx *.xlsx *.csv)", "Omasheet (*.omx)", "All files (*)"]
         onAccepted: {
             win.pendingUrl = selectedFile;
             win.run("openUrl");
@@ -1365,13 +1464,112 @@ ApplicationWindow {
         onRejected: win.pendingAction = ""
     }
 
+    // What to export as. Asked here, as not every file chooser offers a
+    // choice of file types.
+    Dialog {
+        id: exportChoice
+        anchors.centerIn: parent
+        modal: true
+        focus: true
+        width: 460
+        title: "Export"
+        readonly property bool oneTable: !win.table.isConsts && win.tabs.length > 0
+        onClosed: grid.forceActiveFocus()
+        onOpened: workbookButton.forceActiveFocus()
+        function choose(csv) {
+            close();
+            exportDialog.csv = csv;
+            // Beside the sheet, under its name.
+            var name = win.table.isConsts ? "" : win.table.name;
+            exportDialog.selectedFile = sheet.exportSuggestion(csv, name, exportDialog.currentFolder);
+            exportDialog.open();
+        }
+        Shortcut { sequence: "X"; enabled: exportChoice.visible; onActivated: exportChoice.choose(false) }
+        Shortcut { sequence: "C"; enabled: exportChoice.visible && exportChoice.oneTable; onActivated: exportChoice.choose(true) }
+        ColumnLayout {
+            width: parent.width
+            spacing: 10
+            Button {
+                id: workbookButton
+                Layout.fillWidth: true
+                text: "Workbook (.xlsx): every table    X"
+                font: win.font
+                onClicked: exportChoice.choose(false)
+                Keys.onReturnPressed: clicked()
+                Keys.onEnterPressed: clicked()
+            }
+            Button {
+                Layout.fillWidth: true
+                enabled: exportChoice.oneTable
+                text: "CSV (.csv): " + (exportChoice.oneTable ? win.table.name + " only" : "show a table first") + "    C"
+                font: win.font
+                onClicked: exportChoice.choose(true)
+                Keys.onReturnPressed: clicked()
+                Keys.onEnterPressed: clicked()
+            }
+        }
+        standardButtons: Dialog.Cancel
+    }
+
+    // The calculated sheet as a workbook, or the table shown as CSV.
+    Dialogs.FileDialog {
+        id: exportDialog
+        property bool csv: false
+        title: csv ? "Export " + win.table.name + " as CSV" : "Export as a workbook"
+        fileMode: Dialogs.FileDialog.SaveFile
+        nameFilters: csv ? ["CSV (*.csv)"] : ["Workbook (*.xlsx)"]
+        defaultSuffix: csv ? "csv" : "xlsx"
+        onAccepted: {
+            var name = win.table.isConsts ? "" : win.table.name;
+            if (sheet.exportUrl(selectedFile, csv, name) && sheet.notes.length > 0)
+                notesDialog.open();
+        }
+    }
+
+    // What an import or export changed, rounded or left behind.
+    Dialog {
+        id: notesDialog
+        anchors.centerIn: parent
+        modal: true
+        width: Math.min(win.width - 80, 760)
+        title: sheet.status
+        standardButtons: Dialog.Close
+        onClosed: grid.forceActiveFocus()
+        contentItem: ListView {
+            implicitHeight: Math.min(contentHeight, 360)
+            clip: true
+            spacing: 8
+            model: sheet.notes.length > 0 ? sheet.notes.split("\n") : []
+            delegate: Text {
+                required property string modelData
+                width: ListView.view.width
+                text: modelData
+                color: win.textColor
+                wrapMode: Text.Wrap
+                font.family: win.font.family
+                font.features: win.font.features
+                font.pixelSize: win.fontSize - 1
+            }
+        }
+    }
+
     Dialog {
         id: unsavedDialog
         anchors.centerIn: parent
         modal: true
         width: 440
+        focus: true
         title: "Unsaved changes"
         standardButtons: Dialog.Save | Dialog.Discard | Dialog.Cancel
+        // Each button names its key.
+        Component.onCompleted: {
+            standardButton(Dialog.Save).text = "Save    S";
+            standardButton(Dialog.Discard).text = "Discard    D";
+            standardButton(Dialog.Cancel).text = "Cancel    C";
+        }
+        Shortcut { sequence: "S"; enabled: unsavedDialog.visible; onActivated: unsavedDialog.accept() }
+        Shortcut { sequence: "D"; enabled: unsavedDialog.visible; onActivated: unsavedDialog.discarded() }
+        Shortcut { sequence: "C"; enabled: unsavedDialog.visible; onActivated: unsavedDialog.reject() }
         Label {
             width: parent.width
             text: sheet.fileName + " has changes that are not saved."
@@ -1713,40 +1911,6 @@ ApplicationWindow {
         }
     }
 
-    // The source: the sheet as it is written, to read and to copy from.
-    Dialog {
-        id: sourceDialog
-        anchors.centerIn: parent
-        modal: true
-        focus: true
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        Shortcut { sequence: "Esc"; enabled: sourceDialog.visible; onActivated: sourceDialog.close() }
-        width: Math.min(win.width - 60, 960)
-        height: Math.min(win.height - 60, 720)
-        title: "Source: " + sheet.fileName
-        standardButtons: Dialog.Close
-        onOpened: {
-            // Read afresh each time: every edit rewrites the text.
-            sourceText.text = sheet.sourceText();
-            sourceText.forceActiveFocus();
-        }
-        onClosed: grid.forceActiveFocus()
-
-        contentItem: ScrollView {
-            clip: true
-            TextArea {
-                id: sourceText
-                readOnly: true
-                selectByMouse: true
-                wrapMode: TextEdit.NoWrap
-                textFormat: TextEdit.PlainText
-                color: win.textColor
-                font: win.font
-                background: null
-            }
-        }
-    }
-
     Dialog {
         id: helpDialog
         anchors.centerIn: parent
@@ -1761,18 +1925,22 @@ ApplicationWindow {
         Label {
             font: win.font
             text: "Arrows, Tab          Move\n"
+                + "Ctrl+Arrows          Go to the first / last row or column\n"
                 + "Shift+Arrows, drag   Select a block\n"
                 + "Enter, typing        Edit the cell\n"
                 + "Enter / Tab          Commit and move down / right\n"
                 + "Esc                  Cancel the edit\n"
                 + "Delete               Clear the selection\n"
                 + "Ctrl+C / X / V       Copy / cut / paste\n"
+                + "Ctrl+Shift+V         Paste values, not formulas\n"
+                + "Ctrl+Alt+V           Paste transposed: rows as columns\n"
                 + "Ctrl+Enter           Insert a row below (Shift: above)\n"
                 + "Ctrl+Delete          Delete the selected rows\n"
                 + "Ctrl+Z / Ctrl+Y      Undo / redo\n"
                 + "Ctrl+PgUp / PgDn     Previous / next table\n"
                 + "Ctrl+O / S           Open / save\n"
                 + "Ctrl+Shift+S         Save as\n"
+                + "Ctrl+E               Export as a workbook or CSV\n"
                 + "Ctrl+N               New sheet\n"
                 + "Ctrl+Shift+N         New window on this sheet\n"
                 + "Ctrl++ / Ctrl+-      Larger / smaller text (Ctrl+0 resets)\n"

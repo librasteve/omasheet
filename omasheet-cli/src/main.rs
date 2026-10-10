@@ -14,7 +14,7 @@ use std::process::ExitCode;
 #[command(
     name = "omasheet",
     version,
-    about = "A text-native spreadsheet: view, evaluate and check .omx sheets",
+    about = "A text-native spreadsheet: view, evaluate, check, import, export and render .omx sheets",
     args_conflicts_with_subcommands = true
 )]
 struct Cli {
@@ -103,6 +103,66 @@ enum Command {
         /// The sheet to check
         file: PathBuf,
     },
+    /// Write a workbook (.xlsx) or a CSV file (.csv) as a sheet
+    ///
+    /// The sheet is printed, and anything that was changed or left behind
+    /// is reported.
+    Import {
+        /// The workbook or CSV file to read
+        file: PathBuf,
+
+        /// Write the sheet to this file rather than printing it
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+    },
+    /// Write the calculated tables of a sheet as a workbook or as CSV
+    ///
+    /// The file is written beside the sheet: budget.omx as budget.xlsx or
+    /// budget.csv. CSV holds one table, so a sheet with several is written
+    /// as budget.Sales.csv, budget.Summary.csv.
+    Export {
+        /// The sheet to export
+        file: PathBuf,
+
+        /// Write a workbook, with a worksheet for each table
+        #[arg(long, conflicts_with = "csv")]
+        xlsx: bool,
+
+        /// Write CSV, a file for each table
+        #[arg(long)]
+        csv: bool,
+
+        /// Export this table alone
+        #[arg(long, value_name = "NAME")]
+        table: Option<String>,
+
+        /// Write to this file rather than beside the sheet
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+
+        #[command(flatten)]
+        env: Env,
+    },
+    /// Render a Markdown document with its sheets calculated
+    ///
+    /// A fenced `omx` block is shown as its tables, and {{ expression }} as
+    /// its value. `sheets: [budget.omx]` in the front matter names sheets
+    /// to read as well. The document is printed as Markdown, or as HTML.
+    Render {
+        /// The Markdown document to render
+        file: PathBuf,
+
+        /// Write an HTML page
+        #[arg(long)]
+        html: bool,
+
+        /// Write to this file rather than printing
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+
+        #[command(flatten)]
+        env: Env,
+    },
 }
 
 fn read(path: &Path) -> Result<String, ExitCode> {
@@ -110,6 +170,131 @@ fn read(path: &Path) -> Result<String, ExitCode> {
         eprintln!("omasheet: cannot read {}: {e}", path.display());
         ExitCode::from(2)
     })
+}
+
+fn write(path: &Path, bytes: &[u8]) -> Result<(), ExitCode> {
+    std::fs::write(path, bytes).map_err(|e| {
+        eprintln!("omasheet: cannot write {}: {e}", path.display());
+        ExitCode::from(2)
+    })
+}
+
+fn usage<T>(message: &str) -> Result<T, ExitCode> {
+    eprintln!("omasheet: {message}");
+    Err(ExitCode::from(2))
+}
+
+fn note(notices: &[String]) {
+    for notice in notices {
+        eprintln!("note: {notice}");
+    }
+}
+
+fn extension(path: &Path) -> String {
+    let ext = path.extension().unwrap_or_default();
+    ext.to_string_lossy().to_ascii_lowercase()
+}
+
+fn import(file: &Path, output: Option<&Path>) -> Result<ExitCode, ExitCode> {
+    let kind = extension(file);
+    if !matches!(kind.as_str(), "xlsx" | "csv") {
+        return usage(&format!(
+            "cannot import {}: give a workbook (.xlsx) or a CSV file (.csv)",
+            file.display()
+        ));
+    }
+    let bytes = std::fs::read(file).map_err(|e| {
+        eprintln!("omasheet: cannot read {}: {e}", file.display());
+        ExitCode::from(2)
+    })?;
+    let imported = match kind.as_str() {
+        "xlsx" => omasheet_interop::xlsx::import(&bytes),
+        _ => {
+            let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+            omasheet_interop::csv::import(&stem, &bytes)
+        }
+    };
+    let imported = match imported {
+        Ok(imported) => imported,
+        Err(why) => {
+            eprintln!("omasheet: cannot import {}: {why}", file.display());
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+    match output {
+        Some(path) => write(path, imported.source.as_bytes())?,
+        None => print!("{}", imported.source),
+    }
+    note(&imported.notices);
+    Ok(ExitCode::SUCCESS)
+}
+
+fn export(
+    file: &Path,
+    xlsx: bool,
+    table: Option<&str>,
+    output: Option<&Path>,
+    options: Options,
+) -> Result<ExitCode, ExitCode> {
+    let text = read(file)?;
+    let name = file.to_string_lossy();
+    let exported = if xlsx {
+        omasheet_interop::xlsx::export(&name, &text, table, options)
+    } else {
+        omasheet_interop::csv::export(&name, &text, table, options)
+    };
+    let exported = match exported {
+        Ok(exported) => exported,
+        Err(errors) => {
+            return Ok(finish(Outcome {
+                errors,
+                ..Outcome::default()
+            }));
+        }
+    };
+    let ext = if xlsx { "xlsx" } else { "csv" };
+    if output.is_some() && exported.files.len() > 1 {
+        return usage(
+            "the sheet has several tables: give one with --table to write it to --output",
+        );
+    }
+    for out in &exported.files {
+        let path = match (output, &out.table) {
+            (Some(path), _) => path.to_path_buf(),
+            (None, Some(table)) => file.with_extension(format!("{table}.{ext}")),
+            (None, None) => file.with_extension(ext),
+        };
+        write(&path, &out.bytes)?;
+        eprintln!("wrote {}", path.display());
+    }
+    note(&exported.notices);
+    Ok(ExitCode::SUCCESS)
+}
+
+fn render(
+    file: &Path,
+    html: bool,
+    output: Option<&Path>,
+    options: Options,
+) -> Result<ExitCode, ExitCode> {
+    let text = read(file)?;
+    // A sheet is named from where the document is.
+    let load = |path: &str| {
+        let path = file.parent().unwrap_or(Path::new("")).join(path);
+        std::fs::read_to_string(&path)
+            .map(|text| (path.to_string_lossy().into_owned(), text))
+            .map_err(|e| e.to_string())
+    };
+    let format = if html {
+        omasheet_md::Format::Html
+    } else {
+        omasheet_md::Format::Markdown
+    };
+    let mut outcome = omasheet_md::render(&file.to_string_lossy(), &text, &load, format, options);
+    if let Some(path) = output.filter(|_| outcome.ok()) {
+        write(path, std::mem::take(&mut outcome.output).as_bytes())?;
+    }
+    Ok(finish(outcome))
 }
 
 fn finish(outcome: Outcome) -> ExitCode {
@@ -173,6 +358,27 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
                 sheet_ref, expr_name, &expr, options,
             )))
         }
+        Some(Command::Import { file, output }) => import(&file, output.as_deref()),
+        Some(Command::Export {
+            file,
+            xlsx,
+            csv,
+            table,
+            output,
+            env,
+        }) => {
+            if !xlsx && !csv {
+                return usage("say what to export as: --xlsx or --csv");
+            }
+            let options = env.options()?;
+            export(&file, xlsx, table.as_deref(), output.as_deref(), options)
+        }
+        Some(Command::Render {
+            file,
+            html,
+            output,
+            env,
+        }) => render(&file, html, output.as_deref(), env.options()?),
         None => {
             let Some(file) = cli.file else {
                 eprintln!("omasheet: give a sheet to view, or see `omasheet --help`");

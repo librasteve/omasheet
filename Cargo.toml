@@ -1,6 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["omasheet-omx", "omasheet-engine", "omasheet-cli", "omasheet-ui"]
+members = [
+    "omasheet-omx",
+    "omasheet-engine",
+    "omasheet-interop",
+    "omasheet-md",
+    "omasheet-cli",
+    "omasheet-ui",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -17,3 +24,9 @@ libc = "0.2"
 jiff = "0.2"
 omasheet-omx = { path = "omasheet-omx" }
 omasheet-engine = { path = "omasheet-engine" }
+omasheet-interop = { path = "omasheet-interop" }
+omasheet-md = { path = "omasheet-md" }
+calamine = "0.36"
+rust_xlsxwriter = "0.99"
+csv = "1"
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }

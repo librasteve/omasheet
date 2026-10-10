@@ -48,7 +48,7 @@ verified and archived before the next begins.
 | Phase | Change | Delivers | Done when |
 |-------|--------|----------|-----------|
 | 1 | `add-omasheet-core` | Numerics, OMX, the `.omx` format, compile / check / evaluate, `omasheet eval`, `lint` and the read-only view | An `.omx` with computed columns, cursor references, filters and lookups evaluates exactly from the CLI, with no dataframe dependency |
-| 2 | `add-interop` | XLSX import and export; Markdown `{{ }}` and `omx` blocks; `import`, `export`, `render` | A workbook imports to `.omx` and exports back; `omasheet render report.md` produces HTML |
+| 2 | `add-interop` | XLSX and CSV import and export; Markdown `{{ }}` and `omx` blocks; `import`, `export`, `render` | A workbook or CSV file imports to `.omx` and exports back; `omasheet render report.md` produces HTML |
 | 3 | `add-table-operations` | Group, join, the `group` pipe stage, partitioned cursor offsets, incremental recalculation | `Sales \|> group(Region) \|> sum(Revenue)` and a left join give exact results, on Omasheet's own engine |
 | 4 | `add-units` | Unit literals, dimension checking, currencies, column units, user-defined units, display units | `Revenue + Weight` is rejected by `lint`; unit columns export to XLSX |
 | 5 | `add-uncertainty` | `±` values, propagation, `Uncertain<…>` columns, display | `10 ± 0.1 m` propagates through arithmetic and aggregation |
@@ -56,6 +56,10 @@ verified and archived before the next begins.
 Alongside the phases, `add-interactive-app` adds the desktop window: an editable
 grid over the same engine. It needs only Phase 1 and gains each later phase's
 features as they land.
+
+Also outside the numbered phases, `add-dataframe-interop` is a draft for a later
+phase: Parquet import and export, and whatever Polars integration is wanted. It
+needs Phase 2.
 
 Dependencies: every phase needs Phase 1. Phase 3 does not need Phase 2. Phase 4
 adds deltas to Phases 2 and 3 (units on export, units through group/join), and
@@ -73,6 +77,8 @@ pivots, formatting syntax.
   `omasheet-engine` from Phase 3. Polars and other dataframe libraries are out
   of scope — none has an arbitrary-precision rational type
 - XLSX (Phase 2): `calamine` (read), `rust_xlsxwriter` (write)
+- CSV (Phase 2): `csv`
+- Markdown (Phase 2): `pulldown-cmark`
 - CLI: `clap`
 - App: Qt 6 Quick (QML) with `cxx-qt`; needs `qt6-base` and `qt6-declarative`
 - Later: `tower-lsp` (LSP), Neovim plugin
@@ -84,7 +90,8 @@ omasheet/
 ├── omasheet-omx      lexer, parser, AST, type checker, dependency analysis
 ├── omasheet-engine   values, numerics, execution (Phase 1); table operations,
 │                     recalc (3); units (4); uncertainty (5)
-├── omasheet-xlsx     XLSX import/export (Phase 2)
+├── omasheet-interop  XLSX and CSV import/export (Phase 2)
+├── omasheet-md       Markdown: `{{ }}`, `omx` blocks, render (Phase 2)
 ├── omasheet-cli      the `omasheet` binary
 ├── omasheet-ui       the interactive window: Qt Quick, driven from Rust (cxx-qt)
 └── omasheet-lsp      language server (later)

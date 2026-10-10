@@ -8,7 +8,8 @@ use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QString, QUrl};
 use omasheet_engine::doc::{BLANK, entry_hint};
 use omasheet_engine::omx::date::Style;
-use omasheet_engine::{Document, locale};
+use omasheet_engine::{Document, Options, locale};
+use omasheet_interop::{Exported, Imported};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -30,6 +31,7 @@ pub mod qobject {
         #[qproperty(bool, modified)]
         #[qproperty(i32, revision)]
         #[qproperty(QString, status)]
+        #[qproperty(QString, notes)]
         #[qproperty(bool, can_undo)]
         #[qproperty(bool, can_redo)]
         #[qproperty(bool, dark_mode)]
@@ -60,6 +62,15 @@ pub mod qobject {
         fn save(self: Pin<&mut Sheet>) -> bool;
         #[qinvokable]
         fn save_url(self: Pin<&mut Sheet>, url: &QUrl) -> bool;
+        /// Write the calculated sheet as a workbook, or the table named as
+        /// CSV if `csv`; a file named `.xlsx` or `.csv` is written as that.
+        /// What could not be written exactly is left in `notes`.
+        #[qinvokable]
+        fn export_url(self: Pin<&mut Sheet>, url: &QUrl, csv: bool, table: &QString) -> bool;
+        /// Where an export would go unless told otherwise: beside the sheet
+        /// and under its name, or in `folder` if the sheet is not saved yet.
+        #[qinvokable]
+        fn export_suggestion(self: &Sheet, csv: bool, table: &QString, folder: &QUrl) -> QUrl;
 
         #[qinvokable]
         fn set_cell(self: Pin<&mut Sheet>, table: i32, row: i32, col: i32, text: &QString);
@@ -101,6 +112,18 @@ pub mod qobject {
         /// not their formulas.
         #[qinvokable]
         fn paste_values(
+            self: Pin<&mut Sheet>,
+            table: i32,
+            row0: i32,
+            col0: i32,
+            row1: i32,
+            col1: i32,
+            text: &QString,
+        );
+        /// Paste as `paste_cells` does, but turned about: each copied row
+        /// goes down a column.
+        #[qinvokable]
+        fn paste_transposed(
             self: Pin<&mut Sheet>,
             table: i32,
             row0: i32,
@@ -227,6 +250,8 @@ pub struct SheetRust {
     modified: bool,
     revision: i32,
     status: QString,
+    /// What the last import or export changed or left behind, a line each.
+    notes: QString,
     can_undo: bool,
     can_redo: bool,
     dark_mode: bool,
@@ -241,6 +266,8 @@ pub struct SheetRust {
 
     doc: Document,
     path: Option<PathBuf>,
+    /// The workbook or CSV file the sheet was imported from, until it is saved.
+    origin: Option<PathBuf>,
     /// The text as last opened or saved, to tell whether there are changes.
     saved: String,
     /// The cells last cut, until they are pasted.
@@ -281,6 +308,7 @@ impl Default for SheetRust {
             modified: false,
             revision: 0,
             status: QString::default(),
+            notes: QString::default(),
             can_undo: false,
             can_redo: false,
             dark_mode: theme.dark,
@@ -293,6 +321,7 @@ impl Default for SheetRust {
             snapshot_path: QString::from(std::env::var("OMASHEET_UI_SNAPSHOT").unwrap_or_default()),
             doc: document(BLANK),
             path: None,
+            origin: None,
             saved: BLANK.to_string(),
             cut: None,
             copied: None,
@@ -328,6 +357,17 @@ fn parse_block(text: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// A block turned about: its rows as columns. Short rows are filled out.
+fn transposed(block: &[Vec<String>]) -> Vec<Vec<String>> {
+    let width = block.iter().map(Vec::len).max().unwrap_or(0);
+    (0..width)
+        .map(|j| {
+            let cell = |line: &Vec<String>| line.get(j).cloned().unwrap_or_default();
+            block.iter().map(cell).collect()
+        })
+        .collect()
+}
+
 impl qobject::Sheet {
     /// Publish the document's state after it changed.
     fn refresh(mut self: Pin<&mut Self>, status: &str) {
@@ -358,6 +398,7 @@ impl qobject::Sheet {
         self.as_mut().set_file_name(QString::from(&name));
         self.as_mut().set_file_path(QString::from(&full));
         self.as_mut().rust_mut().path = path;
+        self.as_mut().rust_mut().origin = None;
     }
 
     fn snapshot_json(&self) -> QString {
@@ -374,11 +415,52 @@ impl qobject::Sheet {
             rust.doc = document(BLANK);
             rust.saved = BLANK.to_string();
         }
+        self.as_mut().set_notes(QString::default());
         self.as_mut().set_path(None);
         self.refresh("");
     }
 
+    /// Open a workbook or a CSV file as a new sheet, not yet saved.
+    fn import_file(mut self: Pin<&mut Self>, path: PathBuf, kind: &str) -> bool {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let imported =
+            std::fs::read(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|bytes| match kind {
+                    "xlsx" => omasheet_interop::xlsx::import(&bytes),
+                    _ => {
+                        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+                        omasheet_interop::csv::import(&stem, &bytes)
+                    }
+                });
+        match imported {
+            Ok(Imported { source, notices }) => {
+                {
+                    let mut rust = self.as_mut().rust_mut();
+                    rust.doc = document(&source);
+                    // Nothing of it is saved yet.
+                    rust.saved = String::new();
+                }
+                self.as_mut().set_notes(QString::from(&notices.join("\n")));
+                self.as_mut().set_path(None);
+                self.as_mut().rust_mut().origin = Some(path.clone());
+                self.refresh(&format!("Imported {name}"));
+                true
+            }
+            Err(why) => {
+                let message = format!("Could not import {name}: {why}");
+                self.as_mut().set_status(QString::from(&message));
+                false
+            }
+        }
+    }
+
     fn open_file(mut self: Pin<&mut Self>, path: PathBuf) -> bool {
+        let kind = path.extension().unwrap_or_default().to_string_lossy();
+        let kind = kind.to_ascii_lowercase();
+        if matches!(kind.as_str(), "xlsx" | "csv") {
+            return self.import_file(path, &kind);
+        }
         match std::fs::read_to_string(&path) {
             Ok(text) => {
                 {
@@ -386,6 +468,7 @@ impl qobject::Sheet {
                     rust.doc = document(&text);
                     rust.saved = text;
                 }
+                self.as_mut().set_notes(QString::default());
                 self.as_mut().set_path(Some(path));
                 self.refresh("");
                 true
@@ -440,6 +523,87 @@ impl qobject::Sheet {
             path.set_extension("omx");
         }
         self.save_file(path)
+    }
+
+    fn export_url(mut self: Pin<&mut Self>, url: &QUrl, csv: bool, table: &QString) -> bool {
+        let mut path = PathBuf::from(url.to_local_file_or_default().to_string());
+        if path.as_os_str().is_empty() {
+            return false;
+        }
+        let named = path
+            .extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase());
+        let csv = match named.as_deref() {
+            Some("csv") => true,
+            Some("xlsx") => false,
+            _ => {
+                path.as_mut_os_string()
+                    .push(if csv { ".csv" } else { ".xlsx" });
+                csv
+            }
+        };
+        let table = table.to_string();
+        if csv && table.is_empty() {
+            let message = "CSV holds one table: show the table to export first";
+            self.as_mut().set_status(QString::from(message));
+            return false;
+        }
+        let name = self.rust().file_name.to_string();
+        let text = self.rust().doc.text().to_string();
+        let exported = if csv {
+            omasheet_interop::csv::export(&name, &text, Some(&table), Options::default())
+        } else {
+            omasheet_interop::xlsx::export(&name, &text, None, Options::default())
+        };
+        let written = exported
+            .map_err(|_| "the sheet has problems to put right first".to_string())
+            .and_then(|Exported { files, notices }| {
+                let bytes = files.first().map_or(&[][..], |f| &f.bytes);
+                std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+                Ok(notices)
+            });
+        match written {
+            Ok(notices) => {
+                self.as_mut().set_notes(QString::from(&notices.join("\n")));
+                let message = format!("Exported {}", path.display());
+                self.as_mut().set_status(QString::from(&message));
+                true
+            }
+            Err(why) => {
+                let message = format!("Could not export {}: {why}", path.display());
+                self.as_mut().set_status(QString::from(&message));
+                false
+            }
+        }
+    }
+
+    fn export_suggestion(&self, csv: bool, table: &QString, folder: &QUrl) -> QUrl {
+        let rust = self.rust();
+        let from = rust.path.as_ref().or(rust.origin.as_ref());
+        let mut name = from
+            .and_then(|p| p.file_stem())
+            .map_or("Untitled".to_string(), |s| s.to_string_lossy().into_owned());
+        if csv {
+            // As the command line names them: budget.Sales.csv, unless the
+            // sheet has the one table.
+            if rust.doc.snapshot().tables.len() > 1 {
+                name.push('.');
+                name.push_str(&table.to_string());
+            }
+            name.push_str(".csv");
+        } else {
+            name.push_str(".xlsx");
+        }
+        let folder = from
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .or_else(|| {
+                let folder = folder.to_local_file_or_default().to_string();
+                (!folder.is_empty()).then(|| PathBuf::from(folder))
+            })
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default();
+        QUrl::from_local_file(&QString::from(&*folder.join(name).to_string_lossy()))
     }
 
     /// Run an edit and publish the result if it changed anything.
@@ -559,6 +723,20 @@ impl qobject::Sheet {
         let values = self.copied(&text).map(|c| c.values.clone());
         self.as_mut().rust_mut().cut = None;
         let block = parse_block(values.as_deref().unwrap_or(&text));
+        self.put_block(table, (index(row0), index(col0)), (row1, col1), block);
+    }
+
+    fn paste_transposed(
+        mut self: Pin<&mut Self>,
+        table: i32,
+        row0: i32,
+        col0: i32,
+        row1: i32,
+        col1: i32,
+        text: &QString,
+    ) {
+        self.as_mut().rust_mut().cut = None;
+        let block = transposed(&parse_block(&text.to_string()));
         self.put_block(table, (index(row0), index(col0)), (row1, col1), block);
     }
 
@@ -823,11 +1001,18 @@ impl qobject::Sheet {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_block;
+    use super::{parse_block, transposed};
 
     #[test]
     fn parses_clipboard_blocks() {
         assert_eq!(parse_block("a\tb\r\nc\t\n"), [["a", "b"], ["c", ""]]);
         assert_eq!(parse_block("x"), [["x"]]);
+    }
+
+    #[test]
+    fn transposes_blocks() {
+        let block = parse_block("a\tb\tc\nd");
+        assert_eq!(transposed(&block), [["a", "d"], ["b", ""], ["c", ""]]);
+        assert_eq!(transposed(&parse_block("x")), [["x"]]);
     }
 }

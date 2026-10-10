@@ -1,0 +1,11 @@
+[package]
+name = "omasheet-md"
+description = "Omasheet in Markdown: {{ expression }} interpolation and omx blocks, rendered"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+omasheet-engine.workspace = true
+pulldown-cmark.workspace = true

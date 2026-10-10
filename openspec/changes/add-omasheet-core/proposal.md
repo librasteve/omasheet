@@ -39,7 +39,7 @@ Nothing exists yet, so every requirement is ADDED.
 
 Delivered by later changes, in roadmap order:
 
-- `add-interop` (Phase 2) — XLSX import/export and Markdown integration
+- `add-interop` (Phase 2) — XLSX and CSV import/export and Markdown integration
 - `add-table-operations` (Phase 3) — group, join, the `group` pipe stage,
   partitioned cursor offsets, incremental recalculation
 - `add-units` (Phase 4) — units, currencies, dimensional analysis

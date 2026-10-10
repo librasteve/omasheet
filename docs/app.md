@@ -22,8 +22,11 @@ rewrites the text, and saving writes exactly that.
 
 | Keys | |
 |---|---|
+| Ctrl+Arrows | go to the first / last row or column |
 | Enter, typing | edit the cell |
 | Ctrl+C / X / V | copy / cut / paste |
+| Ctrl+Shift+V | paste values, not formulas |
+| Ctrl+Alt+V | paste transposed: rows as columns |
 | Ctrl+X on a row or column | pick it up; Ctrl+V on another moves it there: a formula column can go among the data columns |
 | Ctrl+Enter | insert a row below (Shift: above) |
 | Ctrl+Delete | delete the selected rows |
@@ -31,6 +34,7 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+PgUp / PgDn | previous / next table |
 | Ctrl+Shift+N | another window on this sheet |
 | Ctrl+O / S, Ctrl+Shift+S | open / save, save as |
+| Ctrl+E | export: then X for a workbook, C for the table shown as CSV |
 | F1 | functions |
 | F2 | view the source |
 | Ctrl+? | all shortcuts |

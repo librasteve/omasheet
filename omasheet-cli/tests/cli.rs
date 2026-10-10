@@ -174,3 +174,174 @@ fn time_zones_can_be_given() {
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("there is no time zone `Mars/Base`"));
 }
+
+// ---- import, export, render ------------------------------------------------
+
+/// A directory of its own for a test to write in.
+fn scratch(name: &str) -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn path(dir: &std::path::Path, file: &str) -> String {
+    dir.join(file).to_string_lossy().into_owned()
+}
+
+#[test]
+fn export_writes_beside_the_sheet_and_leaves_it_alone() {
+    let dir = scratch("export");
+    let sheet = path(&dir, "budget.omx");
+    std::fs::copy(root().join("examples/budget.omx"), &sheet).unwrap();
+    let before = std::fs::read(&sheet).unwrap();
+
+    let out = omasheet(&["export", &sheet, "--xlsx"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(dir.join("budget.xlsx").exists());
+    assert!(
+        stderr(&out).contains("note: exact rationals were written as floating point: Sales.Margin"),
+        "{}",
+        stderr(&out)
+    );
+
+    let out = omasheet(&["export", &sheet, "--csv"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(dir.join("budget.Sales.csv").exists());
+    assert!(dir.join("budget.Summary.csv").exists());
+
+    let out = omasheet(&["export", &sheet, "--csv", "--table", "Sales"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let csv = std::fs::read_to_string(dir.join("budget.csv")).unwrap();
+    assert!(
+        csv.starts_with(
+            "Month,Closed,Revenue,Cost,Profit,Tax,Margin,Growth\nJan,2025-02-03T17:30,10000,"
+        ),
+        "{csv}"
+    );
+    assert_eq!(std::fs::read(&sheet).unwrap(), before);
+}
+
+#[test]
+fn export_needs_a_format_and_a_sheet_that_compiles() {
+    let out = omasheet(&["export", "examples/budget.omx"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("--xlsx or --csv"), "{}", stderr(&out));
+
+    let out = omasheet(&["export", "examples/budget.omx", "--csv", "--table", "Costs"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("no table `Costs`"),
+        "{}",
+        stderr(&out)
+    );
+
+    let dir = scratch("export-bad");
+    let sheet = path(&dir, "bad.omx");
+    std::fs::write(&sheet, "table T\n\nA\n= Nope\n").unwrap();
+    let out = omasheet(&["export", &sheet, "--xlsx"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("bad.omx:4:3: error:"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!dir.join("bad.xlsx").exists());
+}
+
+#[test]
+fn import_reads_what_export_wrote() {
+    let dir = scratch("import");
+    let sheet = path(&dir, "budget.omx");
+    std::fs::copy(root().join("examples/budget.omx"), &sheet).unwrap();
+    assert!(omasheet(&["export", &sheet, "--xlsx"]).status.success());
+
+    let back = path(&dir, "back.omx");
+    let out = omasheet(&["import", &path(&dir, "budget.xlsx"), "-o", &back]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert!(omasheet(&["lint", &back]).status.success());
+    let total = omasheet(&["eval", &back, "Sales.Profit.sum()"]);
+    assert_eq!(stdout(&total), "14700\n");
+
+    let csv = path(&dir, "sales.csv");
+    std::fs::write(&csv, "Month,Unit Price\nJan,19.99\n").unwrap();
+    let out = omasheet(&["import", &csv]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "table sales\n\nMonth | UnitPrice\nJan   | 19.99\n"
+    );
+    assert_eq!(stderr(&out), "note: `Unit Price` was renamed `UnitPrice`\n");
+}
+
+#[test]
+fn import_says_what_it_can_read() {
+    let out = omasheet(&["import", "README.md"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        stderr(&out).contains("(.xlsx) or a CSV file (.csv)"),
+        "{}",
+        stderr(&out)
+    );
+
+    let dir = scratch("import-bad");
+    let book = path(&dir, "not.xlsx");
+    std::fs::write(&book, "hello").unwrap();
+    let out = omasheet(&["import", &book]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("it is not a workbook"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn render_matches_the_expected_report() {
+    let out = omasheet(&["render", "examples/report.md"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let expected = std::fs::read_to_string(root().join("examples/report.expected")).unwrap();
+    assert_eq!(stdout(&out), expected);
+    assert!(!expected.contains("{{ S"), "{expected}");
+}
+
+#[test]
+fn render_writes_html() {
+    let dir = scratch("render");
+    let page = path(&dir, "report.html");
+    let out = omasheet(&["render", "examples/report.md", "--html", "-o", &page]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    let html = std::fs::read_to_string(&page).unwrap();
+    assert!(html.contains("<title>First quarter</title>"), "{html}");
+    assert!(html.contains("Revenue for the quarter was 35200"), "{html}");
+    assert!(
+        html.contains("<td style=\"text-align: right\">5700</td>"),
+        "{html}"
+    );
+}
+
+#[test]
+fn render_reports_where_in_the_document() {
+    let dir = scratch("render-bad");
+    let doc = path(&dir, "bad.md");
+    std::fs::write(&doc, "---\nsheets: [missing.omx]\n---\nHello\n").unwrap();
+    let out = omasheet(&["render", &doc]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("bad.md:2:10: error: cannot read `missing.omx`"),
+        "{}",
+        stderr(&out)
+    );
+
+    std::fs::write(&doc, "Total: {{ Sales.Revenue.sum() }}\n").unwrap();
+    let out = omasheet(&["render", &doc]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(stdout(&out), "");
+    assert!(
+        stderr(&out).contains("bad.md:1:11: error:"),
+        "{}",
+        stderr(&out)
+    );
+}

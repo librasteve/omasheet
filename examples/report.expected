@@ -1,0 +1,37 @@
+---
+title: First quarter
+sheets: [budget.omx]
+---
+
+# First quarter
+
+Revenue for the quarter was 35200, and profit
+14700 after costs. The best month was
+Mar, and the books closed on
+2025-04-02.
+
+Tax is charged at 20%, which comes to
+2940.
+
+## Months over target
+
+A table can be shown where it is asked for:
+
+| Month | Revenue | Profit |
+| :---- | ------: | -----: |
+| Feb   |   12000 |   5000 |
+| Mar   |   13200 |   5700 |
+
+## Targets
+
+A document can hold sheets of its own. This block is a sheet like any other,
+and it reads the one named at the top:
+
+| Month | Goal | Profit | Over | Met   |
+| :---- | ---: | -----: | ---: | :---- |
+| Jan   | 4200 |   4000 | -200 | false |
+| Feb   | 4500 |   5000 |  500 | true  |
+| Mar   | 5000 |   5700 |  700 | true  |
+
+2 of 3 months met
+their goal. Written in code, `{{ 1 + 1 }}` is left as it is.
