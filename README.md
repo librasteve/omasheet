@@ -20,6 +20,8 @@ Tax     := Profit * TaxRate
 Running := [Revenue; 0..*].sum()
 ```
 
+<img src="Screenshot.png" alt="Project screenshot">
+
 ## Install
 
 ```sh
