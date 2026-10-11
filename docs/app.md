@@ -36,8 +36,8 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+Shift+N | another window on this sheet |
 | Ctrl+O / S, Ctrl+Shift+S | open / save, save as |
 | Ctrl+E | export: then X for a workbook, C for the table shown as CSV |
-| F1 | functions |
-| F2 | view the source |
+| F1 | view functions |
+| F2 | view source |
 | Ctrl+? | all shortcuts |
 
 ### Two tables side by side

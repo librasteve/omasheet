@@ -1922,37 +1922,39 @@ ApplicationWindow {
         title: "Keyboard shortcuts"
         standardButtons: Dialog.Close
         onClosed: grid.forceActiveFocus()
-        Label {
-            font: win.font
-            text: "Arrows, Tab          Move\n"
-                + "Ctrl+Arrows          Go to the first / last row or column\n"
-                + "Shift+Arrows, drag   Select a block\n"
-                + "Enter, typing        Edit the cell\n"
-                + "Enter / Tab          Commit and move down / right\n"
-                + "Esc                  Cancel the edit\n"
-                + "Delete               Clear the selection\n"
-                + "Ctrl+C / X / V       Copy / cut / paste\n"
-                + "Ctrl+Shift+V         Paste values, not formulas\n"
-                + "Ctrl+Alt+V           Paste transposed: rows as columns\n"
-                + "Ctrl+Enter           Insert a row below (Shift: above)\n"
-                + "Ctrl+Delete          Delete the selected rows\n"
-                + "Ctrl+Z / Ctrl+Y      Undo / redo\n"
-                + "Ctrl+PgUp / PgDn     Previous / next table\n"
-                + "Ctrl+O / S           Open / save\n"
-                + "Ctrl+Shift+S         Save as\n"
-                + "Ctrl+E               Export as a workbook or CSV\n"
-                + "Ctrl+N               New sheet\n"
-                + "Ctrl+Shift+N         New window on this sheet\n"
-                + "Ctrl++ / Ctrl+-      Larger / smaller text (Ctrl+0 resets)\n"
-                + "F1                   Functions\n"
-                + "F2                   View the source\n"
-                + "F11                  Fullscreen\n\n"
-                + "A cell starting with = is a formula.\n"
-                + "While typing a formula, click a cell to refer to it\n"
-                + "(Shift+click for its fixed row number).\n"
-                + "The entry box shows what the column accepts.\n"
-                + "Dates and times: " + sheet.localeHint() + "\n"
-                + "Editing a shaded column changes its formula for every row."
+        // No taller than the window: the list scrolls when it does not fit.
+        height: Math.min(implicitHeight, win.height - 40)
+        contentItem: Flickable {
+            implicitHeight: helpText.implicitHeight
+            contentHeight: helpText.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            Label {
+                id: helpText
+                font: win.font
+                text: "Ctrl+Arrows          Go to the first / last row or column\n"
+                    + "Shift+Arrows         Select a block\n"
+                    + "Delete               Clear the selection\n"
+                    + "Ctrl+C / X / V       Copy / cut / paste\n"
+                    + "Ctrl+Shift+V         Paste values, not formulas\n"
+                    + "Ctrl+Alt+V           Paste transposed: rows as columns\n"
+                    + "Ctrl+Enter           Insert a row below (Shift: above)\n"
+                    + "Ctrl+Delete          Delete the selected rows\n"
+                    + "Ctrl+Z / Ctrl+Y      Undo / redo\n"
+                    + "Ctrl+PgUp / PgDn     Previous / next table\n"
+                    + "Ctrl+O / S           Open / save\n"
+                    + "Ctrl+Shift+S         Save as\n"
+                    + "Ctrl+E               Export as a workbook or CSV\n"
+                    + "Ctrl+N               New sheet\n"
+                    + "Ctrl+Shift+N         New window on this sheet\n"
+                    + "Ctrl++ / Ctrl+-      Larger / smaller text (Ctrl+0 resets)\n"
+                    + "F1                   View functions\n"
+                    + "F2                   View source\n"
+                    + "F11                  Fullscreen\n\n"
+                    + "A cell starting with = is a formula.\n"
+                    + "Dates and times: " + sheet.localeHint()
+            }
         }
     }
 }
