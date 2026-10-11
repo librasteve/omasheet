@@ -77,6 +77,15 @@ ApplicationWindow {
     property var colWidths: []
     property real totalWidth: 0
 
+    // A frame drawn alone can be shown late, when the next one comes: moving
+    // up or down a row draws just the one. So each last frame is drawn twice.
+    property bool drawnAgain: false
+    onFrameSwapped: {
+        drawnAgain = !drawnAgain;
+        if (drawnAgain)
+            update();
+    }
+
     property int curRow: 0
     property int curCol: 0
     property int anchorRow: 0
