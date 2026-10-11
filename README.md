@@ -19,21 +19,28 @@ Tax     := Profit * TaxRate
 Running := [Revenue; 0..*].sum()
 ```
 
-## Run
-
-```sh
-cargo run -p omasheet-ui -- examples/budget.omx      # the app (needs Qt 6)
-cargo run -p omasheet-cli -- examples/budget.omx     # print the calculated sheet
-cargo run -p omasheet-cli -- eval '1/3 + 1/6'        # 0.5, exactly
-cargo run -p omasheet-cli -- export examples/budget.omx --xlsx
-cargo run -p omasheet-cli -- render examples/report.md --html
-```
-
 ## Install
 
 ```sh
-cargo install --git https://github.com/librasteve/omasheet omasheet-cli   # the omasheet command
+cargo install --git https://github.com/librasteve/omasheet omasheet-ui
 ```
+
+This builds the one program, `omasheet`. It needs Qt 6 (`qt6-base`,
+`qt6-declarative`), to build and to run.
+
+## Run
+
+```sh
+omasheet                                # the app, on a new sheet
+omasheet examples/budget.omx            # the app, on a .omx, .csv or .xlsx file
+omasheet print examples/budget.omx      # print the calculated sheet
+omasheet eval '1/3 + 1/6'               # 0.5, exactly
+omasheet export examples/budget.omx --xlsx
+omasheet render examples/report.md --html
+```
+
+The app takes its colours from the Omarchy theme and changes with it at once;
+elsewhere it follows the system, light or dark.
 
 ## AI Skill
 

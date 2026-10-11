@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! Omasheet: an interactive grid for `.omx` sheets.
+//! Omasheet: the `omasheet` command, and the interactive grid for `.omx`
+//! sheets that it opens when it is given no command.
 //!
 //! The windows are Qt Quick (`qml/Main.qml`, opened by `qml/App.qml`);
 //! everything they show and every edit goes through the one `Sheet` object
@@ -12,8 +13,15 @@ mod sheet;
 mod theme;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
+use std::process::ExitCode;
 
-fn main() {
+fn main() -> ExitCode {
+    // The app reads the file to open from the command line itself.
+    omasheet_cli::main(|_file| app())
+}
+
+/// Open the app. Qt is not started for anything else.
+fn app() -> ExitCode {
     // Same look as the other Omarchy apps, unless the user chose a style.
     if std::env::var_os("QT_QUICK_CONTROLS_STYLE").is_none() {
         // SAFETY: nothing else is running yet.
@@ -34,7 +42,8 @@ fn main() {
     if let Some(engine) = engine.as_mut() {
         engine.load(&QUrl::from("qrc:/qt/qml/io/omacom/omasheet/qml/App.qml"));
     }
-    if let Some(app) = app.as_mut() {
-        std::process::exit(app.exec());
+    match app.as_mut() {
+        Some(app) => std::process::exit(app.exec()),
+        None => ExitCode::FAILURE,
     }
 }

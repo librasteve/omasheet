@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Stephen Roe
 
 import QtQml
+import QtQuick
 import io.omacom.omasheet
 
 // The app: one sheet, and the windows open on it. Every window shows the
@@ -27,7 +28,18 @@ QtObject {
         view.createObject(app, { tab: tab, fontSize: fontSize });
     }
 
+    // The theme is Omarchy's; elsewhere it goes with the system, light or dark.
+    function followTheme() {
+        sheet.followTheme(Application.styleHints.colorScheme !== Qt.Light);
+    }
+
+    property Connections scheme: Connections {
+        target: Application.styleHints
+        function onColorSchemeChanged() { app.followTheme(); }
+    }
+
     Component.onCompleted: {
+        followTheme();
         var args = Qt.application.arguments;
         if (args.length > 1)
             sheet.openPath(args[1]);

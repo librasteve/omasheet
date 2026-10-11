@@ -92,8 +92,8 @@ omasheet/
 │                     recalc (3); units (4); uncertainty (5)
 ├── omasheet-interop  XLSX and CSV import/export (Phase 2)
 ├── omasheet-md       Markdown: `{{ }}`, `omx` blocks, render (Phase 2)
-├── omasheet-cli      the `omasheet` binary
-├── omasheet-ui       the interactive window: Qt Quick, driven from Rust (cxx-qt)
+├── omasheet-cli      the commands of `omasheet`: print, eval, lint, import, export, render
+├── omasheet-ui       the `omasheet` binary, and the interactive window it opens: Qt Quick, driven from Rust (cxx-qt)
 └── omasheet-lsp      language server (later)
 ```
 

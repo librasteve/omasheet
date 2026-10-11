@@ -3,10 +3,11 @@
 ## The app
 
 ```sh
-cargo run -p omasheet-ui -- sheet.omx
+omasheet                # a new sheet
+omasheet sheet.omx      # open a sheet, a workbook (.xlsx) or a CSV file
 ```
 
-Needs Qt 6 (`qt6-base`, `qt6-declarative`). The file is the sheet: every edit
+`omasheet` with no command opens the app. Needs Qt 6 (`qt6-base`, `qt6-declarative`). The file is the sheet: every edit
 rewrites the text, and saving writes exactly that.
 
 - One tab per table, plus the constants.
@@ -63,7 +64,7 @@ separate copies, and the one saved last overwrites the other.
 ## The command line
 
 ```sh
-omasheet sheet.omx                    # print the calculated sheet
+omasheet print sheet.omx              # print the calculated sheet
 omasheet eval '1/3 + 1/6'             # one expression
 omasheet eval sheet.omx 'Sales.Revenue.sum()'
 omasheet lint sheet.omx               # check without calculating
@@ -76,7 +77,7 @@ omasheet lint sheet.omx               # check without calculating
 | `--zone Europe/London` | stand in for this machine's time zone |
 | `--exact` | show a `Num` in full, `1.4142135623730951`, not rounded, `1.41421…` |
 
-From the source tree, `omasheet` is `cargo run -p omasheet-cli --`.
+From the source tree, `omasheet` is `cargo run --`.
 
 ---
 

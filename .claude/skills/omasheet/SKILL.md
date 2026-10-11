@@ -17,14 +17,15 @@ so read the rules below before writing, and always run the sheet afterwards.
 
 The command is `omasheet`. If it is not on the PATH:
 
-- in the omasheet repository, use `cargo run -q -p omasheet-cli --` in its
+- in the omasheet repository, use `cargo run -q --` in its
   place (or `target/debug/omasheet` once built);
 - anywhere else, it is not installed. Tell the user, and offer
-  `cargo install --git https://github.com/librasteve/omasheet omasheet-cli`.
+  `cargo install --git https://github.com/librasteve/omasheet omasheet-ui`
+  (it needs Qt 6 to build and to run).
   Without it a sheet can be written but not checked, so say that it was not.
 
 ```sh
-omasheet sheet.omx                         # calculate and print every table
+omasheet print sheet.omx                   # calculate and print every table
 omasheet lint sheet.omx                    # check without calculating
 omasheet eval sheet.omx 'Orders.Net.sum()' # one expression against a sheet
 omasheet eval '1/3 + 1/6'                  # or on its own
@@ -196,7 +197,9 @@ omasheet render report.md --html -o report.html
 
 - `examples/*.omx` each have an `.expected` beside them, compared by the
   tests. After changing an example, regenerate it with
-  `omasheet examples/name.omx > examples/name.expected` and read the diff;
-  do not edit the `.expected` by hand.
-- The desktop app is `omasheet-ui`. It opens a real window on the user's
-  desktop and building it loads every core, so say so before doing either.
+  `omasheet print examples/name.omx > examples/name.expected` and read the
+  diff; do not edit the `.expected` by hand.
+- `omasheet` with no command, or with only a file, opens the desktop app:
+  never run it that way to read a sheet. It opens a real
+  window on the user's desktop and building it loads every core, so say so
+  before doing either.

@@ -6,6 +6,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
+use std::sync::OnceLock;
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -14,8 +15,30 @@ fn root() -> PathBuf {
         .to_path_buf()
 }
 
+/// The `omasheet` program. It belongs to another package, the app, so it is
+/// built here before the first test that runs it.
+fn program() -> PathBuf {
+    static BUILT: OnceLock<PathBuf> = OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            // This test is target/<profile>/deps/cli-…, and the program is
+            // target/<profile>/omasheet.
+            let test = std::env::current_exe().unwrap();
+            let dir = test.parent().unwrap().parent().unwrap();
+            let mut cargo = Command::new(env!("CARGO"));
+            cargo.args(["build", "--quiet", "--package", "omasheet-ui"]);
+            if dir.ends_with("release") {
+                cargo.arg("--release");
+            }
+            let built = cargo.current_dir(root()).status().unwrap();
+            assert!(built.success(), "could not build omasheet");
+            dir.join(format!("omasheet{}", std::env::consts::EXE_SUFFIX))
+        })
+        .clone()
+}
+
 fn omasheet(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_omasheet"))
+    Command::new(program())
         .args(args)
         .current_dir(root())
         .output()
@@ -47,7 +70,7 @@ fn examples_match_their_expected_output() {
             continue;
         }
         let before = std::fs::read(&path).unwrap();
-        let out = omasheet(&[path.to_str().unwrap()]);
+        let out = omasheet(&["print", path.to_str().unwrap()]);
         assert!(out.status.success(), "{}: {}", path.display(), stderr(&out));
         let expected = std::fs::read_to_string(path.with_extension("expected")).unwrap();
         assert_eq!(stdout(&out), expected, "{}", path.display());
@@ -83,7 +106,7 @@ fn eval_against_a_sheet() {
 
 #[test]
 fn eval_from_standard_input() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_omasheet"))
+    let mut child = Command::new(program())
         .args(["eval", "--sheet", "examples/budget.omx"])
         .current_dir(root())
         .stdin(Stdio::piped())
@@ -127,8 +150,20 @@ fn lint_reports_a_located_type_error() {
 }
 
 #[test]
+fn a_command_needs_no_display() {
+    let out = Command::new(program())
+        .args(["eval", "1/3 + 1/6"])
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("DISPLAY")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "0.5\n");
+}
+
+#[test]
 fn missing_file_is_a_usage_error() {
-    let out = omasheet(&["no-such-file.omx"]);
+    let out = omasheet(&["print", "no-such-file.omx"]);
     assert_eq!(out.status.code(), Some(2));
 }
 
@@ -147,7 +182,7 @@ fn now_can_be_given() {
 #[test]
 fn dates_are_iso_unless_the_locale_is_asked_for() {
     let run = |locale: &str, args: &[&str]| {
-        let out = Command::new(env!("CARGO_BIN_EXE_omasheet"))
+        let out = Command::new(program())
             .args(args)
             .env("LC_ALL", locale)
             .output()

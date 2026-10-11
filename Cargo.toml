@@ -26,6 +26,7 @@ omasheet-omx = { path = "omasheet-omx" }
 omasheet-engine = { path = "omasheet-engine" }
 omasheet-interop = { path = "omasheet-interop" }
 omasheet-md = { path = "omasheet-md" }
+omasheet-cli = { path = "omasheet-cli" }
 calamine = "0.36"
 rust_xlsxwriter = "0.99"
 csv = "1"

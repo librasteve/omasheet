@@ -14,14 +14,27 @@ that needs no language runtime to be installed.
 - **THEN** the version is printed and the exit status is zero
 
 ### Requirement: View a sheet
-`omasheet <file.omx>` SHALL evaluate the sheet and present its tables with
-computed values in a read-only view. It SHALL NOT modify the file.
+`omasheet print <file.omx>` SHALL evaluate the sheet and present its tables
+with computed values in a read-only view. It SHALL NOT modify the file.
 
-#### Scenario: Open a sheet
+#### Scenario: Print a sheet
 - **GIVEN** `budget.omx` with a computed column `Profit := Revenue - Cost`
-- **WHEN** `omasheet budget.omx` is run
+- **WHEN** `omasheet print budget.omx` is run
 - **THEN** each table is shown with `Profit` values calculated and formatted
 - **AND** `budget.omx` is unchanged on disk
+
+### Requirement: Open the app
+`omasheet` with no command SHALL open the app, on the file given if there is
+one. A command SHALL NOT need a display.
+
+#### Scenario: Open a sheet
+- **WHEN** `omasheet budget.omx` is run
+- **THEN** the app opens showing `budget.omx`
+
+#### Scenario: No display
+- **GIVEN** a machine with no display
+- **WHEN** `omasheet print budget.omx` is run
+- **THEN** the sheet is printed
 
 ### Requirement: Evaluate an expression
 `omasheet eval '<expr>'` SHALL evaluate one OMX expression and print its value.

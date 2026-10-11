@@ -1,6 +1,10 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! Colours from the current Omarchy theme, with fallbacks elsewhere.
+//! Colours from the current Omarchy theme; elsewhere, a dark or a light set
+//! to go with the system's colour scheme.
+
+use std::path::PathBuf;
+use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Theme {
@@ -23,6 +27,21 @@ impl Default for Theme {
             selection: "#186a9a".into(),
             muted: "#808080".into(),
             error: "#e06c75".into(),
+        }
+    }
+}
+
+impl Theme {
+    /// The colours where there is no Omarchy theme and the system is light.
+    fn light() -> Theme {
+        Theme {
+            dark: false,
+            background: "#fafafa".into(),
+            foreground: "#202020".into(),
+            accent: "#2f6f9f".into(),
+            selection: "#b5d5ee".into(),
+            muted: "#757575".into(),
+            error: "#c0392b".into(),
         }
     }
 }
@@ -68,13 +87,60 @@ pub fn parse(text: &str) -> Theme {
     theme
 }
 
-pub fn load() -> Theme {
-    std::env::var_os("HOME")
-        .map(|home| {
-            std::path::PathBuf::from(home).join(".local/state/omarchy/current/theme/colors.toml")
-        })
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .map_or_else(Theme::default, |text| parse(&text))
+/// Where Omarchy keeps the theme in use.
+fn current() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state/omarchy/current"))
+}
+
+/// The Omarchy theme, or without one the colours for a dark or a light system.
+pub fn load(system_dark: bool) -> Theme {
+    current()
+        .and_then(|dir| std::fs::read_to_string(dir.join("theme/colors.toml")).ok())
+        .map_or_else(
+            || {
+                if system_dark {
+                    Theme::default()
+                } else {
+                    Theme::light()
+                }
+            },
+            |text| parse(&text),
+        )
+}
+
+/// Call `changed` each time the Omarchy theme changes, until it gives false.
+pub fn watch(changed: impl Fn() -> bool + Send + 'static) {
+    use notify::Watcher;
+
+    let Some(dir) = current().filter(|dir| dir.is_dir()) else {
+        return;
+    };
+    std::thread::spawn(move || {
+        let (tx, rx) = std::sync::mpsc::channel();
+        // Reading the theme is itself an event: only a change counts.
+        let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+            if event.is_ok_and(|event| !event.kind.is_access()) {
+                let _ = tx.send(());
+            }
+        });
+        let Ok(mut watcher) = watcher else {
+            return;
+        };
+        // Omarchy swaps the whole theme directory, so watch the one above it.
+        if watcher
+            .watch(&dir, notify::RecursiveMode::Recursive)
+            .is_err()
+        {
+            return;
+        }
+        while rx.recv().is_ok() {
+            // A change of theme is many events: wait for them to stop.
+            while rx.recv_timeout(Duration::from_millis(150)).is_ok() {}
+            if !changed() {
+                break;
+            }
+        }
+    });
 }
 
 #[cfg(test)]

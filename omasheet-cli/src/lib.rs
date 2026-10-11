@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! The `omasheet` command.
+//! The `omasheet` command: its commands, and what it is given to open in
+//! the app when there is none.
 
 use clap::{Args, Parser, Subcommand};
 use omasheet_engine::omx::date::Style;
@@ -14,18 +15,16 @@ use std::process::ExitCode;
 #[command(
     name = "omasheet",
     version,
-    about = "A text-native spreadsheet: view, evaluate, check, import, export and render .omx sheets",
+    about = "A text-native spreadsheet: open a sheet in the app, or print, evaluate, check, import, export and render .omx sheets",
     args_conflicts_with_subcommands = true
 )]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// A sheet to evaluate and show (read-only)
+    /// A sheet, workbook or CSV file to open in the app; a new sheet if
+    /// none is given
     file: Option<PathBuf>,
-
-    #[command(flatten)]
-    env: Env,
 }
 
 #[derive(Args)]
@@ -84,6 +83,14 @@ impl Env {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Calculate a sheet and print its tables
+    Print {
+        /// The sheet to print
+        file: PathBuf,
+
+        #[command(flatten)]
+        env: Env,
+    },
     /// Evaluate one OMX expression and print its value
     ///
     /// The expression is read from standard input when it is not given.
@@ -313,7 +320,7 @@ fn finish(outcome: Outcome) -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
+fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCode, ExitCode> {
     match cli.command {
         Some(Command::Lint { file }) => {
             let text = read(&file)?;
@@ -380,12 +387,9 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
             output,
             env,
         }) => render(&file, html, output.as_deref(), env.options()?),
-        None => {
-            let Some(file) = cli.file else {
-                eprintln!("omasheet: give a sheet to view, or see `omasheet --help`");
-                return Err(ExitCode::from(2));
-            };
-            let options = cli.env.options()?;
+        None => Ok(open(cli.file.as_deref())),
+        Some(Command::Print { file, env }) => {
+            let options = env.options()?;
             let text = read(&file)?;
             Ok(finish(omasheet_engine::view_with(
                 &file.to_string_lossy(),
@@ -396,8 +400,10 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
     }
 }
 
-fn main() -> ExitCode {
-    match run(Cli::parse()) {
+/// Run the command line this program was started with. With no command,
+/// `open` is called to open the app, on the file given if there was one.
+pub fn main(open: impl FnOnce(Option<&Path>) -> ExitCode) -> ExitCode {
+    match run(Cli::parse(), open) {
         Ok(code) | Err(code) => code,
     }
 }

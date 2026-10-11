@@ -12,7 +12,7 @@ Omawrite is C++ and QMake; the owner prefers Rust, so the window's logic is Rust
 |---|--------|----------|-------|
 | D16 | Decided | The app is an interactive grid, not a read-only viewer | Owner decision, 2026-10-08. Supersedes P15 |
 | D17 | Decided | Written in Rust where possible | Owner decision, 2026-10-08. QML for the window, Rust (`cxx-qt`) for everything behind it |
-| D18 | Decided | The app and the command line stay two commands for now: `omasheet-ui` and `omasheet` | Owner decision, 2026-10-08. One binary was the alternative |
+| D18 | Decided | The app and the command line are one binary, `omasheet`, linked to Qt dynamically: with no command, or with only a file, it opens the app, and printing a sheet is `omasheet print` | Owner decision, 2026-10-11, in place of two commands, `omasheet-ui` and `omasheet` (2026-10-08). Qt is started only to open the app, so the commands run with no display; they do need Qt installed |
 | P20 | Provisional | The `.omx` text is the model: each edit rewrites the text and the sheet is re-read and re-evaluated | Keeps one source of truth and makes undo a stack of texts |
 | P21 | Provisional | Unlike the command line, the app evaluates a sheet that has errors, and shows `#ERROR` only in cells that could not be calculated | One mistyped formula should not blank the grid |
 | P22 | Provisional | Editing any cell of a formula column edits that column's formula | A formula column has one expression for all rows |

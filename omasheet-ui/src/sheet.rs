@@ -4,7 +4,7 @@
 
 use crate::{json, theme};
 use core::pin::Pin;
-use cxx_qt::CxxQtType;
+use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QUrl};
 use omasheet_engine::doc::{BLANK, entry_hint};
 use omasheet_engine::omx::date::Style;
@@ -221,6 +221,10 @@ pub mod qobject {
         fn redo(self: Pin<&mut Sheet>);
         #[qinvokable]
         fn reload_theme(self: Pin<&mut Sheet>);
+        /// Take the theme from now on: Omarchy's as it changes, and without
+        /// one the colours for a dark or a light system.
+        #[qinvokable]
+        fn follow_theme(self: Pin<&mut Sheet>, system_dark: bool);
 
         /// The locale and how it writes a date and a time.
         #[qinvokable]
@@ -242,6 +246,9 @@ pub mod qobject {
             col1: i32,
         ) -> QString;
     }
+
+    // The theme is watched from a thread of its own.
+    impl cxx_qt::Threading for Sheet {}
 }
 
 pub struct SheetRust {
@@ -261,6 +268,10 @@ pub struct SheetRust {
     theme_selection: QString,
     theme_muted: QString,
     theme_error: QString,
+    /// Whether the system's colour scheme is dark, for where Omarchy has no say.
+    system_dark: bool,
+    /// Whether the Omarchy theme is being watched.
+    watching: bool,
     /// Development aid: where to save a picture of the window, then quit.
     snapshot_path: QString,
 
@@ -301,7 +312,7 @@ struct Cut {
 
 impl Default for SheetRust {
     fn default() -> Self {
-        let theme = theme::load();
+        let theme = theme::load(true);
         SheetRust {
             file_name: QString::from("Untitled"),
             file_path: QString::default(),
@@ -318,6 +329,8 @@ impl Default for SheetRust {
             theme_selection: QString::from(&theme.selection),
             theme_muted: QString::from(&theme.muted),
             theme_error: QString::from(&theme.error),
+            system_dark: true,
+            watching: false,
             snapshot_path: QString::from(std::env::var("OMASHEET_UI_SNAPSHOT").unwrap_or_default()),
             doc: document(BLANK),
             path: None,
@@ -984,8 +997,18 @@ impl qobject::Sheet {
         QString::from(&text)
     }
 
+    fn follow_theme(mut self: Pin<&mut Self>, system_dark: bool) {
+        self.as_mut().rust_mut().system_dark = system_dark;
+        self.as_mut().reload_theme();
+        if !self.watching {
+            self.as_mut().rust_mut().watching = true;
+            let thread = self.qt_thread();
+            theme::watch(move || thread.queue(|sheet| sheet.reload_theme()).is_ok());
+        }
+    }
+
     fn reload_theme(mut self: Pin<&mut Self>) {
-        let theme = theme::load();
+        let theme = theme::load(self.system_dark);
         self.as_mut().set_dark_mode(theme.dark);
         self.as_mut()
             .set_theme_background(QString::from(&theme.background));
