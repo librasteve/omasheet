@@ -10,7 +10,7 @@ use crate::{
 };
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use num_rational::BigRational;
-use omasheet_engine::omx::convert::ratio_of;
+use omasheet_engine::omx::convert::fraction_of;
 use omasheet_engine::omx::date;
 use omasheet_engine::omx::types::S;
 use omasheet_engine::omx::{Sources, compile};
@@ -36,7 +36,7 @@ fn a1(row: u32, col: u32) -> String {
 
 /// A number of a workbook as the exact number its shortest decimal is.
 fn number(f: f64) -> Datum {
-    match ratio_of(f) {
+    match fraction_of(f) {
         Some(r) if r.is_integer() => Datum::Lit(r.to_integer().to_string(), S::Int),
         Some(r) => Datum::Lit(format_rat(&r), S::Decimal),
         None => Datum::Empty,
@@ -77,7 +77,7 @@ struct Formula {
 fn real(v: &Value) -> Option<f64> {
     match v {
         Value::Int(n) => n.to_string().parse().ok(),
-        Value::Ratio(r) | Value::Percent(r) => Some(to_f64(r)),
+        Value::Fraction(r) | Value::Percent(r) | Value::Ratio(r) => Some(to_f64(r)),
         Value::Num(f) => Some(*f),
         Value::Bool(b) => Some(*b as u8 as f64),
         _ => None,
@@ -419,7 +419,8 @@ fn write_cell(
             }
             sheet.write_number(row, col, f)?;
         }
-        Value::Ratio(r) => {
+        // A ratio is written as the number it stands for: `3:2` as `1.5`.
+        Value::Fraction(r) | Value::Ratio(r) => {
             let (f, same) = double(r);
             if !same {
                 lose(ROUNDED);

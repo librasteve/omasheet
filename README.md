@@ -2,7 +2,8 @@
 
 A text-native spreadsheet: what Markdown is to a word processor, Omasheet is
 to a spreadsheet. A sheet is a plain-text `.omx` file of named, typed tables,
-with formulas in OMX, a small array language with exact arithmetic.
+with formulas in OMX, a small array language with exact arithmetic. Automatically 
+follows system dark/light mode.
 
 ```omx
 const TaxRate = 20%
@@ -25,24 +26,7 @@ Running := [Revenue; 0..*].sum()
 curl -fsSL https://raw.githubusercontent.com/librasteve/omasheet/main/install.sh | bash
 ```
 
-That's it. Then run `omasheet`, or open it from the app launcher (**Super +
-Space** on Omarchy).
-
 **Update:** run the same line again.
-
-What the installer does:
-
-- **On Omarchy and Arch Linux**, x86_64 or aarch64, it installs the latest
-  release's pacman package, after checking its checksum. Qt 6 and the rest of
-  what it needs come from the distribution's repositories. It asks for your
-  password for that step.
-- **Anywhere else** it changes nothing, and says to build from source. That
-  needs a Rust toolchain and Qt 6 (`qt6-base`, `qt6-declarative`):
-
-  ```sh
-  cargo install --git https://github.com/librasteve/omasheet omasheet-ui
-  ```
-
 **Uninstall:** `sudo pacman -R omasheet`.
 
 ## Run
@@ -55,9 +39,6 @@ omasheet eval '1/3 + 1/6'               # 0.5, exactly
 omasheet export examples/budget.omx --xlsx
 omasheet render examples/report.md --html
 ```
-
-The app takes its colours from the Omarchy theme and changes with it at once;
-elsewhere it follows the system, light or dark.
 
 ## AI Skill
 

@@ -14,6 +14,8 @@ pub enum Tok {
     Decimal(BigRational),
     /// A number with a `%`, already divided by a hundred.
     Percent(BigRational),
+    /// Two whole numbers with a `:` between, `3:2`, already divided.
+    Ratio(BigRational),
     Num(f64),
     /// An imaginary number, `4i`.
     Imag(f64),
@@ -63,9 +65,12 @@ pub enum Tok {
 impl Tok {
     pub fn describe(&self) -> String {
         match self {
-            Tok::Int(_) | Tok::Decimal(_) | Tok::Percent(_) | Tok::Num(_) | Tok::Imag(_) => {
-                "a number".into()
-            }
+            Tok::Int(_)
+            | Tok::Decimal(_)
+            | Tok::Percent(_)
+            | Tok::Ratio(_)
+            | Tok::Num(_)
+            | Tok::Imag(_) => "a number".into(),
             Tok::Str(_) => "a string".into(),
             Tok::Date(_) => "a date".into(),
             Tok::Time(_) => "a time".into(),
@@ -351,6 +356,25 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
     while digit(j) || (j < b.len() && b[j] == b'_') {
         j += 1;
     }
+    // A ratio: two whole numbers, `3:2`. Two digits on each side is a time.
+    if at(j, b':') && digit(j + 1) {
+        let mut k = j + 1;
+        while digit(k) || at(k, b'_') {
+            k += 1;
+        }
+        if word(k) || at(k, b':') || (at(k, b'.') && digit(k + 1)) || at(k, b'%') {
+            while word(k) || at(k, b':') || at(k, b'.') || at(k, b'%') {
+                k += 1;
+            }
+            return Err((format!("`{}` is not a ratio", &text[i..k]), i, k));
+        }
+        let part = |s: &str| s.replace('_', "").parse::<BigInt>().unwrap();
+        let (first, second) = (part(&text[i..j]), part(&text[j + 1..k]));
+        if second == BigInt::from(0) {
+            return Err((format!("`{}` is a ratio to nothing", &text[i..k]), i, k));
+        }
+        return Ok((Tok::Ratio(BigRational::new(first, second)), k));
+    }
     let mut frac_digits = 0;
     let mut is_decimal = false;
     if j < b.len() && b[j] == b'.' && digit(j + 1) {
@@ -436,6 +460,19 @@ mod tests {
             Tok::Percent(BigRational::new(1.into(), 5.into()))
         );
         assert_eq!(toks("1e-100")[0], Tok::Num(1e-100));
+        let ratio = |n: i32, d: i32| Tok::Ratio(BigRational::new(n.into(), d.into()));
+        assert_eq!(toks("3:2")[0], ratio(3, 2));
+        assert_eq!(toks("16:9")[0], ratio(16, 9));
+        assert_eq!(toks("4:1")[0], ratio(4, 1));
+        assert_eq!(toks("6:4")[0], ratio(3, 2));
+        assert_eq!(toks("1:100")[0], ratio(1, 100));
+        assert_eq!(toks("-3:2"), vec![Tok::Minus, ratio(3, 2), Tok::Eof]);
+        // Two digits on each side is a time.
+        assert_eq!(toks("16:10")[0], Tok::Time(16 * 3600 + 10 * 60));
+        assert!(lex("3:0", 0, 0).is_err());
+        assert!(lex("1:2:3", 0, 0).is_err());
+        assert!(lex("3:2.5", 0, 0).is_err());
+        assert!(lex("3:2x", 0, 0).is_err());
         assert_eq!(
             toks("0..2"),
             vec![
@@ -476,7 +513,8 @@ mod tests {
         assert_eq!(toks("09:30")[0], Tok::Time(9 * 3600 + 30 * 60));
         assert_eq!(toks("23:59:59")[0], Tok::Time(86_399));
         assert!(lex("24:00", 0, 0).is_err());
-        assert!(lex("9:30", 0, 0).is_err());
+        // One digit before the `:` is a ratio, `3:10`.
+        assert!(matches!(toks("9:30")[0], Tok::Ratio(_)));
         assert!(lex("09:30:1", 0, 0).is_err());
         assert_eq!(toks("a // b |> c ..^ d # note").len(), 8);
     }

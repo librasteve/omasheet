@@ -103,8 +103,8 @@ Big ones | = Orders[; Qty > 2].Item.count()
 
 ## Types
 
-`Int`, `Decimal`, `Ratio`, `Percent`, `Num`, `Complex`, `Text`, `Bool`,
-`Date`, `Time`, `DateTime`.
+`Int`, `Decimal`, `Fraction`, `Percent`, `Ratio`, `Num`, `Complex`, `Text`,
+`Bool`, `Date`, `Time`, `DateTime`.
 A column with no type line takes its type from its cells, which is usually
 what you want; declare one when the cells could be read another way.
 
@@ -112,16 +112,17 @@ what you want; declare one when the cells could be read another way.
 |---|---|
 | `Int` | `42`, `1_000_000` |
 | `Decimal` | `19.99` — exact |
-| `Ratio` | `1/7` — exact |
+| `Fraction` | `1/7`, `22/7` — exact |
 | `Percent` | `20%` — exact, shown as a percentage |
+| `Ratio` | `3:2`, `4:1` — exact, shown as a ratio |
 | `Num` | `1.5e3` — floating point, only when asked for |
 | `Bool` | `true`, `false` |
 | `Date`, `Time`, `DateTime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO |
 
-An `Int` is a `Decimal` and a `Decimal` is a `Ratio`. Sums and products of
-decimals are `Decimal`; a division or an average is a `Ratio`, since it may
+An `Int` is a `Decimal` and a `Decimal` is a `Fraction`. Sums and products of
+decimals are `Decimal`; a division or an average is a `Fraction`, since it may
 not end. So a column declared `Decimal` rejects `= Total / 3`: leave the
-column undeclared, declare it `Ratio`, or write `(Total / 3).Decimal` if it
+column undeclared, declare it `Fraction`, or write `(Total / 3).Decimal` if it
 is known to end.
 
 A `Percent` is the number it stands for, so `Net * (1 + VatRate)` works as
@@ -129,6 +130,13 @@ written and gives a plain number. Only percentages added to percentages stay
 a `Percent`. To show a share as a percentage, declare the column, as in
 `Margin : Percent` over `Margin := Profit / Revenue`, or write `x.Percent`;
 do not multiply by 100. One that does not end shows as `41.67…%`.
+
+A `Ratio` is likewise the number it stands for, `3:2` is `1.5`, shown in its
+lowest terms and to one when whole, `4:1`. Ratios added, multiplied or
+divided by ratios stay a `Ratio`; with any other number the result is plain.
+Declare the column `Ratio`, or write `x.Ratio`, to show a result as one. Two
+digits on each side is a time, so write `16:10` only in a column declared
+`Ratio`, and `8:5` elsewhere.
 
 Arithmetic is exact: `0.1 + 0.2 == 0.3` is true, `1/3 * 3` is `1`, and
 integers do not overflow. An exact number is shown in full: `0.125` if it
@@ -160,7 +168,7 @@ a `…` mark, and `--exact` shows it in full.
 - Functions are called `sum(x)`, `x.sum()` or `x |> sum()`:
   `sum avg min max count`, `abs round floor ceil sqrt` and the usual maths,
   `today() now() year month day weekday`, and the type names as conversions,
-  `x.Int`, `x.Num`, `x.Percent`, `x.Text`.
+  `x.Int`, `x.Num`, `x.Percent`, `x.Ratio`, `x.Text`.
 - A date plus a whole number is days later; two dates subtract to days.
 - A lookup that finds one row fills a cell with its value; none gives empty,
   so add `// "none"`; several is an error.

@@ -2,7 +2,7 @@
 
 //! Runtime values and exact arithmetic.
 //!
-//! Exact numbers are `Int` (arbitrary precision) or `Ratio` (an
+//! Exact numbers are `Int` (arbitrary precision) or `Fraction` (an
 //! arbitrary-precision fraction that is not a whole number). Nothing here
 //! turns an exact number into a `Num` unless the other operand already is one.
 
@@ -26,10 +26,13 @@ pub enum Value {
     /// A cell whose calculation failed; the diagnostic was already reported.
     Error,
     Int(BigInt),
-    Ratio(BigRational),
+    Fraction(BigRational),
     /// An exact number shown as a percentage: `1/5` for `20%`. It may be
     /// whole, `100%`.
     Percent(BigRational),
+    /// An exact number shown as a ratio: `3/2` for `3:2`. It may be whole,
+    /// `4:1`.
+    Ratio(BigRational),
     Num(f64),
     Complex(f64, f64),
     Text(Rc<str>),
@@ -78,7 +81,7 @@ impl Value {
         if r.is_integer() {
             Value::Int(r.to_integer())
         } else {
-            Value::Ratio(r)
+            Value::Fraction(r)
         }
     }
 
@@ -86,16 +89,25 @@ impl Value {
     pub fn percent(self) -> Value {
         match self {
             Value::Int(n) => Value::Percent(BigRational::from_integer(n)),
-            Value::Ratio(r) => Value::Percent(r),
+            Value::Fraction(r) | Value::Ratio(r) => Value::Percent(r),
             other => other,
         }
     }
 
-    /// A percentage as the plain number it stands for; anything else as it
-    /// is.
+    /// An exact number as a ratio; anything else as it is.
+    pub fn ratio(self) -> Value {
+        match self {
+            Value::Int(n) => Value::Ratio(BigRational::from_integer(n)),
+            Value::Fraction(r) | Value::Percent(r) => Value::Ratio(r),
+            other => other,
+        }
+    }
+
+    /// A percentage or a ratio as the plain number it stands for; anything
+    /// else as it is.
     pub fn plain(self) -> Value {
         match self {
-            Value::Percent(r) => Value::exact(r),
+            Value::Percent(r) | Value::Ratio(r) => Value::exact(r),
             other => other,
         }
     }
@@ -103,8 +115,9 @@ impl Value {
     pub fn from_lit(l: &Lit) -> Value {
         match l {
             Lit::Int(n) => Value::Int(n.clone()),
-            Lit::Decimal(r) | Lit::Ratio(r) => Value::exact(r.clone()),
+            Lit::Decimal(r) | Lit::Fraction(r) => Value::exact(r.clone()),
             Lit::Percent(r) => Value::Percent(r.clone()),
+            Lit::Ratio(r) => Value::Ratio(r.clone()),
             Lit::Num(f) => Value::Num(*f),
             Lit::Complex(re, im) => Value::Complex(*re, *im),
             Lit::Text(s) => Value::text(s),
@@ -122,9 +135,10 @@ impl Value {
             Value::Error => "an error",
             Value::Int(_) => "Int",
             // A fraction that ends as a decimal is a `Decimal`.
-            Value::Ratio(r) if is_decimal(r) => "Decimal",
-            Value::Ratio(_) => "Ratio",
+            Value::Fraction(r) if is_decimal(r) => "Decimal",
+            Value::Fraction(_) => "Fraction",
             Value::Percent(_) => "Percent",
+            Value::Ratio(_) => "Ratio",
             Value::Num(_) => "Num",
             Value::Complex(..) => "Complex",
             Value::Text(_) => "Text",
@@ -143,8 +157,9 @@ impl Value {
         matches!(
             self,
             Value::Int(_)
-                | Value::Ratio(_)
+                | Value::Fraction(_)
                 | Value::Percent(_)
+                | Value::Ratio(_)
                 | Value::Num(_)
                 | Value::Complex(..)
         )
@@ -155,9 +170,10 @@ impl Value {
     fn to_lit(&self) -> Option<Lit> {
         Some(match self {
             Value::Int(n) => Lit::Int(n.clone()),
-            Value::Ratio(r) if is_decimal(r) => Lit::Decimal(r.clone()),
-            Value::Ratio(r) => Lit::Ratio(r.clone()),
+            Value::Fraction(r) if is_decimal(r) => Lit::Decimal(r.clone()),
+            Value::Fraction(r) => Lit::Fraction(r.clone()),
             Value::Percent(r) => Lit::Percent(r.clone()),
+            Value::Ratio(r) => Lit::Ratio(r.clone()),
             Value::Num(f) => Lit::Num(*f),
             Value::Complex(re, im) => Lit::Complex(*re, *im),
             Value::Text(s) => Lit::Text(s.to_string()),
@@ -176,9 +192,10 @@ impl Value {
         let fits = match (self, to) {
             (Value::Empty, _) | (_, S::Any) => true,
             (Value::Zoned(_), S::DateTime) | (Value::Text(_), S::Text) => true,
-            // A whole `Decimal` or `Ratio` is held as an `Int`.
-            (Value::Int(_), S::Int | S::Decimal | S::Ratio) => true,
-            (Value::Ratio(_), S::Ratio) | (Value::Percent(_), S::Percent) => true,
+            // A whole `Decimal` or `Fraction` is held as an `Int`.
+            (Value::Int(_), S::Int | S::Decimal | S::Fraction) => true,
+            (Value::Fraction(_), S::Fraction) | (Value::Percent(_), S::Percent) => true,
+            (Value::Ratio(_), S::Ratio) => true,
             _ => false,
         };
         if fits {
@@ -210,7 +227,7 @@ enum N {
 fn number(v: &Value) -> Option<N> {
     Some(match v {
         Value::Int(n) => N::Exact(BigRational::from_integer(n.clone())),
-        Value::Ratio(r) | Value::Percent(r) => N::Exact(r.clone()),
+        Value::Fraction(r) | Value::Percent(r) | Value::Ratio(r) => N::Exact(r.clone()),
         Value::Num(f) => N::Num(*f),
         Value::Complex(re, im) => N::Complex(*re, *im),
         _ => return None,
@@ -248,6 +265,16 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     // the plain number.
     if let (Value::Percent(x), Value::Percent(y), BinOp::Add | BinOp::Sub) = (a, b, op) {
         return Ok(Value::Percent(if op == BinOp::Add { x + y } else { x - y }));
+    }
+    // Ratios add, multiply and divide to a ratio.
+    if let (Value::Ratio(x), Value::Ratio(y)) = (a, b) {
+        match op {
+            BinOp::Add => return Ok(Value::Ratio(x + y)),
+            BinOp::Sub => return Ok(Value::Ratio(x - y)),
+            BinOp::Mul => return Ok(Value::Ratio(x * y)),
+            BinOp::Div if !y.is_zero() => return Ok(Value::Ratio(x / y)),
+            _ => {}
+        }
     }
     let (Some(x), Some(y)) = (number(a), number(b)) else {
         return Err(format!(
@@ -391,19 +418,22 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
         (Value::Percent(r), MathFn::Abs) => return Ok(Value::Percent(r.abs())),
         (Value::Percent(_), MathFn::Re | MathFn::Conj) => return Ok(v.clone()),
         (Value::Percent(_), _) => return math(m, &v.clone().plain()),
+        (Value::Ratio(r), MathFn::Abs) => return Ok(Value::Ratio(r.abs())),
+        (Value::Ratio(_), MathFn::Re | MathFn::Conj) => return Ok(v.clone()),
+        (Value::Ratio(_), _) => return math(m, &v.clone().plain()),
         (Value::Int(n), MathFn::Abs) => return Ok(Value::Int(n.abs())),
         (Value::Int(n), MathFn::Sign) => return Ok(Value::Int(n.signum())),
-        (Value::Int(_) | Value::Ratio(_), MathFn::Im) => return Ok(Value::Int(BigInt::from(0))),
-        (Value::Ratio(_), MathFn::Re | MathFn::Conj) => return Ok(v.clone()),
+        (Value::Int(_) | Value::Fraction(_), MathFn::Im) => return Ok(Value::Int(BigInt::from(0))),
+        (Value::Fraction(_), MathFn::Re | MathFn::Conj) => return Ok(v.clone()),
         (Value::Complex(re, im), _) => return complex_math(m, *re, *im),
         (Value::Int(_), _) if m.is_exact() => return Ok(v.clone()),
-        (Value::Ratio(r), MathFn::Abs) => return Ok(Value::Ratio(r.abs())),
-        (Value::Ratio(r), MathFn::Sign) => return Ok(Value::Int(r.numer().signum())),
-        (Value::Ratio(r), MathFn::Round) => return Ok(whole(r.round())),
-        (Value::Ratio(r), MathFn::Floor) => return Ok(whole(r.floor())),
-        (Value::Ratio(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
+        (Value::Fraction(r), MathFn::Abs) => return Ok(Value::Fraction(r.abs())),
+        (Value::Fraction(r), MathFn::Sign) => return Ok(Value::Int(r.numer().signum())),
+        (Value::Fraction(r), MathFn::Round) => return Ok(whole(r.round())),
+        (Value::Fraction(r), MathFn::Floor) => return Ok(whole(r.floor())),
+        (Value::Fraction(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
         (Value::Int(n), _) => n.to_f64().unwrap_or(f64::NAN),
-        (Value::Ratio(r), _) => to_f64(r),
+        (Value::Fraction(r), _) => to_f64(r),
         (Value::Num(f), _) => *f,
         (other, _) => {
             return Err(format!(
@@ -484,8 +514,8 @@ pub fn equal(a: &Value, b: &Value) -> Result<Option<bool>, String> {
     Ok(compare(a, b)?.map(|o| o == Ordering::Equal))
 }
 
-/// How many digits a `Ratio` is shown with after the decimal point.
-pub const RATIO_DIGITS: usize = 5;
+/// How many digits a `Fraction` is shown with after the decimal point.
+pub const FRACTION_DIGITS: usize = 5;
 
 /// What follows a number that is shown with fewer digits than it has.
 pub const MORE: char = '…';
@@ -505,7 +535,7 @@ fn decimal(scaled: &BigInt, negative: bool, scale: usize) -> String {
 }
 
 /// An exact number as it is shown and written: a `Decimal`, a fraction
-/// that ends, as that decimal in full, and any other `Ratio` as `n/d`.
+/// that ends, as that decimal in full, and any other `Fraction` as `n/d`.
 pub fn format_rat(r: &BigRational) -> String {
     let (two, five, ten) = (BigInt::from(2), BigInt::from(5), BigInt::from(10));
     let mut rest = r.denom().clone();
@@ -551,23 +581,32 @@ pub fn format_percent(r: &BigRational, exact: bool) -> String {
     format!("{shown}{MORE}%")
 }
 
-/// An exact number rounded for a `Num` to be shown as: a decimal with up to
-/// [`RATIO_DIGITS`] digits after the point. One with more is rounded to that many, a half
-/// away from zero, and marked with [`MORE`].
+/// A `Ratio` as it is shown and written: its two whole numbers in their
+/// lowest terms, `3:2`, and a whole one to one, `4:1`.
 pub fn format_ratio(r: &BigRational) -> String {
-    let unit = num_traits::pow(BigInt::from(10), RATIO_DIGITS);
+    format!("{}:{}", r.numer(), r.denom())
+}
+
+/// An exact number rounded for a `Num` to be shown as: a decimal with up to
+/// [`FRACTION_DIGITS`] digits after the point. One with more is rounded to that many, a half
+/// away from zero, and marked with [`MORE`].
+pub fn format_fraction(r: &BigRational) -> String {
+    let unit = num_traits::pow(BigInt::from(10), FRACTION_DIGITS);
     let scaled = r * BigRational::from_integer(unit);
     if scaled.is_integer() {
         return format_rat(r);
     }
     let rounded = scaled.round().to_integer();
-    format!("{}{MORE}", decimal(&rounded, r.is_negative(), RATIO_DIGITS))
+    format!(
+        "{}{MORE}",
+        decimal(&rounded, r.is_negative(), FRACTION_DIGITS)
+    )
 }
 
 /// A `Num` as Raku writes one: a whole number as `100`, one with a fraction
 /// as `1.5`, and a very large or very small one with an exponent, `1e+21`
 /// or `1.5e-07`. In full when `exact`, with the fewest digits that give the
-/// same `Num` back; otherwise more than [`RATIO_DIGITS`] digits after the
+/// same `Num` back; otherwise more than [`FRACTION_DIGITS`] digits after the
 /// point are rounded and marked with [`MORE`], as an exact number's are.
 pub fn format_num(f: f64, exact: bool) -> String {
     if f.is_nan() {
@@ -579,10 +618,10 @@ pub fn format_num(f: f64, exact: bool) -> String {
     // A decimal with too many digits to show, rounded.
     let short = |text: &str| {
         let digits = text.split_once('.').map_or(0, |(_, frac)| frac.len());
-        if exact || digits <= RATIO_DIGITS {
+        if exact || digits <= FRACTION_DIGITS {
             return None;
         }
-        Some(format_ratio(&convert::ratio_of(text.parse().ok()?)?))
+        Some(format_fraction(&convert::fraction_of(text.parse().ok()?)?))
     };
     let scientific = format!("{f:e}");
     let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
@@ -623,9 +662,10 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         Value::Empty => String::new(),
         Value::Error => "#ERROR".into(),
         Value::Int(n) => n.to_string(),
-        // A `Decimal` in full, `19.99`, and any other `Ratio` as `x/y`.
-        Value::Ratio(r) => format_rat(r),
+        // A `Decimal` in full, `19.99`, and any other `Fraction` as `x/y`.
+        Value::Fraction(r) => format_rat(r),
         Value::Percent(r) => format_percent(r, exact),
+        Value::Ratio(r) => format_ratio(r),
         Value::Num(f) => format_num(*f, exact),
         // Each part as a `Num` is written: `3+4i`, `1.5-2i`.
         Value::Complex(re, im) => {
@@ -697,14 +737,19 @@ mod tests {
 
     #[test]
     fn shows_rationals() {
-        assert_eq!(format_ratio(&rat(175, 4)), "43.75");
-        assert_eq!(format_ratio(&rat(1, 100_000)), "0.00001");
-        assert_eq!(format_ratio(&rat(1, 3)), "0.33333…");
-        assert_eq!(format_ratio(&rat(2, 3)), "0.66667…");
-        assert_eq!(format_ratio(&rat(-7, 3)), "-2.33333…");
-        assert_eq!(format_ratio(&rat(1, 64)), "0.01563…");
-        assert_eq!(format_ratio(&rat(-1, 1_000_000)), "-0.00000…");
-        assert_eq!(format_ratio(&rat(1_999_999, 1_000_000)), "2.00000…");
+        assert_eq!(format_ratio(&rat(3, 2)), "3:2");
+        assert_eq!(format_ratio(&rat(6, 4)), "3:2");
+        assert_eq!(format_ratio(&rat(4, 1)), "4:1");
+        assert_eq!(format_ratio(&rat(-7, 3)), "-7:3");
+        assert_eq!(format_rat(&rat(22, 7)), "22/7");
+        assert_eq!(format_fraction(&rat(175, 4)), "43.75");
+        assert_eq!(format_fraction(&rat(1, 100_000)), "0.00001");
+        assert_eq!(format_fraction(&rat(1, 3)), "0.33333…");
+        assert_eq!(format_fraction(&rat(2, 3)), "0.66667…");
+        assert_eq!(format_fraction(&rat(-7, 3)), "-2.33333…");
+        assert_eq!(format_fraction(&rat(1, 64)), "0.01563…");
+        assert_eq!(format_fraction(&rat(-1, 1_000_000)), "-0.00000…");
+        assert_eq!(format_fraction(&rat(1_999_999, 1_000_000)), "2.00000…");
     }
 
     #[test]
@@ -773,13 +818,13 @@ mod tests {
 
     #[test]
     fn converts() {
-        let third = Value::Ratio(rat(-7, 3));
+        let third = Value::Fraction(rat(-7, 3));
         let shown = |v: Result<Value, String>| format_exact(&v.unwrap(), true, &Style::ISO);
         assert_eq!(shown(third.converted(S::Int)), "-2");
-        assert_eq!(shown(third.converted(S::Ratio)), "-7/3");
+        assert_eq!(shown(third.converted(S::Fraction)), "-7/3");
         assert_eq!(shown(third.converted(S::Text)), "\"-7/3\"");
-        assert_eq!(shown(Value::Num(0.1).converted(S::Ratio)), "0.1");
-        assert_eq!(shown(Value::text("1/8").converted(S::Ratio)), "0.125");
+        assert_eq!(shown(Value::Num(0.1).converted(S::Fraction)), "0.1");
+        assert_eq!(shown(Value::text("1/8").converted(S::Fraction)), "0.125");
         assert_eq!(
             shown(Value::Date(1).converted(S::DateTime)),
             "1970-01-02T00:00"
@@ -796,7 +841,7 @@ mod tests {
     #[test]
     fn division_is_exact() {
         let third = arith(BinOp::Div, &Value::Int(1.into()), &Value::Int(3.into())).unwrap();
-        assert!(matches!(third, Value::Ratio(_)));
+        assert!(matches!(third, Value::Fraction(_)));
         let one = arith(BinOp::Mul, &third, &Value::Int(3.into())).unwrap();
         assert!(matches!(one, Value::Int(n) if n.is_one()));
         assert!(arith(BinOp::Div, &Value::Int(1.into()), &Value::Int(0.into())).is_err());

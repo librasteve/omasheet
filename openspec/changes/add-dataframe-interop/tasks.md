@@ -6,7 +6,7 @@
 
 ## 1. Parquet (`parquet-interop`)
 - [ ] 1.1 `parquet` Cargo feature in `omasheet-interop`; CI builds with and without it
-- [ ] 1.2 Export: choose each column's type from its values, exact decimals for terminating `Ratio`
+- [ ] 1.2 Export: choose each column's type from its values, exact decimals for terminating `Fraction`
 - [ ] 1.3 Import: column types from the schema, `zone` line from timestamps
 - [ ] 1.4 Round-trip test over the `examples/` corpus
 

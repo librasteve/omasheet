@@ -159,8 +159,9 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
     match ty {
         "Int" => "Int: a whole number, e.g. 42".into(),
         "Decimal" => "Decimal: an exact decimal number, e.g. 19.99 or 20%".into(),
-        "Ratio" => "Ratio: an exact number, e.g. 1/7, 19.99 or 20%".into(),
+        "Fraction" => "Fraction: an exact number, e.g. 1/7, 19.99 or 20%".into(),
         "Percent" => "Percent: an exact number shown as a percentage, e.g. 20%".into(),
+        "Ratio" => "Ratio: an exact number shown as a ratio, e.g. 3:2 or 4:1".into(),
         "Num" => "Num: a floating-point number, e.g. 1.5 or 2e-3".into(),
         "Complex" => "Complex: e.g. 3+4i or 2.5i".into(),
         "Bool" => "Bool: true or false".into(),
@@ -1836,7 +1837,7 @@ impl Document {
         // What a number shown with fewer digits than it has is in full.
         let exact = |v: &Value, quoted: bool, shown: &str| {
             let full = match v {
-                Value::Ratio(_)
+                Value::Fraction(_)
                 | Value::Percent(_)
                 | Value::Num(_)
                 | Value::Complex(..)

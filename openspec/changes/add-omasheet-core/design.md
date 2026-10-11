@@ -20,7 +20,7 @@ D/P/Q numbers are shared across all five changes, so gaps here are intentional.
 | D4 | OMX is a fully custom language compiled to a Rust engine | No embedded Lua/JS/Python/SQL |
 | D5 | `;` is the dimension separator inside `[]` | As in Raku: `A[3; 2]` |
 | D6 | Numeric design lifted from Raku, centred on rationals | |
-| D7 | `Int` is arbitrary precision (BigInt); `Ratio` is arbitrary precision (FatRat) | No fixed-width integers at language level |
+| D7 | `Int` is arbitrary precision (BigInt); `Fraction` is arbitrary precision (FatRat) | No fixed-width integers at language level |
 | D8 | Units and uncertainty are in scope | Later phases — see `add-units`, `add-uncertainty` |
 | D9 | Types are expressed over an entire column | Column-typed first, cell-typed second; units per column arrive in `add-units` |
 | D10 | XLSX via existing crates | Later phase — see `add-interop`. The dataframe-library half of this decision was withdrawn: see D11 in `add-table-operations` |
@@ -129,7 +129,7 @@ Not built in this phase, though the specs mention them:
 
 ## Open Questions
 
-**Q8 — Ratio growth.** Long chains of exact operations can grow denominators
+**Q8 — Fraction growth.** Long chains of exact operations can grow denominators
 without bound. Decided: never convert silently. Not decided: whether to warn
 (lint) past a size threshold.
 
@@ -150,4 +150,4 @@ specified because an example depends on it; the rest are deferred.
   splitter, not the engine.
 - **Later phases reopen the type system.** Units and uncertainty will extend
   column types and static checking. Keep the type representation open to
-  parameters (`Ratio<unit>`) even though Phase 1 has none.
+  parameters (`Fraction<unit>`) even though Phase 1 has none.

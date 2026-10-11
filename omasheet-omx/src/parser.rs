@@ -315,6 +315,7 @@ impl Parser {
             Tok::Int(n) => lit(Lit::Int(n)),
             Tok::Decimal(r) => lit(Lit::Decimal(r)),
             Tok::Percent(r) => lit(Lit::Percent(r)),
+            Tok::Ratio(r) => lit(Lit::Ratio(r)),
             Tok::Num(f) => lit(Lit::Num(f)),
             Tok::Imag(f) => lit(Lit::Complex(0.0, f)),
             Tok::Str(s) => lit(Lit::Text(s)),

@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! Conversions between the types: what `Int(x)`, `Ratio(x)` and the rest
+//! Conversions between the types: what `Int(x)`, `Fraction(x)` and the rest
 //! do.
 
 use crate::ast::Lit;
@@ -11,19 +11,37 @@ use num_rational::BigRational;
 use num_traits::{ToPrimitive, Zero};
 use std::str::FromStr;
 
-/// A value written on its own, such as `42`, `-1/7`, `3+4i` or
+/// A ratio written on its own, `3:2` or `-16:10`, whatever the number of
+/// digits: where a ratio is wanted, `16:10` is not a time. `None` if the
+/// text is anything else, or a ratio to nothing.
+pub fn parse_ratio(text: &str) -> Option<BigRational> {
+    let (negative, rest) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest.trim_start()),
+        None => (false, text),
+    };
+    let (first, second) = rest.split_once(':')?;
+    let part = |s: &str| {
+        let digits = !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+        digits.then(|| BigInt::from_str(s).ok()).flatten()
+    };
+    let (first, second) = (part(first)?, part(second)?);
+    let r = (!second.is_zero()).then(|| BigRational::new(first, second))?;
+    Some(if negative { -r } else { r })
+}
+
+/// A value written on its own, such as `42`, `-1/7`, `3:2`, `3+4i` or
 /// `2025-01-31`. `None` if the text is anything else.
 pub fn parse_literal(text: &str) -> Option<Lit> {
     let toks = lex(text, 0, 0).ok()?;
     let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
     // A fraction of two whole numbers, `1/7`, is an exact number.
     let fraction = |n: &BigInt, d: &BigInt| {
-        (!d.is_zero()).then(|| Lit::Ratio(BigRational::new(n.clone(), d.clone())))
+        (!d.is_zero()).then(|| Lit::Fraction(BigRational::new(n.clone(), d.clone())))
     };
     // A complex number: `4i`, `3+4i`, `-1.5-2i`.
     let real = |t: &Tok| match t {
         Tok::Int(n) => n.to_f64(),
-        Tok::Decimal(r) | Tok::Percent(r) => r.to_f64(),
+        Tok::Decimal(r) | Tok::Percent(r) | Tok::Ratio(r) => r.to_f64(),
         Tok::Num(f) => Some(*f),
         _ => None,
     };
@@ -46,10 +64,12 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
         [Tok::Int(n), Tok::Eof] => Lit::Int(n.clone()),
         [Tok::Decimal(r), Tok::Eof] => Lit::Decimal(r.clone()),
         [Tok::Percent(r), Tok::Eof] => Lit::Percent(r.clone()),
+        [Tok::Ratio(r), Tok::Eof] => Lit::Ratio(r.clone()),
         [Tok::Num(f), Tok::Eof] => Lit::Num(*f),
         [Tok::Minus, Tok::Int(n), Tok::Eof] => Lit::Int(-n.clone()),
         [Tok::Minus, Tok::Decimal(r), Tok::Eof] => Lit::Decimal(-r.clone()),
         [Tok::Minus, Tok::Percent(r), Tok::Eof] => Lit::Percent(-r.clone()),
+        [Tok::Minus, Tok::Ratio(r), Tok::Eof] => Lit::Ratio(-r.clone()),
         [Tok::Minus, Tok::Num(f), Tok::Eof] => Lit::Num(-*f),
         [Tok::Str(s), Tok::Eof] => Lit::Text(s.clone()),
         [Tok::Date(d), Tok::Eof] => Lit::Date(*d),
@@ -65,8 +85,9 @@ pub fn lit_type(l: &Lit) -> S {
     match l {
         Lit::Int(_) => S::Int,
         Lit::Decimal(_) => S::Decimal,
-        Lit::Ratio(_) => S::Ratio,
+        Lit::Fraction(_) => S::Fraction,
         Lit::Percent(_) => S::Percent,
+        Lit::Ratio(_) => S::Ratio,
         Lit::Num(_) => S::Num,
         Lit::Complex(..) => S::Complex,
         Lit::Text(_) => S::Text,
@@ -93,7 +114,7 @@ pub fn is_decimal(r: &BigRational) -> bool {
 
 /// The exact number a `Num` is shown as: `0.1`, not the binary fraction
 /// nearest to it. `None` if it is not finite.
-pub fn ratio_of(f: f64) -> Option<BigRational> {
+pub fn fraction_of(f: f64) -> Option<BigRational> {
     if !f.is_finite() {
         return None;
     }
@@ -132,7 +153,7 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     let one = |b: bool| BigInt::from(b as u8);
     let real = |l: &Lit| match l {
         Lit::Int(n) => n.to_f64(),
-        Lit::Decimal(r) | Lit::Ratio(r) | Lit::Percent(r) => r.to_f64(),
+        Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) | Lit::Ratio(r) => r.to_f64(),
         Lit::Num(f) => Some(*f),
         Lit::Bool(b) => Some(*b as u8 as f64),
         _ => None,
@@ -142,60 +163,80 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     }
     Ok(match (lit, to) {
         (Lit::Text(s), _) => {
+            // Where a ratio is asked for, `16:10` is one, and not a time.
+            if let (S::Ratio, Some(r)) = (to, parse_ratio(s.trim())) {
+                return Ok(Lit::Ratio(r));
+            }
             let read = parse_literal(s.trim()).filter(|l| !matches!(l, Lit::Text(_)));
             return read
                 .and_then(|l| convert(&l, to).ok())
                 .ok_or_else(|| format!("`{s}` is not {}", a(to)));
         }
-        // A `Percent` is the number it stands for: `20%` is `0.2`.
-        (Lit::Percent(r), S::Int | S::Decimal | S::Ratio | S::Bool) => {
+        // A `Percent` is the number it stands for, `20%` is `0.2`, and so is
+        // a `Ratio`: `3:2` is `1.5`.
+        (Lit::Percent(r) | Lit::Ratio(r), S::Int | S::Decimal | S::Fraction | S::Bool) => {
             let plain = if r.is_integer() {
                 Lit::Int(r.to_integer())
             } else if is_decimal(r) {
                 Lit::Decimal(r.clone())
             } else {
-                Lit::Ratio(r.clone())
+                Lit::Fraction(r.clone())
             };
             return convert(&plain, to);
         }
         (Lit::Int(n), S::Percent) => Lit::Percent(BigRational::from_integer(n.clone())),
-        (Lit::Decimal(r) | Lit::Ratio(r), S::Percent) => Lit::Percent(r.clone()),
-        (Lit::Int(n), S::Decimal | S::Ratio) => Lit::Int(n.clone()),
-        (Lit::Decimal(r) | Lit::Ratio(r), S::Int) => Lit::Int(r.trunc().to_integer()),
-        // Every `Decimal` is a `Ratio`; a `Ratio` is a `Decimal` if it ends.
-        (Lit::Decimal(r), S::Ratio) => Lit::Ratio(r.clone()),
-        (Lit::Ratio(r), S::Decimal) if is_decimal(r) => Lit::Decimal(r.clone()),
-        (Lit::Ratio(r), S::Decimal) => {
+        (Lit::Decimal(r) | Lit::Fraction(r) | Lit::Ratio(r), S::Percent) => Lit::Percent(r.clone()),
+        (Lit::Int(n), S::Ratio) => Lit::Ratio(BigRational::from_integer(n.clone())),
+        (Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r), S::Ratio) => Lit::Ratio(r.clone()),
+        (Lit::Int(n), S::Decimal | S::Fraction) => Lit::Int(n.clone()),
+        (Lit::Decimal(r) | Lit::Fraction(r), S::Int) => Lit::Int(r.trunc().to_integer()),
+        // Every `Decimal` is a `Fraction`; a `Fraction` is a `Decimal` if it ends.
+        (Lit::Decimal(r), S::Fraction) => Lit::Fraction(r.clone()),
+        (Lit::Fraction(r), S::Decimal) if is_decimal(r) => Lit::Decimal(r.clone()),
+        (Lit::Fraction(r), S::Decimal) => {
             return Err(format!(
                 "{}/{} does not end as a decimal",
                 r.numer(),
                 r.denom()
             ));
         }
-        (Lit::Num(f), S::Int | S::Decimal | S::Ratio | S::Percent) => match ratio_of(*f) {
-            Some(r) if to == S::Percent => Lit::Percent(r),
-            Some(r) if to == S::Int || r.is_integer() => Lit::Int(r.trunc().to_integer()),
-            Some(r) if to == S::Decimal => Lit::Decimal(r),
-            Some(r) => Lit::Ratio(r),
-            None => return Err(format!("{f:?} has no exact value")),
-        },
-        (Lit::Bool(b), S::Int | S::Decimal | S::Ratio) => Lit::Int(one(*b)),
+        (Lit::Num(f), S::Int | S::Decimal | S::Fraction | S::Percent | S::Ratio) => {
+            match fraction_of(*f) {
+                Some(r) if to == S::Percent => Lit::Percent(r),
+                Some(r) if to == S::Ratio => Lit::Ratio(r),
+                Some(r) if to == S::Int || r.is_integer() => Lit::Int(r.trunc().to_integer()),
+                Some(r) if to == S::Decimal => Lit::Decimal(r),
+                Some(r) => Lit::Fraction(r),
+                None => return Err(format!("{f:?} has no exact value")),
+            }
+        }
+        (Lit::Bool(b), S::Int | S::Decimal | S::Fraction) => Lit::Int(one(*b)),
         (
-            Lit::Int(_) | Lit::Decimal(_) | Lit::Ratio(_) | Lit::Percent(_) | Lit::Bool(_),
+            Lit::Int(_)
+            | Lit::Decimal(_)
+            | Lit::Fraction(_)
+            | Lit::Percent(_)
+            | Lit::Ratio(_)
+            | Lit::Bool(_),
             S::Num,
         ) => match real(lit) {
             Some(f) => Lit::Num(f),
             None => return no(),
         },
         (
-            Lit::Int(_) | Lit::Decimal(_) | Lit::Ratio(_) | Lit::Percent(_) | Lit::Num(_),
+            Lit::Int(_)
+            | Lit::Decimal(_)
+            | Lit::Fraction(_)
+            | Lit::Percent(_)
+            | Lit::Ratio(_)
+            | Lit::Num(_),
             S::Complex,
         ) => match real(lit) {
             Some(f) => Lit::Complex(f, 0.0),
             None => return no(),
         },
         (Lit::Int(n), S::Bool) => Lit::Bool(!n.is_zero()),
-        (Lit::Decimal(r) | Lit::Ratio(r), S::Bool) => Lit::Bool(!r.is_zero()),
+        (Lit::Decimal(r) | Lit::Fraction(r), S::Bool) => Lit::Bool(!r.is_zero()),
         (Lit::Num(f), S::Bool) => Lit::Bool(*f != 0.0),
         (Lit::DateTime(t), S::Date) => Lit::Date(crate::date::split_datetime(*t).0),
         (Lit::DateTime(t), S::Time) => Lit::Time(crate::date::split_datetime(*t).1),
@@ -208,11 +249,12 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
 mod tests {
     use super::*;
 
-    const TYPES: [S; 11] = [
+    const TYPES: [S; 12] = [
         S::Int,
         S::Decimal,
-        S::Ratio,
+        S::Fraction,
         S::Percent,
+        S::Ratio,
         S::Num,
         S::Complex,
         S::Text,
@@ -230,15 +272,31 @@ mod tests {
     fn converts_numbers() {
         assert_eq!(convert(&lit("19.99"), S::Int), Ok(lit("19")));
         assert_eq!(convert(&lit("-19.99"), S::Int), Ok(lit("-19")));
-        assert_eq!(convert(&lit("1e-1"), S::Ratio), Ok(lit("1/10")));
+        assert_eq!(convert(&lit("1e-1"), S::Fraction), Ok(lit("1/10")));
         assert_eq!(convert(&lit("1e-1"), S::Decimal), Ok(lit("0.1")));
         assert_eq!(convert(&lit("1/8"), S::Decimal), Ok(lit("0.125")));
-        assert_eq!(convert(&lit("0.125"), S::Ratio), Ok(lit("1/8")));
+        assert_eq!(convert(&lit("0.125"), S::Fraction), Ok(lit("1/8")));
         assert_eq!(
             convert(&lit("1/3"), S::Decimal),
             Err("1/3 does not end as a decimal".to_string())
         );
-        assert_eq!(convert(&lit("-2.5e3"), S::Ratio), Ok(lit("-2500")));
+        assert_eq!(convert(&lit("-2.5e3"), S::Fraction), Ok(lit("-2500")));
+        // A top-heavy fraction is a `Fraction` like any other.
+        assert_eq!(
+            lit("7/3"),
+            Lit::Fraction(BigRational::new(7.into(), 3.into()))
+        );
+        assert_eq!(convert(&lit("-22/7"), S::Int), Ok(lit("-3")));
+        assert_eq!(convert(&lit("3:2"), S::Fraction), Ok(lit("3/2")));
+        assert_eq!(convert(&lit("3:2"), S::Decimal), Ok(lit("1.5")));
+        assert_eq!(convert(&lit("7:2"), S::Int), Ok(lit("3")));
+        assert_eq!(convert(&lit("4"), S::Ratio), Ok(lit("4:1")));
+        assert_eq!(convert(&lit("1.5"), S::Ratio), Ok(lit("3:2")));
+        assert_eq!(convert(&lit("7/3"), S::Ratio), Ok(lit("7:3")));
+        assert_eq!(convert(&lit("150%"), S::Ratio), Ok(lit("3:2")));
+        assert_eq!(convert(&lit("3:2"), S::Percent), Ok(lit("150%")));
+        assert_eq!(convert(&lit("-3:2"), S::Num), Ok(Lit::Num(-1.5)));
+        assert_eq!(convert(&Lit::Num(0.75), S::Ratio), Ok(lit("3:4")));
         assert_eq!(convert(&lit("1.5e3"), S::Int), Ok(lit("1500")));
         assert_eq!(convert(&lit("1/4"), S::Num), Ok(Lit::Num(0.25)));
         assert_eq!(convert(&lit("3"), S::Complex), Ok(Lit::Complex(3.0, 0.0)));
@@ -252,7 +310,13 @@ mod tests {
         let text = |s: &str| Lit::Text(s.to_string());
         assert_eq!(convert(&text(" 42 "), S::Int), Ok(lit("42")));
         assert_eq!(convert(&text("19.99"), S::Int), Ok(lit("19")));
-        assert_eq!(convert(&text("20%"), S::Ratio), Ok(lit("1/5")));
+        assert_eq!(convert(&text("20%"), S::Fraction), Ok(lit("1/5")));
+        assert_eq!(convert(&text("3:2"), S::Ratio), Ok(lit("3:2")));
+        // Read as a ratio where one is asked for, and as a time elsewhere.
+        assert_eq!(convert(&text("16:10"), S::Ratio), Ok(lit("8:5")));
+        assert_eq!(convert(&text("-16:10"), S::Ratio), Ok(lit("-8:5")));
+        assert_eq!(convert(&text("16:10"), S::Time), Ok(lit("16:10")));
+        assert!(convert(&text("3:0"), S::Ratio).is_err());
         assert_eq!(convert(&text("2025-01-31"), S::Date), Ok(lit("2025-01-31")));
         assert_eq!(
             convert(&text("abc"), S::Int),
@@ -282,10 +346,11 @@ mod tests {
         let samples = [
             lit("7"),
             lit("0.5"),
-            // A fraction that ends: whether a `Ratio` is a `Decimal` depends
+            // A fraction that ends: whether a `Fraction` is a `Decimal` depends
             // on the number, as whether text is a number depends on the text.
             lit("1/4"),
             lit("12.5%"),
+            lit("3:2"),
             lit("1e-1"),
             lit("3+4i"),
             lit("true"),

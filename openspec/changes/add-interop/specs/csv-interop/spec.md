@@ -43,9 +43,9 @@ chosen. An empty cell SHALL be written as an empty field.
 
 ### Requirement: Values in CSV
 Values SHALL be written as the `.omx` file writes them, so that other tools read
-them without knowing Omasheet: an `Int` in full, a terminating `Ratio` as its
+them without knowing Omasheet: an `Int` in full, a terminating `Fraction` as its
 exact decimal however many digits it needs, dates and times in their ISO forms,
-`true` / `false`. A non-terminating `Ratio` SHALL be written as the shortest
+`true` / `false`. A non-terminating `Fraction` SHALL be written as the shortest
 decimal of its nearest double, and the export SHALL report that it did so. A cell
 that could not be calculated SHALL be written as an empty field and reported.
 
@@ -64,11 +64,12 @@ that could not be calculated SHALL be written as an empty field and reported.
 ### Requirement: Import from CSV
 Importing SHALL produce `.omx` source with one table, named after the file,
 taking the first row as the header. A field SHALL be read from its text, with
-no floating-point step: a number becomes an exact `Int` or `Ratio`, a field in
+no floating-point step: a number becomes an exact `Int` or `Fraction`, a field in
 an ISO date or time form becomes a `Date`, `Time` or `DateTime`, `true` / `false`
 become `Bool`, an empty field becomes an empty cell, and anything else becomes
 `Text`. A field is read as a cell of a sheet reads it, so `20%`, `1/8` and
-`1.5e3` are the numbers a sheet takes them for. A column whose fields agree on a
+`1.5e3` are the numbers a sheet takes them for; but a field a sheet would read
+as a `Ratio`, `9:30`, SHALL stay `Text`, since a file may mean a time by it. A column whose fields agree on a
 type other than an exact number or text SHALL be declared with it. A column
 whose fields do not agree on a type SHALL be left undeclared, each cell keeping
 the type it reads as, and the import SHALL report it.
@@ -92,7 +93,7 @@ the type it reads as, and the import SHALL report it.
 - **THEN** the cell is the text `=SUM(A1:A3)`, not a formula
 
 #### Scenario: Round trip
-- **GIVEN** a table whose cells are all literals and whose `Ratio` values all terminate
+- **GIVEN** a table whose cells are all literals and whose `Fraction` values all terminate
 - **WHEN** it is exported to CSV and the CSV is imported
 - **THEN** the imported table has the same values, exactly
 

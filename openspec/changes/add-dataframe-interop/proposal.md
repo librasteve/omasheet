@@ -13,7 +13,7 @@ shape of any Polars integration is not yet decided.
 ## What Changes
 
 - **parquet-interop** — ADDED: Parquet for one table of typed columns in both
-  directions, with terminating `Ratio` columns kept exact as decimals
+  directions, with terminating `Fraction` columns kept exact as decimals
 - **cli** — ADDED: `.parquet` in `omasheet import`, and `omasheet export --parquet`
 
 ## Impact
@@ -27,7 +27,7 @@ shape of any Polars integration is not yet decided.
 
 - Whether Polars is wanted at all beyond the file format, and for what: a
   library API that hands tables to a Polars `DataFrame`, a Python binding, or
-  nothing more than Parquet. Polars cannot hold `Int` or `Ratio` exactly (D11
+  nothing more than Parquet. Polars cannot hold `Int` or `Fraction` exactly (D11
   in `add-table-operations`), so any such bridge is lossy for those columns.
 - Whether the Cargo feature is on by default.
 - Which compression codecs to read. Snappy and Zstandard cover the defaults of

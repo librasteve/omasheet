@@ -115,23 +115,26 @@ fn no_silent_loss_of_exactness() {
 }
 
 /// `Decimal` is an exact number that ends as a decimal: every `Int` is one,
-/// and every `Decimal` is a `Ratio`.
+/// and every `Decimal` is a `Fraction`.
 #[test]
 fn decimals() {
     // The literal says which: a decimal point is a Decimal, a fraction a
-    // Ratio and a `%` a Percent.
+    // Fraction and a `%` a Percent.
     for (expr, message) in [
         ("19.99 + true", "cannot apply `+` to Decimal and Bool"),
         ("20% + true", "cannot apply `+` to Percent and Bool"),
-        ("(1/7) + true", "cannot apply `+` to Ratio and Bool"),
+        ("(1/7) + true", "cannot apply `+` to Fraction and Bool"),
         // Sums, differences and products of decimals are decimals; a
-        // quotient need not end, and is a Ratio.
+        // quotient need not end, and is a Fraction.
         (
             "19.99 * 3 - 0.5 + true",
             "cannot apply `+` to Decimal and Bool",
         ),
-        ("19.99 / 3 + true", "cannot apply `+` to Ratio and Bool"),
-        ("19.99 + 1/7 + true", "cannot apply `+` to Ratio and Bool"),
+        ("19.99 / 3 + true", "cannot apply `+` to Fraction and Bool"),
+        (
+            "19.99 + 1/7 + true",
+            "cannot apply `+` to Fraction and Bool",
+        ),
     ] {
         let err = calc_err(None, expr);
         assert!(err.contains(message), "{expr}: {err}");
@@ -153,17 +156,17 @@ fn decimals() {
     );
     let errors = lint_errors(&format!("{prices}Tea | = Half / 3 | 1\n"));
     assert!(
-        errors[0].contains("declared `Decimal` but this is `Ratio`"),
+        errors[0].contains("declared `Decimal` but this is `Fraction`"),
         "{errors:?}"
     );
     assert!(errors[0].contains("use `.Decimal`"), "{errors:?}");
     assert!(lint_errors(&format!("{prices}Tea | = Half * 1.5 | 1\n")).is_empty());
 
-    // A Decimal goes where a Ratio is declared.
-    let ratios = "table R\n\nShare : Ratio\n\nShare\n0.25\n1/7\n3\n= 0.5 * 0.5\n";
+    // A Decimal goes where a Fraction is declared.
+    let ratios = "table R\n\nShare : Fraction\n\nShare\n0.25\n1/7\n3\n= 0.5 * 0.5\n";
     assert!(lint_errors(ratios).is_empty());
 
-    // `.Decimal` takes a Ratio that ends, and refuses one that does not.
+    // `.Decimal` takes a Fraction that ends, and refuses one that does not.
     assert_eq!(calc("(1/8).Decimal"), "0.125");
     assert_eq!(calc("(1.5e3).Decimal + 0.5"), "1500.5");
     assert_eq!(calc("\"20%\".Decimal"), "0.2");
@@ -173,12 +176,12 @@ fn decimals() {
     assert_eq!(ask(sheet, "P[Half; 0]"), "0.125");
     assert!(calc_err(Some(sheet), "P[Half; 1]").contains("does not end as a decimal"));
 
-    // An average of decimals is a Ratio; their sum, least and greatest are
+    // An average of decimals is a Fraction; their sum, least and greatest are
     // decimals.
     let sheet = "table P\n\nPrice\n4.50\n9\n0.25\n";
     assert!(calc_err(Some(sheet), "P.Price.sum() + true").contains("Decimal and Bool"));
     assert!(calc_err(Some(sheet), "P.Price.max() + true").contains("Decimal and Bool"));
-    assert!(calc_err(Some(sheet), "P.Price.avg() + true").contains("Ratio and Bool"));
+    assert!(calc_err(Some(sheet), "P.Price.avg() + true").contains("Fraction and Bool"));
     assert_eq!(ask(sheet, "P.Price.sum()"), "13.75");
 }
 
@@ -205,8 +208,8 @@ fn percents() {
     assert_eq!(calc("[20%, 1/3].sum()"), "8/15");
     for (expr, message) in [
         ("20% + 5% + true", "cannot apply `+` to Percent and Bool"),
-        ("20% * 2 + true", "cannot apply `+` to Ratio and Bool"),
-        ("20% + 0.5 + true", "cannot apply `+` to Ratio and Bool"),
+        ("20% * 2 + true", "cannot apply `+` to Fraction and Bool"),
+        ("20% + 0.5 + true", "cannot apply `+` to Fraction and Bool"),
         ("20% + 1.5e0 + true", "cannot apply `+` to Num and Bool"),
     ] {
         let err = calc_err(None, expr);
@@ -236,12 +239,12 @@ fn percents() {
     assert_eq!(calc("(1.5e-1).Percent"), "15%");
     assert_eq!(calc("\"20%\".Percent"), "20%");
     assert_eq!(calc("20%.Decimal"), "0.2");
-    assert_eq!(calc("20%.Ratio"), "0.2");
+    assert_eq!(calc("20%.Fraction"), "0.2");
     assert_eq!(calc("150%.Int"), "1");
     assert_eq!(calc("20%.Num"), "0.2");
 
     // A Percent column takes any exact number, and shows it as a percentage.
-    let sheet = "table S\n\nMargin : Percent\nShare : Ratio\n\n\
+    let sheet = "table S\n\nMargin : Percent\nShare : Fraction\n\n\
                  Cost | Price | Rate | Margin | Share\n\
                  7 | 12 | 20% | * | 20%\n3 | 5 | 0.5 | * | 1/3\n\n\
                  Margin := (Price - Cost) / Price\n";
@@ -249,10 +252,10 @@ fn percents() {
     assert_eq!(ask(sheet, "S.Margin"), "[125/3%, 40%]");
     assert_eq!(ask(sheet, "S.Margin.avg()"), "245/6%");
     // A column of percentages is a Percent column; one with a plain number
-    // among them is a Ratio column.
-    assert!(calc_err(Some(sheet), "S[Rate; 0] + true").contains("Ratio and Bool"));
+    // among them is a Fraction column.
+    assert!(calc_err(Some(sheet), "S[Rate; 0] + true").contains("Fraction and Bool"));
     assert_eq!(ask(sheet, "S.Rate"), "[20%, 0.5]");
-    // In a Ratio column a percentage is the number it stands for.
+    // In a Fraction column a percentage is the number it stands for.
     assert_eq!(ask(sheet, "S.Share"), "[0.2, 1/3]");
 
     // What does not go in one.
@@ -286,6 +289,121 @@ fn percents() {
 }
 
 #[test]
+fn ratios() {
+    // Two whole numbers with a `:` between, in their lowest terms.
+    assert_eq!(calc("3:2"), "3:2");
+    assert_eq!(calc("6:4"), "3:2");
+    assert_eq!(calc("16:9"), "16:9");
+    assert_eq!(calc("1:100"), "1:100");
+    assert_eq!(calc("-3:2"), "-3:2");
+    // A whole one is to one.
+    assert_eq!(calc("4:1"), "4:1");
+    assert_eq!(calc("8:2"), "4:1");
+    assert_eq!(calc("4.Ratio"), "4:1");
+    assert_eq!(calc("0.Ratio"), "0:1");
+    assert!(calc_err(None, "3:0").contains("`3:0` is a ratio to nothing"));
+    assert!(calc_err(None, "1:2:3").contains("is not a ratio"));
+    // Two digits on each side is a time; `.Ratio` reads the text as a ratio.
+    assert_eq!(calc("16:10"), "16:10");
+    assert_eq!(calc("\"16:10\".Ratio"), "8:5");
+
+    // Ratios add, multiply and divide to a ratio; next to any other number
+    // one is the number it stands for.
+    assert_eq!(calc("3:2 + 1:2"), "2:1");
+    assert_eq!(calc("3:2 - 3:2"), "0:1");
+    assert_eq!(calc("3:1 * 2:1"), "6:1");
+    assert_eq!(calc("(3:2) / (1:2)"), "3:1");
+    assert_eq!(calc("3:2 * 2"), "3");
+    assert_eq!(calc("3:2 + 1/3"), "11/6");
+    assert_eq!(calc("3:2 + 50%"), "2");
+    assert_eq!(calc("(3:2) ** 2"), "2.25");
+    assert_eq!(calc("3:2 * 1e0"), "1.5");
+    assert_eq!(calc("3:2 == 1.5"), "true");
+    assert_eq!(calc("3:2 > 4:3"), "true");
+    assert_eq!(calc("abs(-3:2)"), "3:2");
+    assert_eq!(calc("round(7:2)"), "4");
+    assert_eq!(calc("[3:2, 1:2, 4:1].sum()"), "6:1");
+    assert_eq!(calc("[3:2, 1:2].avg()"), "1:1");
+    assert_eq!(calc("[3:2, 1:2, 4:1].max()"), "4:1");
+    assert_eq!(calc("[3:2, 2].sum()"), "3.5");
+
+    // To and from the other types.
+    assert_eq!(calc("1.5.Ratio"), "3:2");
+    assert_eq!(calc("(7/3).Ratio"), "7:3");
+    assert_eq!(calc("150%.Ratio"), "3:2");
+    assert_eq!(calc("7.5e-1.Ratio"), "3:4");
+    assert_eq!(calc("Ratio(2.5)"), "5:2");
+    assert_eq!(calc("(3:2).Fraction"), "1.5");
+    assert_eq!(calc("(7:3).Fraction"), "7/3");
+    assert_eq!(calc("(3:2).Decimal"), "1.5");
+    assert!(calc_err(None, "(7:3).Decimal").contains("7/3 does not end as a decimal"));
+    assert_eq!(calc("(7:2).Int"), "3");
+    assert_eq!(calc("(3:2).Percent"), "150%");
+    assert_eq!(calc("(3:2).Num"), "1.5");
+    assert_eq!(calc("(3:2).Text"), "3:2");
+    assert_eq!(calc("(3:2).Bool"), "true");
+
+    // A Ratio column takes any exact number, and shows it as a ratio; there
+    // `16:10` is a ratio and not a time.
+    let sheet = "table M\n\nParts : Ratio\nGear : Ratio\nPlain : Fraction\n\n\
+                 Parts | Gear | Plain | Loose\n\
+                 3:1 | * | 3:2 | 3:2\n4 | * | 7:3 | 4:1\n1.5 | * | 1:2 | 1:2\n\
+                 16:10 | * | 2 | 5:4\n7/3 | * | 1/3 | 2:3\n75% | * | 1 | 1:1\n\n\
+                 Gear := Parts * 2:1\n";
+    assert!(lint_errors(sheet).is_empty(), "{:?}", lint_errors(sheet));
+    assert_eq!(ask(sheet, "M.Parts"), "[3:1, 4:1, 3:2, 8:5, 7:3, 3:4]");
+    assert_eq!(ask(sheet, "M.Gear"), "[6:1, 8:1, 3:1, 16:5, 14:3, 3:2]");
+    assert_eq!(ask(sheet, "M.Parts.sum()"), "791:60");
+    // A column of ratios is a Ratio column, and in a Fraction column a ratio
+    // is the number it stands for.
+    assert!(calc_err(Some(sheet), "M[Loose; 0] + true").contains("Ratio and Bool"));
+    assert_eq!(ask(sheet, "M.Plain"), "[1.5, 7/3, 0.5, 2, 1/3, 1]");
+
+    // What does not go in one, and where a ratio does not go.
+    let errors = lint_errors("table M\n\nParts : Ratio\n\nParts\nhello\n");
+    assert!(
+        errors[0].contains("`hello` is not a `Ratio` literal"),
+        "{errors:?}"
+    );
+    let errors = lint_errors("table M\n\nParts : Ratio\n\nParts\n3:0\n");
+    assert!(errors[0].contains("is not a `Ratio` literal"), "{errors:?}");
+    let errors = lint_errors("table M\n\nParts : Ratio\n\nParts\n= 1.5e0\n");
+    assert!(errors[0].contains("declared `Ratio`"), "{errors:?}");
+    let errors = lint_errors("table M\n\nN : Int\n\nN\n3:2\n");
+    assert!(
+        errors[0].contains("`3:2` is not an `Int` literal"),
+        "{errors:?}"
+    );
+    let errors = lint_errors("table M\n\nN : Int\n\nA | N\n3:2 | *\n\nN := A\n");
+    assert!(
+        errors[0].contains("declared `Int` but this is `Ratio`"),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn top_heavy_fractions() {
+    // A fraction may be more than one: it is kept as it is, not as a whole
+    // number and a part.
+    assert_eq!(calc("7/3"), "7/3");
+    assert_eq!(calc("22/7"), "22/7");
+    assert_eq!(calc("-22/7"), "-22/7");
+    assert_eq!(calc("10/6"), "5/3");
+    assert_eq!(calc("7/3 + 1"), "10/3");
+    assert_eq!(calc("7/3 * 3"), "7");
+    assert_eq!(calc("(7/3).Int"), "2");
+    assert_eq!(calc("\"22/7\".Fraction"), "22/7");
+    // One that ends is shown as the decimal it is.
+    assert_eq!(calc("7/4"), "1.75");
+    let sheet =
+        "table T\n\nA : Fraction\n\nA | Twice\n7/3 | *\n-22/7 | *\n9/3 | *\n\nTwice := A * 2\n";
+    assert!(lint_errors(sheet).is_empty());
+    assert_eq!(ask(sheet, "T.A"), "[7/3, -22/7, 3]");
+    assert_eq!(ask(sheet, "T.Twice"), "[14/3, -44/7, 6]");
+    assert_eq!(ask(sheet, "T.A.sum()"), "46/21");
+}
+
+#[test]
 fn rationals_in_full() {
     assert_eq!(calc("175/4"), "43.75");
     assert_eq!(calc("1/3 + 1/3"), "2/3");
@@ -306,7 +424,7 @@ fn display_of_rationals() {
     assert_eq!(show("-1/64"), "-0.015625");
     assert_eq!(show("19.99 * 3"), "59.97");
     assert_eq!(show("100/3 * 3"), "100");
-    // Any other Ratio is shown as x/y, in lowest terms.
+    // Any other Fraction is shown as x/y, in lowest terms.
     assert_eq!(show("1/3"), "1/3");
     assert_eq!(show("2/6 + 1/3"), "2/3");
     assert_eq!(show("-7/3"), "-7/3");
@@ -332,9 +450,9 @@ fn conversions() {
     assert_eq!(calc("(10/4).Int + 1"), "3");
     assert_eq!(calc("Int(1.5e3)"), "1500");
     assert_eq!(calc("Int(true) + Int(false)"), "1");
-    assert_eq!(calc("Ratio(1e-1)"), "0.1");
-    assert_eq!(calc("Ratio(Num(1/3)) == 1/3"), "false");
-    assert_eq!(calc("7.Ratio / 2"), "3.5");
+    assert_eq!(calc("Fraction(1e-1)"), "0.1");
+    assert_eq!(calc("Fraction(Num(1/3)) == 1/3"), "false");
+    assert_eq!(calc("7.Fraction / 2"), "3.5");
     assert_eq!(calc("(1/4).Num"), "0.25");
     assert_eq!(calc("3.Complex"), "3+0i");
     assert_eq!(calc("Complex(3, 4)"), "3+4i");
@@ -344,7 +462,7 @@ fn conversions() {
     assert_eq!(calc("0.5.Bool"), "true");
     // Text is read the way a cell is.
     assert_eq!(calc("Int(\"42\") + 1"), "43");
-    assert_eq!(calc("\"20%\".Ratio"), "0.2");
+    assert_eq!(calc("\"20%\".Fraction"), "0.2");
     assert_eq!(calc("Date(\"2025-01-31\") + 1"), "2025-02-01");
     assert_eq!(calc("Bool(\"true\")"), "true");
     assert!(calc_err(None, "Int(\"abc\")").contains("`abc` is not an Int"));
@@ -978,10 +1096,10 @@ fn multiple_tables() {
 #[test]
 fn column_schema() {
     let sheet =
-        "table Items\n\nQty   : Int\nPrice : Ratio\n\nQty | Price\n2   | 19.99\n5   | 0.50\n";
+        "table Items\n\nQty   : Int\nPrice : Fraction\n\nQty | Price\n2   | 19.99\n5   | 0.50\n";
     assert_eq!(ask(sheet, "Items[Price; 0] == 1999/100"), "true");
     assert_eq!(ask(sheet, "Items[Qty; 0] * Items[Price; 0]"), "39.98");
-    let errors = lint_errors("table Items\n\nPrise : Ratio\n\nQty | Price\n2 | 1\n");
+    let errors = lint_errors("table Items\n\nPrise : Fraction\n\nQty | Price\n2 | 1\n");
     assert!(errors[0].contains("no column `Prise`"), "{}", errors[0]);
 }
 
@@ -1030,20 +1148,21 @@ fn cell_content() {
     // Text in an undeclared column.
     assert_eq!(ask(SALES, "Sales[Month; 0]"), "Jan");
     // A marked formula in a typed column.
-    let sheet = "const TaxRate = 20%\n\ntable T\n\nTax : Ratio\n\nRevenue | Tax\n100 | = Revenue * TaxRate\n";
+    let sheet = "const TaxRate = 20%\n\ntable T\n\nTax : Fraction\n\nRevenue | Tax\n100 | = Revenue * TaxRate\n";
     assert_eq!(ask(sheet, "T[Tax; 0]"), "20");
-    // A fraction of two whole numbers is a Ratio literal, declared or not.
-    let thirds = "table T\n\nA : Ratio\n\nA | B\n1/7 | 2/3\n-3/6 | 1/3\n4/2 | x\n";
+    // A fraction of two whole numbers is a Fraction literal, declared or not.
+    let thirds = "table T\n\nA : Fraction\n\nA | B\n1/7 | 2/3\n-3/6 | 1/3\n4/2 | x\n";
     assert_eq!(ask(thirds, "T.A"), "[1/7, -0.5, 2]");
     assert_eq!(ask(thirds, "T[B; 0..1].sum()"), "1");
     assert!(
-        lint_errors("table T\n\nA : Ratio\n\nA\n1/0\n")[0].contains("is not a `Ratio` literal")
+        lint_errors("table T\n\nA : Fraction\n\nA\n1/0\n")[0]
+            .contains("is not a `Fraction` literal")
     );
     assert_eq!(ask("table T\n\nA\n1/0\n", "T[A; 0]"), "1/0");
     // An unmarked expression in a typed column is an error.
-    let errors = lint_errors("table T\n\nTax : Ratio\n\nRevenue | Tax\n100 | Revenue * 2\n");
+    let errors = lint_errors("table T\n\nTax : Fraction\n\nRevenue | Tax\n100 | Revenue * 2\n");
     assert!(
-        errors[0].contains("is not a `Ratio` literal"),
+        errors[0].contains("is not a `Fraction` literal"),
         "{}",
         errors[0]
     );

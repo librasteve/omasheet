@@ -880,17 +880,21 @@ impl<'a> Checker<'a> {
         let Some(want) = declared else { return found };
         if !found.assignable_to(want) {
             let help = match (found, want) {
-                (S::Int | S::Decimal | S::Ratio | S::Percent, S::Num) => {
+                (S::Int | S::Decimal | S::Fraction | S::Percent | S::Ratio, S::Num) => {
                     "use `.Num` to convert to Num"
+                }
+                (S::Ratio, S::Int) => "declare the column as `Ratio`, or use `.Int`",
+                (S::Ratio, S::Decimal) => {
+                    "declare the column as `Ratio` or `Fraction`, or use `.Decimal` if the number ends as a decimal"
                 }
                 (S::Percent, S::Int) => "declare the column as `Percent`, or use `.Int`",
                 (S::Percent, S::Decimal) => {
-                    "declare the column as `Percent` or `Ratio`, or use `.Decimal` if the number ends as a decimal"
+                    "declare the column as `Percent` or `Fraction`, or use `.Decimal` if the number ends as a decimal"
                 }
                 (S::Decimal, S::Int) => "declare the column as `Decimal`, or use `.Int`",
-                (S::Ratio, S::Int) => "declare the column as `Ratio`, or use `.Int`",
-                (S::Ratio, S::Decimal) => {
-                    "declare the column as `Ratio`, or use `.Decimal` if the number ends as a decimal"
+                (S::Fraction, S::Int) => "declare the column as `Fraction`, or use `.Int`",
+                (S::Fraction, S::Decimal) => {
+                    "declare the column as `Fraction`, or use `.Decimal` if the number ends as a decimal"
                 }
                 _ => "change the declared type or the formula",
             };
@@ -905,7 +909,11 @@ impl<'a> Checker<'a> {
 
     /// A cell without a leading `=`: a literal, never an expression.
     fn literal_cell(&mut self, text: &str, span: Span, declared: Option<S>) -> Option<Lit> {
-        let parsed = parse_literal(text);
+        // In a `Ratio` column `16:10` is a ratio, and not a time.
+        let ratio = (declared == Some(S::Ratio))
+            .then(|| crate::convert::parse_ratio(text))
+            .flatten();
+        let parsed = ratio.map(Lit::Ratio).or_else(|| parse_literal(text));
         let Some(want) = declared else {
             return Some(parsed.unwrap_or_else(|| Lit::Text(text.to_string())));
         };
@@ -916,29 +924,40 @@ impl<'a> Checker<'a> {
             });
         }
         let fitted = match (parsed, want) {
-            (Some(l @ Lit::Int(_)), S::Int | S::Decimal | S::Ratio) => Some(l),
-            (Some(l @ Lit::Decimal(_)), S::Decimal | S::Ratio) => Some(l),
-            (Some(l @ Lit::Ratio(_)), S::Ratio) => Some(l),
+            (Some(l @ Lit::Int(_)), S::Int | S::Decimal | S::Fraction) => Some(l),
+            (Some(l @ Lit::Decimal(_)), S::Decimal | S::Fraction) => Some(l),
+            (Some(l @ Lit::Fraction(_)), S::Fraction) => Some(l),
             // Any exact number in a `Percent` column is a percentage: `0.4`
             // is `40%`. A `20%` elsewhere is the number it stands for.
             (Some(l @ Lit::Percent(_)), S::Percent) => Some(l),
             (Some(Lit::Int(n)), S::Percent) => {
                 Some(Lit::Percent(num_rational::BigRational::from_integer(n)))
             }
-            (Some(Lit::Decimal(r) | Lit::Ratio(r)), S::Percent) => Some(Lit::Percent(r)),
-            (Some(l @ Lit::Percent(_)), S::Decimal | S::Ratio) => {
+            (Some(Lit::Decimal(r) | Lit::Fraction(r)), S::Percent) => Some(Lit::Percent(r)),
+            // Any exact number in a `Ratio` column is a ratio: `4` is `4:1`.
+            (Some(l @ Lit::Ratio(_)), S::Ratio) => Some(l),
+            (Some(Lit::Int(n)), S::Ratio) => {
+                Some(Lit::Ratio(num_rational::BigRational::from_integer(n)))
+            }
+            (Some(Lit::Decimal(r) | Lit::Fraction(r)), S::Ratio) => Some(Lit::Ratio(r)),
+            (Some(l @ (Lit::Percent(_) | Lit::Ratio(_))), S::Decimal | S::Fraction) => {
+                crate::convert::convert(&l, want).ok()
+            }
+            (Some(l @ Lit::Percent(_)), S::Ratio) | (Some(l @ Lit::Ratio(_)), S::Percent) => {
                 crate::convert::convert(&l, want).ok()
             }
             (Some(Lit::Int(n)), S::Num) => n.to_f64().map(Lit::Num),
-            (Some(Lit::Decimal(r) | Lit::Ratio(r) | Lit::Percent(r)), S::Num) => {
-                r.to_f64().map(Lit::Num)
-            }
+            (
+                Some(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) | Lit::Ratio(r)),
+                S::Num,
+            ) => r.to_f64().map(Lit::Num),
             (Some(l @ Lit::Num(_)), S::Num) => Some(l),
             (Some(l @ Lit::Complex(..)), S::Complex) => Some(l),
             (Some(Lit::Int(n)), S::Complex) => n.to_f64().map(|x| Lit::Complex(x, 0.0)),
-            (Some(Lit::Decimal(r) | Lit::Ratio(r) | Lit::Percent(r)), S::Complex) => {
-                r.to_f64().map(|x| Lit::Complex(x, 0.0))
-            }
+            (
+                Some(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) | Lit::Ratio(r)),
+                S::Complex,
+            ) => r.to_f64().map(|x| Lit::Complex(x, 0.0)),
             (Some(Lit::Num(x)), S::Complex) => Some(Lit::Complex(x, 0.0)),
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
@@ -953,9 +972,10 @@ impl<'a> Checker<'a> {
                 format!("`{text}` is not {article} `{want}` literal"),
                 match want {
                     S::Int => "enter a whole number such as `42`, or start the cell with `=` for a formula",
-                    S::Decimal => "enter a number such as `19.99` or `20%`, or start the cell with `=` for a formula; a fraction such as `1/7` needs a `Ratio` column",
-                    S::Ratio => "enter a number such as `19.99`, `20%` or `1/7`, or start the cell with `=` for a formula",
+                    S::Decimal => "enter a number such as `19.99` or `20%`, or start the cell with `=` for a formula; a fraction such as `1/7` needs a `Fraction` column",
+                    S::Fraction => "enter a number such as `19.99`, `20%` or `1/7`, or start the cell with `=` for a formula",
                     S::Percent => "enter a percentage such as `20%`, or start the cell with `=` for a formula",
+                    S::Ratio => "enter a ratio such as `3:2`, or start the cell with `=` for a formula",
                     S::Num => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
                     S::Complex => {
                         "enter a complex number such as `3+4i`, or start the cell with `=` for a formula"
@@ -1459,11 +1479,13 @@ impl<'a> Checker<'a> {
             } else {
                 match (op, a.wider(b)) {
                     // A quotient or a power of decimals need not end.
-                    (BinOp::Div | BinOp::Pow, S::Int | S::Decimal) => S::Ratio,
+                    (BinOp::Div | BinOp::Pow, S::Int | S::Decimal) => S::Fraction,
                     // Percentages add up to a percentage; anything else
                     // done with one gives the plain number.
                     (BinOp::Add | BinOp::Sub, S::Percent) => S::Percent,
-                    (_, S::Percent) => S::Ratio,
+                    (_, S::Percent) => S::Fraction,
+                    // Ratios add, multiply and divide to a ratio.
+                    (BinOp::Pow, S::Ratio) => S::Fraction,
                     (_, w) => w,
                 }
             }
@@ -1611,7 +1633,7 @@ impl<'a> Checker<'a> {
                         );
                         return fail;
                     }
-                    Func::Avg if matches!(s, S::Int | S::Decimal) => S::Ratio,
+                    Func::Avg if matches!(s, S::Int | S::Decimal) => S::Fraction,
                     Func::Min | Func::Max if matches!(s, S::Bool | S::Complex) => {
                         self.err(
                             args[0].span,
@@ -1631,7 +1653,13 @@ impl<'a> Checker<'a> {
                         ty,
                         Ty::Any
                             | Ty::Scalar(
-                                S::Any | S::Int | S::Decimal | S::Ratio | S::Percent | S::Num
+                                S::Any
+                                    | S::Int
+                                    | S::Decimal
+                                    | S::Fraction
+                                    | S::Percent
+                                    | S::Ratio
+                                    | S::Num
                             )
                     ) {
                         self.err(
@@ -1849,9 +1877,9 @@ impl<'a> Checker<'a> {
                 let out = |s: S| match s {
                     S::Any => Some(S::Any),
                     S::Complex => m.of_complex(),
-                    S::Int | S::Decimal | S::Ratio | S::Percent if m.is_whole() => Some(S::Int),
-                    S::Int | S::Decimal | S::Ratio | S::Percent if m.is_exact() => Some(s),
-                    S::Int | S::Decimal | S::Ratio | S::Percent | S::Num => Some(S::Num),
+                    s if s.is_exact() && m.is_whole() => Some(S::Int),
+                    s if s.is_exact() && m.is_exact() => Some(s),
+                    s if s.is_exact() || s == S::Num => Some(S::Num),
                     _ => None,
                 };
                 let (arg, aty) = self.lower(&args[0], sc);

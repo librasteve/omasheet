@@ -239,16 +239,17 @@ impl<'p> Engine<'p> {
             );
         }
         // A `Decimal` column holds only what ends as a decimal.
-        let decimal = matches!(&v, Value::Ratio(r) if omasheet_omx::convert::is_decimal(r));
+        let decimal = matches!(&v, Value::Fraction(r) if omasheet_omx::convert::is_decimal(r));
         let ok = !col.declared
             || (decimal && col.ty == S::Decimal)
             || matches!(
                 (&v, col.ty),
                 (Value::Empty, _)
                     | (_, S::Any)
-                    | (Value::Int(_), S::Int | S::Decimal | S::Ratio)
-                    | (Value::Ratio(_), S::Ratio)
+                    | (Value::Int(_), S::Int | S::Decimal | S::Fraction)
+                    | (Value::Fraction(_), S::Fraction)
                     | (Value::Percent(_), S::Percent)
+                    | (Value::Ratio(_), S::Ratio)
                     | (Value::Num(_), S::Num)
                     | (Value::Complex(..), S::Complex)
                     | (Value::Text(_), S::Text)
@@ -259,10 +260,17 @@ impl<'p> Engine<'p> {
             );
         if ok {
             Ok(v)
-        } else if col.ty == S::Percent && matches!(v, Value::Int(_) | Value::Ratio(_)) {
+        } else if col.ty == S::Percent
+            && matches!(v, Value::Int(_) | Value::Fraction(_) | Value::Ratio(_))
+        {
             // Any exact number in a `Percent` column is a percentage.
             Ok(v.percent())
-        } else if col.ty == S::Ratio && matches!(v, Value::Percent(_)) {
+        } else if col.ty == S::Ratio
+            && matches!(v, Value::Int(_) | Value::Fraction(_) | Value::Percent(_))
+        {
+            // And in a `Ratio` column a ratio: `4` is `4:1`.
+            Ok(v.ratio())
+        } else if col.ty == S::Fraction && matches!(v, Value::Percent(_) | Value::Ratio(_)) {
             Ok(v.plain())
         } else {
             fail(
@@ -341,6 +349,7 @@ impl<'p> Engine<'p> {
                         (_, Value::Empty) => Ok(Value::Empty),
                         (UnOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
                         (UnOp::Neg, Value::Percent(r)) => Ok(Value::Percent(-r)),
+                        (UnOp::Neg, Value::Ratio(r)) => Ok(Value::Ratio(-r)),
                         (UnOp::Neg, v) if v.is_numeric() => {
                             arith(BinOp::Sub, &Value::Int(BigInt::from(0)), v)
                                 .or_else(|m| fail(span, m))
@@ -570,7 +579,7 @@ impl<'p> Engine<'p> {
                     *part = match self.eval(arg, fr)? {
                         Value::Empty => return Ok(Value::Empty),
                         Value::Int(n) => n.to_f64().unwrap_or(f64::NAN),
-                        Value::Ratio(r) | Value::Percent(r) => to_f64(&r),
+                        Value::Fraction(r) | Value::Percent(r) | Value::Ratio(r) => to_f64(&r),
                         Value::Num(f) => f,
                         other => {
                             return fail(
@@ -752,10 +761,17 @@ impl<'p> Engine<'p> {
                     }
                     Ok(total)
                 };
-                // The sum and the average of percentages are percentages.
-                let percent =
-                    !present.is_empty() && present.iter().all(|v| matches!(v, Value::Percent(_)));
-                let kept = |v: Value| if percent { v.percent() } else { v };
+                // The sum and the average of percentages are percentages, and
+                // those of ratios are ratios.
+                let all =
+                    |is: fn(&Value) -> bool| !present.is_empty() && present.iter().all(|v| is(v));
+                let percent = all(|v| matches!(v, Value::Percent(_)));
+                let ratio = all(|v| matches!(v, Value::Ratio(_)));
+                let kept = |v: Value| match (percent, ratio) {
+                    (true, _) => v.percent(),
+                    (_, true) => v.ratio(),
+                    _ => v,
+                };
                 match func {
                     Func::Count => Ok(Value::Int(BigInt::from(present.len()))),
                     Func::Sum => sum().map(kept),

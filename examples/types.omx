@@ -1,8 +1,9 @@
 # The numbers, Bool and Text: what each type holds and how it is shown.
 #
-# Int, Decimal, Ratio and Percent are exact, a Num is floating point, and a
-# Complex is a pair of Nums. An Int is a Decimal and a Decimal is a Ratio; a
-# Percent holds what a Ratio does and shows it as so many in a hundred.
+# Int, Decimal, Fraction, Percent and Ratio are exact, a Num is floating
+# point, and a Complex is a pair of Nums. An Int is a Decimal and a Decimal is
+# a Fraction; a Percent holds what a Fraction does and shows it as so many in
+# a hundred, and a Ratio shows it as one amount to another.
 #
 # An exact number is shown in full, as a decimal if it ends and as a
 # fraction if not. A Percent that does not end is rounded to two digits and
@@ -19,7 +20,7 @@ table Numbers
 Name    : Text
 Count   : Int
 Price   : Decimal
-Share   : Ratio
+Share   : Fraction
 Rate    : Percent
 Reading : Num
 Wave    : Complex
@@ -41,12 +42,12 @@ cent  | *      | *       | *     | *     | *     | *      | *    | *      | *   
 minus | *      | *       | *     | *     | *     | *      | *    | *      | *    | *    | *      | *
 huge  | *      | *       | *     | *     | *     | *      | *    | *      | *    | *    | *      | *
 
-# Exact stays exact: an Int does not overflow, and a division is a Ratio.
+# Exact stays exact: an Int does not overflow, and a division is a Fraction.
 Square  := Numbers[Count; *] ** 2
 Inverse := 1 / Numbers[Count; *]
 Whole   := Inverse * Numbers[Count; *]
 
-# Sums and products of Decimals are Decimal; a division is a Ratio, since
+# Sums and products of Decimals are Decimal; a division is a Fraction, since
 # it need not end.
 Taxed   := Numbers[Price; *] * 1.2
 Split   := Numbers[Price; *] / 3
@@ -69,7 +70,7 @@ Likely  := Numbers[Checked; *] and Numbers[Share; *] < Half
 # The name of a type converts to it: `x.Int`, `x.Int()` or `Int(x)`.
 table Converted
 
-Value : Ratio
+Value : Fraction
 
 Value  | AsInt | Rounded | AsDecimal | AsPercent | AsNum | AsComplex | AsBool | AsText | Back
 19.99  | *     | *       | *         | *         | *     | *         | *      | *      | *
@@ -82,7 +83,7 @@ Value  | AsInt | Rounded | AsDecimal | AsPercent | AsNum | AsComplex | AsBool | 
 AsInt     := Value.Int
 Rounded   := round(Value)
 
-# A Ratio that ends is a Decimal as it stands, and `(1/3).Decimal` is an
+# A Fraction that ends is a Decimal as it stands, and `(1/3).Decimal` is an
 # error, as 1/3 does not end. A Num always has a Decimal: the one it is
 # shown as.
 AsDecimal := Value.Num.Decimal
@@ -91,7 +92,29 @@ AsNum     := Value.Num
 AsComplex := Value.Complex
 AsBool    := Value.Bool
 AsText    := Value.Text
-Back      := Value.Num.Ratio == Value
+Back      := Value.Num.Fraction == Value
+
+# A Ratio is two whole numbers in their lowest terms, and to one when whole.
+# In a Ratio column any exact number is a ratio, and `16:10` is one and not
+# a time. A Fraction may be top heavy.
+table Mixes
+
+Parts : Ratio
+Yield : Fraction
+
+Name   | Parts | Yield | Doubled | Geared | Plain | Share | Back
+mortar | 3:1   | 7/3   | *       | *      | *     | *     | *
+screed | 4     | 22/7  | *       | *      | *     | *     | *
+lean   | 1.5   | 9/4   | *       | *      | *     | *     | *
+wide   | 16:10 | 1/2   | *       | *      | *     | *     | *
+
+# Ratios add, multiply and divide to a Ratio. Anything else done with one
+# gives the plain number.
+Doubled := Parts + Parts
+Geared  := Parts * 2:1
+Plain   := Parts * 2
+Share   := Parts.Percent
+Back    := Yield.Ratio
 
 # Text is read the way a cell is.
 table Written
@@ -104,7 +127,7 @@ Text  | Number | Doubled | Whole | Decimal | Percent
 1/8   | *      | *       | *     | *       | *
 1.5e3 | *      | *       | *     | *       | *
 
-Number  := Text.Ratio
+Number  := Text.Fraction
 Doubled := Number * 2
 Whole   := Text.Int
 Decimal := Text.Decimal

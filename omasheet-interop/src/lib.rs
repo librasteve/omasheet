@@ -50,7 +50,8 @@ pub enum Datum {
 impl Datum {
     /// What a cell reads `text` as: a number, a date, a time, `true` or
     /// `false`; anything else is text, and so is a quoted string or a
-    /// formula, which stay as they are written.
+    /// formula, which stay as they are written. So is `9:30`: a file may
+    /// mean a time by it, so it is not taken for a ratio.
     pub fn read(text: &str) -> Datum {
         use omasheet_engine::omx::ast::Lit;
         use omasheet_engine::omx::convert::{lit_type, parse_literal};
@@ -59,7 +60,7 @@ impl Datum {
             return Datum::Empty;
         }
         match parse_literal(trimmed) {
-            Some(Lit::Text(_)) | None => Datum::Text(text.to_string()),
+            Some(Lit::Text(_) | Lit::Ratio(_)) | None => Datum::Text(text.to_string()),
             Some(lit) => Datum::Lit(trimmed.to_string(), lit_type(&lit)),
         }
     }
@@ -164,7 +165,9 @@ fn name_for(
 /// Text as a cell holds it: bare where a cell would read it back as the
 /// same text, and otherwise in quotes.
 fn text_cell(text: &str) -> String {
+    use omasheet_engine::omx::convert::parse_literal;
     let bare = Datum::read(text) == Datum::Text(text.to_string())
+        && parse_literal(text.trim()).is_none()
         && text == text.trim()
         && !text.starts_with(['=', '#', '*'])
         && !text.contains(['|', '"', '\n', '\r', '\t'])
@@ -531,6 +534,10 @@ mod tests {
         assert_eq!(text_cell("Jan"), "Jan");
         assert_eq!(text_cell("N/A"), "N/A");
         assert_eq!(text_cell("42"), "\"42\"");
+        // A sheet would read these as ratios, and a file may mean times.
+        assert_eq!(Datum::read("9:30"), Datum::Text("9:30".to_string()));
+        assert_eq!(text_cell("9:30"), "\"9:30\"");
+        assert_eq!(text_cell("3:2"), "\"3:2\"");
         assert_eq!(text_cell("=SUM(A1:A3)"), "\"=SUM(A1:A3)\"");
         assert_eq!(text_cell("a|b"), "\"a|b\"");
         assert_eq!(text_cell(" padded"), "\" padded\"");

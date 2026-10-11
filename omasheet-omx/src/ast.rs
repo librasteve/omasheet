@@ -12,9 +12,11 @@ pub enum Lit {
     /// Written with a decimal point: `19.99`.
     Decimal(BigRational),
     /// Written as a fraction: `1/7`.
-    Ratio(BigRational),
+    Fraction(BigRational),
     /// Written with a `%`: `20%`, held as `1/5`.
     Percent(BigRational),
+    /// Written with a `:`: `3:2`, held as `3/2`.
+    Ratio(BigRational),
     Num(f64),
     /// Real and imaginary parts.
     Complex(f64, f64),

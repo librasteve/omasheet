@@ -38,7 +38,7 @@ from the values of the whole column:
 | Omasheet | Parquet | When it does not fit |
 |---|---|---|
 | `Int` | 64-bit integer | decimal of scale 0 up to 38 digits; beyond that, string |
-| `Ratio` | decimal, with the scale the column needs | double, when a value does not terminate or needs more than 38 digits |
+| `Fraction` | decimal, with the scale the column needs | double, when a value does not terminate or needs more than 38 digits |
 | `Num` | double | |
 | `Complex` | struct of doubles `re`, `im` | |
 | `Text` | string | |
@@ -53,12 +53,12 @@ report each column written as something less exact than its values, and each
 cell written as null because it failed.
 
 #### Scenario: Exact decimals
-- **GIVEN** a `Ratio` column holding `19.99` and `5.5`
+- **GIVEN** a `Fraction` column holding `19.99` and `5.5`
 - **WHEN** it is exported
 - **THEN** the column is a decimal of scale 2 holding exactly `19.99` and `5.50`, and no notice is given
 
 #### Scenario: One third
-- **GIVEN** a `Ratio` column holding `1/3`
+- **GIVEN** a `Fraction` column holding `1/3`
 - **WHEN** it is exported
 - **THEN** the column is a double and a notice names the column as written in floating point
 
@@ -76,7 +76,7 @@ cell written as null because it failed.
 Importing SHALL produce `.omx` source with one table, named after the file, with
 a `Name : Type` line for every column, taken from the file's schema and not
 inferred from the values. Integers of any width SHALL become `Int`; decimals
-SHALL become `Ratio`, exactly; floating-point columns SHALL become `Num`; a
+SHALL become `Fraction`, exactly; floating-point columns SHALL become `Num`; a
 struct of two doubles `re`, `im` SHALL become `Complex`; null SHALL become an
 empty cell. When timestamp columns carry a time zone, the source SHALL begin
 with a `zone` line naming it.
@@ -87,7 +87,7 @@ struct, binary) SHALL be left out, and the import SHALL report it.
 #### Scenario: Typed columns
 - **GIVEN** `sales.parquet` with a string column `Month` and a decimal column `Revenue`
 - **WHEN** `omasheet import sales.parquet` is run
-- **THEN** the output contains `table sales` with the lines `Month : Text` and `Revenue : Ratio`
+- **THEN** the output contains `table sales` with the lines `Month : Text` and `Revenue : Fraction`
 
 #### Scenario: Floating point stays floating point
 - **GIVEN** a double column `Reading`
@@ -100,7 +100,7 @@ struct, binary) SHALL be left out, and the import SHALL report it.
 - **THEN** the table has no `Tags` column and a notice says it was left out
 
 #### Scenario: Round trip
-- **GIVEN** a table whose `Ratio` values all terminate
+- **GIVEN** a table whose `Fraction` values all terminate
 - **WHEN** it is exported to Parquet and the file is imported
 - **THEN** the imported table has the same column types and the same values, exactly
 
