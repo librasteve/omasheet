@@ -174,13 +174,19 @@ omasheet export sheet.omx --csv --table Orders -o orders.csv
 omasheet render report.md --html -o report.html
 ```
 
-- The `.omx` file is the sheet; the others are ways in and out. Only values
-  cross: Excel formulas come in as the numbers they last showed, and OMX
-  formulas go out as their results. Say so if the user expects otherwise.
+- The `.omx` file is the sheet; the others are ways in and out. An export
+  writes values only: OMX formulas go out as their results. Say so if the
+  user expects otherwise.
+- An `.xlsx` import translates the workbook's formulas to OMX where it can,
+  and a column filled down with one formula becomes a computed column. Each
+  is checked against the value the workbook held; one that cannot be
+  translated, or does not agree, comes in as its value, and a `note:` says
+  which cells and why. CSV has no formulas.
 - Import and export print `note:` lines for what was renamed, rounded or left
   behind. Pass them on to the user; they are the lossy parts.
-- After an import, the sheet is plain data. Turning repeated arithmetic back
-  into computed columns is worth offering, and is done by hand.
+- After a CSV import the sheet is plain data. Turning repeated arithmetic
+  back into computed columns is worth offering, and is done by hand; so is
+  rewriting a workbook formula that was left as a value.
 - In Markdown, `sheets: [budget.omx]` in the front matter names sheets, a
   fenced `omx` block is a sheet shown as its tables, and
   `{{ Sales.Revenue.sum() }}` in the text is replaced by its value.

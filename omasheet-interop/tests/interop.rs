@@ -358,6 +358,10 @@ fn workbook() -> Vec<u8> {
         .unwrap();
     sales.write_string(2, 0, "Feb").unwrap();
     sales.write_number(2, 1, 0.1).unwrap();
+    // A workbook takes the empty cell for nothing, and OMX leaves it empty.
+    sales
+        .write_formula(2, 4, Formula::new("=B3+C3").set_result("0.1"))
+        .unwrap();
     sales
         .write_number_with_format(2, 3, 45_689.5, &stamp)
         .unwrap();
@@ -381,8 +385,8 @@ table Sales
 Closed : DateTime
 
 Month | Revenue | UnitCost | Closed           | Total
-Jan   | 19.99   | 6000     | 2025-01-31T00:00 | 6019.99
-Feb   | 0.1     |          | 2025-02-01T12:00 |
+Jan   | 19.99   | 6000     | 2025-01-31T00:00 | = Revenue + UnitCost
+Feb   | 0.1     |          | 2025-02-01T12:00 | 0.1
 
 table Customers
 
@@ -395,16 +399,148 @@ Name | Column2
     assert_eq!(
         out.notices,
         [
-            "worksheet `Sales`: formulas were not translated, and their values were imported: E2",
             "worksheet `Blank` is empty and was left out",
             "`Unit Cost` was renamed `UnitCost`",
             "a column with no name was named `Column2`",
+            "worksheet `Sales`: 1 formula was translated",
+            "worksheet `Sales`: values were imported in place of formulas, as its translation \
+             gives another value than the workbook holds: E3",
         ]
     );
+    assert_eq!(eval(&out.source, "Sales[Total; 0]"), "6019.99");
     lints(&out.source);
     assert_eq!(eval(&out.source, "Sales[Revenue; 0] * 100"), "1999");
     assert_eq!(eval(&out.source, "Sales[Revenue; 1] * 10"), "1");
     assert!(!out.source.contains("B2"));
+}
+
+/// A workbook with formulas: a column filled down, a running total, a
+/// total under the rows, and a worksheet that reads another.
+fn ledger() -> Vec<u8> {
+    let mut book = Workbook::new();
+    let sales = book.add_worksheet();
+    sales.set_name("Sales").unwrap();
+    let headers = [
+        "Month", "Revenue", "Cost", "Profit", "Running", "Margin", "Note",
+    ];
+    for (c, name) in headers.iter().enumerate() {
+        sales.write_string(0, c as u16, *name).unwrap();
+    }
+    let rows = [
+        ("Jan", 10_000.0_f64, 6_000.0_f64),
+        ("Feb", 12_000.0, 7_000.0),
+        ("Mar", 13_200.0, 7_500.0),
+    ];
+    let mut running = 0.0;
+    for (i, (month, revenue, cost)) in rows.iter().enumerate() {
+        let (r, n) = (i as u32 + 1, i + 2);
+        running += revenue - cost;
+        let formula = |f: String, result: String| Formula::new(f).set_result(result);
+        sales.write_string(r, 0, *month).unwrap();
+        sales.write_number(r, 1, *revenue).unwrap();
+        sales.write_number(r, 2, *cost).unwrap();
+        sales
+            .write_formula(
+                r,
+                3,
+                formula(format!("=B{n}-C{n}"), (revenue - cost).to_string()),
+            )
+            .unwrap();
+        sales
+            .write_formula(
+                r,
+                4,
+                formula(format!("=SUM(D$2:D{n})"), running.to_string()),
+            )
+            .unwrap();
+        let margin = (revenue - cost) / revenue;
+        sales
+            .write_formula(
+                r,
+                5,
+                formula(
+                    format!("=ROUND(D{n}/B{n},4)"),
+                    ((margin * 1e4).round() / 1e4).to_string(),
+                ),
+            )
+            .unwrap();
+        sales
+            .write_formula(r, 6, formula(format!("=A{n}&\"!\""), format!("{month}!")))
+            .unwrap();
+    }
+    let summary = book.add_worksheet();
+    summary.set_name("Year End").unwrap();
+    summary.write_string(0, 0, "Item").unwrap();
+    summary.write_string(0, 1, "Value").unwrap();
+    let lines = [
+        ("Revenue", "=SUM(Sales!B2:B4)", "35200"),
+        ("Profit", "=SUM(Sales!D:D)", "14700"),
+        ("Best", "=MAX(Sales!D2:D4)", "5700"),
+        ("First two", "=Sales!D2+Sales!D3", "9000"),
+        ("Share", "=B3/B2", "0.4176136363636364"),
+        ("Good", "=IF(B3>10000,\"yes\",\"no\")", "yes"),
+        ("Looked up", "=VLOOKUP(\"Feb\",Sales!A2:D4,4,FALSE)", "5000"),
+        ("Wrong", "=B2*2", "1"),
+    ];
+    for (i, (item, formula, result)) in lines.iter().enumerate() {
+        summary.write_string(i as u32 + 1, 0, *item).unwrap();
+        summary
+            .write_formula(i as u32 + 1, 1, Formula::new(*formula).set_result(*result))
+            .unwrap();
+    }
+    book.save_to_buffer().unwrap()
+}
+
+#[test]
+fn xlsx_imports_formulas() {
+    let out = xlsx::import(&ledger()).unwrap();
+    assert_eq!(
+        out.source,
+        "\
+table Sales
+
+Month | Revenue | Cost | Profit | Running | Margin | Note
+Jan   | 10000   | 6000 | *      | *       | *      | Jan!
+Feb   | 12000   | 7000 | *      | *       | *      | Feb!
+Mar   | 13200   | 7500 | *      | *       | *      | Mar!
+
+Profit  := Revenue - Cost
+Running := [Profit; 0..*].sum()
+Margin  := round(Profit / Revenue * 10000) / 10000
+
+table YearEnd
+
+Item      | Value
+Revenue   | = Sales.Revenue.sum()
+Profit    | = Sales.Profit.sum()
+Best      | = Sales.Profit.max()
+First two | = Sales[Profit; 0] + Sales[Profit; 1]
+Share     | = [Value; *-3] / [Value; *-4]
+Good      | = if [Value; *-4] > 10000 then \"yes\" else \"no\"
+Looked up | 5000
+Wrong     | 1
+"
+    );
+    assert_eq!(
+        out.notices,
+        [
+            "`Year End` was renamed `YearEnd`",
+            "worksheet `Sales`: 9 formulas were translated",
+            "worksheet `Sales`: values were imported in place of formulas, as it joins text \
+             with `&`: G2, G3, G4",
+            "worksheet `Year End`: 6 formulas were translated",
+            "worksheet `Year End`: values were imported in place of formulas, as `VLOOKUP` has \
+             no equivalent: B8",
+            "worksheet `Year End`: values were imported in place of formulas, as its \
+             translation gives another value than the workbook holds: B9",
+        ]
+    );
+    lints(&out.source);
+    // The sheet works out what the workbook held.
+    assert_eq!(eval(&out.source, "Sales.Running"), "[4000, 9000, 14700]");
+    assert_eq!(eval(&out.source, "Sales.Margin"), "[0.4, 0.4167, 0.4318]");
+    assert_eq!(eval(&out.source, "YearEnd[Value; 4]"), "147/352");
+    assert_eq!(eval(&out.source, "YearEnd[Value; 5]"), "yes");
 }
 
 #[test]

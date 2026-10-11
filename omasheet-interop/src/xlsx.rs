@@ -5,15 +5,17 @@
 //! shortest decimal on the way in.
 
 use crate::{
-    Datum, Exported, FAILED, Grid, Imported, Losses, Output, is_failure, with_sheet, write_omx,
+    Datum, Exported, FAILED, Grid, Imported, Losses, Names, Output, Place, formula, is_failure,
+    names, with_sheet, write_named,
 };
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use num_rational::BigRational;
 use omasheet_engine::omx::convert::ratio_of;
 use omasheet_engine::omx::date;
 use omasheet_engine::omx::types::S;
+use omasheet_engine::omx::{Sources, compile};
 use omasheet_engine::value::{format_exact, format_rat, to_f64};
-use omasheet_engine::{Options, Value};
+use omasheet_engine::{Engine, Options, Value};
 use rust_xlsxwriter::{Format, Workbook, Worksheet, XlsxError};
 use std::io::Cursor;
 
@@ -55,12 +57,147 @@ fn moment(serial: f64) -> Datum {
     }
 }
 
+/// A formula of a workbook, and the cell it is in.
+struct Formula {
+    grid: usize,
+    /// The row among the table's rows, and the column.
+    row: usize,
+    column: usize,
+    /// `B3`, for a notice.
+    cell: String,
+    /// What the workbook last worked it out as.
+    cached: Datum,
+    /// The translation as one of a column filled down.
+    filled: String,
+    /// `today()` and the like: what it gives now is not what it gave then.
+    volatile: bool,
+}
+
+/// A value as a number, if it is one.
+fn real(v: &Value) -> Option<f64> {
+    match v {
+        Value::Int(n) => n.to_string().parse().ok(),
+        Value::Ratio(r) | Value::Percent(r) => Some(to_f64(r)),
+        Value::Num(f) => Some(*f),
+        Value::Bool(b) => Some(*b as u8 as f64),
+        _ => None,
+    }
+}
+
+/// Whether a formula gave what the workbook holds for its cell. Numbers
+/// are the same when they agree as far as a workbook holds them.
+fn agrees(cached: &Datum, v: &Value) -> bool {
+    let text = match v {
+        Value::Empty => String::new(),
+        v => format_exact(v, false, &date::Style::ISO),
+    };
+    match cached {
+        Datum::Empty | Datum::Formula(_) => text.is_empty(),
+        Datum::Text(s) => *s == text || s.trim() == text,
+        Datum::Lit(s, ty) if ty.is_numeric() => {
+            match (s.replace('_', "").parse::<f64>(), real(v)) {
+                (Ok(a), Some(b)) => (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1e-300),
+                _ => *s == text,
+            }
+        }
+        // A date among date-times was given a time of midnight.
+        Datum::Lit(s, _) => *s == text || s.strip_suffix("T00:00") == Some(text.as_str()),
+    }
+}
+
+const REFUSED: &str = "the sheet does not take its translation";
+const DIFFERS: &str = "its translation gives another value than the workbook holds";
+
+/// Put back the values of the formulas that do not hold up: those the
+/// sheet does not check, and those that do not give what the workbook has.
+/// Each goes into `dropped` with the reason.
+fn settle(
+    grids: &mut [Grid],
+    names: &[Names],
+    formulas: &[Formula],
+    dropped: &mut Vec<(usize, &'static str)>,
+) {
+    let mut live: Vec<usize> = (0..formulas.len()).collect();
+    let mut drop = |grids: &mut [Grid], live: &mut Vec<usize>, which: Vec<usize>, why| {
+        for f in which {
+            let formula = &formulas[f];
+            grids[formula.grid].rows[formula.row][formula.column] = formula.cached.clone();
+            live.retain(|l| *l != f);
+            dropped.push((f, why));
+        }
+    };
+    // Each round drops at least one formula, or is the last.
+    while !live.is_empty() {
+        let (source, places) = write_named(grids, names, &mut Vec::new());
+        // The formulas written at a place: one cell's, or a whole column's.
+        let at = |place: &Place| -> Vec<usize> {
+            live.iter()
+                .copied()
+                .filter(|f| {
+                    let formula = &formulas[*f];
+                    formula.grid == place.grid
+                        && formula.column == place.column
+                        && place.row.is_none_or(|row| row == formula.row)
+                })
+                .collect()
+        };
+        let mut sources = Sources::new();
+        let src = sources.add("workbook", &source);
+        let (program, diags) = compile(&source, src);
+        if !diags.is_empty() {
+            let mut bad: Vec<usize> = Vec::new();
+            for d in &diags {
+                let start = d.span.start as usize;
+                for place in places.iter().filter(|p| p.start <= start && start < p.end) {
+                    bad.extend(at(place));
+                }
+            }
+            bad.sort_unstable();
+            bad.dedup();
+            // An error with no formula to blame: none of them can be kept.
+            if bad.is_empty() {
+                bad = live.clone();
+            }
+            drop(grids, &mut live, bad, REFUSED);
+            continue;
+        }
+        let engine = Engine::with_options(&program, Options::default());
+        engine.take_diags();
+        engine.run();
+        let mut bad = Vec::new();
+        for &f in &live {
+            let formula = &formulas[f];
+            let table = &names[formula.grid].table;
+            let Some(t) = program.tables.iter().position(|t| t.name == *table) else {
+                continue;
+            };
+            match engine.cell(t, formula.column, formula.row) {
+                Ok(v) if formula.volatile || agrees(&formula.cached, &v) => {}
+                _ => bad.push(f),
+            }
+        }
+        if bad.is_empty() {
+            break;
+        }
+        drop(grids, &mut live, bad, DIFFERS);
+    }
+}
+
 /// `.omx` source for a workbook: a table for each worksheet.
 pub fn import(bytes: &[u8]) -> Result<Imported, String> {
     let mut book = open_workbook_auto_from_rs(Cursor::new(bytes))
         .map_err(|e| format!("it is not a workbook: {e}"))?;
     let mut imported = Imported::default();
     let mut grids = Vec::new();
+    // For each grid: its worksheet, and where its header starts.
+    let mut origins: Vec<(String, u32, u32)> = Vec::new();
+    let list = |cells: &[String]| {
+        let more = match cells.len() {
+            n if n > 8 => format!(" and {} more", n - 8),
+            _ => String::new(),
+        };
+        format!("{}{more}", cells[..cells.len().min(8)].join(", "))
+    };
     for sheet in book.sheet_names() {
         let range = book
             .worksheet_range(&sheet)
@@ -109,39 +246,136 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
                 }
             }
         }
-        let list = |cells: &[String]| {
-            let more = match cells.len() {
-                n if n > 8 => format!(" and {} more", n - 8),
-                _ => String::new(),
-            };
-            format!("{}{more}", cells[..cells.len().min(8)].join(", "))
-        };
         if !failed.is_empty() {
             imported.notices.push(format!(
                 "worksheet `{sheet}`: cells holding an error were left empty: {}",
                 list(&failed)
             ));
         }
-        if let Ok(formulas) = book.worksheet_formula(&sheet) {
-            let (ftop, fleft) = formulas.start().unwrap_or((0, 0));
-            let cells: Vec<String> = formulas
-                .used_cells()
-                .filter(|(_, _, f)| !f.is_empty())
-                .map(|(r, c, _)| a1(ftop + r as u32, fleft + c as u32))
-                .collect();
-            if !cells.is_empty() {
-                imported.notices.push(format!(
-                    "worksheet `{sheet}`: formulas were not translated, and their values were imported: {}",
-                    list(&cells)
-                ));
-            }
-        }
         grids.push(Grid::from_rows(&sheet, rows));
+        origins.push((sheet, top, left));
     }
     if grids.is_empty() {
         return Err("it has no worksheet with anything on it".to_string());
     }
-    imported.source = write_omx(grids, &mut imported.notices);
+
+    let names = names(&grids, &mut imported.notices);
+    let sheets: Vec<formula::Sheet> = (0..grids.len())
+        .map(|g| formula::Sheet {
+            excel: origins[g].0.clone(),
+            table: names[g].table.clone(),
+            columns: names[g].columns.clone(),
+            top: origins[g].1,
+            left: origins[g].2,
+            rows: grids[g].rows.len(),
+        })
+        .collect();
+    // Each formula is translated, or has a reason why not.
+    let mut formulas: Vec<Formula> = Vec::new();
+    let mut untranslated: Vec<(usize, String, String)> = Vec::new();
+    for (g, (sheet, top, left)) in origins.iter().enumerate() {
+        let Ok(found) = book.worksheet_formula(sheet) else {
+            continue;
+        };
+        let (ftop, fleft) = found.start().unwrap_or((0, 0));
+        for (r, c, text) in found.used_cells().filter(|(_, _, f)| !f.is_empty()) {
+            let (row, col) = (ftop + r as u32, fleft + c as u32);
+            let cell = a1(row, col);
+            // A formula in the header row, or outside what the table holds.
+            let place = (row.checked_sub(top + 1), col.checked_sub(*left));
+            let (Some(row_in), Some(column)) = place else {
+                untranslated.push((g, "it is in the header row".into(), cell));
+                continue;
+            };
+            let (row_in, column) = (row_in as usize, column as usize);
+            let Some(cached) = grids[g]
+                .rows
+                .get(row_in)
+                .and_then(|cells| cells.get(column))
+            else {
+                continue;
+            };
+            match formula::translate(text, &sheets, g, row) {
+                Ok(translated) => {
+                    formulas.push(Formula {
+                        grid: g,
+                        row: row_in,
+                        column,
+                        cell,
+                        cached: cached.clone(),
+                        filled: translated.filled,
+                        volatile: translated.volatile,
+                    });
+                    grids[g].rows[row_in][column] = Datum::Formula(translated.text);
+                }
+                Err(why) => untranslated.push((g, why, cell)),
+            }
+        }
+    }
+    if !formulas.is_empty() {
+        for grid in &mut grids {
+            grid.fixed = true;
+        }
+    }
+    // A column filled down with one formula: every row has it, and it is
+    // the same written from each.
+    for (g, grid) in grids.iter_mut().enumerate() {
+        for c in 0..grid.headers.len() {
+            let of: Vec<&Formula> = formulas
+                .iter()
+                .filter(|f| f.grid == g && f.column == c)
+                .collect();
+            let same = of.len() == grid.rows.len()
+                && of.len() > 1
+                && of.iter().all(|f| f.filled == of[0].filled);
+            if same {
+                for f in of {
+                    grid.rows[f.row][c] = Datum::Formula(f.filled.clone());
+                }
+            }
+        }
+    }
+    let mut dropped = Vec::new();
+    settle(&mut grids, &names, &formulas, &mut dropped);
+    for (f, why) in dropped {
+        untranslated.push((formulas[f].grid, why.to_string(), formulas[f].cell.clone()));
+    }
+    for (g, (sheet, ..)) in origins.iter().enumerate() {
+        let kept = formulas.iter().filter(|f| f.grid == g).count()
+            - untranslated
+                .iter()
+                .filter(|(at, why, _)| *at == g && (why == REFUSED || why == DIFFERS))
+                .count();
+        if kept > 0 {
+            let (were, s) = if kept == 1 {
+                ("was", "")
+            } else {
+                ("were", "s")
+            };
+            imported.notices.push(format!(
+                "worksheet `{sheet}`: {kept} formula{s} {were} translated"
+            ));
+        }
+        // The reasons in the order they were met, each with its cells.
+        let mut reasons: Vec<&str> = Vec::new();
+        for (at, why, _) in &untranslated {
+            if *at == g && !reasons.contains(&why.as_str()) {
+                reasons.push(why);
+            }
+        }
+        for reason in reasons {
+            let cells: Vec<String> = untranslated
+                .iter()
+                .filter(|(at, why, _)| *at == g && why == reason)
+                .map(|(_, _, cell)| cell.clone())
+                .collect();
+            imported.notices.push(format!(
+                "worksheet `{sheet}`: values were imported in place of formulas, as {reason}: {}",
+                list(&cells)
+            ));
+        }
+    }
+    imported.source = write_named(&grids, &names, &mut imported.notices).0;
     Ok(imported)
 }
 

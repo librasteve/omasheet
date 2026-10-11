@@ -52,6 +52,56 @@ NOT appear in the generated source.
 - **WHEN** an XLSX cell displaying `19.99` is imported
 - **THEN** the `.omx` cell reads `19.99` and evaluates to exactly `1999/100`
 
-#### Scenario: Formula cell
-- **WHEN** a worksheet cell contains an Excel formula
-- **THEN** its cached value is imported and a notice lists the cells whose formulas were not translated
+### Requirement: Formulas are translated on import
+A formula of a worksheet SHALL be imported as an OMX formula where OMX can
+express it. A cell reference SHALL become the column it is in and a row of the
+table: its own row as the bare column name, another row as an offset from its
+own (`[Revenue; *-1]`), and a row held with `$` as that row's index. A reference
+to another worksheet SHALL name that worksheet's table. A range within one
+column SHALL become a vector, and a range that takes in every row of a column
+SHALL become the whole column (`Sales.Revenue`). A1-style references SHALL NOT
+appear in the generated source.
+
+A column whose every row holds the same formula, written relative to its own
+row, SHALL be imported as a computed column.
+
+A formula SHALL NOT be translated, and its cached value SHALL be imported, when
+it uses a function or operator with no OMX equivalent, a defined name, an array
+constant, or a cell in the header row or outside the table. A notice SHALL list
+those cells by worksheet, with the reason.
+
+Every translated formula SHALL be checked: the generated sheet SHALL be
+compiled and calculated, and a formula that the sheet does not accept, or whose
+result differs from the workbook's cached value, SHALL be replaced by that
+value and listed in a notice. A formula whose result depends on the clock SHALL
+be exempt from the comparison. The generated source SHALL always compile.
+
+#### Scenario: A formula on its own row
+- **GIVEN** a worksheet `Sales` with headers `Month, Revenue, Cost, Total` and `=B2+C2` in `D2`
+- **WHEN** it is imported
+- **THEN** the cell reads `= Revenue + Cost`
+
+#### Scenario: A column filled down
+- **GIVEN** `=B2-C2`, `=B3-C3` and `=B4-C4` in `D2:D4` of a worksheet with three rows
+- **WHEN** it is imported
+- **THEN** the column is a computed column with `Profit := Revenue - Cost`
+
+#### Scenario: A running total
+- **GIVEN** `=SUM(D$2:D2)` filled down a column
+- **WHEN** it is imported
+- **THEN** the column's formula is `[Profit; 0..*].sum()`
+
+#### Scenario: Another worksheet
+- **GIVEN** `=SUM(Sales!B2:B4)` where `Sales` has three rows
+- **WHEN** it is imported
+- **THEN** the cell reads `= Sales.Revenue.sum()`
+
+#### Scenario: No equivalent
+- **WHEN** a cell holds `=VLOOKUP("Feb",Sales!A2:D4,4,FALSE)`
+- **THEN** its cached value is imported
+- **AND** a notice names the cell and says that `VLOOKUP` has no equivalent
+
+#### Scenario: A translation that does not agree
+- **GIVEN** `=B3+C3` where `C3` is empty and the workbook holds `0.1` for the cell
+- **WHEN** it is imported
+- **THEN** the cell reads `0.1`, and a notice names it as giving another value than the workbook holds

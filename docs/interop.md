@@ -18,9 +18,46 @@ omasheet import sales.csv                    # one table, named after the file
 - A column of dates, times, date-times or `true` / `false` is given its
   type. A column of numbers and text together has none: each cell is what
   it reads as.
-- A formula in a workbook is not translated: its value is imported, and the
-  cells are listed.
+- A formula in a workbook is translated to OMX where OMX can say it: see
+  [Formulas](#formulas). Where it cannot, the value is imported, and the
+  cells are listed with the reason.
 - Text that looks like a formula, `=SUM(A1:A3)`, stays text.
+
+### Formulas
+
+A worksheet becomes a table whose first row is the header, so a cell of a
+formula becomes a column and a row:
+
+| In the workbook, on row 3 | In the sheet |
+|---|---|
+| `=B3-C3` | `= Revenue - Cost` |
+| `=B2` | `= [Revenue; *-1]`, the row above |
+| `=B$2` | `= [Revenue; 0]`, the first row whichever row asks |
+| `=SUM(B2:B10)`, all the rows | `= Sales.Revenue.sum()` |
+| `=SUM(B$2:B3)` | `= [Revenue; 0..*].sum()`, a running total |
+| `=Rates!B2*B3` | `= Rates[Rate; 0] * Revenue` |
+| `=IF(B3>C3,"up","down")` | `= if Revenue > Cost then "up" else "down"` |
+
+- A column filled down with one formula becomes a computed column, with `*`
+  in its cells and `Profit := Revenue - Cost` after the rows.
+- These are translated: `+ - * / ^ %` and the comparisons; `SUM`, `AVERAGE`,
+  `MIN`, `MAX`, `COUNT`, `COUNTA`; `IF`, `IFS`, `SWITCH`, `AND`, `OR`, `NOT`;
+  `ROUND`, `INT`, `TRUNC`, `ABS`, `SIGN`, `SQRT`, `POWER`, `EXP`, `LN`,
+  `LOG10`, `PI` and the trigonometry; `TODAY`, `NOW`, `YEAR`, `MONTH`, `DAY`,
+  `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `DATEVALUE`.
+- These are not, and the value is imported: joining text with `&`, lookups
+  such as `VLOOKUP`, `DATE(y, m, d)`, names defined in the workbook, lists
+  in `{ }`, and a cell in the header row or outside the table.
+- Every translation is checked. The sheet is worked out, and a formula that
+  does not give the value the workbook holds for its cell is dropped for
+  that value. The commonest cause is an empty cell: a workbook adds it up as
+  nothing, and in OMX what is worked out from an empty cell is empty.
+  `TODAY()` and `NOW()` are not checked, as they give another answer each
+  day.
+- A workbook counts the days of the week from Sunday and OMX from Monday, so
+  `WEEKDAY(A2)=1` becomes `weekday(Date) == 7`.
+- A `SWITCH` or an `IFS` with nothing for when no case fits takes its last
+  case for that.
 
 ## Export
 

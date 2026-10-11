@@ -34,7 +34,6 @@ The XLSX mappings for units and uncertainty are added by `add-units` and
 
 ## Out of Scope
 
-- Translating Excel formulas to OMX on import (cached values are imported)
 - Markdown tables as OMX data sources (`import "report.md"`)
 - Other delimiters and encodings for CSV (TSV, `;`, Latin-1)
 - Parquet and Polars integration (left to `add-dataframe-interop`, design D25)

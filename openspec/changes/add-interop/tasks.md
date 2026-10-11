@@ -13,6 +13,7 @@
 ## 2. XLSX (`xlsx-interop`)
 - [x] 2.1 Import via calamine
 - [x] 2.2 Export via rust_xlsxwriter with documented lossy mappings
+- [x] 2.3 Translate a workbook's formulas to OMX on import, checked against the values it holds
 
 ## 3. CLI (`cli`)
 - [x] 3.1 `omasheet import` for `.xlsx` and `.csv`

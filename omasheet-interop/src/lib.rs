@@ -7,6 +7,7 @@
 //! to save a sheet: each says, as notices, what it could not carry across.
 
 pub mod csv;
+pub mod formula;
 pub mod xlsx;
 
 use omasheet_engine::omx::types::S;
@@ -42,6 +43,8 @@ pub enum Datum {
     /// Text that a cell reads as a value of this type: `19.99`, `2025-01-31`.
     Lit(String, S),
     Text(String),
+    /// An OMX expression for the cell to work out.
+    Formula(String),
 }
 
 impl Datum {
@@ -63,7 +66,7 @@ impl Datum {
 
     fn label(&self) -> &str {
         match self {
-            Datum::Empty => "",
+            Datum::Empty | Datum::Formula(_) => "",
             Datum::Lit(s, _) | Datum::Text(s) => s,
         }
     }
@@ -76,6 +79,8 @@ pub struct Grid {
     pub name: String,
     pub headers: Vec<String>,
     pub rows: Vec<Vec<Datum>>,
+    /// Keep every row, so that a row stays where a formula looks for it.
+    pub fixed: bool,
 }
 
 impl Grid {
@@ -93,6 +98,7 @@ impl Grid {
             name: name.to_string(),
             headers,
             rows,
+            fixed: false,
         }
     }
 }
@@ -194,6 +200,8 @@ fn column_type(cells: &[&Datum]) -> (Option<S>, bool) {
     for cell in cells {
         let ty = match cell {
             Datum::Empty => continue,
+            // What a formula gives is for the sheet to say.
+            Datum::Formula(_) => return (None, false),
             Datum::Lit(_, ty) => *ty,
             Datum::Text(_) => S::Text,
         };
@@ -211,29 +219,85 @@ fn column_type(cells: &[&Datum]) -> (Option<S>, bool) {
     }
 }
 
+/// The names a table and its columns are given.
+#[derive(Clone, Debug)]
+pub(crate) struct Names {
+    pub table: String,
+    pub columns: Vec<String>,
+}
+
+/// How many columns a grid has.
+fn width(grid: &Grid) -> usize {
+    grid.rows
+        .iter()
+        .map(Vec::len)
+        .chain([grid.headers.len()])
+        .max()
+        .unwrap_or(0)
+}
+
+/// Identifiers for each grid and its columns, saying what was renamed.
+pub(crate) fn names(grids: &[Grid], notices: &mut Vec<String>) -> Vec<Names> {
+    let mut tables = Vec::new();
+    grids
+        .iter()
+        .enumerate()
+        .map(|(g, grid)| {
+            let table = name_for(&grid.name, &format!("Table{}", g + 1), &mut tables, notices);
+            let mut taken = Vec::new();
+            let columns = (0..width(grid))
+                .map(|c| {
+                    let raw = grid.headers.get(c).map_or("", String::as_str);
+                    name_for(raw, &format!("Column{}", c + 1), &mut taken, notices)
+                })
+                .collect();
+            Names { table, columns }
+        })
+        .collect()
+}
+
+/// Where a formula was written: the bytes of the source it takes up.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Place {
+    pub grid: usize,
+    pub column: usize,
+    /// `None` for the formula of a whole column.
+    pub row: Option<usize>,
+    pub start: usize,
+    pub end: usize,
+}
+
 /// Write tables as `.omx` source.
 pub fn write_omx(grids: Vec<Grid>, notices: &mut Vec<String>) -> String {
+    let names = names(&grids, notices);
+    write_named(&grids, &names, notices).0
+}
+
+/// The formula every row of a column has, when they all have the same one.
+fn column_formula(rows: &[Vec<Datum>], c: usize) -> Option<&str> {
+    let Some(Datum::Formula(first)) = rows.first().map(|row| &row[c]) else {
+        return None;
+    };
+    let same = |row: &Vec<Datum>| matches!(&row[c], Datum::Formula(f) if f == first);
+    (rows.len() > 1 && rows.iter().all(same)).then_some(first.as_str())
+}
+
+/// Write tables as `.omx` source under the names given, and say where each
+/// formula went.
+pub(crate) fn write_named(
+    grids: &[Grid],
+    names: &[Names],
+    notices: &mut Vec<String>,
+) -> (String, Vec<Place>) {
     let mut out = String::new();
-    let mut tables = Vec::new();
-    for (g, grid) in grids.into_iter().enumerate() {
-        let table = name_for(&grid.name, &format!("Table{}", g + 1), &mut tables, notices);
-        let width = grid
-            .rows
-            .iter()
-            .map(Vec::len)
-            .chain([grid.headers.len()])
-            .max()
-            .unwrap_or(0);
+    let mut places = Vec::new();
+    for (g, grid) in grids.iter().enumerate() {
+        let table = &names[g].table;
+        let columns = &names[g].columns;
+        let width = width(grid);
         if width == 0 {
             continue;
         }
-        let mut names = Vec::new();
-        let columns: Vec<String> = (0..width)
-            .map(|c| {
-                let raw = grid.headers.get(c).map_or("", String::as_str);
-                name_for(raw, &format!("Column{}", c + 1), &mut names, notices)
-            })
-            .collect();
         let cell = |row: &'_ Vec<Datum>, c: usize| row.get(c).cloned().unwrap_or(Datum::Empty);
         let mut rows: Vec<Vec<Datum>> = grid
             .rows
@@ -241,7 +305,7 @@ pub fn write_omx(grids: Vec<Grid>, notices: &mut Vec<String>) -> String {
             .map(|row| (0..width).map(|c| cell(row, c)).collect())
             .collect();
         // A line with nothing on it is not a row.
-        if width == 1 {
+        if width == 1 && !grid.fixed {
             let before = rows.len();
             rows.retain(|row| row[0] != Datum::Empty);
             if rows.len() < before {
@@ -277,14 +341,18 @@ pub fn write_omx(grids: Vec<Grid>, notices: &mut Vec<String>) -> String {
             ));
         }
 
-        let mut lines: Vec<Vec<String>> = vec![columns];
+        let computed: Vec<Option<&str>> = (0..width).map(|c| column_formula(&rows, c)).collect();
+        let mut lines: Vec<Vec<String>> = vec![columns.clone()];
         for row in &rows {
             lines.push(
                 row.iter()
-                    .map(|d| match d {
+                    .enumerate()
+                    .map(|(c, d)| match d {
+                        _ if computed[c].is_some() => "*".to_string(),
                         Datum::Empty => String::new(),
                         Datum::Lit(text, _) => text.clone(),
                         Datum::Text(text) => text_cell(text),
+                        Datum::Formula(f) => format!("= {f}"),
                     })
                     .collect(),
             );
@@ -298,17 +366,49 @@ pub fn write_omx(grids: Vec<Grid>, notices: &mut Vec<String>) -> String {
                     .unwrap_or(0)
             })
             .collect();
-        for line in lines {
-            let cells: Vec<String> = line
-                .iter()
-                .enumerate()
-                .map(|(c, text)| format!("{text}{}", " ".repeat(widths[c] - text.chars().count())))
-                .collect();
-            out.push_str(cells.join(" | ").trim_end());
+        for (l, line) in lines.iter().enumerate() {
+            let mut text = String::new();
+            for (c, cell) in line.iter().enumerate() {
+                if c > 0 {
+                    text.push_str(" | ");
+                }
+                if l > 0 && computed[c].is_none() && matches!(rows[l - 1][c], Datum::Formula(_)) {
+                    places.push(Place {
+                        grid: g,
+                        column: c,
+                        row: Some(l - 1),
+                        start: out.len() + text.len(),
+                        end: out.len() + text.len() + cell.len(),
+                    });
+                }
+                text.push_str(cell);
+                text.push_str(&" ".repeat(widths[c] - cell.chars().count()));
+            }
+            out.push_str(text.trim_end());
             out.push('\n');
         }
+        let longest = (0..width)
+            .filter(|c| computed[*c].is_some())
+            .map(|c| columns[c].len())
+            .max()
+            .unwrap_or(0);
+        for c in 0..width {
+            let Some(formula) = computed[c] else { continue };
+            if !places.iter().any(|p| p.grid == g && p.row.is_none()) {
+                out.push('\n');
+            }
+            let line = format!("{:longest$} := {formula}\n", columns[c]);
+            places.push(Place {
+                grid: g,
+                column: c,
+                row: None,
+                start: out.len(),
+                end: out.len() + line.len(),
+            });
+            out.push_str(&line);
+        }
     }
-    out
+    (out, places)
 }
 
 /// A calculated sheet, for an export to read.
