@@ -61,16 +61,18 @@ jobs:
       - name: Build the package
         run: docker run --rm -v "$PWD:/src" omasheet-build /src/pkgbuild/build
 
+      # The checkout now belongs to the container's builder, so copy out of it.
       - name: Name it for the installer
         run: |
-          cd pkgbuild
-          ls -l omasheet-*-${{ matrix.arch }}.pkg.tar.zst
-          cp omasheet-*-${{ matrix.arch }}.pkg.tar.zst omasheet-${{ matrix.arch }}.pkg.tar.zst
+          mkdir -p "$RUNNER_TEMP/dist"
+          ls -l pkgbuild/omasheet-*-${{ matrix.arch }}.pkg.tar.zst
+          cp pkgbuild/omasheet-*-${{ matrix.arch }}.pkg.tar.zst "$RUNNER_TEMP/dist/"
+          cp pkgbuild/omasheet-*-${{ matrix.arch }}.pkg.tar.zst "$RUNNER_TEMP/dist/omasheet-${{ matrix.arch }}.pkg.tar.zst"
 
       - uses: actions/upload-artifact@v4
         with:
           name: omasheet-${{ matrix.arch }}
-          path: pkgbuild/omasheet-*.pkg.tar.zst
+          path: ${{ runner.temp }}/dist/omasheet-*.pkg.tar.zst
           if-no-files-found: error
 
   attach:
