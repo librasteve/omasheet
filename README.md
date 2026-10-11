@@ -21,12 +21,22 @@ Running := [Revenue; 0..*].sum()
 
 ## Install
 
+On Omarchy and Arch Linux, x86_64 or aarch64:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/librasteve/omasheet/main/install.sh | bash
+```
+
+This installs the `omasheet` package of the latest release with `pacman`: the
+one program, `omasheet`, and its entry in the launcher. Run it again to
+update.
+
+Elsewhere, build it from source. It needs Qt 6 (`qt6-base`,
+`qt6-declarative`), to build and to run:
+
 ```sh
 cargo install --git https://github.com/librasteve/omasheet omasheet-ui
 ```
-
-This builds the one program, `omasheet`. It needs Qt 6 (`qt6-base`,
-`qt6-declarative`), to build and to run.
 
 ## Run
 

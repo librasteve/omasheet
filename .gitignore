@@ -1,2 +1,5 @@
 coinvent-omasheet-format-chatgpt.md
 /target
+/pkgbuild/pkg
+/pkgbuild/src
+/pkgbuild/*.pkg.tar.*

@@ -8,13 +8,12 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # The one binary is built with Qt 6, and so are the tests that run it.
+    container: archlinux:base-devel
     steps:
+      - run: pacman -Syu --noconfirm --needed git rust lld qt6-base qt6-declarative
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
-      # omasheet-ui needs Qt 6 to build, so it is left out here.
-      - run: cargo clippy --workspace --exclude omasheet-ui --all-targets -- -D warnings
-      - run: cargo test --workspace --exclude omasheet-ui
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace

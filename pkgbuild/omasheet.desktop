@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Omasheet
+GenericName=Spreadsheet
+Comment=Text-native spreadsheet
+Exec=omasheet %f
+Icon=omasheet
+Terminal=false
+Categories=Office;Spreadsheet;
+MimeType=application/x-omasheet;text/csv;application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;
+Keywords=spreadsheet;sheet;table;omx;csv;xlsx;
+StartupWMClass=omasheet

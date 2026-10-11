@@ -1,0 +1,91 @@
+# Builds the Arch package for each architecture and attaches it to a GitHub
+# release, where install.sh fetches it.
+name: Arch package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and attach, such as v0.1.0. Left empty, this branch is built and nothing is attached.
+        required: false
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG || github.sha }}
+
+      - name: Check the version
+        run: |
+          cargo=$(sed -n '/^\[workspace\.package\]/,/^\[workspace\.dependencies\]/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          recipe=$(sed -n 's/^pkgver=//p' pkgbuild/PKGBUILD)
+          echo "Cargo.toml: $cargo, PKGBUILD: $recipe, tag: ${TAG:-none}"
+          if [ "$cargo" != "$recipe" ]; then
+            echo "::error::Cargo.toml says $cargo but pkgbuild/PKGBUILD says $recipe"
+            exit 1
+          fi
+          if [ -n "$TAG" ] && [ "$TAG" != "v$cargo" ]; then
+            echo "::error::Cargo.toml says $cargo but the release tag is $TAG"
+            exit 1
+          fi
+
+      - name: Get the container image
+        run: |
+          if [ "${{ matrix.arch }}" = x86_64 ]; then
+            docker pull archlinux:base-devel
+            docker tag archlinux:base-devel omasheet-build
+          else
+            # Arch Linux ARM publishes a root file system, not an image.
+            curl -fsSL http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz \
+              | docker import - omasheet-build
+          fi
+
+      - name: Build the package
+        run: docker run --rm -v "$PWD:/src" omasheet-build /src/pkgbuild/build
+
+      - name: Name it for the installer
+        run: |
+          cd pkgbuild
+          ls -l omasheet-*-${{ matrix.arch }}.pkg.tar.zst
+          cp omasheet-*-${{ matrix.arch }}.pkg.tar.zst omasheet-${{ matrix.arch }}.pkg.tar.zst
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omasheet-${{ matrix.arch }}
+          path: pkgbuild/omasheet-*.pkg.tar.zst
+          if-no-files-found: error
+
+  attach:
+    needs: build
+    if: ${{ github.event.release.tag_name || inputs.tag }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum omasheet-*.pkg.tar.zst > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$TAG" omasheet-*.pkg.tar.zst SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
