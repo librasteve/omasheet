@@ -1,5 +1,7 @@
 # Omasheet
 
+<img src="header.png" alt="Omasheet">
+
 A text-native spreadsheet: what Markdown is to a word processor, Omasheet is
 to a spreadsheet. A sheet is a plain-text `.omx` file of named, typed tables,
 with formulas in OMX, a small array language with exact arithmetic. Automatically 
@@ -20,7 +22,7 @@ Tax     := Profit * TaxRate
 Running := [Revenue; 0..*].sum()
 ```
 
-<img src="Screenshot.png" alt="Project screenshot">
+<img src="Screenshot.png">
 
 ## Install
 
