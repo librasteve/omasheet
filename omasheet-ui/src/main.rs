@@ -28,6 +28,10 @@ fn app() -> ExitCode {
         unsafe { std::env::set_var("QT_QUICK_CONTROLS_STYLE", "Material") };
     }
 
+    // Before the app is made: Qt registers with the desktop portal under
+    // this name as it starts, and the portal takes only the first name.
+    QGuiApplication::set_desktop_file_name(&QString::from("omasheet"));
+
     let mut app = QGuiApplication::new();
     if let Some(mut app) = app.as_mut() {
         app.as_mut()
@@ -36,7 +40,6 @@ fn app() -> ExitCode {
         app.as_mut()
             .set_organization_domain(&QString::from("omacom.io"));
     }
-    QGuiApplication::set_desktop_file_name(&QString::from("omasheet"));
 
     let mut engine = QQmlApplicationEngine::new();
     if let Some(engine) = engine.as_mut() {
