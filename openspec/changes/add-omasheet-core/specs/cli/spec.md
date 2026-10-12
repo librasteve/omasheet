@@ -13,45 +13,45 @@ that needs no language runtime to be installed.
 - **WHEN** `omasheet --version` is run
 - **THEN** the version is printed and the exit status is zero
 
-### Requirement: View a sheet
-`omasheet print <file.omx>` SHALL evaluate the sheet and present its tables
+### Requirement: View a file
+`omasheet print <file.omx>` SHALL evaluate the file and present its sheets
 with computed values in a read-only view. It SHALL NOT modify the file.
 
-#### Scenario: Print a sheet
+#### Scenario: Print a file
 - **GIVEN** `budget.omx` with a computed column `Profit := Revenue - Cost`
 - **WHEN** `omasheet print budget.omx` is run
-- **THEN** each table is shown with `Profit` values calculated and formatted
+- **THEN** each sheet is shown with `Profit` values calculated and formatted
 - **AND** `budget.omx` is unchanged on disk
 
 ### Requirement: Open the app
 `omasheet` with no command SHALL open the app, on the file given if there is
 one. A command SHALL NOT need a display.
 
-#### Scenario: Open a sheet
+#### Scenario: Open a file
 - **WHEN** `omasheet budget.omx` is run
 - **THEN** the app opens showing `budget.omx`
 
 #### Scenario: No display
 - **GIVEN** a machine with no display
 - **WHEN** `omasheet print budget.omx` is run
-- **THEN** the sheet is printed
+- **THEN** the file is printed
 
 ### Requirement: Evaluate an expression
 `omasheet eval '<expr>'` SHALL evaluate one OMX expression and print its value.
-With `--sheet <file>` (or a file argument) the expression SHALL be able to refer
-to that sheet's tables and constants. The expression SHALL also be readable from
+With `--file <file>` (or a file argument) the expression SHALL be able to refer
+to that file's sheets and constants. The expression SHALL also be readable from
 standard input.
 
 #### Scenario: Pure arithmetic
 - **WHEN** `omasheet eval '1/3 + 1/3'` is run
 - **THEN** the output is `2/3`
 
-#### Scenario: Against a sheet
-- **WHEN** `omasheet eval --sheet sales.omx 'Sales[Revenue; Region == "UK"].sum()'` is run
+#### Scenario: Against a file
+- **WHEN** `omasheet eval --file sales.omx 'Sales[Revenue; Region == "UK"].sum()'` is run
 - **THEN** the total UK revenue is printed
 
 #### Scenario: From standard input
-- **WHEN** `echo 'Sales.Revenue.avg()' | omasheet eval --sheet sales.omx` is run
+- **WHEN** `echo 'Sales.Revenue.avg()' | omasheet eval --file sales.omx` is run
 - **THEN** the average is printed
 
 ### Requirement: Dates, times and the clock
@@ -60,8 +60,8 @@ in which case they SHALL be printed the way the locale of the machine
 (`LC_TIME`) writes them, with a four-digit year. `--now <datetime>` SHALL set
 what `today()` and `now()` give, in place of the clock. `--zone <name>` SHALL set
 the time zone of the machine, in place of the one it is set to. With `--locale`
-the date-times of a sheet in another time zone SHALL be printed on the clocks of
-the machine. These options SHALL apply to viewing a sheet and to `eval`.
+the date-times of a file in another time zone SHALL be printed on the clocks of
+the machine. These options SHALL apply to viewing a file and to `eval`.
 
 #### Scenario: ISO by default
 - **GIVEN** a machine whose locale is British
@@ -81,16 +81,16 @@ the machine. These options SHALL apply to viewing a sheet and to `eval`.
 - **WHEN** `omasheet eval --zone America/New_York '2025-07-15T12:00.utc()'` is run
 - **THEN** the output is `2025-07-15T16:00+00:00`
 
-### Requirement: Lint a sheet
-`omasheet lint <file.omx>` SHALL parse and statically check a sheet without
+### Requirement: Lint a file
+`omasheet lint <file.omx>` SHALL parse and statically check a file without
 executing it, print every diagnostic, and exit non-zero if any error was found.
 
-#### Scenario: Clean sheet
-- **WHEN** `omasheet lint` is run on a valid sheet
+#### Scenario: Clean file
+- **WHEN** `omasheet lint` is run on a valid file
 - **THEN** nothing is reported and the exit status is zero
 
 #### Scenario: Type error
-- **WHEN** `omasheet lint` is run on a sheet containing `Revenue + Month` where `Month` is `Text`
+- **WHEN** `omasheet lint` is run on a file containing `Revenue + Month` where `Month` is `Text`
 - **THEN** the error is printed and the exit status is non-zero
 
 ### Requirement: Diagnostics

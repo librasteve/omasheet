@@ -74,7 +74,7 @@ fn examples_match_their_expected_output() {
         assert!(out.status.success(), "{}: {}", path.display(), stderr(&out));
         let expected = std::fs::read_to_string(path.with_extension("expected")).unwrap();
         assert_eq!(stdout(&out), expected, "{}", path.display());
-        // Viewing a sheet never modifies it.
+        // Viewing a file never modifies it.
         assert_eq!(std::fs::read(&path).unwrap(), before);
         seen += 1;
     }
@@ -96,9 +96,9 @@ fn eval_pure_arithmetic() {
 }
 
 #[test]
-fn eval_against_a_sheet() {
+fn eval_against_a_file() {
     let expr = "Orders[Total; Region == \"US\"].sum()";
-    let flag = omasheet(&["eval", "--sheet", "examples/orders.omx", expr]);
+    let flag = omasheet(&["eval", "--file", "examples/orders.omx", expr]);
     let positional = omasheet(&["eval", "examples/orders.omx", expr]);
     assert_eq!(stdout(&flag), "74.47\n");
     assert_eq!(stdout(&positional), "74.47\n");
@@ -107,7 +107,7 @@ fn eval_against_a_sheet() {
 #[test]
 fn eval_from_standard_input() {
     let mut child = Command::new(program())
-        .args(["eval", "--sheet", "examples/budget.omx"])
+        .args(["eval", "--file", "examples/budget.omx"])
         .current_dir(root())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -120,11 +120,11 @@ fn eval_from_standard_input() {
         .write_all(b"Sales.Revenue.avg()\n")
         .unwrap();
     let out = child.wait_with_output().unwrap();
-    assert_eq!(stdout(&out), "35200/3\n");
+    assert_eq!(stdout(&out), "11733 1/3\n");
 }
 
 #[test]
-fn lint_clean_sheet() {
+fn lint_clean_file() {
     let out = omasheet(&["lint", "examples/budget.omx"]);
     assert!(out.status.success());
     assert!(stdout(&out).is_empty() && stderr(&out).is_empty());
@@ -135,7 +135,7 @@ fn lint_reports_a_located_type_error() {
     let path = std::env::temp_dir().join(format!("omasheet-lint-{}.omx", std::process::id()));
     std::fs::write(
         &path,
-        "table Sales\n\nMonth | Revenue | Bad\nJan | 100 | *\n\nBad := Revenue + Month\n",
+        "sheet Sales\n\nMonth | Revenue | Bad\nJan | 100 | *\n\nBad := Revenue + Month\n",
     )
     .unwrap();
     let out = omasheet(&["lint", path.to_str().unwrap()]);
@@ -158,7 +158,7 @@ fn a_command_needs_no_display() {
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
-    assert_eq!(stdout(&out), "0.5\n");
+    assert_eq!(stdout(&out), "1/2\n");
 }
 
 #[test]
@@ -230,13 +230,13 @@ fn path(dir: &std::path::Path, file: &str) -> String {
 }
 
 #[test]
-fn export_writes_beside_the_sheet_and_leaves_it_alone() {
+fn export_writes_beside_the_file_and_leaves_it_alone() {
     let dir = scratch("export");
-    let sheet = path(&dir, "budget.omx");
-    std::fs::copy(root().join("examples/budget.omx"), &sheet).unwrap();
-    let before = std::fs::read(&sheet).unwrap();
+    let file = path(&dir, "budget.omx");
+    std::fs::copy(root().join("examples/budget.omx"), &file).unwrap();
+    let before = std::fs::read(&file).unwrap();
 
-    let out = omasheet(&["export", &sheet, "--xlsx"]);
+    let out = omasheet(&["export", &file, "--xlsx"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(dir.join("budget.xlsx").exists());
     assert!(
@@ -245,12 +245,12 @@ fn export_writes_beside_the_sheet_and_leaves_it_alone() {
         stderr(&out)
     );
 
-    let out = omasheet(&["export", &sheet, "--csv"]);
+    let out = omasheet(&["export", &file, "--csv"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(dir.join("budget.Sales.csv").exists());
     assert!(dir.join("budget.Summary.csv").exists());
 
-    let out = omasheet(&["export", &sheet, "--csv", "--table", "Sales"]);
+    let out = omasheet(&["export", &file, "--csv", "--sheet", "Sales"]);
     assert!(out.status.success(), "{}", stderr(&out));
     let csv = std::fs::read_to_string(dir.join("budget.csv")).unwrap();
     assert!(
@@ -259,27 +259,52 @@ fn export_writes_beside_the_sheet_and_leaves_it_alone() {
         ),
         "{csv}"
     );
-    assert_eq!(std::fs::read(&sheet).unwrap(), before);
+
+    // JSON holds every sheet in the one file, and comes back as a file.
+    let out = omasheet(&["export", &file, "--json"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let json = std::fs::read_to_string(dir.join("budget.json")).unwrap();
+    assert!(
+        json.starts_with("{\n  \"Sales\": [\n    {\"Month\": \"Jan\", \"Closed\": \"2025-02-03T17:30\", \"Revenue\": 10000,"),
+        "{json}"
+    );
+    let out = omasheet(&["import", &path(&dir, "budget.json")]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        stdout(&out).starts_with("sheet Sales\n\nClosed : DateTime\n"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&out).contains("\nsheet Summary\n"),
+        "{}",
+        stdout(&out)
+    );
+    assert_eq!(std::fs::read(&file).unwrap(), before);
 }
 
 #[test]
-fn export_needs_a_format_and_a_sheet_that_compiles() {
+fn export_needs_a_format_and_a_file_that_compiles() {
     let out = omasheet(&["export", "examples/budget.omx"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("--xlsx or --csv"), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("--xlsx, --csv or --json"),
+        "{}",
+        stderr(&out)
+    );
 
-    let out = omasheet(&["export", "examples/budget.omx", "--csv", "--table", "Costs"]);
+    let out = omasheet(&["export", "examples/budget.omx", "--csv", "--sheet", "Costs"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(
-        stderr(&out).contains("no table `Costs`"),
+        stderr(&out).contains("no sheet `Costs`"),
         "{}",
         stderr(&out)
     );
 
     let dir = scratch("export-bad");
-    let sheet = path(&dir, "bad.omx");
-    std::fs::write(&sheet, "table T\n\nA\n= Nope\n").unwrap();
-    let out = omasheet(&["export", &sheet, "--xlsx"]);
+    let file = path(&dir, "bad.omx");
+    std::fs::write(&file, "sheet T\n\nA\n= Nope\n").unwrap();
+    let out = omasheet(&["export", &file, "--xlsx"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(
         stderr(&out).contains("bad.omx:4:3: error:"),
@@ -292,9 +317,9 @@ fn export_needs_a_format_and_a_sheet_that_compiles() {
 #[test]
 fn import_reads_what_export_wrote() {
     let dir = scratch("import");
-    let sheet = path(&dir, "budget.omx");
-    std::fs::copy(root().join("examples/budget.omx"), &sheet).unwrap();
-    assert!(omasheet(&["export", &sheet, "--xlsx"]).status.success());
+    let file = path(&dir, "budget.omx");
+    std::fs::copy(root().join("examples/budget.omx"), &file).unwrap();
+    assert!(omasheet(&["export", &file, "--xlsx"]).status.success());
 
     let back = path(&dir, "back.omx");
     let out = omasheet(&["import", &path(&dir, "budget.xlsx"), "-o", &back]);
@@ -310,7 +335,7 @@ fn import_reads_what_export_wrote() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
         stdout(&out),
-        "table sales\n\nMonth | UnitPrice\nJan   | 19.99\n"
+        "sheet sales\n\nMonth | UnitPrice\nJan   | 19.99\n"
     );
     assert_eq!(stderr(&out), "note: `Unit Price` was renamed `UnitPrice`\n");
 }
@@ -320,7 +345,7 @@ fn import_says_what_it_can_read() {
     let out = omasheet(&["import", "README.md"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(
-        stderr(&out).contains("(.xlsx) or a CSV file (.csv)"),
+        stderr(&out).contains("(.xlsx), a CSV file (.csv) or JSON (.json)"),
         "{}",
         stderr(&out)
     );
@@ -366,11 +391,11 @@ fn render_writes_html() {
 fn render_reports_where_in_the_document() {
     let dir = scratch("render-bad");
     let doc = path(&dir, "bad.md");
-    std::fs::write(&doc, "---\nsheets: [missing.omx]\n---\nHello\n").unwrap();
+    std::fs::write(&doc, "---\nfiles: [missing.omx]\n---\nHello\n").unwrap();
     let out = omasheet(&["render", &doc]);
     assert_eq!(out.status.code(), Some(1));
     assert!(
-        stderr(&out).contains("bad.md:2:10: error: cannot read `missing.omx`"),
+        stderr(&out).contains("bad.md:2:9: error: cannot read `missing.omx`"),
         "{}",
         stderr(&out)
     );

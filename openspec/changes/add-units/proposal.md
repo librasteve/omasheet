@@ -12,18 +12,18 @@ error.
 - **units** — ADDED: unit literals, dimensional analysis, currencies and `%` as
   units, column-level units, unit inference for computed columns, user-defined
   units, display units
-- **sheet-format** — MODIFIED: a column type may be a unit
-- **evaluation** — MODIFIED: static checking covers units; table operations
+- **file-format** — MODIFIED: a column type may be a unit
+- **evaluation** — MODIFIED: static checking covers units; sheet operations
   preserve units
 - **cli** — MODIFIED: `omasheet lint` reports unit errors
 - **xlsx-interop** — ADDED: lossy mapping of units on export
 
 ## Impact
 
-- Depends on `add-omasheet-core`; the `evaluation` table-operations delta
-  depends on `add-table-operations` and the `xlsx-interop` delta on `add-interop`
+- Depends on `add-omasheet-core`; the `evaluation` sheet-operations delta
+  depends on `add-sheet-operations` and the `xlsx-interop` delta on `add-interop`
 - Extends the type system in `omasheet-omx` and the value model in
-  `omasheet-engine`; sheets written for earlier phases stay valid
+  `omasheet-engine`; files written for earlier phases stay valid
 
 ## Out of Scope
 

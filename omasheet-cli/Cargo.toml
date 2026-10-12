@@ -1,6 +1,6 @@
 [package]
 name = "omasheet-cli"
-description = "The commands of omasheet: print, evaluate, lint, import, export and render .omx sheets"
+description = "The commands of omasheet: print, evaluate, lint, import, export and render .omx files"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

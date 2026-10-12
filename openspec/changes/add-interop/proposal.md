@@ -12,7 +12,7 @@ presentation format.
 
 - **xlsx-interop** — ADDED: XLSX as a lossy compatibility format in both
   directions, with exact numbers mapped to the nearest double
-- **csv-interop** — ADDED: CSV for one table of values in both directions, read
+- **csv-interop** — ADDED: CSV for one sheet of values in both directions, read
   and written as text so that terminating decimals and large integers stay exact
 - **markdown-integration** — ADDED: `{{ expr }}` interpolation and `omx`
   blocks in Markdown, linking `.omx` files, HTML and terminal output
@@ -24,7 +24,7 @@ The XLSX mappings for units and uncertainty are added by `add-units` and
 
 ## Impact
 
-- Depends on `add-omasheet-core`; independent of `add-table-operations`
+- Depends on `add-omasheet-core`; independent of `add-sheet-operations`
 - New crate `omasheet-md` (pulldown-cmark) for the Markdown half
 - New crate `omasheet-interop` (calamine to read XLSX, rust_xlsxwriter to write
   it, `csv` for CSV). XLSX and CSV share the path from a grid of cells to `.omx`

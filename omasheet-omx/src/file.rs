@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! Parser for the line-oriented `.omx` sheet format.
+//! Parser for the line-oriented `.omx` file format.
 //!
 //! ```omx
 //! # a comment
@@ -8,7 +8,7 @@
 //! const TaxRate = 20%
 //! fn Margin(revenue, cost) = (revenue - cost) / revenue
 //!
-//! table Sales
+//! sheet Sales
 //!
 //! Revenue : Fraction
 //!
@@ -28,12 +28,12 @@ use crate::parser::parse_expr;
 use crate::types::S;
 
 #[derive(Debug, Default)]
-pub struct SheetAst {
-    /// The time zone the sheet's date-times are in, if it names one.
+pub struct FileAst {
+    /// The time zone the file's date-times are in, if it names one.
     pub zone: Option<(String, Span)>,
     pub consts: Vec<ConstDecl>,
     pub funcs: Vec<FuncDecl>,
-    pub tables: Vec<TableDecl>,
+    pub sheets: Vec<SheetDecl>,
 }
 
 #[derive(Debug)]
@@ -60,14 +60,14 @@ pub struct FuncDecl {
 }
 
 #[derive(Debug)]
-pub struct TableDecl {
+pub struct SheetDecl {
     pub name: String,
     pub span: Span,
     pub schema: Vec<SchemaLine>,
     pub header: Vec<(String, Span)>,
     pub rows: Vec<Vec<CellSrc>>,
     /// The header line, the separator line if any, and each kept row's line
-    /// (without line endings), for tools that rewrite a table in place.
+    /// (without line endings), for tools that rewrite a sheet in place.
     pub header_line: Span,
     pub separator_line: Option<Span>,
     pub row_lines: Vec<Span>,
@@ -206,7 +206,7 @@ pub fn is_zone_name(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "/_-+".contains(c))
 }
 
-pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAst {
+pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst {
     let mut lines = Vec::new();
     let mut offset = 0;
     for raw in text.split_inclusive('\n') {
@@ -217,8 +217,8 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
         offset += raw.len();
     }
 
-    let mut ast = SheetAst::default();
-    let mut table: Option<TableDecl> = None;
+    let mut ast = FileAst::default();
+    let mut sheet: Option<SheetDecl> = None;
     let mut in_body = false; // the header row has been read
     let mut after_header = false; // the next line may be a separator row
     let mut i = 0;
@@ -271,13 +271,13 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
             continue;
         }
 
-        // table <Name>
-        if let Some(rest) = after_keyword(trimmed, "table") {
+        // sheet <Name>
+        if let Some(rest) = after_keyword(trimmed, "sheet") {
             let n = ident_len(rest);
             if n > 0 && rest[n..].trim().is_empty() {
-                ast.tables.extend(table.take());
+                ast.sheets.extend(sheet.take());
                 let name_at = at + (trimmed.len() - rest.len());
-                table = Some(TableDecl {
+                sheet = Some(SheetDecl {
                     name: rest[..n].to_string(),
                     span: Span::new(src, name_at, name_at + n),
                     schema: Vec::new(),
@@ -295,16 +295,16 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
             }
         }
 
-        // zone <Area/City>, before the first table
-        if let Some(rest) = after_keyword(trimmed, "zone").filter(|_| table.is_none())
-            && ast.tables.is_empty()
+        // zone <Area/City>, before the first sheet
+        if let Some(rest) = after_keyword(trimmed, "zone").filter(|_| sheet.is_none())
+            && ast.sheets.is_empty()
             && is_zone_name(rest.trim())
         {
             let name = rest.trim();
             let name_at = at + (trimmed.len() - rest.len());
             let span = Span::new(src, name_at, name_at + name.len());
             if ast.zone.is_some() {
-                diags.push(Diagnostic::new(span, "the sheet already has a `zone`"));
+                diags.push(Diagnostic::new(span, "the file already has a `zone`"));
             } else {
                 ast.zone = Some((name.to_string(), span));
             }
@@ -317,7 +317,7 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
             let n = ident_len(rest);
             let tail = rest[n..].trim_start();
             if n > 0 && tail.starts_with('=') && !tail.starts_with("==") {
-                ast.tables.extend(table.take());
+                ast.sheets.extend(sheet.take());
                 let name_at = at + (trimmed.len() - rest.len());
                 let expr_at = at + (trimmed.len() - tail.len()) + 1;
                 let (expr, expr_span) = expression(&mut i, expr_at, diags);
@@ -366,7 +366,7 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
                     i += 1;
                     continue;
                 }
-                ast.tables.extend(table.take());
+                ast.sheets.extend(sheet.take());
                 let expr_at = line.start + line.text.len() - tail.len() + 1;
                 let (expr, expr_span) = expression(&mut i, expr_at, diags);
                 ast.funcs.push(FuncDecl {
@@ -382,14 +382,14 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
             }
         }
 
-        let Some(t) = table.as_mut() else {
+        let Some(t) = sheet.as_mut() else {
             diags.push(
                 Diagnostic::new(
                     Span::new(src, at, at + trimmed.len()),
-                    "expected `table <Name>`, `const <Name> = <expression>`, \
+                    "expected `sheet <Name>`, `const <Name> = <expression>`, \
                      `fn <Name>(<parameters>) = <expression>` or `zone <Area/City>`",
                 )
-                .with_help("rows of data belong under a `table` line"),
+                .with_help("rows of data belong under a `sheet` line"),
             );
             i += 1;
             continue;
@@ -432,7 +432,7 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
                         format!("unknown type `{ty_text}`"),
                     )
                     .with_help(
-                        "the types are Int, Decimal, Fraction, Percent, Ratio, Num, Complex, Text, Date, Time, DateTime and Bool",
+                        "the types are Int, Decimal, Fraction, Percent, Num, Complex, Text, Date, Time, DateTime and Bool",
                     ),
                 ),
             }
@@ -476,7 +476,7 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
             diags.push(Diagnostic::new(
                 Span::new(src, at, at + trimmed.len()),
                 format!(
-                    "this row has {} cell{} but table `{}` has {} column{}",
+                    "this row has {} cell{} but sheet `{}` has {} column{}",
                     cells.len(),
                     if cells.len() == 1 { "" } else { "s" },
                     t.name,
@@ -491,7 +491,7 @@ pub fn parse_sheet(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> SheetAs
         }
         i += 1;
     }
-    ast.tables.extend(table.take());
+    ast.sheets.extend(sheet.take());
     ast
 }
 
@@ -508,13 +508,13 @@ mod tests {
     }
 
     #[test]
-    fn parses_a_table() {
+    fn parses_a_sheet() {
         let mut diags = Vec::new();
-        let src = "const Rate = 20%\n\ntable Sales\n\nRevenue : Fraction\n\nMonth | Revenue | Tax\n------|---------|----\nJan | 100 | *\nFeb | 120 | *\n\nTax := Revenue * Rate\n";
-        let ast = parse_sheet(src, 0, &mut diags);
+        let src = "const Rate = 20%\n\nsheet Sales\n\nRevenue : Fraction\n\nMonth | Revenue | Tax\n------|---------|----\nJan | 100 | *\nFeb | 120 | *\n\nTax := Revenue * Rate\n";
+        let ast = parse_file(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         assert_eq!(ast.consts.len(), 1);
-        let t = &ast.tables[0];
+        let t = &ast.sheets[0];
         assert_eq!((t.header.len(), t.rows.len(), t.computed.len()), (3, 2, 1));
         assert_eq!(t.schema[0].ty, S::Fraction);
     }
@@ -523,7 +523,7 @@ mod tests {
     fn parses_a_function() {
         let mut diags = Vec::new();
         let src = "# Profit as a share\n# of revenue.\nfn Margin(revenue, cost) =\n  (revenue - cost) / revenue\nfn Vat() = 20%\n";
-        let ast = parse_sheet(src, 0, &mut diags);
+        let ast = parse_file(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         let f = &ast.funcs[0];
         assert_eq!(f.name, "Margin");
@@ -537,16 +537,16 @@ mod tests {
         assert!(f.expr.is_some());
         assert!(ast.funcs[1].params.is_empty() && ast.funcs[1].doc.is_empty());
 
-        parse_sheet("fn Bad(a b) = 1\n", 0, &mut diags);
-        parse_sheet("fn Bad(a) 1\n", 0, &mut diags);
+        parse_file("fn Bad(a b) = 1\n", 0, &mut diags);
+        parse_file("fn Bad(a) 1\n", 0, &mut diags);
         assert_eq!(diags.len(), 2);
     }
 
     #[test]
     fn ragged_row_is_an_error() {
         let mut diags = Vec::new();
-        parse_sheet("table T\n\nA | B\n1 | 2 | 3\n", 0, &mut diags);
+        parse_file("sheet T\n\nA | B\n1 | 2 | 3\n", 0, &mut diags);
         assert_eq!(diags.len(), 1);
-        assert!(diags[0].message.contains("table `T`"));
+        assert!(diags[0].message.contains("sheet `T`"));
     }
 }

@@ -1,20 +1,20 @@
-# The sheet format
+# The file format
 
-An `.omx` file is plain text: constants, functions and tables, in any order.
+An `.omx` file is plain text: constants, functions and sheets, in any order.
 A line that starts with `#` is a comment.
 
 ```omx
-# Optional: the time zone of the sheet.
+# Optional: the time zone of the file.
 zone Europe/London
 
 # A named value, and a function.
 const TaxRate = 20%
 fn WithTax(x) = x * (1 + TaxRate)
 
-table Sales
+sheet Sales
 
 # Optional: the type of a column.
-Revenue : Fraction
+Revenue : Decimal
 
 # A cell that starts with = is a formula.
 Month | Revenue | Cost         | Profit | Gross
@@ -27,9 +27,9 @@ Profit := Revenue - Cost
 Gross  := WithTax(Revenue)
 ```
 
-## Tables
+## Sheets
 
-- `table Name`, then a header row and data rows, cells separated by `|`.
+- `sheet Name`, then a header row and data rows, cells separated by `|`.
 - A `---|---` line under the header is allowed and ignored.
 - `Name := expression` after the rows is the formula of a computed column.
   The header row names the column, anywhere among the others, and each of
@@ -37,7 +37,7 @@ Gross  := WithTax(Revenue)
 - An empty cell is empty: there is no `null`.
 
 ```omx
-table Sales
+sheet Sales
 
 Month | Revenue | Profit | Cost | Tax
 Jan   | 10000   | *      | 6000 | *
@@ -53,35 +53,43 @@ cell of a computed column.
 
 ## Types
 
-`Int`, `Decimal`, `Fraction`, `Percent`, `Ratio`, `Num`, `Complex`, `Text`,
-`Bool`, `Date`, `Time`, `DateTime`.
+`Int`, `Decimal`, `Fraction`, `Percent`, `Num`, `Complex`, `Text`, `Bool`,
+`Date`, `Time`, `DateTime`.
 A column with no `Name : Type` line takes its type from its cells.
 
 | Type | Written |
 |---|---|
 | `Int` | `42`, `1_000_000` |
 | `Decimal` | `19.99` — exact |
-| `Fraction` | `1/7`, `22/7` — exact |
+| `Fraction` | `1/7`, `22/7`, `2 3/4` — exact, shown as a fraction |
 | `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
-| `Ratio` | `3:2`, `4:1` — exact, shown as a ratio |
-| `Num` | `1.5e3` — floating point |
+| `Num` | `1.5e3`, `Inf`, `-Inf`, `NaN` — floating point |
 | `Text` | `hi` or `"hi"`  (escape \|) |
 | `Bool` | `true`, `false` |
 | `Date` | `2025-01-31` |
 | `Time` | `09:30`, `09:30:15` |
 | `DateTime` | `2025-01-31T09:30` |
 
+Text written bare may hold Markdown: `a **slow** start`,
+`see the [lease](lease.pdf)`. The app shows it as that, and so does a
+[rendered document](interop.md#markdown). Text in quotes is as it is:
+`"2 * 3 * 4"`. So is the text a formula makes, as it is written in quotes
+there; a value read from a cell is Markdown or not as that cell is.
+`omasheet print` shows every cell as it is written.
+
 An `Int` is a `Decimal`, and a `Decimal` is a `Fraction`: a `Fraction` column takes
 all three, a `Decimal` column takes whole numbers and decimals, but not `1/7`.
 
 A `Percent` column takes any exact number and shows it as a percentage: `0.4`
 there is `40%`, and so is `= Profit / Revenue` when it comes to two fifths.
-A `20%` in a `Decimal` or `Fraction` column is the number it stands for, `0.2`.
+A `20%` in a `Decimal` or `Fraction` column is the number it stands for, `0.2`
+or `1/5`.
 
-A `Ratio` column takes any exact number and shows it as a ratio in its lowest
-terms: `6:4` and `1.5` there are `3:2`, and `4` is `4:1`. Outside one, two
-digits on each side of the `:` is a time: `16:10` is a ratio only in a
-`Ratio` column.
+A `Fraction` column shows every number as a fraction, and one of more than
+one as a whole number and a part: `2.75` and `11/4` there are both `2 3/4`.
+A fraction may be written that way too, with a space: `2 3/4` is `11/4`, and
+the app keeps it in the file as `11/4`.
+
 See `examples/types.omx` for every type at work.
 
 Dates and times are always written this way in the file. The app shows and
@@ -90,9 +98,9 @@ accepts them in your locale's form.
 ## Constants, functions, zone
 
 - `const Name = expression`
-- `fn Name(a, b) = expression` — sees its parameters, constants and tables,
+- `fn Name(a, b) = expression` — sees its parameters, constants and sheets,
   not the row it is called from. The comment above it is its description.
-- `zone Area/City` before the first table says which time zone the sheet's
+- `zone Area/City` before the first sheet says which time zone the file's
   date-times are in. Without it, they are in the zone of the machine.
 
 ---

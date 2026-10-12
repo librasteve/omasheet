@@ -8,7 +8,7 @@ to a word processor, Omasheet is to a spreadsheet. A workbook is a plain-text
 both people and LLMs to write.
 
 It is deliberately *not* "Excel in text". Authored files have no A1 cell
-coordinates. A sheet is a set of named, column-typed tables, and formulas are
+coordinates. A file is a set of named, column-typed sheets, and formulas are
 written in **OMX** (Omasheet Expressions), a small Raku-inspired array language
 with exact arithmetic, compiled to a Rust engine. Units and uncertainty are part
 of the design and arrive in later phases (see Roadmap).
@@ -22,10 +22,10 @@ that conversation).
 
 ## Design Principles
 
-1. **Tables, not grids.** Named tables and named columns; A1 notation exists
+1. **Sheets, not grids.** Named sheets and named columns; A1 notation exists
    only at the XLSX import/export boundary.
 2. **One indexing model.** `[]` selects, `;` separates dimensions, `..` builds
-   ranges, `*` is the cursor, an empty slot is "all". Scalars, vectors, tables
+   ranges, `*` is the cursor, an empty slot is "all". Scalars, vectors, sheets
    and N-d arrays all use it.
 3. **Exact numerics.** `Int` is arbitrary precision, `Fraction` is an
    arbitrary-precision rational. Floating point (`Num`) only on request.
@@ -49,7 +49,7 @@ verified and archived before the next begins.
 |-------|--------|----------|-----------|
 | 1 | `add-omasheet-core` | Numerics, OMX, the `.omx` format, compile / check / evaluate, `omasheet eval`, `lint` and the read-only view | An `.omx` with computed columns, cursor references, filters and lookups evaluates exactly from the CLI, with no dataframe dependency |
 | 2 | `add-interop` | XLSX and CSV import and export; Markdown `{{ }}` and `omx` blocks; `import`, `export`, `render` | A workbook or CSV file imports to `.omx` and exports back; `omasheet render report.md` produces HTML |
-| 3 | `add-table-operations` | Group, join, the `group` pipe stage, partitioned cursor offsets, incremental recalculation | `Sales \|> group(Region) \|> sum(Revenue)` and a left join give exact results, on Omasheet's own engine |
+| 3 | `add-sheet-operations` | Group, join, the `group` pipe stage, partitioned cursor offsets, incremental recalculation | `Sales \|> group(Region) \|> sum(Revenue)` and a left join give exact results, on Omasheet's own engine |
 | 4 | `add-units` | Unit literals, dimension checking, currencies, column units, user-defined units, display units | `Revenue + Weight` is rejected by `lint`; unit columns export to XLSX |
 | 5 | `add-uncertainty` | `±` values, propagation, `Uncertain<…>` columns, display | `10 ± 0.1 m` propagates through arithmetic and aggregation |
 
@@ -73,7 +73,7 @@ pivots, formatting syntax.
 - Language: Rust, shipped as a single static binary `omasheet`
 - Parsing: hand-written lexer and recursive-descent parser (no parser library)
 - Numerics: `num-bigint` / `num-rational` (`BigInt`, `BigRational`)
-- Table operations (group, join, sort): implemented natively in
+- Sheet operations (group, join, sort): implemented natively in
   `omasheet-engine` from Phase 3. Polars and other dataframe libraries are out
   of scope — none has an arbitrary-precision rational type
 - XLSX (Phase 2): `calamine` (read), `rust_xlsxwriter` (write)
@@ -88,7 +88,7 @@ pivots, formatting syntax.
 ```
 omasheet/
 ├── omasheet-omx      lexer, parser, AST, type checker, dependency analysis
-├── omasheet-engine   values, numerics, execution (Phase 1); table operations,
+├── omasheet-engine   values, numerics, execution (Phase 1); sheet operations,
 │                     recalc (3); units (4); uncertainty (5)
 ├── omasheet-interop  XLSX and CSV import/export (Phase 2)
 ├── omasheet-md       Markdown: `{{ }}`, `omx` blocks, render (Phase 2)
@@ -100,19 +100,19 @@ omasheet/
 ## Conventions
 
 - Native file extension: `.omx` — the same letters as OMX, the expression
-  language; an `.omx` file is a whole sheet (tables, schemas, constants), not a
+  language; an `.omx` file is a whole file (sheets, schemas, constants), not a
   single expression
 - Fenced code block language tag in Markdown: `omx`
 - Row and column positions are 0-based
-- Identifiers for tables and columns are case-sensitive, conventionally
+- Identifiers for sheets and columns are case-sensitive, conventionally
   `PascalCase`
 
 ## Glossary
 
 | Term | Meaning |
 |------|---------|
-| Sheet | An `.omx` file: declarations plus one or more tables |
-| Table | Named, ordered collection of rows with a typed column schema |
+| File | An `.omx` file: declarations plus one or more sheets |
+| Sheet | Named, ordered collection of rows with a typed column schema |
 | Computed column | A column defined once by an OMX expression (`Name := expr`) |
 | OMX | Omasheet Expressions — the formula language |
 | Cursor (`*`) | The current row while an expression is evaluated in row context |

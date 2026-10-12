@@ -13,7 +13,7 @@ from the distribution's repositories and bundle none of it.
 - **WHEN** the package is installed
 - **THEN** `omasheet` is on the path, and Omasheet is in the launcher
 
-#### Scenario: A sheet opens in the app
+#### Scenario: A file opens in the app
 - **GIVEN** the package is installed
 - **WHEN** a `.omx` file is opened from a file manager
 - **THEN** it opens in Omasheet

@@ -10,6 +10,6 @@
 - [ ] 1.4 Display forms
 
 ## 2. Existing capabilities
-- [ ] 2.1 `Uncertain<…>` in column schemas (`sheet-format`)
+- [ ] 2.1 `Uncertain<…>` in column schemas (`file-format`)
 - [ ] 2.2 Uncertainty preserved through group, join and aggregation (`evaluation`)
 - [ ] 2.3 Value and uncertainty columns on XLSX export (`xlsx-interop`)

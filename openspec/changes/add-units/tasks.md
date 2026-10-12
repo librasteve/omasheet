@@ -13,7 +13,7 @@
 - [ ] 1.7 Display unit separate from stored value
 
 ## 2. Existing capabilities
-- [ ] 2.1 Unit types in column schemas (`sheet-format`)
+- [ ] 2.1 Unit types in column schemas (`file-format`)
 - [ ] 2.2 Unit checking in static analysis and `omasheet lint` (`evaluation`, `cli`)
 - [ ] 2.3 Units preserved through group, join and aggregation (`evaluation`)
 - [ ] 2.4 Unit mapping on XLSX export (`xlsx-interop`)

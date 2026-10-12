@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! The `Sheet` object the QML window talks to.
+//! The `File` object the QML window talks to.
 
+use crate::clip::Clip;
 use crate::{json, theme};
 use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
@@ -42,66 +43,70 @@ pub mod qobject {
         #[qproperty(QString, theme_muted)]
         #[qproperty(QString, theme_error)]
         #[qproperty(QString, snapshot_path)]
-        type Sheet = super::SheetRust;
+        type File = super::FileRust;
 
-        /// The whole sheet as JSON: tables, constants and problems.
+        /// The whole file as JSON: sheets, constants and problems.
         #[qinvokable]
-        fn snapshot_json(self: &Sheet) -> QString;
-        /// The sheet as it is written: the text that saving would write.
+        fn snapshot_json(self: &File) -> QString;
+        /// The file as it is written: the text that saving would write.
         #[qinvokable]
-        fn source_text(self: &Sheet) -> QString;
+        fn source_text(self: &File) -> QString;
 
         #[qinvokable]
-        fn new_document(self: Pin<&mut Sheet>);
+        fn new_document(self: Pin<&mut File>);
         #[qinvokable]
-        fn open_path(self: Pin<&mut Sheet>, path: &QString) -> bool;
+        fn open_path(self: Pin<&mut File>, path: &QString) -> bool;
         #[qinvokable]
-        fn open_url(self: Pin<&mut Sheet>, url: &QUrl) -> bool;
+        fn open_url(self: Pin<&mut File>, url: &QUrl) -> bool;
         /// Save to the current file. False if there is none yet, or on failure.
         #[qinvokable]
-        fn save(self: Pin<&mut Sheet>) -> bool;
+        fn save(self: Pin<&mut File>) -> bool;
         #[qinvokable]
-        fn save_url(self: Pin<&mut Sheet>, url: &QUrl) -> bool;
-        /// Write the calculated sheet as a workbook, or the table named as
-        /// CSV if `csv`; a file named `.xlsx` or `.csv` is written as that.
-        /// What could not be written exactly is left in `notes`.
+        fn save_url(self: Pin<&mut File>, url: &QUrl) -> bool;
+        /// Write the calculated file as `kind`: a workbook, `xlsx`, or
+        /// `json`, or the sheet named as `csv`. A file named `.xlsx`, `.csv`
+        /// or `.json` is written as that. What could not be written exactly
+        /// is left in `notes`.
         #[qinvokable]
-        fn export_url(self: Pin<&mut Sheet>, url: &QUrl, csv: bool, table: &QString) -> bool;
-        /// Where an export would go unless told otherwise: beside the sheet
-        /// and under its name, or in `folder` if the sheet is not saved yet.
+        fn export_url(self: Pin<&mut File>, url: &QUrl, kind: &QString, sheet: &QString) -> bool;
+        /// Where an export would go unless told otherwise: beside the file
+        /// and under its name, or in `folder` if the file is not saved yet.
         #[qinvokable]
-        fn export_suggestion(self: &Sheet, csv: bool, table: &QString, folder: &QUrl) -> QUrl;
+        fn export_suggestion(self: &File, kind: &QString, sheet: &QString, folder: &QUrl) -> QUrl;
 
         #[qinvokable]
-        fn set_cell(self: Pin<&mut Sheet>, table: i32, row: i32, col: i32, text: &QString);
+        fn set_cell(self: Pin<&mut File>, sheet: i32, row: i32, col: i32, text: &QString);
         /// The sources of a block of cells as tab-separated text.
         #[qinvokable]
         fn copy_cells(
-            self: &Sheet,
-            table: i32,
+            self: &File,
+            sheet: i32,
             row0: i32,
             col0: i32,
             row1: i32,
             col1: i32,
         ) -> QString;
-        /// Copy a block of cells as `copy_cells` does, and clear it. Pasted
-        /// next in the same table, the cells are moved: formulas go on
-        /// reading what they read.
+        /// Copy a block of cells as `copy_cells` does, to be cleared when it
+        /// is next pasted. Pasted in the same sheet, the cells are moved:
+        /// formulas go on reading what they read.
         #[qinvokable]
         fn cut_cells(
-            self: Pin<&mut Sheet>,
-            table: i32,
+            self: Pin<&mut File>,
+            sheet: i32,
             row0: i32,
             col0: i32,
             row1: i32,
             col1: i32,
         ) -> QString;
+        /// Leave the cells that were cut where they are: a paste copies them.
+        #[qinvokable]
+        fn forget_cut(self: Pin<&mut File>);
         /// Copy a block of cells as `copy_cells` does, remembering where it
         /// came from: `columns` says that it is whole columns.
         #[qinvokable]
         fn copy_block(
-            self: Pin<&mut Sheet>,
-            table: i32,
+            self: Pin<&mut File>,
+            sheet: i32,
             row0: i32,
             col0: i32,
             row1: i32,
@@ -112,33 +117,33 @@ pub mod qobject {
         /// not their formulas.
         #[qinvokable]
         fn paste_values(
-            self: Pin<&mut Sheet>,
-            table: i32,
+            self: Pin<&mut File>,
+            sheet: i32,
             row0: i32,
             col0: i32,
             row1: i32,
             col1: i32,
             text: &QString,
-        );
+        ) -> QString;
         /// Paste as `paste_cells` does, but turned about: each copied row
         /// goes down a column.
         #[qinvokable]
         fn paste_transposed(
-            self: Pin<&mut Sheet>,
-            table: i32,
+            self: Pin<&mut File>,
+            sheet: i32,
             row0: i32,
             col0: i32,
             row1: i32,
             col1: i32,
             text: &QString,
-        );
+        ) -> QString;
         /// Make room for what was copied and put it there: copied columns
         /// become new columns at `col0`, and anything else new rows at
         /// `row0`. Returns an error message, or an empty string.
         #[qinvokable]
         fn insert_copied(
-            self: Pin<&mut Sheet>,
-            table: i32,
+            self: Pin<&mut File>,
+            sheet: i32,
             row0: i32,
             col0: i32,
             text: &QString,
@@ -146,100 +151,106 @@ pub mod qobject {
         /// Paste tab-separated text at a block; a single value fills the block.
         #[qinvokable]
         fn paste_cells(
-            self: Pin<&mut Sheet>,
-            table: i32,
+            self: Pin<&mut File>,
+            sheet: i32,
             row0: i32,
             col0: i32,
             row1: i32,
             col1: i32,
             text: &QString,
-        );
+        ) -> QString;
         #[qinvokable]
         fn clear_cells(
-            self: Pin<&mut Sheet>,
-            table: i32,
+            self: Pin<&mut File>,
+            sheet: i32,
             row0: i32,
             col0: i32,
             row1: i32,
             col1: i32,
         );
         #[qinvokable]
-        fn insert_rows(self: Pin<&mut Sheet>, table: i32, at: i32, count: i32);
+        fn insert_rows(self: Pin<&mut File>, sheet: i32, at: i32, count: i32);
         #[qinvokable]
-        fn delete_rows(self: Pin<&mut Sheet>, table: i32, first: i32, count: i32);
+        fn delete_rows(self: Pin<&mut File>, sheet: i32, first: i32, count: i32);
 
         // These return an error message, or an empty string on success.
         #[qinvokable]
-        fn add_column(self: Pin<&mut Sheet>, table: i32, name: &QString) -> QString;
+        fn add_column(self: Pin<&mut File>, sheet: i32, name: &QString) -> QString;
         #[qinvokable]
         fn add_computed(
-            self: Pin<&mut Sheet>,
-            table: i32,
+            self: Pin<&mut File>,
+            sheet: i32,
             name: &QString,
             expr: &QString,
         ) -> QString;
         /// Add an empty column as column `at`.
         #[qinvokable]
-        fn insert_column(self: Pin<&mut Sheet>, table: i32, at: i32, name: &QString) -> QString;
+        fn insert_column(self: Pin<&mut File>, sheet: i32, at: i32, name: &QString) -> QString;
         /// Add a formula column as column `at`.
         #[qinvokable]
         fn insert_computed(
-            self: Pin<&mut Sheet>,
-            table: i32,
+            self: Pin<&mut File>,
+            sheet: i32,
             at: i32,
             name: &QString,
             expr: &QString,
         ) -> QString;
         #[qinvokable]
-        fn rename_column(self: Pin<&mut Sheet>, table: i32, col: i32, name: &QString) -> QString;
+        fn rename_column(self: Pin<&mut File>, sheet: i32, col: i32, name: &QString) -> QString;
         /// Delete `count` columns from `first`.
         #[qinvokable]
-        fn delete_columns(self: Pin<&mut Sheet>, table: i32, first: i32, count: i32) -> QString;
+        fn delete_columns(self: Pin<&mut File>, sheet: i32, first: i32, count: i32) -> QString;
         /// Move `count` rows from `first` so the first becomes row `to`.
         #[qinvokable]
-        fn move_rows(self: Pin<&mut Sheet>, table: i32, first: i32, count: i32, to: i32)
-        -> QString;
+        fn move_rows(self: Pin<&mut File>, sheet: i32, first: i32, count: i32, to: i32) -> QString;
         /// Move `count` columns from `first` so the first becomes column `to`.
         #[qinvokable]
         fn move_columns(
-            self: Pin<&mut Sheet>,
-            table: i32,
+            self: Pin<&mut File>,
+            sheet: i32,
             first: i32,
             count: i32,
             to: i32,
         ) -> QString;
         #[qinvokable]
-        fn add_table(self: Pin<&mut Sheet>, name: &QString) -> QString;
+        fn add_sheet(self: Pin<&mut File>, name: &QString) -> QString;
+        /// A new sheet before sheet `at`, or last if there is none there.
         #[qinvokable]
-        fn add_const(self: Pin<&mut Sheet>, name: &QString, expr: &QString) -> QString;
+        fn insert_sheet(self: Pin<&mut File>, at: i32, name: &QString) -> QString;
         #[qinvokable]
-        fn set_const(self: Pin<&mut Sheet>, index: i32, expr: &QString);
+        fn rename_sheet(self: Pin<&mut File>, sheet: i32, name: &QString) -> QString;
+        #[qinvokable]
+        fn delete_sheet(self: Pin<&mut File>, sheet: i32) -> QString;
+        #[qinvokable]
+        fn add_const(self: Pin<&mut File>, name: &QString, expr: &QString) -> QString;
+        #[qinvokable]
+        fn set_const(self: Pin<&mut File>, index: i32, expr: &QString);
 
         #[qinvokable]
-        fn undo(self: Pin<&mut Sheet>);
+        fn undo(self: Pin<&mut File>);
         #[qinvokable]
-        fn redo(self: Pin<&mut Sheet>);
+        fn redo(self: Pin<&mut File>);
         #[qinvokable]
-        fn reload_theme(self: Pin<&mut Sheet>);
+        fn reload_theme(self: Pin<&mut File>);
         /// Take the theme from now on: Omarchy's as it changes, and without
         /// one the colours for a dark or a light system.
         #[qinvokable]
-        fn follow_theme(self: Pin<&mut Sheet>, system_dark: bool);
+        fn follow_theme(self: Pin<&mut File>, system_dark: bool);
 
         /// The locale and how it writes a date and a time.
         #[qinvokable]
-        fn locale_hint(self: &Sheet) -> QString;
+        fn locale_hint(self: &File) -> QString;
         /// The function directory as JSON.
         #[qinvokable]
-        fn functions_json(self: &Sheet) -> QString;
+        fn functions_json(self: &File) -> QString;
         /// What can be typed into a column of the named type.
         #[qinvokable]
-        fn entry_hint(self: &Sheet, ty: &QString) -> QString;
+        fn entry_hint(self: &File, ty: &QString) -> QString;
         /// The count, sum and average of a block of cells, for the footer.
         #[qinvokable]
         fn selection_summary(
-            self: &Sheet,
-            table: i32,
+            self: &File,
+            sheet: i32,
             row0: i32,
             col0: i32,
             row1: i32,
@@ -248,10 +259,10 @@ pub mod qobject {
     }
 
     // The theme is watched from a thread of its own.
-    impl cxx_qt::Threading for Sheet {}
+    impl cxx_qt::Threading for File {}
 }
 
-pub struct SheetRust {
+pub struct FileRust {
     file_name: QString,
     file_path: QString,
     modified: bool,
@@ -277,43 +288,18 @@ pub struct SheetRust {
 
     doc: Document,
     path: Option<PathBuf>,
-    /// The workbook or CSV file the sheet was imported from, until it is saved.
+    /// The workbook or CSV file the file was imported from, until it is saved.
     origin: Option<PathBuf>,
     /// The text as last opened or saved, to tell whether there are changes.
     saved: String,
-    /// The cells last cut, until they are pasted.
-    cut: Option<Cut>,
-    /// The cells last copied.
-    copied: Option<Copied>,
+    /// What was last cut or copied here.
+    clip: Clip,
 }
 
-/// A block of cells that was copied.
-struct Copied {
-    table: usize,
-    /// What went to the clipboard: the cells as they are written.
-    text: String,
-    /// The same cells as they were shown.
-    values: String,
-    /// The names of the columns, if whole columns were copied.
-    columns: Option<Vec<String>>,
-}
-
-/// A block of cells that was cut, to be moved by the next paste.
-struct Cut {
-    table: usize,
-    /// The top left cell: its row and column.
-    at: (usize, usize),
-    /// What went to the clipboard.
-    text: String,
-    /// The sheet once the cells were cleared: a paste moves them only if
-    /// nothing else has changed since.
-    after: String,
-}
-
-impl Default for SheetRust {
+impl Default for FileRust {
     fn default() -> Self {
         let theme = theme::load(true);
-        SheetRust {
+        FileRust {
             file_name: QString::from("Untitled"),
             file_path: QString::default(),
             modified: false,
@@ -336,8 +322,7 @@ impl Default for SheetRust {
             path: None,
             origin: None,
             saved: BLANK.to_string(),
-            cut: None,
-            copied: None,
+            clip: Clip::default(),
         }
     }
 }
@@ -357,31 +342,7 @@ fn index(n: i32) -> usize {
     n.max(0) as usize
 }
 
-/// Tab-separated text as rows of cells.
-fn parse_block(text: &str) -> Vec<Vec<String>> {
-    let text = text.strip_suffix('\n').unwrap_or(text);
-    text.split('\n')
-        .map(|line| {
-            line.trim_end_matches('\r')
-                .split('\t')
-                .map(str::to_string)
-                .collect()
-        })
-        .collect()
-}
-
-/// A block turned about: its rows as columns. Short rows are filled out.
-fn transposed(block: &[Vec<String>]) -> Vec<Vec<String>> {
-    let width = block.iter().map(Vec::len).max().unwrap_or(0);
-    (0..width)
-        .map(|j| {
-            let cell = |line: &Vec<String>| line.get(j).cloned().unwrap_or_default();
-            block.iter().map(cell).collect()
-        })
-        .collect()
-}
-
-impl qobject::Sheet {
+impl qobject::File {
     /// Publish the document's state after it changed.
     fn refresh(mut self: Pin<&mut Self>, status: &str) {
         let (modified, can_undo, can_redo) = {
@@ -433,19 +394,19 @@ impl qobject::Sheet {
         self.refresh("");
     }
 
-    /// Open a workbook or a CSV file as a new sheet, not yet saved.
+    /// Open a workbook, a CSV file or JSON as a new file, not yet saved.
     fn import_file(mut self: Pin<&mut Self>, path: PathBuf, kind: &str) -> bool {
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        let imported =
-            std::fs::read(&path)
-                .map_err(|e| e.to_string())
-                .and_then(|bytes| match kind {
+        let imported = std::fs::read(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| {
+                let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+                match kind {
                     "xlsx" => omasheet_interop::xlsx::import(&bytes),
-                    _ => {
-                        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
-                        omasheet_interop::csv::import(&stem, &bytes)
-                    }
-                });
+                    "json" => omasheet_interop::json::import(&stem, &bytes),
+                    _ => omasheet_interop::csv::import(&stem, &bytes),
+                }
+            });
         match imported {
             Ok(Imported { source, notices }) => {
                 {
@@ -471,7 +432,7 @@ impl qobject::Sheet {
     fn open_file(mut self: Pin<&mut Self>, path: PathBuf) -> bool {
         let kind = path.extension().unwrap_or_default().to_string_lossy();
         let kind = kind.to_ascii_lowercase();
-        if matches!(kind.as_str(), "xlsx" | "csv") {
+        if matches!(kind.as_str(), "xlsx" | "csv" | "json") {
             return self.import_file(path, &kind);
         }
         match std::fs::read_to_string(&path) {
@@ -538,7 +499,7 @@ impl qobject::Sheet {
         self.save_file(path)
     }
 
-    fn export_url(mut self: Pin<&mut Self>, url: &QUrl, csv: bool, table: &QString) -> bool {
+    fn export_url(mut self: Pin<&mut Self>, url: &QUrl, kind: &QString, sheet: &QString) -> bool {
         let mut path = PathBuf::from(url.to_local_file_or_default().to_string());
         if path.as_os_str().is_empty() {
             return false;
@@ -546,30 +507,29 @@ impl qobject::Sheet {
         let named = path
             .extension()
             .map(|e| e.to_string_lossy().to_ascii_lowercase());
-        let csv = match named.as_deref() {
-            Some("csv") => true,
-            Some("xlsx") => false,
+        let kind = match named {
+            Some(named) if matches!(named.as_str(), "xlsx" | "csv" | "json") => named,
             _ => {
-                path.as_mut_os_string()
-                    .push(if csv { ".csv" } else { ".xlsx" });
-                csv
+                let kind = kind.to_string();
+                path.as_mut_os_string().push(format!(".{kind}"));
+                kind
             }
         };
-        let table = table.to_string();
-        if csv && table.is_empty() {
-            let message = "CSV holds one table: show the table to export first";
+        let sheet = sheet.to_string();
+        if kind == "csv" && sheet.is_empty() {
+            let message = "CSV holds one sheet: show the sheet to export first";
             self.as_mut().set_status(QString::from(message));
             return false;
         }
         let name = self.rust().file_name.to_string();
         let text = self.rust().doc.text().to_string();
-        let exported = if csv {
-            omasheet_interop::csv::export(&name, &text, Some(&table), Options::default())
-        } else {
-            omasheet_interop::xlsx::export(&name, &text, None, Options::default())
+        let exported = match kind.as_str() {
+            "csv" => omasheet_interop::csv::export(&name, &text, Some(&sheet), Options::default()),
+            "json" => omasheet_interop::json::export(&name, &text, None, Options::default()),
+            _ => omasheet_interop::xlsx::export(&name, &text, None, Options::default()),
         };
         let written = exported
-            .map_err(|_| "the sheet has problems to put right first".to_string())
+            .map_err(|_| "the file has problems to put right first".to_string())
             .and_then(|Exported { files, notices }| {
                 let bytes = files.first().map_or(&[][..], |f| &f.bytes);
                 std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
@@ -590,23 +550,21 @@ impl qobject::Sheet {
         }
     }
 
-    fn export_suggestion(&self, csv: bool, table: &QString, folder: &QUrl) -> QUrl {
+    fn export_suggestion(&self, kind: &QString, sheet: &QString, folder: &QUrl) -> QUrl {
         let rust = self.rust();
         let from = rust.path.as_ref().or(rust.origin.as_ref());
         let mut name = from
             .and_then(|p| p.file_stem())
             .map_or("Untitled".to_string(), |s| s.to_string_lossy().into_owned());
-        if csv {
-            // As the command line names them: budget.Sales.csv, unless the
-            // sheet has the one table.
-            if rust.doc.snapshot().tables.len() > 1 {
-                name.push('.');
-                name.push_str(&table.to_string());
-            }
-            name.push_str(".csv");
-        } else {
-            name.push_str(".xlsx");
+        let kind = kind.to_string();
+        // As the command line names them: budget.Sales.csv, unless the
+        // file has the one sheet.
+        if kind == "csv" && rust.doc.snapshot().sheets.len() > 1 {
+            name.push('.');
+            name.push_str(&sheet.to_string());
         }
+        name.push('.');
+        name.push_str(&kind);
         let folder = from
             .and_then(|p| p.parent())
             .map(PathBuf::from)
@@ -642,301 +600,195 @@ impl qobject::Sheet {
         }
     }
 
-    fn set_cell(self: Pin<&mut Self>, table: i32, row: i32, col: i32, text: &QString) {
+    fn set_cell(self: Pin<&mut Self>, sheet: i32, row: i32, col: i32, text: &QString) {
         let text = text.to_string();
-        self.edit(|doc| doc.set_cell(index(table), index(row), index(col), &text));
+        self.edit(|doc| doc.set_cell(index(sheet), index(row), index(col), &text));
     }
 
-    /// A block of cells as tab-separated text: what they showed if `values`,
-    /// otherwise what they hold.
-    fn block_text(
-        &self,
-        table: i32,
-        (row0, col0): (i32, i32),
-        (row1, col1): (i32, i32),
-        values: bool,
-    ) -> String {
-        let Some(t) = self.rust().doc.snapshot().tables.get(index(table)) else {
-            return String::new();
-        };
-        let mut lines = Vec::new();
-        for row in t.rows.iter().take(index(row1) + 1).skip(index(row0)) {
-            let cells: Vec<&str> = row
-                .iter()
-                .enumerate()
-                .take(index(col1) + 1)
-                .skip(index(col0))
-                // A computed cell has no source of its own, so copy its value:
-                // in full, where it is shown with fewer digits than it has.
-                .map(|(c, cell)| {
-                    if values || t.columns[c].formula.is_some() {
-                        cell.exact.as_deref().unwrap_or(&cell.display)
-                    } else {
-                        cell.source.as_str()
-                    }
-                })
-                .collect();
-            lines.push(cells.join("\t"));
+    /// Cut, copy or paste: with what was last cut or copied, and the document.
+    fn clip<T>(mut self: Pin<&mut Self>, act: impl FnOnce(&mut Clip, &mut Document) -> T) -> T {
+        let mut rust = self.as_mut().rust_mut();
+        let rust = &mut *rust;
+        act(&mut rust.clip, &mut rust.doc)
+    }
+
+    /// A paste, published if it changed anything: why not, if it was refused.
+    fn pasted(
+        mut self: Pin<&mut Self>,
+        act: impl FnOnce(&mut Clip, &mut Document) -> Result<bool, String>,
+    ) -> QString {
+        match self.as_mut().clip(act) {
+            Ok(changed) => {
+                if changed {
+                    self.refresh("");
+                }
+                QString::default()
+            }
+            Err(message) => QString::from(&message),
         }
-        lines.join("\n")
     }
 
-    fn copy_cells(&self, table: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {
-        QString::from(&self.block_text(table, (row0, col0), (row1, col1), false))
+    fn copy_cells(&self, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {
+        let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
+        QString::from(&Clip::text(&self.rust().doc, index(sheet), from, to))
     }
 
     fn copy_block(
-        mut self: Pin<&mut Self>,
-        table: i32,
+        self: Pin<&mut Self>,
+        sheet: i32,
         row0: i32,
         col0: i32,
         row1: i32,
         col1: i32,
         columns: bool,
     ) -> QString {
-        let text = self.block_text(table, (row0, col0), (row1, col1), false);
-        let values = self.block_text(table, (row0, col0), (row1, col1), true);
-        let names: Option<Vec<String>> =
-            self.rust()
-                .doc
-                .snapshot()
-                .tables
-                .get(index(table))
-                .map(|t| {
-                    let picked = t.columns.iter().take(index(col1) + 1).skip(index(col0));
-                    picked.map(|c| c.name.clone()).collect()
-                });
-        let mut rust = self.as_mut().rust_mut();
-        rust.cut = None;
-        rust.copied = Some(Copied {
-            table: index(table),
-            text: text.clone(),
-            values,
-            columns: names.filter(|_| columns),
-        });
-        QString::from(&text)
-    }
-
-    /// What was last copied, if `text` from the clipboard is still that.
-    fn copied(&self, text: &str) -> Option<&Copied> {
-        let copied = self.rust().copied.as_ref()?;
-        (parse_block(&copied.text) == parse_block(text)).then_some(copied)
-    }
-
-    fn paste_values(
-        mut self: Pin<&mut Self>,
-        table: i32,
-        row0: i32,
-        col0: i32,
-        row1: i32,
-        col1: i32,
-        text: &QString,
-    ) {
-        let text = text.to_string();
-        let values = self.copied(&text).map(|c| c.values.clone());
-        self.as_mut().rust_mut().cut = None;
-        let block = parse_block(values.as_deref().unwrap_or(&text));
-        self.put_block(table, (index(row0), index(col0)), (row1, col1), block);
-    }
-
-    fn paste_transposed(
-        mut self: Pin<&mut Self>,
-        table: i32,
-        row0: i32,
-        col0: i32,
-        row1: i32,
-        col1: i32,
-        text: &QString,
-    ) {
-        self.as_mut().rust_mut().cut = None;
-        let block = transposed(&parse_block(&text.to_string()));
-        self.put_block(table, (index(row0), index(col0)), (row1, col1), block);
-    }
-
-    fn insert_copied(
-        mut self: Pin<&mut Self>,
-        table: i32,
-        row0: i32,
-        col0: i32,
-        text: &QString,
-    ) -> QString {
-        let text = text.to_string();
-        self.as_mut().rust_mut().cut = None;
-        // Whole columns copied from this table go in as columns, if they
-        // are all still there.
-        let columns = self.copied(&text).and_then(|copied| {
-            let names = copied.columns.as_ref()?;
-            let t = self.rust().doc.snapshot().tables.get(copied.table)?;
-            let at = |name: &String| t.columns.iter().position(|c| &c.name == name);
-            let cols: Option<Vec<usize>> = names.iter().map(at).collect();
-            cols.filter(|_| copied.table == index(table))
-        });
-        match columns {
-            Some(cols) => self.try_edit(|doc| doc.insert_copies(index(table), &cols, index(col0))),
-            None => {
-                let block = parse_block(&text);
-                self.edit(|doc| doc.insert_cells(index(table), (index(row0), index(col0)), &block));
-                QString::default()
-            }
-        }
+        let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
+        QString::from(&self.clip(|clip, doc| clip.copy(doc, index(sheet), from, to, columns)))
     }
 
     fn cut_cells(
-        mut self: Pin<&mut Self>,
-        table: i32,
+        self: Pin<&mut Self>,
+        sheet: i32,
         row0: i32,
         col0: i32,
         row1: i32,
         col1: i32,
     ) -> QString {
-        let text = self.copy_cells(table, row0, col0, row1, col1);
-        self.as_mut().clear_cells(table, row0, col0, row1, col1);
-        let after = self.rust().doc.text().to_string();
-        self.as_mut().rust_mut().cut = Some(Cut {
-            table: index(table),
-            at: (index(row0), index(col0)),
-            text: text.to_string(),
-            after,
-        });
-        text
+        let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
+        QString::from(&self.clip(|clip, doc| clip.cut(doc, index(sheet), from, to)))
+    }
+
+    fn forget_cut(self: Pin<&mut Self>) {
+        self.clip(|clip, _| clip.forget_cut());
     }
 
     fn paste_cells(
-        mut self: Pin<&mut Self>,
-        table: i32,
+        self: Pin<&mut Self>,
+        sheet: i32,
         row0: i32,
         col0: i32,
         row1: i32,
         col1: i32,
         text: &QString,
-    ) {
+    ) -> QString {
         let text = text.to_string();
-        let block = parse_block(&text);
-        let (row0, col0) = (index(row0), index(col0));
-        // Cells cut from this table, with nothing done since, are moved.
-        let cut = self.as_mut().rust_mut().cut.take();
-        if let Some(cut) = cut
-            && cut.table == index(table)
-            && parse_block(&cut.text) == block
-            && cut.after == self.rust().doc.text()
-        {
-            self.edit(|doc| doc.paste_cut(cut.table, cut.at, (row0, col0), &block));
-            return;
-        }
-        self.put_block(table, (row0, col0), (row1, col1), block);
+        let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
+        self.pasted(|clip, doc| clip.paste(doc, index(sheet), from, to, &text))
     }
 
-    /// Put a block of cells down at a block; a single cell fills it.
-    fn put_block(
+    fn paste_values(
         self: Pin<&mut Self>,
-        table: i32,
-        (row0, col0): (usize, usize),
-        (row1, col1): (i32, i32),
-        block: Vec<Vec<String>>,
-    ) {
-        let single = block.len() == 1 && block[0].len() == 1;
-        let computed: Vec<bool> = self
-            .rust()
-            .doc
-            .snapshot()
-            .tables
-            .get(index(table))
-            .map(|t| t.columns.iter().map(|c| c.formula.is_some()).collect())
-            .unwrap_or_default();
-        let mut cells = Vec::new();
-        let mut put = |row: usize, col: usize, text: &str| {
-            if computed.get(col) == Some(&false) {
-                cells.push((row, col, text.to_string()));
-            }
-        };
-        if single {
-            for row in row0..=index(row1).max(row0) {
-                for col in col0..=index(col1).max(col0) {
-                    put(row, col, &block[0][0]);
-                }
-            }
-        } else {
-            for (i, line) in block.iter().enumerate() {
-                for (j, text) in line.iter().enumerate() {
-                    put(row0 + i, col0 + j, text);
-                }
-            }
-        }
-        self.edit(|doc| doc.set_cells(index(table), &cells));
+        sheet: i32,
+        row0: i32,
+        col0: i32,
+        row1: i32,
+        col1: i32,
+        text: &QString,
+    ) -> QString {
+        let text = text.to_string();
+        let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
+        self.pasted(|clip, doc| clip.paste_values(doc, index(sheet), from, to, &text))
     }
 
-    fn clear_cells(self: Pin<&mut Self>, table: i32, row0: i32, col0: i32, row1: i32, col1: i32) {
-        let Some(t) = self.rust().doc.snapshot().tables.get(index(table)) else {
-            return;
-        };
-        let mut cells = Vec::new();
-        for row in index(row0)..=index(row1).min(t.rows.len().saturating_sub(1)) {
-            for col in index(col0)..=index(col1) {
-                if t.columns.get(col).is_some_and(|c| c.formula.is_none()) {
-                    cells.push((row, col, String::new()));
-                }
-            }
-        }
-        if t.rows.is_empty() {
-            return;
-        }
-        self.edit(|doc| doc.set_cells(index(table), &cells));
+    fn paste_transposed(
+        self: Pin<&mut Self>,
+        sheet: i32,
+        row0: i32,
+        col0: i32,
+        row1: i32,
+        col1: i32,
+        text: &QString,
+    ) -> QString {
+        let text = text.to_string();
+        let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
+        self.pasted(|clip, doc| clip.paste_transposed(doc, index(sheet), from, to, &text))
     }
 
-    fn insert_rows(self: Pin<&mut Self>, table: i32, at: i32, count: i32) {
-        self.edit(|doc| doc.insert_rows(index(table), index(at), index(count)));
+    fn insert_copied(
+        self: Pin<&mut Self>,
+        sheet: i32,
+        row0: i32,
+        col0: i32,
+        text: &QString,
+    ) -> QString {
+        let text = text.to_string();
+        let at = (index(row0), index(col0));
+        self.pasted(|clip, doc| clip.insert(doc, index(sheet), at, &text))
     }
 
-    fn delete_rows(self: Pin<&mut Self>, table: i32, first: i32, count: i32) {
-        self.edit(|doc| doc.delete_rows(index(table), index(first), index(count)));
+    fn clear_cells(self: Pin<&mut Self>, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) {
+        let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
+        self.edit(|doc| Clip::clear(doc, index(sheet), from, to));
     }
 
-    fn add_column(self: Pin<&mut Self>, table: i32, name: &QString) -> QString {
+    fn insert_rows(self: Pin<&mut Self>, sheet: i32, at: i32, count: i32) {
+        self.edit(|doc| doc.insert_rows(index(sheet), index(at), index(count)));
+    }
+
+    fn delete_rows(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32) {
+        self.edit(|doc| doc.delete_rows(index(sheet), index(first), index(count)));
+    }
+
+    fn add_column(self: Pin<&mut Self>, sheet: i32, name: &QString) -> QString {
         let name = name.to_string();
-        self.try_edit(|doc| doc.add_column(index(table), &name))
+        self.try_edit(|doc| doc.add_column(index(sheet), &name))
     }
 
-    fn insert_column(self: Pin<&mut Self>, table: i32, at: i32, name: &QString) -> QString {
+    fn insert_column(self: Pin<&mut Self>, sheet: i32, at: i32, name: &QString) -> QString {
         let name = name.to_string();
-        self.try_edit(|doc| doc.insert_column(index(table), index(at), &name))
+        self.try_edit(|doc| doc.insert_column(index(sheet), index(at), &name))
     }
 
     fn insert_computed(
         self: Pin<&mut Self>,
-        table: i32,
+        sheet: i32,
         at: i32,
         name: &QString,
         expr: &QString,
     ) -> QString {
         let (name, expr) = (name.to_string(), expr.to_string());
-        self.try_edit(|doc| doc.insert_computed(index(table), index(at), &name, &expr))
+        self.try_edit(|doc| doc.insert_computed(index(sheet), index(at), &name, &expr))
     }
 
-    fn add_computed(self: Pin<&mut Self>, table: i32, name: &QString, expr: &QString) -> QString {
+    fn add_computed(self: Pin<&mut Self>, sheet: i32, name: &QString, expr: &QString) -> QString {
         let (name, expr) = (name.to_string(), expr.to_string());
-        self.try_edit(|doc| doc.add_computed(index(table), &name, &expr))
+        self.try_edit(|doc| doc.add_computed(index(sheet), &name, &expr))
     }
 
-    fn rename_column(self: Pin<&mut Self>, table: i32, col: i32, name: &QString) -> QString {
+    fn rename_column(self: Pin<&mut Self>, sheet: i32, col: i32, name: &QString) -> QString {
         let name = name.to_string();
-        self.try_edit(|doc| doc.rename_column(index(table), index(col), &name))
+        self.try_edit(|doc| doc.rename_column(index(sheet), index(col), &name))
     }
 
-    fn delete_columns(self: Pin<&mut Self>, table: i32, first: i32, count: i32) -> QString {
-        self.try_edit(|doc| doc.delete_columns(index(table), index(first), index(count)))
+    fn delete_columns(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32) -> QString {
+        self.try_edit(|doc| doc.delete_columns(index(sheet), index(first), index(count)))
     }
 
-    fn move_rows(self: Pin<&mut Self>, table: i32, first: i32, count: i32, to: i32) -> QString {
-        self.try_edit(|doc| doc.move_rows(index(table), index(first), index(count), index(to)))
+    fn move_rows(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, to: i32) -> QString {
+        self.try_edit(|doc| doc.move_rows(index(sheet), index(first), index(count), index(to)))
     }
 
-    fn move_columns(self: Pin<&mut Self>, table: i32, first: i32, count: i32, to: i32) -> QString {
-        self.try_edit(|doc| doc.move_columns(index(table), index(first), index(count), index(to)))
+    fn move_columns(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, to: i32) -> QString {
+        self.try_edit(|doc| doc.move_columns(index(sheet), index(first), index(count), index(to)))
     }
 
-    fn add_table(self: Pin<&mut Self>, name: &QString) -> QString {
+    fn add_sheet(self: Pin<&mut Self>, name: &QString) -> QString {
         let name = name.to_string();
-        self.try_edit(|doc| doc.add_table(&name))
+        self.try_edit(|doc| doc.add_sheet(&name))
+    }
+
+    fn insert_sheet(self: Pin<&mut Self>, at: i32, name: &QString) -> QString {
+        let name = name.to_string();
+        self.try_edit(|doc| doc.insert_sheet(index(at), &name))
+    }
+
+    fn rename_sheet(self: Pin<&mut Self>, sheet: i32, name: &QString) -> QString {
+        let name = name.to_string();
+        self.try_edit(|doc| doc.rename_sheet(index(sheet), &name))
+    }
+
+    fn delete_sheet(self: Pin<&mut Self>, sheet: i32) -> QString {
+        self.try_edit(|doc| doc.delete_sheet(index(sheet)))
     }
 
     fn add_const(self: Pin<&mut Self>, name: &QString, expr: &QString) -> QString {
@@ -984,10 +836,10 @@ impl qobject::Sheet {
         QString::from(&entry_hint(&style(), &ty))
     }
 
-    fn selection_summary(&self, table: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {
+    fn selection_summary(&self, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {
         let doc = &self.rust().doc;
         let from = (index(row0), index(col0));
-        let Some(summary) = doc.summary(index(table), from, (index(row1), index(col1))) else {
+        let Some(summary) = doc.summary(index(sheet), from, (index(row1), index(col1))) else {
             return QString::default();
         };
         let mut text = format!("Count {}", summary.count);
@@ -1003,7 +855,7 @@ impl qobject::Sheet {
         if !self.watching {
             self.as_mut().rust_mut().watching = true;
             let thread = self.qt_thread();
-            theme::watch(move || thread.queue(|sheet| sheet.reload_theme()).is_ok());
+            theme::watch(move || thread.queue(|file| file.reload_theme()).is_ok());
         }
     }
 
@@ -1019,23 +871,5 @@ impl qobject::Sheet {
             .set_theme_selection(QString::from(&theme.selection));
         self.as_mut().set_theme_muted(QString::from(&theme.muted));
         self.as_mut().set_theme_error(QString::from(&theme.error));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{parse_block, transposed};
-
-    #[test]
-    fn parses_clipboard_blocks() {
-        assert_eq!(parse_block("a\tb\r\nc\t\n"), [["a", "b"], ["c", ""]]);
-        assert_eq!(parse_block("x"), [["x"]]);
-    }
-
-    #[test]
-    fn transposes_blocks() {
-        let block = parse_block("a\tb\tc\nd");
-        assert_eq!(transposed(&block), [["a", "d"], ["b", ""], ["c", ""]]);
-        assert_eq!(transposed(&parse_block("x")), [["x"]]);
     }
 }

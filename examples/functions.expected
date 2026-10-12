@@ -3,14 +3,14 @@ const Everything = 105
 const Large = 45
 const Diagonal = 5
 
-table Customers
+sheet Customers
 
 ID | Name
 ---|----------
  1 | Ada Ltd
  2 | Grace Inc
 
-table Orders
+sheet Orders
 
 CustomerID | Qty | Price | Cost | Customer  | Net | Gross | Margin
 -----------|-----|-------|------|-----------|-----|-------|-------

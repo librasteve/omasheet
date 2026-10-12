@@ -20,26 +20,31 @@ use std::rc::Rc;
 
 #[derive(Clone, Debug, Default)]
 pub enum Value {
-    /// No value: a blank cell, or a row offset outside the table.
+    /// No value: a blank cell, or a row offset outside the sheet.
     #[default]
     Empty,
     /// A cell whose calculation failed; the diagnostic was already reported.
     Error,
     Int(BigInt),
+    /// An exact number that is not whole and ends as a decimal, shown as
+    /// one: `2.75`.
+    Decimal(BigRational),
+    /// An exact number that is not whole, shown as a fraction: `1/3`, and
+    /// `11/4` as `2 3/4`.
     Fraction(BigRational),
     /// An exact number shown as a percentage: `1/5` for `20%`. It may be
     /// whole, `100%`.
     Percent(BigRational),
-    /// An exact number shown as a ratio: `3/2` for `3:2`. It may be whole,
-    /// `4:1`.
-    Ratio(BigRational),
     Num(f64),
     Complex(f64, f64),
-    Text(Rc<str>),
+    /// Text, and whether it was written bare in a cell, to be read as
+    /// Markdown where a file is shown as a document. Text written in quotes,
+    /// or made by a formula, is as it is.
+    Text(Rc<str>, bool),
     Bool(bool),
     Date(i32),
     Time(i32),
-    /// What the clocks of the sheet's time zone show.
+    /// What the clocks of the file's time zone show.
     DateTime(i64),
     /// A date-time moved to another time zone.
     Zoned(Rc<Zoned>),
@@ -51,37 +56,54 @@ pub enum Value {
         exclusive: bool,
     },
     Vector(Rc<Vec<Value>>),
-    Table(View),
+    Sheet(View),
     Row(RowRef),
 }
 
-/// Rows and columns of a sheet table, by index. Cells are read on demand, so
+/// Rows and columns of a sheet of the file, by index. Cells are read on demand, so
 /// selecting never copies data.
 #[derive(Clone, Debug)]
 pub struct View {
-    pub table: usize,
+    pub sheet: usize,
     pub rows: Rc<Vec<usize>>,
     pub cols: Rc<Vec<usize>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct RowRef {
-    pub table: usize,
+    pub sheet: usize,
     pub row: usize,
     pub cols: Rc<Vec<usize>>,
 }
 
 impl Value {
-    pub fn text(s: &str) -> Value {
-        Value::Text(Rc::from(s))
+    /// Whether this is text to be read as Markdown: see [`Value::Text`].
+    pub fn is_markdown(&self) -> bool {
+        matches!(self, Value::Text(_, true))
     }
 
-    /// An exact number, as an `Int` when it is whole.
+    pub fn text(s: &str) -> Value {
+        Value::Text(Rc::from(s), false)
+    }
+
+    /// An exact number: an `Int` when it is whole, a `Decimal` when it ends
+    /// as one, and otherwise a `Fraction`.
     pub fn exact(r: BigRational) -> Value {
         if r.is_integer() {
             Value::Int(r.to_integer())
+        } else if is_decimal(&r) {
+            Value::Decimal(r)
         } else {
             Value::Fraction(r)
+        }
+    }
+
+    /// An exact number as a fraction, `2.75` as `2 3/4`; anything else as it
+    /// is. A whole one stays an `Int`.
+    pub fn fraction(self) -> Value {
+        match self {
+            Value::Decimal(r) => Value::Fraction(r),
+            other => other,
         }
     }
 
@@ -89,25 +111,16 @@ impl Value {
     pub fn percent(self) -> Value {
         match self {
             Value::Int(n) => Value::Percent(BigRational::from_integer(n)),
-            Value::Fraction(r) | Value::Ratio(r) => Value::Percent(r),
+            Value::Decimal(r) | Value::Fraction(r) => Value::Percent(r),
             other => other,
         }
     }
 
-    /// An exact number as a ratio; anything else as it is.
-    pub fn ratio(self) -> Value {
-        match self {
-            Value::Int(n) => Value::Ratio(BigRational::from_integer(n)),
-            Value::Fraction(r) | Value::Percent(r) => Value::Ratio(r),
-            other => other,
-        }
-    }
-
-    /// A percentage or a ratio as the plain number it stands for; anything
-    /// else as it is.
+    /// A percentage as the plain number it stands for; anything else as it
+    /// is.
     pub fn plain(self) -> Value {
         match self {
-            Value::Percent(r) | Value::Ratio(r) => Value::exact(r),
+            Value::Percent(r) => Value::exact(r),
             other => other,
         }
     }
@@ -115,9 +128,9 @@ impl Value {
     pub fn from_lit(l: &Lit) -> Value {
         match l {
             Lit::Int(n) => Value::Int(n.clone()),
-            Lit::Decimal(r) | Lit::Fraction(r) => Value::exact(r.clone()),
+            Lit::Decimal(r) => Value::exact(r.clone()),
+            Lit::Fraction(r) => Value::exact(r.clone()).fraction(),
             Lit::Percent(r) => Value::Percent(r.clone()),
-            Lit::Ratio(r) => Value::Ratio(r.clone()),
             Lit::Num(f) => Value::Num(*f),
             Lit::Complex(re, im) => Value::Complex(*re, *im),
             Lit::Text(s) => Value::text(s),
@@ -134,21 +147,19 @@ impl Value {
             Value::Empty => "empty",
             Value::Error => "an error",
             Value::Int(_) => "Int",
-            // A fraction that ends as a decimal is a `Decimal`.
-            Value::Fraction(r) if is_decimal(r) => "Decimal",
+            Value::Decimal(_) => "Decimal",
             Value::Fraction(_) => "Fraction",
             Value::Percent(_) => "Percent",
-            Value::Ratio(_) => "Ratio",
             Value::Num(_) => "Num",
             Value::Complex(..) => "Complex",
-            Value::Text(_) => "Text",
+            Value::Text(..) => "Text",
             Value::Bool(_) => "Bool",
             Value::Date(_) => "Date",
             Value::Time(_) => "Time",
             Value::DateTime(_) | Value::Zoned(_) => "DateTime",
             Value::Range { .. } => "a range",
             Value::Vector(_) => "a vector",
-            Value::Table(_) => "a table",
+            Value::Sheet(_) => "a sheet",
             Value::Row(_) => "a row",
         }
     }
@@ -157,9 +168,9 @@ impl Value {
         matches!(
             self,
             Value::Int(_)
+                | Value::Decimal(_)
                 | Value::Fraction(_)
                 | Value::Percent(_)
-                | Value::Ratio(_)
                 | Value::Num(_)
                 | Value::Complex(..)
         )
@@ -170,13 +181,12 @@ impl Value {
     fn to_lit(&self) -> Option<Lit> {
         Some(match self {
             Value::Int(n) => Lit::Int(n.clone()),
-            Value::Fraction(r) if is_decimal(r) => Lit::Decimal(r.clone()),
+            Value::Decimal(r) => Lit::Decimal(r.clone()),
             Value::Fraction(r) => Lit::Fraction(r.clone()),
             Value::Percent(r) => Lit::Percent(r.clone()),
-            Value::Ratio(r) => Lit::Ratio(r.clone()),
             Value::Num(f) => Lit::Num(*f),
             Value::Complex(re, im) => Lit::Complex(*re, *im),
-            Value::Text(s) => Lit::Text(s.to_string()),
+            Value::Text(s, _) => Lit::Text(s.to_string()),
             Value::Bool(b) => Lit::Bool(*b),
             Value::Date(d) => Lit::Date(*d),
             Value::Time(t) => Lit::Time(*t),
@@ -191,11 +201,11 @@ impl Value {
     pub fn converted(&self, to: S) -> Result<Value, String> {
         let fits = match (self, to) {
             (Value::Empty, _) | (_, S::Any) => true,
-            (Value::Zoned(_), S::DateTime) | (Value::Text(_), S::Text) => true,
+            (Value::Zoned(_), S::DateTime) | (Value::Text(..), S::Text) => true,
             // A whole `Decimal` or `Fraction` is held as an `Int`.
             (Value::Int(_), S::Int | S::Decimal | S::Fraction) => true,
-            (Value::Fraction(_), S::Fraction) | (Value::Percent(_), S::Percent) => true,
-            (Value::Ratio(_), S::Ratio) => true,
+            (Value::Decimal(_), S::Decimal) | (Value::Fraction(_), S::Fraction) => true,
+            (Value::Percent(_), S::Percent) => true,
             _ => false,
         };
         if fits {
@@ -227,7 +237,7 @@ enum N {
 fn number(v: &Value) -> Option<N> {
     Some(match v {
         Value::Int(n) => N::Exact(BigRational::from_integer(n.clone())),
-        Value::Fraction(r) | Value::Percent(r) | Value::Ratio(r) => N::Exact(r.clone()),
+        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => N::Exact(r.clone()),
         Value::Num(f) => N::Num(*f),
         Value::Complex(re, im) => N::Complex(*re, *im),
         _ => return None,
@@ -266,16 +276,6 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     if let (Value::Percent(x), Value::Percent(y), BinOp::Add | BinOp::Sub) = (a, b, op) {
         return Ok(Value::Percent(if op == BinOp::Add { x + y } else { x - y }));
     }
-    // Ratios add, multiply and divide to a ratio.
-    if let (Value::Ratio(x), Value::Ratio(y)) = (a, b) {
-        match op {
-            BinOp::Add => return Ok(Value::Ratio(x + y)),
-            BinOp::Sub => return Ok(Value::Ratio(x - y)),
-            BinOp::Mul => return Ok(Value::Ratio(x * y)),
-            BinOp::Div if !y.is_zero() => return Ok(Value::Ratio(x / y)),
-            _ => {}
-        }
-    }
     let (Some(x), Some(y)) = (number(a), number(b)) else {
         return Err(format!(
             "cannot apply `{}` to {} and {}",
@@ -285,7 +285,14 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         ));
     };
     match (&x, &y) {
-        (N::Exact(x), N::Exact(y)) => exact_arith(op, x, y),
+        // Anything done with a fraction gives a fraction.
+        (N::Exact(x), N::Exact(y)) => exact_arith(op, x, y).map(|v| {
+            if matches!(a, Value::Fraction(_)) || matches!(b, Value::Fraction(_)) {
+                v.fraction()
+            } else {
+                v
+            }
+        }),
         (N::Complex(..), _) | (_, N::Complex(..)) => {
             let ((a, b), (c, d)) = (complex(&x), complex(&y));
             let (re, im) = match op {
@@ -381,6 +388,18 @@ fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
     })
 }
 
+/// An exact number divided by zero, which no exact number is: `Inf` or
+/// `-Inf` by its sign, and `NaN` for zero.
+fn over_zero(x: &BigRational) -> f64 {
+    if x.is_zero() {
+        f64::NAN
+    } else if x.is_negative() {
+        f64::NEG_INFINITY
+    } else {
+        f64::INFINITY
+    }
+}
+
 fn exact_arith(op: BinOp, x: &BigRational, y: &BigRational) -> Result<Value, String> {
     Ok(Value::exact(match op {
         BinOp::Add => x + y,
@@ -388,7 +407,7 @@ fn exact_arith(op: BinOp, x: &BigRational, y: &BigRational) -> Result<Value, Str
         BinOp::Mul => x * y,
         BinOp::Div => {
             if y.is_zero() {
-                return Err("division by zero".into());
+                return Ok(Value::Num(over_zero(x)));
             }
             x / y
         }
@@ -402,7 +421,7 @@ fn exact_arith(op: BinOp, x: &BigRational, y: &BigRational) -> Result<Value, Str
                 return Err("the exponent is too large".into());
             };
             if x.is_zero() && e < 0 {
-                return Err("division by zero".into());
+                return Ok(Value::Num(f64::INFINITY));
             }
             x.pow(e)
         }
@@ -418,22 +437,26 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
         (Value::Percent(r), MathFn::Abs) => return Ok(Value::Percent(r.abs())),
         (Value::Percent(_), MathFn::Re | MathFn::Conj) => return Ok(v.clone()),
         (Value::Percent(_), _) => return math(m, &v.clone().plain()),
-        (Value::Ratio(r), MathFn::Abs) => return Ok(Value::Ratio(r.abs())),
-        (Value::Ratio(_), MathFn::Re | MathFn::Conj) => return Ok(v.clone()),
-        (Value::Ratio(_), _) => return math(m, &v.clone().plain()),
         (Value::Int(n), MathFn::Abs) => return Ok(Value::Int(n.abs())),
         (Value::Int(n), MathFn::Sign) => return Ok(Value::Int(n.signum())),
-        (Value::Int(_) | Value::Fraction(_), MathFn::Im) => return Ok(Value::Int(BigInt::from(0))),
-        (Value::Fraction(_), MathFn::Re | MathFn::Conj) => return Ok(v.clone()),
+        (Value::Int(_) | Value::Decimal(_) | Value::Fraction(_), MathFn::Im) => {
+            return Ok(Value::Int(BigInt::from(0)));
+        }
+        (Value::Decimal(_) | Value::Fraction(_), MathFn::Re | MathFn::Conj) => {
+            return Ok(v.clone());
+        }
         (Value::Complex(re, im), _) => return complex_math(m, *re, *im),
         (Value::Int(_), _) if m.is_exact() => return Ok(v.clone()),
+        (Value::Decimal(r), MathFn::Abs) => return Ok(Value::Decimal(r.abs())),
         (Value::Fraction(r), MathFn::Abs) => return Ok(Value::Fraction(r.abs())),
-        (Value::Fraction(r), MathFn::Sign) => return Ok(Value::Int(r.numer().signum())),
-        (Value::Fraction(r), MathFn::Round) => return Ok(whole(r.round())),
-        (Value::Fraction(r), MathFn::Floor) => return Ok(whole(r.floor())),
-        (Value::Fraction(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
+        (Value::Decimal(r) | Value::Fraction(r), MathFn::Sign) => {
+            return Ok(Value::Int(r.numer().signum()));
+        }
+        (Value::Decimal(r) | Value::Fraction(r), MathFn::Round) => return Ok(whole(r.round())),
+        (Value::Decimal(r) | Value::Fraction(r), MathFn::Floor) => return Ok(whole(r.floor())),
+        (Value::Decimal(r) | Value::Fraction(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
         (Value::Int(n), _) => n.to_f64().unwrap_or(f64::NAN),
-        (Value::Fraction(r), _) => to_f64(r),
+        (Value::Decimal(r) | Value::Fraction(r), _) => to_f64(r),
         (Value::Num(f), _) => *f,
         (other, _) => {
             return Err(format!(
@@ -443,16 +466,9 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
             ));
         }
     };
-    let y = m.apply(x);
-    // Outside the function's domain, such as `sqrt(-1)` or `ln(0)`.
-    if x.is_finite() && !y.is_finite() {
-        return Err(format!(
-            "`{}` is not defined for {}",
-            m.name(),
-            format_num(x, true)
-        ));
-    }
-    Ok(Value::Num(y))
+    // Outside the function's domain it is as Raku has it: `sqrt(-1)` is
+    // `NaN` and `ln(0)` is `-Inf`.
+    Ok(Value::Num(m.apply(x)))
 }
 
 fn complex_math(m: MathFn, re: f64, im: f64) -> Result<Value, String> {
@@ -469,17 +485,22 @@ fn complex_math(m: MathFn, re: f64, im: f64) -> Result<Value, String> {
             Value::Complex(((r + re) / 2.0).sqrt(), if im < 0.0 { -half } else { half })
         }
         MathFn::Exp => Value::Complex(re.exp() * im.cos(), re.exp() * im.sin()),
-        MathFn::Ln if r == 0.0 => return Err("`ln` is not defined for zero".into()),
         MathFn::Ln => Value::Complex(r.ln(), im.atan2(re)),
         _ => return Err(format!("`{}` is not defined for Complex", m.name())),
     })
 }
 
-/// Order two single values. `None` if either is empty.
+/// Whether a value is `NaN`, which is not equal to, less than or more than
+/// anything, itself included.
+pub fn is_nan(v: &Value) -> bool {
+    matches!(v, Value::Num(f) if f.is_nan())
+}
+
+/// Order two single values. `None` if either is empty, or `NaN`.
 pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
     Ok(Some(match (a, b) {
         (Value::Empty, _) | (_, Value::Empty) => return Ok(None),
-        (Value::Text(x), Value::Text(y)) => x.cmp(y),
+        (Value::Text(x, _), Value::Text(y, _)) => x.cmp(y),
         (Value::Date(x), Value::Date(y)) => x.cmp(y),
         (Value::Time(x), Value::Time(y)) => x.cmp(y),
         (Value::DateTime(x), Value::DateTime(y)) => x.cmp(y),
@@ -560,6 +581,16 @@ pub fn format_rat(r: &BigRational) -> String {
     decimal(&scaled, r.is_negative(), scale)
 }
 
+/// A `Fraction` as it is shown: `3/4`, and one of more than one as a whole
+/// number and a part, `2 3/4` for `11/4`.
+pub fn format_mixed(r: &BigRational) -> String {
+    let (whole, part) = (r.trunc().to_integer(), r.fract().abs());
+    if whole.is_zero() || part.is_zero() {
+        return format!("{}/{}", r.numer(), r.denom());
+    }
+    format!("{whole} {}/{}", part.numer(), part.denom())
+}
+
 /// How many digits a `Percent` that does not end is shown with after the
 /// decimal point.
 pub const PERCENT_DIGITS: usize = 2;
@@ -579,12 +610,6 @@ pub fn format_percent(r: &BigRational, exact: bool) -> String {
         .to_integer();
     let shown = decimal(&rounded, hundred.is_negative(), PERCENT_DIGITS);
     format!("{shown}{MORE}%")
-}
-
-/// A `Ratio` as it is shown and written: its two whole numbers in their
-/// lowest terms, `3:2`, and a whole one to one, `4:1`.
-pub fn format_ratio(r: &BigRational) -> String {
-    format!("{}:{}", r.numer(), r.denom())
 }
 
 /// An exact number rounded for a `Num` to be shown as: a decimal with up to
@@ -640,7 +665,7 @@ pub fn format_num(f: f64, exact: bool) -> String {
     format!("{mantissa}e{sign}{:02}", exponent.abs())
 }
 
-/// A single value as text, the way a sheet shows it. `quoted` puts text in
+/// A single value as text, the way a file shows it. `quoted` puts text in
 /// quotes, as inside a vector.
 pub fn format_scalar(v: &Value, quoted: bool) -> String {
     format_styled(v, quoted, &Style::ISO)
@@ -662,10 +687,12 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         Value::Empty => String::new(),
         Value::Error => "#ERROR".into(),
         Value::Int(n) => n.to_string(),
-        // A `Decimal` in full, `19.99`, and any other `Fraction` as `x/y`.
-        Value::Fraction(r) => format_rat(r),
+        // A `Decimal` in full, `19.99`. A `Fraction` as a whole number and a
+        // part, `2 3/4`, and as `11/4` when `exact`, which is how it is written.
+        Value::Decimal(r) => format_rat(r),
+        Value::Fraction(r) if exact => format!("{}/{}", r.numer(), r.denom()),
+        Value::Fraction(r) => format_mixed(r),
         Value::Percent(r) => format_percent(r, exact),
-        Value::Ratio(r) => format_ratio(r),
         Value::Num(f) => format_num(*f, exact),
         // Each part as a `Num` is written: `3+4i`, `1.5-2i`.
         Value::Complex(re, im) => {
@@ -675,13 +702,13 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
             let i = if im.is_finite() { "i" } else { "\\i" };
             format!("{re}{plus}{part}{i}")
         }
-        Value::Text(s) if quoted => format!("{s:?}"),
-        Value::Text(s) => s.to_string(),
+        Value::Text(s, _) if quoted => format!("{s:?}"),
+        Value::Text(s, _) => s.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Date(d) => style.date(*d),
         Value::Time(t) => style.time(*t),
         Value::DateTime(t) => style.datetime(*t),
-        // `2025-01-31T09:30+09:00`, to tell it from the sheet's own zone.
+        // `2025-01-31T09:30+09:00`, to tell it from the file's own zone.
         Value::Zoned(z) => format!(
             "{}{}{}",
             style.datetime(z.wall),
@@ -712,7 +739,7 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
                 .collect();
             format!("[{}]", parts.join(", "))
         }
-        Value::Table(_) => "<table>".into(),
+        Value::Sheet(_) => "<sheet>".into(),
         Value::Row(_) => "<row>".into(),
     }
 }
@@ -737,11 +764,12 @@ mod tests {
 
     #[test]
     fn shows_rationals() {
-        assert_eq!(format_ratio(&rat(3, 2)), "3:2");
-        assert_eq!(format_ratio(&rat(6, 4)), "3:2");
-        assert_eq!(format_ratio(&rat(4, 1)), "4:1");
-        assert_eq!(format_ratio(&rat(-7, 3)), "-7:3");
         assert_eq!(format_rat(&rat(22, 7)), "22/7");
+        assert_eq!(format_mixed(&rat(22, 7)), "3 1/7");
+        assert_eq!(format_mixed(&rat(11, 4)), "2 3/4");
+        assert_eq!(format_mixed(&rat(-11, 4)), "-2 3/4");
+        assert_eq!(format_mixed(&rat(3, 4)), "3/4");
+        assert_eq!(format_mixed(&rat(-1, 3)), "-1/3");
         assert_eq!(format_fraction(&rat(175, 4)), "43.75");
         assert_eq!(format_fraction(&rat(1, 100_000)), "0.00001");
         assert_eq!(format_fraction(&rat(1, 3)), "0.33333…");
@@ -823,8 +851,8 @@ mod tests {
         assert_eq!(shown(third.converted(S::Int)), "-2");
         assert_eq!(shown(third.converted(S::Fraction)), "-7/3");
         assert_eq!(shown(third.converted(S::Text)), "\"-7/3\"");
-        assert_eq!(shown(Value::Num(0.1).converted(S::Fraction)), "0.1");
-        assert_eq!(shown(Value::text("1/8").converted(S::Fraction)), "0.125");
+        assert_eq!(shown(Value::Num(0.1).converted(S::Fraction)), "1/10");
+        assert_eq!(shown(Value::text("1/8").converted(S::Fraction)), "1/8");
         assert_eq!(
             shown(Value::Date(1).converted(S::DateTime)),
             "1970-01-02T00:00"
@@ -844,7 +872,18 @@ mod tests {
         assert!(matches!(third, Value::Fraction(_)));
         let one = arith(BinOp::Mul, &third, &Value::Int(3.into())).unwrap();
         assert!(matches!(one, Value::Int(n) if n.is_one()));
-        assert!(arith(BinOp::Div, &Value::Int(1.into()), &Value::Int(0.into())).is_err());
+    }
+
+    #[test]
+    fn division_by_zero_is_a_num() {
+        let over_zero = |n: i64| {
+            let v = arith(BinOp::Div, &Value::Int(n.into()), &Value::Int(0.into())).unwrap();
+            assert!(matches!(v, Value::Num(_)));
+            format_scalar(&v, false)
+        };
+        assert_eq!(over_zero(1), "Inf");
+        assert_eq!(over_zero(-1), "-Inf");
+        assert_eq!(over_zero(0), "NaN");
     }
 
     #[test]

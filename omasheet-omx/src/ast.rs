@@ -15,8 +15,6 @@ pub enum Lit {
     Fraction(BigRational),
     /// Written with a `%`: `20%`, held as `1/5`.
     Percent(BigRational),
-    /// Written with a `:`: `3:2`, held as `3/2`.
-    Ratio(BigRational),
     Num(f64),
     /// Real and imaginary parts.
     Complex(f64, f64),
@@ -42,8 +40,8 @@ pub enum ExprKind {
     Name(String),
     /// `*`, the current row.
     Cursor,
-    /// The table of the current row: the base of `[Revenue; *-1]`, an index
-    /// written with no table name.
+    /// The sheet of the current row: the base of `[Revenue; *-1]`, an index
+    /// written with no sheet name.
     Own,
     Unary(UnOp, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),

@@ -9,7 +9,7 @@
 
 use crate::Options;
 use crate::value::{
-    RowRef, Value, View, arith, compare, equal, format_exact, format_styled, math, to_f64,
+    RowRef, Value, View, arith, compare, equal, format_exact, format_styled, is_nan, math, to_f64,
 };
 use crate::zone::{Zone, Zoned, utc_now};
 use num_bigint::BigInt;
@@ -32,7 +32,7 @@ pub enum Fail {
 
 type R<T = Value> = Result<T, Fail>;
 
-/// The rows in scope: (table, row). The innermost row is last.
+/// The rows in scope: (sheet, row). The innermost row is last.
 pub type Frames = Vec<(usize, usize)>;
 
 #[derive(Clone)]
@@ -43,7 +43,7 @@ enum Slot {
 }
 
 enum Rows {
-    /// One position, or `None` for a cursor offset outside the table.
+    /// One position, or `None` for a cursor offset outside the sheet.
     One(Option<usize>),
     Many(Vec<usize>),
 }
@@ -52,14 +52,14 @@ pub struct Engine<'p> {
     prog: &'p Program,
     cells: RefCell<Vec<Vec<Vec<Slot>>>>,
     consts: RefCell<Vec<Slot>>,
-    /// The arguments of the sheet's own functions being evaluated, the
+    /// The arguments of the file's own functions being evaluated, the
     /// innermost call last.
     args: RefCell<Vec<Vec<Value>>>,
     all_rows: Vec<Rc<Vec<usize>>>,
     all_cols: Vec<Rc<Vec<usize>>>,
     diags: RefCell<Vec<Diagnostic>>,
     options: Options,
-    /// The zone the sheet's date-times are in.
+    /// The zone the file's date-times are in.
     home: Rc<Zone>,
     /// The zone of this machine.
     local: Rc<Zone>,
@@ -68,7 +68,7 @@ pub struct Engine<'p> {
     now: i64,
 }
 
-/// The complaint about a sheet that names a time zone there is none of.
+/// The complaint about a file that names a time zone there is none of.
 pub fn unknown_zone(prog: &Program) -> Option<Diagnostic> {
     let (name, span) = prog.zone.as_ref()?;
     Zone::named(name).is_none().then(|| no_zone(name, *span))
@@ -88,7 +88,7 @@ impl<'p> Engine<'p> {
         Engine::with_options(prog, Options::default())
     }
 
-    /// A sheet that names a time zone there is none of is evaluated in the
+    /// A file that names a time zone there is none of is evaluated in the
     /// zone of this machine, with a diagnostic to take before running.
     pub fn with_options(prog: &'p Program, options: Options) -> Engine<'p> {
         let local = Rc::new(options.zone.clone().unwrap_or_else(Zone::system));
@@ -101,7 +101,7 @@ impl<'p> Engine<'p> {
         Engine {
             prog,
             cells: RefCell::new(
-                prog.tables
+                prog.sheets
                     .iter()
                     .map(|t| vec![vec![Slot::Pending; t.nrows]; t.cols.len()])
                     .collect(),
@@ -109,12 +109,12 @@ impl<'p> Engine<'p> {
             consts: RefCell::new(vec![Slot::Pending; prog.consts.len()]),
             args: RefCell::new(Vec::new()),
             all_rows: prog
-                .tables
+                .sheets
                 .iter()
                 .map(|t| Rc::new((0..t.nrows).collect()))
                 .collect(),
             all_cols: prog
-                .tables
+                .sheets
                 .iter()
                 .map(|t| Rc::new((0..t.cols.len()).collect()))
                 .collect(),
@@ -138,11 +138,11 @@ impl<'p> Engine<'p> {
                     let Some(&(t, _)) = cols.first() else {
                         continue;
                     };
-                    let n = self.prog.tables[t].nrows;
+                    let n = self.prog.sheets[t].nrows;
                     for k in 0..n {
                         let r = if *reverse { n - 1 - k } else { k };
                         for &(t, c) in cols {
-                            if r < self.prog.tables[t].nrows {
+                            if r < self.prog.sheets[t].nrows {
                                 let _ = self.cell(t, c, r);
                             }
                         }
@@ -171,7 +171,7 @@ impl<'p> Engine<'p> {
 
     fn full_view(&self, t: usize) -> View {
         View {
-            table: t,
+            sheet: t,
             rows: self.all_rows[t].clone(),
             cols: self.all_cols[t].clone(),
         }
@@ -181,7 +181,7 @@ impl<'p> Engine<'p> {
 
     /// The value of one cell, calculating it if needed.
     pub fn cell(&self, t: usize, c: usize, r: usize) -> R {
-        let col = &self.prog.tables[t].cols[c];
+        let col = &self.prog.sheets[t].cols[c];
         match &self.cells.borrow()[t][c][r] {
             Slot::Done(Value::Error) => return Err(Fail::Poison),
             Slot::Done(v) => return Ok(v.clone()),
@@ -203,6 +203,7 @@ impl<'p> Engine<'p> {
             ColKind::Data(cells) => match &cells[r] {
                 Cell::Empty => Ok(Value::Empty),
                 Cell::Lit(l) => Ok(Value::from_lit(l)),
+                Cell::Markdown(s) => Ok(Value::Text(Rc::from(s.as_str()), true)),
                 Cell::Formula(node) => formula(node),
                 Cell::Invalid => Err(Fail::Poison),
             },
@@ -231,28 +232,25 @@ impl<'p> Engine<'p> {
     fn fit(&self, v: Value, col: &Column, span: Span) -> R {
         if matches!(
             v,
-            Value::Vector(_) | Value::Table(_) | Value::Row(_) | Value::Range { .. }
+            Value::Vector(_) | Value::Sheet(_) | Value::Row(_) | Value::Range { .. }
         ) {
             return fail(
                 span,
                 format!("a cell holds one value, but this is {}", v.kind()),
             );
         }
-        // A `Decimal` column holds only what ends as a decimal.
-        let decimal = matches!(&v, Value::Fraction(r) if omasheet_omx::convert::is_decimal(r));
         let ok = !col.declared
-            || (decimal && col.ty == S::Decimal)
             || matches!(
                 (&v, col.ty),
                 (Value::Empty, _)
                     | (_, S::Any)
                     | (Value::Int(_), S::Int | S::Decimal | S::Fraction)
+                    | (Value::Decimal(_), S::Decimal)
                     | (Value::Fraction(_), S::Fraction)
                     | (Value::Percent(_), S::Percent)
-                    | (Value::Ratio(_), S::Ratio)
                     | (Value::Num(_), S::Num)
                     | (Value::Complex(..), S::Complex)
-                    | (Value::Text(_), S::Text)
+                    | (Value::Text(..), S::Text)
                     | (Value::Bool(_), S::Bool)
                     | (Value::Date(_), S::Date)
                     | (Value::Time(_), S::Time)
@@ -261,17 +259,18 @@ impl<'p> Engine<'p> {
         if ok {
             Ok(v)
         } else if col.ty == S::Percent
-            && matches!(v, Value::Int(_) | Value::Fraction(_) | Value::Ratio(_))
+            && matches!(v, Value::Int(_) | Value::Decimal(_) | Value::Fraction(_))
         {
             // Any exact number in a `Percent` column is a percentage.
             Ok(v.percent())
-        } else if col.ty == S::Ratio
-            && matches!(v, Value::Int(_) | Value::Fraction(_) | Value::Percent(_))
+        } else if col.ty == S::Fraction && matches!(v, Value::Decimal(_) | Value::Percent(_)) {
+            // And in a `Fraction` column a fraction: `2.75` is `2 3/4`.
+            Ok(v.plain().fraction())
+        } else if let (S::Decimal, Value::Fraction(r)) = (col.ty, &v)
+            && omasheet_omx::convert::is_decimal(r)
         {
-            // And in a `Ratio` column a ratio: `4` is `4:1`.
-            Ok(v.ratio())
-        } else if col.ty == S::Fraction && matches!(v, Value::Percent(_) | Value::Ratio(_)) {
-            Ok(v.plain())
+            // A `Decimal` column holds only what ends as a decimal.
+            Ok(Value::Decimal(r.clone()))
         } else {
             fail(
                 span,
@@ -330,8 +329,8 @@ impl<'p> Engine<'p> {
             Ir::Error => Err(Fail::Poison),
             Ir::Lit(l) => Ok(Value::from_lit(l)),
             Ir::Const(i) => self.const_value(*i),
-            Ir::Table(t) => Ok(Value::Table(self.full_view(*t))),
-            Ir::Column { table, col } => self.column(*table, *col, &self.all_rows[*table]),
+            Ir::Sheet(t) => Ok(Value::Sheet(self.full_view(*t))),
+            Ir::Column { sheet, col } => self.column(*sheet, *col, &self.all_rows[*sheet]),
             Ir::RowCol { depth, col } => {
                 let (t, r) = fr[fr.len() - 1 - depth];
                 self.cell(t, *col, r)
@@ -349,7 +348,6 @@ impl<'p> Engine<'p> {
                         (_, Value::Empty) => Ok(Value::Empty),
                         (UnOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
                         (UnOp::Neg, Value::Percent(r)) => Ok(Value::Percent(-r)),
-                        (UnOp::Neg, Value::Ratio(r)) => Ok(Value::Ratio(-r)),
                         (UnOp::Neg, v) if v.is_numeric() => {
                             arith(BinOp::Sub, &Value::Int(BigInt::from(0)), v)
                                 .or_else(|m| fail(span, m))
@@ -388,13 +386,13 @@ impl<'p> Engine<'p> {
                 self.index(b, rows, cols, span, fr)
             }
             Ir::Field { base, col } => match self.eval(base, fr)? {
-                Value::Table(v) => self.column(v.table, *col, &v.rows),
-                Value::Row(r) => self.cell(r.table, *col, r.row),
+                Value::Sheet(v) => self.column(v.sheet, *col, &v.rows),
+                Value::Row(r) => self.cell(r.sheet, *col, r.row),
                 Value::Empty => Ok(Value::Empty),
                 other => fail(
                     span,
                     format!(
-                        "a column can be read from a table or row, not {}",
+                        "a column can be read from a sheet or row, not {}",
                         other.kind()
                     ),
                 ),
@@ -579,7 +577,7 @@ impl<'p> Engine<'p> {
                     *part = match self.eval(arg, fr)? {
                         Value::Empty => return Ok(Value::Empty),
                         Value::Int(n) => n.to_f64().unwrap_or(f64::NAN),
-                        Value::Fraction(r) | Value::Percent(r) | Value::Ratio(r) => to_f64(&r),
+                        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => to_f64(&r),
                         Value::Num(f) => f,
                         other => {
                             return fail(
@@ -609,7 +607,7 @@ impl<'p> Engine<'p> {
                 let target = match func {
                     Func::ToZone => match self.eval(&args[1], fr)? {
                         Value::Empty => return Ok(Value::Empty),
-                        Value::Text(name) => Some(self.zone(&name, args[1].span)?),
+                        Value::Text(name, _) => Some(self.zone(&name, args[1].span)?),
                         other => {
                             return fail(
                                 args[1].span,
@@ -639,7 +637,7 @@ impl<'p> Engine<'p> {
                         }
                     };
                     match (&target, func) {
-                        // The sheet's own zone needs no label.
+                        // The file's own zone needs no label.
                         (Some(target), _) if **target == *self.home => self
                             .home
                             .from_utc(utc)
@@ -725,7 +723,7 @@ impl<'p> Engine<'p> {
             Func::Sum | Func::Avg | Func::Min | Func::Max | Func::Count => {
                 let items: Rc<Vec<Value>> = match self.eval(&args[0], fr)? {
                     Value::Vector(items) => items,
-                    Value::Table(v) if func == Func::Count => {
+                    Value::Sheet(v) if func == Func::Count => {
                         return Ok(Value::Int(BigInt::from(v.rows.len())));
                     }
                     Value::Range {
@@ -739,7 +737,7 @@ impl<'p> Engine<'p> {
                         Rc::new((lo..=hi).map(|n| Value::Int(BigInt::from(n))).collect())
                     }
                     Value::Row(row) => {
-                        let cells = row.cols.iter().map(|&c| self.cell(row.table, c, row.row));
+                        let cells = row.cols.iter().map(|&c| self.cell(row.sheet, c, row.row));
                         Rc::new(cells.collect::<R<Vec<_>>>()?)
                     }
                     Value::Empty => Rc::new(Vec::new()),
@@ -761,17 +759,10 @@ impl<'p> Engine<'p> {
                     }
                     Ok(total)
                 };
-                // The sum and the average of percentages are percentages, and
-                // those of ratios are ratios.
-                let all =
-                    |is: fn(&Value) -> bool| !present.is_empty() && present.iter().all(|v| is(v));
-                let percent = all(|v| matches!(v, Value::Percent(_)));
-                let ratio = all(|v| matches!(v, Value::Ratio(_)));
-                let kept = |v: Value| match (percent, ratio) {
-                    (true, _) => v.percent(),
-                    (_, true) => v.ratio(),
-                    _ => v,
-                };
+                // The sum and the average of percentages are percentages.
+                let percent =
+                    !present.is_empty() && present.iter().all(|v| matches!(v, Value::Percent(_)));
+                let kept = |v: Value| if percent { v.percent() } else { v };
                 match func {
                     Func::Count => Ok(Value::Int(BigInt::from(present.len()))),
                     Func::Sum => sum().map(kept),
@@ -789,6 +780,10 @@ impl<'p> Engine<'p> {
                         } else {
                             Ordering::Greater
                         };
+                        // A `NaN` has no order, so it is the answer.
+                        if let Some(&nan) = present.iter().find(|v| is_nan(v)) {
+                            return Ok(nan.clone());
+                        }
                         let mut best: Option<&Value> = None;
                         for &v in &present {
                             best = match best {
@@ -818,13 +813,13 @@ impl<'p> Engine<'p> {
         }
     }
 
-    /// Resolve a row selector to positions in a list of `len` rows. `table`
-    /// gives the sheet rows behind each position, for conditions.
+    /// Resolve a row selector to positions in a list of `len` rows. `sheet`
+    /// gives the file rows behind each position, for conditions.
     fn rows(
         &self,
         sel: &RowSel,
         len: usize,
-        table: Option<(usize, &[usize])>,
+        sheet: Option<(usize, &[usize])>,
         span: Span,
         fr: &mut Frames,
     ) -> R<Rows> {
@@ -895,11 +890,11 @@ impl<'p> Engine<'p> {
                 }
             },
             RowSel::Pred(node) => {
-                let Some((t, sheet_rows)) = table else {
-                    return fail(node.span, "a condition needs a table to select from");
+                let Some((t, file_rows)) = sheet else {
+                    return fail(node.span, "a condition needs a sheet to select from");
                 };
                 let mut keep = Vec::new();
-                for (p, &r) in sheet_rows.iter().enumerate() {
+                for (p, &r) in file_rows.iter().enumerate() {
                     fr.push((t, r));
                     let v = self.eval(node, fr);
                     fr.pop();
@@ -950,26 +945,26 @@ impl<'p> Engine<'p> {
     fn index(&self, base: Value, rows: &RowSel, cols: &ColSel, span: Span, fr: &mut Frames) -> R {
         match base {
             Value::Empty => Ok(Value::Empty),
-            Value::Table(v) => {
-                let picked = self.rows(rows, v.rows.len(), Some((v.table, &v.rows)), span, fr)?;
+            Value::Sheet(v) => {
+                let picked = self.rows(rows, v.rows.len(), Some((v.sheet, &v.rows)), span, fr)?;
                 let sub_cols = |cols: &ColSel| match cols {
                     ColSel::Many(list) => Rc::new(list.clone()),
                     _ => v.cols.clone(),
                 };
                 Ok(match (picked, cols) {
                     (Rows::One(None), _) => Value::Empty,
-                    (Rows::One(Some(p)), ColSel::One(c)) => self.cell(v.table, *c, v.rows[p])?,
+                    (Rows::One(Some(p)), ColSel::One(c)) => self.cell(v.sheet, *c, v.rows[p])?,
                     (Rows::One(Some(p)), cols) => Value::Row(RowRef {
-                        table: v.table,
+                        sheet: v.sheet,
                         row: v.rows[p],
                         cols: sub_cols(cols),
                     }),
                     (Rows::Many(ps), ColSel::One(c)) => {
-                        let sheet_rows: Vec<usize> = ps.iter().map(|&p| v.rows[p]).collect();
-                        self.column(v.table, *c, &sheet_rows)?
+                        let file_rows: Vec<usize> = ps.iter().map(|&p| v.rows[p]).collect();
+                        self.column(v.sheet, *c, &file_rows)?
                     }
-                    (Rows::Many(ps), cols) => Value::Table(View {
-                        table: v.table,
+                    (Rows::Many(ps), cols) => Value::Sheet(View {
+                        sheet: v.sheet,
                         rows: Rc::new(ps.iter().map(|&p| v.rows[p]).collect()),
                         cols: sub_cols(cols),
                     }),
@@ -999,7 +994,7 @@ impl<'p> Engine<'p> {
         found.ok_or_else(|| Fail::Diag(no_zone(name, span)))
     }
 
-    /// The sheet's own date-times in `v` on the clocks of this machine, when
+    /// The file's own date-times in `v` on the clocks of this machine, when
     /// that was asked for and they differ.
     fn localised(&self, v: &Value) -> Option<Value> {
         if !self.options.local || *self.home == *self.local {
@@ -1034,21 +1029,21 @@ impl<'p> Engine<'p> {
         }
     }
 
-    /// The name of the time zone the sheet's date-times are in.
+    /// The name of the time zone the file's date-times are in.
     pub fn zone_name(&self) -> &str {
         self.home.name()
     }
 
-    /// A table as aligned text, in the same shape as `.omx` source.
+    /// A sheet as aligned text, in the same shape as `.omx` source.
     pub fn render_view(&self, v: &View) -> String {
-        let table = &self.prog.tables[v.table];
+        let sheet = &self.prog.sheets[v.sheet];
         let mut grid: Vec<Vec<String>> =
-            vec![v.cols.iter().map(|&c| table.cols[c].name.clone()).collect()];
+            vec![v.cols.iter().map(|&c| sheet.cols[c].name.clone()).collect()];
         let mut numeric = vec![true; v.cols.len()];
         for &r in v.rows.iter() {
             let mut line = Vec::with_capacity(v.cols.len());
             for (k, &c) in v.cols.iter().enumerate() {
-                let value = self.cell_shown(v.table, c, r);
+                let value = self.cell_shown(v.sheet, c, r);
                 if !matches!(value, Value::Empty | Value::Error) && !value.is_numeric() {
                     numeric[k] = false;
                 }
@@ -1089,16 +1084,16 @@ impl<'p> Engine<'p> {
         out
     }
 
-    pub fn render_table(&self, t: usize) -> String {
+    pub fn render_sheet(&self, t: usize) -> String {
         self.render_view(&self.full_view(t))
     }
 
     /// Any value as text, ending in a newline.
     pub fn render_value(&self, v: &Value) -> String {
         match v {
-            Value::Table(view) => self.render_view(view),
+            Value::Sheet(view) => self.render_view(view),
             Value::Row(row) => self.render_view(&View {
-                table: row.table,
+                sheet: row.sheet,
                 rows: Rc::new(vec![row.row]),
                 cols: row.cols.clone(),
             }),
@@ -1112,6 +1107,12 @@ fn scalar_op(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     let empty = matches!(a, Value::Empty) || matches!(b, Value::Empty);
     Ok(match op {
         _ if op.is_arithmetic() => arith(op, a, b)?,
+        // As Raku has it: only `!=` is true of a `NaN`.
+        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
+            if !empty && (is_nan(a) || is_nan(b)) =>
+        {
+            Value::Bool(op == BinOp::Ne)
+        }
         BinOp::Eq => equal(a, b)?.map_or(Value::Empty, Value::Bool),
         BinOp::Ne => equal(a, b)?.map_or(Value::Empty, |e| Value::Bool(!e)),
         BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => match compare(a, b)? {

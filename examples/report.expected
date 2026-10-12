@@ -1,6 +1,6 @@
 ---
 title: First quarter
-sheets: [budget.omx]
+files: [budget.omx]
 ---
 
 # First quarter
@@ -15,7 +15,7 @@ Tax is charged at 20%, which comes to
 
 ## Months over target
 
-A table can be shown where it is asked for:
+A sheet can be shown where it is asked for:
 
 | Month | Revenue | Profit |
 | :---- | ------: | -----: |
@@ -24,14 +24,17 @@ A table can be shown where it is asked for:
 
 ## Targets
 
-A document can hold sheets of its own. This block is a sheet like any other,
+A document can hold files of its own. This block is a file like any other,
 and it reads the one named at the top:
 
-| Month | Goal | Profit | Over | Met   |
-| :---- | ---: | -----: | ---: | :---- |
-| Jan   | 4200 |   4000 | -200 | false |
-| Feb   | 4500 |   5000 |  500 | true  |
-| Mar   | 5000 |   5700 |  700 | true  |
+| Month | Goal | Profit | Over | Met   | Note                                     |
+| :---- | ---: | -----: | ---: | :---- | :--------------------------------------- |
+| Jan   | 4200 |   4000 | -200 | false | a **slow** start                         |
+| Feb   | 4500 |   5000 |  500 | true  | see the [file format](../docs/format.md) |
+| Mar   | 5000 |   5700 |  700 | true  | the _best_ month, `Mar`                  |
 
 2 of 3 months met
-their goal. Written in code, `{{ 1 + 1 }}` is left as it is.
+their goal.
+
+To show the braces themselves, put them in backticks: `{{ 1 + 1 }}` is not
+worked out.

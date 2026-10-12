@@ -10,33 +10,33 @@ use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use crate::convert::{lit_type, parse_literal};
 use crate::deps;
 use crate::diag::{Diagnostic, Span};
+use crate::file::{FileAst, parse_file};
 use crate::funcs::{FUNCTIONS, MathFn};
 use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use crate::parser::parse_expr;
-use crate::sheet::{SheetAst, parse_sheet};
-use crate::types::{DepKind, S, TableTy, Ty};
+use crate::types::{DepKind, S, SheetTy, Ty};
 use num_traits::ToPrimitive;
 use std::mem;
 use std::rc::Rc;
 
-/// A checked sheet, ready to evaluate.
+/// A checked file, ready to evaluate.
 #[derive(Debug, Default)]
 pub struct Program {
-    /// The time zone the sheet names for its date-times, and where.
+    /// The time zone the file names for its date-times, and where.
     pub zone: Option<(String, Span)>,
-    pub tables: Vec<Table>,
+    pub sheets: Vec<Sheet>,
     pub consts: Vec<Const>,
-    /// The functions the sheet defines.
+    /// The functions the file defines.
     pub funcs: Vec<UserFn>,
     /// Calculation order: each group only reads groups before it.
     pub order: Vec<Group>,
-    /// Where the source names a column of a table: `(span, table, column)`.
+    /// Where the source names a column of a sheet: `(span, sheet, column)`.
     /// A formula checked more than once is listed more than once.
     pub col_refs: Vec<(Span, usize, usize)>,
 }
 
 #[derive(Debug)]
-pub struct Table {
+pub struct Sheet {
     pub name: String,
     pub cols: Vec<Column>,
     pub nrows: usize,
@@ -62,6 +62,8 @@ pub enum ColKind {
 pub enum Cell {
     Empty,
     Lit(Lit),
+    /// Text written bare, not in quotes: it may hold Markdown.
+    Markdown(String),
     Formula(Node),
     /// A cell that failed to check.
     Invalid,
@@ -75,7 +77,7 @@ pub struct Const {
     stat: Option<Static>,
 }
 
-/// A function defined in the sheet with `fn`. It is checked afresh at
+/// A function defined in the file with `fn`. It is checked afresh at
 /// each call, for the types of that call's arguments.
 #[derive(Clone, Debug)]
 pub struct UserFn {
@@ -100,7 +102,7 @@ impl UserFn {
 #[derive(Debug)]
 pub enum Group {
     Const(usize),
-    /// Columns (table, column) calculated together, row by row.
+    /// Columns (sheet, column) calculated together, row by row.
     Cols {
         cols: Vec<(usize, usize)>,
         reverse: bool,
@@ -127,7 +129,7 @@ type Dep = (DepNode, DepKind);
 enum ColSrc {
     /// Index into the header row.
     Data(usize),
-    /// Index into the table's computed declarations.
+    /// Index into the sheet's computed declarations.
     Computed(usize),
     /// Already checked (when compiling an expression against a program).
     Done,
@@ -140,7 +142,7 @@ struct ColInfo {
     src: ColSrc,
 }
 
-struct TableInfo {
+struct SheetInfo {
     name: String,
     decl: usize,
     cols: Vec<ColInfo>,
@@ -166,7 +168,7 @@ struct Scope {
     frames: Vec<usize>,
     /// `frames[0]` is the row that owns the expression (a cell's own row).
     own: bool,
-    /// The column that owns the expression, in the table of `frames[0]`.
+    /// The column that owns the expression, in the sheet of `frames[0]`.
     col: Option<usize>,
 }
 
@@ -206,8 +208,8 @@ impl RowPick {
 struct Checker<'a> {
     src: u32,
     text: &'a str,
-    ast: Option<&'a SheetAst>,
-    tables: Vec<TableInfo>,
+    ast: Option<&'a FileAst>,
+    sheets: Vec<SheetInfo>,
     consts: Vec<ConstInfo>,
     funcs: Vec<UserFn>,
     /// The parameters of the function whose body is being checked: each
@@ -228,20 +230,20 @@ struct Checker<'a> {
     col_refs: Vec<(Span, usize, usize)>,
 }
 
-/// Compile a sheet. If any diagnostic is returned the program must not be
+/// Compile a file. If any diagnostic is returned the program must not be
 /// evaluated.
 pub fn compile(text: &str, src: u32) -> (Program, Vec<Diagnostic>) {
     let mut diags = Vec::new();
-    let ast = parse_sheet(text, src, &mut diags);
-    let mut ck = Checker::for_sheet(&ast, text, src);
+    let ast = parse_file(text, src, &mut diags);
+    let mut ck = Checker::for_file(&ast, text, src);
     for i in 0..ck.funcs.len() {
         ck.check_func(i);
     }
     for i in 0..ck.consts.len() {
         ck.ensure_const(i);
     }
-    for t in 0..ck.tables.len() {
-        for c in 0..ck.tables[t].cols.len() {
+    for t in 0..ck.sheets.len() {
+        for c in 0..ck.sheets[t].cols.len() {
             ck.ensure_col(t, c);
         }
     }
@@ -251,7 +253,7 @@ pub fn compile(text: &str, src: u32) -> (Program, Vec<Diagnostic>) {
     (ck.finish(order), diags)
 }
 
-/// Compile one expression that may refer to the tables and constants of
+/// Compile one expression that may refer to the sheets and constants of
 /// `prog`. It has no current row.
 pub fn compile_expr(prog: &Program, text: &str, src: u32) -> Result<(Node, Ty), Vec<Diagnostic>> {
     let expr = parse_expr(text, src, 0).map_err(|d| vec![d])?;
@@ -347,7 +349,7 @@ impl<'a> Checker<'a> {
             src,
             text,
             ast: None,
-            tables: Vec::new(),
+            sheets: Vec::new(),
             consts: Vec::new(),
             funcs: Vec::new(),
             params: Vec::new(),
@@ -367,10 +369,10 @@ impl<'a> Checker<'a> {
 
     fn for_program(prog: &Program, text: &'a str, src: u32) -> Checker<'a> {
         let mut ck = Checker::empty(text, src);
-        for (i, t) in prog.tables.iter().enumerate() {
+        for (i, t) in prog.sheets.iter().enumerate() {
             ck.col_state
                 .push(t.cols.iter().map(|c| St::Done(c.ty)).collect());
-            ck.tables.push(TableInfo {
+            ck.sheets.push(SheetInfo {
                 name: t.name.clone(),
                 decl: i,
                 nrows: t.nrows,
@@ -400,15 +402,15 @@ impl<'a> Checker<'a> {
     }
 
     /// Collect declarations and report clashes; nothing is lowered yet.
-    fn for_sheet(ast: &'a SheetAst, text: &'a str, src: u32) -> Checker<'a> {
+    fn for_file(ast: &'a FileAst, text: &'a str, src: u32) -> Checker<'a> {
         let mut ck = Checker::empty(text, src);
         ck.ast = Some(ast);
 
-        for (decl, t) in ast.tables.iter().enumerate() {
-            if ck.tables.iter().any(|x| x.name == t.name) {
+        for (decl, t) in ast.sheets.iter().enumerate() {
+            if ck.sheets.iter().any(|x| x.name == t.name) {
                 ck.done.push(Diagnostic::new(
                     t.span,
-                    format!("table `{}` is already defined", t.name),
+                    format!("sheet `{}` is already defined", t.name),
                 ));
                 continue;
             }
@@ -417,7 +419,7 @@ impl<'a> Checker<'a> {
                 if cols.iter().any(|c| &c.name == name) {
                     ck.done.push(Diagnostic::new(
                         *span,
-                        format!("column `{name}` appears twice in table `{}`", t.name),
+                        format!("column `{name}` appears twice in sheet `{}`", t.name),
                     ));
                 }
                 // A formula column is named in the header row, where it sits
@@ -463,7 +465,7 @@ impl<'a> Checker<'a> {
                     Diagnostic::new(
                         cd.span,
                         format!(
-                            "formula column `{}` is not in the header row of table `{}`",
+                            "formula column `{}` is not in the header row of sheet `{}`",
                             cd.name, t.name
                         ),
                     )
@@ -491,7 +493,7 @@ impl<'a> Checker<'a> {
                     None => {
                         let mut d = Diagnostic::new(
                             line.span,
-                            format!("table `{}` has no column `{}`", t.name, line.name),
+                            format!("sheet `{}` has no column `{}`", t.name, line.name),
                         );
                         if let Some(c) = closest(&line.name, cols.iter().map(|c| c.name.as_str())) {
                             d = d.with_help(format!("did you mean `{c}`?"));
@@ -504,7 +506,7 @@ impl<'a> Checker<'a> {
                 .push(cols.iter().map(|_| St::Pending).collect());
             ck.col_out.push(cols.iter().map(|_| None).collect());
             ck.col_deps.push(cols.iter().map(|_| Vec::new()).collect());
-            ck.tables.push(TableInfo {
+            ck.sheets.push(SheetInfo {
                 name: t.name.clone(),
                 decl,
                 cols,
@@ -515,8 +517,8 @@ impl<'a> Checker<'a> {
         for (decl, c) in ast.consts.iter().enumerate() {
             let clash = if ck.consts.iter().any(|x| x.name == c.name) {
                 Some("constant")
-            } else if ck.tables.iter().any(|t| t.name == c.name) {
-                Some("table")
+            } else if ck.sheets.iter().any(|t| t.name == c.name) {
+                Some("sheet")
             } else {
                 None
             };
@@ -590,17 +592,17 @@ impl<'a> Checker<'a> {
     }
 
     fn find_col(&self, t: usize, name: &str) -> Option<usize> {
-        self.tables[t].cols.iter().position(|c| c.name == name)
+        self.sheets[t].cols.iter().position(|c| c.name == name)
     }
 
     fn all_cols(&self, t: usize) -> Rc<Vec<usize>> {
-        Rc::new((0..self.tables[t].cols.len()).collect())
+        Rc::new((0..self.sheets[t].cols.len()).collect())
     }
 
     // ---- lazily checked declarations --------------------------------------
 
     fn col_type(&mut self, t: usize, c: usize) -> S {
-        if let Some(d) = self.tables[t].cols[c].declared {
+        if let Some(d) = self.sheets[t].cols[c].declared {
             return d;
         }
         if matches!(self.col_state[t][c], St::Pending) {
@@ -653,11 +655,11 @@ impl<'a> Checker<'a> {
             return;
         }
         let Some(ast) = self.ast else { return };
-        let decl = &ast.tables[self.tables[t].decl];
-        let declared = self.tables[t].cols[c].declared;
+        let decl = &ast.sheets[self.sheets[t].decl];
+        let declared = self.sheets[t].cols[c].declared;
         let saved = (mem::take(&mut self.cur), mem::take(&mut self.deps));
 
-        let (kind, ty) = match self.tables[t].cols[c].src {
+        let (kind, ty) = match self.sheets[t].cols[c].src {
             ColSrc::Done => unreachable!("a checked program has no pending columns"),
             ColSrc::Computed(k) => {
                 self.col_state[t][c] = St::Busy(declared.unwrap_or(S::Any));
@@ -697,14 +699,18 @@ impl<'a> Checker<'a> {
                         match self.literal_cell(&cell.text, cell.span, declared) {
                             Some(lit) => {
                                 widen(lit_type(&lit));
-                                cells.push(Cell::Lit(lit));
+                                cells.push(match lit {
+                                    // In quotes it is text as it is.
+                                    Lit::Text(s) if !quoted(&cell.text) => Cell::Markdown(s),
+                                    lit => Cell::Lit(lit),
+                                });
                             }
                             None => cells.push(Cell::Invalid),
                         }
                     }
                 }
                 self.col_state[t][c] = St::Busy(declared.or(inferred).unwrap_or(S::Any));
-                let name = self.tables[t].cols[c].name.clone();
+                let name = self.sheets[t].cols[c].name.clone();
                 for r in formulas {
                     let cell = &decl.rows[r][h];
                     let at = cell.span.start as usize + 1;
@@ -850,7 +856,7 @@ impl<'a> Checker<'a> {
         )
     }
 
-    /// Lower an expression that produces one cell of table `t`.
+    /// Lower an expression that produces one cell of sheet `t`.
     fn lower_cell(&mut self, e: &Expr, t: usize, c: usize) -> (Node, S) {
         let mut scope = Scope {
             frames: vec![t],
@@ -880,12 +886,8 @@ impl<'a> Checker<'a> {
         let Some(want) = declared else { return found };
         if !found.assignable_to(want) {
             let help = match (found, want) {
-                (S::Int | S::Decimal | S::Fraction | S::Percent | S::Ratio, S::Num) => {
+                (S::Int | S::Decimal | S::Fraction | S::Percent, S::Num) => {
                     "use `.Num` to convert to Num"
-                }
-                (S::Ratio, S::Int) => "declare the column as `Ratio`, or use `.Int`",
-                (S::Ratio, S::Decimal) => {
-                    "declare the column as `Ratio` or `Fraction`, or use `.Decimal` if the number ends as a decimal"
                 }
                 (S::Percent, S::Int) => "declare the column as `Percent`, or use `.Int`",
                 (S::Percent, S::Decimal) => {
@@ -909,11 +911,7 @@ impl<'a> Checker<'a> {
 
     /// A cell without a leading `=`: a literal, never an expression.
     fn literal_cell(&mut self, text: &str, span: Span, declared: Option<S>) -> Option<Lit> {
-        // In a `Ratio` column `16:10` is a ratio, and not a time.
-        let ratio = (declared == Some(S::Ratio))
-            .then(|| crate::convert::parse_ratio(text))
-            .flatten();
-        let parsed = ratio.map(Lit::Ratio).or_else(|| parse_literal(text));
+        let parsed = parse_literal(text);
         let Some(want) = declared else {
             return Some(parsed.unwrap_or_else(|| Lit::Text(text.to_string())));
         };
@@ -925,7 +923,10 @@ impl<'a> Checker<'a> {
         }
         let fitted = match (parsed, want) {
             (Some(l @ Lit::Int(_)), S::Int | S::Decimal | S::Fraction) => Some(l),
-            (Some(l @ Lit::Decimal(_)), S::Decimal | S::Fraction) => Some(l),
+            (Some(l @ Lit::Decimal(_)), S::Decimal) => Some(l),
+            // Any exact number in a `Fraction` column is a fraction: `2.75`
+            // is `2 3/4`.
+            (Some(Lit::Decimal(r)), S::Fraction) => Some(Lit::Fraction(r)),
             (Some(l @ Lit::Fraction(_)), S::Fraction) => Some(l),
             // Any exact number in a `Percent` column is a percentage: `0.4`
             // is `40%`. A `20%` elsewhere is the number it stands for.
@@ -934,30 +935,19 @@ impl<'a> Checker<'a> {
                 Some(Lit::Percent(num_rational::BigRational::from_integer(n)))
             }
             (Some(Lit::Decimal(r) | Lit::Fraction(r)), S::Percent) => Some(Lit::Percent(r)),
-            // Any exact number in a `Ratio` column is a ratio: `4` is `4:1`.
-            (Some(l @ Lit::Ratio(_)), S::Ratio) => Some(l),
-            (Some(Lit::Int(n)), S::Ratio) => {
-                Some(Lit::Ratio(num_rational::BigRational::from_integer(n)))
-            }
-            (Some(Lit::Decimal(r) | Lit::Fraction(r)), S::Ratio) => Some(Lit::Ratio(r)),
-            (Some(l @ (Lit::Percent(_) | Lit::Ratio(_))), S::Decimal | S::Fraction) => {
-                crate::convert::convert(&l, want).ok()
-            }
-            (Some(l @ Lit::Percent(_)), S::Ratio) | (Some(l @ Lit::Ratio(_)), S::Percent) => {
+            (Some(l @ Lit::Percent(_)), S::Decimal | S::Fraction) => {
                 crate::convert::convert(&l, want).ok()
             }
             (Some(Lit::Int(n)), S::Num) => n.to_f64().map(Lit::Num),
-            (
-                Some(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) | Lit::Ratio(r)),
-                S::Num,
-            ) => r.to_f64().map(Lit::Num),
+            (Some(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)), S::Num) => {
+                r.to_f64().map(Lit::Num)
+            }
             (Some(l @ Lit::Num(_)), S::Num) => Some(l),
             (Some(l @ Lit::Complex(..)), S::Complex) => Some(l),
             (Some(Lit::Int(n)), S::Complex) => n.to_f64().map(|x| Lit::Complex(x, 0.0)),
-            (
-                Some(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) | Lit::Ratio(r)),
-                S::Complex,
-            ) => r.to_f64().map(|x| Lit::Complex(x, 0.0)),
+            (Some(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)), S::Complex) => {
+                r.to_f64().map(|x| Lit::Complex(x, 0.0))
+            }
             (Some(Lit::Num(x)), S::Complex) => Some(Lit::Complex(x, 0.0)),
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
@@ -973,9 +963,8 @@ impl<'a> Checker<'a> {
                 match want {
                     S::Int => "enter a whole number such as `42`, or start the cell with `=` for a formula",
                     S::Decimal => "enter a number such as `19.99` or `20%`, or start the cell with `=` for a formula; a fraction such as `1/7` needs a `Fraction` column",
-                    S::Fraction => "enter a number such as `19.99`, `20%` or `1/7`, or start the cell with `=` for a formula",
+                    S::Fraction => "enter a number such as `1/7`, `2 3/4` or `19.99`, or start the cell with `=` for a formula",
                     S::Percent => "enter a percentage such as `20%`, or start the cell with `=` for a formula",
-                    S::Ratio => "enter a ratio such as `3:2`, or start the cell with `=` for a formula",
                     S::Num => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
                     S::Complex => {
                         "enter a complex number such as `3+4i`, or start the cell with `=` for a formula"
@@ -1003,19 +992,19 @@ impl<'a> Checker<'a> {
                 if !sc.own || sc.frames.is_empty() {
                     self.err_help(
                         span,
-                        "an index with no table name needs a current table",
-                        "name the table, for example `Sales[Revenue; 0]`",
+                        "an index with no sheet name needs a current sheet",
+                        "name the sheet, for example `Sales[Revenue; 0]`",
                     );
                     return fail;
                 }
                 let t = sc.frames[0];
-                let ty = Ty::Table(TableTy {
-                    table: t,
+                let ty = Ty::Sheet(SheetTy {
+                    sheet: t,
                     cols: self.all_cols(t),
-                    rows: Some(self.tables[t].nrows),
+                    rows: Some(self.sheets[t].nrows),
                     kind: DepKind::Whole,
                 });
-                (Node::new(Ir::Table(t), span), ty)
+                (Node::new(Ir::Sheet(t), span), ty)
             }
             ExprKind::Cursor => {
                 self.err_help(
@@ -1143,18 +1132,18 @@ impl<'a> Checker<'a> {
             ExprKind::Field(base, name, name_span) => {
                 let (b, bty) = self.lower(base, sc);
                 match bty {
-                    Ty::Table(tt) | Ty::Row(tt) if self.col_in(&tt, name).is_none() => {
+                    Ty::Sheet(tt) | Ty::Row(tt) if self.col_in(&tt, name).is_none() => {
                         self.no_column(&tt, name, *name_span);
                         fail
                     }
-                    Ty::Table(tt) => {
+                    Ty::Sheet(tt) => {
                         let c = self.col_in(&tt, name).unwrap();
-                        self.col_refs.push((*name_span, tt.table, c));
-                        self.deps.push((DepNode::Col(tt.table, c), tt.kind));
-                        let s = self.col_type(tt.table, c);
-                        let kind = if matches!(b.kind, Ir::Table(_)) {
+                        self.col_refs.push((*name_span, tt.sheet, c));
+                        self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
+                        let s = self.col_type(tt.sheet, c);
+                        let kind = if matches!(b.kind, Ir::Sheet(_)) {
                             Ir::Column {
-                                table: tt.table,
+                                sheet: tt.sheet,
                                 col: c,
                             }
                         } else {
@@ -1167,9 +1156,9 @@ impl<'a> Checker<'a> {
                     }
                     Ty::Row(tt) => {
                         let c = self.col_in(&tt, name).unwrap();
-                        self.col_refs.push((*name_span, tt.table, c));
-                        self.deps.push((DepNode::Col(tt.table, c), tt.kind));
-                        let s = self.col_type(tt.table, c);
+                        self.col_refs.push((*name_span, tt.sheet, c));
+                        self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
+                        let s = self.col_type(tt.sheet, c);
                         (
                             Node::new(
                                 Ir::Field {
@@ -1191,7 +1180,7 @@ impl<'a> Checker<'a> {
                         self.err(
                             *name_span,
                             format!(
-                                "`.{name}` needs a table or a row, but this is {}",
+                                "`.{name}` needs a sheet or a row, but this is {}",
                                 other.describe()
                             ),
                         );
@@ -1233,20 +1222,20 @@ impl<'a> Checker<'a> {
         (Node::new(Ir::Call(Func::To(to), vec![arg]), span), ty)
     }
 
-    fn col_in(&self, tt: &TableTy, name: &str) -> Option<usize> {
+    fn col_in(&self, tt: &SheetTy, name: &str) -> Option<usize> {
         tt.cols
             .iter()
             .copied()
-            .find(|&c| self.tables[tt.table].cols[c].name == name)
+            .find(|&c| self.sheets[tt.sheet].cols[c].name == name)
     }
 
-    fn no_column(&mut self, tt: &TableTy, name: &str, span: Span) {
-        let table = &self.tables[tt.table];
+    fn no_column(&mut self, tt: &SheetTy, name: &str, span: Span) {
+        let sheet = &self.sheets[tt.sheet];
         let mut d = Diagnostic::new(
             span,
-            format!("table `{}` has no column `{name}`", table.name),
+            format!("sheet `{}` has no column `{name}`", sheet.name),
         );
-        let names = tt.cols.iter().map(|&c| table.cols[c].name.as_str());
+        let names = tt.cols.iter().map(|&c| sheet.cols[c].name.as_str());
         if let Some(c) = closest(name, names) {
             d = d.with_help(format!("did you mean `{c}`?"));
         }
@@ -1282,19 +1271,19 @@ impl<'a> Checker<'a> {
             let ty = self.const_type(i);
             return (Node::new(Ir::Const(i), span), ty);
         }
-        if let Some(t) = self.tables.iter().position(|t| t.name == name) {
-            let ty = Ty::Table(TableTy {
-                table: t,
+        if let Some(t) = self.sheets.iter().position(|t| t.name == name) {
+            let ty = Ty::Sheet(SheetTy {
+                sheet: t,
                 cols: self.all_cols(t),
-                rows: Some(self.tables[t].nrows),
+                rows: Some(self.sheets[t].nrows),
                 kind: DepKind::Whole,
             });
-            return (Node::new(Ir::Table(t), span), ty);
+            return (Node::new(Ir::Sheet(t), span), ty);
         }
 
         let mut d = Diagnostic::new(span, format!("unknown name `{name}`"));
         let owner = self
-            .tables
+            .sheets
             .iter()
             .find(|t| t.cols.iter().any(|c| c.name == name));
         if let Some(t) = owner {
@@ -1306,10 +1295,10 @@ impl<'a> Checker<'a> {
             let frames = sc.frames.clone();
             let names = frames
                 .iter()
-                .flat_map(|&t| self.tables[t].cols.iter().map(|c| c.name.as_str()))
+                .flat_map(|&t| self.sheets[t].cols.iter().map(|c| c.name.as_str()))
                 .chain(self.params.iter().map(|p| p.0.as_str()))
                 .chain(self.consts.iter().map(|c| c.name.as_str()))
-                .chain(self.tables.iter().map(|t| t.name.as_str()));
+                .chain(self.sheets.iter().map(|t| t.name.as_str()));
             if let Some(c) = closest(name, names) {
                 d = d.with_help(format!("did you mean `{c}`?"));
             }
@@ -1484,8 +1473,6 @@ impl<'a> Checker<'a> {
                     // done with one gives the plain number.
                     (BinOp::Add | BinOp::Sub, S::Percent) => S::Percent,
                     (_, S::Percent) => S::Fraction,
-                    // Ratios add, multiply and divide to a ratio.
-                    (BinOp::Pow, S::Ratio) => S::Fraction,
                     (_, w) => w,
                 }
             }
@@ -1569,7 +1556,7 @@ impl<'a> Checker<'a> {
                     Ty::Any => return (Node::new(Ir::Call(func, vec![arg]), span), Ty::Any),
                     Ty::Vector(s, _) => (arg, s),
                     Ty::Range => (arg, S::Int),
-                    Ty::Table(_) if func == Func::Count => {
+                    Ty::Sheet(_) if func == Func::Count => {
                         return (
                             Node::new(Ir::Call(func, vec![arg]), span),
                             Ty::Scalar(S::Int),
@@ -1579,8 +1566,8 @@ impl<'a> Checker<'a> {
                     Ty::Row(tt) => {
                         let mut s: Option<Option<S>> = None;
                         for &c in tt.cols.iter() {
-                            self.deps.push((DepNode::Col(tt.table, c), tt.kind));
-                            let ty = self.col_type(tt.table, c);
+                            self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
+                            let ty = self.col_type(tt.sheet, c);
                             s = Some(match s {
                                 None => Some(ty),
                                 Some(so_far) => so_far.and_then(|x| x.join(ty)),
@@ -1599,10 +1586,10 @@ impl<'a> Checker<'a> {
                             }
                         }
                     }
-                    Ty::Table(tt) if tt.cols.len() == 1 => {
+                    Ty::Sheet(tt) if tt.cols.len() == 1 => {
                         let c = tt.cols[0];
-                        self.deps.push((DepNode::Col(tt.table, c), tt.kind));
-                        let s = self.col_type(tt.table, c);
+                        self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
+                        let s = self.col_type(tt.sheet, c);
                         let arg_span = arg.span;
                         (
                             Node::new(
@@ -1653,13 +1640,7 @@ impl<'a> Checker<'a> {
                         ty,
                         Ty::Any
                             | Ty::Scalar(
-                                S::Any
-                                    | S::Int
-                                    | S::Decimal
-                                    | S::Fraction
-                                    | S::Percent
-                                    | S::Ratio
-                                    | S::Num
+                                S::Any | S::Int | S::Decimal | S::Fraction | S::Percent | S::Num
                             )
                     ) {
                         self.err(
@@ -1785,10 +1766,10 @@ impl<'a> Checker<'a> {
                     return fail;
                 }
                 let (b, bty) = self.lower(&args[0], sc);
-                if !matches!(bty, Ty::Table(_) | Ty::Any) {
+                if !matches!(bty, Ty::Sheet(_) | Ty::Any) {
                     self.err(
                         args[0].span,
-                        format!("`filter` needs a table, but this is {}", bty.describe()),
+                        format!("`filter` needs a sheet, but this is {}", bty.describe()),
                     );
                     return fail;
                 }
@@ -1798,17 +1779,17 @@ impl<'a> Checker<'a> {
                 if args.len() < 2 {
                     self.err_help(
                         span,
-                        "`select` needs a table and at least one column",
+                        "`select` needs a sheet and at least one column",
                         "usage: `Sales |> select(Month, Revenue)`",
                     );
                     return fail;
                 }
                 let (b, bty) = self.lower(&args[0], sc);
-                let Ty::Table(tt) = bty else {
+                let Ty::Sheet(tt) = bty else {
                     if !matches!(b.kind, Ir::Error) {
                         self.err(
                             args[0].span,
-                            format!("`select` needs a table, but this is {}", bty.describe()),
+                            format!("`select` needs a sheet, but this is {}", bty.describe()),
                         );
                     }
                     return fail;
@@ -1821,7 +1802,7 @@ impl<'a> Checker<'a> {
                     };
                     match self.col_in(&tt, col) {
                         Some(c) => {
-                            self.col_refs.push((a.span, tt.table, c));
+                            self.col_refs.push((a.span, tt.sheet, c));
                             cols.push(c)
                         }
                         None => {
@@ -1830,8 +1811,8 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
-                let ty = Ty::Table(TableTy {
-                    table: tt.table,
+                let ty = Ty::Sheet(SheetTy {
+                    sheet: tt.sheet,
                     cols: Rc::new(cols.clone()),
                     rows: tt.rows,
                     kind: tt.kind,
@@ -1933,15 +1914,15 @@ impl<'a> Checker<'a> {
     ) -> (Node, Ty) {
         let fail = (Node::error(span), Ty::Any);
         match bty {
-            Ty::Table(tt) => {
+            Ty::Sheet(tt) => {
                 if slots.len() > 2 {
-                    self.err(span, "a table has two dimensions: `[columns; rows]`");
+                    self.err(span, "a sheet has two dimensions: `[columns; rows]`");
                     return fail;
                 }
-                let direct = matches!(b.kind, Ir::Table(_));
+                let direct = matches!(b.kind, Ir::Sheet(_));
                 // `[columns; rows]`: the columns come first.
                 let pick =
-                    self.rowsel(slots.get(1).copied().flatten(), Some(tt.table), tt.rows, sc);
+                    self.rowsel(slots.get(1).copied().flatten(), Some(tt.sheet), tt.rows, sc);
                 if pick.is_unknown() {
                     return fail;
                 }
@@ -1950,16 +1931,16 @@ impl<'a> Checker<'a> {
                 let Some(cols) = self.colsel(slots.first().copied().flatten(), &tt, own) else {
                     return fail;
                 };
-                let sub = |cols: Rc<Vec<usize>>, rows| TableTy {
-                    table: tt.table,
+                let sub = |cols: Rc<Vec<usize>>, rows| SheetTy {
+                    sheet: tt.sheet,
                     cols,
                     rows,
                     kind,
                 };
                 let ty = match (&cols, pick.one) {
                     (ColSel::One(c), one) => {
-                        self.deps.push((DepNode::Col(tt.table, *c), kind));
-                        let s = self.col_type(tt.table, *c);
+                        self.deps.push((DepNode::Col(tt.sheet, *c), kind));
+                        let s = self.col_type(tt.sheet, *c);
                         if one {
                             Ty::Scalar(s)
                         } else {
@@ -1967,9 +1948,9 @@ impl<'a> Checker<'a> {
                         }
                     }
                     (ColSel::All, true) => Ty::Row(sub(tt.cols.clone(), None)),
-                    (ColSel::All, false) => Ty::Table(sub(tt.cols.clone(), pick.len)),
+                    (ColSel::All, false) => Ty::Sheet(sub(tt.cols.clone(), pick.len)),
                     (ColSel::Many(v), true) => Ty::Row(sub(Rc::new(v.clone()), None)),
-                    (ColSel::Many(v), false) => Ty::Table(sub(Rc::new(v.clone()), pick.len)),
+                    (ColSel::Many(v), false) => Ty::Sheet(sub(Rc::new(v.clone()), pick.len)),
                 };
                 (
                     Node::new(
@@ -2038,7 +2019,7 @@ impl<'a> Checker<'a> {
     fn rowsel(
         &mut self,
         slot: Option<&Expr>,
-        table: Option<usize>,
+        sheet: Option<usize>,
         nrows: Option<usize>,
         sc: &mut Scope,
     ) -> RowPick {
@@ -2046,8 +2027,8 @@ impl<'a> Checker<'a> {
             return RowPick::all(nrows);
         };
         // Whether cursor offsets here are relative to the cell's own row in
-        // its own table, which is what makes "previous row" safe to read.
-        let own = sc.own && table == Some(sc.frames[0]);
+        // its own sheet, which is what makes "previous row" safe to read.
+        let own = sc.own && sheet == Some(sc.frames[0]);
         let need_row = |ck: &mut Checker, e: &Expr| {
             if !sc.own {
                 let text = ck.snippet(e.span).to_string();
@@ -2139,7 +2120,7 @@ impl<'a> Checker<'a> {
 
         // A condition on the candidate row?
         let mut trial_errors = Vec::new();
-        if let Some(t) = table {
+        if let Some(t) = sheet {
             let (dmark, pmark) = (self.cur.len(), self.deps.len());
             sc.frames.push(t);
             let (node, ty) = self.lower(e, sc);
@@ -2243,12 +2224,12 @@ impl<'a> Checker<'a> {
         static_of(e)
     }
 
-    /// `own` is the table and column of the formula being checked, if it
+    /// `own` is the sheet and column of the formula being checked, if it
     /// is in a cell.
     fn colsel(
         &mut self,
         slot: Option<&Expr>,
-        tt: &TableTy,
+        tt: &SheetTy,
         own: Option<(usize, usize)>,
     ) -> Option<ColSel> {
         let Some(e) = slot else {
@@ -2261,12 +2242,12 @@ impl<'a> Checker<'a> {
             && (cursor_form(lo).is_some() || cursor_form(hi).is_some())
         {
             let here = own
-                .filter(|(t, _)| *t == tt.table)
+                .filter(|(t, _)| *t == tt.sheet)
                 .and_then(|(_, c)| tt.cols.iter().position(|&x| x == c));
             let Some(here) = here else {
                 self.err_help(
                     e.span,
-                    "`*` as a column is the column of the formula, in its own table",
+                    "`*` as a column is the column of the formula, in its own sheet",
                     "name the columns, or count them from the first: `[1..3; *]`",
                 );
                 return None;
@@ -2309,12 +2290,12 @@ impl<'a> Checker<'a> {
         // `*`, `*+1`, `*-2`: a column counted from the formula's own.
         if let Some(form) = cursor_form(e) {
             let here = own
-                .filter(|(t, _)| *t == tt.table)
+                .filter(|(t, _)| *t == tt.sheet)
                 .and_then(|(_, c)| tt.cols.iter().position(|&x| x == c));
             let Some(here) = here else {
                 self.err_help(
                     e.span,
-                    "`*` as a column is the column of the formula, in its own table",
+                    "`*` as a column is the column of the formula, in its own sheet",
                     "name the column, for example `[Revenue; *-1]`",
                 );
                 return None;
@@ -2347,7 +2328,7 @@ impl<'a> Checker<'a> {
         if let ExprKind::Name(name) = &e.kind
             && let Some(c) = self.col_in(tt, name)
         {
-            self.col_refs.push((e.span, tt.table, c));
+            self.col_refs.push((e.span, tt.sheet, c));
             return Some(ColSel::One(c));
         }
         let n = tt.cols.len() as i64;
@@ -2404,8 +2385,8 @@ impl<'a> Checker<'a> {
     fn order(&mut self) -> Vec<Group> {
         let nconsts = self.consts.len();
         let mut nodes: Vec<DepNode> = (0..nconsts).map(DepNode::Const).collect();
-        for (t, table) in self.tables.iter().enumerate() {
-            nodes.extend((0..table.cols.len()).map(|c| DepNode::Col(t, c)));
+        for (t, sheet) in self.sheets.iter().enumerate() {
+            nodes.extend((0..sheet.cols.len()).map(|c| DepNode::Col(t, c)));
         }
         let id = |n: DepNode| nodes.iter().position(|x| *x == n).unwrap();
         let edges: Vec<Vec<(usize, DepKind)>> = nodes
@@ -2429,22 +2410,22 @@ impl<'a> Checker<'a> {
         let mut groups = Vec::new();
         for scc in deps::analyse(&edges) {
             if let Some(cycle) = &scc.cycle {
-                let one_table = cycle.iter().all(|&n| match (nodes[n], nodes[cycle[0]]) {
+                let one_sheet = cycle.iter().all(|&n| match (nodes[n], nodes[cycle[0]]) {
                     (DepNode::Col(a, _), DepNode::Col(b, _)) => a == b,
                     _ => false,
                 });
                 let label = |n: usize| match nodes[n] {
                     DepNode::Const(i) => self.consts[i].name.clone(),
-                    DepNode::Col(t, c) if one_table => self.tables[t].cols[c].name.clone(),
+                    DepNode::Col(t, c) if one_sheet => self.sheets[t].cols[c].name.clone(),
                     DepNode::Col(t, c) => {
-                        format!("{}.{}", self.tables[t].name, self.tables[t].cols[c].name)
+                        format!("{}.{}", self.sheets[t].name, self.sheets[t].cols[c].name)
                     }
                 };
                 let mut path: Vec<String> = cycle.iter().map(|&n| label(n)).collect();
                 path.push(label(cycle[0]));
                 let span = match nodes[cycle[0]] {
                     DepNode::Const(i) => self.consts[i].span,
-                    DepNode::Col(t, c) => self.tables[t].cols[c].span,
+                    DepNode::Col(t, c) => self.sheets[t].cols[c].span,
                 };
                 self.done.push(
                     Diagnostic::new(span, format!("circular reference: {}", path.join(" → ")))
@@ -2470,8 +2451,8 @@ impl<'a> Checker<'a> {
     }
 
     fn finish(mut self, order: Vec<Group>) -> Program {
-        let mut tables = Vec::new();
-        for (t, info) in mem::take(&mut self.tables).into_iter().enumerate() {
+        let mut sheets = Vec::new();
+        for (t, info) in mem::take(&mut self.sheets).into_iter().enumerate() {
             let mut cols = Vec::new();
             for (c, col) in info.cols.into_iter().enumerate() {
                 let ty = match &self.col_state[t][c] {
@@ -2488,7 +2469,7 @@ impl<'a> Checker<'a> {
                         .unwrap_or(ColKind::Computed(Node::error(col.span))),
                 });
             }
-            tables.push(Table {
+            sheets.push(Sheet {
                 name: info.name,
                 cols,
                 nrows: info.nrows,
@@ -2509,7 +2490,7 @@ impl<'a> Checker<'a> {
         }
         Program {
             zone: self.ast.and_then(|ast| ast.zone.clone()),
-            tables,
+            sheets,
             consts,
             funcs: mem::take(&mut self.funcs),
             order,
@@ -2524,4 +2505,9 @@ fn unop_text(op: UnOp) -> &'static str {
         UnOp::Not => "not",
         UnOp::UpTo => "^",
     }
+}
+
+/// Whether the text of a cell is text written in quotes.
+fn quoted(cell: &str) -> bool {
+    matches!(parse_literal(cell), Some(Lit::Text(_)))
 }

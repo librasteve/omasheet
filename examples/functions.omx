@@ -1,6 +1,6 @@
 # Functions of your own: `fn Name(parameters) = expression`, anywhere
-# outside a table. A function sees its parameters, the sheet's constants and
-# tables and the other functions, but not the row it is called from: what it
+# outside a sheet. A function sees its parameters, the file's constants and
+# sheets and the other functions, but not the row it is called from: what it
 # needs from the row, it is given.
 #
 # The comment above a function is what the function directory says about it.
@@ -16,19 +16,19 @@ fn Margin(revenue, cost) = if revenue == 0 then 0 else (revenue - cost) / revenu
 # A customer's name from their ID.
 fn CustomerName(id) = Customers[; ID == id].Name // "Unknown"
 
-# What a table of orders comes to. A parameter can be a whole table.
+# What a sheet of orders comes to. A parameter can be a whole sheet.
 fn Worth(orders) = (orders.Qty * orders.Price).sum()
 
 # The length of the long side of a right-angled triangle.
 fn Hypotenuse(a, b) = sqrt(a ** 2 + b ** 2)
 
-table Customers
+sheet Customers
 
 ID | Name
 1  | Ada Ltd
 2  | Grace Inc
 
-table Orders
+sheet Orders
 
 CustomerID | Qty | Price | Cost | Customer | Net | Gross | Margin
 2          | 3   | 20    | 45   | *        | *   | *     | *

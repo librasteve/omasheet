@@ -23,8 +23,8 @@ D/P/Q numbers are shared across all five changes, so gaps here are intentional.
 | D7 | `Int` is arbitrary precision (BigInt); `Fraction` is arbitrary precision (FatRat) | No fixed-width integers at language level |
 | D8 | Units and uncertainty are in scope | Later phases — see `add-units`, `add-uncertainty` |
 | D9 | Types are expressed over an entire column | Column-typed first, cell-typed second; units per column arrive in `add-units` |
-| D10 | XLSX via existing crates | Later phase — see `add-interop`. The dataframe-library half of this decision was withdrawn: see D11 in `add-table-operations` |
-| D12 | File extension is `.omx` | Owner decision, 2026-10-07. Replaces the provisional `.sheet`; also seen: `.sd`, `.sheetdown`, `.omasheet` |
+| D10 | XLSX via existing crates | Later phase — see `add-interop`. The dataframe-library half of this decision was withdrawn: see D11 in `add-sheet-operations` |
+| D12 | File extension is `.omx` | Owner decision, 2026-10-07. Replaces the provisional `.file`; also seen: `.sd`, `.sheetdown`, `.omasheet` |
 | D13 | `*` is always the cursor (current row); the whole dimension is an empty slot: `A[3]`, `A[; 2]` | Owner decision, 2026-10-07. Bare `*` is an error with no row context. Unlike Raku, `[; *-1]` is the previous row; the last row is `[-1]` |
 | D14 | A leading `=` marks a formula cell; every other cell is a literal | Owner decision, 2026-10-07. Replaces the provisional "no leading `=`". Computed columns (`Name := expr`) and `const` take no marker |
 | D15 | Fallback operator is `//` (Raku defined-or) | Owner decision, 2026-10-07. Chosen over `??`. `//` therefore cannot mean integer division or begin a comment |
@@ -39,12 +39,12 @@ D/P/Q numbers are shared across all five changes, so gaps here are intentional.
 | P5 | `.Field` and `; Field` are equivalent: `T[; r].C` ≡ `T[C; r]` | Only one of the two |
 | P7 | Conditional is `if … then … else …` | `c ? a : b` ternary |
 | P8 | Aggregations are methods: `.sum() .avg() .min() .max() .count()` | Function form `sum(x)` |
-| P9 | Pipe operator `|>` for multi-step table transforms | Method chaining only |
+| P9 | Pipe operator `|>` for multi-step sheet transforms | Method chaining only |
 | P10 | Computed column syntax `Name := expr` | Per-cell repeated formulas |
 | P15 | First app is a read-only viewer; editing stays in the text editor | Superseded by D16 in `add-interactive-app`: the app is an interactive grid |
 | P17 | Lexical choices made while building: `#` comments to end of line; `"…"` strings with `\" \\ \n \t`; `true` / `false`; dates as `2025-01-01`, times of day as `09:30` or `09:30:15`, and date-times as `2025-01-01T09:30` or `2025-01-01T09:30:15` (no time zone), always in these ISO forms whatever the locale; a `const` or `:=` expression continues onto following indented lines, or while a bracket is open | Not discussed in the source — was Q13. No `null` literal: an empty cell is the only way to write "empty" |
 | P18 | Inside a cell, `|` is not a separator when it is inside a quoted string or is the `|>` operator | Not discussed in the source — was Q14. An escape such as `\|` |
-| P19 | A lookup that yields a vector of one value fills a cell with that value; no match gives empty; several matches is an error | Relates to Q10 in `add-table-operations` |
+| P19 | A lookup that yields a vector of one value fills a cell with that value; no match gives empty; several matches is an error | Relates to Q10 in `add-sheet-operations` |
 
 ## Architecture
 
@@ -64,11 +64,11 @@ D/P/Q numbers are shared across all five changes, so gaps here are intentional.
   The OMX parser does not know whether an expression came from a cell, a
   computed column, `omasheet eval`, or a Markdown `{{ }}`.
 - References are resolved at compile time: `Sales[Revenue; *-1]` becomes
-  `LoadCell { table_id, row_offset: -1, col_id }`, not a runtime name lookup.
+  `LoadCell { sheet_id, row_offset: -1, col_id }`, not a runtime name lookup.
 - Storage is column-oriented. MVP may use plain `Vec<T>` per column with
   hand-written slicing; views should not copy.
 - Later phases extend this pipeline without replacing it: XLSX and Markdown
-  at the edges (Phase 2), table operations beside the kernel (Phase 3), units
+  at the edges (Phase 2), sheet operations beside the kernel (Phase 3), units
   and uncertainty in semantic analysis and the value model (Phases 4 and 5).
 
 ## Implementation Notes (as built)
@@ -91,7 +91,7 @@ D/P/Q numbers are shared across all five changes, so gaps here are intentional.
 
 Not built in this phase, though the specs mention them:
 
-- **A distinct matrix shape.** `Sales[3..7; 2..5]` returns a table (rows and
+- **A distinct matrix shape.** `Sales[3..7; 2..5]` returns a sheet (rows and
   named columns) with those dimensions rather than an unnamed matrix; there is
   no matrix literal. Matrices are not in any planned change.
 - **Complex numbers.** A number followed by `i` is imaginary, so `3+4i` is a
@@ -109,22 +109,22 @@ Not built in this phase, though the specs mention them:
   (`LC_TIME`), the command line does so only with `--locale`. From the locale
   come the order of the date, its separator and the 12 or 24 hour clock; the
   year always has four digits.
-- **Time zones.** A `DateTime` is a wall clock in the sheet's zone: the one a
+- **Time zones.** A `DateTime` is a wall clock in the file's zone: the one a
   `zone <Area/City>` line names, or else the zone of the machine. Literals
   carry no offset. `.to_zone("Asia/Tokyo")`, `.utc()` and `.local()` give the
   same instant on other clocks, as a `DateTime` that remembers its zone and
   prints its offset (`2025-07-15T20:00+09:00`); `.offset()` and `.zone()` read
-  it back. Within the sheet's zone, comparison and subtraction take the
+  it back. Within the file's zone, comparison and subtraction take the
   clocks at their word, so a day in which the clocks change is still 86400
   seconds; as soon as another zone is involved it is the instants that are
   compared, and `a.utc() - b.utc()` is the elapsed time. Zones come from the
   time zone database of the operating system (the `jiff` crate reads it), so
   a zone the machine does not know is an error. The file keeps what was
   written; only the interactive app, and the command line with `--locale`,
-  show the sheet's date-times on the clocks of the machine. What is typed
-  into a cell is in the sheet's zone, as the entry box shows it.
-- **`today()` and `now()`** read the clock once per evaluation, in the sheet's
-  zone, so a sheet that uses them gives different results on different days. `--now`
+  show the file's date-times on the clocks of the machine. What is typed
+  into a cell is in the file's zone, as the entry box shows it.
+- **`today()` and `now()`** read the clock once per evaluation, in the file's
+  zone, so a file that uses them gives different results on different days. `--now`
   fixes the clock for a repeatable run.
 
 ## Open Questions
@@ -141,7 +141,7 @@ specified because an example depends on it; the rest are deferred.
 ## Risks
 
 - **Scope.** Exact numerics plus a new language is already a large surface. The
-  roadmap in `project.md` keeps units, uncertainty, table operations and
+  roadmap in `project.md` keeps units, uncertainty, sheet operations and
   XLSX out of this phase so that a useful tool (parse, evaluate, print) exists
   first.
 - **Ambiguity debt.** The three grammar-shaping questions are settled (D13–D15).

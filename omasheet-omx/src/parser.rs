@@ -315,7 +315,6 @@ impl Parser {
             Tok::Int(n) => lit(Lit::Int(n)),
             Tok::Decimal(r) => lit(Lit::Decimal(r)),
             Tok::Percent(r) => lit(Lit::Percent(r)),
-            Tok::Ratio(r) => lit(Lit::Ratio(r)),
             Tok::Num(f) => lit(Lit::Num(f)),
             Tok::Imag(f) => lit(Lit::Complex(0.0, f)),
             Tok::Str(s) => lit(Lit::Text(s)),
@@ -352,7 +351,7 @@ impl Parser {
                 self.bump();
                 let mut items = Vec::new();
                 // `[Revenue; *-1]`, with a `;` or a row cursor, is an index
-                // into the current table; anything else is a vector.
+                // into the current sheet; anything else is a vector.
                 let mut first = None;
                 if !matches!(self.peek(), Tok::Semi | Tok::RBracket) {
                     first = Some(self.expr()?);

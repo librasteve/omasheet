@@ -2,9 +2,9 @@
 
 ## Why
 
-People who work in Polars, pandas or DuckDB exchange tables as Parquet, which
-carries column types where CSV carries only text. Bringing such a table into a
-sheet, and handing a sheet's tables back, should not lose those types.
+People who work in Polars, pandas or DuckDB exchange sheets as Parquet, which
+carries column types where CSV carries only text. Bringing such a sheet into a
+file, and handing a file's sheets back, should not lose those types.
 
 Deferred from `add-interop` (Phase 2) by owner decision, 2026-10-09: the Parquet
 crates take the `omasheet` binary from about 1.7 MB to about 8-10 MB, and the
@@ -12,7 +12,7 @@ shape of any Polars integration is not yet decided.
 
 ## What Changes
 
-- **parquet-interop** — ADDED: Parquet for one table of typed columns in both
+- **parquet-interop** — ADDED: Parquet for one sheet of typed columns in both
   directions, with terminating `Fraction` columns kept exact as decimals
 - **cli** — ADDED: `.parquet` in `omasheet import`, and `omasheet export --parquet`
 
@@ -26,9 +26,9 @@ shape of any Polars integration is not yet decided.
 ## Open Questions
 
 - Whether Polars is wanted at all beyond the file format, and for what: a
-  library API that hands tables to a Polars `DataFrame`, a Python binding, or
+  library API that hands sheets to a Polars `DataFrame`, a Python binding, or
   nothing more than Parquet. Polars cannot hold `Int` or `Fraction` exactly (D11
-  in `add-table-operations`), so any such bridge is lossy for those columns.
+  in `add-sheet-operations`), so any such bridge is lossy for those columns.
 - Whether the Cargo feature is on by default.
 - Which compression codecs to read. Snappy and Zstandard cover the defaults of
   pandas, Spark, Polars and DuckDB; all codecs add about 2 MB more.

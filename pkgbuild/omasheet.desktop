@@ -8,5 +8,5 @@ Icon=omasheet
 Terminal=false
 Categories=Office;Spreadsheet;
 MimeType=application/x-omasheet;text/csv;application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;
-Keywords=spreadsheet;sheet;table;omx;csv;xlsx;
+Keywords=spreadsheet;file;sheet;omx;csv;xlsx;
 StartupWMClass=omasheet

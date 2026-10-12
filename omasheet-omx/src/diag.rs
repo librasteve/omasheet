@@ -51,7 +51,7 @@ impl Diagnostic {
     }
 }
 
-/// The source texts diagnostics refer to: a sheet file, an `eval` expression.
+/// The source texts diagnostics refer to: an `.omx` file, an `eval` expression.
 #[derive(Debug, Default)]
 pub struct Sources {
     files: Vec<(String, String)>,

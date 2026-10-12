@@ -4,25 +4,25 @@ The interactive Omasheet window.
 
 ## ADDED Requirements
 
-### Requirement: Grid of the current table
-The app SHALL show one table at a time as a grid with one row per table row and
-one column per table column, including computed columns. Each cell SHALL show its
+### Requirement: Grid of the current sheet
+The app SHALL show one sheet at a time as a grid with one row per sheet row and
+one column per sheet column, including computed columns. Each cell SHALL show its
 calculated value. Column headers SHALL show the column name and its type, or for
 a computed column its expression. Rows SHALL be numbered from zero.
 
-#### Scenario: Open a sheet
-- **GIVEN** `budget.omx` with a table `Sales` and a computed column `Profit := Revenue - Cost`
+#### Scenario: Open a file
+- **GIVEN** `budget.omx` with a sheet `Sales` and a computed column `Profit := Revenue - Cost`
 - **WHEN** it is opened in the app
 - **THEN** the grid shows the `Sales` rows with a `Profit` column of calculated values
 - **AND** the `Profit` header shows `:= Revenue - Cost`
 
 ### Requirement: Tabs
-When a sheet has more than one table the app SHALL offer a tab for each, and
-SHALL show the sheet's constants as a further tab listing each constant's name,
+When a file has more than one sheet the app SHALL offer a tab for each, and
+SHALL show the file's constants as a further tab listing each constant's name,
 expression and value.
 
-#### Scenario: Switch table
-- **GIVEN** a sheet with tables `Sales` and `Summary`
+#### Scenario: Switch sheet
+- **GIVEN** a file with sheets `Sales` and `Summary`
 - **WHEN** the `Summary` tab is chosen
 - **THEN** the grid shows `Summary`
 
@@ -67,14 +67,14 @@ the file in the ISO form. The entry box SHALL show the stored ISO form.
 - **THEN** the file holds `2026-09-10`
 
 ### Requirement: Date-times on local clocks
-The grid SHALL show the `DateTime` values of a sheet in another time zone on the
+The grid SHALL show the `DateTime` values of a file in another time zone on the
 clocks of the machine. A `DateTime` moved to a zone with `.to_zone()` or `.utc()`
 SHALL be shown in that zone with its offset. The entry box SHALL show, and what
-is committed SHALL be taken in, the sheet's zone; the file SHALL NOT change
+is committed SHALL be taken in, the file's zone; the file SHALL NOT change
 because of where it is opened.
 
-#### Scenario: A New York sheet in London
-- **GIVEN** a sheet that begins `zone America/New_York`, opened in London
+#### Scenario: A New York file in London
+- **GIVEN** a file that begins `zone America/New_York`, opened in London
 - **WHEN** a cell holds `2025-03-03T09:12`
 - **THEN** the grid shows 14:12 and the entry box shows `2025-03-03T09:12`
 
@@ -89,36 +89,36 @@ larger selection SHALL fill the selection.
 #### Scenario: Copy and paste a block
 - **GIVEN** a 2 × 3 block is selected and copied
 - **WHEN** it is pasted with the cursor two rows below the last row
-- **THEN** the table gains rows and the block's sources appear there
+- **THEN** the sheet gains rows and the block's sources appear there
 
 #### Scenario: Paste from another program
 - **GIVEN** the clipboard holds `Apr<TAB>14000<NEWLINE>May<TAB>15000`
 - **WHEN** it is pasted at the first cell of a new row
 - **THEN** two rows are filled
 
-### Requirement: Rows, columns, tables and constants
+### Requirement: Rows, columns, sheets and constants
 The app SHALL be able to insert and delete rows, add a data column, add a
-computed column from a name and an expression, add a table, and add a constant.
+computed column from a name and an expression, add a sheet, and add a constant.
 It SHALL refuse a name that is not valid or is already in use, saying why.
 
 #### Scenario: Duplicate column
-- **WHEN** a column named `Revenue` is added to a table that has one
+- **WHEN** a column named `Revenue` is added to a sheet that has one
 - **THEN** nothing changes and the app says the name is already used
 
-### Requirement: The file is the sheet
+### Requirement: The text is the file
 The app SHALL open and save `.omx` files and SHALL NOT keep any state outside
-that text. An edit SHALL change only the lines of the table it touches, leaving
-comments, constants, other tables and line order as they were. The app SHALL warn
+that text. An edit SHALL change only the lines of the sheet it touches, leaving
+comments, constants, other sheets and line order as they were. The app SHALL warn
 before discarding unsaved changes.
 
 #### Scenario: One-line diff
-- **GIVEN** a saved sheet under version control
-- **WHEN** one cell is changed to a value of the same width and the sheet is saved
+- **GIVEN** a saved file under version control
+- **WHEN** one cell is changed to a value of the same width and the file is saved
 - **THEN** the diff is one changed line
 
 #### Scenario: Comments survive
-- **GIVEN** a sheet with `#` comments between declarations
-- **WHEN** a cell is edited and the sheet is saved
+- **GIVEN** a file with `#` comments between declarations
+- **WHEN** a cell is edited and the file is saved
 - **THEN** every comment is still present
 
 ### Requirement: Undo
@@ -127,15 +127,15 @@ clear of a block is one edit.
 
 #### Scenario: Undo a paste
 - **WHEN** a block is pasted and undo is used once
-- **THEN** the sheet is exactly as it was before the paste
+- **THEN** the file is exactly as it was before the paste
 
 ### Requirement: Errors do not blank the grid
-When a sheet has errors the app SHALL still calculate and show every cell that
+When a file has errors the app SHALL still calculate and show every cell that
 can be calculated, SHALL mark each cell that cannot, and SHALL list the problems
 with their line numbers.
 
 #### Scenario: One mistyped formula
-- **GIVEN** a sheet with ten valid computed columns
+- **GIVEN** a file with ten valid computed columns
 - **WHEN** a cell is given the formula `= Revnue * 2`
 - **THEN** that cell and the cells that read it show as errors, with the message for the unknown name
 - **AND** cells that do not depend on it keep their values

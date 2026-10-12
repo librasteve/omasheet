@@ -1,5 +1,5 @@
 # Moving, cutting and pasting: every way a formula can point at a row or a
-# column, in a table big enough to move things around in.
+# column, in a sheet big enough to move things around in.
 #
 # `Checks` reads results out of `Grid` and compares each with the value it had
 # when this file was written. Move rows and columns, cut and paste cells: a
@@ -19,7 +19,7 @@
 const Corner  = Grid[1; 0]
 const LastApr = Grid[Apr; -1]
 
-table Grid
+sheet Grid
 
 Item | Jan | Feb | Mar | Apr | Total                                       | Prev                | Mix                                         | Run | Scaled
 r00  | 1   | 10  | 100 | 1   | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = 0                 | = [*-2; *]                                  | *   | *
@@ -46,7 +46,7 @@ r19  | 20  | 200 | 119 | 39  | = [*-4; *] + [*-3; *] + [*-2; *] + [*-1; *] | = [
 Run    := Jan + ([Run; *-1] // 0)
 Scaled := [1; *] * Grid[2; 0]
 
-table Checks
+sheet Checks
 
 Kind  | Reads                      | Expect | Actual                 | OK
 own   | "Mix of r00"               | 112    | = Grid[Mix; 0]         | *
@@ -82,7 +82,7 @@ order | "Run, at its largest"      | 210    | = Grid.Run.max()       | *
 
 OK := Expect == Actual
 
-table Verdict
+sheet Verdict
 
 Kind  | Count | Failed
 cell  | *     | *

@@ -39,10 +39,11 @@ fn list<T>(out: &mut String, items: &[T], mut each: impl FnMut(&mut String, &T))
 }
 
 /// Cells are `{d: display, s: source, n: numeric, f: formula, e: error,
-/// x: the value in full when the display is shortened}`.
+/// x: the value in full when the display is shortened, h: text that is
+/// Markdown as HTML}`.
 pub fn snapshot(snap: &Snapshot) -> String {
-    let mut out = String::from("{\"tables\":");
-    list(&mut out, &snap.tables, |out, t| {
+    let mut out = String::from("{\"sheets\":");
+    list(&mut out, &snap.sheets, |out, t| {
         out.push('{');
         field(out, "name", &t.name);
         out.push_str(",\"columns\":");
@@ -66,6 +67,14 @@ pub fn snapshot(snap: &Snapshot) -> String {
                 field(out, "e", cell.error.as_deref().unwrap_or(""));
                 out.push(',');
                 field(out, "x", cell.exact.as_deref().unwrap_or(""));
+                if cell.value.is_markdown() {
+                    out.push(',');
+                    // The grid draws `<i>`, and has no `<em>`.
+                    let html = omasheet_md::inline_html(&cell.display)
+                        .replace("<em>", "<i>")
+                        .replace("</em>", "</i>");
+                    field(out, "h", &html);
+                }
                 out.push_str(&format!(",\"n\":{},\"f\":{}}}", cell.numeric, cell.formula));
             });
         });
@@ -96,7 +105,7 @@ pub fn snapshot(snap: &Snapshot) -> String {
 }
 
 /// The function directory: `[{name, category, usage, summary, code}]`. The
-/// functions the sheet defines come first, under `Custom`, each with the
+/// functions the file defines come first, under `Custom`, each with the
 /// expression it stands for as its `code`.
 pub fn functions(custom: &[FuncSnap], docs: &[FuncDoc]) -> String {
     let mut entries: Vec<[String; 5]> = Vec::new();
@@ -141,9 +150,9 @@ mod tests {
     #[test]
     fn escapes_and_structure() {
         let doc =
-            Document::from_text("table T\n\nA | B | C\n\"say \\\"hi\\\"\" | 2 | *\n\nC := B * 2\n");
+            Document::from_text("sheet T\n\nA | B | C\n\"say \\\"hi\\\"\" | 2 | *\n\nC := B * 2\n");
         let json = super::snapshot(doc.snapshot());
-        assert!(json.starts_with("{\"tables\":[{\"name\":\"T\",\"columns\":[{\"name\":\"A\""));
+        assert!(json.starts_with("{\"sheets\":[{\"name\":\"T\",\"columns\":[{\"name\":\"A\""));
         assert!(json.contains("\"d\":\"say \\\"hi\\\"\""), "{json}");
         assert!(json.contains("\"formula\":\"B * 2\",\"computed\":true"));
         assert!(json.contains("\"d\":\"4\""));
@@ -151,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn the_sheets_own_functions_lead_the_directory() {
+    fn the_files_own_functions_lead_the_directory() {
         let doc = Document::from_text("# Twice over.\nfn Twice(x) = x * 2\nfn Half(x) = x / 2\n");
         let json = super::functions(
             &doc.snapshot().funcs,

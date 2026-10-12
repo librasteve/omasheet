@@ -1,24 +1,24 @@
 # Time zones, and the things worth knowing about them.
 #
-# 1. This sheet is in New York. Open it in the app anywhere else and the grid
+# 1. This file is in New York. Open it in the app anywhere else and the grid
 #    shows `Placed` on your own clocks (14:12 in London for the first row),
 #    while the entry box shows what is stored here (09:12). What you type is
-#    taken in the sheet's zone, so a cell never shifts by being re-entered.
+#    taken in the file's zone, so a cell never shifts by being re-entered.
 #    The command line shows what is stored unless you pass `--locale`.
 #
 # 2. It is `.to_zone("Asia/Tokyo")`, not `.in(...)`: `in` is the membership
 #    operator. A converted date-time prints its offset from UTC; one in the
-#    sheet's own zone prints none.
+#    file's own zone prints none.
 #
-# 3. In the sheet's own zone the clocks are taken at their word. Across zones
-#    it is the instant that counts. See the Clocks table.
+# 3. In the file's own zone the clocks are taken at their word. Across zones
+#    it is the instant that counts. See the Clocks sheet.
 #
-# 4. `now()`, `today()` and `.local()` depend on when and where the sheet is
+# 4. `now()`, `today()` and `.local()` depend on when and where the file is
 #    opened, so this example leaves them out. `--now` and `--zone` pin them.
 
 zone America/New_York
 
-table Calls
+sheet Calls
 
 Placed : DateTime
 
@@ -37,12 +37,12 @@ Tokyo   := Placed.to_zone("Asia/Tokyo")
 # next year in Tokyo.
 TokyoOn := Tokyo.date()
 Zone    := Tokyo.zone()
-# Back in the sheet's own zone it is an ordinary date-time again.
+# Back in the file's own zone it is an ordinary date-time again.
 Back    := Tokyo.to_zone("America/New_York")
 # A converted value is still the same instant.
 Same    := Tokyo == Placed
 
-table Clocks
+sheet Clocks
 
 # Noon to noon over three nights in New York: an ordinary one, the night the
 # clocks go forward, and the night they go back.

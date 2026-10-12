@@ -2,7 +2,7 @@
 
 const TaxRate = 20%
 
-table Sales
+sheet Sales
 
 Closed : DateTime
 Margin : Percent
@@ -18,7 +18,7 @@ Tax    := Profit * TaxRate
 Margin := Profit / Revenue
 Growth := Revenue / Sales[Revenue; *-1] - 1
 
-table Summary
+sheet Summary
 
 Item           | Value
 Revenue        | = Sales.Revenue.sum()
