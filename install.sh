@@ -52,10 +52,13 @@ info "Checking it"
 
 info "Installing it with pacman"
 # Piped from curl, this script is on standard input: ask on the terminal.
+# It needs at least the Qt it was built with, which pacman may not know of
+# until the system is updated.
+STALE="pacman did not install it. If it could not satisfy a dependency on qt6, update the system (sudo pacman -Syu) and run this again"
 if [[ -r /dev/tty ]]; then
-  sudo pacman -U "$TMP/$PACKAGE" </dev/tty
+  sudo pacman -U "$TMP/$PACKAGE" </dev/tty || die "$STALE"
 else
-  sudo pacman -U --noconfirm "$TMP/$PACKAGE"
+  sudo pacman -U --noconfirm "$TMP/$PACKAGE" || die "$STALE"
 fi
 
 info "Done: $(pacman -Q omasheet)"

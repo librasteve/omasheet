@@ -4,7 +4,7 @@
 # container; `makepkg` here builds on this machine.
 
 pkgname=omasheet
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc='Text-native spreadsheet: plain-text .omx files, with a Qt Quick app'
 arch=('x86_64' 'aarch64')
@@ -13,12 +13,24 @@ license=('MIT')
 install='omasheet.install'
 # The C++ of the Qt bridge is linked by rustc, which cannot read GCC's LTO.
 options=('!debug' '!lto')
+# The QML is compiled against the Qt it is built with, and does not start on
+# an older one: so the package needs at least the Qt that is here when it is
+# made. Before that Qt is installed, to build with, any will do.
+_at_least() {
+  local built
+  built=$(pacman -Q "$1" 2>/dev/null | cut -d' ' -f2)
+  if [[ -n $built ]]; then
+    printf '%s>=%s' "$1" "${built%-*}"
+  else
+    printf '%s' "$1"
+  fi
+}
 depends=(
   'gcc-libs'
   'glibc'
   'hicolor-icon-theme'
-  'qt6-base'
-  'qt6-declarative'
+  "$(_at_least qt6-base)"
+  "$(_at_least qt6-declarative)"
   'xdg-desktop-portal'
 )
 makedepends=(
