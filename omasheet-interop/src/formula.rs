@@ -2,19 +2,19 @@
 
 //! A workbook's formulas as OMX.
 //!
-//! A worksheet becomes a table whose first row is the header, so a cell
-//! reference becomes a column and a row of that table: `B3` is `Revenue` on
+//! A worksheet becomes a sheet whose first row is the header, so a cell
+//! reference becomes a column and a row of that sheet: `B3` is `Revenue` on
 //! its own row, `[Revenue; *-1]` on the row below, and `[Revenue; 1]` when it
 //! is written `B$3`. A formula that OMX has no way to say is not translated,
 //! and the reason is given.
 
-/// A worksheet as the table it becomes.
+/// A worksheet as the sheet it becomes.
 #[derive(Debug)]
-pub struct Sheet {
+pub struct Worksheet {
     /// The worksheet's name in the workbook.
     pub excel: String,
-    /// The table's name in the sheet.
-    pub table: String,
+    /// The sheet's name in the file.
+    pub sheet: String,
     pub columns: Vec<String>,
     /// The row and the column of the header's first cell.
     pub top: u32,
@@ -43,7 +43,7 @@ enum Tok {
     Word(String),
     Cell(Cell),
     /// A worksheet's name, before the `!`.
-    Sheet(String),
+    Worksheet(String),
     Op(&'static str),
     Open,
     Close,
@@ -166,7 +166,7 @@ fn lex(text: &str) -> R<Vec<Tok>> {
                 return Err(UNREADABLE.into());
             }
             i += at + 1;
-            toks.push(Tok::Sheet(name));
+            toks.push(Tok::Worksheet(name));
         } else if b.is_ascii_digit()
             || (b == b'.' && rest[1..].starts_with(|c: char| c.is_ascii_digit()))
         {
@@ -201,7 +201,7 @@ fn lex(text: &str) -> R<Vec<Tok>> {
             }
             let word = text[i..j].to_string();
             if bytes.get(j) == Some(&b'!') {
-                toks.push(Tok::Sheet(word));
+                toks.push(Tok::Worksheet(word));
                 j += 1;
             } else {
                 toks.push(Tok::Word(word));
@@ -228,7 +228,7 @@ fn lex(text: &str) -> R<Vec<Tok>> {
                 (_, b',') => (Tok::Comma, 1),
                 (_, b':') => (Tok::Colon, 1),
                 (_, b'{') => return Err("it holds a list of values in `{ }`".into()),
-                (_, b'[') => return Err("it refers to a table of the workbook by name".into()),
+                (_, b'[') => return Err("it refers to a sheet of the workbook by name".into()),
                 (_, b'#') => return Err("it holds an error value".into()),
                 _ => return Err(UNREADABLE.into()),
             };
@@ -303,8 +303,8 @@ impl Parser {
     }
 
     fn primary(&mut self) -> R<Expr> {
-        let sheet = match self.peek() {
-            Some(Tok::Sheet(name)) => {
+        let worksheet = match self.peek() {
+            Some(Tok::Worksheet(name)) => {
                 let name = name.clone();
                 self.at += 1;
                 Some(name)
@@ -312,7 +312,7 @@ impl Parser {
             _ => None,
         };
         let tok = self.next().ok_or(UNREADABLE)?;
-        if sheet.is_some() && !matches!(tok, Tok::Cell(_) | Tok::Word(_)) {
+        if worksheet.is_some() && !matches!(tok, Tok::Cell(_) | Tok::Word(_)) {
             return Err(UNREADABLE.into());
         }
         match tok {
@@ -327,20 +327,20 @@ impl Parser {
             }
             Tok::Cell(from) => {
                 if self.peek() != Some(&Tok::Colon) {
-                    return Ok(Expr::Cell(sheet, from));
+                    return Ok(Expr::Cell(worksheet, from));
                 }
                 self.at += 1;
                 // The far corner may name its worksheet again.
-                if matches!(self.peek(), Some(Tok::Sheet(_))) {
+                if matches!(self.peek(), Some(Tok::Worksheet(_))) {
                     self.at += 1;
                 }
                 match self.next() {
-                    Some(Tok::Cell(to)) => Ok(Expr::Block(sheet, from, to)),
+                    Some(Tok::Cell(to)) => Ok(Expr::Block(worksheet, from, to)),
                     _ => Err(UNREADABLE.into()),
                 }
             }
             Tok::Word(word) => {
-                if self.peek() == Some(&Tok::Open) && sheet.is_none() {
+                if self.peek() == Some(&Tok::Open) && worksheet.is_none() {
                     self.at += 1;
                     let mut args = Vec::new();
                     if self.peek() == Some(&Tok::Close) {
@@ -366,19 +366,19 @@ impl Parser {
                     self.at += 1;
                     return match self.next() {
                         Some(Tok::Word(to)) => match column(&to) {
-                            Some(to) => Ok(Expr::Columns(sheet, from.min(to), from.max(to))),
+                            Some(to) => Ok(Expr::Columns(worksheet, from.min(to), from.max(to))),
                             None => Err(UNREADABLE.into()),
                         },
                         _ => Err(UNREADABLE.into()),
                     };
                 }
                 match word.to_ascii_uppercase().as_str() {
-                    "TRUE" if sheet.is_none() => Ok(Expr::Bool(true)),
-                    "FALSE" if sheet.is_none() => Ok(Expr::Bool(false)),
+                    "TRUE" if worksheet.is_none() => Ok(Expr::Bool(true)),
+                    "FALSE" if worksheet.is_none() => Ok(Expr::Bool(false)),
                     _ => Err(format!("it uses the name `{word}`")),
                 }
             }
-            Tok::Colon | Tok::Comma | Tok::Close | Tok::Op(_) | Tok::Sheet(_) => {
+            Tok::Colon | Tok::Comma | Tok::Close | Tok::Op(_) | Tok::Worksheet(_) => {
                 Err(UNREADABLE.into())
             }
         }
@@ -445,13 +445,13 @@ enum Out {
 }
 
 const RANGE: &str = "it uses a range of cells where one value is wanted";
-const OUTSIDE: &str = "it refers to a cell outside the table";
+const OUTSIDE: &str = "it refers to a cell outside the sheet";
 const HEADER: &str = "it refers to the header row";
 
 struct Scope<'a> {
-    sheets: &'a [Sheet],
+    worksheets: &'a [Worksheet],
     here: usize,
-    /// The row of the formula's cell among the table's rows.
+    /// The row of the formula's cell among the sheet's rows.
     row: i64,
     /// Write it as one of a column filled down: see [`Translated::filled`].
     filled: bool,
@@ -459,34 +459,34 @@ struct Scope<'a> {
 }
 
 impl Scope<'_> {
-    fn sheet(&self, name: &Option<String>) -> R<usize> {
+    fn worksheet(&self, name: &Option<String>) -> R<usize> {
         let Some(name) = name else {
             return Ok(self.here);
         };
-        self.sheets
+        self.worksheets
             .iter()
             .position(|s| s.excel.eq_ignore_ascii_case(name))
             .ok_or_else(|| format!("it refers to `{name}`, which was not imported"))
     }
 
     fn column(&self, s: usize, col: u32) -> R<&str> {
-        let sheet = &self.sheets[s];
-        col.checked_sub(sheet.left)
-            .and_then(|c| sheet.columns.get(c as usize))
+        let worksheet = &self.worksheets[s];
+        col.checked_sub(worksheet.left)
+            .and_then(|c| worksheet.columns.get(c as usize))
             .map(String::as_str)
             .ok_or_else(|| OUTSIDE.to_string())
     }
 
-    /// The row a cell is on among its table's rows; `-1` is the header.
+    /// The row a cell is on among its sheet's rows; `-1` is the header.
     fn index(&self, s: usize, cell: Cell) -> R<i64> {
-        let k = cell.row as i64 - self.sheets[s].top as i64 - 1;
+        let k = cell.row as i64 - self.worksheets[s].top as i64 - 1;
         if k < -1 { Err(OUTSIDE.into()) } else { Ok(k) }
     }
 
     /// A row as a formula on this row writes it: a number when it is
     /// fixed, and otherwise so many rows from this one.
     ///
-    /// A row of another table is a number too, unless the formula is one
+    /// A row of another sheet is a number too, unless the formula is one
     /// of a column filled down: one cell there is not meant as so many rows
     /// from one here.
     fn position(&self, s: usize, k: i64, fixed: bool) -> String {
@@ -502,18 +502,18 @@ impl Scope<'_> {
         if s == self.here {
             format!("[{column}; {rows}]")
         } else {
-            format!("{}[{column}; {rows}]", self.sheets[s].table)
+            format!("{}[{column}; {rows}]", self.worksheets[s].sheet)
         }
     }
 
-    fn cell(&self, sheet: &Option<String>, cell: Cell) -> R<Omx> {
-        let s = self.sheet(sheet)?;
+    fn cell(&self, worksheet: &Option<String>, cell: Cell) -> R<Omx> {
+        let s = self.worksheet(worksheet)?;
         let column = self.column(s, cell.col)?;
         let k = self.index(s, cell)?;
         if k < 0 {
             return Err(HEADER.into());
         }
-        if k >= self.sheets[s].rows as i64 {
+        if k >= self.worksheets[s].rows as i64 {
             return Err(OUTSIDE.into());
         }
         if s == self.here && k == self.row && !cell.fixed {
@@ -527,10 +527,10 @@ impl Scope<'_> {
     }
 
     /// The cells of some columns between two rows, a vector for each
-    /// column. A header and empty rows below the table are no part of it.
-    fn block(&self, sheet: &Option<String>, a: Cell, b: Cell) -> R<Vec<String>> {
-        let s = self.sheet(sheet)?;
-        let rows = self.sheets[s].rows as i64;
+    /// column. A header and empty rows below the sheet are no part of it.
+    fn block(&self, worksheet: &Option<String>, a: Cell, b: Cell) -> R<Vec<String>> {
+        let s = self.worksheet(worksheet)?;
+        let rows = self.worksheets[s].rows as i64;
         let (first, last) = if a.row <= b.row { (a, b) } else { (b, a) };
         let (mut lo, mut hi) = (self.index(s, first)?, self.index(s, last)?);
         let (mut lo_fixed, mut hi_fixed) = (first.fixed, last.fixed);
@@ -550,7 +550,7 @@ impl Scope<'_> {
             .map(|col| {
                 let column = self.column(s, col)?;
                 Ok(if all {
-                    format!("{}.{column}", self.sheets[s].table)
+                    format!("{}.{column}", self.worksheets[s].sheet)
                 } else {
                     let rows = format!(
                         "{}..{}",
@@ -595,12 +595,18 @@ impl Scope<'_> {
             Expr::Num(n) => Omx::whole(number(n)),
             Expr::Str(s) => Omx::whole(format!("{s:?}")),
             Expr::Bool(b) => Omx::whole(b.to_string()),
-            Expr::Cell(sheet, cell) => self.cell(sheet, *cell)?,
-            Expr::Block(sheet, a, b) => return Ok(Out::Many(self.block(sheet, *a, *b)?)),
-            Expr::Columns(sheet, from, to) => {
-                let s = self.sheet(sheet)?;
+            Expr::Cell(worksheet, cell) => self.cell(worksheet, *cell)?,
+            Expr::Block(worksheet, a, b) => return Ok(Out::Many(self.block(worksheet, *a, *b)?)),
+            Expr::Columns(worksheet, from, to) => {
+                let s = self.worksheet(worksheet)?;
                 let columns: R<Vec<String>> = (*from..=*to)
-                    .map(|col| Ok(format!("{}.{}", self.sheets[s].table, self.column(s, col)?)))
+                    .map(|col| {
+                        Ok(format!(
+                            "{}.{}",
+                            self.worksheets[s].sheet,
+                            self.column(s, col)?
+                        ))
+                    })
                     .collect();
                 return Ok(Out::Many(columns?));
             }
@@ -931,12 +937,12 @@ fn number(n: &str) -> String {
 /// The formula of the cell on row `row` of worksheet `here`, in OMX. `row`
 /// counts from the top of the worksheet, as `top` does. The error says why
 /// the formula has no translation.
-pub fn translate(formula: &str, sheets: &[Sheet], here: usize, row: u32) -> R<Translated> {
+pub fn translate(formula: &str, worksheets: &[Worksheet], here: usize, row: u32) -> R<Translated> {
     let e = parse(formula)?;
     let mut scope = Scope {
-        sheets,
+        worksheets,
         here,
-        row: row as i64 - sheets[here].top as i64 - 1,
+        row: row as i64 - worksheets[here].top as i64 - 1,
         filled: false,
         volatile: false,
     };
@@ -954,31 +960,31 @@ pub fn translate(formula: &str, sheets: &[Sheet], here: usize, row: u32) -> R<Tr
 mod tests {
     use super::*;
 
-    fn sheets() -> Vec<Sheet> {
-        let sheet = |excel: &str, table: &str, columns: &[&str], rows| Sheet {
+    fn worksheets() -> Vec<Worksheet> {
+        let worksheet = |excel: &str, sheet: &str, columns: &[&str], rows| Worksheet {
             excel: excel.into(),
-            table: table.into(),
+            sheet: sheet.into(),
             columns: columns.iter().map(|c| c.to_string()).collect(),
             top: 0,
             left: 0,
             rows,
         };
         vec![
-            sheet("Sales", "Sales", &["Month", "Revenue", "Cost", "Profit"], 3),
-            sheet("My Rates", "MyRates", &["Name", "Rate"], 2),
+            worksheet("Sales", "Sales", &["Month", "Revenue", "Cost", "Profit"], 3),
+            worksheet("My Rates", "MyRates", &["Name", "Rate"], 2),
         ]
     }
 
     /// A formula in row 3 of `Sales`, its second row.
     fn omx(formula: &str) -> String {
-        match translate(formula, &sheets(), 0, 2) {
+        match translate(formula, &worksheets(), 0, 2) {
             Ok(t) => t.text,
             Err(why) => format!("no: {why}"),
         }
     }
 
     fn filled(formula: &str) -> String {
-        translate(formula, &sheets(), 0, 2).unwrap().filled
+        translate(formula, &worksheets(), 0, 2).unwrap().filled
     }
 
     #[test]
@@ -1097,6 +1103,6 @@ mod tests {
         );
         assert_eq!(omx("Rate*2"), "no: it uses the name `Rate`");
         assert_eq!(omx("SUM(B2:B4"), format!("no: {UNREADABLE}"));
-        assert!(translate("TODAY()", &sheets(), 0, 2).unwrap().volatile);
+        assert!(translate("TODAY()", &worksheets(), 0, 2).unwrap().volatile);
     }
 }

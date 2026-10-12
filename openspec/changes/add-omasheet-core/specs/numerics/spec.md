@@ -167,7 +167,7 @@ The name of each type SHALL be a conversion to that type, written `Int(x)`,
 empty staying empty. `Int` SHALL drop the fractional part. `Fraction` or `Decimal`
 of a `Num` SHALL be the decimal the `Num` is shown as. `Decimal` of a `Fraction`
 SHALL be that number when it terminates, and an error when it does not. `Text` SHALL write a value in full,
-the way a sheet writes it. Text SHALL be read the way a cell is, and SHALL be an
+the way a file writes it. Text SHALL be read the way a cell is, and SHALL be an
 error when it is not a value of the type. `Bool` of a number SHALL be whether it
 is not zero, and a number of a `Bool` SHALL be `1` or `0`. `Date` and `Time`
 SHALL take that half of a `DateTime`, and `DateTime` of a `Date` SHALL be its

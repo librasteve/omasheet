@@ -1,17 +1,17 @@
-# The sheet format
+# The file format
 
-An `.omx` file is plain text: constants, functions and tables, in any order.
+An `.omx` file is plain text: constants, functions and sheets, in any order.
 A line that starts with `#` is a comment.
 
 ```omx
-# Optional: the time zone of the sheet.
+# Optional: the time zone of the file.
 zone Europe/London
 
 # A named value, and a function.
 const TaxRate = 20%
 fn WithTax(x) = x * (1 + TaxRate)
 
-table Sales
+sheet Sales
 
 # Optional: the type of a column.
 Revenue : Decimal
@@ -27,9 +27,9 @@ Profit := Revenue - Cost
 Gross  := WithTax(Revenue)
 ```
 
-## Tables
+## Sheets
 
-- `table Name`, then a header row and data rows, cells separated by `|`.
+- `sheet Name`, then a header row and data rows, cells separated by `|`.
 - A `---|---` line under the header is allowed and ignored.
 - `Name := expression` after the rows is the formula of a computed column.
   The header row names the column, anywhere among the others, and each of
@@ -37,7 +37,7 @@ Gross  := WithTax(Revenue)
 - An empty cell is empty: there is no `null`.
 
 ```omx
-table Sales
+sheet Sales
 
 Month | Revenue | Profit | Cost | Tax
 Jan   | 10000   | *      | 6000 | *
@@ -98,9 +98,9 @@ accepts them in your locale's form.
 ## Constants, functions, zone
 
 - `const Name = expression`
-- `fn Name(a, b) = expression` — sees its parameters, constants and tables,
+- `fn Name(a, b) = expression` — sees its parameters, constants and sheets,
   not the row it is called from. The comment above it is its description.
-- `zone Area/City` before the first table says which time zone the sheet's
+- `zone Area/City` before the first sheet says which time zone the file's
   date-times are in. Without it, they are in the zone of the machine.
 
 ---

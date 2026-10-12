@@ -67,7 +67,7 @@ pub fn utc_now() -> i64 {
     Timestamp::now().as_second()
 }
 
-/// A date-time in a zone other than the sheet's own.
+/// A date-time in a zone other than the file's own.
 #[derive(Clone, Debug)]
 pub struct Zoned {
     /// What the clocks of `zone` show.
@@ -75,7 +75,7 @@ pub struct Zoned {
     /// The instant, in UTC.
     pub utc: i64,
     pub zone: Rc<Zone>,
-    /// The zone of the sheet, to compare with its own date-times.
+    /// The zone of the file, to compare with its own date-times.
     pub home: Rc<Zone>,
 }
 
@@ -90,7 +90,7 @@ impl Zoned {
         })
     }
 
-    /// What the clocks of the sheet's zone show at this instant.
+    /// What the clocks of the file's zone show at this instant.
     pub fn home_wall(&self) -> i64 {
         self.home.from_utc(self.utc).unwrap_or(self.wall)
     }

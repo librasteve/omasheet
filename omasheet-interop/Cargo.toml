@@ -1,6 +1,6 @@
 [package]
 name = "omasheet-interop"
-description = "Omasheet interop: import and export of .omx sheets as XLSX, CSV and JSON"
+description = "Omasheet interop: import and export of .omx files as XLSX, CSV and JSON"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

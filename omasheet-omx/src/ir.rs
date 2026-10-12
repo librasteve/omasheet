@@ -33,10 +33,10 @@ pub enum Ir {
     Error,
     Lit(Lit),
     Const(usize),
-    Table(usize),
-    /// A whole column of a sheet table.
+    Sheet(usize),
+    /// A whole column of a sheet of the file.
     Column {
-        table: usize,
+        sheet: usize,
         col: usize,
     },
     /// A column of the row `depth` frames out (0 is the innermost row).
@@ -53,13 +53,13 @@ pub enum Ir {
         rows: RowSel,
         cols: ColSel,
     },
-    /// A column of a table or row value.
+    /// A column of a sheet or row value.
     Field {
         base: Box<Node>,
         col: usize,
     },
     Call(Func, Vec<Node>),
-    /// A call of a function the sheet defines: its body, in which `Arg(i)`
+    /// A call of a function the file defines: its body, in which `Arg(i)`
     /// stands for `args[i]`.
     Apply {
         name: String,
@@ -89,7 +89,7 @@ pub enum RowSel {
     All,
     /// One row by position; negative counts from the end.
     Pos(Box<Node>),
-    /// One row relative to the current row; outside the table gives empty.
+    /// One row relative to the current row; outside the sheet gives empty.
     Cursor(Offset),
     Range {
         lo: Bound,

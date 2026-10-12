@@ -1,17 +1,17 @@
 ---
 name: omasheet
-description: Read, write, check and convert Omasheet sheets — plain-text `.omx` spreadsheets with named, typed tables and formulas in OMX, the Omasheet expression language. Use this whenever the user mentions omasheet, an `.omx` file, OMX formulas, or `omx` blocks and `{{ }}` values in Markdown; whenever they want a spreadsheet, budget, ledger or table of calculations kept as text or in Git; and whenever they want to bring an `.xlsx` or `.csv` into a sheet, export one, or render a Markdown report from one. Use it before writing or editing any `.omx` text, even a small change: the syntax is not Excel's and is easy to guess wrong.
+description: Read, write, check and convert Omasheet files — plain-text `.omx` spreadsheets with named, typed sheets and formulas in OMX, the Omasheet expression language. Use this whenever the user mentions omasheet, an `.omx` file, OMX formulas, or `omx` blocks and `{{ }}` values in Markdown; whenever they want a spreadsheet, budget, ledger or sheet of calculations kept as text or in Git; and whenever they want to bring an `.xlsx` or `.csv` into a file, export one, or render a Markdown report from one. Use it before writing or editing any `.omx` text, even a small change: the syntax is not Excel's and is easy to guess wrong.
 ---
 
 # Omasheet
 
 Omasheet is a text-native spreadsheet: what Markdown is to a word processor.
-A sheet is an `.omx` file of named tables with typed columns, and formulas
+An `.omx` file holds named sheets with typed columns, and formulas
 are written in OMX, a small array language with exact arithmetic.
 
 It is not Excel in text. There are no cell addresses like `B2`: formulas
 name columns and rows. Most mistakes come from writing Excel habits into it,
-so read the rules below before writing, and always run the sheet afterwards.
+so read the rules below before writing, and always run the file afterwards.
 
 ## Running it
 
@@ -22,14 +22,14 @@ The command is `omasheet`. If it is not on the PATH:
 - anywhere else, it is not installed. Tell the user, and offer
   `cargo install --git https://github.com/librasteve/omasheet omasheet-ui`
   (it needs Qt 6 to build and to run).
-  Without it a sheet can be written but not checked, so say that it was not.
+  Without it a file can be written but not checked, so say that it was not.
 
 ```sh
-omasheet print sheet.omx                   # calculate and print every table
-omasheet lint sheet.omx                    # check without calculating
-omasheet eval sheet.omx 'Orders.Net.sum()' # one expression against a sheet
+omasheet print file.omx                   # calculate and print every sheet
+omasheet lint file.omx                    # check without calculating
+omasheet eval file.omx 'Orders.Net.sum()' # one expression against a file
 omasheet eval '1/3 + 1/6'                  # or on its own
-omasheet eval --exact sheet.omx '...'      # a Num in full, not 1.41421…
+omasheet eval --exact file.omx '...'      # a Num in full, not 1.41421…
 ```
 
 Errors come as `file:line:col: error: message` with the line and a marker,
@@ -39,16 +39,16 @@ often with a `help:` line that says what to write instead. Read the help.
 
 1. Write or edit the `.omx` text.
 2. `omasheet lint` it. Fix every error; they are all reported at once.
-3. `omasheet` it and read the calculated tables. A cell showing `#ERROR`
-   failed, and the reason is printed after the tables.
+3. `omasheet` it and read the calculated sheets. A cell showing `#ERROR`
+   failed, and the reason is printed after the sheets.
 4. Spot-check a number or two with `omasheet eval`.
 
-Do not report a sheet as working until step 3 has run clean. The language is
+Do not report a file as working until step 3 has run clean. The language is
 young and still changing, so the tool is the authority, not this page. If the
 repository's `docs/format.md` and `docs/expressions.md` are there, they are
 newer than this page: read them when something here does not work.
 
-## A whole sheet
+## A whole file
 
 ```omx
 # Orders for a small shop.
@@ -57,7 +57,7 @@ const VatRate = 20%
 # The price with VAT added.
 fn WithVat(x) = x * (1 + VatRate)
 
-table Orders
+sheet Orders
 
 Placed : Date
 
@@ -70,7 +70,7 @@ Net     := Qty * Price
 Gross   := WithVat(Net)
 Running := [Net; 0..*].sum()
 
-table Summary
+sheet Summary
 
 Label    | Value
 Total    | = Orders.Gross.sum()
@@ -83,10 +83,10 @@ Big ones | = Orders[; Qty > 2].Item.count()
 - `# comment` on a line of its own. The comment above an `fn` is its
   description.
 - `const Name = expression` and `fn Name(a, b) = expression`, anywhere. A
-  function sees its parameters, constants and tables, not the row it was
+  function sees its parameters, constants and sheets, not the row it was
   called from: pass the row's values in.
-- `zone Europe/London` before the first table, if date-times need a zone.
-- `table Name`, a blank line, optional `Column : Type` lines, then the header
+- `zone Europe/London` before the first sheet, if date-times need a zone.
+- `sheet Name`, a blank line, optional `Column : Type` lines, then the header
   row and the data rows, cells separated by `|`. Line the pipes up; it is
   what makes the file readable and the diffs small.
 - Names are identifiers: letters, digits and `_`, no spaces. `UnitPrice`, not
@@ -100,7 +100,7 @@ Big ones | = Orders[; Qty > 2].Item.count()
 - An empty cell is empty. There is no `null` or `NA`; leave it blank.
 - Text is written bare, `Jan`. Quote it when it would read as something
   else or holds a `|`: `"42"`, `"a|b"`, `"=not a formula"`.
-- Bare text is Markdown where a sheet is shown, in the app and in a
+- Bare text is Markdown where a file is shown, in the app and in a
   rendered document: `a **slow** start`, `[lease](lease.pdf)`. Quote text
   whose `*`, `_`, `[` or backticks are meant as they are: `"2 * 3 * 4"`.
 
@@ -149,12 +149,12 @@ a `…` mark, and `--exact` shows it in full.
 
 | Written | Means |
 |---|---|
-| `Revenue` | in a table's own formula: this row's value |
+| `Revenue` | in a sheet's own formula: this row's value |
 | `Sales.Revenue` | the whole column, a vector |
 | `Sales[Revenue; 1]` | one cell. Rows count from 0; `-1` is the last |
 | `Sales[; Revenue > 100]` | the rows where it is true, every column |
 | `Sales[Revenue; *-1]` | the row before this one; `*` is this row |
-| `[Revenue; 0..*]` | from the top to this row; the table's name can be dropped inside it |
+| `[Revenue; 0..*]` | from the top to this row; the sheet's name can be dropped inside it |
 | `a // b` | `b` when `a` is empty: `[Revenue; *-1] // 0` |
 
 - Selection is `[columns; rows]`, with `;` between them. One column only: for
@@ -176,16 +176,16 @@ a `…` mark, and `--exact` shows it in full.
 ## Workbooks, CSV, JSON and Markdown
 
 ```sh
-omasheet import book.xlsx -o book.omx    # a table for each worksheet
-omasheet import sales.csv                # one table, printed
-omasheet export sheet.omx --xlsx         # sheet.xlsx
-omasheet export sheet.omx --csv --table Orders -o orders.csv
-omasheet import orders.json              # a list of row objects, or {"Table": [rows]}
-omasheet export sheet.omx --json         # sheet.json: {"Table": [{"Col": value}]}
+omasheet import book.xlsx -o book.omx    # a sheet for each worksheet
+omasheet import sales.csv                # one sheet, printed
+omasheet export file.omx --xlsx          # file.xlsx
+omasheet export file.omx --csv --sheet Orders -o orders.csv
+omasheet import orders.json              # a list of row objects, or {"Sheet": [rows]}
+omasheet export file.omx --json          # file.json: {"Sheet": [{"Col": value}]}
 omasheet render report.md --html -o report.html
 ```
 
-- The `.omx` file is the sheet; the others are ways in and out. An `.xlsx`
+- The `.omx` file is the original; the others are ways in and out. An `.xlsx`
   export writes OMX formulas as workbook formulas where a workbook can say
   them, each with its value; the rest go out as values, and a `note:` says
   which columns and why. CSV and JSON hold values only. Import and export
@@ -197,11 +197,11 @@ omasheet render report.md --html -o report.html
   which cells and why. CSV has no formulas.
 - Import and export print `note:` lines for what was renamed, rounded or left
   behind. Pass them on to the user; they are the lossy parts.
-- After a CSV import the sheet is plain data. Turning repeated arithmetic
+- After a CSV import the file is plain data. Turning repeated arithmetic
   back into computed columns is worth offering, and is done by hand; so is
   rewriting a workbook formula that was left as a value.
-- In Markdown, `sheets: [budget.omx]` in the front matter names sheets, a
-  fenced `omx` block is a sheet shown as its tables, and
+- In Markdown, `files: [budget.omx]` in the front matter names files, a
+  fenced `omx` block is a file shown as its sheets, and
   `{{ Sales.Revenue.sum() }}` in the text is replaced by its value.
   `omasheet render` reports mistakes at their line in the document.
 
@@ -212,6 +212,6 @@ omasheet render report.md --html -o report.html
   `omasheet print examples/name.omx > examples/name.expected` and read the
   diff; do not edit the `.expected` by hand.
 - `omasheet` with no command, or with only a file, opens the desktop app:
-  never run it that way to read a sheet. It opens a real
+  never run it that way to read a file. It opens a real
   window on the user's desktop and building it loads every core, so say so
   before doing either.

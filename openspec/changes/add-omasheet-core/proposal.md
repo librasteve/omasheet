@@ -18,7 +18,7 @@ command line. It has no dataframe, XLSX or Markdown dependency.
 
 Nothing exists yet, so every requirement is ADDED.
 
-- **sheet-format** — the `.omx` plain-text file format: tables, column
+- **file-format** — the `.omx` plain-text file format: sheets, column
   schemas over the base types, computed columns, constants, functions
 - **omx-expressions** — the OMX formula language: references, `[; ]` indexing,
   ranges, slices, the `*` cursor, filtering, aggregation, conditionals, pipes
@@ -40,15 +40,15 @@ Nothing exists yet, so every requirement is ADDED.
 Delivered by later changes, in roadmap order:
 
 - `add-interop` (Phase 2) — XLSX and CSV import/export and Markdown integration
-- `add-table-operations` (Phase 3) — group, join, the `group` pipe stage,
+- `add-sheet-operations` (Phase 3) — group, join, the `group` pipe stage,
   partitioned cursor offsets, incremental recalculation
 - `add-units` (Phase 4) — units, currencies, dimensional analysis
 - `add-uncertainty` (Phase 5) — `±` values and propagation
 
 Discussed in the source conversation and not yet in any change:
 
-- Charts and pivot-table declarations
-- Sheet directives from the early brainstorm (`@format`, `@validate`, `@freeze`,
+- Charts and pivot-sheet declarations
+- File directives from the early brainstorm (`@format`, `@validate`, `@freeze`,
   `@filter`) — superseded in part by column types; formatting syntax is an open
   question
 - A1 / `$A$1` references in authored files (import/export boundary only)

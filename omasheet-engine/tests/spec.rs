@@ -7,7 +7,7 @@ use omasheet_engine::omx::date::{Order, Style};
 use omasheet_engine::{Options, eval, eval_with, lint, view, view_with};
 
 const SALES: &str = "\
-table Sales
+sheet Sales
 
 Month | Region | Revenue | Cost
 Jan   | UK     | 100     | 60
@@ -30,49 +30,49 @@ fn sales_with(formulas: &str) -> String {
         .lines()
         .filter_map(|line| line.split_once(":=").map(|(name, _)| name.trim()))
         .collect();
-    let mut sheet = String::new();
+    let mut file = String::new();
     for (i, line) in SALES.lines().enumerate() {
-        sheet.push_str(line);
+        file.push_str(line);
         if line.contains('|') {
             for name in &names {
-                sheet.push_str(" | ");
-                sheet.push_str(if i == 2 { name } else { "*" });
+                file.push_str(" | ");
+                file.push_str(if i == 2 { name } else { "*" });
             }
         }
-        sheet.push('\n');
+        file.push('\n');
     }
-    format!("{sheet}\n{formulas}")
+    format!("{file}\n{formulas}")
 }
 
-/// Evaluate an expression with no sheet.
+/// Evaluate an expression with no file.
 fn calc(expr: &str) -> String {
     let out = eval_with(None, "<expression>", expr, exact());
     assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
     out.output.trim_end().to_string()
 }
 
-/// Evaluate an expression against a sheet.
-fn ask(sheet: &str, expr: &str) -> String {
-    let out = eval_with(Some(("test.omx", sheet)), "<expression>", expr, exact());
+/// Evaluate an expression against a file.
+fn ask(file: &str, expr: &str) -> String {
+    let out = eval_with(Some(("test.omx", file)), "<expression>", expr, exact());
     assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
     out.output.trim_end().to_string()
 }
 
 /// The first error from evaluating an expression.
-fn calc_err(sheet: Option<&str>, expr: &str) -> String {
-    let out = eval(sheet.map(|s| ("test.omx", s)), "<expression>", expr);
+fn calc_err(file: Option<&str>, expr: &str) -> String {
+    let out = eval(file.map(|s| ("test.omx", s)), "<expression>", expr);
     assert!(!out.ok(), "`{expr}` should fail but gave {}", out.output);
     out.errors.join("\n")
 }
 
-fn shown(sheet: &str) -> String {
-    let out = view_with("test.omx", sheet, exact());
+fn shown(file: &str) -> String {
+    let out = view_with("test.omx", file, exact());
     assert!(out.ok(), "view failed:\n{}", out.errors.join("\n"));
     out.output
 }
 
-fn lint_errors(sheet: &str) -> Vec<String> {
-    lint("test.omx", sheet).errors
+fn lint_errors(file: &str) -> Vec<String> {
+    lint("test.omx", file).errors
 }
 
 // ---- numerics ------------------------------------------------------------
@@ -142,7 +142,7 @@ fn decimals() {
 
     // A column of decimals and whole numbers is a Decimal column, and
     // takes them, but not a fraction, nor a formula that may not end.
-    let prices = "table P\n\nPrice : Decimal\n\nItem | Price | Half\n";
+    let prices = "sheet P\n\nPrice : Decimal\n\nItem | Price | Half\n";
     assert!(
         lint_errors(&format!(
             "{prices}Tea | 4.50 | 1\nMug | 9 | 2\nTin | 20% | 3\n"
@@ -163,7 +163,7 @@ fn decimals() {
     assert!(lint_errors(&format!("{prices}Tea | = Half * 1.5 | 1\n")).is_empty());
 
     // A Decimal goes where a Fraction is declared.
-    let ratios = "table R\n\nShare : Fraction\n\nShare\n0.25\n1/7\n3\n= 0.5 * 0.5\n";
+    let ratios = "sheet R\n\nShare : Fraction\n\nShare\n0.25\n1/7\n3\n= 0.5 * 0.5\n";
     assert!(lint_errors(ratios).is_empty());
 
     // `.Decimal` takes a Fraction that ends, and refuses one that does not.
@@ -171,18 +171,18 @@ fn decimals() {
     assert_eq!(calc("(1.5e3).Decimal + 0.5"), "1500.5");
     assert_eq!(calc("\"20%\".Decimal"), "0.2");
     assert!(calc_err(None, "(1/3).Decimal").contains("1/3 does not end as a decimal"));
-    let sheet =
-        "table P\n\nHalf : Decimal\n\nN | Half\n8 | = (1 / N).Decimal\n3 | = (1 / N).Decimal\n";
-    assert_eq!(ask(sheet, "P[Half; 0]"), "0.125");
-    assert!(calc_err(Some(sheet), "P[Half; 1]").contains("does not end as a decimal"));
+    let file =
+        "sheet P\n\nHalf : Decimal\n\nN | Half\n8 | = (1 / N).Decimal\n3 | = (1 / N).Decimal\n";
+    assert_eq!(ask(file, "P[Half; 0]"), "0.125");
+    assert!(calc_err(Some(file), "P[Half; 1]").contains("does not end as a decimal"));
 
     // An average of decimals is a Fraction; their sum, least and greatest are
     // decimals.
-    let sheet = "table P\n\nPrice\n4.50\n9\n0.25\n";
-    assert!(calc_err(Some(sheet), "P.Price.sum() + true").contains("Decimal and Bool"));
-    assert!(calc_err(Some(sheet), "P.Price.max() + true").contains("Decimal and Bool"));
-    assert!(calc_err(Some(sheet), "P.Price.avg() + true").contains("Fraction and Bool"));
-    assert_eq!(ask(sheet, "P.Price.sum()"), "13.75");
+    let file = "sheet P\n\nPrice\n4.50\n9\n0.25\n";
+    assert!(calc_err(Some(file), "P.Price.sum() + true").contains("Decimal and Bool"));
+    assert!(calc_err(Some(file), "P.Price.max() + true").contains("Decimal and Bool"));
+    assert!(calc_err(Some(file), "P.Price.avg() + true").contains("Fraction and Bool"));
+    assert_eq!(ask(file, "P.Price.sum()"), "13.75");
 }
 
 /// A `Percent` is an exact number shown as so many in a hundred.
@@ -244,22 +244,22 @@ fn percents() {
     assert_eq!(calc("20%.Num"), "0.2");
 
     // A Percent column takes any exact number, and shows it as a percentage.
-    let sheet = "table S\n\nMargin : Percent\nShare : Fraction\n\n\
+    let file = "sheet S\n\nMargin : Percent\nShare : Fraction\n\n\
                  Cost | Price | Rate | Margin | Share\n\
                  7 | 12 | 20% | * | 20%\n3 | 5 | 0.5 | * | 1/3\n\n\
                  Margin := (Price - Cost) / Price\n";
-    assert!(lint_errors(sheet).is_empty());
-    assert_eq!(ask(sheet, "S.Margin"), "[125/3%, 40%]");
-    assert_eq!(ask(sheet, "S.Margin.avg()"), "245/6%");
+    assert!(lint_errors(file).is_empty());
+    assert_eq!(ask(file, "S.Margin"), "[125/3%, 40%]");
+    assert_eq!(ask(file, "S.Margin.avg()"), "245/6%");
     // A column of percentages is a Percent column; one with a plain number
     // among them is a Fraction column.
-    assert!(calc_err(Some(sheet), "S[Rate; 0] + true").contains("Fraction and Bool"));
-    assert_eq!(ask(sheet, "S.Rate"), "[20%, 0.5]");
+    assert!(calc_err(Some(file), "S[Rate; 0] + true").contains("Fraction and Bool"));
+    assert_eq!(ask(file, "S.Rate"), "[20%, 0.5]");
     // In a Fraction column a percentage is the number it stands for.
-    assert_eq!(ask(sheet, "S.Share"), "[1/5, 1/3]");
+    assert_eq!(ask(file, "S.Share"), "[1/5, 1/3]");
 
     // What does not go in one.
-    let rates = "table R\n\nRate : Percent\nWhole : Int\nEnds : Decimal\n\nRate | Whole | Ends\n";
+    let rates = "sheet R\n\nRate : Percent\nWhole : Int\nEnds : Decimal\n\nRate | Whole | Ends\n";
     assert!(
         lint_errors(&format!(
             "{rates}20% | 1 | 20%\n0.4 | 2 | 0.5\n1/3 | 3 | 1\n"
@@ -302,54 +302,54 @@ fn top_heavy_fractions() {
     assert_eq!(calc("\"22/7\".Fraction"), "22/7");
     // Whole numbers divided give a decimal when it ends.
     assert_eq!(calc("7/4"), "1.75");
-    let sheet =
-        "table T\n\nA : Fraction\n\nA | Twice\n7/3 | *\n-22/7 | *\n9/3 | *\n\nTwice := A * 2\n";
-    assert!(lint_errors(sheet).is_empty());
-    assert_eq!(ask(sheet, "T.A"), "[7/3, -22/7, 3]");
-    assert_eq!(ask(sheet, "T.Twice"), "[14/3, -44/7, 6]");
-    assert_eq!(ask(sheet, "T.A.sum()"), "46/21");
+    let file =
+        "sheet T\n\nA : Fraction\n\nA | Twice\n7/3 | *\n-22/7 | *\n9/3 | *\n\nTwice := A * 2\n";
+    assert!(lint_errors(file).is_empty());
+    assert_eq!(ask(file, "T.A"), "[7/3, -22/7, 3]");
+    assert_eq!(ask(file, "T.Twice"), "[14/3, -44/7, 6]");
+    assert_eq!(ask(file, "T.A.sum()"), "46/21");
 }
 
 #[test]
 fn mixed_fractions() {
-    let show = |sheet: &str, expr: &str| {
-        let out = eval(Some(("test.omx", sheet)), "<expression>", expr);
+    let show = |file: &str, expr: &str| {
+        let out = eval(Some(("test.omx", file)), "<expression>", expr);
         assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
         out.output.trim_end().to_string()
     };
     // A whole number and a part in a cell is the fraction they come to, and
     // a fraction of more than one is shown as a whole number and a part.
-    let sheet = "table T\n\nA | Twice | Less\n2 3/4 | * | *\n11/4 | * | *\n-2 3/4 | * | *\n\
+    let file = "sheet T\n\nA | Twice | Less\n2 3/4 | * | *\n11/4 | * | *\n-2 3/4 | * | *\n\
                  3/4 | * | *\n1 1/3 | * | *\n\nTwice := A * 2\nLess := A - 0.75\n";
-    assert!(lint_errors(sheet).is_empty(), "{:?}", lint_errors(sheet));
-    assert_eq!(show(sheet, "T.A"), "[2 3/4, 2 3/4, -2 3/4, 3/4, 1 1/3]");
-    assert_eq!(ask(sheet, "T.A"), "[11/4, 11/4, -11/4, 3/4, 4/3]");
-    assert_eq!(show(sheet, "T[A; 0] == 2.75"), "true");
+    assert!(lint_errors(file).is_empty(), "{:?}", lint_errors(file));
+    assert_eq!(show(file, "T.A"), "[2 3/4, 2 3/4, -2 3/4, 3/4, 1 1/3]");
+    assert_eq!(ask(file, "T.A"), "[11/4, 11/4, -11/4, 3/4, 4/3]");
+    assert_eq!(show(file, "T[A; 0] == 2.75"), "true");
     // Anything done with a fraction gives a fraction; a whole one is an Int.
     assert_eq!(
-        show(sheet, "T.Twice"),
+        show(file, "T.Twice"),
         "[5 1/2, 5 1/2, -5 1/2, 1 1/2, 2 2/3]"
     );
-    assert_eq!(show(sheet, "T.Less"), "[2, 2, -3 1/2, 0, 7/12]");
-    assert_eq!(show(sheet, "T[A; 0].Decimal * 2"), "5.5");
-    assert_eq!(show(sheet, "\"2 3/4\".Fraction"), "2 3/4");
-    assert_eq!(show(sheet, "T[A; 0].Text"), "11/4");
+    assert_eq!(show(file, "T.Less"), "[2, 2, -3 1/2, 0, 7/12]");
+    assert_eq!(show(file, "T[A; 0].Decimal * 2"), "5.5");
+    assert_eq!(show(file, "\"2 3/4\".Fraction"), "2 3/4");
+    assert_eq!(show(file, "T[A; 0].Text"), "11/4");
 
     // A Fraction column shows a decimal as a fraction, and a Decimal column
     // a fraction that ends as a decimal.
-    let typed = "table T\n\nF : Fraction\nD : Decimal\n\nF | D\n2.75 | *\n0.5 | *\n20% | *\n\
+    let typed = "sheet T\n\nF : Fraction\nD : Decimal\n\nF | D\n2.75 | *\n0.5 | *\n20% | *\n\
                  = 5 / 2 | *\n\nD := (F * 2).Decimal\n";
     assert!(lint_errors(typed).is_empty(), "{:?}", lint_errors(typed));
     assert_eq!(show(typed, "T.F"), "[2 3/4, 1/2, 1/5, 2 1/2]");
     assert_eq!(show(typed, "T.D"), "[5.5, 1, 0.4, 5]");
 
     // The part is less than one, and a Decimal column takes no fraction.
-    let errors = lint_errors("table T\n\nA : Fraction\n\nA\n2 7/4\n");
+    let errors = lint_errors("sheet T\n\nA : Fraction\n\nA\n2 7/4\n");
     assert!(
         errors[0].contains("`2 7/4` is not a `Fraction` literal"),
         "{errors:?}"
     );
-    let errors = lint_errors("table T\n\nA : Decimal\n\nA\n2 3/4\n");
+    let errors = lint_errors("sheet T\n\nA : Decimal\n\nA\n2 3/4\n");
     assert!(
         errors[0].contains("`2 3/4` is not a `Decimal` literal"),
         "{errors:?}"
@@ -428,7 +428,7 @@ fn conversions() {
     // Each value of a vector, and empty stays empty.
     assert_eq!(ask(SALES, "(Sales.Revenue / 7).Int"), "[14, 17, 21]");
     assert_eq!(ask(SALES, "Sales.Revenue.Num.sum()"), "370");
-    assert_eq!(ask("table T\n\nA | B\n1.5 |\n", "T.B.Int"), "[empty]");
+    assert_eq!(ask("sheet T\n\nA | B\n1.5 |\n", "T.B.Int"), "[empty]");
     // What cannot be converted is caught before anything is calculated.
     assert!(calc_err(None, "Int(2025-01-31)").contains("`Int` cannot be applied to Date"));
     assert!(calc_err(None, "(3+4i).Int").contains("`Int` cannot be applied to Complex"));
@@ -479,22 +479,22 @@ fn ranges() {
         calc("[0 in 0^..10, 10 in 0^..10, 0 in ^5, 5 in ^5]"),
         "[false, true, true, false]"
     );
-    let sheet = format!("const Rows = 1..2\nconst Cols = 2..3\n\n{SALES}");
+    let file = format!("const Rows = 1..2\nconst Cols = 2..3\n\n{SALES}");
     assert_eq!(
-        ask(&sheet, "Sales[Cols; Rows]"),
+        ask(&file, "Sales[Cols; Rows]"),
         ask(SALES, "Sales[2..3; 1..2]")
     );
 }
 
 #[test]
 fn row_cursor() {
-    let sheet = sales_with(
+    let file = sales_with(
         "Prev := Sales[Revenue; *-1]\nGrowth := Revenue / Sales[Revenue; *-1] - 1\nRunning := Sales[Revenue; 0..*].sum()\nWindow := Sales[Revenue; *-1..*].avg()\n",
     );
-    assert_eq!(ask(&sheet, "Sales.Prev"), "[empty, 100, 120]");
-    assert_eq!(ask(&sheet, "Sales.Growth"), "[empty, 0.2, 0.25]");
-    assert_eq!(ask(&sheet, "Sales.Running"), "[100, 220, 370]");
-    assert_eq!(ask(&sheet, "Sales.Window"), "[100, 110, 135]");
+    assert_eq!(ask(&file, "Sales.Prev"), "[empty, 100, 120]");
+    assert_eq!(ask(&file, "Sales.Growth"), "[empty, 0.2, 0.25]");
+    assert_eq!(ask(&file, "Sales.Running"), "[100, 220, 370]");
+    assert_eq!(ask(&file, "Sales.Window"), "[100, 110, 135]");
 }
 
 #[test]
@@ -507,56 +507,53 @@ fn cursor_needs_a_row() {
 
 #[test]
 fn cursor_survives_row_insertion() {
-    let sheet = "table T\n\nV | Prev\n1 | *\n5 | *\n2 | *\n\nPrev := T[V; *-1]\n";
-    assert_eq!(ask(sheet, "T.Prev"), "[empty, 1, 5]");
+    let file = "sheet T\n\nV | Prev\n1 | *\n5 | *\n2 | *\n\nPrev := T[V; *-1]\n";
+    assert_eq!(ask(file, "T.Prev"), "[empty, 1, 5]");
 }
 
 #[test]
 fn predicate_selection() {
     assert_eq!(ask(SALES, "Sales[; Region == \"UK\"].Revenue.sum()"), "250");
-    let dated = "table Sales\n\nDate | Region | Revenue\n2024-12-31 | UK | 1\n2025-03-01 | UK | 10\n2025-06-01 | US | 100\n2026-01-01 | UK | 1000\n";
+    let dated = "sheet Sales\n\nDate | Region | Revenue\n2024-12-31 | UK | 1\n2025-03-01 | UK | 10\n2025-06-01 | US | 100\n2026-01-01 | UK | 1000\n";
     let expr = "Sales[;\n    Region == \"UK\" and\n    Date >= 2025-01-01 and\n    Date < 2026-01-01\n].Revenue.sum()";
     assert_eq!(ask(dated, expr), "10");
 }
 
 #[test]
 fn datetime_columns() {
-    let sheet = "table Log\n\nAt : DateTime\n\nAt | N\n2025-03-01T09:30 | 1\n2025-03-01T17:45:10 | 10\n2025-03-02T00:00 | 100\n";
+    let file = "sheet Log\n\nAt : DateTime\n\nAt | N\n2025-03-01T09:30 | 1\n2025-03-01T17:45:10 | 10\n2025-03-02T00:00 | 100\n";
     assert_eq!(
         ask(
-            sheet,
+            file,
             "Log[; At >= 2025-03-01T12:00 and At < 2025-03-02T00:00].N.sum()"
         ),
         "10"
     );
-    assert_eq!(ask(sheet, "Log.At.max()"), "2025-03-02T00:00");
-    assert_eq!(ask(sheet, "Log[At; 1]"), "2025-03-01T17:45:10");
+    assert_eq!(ask(file, "Log.At.max()"), "2025-03-02T00:00");
+    assert_eq!(ask(file, "Log[At; 1]"), "2025-03-01T17:45:10");
     // An undeclared column infers DateTime from its cells.
-    let inferred = sheet.replace("At : DateTime\n\n", "");
+    let inferred = file.replace("At : DateTime\n\n", "");
     assert_eq!(ask(&inferred, "Log.At.min()"), "2025-03-01T09:30");
     // A Date is not a DateTime.
-    let err = calc_err(Some(sheet), "Log[; At >= 2025-03-01].N.sum()");
+    let err = calc_err(Some(file), "Log[; At >= 2025-03-01].N.sum()");
     assert!(err.contains("cannot compare DateTime and Date"), "{err}");
-    let bad = "table Log\n\nAt : DateTime\n\nAt\n2025-03-01\n";
+    let bad = "sheet Log\n\nAt : DateTime\n\nAt\n2025-03-01\n";
     let errs = lint_errors(bad);
     assert!(errs[0].contains("is not a `DateTime` literal"), "{errs:?}");
 }
 
 #[test]
 fn time_columns() {
-    let sheet = "table Log\n\nAt : Time\n\nAt | N\n09:30 | 1\n17:45:10 | 10\n00:00 | 100\n";
-    assert_eq!(
-        ask(sheet, "Log[; At >= 09:30 and At < 18:00].N.sum()"),
-        "11"
-    );
-    assert_eq!(ask(sheet, "Log.At.max()"), "17:45:10");
-    assert_eq!(ask(sheet, "Log[At; 0]"), "09:30");
+    let file = "sheet Log\n\nAt : Time\n\nAt | N\n09:30 | 1\n17:45:10 | 10\n00:00 | 100\n";
+    assert_eq!(ask(file, "Log[; At >= 09:30 and At < 18:00].N.sum()"), "11");
+    assert_eq!(ask(file, "Log.At.max()"), "17:45:10");
+    assert_eq!(ask(file, "Log[At; 0]"), "09:30");
     // An undeclared column infers Time from its cells.
-    let inferred = sheet.replace("At : Time\n\n", "");
+    let inferred = file.replace("At : Time\n\n", "");
     assert_eq!(ask(&inferred, "Log.At.min()"), "00:00");
-    let err = calc_err(Some(sheet), "Log[; At >= 2025-03-01].N.sum()");
+    let err = calc_err(Some(file), "Log[; At >= 2025-03-01].N.sum()");
     assert!(err.contains("cannot compare Time and Date"), "{err}");
-    let errs = lint_errors("table Log\n\nAt : Time\n\nAt\n9.30\n");
+    let errs = lint_errors("sheet Log\n\nAt : Time\n\nAt\n9.30\n");
     assert!(errs[0].contains("is not a `Time` literal"), "{errs:?}");
     assert!(errs[0].contains("such as `09:30`"), "{errs:?}");
     assert!(calc_err(None, "24:00").contains("is not a real time"));
@@ -600,9 +597,9 @@ fn date_and_time_arithmetic() {
         assert!(err.contains(message), "{expr}: {err}");
     }
 
-    let sheet = "table Jobs\n\nDue : Date\n\nStart | Days | Due\n2025-01-30 | 3 | = Start + Days\n";
-    assert_eq!(ask(sheet, "Jobs[Due; 0]"), "2025-02-02");
-    let bad = sheet.replace("Due : Date", "Due : DateTime");
+    let file = "sheet Jobs\n\nDue : Date\n\nStart | Days | Due\n2025-01-30 | 3 | = Start + Days\n";
+    assert_eq!(ask(file, "Jobs[Due; 0]"), "2025-02-02");
+    let bad = file.replace("Due : Date", "Due : DateTime");
     assert!(lint_errors(&bad)[0].contains("declared `DateTime` but this is `Date`"));
     // A conversion makes it fit.
     let fixed = bad.replace("= Start + Days", "= (Start + Days).DateTime");
@@ -664,41 +661,41 @@ fn today_and_now_come_from_the_options() {
     assert_eq!(at("[today(), 2025-01-31]", &gb), "[08/10/2026, 31/01/2025]");
     assert_eq!(at("now()", &us), "10/08/2026 5:47 PM");
     assert_eq!(at("2026-10-08 + 00:00:05", &us), "10/08/2026 12:00:05 AM");
-    let sheet = "const Start = 2025-01-31\n\ntable T\n\nAt\n09:30\n";
+    let file = "const Start = 2025-01-31\n\nsheet T\n\nAt\n09:30\n";
     assert_eq!(
-        view_with("test.omx", sheet, gb).output,
-        "const Start = 31/01/2025\n\ntable T\n\nAt\n-----\n09:30\n"
+        view_with("test.omx", file, gb).output,
+        "const Start = 31/01/2025\n\nsheet T\n\nAt\n-----\n09:30\n"
     );
     assert_eq!(
-        shown(sheet),
-        "const Start = 2025-01-31\n\ntable T\n\nAt\n-----\n09:30\n"
+        shown(file),
+        "const Start = 2025-01-31\n\nsheet T\n\nAt\n-----\n09:30\n"
     );
 }
 
 #[test]
-fn index_with_no_table_name() {
-    // In a table, `[...]` with a `;` or a row cursor is that table.
-    let sheet = "table T\n\nV | Prev | Run | Same | First | All | Row\n1 | * | * | * | * | * | *\n5 | * | * | * | * | * | *\n2 | * | * | * | * | * | *\n\nPrev := [V; *-1]\nRun := [V; 0..*].sum()\nSame := [V; *]\nFirst := [V; 0]\nAll := [V; ].sum()\nRow := [; *-1].V // 0\n";
-    assert_eq!(ask(sheet, "T.Prev"), "[empty, 1, 5]");
-    assert_eq!(ask(sheet, "T.Run"), "[1, 6, 8]");
-    assert_eq!(ask(sheet, "T.Same"), "[1, 5, 2]");
-    assert_eq!(ask(sheet, "T.First"), "[1, 1, 1]");
-    assert_eq!(ask(sheet, "T.All"), "[8, 8, 8]");
-    assert_eq!(ask(sheet, "T.Row"), "[0, 1, 5]");
+fn index_with_no_sheet_name() {
+    // In a sheet, `[...]` with a `;` or a row cursor is that sheet.
+    let file = "sheet T\n\nV | Prev | Run | Same | First | All | Row\n1 | * | * | * | * | * | *\n5 | * | * | * | * | * | *\n2 | * | * | * | * | * | *\n\nPrev := [V; *-1]\nRun := [V; 0..*].sum()\nSame := [V; *]\nFirst := [V; 0]\nAll := [V; ].sum()\nRow := [; *-1].V // 0\n";
+    assert_eq!(ask(file, "T.Prev"), "[empty, 1, 5]");
+    assert_eq!(ask(file, "T.Run"), "[1, 6, 8]");
+    assert_eq!(ask(file, "T.Same"), "[1, 5, 2]");
+    assert_eq!(ask(file, "T.First"), "[1, 1, 1]");
+    assert_eq!(ask(file, "T.All"), "[8, 8, 8]");
+    assert_eq!(ask(file, "T.Row"), "[0, 1, 5]");
     // `*` as a column is the formula's own column, and counts from it.
-    let grid = "table G\n\nA | B | C\n1 | = [*-1; *] + 1 | = [*-1; *] * 10\n5 | = [*; *-1] + [A; *] | = [*+0; *-1]\n";
+    let grid = "sheet G\n\nA | B | C\n1 | = [*-1; *] + 1 | = [*-1; *] * 10\n5 | = [*; *-1] + [A; *] | = [*+0; *-1]\n";
     assert_eq!(ask(grid, "G.B"), "[2, 7]");
     assert_eq!(ask(grid, "G.C"), "[20, 20]");
-    let off = lint_errors("table G\n\nA | B\n= [*-1; *] | 2\n");
+    let off = lint_errors("sheet G\n\nA | B\n= [*-1; *] | 2\n");
     assert!(off[0].contains("no column 1 to the left"), "{off:?}");
     let err = calc_err(Some(grid), "G[*; 0]");
     assert!(err.contains("`*` as a column"), "{err}");
     // A vector literal is still a vector.
     assert_eq!(calc("[1, 2, 3].sum()"), "6");
     assert_eq!(calc("[4]"), "[4]");
-    // Outside a table there is no table to mean.
-    let err = calc_err(Some(sheet), "[V; 0]");
-    assert!(err.contains("needs a current table"), "{err}");
+    // Outside a sheet there is no sheet to mean.
+    let err = calc_err(Some(file), "[V; 0]");
+    assert!(err.contains("needs a current sheet"), "{err}");
 }
 
 #[test]
@@ -718,14 +715,14 @@ fn complex_numbers() {
     assert!(calc_err(None, "sin(1i)").contains("`sin` cannot be applied to Complex"));
     assert!(calc_err(None, "1i < 2i").contains("cannot compare"));
     // A column of them: literal cells, a real number, and a formula.
-    let sheet = "table Z\n\nV : Complex\n\nV | Size\n3+4i | *\n-2i | *\n5 | *\n-1.5-2i | *\n= [V; *-4] * 1i | *\n\nSize := abs(V)\n";
-    assert_eq!(ask(sheet, "Z.V"), "[3+4i, 0-2i, 5+0i, -1.5-2i, -4+3i]");
-    assert_eq!(ask(sheet, "Z.Size"), "[5, 2, 5, 2.5, 5]");
-    assert_eq!(ask(sheet, "Z.V.sum()"), "2.5+3i");
+    let file = "sheet Z\n\nV : Complex\n\nV | Size\n3+4i | *\n-2i | *\n5 | *\n-1.5-2i | *\n= [V; *-4] * 1i | *\n\nSize := abs(V)\n";
+    assert_eq!(ask(file, "Z.V"), "[3+4i, 0-2i, 5+0i, -1.5-2i, -4+3i]");
+    assert_eq!(ask(file, "Z.Size"), "[5, 2, 5, 2.5, 5]");
+    assert_eq!(ask(file, "Z.V.sum()"), "2.5+3i");
     // Undeclared, a column of them is still Complex.
-    let inferred = sheet.replace("V : Complex\n\n", "");
+    let inferred = file.replace("V : Complex\n\n", "");
     assert_eq!(ask(&inferred, "Z[V; 1]"), "0-2i");
-    let bad = lint_errors("table Z\n\nV : Complex\n\nV\nfour\n");
+    let bad = lint_errors("sheet Z\n\nV : Complex\n\nV\nfour\n");
     assert!(bad[0].contains("such as `3+4i`"), "{bad:?}");
 }
 
@@ -778,9 +775,9 @@ fn time_zones() {
         zone: Zone::named("Europe/London"),
         ..Options::default()
     };
-    let with = |options: &Options, sheet: Option<&str>, expr: &str| {
-        let sheet = sheet.map(|s| ("test.omx", s));
-        let out = eval_with(sheet, "<expression>", expr, options.clone());
+    let with = |options: &Options, file: Option<&str>, expr: &str| {
+        let file = file.map(|s| ("test.omx", s));
+        let out = eval_with(file, "<expression>", expr, options.clone());
         assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
         out.output.trim_end().to_string()
     };
@@ -802,7 +799,7 @@ fn time_zones() {
     assert_eq!(at("2025-07-15T12:00.zone()"), "Europe/London");
     assert_eq!(at("2025-07-15T12:00.utc().zone()"), "UTC");
     assert_eq!(at("2025-07-15T12:00.utc().offset()"), "0");
-    // Back to the sheet's own zone it is an ordinary date-time again.
+    // Back to the file's own zone it is an ordinary date-time again.
     assert_eq!(
         at("2025-07-15T12:00.to_zone(\"Asia/Tokyo\").to_zone(\"Europe/London\")"),
         "2025-07-15T12:00"
@@ -856,26 +853,26 @@ fn time_zones() {
     assert!(calc_err(None, "2025-07-15.utc()").contains("`utc` needs a DateTime"));
     assert!(calc_err(None, "now().to_zone(3)").contains("needs the name of a time zone"));
 
-    // A sheet names the zone its date-times are in.
-    let sheet = "zone America/New_York\n\ntable Calls\n\nAt | Tokyo\n2025-03-03T09:12 | *\n\n\
+    // A file names the zone its date-times are in.
+    let file = "zone America/New_York\n\nsheet Calls\n\nAt | Tokyo\n2025-03-03T09:12 | *\n\n\
                  Tokyo := At.to_zone(\"Asia/Tokyo\")\n";
-    let ny = |expr: &str| with(&london, Some(sheet), expr);
+    let ny = |expr: &str| with(&london, Some(file), expr);
     assert_eq!(ny("Calls[At; 0]"), "2025-03-03T09:12");
     assert_eq!(ny("Calls[At; 0].zone()"), "America/New_York");
     assert_eq!(ny("Calls[At; 0].offset()"), "-18000");
     assert_eq!(ny("Calls[Tokyo; 0]"), "2025-03-03T23:12+09:00");
     assert_eq!(ny("Calls[At; 0].local()"), "2025-03-03T14:12+00:00");
     assert_eq!(ny("Calls[At; 0].utc() == Calls[At; 0]"), "true");
-    // `now()` is on the sheet's clocks: five hours behind London in winter.
+    // `now()` is on the file's clocks: five hours behind London in winter.
     assert_eq!(ny("now().zone()"), "America/New_York");
     assert_eq!(ny("now().local() == now()"), "true");
     let fixed = Options {
         now: Some(20_734 * 86_400),
         ..london.clone()
     };
-    assert_eq!(with(&fixed, Some(sheet), "now()"), "2026-10-08T00:00");
+    assert_eq!(with(&fixed, Some(file), "now()"), "2026-10-08T00:00");
     assert_eq!(
-        with(&fixed, Some(sheet), "now().local()"),
+        with(&fixed, Some(file), "now().local()"),
         "2026-10-08T05:00+01:00"
     );
 
@@ -884,36 +881,33 @@ fn time_zones() {
         local: true,
         ..london.clone()
     };
+    assert_eq!(with(&local, Some(file), "Calls[At; 0]"), "2025-03-03T14:12");
+    assert_eq!(with(&local, Some(file), "Calls.At"), "[2025-03-03T14:12]");
     assert_eq!(
-        with(&local, Some(sheet), "Calls[At; 0]"),
-        "2025-03-03T14:12"
-    );
-    assert_eq!(with(&local, Some(sheet), "Calls.At"), "[2025-03-03T14:12]");
-    assert_eq!(
-        with(&local, Some(sheet), "Calls[Tokyo; 0]"),
+        with(&local, Some(file), "Calls[Tokyo; 0]"),
         "2025-03-03T23:12+09:00"
     );
-    assert_eq!(with(&local, Some(sheet), "Calls[At; 0].hour()"), "9");
+    assert_eq!(with(&local, Some(file), "Calls[At; 0].hour()"), "9");
     assert_eq!(
-        view_with("test.omx", sheet, local).output,
-        "table Calls\n\nAt               | Tokyo\n-----------------|-----------------------\n\
+        view_with("test.omx", file, local).output,
+        "sheet Calls\n\nAt               | Tokyo\n-----------------|-----------------------\n\
          2025-03-03T14:12 | 2025-03-03T23:12+09:00\n"
     );
 
-    // The zone line is checked, and belongs before the first table.
-    let errs = lint_errors("zone Mars/Base\n\ntable T\n\nA\n1\n");
+    // The zone line is checked, and belongs before the first sheet.
+    let errs = lint_errors("zone Mars/Base\n\nsheet T\n\nA\n1\n");
     assert!(
         errs[0].contains("test.omx:1:6: error: there is no time zone `Mars/Base`"),
         "{errs:?}"
     );
-    assert!(!view("test.omx", "zone Mars/Base\n\ntable T\n\nA\n1\n").ok());
-    let errs = lint_errors("zone UTC\nzone Asia/Tokyo\n\ntable T\n\nA\n1\n");
+    assert!(!view("test.omx", "zone Mars/Base\n\nsheet T\n\nA\n1\n").ok());
+    let errs = lint_errors("zone UTC\nzone Asia/Tokyo\n\nsheet T\n\nA\n1\n");
     assert!(
-        errs[0].contains("the sheet already has a `zone`"),
+        errs[0].contains("the file already has a `zone`"),
         "{errs:?}"
     );
-    assert!(lint_errors("zone UTC\n\ntable T\n\nA\n1\n").is_empty());
-    assert_eq!(ask("table T\n\nA\nzone UTC\n", "T[A; 0]"), "zone UTC");
+    assert!(lint_errors("zone UTC\n\nsheet T\n\nA\n1\n").is_empty());
+    assert_eq!(ask("sheet T\n\nA\nzone UTC\n", "T[A; 0]"), "zone UTC");
 }
 
 #[test]
@@ -941,15 +935,15 @@ fn one_slot_selects_columns() {
 }
 
 #[test]
-fn lookup_from_another_table() {
-    let sheet = "\
-table Customers
+fn lookup_from_another_sheet() {
+    let file = "\
+sheet Customers
 
 ID | Name
 1  | Ada
 2  | Grace
 
-table Sales
+sheet Sales
 
 CustomerID | Amount | Customer
 2          | 50     | *
@@ -959,25 +953,24 @@ CustomerID | Amount | Customer
 Customer := Customers[; ID == CustomerID].Name // \"Unknown\"
 ";
     assert_eq!(
-        ask(sheet, "Sales.Customer"),
+        ask(file, "Sales.Customer"),
         "[\"Grace\", \"Unknown\", \"Ada\"]"
     );
 }
 
 #[test]
 fn operators() {
-    let sheet =
-        sales_with("Prev := Sales[Revenue; *-1] // 0\nHome := Region in [\"UK\", \"IE\"]\n");
-    assert_eq!(ask(&sheet, "Sales.Prev"), "[0, 100, 120]");
-    assert_eq!(ask(&sheet, "Sales.Home"), "[true, false, true]");
+    let file = sales_with("Prev := Sales[Revenue; *-1] // 0\nHome := Region in [\"UK\", \"IE\"]\n");
+    assert_eq!(ask(&file, "Sales.Prev"), "[0, 100, 120]");
+    assert_eq!(ask(&file, "Sales.Home"), "[true, false, true]");
     let err = calc_err(Some(SALES), "Sales[; Region = \"UK\"]");
     assert!(err.contains("=="), "{err}");
 }
 
 #[test]
 fn conditional_expression() {
-    let sheet = "table T\n\nRevenue | Region | Net\n2000 | UK | *\n500 | UK | *\n\nNet :=\n  if Revenue > 1000 and Region in [\"UK\", \"US\"]\n  then Revenue * 90%\n  else Revenue\n";
-    assert_eq!(ask(sheet, "T.Net"), "[1800, 500]");
+    let file = "sheet T\n\nRevenue | Region | Net\n2000 | UK | *\n500 | UK | *\n\nNet :=\n  if Revenue > 1000 and Region in [\"UK\", \"US\"]\n  then Revenue * 90%\n  else Revenue\n";
+    assert_eq!(ask(file, "T.Net"), "[1800, 500]");
 }
 
 #[test]
@@ -1020,68 +1013,68 @@ fn pipe_operator() {
     );
 }
 
-// ---- sheet-format ----------------------------------------------------------
+// ---- file-format ----------------------------------------------------------
 
 #[test]
-fn minimal_table_and_optional_separator() {
+fn minimal_sheet_and_optional_separator() {
     let plain =
-        "table Sales\n\nMonth | Revenue | Cost\nJan   | 10000   | 6000\nFeb   | 12000   | 7000\n";
-    let ruled = "table Sales\n\nMonth | Revenue | Cost\n------|---------|-----\nJan   | 10000   | 6000\nFeb   | 12000   | 7000\n";
+        "sheet Sales\n\nMonth | Revenue | Cost\nJan   | 10000   | 6000\nFeb   | 12000   | 7000\n";
+    let ruled = "sheet Sales\n\nMonth | Revenue | Cost\n------|---------|-----\nJan   | 10000   | 6000\nFeb   | 12000   | 7000\n";
     assert_eq!(shown(plain), shown(ruled));
     assert_eq!(ask(plain, "Sales.count()"), "2");
 }
 
 #[test]
 fn ragged_row() {
-    let errors = lint_errors("table Sales\n\nMonth | Revenue\nJan | 1 | 2\n");
+    let errors = lint_errors("sheet Sales\n\nMonth | Revenue\nJan | 1 | 2\n");
     assert_eq!(errors.len(), 1);
     assert!(errors[0].starts_with("test.omx:4:1:"), "{}", errors[0]);
-    assert!(errors[0].contains("table `Sales`"), "{}", errors[0]);
+    assert!(errors[0].contains("sheet `Sales`"), "{}", errors[0]);
 }
 
 #[test]
-fn multiple_tables() {
-    let sheet = sales_with("table Summary\n\nLabel | Value\nTotal | = Sales.Revenue.sum()\n");
-    assert_eq!(ask(&sheet, "Summary[Value; 0]"), "370");
-    let errors = lint_errors("table Sales\n\nA\n1\n\ntable Sales\n\nA\n2\n");
+fn multiple_sheets() {
+    let file = sales_with("sheet Summary\n\nLabel | Value\nTotal | = Sales.Revenue.sum()\n");
+    assert_eq!(ask(&file, "Summary[Value; 0]"), "370");
+    let errors = lint_errors("sheet Sales\n\nA\n1\n\nsheet Sales\n\nA\n2\n");
     assert_eq!(errors.len(), 1);
     assert!(errors[0].starts_with("test.omx:6:"), "{}", errors[0]);
 }
 
 #[test]
 fn column_schema() {
-    let sheet =
-        "table Items\n\nQty   : Int\nPrice : Fraction\n\nQty | Price\n2   | 19.99\n5   | 0.50\n";
-    assert_eq!(ask(sheet, "Items[Price; 0] == 1999/100"), "true");
-    assert_eq!(ask(sheet, "Items[Qty; 0] * Items[Price; 0]"), "1999/50");
-    let errors = lint_errors("table Items\n\nPrise : Fraction\n\nQty | Price\n2 | 1\n");
+    let file =
+        "sheet Items\n\nQty   : Int\nPrice : Fraction\n\nQty | Price\n2   | 19.99\n5   | 0.50\n";
+    assert_eq!(ask(file, "Items[Price; 0] == 1999/100"), "true");
+    assert_eq!(ask(file, "Items[Qty; 0] * Items[Price; 0]"), "1999/50");
+    let errors = lint_errors("sheet Items\n\nPrise : Fraction\n\nQty | Price\n2 | 1\n");
     assert!(errors[0].contains("no column `Prise`"), "{}", errors[0]);
 }
 
 #[test]
 fn computed_columns() {
-    let sheet = sales_with("Profit := Revenue - Cost\n");
-    assert_eq!(ask(&sheet, "Sales.Profit"), "[40, 50, 70]");
+    let file = sales_with("Profit := Revenue - Cost\n");
+    assert_eq!(ask(&file, "Sales.Profit"), "[40, 50, 70]");
     // The header row may name a formula column, to say where it goes among
     // the others. Its cells are written `*`.
-    let among = "table T\n\nA | Twice | B | Sum\n1 | * | 10 | *\n2 | * | 20 | *\n\nTwice := A * 2\nSum := Twice + B\n";
+    let among = "sheet T\n\nA | Twice | B | Sum\n1 | * | 10 | *\n2 | * | 20 | *\n\nTwice := A * 2\nSum := Twice + B\n";
     assert_eq!(lint_errors(among), Vec::<String>::new());
     assert_eq!(
         shown(among),
-        "table T\n\nA | Twice | B  | Sum\n--|-------|----|----\n1 |     2 | 10 |  12\n2 |     4 | 20 |  24\n"
+        "sheet T\n\nA | Twice | B  | Sum\n--|-------|----|----\n1 |     2 | 10 |  12\n2 |     4 | 20 |  24\n"
     );
     // Counting columns counts it where it is.
     assert_eq!(ask(among, "T[1; 1]"), "4");
-    let errors = lint_errors("table T\n\nA | Profit\n1 | 2\n\nProfit := A\n");
+    let errors = lint_errors("sheet T\n\nA | Profit\n1 | 2\n\nProfit := A\n");
     assert!(
         errors[0].contains("`Profit` is a formula column: its cells are written `*`"),
         "{}",
         errors[0]
     );
     // The header row has to name it.
-    let unnamed = lint_errors("table T\n\nA\n1\n\nP := A\n");
+    let unnamed = lint_errors("sheet T\n\nA\n1\n\nP := A\n");
     assert!(
-        unnamed[0].contains("formula column `P` is not in the header row of table `T`"),
+        unnamed[0].contains("formula column `P` is not in the header row of sheet `T`"),
         "{}",
         unnamed[0]
     );
@@ -1090,7 +1083,7 @@ fn computed_columns() {
         "{}",
         unnamed[0]
     );
-    let twice = lint_errors("table T\n\nA | P\n1 | *\n\nP := A\nP := A + 1\n");
+    let twice = lint_errors("sheet T\n\nA | P\n1 | *\n\nP := A\nP := A + 1\n");
     assert!(
         twice[0].contains("computed column `P` is defined twice"),
         "{}",
@@ -1103,17 +1096,17 @@ fn cell_content() {
     // Text in an undeclared column.
     assert_eq!(ask(SALES, "Sales[Month; 0]"), "Jan");
     // A marked formula in a typed column.
-    let sheet = "const TaxRate = 20%\n\ntable T\n\nTax : Fraction\n\nRevenue | Tax\n100 | = Revenue * TaxRate\n";
-    assert_eq!(ask(sheet, "T[Tax; 0]"), "20");
+    let file = "const TaxRate = 20%\n\nsheet T\n\nTax : Fraction\n\nRevenue | Tax\n100 | = Revenue * TaxRate\n";
+    assert_eq!(ask(file, "T[Tax; 0]"), "20");
     // A fraction of two whole numbers is a Fraction literal, declared or not.
-    let thirds = "table T\n\nA : Fraction\n\nA | B\n1/7 | 2/3\n-3/6 | 1/3\n4/2 | x\n";
+    let thirds = "sheet T\n\nA : Fraction\n\nA | B\n1/7 | 2/3\n-3/6 | 1/3\n4/2 | x\n";
     assert_eq!(ask(thirds, "T.A"), "[1/7, -1/2, 2]");
     assert_eq!(ask(thirds, "T[B; 0..1].sum()"), "1");
     assert!(
-        lint_errors("table T\n\nA : Fraction\n\nA\n1/0\n")[0]
+        lint_errors("sheet T\n\nA : Fraction\n\nA\n1/0\n")[0]
             .contains("is not a `Fraction` literal")
     );
-    assert_eq!(ask("table T\n\nA\n1/0\n", "T[A; 0]"), "1/0");
+    assert_eq!(ask("sheet T\n\nA\n1/0\n", "T[A; 0]"), "1/0");
     // An exact number over zero is a Num: `Inf`, `-Inf`, or `NaN` for zero.
     assert_eq!(
         calc("[1/0, -1/0, 0/0, 1.5/0, 0 ** -1]"),
@@ -1137,7 +1130,7 @@ fn cell_content() {
     );
     assert_eq!(calc("[[1, NaN, 3].max(), [1, Inf, 3].max()]"), "[NaN, Inf]");
     assert!(calc_err(None, "Inf.Int").contains("Inf has no exact value"));
-    let cells = "table T\n\nN : Num\nT : Text\n\nN | T | Any | Quoted | Z\nInf | Inf | -Inf | \"NaN\" | 1+NaN\\i\nNaN | NaN | NaN | \"Inf\" | *\n";
+    let cells = "sheet T\n\nN : Num\nT : Text\n\nN | T | Any | Quoted | Z\nInf | Inf | -Inf | \"NaN\" | 1+NaN\\i\nNaN | NaN | NaN | \"Inf\" | *\n";
     assert_eq!(ask(cells, "T.N"), "[Inf, NaN]");
     assert_eq!(
         ask(cells, "[T[Any; 0] < 0, T[Any; 1] != T[Any; 1]]"),
@@ -1147,32 +1140,32 @@ fn cell_content() {
     assert_eq!(ask(cells, "T.Quoted"), "[\"NaN\", \"Inf\"]");
     assert_eq!(ask(cells, "T[Z; 0]"), "1+NaN\\i");
     // An unmarked expression in a typed column is an error.
-    let errors = lint_errors("table T\n\nTax : Fraction\n\nRevenue | Tax\n100 | Revenue * 2\n");
+    let errors = lint_errors("sheet T\n\nTax : Fraction\n\nRevenue | Tax\n100 | Revenue * 2\n");
     assert!(
         errors[0].contains("is not a `Fraction` literal"),
         "{}",
         errors[0]
     );
     // An unmarked expression in a text column is text.
-    let sheet = "table T\n\nNote : Text\n\nRevenue | Note\n100 | Revenue - Cost\n200 | \"= see appendix\"\n";
+    let file = "sheet T\n\nNote : Text\n\nRevenue | Note\n100 | Revenue - Cost\n200 | \"= see appendix\"\n";
     assert_eq!(
-        ask(sheet, "T.Note"),
+        ask(file, "T.Note"),
         "[\"Revenue - Cost\", \"= see appendix\"]"
     );
     // An empty cell.
-    assert_eq!(ask("table T\n\nA | B\n1 |\n", "T[B; 0]"), "empty");
+    assert_eq!(ask("sheet T\n\nA | B\n1 |\n", "T[B; 0]"), "empty");
 }
 
 #[test]
 fn constants() {
-    let sheet = "const TaxRate = 20%\n\ntable Sales\n\nRevenue | Tax\n100 | *\n250 | *\n\nTax := Revenue * TaxRate\n";
-    assert_eq!(ask(sheet, "Sales.Tax"), "[20, 50]");
-    assert_eq!(ask(sheet, "TaxRate == 1/5"), "true");
+    let file = "const TaxRate = 20%\n\nsheet Sales\n\nRevenue | Tax\n100 | *\n250 | *\n\nTax := Revenue * TaxRate\n";
+    assert_eq!(ask(file, "Sales.Tax"), "[20, 50]");
+    assert_eq!(ask(file, "TaxRate == 1/5"), "true");
 }
 
 #[test]
 fn a1_reference_is_not_special() {
-    let errors = lint_errors("table T\n\nA | B\n1 | *\n\nB := B2\n");
+    let errors = lint_errors("sheet T\n\nA | B\n1 | *\n\nB := B2\n");
     assert!(errors[0].contains("unknown name `B2`"), "{}", errors[0]);
 }
 
@@ -1181,7 +1174,7 @@ fn a1_reference_is_not_special() {
 #[test]
 fn unresolved_name_is_a_compile_error() {
     let errors = lint_errors(
-        "table Sales\n\nRevenue | Cost | Profit\n1 | 2 | *\n\nProfit := Revnue - Cost\n",
+        "sheet Sales\n\nRevenue | Cost | Profit\n1 | 2 | *\n\nProfit := Revnue - Cost\n",
     );
     assert_eq!(errors.len(), 1);
     assert!(errors[0].starts_with("test.omx:6:11:"), "{}", errors[0]);
@@ -1194,8 +1187,8 @@ fn unresolved_name_is_a_compile_error() {
 
 #[test]
 fn one_type_error_blocks_execution() {
-    let sheet = "table Sales\n\nMonth | Revenue | Double | Bad\nJan | 100 | * | *\n\nDouble := Revenue * 2\nBad := Revenue + Month\n";
-    let out = view("test.omx", sheet);
+    let file = "sheet Sales\n\nMonth | Revenue | Double | Bad\nJan | 100 | * | *\n\nDouble := Revenue * 2\nBad := Revenue + Month\n";
+    let out = view("test.omx", file);
     assert_eq!(out.errors.len(), 1);
     assert!(
         out.errors[0].contains("cannot apply `+` to Int and Text"),
@@ -1211,25 +1204,25 @@ fn one_type_error_blocks_execution() {
 
 #[test]
 fn all_errors_reported_together() {
-    let sheet = "table T\n\nName | N | A | B | C\nx | 1 | * | * | *\n\nA := N + Name\nB := Name * 2\nC := not N\n";
-    assert_eq!(lint_errors(sheet).len(), 3);
+    let file = "sheet T\n\nName | N | A | B | C\nx | 1 | * | * | *\n\nA := N + Name\nB := Name * 2\nC := not N\n";
+    assert_eq!(lint_errors(file).len(), 3);
 }
 
 #[test]
 fn declaration_order_does_not_matter() {
-    let sheet = "table T\n\nRevenue | Cost | Margin | Profit\n100 | 60 | * | *\n\nMargin := Profit / Revenue\nProfit := Revenue - Cost\n";
-    assert_eq!(ask(sheet, "T.Margin"), "[0.4]");
+    let file = "sheet T\n\nRevenue | Cost | Margin | Profit\n100 | 60 | * | *\n\nMargin := Profit / Revenue\nProfit := Revenue - Cost\n";
+    assert_eq!(ask(file, "T.Margin"), "[0.4]");
 }
 
 #[test]
 fn row_wise_self_reference() {
-    let sheet = "table Ledger\n\nAmount | Balance\n10 | *\n-3 | *\n5 | *\n\nBalance := (Ledger[Balance; *-1] // 0) + Amount\n";
-    assert_eq!(ask(sheet, "Ledger.Balance"), "[10, 7, 12]");
+    let file = "sheet Ledger\n\nAmount | Balance\n10 | *\n-3 | *\n5 | *\n\nBalance := (Ledger[Balance; *-1] // 0) + Amount\n";
+    assert_eq!(ask(file, "Ledger.Balance"), "[10, 7, 12]");
 }
 
 #[test]
 fn cycle_detection() {
-    let errors = lint_errors("table T\n\nX | A | B\n1 | * | *\n\nA := B + 1\nB := A + 1\n");
+    let errors = lint_errors("sheet T\n\nX | A | B\n1 | * | *\n\nA := B + 1\nB := A + 1\n");
     assert_eq!(errors.len(), 1);
     assert!(errors[0].contains("A → B → A"), "{}", errors[0]);
 }
@@ -1238,11 +1231,11 @@ fn cycle_detection() {
 
 #[test]
 fn view_shows_computed_values() {
-    let sheet = sales_with("Profit := Revenue - Cost\n");
+    let file = sales_with("Profit := Revenue - Cost\n");
     assert_eq!(
-        shown(&sheet),
+        shown(&file),
         "\
-table Sales
+sheet Sales
 
 Month | Region | Revenue | Cost | Profit
 ------|--------|---------|------|-------
@@ -1262,8 +1255,8 @@ fn lint_clean_and_type_error() {
 
 #[test]
 fn diagnostics_are_located() {
-    let sheet = "table T\n\nName | N | Bad\nx | 1 | *\n\n\n\n\n\n\n\n\n\nBad := N + Name\n";
-    let errors = lint_errors(sheet);
+    let file = "sheet T\n\nName | N | Bad\nx | 1 | *\n\n\n\n\n\n\n\n\n\nBad := N + Name\n";
+    let errors = lint_errors(file);
     assert!(
         errors[0].starts_with("test.omx:14:8: error:"),
         "{}",
@@ -1284,13 +1277,13 @@ fn Twice(x) = WithTax(WithTax(x))
 fn Total(t) = t.Revenue.sum()
 fn NameOf(id) = Customers[; ID == id].Name // \"Unknown\"
 
-table Customers
+sheet Customers
 
 ID | Name
 1  | Ada
 2  | Grace
 
-table Sales
+sheet Sales
 
 Month | Revenue | Cost | Who | Margin | Gross | Twice | Buyer
 Jan   | 100     | 60   | 1   | *      | *     | *     | *
@@ -1316,7 +1309,7 @@ fn custom_function_as_method_and_pipe_stage() {
 }
 
 #[test]
-fn custom_function_takes_tables_and_vectors() {
+fn custom_function_takes_sheets_and_vectors() {
     assert_eq!(ask(FUNCS, "Total(Sales)"), "220");
     assert_eq!(ask(FUNCS, "Total(Sales |> filter(Cost > 60))"), "120");
     assert_eq!(ask(FUNCS, "WithTax(Sales.Revenue)"), "[120, 144]");
@@ -1324,9 +1317,9 @@ fn custom_function_takes_tables_and_vectors() {
 
 #[test]
 fn custom_function_does_not_see_the_callers_row() {
-    let sheet =
-        "fn Bad(x) = x + Cost\n\ntable T\n\nRevenue | Cost | A\n1 | 2 | *\n\nA := Bad(Revenue)\n";
-    let errors = lint_errors(sheet).join("\n");
+    let file =
+        "fn Bad(x) = x + Cost\n\nsheet T\n\nRevenue | Cost | A\n1 | 2 | *\n\nA := Bad(Revenue)\n";
+    let errors = lint_errors(file).join("\n");
     assert!(errors.contains("unknown name `Cost`"), "{errors}");
 }
 
@@ -1371,15 +1364,15 @@ fn custom_function_definitions_are_checked() {
 
 #[test]
 fn a_column_range_counts_from_the_formulas_own_column() {
-    let sheet = "table T\n\nN | A | B   | C | D | E | F\n\
+    let file = "sheet T\n\nN | A | B   | C | D | E | F\n\
                  x | 1 | 2   | 3 | 4 | = sum([*-4..*-1; *])     | = [*-5..^*-2; *].max()\n\
                  y | 1 | 2.5 | 3 | 4 | = sum([1..*-1; *])       | = avg([*-5..-4; *])\n\
                  z | 1 | 2   | 3 | 4 | = [*-4..*-1; *].count()  | = min([*-3..*-2; *])\n";
-    assert_eq!(ask(sheet, "T.E"), "[10, 10.5, 4]");
-    assert_eq!(ask(sheet, "T.F"), "[3, 13/6, 3]");
+    assert_eq!(ask(file, "T.E"), "[10, 10.5, 4]");
+    assert_eq!(ask(file, "T.F"), "[3, 13/6, 3]");
 
     let errors = |cell: &str| {
-        lint_errors(&format!("table T\n\nN | A | B | C\nx | 1 | 2 | {cell}\n")).join("\n")
+        lint_errors(&format!("sheet T\n\nN | A | B | C\nx | 1 | 2 | {cell}\n")).join("\n")
     };
     assert!(errors("= sum([*-9..*-1; *])").contains("runs past the first column"));
     assert!(errors("= sum([*-1..*+1; *])").contains("runs past the last column"));

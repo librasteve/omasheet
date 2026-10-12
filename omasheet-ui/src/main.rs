@@ -1,15 +1,16 @@
 // Copyright (c) 2026 Stephen Roe
 
 //! Omasheet: the `omasheet` command, and the interactive grid for `.omx`
-//! sheets that it opens when it is given no command.
+//! files that it opens when it is given no command.
 //!
 //! The windows are Qt Quick (`qml/Main.qml`, opened by `qml/App.qml`);
-//! everything they show and every edit goes through the one `Sheet` object
-//! in `sheet.rs`, which wraps the engine's editable
+//! everything they show and every edit goes through the one `File` object
+//! in `file.rs`, which wraps the engine's editable
 //! [`Document`](omasheet_engine::Document).
 
+mod clip;
+mod file;
 mod json;
-mod sheet;
 mod theme;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};

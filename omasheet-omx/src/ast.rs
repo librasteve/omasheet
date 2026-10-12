@@ -40,8 +40,8 @@ pub enum ExprKind {
     Name(String),
     /// `*`, the current row.
     Cursor,
-    /// The table of the current row: the base of `[Revenue; *-1]`, an index
-    /// written with no table name.
+    /// The sheet of the current row: the base of `[Revenue; *-1]`, an index
+    /// written with no sheet name.
     Own,
     Unary(UnOp, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),

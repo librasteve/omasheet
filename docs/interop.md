@@ -1,10 +1,10 @@
 # Workbooks, CSV, JSON and Markdown
 
-The `.omx` file is the sheet. A workbook, a CSV file or JSON is a way in or out,
+The `.omx` file is the original. A workbook, a CSV file or JSON is a way in or out,
 and each command says what it could not carry across.
 
-Import and export are a helper, not a full conversion. A sheet and a
-workbook are built differently: named, typed tables and exact numbers on one
+Import and export are a helper, not a full conversion. A file and a
+workbook are built differently: named, typed sheets and exact numbers on one
 side, a grid of cells and floating point on the other. Those differences
 keep either direction from covering everything, so check what the command
 reports.
@@ -12,9 +12,9 @@ reports.
 ## Import
 
 ```sh
-omasheet import budget.xlsx -o budget.omx    # a table for each worksheet
-omasheet import sales.csv                    # one table, named after the file
-omasheet import orders.json                  # a table for each list of rows
+omasheet import budget.xlsx -o budget.omx    # a sheet for each worksheet
+omasheet import sales.csv                    # one sheet, named after the file
+omasheet import orders.json                  # a sheet for each list of rows
 ```
 
 - The first row is the column names. A name that is not an identifier is
@@ -34,8 +34,8 @@ omasheet import orders.json                  # a table for each list of rows
 
 ### JSON
 
-JSON is read as values: a list of rows is a table named after the file, and
-an object of such lists is a table for each, named by its key.
+JSON is read as values: a list of rows is a sheet named after the file, and
+an object of such lists is a sheet for each, named by its key.
 
 ```json
 {
@@ -59,10 +59,10 @@ an object of such lists is a table for each, named by its key.
 
 ### Formulas
 
-A worksheet becomes a table whose first row is the header, so a cell of a
+A worksheet becomes a sheet whose first row is the header, so a cell of a
 formula becomes a column and a row:
 
-| In the workbook, on row 3 | In the sheet |
+| In the workbook, on row 3 | In the file |
 |---|---|
 | `=B3-C3` | `= Revenue - Cost` |
 | `=B2` | `= [Revenue; *-1]`, the row above |
@@ -81,8 +81,8 @@ formula becomes a column and a row:
   `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `DATEVALUE`.
 - These are not, and the value is imported: joining text with `&`, lookups
   such as `VLOOKUP`, `DATE(y, m, d)`, names defined in the workbook, lists
-  in `{ }`, and a cell in the header row or outside the table.
-- Every translation is checked. The sheet is worked out, and a formula that
+  in `{ }`, and a cell in the header row or outside the sheet.
+- Every translation is checked. The file is worked out, and a formula that
   does not give the value the workbook holds for its cell is dropped for
   that value. The commonest cause is an empty cell: a workbook adds it up as
   nothing, and in OMX what is worked out from an empty cell is empty.
@@ -96,27 +96,27 @@ formula becomes a column and a row:
 ## Export
 
 ```sh
-omasheet export budget.omx --xlsx            # budget.xlsx, a worksheet for each table
+omasheet export budget.omx --xlsx            # budget.xlsx, a worksheet for each sheet
 omasheet export budget.omx --csv             # budget.Sales.csv, budget.Summary.csv
-omasheet export budget.omx --csv --table Sales -o sales.csv
-omasheet export budget.omx --json            # budget.json, every table
-omasheet export budget.omx --json --table Sales   # the rows of Sales alone
+omasheet export budget.omx --csv --sheet Sales -o sales.csv
+omasheet export budget.omx --json            # budget.json, every sheet
+omasheet export budget.omx --json --sheet Sales   # the rows of Sales alone
 ```
 
-A workbook is written with the formulas of the sheet, and each with its
+A workbook is written with the formulas of the file, and each with its
 calculated value, so it reads the same before anything works it out again.
 CSV and JSON hold the calculated values alone. Constants are not exported: a
 formula that reads one is written with what the constant is.
 
-A table becomes a worksheet whose first row is the header, so a column and a
+A sheet becomes a worksheet whose first row is the header, so a column and a
 row become a cell. Each formula is written for the row it is on:
 
-| In the sheet, on row 1 of `Sales` | In the workbook |
+| In the file, on row 1 of `Sales` | In the workbook |
 |---|---|
 | `Revenue - Cost` | `=B3-C3` |
 | `[Revenue; *-1]`, the row above | `=B2` |
 | `[Revenue; 0]`, the first row | `=$B$2` |
-| `Sales.Revenue.sum()`, from another table | `=SUM('Sales'!$B$2:$B$13)` |
+| `Sales.Revenue.sum()`, from another sheet | `=SUM('Sales'!$B$2:$B$13)` |
 | `sum([Revenue; 0..*])`, a running total | `=SUM($B$2:B3)` |
 | `[Revenue; *-1] // 0` | `=IF(ISBLANK(B2),0,B2)`, and `0` on the first row |
 | `Rates[Fee; Code == Sales[Code; *]] // 1` | `=IFERROR(INDEX('Rates'!$B$2:$B$9,MATCH(A3,'Rates'!$A$2:$A$9,0)),1)` |
@@ -129,7 +129,7 @@ row become a cell. Each formula is written for the row it is on:
   values; a row found where one column equals a value; `abs`, `round`,
   `floor`, `ceil`, `sqrt`, the logarithms and the trigonometry; `today`,
   `now`, `year` to `second`, `weekday`, `date` and `time`; `x.Int`, and a
-  function the sheet defines.
+  function the file defines.
 - These are not, and the value is written: a calculation on a whole column
   at once, `Sales.Revenue * 2`; rows picked by any other condition, by a
   list or by a range value; `in` and ranges as values; `//` after a
@@ -137,12 +137,12 @@ row become a cell. Each formula is written for the row it is on:
   reported with the columns it happened in.
 - A cell that comes to nothing, or that failed, is left empty, with no
   formula.
-- A workbook counts a time in days and a sheet in seconds, so `At - 09:00`
+- A workbook counts a time in days and a file in seconds, so `At - 09:00`
   is written `=ROUND((C3-TIME(9,0,0))*86400,0)`.
-- A table exported alone with `--table` cannot read another: those formulas
+- A sheet exported alone with `--sheet` cannot read another: those formulas
   are written as values.
 - A formula is not checked in a workbook, as nothing here works one out. It
-  is exact in the sheet and floating point there, so the last digits may
+  is exact in the file and floating point there, so the last digits may
   differ.
 - Importing the workbook again brings back most formulas, but not all: the
   import has no translation for `ISBLANK` or `IFERROR`, and takes those
@@ -156,9 +156,9 @@ row become a cell. Each formula is written for the row it is on:
 | `Complex` | text | `3+4i` |
 | a cell that failed | empty | empty |
 
-JSON is written as it is read: an object holding each table by name as a
+JSON is written as it is read: an object holding each sheet by name as a
 list of rows, a row to a line, and each row an object of values by column
-name. With `--table` it is the rows of that table alone.
+name. With `--sheet` it is the rows of that sheet alone.
 
 | | JSON |
 |---|---|
@@ -166,18 +166,18 @@ name. With `--table` it is the rows of that table alone.
 | `Percent` | the number it stands for: `20%` is `0.2` |
 | `Num` | a number; `Inf`, `-Inf` and `NaN` as strings |
 | `Text`, `Bool` | a string; `true` or `false` |
-| `Date`, `Time`, `DateTime`, `Complex` | a string, as a sheet writes it: `"2025-01-31"`, `"3+4i"` |
+| `Date`, `Time`, `DateTime`, `Complex` | a string, as a file writes it: `"2025-01-31"`, `"3+4i"` |
 | an empty cell, or one that failed | `null` |
 
-Anything written less exactly than the sheet holds it is reported, with the
+Anything written less exactly than the file holds it is reported, with the
 columns it happened in.
 
 ## In the app
 
-- Ctrl+O opens a workbook, a CSV file or JSON as well as a sheet. It is
-  imported as a new sheet, not yet saved.
-- Ctrl+E exports, and asks what as: every table as a workbook (X) or as
-  JSON (J), or the table shown as CSV (C). It then asks where.
+- Ctrl+O opens a workbook, a CSV file or JSON as well as an `.omx` file. It is
+  imported as a new file, not yet saved.
+- Ctrl+E exports, and asks what as: every sheet as a workbook (X) or as
+  JSON (J), or the sheet shown as CSV (C). It then asks where.
 - What was changed, rounded or left behind is listed, and stays under
   `notes` in the footer.
 
@@ -188,17 +188,17 @@ omasheet render report.md                    # Markdown, with the values in plac
 omasheet render report.md --html -o report.html
 ```
 
-A Markdown document can quote a sheet:
+A Markdown document can quote a file:
 
 ````markdown
 ---
-sheets: [budget.omx]
+files: [budget.omx]
 ---
 
 Revenue was {{ Sales.Revenue.sum() }}, best in {{ Sales[; Profit == Sales.Profit.max()].Month }}.
 
 ```omx
-table Targets
+sheet Targets
 
 Month | Goal | Over
 Jan   | 4200 | *
@@ -207,17 +207,17 @@ Over := Sales[Profit; *] - Goal
 ```
 ````
 
-- `sheets:` in the front matter names `.omx` files, from where the document
-  is. `sheets: budget.omx` and a list of `- budget.omx` lines work too.
-- A fenced `omx` block is a sheet, shown as its tables. The files and all
-  the blocks of a document are one sheet, so each can read the others.
+- `files:` in the front matter names `.omx` files, from where the document
+  is. `files: budget.omx` and a list of `- budget.omx` lines work too.
+- A fenced `omx` block is a file, shown as its sheets. The files and all
+  the blocks of a document are one file, so each can read the others.
 - `{{ expression }}` is replaced by its value. Several values read as a
-  list, `Feb, Mar`; a table is shown as a table.
+  list, `Feb, Mar`; a sheet is shown as a Markdown table.
 - `{{` in code is left alone, and so is `\{{`.
 - Text written bare in a cell may hold Markdown, and is read as that in the
   document: `**bold**`, `[a link](there.md)`. Text in quotes, or made by a
   formula, is shown as it is. HTML in a cell is shown as text.
-- A mistake is reported at its line in the document, or in the sheet it is
+- A mistake is reported at its line in the document, or in the file it is
   in, and nothing is written.
 
 A tool that does not know Omasheet shows the block as code and the braces

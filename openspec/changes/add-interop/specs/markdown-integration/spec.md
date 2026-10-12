@@ -17,14 +17,14 @@ do not know Omasheet.
 
 ### Requirement: Fenced omx blocks
 A fenced code block with the language tag `omx` in a Markdown file SHALL be
-treated as `.omx` source. Tables and constants it declares SHALL be available
-to the rest of that document, and the block SHALL render as its evaluated tables.
+treated as `.omx` source. Sheets and constants it declares SHALL be available
+to the rest of that document, and the block SHALL render as its evaluated sheets.
 
-#### Scenario: Inline table
+#### Scenario: Inline sheet
 - **GIVEN** a Markdown file with
   ````markdown
   ```omx
-  table Sales
+  sheet Sales
 
   Month | Revenue
   Jan   | 100
@@ -32,11 +32,11 @@ to the rest of that document, and the block SHALL render as its evaluated tables
   ```
   ````
 - **WHEN** the document is rendered
-- **THEN** the block is replaced by a rendered `Sales` table
+- **THEN** the block is replaced by a rendered `Sales` sheet
 
 ### Requirement: Expression interpolation
 `{{ <OMX expression> }}` in Markdown prose SHALL be replaced on render by the
-formatted value of the expression, which SHALL be able to refer to tables and
+formatted value of the expression, which SHALL be able to refer to sheets and
 constants from the document's `omx` blocks and from linked `.omx` files.
 
 #### Scenario: Computed value in prose
@@ -52,35 +52,35 @@ constants from the document's `omx` blocks and from linked `.omx` files.
 - **WHEN** an interpolation's value is the vector of `"Feb"` and `"Mar"`
 - **THEN** it reads `Feb, Mar`
 
-#### Scenario: A table
-- **WHEN** an interpolation's value is a table
-- **THEN** it is replaced by a rendered table, set apart from the text around it
+#### Scenario: A sheet
+- **WHEN** an interpolation's value is a sheet
+- **THEN** it is replaced by a rendered sheet, set apart from the text around it
 
 #### Scenario: In code
 - **WHEN** `{{ 1 + 1 }}` is written in a code span or a code block that is not `omx`
 - **THEN** it is left as it is
 
-### Requirement: Linking a sheet file
-A Markdown document SHALL be able to name one or more `.omx` files whose tables
+### Requirement: Linking an `.omx` file
+A Markdown document SHALL be able to name one or more `.omx` files whose sheets
 and constants its interpolations and `omx` blocks may reference. It names them
-in YAML front matter, under `sheets`, as one path or a list of paths, each taken
+in YAML front matter, under `files`, as one path or a list of paths, each taken
 from the directory the document is in. The files and the document's `omx`
-blocks SHALL be one sheet: a name defined twice among them is an error, and a
+blocks SHALL be one file: a name defined twice among them is an error, and a
 `zone` line in any of them is the time zone of them all.
 
-#### Scenario: Report over a separate sheet
-- **GIVEN** `Sales.omx` defining `const TotalRevenue = Sales.Revenue.sum()` and `report.md` beginning with front matter `sheets: [Sales.omx]`
+#### Scenario: Report over a separate file
+- **GIVEN** `Sales.omx` defining `const TotalRevenue = Sales.Revenue.sum()` and `report.md` beginning with front matter `files: [Sales.omx]`
 - **WHEN** `omasheet render report.md` is run
 - **THEN** `{{ TotalRevenue }}` in the report is replaced by the computed total
 
-#### Scenario: A sheet that cannot be read
+#### Scenario: A file that cannot be read
 - **WHEN** the front matter names a file that does not exist
 - **THEN** rendering fails with a diagnostic pointing at the name in the front matter
 
 ### Requirement: Render output
 `omasheet render` SHALL produce at least HTML and plain terminal output. The
 terminal output SHALL be the document as Markdown, with each interpolation
-replaced by its value and each `omx` block by its tables as Markdown tables.
+replaced by its value and each `omx` block by its sheets as Markdown tables.
 The HTML output SHALL be a whole page.
 
 #### Scenario: HTML output

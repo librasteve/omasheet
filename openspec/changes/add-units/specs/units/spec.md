@@ -62,7 +62,7 @@ is written explicitly with `convert(<quantity>, <unit>)` and a rate is available
 - **THEN** the result is a `GBP` quantity
 
 ### Requirement: Column-level units
-A column SHALL be able to declare its unit in the table schema. Cells in that
+A column SHALL be able to declare its unit in the sheet schema. Cells in that
 column SHALL NOT need to repeat the unit: a bare number takes the column's unit.
 A cell written with a different unit of the same dimension SHALL be accepted and
 converted. A cell written with a unit of a different dimension SHALL be a type
@@ -78,7 +78,7 @@ error reported before execution.
 
 #### Scenario: Wrong dimension in a cell
 - **GIVEN** `Distance : m` and a cell `5kg`
-- **WHEN** the sheet is checked
+- **WHEN** the file is checked
 - **THEN** an error reports `expected m, found kg` with the cell's location
 
 ### Requirement: Unit inference for computed columns
@@ -104,7 +104,7 @@ declaration.
 - **THEN** a type error reports `declared kg, inferred m/s`
 
 ### Requirement: User-defined units
-A sheet SHALL be able to declare a new base unit with `unit <Name>` and a derived
+A file SHALL be able to declare a new base unit with `unit <Name>` and a derived
 unit with `unit <Name> = <quantity expression>`.
 
 #### Scenario: Derived unit

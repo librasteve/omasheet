@@ -17,7 +17,7 @@ const Third = 1/3
 const Root2 = sqrt(2)
 const Turn = 1i
 
-table Numbers
+sheet Numbers
 
 Name    : Text
 Count   : Int
@@ -36,7 +36,7 @@ huge  | 10_000_000_000_000_000_000 | 1000  | 3     | 0.5   | 6.02e23  | 1e20    
 
 # What is done with the numbers above. A column with no type takes the type
 # of its formula.
-table Arithmetic
+sheet Arithmetic
 
 Name  | Square | Inverse | Whole | Taxed | Split | Raised | Part | Scaled | Root | Size | Turned | Likely
 seven | *      | *       | *     | *     | *     | *      | *    | *      | *    | *    | *      | *
@@ -73,7 +73,7 @@ Likely  := Numbers[Checked; *] and Numbers[Share; *] < Half
 # for zero over zero. So is a function outside its domain. Each is written
 # in a cell as it is shown, and the text of one is in quotes. A NaN is not
 # equal to anything, itself included.
-table Limits
+sheet Limits
 
 Top | Over | Root | Log | Limit | Same | Word   | Add           | Multiply
 1   | *    | *    | *   | Inf   | *    | "Inf"  | =Inf+[*-6; *] | =Inf*[*-7; *]
@@ -86,7 +86,7 @@ Log  := ln(Top)
 Same := Limit == Limit
 
 # The name of a type converts to it: `x.Int`, `x.Int()` or `Int(x)`.
-table Converted
+sheet Converted
 
 Value  | AsInt | Rounded | AsDecimal | AsPercent | AsNum | AsComplex | AsBool | AsText | Back
 19.99  | *     | *       | *         | *         | *     | *         | *      | *      | *
@@ -114,7 +114,7 @@ Back      := Value.Num.Fraction == Value
 # number and a part. It may be written either way: `2 3/4` is `11/4`. In a
 # Fraction column a decimal is a fraction too, and anything worked out from
 # a fraction is one.
-table Mixes
+sheet Mixes
 
 Yield : Fraction
 
@@ -128,7 +128,7 @@ Doubled := Yield * 2
 Share   := Yield.Percent
 
 # Text is read the way a cell is.
-table Written
+sheet Written
 
 Text : Text
 

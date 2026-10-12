@@ -1,12 +1,12 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! XLSX: a worksheet for each table. Every number in a workbook is a double,
+//! XLSX: a worksheet for each sheet. Every number in a workbook is a double,
 //! so exact numbers are rounded on the way out and read back from the
 //! shortest decimal on the way in.
 
 use crate::{
     Datum, Exported, FAILED, Grid, Imported, Losses, Names, Output, Place, formula, is_failure,
-    names, with_sheet, write_named,
+    names, with_file, write_named,
 };
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use num_rational::BigRational;
@@ -63,7 +63,7 @@ fn moment(serial: f64) -> Datum {
 /// A formula of a workbook, and the cell it is in.
 struct Formula {
     grid: usize,
-    /// The row among the table's rows, and the column.
+    /// The row among the sheet's rows, and the column.
     row: usize,
     column: usize,
     /// `B3`, for a notice.
@@ -108,11 +108,11 @@ fn agrees(cached: &Datum, v: &Value) -> bool {
     }
 }
 
-const REFUSED: &str = "the sheet does not take its translation";
+const REFUSED: &str = "the file does not take its translation";
 const DIFFERS: &str = "its translation gives another value than the workbook holds";
 
 /// Put back the values of the formulas that do not hold up: those the
-/// sheet does not check, and those that do not give what the workbook has.
+/// file does not check, and those that do not give what the workbook has.
 /// Each goes into `dropped` with the reason.
 fn settle(
     grids: &mut [Grid],
@@ -170,8 +170,8 @@ fn settle(
         let mut bad = Vec::new();
         for &f in &live {
             let formula = &formulas[f];
-            let table = &names[formula.grid].table;
-            let Some(t) = program.tables.iter().position(|t| t.name == *table) else {
+            let sheet = &names[formula.grid].sheet;
+            let Some(t) = program.sheets.iter().position(|t| t.name == *sheet) else {
                 continue;
             };
             match engine.cell(t, formula.column, formula.row) {
@@ -186,7 +186,7 @@ fn settle(
     }
 }
 
-/// `.omx` source for a workbook: a table for each worksheet.
+/// `.omx` source for a workbook: a sheet for each worksheet.
 pub fn import(bytes: &[u8]) -> Result<Imported, String> {
     let mut book = open_workbook_auto_from_rs(Cursor::new(bytes))
         .map_err(|e| format!("it is not a workbook: {e}"))?;
@@ -201,14 +201,14 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
         };
         format!("{}{more}", cells[..cells.len().min(8)].join(", "))
     };
-    for sheet in book.sheet_names() {
+    for worksheet in book.sheet_names() {
         let range = book
-            .worksheet_range(&sheet)
-            .map_err(|e| format!("worksheet `{sheet}` cannot be read: {e}"))?;
+            .worksheet_range(&worksheet)
+            .map_err(|e| format!("worksheet `{worksheet}` cannot be read: {e}"))?;
         let Some((top, left)) = range.start() else {
             imported
                 .notices
-                .push(format!("worksheet `{sheet}` is empty and was left out"));
+                .push(format!("worksheet `{worksheet}` is empty and was left out"));
             continue;
         };
         let mut failed = Vec::new();
@@ -251,22 +251,22 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
         }
         if !failed.is_empty() {
             imported.notices.push(format!(
-                "worksheet `{sheet}`: cells holding an error were left empty: {}",
+                "worksheet `{worksheet}`: cells holding an error were left empty: {}",
                 list(&failed)
             ));
         }
-        grids.push(Grid::from_rows(&sheet, rows));
-        origins.push((sheet, top, left));
+        grids.push(Grid::from_rows(&worksheet, rows));
+        origins.push((worksheet, top, left));
     }
     if grids.is_empty() {
         return Err("it has no worksheet with anything on it".to_string());
     }
 
     let names = names(&grids, &mut imported.notices);
-    let sheets: Vec<formula::Sheet> = (0..grids.len())
-        .map(|g| formula::Sheet {
+    let worksheets: Vec<formula::Worksheet> = (0..grids.len())
+        .map(|g| formula::Worksheet {
             excel: origins[g].0.clone(),
-            table: names[g].table.clone(),
+            sheet: names[g].sheet.clone(),
             columns: names[g].columns.clone(),
             top: origins[g].1,
             left: origins[g].2,
@@ -276,15 +276,15 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
     // Each formula is translated, or has a reason why not.
     let mut formulas: Vec<Formula> = Vec::new();
     let mut untranslated: Vec<(usize, String, String)> = Vec::new();
-    for (g, (sheet, top, left)) in origins.iter().enumerate() {
-        let Ok(found) = book.worksheet_formula(sheet) else {
+    for (g, (worksheet, top, left)) in origins.iter().enumerate() {
+        let Ok(found) = book.worksheet_formula(worksheet) else {
             continue;
         };
         let (ftop, fleft) = found.start().unwrap_or((0, 0));
         for (r, c, text) in found.used_cells().filter(|(_, _, f)| !f.is_empty()) {
             let (row, col) = (ftop + r as u32, fleft + c as u32);
             let cell = a1(row, col);
-            // A formula in the header row, or outside what the table holds.
+            // A formula in the header row, or outside what the sheet holds.
             let place = (row.checked_sub(top + 1), col.checked_sub(*left));
             let (Some(row_in), Some(column)) = place else {
                 untranslated.push((g, "it is in the header row".into(), cell));
@@ -298,7 +298,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
             else {
                 continue;
             };
-            match formula::translate(text, &sheets, g, row) {
+            match formula::translate(text, &worksheets, g, row) {
                 Ok(translated) => {
                     formulas.push(Formula {
                         grid: g,
@@ -343,7 +343,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
     for (f, why) in dropped {
         untranslated.push((formulas[f].grid, why.to_string(), formulas[f].cell.clone()));
     }
-    for (g, (sheet, ..)) in origins.iter().enumerate() {
+    for (g, (worksheet, ..)) in origins.iter().enumerate() {
         let kept = formulas.iter().filter(|f| f.grid == g).count()
             - untranslated
                 .iter()
@@ -356,7 +356,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
                 ("were", "s")
             };
             imported.notices.push(format!(
-                "worksheet `{sheet}`: {kept} formula{s} {were} translated"
+                "worksheet `{worksheet}`: {kept} formula{s} {were} translated"
             ));
         }
         // The reasons in the order they were met, each with its cells.
@@ -373,7 +373,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
                 .map(|(_, _, cell)| cell.clone())
                 .collect();
             imported.notices.push(format!(
-                "worksheet `{sheet}`: values were imported in place of formulas, as {reason}: {}",
+                "worksheet `{worksheet}`: values were imported in place of formulas, as {reason}: {}",
                 list(&cells)
             ));
         }
@@ -385,7 +385,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
 const ROUNDED: &str = "exact rationals were written as floating point";
 const LARGE: &str = "integers too large for a workbook were rounded";
 const AS_TEXT: &str = "values a workbook has no type for were written as text";
-const ZONES: &str = "date-times in another time zone were written on the clocks of the sheet's";
+const ZONES: &str = "date-times in another time zone were written on the clocks of the file's";
 
 /// The nearest double to an exact number, and whether it is that number.
 fn double(r: &BigRational) -> (f64, bool) {
@@ -466,19 +466,19 @@ fn shown<'f>(
 /// Write a cell: its value, or its formula with the value as its result,
 /// so that the workbook shows it before anything works it out again.
 fn write_cell(
-    sheet: &mut Worksheet,
+    worksheet: &mut Worksheet,
     (row, col): (u32, u16),
     shown: Shown,
     formula: Option<String>,
 ) -> Result<(), XlsxError> {
     let Some(formula) = formula else {
         match shown {
-            Shown::Number(f, None) => sheet.write_number(row, col, f)?,
+            Shown::Number(f, None) => worksheet.write_number(row, col, f)?,
             Shown::Number(f, Some(format)) => {
-                sheet.write_number_with_format(row, col, f, format)?
+                worksheet.write_number_with_format(row, col, f, format)?
             }
-            Shown::Text(s) | Shown::Written(s) => sheet.write_string(row, col, s)?,
-            Shown::Bool(b) => sheet.write_boolean(row, col, b)?,
+            Shown::Text(s) | Shown::Written(s) => worksheet.write_string(row, col, s)?,
+            Shown::Bool(b) => worksheet.write_boolean(row, col, b)?,
         };
         return Ok(());
     };
@@ -489,21 +489,21 @@ fn write_cell(
     };
     let formula = rust_xlsxwriter::Formula::new(formula).set_result(result);
     match format {
-        Some(format) => sheet.write_formula_with_format(row, col, formula, format)?,
-        None => sheet.write_formula(row, col, formula)?,
+        Some(format) => worksheet.write_formula_with_format(row, col, formula, format)?,
+        None => worksheet.write_formula(row, col, formula)?,
     };
     Ok(())
 }
 
-/// A workbook with a worksheet for each table of a sheet, or for the one
+/// A workbook with a worksheet for each sheet of a file, or for the one
 /// named.
 pub fn export(
     name: &str,
     text: &str,
-    table: Option<&str>,
+    sheet: Option<&str>,
     options: Options,
 ) -> Result<Exported, Vec<String>> {
-    with_sheet(name, text, table, options, |sheet| {
+    with_file(name, text, sheet, options, |file| {
         let fail = |e: XlsxError| e.to_string();
         let formats = Formats {
             date: Format::new().set_num_format("yyyy-mm-dd"),
@@ -516,51 +516,51 @@ pub fn export(
         let mut notices = Vec::new();
         let mut used: Vec<String> = Vec::new();
         // Every worksheet is named before any is written, as a formula may
-        // read a table that comes after its own.
-        let mut titles: Vec<Option<String>> = vec![None; sheet.program.tables.len()];
-        for &t in &sheet.tables {
-            let table = &sheet.program.tables[t];
+        // read a sheet that comes after its own.
+        let mut titles: Vec<Option<String>> = vec![None; file.program.sheets.len()];
+        for &t in &file.sheets {
+            let sheet = &file.program.sheets[t];
             // A worksheet name is at most 31 characters.
-            let mut title: String = table.name.chars().take(31).collect();
+            let mut title: String = sheet.name.chars().take(31).collect();
             let mut n = 2;
             while used.contains(&title) {
                 let tail = format!("_{n}");
-                title = table.name.chars().take(31 - tail.len()).collect::<String>() + &tail;
+                title = sheet.name.chars().take(31 - tail.len()).collect::<String>() + &tail;
                 n += 1;
             }
-            if title != table.name {
-                notices.push(format!("table `{}` is worksheet `{title}`", table.name));
+            if title != sheet.name {
+                notices.push(format!("sheet `{}` is worksheet `{title}`", sheet.name));
             }
             used.push(title.clone());
             titles[t] = Some(title);
         }
         let writer = write::Writer {
-            program: sheet.program,
-            engine: sheet.engine,
+            program: file.program,
+            engine: file.engine,
             titles,
         };
         let mut formulas = 0;
-        for &t in &sheet.tables {
-            let table = &sheet.program.tables[t];
+        for &t in &file.sheets {
+            let sheet = &file.program.sheets[t];
             let page = book.add_worksheet();
-            let title = writer.titles[t].as_deref().unwrap_or(&table.name);
+            let title = writer.titles[t].as_deref().unwrap_or(&sheet.name);
             page.set_name(title).map_err(fail)?;
-            for (c, col) in table.cols.iter().enumerate() {
+            for (c, col) in sheet.cols.iter().enumerate() {
                 page.write_string(0, c as u16, &col.name).map_err(fail)?;
             }
-            for r in 0..table.nrows {
-                for c in 0..table.cols.len() {
-                    let value = sheet.engine.cell_shown(t, c, r);
+            for r in 0..sheet.nrows {
+                for c in 0..sheet.cols.len() {
+                    let value = file.engine.cell_shown(t, c, r);
                     if is_failure(&value) {
-                        losses.add(FAILED, sheet.column(t, c));
+                        losses.add(FAILED, file.column(t, c));
                         continue;
                     }
-                    let Some(shown) = shown(&formats, &value, |what| {
-                        losses.add(what, sheet.column(t, c))
-                    }) else {
+                    let Some(shown) =
+                        shown(&formats, &value, |what| losses.add(what, file.column(t, c)))
+                    else {
                         continue;
                     };
-                    let node = match &table.cols[c].kind {
+                    let node = match &sheet.cols[c].kind {
                         ColKind::Computed(node) => Some(node),
                         ColKind::Data(cells) => match cells.get(r) {
                             Some(Cell::Formula(node)) => Some(node),
@@ -572,7 +572,7 @@ pub fn export(
                     let formula = match node.map(|node| writer.formula(node, t, r)) {
                         Some(Ok(formula)) => formula,
                         Some(Err(why)) => {
-                            losses.add(why, sheet.column(t, c));
+                            losses.add(why, file.column(t, c));
                             None
                         }
                         None => None,
@@ -582,8 +582,8 @@ pub fn export(
                 }
             }
         }
-        if table.is_none() && !sheet.program.consts.is_empty() {
-            let names: Vec<&str> = sheet
+        if sheet.is_none() && !file.program.consts.is_empty() {
+            let names: Vec<&str> = file
                 .program
                 .consts
                 .iter()
@@ -598,7 +598,7 @@ pub fn export(
         notices.extend(losses.notices());
         let bytes = book.save_to_buffer().map_err(fail)?;
         Ok(Exported {
-            files: vec![Output { table: None, bytes }],
+            files: vec![Output { sheet: None, bytes }],
             notices,
         })
     })

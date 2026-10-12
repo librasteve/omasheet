@@ -12,8 +12,8 @@ viewer (P15 in `add-omasheet-core`).
 
 ## What Changes
 
-- **app** — ADDED: a desktop application showing each table as an editable grid,
-  with tabs for tables and constants, an entry box for the current cell,
+- **app** — ADDED: a desktop application showing each sheet as an editable grid,
+  with tabs for sheets and constants, an entry box for the current cell,
   block selection, copy / cut / paste, undo, open / save, and live recalculation
 
 ## Impact
@@ -21,13 +21,13 @@ viewer (P15 in `add-omasheet-core`).
 - Depends on `add-omasheet-core`
 - New crate `omasheet-ui`: Qt Quick (QML) window driven from Rust through
   `cxx-qt`. Needs Qt 6 (`qt6-base`, `qt6-declarative`) to build and run
-- `omasheet-engine` gains `Document`, an editable sheet that rewrites the `.omx`
+- `omasheet-engine` gains `Document`, an editable file that rewrites the `.omx`
   text for each edit; `omasheet-omx` records line positions to support it
 - The `.omx` text remains the only saved form; the app adds no file format
 
 ## Out of Scope
 
-- Renaming or deleting columns, tables and constants; reordering rows
+- Renaming or deleting columns, sheets and constants; reordering rows
 - Changing a column's declared type from the app
 - Find and replace, printing, charts, formatting
 - Packaging (desktop entry, icon, Arch package)

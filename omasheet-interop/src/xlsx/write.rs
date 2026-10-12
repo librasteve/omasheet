@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! A sheet's formulas as a workbook's.
+//! A file's formulas as a workbook's.
 //!
-//! A table becomes a worksheet whose first row is the header, so a column
-//! and a row of a table become a cell: `Revenue` on its own row is `B3`,
+//! A sheet becomes a worksheet whose first row is the header, so a column
+//! and a row of a sheet become a cell: `Revenue` on its own row is `B3`,
 //! `[Revenue; *-1]` is `B2`, `[Revenue; 0]` is `$B$2`, and `Sales.Revenue`
 //! is `$B$2:$B$13`. Each cell is written for the row it is on. A formula
 //! that a workbook has no way to say is not written, and the reason is
@@ -40,8 +40,8 @@ const FUNCTION: Why =
 const COMPLEX: Why = "values were written in place of formulas with complex numbers";
 const LITERAL: Why =
     "values were written in place of formulas with a number or text a workbook cannot hold";
-const OTHER_TABLE: Why =
-    "values were written in place of formulas that read a table that is not exported";
+const OTHER_SHEET: Why =
+    "values were written in place of formulas that read a sheet that is not exported";
 const TOO_LONG: Why = "values were written in place of formulas too long for a workbook";
 
 /// The most characters a workbook's formula may have.
@@ -112,12 +112,12 @@ impl Expr {
     }
 }
 
-/// Where a formula is: its table and row, how many rows a condition has
+/// Where a formula is: its sheet and row, how many rows a condition has
 /// put between it and what is being read, and the arguments of the function
 /// it is the body of.
 #[derive(Clone, Copy)]
 struct Cx<'e> {
-    table: usize,
+    sheet: usize,
     row: usize,
     depth: usize,
     args: &'e [Option<Expr>],
@@ -167,17 +167,17 @@ fn whole(program: &Program, node: &Node) -> Option<i64> {
     }
 }
 
-/// The table, rows and columns a selection reads; no columns is all of
-/// them. `None` if it is not a selection from a table.
+/// The sheet, rows and columns a selection reads; no columns is all of
+/// them. `None` if it is not a selection from a sheet.
 fn target(node: &Node) -> Option<(usize, Option<&RowSel>, Vec<usize>)> {
     match &node.kind {
-        Ir::Column { table, col } => Some((*table, None, vec![*col])),
+        Ir::Column { sheet, col } => Some((*sheet, None, vec![*col])),
         Ir::Single(inner) => target(inner),
         Ir::Index { base, rows, cols } => match (&base.kind, cols) {
-            (Ir::Table(t), ColSel::All) => Some((*t, Some(rows), Vec::new())),
-            (Ir::Table(t), ColSel::One(c)) => Some((*t, Some(rows), vec![*c])),
-            (Ir::Table(t), ColSel::Many(many)) => Some((*t, Some(rows), many.clone())),
-            (Ir::Column { table, col }, ColSel::All) => Some((*table, Some(rows), vec![*col])),
+            (Ir::Sheet(t), ColSel::All) => Some((*t, Some(rows), Vec::new())),
+            (Ir::Sheet(t), ColSel::One(c)) => Some((*t, Some(rows), vec![*c])),
+            (Ir::Sheet(t), ColSel::Many(many)) => Some((*t, Some(rows), many.clone())),
+            (Ir::Column { sheet, col }, ColSel::All) => Some((*sheet, Some(rows), vec![*col])),
             _ => None,
         },
         Ir::Field { base, col } => {
@@ -188,20 +188,20 @@ fn target(node: &Node) -> Option<(usize, Option<&RowSel>, Vec<usize>)> {
     }
 }
 
-/// Writes the formulas of a sheet for a workbook.
+/// Writes the formulas of a file for a workbook.
 pub struct Writer<'a> {
     pub program: &'a Program,
     pub engine: &'a Engine<'a>,
-    /// The worksheet of each table, or `None` for one that is not exported.
+    /// The worksheet of each sheet, or `None` for one that is not exported.
     pub titles: Vec<Option<String>>,
 }
 
 impl Writer<'_> {
-    /// The formula of the cell on row `row` of `table`, as a workbook writes
+    /// The formula of the cell on row `row` of `sheet`, as a workbook writes
     /// it, without its `=`. `None` if it comes to nothing there.
-    pub fn formula(&self, node: &Node, table: usize, row: usize) -> Result<Option<String>, Why> {
+    pub fn formula(&self, node: &Node, sheet: usize, row: usize) -> Result<Option<String>, Why> {
         let cx = Cx {
-            table,
+            sheet,
             row,
             depth: 0,
             args: &[],
@@ -212,24 +212,24 @@ impl Writer<'_> {
         }
     }
 
-    /// The worksheet of a table, written before a cell of it: nothing for
-    /// the table the formula is in.
-    fn sheet(&self, t: usize, cx: &Cx) -> Result<String, Why> {
-        let title = self.titles[t].as_ref().ok_or(OTHER_TABLE)?;
-        Ok(if t == cx.table {
+    /// The worksheet of a sheet, written before a cell of it: nothing for
+    /// the sheet the formula is in.
+    fn worksheet(&self, t: usize, cx: &Cx) -> Result<String, Why> {
+        let title = self.titles[t].as_ref().ok_or(OTHER_SHEET)?;
+        Ok(if t == cx.sheet {
             String::new()
         } else {
             format!("'{}'!", title.replace('\'', "''"))
         })
     }
 
-    /// One cell, or nothing if the row is outside the table.
+    /// One cell, or nothing if the row is outside the sheet.
     fn cell(&self, cx: &Cx, t: usize, c: usize, (r, fixed): (i64, bool)) -> Scalar {
-        let table = &self.program.tables[t];
-        if r < 0 || r >= table.nrows as i64 {
+        let sheet = &self.program.sheets[t];
+        if r < 0 || r >= sheet.nrows as i64 {
             return Ok(None);
         }
-        let sheet = self.sheet(t, cx)?;
+        let worksheet = self.worksheet(t, cx)?;
         let d = if fixed { "$" } else { "" };
         let kind = match self.engine.cell_shown(t, c, r as usize) {
             Value::Int(_)
@@ -242,11 +242,11 @@ impl Writer<'_> {
             Value::Date(_) => Kind::Date,
             Value::Time(_) => Kind::Time,
             Value::DateTime(_) | Value::Zoned(_) => Kind::DateTime,
-            Value::Empty => kind_of(table.cols[c].ty),
+            Value::Empty => kind_of(sheet.cols[c].ty),
             _ => Kind::Unknown,
         };
         Ok(Some(Expr {
-            text: format!("{sheet}{d}{}{d}{}", letters(c), r + 2),
+            text: format!("{worksheet}{d}{}{d}{}", letters(c), r + 2),
             prec: ATOM,
             kind,
             form: Form::Cell,
@@ -262,36 +262,36 @@ impl Writer<'_> {
         cols: &[usize],
         (lo, hi): ((i64, bool), (i64, bool)),
     ) -> Result<String, Why> {
-        let table = &self.program.tables[t];
+        let sheet = &self.program.sheets[t];
         let (first, last) = match cols {
-            [] if !table.cols.is_empty() => (0, table.cols.len() - 1),
+            [] if !sheet.cols.is_empty() => (0, sheet.cols.len() - 1),
             [first, .., last] if cols.windows(2).all(|w| w[1] == w[0] + 1) => (*first, *last),
             [one] => (*one, *one),
             _ => return Err(COLUMNS),
         };
         let (lo, hi) = (
             (lo.0.max(0), lo.1),
-            (hi.0.min(table.nrows as i64 - 1), hi.1),
+            (hi.0.min(sheet.nrows as i64 - 1), hi.1),
         );
         if lo.0 > hi.0 {
             return Err(NO_ROWS);
         }
-        let sheet = self.sheet(t, cx)?;
+        let worksheet = self.worksheet(t, cx)?;
         let end = |c: usize, (r, fixed): (i64, bool)| {
             let d = if fixed { "$" } else { "" };
             format!("{d}{}{d}{}", letters(c), r + 2)
         };
-        Ok(format!("{sheet}{}:{}", end(first, lo), end(last, hi)))
+        Ok(format!("{worksheet}{}:{}", end(first, lo), end(last, hi)))
     }
 
     /// The whole of a column.
     fn column(&self, cx: &Cx, t: usize, c: usize) -> Result<String, Why> {
-        let last = self.program.tables[t].nrows as i64 - 1;
+        let last = self.program.sheets[t].nrows as i64 - 1;
         self.area(cx, t, &[c], ((0, true), (last, true)))
     }
 
     fn rows<'n>(&self, sel: Option<&'n RowSel>, t: usize, cx: &Cx) -> Result<Rows<'n>, Why> {
-        let n = self.program.tables[t].nrows as i64;
+        let n = self.program.sheets[t].nrows as i64;
         let fixed = |node: &Node| {
             let at = whole(self.program, node).ok_or(ROW)?;
             Ok::<_, Why>((if at < 0 { at + n } else { at }, true))
@@ -334,7 +334,7 @@ impl Writer<'_> {
         })
     }
 
-    /// A condition as columns of the table and what each is to equal:
+    /// A condition as columns of the sheet and what each is to equal:
     /// `Kind == x and not Done` is `Kind` equal to `x`, and `Done` to `FALSE`.
     fn criteria(&self, node: &Node, cx: &Cx, out: &mut Vec<(usize, Expr)>) -> Result<(), Why> {
         let tested = |n: &Node| match &n.kind {
@@ -388,7 +388,7 @@ impl Writer<'_> {
             let mut parts = Vec::new();
             let mut kind = None;
             for item in items {
-                // What is empty is left out, as the sheet leaves it out.
+                // What is empty is left out, as the file leaves it out.
                 if let Some(e) = self.scalar(item, cx)? {
                     kind =
                         Some(kind.map_or(e.kind, |k| if k == e.kind { k } else { Kind::Unknown }));
@@ -405,10 +405,10 @@ impl Writer<'_> {
             )));
         }
         let (t, sel, cols) = target(arg).ok_or(VECTOR)?;
-        let table = &self.program.tables[t];
+        let sheet = &self.program.sheets[t];
         let kind = match (func, cols.as_slice()) {
             (Func::Count, _) => Kind::Number,
-            (_, [c, ..]) => kind_of(table.cols[*c].ty),
+            (_, [c, ..]) => kind_of(sheet.cols[*c].ty),
             _ => return Err(VECTOR),
         };
         let text = match self.rows(sel, t, cx)? {
@@ -452,7 +452,7 @@ impl Writer<'_> {
         Ok(Some(Expr::atom(text, kind)))
     }
 
-    /// One value read from a table: a cell, or the row a condition finds.
+    /// One value read from a sheet: a cell, or the row a condition finds.
     fn read(&self, node: &Node, cx: &Cx) -> Scalar {
         let (t, sel, cols) = target(node).ok_or(VECTOR)?;
         let [c] = cols.as_slice() else {
@@ -471,7 +471,7 @@ impl Writer<'_> {
                 Ok(Some(Expr {
                     text: format!("INDEX({read},MATCH({},{keys},0))", value.text),
                     prec: ATOM,
-                    kind: kind_of(self.program.tables[t].cols[*c].ty),
+                    kind: kind_of(self.program.sheets[t].cols[*c].ty),
                     form: Form::Lookup,
                 }))
             }
@@ -528,7 +528,7 @@ impl Writer<'_> {
         })
     }
 
-    /// `+ - * / **`. A workbook counts a time in days where a sheet counts
+    /// `+ - * / **`. A workbook counts a time in days where a file counts
     /// it in seconds.
     fn arithmetic(&self, op: BinOp, a: Expr, b: Expr) -> Result<Expr, Why> {
         use Kind::{Date, DateTime, Number, Time};
@@ -597,7 +597,7 @@ impl Writer<'_> {
             Func::Year if dated => of("YEAR", Kind::Number),
             Func::Month if dated => of("MONTH", Kind::Number),
             Func::Day if dated => of("DAY", Kind::Number),
-            // A sheet counts the days of the week from Monday.
+            // A file counts the days of the week from Monday.
             Func::Weekday if dated => Expr::atom(format!("WEEKDAY({},2)", x.text), Kind::Number),
             Func::Hour if timed => of("HOUR", Kind::Number),
             Func::Minute if timed => of("MINUTE", Kind::Number),
@@ -637,7 +637,7 @@ impl Writer<'_> {
                     MathFn::Tanh => "TANH",
                     MathFn::Radians => "RADIANS",
                     MathFn::Degrees => "DEGREES",
-                    // A half goes away from zero, as in a sheet.
+                    // A half goes away from zero, as in a file.
                     MathFn::Round => {
                         return Ok(Some(Expr::atom(
                             format!("ROUND({},0)", x.text),
@@ -695,7 +695,7 @@ impl Writer<'_> {
             // A column of the row the formula is on. Inside a condition, a
             // column of the row being tested cannot be read on its own.
             Ir::RowCol { depth, col } if *depth == cx.depth => {
-                self.cell(cx, cx.table, *col, (cx.row as i64, false))
+                self.cell(cx, cx.sheet, *col, (cx.row as i64, false))
             }
             Ir::RowCol { .. } => Err(CONDITION),
             Ir::Arg(i) => cx.args.get(*i).cloned().ok_or(FUNCTION),
@@ -792,7 +792,7 @@ impl Writer<'_> {
                 };
                 self.scalar(body, &inside)
             }
-            Ir::VecLit(_) | Ir::Table(_) => Err(VECTOR),
+            Ir::VecLit(_) | Ir::Sheet(_) => Err(VECTOR),
             Ir::Error => Err(FUNCTION),
         }
     }

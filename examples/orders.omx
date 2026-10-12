@@ -1,14 +1,14 @@
-# Two tables: a lookup from one into the other, conditional sums, and a
+# Two sheets: a lookup from one into the other, conditional sums, and a
 # date-time cutoff.
 
-table Customers
+sheet Customers
 
 ID | Name      | Region
 1  | Ada Ltd   | UK
 2  | Grace Inc | US
 3  | Linus Oy  | FI
 
-table Orders
+sheet Orders
 
 Placed : DateTime
 
@@ -24,7 +24,7 @@ Total    := Qty * Price
 Discount := if Total > 50 and Region in ["UK", "US"] then Total * 10% else 0
 Rush     := Placed < 2025-03-04T00:00
 
-table ByRegion
+sheet ByRegion
 
 Region | Count | Sales
 UK     | *     | *

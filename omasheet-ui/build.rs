@@ -8,6 +8,6 @@ fn main() {
     )
     .qt_module("Quick")
     .qt_module("QuickControls2")
-    .file("src/sheet.rs")
+    .file("src/file.rs")
     .build();
 }

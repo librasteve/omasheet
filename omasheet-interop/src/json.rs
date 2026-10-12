@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! JSON: the values of tables, each a list of rows by column name.
+//! JSON: the values of sheets, each a list of rows by column name.
 
 use crate::{
-    Datum, Exported, FAILED, Grid, Imported, Losses, Output, is_failure, with_sheet, write_omx,
+    Datum, Exported, FAILED, Grid, Imported, Losses, Output, is_failure, with_file, write_omx,
 };
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::omx::types::S;
@@ -13,7 +13,7 @@ use serde_json::Value as Json;
 
 const ROUNDED: &str = "exact rationals that do not end were written as decimals";
 const NESTED: &str = "lists and objects inside a row were kept as text";
-const SHAPE: &str = "it is not a list of rows, or an object holding one for each table by its name";
+const SHAPE: &str = "it is not a list of rows, or an object holding one for each sheet by its name";
 
 /// What a cell reads a JSON value as. A number is the number a cell would
 /// read it as. JSON has no dates or times, so a string that is one is that;
@@ -50,7 +50,7 @@ fn datum(value: &Json, nested: &mut bool) -> Datum {
     }
 }
 
-/// A table from a list of rows: each an object of values by column name, or
+/// A sheet from a list of rows: each an object of values by column name, or
 /// each a list of values, of which the first is the names.
 fn grid(name: &str, rows: &[Json], notices: &mut Vec<String>) -> Result<Grid, String> {
     let mut nested = false;
@@ -102,9 +102,9 @@ fn grid(name: &str, rows: &[Json], notices: &mut Vec<String>) -> Result<Grid, St
     Ok(grid)
 }
 
-/// `.omx` source for a JSON file: a list of rows, which is a table called
+/// `.omx` source for a JSON file: a list of rows, which is a sheet called
 /// `name`, the name of the file without `.json`; or an object of such
-/// lists, each a table called by its key.
+/// lists, each a sheet called by its key.
 pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
     let text = std::str::from_utf8(bytes).map_err(|_| "it is not UTF-8 text".to_string())?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
@@ -112,7 +112,7 @@ pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
     let mut imported = Imported::default();
     let grids = match &json {
         Json::Array(rows) => vec![grid(name, rows, &mut imported.notices)?],
-        Json::Object(tables) if !tables.is_empty() => tables
+        Json::Object(sheets) if !sheets.is_empty() => sheets
             .iter()
             .map(|(key, rows)| match rows {
                 Json::Array(rows) => grid(key, rows, &mut imported.notices),
@@ -134,7 +134,7 @@ fn quoted(text: &str) -> String {
 
 /// A value as JSON, and whether it was rounded to write it. A number is a
 /// number, a `Percent` the number it stands for; a date, a time and a
-/// `Complex` are strings as a sheet writes them, and so are `Inf` and
+/// `Complex` are strings as a file writes them, and so are `Inf` and
 /// `NaN`.
 fn field(v: &Value) -> (String, bool) {
     let num = |f: f64| {
@@ -158,34 +158,34 @@ fn field(v: &Value) -> (String, bool) {
     }
 }
 
-/// One JSON file for a sheet: an object holding each table by name as a
-/// list of rows, each an object of values by column name. A table that is
+/// One JSON file for a file: an object holding each sheet by name as a
+/// list of rows, each an object of values by column name. A sheet that is
 /// named is that list alone.
 pub fn export(
     name: &str,
     text: &str,
-    table: Option<&str>,
+    sheet: Option<&str>,
     options: Options,
 ) -> Result<Exported, Vec<String>> {
-    with_sheet(name, text, table, options, |sheet| {
+    with_file(name, text, sheet, options, |file| {
         let mut losses = Losses::default();
-        let alone = table.is_some();
+        let alone = sheet.is_some();
         let indent = if alone { "  " } else { "    " };
         let mut lists = Vec::new();
-        for &t in &sheet.tables {
-            let table = &sheet.program.tables[t];
-            let mut rows = Vec::with_capacity(table.nrows);
-            for r in 0..table.nrows {
-                let mut fields = Vec::with_capacity(table.cols.len());
-                for (c, col) in table.cols.iter().enumerate() {
-                    let value = sheet.engine.cell_shown(t, c, r);
+        for &t in &file.sheets {
+            let sheet = &file.program.sheets[t];
+            let mut rows = Vec::with_capacity(sheet.nrows);
+            for r in 0..sheet.nrows {
+                let mut fields = Vec::with_capacity(sheet.cols.len());
+                for (c, col) in sheet.cols.iter().enumerate() {
+                    let value = file.engine.cell_shown(t, c, r);
                     let text = if is_failure(&value) {
-                        losses.add(FAILED, sheet.column(t, c));
+                        losses.add(FAILED, file.column(t, c));
                         "null".to_string()
                     } else {
                         let (text, rounded) = field(&value);
                         if rounded {
-                            losses.add(ROUNDED, sheet.column(t, c));
+                            losses.add(ROUNDED, file.column(t, c));
                         }
                         text
                     };
@@ -204,17 +204,17 @@ pub fn export(
         let json = if alone {
             format!("{}\n", lists.concat())
         } else {
-            let tables: Vec<String> = sheet
-                .tables
+            let sheets: Vec<String> = file
+                .sheets
                 .iter()
                 .zip(&lists)
-                .map(|(&t, list)| format!("  {}: {list}", quoted(sheet.name(t))))
+                .map(|(&t, list)| format!("  {}: {list}", quoted(file.name(t))))
                 .collect();
-            format!("{{\n{}\n}}\n", tables.join(",\n"))
+            format!("{{\n{}\n}}\n", sheets.join(",\n"))
         };
         Ok(Exported {
             files: vec![Output {
-                table: None,
+                sheet: None,
                 bytes: json.into_bytes(),
             }],
             notices: losses.notices(),

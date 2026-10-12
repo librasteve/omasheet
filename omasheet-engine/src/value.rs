@@ -20,7 +20,7 @@ use std::rc::Rc;
 
 #[derive(Clone, Debug, Default)]
 pub enum Value {
-    /// No value: a blank cell, or a row offset outside the table.
+    /// No value: a blank cell, or a row offset outside the sheet.
     #[default]
     Empty,
     /// A cell whose calculation failed; the diagnostic was already reported.
@@ -38,13 +38,13 @@ pub enum Value {
     Num(f64),
     Complex(f64, f64),
     /// Text, and whether it was written bare in a cell, to be read as
-    /// Markdown where a sheet is shown as a document. Text written in quotes,
+    /// Markdown where a file is shown as a document. Text written in quotes,
     /// or made by a formula, is as it is.
     Text(Rc<str>, bool),
     Bool(bool),
     Date(i32),
     Time(i32),
-    /// What the clocks of the sheet's time zone show.
+    /// What the clocks of the file's time zone show.
     DateTime(i64),
     /// A date-time moved to another time zone.
     Zoned(Rc<Zoned>),
@@ -56,22 +56,22 @@ pub enum Value {
         exclusive: bool,
     },
     Vector(Rc<Vec<Value>>),
-    Table(View),
+    Sheet(View),
     Row(RowRef),
 }
 
-/// Rows and columns of a sheet table, by index. Cells are read on demand, so
+/// Rows and columns of a sheet of the file, by index. Cells are read on demand, so
 /// selecting never copies data.
 #[derive(Clone, Debug)]
 pub struct View {
-    pub table: usize,
+    pub sheet: usize,
     pub rows: Rc<Vec<usize>>,
     pub cols: Rc<Vec<usize>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct RowRef {
-    pub table: usize,
+    pub sheet: usize,
     pub row: usize,
     pub cols: Rc<Vec<usize>>,
 }
@@ -159,7 +159,7 @@ impl Value {
             Value::DateTime(_) | Value::Zoned(_) => "DateTime",
             Value::Range { .. } => "a range",
             Value::Vector(_) => "a vector",
-            Value::Table(_) => "a table",
+            Value::Sheet(_) => "a sheet",
             Value::Row(_) => "a row",
         }
     }
@@ -665,7 +665,7 @@ pub fn format_num(f: f64, exact: bool) -> String {
     format!("{mantissa}e{sign}{:02}", exponent.abs())
 }
 
-/// A single value as text, the way a sheet shows it. `quoted` puts text in
+/// A single value as text, the way a file shows it. `quoted` puts text in
 /// quotes, as inside a vector.
 pub fn format_scalar(v: &Value, quoted: bool) -> String {
     format_styled(v, quoted, &Style::ISO)
@@ -708,7 +708,7 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         Value::Date(d) => style.date(*d),
         Value::Time(t) => style.time(*t),
         Value::DateTime(t) => style.datetime(*t),
-        // `2025-01-31T09:30+09:00`, to tell it from the sheet's own zone.
+        // `2025-01-31T09:30+09:00`, to tell it from the file's own zone.
         Value::Zoned(z) => format!(
             "{}{}{}",
             style.datetime(z.wall),
@@ -739,7 +739,7 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
                 .collect();
             format!("[{}]", parts.join(", "))
         }
-        Value::Table(_) => "<table>".into(),
+        Value::Sheet(_) => "<sheet>".into(),
         Value::Row(_) => "<row>".into(),
     }
 }

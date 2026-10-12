@@ -149,7 +149,7 @@ impl MathFn {
 pub struct FuncDoc {
     pub name: &'static str,
     pub category: &'static str,
-    /// How it is written, such as `Table.Column.sum()`.
+    /// How it is written, such as `Sheet.Column.sum()`.
     pub usage: &'static str,
     pub summary: &'static str,
 }
@@ -169,7 +169,7 @@ const fn doc(
 }
 
 const AGG: &str = "Aggregate";
-const TABLE: &str = "Table";
+const SHEET: &str = "Sheet";
 const CONVERT: &str = "Convert";
 const MATH: &str = "Math";
 const LOG: &str = "Log & Exp";
@@ -182,44 +182,44 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     doc(
         AGG,
         "sum",
-        "Table.Column.sum()",
+        "Sheet.Column.sum()",
         "The total of a column or vector. Empty cells are skipped.",
     ),
     doc(
         AGG,
         "avg",
-        "Table.Column.avg()",
+        "Sheet.Column.avg()",
         "The mean of a column or vector, as an exact fraction where it can be.",
     ),
     doc(
         AGG,
         "min",
-        "Table.Column.min()",
+        "Sheet.Column.min()",
         "The smallest value. Works on numbers, text, dates and times.",
     ),
     doc(
         AGG,
         "max",
-        "Table.Column.max()",
+        "Sheet.Column.max()",
         "The largest value. Works on numbers, text, dates and times.",
     ),
     doc(
         AGG,
         "count",
-        "Table.Column.count()",
-        "How many cells are not empty; for a table, how many rows.",
+        "Sheet.Column.count()",
+        "How many cells are not empty; for a sheet, how many rows.",
     ),
     doc(
-        TABLE,
+        SHEET,
         "filter",
-        "Table |> filter(Column == value)",
-        "The rows of a table for which a condition holds.",
+        "Sheet |> filter(Column == value)",
+        "The rows of a sheet for which a condition holds.",
     ),
     doc(
-        TABLE,
+        SHEET,
         "select",
-        "Table |> select(Column1, Column2)",
-        "A table with only the named columns.",
+        "Sheet |> select(Column1, Column2)",
+        "A sheet with only the named columns.",
     ),
     doc(
         MATH,
@@ -296,7 +296,7 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         CONVERT,
         "Text",
         "x.Text",
-        "Any value as text, written the way a sheet writes it. Also written Text(x).",
+        "Any value as text, written the way a file writes it. Also written Text(x).",
     ),
     doc(
         CONVERT,
@@ -419,66 +419,66 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         TIME,
         "today",
         "today()",
-        "The date now, in the sheet's time zone.",
+        "The date now, in the file's time zone.",
     ),
     doc(
         TIME,
         "now",
         "now()",
-        "The date and time now, in the sheet's time zone.",
+        "The date and time now, in the file's time zone.",
     ),
     doc(
         TIME,
         "year",
-        "Table.Column.year()",
+        "Sheet.Column.year()",
         "The year of a Date or DateTime.",
     ),
     doc(
         TIME,
         "month",
-        "Table.Column.month()",
+        "Sheet.Column.month()",
         "The month, 1 to 12, of a Date or DateTime.",
     ),
     doc(
         TIME,
         "day",
-        "Table.Column.day()",
+        "Sheet.Column.day()",
         "The day of the month of a Date or DateTime.",
     ),
     doc(
         TIME,
         "weekday",
-        "Table.Column.weekday()",
+        "Sheet.Column.weekday()",
         "The day of the week, 1 for Monday to 7 for Sunday.",
     ),
     doc(
         TIME,
         "hour",
-        "Table.Column.hour()",
+        "Sheet.Column.hour()",
         "The hour, 0 to 23, of a Time or DateTime.",
     ),
     doc(
         TIME,
         "minute",
-        "Table.Column.minute()",
+        "Sheet.Column.minute()",
         "The minute of a Time or DateTime.",
     ),
     doc(
         TIME,
         "second",
-        "Table.Column.second()",
+        "Sheet.Column.second()",
         "The second of a Time or DateTime.",
     ),
     doc(
         TIME,
         "date",
-        "Table.Column.date()",
+        "Sheet.Column.date()",
         "The Date half of a DateTime.",
     ),
     doc(
         TIME,
         "time",
-        "Table.Column.time()",
+        "Sheet.Column.time()",
         "The Time half of a DateTime.",
     ),
     doc(

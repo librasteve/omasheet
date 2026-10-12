@@ -1,7 +1,7 @@
 # A running balance: each row reads the row before it. A memo is text
 # written bare, so it may hold Markdown; in quotes it would be as it is.
 
-table Ledger
+sheet Ledger
 
 When : DateTime
 Memo : Text

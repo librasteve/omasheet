@@ -6,7 +6,7 @@
 pkgname=omasheet
 pkgver=0.1.0
 pkgrel=1
-pkgdesc='Text-native spreadsheet: plain-text .omx sheets, with a Qt Quick app'
+pkgdesc='Text-native spreadsheet: plain-text .omx files, with a Qt Quick app'
 arch=('x86_64' 'aarch64')
 url='https://github.com/librasteve/omasheet'
 license=('MIT')

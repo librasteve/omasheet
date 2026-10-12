@@ -351,7 +351,7 @@ impl Parser {
                 self.bump();
                 let mut items = Vec::new();
                 // `[Revenue; *-1]`, with a `;` or a row cursor, is an index
-                // into the current table; anything else is a vector.
+                // into the current sheet; anything else is a vector.
                 let mut first = None;
                 if !matches!(self.peek(), Tok::Semi | Tok::RBracket) {
                     first = Some(self.expr()?);

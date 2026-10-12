@@ -1,6 +1,6 @@
 # Expressions (OMX)
 
-Try any of these with `omasheet eval [sheet.omx] '<expression>'`.
+Try any of these with `omasheet eval [file.omx] '<expression>'`.
 
 ## Numbers
 
@@ -73,7 +73,7 @@ vector is converted value by value.
 | `x.Percent` | the same number as a percentage: `0.4` gives `40%`, `5/12` gives `41.67…%` |
 | `x.Num` | a floating-point number |
 | `x.Complex` | a complex number from a real one |
-| `x.Text` | any value as text, written the way a sheet writes it |
+| `x.Text` | any value as text, written the way a file writes it |
 | `x.Bool` | `false` for zero, `true` for any other number |
 | `x.Date`, `x.Time` | that half of a `DateTime` |
 | `x.DateTime` | a `Date` at midnight |
@@ -86,9 +86,9 @@ Text is read the way a cell is: `"42".Int` is `42`, `"20%".Fraction` is `1/5`,
 
 | Written | Means |
 |---|---|
-| `Sales` | the table |
+| `Sales` | the sheet |
 | `Sales.Revenue` | the column, as a vector |
-| `Revenue` | inside the table: this row's value |
+| `Revenue` | inside the sheet: this row's value |
 | `TaxRate` | a constant |
 
 ## Selecting with `[columns; rows]`
@@ -105,20 +105,20 @@ Text is read the way a cell is: `"42".Int` is `42`, `"20%".Fraction` is `1/5`,
 | `Sales[Revenue; *-1]` | the row before this one; `*` is this row |
 | `Sales[Revenue; 0..*]` | from the top down to this row |
 
-Inside its own table the name can be dropped: `[Revenue; *-1]`. A row
-outside the table is empty, so `[Revenue; *-1] // 0` starts a running value.
+Inside its own sheet the name can be dropped: `[Revenue; *-1]`. A row
+outside the sheet is empty, so `[Revenue; *-1] // 0` starts a running value.
 
 ## Functions
 
 Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 
 - Vectors: `sum avg min max count`
-- Tables: `filter(condition)`, `select(columns)`
+- Sheets: `filter(condition)`, `select(columns)`
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
 - Converting: `Int Decimal Fraction Percent Num Complex Text Bool Date Time DateTime`
 - Dates: `today() now() year month day weekday hour minute second date time`
 - Time zones: `to_zone("Asia/Tokyo") utc() local() offset() zone()`
-- Your own: `fn` in the sheet
+- Your own: `fn` in the file
 
 The app lists them all under `fn()` (F1).
 

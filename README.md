@@ -1,14 +1,14 @@
 # Omasheet
 
 A text-native spreadsheet: what Markdown is to a word processor, Omasheet is
-to a spreadsheet. A sheet is a plain-text `.omx` file of named, typed tables,
+to a spreadsheet. An `.omx` file is plain text: named, typed sheets,
 with formulas in OMX, a small array language with exact arithmetic. Automatically 
 follows system dark/light mode.
 
 ```omx
 const TaxRate = 20%
 
-table Sales
+sheet Sales
 
 Month | Revenue | Cost | Profit | Tax | Running
 Jan   | 10000   | 6000 | *      | *   | *
@@ -34,9 +34,9 @@ curl -fsSL https://raw.githubusercontent.com/librasteve/omasheet/main/install.sh
 ## Run
 
 ```sh
-omasheet                                # the app, on a new sheet
+omasheet                                # the app, on a new file
 omasheet examples/budget.omx            # the app, on a .omx, .csv, .json or .xlsx file
-omasheet print examples/budget.omx      # print the calculated sheet
+omasheet print examples/budget.omx      # print the calculated file
 omasheet eval '1/3 + 1/6'               # 0.5, exactly
 omasheet export examples/budget.omx --xlsx [or --csv | --json]
 omasheet render examples/report.md --html
@@ -52,11 +52,11 @@ Please load the Omasheet skill from https://raw.githubusercontent.com/librasteve
 
 ## Docs
 
-- [The sheet format](docs/format.md)
+- [The file format](docs/format.md)
 - [Expressions](docs/expressions.md)
 - [The app and the command line](docs/app.md)
 - [XLSX, CSV, JSON and Markdown](docs/interop.md)
-- [`examples/`](examples) — worked sheets, each with its expected output
+- [`examples/`](examples) — worked files, each with its expected output
 - [`openspec/`](openspec) — the design and the specs
 
 Early and changing. MAY CONTAIN ERRORS.

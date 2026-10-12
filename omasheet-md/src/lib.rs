@@ -2,16 +2,16 @@
 
 //! Omasheet in Markdown.
 //!
-//! A Markdown document may hold sheets and quote their values:
+//! A Markdown document may hold files and quote their values:
 //!
-//! - a fenced `omx` block is `.omx` source, and is shown as its tables;
+//! - a fenced `omx` block is `.omx` source, and is shown as its sheets;
 //! - `{{ expression }}` in the text is replaced by the expression's value;
-//! - `sheets:` in the front matter names `.omx` files to read as well.
+//! - `files:` in the front matter names `.omx` files to read as well.
 //!
-//! Everything the document names is one sheet. [`render`] calculates it and
+//! Everything the document names is one file. [`render`] calculates it and
 //! gives the document back as Markdown with the values in place, or as HTML.
 
-use omasheet_engine::omx::sheet::{is_zone_name, parse_sheet};
+use omasheet_engine::omx::file::{is_zone_name, parse_file};
 use omasheet_engine::omx::{Diagnostic, Sources, Span, compile, compile_expr};
 use omasheet_engine::value::View;
 use omasheet_engine::{Engine, Options, Outcome, Value};
@@ -22,7 +22,7 @@ use std::rc::Rc;
 /// What a rendered document is written as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
-    /// Markdown, with values and tables in place: plain text to read in a
+    /// Markdown, with values and sheets in place: plain text to read in a
     /// terminal, and a document for any Markdown tool.
     Markdown,
     /// A whole HTML page.
@@ -38,11 +38,11 @@ fn extensions() -> pulldown_cmark::Options {
         | O::ENABLE_YAML_STYLE_METADATA_BLOCKS
 }
 
-/// What the front matter says: the sheets it names, each with where it is
+/// What the front matter says: the files it names, each with where it is
 /// named, and the title.
 #[derive(Default)]
 struct Front {
-    sheets: Vec<(String, Range<usize>)>,
+    files: Vec<(String, Range<usize>)>,
     title: Option<String>,
 }
 
@@ -63,7 +63,7 @@ fn scalar(text: &str, range: Range<usize>) -> Option<(String, Range<usize>)> {
 }
 
 /// Read the front matter: the lines between a first line of `---` and the
-/// next. Only `sheets` and `title` are looked at.
+/// next. Only `files` and `title` are looked at.
 fn front_matter(text: &str) -> Front {
     let mut front = Front::default();
     let mut lines = text.split_inclusive('\n');
@@ -71,7 +71,7 @@ fn front_matter(text: &str) -> Front {
         return front;
     }
     let mut at = text.find('\n').map_or(text.len(), |i| i + 1);
-    let mut in_sheets = false;
+    let mut in_files = false;
     for line in lines {
         let here = at;
         at += line.len();
@@ -79,12 +79,12 @@ fn front_matter(text: &str) -> Front {
         if body == "---" || body == "..." {
             return front;
         }
-        if let Some(item) = body.trim_start().strip_prefix("- ").filter(|_| in_sheets) {
+        if let Some(item) = body.trim_start().strip_prefix("- ").filter(|_| in_files) {
             let start = here + body.len() - item.len();
-            front.sheets.extend(scalar(text, start..start + item.len()));
+            front.files.extend(scalar(text, start..start + item.len()));
             continue;
         }
-        in_sheets = false;
+        in_files = false;
         let Some((key, value)) = body.split_once(':') else {
             continue;
         };
@@ -92,18 +92,18 @@ fn front_matter(text: &str) -> Front {
         let range = start..start + value.len();
         match key {
             "title" => front.title = scalar(text, range).map(|(title, _)| title),
-            "sheets" | "sheet" => {
+            "files" | "file" => {
                 let inner = value.trim();
                 if let Some(list) = inner.strip_prefix('[').and_then(|v| v.strip_suffix(']')) {
                     let mut from = start + value.find('[').unwrap_or(0) + 1;
                     for part in list.split(',') {
-                        front.sheets.extend(scalar(text, from..from + part.len()));
+                        front.files.extend(scalar(text, from..from + part.len()));
                         from += part.len() + 1;
                     }
                 } else if inner.is_empty() {
-                    in_sheets = true;
+                    in_files = true;
                 } else {
-                    front.sheets.extend(scalar(text, range));
+                    front.files.extend(scalar(text, range));
                 }
             }
             _ => {}
@@ -177,7 +177,7 @@ fn interpolations(text: &str, skip: &[Range<usize>]) -> Vec<(Range<usize>, Range
     found
 }
 
-/// A part of the one sheet a document is, and the source it came from.
+/// A part of the one file a document is, and the source it came from.
 struct Segment {
     at: usize,
     len: usize,
@@ -185,7 +185,7 @@ struct Segment {
     base: usize,
 }
 
-/// The one sheet of a document, put together from its blocks and the files
+/// The one file of a document, put together from its blocks and the files
 /// it names, with what is needed to say where in them a diagnostic is.
 #[derive(Default)]
 struct Joined {
@@ -205,7 +205,7 @@ impl Joined {
         self.text.push_str("\n\n");
     }
 
-    /// A place in the joined sheet as a place in the source it came from.
+    /// A place in the joined file as a place in the source it came from.
     fn locate(&self, span: Span) -> Span {
         let start = span.start as usize;
         match self
@@ -223,14 +223,14 @@ impl Joined {
     }
 }
 
-/// Take the `zone` line out of a sheet's text, if it has one before its
-/// first table: its name and where that is. A document's sheets are joined
+/// Take the `zone` line out of a file's text, if it has one before its
+/// first sheet: its name and where that is. A document's files are joined
 /// into one, and only the first lines of that one may name the zone.
 fn take_zone(text: &mut String) -> Option<(String, usize)> {
     let mut at = 0;
     for line in text.split_inclusive('\n') {
         let trimmed = line.trim();
-        if trimmed.starts_with("table ") {
+        if trimmed.starts_with("sheet ") {
             return None;
         }
         if let Some(name) = trimmed.strip_prefix("zone ").map(str::trim)
@@ -352,21 +352,21 @@ pub fn is_plain(text: &str) -> bool {
     read == text
 }
 
-/// Rows and columns of a table as a Markdown table, numbers to the right.
-fn table(
+/// Rows and columns of a sheet as a Markdown table, numbers to the right.
+fn sheet(
     engine: &Engine,
     program: &omasheet_engine::omx::Program,
     view: &View,
     format: Format,
 ) -> String {
-    let cols = &program.tables[view.table].cols;
+    let cols = &program.sheets[view.sheet].cols;
     let mut grid: Vec<Vec<String>> =
         vec![view.cols.iter().map(|&c| cols[c].name.clone()).collect()];
     let mut numeric = vec![true; view.cols.len()];
     for &r in view.rows.iter() {
         let mut line = Vec::with_capacity(view.cols.len());
         for (k, &c) in view.cols.iter().enumerate() {
-            let value = engine.cell_shown(view.table, c, r);
+            let value = engine.cell_shown(view.sheet, c, r);
             if !matches!(value, Value::Empty | Value::Error) && !value.is_numeric() {
                 numeric[k] = false;
             }
@@ -419,7 +419,7 @@ fn table(
 const STYLE: &str = "\
 :root { color-scheme: light dark; }
 body { font: 16px/1.6 system-ui, sans-serif; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
-table { border-collapse: collapse; margin: 1rem 0; font-variant-numeric: tabular-nums; }
+sheet { border-collapse: collapse; margin: 1rem 0; font-variant-numeric: tabular-nums; }
 th, td { padding: 0.25rem 0.75rem; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
 th { border-bottom-width: 2px; }
 code, pre { font-family: ui-monospace, monospace; font-size: 0.9em; }
@@ -456,7 +456,7 @@ fn first_heading(markdown: &str) -> Option<String> {
     None
 }
 
-/// Reads a sheet the front matter names, by the path written there: its
+/// Reads a file the front matter names, by the path written there: its
 /// name for diagnostics and its text, or why it cannot be read.
 pub type Load<'a> = dyn Fn(&str) -> Result<(String, String), String> + 'a;
 
@@ -476,11 +476,11 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
     // that every place in a block is the same place in the document.
     let mut parts: Vec<(String, u32)> = Vec::new();
     let mut unread = Vec::new();
-    for (path, range) in &front.sheets {
+    for (path, range) in &front.files {
         match load(path) {
-            Ok((name, sheet)) => {
-                let src = sources.add(name, sheet.clone());
-                parts.push((sheet, src));
+            Ok((name, file)) => {
+                let src = sources.add(name, file.clone());
+                parts.push((file, src));
             }
             Err(why) => unread.push(Diagnostic::new(
                 Span::new(md, range.start, range.end),
@@ -514,7 +514,7 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
                         span,
                         format!("the document is already in the zone `{first}`"),
                     )
-                    .with_help("the sheets of one document share a time zone"),
+                    .with_help("the files of one document share a time zone"),
                 ),
                 Some(_) => {}
                 None => {
@@ -536,7 +536,7 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
         joined.push(part, *src, 0);
     }
 
-    // Diagnostics name places in the joined sheet (source 0) or in an
+    // Diagnostics name places in the joined file (source 0) or in an
     // expression (source 1) that starts at `base` in the document.
     let locate = |d: &Diagnostic, base: usize| {
         let mut d = d.clone();
@@ -563,21 +563,21 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
     let mut changes: Vec<(Range<usize>, String)> = Vec::new();
     for block in &blocks {
         let source: String = block.source.iter().map(|r| &text[r.clone()]).collect();
-        let declared = parse_sheet(&source, 0, &mut Vec::new());
-        let tables: Vec<String> = declared
-            .tables
+        let declared = parse_file(&source, 0, &mut Vec::new());
+        let sheets: Vec<String> = declared
+            .sheets
             .iter()
-            .filter_map(|decl| program.tables.iter().position(|t| t.name == decl.name))
+            .filter_map(|decl| program.sheets.iter().position(|t| t.name == decl.name))
             .map(|t| {
                 let view = View {
-                    table: t,
-                    rows: Rc::new((0..program.tables[t].nrows).collect()),
-                    cols: Rc::new((0..program.tables[t].cols.len()).collect()),
+                    sheet: t,
+                    rows: Rc::new((0..program.sheets[t].nrows).collect()),
+                    cols: Rc::new((0..program.sheets[t].cols.len()).collect()),
                 };
-                table(&engine, &program, &view, format)
+                sheet(&engine, &program, &view, format)
             })
             .collect();
-        let mut shown = tables.join("\n");
+        let mut shown = sheets.join("\n");
         let mut range = block.range.clone();
         if shown.is_empty() {
             // A block of constants shows nothing, and leaves no gap.
@@ -607,9 +607,9 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
                 continue;
             }
         };
-        // A table stands apart from the text around it.
+        // A sheet stands apart from the text around it.
         let apart = |view: &View| {
-            let shown = table(&engine, &program, view, format);
+            let shown = sheet(&engine, &program, view, format);
             let before = &text[..whole.start];
             let lead = match before {
                 b if b.is_empty() || b.ends_with("\n\n") => "",
@@ -625,9 +625,9 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
             format!("{lead}{}{tail}", shown.trim_end())
         };
         let shown = match engine.eval_top(&node) {
-            Some(Value::Table(view)) => apart(&view),
+            Some(Value::Sheet(view)) => apart(&view),
             Some(Value::Row(row)) => apart(&View {
-                table: row.table,
+                sheet: row.sheet,
                 rows: Rc::new(vec![row.row]),
                 cols: row.cols.clone(),
             }),

@@ -1,11 +1,11 @@
 # Every column type, with dates and times: a Date counts in days, a Time and
-# a DateTime in seconds. A sheet always writes them the ISO way, and may say
+# a DateTime in seconds. A file always writes them the ISO way, and may say
 # which time zone its date-times are in.
 
 zone Europe/London
 const Day = 86400
 
-table Shifts
+sheet Shifts
 
 Who    : Text
 On     : Date
@@ -31,7 +31,7 @@ Delay   := (Logged - Begins) / 3600
 Late    := Logged.date() > On
 Sydney  := Logged.to_zone("Australia/Sydney")
 
-table Totals
+sheet Totals
 
 Label | Hours | Pay | First | Span
 All   | *     | *   | *     | *

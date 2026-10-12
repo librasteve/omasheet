@@ -10,46 +10,46 @@ conversions at the boundary, and the system SHALL NOT use XLSX as its internal
 representation or as a lossless save format.
 
 #### Scenario: Export does not replace the source
-- **WHEN** a sheet is exported to XLSX
+- **WHEN** a file is exported to XLSX
 - **THEN** the `.omx` file is unchanged and remains the source of truth
 
 ### Requirement: Export to XLSX
-Exporting SHALL write one worksheet per table, with a header row of column names
-and one row per table row. Data cells SHALL be written as values. Constructs with
+Exporting SHALL write one worksheet per sheet, with a header row of column names
+and one row per sheet row. Data cells SHALL be written as values. Constructs with
 no XLSX equivalent SHALL be mapped by the documented lossy rules below, and the
 export SHALL report which lossy rules were applied.
 
 A formula cell and a cell of a computed column SHALL be written as a workbook
 formula where a workbook can say it, with the calculated value as its result:
-a column and a row of a table as a cell of that table's worksheet, relative
-to the row the formula is on, or fixed where the sheet names a row by number.
+a column and a row of a sheet as a cell of that sheet's worksheet, relative
+to the row the formula is on, or fixed where the file names a row by number.
 A formula a workbook cannot say SHALL be written as its value, and the export
 SHALL report why, and in which columns. A cell that is empty or that failed
 SHALL be written with no formula. A constant SHALL be written into a formula
 as the expression it stands for.
 
-#### Scenario: One worksheet per table
-- **GIVEN** a sheet with tables `Sales` and `Customers`
+#### Scenario: One worksheet per sheet
+- **GIVEN** a file with sheets `Sales` and `Customers`
 - **WHEN** it is exported
 - **THEN** the workbook has worksheets `Sales` and `Customers`
 
 #### Scenario: A computed column
-- **GIVEN** a table `Sales` with columns `Month`, `Revenue`, `Cost` and `Profit := Revenue - Cost`
+- **GIVEN** a sheet `Sales` with columns `Month`, `Revenue`, `Cost` and `Profit := Revenue - Cost`
 - **WHEN** it is exported
 - **THEN** the cell `D2` of worksheet `Sales` holds the formula `=B2-C2` and its value
 
-#### Scenario: A formula that reads another table
-- **GIVEN** a cell `= Sales.Revenue.sum()` in a table `Summary`, and three rows in `Sales`
-- **WHEN** the sheet is exported
+#### Scenario: A formula that reads another sheet
+- **GIVEN** a cell `= Sales.Revenue.sum()` in a sheet `Summary`, and three rows in `Sales`
+- **WHEN** the file is exported
 - **THEN** the cell holds `=SUM('Sales'!$B$2:$B$4)`
 
 #### Scenario: A formula a workbook cannot say
 - **GIVEN** a computed column `Odd := N in [10, 30]`
-- **WHEN** the sheet is exported
+- **WHEN** the file is exported
 - **THEN** its cells hold their values, and a notice names the column and the reason
 
 #### Scenario: Lossy export is reported
-- **GIVEN** a sheet containing a non-terminating `Fraction`
+- **GIVEN** a file containing a non-terminating `Fraction`
 - **WHEN** it is exported
 - **THEN** a notice states that exact rationals were written as floating point
 
@@ -62,7 +62,7 @@ exported as the nearest double.
 - **THEN** the XLSX cell contains `0.3333333333333333`
 
 ### Requirement: Import from XLSX
-Importing SHALL produce `.omx` source with one table per worksheet, taking the
+Importing SHALL produce `.omx` source with one sheet per worksheet, taking the
 first row as the header. Numeric cells SHALL be imported as exact `Fraction` or `Int`
 values from their shortest decimal representation. A1-style cell references SHALL
 NOT appear in the generated source.
@@ -70,7 +70,7 @@ NOT appear in the generated source.
 #### Scenario: Simple worksheet
 - **GIVEN** a workbook with a worksheet `Sales` whose first row is `Month, Revenue, Cost`
 - **WHEN** `omasheet import` is run
-- **THEN** the output contains `table Sales` with those columns and one data row per worksheet row
+- **THEN** the output contains `sheet Sales` with those columns and one data row per worksheet row
 
 #### Scenario: Decimal cell
 - **WHEN** an XLSX cell displaying `19.99` is imported
@@ -79,9 +79,9 @@ NOT appear in the generated source.
 ### Requirement: Formulas are translated on import
 A formula of a worksheet SHALL be imported as an OMX formula where OMX can
 express it. A cell reference SHALL become the column it is in and a row of the
-table: its own row as the bare column name, another row as an offset from its
+sheet: its own row as the bare column name, another row as an offset from its
 own (`[Revenue; *-1]`), and a row held with `$` as that row's index. A reference
-to another worksheet SHALL name that worksheet's table. A range within one
+to another worksheet SHALL name that worksheet's sheet. A range within one
 column SHALL become a vector, and a range that takes in every row of a column
 SHALL become the whole column (`Sales.Revenue`). A1-style references SHALL NOT
 appear in the generated source.
@@ -91,11 +91,11 @@ row, SHALL be imported as a computed column.
 
 A formula SHALL NOT be translated, and its cached value SHALL be imported, when
 it uses a function or operator with no OMX equivalent, a defined name, an array
-constant, or a cell in the header row or outside the table. A notice SHALL list
+constant, or a cell in the header row or outside the sheet. A notice SHALL list
 those cells by worksheet, with the reason.
 
-Every translated formula SHALL be checked: the generated sheet SHALL be
-compiled and calculated, and a formula that the sheet does not accept, or whose
+Every translated formula SHALL be checked: the generated file SHALL be
+compiled and calculated, and a formula that the file does not accept, or whose
 result differs from the workbook's cached value, SHALL be replaced by that
 value and listed in a notice. A formula whose result depends on the clock SHALL
 be exempt from the comparison. The generated source SHALL always compile.

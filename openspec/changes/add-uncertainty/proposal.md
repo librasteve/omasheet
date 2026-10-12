@@ -10,14 +10,14 @@ value lets it propagate automatically through arithmetic and aggregation.
 
 - **uncertainty** — ADDED: `±` values, automatic propagation, aggregation,
   `Uncertain<…>` columns, display
-- **sheet-format** — MODIFIED: a column type may be `Uncertain<…>`
-- **evaluation** — MODIFIED: table operations preserve uncertainties
+- **file-format** — MODIFIED: a column type may be `Uncertain<…>`
+- **evaluation** — MODIFIED: sheet operations preserve uncertainties
 - **xlsx-interop** — ADDED: lossy mapping of uncertainty on export
 
 ## Impact
 
 - Depends on `add-units` (uncertain quantities share the unit of their value);
-  the `evaluation` delta depends on `add-table-operations` and the
+  the `evaluation` delta depends on `add-sheet-operations` and the
   `xlsx-interop` delta on `add-interop`
 - Extends the value model in `omasheet-engine`
 

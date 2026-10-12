@@ -33,4 +33,4 @@ the call on its right, with at least the stages `filter(<predicate>)`,
 
 #### Scenario: Group stage
 - **WHEN** `Sales |> group(Region) |> sum(Revenue)` is evaluated
-- **THEN** the result is the grouped table specified by the `evaluation` Grouping requirement
+- **THEN** the result is the grouped sheet specified by the `evaluation` Grouping requirement

@@ -1,6 +1,6 @@
 [package]
 name = "omasheet-engine"
-description = "Omasheet engine: exact values and evaluation of compiled .omx sheets"
+description = "Omasheet engine: exact values and evaluation of compiled .omx files"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "omasheet-ui"
-description = "Omasheet: the omasheet command, and its interactive grid for .omx sheets, built with Qt Quick"
+description = "Omasheet: the omasheet command, and its interactive grid for .omx files, built with Qt Quick"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

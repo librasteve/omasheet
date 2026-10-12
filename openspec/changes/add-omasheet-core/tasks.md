@@ -31,12 +31,12 @@
 - [x] 3.10 Broadcasting for scalar⊗vector and vector⊗vector
 - [x] 3.11 Pipe `|>` with `filter`, `select`, `sum`
 
-## 4. Sheet format (`sheet-format`)
-- [x] 4.1 Parser for `table`, schema lines, header row, data rows
+## 4. File format (`file-format`)
+- [x] 4.1 Parser for `sheet`, schema lines, header row, data rows
 - [x] 4.2 `const` declarations
 - [x] 4.3 Computed columns `Name := expr`
 - [x] 4.4 Cell rule (`=` formula, otherwise literal) and diagnostics for ragged rows / unknown columns
-- [x] 4.5 Multiple tables per file and cross-table references
+- [x] 4.5 Multiple sheets per file and cross-sheet references
 - [x] 4.6 `fn` definitions, checked at each call, and listed in the function directory
 
 ## 5. Evaluation (`evaluation`)

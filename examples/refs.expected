@@ -1,7 +1,7 @@
 const Corner = 1
 const LastApr = 39
 
-table Grid
+sheet Grid
 
 Item | Jan | Feb | Mar | Apr | Total | Prev | Mix | Run | Scaled
 -----|-----|-----|-----|-----|-------|------|-----|-----|-------
@@ -26,7 +26,7 @@ r17  |  18 | 180 | 117 |  35 |   350 |  336 | 145 | 171 |    180
 r18  |  19 | 190 | 118 |  37 |   364 |  350 | 350 | 190 |    190
 r19  |  20 | 200 | 119 |  39 |   378 |  364 |   0 | 210 |    200
 
-table Checks
+sheet Checks
 
 Kind  | Reads                    | Expect | Actual | OK
 ------|--------------------------|--------|--------|-----
@@ -61,7 +61,7 @@ range | Feb, rows 5 to 9         |    400 |    400 | true
 order | Run of r19               |    210 |    210 | true
 order | Run, at its largest      |    210 |    210 | true
 
-table Verdict
+sheet Verdict
 
 Kind  | Count | Failed
 ------|-------|-------

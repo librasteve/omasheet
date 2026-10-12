@@ -1,4 +1,4 @@
-# Design: Table operations (Phase 3)
+# Design: Sheet operations (Phase 3)
 
 ## Context
 
@@ -37,9 +37,9 @@ a `unique` column constraint were suggested, not settled.
 
 ## Risks
 
-- **Native table operations are ours to get right.** Group and join are a hash
-  on the key plus a gather, which is small, but performance on large tables and
+- **Native sheet operations are ours to get right.** Group and join are a hash
+  on the key plus a gather, which is small, but performance on large sheets and
   later additions (sort, pivot, window) have no library to lean on.
-- **Recalculation has no consumer yet.** The CLI evaluates a sheet once per
+- **Recalculation has no consumer yet.** The CLI evaluates a file once per
   run. Incremental recalculation only pays off with a long-running viewer or
   LSP; it could move to whichever change introduces one.

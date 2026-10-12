@@ -4,7 +4,7 @@
 //! times of day as a count of seconds since midnight, and date-times as a
 //! count of seconds since the start of 1970-01-01. None has a time zone.
 //!
-//! A sheet always writes them the ISO way (`2025-01-31`, `09:30`,
+//! A file always writes them the ISO way (`2025-01-31`, `09:30`,
 //! `2025-01-31T09:30`). A [`Style`] is how they are shown to, and typed by, a
 //! person: `31/01/2025` in Britain, `01/31/2025` in the United States.
 
@@ -110,7 +110,7 @@ impl Default for Style {
 }
 
 impl Style {
-    /// The way a sheet writes them: `2025-01-31`, `17:05`, `2025-01-31T17:05`.
+    /// The way a file writes them: `2025-01-31`, `17:05`, `2025-01-31T17:05`.
     pub const ISO: Style = Style {
         order: Order::Ymd,
         sep: '-',

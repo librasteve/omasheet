@@ -172,10 +172,10 @@ pub enum DepKind {
     Whole,
 }
 
-/// A selection of rows and columns from one sheet table.
+/// A selection of rows and columns from one sheet of the file.
 #[derive(Clone, Debug, PartialEq)]
-pub struct TableTy {
-    pub table: usize,
+pub struct SheetTy {
+    pub sheet: usize,
     pub cols: Rc<Vec<usize>>,
     pub rows: Option<usize>,
     pub kind: DepKind,
@@ -188,8 +188,8 @@ pub enum Ty {
     Scalar(S),
     Vector(S, Option<usize>),
     Range,
-    Table(TableTy),
-    Row(TableTy),
+    Sheet(SheetTy),
+    Row(SheetTy),
 }
 
 impl Ty {
@@ -201,7 +201,7 @@ impl Ty {
             Ty::Vector(S::Any, _) => "a vector".into(),
             Ty::Vector(s, _) => format!("a vector of {s}"),
             Ty::Range => "a range".into(),
-            Ty::Table(_) => "a table".into(),
+            Ty::Sheet(_) => "a sheet".into(),
             Ty::Row(_) => "a row".into(),
         }
     }

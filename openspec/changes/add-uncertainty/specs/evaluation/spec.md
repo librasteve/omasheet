@@ -1,10 +1,10 @@
 # evaluation
 
-Uncertainty in table operations.
+Uncertainty in sheet operations.
 
 ## MODIFIED Requirements
 
-### Requirement: Table operations preserve exactness
+### Requirement: Sheet operations preserve exactness
 Selection, sorting, grouping, joining and aggregation SHALL preserve the exact
 numeric values, units and uncertainties of the data they operate on.
 

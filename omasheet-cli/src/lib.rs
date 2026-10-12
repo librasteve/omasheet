@@ -15,14 +15,14 @@ use std::process::ExitCode;
 #[command(
     name = "omasheet",
     version,
-    about = "A text-native spreadsheet: open a sheet in the app, or print, evaluate, check, import, export and render .omx sheets",
+    about = "A text-native spreadsheet: open a file in the app, or print, evaluate, check, import, export and render .omx files",
     args_conflicts_with_subcommands = true
 )]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// A sheet, workbook or CSV file to open in the app; a new sheet if
+    /// An .omx file, workbook or CSV file to open in the app; a new file if
     /// none is given
     file: Option<PathBuf>,
 }
@@ -30,8 +30,8 @@ struct Cli {
 #[derive(Args)]
 struct Env {
     /// Show dates and times the way this machine's locale writes them,
-    /// rather than as the sheet does (2025-01-31, 17:05), and date-times on
-    /// this machine's clocks rather than those of the sheet's time zone
+    /// rather than as the file does (2025-01-31, 17:05), and date-times on
+    /// this machine's clocks rather than those of the file's time zone
     #[arg(long)]
     locale: bool,
 
@@ -40,7 +40,7 @@ struct Env {
     now: Option<String>,
 
     /// The time zone of this machine, in place of the one it is set to; it
-    /// is also the zone of a sheet that names none
+    /// is also the zone of a file that names none
     #[arg(long, value_name = "ZONE")]
     zone: Option<String>,
 
@@ -83,9 +83,9 @@ impl Env {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Calculate a sheet and print its tables
+    /// Calculate a file and print its sheets
     Print {
-        /// The sheet to print
+        /// The file to print
         file: PathBuf,
 
         #[command(flatten)]
@@ -95,9 +95,9 @@ enum Command {
     ///
     /// The expression is read from standard input when it is not given.
     Eval {
-        /// A sheet whose tables and constants the expression may use
+        /// A file whose sheets and constants the expression may use
         #[arg(long, value_name = "FILE")]
-        sheet: Option<PathBuf>,
+        file: Option<PathBuf>,
 
         /// [FILE] EXPRESSION
         #[arg(value_name = "ARGS", num_args = 0..=2)]
@@ -106,60 +106,60 @@ enum Command {
         #[command(flatten)]
         env: Env,
     },
-    /// Check a sheet without evaluating it
+    /// Check a file without evaluating it
     Lint {
-        /// The sheet to check
+        /// The file to check
         file: PathBuf,
     },
-    /// Write a workbook (.xlsx), a CSV file (.csv) or JSON (.json) as a sheet
+    /// Write a workbook (.xlsx), a CSV file (.csv) or JSON (.json) as an .omx file
     ///
-    /// The sheet is printed, and anything that was changed or left behind
+    /// The file is printed, and anything that was changed or left behind
     /// is reported.
     Import {
         /// The workbook, CSV or JSON file to read
         file: PathBuf,
 
-        /// Write the sheet to this file rather than printing it
+        /// Write the file to this file rather than printing it
         #[arg(short, long, value_name = "FILE")]
         output: Option<PathBuf>,
     },
-    /// Write the calculated tables of a sheet as a workbook, CSV or JSON
+    /// Write the calculated sheets of a file as a workbook, CSV or JSON
     ///
-    /// The file is written beside the sheet: budget.omx as budget.xlsx,
-    /// budget.csv or budget.json. CSV holds one table, so a sheet with
+    /// The file is written beside the file: budget.omx as budget.xlsx,
+    /// budget.csv or budget.json. CSV holds one sheet, so a file with
     /// several is written as budget.Sales.csv, budget.Summary.csv.
     Export {
-        /// The sheet to export
+        /// The file to export
         file: PathBuf,
 
-        /// Write a workbook, with a worksheet for each table
+        /// Write a workbook, with a worksheet for each sheet
         #[arg(long, conflicts_with_all = ["csv", "json"])]
         xlsx: bool,
 
-        /// Write CSV, a file for each table
+        /// Write CSV, a file for each sheet
         #[arg(long, conflicts_with = "json")]
         csv: bool,
 
-        /// Write JSON: the values of each table as a list of rows by
-        /// column name, and of a table given with --table as that list alone
+        /// Write JSON: the values of each sheet as a list of rows by
+        /// column name, and of a sheet given with --sheet as that list alone
         #[arg(long)]
         json: bool,
 
-        /// Export this table alone
+        /// Export this sheet alone
         #[arg(long, value_name = "NAME")]
-        table: Option<String>,
+        sheet: Option<String>,
 
-        /// Write to this file rather than beside the sheet
+        /// Write to this file rather than beside the file
         #[arg(short, long, value_name = "FILE")]
         output: Option<PathBuf>,
 
         #[command(flatten)]
         env: Env,
     },
-    /// Render a Markdown document with its sheets calculated
+    /// Render a Markdown document with its files calculated
     ///
-    /// A fenced `omx` block is shown as its tables, and {{ expression }} as
-    /// its value. `sheets: [budget.omx]` in the front matter names sheets
+    /// A fenced `omx` block is shown as its sheets, and {{ expression }} as
+    /// its value. `files: [budget.omx]` in the front matter names files
     /// to read as well. The document is printed as Markdown, or as HTML.
     Render {
         /// The Markdown document to render
@@ -244,16 +244,16 @@ fn import(file: &Path, output: Option<&Path>) -> Result<ExitCode, ExitCode> {
 fn export(
     file: &Path,
     ext: &str,
-    table: Option<&str>,
+    sheet: Option<&str>,
     output: Option<&Path>,
     options: Options,
 ) -> Result<ExitCode, ExitCode> {
     let text = read(file)?;
     let name = file.to_string_lossy();
     let exported = match ext {
-        "xlsx" => omasheet_interop::xlsx::export(&name, &text, table, options),
-        "json" => omasheet_interop::json::export(&name, &text, table, options),
-        _ => omasheet_interop::csv::export(&name, &text, table, options),
+        "xlsx" => omasheet_interop::xlsx::export(&name, &text, sheet, options),
+        "json" => omasheet_interop::json::export(&name, &text, sheet, options),
+        _ => omasheet_interop::csv::export(&name, &text, sheet, options),
     };
     let exported = match exported {
         Ok(exported) => exported,
@@ -265,14 +265,12 @@ fn export(
         }
     };
     if output.is_some() && exported.files.len() > 1 {
-        return usage(
-            "the sheet has several tables: give one with --table to write it to --output",
-        );
+        return usage("the file has several sheets: give one with --sheet to write it to --output");
     }
     for out in &exported.files {
-        let path = match (output, &out.table) {
+        let path = match (output, &out.sheet) {
             (Some(path), _) => path.to_path_buf(),
-            (None, Some(table)) => file.with_extension(format!("{table}.{ext}")),
+            (None, Some(sheet)) => file.with_extension(format!("{sheet}.{ext}")),
             (None, None) => file.with_extension(ext),
         };
         write(&path, &out.bytes)?;
@@ -289,7 +287,7 @@ fn render(
     options: Options,
 ) -> Result<ExitCode, ExitCode> {
     let text = read(file)?;
-    // A sheet is named from where the document is.
+    // A file is named from where the document is.
     let load = |path: &str| {
         let path = file.parent().unwrap_or(Path::new("")).join(path);
         std::fs::read_to_string(&path)
@@ -333,21 +331,21 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
             )))
         }
         Some(Command::Eval {
-            sheet,
+            file,
             mut args,
             env,
         }) => {
             let options = env.options()?;
-            // `eval FILE EXPR` is the same as `eval --sheet FILE EXPR`.
-            let sheet = match (sheet, args.len()) {
+            // `eval FILE EXPR` is the same as `eval --file FILE EXPR`.
+            let file = match (file, args.len()) {
                 (None, 2) => Some(PathBuf::from(args.remove(0))),
                 (Some(_), 2) => {
                     eprintln!(
-                        "omasheet: give the sheet once, either as --sheet or before the expression"
+                        "omasheet: give the file once, either as --file or before the expression"
                     );
                     return Err(ExitCode::from(2));
                 }
-                (sheet, _) => sheet,
+                (file, _) => file,
             };
             let (expr_name, expr) = match args.pop() {
                 Some(expr) => ("<expression>", expr),
@@ -360,13 +358,13 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
                     ("<stdin>", buffer)
                 }
             };
-            let loaded = match &sheet {
+            let loaded = match &file {
                 Some(path) => Some((path.to_string_lossy().into_owned(), read(path)?)),
                 None => None,
             };
-            let sheet_ref = loaded.as_ref().map(|(n, t)| (n.as_str(), t.as_str()));
+            let file_ref = loaded.as_ref().map(|(n, t)| (n.as_str(), t.as_str()));
             Ok(finish(omasheet_engine::eval_with(
-                sheet_ref, expr_name, &expr, options,
+                file_ref, expr_name, &expr, options,
             )))
         }
         Some(Command::Import { file, output }) => import(&file, output.as_deref()),
@@ -375,7 +373,7 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
             xlsx,
             csv,
             json,
-            table,
+            sheet,
             output,
             env,
         }) => {
@@ -386,7 +384,7 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
                 _ => return usage("say what to export as: --xlsx, --csv or --json"),
             };
             let options = env.options()?;
-            export(&file, ext, table.as_deref(), output.as_deref(), options)
+            export(&file, ext, sheet.as_deref(), output.as_deref(), options)
         }
         Some(Command::Render {
             file,

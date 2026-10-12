@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! An editable sheet for interactive front ends.
+//! An editable file for interactive front ends.
 //!
 //! The `.omx` text stays the single source of truth: every edit rewrites the
-//! text and the sheet is then re-read and re-evaluated. A [`Snapshot`] is what
+//! text and the file is then re-read and re-evaluated. A [`Snapshot`] is what
 //! a grid shows: for each cell, the value to display and the source to edit.
 //!
 //! Unlike the command line, a document is evaluated even when it has errors,
@@ -16,25 +16,25 @@ use crate::value::{Value, arith, format_exact, format_scalar};
 use num_traits::ToPrimitive;
 use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use omasheet_omx::date::{self, Style};
+use omasheet_omx::file::{FileAst, SheetDecl, ident_len, parse_file, split_cells};
 use omasheet_omx::parser::parse_expr;
-use omasheet_omx::sheet::{SheetAst, TableDecl, ident_len, parse_sheet, split_cells};
 use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile};
 
 const UNDO_LIMIT: usize = 200;
 
-/// A fresh sheet: one small empty table to type into.
-pub const BLANK: &str = "table Sheet1\n\nA | B | C\n  |   |\n  |   |\n  |   |\n  |   |\n  |   |\n";
+/// A fresh file: one small empty sheet to type into.
+pub const BLANK: &str = "sheet Sheet1\n\nA | B | C\n  |   |\n  |   |\n  |   |\n  |   |\n  |   |\n";
 
 #[derive(Debug, Default, Clone)]
 pub struct Snapshot {
-    pub tables: Vec<TableSnap>,
+    pub sheets: Vec<SheetSnap>,
     pub consts: Vec<ConstSnap>,
     pub funcs: Vec<FuncSnap>,
     pub problems: Vec<Problem>,
 }
 
 #[derive(Debug, Clone)]
-pub struct TableSnap {
+pub struct SheetSnap {
     pub name: String,
     pub columns: Vec<ColumnSnap>,
     pub rows: Vec<Vec<CellSnap>>,
@@ -76,7 +76,7 @@ pub struct Summary {
     pub numbers: Option<(String, String)>,
 }
 
-/// A function the sheet defines.
+/// A function the file defines.
 #[derive(Debug, Clone)]
 pub struct FuncSnap {
     pub name: String,
@@ -126,7 +126,7 @@ fn contains(outer: Span, inner: Span) -> bool {
 }
 
 /// A date or time typed the way `style` writes it (`31/1/2025`, `9:30 pm`),
-/// as a sheet writes it, for a column of type `ty`. `None` if it is not one.
+/// as a file writes it, for a column of type `ty`. `None` if it is not one.
 fn iso_entry(style: &Style, ty: &str, input: &str) -> Option<String> {
     let text = input.trim();
     let date = || style.parse_date(text).map(date::format);
@@ -150,7 +150,7 @@ fn iso_entry(style: &Style, ty: &str, input: &str) -> Option<String> {
 }
 
 /// A whole number and a part typed into a cell, `2 3/4`, as the fraction a
-/// sheet keeps, `11/4`. `None` if it is not one, or the column is `Text`.
+/// file keeps, `11/4`. `None` if it is not one, or the column is `Text`.
 fn fraction_entry(ty: &str, input: &str) -> Option<String> {
     let r = omasheet_omx::convert::parse_mixed(input.trim()).filter(|_| ty != "Text")?;
     Some(format!("{}/{}", r.numer(), r.denom()))
@@ -268,10 +268,10 @@ enum ColPart<'a> {
     Field(&'a str, Span),
 }
 
-/// One index into a table: `T[columns; rows]` and its other spellings.
+/// One index into a sheet: `T[columns; rows]` and its other spellings.
 struct Site<'a> {
-    /// The table as written; `None` for an index with no table name.
-    table: Option<&'a str>,
+    /// The sheet as written; `None` for an index with no sheet name.
+    sheet: Option<&'a str>,
     row: Option<&'a Expr>,
     col: ColPart<'a>,
     /// Inside a slot of another index, where the current row is a row of
@@ -279,9 +279,9 @@ struct Site<'a> {
     nested: bool,
 }
 
-/// The table an index is into, if its base says so: `Some(None)` for an
-/// index with no table name.
-fn base_table(e: &Expr) -> Option<Option<&str>> {
+/// The sheet an index is into, if its base says so: `Some(None)` for an
+/// index with no sheet name.
+fn base_sheet(e: &Expr) -> Option<Option<&str>> {
     match &e.kind {
         ExprKind::Own => Some(None),
         ExprKind::Name(name) => Some(Some(name)),
@@ -289,7 +289,7 @@ fn base_table(e: &Expr) -> Option<Option<&str>> {
     }
 }
 
-/// Every index into a table in `e`, and every name that stands alone, which
+/// Every index into a sheet in `e`, and every name that stands alone, which
 /// in a cell may be a column of the cell's own row.
 fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec<(&'a str, Span)>) {
     match &e.kind {
@@ -317,10 +317,10 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
         ExprKind::Field(a, name, span) => match &a.kind {
             // `T[0].Name`
             ExprKind::Index(base, slots)
-                if slots.len() == 2 && slots[0].is_none() && base_table(base).is_some() =>
+                if slots.len() == 2 && slots[0].is_none() && base_sheet(base).is_some() =>
             {
                 out.push(Site {
-                    table: base_table(base).flatten(),
+                    sheet: base_sheet(base).flatten(),
                     row: slots[1].as_ref(),
                     col: ColPart::Field(name, *span),
                     nested,
@@ -329,14 +329,14 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
                     sites(slot, true, out, names);
                 }
             }
-            // `T.Name`: a table and its column, not a name on its own.
+            // `T.Name`: a sheet and its column, not a name on its own.
             ExprKind::Name(_) => {}
             _ => sites(a, nested, out, names),
         },
         ExprKind::Index(base, slots) => {
-            if let Some(table) = base_table(base) {
+            if let Some(sheet) = base_sheet(base) {
                 out.push(Site {
-                    table,
+                    sheet,
                     row: slots.get(1).and_then(Option::as_ref),
                     col: match slots.first() {
                         Some(Some(slot)) => ColPart::Slot(slot),
@@ -345,12 +345,12 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
                     nested,
                 });
             } else if let ExprKind::Field(inner, name, span) = &base.kind
-                && let ExprKind::Name(table) = &inner.kind
+                && let ExprKind::Name(sheet) = &inner.kind
                 && slots.len() == 1
             {
                 // `T.Name[0]`
                 out.push(Site {
-                    table: Some(table),
+                    sheet: Some(sheet),
                     row: slots[0].as_ref(),
                     col: ColPart::Field(name, *span),
                     nested,
@@ -365,18 +365,53 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
     }
 }
 
-/// Where a formula is: its table, and its row and column if it is in a cell.
+/// Every place in `e` that the name `name` stands: alone, or as what is
+/// indexed or read from.
+fn named(e: &Expr, name: &str, out: &mut Vec<Span>) {
+    match &e.kind {
+        ExprKind::Lit(_) | ExprKind::Cursor | ExprKind::Own => {}
+        ExprKind::Name(n) => {
+            if n == name {
+                out.push(e.span);
+            }
+        }
+        ExprKind::Unary(_, a) => named(a, name, out),
+        ExprKind::Binary(_, l, r) => {
+            named(l, name, out);
+            named(r, name, out);
+        }
+        ExprKind::If(c, a, b) => {
+            named(c, name, out);
+            named(a, name, out);
+            named(b, name, out);
+        }
+        ExprKind::VecLit(items) | ExprKind::Call(_, _, items) => {
+            for item in items {
+                named(item, name, out);
+            }
+        }
+        ExprKind::Index(base, slots) => {
+            named(base, name, out);
+            for slot in slots.iter().flatten() {
+                named(slot, name, out);
+            }
+        }
+        ExprKind::Field(base, _, _) => named(base, name, out),
+    }
+}
+
+/// Where a formula is: its sheet, and its row and column if it is in a cell.
 #[derive(Clone, Copy)]
 struct Place {
-    table: Option<usize>,
+    sheet: Option<usize>,
     cell: Option<(usize, usize)>,
 }
 
-/// Every formula of a sheet, with spans into the text of the sheet.
-fn formulas(ast: &SheetAst) -> Vec<(Place, Expr)> {
+/// Every formula of a file, with spans into the text of the file.
+fn formulas(ast: &FileAst) -> Vec<(Place, Expr)> {
     let mut out = Vec::new();
     let nowhere = Place {
-        table: None,
+        sheet: None,
         cell: None,
     };
     for c in &ast.consts {
@@ -385,7 +420,7 @@ fn formulas(ast: &SheetAst) -> Vec<(Place, Expr)> {
     for f in &ast.funcs {
         out.extend(f.expr.clone().map(|e| (nowhere, e)));
     }
-    for (t, decl) in ast.tables.iter().enumerate() {
+    for (t, decl) in ast.sheets.iter().enumerate() {
         for (r, row) in decl.rows.iter().enumerate() {
             for (c, cell) in row.iter().enumerate() {
                 if let Some(body) = cell.text.strip_prefix('=')
@@ -394,7 +429,7 @@ fn formulas(ast: &SheetAst) -> Vec<(Place, Expr)> {
                     let cell = Some((r, c));
                     out.push((
                         Place {
-                            table: Some(t),
+                            sheet: Some(t),
                             cell,
                         },
                         e,
@@ -403,7 +438,7 @@ fn formulas(ast: &SheetAst) -> Vec<(Place, Expr)> {
             }
         }
         let place = Place {
-            table: Some(t),
+            sheet: Some(t),
             cell: None,
         };
         for c in &decl.computed {
@@ -413,20 +448,20 @@ fn formulas(ast: &SheetAst) -> Vec<(Place, Expr)> {
     out
 }
 
-/// Whether `site`, in a formula at `place`, is an index into table `t`; and
+/// Whether `site`, in a formula at `place`, is an index into sheet `t`; and
 /// if so, whether a `*` in it is the formula's own cell.
-fn into_table(site: &Site, place: Place, t: usize, name: &str) -> Option<bool> {
-    let home = place.table == Some(t) && !site.nested;
-    match site.table {
-        Some(table) if table == name => Some(home && place.cell.is_some()),
+fn into_sheet(site: &Site, place: Place, t: usize, name: &str) -> Option<bool> {
+    let home = place.sheet == Some(t) && !site.nested;
+    match site.sheet {
+        Some(sheet) if sheet == name => Some(home && place.cell.is_some()),
         None if home => Some(place.cell.is_some()),
         _ => None,
     }
 }
 
-/// The names of the columns of a table, in order: those of the header row,
+/// The names of the columns of a sheet, in order: those of the header row,
 /// then any formula column it fails to name.
-fn column_names(decl: &TableDecl) -> Vec<&str> {
+fn column_names(decl: &SheetDecl) -> Vec<&str> {
     let named = |name: &str| decl.header.iter().any(|h| h.0 == name);
     let header = decl.header.iter().map(|h| h.0.as_str());
     let rest = decl.computed.iter().map(|c| c.name.as_str());
@@ -436,7 +471,7 @@ fn column_names(decl: &TableDecl) -> Vec<&str> {
 /// What a row holds for a formula column.
 const FORMULA_CELL: &str = "*";
 
-/// `(start, end, replacement)` in the text of a sheet.
+/// `(start, end, replacement)` in the text of a file.
 type Edit = (usize, usize, String);
 
 /// Note that `e` is to read `new`, unless it does already.
@@ -447,22 +482,22 @@ fn put(edits: &mut Vec<Edit>, text: &str, span: Span, new: String) {
     }
 }
 
-/// `text` with `edits` made, and the tables they fall in lined up again.
-fn rewritten(text: &str, ast: &SheetAst, mut edits: Vec<Edit>) -> String {
+/// `text` with `edits` made, and the sheets they fall in lined up again.
+fn rewritten(text: &str, ast: &FileAst, mut edits: Vec<Edit>) -> String {
     edits.sort_by_key(|e| std::cmp::Reverse(e.0));
     edits.dedup_by_key(|e| e.0);
     let mut out = text.to_string();
     let mut touched: Vec<&str> = Vec::new();
     for (s, e, new) in &edits {
-        let owner = ast.tables.iter().rfind(|t| t.span.start as usize <= *s);
+        let owner = ast.sheets.iter().rfind(|t| t.span.start as usize <= *s);
         if let Some(t) = owner.filter(|t| !touched.contains(&t.name.as_str())) {
             touched.push(&t.name);
         }
         out.replace_range(*s..*e, new);
     }
     for name in touched {
-        let ast = parse_sheet(&out, 0, &mut Vec::new());
-        if let Some(decl) = ast.tables.iter().find(|t| t.name == name) {
+        let ast = parse_file(&out, 0, &mut Vec::new());
+        if let Some(decl) = ast.sheets.iter().find(|t| t.name == name) {
             out = Grid::of(decl).write(decl, &out);
         }
     }
@@ -523,12 +558,12 @@ fn follow_slot(
 }
 
 /// The edits that keep every row or column picked by counting on the row or
-/// column it was, when those of table `t` are rearranged so that `place[k]`
+/// column it was, when those of sheet `t` are rearranged so that `place[k]`
 /// is where the k-th ends up, of `count` in all. An offset in a formula column
 /// is left alone:
 /// one formula serves every row, so `*-1` goes on meaning the row before.
 fn follow_move(
-    ast: &SheetAst,
+    ast: &FileAst,
     text: &str,
     t: usize,
     rows: bool,
@@ -536,12 +571,12 @@ fn follow_move(
     count: usize,
 ) -> Vec<Edit> {
     let mut edits = Vec::new();
-    let name = ast.tables[t].name.as_str();
+    let name = ast.sheets[t].name.as_str();
     for (at, expr) in formulas(ast) {
         let mut found = Vec::new();
         sites(&expr, false, &mut found, &mut Vec::new());
         for site in found {
-            let Some(relative) = into_table(&site, at, t, name) else {
+            let Some(relative) = into_sheet(&site, at, t, name) else {
                 continue;
             };
             let slot = match (rows, &site.col) {
@@ -586,7 +621,7 @@ fn one_column(
     }
 }
 
-/// The one cell of a table that `site` reads, if it reads just one: its row
+/// The one cell of a sheet that `site` reads, if it reads just one: its row
 /// and column, each with how it is written and where.
 #[allow(clippy::type_complexity)]
 fn one_cell(
@@ -603,12 +638,12 @@ fn one_cell(
 }
 
 /// The edits that keep each formula reading a cell of `block`, cut from
-/// table `t`, on that cell once it is `by` rows and columns away. Only a
+/// sheet `t`, on that cell once it is `by` rows and columns away. Only a
 /// reference to one cell follows it: a range or a whole column reads the
 /// place, and so does a formula column.
-fn follow_cut(ast: &SheetAst, text: &str, t: usize, block: &Block, by: (i64, i64)) -> Vec<Edit> {
+fn follow_cut(ast: &FileAst, text: &str, t: usize, block: &Block, by: (i64, i64)) -> Vec<Edit> {
     let mut edits = Vec::new();
-    let decl = &ast.tables[t];
+    let decl = &ast.sheets[t];
     let cols = column_names(decl);
     let nrows = decl.rows.len();
     let inside = |r: usize, c: usize| block.0.contains(&r) && block.1.contains(&c);
@@ -621,7 +656,7 @@ fn follow_cut(ast: &SheetAst, text: &str, t: usize, block: &Block, by: (i64, i64
         let (mut found, mut names) = (Vec::new(), Vec::new());
         sites(&expr, false, &mut found, &mut names);
         for site in found {
-            let Some(relative) = into_table(&site, at, t, &decl.name) else {
+            let Some(relative) = into_sheet(&site, at, t, &decl.name) else {
                 continue;
             };
             let own = at.cell.filter(|_| relative);
@@ -653,7 +688,7 @@ fn follow_cut(ast: &SheetAst, text: &str, t: usize, block: &Block, by: (i64, i64
             }
         }
         // A column named on its own in a cell is that column of its row.
-        let Some((r, _)) = at.cell.filter(|_| at.table == Some(t)) else {
+        let Some((r, _)) = at.cell.filter(|_| at.sheet == Some(t)) else {
             continue;
         };
         for (name, span) in names {
@@ -695,7 +730,7 @@ fn shift_slot(slot: &Expr, by: i64, text: &str, edits: &mut Vec<Edit>) {
     }
 }
 
-/// The source of a cell of `block`, cut from `from` in a table and put down
+/// The source of a cell of `block`, cut from `from` in a sheet and put down
 /// `by` rows and columns away. What its formula reads by an offset it still
 /// reads: a move sideways counts the columns again, and a move up or down
 /// the rows. A cell that was cut along with it is as far away as it was.
@@ -704,7 +739,7 @@ fn moved_cell(
     from: (usize, usize),
     block: &Block,
     by: (i64, i64),
-    table: &str,
+    sheet: &str,
     nrows: usize,
     cols: &[&str],
 ) -> String {
@@ -715,7 +750,7 @@ fn moved_cell(
     sites(&expr, false, &mut found, &mut Vec::new());
     let mut edits = Vec::new();
     for site in found {
-        if site.nested || site.table.is_some_and(|name| name != table) {
+        if site.nested || site.sheet.is_some_and(|name| name != sheet) {
             continue;
         }
         let one = one_cell(&site, Some(from), nrows, cols);
@@ -786,7 +821,7 @@ fn valid_name(name: &str) -> Result<&str, String> {
     Ok(name)
 }
 
-/// The header and rows of a table as text, plus where each row came from.
+/// The header and rows of a sheet as text, plus where each row came from.
 struct Grid {
     header: Vec<String>,
     /// Which columns of the header row are formula columns: their cells
@@ -797,7 +832,7 @@ struct Grid {
 }
 
 impl Grid {
-    fn of(t: &TableDecl) -> Grid {
+    fn of(t: &SheetDecl) -> Grid {
         let formula = |name: &String| t.computed.iter().any(|c| &c.name == name);
         Grid {
             header: t.header.iter().map(|(name, _)| name.clone()).collect(),
@@ -818,8 +853,8 @@ impl Grid {
         self.formula.iter().map(|f| blank(f).to_string()).collect()
     }
 
-    /// Rewrite the table's lines in `text`, aligned, touching nothing else.
-    fn write(&self, t: &TableDecl, text: &str) -> String {
+    /// Rewrite the sheet's lines in `text`, aligned, touching nothing else.
+    fn write(&self, t: &SheetDecl, text: &str) -> String {
         let n = self.header.len();
         let mut widths: Vec<usize> = self.header.iter().map(|h| h.chars().count()).collect();
         for (_, row) in &self.rows {
@@ -897,14 +932,14 @@ impl Grid {
 }
 
 impl Document {
-    /// A document that shows dates and times as the sheet writes them.
+    /// A document that shows dates and times as the file writes them.
     pub fn from_text(text: &str) -> Document {
         Document::new(text, Style::ISO, false)
     }
 
     /// A document for a person to look at: dates and times are shown in
     /// `style`, and date-times on the clocks of this machine even when the
-    /// sheet is in another time zone. See [`Document::set_style`].
+    /// file is in another time zone. See [`Document::set_style`].
     pub fn with_style(text: &str, style: Style) -> Document {
         Document::new(text, style, true)
     }
@@ -923,7 +958,7 @@ impl Document {
     }
 
     /// How dates and times are shown, and how they may be typed into a cell.
-    /// The text of the sheet stays ISO whatever the style.
+    /// The text of the file stays ISO whatever the style.
     pub fn set_style(&mut self, style: Style) {
         self.style = style;
         self.rebuild();
@@ -981,62 +1016,76 @@ impl Document {
         true
     }
 
-    fn ast(&self) -> SheetAst {
-        parse_sheet(&self.text, 0, &mut Vec::new())
+    /// Make several edits as one undoable step. Returns whether they
+    /// changed anything.
+    pub fn as_one(&mut self, edits: impl FnOnce(&mut Self)) -> bool {
+        let before = self.text.clone();
+        let steps = self.undo.len();
+        edits(self);
+        let changed = self.text != before;
+        // The first of the edits left the text as it was to be undone to.
+        if self.undo.get(steps) == Some(&before) {
+            self.undo.truncate(steps + usize::from(changed));
+        }
+        changed
     }
 
-    /// The declaration of the snapshot's table `table`.
-    fn table_decl<'a>(&self, ast: &'a SheetAst, table: usize) -> Option<&'a TableDecl> {
-        let name = &self.snapshot.tables.get(table)?.name;
-        ast.tables.iter().find(|t| &t.name == name)
+    fn ast(&self) -> FileAst {
+        parse_file(&self.text, 0, &mut Vec::new())
     }
 
-    /// `text` with the grid of table `table` changed.
+    /// The declaration of the snapshot's sheet `sheet`.
+    fn sheet_decl<'a>(&self, ast: &'a FileAst, sheet: usize) -> Option<&'a SheetDecl> {
+        let name = &self.snapshot.sheets.get(sheet)?.name;
+        ast.sheets.iter().find(|t| &t.name == name)
+    }
+
+    /// `text` with the grid of sheet `sheet` changed.
     fn grid_edited(
         &self,
         text: &str,
-        table: usize,
+        sheet: usize,
         change: impl FnOnce(&mut Grid),
     ) -> Option<String> {
-        let ast = parse_sheet(text, 0, &mut Vec::new());
-        let decl = self.table_decl(&ast, table)?;
+        let ast = parse_file(text, 0, &mut Vec::new());
+        let decl = self.sheet_decl(&ast, sheet)?;
         let mut grid = Grid::of(decl);
         change(&mut grid);
         Some(grid.write(decl, text))
     }
 
-    fn edit_grid(&mut self, table: usize, change: impl FnOnce(&mut Grid)) -> bool {
-        match self.grid_edited(&self.text, table, change) {
+    fn edit_grid(&mut self, sheet: usize, change: impl FnOnce(&mut Grid)) -> bool {
+        match self.grid_edited(&self.text, sheet, change) {
             Some(text) => self.commit(text),
             None => false,
         }
     }
 
-    /// Set cells of one table in a single undoable step. Cells are
+    /// Set cells of one sheet in a single undoable step. Cells are
     /// `(row, column, text)`; rows past the end are added. Cells in computed
     /// columns are skipped.
-    pub fn set_cells(&mut self, table: usize, cells: &[(usize, usize, String)]) -> bool {
-        match self.cells_set(&self.text, table, cells) {
+    pub fn set_cells(&mut self, sheet: usize, cells: &[(usize, usize, String)]) -> bool {
+        match self.cells_set(&self.text, sheet, cells) {
             Some(text) => self.commit(text),
             None => false,
         }
     }
 
-    /// `text` with cells of one table set, as `set_cells` sets them.
+    /// `text` with cells of one sheet set, as `set_cells` sets them.
     fn cells_set(
         &self,
         text: &str,
-        table: usize,
+        sheet: usize,
         cells: &[(usize, usize, String)],
     ) -> Option<String> {
         let style = self.style;
         let types: Vec<String> = self
             .snapshot
-            .tables
-            .get(table)
+            .sheets
+            .get(sheet)
             .map(|t| t.columns.iter().map(|c| c.ty.clone()).collect())
             .unwrap_or_default();
-        self.grid_edited(text, table, |grid| {
+        self.grid_edited(text, sheet, |grid| {
             for (row, col, text) in cells {
                 if *col >= grid.header.len() || grid.formula[*col] {
                     continue;
@@ -1059,28 +1108,28 @@ impl Document {
         })
     }
 
-    /// Put down `block`, the sources of cells cut from `from` in a table, at
-    /// `to` in the same table, in one undoable step. Formulas go on reading
+    /// Put down `block`, the sources of cells cut from `from` in a sheet, at
+    /// `to` in the same sheet, in one undoable step. Formulas go on reading
     /// what they read: those put down count their offsets again, and those
     /// that read a cell that was cut follow it to where it now is.
     pub fn paste_cut(
         &mut self,
-        table: usize,
+        sheet: usize,
         from: (usize, usize),
         to: (usize, usize),
         block: &[Vec<String>],
     ) -> bool {
         let ast = self.ast();
-        let Some(name) = self.snapshot.tables.get(table).map(|t| t.name.clone()) else {
+        let Some(name) = self.snapshot.sheets.get(sheet).map(|t| t.name.clone()) else {
             return false;
         };
-        let Some(t) = ast.tables.iter().position(|t| t.name == name) else {
+        let Some(t) = ast.sheets.iter().position(|t| t.name == name) else {
             return false;
         };
         let width = block.iter().map(Vec::len).max().unwrap_or(0);
         let cut: Block = (from.0..from.0 + block.len(), from.1..from.1 + width);
         let by = (to.0 as i64 - from.0 as i64, to.1 as i64 - from.1 as i64);
-        let decl = &ast.tables[t];
+        let decl = &ast.sheets[t];
         let cols = column_names(decl);
         let mut cells = Vec::new();
         for (i, line) in block.iter().enumerate() {
@@ -1092,7 +1141,7 @@ impl Document {
         }
         let edits = follow_cut(&ast, &self.text, t, &cut, by);
         let followed = rewritten(&self.text, &ast, edits);
-        match self.cells_set(&followed, table, &cells) {
+        match self.cells_set(&followed, sheet, &cells) {
             Some(text) => self.commit(text),
             None => false,
         }
@@ -1102,11 +1151,11 @@ impl Document {
     /// to `(bottom, right)`. Numbers add up exactly, as they do in a formula.
     pub fn summary(
         &self,
-        table: usize,
+        sheet: usize,
         (top, left): (usize, usize),
         (bottom, right): (usize, usize),
     ) -> Option<Summary> {
-        let rows = &self.snapshot.tables.get(table)?.rows;
+        let rows = &self.snapshot.sheets.get(sheet)?.rows;
         let values = rows
             .iter()
             .take(bottom + 1)
@@ -1133,22 +1182,22 @@ impl Document {
         Some(Summary { count, numbers })
     }
 
-    pub fn set_cell(&mut self, table: usize, row: usize, col: usize, text: &str) -> bool {
+    pub fn set_cell(&mut self, sheet: usize, row: usize, col: usize, text: &str) -> bool {
         let is_computed = self
             .snapshot
-            .tables
-            .get(table)
+            .sheets
+            .get(sheet)
             .and_then(|t| t.columns.get(col))
             .is_some_and(|c| c.formula.is_some());
         if is_computed {
-            return self.set_column_formula(table, col, text);
+            return self.set_column_formula(sheet, col, text);
         }
-        self.set_cells(table, &[(row, col, text.to_string())])
+        self.set_cells(sheet, &[(row, col, text.to_string())])
     }
 
     /// Insert `count` empty rows before row `at`.
-    pub fn insert_rows(&mut self, table: usize, at: usize, count: usize) -> bool {
-        self.edit_grid(table, |grid| {
+    pub fn insert_rows(&mut self, sheet: usize, at: usize, count: usize) -> bool {
+        self.edit_grid(sheet, |grid| {
             let at = at.min(grid.rows.len());
             for _ in 0..count {
                 let blank = grid.blank_row();
@@ -1157,8 +1206,8 @@ impl Document {
         })
     }
 
-    pub fn delete_rows(&mut self, table: usize, first: usize, count: usize) -> bool {
-        self.edit_grid(table, |grid| {
+    pub fn delete_rows(&mut self, sheet: usize, first: usize, count: usize) -> bool {
+        self.edit_grid(sheet, |grid| {
             let end = (first + count).min(grid.rows.len());
             if first < end {
                 grid.rows.drain(first..end);
@@ -1167,18 +1216,18 @@ impl Document {
     }
 
     /// Delete `count` columns starting at `first`, with their cells or
-    /// formulas and their type lines, in one undoable step. A table keeps at
+    /// formulas and their type lines, in one undoable step. A sheet keeps at
     /// least one data column. A column that a formula picks by counting is
     /// still the column it was; a formula that reads a deleted column is
     /// left to be shown as an error.
     pub fn delete_columns(
         &mut self,
-        table: usize,
+        sheet: usize,
         first: usize,
         count: usize,
     ) -> Result<(), String> {
-        let Some(snap) = self.snapshot.tables.get(table) else {
-            return Err("there is no such table".into());
+        let Some(snap) = self.snapshot.sheets.get(sheet) else {
+            return Err("there is no such sheet".into());
         };
         let n = snap.columns.len();
         if count == 0 || first + count > n {
@@ -1190,7 +1239,7 @@ impl Document {
             .filter(kept)
             .any(|k| snap.columns[k].formula.is_none())
         {
-            return Err("a table keeps at least one data column".into());
+            return Err("a sheet keeps at least one data column".into());
         }
         let name = |k: usize| snap.columns[k].name.clone();
         let names: Vec<String> = gone.clone().map(name).collect();
@@ -1203,11 +1252,11 @@ impl Document {
                 k => k - count,
             })
             .collect();
-        let mut text = self.followed_to(table, false, &place, n - count);
+        let mut text = self.followed_to(sheet, false, &place, n - count);
 
-        let ast = parse_sheet(&text, 0, &mut Vec::new());
-        let Some(decl) = self.table_decl(&ast, table) else {
-            return Err("there is no such table".into());
+        let ast = parse_file(&text, 0, &mut Vec::new());
+        let Some(decl) = self.sheet_decl(&ast, sheet) else {
+            return Err("there is no such sheet".into());
         };
         // Whole lines to take out: type lines, and `Name := expression`.
         let line = |s: usize, e: usize| {
@@ -1225,20 +1274,20 @@ impl Document {
         for (s, e) in cuts.into_iter().rev() {
             text.replace_range(s..e, "");
         }
-        let Some(text) = self.arranged(&text, table, &order) else {
-            return Err("there is no such table".into());
+        let Some(text) = self.arranged(&text, sheet, &order) else {
+            return Err("there is no such sheet".into());
         };
         self.commit(text);
         Ok(())
     }
 
-    /// `text` with the columns of table `table` in the order of `order`,
+    /// `text` with the columns of sheet `sheet` in the order of `order`,
     /// their names; a column of the header row that is not among them is
     /// taken out. The header row names every column, and the cells of a
     /// formula column are `*`.
-    fn arranged(&self, text: &str, table: usize, order: &[String]) -> Option<String> {
-        let ast = parse_sheet(text, 0, &mut Vec::new());
-        let decl = self.table_decl(&ast, table)?;
+    fn arranged(&self, text: &str, sheet: usize, order: &[String]) -> Option<String> {
+        let ast = parse_file(text, 0, &mut Vec::new());
+        let decl = self.sheet_decl(&ast, sheet)?;
         let formula = |name: &String| decl.computed.iter().any(|c| &c.name == name);
         let column = |name: &String| decl.header.iter().position(|h| &h.0 == name);
 
@@ -1263,24 +1312,24 @@ impl Document {
     }
 
     /// Add an empty data column at the end of the header row.
-    pub fn add_column(&mut self, table: usize, name: &str) -> Result<(), String> {
+    pub fn add_column(&mut self, sheet: usize, name: &str) -> Result<(), String> {
         let name = valid_name(name)?.to_string();
-        let Some(snap) = self.snapshot.tables.get(table) else {
-            return Err("there is no such table".into());
+        let Some(snap) = self.snapshot.sheets.get(sheet) else {
+            return Err("there is no such sheet".into());
         };
         if snap.columns.iter().any(|c| c.name == name) {
             return Err(format!(
-                "table `{}` already has a column `{name}`",
+                "sheet `{}` already has a column `{name}`",
                 snap.name
             ));
         }
         // A formula column that the header row fails to name moves along one.
         let n = snap.columns.len();
         let ast = self.ast();
-        let named = self.table_decl(&ast, table).map_or(n, |d| d.header.len());
+        let named = self.sheet_decl(&ast, sheet).map_or(n, |d| d.header.len());
         let place: Vec<usize> = (0..n).map(|k| if k < named { k } else { k + 1 }).collect();
-        let followed = self.followed_to(table, false, &place, n + 1);
-        let text = self.grid_edited(&followed, table, |grid| {
+        let followed = self.followed_to(sheet, false, &place, n + 1);
+        let text = self.grid_edited(&followed, sheet, |grid| {
             // A lone column stored its empty cells as `""`.
             if grid.header.len() == 1 {
                 for (_, row) in &mut grid.rows {
@@ -1302,10 +1351,10 @@ impl Document {
     }
 
     /// Rename a column, and every reference to it, in one undoable step.
-    pub fn rename_column(&mut self, table: usize, col: usize, name: &str) -> Result<(), String> {
+    pub fn rename_column(&mut self, sheet: usize, col: usize, name: &str) -> Result<(), String> {
         let new = valid_name(name)?.to_string();
-        let Some(snap) = self.snapshot.tables.get(table) else {
-            return Err("there is no such table".into());
+        let Some(snap) = self.snapshot.sheets.get(sheet) else {
+            return Err("there is no such sheet".into());
         };
         let Some(old) = snap.columns.get(col).map(|c| c.name.clone()) else {
             return Err("there is no such column".into());
@@ -1315,18 +1364,18 @@ impl Document {
         }
         if snap.columns.iter().any(|c| c.name == new) {
             return Err(format!(
-                "table `{}` already has a column `{new}`",
+                "sheet `{}` already has a column `{new}`",
                 snap.name
             ));
         }
         let taken = self.snapshot.consts.iter().any(|c| c.name == new)
-            || self.snapshot.tables.iter().any(|t| t.name == new);
+            || self.snapshot.sheets.iter().any(|t| t.name == new);
         if taken {
-            return Err(format!("`{new}` is already a constant or a table"));
+            return Err(format!("`{new}` is already a constant or a sheet"));
         }
         let ast = self.ast();
-        let Some(decl) = self.table_decl(&ast, table) else {
-            return Err("there is no such table".into());
+        let Some(decl) = self.sheet_decl(&ast, sheet) else {
+            return Err("there is no such sheet".into());
         };
 
         // The declaration: the header cell or `Name :=`, and its type line.
@@ -1340,13 +1389,13 @@ impl Document {
         // Every place a formula names this column, as the checker resolved it.
         let (program, _) = compile(&self.text, 0);
         let column = program
-            .tables
+            .sheets
             .iter()
             .position(|t| t.name == decl.name)
             .and_then(|t| {
                 Some((
                     t,
-                    program.tables[t].cols.iter().position(|c| c.name == old)?,
+                    program.sheets[t].cols.iter().position(|c| c.name == old)?,
                 ))
             });
         let uses = |p: &omasheet_omx::Program| {
@@ -1376,7 +1425,7 @@ impl Document {
         let mut text = self.text.clone();
         let mut touched: Vec<&str> = Vec::new();
         for &s in starts.iter().rev() {
-            let owner = ast.tables.iter().rfind(|t| t.span.start as usize <= s);
+            let owner = ast.sheets.iter().rfind(|t| t.span.start as usize <= s);
             if let Some(t) = owner.filter(|t| !touched.contains(&t.name.as_str())) {
                 touched.push(&t.name);
             }
@@ -1389,10 +1438,10 @@ impl Document {
                 "renaming to `{new}` would change what a formula refers to"
             ));
         }
-        // Line the changed tables up again.
+        // Line the changed sheets up again.
         for name in touched {
-            let ast = parse_sheet(&text, 0, &mut Vec::new());
-            if let Some(decl) = ast.tables.iter().find(|t| t.name == name) {
+            let ast = parse_file(&text, 0, &mut Vec::new());
+            if let Some(decl) = ast.sheets.iter().find(|t| t.name == name) {
                 text = Grid::of(decl).write(decl, &text);
             }
         }
@@ -1400,24 +1449,24 @@ impl Document {
         Ok(())
     }
 
-    /// The text with every row or column of table `table` that a formula
+    /// The text with every row or column of sheet `sheet` that a formula
     /// picks by counting still the one it was, once they are rearranged so
     /// that the k-th is `order[k]`.
-    fn followed(&self, table: usize, rows: bool, order: &[usize]) -> String {
+    fn followed(&self, sheet: usize, rows: bool, order: &[usize]) -> String {
         let mut place = vec![0; order.len()];
         for (new, &old) in order.iter().enumerate() {
             place[old] = new;
         }
-        self.followed_to(table, rows, &place, order.len())
+        self.followed_to(sheet, rows, &place, order.len())
     }
 
     /// The same, for the k-th going to `place[k]` of `count` in all: more
     /// than there were, when some are being added.
-    fn followed_to(&self, table: usize, rows: bool, place: &[usize], count: usize) -> String {
+    fn followed_to(&self, sheet: usize, rows: bool, place: &[usize], count: usize) -> String {
         let ast = self.ast();
-        let name = self.snapshot.tables.get(table).map(|t| t.name.as_str());
+        let name = self.snapshot.sheets.get(sheet).map(|t| t.name.as_str());
         let Some(t) = ast
-            .tables
+            .sheets
             .iter()
             .position(|t| Some(t.name.as_str()) == name)
         else {
@@ -1434,14 +1483,14 @@ impl Document {
 
     /// A name for a copy of column `name`: `Name_copy001`, or the first
     /// after it that is free.
-    fn copy_name(&self, table: usize, name: &str) -> String {
+    fn copy_name(&self, sheet: usize, name: &str) -> String {
         let snap = &self.snapshot;
         let taken = |n: &str| {
-            snap.tables
-                .get(table)
+            snap.sheets
+                .get(sheet)
                 .is_some_and(|t| t.columns.iter().any(|c| c.name == n))
                 || snap.consts.iter().any(|c| c.name == n)
-                || snap.tables.iter().any(|t| t.name == n)
+                || snap.sheets.iter().any(|t| t.name == n)
         };
         (1..)
             .map(|k| format!("{name}_copy{k:03}"))
@@ -1450,15 +1499,15 @@ impl Document {
     }
 
     /// Add an empty data column as column `at`, in one undoable step.
-    pub fn insert_column(&mut self, table: usize, at: usize, name: &str) -> Result<(), String> {
+    pub fn insert_column(&mut self, sheet: usize, at: usize, name: &str) -> Result<(), String> {
         let mark = self.undo.len();
         let ast = self.ast();
-        let named = self.table_decl(&ast, table).map(|d| d.header.len());
-        self.add_column(table, name)?;
+        let named = self.sheet_decl(&ast, sheet).map(|d| d.header.len());
+        self.add_column(sheet, name)?;
         // It was put at the end of the header row.
-        let last = self.snapshot.tables[table].columns.len() - 1;
+        let last = self.snapshot.sheets[sheet].columns.len() - 1;
         let from = named.unwrap_or(last).min(last);
-        self.move_columns(table, from, 1, at.min(last))?;
+        self.move_columns(sheet, from, 1, at.min(last))?;
         self.squash(mark);
         Ok(())
     }
@@ -1466,26 +1515,26 @@ impl Document {
     /// Add `Name := expression` as column `at`, in one undoable step.
     pub fn insert_computed(
         &mut self,
-        table: usize,
+        sheet: usize,
         at: usize,
         name: &str,
         expr: &str,
     ) -> Result<(), String> {
         let mark = self.undo.len();
-        self.add_computed(table, name, expr)?;
-        let last = self.snapshot.tables[table].columns.len() - 1;
-        self.move_columns(table, last, 1, at.min(last))?;
+        self.add_computed(sheet, name, expr)?;
+        let last = self.snapshot.sheets[sheet].columns.len() - 1;
+        self.move_columns(sheet, last, 1, at.min(last))?;
         self.squash(mark);
         Ok(())
     }
 
-    /// Put copies of the columns `cols` of a table in at column `at`, in one
+    /// Put copies of the columns `cols` of a sheet in at column `at`, in one
     /// undoable step. A data column is copied with its cells as they are
     /// written, and a formula column with its formula, each under a name
     /// like `Name_copy001`.
-    pub fn insert_copies(&mut self, table: usize, cols: &[usize], at: usize) -> Result<(), String> {
-        let Some(snap) = self.snapshot.tables.get(table) else {
-            return Err("there is no such table".into());
+    pub fn insert_copies(&mut self, sheet: usize, cols: &[usize], at: usize) -> Result<(), String> {
+        let Some(snap) = self.snapshot.sheets.get(sheet) else {
+            return Err("there is no such sheet".into());
         };
         if cols.iter().any(|c| *c >= snap.columns.len()) {
             return Err("there is no such column".into());
@@ -1495,11 +1544,11 @@ impl Document {
         let start = at.min(snap.columns.len());
         for k in 0..cols.len() {
             let to = start + k;
-            let column = self.snapshot.tables[table].columns[cols[k]].clone();
-            let name = self.copy_name(table, &column.name);
+            let column = self.snapshot.sheets[sheet].columns[cols[k]].clone();
+            let name = self.copy_name(sheet, &column.name);
             match &column.formula {
-                None => self.insert_column(table, to, &name)?,
-                Some(expr) => self.insert_computed(table, to, &name, expr)?,
+                None => self.insert_column(sheet, to, &name)?,
+                Some(expr) => self.insert_computed(sheet, to, &name, expr)?,
             }
             for col in &mut cols {
                 if *col >= to {
@@ -1508,7 +1557,7 @@ impl Document {
             }
             if column.formula.is_none() {
                 let from = cols[k];
-                self.edit_grid(table, |grid| {
+                self.edit_grid(sheet, |grid| {
                     for (_, row) in &mut grid.rows {
                         if let Some(cell) = row.get(from).cloned()
                             && let Some(copy) = row.get_mut(to)
@@ -1523,16 +1572,16 @@ impl Document {
         Ok(())
     }
 
-    /// Add rows at row `row` of a table and put `block` in them from column
+    /// Add rows at row `row` of a sheet and put `block` in them from column
     /// `col`, in one undoable step.
     pub fn insert_cells(
         &mut self,
-        table: usize,
+        sheet: usize,
         (row, col): (usize, usize),
         block: &[Vec<String>],
     ) -> bool {
         let mark = self.undo.len();
-        if !self.insert_rows(table, row, block.len()) {
+        if !self.insert_rows(sheet, row, block.len()) {
             return false;
         }
         let mut cells = Vec::new();
@@ -1541,7 +1590,7 @@ impl Document {
                 cells.push((row + i, col + j, text.clone()));
             }
         }
-        self.set_cells(table, &cells);
+        self.set_cells(sheet, &cells);
         self.squash(mark);
         true
     }
@@ -1550,17 +1599,17 @@ impl Document {
     /// becomes row `to`, in one undoable step. The rows keep their cells.
     /// A row that a formula picks by counting is still the row it was: a
     /// cell's `*-1` is counted again, and so is a number anywhere in the
-    /// sheet. A formula column goes on reading the row before, in the new
+    /// file. A formula column goes on reading the row before, in the new
     /// order.
     pub fn move_rows(
         &mut self,
-        table: usize,
+        sheet: usize,
         first: usize,
         count: usize,
         to: usize,
     ) -> Result<(), String> {
-        let Some(snap) = self.snapshot.tables.get(table) else {
-            return Err("there is no such table".into());
+        let Some(snap) = self.snapshot.sheets.get(sheet) else {
+            return Err("there is no such sheet".into());
         };
         let n = snap.rows.len();
         if count == 0 || first + count > n || to + count > n {
@@ -1572,9 +1621,9 @@ impl Document {
         let mut order: Vec<usize> = (0..n).collect();
         let block: Vec<usize> = order.drain(first..first + count).collect();
         order.splice(to..to, block);
-        let followed = self.followed(table, true, &order);
-        let text = self.grid_edited(&followed, table, |grid| {
-            // Each line of the table keeps its place and takes the cells of
+        let followed = self.followed(sheet, true, &order);
+        let text = self.grid_edited(&followed, sheet, |grid| {
+            // Each line of the sheet keeps its place and takes the cells of
             // the row that now belongs there.
             let cells: Vec<Vec<String>> = grid.rows.iter().map(|(_, row)| row.clone()).collect();
             for (slot, &from) in grid.rows.iter_mut().zip(&order) {
@@ -1596,13 +1645,13 @@ impl Document {
     /// column it was.
     pub fn move_columns(
         &mut self,
-        table: usize,
+        sheet: usize,
         first: usize,
         count: usize,
         to: usize,
     ) -> Result<(), String> {
-        let Some(snap) = self.snapshot.tables.get(table) else {
-            return Err("there is no such table".into());
+        let Some(snap) = self.snapshot.sheets.get(sheet) else {
+            return Err("there is no such sheet".into());
         };
         let n = snap.columns.len();
         if count == 0 || first + count > n || to + count > n {
@@ -1619,39 +1668,39 @@ impl Document {
             .map(|&k| snap.columns[k].name.clone())
             .collect();
 
-        let followed = self.followed(table, false, &order);
-        let Some(text) = self.arranged(&followed, table, &names) else {
+        let followed = self.followed(sheet, false, &order);
+        let Some(text) = self.arranged(&followed, sheet, &names) else {
             return Err("the columns cannot be moved".into());
         };
         self.commit(text);
         Ok(())
     }
 
-    /// Add `Name := expression` to a table, as its last column: the header
+    /// Add `Name := expression` to a sheet, as its last column: the header
     /// row names it, with `*` for its cells.
-    pub fn add_computed(&mut self, table: usize, name: &str, expr: &str) -> Result<(), String> {
+    pub fn add_computed(&mut self, sheet: usize, name: &str, expr: &str) -> Result<(), String> {
         let name = valid_name(name)?.to_string();
         let expr = expr.trim().trim_start_matches('=').trim();
         if expr.is_empty() {
             return Err("a computed column needs an expression".into());
         }
-        let Some(n) = self.snapshot.tables.get(table).map(|t| t.columns.len()) else {
-            return Err("there is no such table".into());
+        let Some(n) = self.snapshot.sheets.get(sheet).map(|t| t.columns.len()) else {
+            return Err("there is no such sheet".into());
         };
         // A column counted from the end is one further from it.
         let place: Vec<usize> = (0..n).collect();
-        let followed = self.followed_to(table, false, &place, n + 1);
-        let ast = parse_sheet(&followed, 0, &mut Vec::new());
-        let Some(decl) = self.table_decl(&ast, table) else {
-            return Err("there is no such table".into());
+        let followed = self.followed_to(sheet, false, &place, n + 1);
+        let ast = parse_file(&followed, 0, &mut Vec::new());
+        let Some(decl) = self.sheet_decl(&ast, sheet) else {
+            return Err("there is no such sheet".into());
         };
-        if self.snapshot.tables[table]
+        if self.snapshot.sheets[sheet]
             .columns
             .iter()
             .any(|c| c.name == name)
         {
             return Err(format!(
-                "table `{}` already has a column `{name}`",
+                "sheet `{}` already has a column `{name}`",
                 decl.name
             ));
         }
@@ -1671,9 +1720,9 @@ impl Document {
         }
         let mut text = grid.write(decl, &followed);
 
-        let ast = parse_sheet(&text, 0, &mut Vec::new());
-        let Some(decl) = self.table_decl(&ast, table) else {
-            return Err("there is no such table".into());
+        let ast = parse_file(&text, 0, &mut Vec::new());
+        let Some(decl) = self.sheet_decl(&ast, sheet) else {
+            return Err("there is no such sheet".into());
         };
         let rows_end = decl
             .row_lines
@@ -1691,7 +1740,7 @@ impl Document {
     }
 
     /// Change the expression of a computed column.
-    pub fn set_column_formula(&mut self, table: usize, col: usize, expr: &str) -> bool {
+    pub fn set_column_formula(&mut self, sheet: usize, col: usize, expr: &str) -> bool {
         let expr = expr
             .trim()
             .trim_start_matches('=')
@@ -1701,10 +1750,10 @@ impl Document {
             return false;
         }
         let ast = self.ast();
-        let Some(decl) = self.table_decl(&ast, table) else {
+        let Some(decl) = self.sheet_decl(&ast, sheet) else {
             return false;
         };
-        let Some(name) = self.snapshot.tables[table]
+        let Some(name) = self.snapshot.sheets[sheet]
             .columns
             .get(col)
             .map(|c| &c.name)
@@ -1753,14 +1802,14 @@ impl Document {
             return Err("a constant needs an expression".into());
         }
         let taken = self.snapshot.consts.iter().any(|c| c.name == name)
-            || self.snapshot.tables.iter().any(|t| t.name == name);
+            || self.snapshot.sheets.iter().any(|t| t.name == name);
         if taken {
             return Err(format!("the name `{name}` is already used"));
         }
-        // Constants go first, before the first table.
+        // Constants go first, before the first sheet.
         let ast = self.ast();
         let at = ast
-            .tables
+            .sheets
             .first()
             .map(|t| {
                 self.text[..t.span.start as usize]
@@ -1777,28 +1826,149 @@ impl Document {
         Ok(())
     }
 
-    /// Append a new table with one empty row.
-    pub fn add_table(&mut self, name: &str) -> Result<(), String> {
+    /// Append a new sheet with one empty row.
+    pub fn add_sheet(&mut self, name: &str) -> Result<(), String> {
+        self.insert_sheet(usize::MAX, name)
+    }
+
+    /// Put a new sheet in before sheet `at`, or last if there is none
+    /// there. It goes above the comment written over that sheet.
+    pub fn insert_sheet(&mut self, at: usize, name: &str) -> Result<(), String> {
         let name = valid_name(name)?.to_string();
         let taken = self.snapshot.consts.iter().any(|c| c.name == name)
-            || self.snapshot.tables.iter().any(|t| t.name == name);
+            || self.snapshot.sheets.iter().any(|t| t.name == name);
         if taken {
             return Err(format!("the name `{name}` is already used"));
         }
-        let mut text = self.text.trim_end().to_string();
-        if !text.is_empty() {
-            text.push_str("\n\n");
+        let block = format!("sheet {name}\n\nA | B | C\n  |   |\n  |   |\n  |   |\n");
+        let ast = self.ast();
+        let text = match self.sheet_decl(&ast, at) {
+            Some(decl) => {
+                let mut start = self.line_start(decl.span.start as usize);
+                while start > 0 {
+                    let above = self.line_start(start - 1);
+                    if !self.text[above..start].starts_with('#') {
+                        break;
+                    }
+                    start = above;
+                }
+                format!("{}{block}\n{}", &self.text[..start], &self.text[start..])
+            }
+            None => {
+                let mut text = self.text.trim_end().to_string();
+                if !text.is_empty() {
+                    text.push_str("\n\n");
+                }
+                text + &block
+            }
+        };
+        self.commit(text);
+        Ok(())
+    }
+
+    /// Where the line holding byte `at` starts.
+    fn line_start(&self, at: usize) -> usize {
+        self.text[..at].rfind('\n').map_or(0, |k| k + 1)
+    }
+
+    /// Give sheet `sheet` another name, in its own line and wherever a
+    /// formula names it.
+    pub fn rename_sheet(&mut self, sheet: usize, name: &str) -> Result<(), String> {
+        let new = valid_name(name)?.to_string();
+        let ast = self.ast();
+        let Some(decl) = self.sheet_decl(&ast, sheet) else {
+            return Err("there is no such sheet".into());
+        };
+        let old = decl.name.clone();
+        if new == old {
+            return Ok(());
         }
-        text.push_str(&format!(
-            "table {name}\n\nA | B | C\n  |   |\n  |   |\n  |   |\n"
-        ));
+        let taken = self.snapshot.consts.iter().any(|c| c.name == new)
+            || self.snapshot.sheets.iter().any(|t| t.name == new);
+        if taken {
+            return Err(format!("the name `{new}` is already used"));
+        }
+        let mut spans = vec![decl.span];
+        for (_, e) in formulas(&ast) {
+            named(&e, &old, &mut spans);
+        }
+        let mut starts: Vec<usize> = spans
+            .iter()
+            .map(|s| s.start as usize)
+            .filter(|s| self.text[*s..].starts_with(&old))
+            .collect();
+        starts.sort_unstable();
+        starts.dedup();
+        let mut text = self.text.clone();
+        let mut touched: Vec<String> = Vec::new();
+        for &s in starts.iter().rev() {
+            let owner = ast.sheets.iter().rfind(|t| t.span.start as usize <= s);
+            if let Some(t) = owner {
+                let name = if t.name == old { &new } else { &t.name };
+                if !touched.contains(name) {
+                    touched.push(name.clone());
+                }
+            }
+            text.replace_range(s..s + old.len(), &new);
+        }
+        // A formula must read what it read: a name that now means something
+        // else, or nothing, is a rename not to make.
+        if compile(&text, 0).1.len() != compile(&self.text, 0).1.len() {
+            return Err(format!(
+                "renaming to `{new}` would change what a formula refers to"
+            ));
+        }
+        // Line the changed sheets up again.
+        for name in touched {
+            let ast = parse_file(&text, 0, &mut Vec::new());
+            if let Some(decl) = ast.sheets.iter().find(|t| t.name == name) {
+                text = Grid::of(decl).write(decl, &text);
+            }
+        }
+        self.commit(text);
+        Ok(())
+    }
+
+    /// Take sheet `sheet` out of the file: its line, its types, its rows
+    /// and its formulas. A formula elsewhere that reads it is left to be
+    /// shown as an error.
+    pub fn delete_sheet(&mut self, sheet: usize) -> Result<(), String> {
+        let ast = self.ast();
+        let Some(decl) = self.sheet_decl(&ast, sheet) else {
+            return Err("there is no such sheet".into());
+        };
+        let start = self.line_start(decl.span.start as usize);
+        let ends = [decl.span, decl.header_line]
+            .into_iter()
+            .chain(decl.separator_line)
+            .chain(decl.row_lines.iter().copied())
+            .chain(decl.schema.iter().map(|l| l.span))
+            .chain(decl.computed.iter().map(|c| c.expr_span));
+        let last = ends.map(|s| s.end as usize).max().unwrap_or(start);
+        let mut end = self.text[last..]
+            .find('\n')
+            .map_or(self.text.len(), |k| last + k + 1);
+        // The blank lines under it go with it.
+        while let Some(rest) = self.text[end..].split_inclusive('\n').next() {
+            if !rest.trim().is_empty() {
+                break;
+            }
+            end += rest.len();
+        }
+        let mut text = format!("{}{}", &self.text[..start], &self.text[end..]);
+        if end >= self.text.len() {
+            text = text.trim_end().to_string();
+            if !text.is_empty() {
+                text.push('\n');
+            }
+        }
         self.commit(text);
         Ok(())
     }
 
     fn rebuild(&mut self) {
         let mut sources = Sources::new();
-        let src = sources.add("sheet", self.text.as_str());
+        let src = sources.add("file", self.text.as_str());
         let (program, mut diags) = compile(&self.text, src);
         let engine = Engine::with_options(
             &program,
@@ -1814,11 +1984,11 @@ impl Document {
 
         // A cell that does not fit its column: say what the column takes,
         // written the way the user types it.
-        for table in &program.tables {
-            let Some(decl) = ast.tables.iter().find(|d| d.name == table.name) else {
+        for sheet in &program.sheets {
+            let Some(decl) = ast.sheets.iter().find(|d| d.name == sheet.name) else {
                 continue;
             };
-            for (cell, col) in decl.rows.iter().flat_map(|row| row.iter().zip(&table.cols)) {
+            for (cell, col) in decl.rows.iter().flat_map(|row| row.iter().zip(&sheet.cols)) {
                 let hint = entry_hint(&self.style, &col.ty.to_string());
                 let misfits = diags
                     .iter_mut()
@@ -1838,7 +2008,7 @@ impl Document {
         };
         let within = |span: Span| diags.iter().find(|d| contains(span, d.span)).map(message);
         let show = |v: &Value| match v {
-            Value::Table(_) => "<table>".to_string(),
+            Value::Sheet(_) => "<sheet>".to_string(),
             Value::Row(_) => "<row>".to_string(),
             other => engine.show(other, false),
         };
@@ -1857,11 +2027,11 @@ impl Document {
         };
 
         let mut snapshot = Snapshot::default();
-        for (t, table) in program.tables.iter().enumerate() {
-            let decl = ast.tables.iter().find(|d| d.name == table.name);
+        for (t, sheet) in program.sheets.iter().enumerate() {
+            let decl = ast.sheets.iter().find(|d| d.name == sheet.name);
             let mut columns = Vec::new();
             let mut column_errors = Vec::new();
-            for col in &table.cols {
+            for col in &sheet.cols {
                 let computed = decl
                     .filter(|_| matches!(col.kind, ColKind::Computed(_)))
                     .and_then(|d| d.computed.iter().find(|c| c.name == col.name));
@@ -1878,9 +2048,9 @@ impl Document {
                 });
                 column_errors.push(computed.and_then(|c| within(c.expr_span)));
             }
-            let mut rows = Vec::with_capacity(table.nrows);
-            for r in 0..table.nrows {
-                let mut row = Vec::with_capacity(table.cols.len());
+            let mut rows = Vec::with_capacity(sheet.nrows);
+            for r in 0..sheet.nrows {
+                let mut row = Vec::with_capacity(sheet.cols.len());
                 for (c, column) in columns.iter().enumerate() {
                     let value = engine.cell_shown(t, c, r);
                     let failed = matches!(value, Value::Error);
@@ -1911,8 +2081,8 @@ impl Document {
                 }
                 rows.push(row);
             }
-            snapshot.tables.push(TableSnap {
-                name: table.name.clone(),
+            snapshot.sheets.push(SheetSnap {
+                name: sheet.name.clone(),
                 columns,
                 rows,
             });
@@ -1962,10 +2132,10 @@ impl Document {
 mod tests {
     use super::*;
 
-    const SALES: &str = "# sales\nconst Rate = 20%\n\ntable Sales\n\nMonth | Revenue | Cost | Profit | Tax\nJan   | 100     | 60   | *      | *\nFeb   | 120     | 70   | *      | *\n\nProfit := Revenue - Cost\nTax := Profit * Rate\n";
+    const SALES: &str = "# sales\nconst Rate = 20%\n\nsheet Sales\n\nMonth | Revenue | Cost | Profit | Tax\nJan   | 100     | 60   | *      | *\nFeb   | 120     | 70   | *      | *\n\nProfit := Revenue - Cost\nTax := Profit * Rate\n";
 
-    fn col(doc: &Document, table: usize, col: usize) -> Vec<String> {
-        doc.snapshot().tables[table]
+    fn col(doc: &Document, sheet: usize, col: usize) -> Vec<String> {
+        doc.snapshot().sheets[sheet]
             .rows
             .iter()
             .map(|r| r[col].display.clone())
@@ -1975,7 +2145,7 @@ mod tests {
     #[test]
     fn snapshot_shows_values_and_sources() {
         let doc = Document::from_text(SALES);
-        let t = &doc.snapshot().tables[0];
+        let t = &doc.snapshot().sheets[0];
         assert_eq!(t.name, "Sales");
         assert_eq!(t.columns.len(), 5);
         assert_eq!(t.columns[3].formula.as_deref(), Some("Revenue - Cost"));
@@ -2045,16 +2215,16 @@ mod tests {
     }
 
     #[test]
-    fn columns_constants_and_tables() {
+    fn columns_constants_and_sheets() {
         let mut doc = Document::from_text(SALES);
         doc.add_column(0, "Note").unwrap();
         assert!(doc.add_column(0, "Note").is_err());
         assert!(doc.add_column(0, "bad name").is_err());
         // A new column is the last one.
         doc.set_cell(0, 0, 5, "a | b");
-        assert_eq!(doc.snapshot().tables[0].rows[0][5].display, "a | b");
+        assert_eq!(doc.snapshot().sheets[0].rows[0][5].display, "a | b");
         doc.add_computed(0, "Margin", "Profit / Revenue").unwrap();
-        let names: Vec<_> = doc.snapshot().tables[0]
+        let names: Vec<_> = doc.snapshot().sheets[0]
             .columns
             .iter()
             .map(|c| c.name.clone())
@@ -2068,7 +2238,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 6), ["0.4", "5/12"]);
         // An exact number is shown in full, so there is no more of it to
         // show.
-        let exact = |doc: &Document| doc.snapshot().tables[0].rows[1][6].exact.clone();
+        let exact = |doc: &Document| doc.snapshot().sheets[0].rows[1][6].exact.clone();
         assert_eq!(exact(&doc), None);
         doc.set_cell(0, 0, 6, "Profit / Cost");
         assert_eq!(col(&doc, 0, 6), ["2/3", "5/7"]);
@@ -2076,8 +2246,8 @@ mod tests {
         assert_eq!(col(&doc, 0, 4), ["20", "25"]);
         doc.add_const("Extra", "Sales.Revenue.sum()").unwrap();
         assert_eq!(doc.snapshot().consts[1].display, "220");
-        doc.add_table("Notes").unwrap();
-        assert_eq!(doc.snapshot().tables[1].rows.len(), 3);
+        doc.add_sheet("Notes").unwrap();
+        assert_eq!(doc.snapshot().sheets[1].rows.len(), 3);
         assert!(
             doc.snapshot().problems.is_empty(),
             "{:?}",
@@ -2088,7 +2258,7 @@ mod tests {
     #[test]
     fn renaming_a_column_follows_its_references() {
         let text = format!(
-            "{SALES}\ntable Top\n\nKind | Value                                 | Revenue\nSum  | = Sales.Revenue.sum()                 | *\nBig  | = Sales[Revenue; Revenue > 100].sum() | *\n\nRevenue := Value\n"
+            "{SALES}\nsheet Top\n\nKind | Value                                 | Revenue\nSum  | = Sales.Revenue.sum()                 | *\nBig  | = Sales[Revenue; Revenue > 100].sum() | *\n\nRevenue := Value\n"
         );
         let mut doc = Document::from_text(&text);
         let before = col(&doc, 0, 3);
@@ -2100,7 +2270,7 @@ mod tests {
         assert!(renamed.contains("Profit := Income - Cost"));
         assert!(renamed.contains("= Sales.Income.sum()"));
         assert!(renamed.contains("= Sales[Income; Income > 100].sum()"));
-        // Another table's own column of the same name is left alone.
+        // Another sheet's own column of the same name is left alone.
         assert!(renamed.contains("Revenue := Value"));
         assert!(
             doc.snapshot().problems.is_empty(),
@@ -2123,7 +2293,7 @@ mod tests {
         assert!(doc.rename_column(0, 1, "bad name").is_err());
         // `Value` inside `Sales[...]` would be captured by the renamed column.
         let capture =
-            format!("{SALES}\ntable Top\n\nValue\n100\n\nN := Sales[; Revenue > Value].count()\n");
+            format!("{SALES}\nsheet Top\n\nValue\n100\n\nN := Sales[; Revenue > Value].count()\n");
         let mut other = Document::from_text(&capture);
         assert!(other.rename_column(0, 1, "Value").is_err());
         assert_eq!(other.text(), capture);
@@ -2138,7 +2308,7 @@ mod tests {
     fn functions_are_listed_and_follow_a_renamed_column() {
         let text = "# Everything sold.\nfn Sold() = Sales.Revenue.sum()\nfn Net(a, b) = a - b\n\n"
             .to_string()
-            + "table Sales\n\nMonth | Revenue | Cost | Profit\nJan   | 100     | 60   | *\n\nProfit := Net(Revenue, Cost)\n";
+            + "sheet Sales\n\nMonth | Revenue | Cost | Profit\nJan   | 100     | 60   | *\n\nProfit := Net(Revenue, Cost)\n";
         let mut doc = Document::from_text(&text);
         assert!(doc.snapshot().problems.is_empty());
         let funcs = &doc.snapshot().funcs;
@@ -2156,12 +2326,12 @@ mod tests {
 
     #[test]
     fn columns_can_be_deleted() {
-        let text = "const Rate = 20%\n\ntable Sales\n\nCost : Int\nRevenue : Int\n\n\
+        let text = "const Rate = 20%\n\nsheet Sales\n\nCost : Int\nRevenue : Int\n\n\
                     Month | Revenue | Cost | Note       | Profit | Tax\nJan   | 100     | 60   | a          | *      | *\nFeb   | 120     | 70   | = [*-1; *] | *      | *\n\n\
                     Profit := Revenue - Cost\nTax := Profit * Rate\n";
         let mut doc = Document::from_text(text);
         let names = |doc: &Document| -> Vec<String> {
-            let columns = &doc.snapshot().tables[0].columns;
+            let columns = &doc.snapshot().sheets[0].columns;
             columns.iter().map(|c| c.name.clone()).collect()
         };
         // A data column goes with its cells and its type line; the formula
@@ -2202,7 +2372,7 @@ mod tests {
         assert!(doc.undo());
         assert_eq!(doc.text(), text);
 
-        // Not every data column, and not off the table.
+        // Not every data column, and not off the sheet.
         assert!(
             doc.delete_columns(0, 0, 4)
                 .unwrap_err()
@@ -2211,17 +2381,17 @@ mod tests {
         assert!(doc.delete_columns(0, 5, 2).is_err());
         assert_eq!(doc.text(), text);
         // Down to one column, an empty cell is still a row.
-        let mut two = Document::from_text("table T\n\nA | B\n  | 1\nx | 2\n");
+        let mut two = Document::from_text("sheet T\n\nA | B\n  | 1\nx | 2\n");
         two.delete_columns(0, 1, 1).unwrap();
-        assert_eq!(two.text(), "table T\n\nA\n\"\"\nx\n");
-        assert_eq!(two.snapshot().tables[0].rows.len(), 2);
+        assert_eq!(two.text(), "sheet T\n\nA\n\"\"\nx\n");
+        assert_eq!(two.snapshot().sheets[0].rows.len(), 2);
     }
 
     #[test]
     fn errors_do_not_blank_the_grid() {
         let mut doc = Document::from_text(SALES);
         doc.set_cell(0, 0, 1, "= Revnue + 1");
-        let t = &doc.snapshot().tables[0];
+        let t = &doc.snapshot().sheets[0];
         assert_eq!(t.rows[0][1].display, "#ERROR");
         assert!(t.rows[0][1].error.as_ref().unwrap().contains("Revnue"));
         assert_eq!(t.rows[1][3].display, "50");
@@ -2232,11 +2402,11 @@ mod tests {
     #[test]
     fn dates_follow_the_style_but_the_text_stays_iso() {
         use omasheet_omx::date::Order;
-        let text = "table Log\n\nDay : Date\nAt : Time\nSeen : DateTime\n\n\
+        let text = "sheet Log\n\nDay : Date\nAt : Time\nSeen : DateTime\n\n\
                     Day | At | Seen | Note\n2026-10-08 | 17:47 | 2026-10-08T17:47 | a\n";
         let mut doc = Document::from_text(text);
         let row = |doc: &Document, r: usize| -> Vec<String> {
-            let cells = &doc.snapshot().tables[0].rows[r];
+            let cells = &doc.snapshot().sheets[0].rows[r];
             cells.iter().map(|c| c.display.clone()).collect()
         };
         assert_eq!(
@@ -2249,7 +2419,7 @@ mod tests {
             row(&doc, 0),
             ["08/10/2026", "17:47", "08/10/2026 17:47", "a"]
         );
-        assert_eq!(doc.snapshot().tables[0].rows[0][0].source, "2026-10-08");
+        assert_eq!(doc.snapshot().sheets[0].rows[0][0].source, "2026-10-08");
         assert_eq!(doc.text(), text);
 
         // Typed the British way, stored the ISO way.
@@ -2281,7 +2451,7 @@ mod tests {
         assert!(doc.text().contains("2026-03-04 | 17:47"));
 
         // A column with no type takes only what must be a date or a time.
-        let mut loose = Document::from_text("table T\n\nA | B\n  |\n  |\n");
+        let mut loose = Document::from_text("sheet T\n\nA | B\n  |\n  |\n");
         loose.set_style(Style::new(Order::Dmy, '/', false));
         loose.set_cells(
             0,
@@ -2295,7 +2465,7 @@ mod tests {
         assert!(loose.text().contains("2026-10-08 | 09:30"));
 
         // A whole number and a part is kept as the fraction it comes to.
-        let mut mixed = Document::from_text("table T\n\nN : Text\n\nA | N\n  |\n  |\n");
+        let mut mixed = Document::from_text("sheet T\n\nN : Text\n\nA | N\n  |\n  |\n");
         mixed.set_cells(
             0,
             &[
@@ -2306,7 +2476,7 @@ mod tests {
         );
         assert!(mixed.text().contains("11/4 | 2 3/4"), "{}", mixed.text());
         assert!(mixed.text().contains("-4/3"));
-        let cell = &mixed.snapshot().tables[0].rows[0][0];
+        let cell = &mixed.snapshot().sheets[0].rows[0][0];
         assert_eq!(
             (cell.display.as_str(), cell.source.as_str()),
             ("2 3/4", "11/4")
@@ -2334,10 +2504,10 @@ mod tests {
         );
         assert_eq!(entry_hint(&us, ""), "");
         // A cell that does not fit says what would.
-        let mut doc = Document::with_style("table T\n\nOn : Date\n\nOn\n2025-01-31\n", us);
+        let mut doc = Document::with_style("sheet T\n\nOn : Date\n\nOn\n2025-01-31\n", us);
         doc.set_cell(0, 0, 0, "soon");
         assert_eq!(
-            doc.snapshot().tables[0].rows[0][0].error.as_deref(),
+            doc.snapshot().sheets[0].rows[0][0].error.as_deref(),
             Some(
                 "`soon` does not fit column `On` (Date: MM/DD/YYYY, e.g. 01/31/2025 or ISO; \
                  to calculate a value, start the cell with `=`)"
@@ -2361,36 +2531,36 @@ mod tests {
     }
 
     #[test]
-    fn a_sheet_in_another_zone_is_shown_on_local_clocks() {
+    fn a_file_in_another_zone_is_shown_on_local_clocks() {
         // A zone whose clocks this machine does not keep, wherever it is.
         let zone = match crate::zone::Zone::system().from_utc(0) {
             Some(32_400) => "America/New_York",
             _ => "Asia/Tokyo",
         };
-        let text = format!("zone {zone}\n\ntable T\n\nAt\n2025-07-15T12:00\n");
-        // As the sheet writes it, for tools.
+        let text = format!("zone {zone}\n\nsheet T\n\nAt\n2025-07-15T12:00\n");
+        // As the file writes it, for tools.
         let plain = Document::from_text(&text);
         assert_eq!(
-            plain.snapshot().tables[0].rows[0][0].display,
+            plain.snapshot().sheets[0].rows[0][0].display,
             "2025-07-15T12:00"
         );
         // For a person, on this machine's clocks; the source is untouched.
         let mut doc = Document::with_style(&text, Style::ISO);
-        let cell = doc.snapshot().tables[0].rows[0][0].clone();
+        let cell = doc.snapshot().sheets[0].rows[0][0].clone();
         assert_eq!(cell.source, "2025-07-15T12:00");
         assert_ne!(cell.display, "2025-07-15T12:00");
-        // What is typed is in the sheet's zone, as the source shows it.
+        // What is typed is in the file's zone, as the source shows it.
         doc.set_cell(0, 0, 0, "2025-07-15T13:00");
         assert!(doc.text().contains("\n2025-07-15T13:00\n"));
 
-        let bad = Document::from_text("zone Mars/Base\n\ntable T\n\nA\n1\n");
+        let bad = Document::from_text("zone Mars/Base\n\nsheet T\n\nA\n1\n");
         assert!(bad.snapshot().problems[0].message.contains("no time zone"));
-        assert_eq!(bad.snapshot().tables[0].rows[0][0].display, "1");
+        assert_eq!(bad.snapshot().sheets[0].rows[0][0].display, "1");
     }
 
     #[test]
     fn a_block_of_cells_is_summed_exactly() {
-        let text = "table T\n\nName | A | B\nx | 1 | 0.5\ny | 2 |\nz | = 1/3 | 1e2\n";
+        let text = "sheet T\n\nName | A | B\nx | 1 | 0.5\ny | 2 |\nz | = 1/3 | 1e2\n";
         let doc = Document::from_text(text);
         let sum = |from, to| doc.summary(0, from, to).unwrap();
         let numbers = |s: &str, a: &str| Some((s.to_string(), a.to_string()));
@@ -2405,7 +2575,7 @@ mod tests {
         assert_eq!((b.count, b.numbers), (2, numbers("100.5", "50.25")));
         let names = sum((0, 0), (2, 0));
         assert_eq!((names.count, names.numbers), (3, None));
-        // A block that runs off the table is cut to it.
+        // A block that runs off the sheet is cut to it.
         assert_eq!(sum((2, 1), (9, 9)).count, 2);
         assert!(doc.summary(5, (0, 0), (1, 1)).is_none());
     }
@@ -2414,12 +2584,12 @@ mod tests {
     fn columns_can_be_moved() {
         let mut doc = Document::from_text(SALES);
         let names = |doc: &Document| -> Vec<String> {
-            let columns = &doc.snapshot().tables[0].columns;
+            let columns = &doc.snapshot().sheets[0].columns;
             columns.iter().map(|c| c.name.clone()).collect()
         };
         assert_eq!(names(&doc), ["Month", "Revenue", "Cost", "Profit", "Tax"]);
 
-        // A data column, with its cells, and the table lined up again.
+        // A data column, with its cells, and the sheet lined up again.
         doc.move_columns(0, 0, 1, 2).unwrap();
         assert_eq!(names(&doc), ["Revenue", "Cost", "Month", "Profit", "Tax"]);
         assert!(
@@ -2446,7 +2616,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 3), ["8", "10"]);
         assert!(doc.snapshot().problems.is_empty());
 
-        // Not off the table.
+        // Not off the sheet.
         let before = doc.text().to_string();
         assert!(doc.move_columns(0, 3, 2, 4).is_err());
         assert!(doc.move_columns(0, 9, 1, 0).is_err());
@@ -2456,14 +2626,14 @@ mod tests {
 
     #[test]
     fn formula_columns_go_among_data_columns() {
-        let text = "const Rate = 20%\n\ntable Sales\n\n\
+        let text = "const Rate = 20%\n\nsheet Sales\n\n\
                     Month | Revenue | Cost | Left                  | Profit | Tax\n\
                     Jan   | 100     | 60   | = [*-1; *] + [*+1; *] | *      | *\n\
                     Feb   | 120     | 70   | 5                     | *      | *\n\n\
                     Profit := Revenue - Cost\nTax := Profit * Rate\n";
         let mut doc = Document::from_text(text);
         let names = |doc: &Document| -> Vec<String> {
-            let columns = &doc.snapshot().tables[0].columns;
+            let columns = &doc.snapshot().sheets[0].columns;
             columns.iter().map(|c| c.name.clone()).collect()
         };
         assert!(doc.snapshot().problems.is_empty());
@@ -2492,7 +2662,7 @@ mod tests {
         assert!(doc.snapshot().problems.is_empty());
         // Its cells show its formula, and typing in one changes the formula.
         assert_eq!(
-            doc.snapshot().tables[0].rows[1][2].source,
+            doc.snapshot().sheets[0].rows[1][2].source,
             "= Revenue - Cost"
         );
         doc.set_cell(0, 1, 2, "= Revenue - Cost - 1");
@@ -2561,13 +2731,13 @@ mod tests {
 
         // Written by hand: a cell of a formula column that is not `*`, and
         // a formula column that the header row does not name.
-        let bad = Document::from_text("table T\n\nA | B\n1 | 2\n\nB := A + 1\n");
+        let bad = Document::from_text("sheet T\n\nA | B\n1 | 2\n\nB := A + 1\n");
         let problems = &bad.snapshot().problems;
         assert!(
             problems[0].message.contains("its cells are written `*`"),
             "{problems:?}"
         );
-        let unnamed = Document::from_text("table T\n\nA\n1\n\nB := A + 1\n");
+        let unnamed = Document::from_text("sheet T\n\nA\n1\n\nB := A + 1\n");
         let problems = &unnamed.snapshot().problems;
         assert!(
             problems[0].message.contains("is not in the header row"),
@@ -2577,7 +2747,7 @@ mod tests {
         assert_eq!(col(&unnamed, 0, 1), ["2"]);
         let mut fixed = unnamed;
         fixed.move_columns(0, 1, 1, 0).unwrap();
-        assert_eq!(fixed.text(), "table T\n\nB | A\n* | 1\n\nB := A + 1\n");
+        assert_eq!(fixed.text(), "sheet T\n\nB | A\n* | 1\n\nB := A + 1\n");
         assert!(fixed.snapshot().problems.is_empty());
     }
 
@@ -2632,8 +2802,8 @@ mod tests {
 
     #[test]
     fn formulas_follow_a_cut_cell() {
-        let text = "const K = T[C; 1]\n\ntable T\n\nA | B | C | D                                    | E\n  |   | 1 | = [*-1; *] + C                       | *\n  |   | 5 | = [*-1; *] * 10 + [2; *-1] + T[C; *] | *\n  |   |   | = sum(T.C)                           | *\n\n\
-                    E := C * 2\n\ntable U\n\nX\n= T[2; 1] + T[; 1].C + T.C[1]\n";
+        let text = "const K = T[C; 1]\n\nsheet T\n\nA | B | C | D                                    | E\n  |   | 1 | = [*-1; *] + C                       | *\n  |   | 5 | = [*-1; *] * 10 + [2; *-1] + T[C; *] | *\n  |   |   | = sum(T.C)                           | *\n\n\
+                    E := C * 2\n\nsheet U\n\nX\n= T[2; 1] + T[; 1].C + T.C[1]\n";
         let mut doc = Document::from_text(text);
         assert_eq!(col(&doc, 0, 3), ["2", "56", "6"]);
         // The 5 goes from C to A and down a row, as a cut and a paste do it.
@@ -2654,14 +2824,14 @@ mod tests {
         assert!(doc.snapshot().problems.is_empty());
 
         // A column named on its own follows too.
-        let mut doc = Document::from_text("table T\n\nA | B | C\n  | 5 | = B * 2\n  |   |\n");
+        let mut doc = Document::from_text("sheet T\n\nA | B | C\n  | 5 | = B * 2\n  |   |\n");
         doc.set_cell(0, 0, 1, "");
         doc.paste_cut(0, (0, 1), (1, 0), &[vec!["5".to_string()]]);
         assert!(doc.text().contains("| = [A; *+1] * 2"), "{}", doc.text());
         assert_eq!(col(&doc, 0, 2), ["10", ""]);
 
         // Put down on the cell it reads, a formula is an error, not refused.
-        let mut doc = Document::from_text("table T\n\nA | B\n1 | = [*-1; *]\n");
+        let mut doc = Document::from_text("sheet T\n\nA | B\n1 | = [*-1; *]\n");
         doc.set_cell(0, 0, 1, "");
         assert!(doc.paste_cut(0, (0, 1), (0, 0), &[vec!["= [*-1; *]".to_string()]]));
         assert!(doc.text().contains("\n= [*; *] |\n"), "{}", doc.text());
@@ -2669,8 +2839,29 @@ mod tests {
     }
 
     #[test]
+    fn edits_as_one_undo_as_one() {
+        let text = "sheet T\n\nA | B\n1 | 2\n";
+        let mut doc = Document::from_text(text);
+        assert!(doc.as_one(|doc| {
+            doc.set_cell(0, 0, 0, "");
+            doc.set_cell(0, 0, 1, "1");
+        }));
+        assert_eq!(col(&doc, 0, 1), ["1"]);
+        assert!(doc.undo());
+        assert_eq!(doc.text(), text);
+        assert!(!doc.undo());
+        assert!(!doc.as_one(|_| {}));
+        // Edits that come to nothing leave nothing to undo.
+        assert!(!doc.as_one(|doc| {
+            doc.set_cell(0, 0, 0, "");
+            doc.set_cell(0, 0, 0, "1");
+        }));
+        assert!(!doc.undo());
+    }
+
+    #[test]
     fn moved_rows_keep_a_range_that_starts_after() {
-        let text = "table T\n\nName | N | M\na | 1 |\nb | 2 |\nc | 3 |\n\
+        let text = "sheet T\n\nName | N | M\na | 1 |\nb | 2 |\nc | 3 |\n\
                     d | 4 | = sum([N; 0^..2]) + sum([N; ^2])\n";
         let mut doc = Document::from_text(text);
         assert_eq!(col(&doc, 0, 2), ["", "", "", "8"]);
@@ -2688,7 +2879,7 @@ mod tests {
 
     #[test]
     fn moved_rows_keep_what_reads_them() {
-        let text = "const First = T[N; 0]\n\ntable T\n\nName | N | M                                   | Sum\na    | 1 |                                     | *\nb    | 2 |                                     | *\nc    | 3 | = [N; *-1] + 10                     | *\n\
+        let text = "const First = T[N; 0]\n\nsheet T\n\nName | N | M                                   | Sum\na    | 1 |                                     | *\nb    | 2 |                                     | *\nc    | 3 | = [N; *-1] + 10                     | *\n\
                     d    | 4 | = [N; 0] + sum([N; 0..1]) + [N; -3] | *\n\nSum := N + ([N; *-1] // 0)\n";
         let mut doc = Document::from_text(text);
         assert_eq!(col(&doc, 0, 2), ["", "", "12", "6"]);
@@ -2730,7 +2921,7 @@ mod tests {
         // The checks that must hold through anything: `cell` and `own`.
         let failed = |doc: &Document| col(doc, 2, 2)[..2].join(" ");
         let cut = |doc: &mut Document, from: (usize, usize), to: (usize, usize)| {
-            let source = doc.snapshot().tables[0].rows[from.0][from.1].source.clone();
+            let source = doc.snapshot().sheets[0].rows[from.0][from.1].source.clone();
             doc.set_cell(0, from.0, from.1, "");
             doc.paste_cut(0, from, to, &[vec![source]]);
         };
@@ -2772,10 +2963,10 @@ mod tests {
 
     #[test]
     fn columns_can_be_put_in_and_copied() {
-        let text = "const K = T[1; 0] + T[-1; 0]\n\ntable T\n\nA | B | C                                  | S\n1 | 2 | = [*-1; *] * 10 + [0; *] + [-3; *] | *\n3 | 4 | = [*-2; *]                         | *\n\n\
+        let text = "const K = T[1; 0] + T[-1; 0]\n\nsheet T\n\nA | B | C                                  | S\n1 | 2 | = [*-1; *] * 10 + [0; *] + [-3; *] | *\n3 | 4 | = [*-2; *]                         | *\n\n\
                     S := A + [1; *]\n";
         let names = |doc: &Document| -> Vec<String> {
-            let columns = &doc.snapshot().tables[0].columns;
+            let columns = &doc.snapshot().sheets[0].columns;
             columns.iter().map(|c| c.name.clone()).collect()
         };
         let mut doc = Document::from_text(text);
@@ -2825,7 +3016,7 @@ mod tests {
         // The copy counts from where it is, so it reads other cells.
         assert_eq!(col(&doc, 0, 4), ["23", "3"]);
         assert!(
-            doc.snapshot().tables[0].rows[1][0]
+            doc.snapshot().sheets[0].rows[1][0]
                 .source
                 .contains("[*-2; *]")
         );
@@ -2845,7 +3036,7 @@ mod tests {
 
     #[test]
     fn rows_can_be_moved() {
-        let text = "table T\n\nName | N               | Sum\na    | 1               | *\nb    | 2               | *\nc    | = [N; *-1] + 10 | *\nd    | 4               | *\n\n\
+        let text = "sheet T\n\nName | N               | Sum\na    | 1               | *\nb    | 2               | *\nc    | = [N; *-1] + 10 | *\nd    | 4               | *\n\n\
                     Sum := N + ([N; *-1] // 0)\n";
         let mut doc = Document::from_text(text);
         assert_eq!(col(&doc, 0, 2), ["1", "3", "14", "16"]);
@@ -2863,7 +3054,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 0), ["a", "d", "b", "c"]);
         assert!(doc.undo());
         assert_eq!(col(&doc, 0, 0), ["b", "c", "a", "d"]);
-        // Not off the table.
+        // Not off the sheet.
         let before = doc.text().to_string();
         assert!(doc.move_rows(0, 3, 2, 0).is_err());
         assert!(doc.move_rows(0, 0, 2, 3).is_err());
@@ -2872,12 +3063,89 @@ mod tests {
     }
 
     #[test]
+    fn sheets_can_be_put_in_renamed_and_deleted() {
+        let text = "const K = Sales.Revenue.sum()\n\n# The sales.\nsheet Sales\n\nMonth | Revenue\nJan   | 100\nFeb   | 120\n\n\
+                    sheet Summary\n\nLabel | Total                     | Twice\nAll   | = Sales[Revenue; 0] + K | *\n\nTwice := Sales.Revenue.sum() * 2\n";
+        let mut doc = Document::from_text(text);
+        let names = |doc: &Document| -> Vec<String> {
+            doc.snapshot()
+                .sheets
+                .iter()
+                .map(|t| t.name.clone())
+                .collect()
+        };
+
+        // Before a sheet, above its comment; after the last, at the end.
+        doc.insert_sheet(0, "First").unwrap();
+        doc.insert_sheet(2, "Middle").unwrap();
+        doc.insert_sheet(4, "Last").unwrap();
+        assert_eq!(names(&doc), ["First", "Sales", "Middle", "Summary", "Last"]);
+        assert!(
+            doc.text().contains("\n\n# The sales.\nsheet Sales\n"),
+            "{}",
+            doc.text()
+        );
+        assert!(doc.insert_sheet(0, "Sales").is_err());
+        assert!(doc.insert_sheet(0, "K").is_err());
+        assert!(
+            doc.snapshot().problems.is_empty(),
+            "{:?}",
+            doc.snapshot().problems
+        );
+
+        // A new name is followed wherever the sheet is read.
+        doc.rename_sheet(1, "Takings").unwrap();
+        assert_eq!(names(&doc)[1], "Takings");
+        assert!(
+            doc.text().contains("const K = Takings.Revenue.sum()"),
+            "{}",
+            doc.text()
+        );
+        assert!(
+            doc.text().contains("= Takings[Revenue; 0] + K"),
+            "{}",
+            doc.text()
+        );
+        assert!(
+            doc.text().contains("Twice := Takings.Revenue.sum() * 2"),
+            "{}",
+            doc.text()
+        );
+        assert!(
+            doc.snapshot().problems.is_empty(),
+            "{:?}",
+            doc.snapshot().problems
+        );
+        assert_eq!(doc.snapshot().sheets[3].rows[0][1].display, "320");
+        assert!(doc.rename_sheet(1, "Summary").is_err());
+        assert!(doc.rename_sheet(1, "K").is_err());
+        assert!(doc.rename_sheet(1, "bad name").is_err());
+        assert!(doc.undo());
+        assert_eq!(names(&doc)[1], "Sales");
+
+        // Deleting takes the whole of it, and nothing of its neighbours.
+        doc.delete_sheet(2).unwrap();
+        doc.delete_sheet(3).unwrap();
+        doc.delete_sheet(0).unwrap();
+        assert_eq!(names(&doc), ["Sales", "Summary"]);
+        assert_eq!(doc.text(), text);
+        assert!(doc.delete_sheet(2).is_err());
+        doc.delete_sheet(1).unwrap();
+        doc.delete_sheet(0).unwrap();
+        assert!(names(&doc).is_empty());
+        assert_eq!(
+            doc.text(),
+            "const K = Sales.Revenue.sum()\n\n# The sales.\n"
+        );
+    }
+
+    #[test]
     fn blank_document_is_valid() {
         let mut doc = Document::default();
         assert!(doc.snapshot().problems.is_empty());
-        assert_eq!(doc.snapshot().tables[0].rows.len(), 5);
+        assert_eq!(doc.snapshot().sheets[0].rows.len(), 5);
         doc.set_cell(0, 0, 0, "1");
         doc.set_cell(0, 0, 1, "= A + 1");
-        assert_eq!(doc.snapshot().tables[0].rows[0][1].display, "2");
+        assert_eq!(doc.snapshot().sheets[0].rows[0][1].display, "2");
     }
 }

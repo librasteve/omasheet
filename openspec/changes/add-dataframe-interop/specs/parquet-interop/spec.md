@@ -1,33 +1,33 @@
 # parquet-interop
 
-Parquet is the compatibility format for dataframe tools: one table of typed
+Parquet is the compatibility format for dataframe tools: one sheet of typed
 columns.
 
 ## ADDED Requirements
 
 ### Requirement: Parquet is not the native model
 Parquet import and export SHALL be conversions at the boundary, like XLSX and
-CSV. A Parquet file holds the values and column types of one table: it SHALL NOT
+CSV. A Parquet file holds the values and column types of one sheet: it SHALL NOT
 carry formulas, computed-column definitions, constants or functions.
 
 #### Scenario: Export does not replace the source
-- **WHEN** a sheet is exported to Parquet
+- **WHEN** a file is exported to Parquet
 - **THEN** the `.omx` file is unchanged and remains the source of truth
 
 ### Requirement: Export to Parquet
-Exporting SHALL write one Parquet file per table, with one column per table
+Exporting SHALL write one Parquet file per sheet, with one column per sheet
 column under the same name, and computed columns and formula cells written as
-their values. A sheet with one table SHALL be written to `<name>.parquet`; a
-sheet with several SHALL be written to `<name>.<Table>.parquet` for each, unless
-one table is chosen. An empty cell SHALL be written as null.
+their values. A file with one sheet SHALL be written to `<name>.parquet`; a
+file with several SHALL be written to `<name>.<Sheet>.parquet` for each, unless
+one sheet is chosen. An empty cell SHALL be written as null.
 
-#### Scenario: One table
-- **GIVEN** `budget.omx` with the single table `Sales`
+#### Scenario: One sheet
+- **GIVEN** `budget.omx` with the single sheet `Sales`
 - **WHEN** it is exported to Parquet
 - **THEN** `budget.parquet` is written with the columns `Month`, `Revenue`, `Cost`, `Profit`
 
-#### Scenario: Several tables
-- **GIVEN** `budget.omx` with tables `Sales` and `Summary`
+#### Scenario: Several sheets
+- **GIVEN** `budget.omx` with sheets `Sales` and `Summary`
 - **WHEN** it is exported to Parquet
 - **THEN** `budget.Sales.parquet` and `budget.Summary.parquet` are written
 
@@ -45,7 +45,7 @@ from the values of the whole column:
 | `Bool` | boolean | |
 | `Date` | date | |
 | `Time` | time of day | |
-| `DateTime` | timestamp, in the sheet's time zone when it names one, otherwise with no zone | |
+| `DateTime` | timestamp, in the file's time zone when it names one, otherwise with no zone | |
 
 A column whose values are not all of one type SHALL be written as strings. A
 cell that could not be calculated SHALL be written as null. The export SHALL
@@ -68,12 +68,12 @@ cell written as null because it failed.
 - **THEN** the column is a decimal of scale 0 holding `1267650600228229401496703205376`
 
 #### Scenario: Time zone
-- **GIVEN** a sheet with `zone Europe/London` and a `DateTime` column
+- **GIVEN** a file with `zone Europe/London` and a `DateTime` column
 - **WHEN** it is exported
 - **THEN** the column is a timestamp in `Europe/London`
 
 ### Requirement: Import from Parquet
-Importing SHALL produce `.omx` source with one table, named after the file, with
+Importing SHALL produce `.omx` source with one sheet, named after the file, with
 a `Name : Type` line for every column, taken from the file's schema and not
 inferred from the values. Integers of any width SHALL become `Int`; decimals
 SHALL become `Fraction`, exactly; floating-point columns SHALL become `Num`; a
@@ -87,7 +87,7 @@ struct, binary) SHALL be left out, and the import SHALL report it.
 #### Scenario: Typed columns
 - **GIVEN** `sales.parquet` with a string column `Month` and a decimal column `Revenue`
 - **WHEN** `omasheet import sales.parquet` is run
-- **THEN** the output contains `table sales` with the lines `Month : Text` and `Revenue : Fraction`
+- **THEN** the output contains `sheet sales` with the lines `Month : Text` and `Revenue : Fraction`
 
 #### Scenario: Floating point stays floating point
 - **GIVEN** a double column `Reading`
@@ -97,12 +97,12 @@ struct, binary) SHALL be left out, and the import SHALL report it.
 #### Scenario: Nested column
 - **GIVEN** a file with a list column `Tags`
 - **WHEN** it is imported
-- **THEN** the table has no `Tags` column and a notice says it was left out
+- **THEN** the sheet has no `Tags` column and a notice says it was left out
 
 #### Scenario: Round trip
-- **GIVEN** a table whose `Fraction` values all terminate
+- **GIVEN** a sheet whose `Fraction` values all terminate
 - **WHEN** it is exported to Parquet and the file is imported
-- **THEN** the imported table has the same column types and the same values, exactly
+- **THEN** the imported sheet has the same column types and the same values, exactly
 
 ### Requirement: Names on import
 Column and file names SHALL be made into OMX identifiers by the rule in
