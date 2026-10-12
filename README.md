@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/librasteve/omasheet/main/install.sh
 
 ```sh
 omasheet                                # the app, on a new sheet
-omasheet examples/budget.omx            # the app, on a .omx, .csv or .xlsx file
+omasheet examples/budget.omx            # the app, on a .omx, .csv, .json or .xlsx file
 omasheet print examples/budget.omx      # print the calculated sheet
 omasheet eval '1/3 + 1/6'               # 0.5, exactly
 omasheet export examples/budget.omx --xlsx
@@ -55,7 +55,7 @@ Please load the Omasheet skill from https://raw.githubusercontent.com/librasteve
 - [The sheet format](docs/format.md)
 - [Expressions](docs/expressions.md)
 - [The app and the command line](docs/app.md)
-- [Workbooks, CSV and Markdown](docs/interop.md)
+- [Workbooks, CSV, JSON and Markdown](docs/interop.md)
 - [`examples/`](examples) — worked sheets, each with its expected output
 - [`openspec/`](openspec) — the design and the specs
 

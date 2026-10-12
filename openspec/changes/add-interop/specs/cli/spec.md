@@ -5,9 +5,9 @@ The `import`, `export` and `render` subcommands.
 ## ADDED Requirements
 
 ### Requirement: Import subcommand
-`omasheet import <file>` SHALL produce `.omx` source from an XLSX workbook or a
-CSV file, chosen by the file's extension, as specified in `xlsx-interop` and
-`csv-interop`. The source SHALL be written to standard output, or to the file
+`omasheet import <file>` SHALL produce `.omx` source from an XLSX workbook, a
+CSV file or a JSON file, chosen by the file's extension, as specified in
+`xlsx-interop`, `csv-interop` and `json-interop`. The source SHALL be written to standard output, or to the file
 given with `-o`; notices SHALL be written to standard error.
 
 #### Scenario: Import a workbook
@@ -23,7 +23,7 @@ given with `-o`; notices SHALL be written to standard error.
 - **THEN** the command fails, naming the kinds of file it can import
 
 ### Requirement: Export subcommand
-`omasheet export <file.omx>` SHALL take exactly one of `--xlsx` and `--csv` and
+`omasheet export <file.omx>` SHALL take exactly one of `--xlsx`, `--csv` and `--json` and
 write the evaluated sheet in that format beside the source, or to the path given
 with `-o`. `--table <Name>` SHALL export that table alone. A sheet that does not
 compile SHALL NOT be exported.
@@ -36,9 +36,13 @@ compile SHALL NOT be exported.
 - **WHEN** `omasheet export budget.omx --csv --table Sales` is run
 - **THEN** `budget.csv` is written, holding the `Sales` table
 
+#### Scenario: Export to JSON
+- **WHEN** `omasheet export budget.omx --json` is run
+- **THEN** `budget.json` is written, holding every table
+
 #### Scenario: No format
 - **WHEN** `omasheet export budget.omx` is run
-- **THEN** the command fails, asking for `--xlsx` or `--csv`
+- **THEN** the command fails, asking for `--xlsx`, `--csv` or `--json`
 
 ### Requirement: Render subcommand
 `omasheet render <file.md>` SHALL render a Markdown document with its Omasheet

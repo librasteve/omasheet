@@ -1,6 +1,6 @@
 [package]
 name = "omasheet-interop"
-description = "Omasheet interop: import and export of .omx sheets as XLSX and CSV"
+description = "Omasheet interop: import and export of .omx sheets as XLSX, CSV and JSON"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,3 +12,4 @@ num-rational.workspace = true
 calamine.workspace = true
 rust_xlsxwriter.workspace = true
 csv.workspace = true
+serde_json.workspace = true

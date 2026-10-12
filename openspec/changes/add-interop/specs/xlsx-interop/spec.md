@@ -19,10 +19,34 @@ and one row per table row. Data cells SHALL be written as values. Constructs wit
 no XLSX equivalent SHALL be mapped by the documented lossy rules below, and the
 export SHALL report which lossy rules were applied.
 
+A formula cell and a cell of a computed column SHALL be written as a workbook
+formula where a workbook can say it, with the calculated value as its result:
+a column and a row of a table as a cell of that table's worksheet, relative
+to the row the formula is on, or fixed where the sheet names a row by number.
+A formula a workbook cannot say SHALL be written as its value, and the export
+SHALL report why, and in which columns. A cell that is empty or that failed
+SHALL be written with no formula. A constant SHALL be written into a formula
+as the expression it stands for.
+
 #### Scenario: One worksheet per table
 - **GIVEN** a sheet with tables `Sales` and `Customers`
 - **WHEN** it is exported
 - **THEN** the workbook has worksheets `Sales` and `Customers`
+
+#### Scenario: A computed column
+- **GIVEN** a table `Sales` with columns `Month`, `Revenue`, `Cost` and `Profit := Revenue - Cost`
+- **WHEN** it is exported
+- **THEN** the cell `D2` of worksheet `Sales` holds the formula `=B2-C2` and its value
+
+#### Scenario: A formula that reads another table
+- **GIVEN** a cell `= Sales.Revenue.sum()` in a table `Summary`, and three rows in `Sales`
+- **WHEN** the sheet is exported
+- **THEN** the cell holds `=SUM('Sales'!$B$2:$B$4)`
+
+#### Scenario: A formula a workbook cannot say
+- **GIVEN** a computed column `Odd := N in [10, 30]`
+- **WHEN** the sheet is exported
+- **THEN** its cells hold their values, and a notice names the column and the reason
 
 #### Scenario: Lossy export is reported
 - **GIVEN** a sheet containing a non-terminating `Fraction`

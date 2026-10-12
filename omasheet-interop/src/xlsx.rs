@@ -10,6 +10,7 @@ use crate::{
 };
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use num_rational::BigRational;
+use omasheet_engine::omx::check::{Cell, ColKind};
 use omasheet_engine::omx::convert::fraction_of;
 use omasheet_engine::omx::date;
 use omasheet_engine::omx::types::S;
@@ -18,6 +19,8 @@ use omasheet_engine::value::{format_exact, format_rat, to_f64};
 use omasheet_engine::{Engine, Options, Value};
 use rust_xlsxwriter::{Format, Workbook, Worksheet, XlsxError};
 use std::io::Cursor;
+
+mod write;
 
 /// Days from the day a workbook counts from, 1899-12-30, to 1970-01-01.
 const EPOCH: i64 = 25_569;
@@ -397,73 +400,98 @@ struct Formats {
     percent: Format,
 }
 
-fn write_cell(
-    sheet: &mut Worksheet,
-    formats: &Formats,
-    (row, col): (u32, u16),
+/// What a cell of a workbook holds for a value.
+enum Shown<'f> {
+    Number(f64, Option<&'f Format>),
+    Text(String),
+    Bool(bool),
+    /// A value a workbook has no type for, as text: no formula gives it.
+    Written(String),
+}
+
+/// A value as a workbook holds it, or `None` for nothing.
+fn shown<'f>(
+    formats: &'f Formats,
     value: &Value,
     mut lose: impl FnMut(&'static str),
-) -> Result<(), XlsxError> {
+) -> Option<Shown<'f>> {
     let day = DAY as f64;
-    match value {
-        Value::Empty => {}
+    Some(match value {
+        Value::Empty => return None,
         Value::Int(n) => {
             let (f, same) = double(&BigRational::from_integer(n.clone()));
             if !f.is_finite() {
                 lose(AS_TEXT);
-                sheet.write_string(row, col, n.to_string())?;
-                return Ok(());
+                return Some(Shown::Written(n.to_string()));
             }
             if !same {
                 lose(LARGE);
             }
-            sheet.write_number(row, col, f)?;
+            Shown::Number(f, None)
         }
         Value::Decimal(r) | Value::Fraction(r) => {
             let (f, same) = double(r);
             if !same {
                 lose(ROUNDED);
             }
-            sheet.write_number(row, col, f)?;
+            Shown::Number(f, None)
         }
         Value::Percent(r) => {
             let (f, same) = double(r);
             if !same {
                 lose(ROUNDED);
             }
-            sheet.write_number_with_format(row, col, f, &formats.percent)?;
+            Shown::Number(f, Some(&formats.percent))
         }
-        Value::Num(f) if f.is_finite() => {
-            sheet.write_number(row, col, *f)?;
-        }
-        Value::Text(s) => {
-            sheet.write_string(row, col, &**s)?;
-        }
-        Value::Bool(b) => {
-            sheet.write_boolean(row, col, *b)?;
-        }
-        Value::Date(d) => {
-            let serial = (*d as i64 + EPOCH) as f64;
-            sheet.write_number_with_format(row, col, serial, &formats.date)?;
-        }
-        Value::Time(t) => {
-            sheet.write_number_with_format(row, col, *t as f64 / day, &formats.time)?;
-        }
+        Value::Num(f) if f.is_finite() => Shown::Number(*f, None),
+        Value::Text(s) => Shown::Text(s.to_string()),
+        Value::Bool(b) => Shown::Bool(*b),
+        Value::Date(d) => Shown::Number((*d as i64 + EPOCH) as f64, Some(&formats.date)),
+        Value::Time(t) => Shown::Number(*t as f64 / day, Some(&formats.time)),
         Value::DateTime(t) => {
-            let serial = *t as f64 / day + EPOCH as f64;
-            sheet.write_number_with_format(row, col, serial, &formats.datetime)?;
+            Shown::Number(*t as f64 / day + EPOCH as f64, Some(&formats.datetime))
         }
         Value::Zoned(z) => {
             lose(ZONES);
             let serial = z.home_wall() as f64 / day + EPOCH as f64;
-            sheet.write_number_with_format(row, col, serial, &formats.datetime)?;
+            Shown::Number(serial, Some(&formats.datetime))
         }
         other => {
             lose(AS_TEXT);
-            let text = format_exact(other, false, &date::Style::ISO);
-            sheet.write_string(row, col, text)?;
+            Shown::Written(format_exact(other, false, &date::Style::ISO))
         }
-    }
+    })
+}
+
+/// Write a cell: its value, or its formula with the value as its result,
+/// so that the workbook shows it before anything works it out again.
+fn write_cell(
+    sheet: &mut Worksheet,
+    (row, col): (u32, u16),
+    shown: Shown,
+    formula: Option<String>,
+) -> Result<(), XlsxError> {
+    let Some(formula) = formula else {
+        match shown {
+            Shown::Number(f, None) => sheet.write_number(row, col, f)?,
+            Shown::Number(f, Some(format)) => {
+                sheet.write_number_with_format(row, col, f, format)?
+            }
+            Shown::Text(s) | Shown::Written(s) => sheet.write_string(row, col, s)?,
+            Shown::Bool(b) => sheet.write_boolean(row, col, b)?,
+        };
+        return Ok(());
+    };
+    let (result, format) = match shown {
+        Shown::Number(f, format) => (f.to_string(), format),
+        Shown::Text(s) | Shown::Written(s) => (s, None),
+        Shown::Bool(b) => (if b { "TRUE" } else { "FALSE" }.to_string(), None),
+    };
+    let formula = rust_xlsxwriter::Formula::new(formula).set_result(result);
+    match format {
+        Some(format) => sheet.write_formula_with_format(row, col, formula, format)?,
+        None => sheet.write_formula(row, col, formula)?,
+    };
     Ok(())
 }
 
@@ -487,6 +515,9 @@ pub fn export(
         let mut losses = Losses::default();
         let mut notices = Vec::new();
         let mut used: Vec<String> = Vec::new();
+        // Every worksheet is named before any is written, as a formula may
+        // read a table that comes after its own.
+        let mut titles: Vec<Option<String>> = vec![None; sheet.program.tables.len()];
         for &t in &sheet.tables {
             let table = &sheet.program.tables[t];
             // A worksheet name is at most 31 characters.
@@ -501,8 +532,19 @@ pub fn export(
                 notices.push(format!("table `{}` is worksheet `{title}`", table.name));
             }
             used.push(title.clone());
+            titles[t] = Some(title);
+        }
+        let writer = write::Writer {
+            program: sheet.program,
+            engine: sheet.engine,
+            titles,
+        };
+        let mut formulas = 0;
+        for &t in &sheet.tables {
+            let table = &sheet.program.tables[t];
             let page = book.add_worksheet();
-            page.set_name(&title).map_err(fail)?;
+            let title = writer.titles[t].as_deref().unwrap_or(&table.name);
+            page.set_name(title).map_err(fail)?;
             for (c, col) in table.cols.iter().enumerate() {
                 page.write_string(0, c as u16, &col.name).map_err(fail)?;
             }
@@ -513,11 +555,30 @@ pub fn export(
                         losses.add(FAILED, sheet.column(t, c));
                         continue;
                     }
-                    let at = (r as u32 + 1, c as u16);
-                    write_cell(page, &formats, at, &value, |what| {
+                    let Some(shown) = shown(&formats, &value, |what| {
                         losses.add(what, sheet.column(t, c))
-                    })
-                    .map_err(fail)?;
+                    }) else {
+                        continue;
+                    };
+                    let node = match &table.cols[c].kind {
+                        ColKind::Computed(node) => Some(node),
+                        ColKind::Data(cells) => match cells.get(r) {
+                            Some(Cell::Formula(node)) => Some(node),
+                            _ => None,
+                        },
+                    };
+                    // A value with no type in a workbook has no formula there.
+                    let node = node.filter(|_| !matches!(shown, Shown::Written(_)));
+                    let formula = match node.map(|node| writer.formula(node, t, r)) {
+                        Some(Ok(formula)) => formula,
+                        Some(Err(why)) => {
+                            losses.add(why, sheet.column(t, c));
+                            None
+                        }
+                        None => None,
+                    };
+                    formulas += formula.is_some() as usize;
+                    write_cell(page, (r as u32 + 1, c as u16), shown, formula).map_err(fail)?;
                 }
             }
         }
@@ -529,6 +590,10 @@ pub fn export(
                 .map(|c| c.name.as_str())
                 .collect();
             notices.push(format!("constants are not exported: {}", names.join(", ")));
+        }
+        if formulas > 0 {
+            let s = if formulas == 1 { "" } else { "s" };
+            notices.push(format!("{formulas} formula{s} written"));
         }
         notices.extend(losses.notices());
         let bytes = book.save_to_buffer().map_err(fail)?;

@@ -1504,8 +1504,8 @@ ApplicationWindow {
         id: openDialog
         title: "Open sheet"
         fileMode: Dialogs.FileDialog.OpenFile
-        // A workbook or a CSV file is imported: it opens as a new sheet.
-        nameFilters: ["Sheets, workbooks and CSV (*.omx *.xlsx *.csv)", "Omasheet (*.omx)", "All files (*)"]
+        // A workbook, a CSV file or JSON is imported: it opens as a new sheet.
+        nameFilters: ["Sheets, workbooks, CSV and JSON (*.omx *.xlsx *.csv *.json)", "Omasheet (*.omx)", "All files (*)"]
         onAccepted: {
             win.pendingUrl = selectedFile;
             win.run("openUrl");
@@ -1540,16 +1540,17 @@ ApplicationWindow {
         readonly property bool oneTable: !win.table.isConsts && win.tabs.length > 0
         onClosed: grid.forceActiveFocus()
         onOpened: workbookButton.forceActiveFocus()
-        function choose(csv) {
+        function choose(kind) {
             close();
-            exportDialog.csv = csv;
+            exportDialog.kind = kind;
             // Beside the sheet, under its name.
             var name = win.table.isConsts ? "" : win.table.name;
-            exportDialog.selectedFile = sheet.exportSuggestion(csv, name, exportDialog.currentFolder);
+            exportDialog.selectedFile = sheet.exportSuggestion(kind, name, exportDialog.currentFolder);
             exportDialog.open();
         }
-        Shortcut { sequence: "X"; enabled: exportChoice.visible; onActivated: exportChoice.choose(false) }
-        Shortcut { sequence: "C"; enabled: exportChoice.visible && exportChoice.oneTable; onActivated: exportChoice.choose(true) }
+        Shortcut { sequence: "X"; enabled: exportChoice.visible; onActivated: exportChoice.choose("xlsx") }
+        Shortcut { sequence: "C"; enabled: exportChoice.visible && exportChoice.oneTable; onActivated: exportChoice.choose("csv") }
+        Shortcut { sequence: "J"; enabled: exportChoice.visible; onActivated: exportChoice.choose("json") }
         ColumnLayout {
             width: parent.width
             spacing: 10
@@ -1558,7 +1559,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 text: "Workbook (.xlsx): every table    X"
                 font: win.font
-                onClicked: exportChoice.choose(false)
+                onClicked: exportChoice.choose("xlsx")
                 Keys.onReturnPressed: clicked()
                 Keys.onEnterPressed: clicked()
             }
@@ -1567,7 +1568,15 @@ ApplicationWindow {
                 enabled: exportChoice.oneTable
                 text: "CSV (.csv): " + (exportChoice.oneTable ? win.table.name + " only" : "show a table first") + "    C"
                 font: win.font
-                onClicked: exportChoice.choose(true)
+                onClicked: exportChoice.choose("csv")
+                Keys.onReturnPressed: clicked()
+                Keys.onEnterPressed: clicked()
+            }
+            Button {
+                Layout.fillWidth: true
+                text: "JSON (.json): the values of every table    J"
+                font: win.font
+                onClicked: exportChoice.choose("json")
                 Keys.onReturnPressed: clicked()
                 Keys.onEnterPressed: clicked()
             }
@@ -1575,17 +1584,18 @@ ApplicationWindow {
         standardButtons: Dialog.Cancel
     }
 
-    // The calculated sheet as a workbook, or the table shown as CSV.
+    // The calculated sheet as a workbook or JSON, or the table shown as CSV.
     Dialogs.FileDialog {
         id: exportDialog
-        property bool csv: false
-        title: csv ? "Export " + win.table.name + " as CSV" : "Export as a workbook"
+        property string kind: "xlsx"
+        title: kind === "csv" ? "Export " + win.table.name + " as CSV"
+             : kind === "json" ? "Export as JSON" : "Export as a workbook"
         fileMode: Dialogs.FileDialog.SaveFile
-        nameFilters: csv ? ["CSV (*.csv)"] : ["Workbook (*.xlsx)"]
-        defaultSuffix: csv ? "csv" : "xlsx"
+        nameFilters: kind === "csv" ? ["CSV (*.csv)"] : kind === "json" ? ["JSON (*.json)"] : ["Workbook (*.xlsx)"]
+        defaultSuffix: kind
         onAccepted: {
             var name = win.table.isConsts ? "" : win.table.name;
-            if (sheet.exportUrl(selectedFile, csv, name) && sheet.notes.length > 0)
+            if (sheet.exportUrl(selectedFile, kind, name) && sheet.notes.length > 0)
                 notesDialog.open();
         }
     }
@@ -2009,7 +2019,7 @@ ApplicationWindow {
                     + "Ctrl+PgUp / PgDn     Previous / next table\n"
                     + "Ctrl+O / S           Open / save\n"
                     + "Ctrl+Shift+S         Save as\n"
-                    + "Ctrl+E               Export as a workbook or CSV\n"
+                    + "Ctrl+E               Export as a workbook, CSV or JSON\n"
                     + "Ctrl+N               New sheet\n"
                     + "Ctrl+Shift+N         New window on this sheet\n"
                     + "Ctrl++ / Ctrl+-      Larger / smaller text (Ctrl+0 resets)\n"

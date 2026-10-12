@@ -1,13 +1,20 @@
-# Workbooks, CSV and Markdown
+# Workbooks, CSV, JSON and Markdown
 
-The `.omx` file is the sheet. A workbook or a CSV file is a way in or out,
+The `.omx` file is the sheet. A workbook, a CSV file or JSON is a way in or out,
 and each command says what it could not carry across.
+
+Import and export are a helper, not a full conversion. A sheet and a
+workbook are built differently: named, typed tables and exact numbers on one
+side, a grid of cells and floating point on the other. Those differences
+keep either direction from covering everything, so check what the command
+reports.
 
 ## Import
 
 ```sh
 omasheet import budget.xlsx -o budget.omx    # a table for each worksheet
 omasheet import sales.csv                    # one table, named after the file
+omasheet import orders.json                  # a table for each list of rows
 ```
 
 - The first row is the column names. A name that is not an identifier is
@@ -22,6 +29,31 @@ omasheet import sales.csv                    # one table, named after the file
   [Formulas](#formulas). Where it cannot, the value is imported, and the
   cells are listed with the reason.
 - Text that looks like a formula, `=SUM(A1:A3)`, stays text.
+
+### JSON
+
+JSON is read as values: a list of rows is a table named after the file, and
+an object of such lists is a table for each, named by its key.
+
+```json
+{
+  "Sales": [
+    {"Month": "Jan", "Revenue": 10000, "Day": "2025-01-31"},
+    {"Month": "Feb", "Revenue": 12000, "Day": "2025-02-28"}
+  ]
+}
+```
+
+- A row is an object of values by column name. The columns are in the order
+  they are first met, and one that a row does not have is empty there. A
+  row may be a list of values instead, with the names as the first row.
+- A number is read as it is written, every digit of it: `19.99` is a
+  `Decimal`, and `1.5e3` a `Num`. `true` and `false` are `Bool`, and `null`
+  is an empty cell.
+- JSON has no dates, so a string that is a date, a time or a date-time is
+  one. So is a string that is a `Complex`, `"3+4i"`, or `"Inf"`, `"-Inf"`
+  or `"NaN"`. Any other string is text, a number in quotes too: `"42"`.
+- A list or an object inside a row is kept as text, and reported.
 
 ### Formulas
 
@@ -65,9 +97,54 @@ formula becomes a column and a row:
 omasheet export budget.omx --xlsx            # budget.xlsx, a worksheet for each table
 omasheet export budget.omx --csv             # budget.Sales.csv, budget.Summary.csv
 omasheet export budget.omx --csv --table Sales -o sales.csv
+omasheet export budget.omx --json            # budget.json, every table
+omasheet export budget.omx --json --table Sales   # the rows of Sales alone
 ```
 
-What is written is the calculated values: no formulas, and no constants.
+A workbook is written with the formulas of the sheet, and each with its
+calculated value, so it reads the same before anything works it out again.
+CSV and JSON hold the calculated values alone. Constants are not exported: a
+formula that reads one is written with what the constant is.
+
+A table becomes a worksheet whose first row is the header, so a column and a
+row become a cell. Each formula is written for the row it is on:
+
+| In the sheet, on row 1 of `Sales` | In the workbook |
+|---|---|
+| `Revenue - Cost` | `=B3-C3` |
+| `[Revenue; *-1]`, the row above | `=B2` |
+| `[Revenue; 0]`, the first row | `=$B$2` |
+| `Sales.Revenue.sum()`, from another table | `=SUM('Sales'!$B$2:$B$13)` |
+| `sum([Revenue; 0..*])`, a running total | `=SUM($B$2:B3)` |
+| `[Revenue; *-1] // 0` | `=IF(ISBLANK(B2),0,B2)`, and `0` on the first row |
+| `Rates[Fee; Code == Sales[Code; *]] // 1` | `=IFERROR(INDEX('Rates'!$B$2:$B$9,MATCH(A3,'Rates'!$A$2:$A$9,0)),1)` |
+| `count(Orders[; Region == Name])` | `=COUNTIFS('Orders'!$F$2:$F$40,A3)` |
+| `if Revenue > Cost then "up" else "down"` | `=IF(B3>C3,"up","down")` |
+
+- These are written: `+ - * / **` and the comparisons; `and`, `or`, `not`,
+  `if`; `sum`, `avg`, `min`, `max` and `count` of a column, a range of rows
+  or a list; `sum`, `avg` and `count` of the rows where columns equal
+  values; a row found where one column equals a value; `abs`, `round`,
+  `floor`, `ceil`, `sqrt`, the logarithms and the trigonometry; `today`,
+  `now`, `year` to `second`, `weekday`, `date` and `time`; `x.Int`, and a
+  function the sheet defines.
+- These are not, and the value is written: a calculation on a whole column
+  at once, `Sales.Revenue * 2`; rows picked by any other condition, by a
+  list or by a range value; `in` and ranges as values; `//` after a
+  calculation; text conversions; time zones; complex numbers. Each is
+  reported with the columns it happened in.
+- A cell that comes to nothing, or that failed, is left empty, with no
+  formula.
+- A workbook counts a time in days and a sheet in seconds, so `At - 09:00`
+  is written `=ROUND((C3-TIME(9,0,0))*86400,0)`.
+- A table exported alone with `--table` cannot read another: those formulas
+  are written as values.
+- A formula is not checked in a workbook, as nothing here works one out. It
+  is exact in the sheet and floating point there, so the last digits may
+  differ.
+- Importing the workbook again brings back most formulas, but not all: the
+  import has no translation for `ISBLANK` or `IFERROR`, and takes those
+  cells as values.
 
 | | XLSX | CSV |
 |---|---|---|
@@ -77,15 +154,28 @@ What is written is the calculated values: no formulas, and no constants.
 | `Complex` | text | `3+4i` |
 | a cell that failed | empty | empty |
 
+JSON is written as it is read: an object holding each table by name as a
+list of rows, a row to a line, and each row an object of values by column
+name. With `--table` it is the rows of that table alone.
+
+| | JSON |
+|---|---|
+| `Int`, `Decimal`, `Fraction` | a number, in full; one that does not end, such as `1/3`, as `0.3333333333333333` |
+| `Percent` | the number it stands for: `20%` is `0.2` |
+| `Num` | a number; `Inf`, `-Inf` and `NaN` as strings |
+| `Text`, `Bool` | a string; `true` or `false` |
+| `Date`, `Time`, `DateTime`, `Complex` | a string, as a sheet writes it: `"2025-01-31"`, `"3+4i"` |
+| an empty cell, or one that failed | `null` |
+
 Anything written less exactly than the sheet holds it is reported, with the
 columns it happened in.
 
 ## In the app
 
-- Ctrl+O opens a workbook or a CSV file as well as a sheet. It is imported
-  as a new sheet, not yet saved.
-- Ctrl+E exports, and asks what as: every table as a workbook (X), or the
-  table shown as CSV (C). It then asks where.
+- Ctrl+O opens a workbook, a CSV file or JSON as well as a sheet. It is
+  imported as a new sheet, not yet saved.
+- Ctrl+E exports, and asks what as: every table as a workbook (X) or as
+  JSON (J), or the table shown as CSV (C). It then asks where.
 - What was changed, rounded or left behind is listed, and stays under
   `notes` in the footer.
 

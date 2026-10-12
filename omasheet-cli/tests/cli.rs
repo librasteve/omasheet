@@ -259,6 +259,27 @@ fn export_writes_beside_the_sheet_and_leaves_it_alone() {
         ),
         "{csv}"
     );
+
+    // JSON holds every table in the one file, and comes back as a sheet.
+    let out = omasheet(&["export", &sheet, "--json"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let json = std::fs::read_to_string(dir.join("budget.json")).unwrap();
+    assert!(
+        json.starts_with("{\n  \"Sales\": [\n    {\"Month\": \"Jan\", \"Closed\": \"2025-02-03T17:30\", \"Revenue\": 10000,"),
+        "{json}"
+    );
+    let out = omasheet(&["import", &path(&dir, "budget.json")]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        stdout(&out).starts_with("table Sales\n\nClosed : DateTime\n"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&out).contains("\ntable Summary\n"),
+        "{}",
+        stdout(&out)
+    );
     assert_eq!(std::fs::read(&sheet).unwrap(), before);
 }
 
@@ -266,7 +287,11 @@ fn export_writes_beside_the_sheet_and_leaves_it_alone() {
 fn export_needs_a_format_and_a_sheet_that_compiles() {
     let out = omasheet(&["export", "examples/budget.omx"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("--xlsx or --csv"), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("--xlsx, --csv or --json"),
+        "{}",
+        stderr(&out)
+    );
 
     let out = omasheet(&["export", "examples/budget.omx", "--csv", "--table", "Costs"]);
     assert_eq!(out.status.code(), Some(1));
@@ -320,7 +345,7 @@ fn import_says_what_it_can_read() {
     let out = omasheet(&["import", "README.md"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(
-        stderr(&out).contains("(.xlsx) or a CSV file (.csv)"),
+        stderr(&out).contains("(.xlsx), a CSV file (.csv) or JSON (.json)"),
         "{}",
         stderr(&out)
     );

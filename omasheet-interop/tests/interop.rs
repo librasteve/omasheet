@@ -4,7 +4,7 @@
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use omasheet_engine::Options;
-use omasheet_interop::{Datum, Exported, csv, xlsx};
+use omasheet_interop::{Datum, Exported, csv, json, xlsx};
 use rust_xlsxwriter::{Format, Formula, Workbook};
 use std::io::Cursor;
 
@@ -311,8 +311,127 @@ fn xlsx_has_a_worksheet_for_each_table() {
         out.notices,
         [
             "constants are not exported: TaxRate",
+            "5 formulas written",
             "exact rationals were written as floating point: Sales.Share",
         ]
+    );
+}
+
+/// The formulas of a worksheet, by cell: `B2` and what is written there.
+fn formulas(bytes: &[u8], sheet: &str) -> Vec<(String, String)> {
+    let mut book = open_workbook_auto_from_rs(Cursor::new(bytes)).unwrap();
+    let found = book.worksheet_formula(sheet).unwrap();
+    let (top, left) = found.start().unwrap_or((0, 0));
+    found
+        .used_cells()
+        .filter(|(_, _, f)| !f.is_empty())
+        .map(|(r, c, f)| {
+            let column = (b'A' + (c as u32 + left) as u8) as char;
+            (format!("{column}{}", r as u32 + top + 1), f.clone())
+        })
+        .collect()
+}
+
+fn formula_at(bytes: &[u8], sheet: &str, cell: &str) -> String {
+    let all = formulas(bytes, sheet);
+    let found = all.iter().find(|(at, _)| at == cell);
+    found.map_or(String::new(), |(_, f)| f.clone())
+}
+
+#[test]
+fn xlsx_writes_formulas() {
+    let out = xlsx::export("budget.omx", BUDGET, None, options()).unwrap();
+    let bytes = &out.files[0].bytes;
+    // A computed column is written on each row, for that row.
+    assert_eq!(formula_at(bytes, "Sales", "D2"), "B2-C2");
+    assert_eq!(formula_at(bytes, "Sales", "D3"), "B3-C3");
+    assert_eq!(formula_at(bytes, "Sales", "E3"), "D3/3");
+    // A cell that is not a formula holds its value alone.
+    assert_eq!(formula_at(bytes, "Sales", "B2"), "");
+    // Another table is another worksheet, and a whole column is all its rows.
+    assert_eq!(formula_at(bytes, "Summary", "B2"), "SUM('Sales'!$B$2:$B$3)");
+    // The value is there too, for a reader that does not work it out.
+    assert_eq!(cells(bytes, "Sales")[1][3], Data::Float(4000.0));
+    assert_eq!(cells(bytes, "Summary")[1][1], Data::Float(22000.0));
+}
+
+#[test]
+fn xlsx_formulas_read_rows_and_tables() {
+    let sheet = "\
+const Rate = 20%
+
+table Rates
+
+Code | Fee
+a    | 5
+b    | 7.5
+
+table T
+
+On : Date
+At : Time
+
+Code | On         | At    | N  | Prev | Run | Fee | Net | First | Next | Late | Hits | Paid | Odd
+a    | 2025-01-31 | 09:00 | 10 | *    | *   | *   | *   | *     | *    | *    | *    | *    | *
+b    | 2025-02-01 | 17:30 | 20 | *    | *   | *   | *   | *     | *    | *    | *    | *    | *
+c    | 2025-02-03 | 08:15 | 30 | *    | *   | *   | *   | *     | *    | *    | *    | *    | *
+
+Prev  := [N; *-1] // 0
+Run   := sum([N; 0..*])
+Fee   := Rates[Fee; Code == T[Code; *]] // 1
+Net   := N * (1 - Rate) + Fee
+First := [N; 0] + [N; -1]
+Next  := On + 7
+Late  := At - 09:00
+Hits  := count(Rates[; Code == T[Code; *]])
+Paid  := sum(Rates[Fee; Code == T[Code; *]])
+Odd   := [N; *] in [10, 30]
+";
+    let out = xlsx::export("t.omx", sheet, None, options()).unwrap();
+    let bytes = &out.files[0].bytes;
+    let at = |cell: &str| formula_at(bytes, "T", cell);
+    // The row before the first is nothing, so `//` gives what it falls back to.
+    assert_eq!(at("E2"), "0");
+    assert_eq!(at("E3"), "IF(ISBLANK(D2),0,D2)");
+    // A range from a fixed row to this one.
+    assert_eq!(at("F4"), "SUM($D$2:D4)");
+    // A row found by a condition, and what to give when there is none.
+    assert_eq!(
+        at("G2"),
+        "IFERROR(INDEX('Rates'!$B$2:$B$3,MATCH(A2,'Rates'!$A$2:$A$3,0)),1)"
+    );
+    // A constant is written as what it is.
+    assert_eq!(at("H2"), "D2*(1-0.2)+G2");
+    // Rows by number, from the start and from the end.
+    assert_eq!(at("I3"), "$D$2+$D$4");
+    // A workbook counts dates in days, as a sheet does, and times in days
+    // where a sheet counts seconds.
+    assert_eq!(at("J2"), "B2+7");
+    assert_eq!(at("K3"), "ROUND((C3-TIME(9,0,0))*86400,0)");
+    assert_eq!(cells(bytes, "T")[2][10], Data::Float(30_600.0));
+    assert_eq!(at("L2"), "COUNTIFS('Rates'!$A$2:$A$3,A2)");
+    assert_eq!(at("M2"), "SUMIFS('Rates'!$B$2:$B$3,'Rates'!$A$2:$A$3,A2)");
+    // What a workbook cannot say is written as its value, and reported.
+    assert_eq!(at("N2"), "");
+    assert_eq!(cells(bytes, "T")[1][13], Data::Bool(true));
+    assert!(
+        out.notices.contains(
+            &"values were written in place of formulas that use `in` or a range: T.Odd".to_string()
+        ),
+        "{:?}",
+        out.notices
+    );
+
+    // A table exported alone cannot read another: its values are written.
+    let alone = xlsx::export("t.omx", sheet, Some("T"), options()).unwrap();
+    assert_eq!(formula_at(&alone.files[0].bytes, "T", "G2"), "");
+    assert_eq!(formula_at(&alone.files[0].bytes, "T", "J2"), "B2+7");
+    assert!(
+        alone.notices.iter().any(|n| n.starts_with(
+            "values were written in place of formulas that read a table that is not exported: T.Fee"
+        )),
+        "{:?}",
+        alone.notices
     );
 }
 
@@ -331,7 +450,10 @@ fn xlsx_writes_one_third_as_the_nearest_double() {
     );
     assert_eq!(
         out.notices,
-        ["exact rationals were written as floating point: T.A"]
+        [
+            "1 formula written",
+            "exact rationals were written as floating point: T.A"
+        ]
     );
 }
 
@@ -560,4 +682,127 @@ fn not_a_workbook() {
             .starts_with("it is not a workbook")
     );
     assert_eq!(csv::import("t", b"").unwrap_err(), "it has no header row");
+}
+
+// ---- JSON ------------------------------------------------------------------
+
+const KINDS: &str = "\
+table T
+
+N : Num
+F : Fraction
+Z : Complex
+
+Name | Count | Price | Rate | N    | F   | Z    | On    | Day        | At    | Gap | Bad
+a    | 7     | 19.99 | 20%  | 1e20 | 1/3 | 3+4i | true  | 2025-01-31 | 09:30 |     | = Inf.Int
+\"42\" | -3    | 0.125 | -5%  | Inf  | 1/8 | 2i   | false | 2025-02-01 | 17:05 | x   | 1
+";
+
+fn json_of(text: &str, table: Option<&str>) -> Exported {
+    json::export("sheet.omx", text, table, options()).expect("the sheet exports")
+}
+
+#[test]
+fn json_holds_every_table_as_rows_by_column_name() {
+    let out = json_of(BUDGET, None);
+    assert_eq!(out.files.len(), 1);
+    assert_eq!(
+        text_of(&out, 0),
+        "{\n  \"Sales\": [\n    \
+         {\"Month\": \"Jan\", \"Revenue\": 10000, \"Cost\": 6000, \"Profit\": 4000, \"Share\": 1333.3333333333333},\n    \
+         {\"Month\": \"Feb\", \"Revenue\": 12000, \"Cost\": 7000, \"Profit\": 5000, \"Share\": 1666.6666666666667}\n  ],\n  \
+         \"Summary\": [\n    {\"Item\": \"Revenue\", \"Value\": 22000}\n  ]\n}\n"
+    );
+    assert_eq!(
+        out.notices,
+        ["exact rationals that do not end were written as decimals: Sales.Share"]
+    );
+    // A table that is named is its rows alone.
+    assert_eq!(
+        text_of(&json_of(BUDGET, Some("Summary")), 0),
+        "[\n  {\"Item\": \"Revenue\", \"Value\": 22000}\n]\n"
+    );
+}
+
+#[test]
+fn json_writes_each_kind_of_value() {
+    let out = json_of(KINDS, Some("T"));
+    assert_eq!(
+        text_of(&out, 0),
+        "[\n  \
+         {\"Name\": \"a\", \"Count\": 7, \"Price\": 19.99, \"Rate\": 0.2, \"N\": 1e+20, \"F\": 0.3333333333333333, \
+         \"Z\": \"3+4i\", \"On\": true, \"Day\": \"2025-01-31\", \"At\": \"09:30\", \"Gap\": null, \"Bad\": null},\n  \
+         {\"Name\": \"42\", \"Count\": -3, \"Price\": 0.125, \"Rate\": -0.05, \"N\": \"Inf\", \"F\": 0.125, \
+         \"Z\": \"0+2i\", \"On\": false, \"Day\": \"2025-02-01\", \"At\": \"17:05\", \"Gap\": \"x\", \"Bad\": 1}\n]\n"
+    );
+    assert_eq!(
+        out.notices,
+        [
+            "exact rationals that do not end were written as decimals: T.F",
+            "cells that could not be calculated were left empty: T.Bad"
+        ]
+    );
+}
+
+#[test]
+fn json_comes_back_as_the_values_it_was_written_from() {
+    let written = text_of(&json_of(KINDS, None), 0);
+    let back = json::import("kinds", written.as_bytes()).unwrap();
+    lints(&back.source);
+    assert_eq!(eval(&back.source, "T.Count"), "[7, -3]");
+    assert_eq!(eval(&back.source, "T.Price.sum()"), "20.115");
+    assert_eq!(eval(&back.source, "T.N"), "[1e+20, Inf]");
+    assert_eq!(eval(&back.source, "T.Z"), "[3+4i, 0+2i]");
+    assert_eq!(eval(&back.source, "T.On"), "[true, false]");
+    assert_eq!(eval(&back.source, "T[Day; 1] - T[Day; 0]"), "1");
+    assert_eq!(eval(&back.source, "T.At"), "[09:30, 17:05]");
+    // A number in quotes is text, and null is empty.
+    assert_eq!(eval(&back.source, "T.Name"), "[\"a\", \"42\"]");
+    assert_eq!(eval(&back.source, "T.Gap"), "[empty, \"x\"]");
+}
+
+#[test]
+fn json_reads_a_list_of_rows_as_one_table() {
+    let rows = r#"[
+        {"Unit Price": 19.99, "Qty": 2},
+        {"Qty": 10000000000000000000000, "Note": "late", "Tags": ["a", 1]},
+        ["not", "a", "row"]
+    ]"#;
+    let why = json::import("orders", rows.as_bytes()).unwrap_err();
+    assert_eq!(
+        why,
+        "row 3 of `orders` is not an object of values by column name"
+    );
+
+    let rows = rows.replace(",\n        [\"not\", \"a\", \"row\"]", "");
+    let back = json::import("orders", rows.as_bytes()).unwrap();
+    lints(&back.source);
+    assert!(back.source.starts_with("table orders\n"), "{}", back.source);
+    // Columns are in the order they are first met; one a row lacks is empty.
+    assert_eq!(eval(&back.source, "orders.UnitPrice"), "[19.99, empty]");
+    assert_eq!(
+        eval(&back.source, "orders[Qty; 1] + 1"),
+        "10000000000000000000001"
+    );
+    assert_eq!(
+        eval(&back.source, "orders.Tags"),
+        "[empty, \"[\\\"a\\\",1]\"]"
+    );
+    assert_eq!(
+        back.notices,
+        [
+            "`orders`: lists and objects inside a row were kept as text",
+            "`Unit Price` was renamed `UnitPrice`"
+        ]
+    );
+
+    // Rows as lists: the first is the names.
+    let lists = r#"[["Item", "Cost"], ["tea", 1.5e3], ["milk", null]]"#;
+    let back = json::import("shop", lists.as_bytes()).unwrap();
+    lints(&back.source);
+    assert_eq!(eval(&back.source, "shop.Cost"), "[1500, empty]");
+
+    for bad in ["{", "42", "{}", "[]", r#"{"T": 1}"#] {
+        assert!(json::import("x", bad.as_bytes()).is_err(), "{bad}");
+    }
 }

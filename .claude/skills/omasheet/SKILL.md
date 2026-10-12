@@ -170,19 +170,23 @@ a `…` mark, and `--exact` shows it in full.
 - A lookup that finds one row fills a cell with its value; none gives empty,
   so add `// "none"`; several is an error.
 
-## Workbooks, CSV and Markdown
+## Workbooks, CSV, JSON and Markdown
 
 ```sh
 omasheet import book.xlsx -o book.omx    # a table for each worksheet
 omasheet import sales.csv                # one table, printed
 omasheet export sheet.omx --xlsx         # sheet.xlsx
 omasheet export sheet.omx --csv --table Orders -o orders.csv
+omasheet import orders.json              # a list of row objects, or {"Table": [rows]}
+omasheet export sheet.omx --json         # sheet.json: {"Table": [{"Col": value}]}
 omasheet render report.md --html -o report.html
 ```
 
-- The `.omx` file is the sheet; the others are ways in and out. An export
-  writes values only: OMX formulas go out as their results. Say so if the
-  user expects otherwise.
+- The `.omx` file is the sheet; the others are ways in and out. An `.xlsx`
+  export writes OMX formulas as workbook formulas where a workbook can say
+  them, each with its value; the rest go out as values, and a `note:` says
+  which columns and why. CSV and JSON hold values only. Import and export
+  are a helper, not a full conversion: say so if the user expects otherwise.
 - An `.xlsx` import translates the workbook's formulas to OMX where it can,
   and a column filled down with one formula becomes a computed column. Each
   is checked against the value the workbook held; one that cannot be

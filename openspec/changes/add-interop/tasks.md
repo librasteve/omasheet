@@ -14,6 +14,7 @@
 - [x] 2.1 Import via calamine
 - [x] 2.2 Export via rust_xlsxwriter with documented lossy mappings
 - [x] 2.3 Translate a workbook's formulas to OMX on import, checked against the values it holds
+- [x] 2.4 Write a sheet's formulas as workbook formulas on export, each with its value, and report those written as values
 
 ## 3. CLI (`cli`)
 - [x] 3.1 `omasheet import` for `.xlsx` and `.csv`
@@ -28,4 +29,5 @@
 ## 5. Finish
 - [x] 5.1 `docs/interop.md`, README, an `examples/report.md`
 - [x] 5.2 Import and export in the app: Open reads `.xlsx` and `.csv`, Ctrl+E exports
+- [x] 5.4 JSON (`json-interop`): `omasheet import` of `.json`, `omasheet export --json`, and both in the app
 - [ ] 5.3 Archive the change

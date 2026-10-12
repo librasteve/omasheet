@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! Omasheet at its edges: XLSX and CSV.
+//! Omasheet at its edges: XLSX, CSV and JSON.
 //!
 //! An import turns a file into `.omx` source, which is then a sheet like any
 //! other. An export writes the calculated tables of a sheet. Neither is a way
@@ -8,6 +8,7 @@
 
 pub mod csv;
 pub mod formula;
+pub mod json;
 pub mod xlsx;
 
 use omasheet_engine::omx::types::S;

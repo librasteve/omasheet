@@ -23,11 +23,11 @@ huge  | 100000000000000000000000000000000000000 | 0.0000000000000000001 |     1 
 
 table Limits
 
-Top | Over | Root | Log  | Limit | Same  | Word
-----|------|------|------|-------|-------|-----
-  1 |  Inf |    1 |    0 |   Inf | true  | Inf
- -1 | -Inf |  NaN |  NaN |  -Inf | true  | -Inf
-  0 |  NaN |    0 | -Inf |   NaN | false | NaN
+Top | Over | Root | Log  | Limit | Same  | Word | Add | Multiply
+----|------|------|------|-------|-------|------|-----|---------
+  1 |  Inf |    1 |    0 |   Inf | true  | Inf  | Inf |      Inf
+ -1 | -Inf |  NaN |  NaN |  -Inf | true  | -Inf | NaN |      NaN
+  0 |  NaN |    0 | -Inf |   NaN | false | NaN  | NaN |      NaN
 
 table Converted
 

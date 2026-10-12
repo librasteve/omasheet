@@ -62,15 +62,16 @@ pub mod qobject {
         fn save(self: Pin<&mut Sheet>) -> bool;
         #[qinvokable]
         fn save_url(self: Pin<&mut Sheet>, url: &QUrl) -> bool;
-        /// Write the calculated sheet as a workbook, or the table named as
-        /// CSV if `csv`; a file named `.xlsx` or `.csv` is written as that.
-        /// What could not be written exactly is left in `notes`.
+        /// Write the calculated sheet as `kind`: a workbook, `xlsx`, or
+        /// `json`, or the table named as `csv`. A file named `.xlsx`, `.csv`
+        /// or `.json` is written as that. What could not be written exactly
+        /// is left in `notes`.
         #[qinvokable]
-        fn export_url(self: Pin<&mut Sheet>, url: &QUrl, csv: bool, table: &QString) -> bool;
+        fn export_url(self: Pin<&mut Sheet>, url: &QUrl, kind: &QString, table: &QString) -> bool;
         /// Where an export would go unless told otherwise: beside the sheet
         /// and under its name, or in `folder` if the sheet is not saved yet.
         #[qinvokable]
-        fn export_suggestion(self: &Sheet, csv: bool, table: &QString, folder: &QUrl) -> QUrl;
+        fn export_suggestion(self: &Sheet, kind: &QString, table: &QString, folder: &QUrl) -> QUrl;
 
         #[qinvokable]
         fn set_cell(self: Pin<&mut Sheet>, table: i32, row: i32, col: i32, text: &QString);
@@ -433,19 +434,19 @@ impl qobject::Sheet {
         self.refresh("");
     }
 
-    /// Open a workbook or a CSV file as a new sheet, not yet saved.
+    /// Open a workbook, a CSV file or JSON as a new sheet, not yet saved.
     fn import_file(mut self: Pin<&mut Self>, path: PathBuf, kind: &str) -> bool {
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        let imported =
-            std::fs::read(&path)
-                .map_err(|e| e.to_string())
-                .and_then(|bytes| match kind {
+        let imported = std::fs::read(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| {
+                let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+                match kind {
                     "xlsx" => omasheet_interop::xlsx::import(&bytes),
-                    _ => {
-                        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
-                        omasheet_interop::csv::import(&stem, &bytes)
-                    }
-                });
+                    "json" => omasheet_interop::json::import(&stem, &bytes),
+                    _ => omasheet_interop::csv::import(&stem, &bytes),
+                }
+            });
         match imported {
             Ok(Imported { source, notices }) => {
                 {
@@ -471,7 +472,7 @@ impl qobject::Sheet {
     fn open_file(mut self: Pin<&mut Self>, path: PathBuf) -> bool {
         let kind = path.extension().unwrap_or_default().to_string_lossy();
         let kind = kind.to_ascii_lowercase();
-        if matches!(kind.as_str(), "xlsx" | "csv") {
+        if matches!(kind.as_str(), "xlsx" | "csv" | "json") {
             return self.import_file(path, &kind);
         }
         match std::fs::read_to_string(&path) {
@@ -538,7 +539,7 @@ impl qobject::Sheet {
         self.save_file(path)
     }
 
-    fn export_url(mut self: Pin<&mut Self>, url: &QUrl, csv: bool, table: &QString) -> bool {
+    fn export_url(mut self: Pin<&mut Self>, url: &QUrl, kind: &QString, table: &QString) -> bool {
         let mut path = PathBuf::from(url.to_local_file_or_default().to_string());
         if path.as_os_str().is_empty() {
             return false;
@@ -546,27 +547,26 @@ impl qobject::Sheet {
         let named = path
             .extension()
             .map(|e| e.to_string_lossy().to_ascii_lowercase());
-        let csv = match named.as_deref() {
-            Some("csv") => true,
-            Some("xlsx") => false,
+        let kind = match named {
+            Some(named) if matches!(named.as_str(), "xlsx" | "csv" | "json") => named,
             _ => {
-                path.as_mut_os_string()
-                    .push(if csv { ".csv" } else { ".xlsx" });
-                csv
+                let kind = kind.to_string();
+                path.as_mut_os_string().push(format!(".{kind}"));
+                kind
             }
         };
         let table = table.to_string();
-        if csv && table.is_empty() {
+        if kind == "csv" && table.is_empty() {
             let message = "CSV holds one table: show the table to export first";
             self.as_mut().set_status(QString::from(message));
             return false;
         }
         let name = self.rust().file_name.to_string();
         let text = self.rust().doc.text().to_string();
-        let exported = if csv {
-            omasheet_interop::csv::export(&name, &text, Some(&table), Options::default())
-        } else {
-            omasheet_interop::xlsx::export(&name, &text, None, Options::default())
+        let exported = match kind.as_str() {
+            "csv" => omasheet_interop::csv::export(&name, &text, Some(&table), Options::default()),
+            "json" => omasheet_interop::json::export(&name, &text, None, Options::default()),
+            _ => omasheet_interop::xlsx::export(&name, &text, None, Options::default()),
         };
         let written = exported
             .map_err(|_| "the sheet has problems to put right first".to_string())
@@ -590,23 +590,21 @@ impl qobject::Sheet {
         }
     }
 
-    fn export_suggestion(&self, csv: bool, table: &QString, folder: &QUrl) -> QUrl {
+    fn export_suggestion(&self, kind: &QString, table: &QString, folder: &QUrl) -> QUrl {
         let rust = self.rust();
         let from = rust.path.as_ref().or(rust.origin.as_ref());
         let mut name = from
             .and_then(|p| p.file_stem())
             .map_or("Untitled".to_string(), |s| s.to_string_lossy().into_owned());
-        if csv {
-            // As the command line names them: budget.Sales.csv, unless the
-            // sheet has the one table.
-            if rust.doc.snapshot().tables.len() > 1 {
-                name.push('.');
-                name.push_str(&table.to_string());
-            }
-            name.push_str(".csv");
-        } else {
-            name.push_str(".xlsx");
+        let kind = kind.to_string();
+        // As the command line names them: budget.Sales.csv, unless the
+        // sheet has the one table.
+        if kind == "csv" && rust.doc.snapshot().tables.len() > 1 {
+            name.push('.');
+            name.push_str(&table.to_string());
         }
+        name.push('.');
+        name.push_str(&kind);
         let folder = from
             .and_then(|p| p.parent())
             .map(PathBuf::from)

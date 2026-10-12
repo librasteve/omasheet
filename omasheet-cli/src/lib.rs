@@ -111,34 +111,39 @@ enum Command {
         /// The sheet to check
         file: PathBuf,
     },
-    /// Write a workbook (.xlsx) or a CSV file (.csv) as a sheet
+    /// Write a workbook (.xlsx), a CSV file (.csv) or JSON (.json) as a sheet
     ///
     /// The sheet is printed, and anything that was changed or left behind
     /// is reported.
     Import {
-        /// The workbook or CSV file to read
+        /// The workbook, CSV or JSON file to read
         file: PathBuf,
 
         /// Write the sheet to this file rather than printing it
         #[arg(short, long, value_name = "FILE")]
         output: Option<PathBuf>,
     },
-    /// Write the calculated tables of a sheet as a workbook or as CSV
+    /// Write the calculated tables of a sheet as a workbook, CSV or JSON
     ///
-    /// The file is written beside the sheet: budget.omx as budget.xlsx or
-    /// budget.csv. CSV holds one table, so a sheet with several is written
-    /// as budget.Sales.csv, budget.Summary.csv.
+    /// The file is written beside the sheet: budget.omx as budget.xlsx,
+    /// budget.csv or budget.json. CSV holds one table, so a sheet with
+    /// several is written as budget.Sales.csv, budget.Summary.csv.
     Export {
         /// The sheet to export
         file: PathBuf,
 
         /// Write a workbook, with a worksheet for each table
-        #[arg(long, conflicts_with = "csv")]
+        #[arg(long, conflicts_with_all = ["csv", "json"])]
         xlsx: bool,
 
         /// Write CSV, a file for each table
-        #[arg(long)]
+        #[arg(long, conflicts_with = "json")]
         csv: bool,
+
+        /// Write JSON: the values of each table as a list of rows by
+        /// column name, and of a table given with --table as that list alone
+        #[arg(long)]
+        json: bool,
 
         /// Export this table alone
         #[arg(long, value_name = "NAME")]
@@ -205,9 +210,9 @@ fn extension(path: &Path) -> String {
 
 fn import(file: &Path, output: Option<&Path>) -> Result<ExitCode, ExitCode> {
     let kind = extension(file);
-    if !matches!(kind.as_str(), "xlsx" | "csv") {
+    if !matches!(kind.as_str(), "xlsx" | "csv" | "json") {
         return usage(&format!(
-            "cannot import {}: give a workbook (.xlsx) or a CSV file (.csv)",
+            "cannot import {}: give a workbook (.xlsx), a CSV file (.csv) or JSON (.json)",
             file.display()
         ));
     }
@@ -215,12 +220,11 @@ fn import(file: &Path, output: Option<&Path>) -> Result<ExitCode, ExitCode> {
         eprintln!("omasheet: cannot read {}: {e}", file.display());
         ExitCode::from(2)
     })?;
+    let stem = file.file_stem().unwrap_or_default().to_string_lossy();
     let imported = match kind.as_str() {
         "xlsx" => omasheet_interop::xlsx::import(&bytes),
-        _ => {
-            let stem = file.file_stem().unwrap_or_default().to_string_lossy();
-            omasheet_interop::csv::import(&stem, &bytes)
-        }
+        "json" => omasheet_interop::json::import(&stem, &bytes),
+        _ => omasheet_interop::csv::import(&stem, &bytes),
     };
     let imported = match imported {
         Ok(imported) => imported,
@@ -239,17 +243,17 @@ fn import(file: &Path, output: Option<&Path>) -> Result<ExitCode, ExitCode> {
 
 fn export(
     file: &Path,
-    xlsx: bool,
+    ext: &str,
     table: Option<&str>,
     output: Option<&Path>,
     options: Options,
 ) -> Result<ExitCode, ExitCode> {
     let text = read(file)?;
     let name = file.to_string_lossy();
-    let exported = if xlsx {
-        omasheet_interop::xlsx::export(&name, &text, table, options)
-    } else {
-        omasheet_interop::csv::export(&name, &text, table, options)
+    let exported = match ext {
+        "xlsx" => omasheet_interop::xlsx::export(&name, &text, table, options),
+        "json" => omasheet_interop::json::export(&name, &text, table, options),
+        _ => omasheet_interop::csv::export(&name, &text, table, options),
     };
     let exported = match exported {
         Ok(exported) => exported,
@@ -260,7 +264,6 @@ fn export(
             }));
         }
     };
-    let ext = if xlsx { "xlsx" } else { "csv" };
     if output.is_some() && exported.files.len() > 1 {
         return usage(
             "the sheet has several tables: give one with --table to write it to --output",
@@ -371,15 +374,19 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
             file,
             xlsx,
             csv,
+            json,
             table,
             output,
             env,
         }) => {
-            if !xlsx && !csv {
-                return usage("say what to export as: --xlsx or --csv");
-            }
+            let ext = match (xlsx, csv, json) {
+                (true, ..) => "xlsx",
+                (_, true, _) => "csv",
+                (.., true) => "json",
+                _ => return usage("say what to export as: --xlsx, --csv or --json"),
+            };
             let options = env.options()?;
-            export(&file, xlsx, table.as_deref(), output.as_deref(), options)
+            export(&file, ext, table.as_deref(), output.as_deref(), options)
         }
         Some(Command::Render {
             file,
