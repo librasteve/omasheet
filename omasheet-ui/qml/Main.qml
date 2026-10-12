@@ -851,6 +851,8 @@ ApplicationWindow {
                                 id: headCell
                                 required property int index
                                 readonly property var column: win.table.columns[index]
+                                // The name is being typed over, in place.
+                                property bool renaming: false
                                 width: win.colWidths[index] || 0
                                 height: win.headerHeight
                                 // Cut and waiting to be put down.
@@ -907,6 +909,55 @@ ApplicationWindow {
                                         win.curRow = Math.max(0, win.table.rows.length - 1);
                                         win.curCol = headCell.index;
                                     }
+                                    // Rename the column where its name is.
+                                    onDoubleClicked: function(mouse) {
+                                        if (mouse.button !== Qt.LeftButton || win.table.isConsts || !headCell.column)
+                                            return;
+                                        win.notice = "";
+                                        headCell.renaming = true;
+                                    }
+                                }
+                                Loader {
+                                    anchors.fill: parent
+                                    active: headCell.renaming
+                                    sourceComponent: TextField {
+                                        font.family: win.font.family
+                                        font.features: win.font.features
+                                        font.pixelSize: win.fontSize
+                                        font.bold: true
+                                        color: win.textColor
+                                        leftPadding: 7
+                                        rightPadding: 7
+                                        topPadding: 0
+                                        bottomPadding: 0
+                                        verticalAlignment: TextInput.AlignVCenter
+                                        selectByMouse: true
+                                        background: Rectangle {
+                                            color: win.pageColor
+                                            border.width: 2
+                                            border.color: win.accentColor
+                                        }
+                                        property bool done: false
+                                        Component.onCompleted: {
+                                            text = headCell.column.name;
+                                            forceActiveFocus();
+                                            selectAll();
+                                        }
+                                        // A name that is refused is said why, and the old one stays.
+                                        function finish(keep) {
+                                            if (done)
+                                                return;
+                                            done = true;
+                                            var name = text.trim();
+                                            if (keep && name.length > 0 && name !== headCell.column.name)
+                                                win.notice = sheet.renameColumn(win.tab, headCell.index, name);
+                                            headCell.renaming = false;
+                                            grid.forceActiveFocus();
+                                        }
+                                        onAccepted: finish(true)
+                                        Keys.onEscapePressed: finish(false)
+                                        onActiveFocusChanged: if (!activeFocus) finish(true)
+                                    }
                                 }
                             }
                         }
@@ -920,6 +971,10 @@ ApplicationWindow {
                         boundsBehavior: Flickable.StopAtBounds
                         model: win.table.rows.length
                         reuseItems: true
+                        // The grid moves the selection. After an edit the
+                        // focus is left inside a row, and the list would
+                        // take Up and Down for itself.
+                        keyNavigationEnabled: false
                         ScrollBar.vertical: vbar
 
                         delegate: Row {

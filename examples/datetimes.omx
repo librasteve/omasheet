@@ -11,7 +11,7 @@ Who    : Text
 On     : Date
 Start  : Time
 End    : Time
-Rate   : Fraction
+Rate   : Decimal
 Paid   : Bool
 Logged : DateTime
 

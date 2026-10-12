@@ -68,8 +68,7 @@ no floating-point step: a number becomes an exact `Int` or `Fraction`, a field i
 an ISO date or time form becomes a `Date`, `Time` or `DateTime`, `true` / `false`
 become `Bool`, an empty field becomes an empty cell, and anything else becomes
 `Text`. A field is read as a cell of a sheet reads it, so `20%`, `1/8` and
-`1.5e3` are the numbers a sheet takes them for; but a field a sheet would read
-as a `Ratio`, `9:30`, SHALL stay `Text`, since a file may mean a time by it. A column whose fields agree on a
+`1.5e3` are the numbers a sheet takes them for. A column whose fields agree on a
 type other than an exact number or text SHALL be declared with it. A column
 whose fields do not agree on a type SHALL be left undeclared, each cell keeping
 the type it reads as, and the import SHALL report it.

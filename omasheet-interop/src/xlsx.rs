@@ -77,7 +77,7 @@ struct Formula {
 fn real(v: &Value) -> Option<f64> {
     match v {
         Value::Int(n) => n.to_string().parse().ok(),
-        Value::Fraction(r) | Value::Percent(r) | Value::Ratio(r) => Some(to_f64(r)),
+        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => Some(to_f64(r)),
         Value::Num(f) => Some(*f),
         Value::Bool(b) => Some(*b as u8 as f64),
         _ => None,
@@ -419,8 +419,7 @@ fn write_cell(
             }
             sheet.write_number(row, col, f)?;
         }
-        // A ratio is written as the number it stands for: `3:2` as `1.5`.
-        Value::Fraction(r) | Value::Ratio(r) => {
+        Value::Decimal(r) | Value::Fraction(r) => {
             let (f, same) = double(r);
             if !same {
                 lose(ROUNDED);

@@ -14,7 +14,7 @@ fn WithTax(x) = x * (1 + TaxRate)
 table Sales
 
 # Optional: the type of a column.
-Revenue : Fraction
+Revenue : Decimal
 
 # A cell that starts with = is a formula.
 Month | Revenue | Cost         | Profit | Gross
@@ -53,18 +53,17 @@ cell of a computed column.
 
 ## Types
 
-`Int`, `Decimal`, `Fraction`, `Percent`, `Ratio`, `Num`, `Complex`, `Text`,
-`Bool`, `Date`, `Time`, `DateTime`.
+`Int`, `Decimal`, `Fraction`, `Percent`, `Num`, `Complex`, `Text`, `Bool`,
+`Date`, `Time`, `DateTime`.
 A column with no `Name : Type` line takes its type from its cells.
 
 | Type | Written |
 |---|---|
 | `Int` | `42`, `1_000_000` |
 | `Decimal` | `19.99` — exact |
-| `Fraction` | `1/7`, `22/7` — exact |
+| `Fraction` | `1/7`, `22/7`, `2 3/4` — exact, shown as a fraction |
 | `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
-| `Ratio` | `3:2`, `4:1` — exact, shown as a ratio |
-| `Num` | `1.5e3` — floating point |
+| `Num` | `1.5e3`, `Inf`, `-Inf`, `NaN` — floating point |
 | `Text` | `hi` or `"hi"`  (escape \|) |
 | `Bool` | `true`, `false` |
 | `Date` | `2025-01-31` |
@@ -76,12 +75,14 @@ all three, a `Decimal` column takes whole numbers and decimals, but not `1/7`.
 
 A `Percent` column takes any exact number and shows it as a percentage: `0.4`
 there is `40%`, and so is `= Profit / Revenue` when it comes to two fifths.
-A `20%` in a `Decimal` or `Fraction` column is the number it stands for, `0.2`.
+A `20%` in a `Decimal` or `Fraction` column is the number it stands for, `0.2`
+or `1/5`.
 
-A `Ratio` column takes any exact number and shows it as a ratio in its lowest
-terms: `6:4` and `1.5` there are `3:2`, and `4` is `4:1`. Outside one, two
-digits on each side of the `:` is a time: `16:10` is a ratio only in a
-`Ratio` column.
+A `Fraction` column shows every number as a fraction, and one of more than
+one as a whole number and a part: `2.75` and `11/4` there are both `2 3/4`.
+A fraction may be written that way too, with a space: `2 3/4` is `11/4`, and
+the app keeps it in the file as `11/4`.
+
 See `examples/types.omx` for every type at work.
 
 Dates and times are always written this way in the file. The app shows and

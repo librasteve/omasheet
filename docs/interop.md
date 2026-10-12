@@ -22,8 +22,6 @@ omasheet import sales.csv                    # one table, named after the file
   [Formulas](#formulas). Where it cannot, the value is imported, and the
   cells are listed with the reason.
 - Text that looks like a formula, `=SUM(A1:A3)`, stays text.
-- Text that looks like a ratio, `9:30` or `3:2`, stays text too: a file may
-  mean a time by it. Take the quotes off in a column you declare `Ratio`.
 
 ### Formulas
 
@@ -75,7 +73,6 @@ What is written is the calculated values: no formulas, and no constants.
 |---|---|---|
 | `Int`, `Decimal`, `Fraction` | the nearest floating-point number | in full; one that does not end, such as `1/3`, as `0.3333333333333333` |
 | `Percent` | that number, formatted as a percentage | `40%`; one that does not end as `33.33333333333333%` |
-| `Ratio` | the nearest floating-point number | `3:2` |
 | `Date`, `Time`, `DateTime` | a date or time cell | `2025-01-31`, `09:30`, `2025-01-31T09:30` |
 | `Complex` | text | `3+4i` |
 | a cell that failed | empty | empty |

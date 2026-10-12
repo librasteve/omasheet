@@ -50,8 +50,7 @@ pub enum Datum {
 impl Datum {
     /// What a cell reads `text` as: a number, a date, a time, `true` or
     /// `false`; anything else is text, and so is a quoted string or a
-    /// formula, which stay as they are written. So is `9:30`: a file may
-    /// mean a time by it, so it is not taken for a ratio.
+    /// formula, which stay as they are written.
     pub fn read(text: &str) -> Datum {
         use omasheet_engine::omx::ast::Lit;
         use omasheet_engine::omx::convert::{lit_type, parse_literal};
@@ -60,7 +59,7 @@ impl Datum {
             return Datum::Empty;
         }
         match parse_literal(trimmed) {
-            Some(Lit::Text(_) | Lit::Ratio(_)) | None => Datum::Text(text.to_string()),
+            Some(Lit::Text(_)) | None => Datum::Text(text.to_string()),
             Some(lit) => Datum::Lit(trimmed.to_string(), lit_type(&lit)),
         }
     }
@@ -105,7 +104,8 @@ impl Grid {
 }
 
 const RESERVED: &[&str] = &[
-    "if", "then", "else", "and", "or", "not", "in", "true", "false", "table", "const", "fn", "zone",
+    "if", "then", "else", "and", "or", "not", "in", "true", "false", "Inf", "NaN", "table",
+    "const", "fn", "zone",
 ];
 
 /// `raw` as an OMX identifier: the letters, digits and `_` of it, with a
@@ -173,7 +173,7 @@ fn text_cell(text: &str) -> String {
         && !text.contains(['|', '"', '\n', '\r', '\t'])
         && !text.contains(":=")
         && !text.chars().all(|c| matches!(c, '-' | ':' | ' '))
-        && !RESERVED[9..]
+        && !RESERVED[11..]
             .iter()
             .any(|k| text.strip_prefix(k).is_some_and(|r| r.starts_with(' ')));
     if bare {
@@ -534,10 +534,10 @@ mod tests {
         assert_eq!(text_cell("Jan"), "Jan");
         assert_eq!(text_cell("N/A"), "N/A");
         assert_eq!(text_cell("42"), "\"42\"");
-        // A sheet would read these as ratios, and a file may mean times.
+        // A time has two digits each side of the `:`; anything else is text.
         assert_eq!(Datum::read("9:30"), Datum::Text("9:30".to_string()));
-        assert_eq!(text_cell("9:30"), "\"9:30\"");
-        assert_eq!(text_cell("3:2"), "\"3:2\"");
+        assert_eq!(text_cell("9:30"), "9:30");
+        assert_eq!(text_cell("09:30"), "\"09:30\"");
         assert_eq!(text_cell("=SUM(A1:A3)"), "\"=SUM(A1:A3)\"");
         assert_eq!(text_cell("a|b"), "\"a|b\"");
         assert_eq!(text_cell(" padded"), "\" padded\"");

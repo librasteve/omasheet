@@ -17,9 +17,6 @@ pub enum S {
     /// An exact number shown as so many in a hundred: `20%` is `1/5`. It
     /// holds whatever a `Fraction` does.
     Percent,
-    /// An exact number shown as one amount to another: `3:2` is `3/2`, and
-    /// `4` is `4:1`. It holds whatever a `Fraction` does.
-    Ratio,
     Num,
     Complex,
     Text,
@@ -37,7 +34,6 @@ impl S {
             "Decimal" => S::Decimal,
             "Fraction" => S::Fraction,
             "Percent" => S::Percent,
-            "Ratio" => S::Ratio,
             "Num" => S::Num,
             "Complex" => S::Complex,
             "Text" => S::Text,
@@ -52,23 +48,13 @@ impl S {
     pub fn is_numeric(self) -> bool {
         matches!(
             self,
-            S::Any
-                | S::Int
-                | S::Decimal
-                | S::Fraction
-                | S::Percent
-                | S::Ratio
-                | S::Num
-                | S::Complex
+            S::Any | S::Int | S::Decimal | S::Fraction | S::Percent | S::Num | S::Complex
         )
     }
 
-    /// An exact number: `Int`, `Decimal`, `Fraction`, `Percent` or `Ratio`.
+    /// An exact number: `Int`, `Decimal`, `Fraction` or `Percent`.
     pub fn is_exact(self) -> bool {
-        matches!(
-            self,
-            S::Int | S::Decimal | S::Fraction | S::Percent | S::Ratio
-        )
+        matches!(self, S::Int | S::Decimal | S::Fraction | S::Percent)
     }
 
     /// A date, a time of day, or both.
@@ -95,17 +81,16 @@ impl S {
         match self {
             S::Int => 0,
             S::Decimal => 1,
-            S::Fraction | S::Percent | S::Ratio => 2,
+            S::Fraction | S::Percent => 2,
             S::Num => 3,
             _ => 4,
         }
     }
 
-    /// The wider of two numeric types. A `Percent` or a `Ratio` next to
-    /// another kind of exact number is a `Fraction`.
+    /// The wider of two numeric types. A `Percent` next to another kind of
+    /// exact number is a `Fraction`.
     pub fn wider(self, other: S) -> S {
-        let shown = |s: S| matches!(s, S::Percent | S::Ratio);
-        let either = shown(self) || shown(other);
+        let either = self == S::Percent || other == S::Percent;
         if self != other && either && self.is_exact() && other.is_exact() {
             S::Fraction
         } else if self.rank() >= other.rank() {
@@ -137,7 +122,7 @@ impl S {
             || match to {
                 S::Any | S::Text => true,
                 S::Int | S::Decimal | S::Fraction | S::Num => number || self == S::Bool,
-                S::Percent | S::Ratio | S::Complex | S::Bool => number,
+                S::Percent | S::Complex | S::Bool => number,
                 S::Date | S::Time => self == S::DateTime,
                 S::DateTime => self == S::Date,
             }
@@ -149,7 +134,7 @@ impl S {
             || self == S::Any
             || to == S::Any
             // An `Int` is a `Decimal`, and a `Decimal` is a `Fraction`. A
-            // `Percent` or a `Ratio` holds any of them, and is a `Fraction`.
+            // `Percent` holds any of them, and is a `Fraction`.
             || (self.is_exact() && to.is_exact() && self.rank() <= to.rank())
     }
 }
@@ -162,7 +147,6 @@ impl fmt::Display for S {
             S::Decimal => "Decimal",
             S::Fraction => "Fraction",
             S::Percent => "Percent",
-            S::Ratio => "Ratio",
             S::Num => "Num",
             S::Complex => "Complex",
             S::Text => "Text",

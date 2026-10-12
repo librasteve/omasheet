@@ -9,9 +9,8 @@ explicit choice.
 OMX SHALL provide the numeric types `Int` (arbitrary-precision integer), `Fraction`
 (arbitrary-precision rational, numerator and denominator both unbounded, always
 in lowest terms), `Decimal` (a `Fraction` whose decimal expansion terminates),
-`Percent` (a `Fraction` displayed as a percentage), `Ratio` (a `Fraction`
-displayed as one whole number to another), `Num` (IEEE 754 double) and
-`Complex` (pair of `Num`). OMX SHALL NOT expose fixed-width integer types.
+`Percent` (a `Fraction` displayed as a percentage), `Num` (IEEE 754 double)
+and `Complex` (pair of `Num`). OMX SHALL NOT expose fixed-width integer types.
 
 `Decimal` SHALL be a subtype of `Fraction`, and `Int` of `Decimal`: an `Int` SHALL
 be accepted where a `Decimal` is declared, and a `Decimal` where a `Fraction` is.
@@ -21,11 +20,6 @@ A `Percent` SHALL hold any exact number. An `Int`, a `Decimal` or a `Fraction`
 SHALL be accepted where a `Percent` is declared, and SHALL become a `Percent`
 of the same value; a `Percent` SHALL be accepted where a `Fraction` is declared,
 and SHALL become the plain number.
-
-A `Ratio` SHALL hold any exact number. An `Int`, a `Decimal`, a `Fraction` or a
-`Percent` SHALL be accepted where a `Ratio` is declared, and SHALL become a
-`Ratio` of the same value; a `Ratio` SHALL be accepted where a `Fraction` or a
-`Percent` is declared, and SHALL become the plain number or the percentage.
 
 #### Scenario: Large integers do not overflow
 - **WHEN** `10**1000` is evaluated
@@ -38,13 +32,12 @@ A `Ratio` SHALL hold any exact number. An `Int`, a `Decimal`, a `Fraction` or a
 ### Requirement: Literal types
 An integer literal SHALL be an `Int`. A literal with a decimal point SHALL be
 the exactly equal `Decimal`. A fraction of two whole numbers written in a cell,
-`1/7`, SHALL be a `Fraction`, whether or not it is more than one, `22/7`. Two
-whole numbers with a `:` between, `3:2`, SHALL be the first divided by the
-second, exactly, as a `Ratio`; a second of zero SHALL be an error. Two digits
-on each side of the `:` SHALL be a `Time`, except in a cell of a column
-declared `Ratio` and in text converted with `Ratio`, where it SHALL be a
-`Ratio`. A literal with an exponent (`1e-100`) SHALL be a `Num`. Digits MAY
-be grouped with `_`. A number immediately followed by `%` SHALL be that number
+`1/7`, SHALL be a `Fraction`, whether or not it is more than one, `22/7`; so
+SHALL a whole number, a space and a fraction of less than one, `2 3/4`, which
+SHALL be their sum, `11/4`. Two
+digits on each side of a `:`, `16:10`, SHALL be a `Time`; any other pair of
+whole numbers with a `:` between SHALL be an error. A literal with an
+exponent (`1e-100`) SHALL be a `Num`, and so SHALL `Inf` and `NaN`; text of the same SHALL be written in quotes, `"Inf"`. Digits MAY be grouped with `_`. A number immediately followed by `%` SHALL be that number
 divided by 100, exactly, as a `Percent`. A number immediately followed by `i` SHALL be an
 imaginary `Complex`, so that `3+4i` is the `Complex` with real part 3 and
 imaginary part 4. A cell holding such a number, with no `=`, SHALL be a `Complex`
@@ -73,17 +66,21 @@ with no imaginary part.
 
 #### Scenario: A top-heavy fraction
 - **WHEN** a cell holds `22/7`
-- **THEN** it is the `Fraction` exactly equal to `22/7`, displayed as `22/7`
+- **THEN** it is the `Fraction` exactly equal to `22/7`, displayed as `3 1/7`
 
-#### Scenario: Ratio literal
-- **WHEN** `6:4` is evaluated
-- **THEN** the result is the `Ratio` exactly equal to `3/2`, displayed as `3:2`
-- **AND** `3:0` is an error
+#### Scenario: A whole number and a part
+- **WHEN** a cell holds `2 3/4`
+- **THEN** it is the `Fraction` exactly equal to `11/4`, displayed as `2 3/4`
+- **AND** `2 7/4` is not a number
 
-#### Scenario: A ratio or a time
+#### Scenario: A Fraction column
+- **WHEN** a column declared `Fraction` holds `2.75` and `0.5`
+- **THEN** the cells are displayed as `2 3/4` and `1/2`
+
+#### Scenario: A time, not a ratio
 - **WHEN** `16:10` is evaluated
 - **THEN** the result is the `Time` ten past four in the afternoon
-- **AND** a cell holding `16:10` in a column declared `Ratio` is the `Ratio` `8:5`
+- **AND** `3:2` is an error
 
 #### Scenario: Exponent literal is approximate
 - **WHEN** `1e-100` is evaluated
@@ -92,7 +89,15 @@ with no imaginary part.
 ### Requirement: Exact arithmetic
 `+`, `-`, `*` and `/` over `Int`, `Decimal` and `Fraction` operands SHALL be exact.
 Division of two `Int`s SHALL yield a `Fraction` (or an `Int` when the division is
-exact) and SHALL NOT truncate or produce a `Num`.
+exact) and SHALL NOT truncate or produce a `Num`, except that division by zero,
+which no exact number is, SHALL yield the `Num` `Inf`, `-Inf` by the sign of
+what is divided, or `NaN` when that is zero. A `NaN` SHALL NOT be equal to,
+less than or more than any value, itself included.
+
+#### Scenario: Division by zero
+- **WHEN** `1/0`, `-1/0` and `0/0` are evaluated
+- **THEN** the results are the `Num`s `Inf`, `-Inf` and `NaN`
+- **AND** `NaN == NaN` is `false` and `NaN != NaN` is `true`
 
 The type of a sum, difference or product SHALL be the wider of its operands'
 types, so that decimals stay `Decimal`. A quotient or a power of `Int`s or
@@ -104,24 +109,6 @@ The sum or difference of two `Percent`s, the negation or absolute value of
 one, and the sum, average, least or greatest of a vector of them SHALL be a
 `Percent`. Any other arithmetic with a `Percent` SHALL treat it as the number
 it stands for, and SHALL give a `Fraction` next to an exact operand.
-
-The sum, difference, product or quotient of two `Ratio`s, the negation or
-absolute value of one, and the sum, average, least or greatest of a vector of
-them SHALL be a `Ratio`. Any other arithmetic with a `Ratio` SHALL treat it as
-the number it stands for, and SHALL give a `Fraction` next to an exact operand.
-
-#### Scenario: Ratios compound
-- **WHEN** `3:1 * 2:1` is evaluated
-- **THEN** the result is the `Ratio` `6:1`
-
-#### Scenario: A ratio next to a number
-- **WHEN** `3:2 * 2` is evaluated
-- **THEN** the result is `3`, not a `Ratio`
-- **AND** `3:2 == 1.5` is true
-
-#### Scenario: A Ratio column
-- **WHEN** a column declared `Ratio` holds `4`, `1.5` and `6:4`
-- **THEN** the cells are displayed as `4:1`, `3:2` and `3:2`
 
 #### Scenario: Percentages add up
 - **WHEN** `20% + 5%` is evaluated
@@ -200,12 +187,6 @@ anything is calculated.
 - **THEN** the result is the `Percent` `12.5%`
 - **AND** `(1/3).Percent` is the `Percent` exactly equal to `1/3`, not an error
 
-#### Scenario: A number as a Ratio
-- **WHEN** `1.5.Ratio` is evaluated
-- **THEN** the result is the `Ratio` `3:2`
-- **AND** `4.Ratio` is the `Ratio` `4:1`
-- **AND** `(3:2).Fraction` is `1.5`
-
 #### Scenario: A Fraction as a Decimal
 - **WHEN** `(1/8).Decimal` is evaluated
 - **THEN** the result is the `Decimal` `0.125`
@@ -222,16 +203,18 @@ anything is calculated.
 
 ### Requirement: Value is independent of display
 The stored value of a number SHALL NOT be altered by how it is displayed.
-An exact number SHALL always display in full: a `Decimal`, a `Fraction` whose
-expansion terminates, as that decimal, and any other `Fraction` as a fraction
-`x/y` in lowest terms. A `Percent` SHALL display as its value times 100
+An exact number SHALL always display in full: a `Decimal` as that decimal, and
+a `Fraction` as a fraction in lowest terms, never as a decimal. A `Percent` SHALL display as its value times 100
 followed by `%`: in full when that terminates, and otherwise rounded to two
 digits after the point, a half away from zero, and marked with `…` before the
-`%`; on request it SHALL display in full as a fraction followed by `%`. A
-`Ratio` SHALL display as its numerator, `:` and its denominator, in lowest
-terms, and a whole one with a denominator of `1`, `4:1`. A `Fraction` of more
-than one SHALL display as it is, `7/3`, and not as a whole number and a part.
-A `Num` SHALL display as
+`%`; on request it SHALL display in full as a fraction followed by `%`. A `Fraction` of
+less than one SHALL display as `x/y`, and one of more than one as a whole
+number and a part with a space between, `2 3/4`; on request, and as text, it
+SHALL display as it is written in a file, `11/4`. A value declared or
+converted `Fraction`, a fraction written in a cell, and the result of
+arithmetic with one SHALL be a `Fraction`. The result of other exact
+arithmetic SHALL be a `Decimal` when it terminates and a `Fraction` when it
+does not. A `Num` SHALL display as
 Raku displays one: a whole number with no decimal point, any other as a decimal,
 and one of magnitude `1e15` or more, or less than `1e-4`, with a signed exponent
 of at least two digits. By default more than five digits after the point, or

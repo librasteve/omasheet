@@ -15,8 +15,6 @@ pub enum Lit {
     Fraction(BigRational),
     /// Written with a `%`: `20%`, held as `1/5`.
     Percent(BigRational),
-    /// Written with a `:`: `3:2`, held as `3/2`.
-    Ratio(BigRational),
     Num(f64),
     /// Real and imaginary parts.
     Complex(f64, f64),

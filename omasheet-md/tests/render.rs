@@ -188,7 +188,7 @@ fn an_error_in_a_linked_sheet_points_into_that_sheet() {
         shown.starts_with("report.md:2:10: error: cannot read `Missing.omx`: No such file"),
         "{shown}"
     );
-    let shown = errors("{{ 1 / 0 }}\n");
+    let shown = errors("{{ 1 + \"a\" }}\n");
     assert!(shown.starts_with("report.md:1:4: error:"), "{shown}");
 }
 

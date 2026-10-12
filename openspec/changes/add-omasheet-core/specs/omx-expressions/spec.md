@@ -288,7 +288,8 @@ away from zero. `sqrt`, `exp`, `ln`, `log10`, `log2`, `sin`, `cos`, `tan`,
 `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, `radians` and `degrees` SHALL
 give a `Num`, with angles in radians, and `pi()` SHALL give π and `e()` the
 base of the natural logarithm, each as a `Num`. A
-number outside a function's domain SHALL be an error. `re`, `im`, `conj` and
+number outside a function's domain SHALL give what Raku gives, the `Num` `NaN`
+or an infinity. `re`, `im`, `conj` and
 `arg` SHALL give the real part, imaginary part, conjugate and angle of a
 `Complex`, and `abs`, `sqrt`, `exp` and `ln` SHALL accept one; the other
 functions SHALL NOT. Every function SHALL be
@@ -306,7 +307,8 @@ than with the names of any particular sheet.
 
 #### Scenario: Outside the domain
 - **WHEN** `sqrt(-1)` is evaluated
-- **THEN** an error says `sqrt` is not defined for that number
+- **THEN** the result is the `Num` `NaN`
+- **AND** `ln(0)` is `-Inf`
 
 ### Requirement: Calling a sheet's functions
 A function a sheet defines SHALL be called like a built-in one: as `F(a, b)`,

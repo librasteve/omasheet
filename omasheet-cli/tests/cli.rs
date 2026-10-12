@@ -120,7 +120,7 @@ fn eval_from_standard_input() {
         .write_all(b"Sales.Revenue.avg()\n")
         .unwrap();
     let out = child.wait_with_output().unwrap();
-    assert_eq!(stdout(&out), "35200/3\n");
+    assert_eq!(stdout(&out), "11733 1/3\n");
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn a_command_needs_no_display() {
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
-    assert_eq!(stdout(&out), "0.5\n");
+    assert_eq!(stdout(&out), "1/2\n");
 }
 
 #[test]

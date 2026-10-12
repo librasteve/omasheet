@@ -131,7 +131,7 @@ fn csv_quotes_as_rfc_4180() {
 
 #[test]
 fn csv_leaves_a_failed_cell_empty_and_says_so() {
-    let sheet = "table T\n\nA | B\n1 | = 1 / 0\n";
+    let sheet = "table T\n\nA | B\n1 | = Inf.Int\n";
     let out = csv_of(sheet, None);
     assert_eq!(text_of(&out, 0), "A,B\n1,\n");
     assert_eq!(

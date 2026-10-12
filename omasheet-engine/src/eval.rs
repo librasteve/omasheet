@@ -9,7 +9,7 @@
 
 use crate::Options;
 use crate::value::{
-    RowRef, Value, View, arith, compare, equal, format_exact, format_styled, math, to_f64,
+    RowRef, Value, View, arith, compare, equal, format_exact, format_styled, is_nan, math, to_f64,
 };
 use crate::zone::{Zone, Zoned, utc_now};
 use num_bigint::BigInt;
@@ -238,18 +238,15 @@ impl<'p> Engine<'p> {
                 format!("a cell holds one value, but this is {}", v.kind()),
             );
         }
-        // A `Decimal` column holds only what ends as a decimal.
-        let decimal = matches!(&v, Value::Fraction(r) if omasheet_omx::convert::is_decimal(r));
         let ok = !col.declared
-            || (decimal && col.ty == S::Decimal)
             || matches!(
                 (&v, col.ty),
                 (Value::Empty, _)
                     | (_, S::Any)
                     | (Value::Int(_), S::Int | S::Decimal | S::Fraction)
+                    | (Value::Decimal(_), S::Decimal)
                     | (Value::Fraction(_), S::Fraction)
                     | (Value::Percent(_), S::Percent)
-                    | (Value::Ratio(_), S::Ratio)
                     | (Value::Num(_), S::Num)
                     | (Value::Complex(..), S::Complex)
                     | (Value::Text(_), S::Text)
@@ -261,17 +258,18 @@ impl<'p> Engine<'p> {
         if ok {
             Ok(v)
         } else if col.ty == S::Percent
-            && matches!(v, Value::Int(_) | Value::Fraction(_) | Value::Ratio(_))
+            && matches!(v, Value::Int(_) | Value::Decimal(_) | Value::Fraction(_))
         {
             // Any exact number in a `Percent` column is a percentage.
             Ok(v.percent())
-        } else if col.ty == S::Ratio
-            && matches!(v, Value::Int(_) | Value::Fraction(_) | Value::Percent(_))
+        } else if col.ty == S::Fraction && matches!(v, Value::Decimal(_) | Value::Percent(_)) {
+            // And in a `Fraction` column a fraction: `2.75` is `2 3/4`.
+            Ok(v.plain().fraction())
+        } else if let (S::Decimal, Value::Fraction(r)) = (col.ty, &v)
+            && omasheet_omx::convert::is_decimal(r)
         {
-            // And in a `Ratio` column a ratio: `4` is `4:1`.
-            Ok(v.ratio())
-        } else if col.ty == S::Fraction && matches!(v, Value::Percent(_) | Value::Ratio(_)) {
-            Ok(v.plain())
+            // A `Decimal` column holds only what ends as a decimal.
+            Ok(Value::Decimal(r.clone()))
         } else {
             fail(
                 span,
@@ -349,7 +347,6 @@ impl<'p> Engine<'p> {
                         (_, Value::Empty) => Ok(Value::Empty),
                         (UnOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
                         (UnOp::Neg, Value::Percent(r)) => Ok(Value::Percent(-r)),
-                        (UnOp::Neg, Value::Ratio(r)) => Ok(Value::Ratio(-r)),
                         (UnOp::Neg, v) if v.is_numeric() => {
                             arith(BinOp::Sub, &Value::Int(BigInt::from(0)), v)
                                 .or_else(|m| fail(span, m))
@@ -579,7 +576,7 @@ impl<'p> Engine<'p> {
                     *part = match self.eval(arg, fr)? {
                         Value::Empty => return Ok(Value::Empty),
                         Value::Int(n) => n.to_f64().unwrap_or(f64::NAN),
-                        Value::Fraction(r) | Value::Percent(r) | Value::Ratio(r) => to_f64(&r),
+                        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => to_f64(&r),
                         Value::Num(f) => f,
                         other => {
                             return fail(
@@ -761,17 +758,10 @@ impl<'p> Engine<'p> {
                     }
                     Ok(total)
                 };
-                // The sum and the average of percentages are percentages, and
-                // those of ratios are ratios.
-                let all =
-                    |is: fn(&Value) -> bool| !present.is_empty() && present.iter().all(|v| is(v));
-                let percent = all(|v| matches!(v, Value::Percent(_)));
-                let ratio = all(|v| matches!(v, Value::Ratio(_)));
-                let kept = |v: Value| match (percent, ratio) {
-                    (true, _) => v.percent(),
-                    (_, true) => v.ratio(),
-                    _ => v,
-                };
+                // The sum and the average of percentages are percentages.
+                let percent =
+                    !present.is_empty() && present.iter().all(|v| matches!(v, Value::Percent(_)));
+                let kept = |v: Value| if percent { v.percent() } else { v };
                 match func {
                     Func::Count => Ok(Value::Int(BigInt::from(present.len()))),
                     Func::Sum => sum().map(kept),
@@ -789,6 +779,10 @@ impl<'p> Engine<'p> {
                         } else {
                             Ordering::Greater
                         };
+                        // A `NaN` has no order, so it is the answer.
+                        if let Some(&nan) = present.iter().find(|v| is_nan(v)) {
+                            return Ok(nan.clone());
+                        }
                         let mut best: Option<&Value> = None;
                         for &v in &present {
                             best = match best {
@@ -1112,6 +1106,12 @@ fn scalar_op(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     let empty = matches!(a, Value::Empty) || matches!(b, Value::Empty);
     Ok(match op {
         _ if op.is_arithmetic() => arith(op, a, b)?,
+        // As Raku has it: only `!=` is true of a `NaN`.
+        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
+            if !empty && (is_nan(a) || is_nan(b)) =>
+        {
+            Value::Bool(op == BinOp::Ne)
+        }
         BinOp::Eq => equal(a, b)?.map_or(Value::Empty, Value::Bool),
         BinOp::Ne => equal(a, b)?.map_or(Value::Empty, |e| Value::Bool(!e)),
         BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => match compare(a, b)? {

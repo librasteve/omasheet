@@ -149,6 +149,13 @@ fn iso_entry(style: &Style, ty: &str, input: &str) -> Option<String> {
     }
 }
 
+/// A whole number and a part typed into a cell, `2 3/4`, as the fraction a
+/// sheet keeps, `11/4`. `None` if it is not one, or the column is `Text`.
+fn fraction_entry(ty: &str, input: &str) -> Option<String> {
+    let r = omasheet_omx::convert::parse_mixed(input.trim()).filter(|_| ty != "Text")?;
+    Some(format!("{}/{}", r.numer(), r.denom()))
+}
+
 /// What can be typed into a cell of a column of type `ty`, with an example
 /// written the way `style` reads it. Empty when the type is not known.
 pub fn entry_hint(style: &Style, ty: &str) -> String {
@@ -159,10 +166,9 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
     match ty {
         "Int" => "Int: a whole number, e.g. 42".into(),
         "Decimal" => "Decimal: an exact decimal number, e.g. 19.99 or 20%".into(),
-        "Fraction" => "Fraction: an exact number, e.g. 1/7, 19.99 or 20%".into(),
+        "Fraction" => "Fraction: an exact number shown as a fraction, e.g. 1/7 or 2 3/4".into(),
         "Percent" => "Percent: an exact number shown as a percentage, e.g. 20%".into(),
-        "Ratio" => "Ratio: an exact number shown as a ratio, e.g. 3:2 or 4:1".into(),
-        "Num" => "Num: a floating-point number, e.g. 1.5 or 2e-3".into(),
+        "Num" => "Num: a floating-point number, e.g. 1.5, 2e-3 or Inf".into(),
         "Complex" => "Complex: e.g. 3+4i or 2.5i".into(),
         "Bool" => "Bool: true or false".into(),
         "Text" => "Text".into(),
@@ -1041,7 +1047,9 @@ impl Document {
                 }
                 let single = grid.header.len() == 1;
                 let ty = types.get(*col).map_or("", String::as_str);
-                let cleaned = iso_entry(&style, ty, text).unwrap_or_else(|| clean_cell(text));
+                let cleaned = iso_entry(&style, ty, text)
+                    .or_else(|| fraction_entry(ty, text))
+                    .unwrap_or_else(|| clean_cell(text));
                 grid.rows[*row].1[*col] = if cleaned.is_empty() && single {
                     "\"\"".to_string()
                 } else {
@@ -1837,7 +1845,8 @@ impl Document {
         // What a number shown with fewer digits than it has is in full.
         let exact = |v: &Value, quoted: bool, shown: &str| {
             let full = match v {
-                Value::Fraction(_)
+                Value::Decimal(_)
+                | Value::Fraction(_)
                 | Value::Percent(_)
                 | Value::Num(_)
                 | Value::Complex(..)
@@ -2284,6 +2293,25 @@ mod tests {
             ],
         );
         assert!(loose.text().contains("2026-10-08 | 09:30"));
+
+        // A whole number and a part is kept as the fraction it comes to.
+        let mut mixed = Document::from_text("table T\n\nN : Text\n\nA | N\n  |\n  |\n");
+        mixed.set_cells(
+            0,
+            &[
+                (0, 0, " 2 3/4".to_string()),
+                (1, 0, "-1 1/3".to_string()),
+                (0, 1, "2 3/4".to_string()),
+            ],
+        );
+        assert!(mixed.text().contains("11/4 | 2 3/4"), "{}", mixed.text());
+        assert!(mixed.text().contains("-4/3"));
+        let cell = &mixed.snapshot().tables[0].rows[0][0];
+        assert_eq!(
+            (cell.display.as_str(), cell.source.as_str()),
+            ("2 3/4", "11/4")
+        );
+        assert_eq!(cell.exact.as_deref(), Some("11/4"));
         assert!(loose.text().contains("= 1/2"));
         assert!(loose.text().contains("10.11.12"));
     }
@@ -2368,10 +2396,10 @@ mod tests {
         let numbers = |s: &str, a: &str| Some((s.to_string(), a.to_string()));
         // Exact numbers add up exactly, and are shown as cells are.
         let a = sum((0, 1), (2, 1));
-        assert_eq!((a.count, a.numbers), (3, numbers("10/3", "10/9")));
+        assert_eq!((a.count, a.numbers), (3, numbers("3 1/3", "1 1/9")));
         // Text counts but does not add; an empty cell does neither.
         let top = sum((0, 0), (1, 2));
-        assert_eq!((top.count, top.numbers), (5, numbers("3.5", "7/6")));
+        assert_eq!((top.count, top.numbers), (5, numbers("3.5", "1 1/6")));
         // One Num makes the total a Num.
         let b = sum((0, 2), (2, 2));
         assert_eq!((b.count, b.numbers), (2, numbers("100.5", "50.25")));

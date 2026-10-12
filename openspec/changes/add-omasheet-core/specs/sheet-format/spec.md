@@ -77,7 +77,7 @@ an error.
 ### Requirement: Column schema
 A table SHALL be able to declare the type of each column with lines of the form
 `<Column> : <Type>` placed between the `table` line and the header row. A type
-SHALL be a base type (`Int`, `Decimal`, `Fraction`, `Percent`, `Ratio`, `Num`, `Complex`, `Text`, `Date`, `Time`, `DateTime`, `Bool`).
+SHALL be a base type (`Int`, `Decimal`, `Fraction`, `Percent`, `Num`, `Complex`, `Text`, `Date`, `Time`, `DateTime`, `Bool`).
 A column with no declaration SHALL have its type inferred from its cells.
 
 #### Scenario: Typed columns

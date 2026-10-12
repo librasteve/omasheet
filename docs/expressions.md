@@ -7,8 +7,15 @@ Try any of these with `omasheet eval [sheet.omx] '<expression>'`.
 Arithmetic is exact: `1/3 + 1/6` is `0.5`, `0.1 + 0.2` is `0.3`, and integers
 do not overflow. `x.Num` gives a floating-point `Num`.
 
-An exact number is shown in full: one that ends as a decimal, `0.015625`,
-and any other as a fraction, `1/3`. A `Num` is shown with up to five digits
+No exact number is a division by zero, so that gives a `Num`: `1/0` is `Inf`,
+`-1/0` is `-Inf` and `0/0` is `NaN`. So does a function outside its
+domain: `sqrt(-1)` is `NaN` and `ln(0)` is `-Inf`. They are written as they are shown,
+`Inf`, `-Inf` and `NaN`, in a formula or a cell; the text is in quotes,
+`"Inf"`. A `NaN` is not equal to anything, itself included: of the
+comparisons only `!=` is true of one.
+
+An exact number is shown in full: a `Decimal` as a decimal, `0.015625`, and
+a `Fraction` as a fraction, `1/3`. A `Num` is shown with up to five digits
 after the point; one with more is rounded and marked, `1.41421…`. Only the
 display is rounded, and `omasheet eval --exact` gives it in full.
 
@@ -16,12 +23,15 @@ A `Percent` is an exact number shown as so many in a hundred: `20%` is `1/5`.
 One that does not end is rounded to two digits and marked, `41.67…%`, and
 `--exact` gives it as a fraction, `125/3%`.
 
-A `Ratio` is an exact number shown as one amount to another: `3:2` is `3/2`.
-It is shown in its lowest terms, `6:4` as `3:2`, and a whole one to one,
-`4:1`.
+A `Fraction` is never shown as a decimal. One of more than one is shown as a
+whole number and a part: `11/4` as `2 3/4`. `--exact` and `x.Text` give it
+as it is written in the file, `11/4`.
 
-A `Fraction` may be more than one, `7/3`, and is kept as it is, not as a
-whole number and a part.
+Whole numbers and decimals divided give a `Decimal` when the result ends,
+`7 / 4` is `1.75`, and a `Fraction` when it does not, `7 / 3` is `2 1/3`.
+Anything worked out from a `Fraction` is a `Fraction`: `x.Fraction * 2`. To
+show a result as a fraction, declare its column `Fraction` or write
+`x.Fraction`; for a decimal, write `x.Decimal`.
 
 Numbers are shown the way Raku shows them:
 
@@ -29,10 +39,9 @@ Numbers are shown the way Raku shows them:
 |---|---|
 | `Int` | `101` |
 | `Decimal` | `1.01` |
-| `Fraction` | `1/3`, `7/3` |
+| `Fraction` | `1/3`, `2 3/4` |
 | `Percent` | `20%`, `12.5%`; `41.67…%` when it does not end |
-| `Ratio` | `3:2`, `4:1` |
-| `Num` | `100`, `1.5`, `1.41421…`; `1e+21` or `1.41421…e-07` when very large or small |
+| `Num` | `100`, `1.5`, `1.41421…`; `1e+21` or `1.41421…e-07` when very large or small; `Inf`, `-Inf`, `NaN` |
 | `Complex` | each part as a `Num`: `3+4i`, `1.5-2i`, `0+1.41421…i` |
 
 A `Num` that is a whole number looks like an `Int`, but it is still a `Num`.
@@ -48,15 +57,6 @@ Anything else done with one gives the plain number: `100 * 20%` is `20`,
 `1 + 20%` is `1.2`, and `20% == 0.2` is true. To show a result as a
 percentage, declare its column `Percent` or write `x.Percent`.
 
-A `Ratio` holds what a `Fraction` does too. Ratios add, subtract, multiply
-and divide to a ratio: `3:1 * 2:1` is `6:1`, and so are their sum, average,
-least and greatest. Next to any other number one is the plain number:
-`3:2 * 2` is `3`, and `3:2 == 1.5` is true. To show a result as a ratio,
-declare its column `Ratio` or write `x.Ratio`.
-
-Two digits on each side of the `:` is a time, `16:10`. For that ratio write
-`8:5` or `"16:10".Ratio`, or enter it in a column declared `Ratio`.
-
 `+ - * / **`, `== != < > <= >=`, `and or not`, `in`, and `a // b` (b when a
 is empty). `if c then a else b`.
 
@@ -69,9 +69,8 @@ vector is converted value by value.
 |---|---|
 | `x.Int` | a whole number: `19.99` gives `19`, `-19.99` gives `-19` |
 | `x.Decimal` | an exact decimal: `(1/8).Decimal` is `0.125`; `(1/3).Decimal` is an error |
-| `x.Fraction` | an exact number: a `Num` as the decimal it is shown as |
+| `x.Fraction` | the same number as a fraction: `2.75` gives `2 3/4`; a `Num` as the decimal it is shown as |
 | `x.Percent` | the same number as a percentage: `0.4` gives `40%`, `5/12` gives `41.67…%` |
-| `x.Ratio` | the same number as a ratio: `1.5` gives `3:2`, `4` gives `4:1` |
 | `x.Num` | a floating-point number |
 | `x.Complex` | a complex number from a real one |
 | `x.Text` | any value as text, written the way a sheet writes it |
@@ -79,7 +78,7 @@ vector is converted value by value.
 | `x.Date`, `x.Time` | that half of a `DateTime` |
 | `x.DateTime` | a `Date` at midnight |
 
-Text is read the way a cell is: `"42".Int` is `42`, `"20%".Fraction` is `0.2`,
+Text is read the way a cell is: `"42".Int` is `42`, `"20%".Fraction` is `1/5`,
 `"2025-01-31".Date` is that date, and `"abc".Int` is an error. `true.Int` is
 `1`. To round rather than drop the fraction, use `round(x)`.
 
@@ -116,7 +115,7 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 - Vectors: `sum avg min max count`
 - Tables: `filter(condition)`, `select(columns)`
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
-- Converting: `Int Decimal Fraction Percent Ratio Num Complex Text Bool Date Time DateTime`
+- Converting: `Int Decimal Fraction Percent Num Complex Text Bool Date Time DateTime`
 - Dates: `today() now() year month day weekday hour minute second date time`
 - Time zones: `to_zone("Asia/Tokyo") utc() local() offset() zone()`
 - Your own: `fn` in the sheet
