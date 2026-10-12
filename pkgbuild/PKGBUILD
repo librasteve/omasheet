@@ -4,7 +4,7 @@
 # container; `makepkg` here builds on this machine.
 
 pkgname=omasheet
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc='Text-native spreadsheet: plain-text .omx files, with a Qt Quick app'
 arch=('x86_64' 'aarch64')
