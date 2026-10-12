@@ -137,7 +137,7 @@ fn refused(
     let onto: Vec<_> = t.columns.iter().take(last + 1).skip(from.1).collect();
     match onto.first() {
         Some(first) if onto.iter().all(|c| c.formula.is_some()) => Err(format!(
-            "`{}` is a formula column: its cells cannot be pasted over",
+            "`{}` is a formula column: click F2 to edit",
             first.name
         )),
         _ => Ok(()),
@@ -537,7 +537,7 @@ mod tests {
     fn nothing_is_pasted_onto_a_formula_column_alone() {
         let mut doc = doc();
         let mut clip = Clip::default();
-        let why = Err("`Sum` is a formula column: its cells cannot be pasted over".to_string());
+        let why = Err("`Sum` is a formula column: click F2 to edit".to_string());
         assert_eq!(clip.paste(&mut doc, 0, (0, 3), (0, 3), "5"), why);
         assert_eq!(clip.paste(&mut doc, 0, (0, 3), (2, 3), "5\n6"), why);
         assert_eq!(clip.paste_values(&mut doc, 0, (0, 3), (0, 3), "5"), why);

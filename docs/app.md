@@ -60,7 +60,8 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+N | New sheet after this one |
 | Ctrl+Shift+N | New window on this file |
 | F1 | View functions |
-| F2 | View source |
+| F2 | Edit in the formula box |
+| F3 | View source |
 | F11 | Fullscreen |
 
 ### Two sheets side by side

@@ -325,6 +325,12 @@ ApplicationWindow {
             return;
         if (sheet.isConsts && curCol !== 1)
             return;
+        // A formula column has one formula, written in the box at the top.
+        var column = sheet.columns[curCol];
+        if (!sheet.isConsts && column && column.computed) {
+            errorDialog.say("`" + column.name + "` is a formula column: click F2 to edit");
+            return;
+        }
         anchorRow = curRow;
         anchorCol = curCol;
         byRow = false;
@@ -371,6 +377,20 @@ ApplicationWindow {
         editor.insert(at, ref);
         editor.cursorPosition = at + ref.length;
         editor.forceActiveFocus();
+    }
+
+    // Go to the box at the top, to write what the cell holds there: the
+    // one formula of a formula column, from any cell of it or the whole.
+    function editInBox() {
+        if (tabs.length === 0)
+            return;
+        stopEditing();
+        if (selKind === "column" && selLeft === selRight)
+            selectCell(0, selLeft, false);
+        if (!hasCursor || !cellAt(curRow, curCol))
+            return;
+        formulaField.forceActiveFocus();
+        formulaField.selectAll();
     }
 
     function commit(text, dRow, dCol) {
@@ -847,7 +867,8 @@ ApplicationWindow {
     Shortcut { sequences: ["Ctrl+Alt+Left", "Ctrl+Shift+[", "Ctrl+Shift+{", "Ctrl+{"]; onActivated: win.switchTab(win.tab - 1) }
     Shortcut { sequence: "Ctrl+?"; onActivated: helpDialog.open() }
     Shortcut { sequence: "F1"; onActivated: functionsDialog.open() }
-    Shortcut { sequence: "F2"; onActivated: win.showSource = !win.showSource }
+    Shortcut { sequence: "F2"; enabled: !win.showSource; onActivated: win.editInBox() }
+    Shortcut { sequence: "F3"; onActivated: win.showSource = !win.showSource }
     Shortcut { sequences: ["Meta+F", "F11"]
         onActivated: win.visibility = win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen }
 
@@ -1992,7 +2013,6 @@ ApplicationWindow {
         modal: true
         width: 440
         focus: true
-        title: "Cannot paste"
         standardButtons: Dialog.Ok
         property string message: ""
         function say(text) {
@@ -2481,7 +2501,8 @@ ApplicationWindow {
                     + "Ctrl+N               New sheet after this one\n"
                     + "Ctrl+Shift+N         New window on this file\n\n"
                     + "F1                   View functions\n"
-                    + "F2                   View source\n"
+                    + "F2                   Edit in the formula box\n"
+                    + "F3                   View source\n"
                     + "F11                  Fullscreen\n\n"
                     + "A cell starting with = is a formula.\n"
                     + "Text is Markdown unless in quotes; Ctrl+click opens a link.\n"
