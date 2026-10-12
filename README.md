@@ -33,9 +33,9 @@ curl -fsSL https://raw.githubusercontent.com/librasteve/omasheet/main/install.sh
 **Update:** run the same line again.
 **Uninstall:** `sudo pacman -R omasheet`.
 
-**Build from source (eg. macOS aarch):** install Qt 6 (`brew install qt`) and
-Rust, then `cargo build --release --package omasheet-ui`; the binary is at
-`target/release/omasheet`.
+**Build from source** (e.g. on macOS ARM and other Linux): install Qt 6 and Rust 
+(`brew install qt rust`), then `cargo build --release --package omasheet-ui`; 
+the binary is at `target/release/omasheet`.
 
 ## Run
 
