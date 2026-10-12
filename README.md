@@ -1,5 +1,7 @@
 # Omasheet
 
+<img src="header.png" alt="Omasheet">
+
 A text-native spreadsheet: what Markdown is to a word processor, Omasheet is
 to a spreadsheet. An `.omx` file is plain text: named, typed sheets,
 with formulas in OMX, a small array language with exact arithmetic. Automatically 
