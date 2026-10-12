@@ -247,21 +247,109 @@ fn take_zone(text: &mut String) -> Option<(String, usize)> {
     None
 }
 
-/// A value's text with the characters Markdown reads as markup escaped.
-fn escape(text: &str, format: Format) -> String {
-    let marks: &[char] = match format {
-        // A table still needs its `|` and line breaks kept out of cells.
-        Format::Markdown => &[],
-        Format::Html => &['\\', '`', '*', '_', '[', ']', '<', '>', '&', '#', '~'],
-    };
+/// A value as it goes into the document. Text written bare in a cell may
+/// hold Markdown, and is left to be read as that: `**bold**`,
+/// `[a link](there)`. For a page, what it holds that would be read as HTML
+/// is escaped, outside a code span, where it is text already. Text written
+/// in quotes or made by a formula is shown as it is, with what Markdown
+/// reads as markup escaped, and so is any other value on a page.
+fn place(engine: &Engine, value: &Value, format: Format) -> String {
+    let text = engine.show(value, false);
+    if !value.is_markdown() {
+        if format == Format::Markdown && !matches!(value, Value::Text(..)) {
+            return text;
+        }
+        let marks = ['\\', '`', '*', '_', '[', ']', '<', '>', '&', '#', '~'];
+        let mut out = String::with_capacity(text.len());
+        for c in text.chars() {
+            if marks.contains(&c) {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+        return out;
+    }
+    if format == Format::Markdown {
+        return text;
+    }
+    let text = text.as_str();
+    let ticks = |from: &str| from.len() - from.trim_start_matches('`').len();
     let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        if marks.contains(&c) {
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        if c == '`' {
+            // A code span runs to as many backticks as opened it.
+            let run = ticks(rest);
+            let mut at = run;
+            let close = loop {
+                let Some(next) = rest[at..].find('`').map(|i| at + i) else {
+                    break None;
+                };
+                let found = ticks(&rest[next..]);
+                if found == run {
+                    break Some(next + found);
+                }
+                at = next + found;
+            };
+            let end = close.unwrap_or(run);
+            out.push_str(&rest[..end]);
+            rest = &rest[end..];
+            continue;
+        }
+        if matches!(c, '<' | '>' | '&') {
             out.push('\\');
         }
         out.push(c);
+        rest = &rest[c.len_utf8()..];
     }
     out
+}
+
+/// What Markdown reads a line of text as, as a cell of a table in a page
+/// has it.
+fn inline(text: &str) -> Vec<Event<'static>> {
+    let line = text.replace('|', "\\|").replace('\n', " ");
+    let table = format!("| {line} |\n| --- |\n");
+    let mut inside = false;
+    Parser::new_ext(&table, extensions())
+        .filter(|event| match event {
+            Event::Start(Tag::TableCell) => {
+                inside = true;
+                false
+            }
+            Event::End(TagEnd::TableCell) => {
+                inside = false;
+                false
+            }
+            _ => inside,
+        })
+        .map(Event::into_static)
+        .collect()
+}
+
+/// Text that holds Markdown as the HTML of a line: `a <strong>slow</strong>
+/// start`. HTML in the text is shown as text.
+pub fn inline_html(text: &str) -> String {
+    let events = inline(text).into_iter().map(|event| match event {
+        Event::Html(html) | Event::InlineHtml(html) => Event::Text(html),
+        event => event,
+    });
+    let mut html = String::new();
+    pulldown_cmark::html::push_html(&mut html, events);
+    html
+}
+
+/// Whether Markdown reads the text as nothing but itself: no markup in it,
+/// so it is shown the same as Markdown or not.
+pub fn is_plain(text: &str) -> bool {
+    let mut read = String::new();
+    for event in inline(text) {
+        match event {
+            Event::Text(part) => read.push_str(&part),
+            _ => return false,
+        }
+    }
+    read == text
 }
 
 /// Rows and columns of a table as a Markdown table, numbers to the right.
@@ -282,7 +370,7 @@ fn table(
             if !matches!(value, Value::Empty | Value::Error) && !value.is_numeric() {
                 numeric[k] = false;
             }
-            let shown = escape(&engine.show(&value, false), format);
+            let shown = place(engine, &value, format);
             line.push(shown.replace('|', "\\|").replace('\n', " "));
         }
         grid.push(line);
@@ -545,10 +633,10 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
             }),
             // Several values read as a list: `Jan, Feb`.
             Some(Value::Vector(items)) => {
-                let shown: Vec<String> = items.iter().map(|v| engine.show(v, false)).collect();
-                escape(&shown.join(", "), format)
+                let shown: Vec<String> = items.iter().map(|v| place(&engine, v, format)).collect();
+                shown.join(", ")
             }
-            Some(value) => escape(&engine.show(&value, false), format),
+            Some(value) => place(&engine, &value, format),
             None => {
                 let diags = engine.take_diags();
                 out.errors

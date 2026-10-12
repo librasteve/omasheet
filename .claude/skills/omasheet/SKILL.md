@@ -100,6 +100,9 @@ Big ones | = Orders[; Qty > 2].Item.count()
 - An empty cell is empty. There is no `null` or `NA`; leave it blank.
 - Text is written bare, `Jan`. Quote it when it would read as something
   else or holds a `|`: `"42"`, `"a|b"`, `"=not a formula"`.
+- Bare text is Markdown where a sheet is shown, in the app and in a
+  rendered document: `a **slow** start`, `[lease](lease.pdf)`. Quote text
+  whose `*`, `_`, `[` or backticks are meant as they are: `"2 * 3 * 4"`.
 
 ## Types
 

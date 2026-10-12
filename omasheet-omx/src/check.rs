@@ -62,6 +62,8 @@ pub enum ColKind {
 pub enum Cell {
     Empty,
     Lit(Lit),
+    /// Text written bare, not in quotes: it may hold Markdown.
+    Markdown(String),
     Formula(Node),
     /// A cell that failed to check.
     Invalid,
@@ -697,7 +699,11 @@ impl<'a> Checker<'a> {
                         match self.literal_cell(&cell.text, cell.span, declared) {
                             Some(lit) => {
                                 widen(lit_type(&lit));
-                                cells.push(Cell::Lit(lit));
+                                cells.push(match lit {
+                                    // In quotes it is text as it is.
+                                    Lit::Text(s) if !quoted(&cell.text) => Cell::Markdown(s),
+                                    lit => Cell::Lit(lit),
+                                });
                             }
                             None => cells.push(Cell::Invalid),
                         }
@@ -2499,4 +2505,9 @@ fn unop_text(op: UnOp) -> &'static str {
         UnOp::Not => "not",
         UnOp::UpTo => "^",
     }
+}
+
+/// Whether the text of a cell is text written in quotes.
+fn quoted(cell: &str) -> bool {
+    matches!(parse_literal(cell), Some(Lit::Text(_)))
 }

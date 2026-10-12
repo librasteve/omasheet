@@ -158,6 +158,13 @@ ApplicationWindow {
         clampCursor();
     }
 
+    // Open a link from a cell: one with no scheme is a file beside the sheet.
+    function openLink(link) {
+        if (!/^[a-z][a-z0-9+.-]*:/i.test(link) && sheet.filePath.length > 0)
+            link = "file://" + sheet.filePath.replace(/[^\/]*$/, "") + link;
+        Qt.openUrlExternally(link);
+    }
+
     function measure() {
         var widths = [];
         var total = 0;
@@ -1037,11 +1044,17 @@ ApplicationWindow {
                                         : column && column.computed ? win.computedTint : "transparent"
 
                                     Text {
+                                        id: cellText
                                         anchors.fill: parent
                                         anchors.leftMargin: 7
                                         anchors.rightMargin: 7
                                         visible: !(win.editing && cellItem.current)
-                                        text: cellItem.cell ? cellItem.cell.d : ""
+                                        // Text written bare is Markdown; in quotes it is as it is.
+                                        readonly property bool marked: !!cellItem.cell && cellItem.cell.h !== undefined
+                                        text: marked ? cellItem.cell.h : cellItem.cell ? cellItem.cell.d : ""
+                                        textFormat: marked ? Text.StyledText : Text.PlainText
+                                        linkColor: win.accentColor
+                                        clip: marked
                                         color: cellItem.cell && cellItem.cell.e ? win.errorColor : win.textColor
                                         opacity: cellItem.cell && cellItem.cell.f && cellItem.column && !cellItem.column.computed ? 0.92 : 1
                                         font.family: win.font.family
@@ -1074,9 +1087,17 @@ ApplicationWindow {
                                         ToolTip.visible: containsMouse && !cellMenu.visible && tip.length > 0
                                         ToolTip.delay: 400
                                         ToolTip.text: tip
+                                        // A link in the cell under the pointer, opened with Ctrl and a click.
+                                        readonly property string link: containsMouse
+                                            ? cellText.linkAt(mouseX - cellText.x, mouseY - cellText.y) : ""
+                                        cursorShape: link.length > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
                                         onPressed: function(mouse) {
                                             if (mouse.button === Qt.RightButton) {
                                                 win.openMenu(cellItem.row, cellItem.index);
+                                                return;
+                                            }
+                                            if (link.length > 0 && (mouse.modifiers & Qt.ControlModifier)) {
+                                                win.openLink(link);
                                                 return;
                                             }
                                             // While a formula is typed, a click picks this cell.
@@ -1566,7 +1587,7 @@ ApplicationWindow {
             Button {
                 Layout.fillWidth: true
                 enabled: exportChoice.oneTable
-                text: "CSV (.csv): " + (exportChoice.oneTable ? win.table.name + " only" : "show a table first") + "    C"
+                text: "CSV (.csv): " + (exportChoice.oneTable ? "this table" : "show a table first") + "    C"
                 font: win.font
                 onClicked: exportChoice.choose("csv")
                 Keys.onReturnPressed: clicked()
@@ -1574,7 +1595,7 @@ ApplicationWindow {
             }
             Button {
                 Layout.fillWidth: true
-                text: "JSON (.json): the values of every table    J"
+                text: "JSON (.json): every table    J"
                 font: win.font
                 onClicked: exportChoice.choose("json")
                 Keys.onReturnPressed: clicked()
@@ -2027,6 +2048,7 @@ ApplicationWindow {
                     + "F2                   View source\n"
                     + "F11                  Fullscreen\n\n"
                     + "A cell starting with = is a formula.\n"
+                    + "Text is Markdown unless in quotes; Ctrl+click opens a link.\n"
                     + "Dates and times: " + sheet.localeHint()
             }
         }

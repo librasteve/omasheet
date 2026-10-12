@@ -237,3 +237,57 @@ fn html() {
     );
     assert!(!html.contains("sheets"), "{html}");
 }
+
+#[test]
+fn bare_text_is_markdown() {
+    let text = "```omx\ntable T\n\nID | Note\n1 | **bold**, [a link](there.md)\n2 | \"**as it is**\"\n3 | <b>a & b</b>\n4 | `x < y`\n\ntable U\n\nID | Note | Made\n1 | * | *\n2 | * | *\n\nNote := T[; ID == U[ID; *]].Note\nMade := \"_made_\"\n```\n\n{{ T[Note; 0] }} and {{ T[Note; 1] }}\n";
+    let shown = markdown(text);
+    assert!(
+        shown.contains("| **bold**, [a link](there.md) |"),
+        "{shown}"
+    );
+    // Text in quotes is as it is, and so is text a formula makes.
+    assert!(shown.contains(r"| \*\*as it is\*\*"), "{shown}");
+    assert!(shown.contains(r"| \_made\_"), "{shown}");
+    assert!(
+        shown.ends_with("**bold**, [a link](there.md) and \\*\\*as it is\\*\\*\n"),
+        "{shown}"
+    );
+
+    let out = render("report.md", text, &load, Format::Html, Options::default());
+    assert!(out.ok(), "{:?}", out.errors);
+    let html = out.output;
+    let bold = "<strong>bold</strong>, <a href=\"there.md\">a link</a>";
+    // A value read from a cell is Markdown as the cell is: twice in tables,
+    // and once in the text.
+    assert_eq!(html.matches(bold).count(), 3, "{html}");
+    assert_eq!(html.matches("**as it is**").count(), 3, "{html}");
+    assert!(
+        html.contains("<td style=\"text-align: left\">_made_</td>"),
+        "{html}"
+    );
+    // HTML in a value is text, not markup; in a code span it is as written.
+    assert!(html.contains("&lt;b&gt;a &amp; b&lt;/b&gt;"), "{html}");
+    assert!(html.contains("<code>x &lt; y</code>"), "{html}");
+}
+
+#[test]
+fn a_line_of_markdown_as_html() {
+    use omasheet_md::inline_html;
+    assert_eq!(
+        inline_html("a **slow** _start_, [see](there.md) `a|b`"),
+        "a <strong>slow</strong> <em>start</em>, <a href=\"there.md\">see</a> <code>a|b</code>"
+    );
+    assert_eq!(inline_html("# not a heading"), "# not a heading");
+    assert_eq!(inline_html("<b>a & b</b>"), "&lt;b&gt;a &amp; b&lt;/b&gt;");
+    assert_eq!(inline_html("plain"), "plain");
+}
+
+#[test]
+fn text_with_no_markup_is_plain() {
+    use omasheet_md::is_plain;
+    assert!(is_plain("Opening deposit, 2 * 3 & snake_case"));
+    assert!(!is_plain("a **slow** start"));
+    assert!(!is_plain("see https://example.com/[x](y)"));
+    assert!(!is_plain("a \\* b"));
+}

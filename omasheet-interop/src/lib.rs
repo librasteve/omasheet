@@ -164,12 +164,15 @@ fn name_for(
 }
 
 /// Text as a cell holds it: bare where a cell would read it back as the
-/// same text, and otherwise in quotes.
+/// same text, and otherwise in quotes. Bare text is Markdown, and what is
+/// imported is not, so text that Markdown would read as markup is in quotes
+/// too.
 fn text_cell(text: &str) -> String {
     use omasheet_engine::omx::convert::parse_literal;
     let bare = Datum::read(text) == Datum::Text(text.to_string())
         && parse_literal(text.trim()).is_none()
         && text == text.trim()
+        && omasheet_md::is_plain(text)
         && !text.starts_with(['=', '#', '*'])
         && !text.contains(['|', '"', '\n', '\r', '\t'])
         && !text.contains(":=")
@@ -545,5 +548,15 @@ mod tests {
         assert_eq!(text_cell("say \"hi\""), "\"say \\\"hi\\\"\"");
         assert_eq!(text_cell("table Sales"), "\"table Sales\"");
         assert_eq!(text_cell("---"), "\"---\"");
+        // What is imported is not Markdown: markup is kept as it is.
+        assert_eq!(text_cell("so *very* good"), "\"so *very* good\"");
+        assert_eq!(text_cell("[a](b.md)"), "\"[a](b.md)\"");
+        assert_eq!(text_cell("a `b` c"), "\"a `b` c\"");
+        assert_eq!(text_cell("<b>x</b>"), "\"<b>x</b>\"");
+        assert_eq!(text_cell("AT&amp;T"), "\"AT&amp;T\"");
+        assert_eq!(
+            text_cell("snake_case, 2 * 3, Ada & Co"),
+            "snake_case, 2 * 3, Ada & Co"
+        );
     }
 }

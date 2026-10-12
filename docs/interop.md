@@ -29,6 +29,8 @@ omasheet import orders.json                  # a table for each list of rows
   [Formulas](#formulas). Where it cannot, the value is imported, and the
   cells are listed with the reason.
 - Text that looks like a formula, `=SUM(A1:A3)`, stays text.
+- Text is imported as it is, not as Markdown: `*new*` is written in quotes,
+  `"*new*"`, so its asterisks are kept.
 
 ### JSON
 
@@ -212,6 +214,9 @@ Over := Sales[Profit; *] - Goal
 - `{{ expression }}` is replaced by its value. Several values read as a
   list, `Feb, Mar`; a table is shown as a table.
 - `{{` in code is left alone, and so is `\{{`.
+- Text written bare in a cell may hold Markdown, and is read as that in the
+  document: `**bold**`, `[a link](there.md)`. Text in quotes, or made by a
+  formula, is shown as it is. HTML in a cell is shown as text.
 - A mistake is reported at its line in the document, or in the sheet it is
   in, and nothing is written.
 

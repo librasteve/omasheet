@@ -790,6 +790,7 @@ dependencies = [
  "csv",
  "num-rational",
  "omasheet-engine",
+ "omasheet-md",
  "rust_xlsxwriter",
  "serde_json",
 ]
@@ -823,6 +824,7 @@ dependencies = [
  "omasheet-cli",
  "omasheet-engine",
  "omasheet-interop",
+ "omasheet-md",
 ]
 
 [[package]]

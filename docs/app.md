@@ -36,7 +36,8 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+PgUp / PgDn | previous / next table |
 | Ctrl+Shift+N | another window on this sheet |
 | Ctrl+O / S, Ctrl+Shift+S | open / save, save as |
-| Ctrl+E | export: then X for a workbook, C for the table shown as CSV |
+| Ctrl+E | export: then X for a workbook, C for the table shown as CSV, J for JSON |
+| Ctrl+click on a link | open it: text written bare in a cell is shown as Markdown |
 | F1 | view functions |
 | F2 | view source |
 | Ctrl+? | all shortcuts |

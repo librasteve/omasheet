@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 omasheet-engine.workspace = true
 omasheet-interop.workspace = true
+omasheet-md.workspace = true
 omasheet-cli.workspace = true
 cxx = "1"
 cxx-qt = "0.10"

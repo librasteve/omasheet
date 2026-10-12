@@ -38,7 +38,7 @@ omasheet                                # the app, on a new sheet
 omasheet examples/budget.omx            # the app, on a .omx, .csv, .json or .xlsx file
 omasheet print examples/budget.omx      # print the calculated sheet
 omasheet eval '1/3 + 1/6'               # 0.5, exactly
-omasheet export examples/budget.omx --xlsx
+omasheet export examples/budget.omx --xlsx [or --csv | --json]
 omasheet render examples/report.md --html
 ```
 
@@ -55,7 +55,7 @@ Please load the Omasheet skill from https://raw.githubusercontent.com/librasteve
 - [The sheet format](docs/format.md)
 - [Expressions](docs/expressions.md)
 - [The app and the command line](docs/app.md)
-- [Workbooks, CSV, JSON and Markdown](docs/interop.md)
+- [XLSX, CSV, JSON and Markdown](docs/interop.md)
 - [`examples/`](examples) — worked sheets, each with its expected output
 - [`openspec/`](openspec) — the design and the specs
 

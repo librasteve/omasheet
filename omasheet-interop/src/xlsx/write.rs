@@ -237,7 +237,7 @@ impl Writer<'_> {
             | Value::Fraction(_)
             | Value::Percent(_)
             | Value::Num(_) => Kind::Number,
-            Value::Text(_) => Kind::Text,
+            Value::Text(..) => Kind::Text,
             Value::Bool(_) => Kind::Bool,
             Value::Date(_) => Kind::Date,
             Value::Time(_) => Kind::Time,

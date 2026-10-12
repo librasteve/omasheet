@@ -1922,7 +1922,7 @@ impl Document {
             let value = engine.const_value(i).unwrap_or(Value::Error);
             let display = match &value {
                 Value::Empty => "empty".to_string(),
-                Value::Vector(_) | Value::Text(_) => engine.show(&value, true),
+                Value::Vector(_) | Value::Text(..) => engine.show(&value, true),
                 other => show(other),
             };
             snapshot.consts.push(ConstSnap {

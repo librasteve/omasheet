@@ -70,6 +70,13 @@ A column with no `Name : Type` line takes its type from its cells.
 | `Time` | `09:30`, `09:30:15` |
 | `DateTime` | `2025-01-31T09:30` |
 
+Text written bare may hold Markdown: `a **slow** start`,
+`see the [lease](lease.pdf)`. The app shows it as that, and so does a
+[rendered document](interop.md#markdown). Text in quotes is as it is:
+`"2 * 3 * 4"`. So is the text a formula makes, as it is written in quotes
+there; a value read from a cell is Markdown or not as that cell is.
+`omasheet print` shows every cell as it is written.
+
 An `Int` is a `Decimal`, and a `Decimal` is a `Fraction`: a `Fraction` column takes
 all three, a `Decimal` column takes whole numbers and decimals, but not `1/7`.
 

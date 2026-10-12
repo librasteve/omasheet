@@ -203,6 +203,7 @@ impl<'p> Engine<'p> {
             ColKind::Data(cells) => match &cells[r] {
                 Cell::Empty => Ok(Value::Empty),
                 Cell::Lit(l) => Ok(Value::from_lit(l)),
+                Cell::Markdown(s) => Ok(Value::Text(Rc::from(s.as_str()), true)),
                 Cell::Formula(node) => formula(node),
                 Cell::Invalid => Err(Fail::Poison),
             },
@@ -249,7 +250,7 @@ impl<'p> Engine<'p> {
                     | (Value::Percent(_), S::Percent)
                     | (Value::Num(_), S::Num)
                     | (Value::Complex(..), S::Complex)
-                    | (Value::Text(_), S::Text)
+                    | (Value::Text(..), S::Text)
                     | (Value::Bool(_), S::Bool)
                     | (Value::Date(_), S::Date)
                     | (Value::Time(_), S::Time)
@@ -606,7 +607,7 @@ impl<'p> Engine<'p> {
                 let target = match func {
                     Func::ToZone => match self.eval(&args[1], fr)? {
                         Value::Empty => return Ok(Value::Empty),
-                        Value::Text(name) => Some(self.zone(&name, args[1].span)?),
+                        Value::Text(name, _) => Some(self.zone(&name, args[1].span)?),
                         other => {
                             return fail(
                                 args[1].span,

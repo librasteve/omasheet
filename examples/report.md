@@ -29,10 +29,10 @@ const Target = 4500
 
 table Targets
 
-Month | Goal | Profit | Over | Met
-Jan   | 4200 | *      | *    | *
-Feb   | 4500 | *      | *    | *
-Mar   | 5000 | *      | *    | *
+Month | Goal | Profit | Over | Met | Note
+Jan   | 4200 | *      | *    | *   | a **slow** start
+Feb   | 4500 | *      | *    | *   | see the [sheet format](../docs/format.md)
+Mar   | 5000 | *      | *    | *   | the _best_ month, `Mar`
 
 Profit := Sales[Profit; *]
 Over   := Profit - Goal
@@ -40,4 +40,7 @@ Met    := Over >= 0
 ```
 
 {{ Targets[; Met].Month.count() }} of {{ Targets.Month.count() }} months met
-their goal. Written in code, `{{ 1 + 1 }}` is left as it is.
+their goal.
+
+To show the braces themselves, put them in backticks: `{{ 1 + 1 }}` is not
+worked out.

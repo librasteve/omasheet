@@ -444,7 +444,7 @@ fn shown<'f>(
             Shown::Number(f, Some(&formats.percent))
         }
         Value::Num(f) if f.is_finite() => Shown::Number(*f, None),
-        Value::Text(s) => Shown::Text(s.to_string()),
+        Value::Text(s, _) => Shown::Text(s.to_string()),
         Value::Bool(b) => Shown::Bool(*b),
         Value::Date(d) => Shown::Number((*d as i64 + EPOCH) as f64, Some(&formats.date)),
         Value::Time(t) => Shown::Number(*t as f64 / day, Some(&formats.time)),

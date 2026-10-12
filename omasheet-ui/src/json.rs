@@ -39,7 +39,8 @@ fn list<T>(out: &mut String, items: &[T], mut each: impl FnMut(&mut String, &T))
 }
 
 /// Cells are `{d: display, s: source, n: numeric, f: formula, e: error,
-/// x: the value in full when the display is shortened}`.
+/// x: the value in full when the display is shortened, h: text that is
+/// Markdown as HTML}`.
 pub fn snapshot(snap: &Snapshot) -> String {
     let mut out = String::from("{\"tables\":");
     list(&mut out, &snap.tables, |out, t| {
@@ -66,6 +67,14 @@ pub fn snapshot(snap: &Snapshot) -> String {
                 field(out, "e", cell.error.as_deref().unwrap_or(""));
                 out.push(',');
                 field(out, "x", cell.exact.as_deref().unwrap_or(""));
+                if cell.value.is_markdown() {
+                    out.push(',');
+                    // The grid draws `<i>`, and has no `<em>`.
+                    let html = omasheet_md::inline_html(&cell.display)
+                        .replace("<em>", "<i>")
+                        .replace("</em>", "</i>");
+                    field(out, "h", &html);
+                }
                 out.push_str(&format!(",\"n\":{},\"f\":{}}}", cell.numeric, cell.formula));
             });
         });

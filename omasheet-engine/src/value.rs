@@ -37,7 +37,10 @@ pub enum Value {
     Percent(BigRational),
     Num(f64),
     Complex(f64, f64),
-    Text(Rc<str>),
+    /// Text, and whether it was written bare in a cell, to be read as
+    /// Markdown where a sheet is shown as a document. Text written in quotes,
+    /// or made by a formula, is as it is.
+    Text(Rc<str>, bool),
     Bool(bool),
     Date(i32),
     Time(i32),
@@ -74,8 +77,13 @@ pub struct RowRef {
 }
 
 impl Value {
+    /// Whether this is text to be read as Markdown: see [`Value::Text`].
+    pub fn is_markdown(&self) -> bool {
+        matches!(self, Value::Text(_, true))
+    }
+
     pub fn text(s: &str) -> Value {
-        Value::Text(Rc::from(s))
+        Value::Text(Rc::from(s), false)
     }
 
     /// An exact number: an `Int` when it is whole, a `Decimal` when it ends
@@ -144,7 +152,7 @@ impl Value {
             Value::Percent(_) => "Percent",
             Value::Num(_) => "Num",
             Value::Complex(..) => "Complex",
-            Value::Text(_) => "Text",
+            Value::Text(..) => "Text",
             Value::Bool(_) => "Bool",
             Value::Date(_) => "Date",
             Value::Time(_) => "Time",
@@ -178,7 +186,7 @@ impl Value {
             Value::Percent(r) => Lit::Percent(r.clone()),
             Value::Num(f) => Lit::Num(*f),
             Value::Complex(re, im) => Lit::Complex(*re, *im),
-            Value::Text(s) => Lit::Text(s.to_string()),
+            Value::Text(s, _) => Lit::Text(s.to_string()),
             Value::Bool(b) => Lit::Bool(*b),
             Value::Date(d) => Lit::Date(*d),
             Value::Time(t) => Lit::Time(*t),
@@ -193,7 +201,7 @@ impl Value {
     pub fn converted(&self, to: S) -> Result<Value, String> {
         let fits = match (self, to) {
             (Value::Empty, _) | (_, S::Any) => true,
-            (Value::Zoned(_), S::DateTime) | (Value::Text(_), S::Text) => true,
+            (Value::Zoned(_), S::DateTime) | (Value::Text(..), S::Text) => true,
             // A whole `Decimal` or `Fraction` is held as an `Int`.
             (Value::Int(_), S::Int | S::Decimal | S::Fraction) => true,
             (Value::Decimal(_), S::Decimal) | (Value::Fraction(_), S::Fraction) => true,
@@ -492,7 +500,7 @@ pub fn is_nan(v: &Value) -> bool {
 pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
     Ok(Some(match (a, b) {
         (Value::Empty, _) | (_, Value::Empty) => return Ok(None),
-        (Value::Text(x), Value::Text(y)) => x.cmp(y),
+        (Value::Text(x, _), Value::Text(y, _)) => x.cmp(y),
         (Value::Date(x), Value::Date(y)) => x.cmp(y),
         (Value::Time(x), Value::Time(y)) => x.cmp(y),
         (Value::DateTime(x), Value::DateTime(y)) => x.cmp(y),
@@ -694,8 +702,8 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
             let i = if im.is_finite() { "i" } else { "\\i" };
             format!("{re}{plus}{part}{i}")
         }
-        Value::Text(s) if quoted => format!("{s:?}"),
-        Value::Text(s) => s.to_string(),
+        Value::Text(s, _) if quoted => format!("{s:?}"),
+        Value::Text(s, _) => s.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Date(d) => style.date(*d),
         Value::Time(t) => style.time(*t),
