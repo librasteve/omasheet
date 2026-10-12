@@ -11,7 +11,7 @@
 ## 3. Release (interim route)
 - [x] 3.1 `package.yml`: build for x86_64 and aarch64 on a release, attach the packages and `SHA256SUMS`
 - [x] 3.2 `install.sh`: fetch the package of the latest release, check it, install it with `pacman`
-- [ ] 3.3 Run `package.yml` by hand on GitHub, and put right what the first run finds
+- [x] 3.3 Run `package.yml` by hand on GitHub, and put right what the first run finds
 - [ ] 3.4 Tag `v0.1.0` and publish the first release; install from it on a clean machine
 
 ## 4. Omarchy repository (goal)
