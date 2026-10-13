@@ -1,0 +1,76 @@
+# Publishes a release to the AUR, where `yay -S omasheet` builds it from the
+# release's source archive. Needs the secret AUR_SSH_PRIVATE_KEY: a private key
+# whose public half is in the AUR account that maintains the package.
+name: AUR
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, such as v0.1.0.
+        required: true
+      pkgrel:
+        description: Package release, raised to republish a version whose recipe changed.
+        default: "1"
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  PKGREL: ${{ inputs.pkgrel || '1' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write the recipe
+        run: |
+          sum=$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/$TAG.tar.gz" | sha256sum | cut -d' ' -f1)
+          mkdir -m 777 "$RUNNER_TEMP/recipe"
+          sed -e "s/^pkgver=.*/pkgver=${TAG#v}/" \
+            -e "s/^pkgrel=.*/pkgrel=$PKGREL/" \
+            -e "s/^sha256sums=.*/sha256sums=('$sum')/" \
+            pkgbuild/aur/PKGBUILD > "$RUNNER_TEMP/recipe/PKGBUILD"
+          cp pkgbuild/omasheet.install "$RUNNER_TEMP/recipe/"
+
+          # makepkg does not run as root.
+          docker run --rm -v "$RUNNER_TEMP/recipe:/recipe" archlinux:base-devel \
+            bash -c 'cd /recipe && runuser -u nobody -- makepkg --printsrcinfo' \
+            > "$RUNNER_TEMP/recipe/.SRCINFO"
+          cat "$RUNNER_TEMP/recipe/.SRCINFO"
+
+      - name: Push it to the AUR
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "$AUR_SSH_PRIVATE_KEY" ]; then
+            echo "::error::The secret AUR_SSH_PRIVATE_KEY is not set, so the AUR still has the last version"
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o IdentitiesOnly=yes"
+
+          # A package the AUR does not have yet is an empty repository, which
+          # the first push creates.
+          git clone ssh://aur@aur.archlinux.org/omasheet.git "$RUNNER_TEMP/aur"
+          cd "$RUNNER_TEMP/aur"
+          cp "$RUNNER_TEMP"/recipe/{PKGBUILD,.SRCINFO,omasheet.install} .
+          git add PKGBUILD .SRCINFO omasheet.install
+          if git diff --cached --quiet; then
+            echo "The AUR already has ${TAG#v}-$PKGREL"
+            exit 0
+          fi
+
+          git -c user.name="Stephen Roe" -c user.email="stephen.john.roe@gmail.com" \
+            commit -m "Version ${TAG#v}-$PKGREL"
+          git push origin HEAD:master
