@@ -15,6 +15,13 @@ rewrites the text, and saving writes exactly that.
   a window of its own.
 - The box at the top shows the source of the current cell; the grid shows
   the value.
+- Under its name a column shows its type: muted if it comes from the
+  cells, plain if it is declared, and after `:=` in a formula column.
+  Right-click a column's header to **Set type…**, which starts on the type
+  the column has now, or **Clear type**; a cell that does not fit a
+  declared type is an error.
+- F3 shows the source of the whole file, to read or to edit. An edit is
+  taken when the source is left, saved or closed, and undone as one step.
 - Selecting several cells shows their count, sum and average in the footer.
 - Beside that box is the selection, written as a formula would write it:
 

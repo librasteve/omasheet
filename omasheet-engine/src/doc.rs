@@ -16,7 +16,7 @@ use crate::value::{Value, arith, format_exact, format_scalar};
 use num_traits::ToPrimitive;
 use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use omasheet_omx::date::{self, Style};
-use omasheet_omx::file::{FileAst, SheetDecl, ident_len, parse_file, split_cells};
+use omasheet_omx::file::{FileAst, SchemaLine, SheetDecl, ident_len, parse_file, split_cells};
 use omasheet_omx::parser::parse_expr;
 use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile};
 
@@ -45,6 +45,9 @@ pub struct ColumnSnap {
     pub name: String,
     /// The column type, or empty when it is not known.
     pub ty: String,
+    /// The type is written in the file, as `Name : Type`, and its cells
+    /// are held to it.
+    pub declared: bool,
     /// The `:=` expression of a computed column; `None` for a data column.
     pub formula: Option<String>,
 }
@@ -931,6 +934,84 @@ impl Grid {
     }
 }
 
+/// `text` with the type line of column `name` of a sheet set to `ty`, or
+/// taken out. Type lines whose colons are in line stay so.
+fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
+    let line_start = |at: usize| text[..at].rfind('\n').map_or(0, |k| k + 1);
+    // Where the colon of a type line is, and its type.
+    let parts = |l: &SchemaLine| {
+        let end = l.span.end as usize;
+        let colon = end + text[end..].find(':').unwrap_or(0);
+        let rest = &text[colon + 1..];
+        let ty_at = colon + 1 + (rest.len() - rest.trim_start_matches([' ', '\t']).len());
+        (colon, ty_at, ty_at + ident_len(&text[ty_at..]))
+    };
+    let existing = decl.schema.iter().find(|l| l.name == name);
+    let mut out = text.to_string();
+
+    let Some(ty) = ty else {
+        let Some(l) = existing else { return out };
+        let start = line_start(l.span.start as usize);
+        let end = text[start..].find('\n').map_or(text.len(), |k| start + k + 1);
+        out.replace_range(start..end, "");
+        // The last of them takes its blank line with it.
+        let alone = decl.schema.len() == 1;
+        if alone && out[start..].starts_with('\n') && out[..start].ends_with("\n\n") {
+            out.remove(start);
+        }
+        return out;
+    };
+    if let Some(l) = existing {
+        let (_, ty_at, ty_end) = parts(l);
+        out.replace_range(ty_at..ty_end, &ty.to_string());
+        return out;
+    }
+
+    // How far each colon is from the start of its name.
+    let offsets: Vec<usize> = decl
+        .schema
+        .iter()
+        .map(|l| parts(l).0 - l.span.start as usize)
+        .collect();
+    let in_line = offsets.windows(2).all(|w| w[0] == w[1]);
+    let mut offset = name.len() + 1;
+    let mut edits: Vec<(usize, String)> = Vec::new();
+    if in_line && let Some(&theirs) = offsets.first() {
+        // A longer name moves the others out to it.
+        for l in decl.schema.iter().filter(|_| offset > theirs) {
+            edits.push((l.span.end as usize, " ".repeat(offset - theirs)));
+        }
+        offset = offset.max(theirs);
+    }
+    let line = format!("{name:<width$} : {ty}\n", width = offset - 1);
+    // In the order of the header row; with no type lines yet, above it.
+    let place = |n: &str| decl.header.iter().position(|h| h.0 == n);
+    let here = place(name).unwrap_or(usize::MAX);
+    let next = decl
+        .schema
+        .iter()
+        .find(|l| place(&l.name).unwrap_or(usize::MAX) > here);
+    match (next, decl.schema.last()) {
+        (Some(l), _) => edits.push((line_start(l.span.start as usize), line)),
+        (None, Some(l)) => {
+            let end = l.span.end as usize;
+            match text[end..].find('\n') {
+                Some(k) => edits.push((end + k + 1, line)),
+                None => edits.push((text.len(), format!("\n{}", line.trim_end()))),
+            }
+        }
+        (None, None) => edits.push((
+            line_start(decl.header_line.start as usize),
+            format!("{line}\n"),
+        )),
+    }
+    edits.sort_by(|a, b| b.0.cmp(&a.0));
+    for (at, insert) in edits {
+        out.insert_str(at, &insert);
+    }
+    out
+}
+
 impl Document {
     /// A document that shows dates and times as the file writes them.
     pub fn from_text(text: &str) -> Document {
@@ -1014,6 +1095,12 @@ impl Document {
         self.redo.clear();
         self.rebuild();
         true
+    }
+
+    /// Replace the whole text, as written by hand, as one undoable step.
+    /// Returns whether it changed.
+    pub fn set_text(&mut self, text: &str) -> bool {
+        self.commit(text.to_string())
     }
 
     /// Make several edits as one undoable step. Returns whether they
@@ -1193,6 +1280,34 @@ impl Document {
             return self.set_column_formula(sheet, col, text);
         }
         self.set_cells(sheet, &[(row, col, text.to_string())])
+    }
+
+    /// Declare the type of columns `cols` of a sheet as `ty`, the name of a
+    /// type, or with `None` leave them to take their type from their cells.
+    /// One undoable step. A cell that does not fit is left to be an error.
+    pub fn set_column_types(&mut self, sheet: usize, cols: &[usize], ty: Option<&str>) -> bool {
+        let ty = match ty.map(S::from_name) {
+            Some(None) => return false,
+            Some(found) => found,
+            None => None,
+        };
+        let Some(snap) = self.snapshot.sheets.get(sheet) else {
+            return false;
+        };
+        let names: Vec<String> = cols
+            .iter()
+            .filter_map(|&c| snap.columns.get(c))
+            .map(|c| c.name.clone())
+            .collect();
+        let mut text = self.text.clone();
+        for name in &names {
+            let ast = parse_file(&text, 0, &mut Vec::new());
+            let Some(decl) = self.sheet_decl(&ast, sheet) else {
+                return false;
+            };
+            text = retyped(&text, decl, name, ty);
+        }
+        self.commit(text)
     }
 
     /// Insert `count` empty rows before row `at`.
@@ -2042,6 +2157,7 @@ impl Document {
                     } else {
                         col.ty.to_string()
                     },
+                    declared: col.declared,
                     formula: computed.map(|c| {
                         self.text[c.expr_span.start as usize..c.expr_span.end as usize].to_string()
                     }),
@@ -2155,6 +2271,57 @@ mod tests {
         assert!(t.rows[0][1].numeric && !t.rows[0][0].numeric);
         assert_eq!(doc.snapshot().consts[0].display, "20%");
         assert!(doc.snapshot().problems.is_empty());
+    }
+
+    #[test]
+    fn setting_the_text_is_one_step() {
+        let mut doc = Document::from_text(SALES);
+        assert!(!doc.set_text(SALES));
+        assert!(!doc.can_undo());
+        assert!(doc.set_text(&SALES.replace("| 100 ", "| 300 ")));
+        assert_eq!(col(&doc, 0, 3), ["240", "50"]);
+        // Text that is wrong is kept as it is, and said to be wrong.
+        let wrong = SALES.replace("Revenue - Cost", "Revenue - Nothing");
+        assert!(doc.set_text(&wrong));
+        assert_eq!(doc.text(), wrong);
+        assert!(!doc.snapshot().problems.is_empty());
+        assert!(doc.undo() && doc.undo());
+        assert_eq!(doc.text(), SALES);
+    }
+
+    #[test]
+    fn a_column_type_is_set_and_cleared() {
+        let mut doc = Document::from_text(SALES);
+        assert!(!doc.snapshot().sheets[0].columns[1].declared);
+        // The first type line goes above the header row.
+        assert!(doc.set_column_types(0, &[2], Some("Decimal")));
+        assert!(
+            doc.text()
+                .contains("sheet Sales\n\nCost : Decimal\n\nMonth | Revenue")
+        );
+        let column = &doc.snapshot().sheets[0].columns[2];
+        assert!(column.declared && column.ty == "Decimal");
+        // The rest follow the header row, their colons in line.
+        assert!(doc.set_column_types(0, &[0, 3], Some("Text")));
+        assert!(
+            doc.text()
+                .contains("\n\nMonth  : Text\nCost   : Decimal\nProfit : Text\n\nMonth | ")
+        );
+        // A formula that does not fit its type is an error, not refused.
+        assert!(!doc.snapshot().problems.is_empty());
+        assert!(doc.set_column_types(0, &[3], Some("Decimal")));
+        assert!(doc.text().contains("Profit : Decimal\n"));
+        assert!(doc.snapshot().problems.is_empty());
+        assert!(!doc.set_column_types(0, &[3], Some("Decimal")));
+        assert!(!doc.set_column_types(0, &[3], Some("Whole")));
+        // Cleared one at a time, and the last takes its blank line.
+        assert!(doc.set_column_types(0, &[0, 3], None));
+        assert!(doc.text().contains("sheet Sales\n\nCost   : Decimal\n\nMonth | "));
+        assert!(doc.set_column_types(0, &[1, 2], None));
+        assert_eq!(doc.text(), SALES);
+        assert!(!doc.set_column_types(0, &[2], None));
+        assert!(doc.undo() && doc.undo());
+        assert!(doc.text().contains("Profit : Decimal\n"));
     }
 
     #[test]

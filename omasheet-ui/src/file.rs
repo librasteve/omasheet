@@ -51,6 +51,9 @@ pub mod qobject {
         /// The file as it is written: the text that saving would write.
         #[qinvokable]
         fn source_text(self: &File) -> QString;
+        /// Take `text` as the file: the source as edited by hand.
+        #[qinvokable]
+        fn set_source_text(self: Pin<&mut File>, text: &QString);
 
         #[qinvokable]
         fn new_document(self: Pin<&mut File>);
@@ -200,6 +203,10 @@ pub mod qobject {
         /// Delete `count` columns from `first`.
         #[qinvokable]
         fn delete_columns(self: Pin<&mut File>, sheet: i32, first: i32, count: i32) -> QString;
+        /// Declare the type of `count` columns from `first` as `ty`, or with
+        /// no `ty` leave them to take their type from their cells.
+        #[qinvokable]
+        fn set_column_types(self: Pin<&mut File>, sheet: i32, first: i32, count: i32, ty: &QString);
         /// Move `count` rows from `first` so the first becomes row `to`.
         #[qinvokable]
         fn move_rows(self: Pin<&mut File>, sheet: i32, first: i32, count: i32, to: i32) -> QString;
@@ -381,6 +388,11 @@ impl qobject::File {
 
     fn source_text(&self) -> QString {
         QString::from(self.rust().doc.text())
+    }
+
+    fn set_source_text(self: Pin<&mut Self>, text: &QString) {
+        let text = text.to_string();
+        self.edit(|doc| doc.set_text(&text));
     }
 
     fn new_document(mut self: Pin<&mut Self>) {
@@ -762,6 +774,14 @@ impl qobject::File {
 
     fn delete_columns(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32) -> QString {
         self.try_edit(|doc| doc.delete_columns(index(sheet), index(first), index(count)))
+    }
+
+    fn set_column_types(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, ty: &QString) {
+        let ty = ty.to_string();
+        let cols: Vec<usize> = (index(first)..index(first) + index(count)).collect();
+        self.edit(|doc| {
+            doc.set_column_types(index(sheet), &cols, Some(ty.as_str()).filter(|t| !t.is_empty()))
+        });
     }
 
     fn move_rows(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, to: i32) -> QString {

@@ -104,6 +104,15 @@ ApplicationWindow {
         if (showSource) sourceText.forceActiveFocus();
         else grid.forceActiveFocus();
     })
+    // Take the source as it has been edited: one step to undo.
+    function applySource() {
+        if (showSource && sourceText.text !== file.sourceText())
+            file.setSourceText(sourceText.text);
+    }
+    function viewSource(show) {
+        applySource();
+        showSource = show;
+    }
     property string editSeed: ""
     property bool closeConfirmed: false
     property string pendingAction: ""
@@ -143,9 +152,9 @@ ApplicationWindow {
                 name: "Constants",
                 isConsts: true,
                 columns: [
-                    { name: "Name", type: "", formula: "", computed: false },
-                    { name: "Expression", type: "", formula: "", computed: false },
-                    { name: "Value", type: "", formula: "", computed: true }
+                    { name: "Name", type: "", formula: "", computed: false, declared: false },
+                    { name: "Expression", type: "", formula: "", computed: false, declared: false },
+                    { name: "Value", type: "", formula: "", computed: true, declared: false }
                 ],
                 rows: rows
             });
@@ -176,7 +185,8 @@ ApplicationWindow {
         var total = 0;
         var cols = sheet.columns;
         for (var c = 0; c < cols.length; c++) {
-            var chars = Math.max(cols[c].name.length, cols[c].type.length + 2);
+            // A formula column shows `:= ` before its type.
+            var chars = Math.max(cols[c].name.length, cols[c].type.length + (cols[c].computed ? 5 : 2));
             for (var r = 0; r < sheet.rows.length; r++)
                 chars = Math.max(chars, sheet.rows[r][c].d.length);
             var w = Math.round(Math.min(46, Math.max(7, chars + 2)) * metrics.averageCharacterWidth) + 14;
@@ -683,6 +693,35 @@ ApplicationWindow {
             selectCell(curRow, col, false);
     }
 
+    // The type the selected columns all have, if there is one: with
+    // `declared`, only if each is declared as it.
+    function sharedType(declared) {
+        var found = "";
+        for (var c = selLeft; c <= selRight; c++) {
+            var column = sheet.columns[c];
+            if (!column || (declared && !column.declared) || (c > selLeft && column.type !== found))
+                return "";
+            found = column.type;
+        }
+        return found;
+    }
+
+    function anyDeclared() {
+        for (var c = selLeft; c <= selRight; c++) {
+            if (sheet.columns[c] && sheet.columns[c].declared)
+                return true;
+        }
+        return false;
+    }
+
+    // Declare the selected columns as `type`, or with none leave them to
+    // take their type from their cells.
+    function setColumnTypes(type) {
+        if (sheet.isConsts)
+            return;
+        file.setColumnTypes(tab, selLeft, selRight - selLeft + 1, type);
+    }
+
     // The menu a right-click opens, from the keyboard: for the selection as
     // it is, below the cell the cursor is in.
     function keyMenu() {
@@ -758,6 +797,7 @@ ApplicationWindow {
     // ---- files -------------------------------------------------------------
 
     function guard(action) {
+        applySource();
         if (!file.modified) {
             run(action);
             return;
@@ -786,6 +826,7 @@ ApplicationWindow {
     }
 
     function save() {
+        applySource();
         if (file.filePath.length === 0) {
             saveDialog.open();
             return false;
@@ -794,6 +835,7 @@ ApplicationWindow {
     }
 
     onClosing: function(close) {
+        applySource();
         // Nothing is lost while another window still shows the file.
         if (closeConfirmed || !file.modified || !alone) {
             dismissed();
@@ -846,7 +888,7 @@ ApplicationWindow {
 
     // ---- shortcuts ---------------------------------------------------------
 
-    readonly property bool typing: editing || formulaField.activeFocus || promptDialog.opened
+    readonly property bool typing: editing || formulaField.activeFocus || sourceText.activeFocus || promptDialog.opened
 
     Shortcut { sequence: "Ctrl+S"; onActivated: win.save() }
     Shortcut { sequence: "Ctrl+Shift+S"; onActivated: saveDialog.open() }
@@ -868,7 +910,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+?"; onActivated: helpDialog.open() }
     Shortcut { sequence: "F1"; onActivated: functionsDialog.open() }
     Shortcut { sequence: "F2"; enabled: !win.showSource; onActivated: win.editInBox() }
-    Shortcut { sequence: "F3"; onActivated: win.showSource = !win.showSource }
+    Shortcut { sequence: "F3"; onActivated: win.viewSource(!win.showSource) }
     Shortcut { sequences: ["Meta+F", "F11"]
         onActivated: win.visibility = win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen }
 
@@ -983,6 +1025,14 @@ ApplicationWindow {
                     visible: !!column && column.computed && !win.sheet.isConsts
                     text: "formula column"
                     color: win.accentColor
+                    font: win.font
+                }
+                Text {
+                    readonly property var column: win.hasCursor || (win.selKind === "column" && win.selLeft === win.selRight)
+                        ? win.sheet.columns[win.curCol] : undefined
+                    visible: !!column && column.declared && !win.sheet.isConsts
+                    text: "typed column"
+                    color: win.textColor
                     font: win.font
                 }
 
@@ -1160,9 +1210,17 @@ ApplicationWindow {
                                         font.bold: true
                                         elide: Text.ElideRight
                                     }
+                                    // The type: marked `:=` in a formula column, and
+                                    // plain rather than muted where it is declared.
                                     Text {
+                                        readonly property bool computed: !!headCell.column && headCell.column.computed && !win.sheet.isConsts
+                                        readonly property bool declared: !!headCell.column && headCell.column.declared
+                                        readonly property color typeColor: declared ? win.textColor : win.mutedColor
                                         width: parent.width
-                                        text: headCell.column ? headCell.column.type : ""
+                                        textFormat: Text.StyledText
+                                        text: !headCell.column ? ""
+                                            : (computed ? "<font color=\"" + win.accentColor + "\">:=</font> " : "")
+                                              + "<font color=\"" + typeColor + "\">" + headCell.column.type + "</font>"
                                         color: win.mutedColor
                                         font.family: win.font.family
                                         font.features: win.font.features
@@ -1522,7 +1580,8 @@ ApplicationWindow {
             }
         }
 
-        // The source: the file as it is written, to read and to copy from.
+        // The source: the file as it is written, to read and to edit. An
+        // edit is taken when the source is left, saved or closed.
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -1547,7 +1606,7 @@ ApplicationWindow {
                         elide: Text.ElideMiddle
                         Layout.fillWidth: true
                     }
-                    FooterButton { label: "\u00d7"; onClicked: win.showSource = false }
+                    FooterButton { label: "\u00d7"; onClicked: win.viewSource(false) }
                 }
 
                 Rectangle {
@@ -1571,7 +1630,6 @@ ApplicationWindow {
                     id: sourceText
                     // `win.snap` is read so that an edit rewrites the text.
                     text: win.showSource && win.snap ? file.sourceText() : ""
-                    readOnly: true
                     selectByMouse: true
                     wrapMode: TextEdit.NoWrap
                     textFormat: TextEdit.PlainText
@@ -1580,7 +1638,9 @@ ApplicationWindow {
                     leftPadding: 12
                     rightPadding: 12
                     background: null
-                    Keys.onEscapePressed: win.showSource = false
+                    Keys.onEscapePressed: win.viewSource(false)
+                    // Another window, or a dialog, sees the file as edited.
+                    onActiveFocusChanged: if (!activeFocus) win.applySource()
                 }
             }
         }
@@ -1606,7 +1666,7 @@ ApplicationWindow {
                         label: win.tabs[index].name
                         active: index === win.tab && !win.showSource
                         onClicked: {
-                            win.showSource = false;
+                            win.viewSource(false);
                             win.switchTab(index);
                         }
                         onRightClicked: {
@@ -1667,7 +1727,7 @@ ApplicationWindow {
                 FooterButton { label: "+ Formula"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("computed") }
                 FooterButton { label: "+ Constant"; quiet: true; onClicked: promptDialog.ask("const") }
                 FooterButton { label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
-                FooterButton { label: "</>"; quiet: true; active: win.showSource; onClicked: win.showSource = !win.showSource }
+                FooterButton { label: "</>"; quiet: true; active: win.showSource; onClicked: win.viewSource(!win.showSource) }
                 FooterButton { label: "?"; quiet: true; onClicked: helpDialog.open() }
             }
         }
@@ -1687,6 +1747,12 @@ ApplicationWindow {
         font.family: win.font.family
         font.features: win.font.features
         font.pixelSize: win.fontSize - 1
+    }
+    // A type to declare the selected columns as: ticked if they are.
+    component TypeEntry: MenuEntry {
+        required property string typeName
+        text: (typeMenu.current === typeName ? "\u2713 " : "  ") + typeName
+        onTriggered: win.setColumnTypes(typeName)
     }
     component MenuRule: MenuSeparator {
         height: visible ? implicitHeight : 0
@@ -1752,7 +1818,7 @@ ApplicationWindow {
         onClosed: {
             if (promptDialog.visible)
                 promptDialog.takeFocus();
-            else
+            else if (!typeMenu.visible)
                 grid.forceActiveFocus();
         }
         // Close set, to fit a long menu on a small window.
@@ -1849,11 +1915,60 @@ ApplicationWindow {
             onTriggered: promptDialog.ask("rename")
         }
         MenuEntry {
+            text: "Set type\u2026"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.sheet.columns.length > 0
+            onTriggered: {
+                typeMenu.current = win.sharedType(true);
+                typeMenu.suggested = win.sharedType(false);
+                // Where this menu was.
+                typeMenu.popup(cellMenu.parent, cellMenu.x, cellMenu.y);
+            }
+        }
+        MenuEntry {
+            text: "Clear type"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.anyDeclared()
+            onTriggered: win.setColumnTypes("")
+        }
+        MenuEntry {
             text: cellMenu.columnCount > 1 ? "Delete " + cellMenu.columnCount + " columns" : "Delete column"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.sheet.columns.length > 1
             onTriggered: win.deleteColumns()
         }
+    }
+
+    // The types a column may be declared as, from `Set type`: the one it
+    // has is ticked.
+    Menu {
+        id: typeMenu
+        property string current: ""
+        // The type the columns have now, declared or taken from their
+        // cells: the arrow keys start from it.
+        property string suggested: ""
+        onOpened: {
+            for (var i = 0; i < count; i++) {
+                if (itemAt(i).typeName === suggested)
+                    currentIndex = i;
+            }
+        }
+        onClosed: grid.forceActiveFocus()
+        topPadding: 4
+        bottomPadding: 4
+        width: Math.round(win.fontSize * 11)
+
+        TypeEntry { typeName: "Int" }
+        TypeEntry { typeName: "Decimal" }
+        TypeEntry { typeName: "Fraction" }
+        TypeEntry { typeName: "Percent" }
+        TypeEntry { typeName: "Num" }
+        TypeEntry { typeName: "Complex" }
+        TypeEntry { typeName: "Text" }
+        TypeEntry { typeName: "Bool" }
+        TypeEntry { typeName: "Date" }
+        TypeEntry { typeName: "Time" }
+        TypeEntry { typeName: "DateTime" }
     }
 
     // Right-click on a sheet's tab.
@@ -1889,6 +2004,7 @@ ApplicationWindow {
         nameFilters: ["Omasheet (*.omx)"]
         defaultSuffix: "omx"
         onAccepted: {
+            win.applySource();
             if (file.saveUrl(selectedFile) && win.pendingAction.length > 0) {
                 var action = win.pendingAction;
                 win.pendingAction = "";
@@ -1913,6 +2029,7 @@ ApplicationWindow {
         onOpened: workbookButton.forceActiveFocus()
         function choose(kind) {
             close();
+            win.applySource();
             exportDialog.kind = kind;
             // Beside the file, under its name.
             var name = win.sheet.isConsts ? "" : win.sheet.name;
