@@ -1847,6 +1847,52 @@ impl<'a> Checker<'a> {
                 let (arg, aty) = self.lower(&args[0], sc);
                 self.convert(name, to, arg, aty, args[0].span, span)
             }
+            // `round(x, scale)`: to the nearest multiple of `scale`, as in
+            // Raku. It is `round(x / scale) * scale`, so its type is that of
+            // the arithmetic: `round(19.99, 0.1)` is a Decimal.
+            "round" if args.len() != 1 => {
+                if args.len() != 2 {
+                    self.err_help(
+                        span,
+                        format!("`round` takes 1 or 2 arguments, found {}", args.len()),
+                        "usage: `round(x)`, or `round(x, 0.01)` to the nearest 0.01",
+                    );
+                    return fail;
+                }
+                // The scale on its own first, so that what is wrong with it
+                // is said once.
+                let (scale, sty) = self.lower(&args[1], sc);
+                if matches!(scale.kind, Ir::Error) {
+                    return fail;
+                }
+                if !matches!(sty, Ty::Any | Ty::Scalar(S::Any)) {
+                    let numeric = matches!(sty, Ty::Scalar(s) if s.is_numeric() && s != S::Complex);
+                    if !numeric {
+                        self.err_help(
+                            args[1].span,
+                            format!(
+                                "the scale of `round` must be a single real number, found {}",
+                                sty.describe()
+                            ),
+                            "usage: `round(x, 0.01)` to the nearest 0.01",
+                        );
+                        return fail;
+                    }
+                }
+                let at = |kind| Expr { kind, span };
+                let quotient = at(ExprKind::Binary(
+                    BinOp::Div,
+                    Box::new(args[0].clone()),
+                    Box::new(args[1].clone()),
+                ));
+                let whole = at(ExprKind::Call(name.to_string(), name_span, vec![quotient]));
+                let rounded = at(ExprKind::Binary(
+                    BinOp::Mul,
+                    Box::new(whole),
+                    Box::new(args[1].clone()),
+                ));
+                self.lower(&rounded, sc)
+            }
             _ if MathFn::from_name(name).is_some() => {
                 if !arity(self, 1, &format!("{name}(x)")) {
                     return fail;

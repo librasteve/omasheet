@@ -80,7 +80,8 @@ vector is converted value by value.
 
 Text is read the way a cell is: `"42".Int` is `42`, `"20%".Fraction` is `1/5`,
 `"2025-01-31".Date` is that date, and `"abc".Int` is an error. `true.Int` is
-`1`. To round rather than drop the fraction, use `round(x)`.
+`1`. To round rather than drop the fraction, use `round(x)`; `round(x, 0.01)`
+rounds to the nearest 0.01, and `round(x, 100)` to the nearest hundred.
 
 ## Names
 

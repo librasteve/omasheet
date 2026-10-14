@@ -614,6 +614,35 @@ fn ledger() -> Vec<u8> {
 }
 
 #[test]
+fn xlsx_round_to_a_scale() {
+    let file = "\
+sheet T
+
+X     | Cents | Hundreds | Halves | Whole
+1.005 | *     | *        | *      | *
+-1250 | *     | *        | *      | *
+
+Cents    := round(X, 0.01)
+Hundreds := round(X, 100)
+Halves   := round(X, 0.5)
+Whole    := round(X)
+";
+    let out = xlsx::export("t.omx", file, None, options()).unwrap();
+    let bytes = &out.files[0].bytes;
+    let at = |cell: &str| formula_at(bytes, "T", cell);
+    // To a power of ten, as a workbook rounds to so many digits.
+    assert_eq!(at("B2"), "ROUND(A2,2)");
+    assert_eq!(at("C3"), "ROUND(A3,-2)");
+    // To any other scale, as it is meant.
+    assert!(at("D2").starts_with("ROUND(A2/0.5,0)*"), "{}", at("D2"));
+    assert_eq!(at("E2"), "ROUND(A2,0)");
+    // And back again.
+    let back = xlsx::import(bytes).unwrap().source;
+    assert!(back.contains("round(X, 0.01)"), "{back}");
+    assert!(back.contains("round(X, 100)"), "{back}");
+}
+
+#[test]
 fn xlsx_imports_formulas() {
     let out = xlsx::import(&ledger()).unwrap();
     assert_eq!(
@@ -628,7 +657,7 @@ Mar   | 13200   | 7500 | *      | *       | *      | Mar!
 
 Profit  := Revenue - Cost
 Running := [Profit; 0..*].sum()
-Margin  := round(Profit / Revenue * 10000) / 10000
+Margin  := round(Profit / Revenue, 0.0001)
 
 sheet YearEnd
 

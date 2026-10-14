@@ -736,6 +736,15 @@ fn math_functions() {
     );
     assert_eq!(calc("[sign(-3), sign(0), sign(1/2)]"), "[-1, 0, 1]");
     assert_eq!(calc("round(2.5e0)"), "3");
+    // With a scale, to the nearest multiple of it, as in Raku: the type is
+    // that of `round(x / scale) * scale`.
+    assert_eq!(calc("round(3.14159, 0.01)"), "3.14");
+    assert_eq!(calc("round(19.74, 0.5)"), "19.5");
+    assert_eq!(calc("round([1234, 1250, -1250], 100)"), "[1200, 1300, -1300]");
+    assert_eq!(calc("round(pi(), 0.5)"), "3");
+    assert_eq!(calc("(3.14159).round(0.001)"), "3.142");
+    assert!(calc_err(None, "round(1, 2, 3)").contains("`round` takes 1 or 2 arguments"));
+    assert!(calc_err(None, "round(1, \"a\")").contains("the scale of `round`"));
     // The rest give a Num.
     assert_eq!(calc("sqrt(16)"), "4");
     assert_eq!(calc("exp(0)"), "1");
