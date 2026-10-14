@@ -247,6 +247,10 @@ pub mod qobject {
         /// The locale and how it writes a date and a time.
         #[qinvokable]
         fn locale_hint(self: &File) -> QString;
+        /// The keyboard help, from `help.txt`, with the locale and the
+        /// version filled in.
+        #[qinvokable]
+        fn help_text(self: &File) -> QString;
         /// The function directory as JSON.
         #[qinvokable]
         fn functions_json(self: &File) -> QString;
@@ -838,6 +842,14 @@ impl qobject::File {
         };
         let clock = if style.hour12 { "12h" } else { "24h" };
         QString::from(&format!("{name}: {} {clock}", style.date_pattern()))
+    }
+
+    fn help_text(&self) -> QString {
+        let text = include_str!("../help.txt")
+            .trim_end()
+            .replace("{locale}", &self.locale_hint().to_string())
+            .replace("{version}", env!("CARGO_PKG_VERSION"));
+        QString::from(&text)
     }
 
     fn functions_json(&self) -> QString {

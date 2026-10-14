@@ -2598,32 +2598,7 @@ ApplicationWindow {
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.dialogSize
-                text: "Ctrl+.               Context menu\n"
-                    + "Ctrl+?               Keyboard shortcuts\n"
-                    + "Ctrl++ / Ctrl+-      Zoom in / out (Ctrl+0 resets)\n"
-                    + "Ctrl+Z / Ctrl+Y      Undo / redo\n\n"
-                    + "Ctrl+Arrows          Go to end\n"
-                    + "Shift+Arrows         Select block\n"
-                    + "Ctrl+Alt+Left/Right  Previous / next sheet\n\n"
-                    + "Ctrl+C / X / V       Copy / Cut / Paste\n"
-                    + "Ctrl+Shift+V         Paste values: not formulas\n"
-                    + "Ctrl+Alt+V           Paste transposed: rows as columns\n\n"
-                    + "Ctrl+Enter           Insert row below (Shift: above)\n"
-                    + "Delete               Clear\n"
-                    + "Ctrl+Delete          Delete the selected rows, columns or sheet\n\n"
-                    + "Ctrl+O / S           Open / save\n"
-                    + "Ctrl+Shift+S         Save as\n"
-                    + "Ctrl+E               Export as a workbook, CSV or JSON\n\n"
-                    + "Ctrl+K               New constant\n"
-                    + "Ctrl+N               New sheet after this one\n"
-                    + "Ctrl+Shift+N         New window on this file\n\n"
-                    + "F1                   View functions\n"
-                    + "F2                   Edit in the formula box\n"
-                    + "F3                   View source\n"
-                    + "F11                  Fullscreen\n\n"
-                    + "A cell starting with = is a formula.\n"
-                    + "Text is Markdown unless in quotes; Ctrl+click opens a link.\n"
-                    + "Dates and times: " + file.localeHint()
+                text: file.helpText()
             }
         }
     }
