@@ -3,3 +3,4 @@ coinvent-omasheet-format-chatgpt.md
 /pkgbuild/pkg
 /pkgbuild/src
 /pkgbuild/*.pkg.tar.*
+.DS_Store
