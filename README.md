@@ -37,6 +37,11 @@ curl -fsSL https://raw.githubusercontent.com/librasteve/omasheet/main/install.sh
 (`brew install qt rust`), then `cargo build --release --package omasheet-ui`; 
 the binary is at `target/release/omasheet`.
 
+Building directly from the git repo instead of a local clone needs `--locked`
+(`cargo install --git https://github.com/librasteve/omasheet --locked omasheet-ui`),
+since omasheet depends on a crate whose compatible releases are all yanked, and
+only the version pinned in this repo's `Cargo.lock` can still be resolved.
+
 ## Run
 
 ```sh
