@@ -97,6 +97,14 @@ ApplicationWindow {
     readonly property int selLeft: Math.min(curCol, anchorCol)
     readonly property int selRight: Math.max(curCol, anchorCol)
 
+    // Where the arrow keys are pointing a formula reference, while one is
+    // being typed: -1 when no such pick is under way.
+    property int pickRow: -1
+    property int pickCol: -1
+    // The reference last placed by it, to take back out on the next move.
+    property int pickAt: -1
+    property int pickLen: 0
+
     property bool editing: false
     // The source takes the place of the grid while it is shown.
     property bool showSource: false
@@ -305,11 +313,15 @@ ApplicationWindow {
     }
 
     function reveal() {
-        rowsView.positionViewAtIndex(curRow, ListView.Contain);
+        revealAt(curRow, curCol);
+    }
+
+    function revealAt(row, col) {
+        rowsView.positionViewAtIndex(row, ListView.Contain);
         var x = gutterWidth;
-        for (var c = 0; c < curCol; c++)
+        for (var c = 0; c < col; c++)
             x += colWidths[c];
-        var w = colWidths[curCol] || 0;
+        var w = colWidths[col] || 0;
         if (x - gutterWidth < hflick.contentX)
             hflick.contentX = x - gutterWidth;
         else if (x + w > hflick.contentX + hflick.width)
@@ -347,10 +359,12 @@ ApplicationWindow {
         byCol = false;
         editSeed = seed;
         editing = true;
+        stopPicking();
     }
 
     function stopEditing() {
         editing = false;
+        stopPicking();
         grid.forceActiveFocus();
     }
 
@@ -364,29 +378,71 @@ ApplicationWindow {
         return !!editor && !sheet.isConsts && editor.text.trim().charAt(0) === "=";
     }
 
-    // Write a reference to a cell at the cursor of the formula being typed:
+    // The reference a cell is written by, from the formula being typed:
     // relative to the edited cell, or by row number when `absolute`.
-    function pickCell(row, col, absolute) {
-        if (!canPick() || !sheet.columns[col])
-            return;
+    function refFor(row, col, absolute) {
         var name = sheet.columns[col].name;
         var offset = row - curRow;
         var step = function(n) { return n === 0 ? "*" : "*" + (n > 0 ? "+" : "-") + Math.abs(n); };
-        var ref;
         if (absolute) {
-            ref = "[" + name + "; " + row + "]";
+            return "[" + name + "; " + row + "]";
         } else if (sheet.columns[curCol] && sheet.columns[curCol].computed) {
             // A column formula names columns: it is the same for every row.
-            ref = offset === 0 ? name : "[" + name + "; " + step(offset) + "]";
+            return offset === 0 ? name : "[" + name + "; " + step(offset) + "]";
         } else {
             // A formula in one cell counts rows and columns from itself.
-            ref = "[" + step(col - curCol) + "; " + step(offset) + "]";
+            return "[" + step(col - curCol) + "; " + step(offset) + "]";
         }
+    }
+
+    // Write a reference to a cell at the cursor of the formula being typed.
+    function pickCell(row, col, absolute) {
+        if (!canPick() || !sheet.columns[col])
+            return;
+        var ref = refFor(row, col, absolute);
         var at = editor.selectionStart;
         editor.remove(at, editor.selectionEnd);
         editor.insert(at, ref);
         editor.cursorPosition = at + ref.length;
         editor.forceActiveFocus();
+        // A click picks outright: a pick under way from the keyboard, if
+        // any, does not carry on from here.
+        stopPicking();
+    }
+
+    // Move the keyboard's formula-reference pick by `dRow`/`dCol` cells,
+    // writing (or rewriting, if one is already under way) the reference it
+    // lands on, exactly as a click on that cell would. Returns whether
+    // there was a formula to pick a cell for.
+    function pickArrow(dRow, dCol, absolute) {
+        if (!canPick() || sheet.rows.length === 0 || sheet.columns.length === 0)
+            return false;
+        if (pickRow < 0) {
+            pickRow = curRow;
+            pickCol = curCol;
+            pickAt = editor.selectionStart;
+            editor.remove(pickAt, editor.selectionEnd);
+            pickLen = 0;
+        } else {
+            editor.remove(pickAt, pickAt + pickLen);
+        }
+        pickRow = Math.max(0, Math.min(sheet.rows.length - 1, pickRow + dRow));
+        pickCol = Math.max(0, Math.min(sheet.columns.length - 1, pickCol + dCol));
+        var ref = refFor(pickRow, pickCol, absolute);
+        editor.insert(pickAt, ref);
+        pickLen = ref.length;
+        editor.cursorPosition = pickAt + ref.length;
+        revealAt(pickRow, pickCol);
+        return true;
+    }
+
+    // End a keyboard pick under way, so that the next arrow pressed starts
+    // a fresh one from the edited cell rather than carrying on from here.
+    function stopPicking() {
+        pickRow = -1;
+        pickCol = -1;
+        pickAt = -1;
+        pickLen = 0;
     }
 
     // Go to the box at the top, to write what the cell holds there: the
@@ -406,6 +462,7 @@ ApplicationWindow {
     function commit(text, dRow, dCol) {
         var row = curRow, col = curCol;
         editing = false;
+        stopPicking();
         keeping(row + 1, 0, function() {
             if (sheet.isConsts) {
                 if (col === 1)
@@ -968,7 +1025,7 @@ ApplicationWindow {
                     readonly property string down: win.selBottom > win.selTop
                         ? win.selTop + ".." + win.selBottom : "" + win.selTop
                     text: win.sheet.isConsts
-                        ? (column ? win.sheet.rows[win.curRow][0].d : "")
+                        ? (column && win.curRow < win.sheet.rows.length ? win.sheet.rows[win.curRow][0].d : "")
                         : across.length === 0 ? ""
                         : win.sheet.name + (win.selKind === "all" ? ""
                             : win.selKind === "row" ? "[; " + down + "]"
@@ -1381,6 +1438,8 @@ ApplicationWindow {
                                         && win.selTop === win.selBottom && win.selLeft === win.selRight
                                     // Copied or cut, and not yet done with.
                                     readonly property bool marked: win.isMarked(row, index)
+                                    // Where the arrows are pointing a formula reference.
+                                    readonly property bool picked: row === win.pickRow && index === win.pickCol
                                     width: win.colWidths[index] || 0
                                     height: win.rowHeight
                                     opacity: win.grabbedHere && win.isGrabbed(row, index) ? 0.4 : 1
@@ -1424,6 +1483,14 @@ ApplicationWindow {
                                         color: "transparent"
                                         border.width: 2
                                         border.color: win.accentColor
+                                    }
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        visible: cellItem.picked
+                                        color: "transparent"
+                                        border.width: 2
+                                        border.color: win.accentColor
+                                        opacity: 0.6
                                     }
 
                                     MouseArea {
@@ -1527,6 +1594,21 @@ ApplicationWindow {
                                                 win.stopEditing();
                                             }
                                             onActiveFocusChanged: if (!activeFocus) finish(0, 0)
+                                            // While what is typed is a formula, the arrows pick
+                                            // a cell's reference instead of moving in the text.
+                                            Keys.priority: Keys.BeforeItem
+                                            Keys.onPressed: function(event) {
+                                                var absolute = (event.modifiers & Qt.ShiftModifier) !== 0;
+                                                switch (event.key) {
+                                                case Qt.Key_Up: event.accepted = win.pickArrow(-1, 0, absolute); break;
+                                                case Qt.Key_Down: event.accepted = win.pickArrow(1, 0, absolute); break;
+                                                case Qt.Key_Left: event.accepted = win.pickArrow(0, -1, absolute); break;
+                                                case Qt.Key_Right: event.accepted = win.pickArrow(0, 1, absolute); break;
+                                                default:
+                                                    win.stopPicking();
+                                                    event.accepted = false;
+                                                }
+                                            }
                                         }
                                     }
                                 }
