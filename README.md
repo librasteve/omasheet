@@ -2,10 +2,7 @@
 
 <img src="header.png" alt="Omasheet">
 
-A text-native spreadsheet: what Markdown is to a word processor, Omasheet is
-to a spreadsheet. An `.omx` file is plain text: named, typed sheets,
-with formulas in OMX, a small array language with exact arithmetic. Automatically 
-follows system dark/light mode.
+What Markdown is to text, Omasheet is to numbers.
 
 📄 **Text as the source of truth**
 
@@ -18,6 +15,8 @@ Named, typed data and array expressions connect spreadsheet authoring to datafra
 🔢 **Exact arithmetic as a semantic guarantee**
 
 Numeric values retain their exact decimal or rational meaning instead of floating-point approximations.
+
+_Automatically follows system dark/light mode._
 
 ```omx
 const TaxRate = 20%
