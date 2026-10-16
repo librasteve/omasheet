@@ -1,0 +1,29 @@
+# Household bills for a shared flat. This file is the spreadsheet:
+# read it, diff it and review it like any other text.
+
+const People = 3
+
+# One person's part of a bill, to the penny.
+fn Share(x) = round(x / People, 0.01)
+
+sheet Bills
+
+Due  : Date
+Note : Text
+
+Bill        | Due        | Amount  | Each | Paid  | Note
+Rent        | 2026-11-01 | 1450.00 | *    | true  | as the [lease](https://example.com/lease)
+Electricity | 2026-11-08 | 96.40   | *    | false | meter `E-4471`
+Water       | 2026-11-12 | 38.75   | *    | false |
+Broadband   | 2026-11-15 | 32.00   | *    | true  | **fixed** until March
+Council tax | 2026-11-20 | 187.00  | *    | false | band C
+
+Each := Share(Amount)
+
+sheet Summary
+
+Item           | Value
+Total          | = Bills.Amount.sum()
+Each person    | = Share(Bills.Amount.sum())
+Still to pay   | = Bills[; not Paid].Amount.sum()
+Next due       | = Bills[; not Paid].Due.min()

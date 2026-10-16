@@ -1,0 +1,46 @@
+# Orders by region. Columns are named and typed, and a computed column is
+# one expression over the whole column, like a dataframe.
+
+const VatRate = 20%
+
+sheet Orders
+
+Placed : Date
+Region : Text
+
+Placed     | Region | Product | Qty | Price  | Net | Vat | Gross
+2026-09-02 | North  | Kettle  | 4   | 24.99  | *   | *   | *
+2026-09-03 | South  | Toaster | 2   | 39.50  | *   | *   | *
+2026-09-05 | North  | Blender | 1   | 89.00  | *   | *   | *
+2026-09-09 | West   | Kettle  | 12  | 24.99  | *   | *   | *
+2026-09-11 | South  | Mixer   | 3   | 149.00 | *   | *   | *
+2026-09-14 | West   | Toaster | 5   | 39.50  | *   | *   | *
+2026-09-18 | North  | Mixer   | 2   | 149.00 | *   | *   | *
+2026-09-22 | South  | Kettle  | 6   | 24.99  | *   | *   | *
+
+Net   := Qty * Price
+Vat   := Net * VatRate
+Gross := Net + Vat
+
+sheet Regions
+
+Share : Percent
+
+Region | Count | Units | Sales | Share
+North  | *     | *     | *     | *
+South  | *     | *     | *     | *
+West   | *     | *     | *     | *
+
+Count := Orders[; Region == Regions[Region; *]].count()
+Units := Orders[; Region == Regions[Region; *]].Qty.sum()
+Sales := Orders[; Region == Regions[Region; *]].Net.sum()
+Share := Sales / Orders.Net.sum()
+
+sheet Facts
+
+Item          | Value
+Net sales     | = Orders.Net.sum()
+Average order | = Orders.Net.avg()
+Best region   | = Regions[; Sales == Regions.Sales.max()].Region
+Big orders    | = Orders[; Net > 200].count()
+Kettles sold  | = Orders[; Product == "Kettle"].Qty.sum()
