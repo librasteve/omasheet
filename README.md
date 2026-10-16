@@ -7,6 +7,18 @@ to a spreadsheet. An `.omx` file is plain text: named, typed sheets,
 with formulas in OMX, a small array language with exact arithmetic. Automatically 
 follows system dark/light mode.
 
+📄 **Text as the source of truth**
+
+The spreadsheet becomes a readable, diffable and composable document, not just a binary workbook.
+
+📊 **Columns as the computational model**
+
+Named, typed data and array expressions connect spreadsheet authoring to dataframe-style transformations.
+
+🔢 **Exact arithmetic as a semantic guarantee**
+
+Numeric values retain their exact decimal or rational meaning instead of floating-point approximations.
+
 ```omx
 const TaxRate = 20%
 
