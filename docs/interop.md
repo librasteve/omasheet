@@ -200,8 +200,9 @@ Revenue was {{ Sales.Revenue.sum() }}, best in {{ Sales[; Profit == Sales.Profit
 ```omx
 sheet Targets
 
-Month | Goal | Over
-Jan   | 4200 | *
+| Month | Goal | Over |
+| ----- | ---- | ---- |
+| Jan   | 4200 | *    |
 
 Over := Sales[Profit; *] - Goal
 ```

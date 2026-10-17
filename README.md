@@ -23,10 +23,11 @@ const TaxRate = 20%
 
 sheet Sales
 
-Month | Revenue | Cost | Profit | Tax | Running
-Jan   | 10000   | 6000 | *      | *   | *
-Feb   | 12000   | 7000 | *      | *   | *
-Mar   | 15000   | 8000 | *      | *   | *
+| Month | Revenue | Cost | Profit | Tax | Running |
+| ----- | ------- | ---- | ------ | --- | ------- |
+| Jan   | 10000   | 6000 | *      | *   | *       |
+| Feb   | 12000   | 7000 | *      | *   | *       |
+| Mar   | 15000   | 8000 | *      | *   | *       |
 
 Profit  := Revenue - Cost
 Tax     := Profit * TaxRate

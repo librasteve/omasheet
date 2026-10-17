@@ -338,7 +338,7 @@ fn import_reads_what_export_wrote() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
         stdout(&out),
-        "sheet sales\n\nMonth | UnitPrice\nJan   | 19.99\n"
+        "sheet sales\n\n| Month | UnitPrice |\n| ----- | --------- |\n| Jan   | 19.99     |\n"
     );
     assert_eq!(stderr(&out), "note: `Unit Price` was renamed `UnitPrice`\n");
 }

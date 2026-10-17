@@ -155,7 +155,7 @@ fn csv_imports_a_sheet_named_after_the_file() {
     let out = csv::import("sales", b"Month,Revenue,Cost\nJan,100,60.5\nFeb,120,\n").unwrap();
     assert_eq!(
         out.source,
-        "sheet sales\n\nMonth | Revenue | Cost\nJan   | 100     | 60.5\nFeb   | 120     |\n"
+        "sheet sales\n\n| Month | Revenue | Cost |\n| ----- | ------- | ---- |\n| Jan   | 100     | 60.5 |\n| Feb   | 120     |      |\n"
     );
     assert!(out.notices.is_empty(), "{:?}", out.notices);
     lints(&out.source);
@@ -209,7 +209,7 @@ fn csv_makes_names_identifiers() {
     );
     assert!(
         out.source
-            .contains("UnitPrice | UnitPrice_2 | Column3 | in_\n"),
+            .contains("| UnitPrice | UnitPrice_2 | Column3 | in_ |\n"),
         "{}",
         out.source
     );
@@ -506,16 +506,18 @@ sheet Sales
 
 Closed : DateTime
 
-Month | Revenue | UnitCost | Closed           | Total
-Jan   | 19.99   | 6000     | 2025-01-31T00:00 | = Revenue + UnitCost
-Feb   | 0.1     |          | 2025-02-01T12:00 | 0.1
+| Month | Revenue | UnitCost | Closed           | Total                |
+| ----- | ------- | -------- | ---------------- | -------------------- |
+| Jan   | 19.99   | 6000     | 2025-01-31T00:00 | = Revenue + UnitCost |
+| Feb   | 0.1     |          | 2025-02-01T12:00 | 0.1                  |
 
 sheet Customers
 
 Column2 : Bool
 
-Name | Column2
-\"42\" | true
+| Name | Column2 |
+| ---- | ------- |
+| \"42\" | true    |
 "
     );
     assert_eq!(
@@ -650,10 +652,11 @@ fn xlsx_imports_formulas() {
         "\
 sheet Sales
 
-Month | Revenue | Cost | Profit | Running | Margin | Note
-Jan   | 10000   | 6000 | *      | *       | *      | Jan!
-Feb   | 12000   | 7000 | *      | *       | *      | Feb!
-Mar   | 13200   | 7500 | *      | *       | *      | Mar!
+| Month | Revenue | Cost | Profit | Running | Margin | Note |
+| ----- | ------- | ---- | ------ | ------- | ------ | ---- |
+| Jan   | 10000   | 6000 | *      | *       | *      | Jan! |
+| Feb   | 12000   | 7000 | *      | *       | *      | Feb! |
+| Mar   | 13200   | 7500 | *      | *       | *      | Mar! |
 
 Profit  := Revenue - Cost
 Running := [Profit; 0..*].sum()
@@ -661,15 +664,16 @@ Margin  := round(Profit / Revenue, 0.0001)
 
 sheet YearEnd
 
-Item      | Value
-Revenue   | = Sales.Revenue.sum()
-Profit    | = Sales.Profit.sum()
-Best      | = Sales.Profit.max()
-First two | = Sales[Profit; 0] + Sales[Profit; 1]
-Share     | = [Value; *-3] / [Value; *-4]
-Good      | = if [Value; *-4] > 10000 then \"yes\" else \"no\"
-Looked up | 5000
-Wrong     | 1
+| Item      | Value                                          |
+| --------- | ---------------------------------------------- |
+| Revenue   | = Sales.Revenue.sum()                          |
+| Profit    | = Sales.Profit.sum()                           |
+| Best      | = Sales.Profit.max()                           |
+| First two | = Sales[Profit; 0] + Sales[Profit; 1]          |
+| Share     | = [Value; *-3] / [Value; *-4]                  |
+| Good      | = if [Value; *-4] > 10000 then \"yes\" else \"no\" |
+| Looked up | 5000                                           |
+| Wrong     | 1                                              |
 "
     );
     assert_eq!(

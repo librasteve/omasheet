@@ -371,10 +371,14 @@ pub(crate) fn write_named(
                     .map(|l| l[c].chars().count())
                     .max()
                     .unwrap_or(0)
+                    // At least as wide as the `---` that Markdown asks for.
+                    .max(3)
             })
             .collect();
+        // A Markdown table: each line between outer pipes, and a `---` line
+        // under the header row.
         for (l, line) in lines.iter().enumerate() {
-            let mut text = String::new();
+            let mut text = String::from("| ");
             for (c, cell) in line.iter().enumerate() {
                 if c > 0 {
                     text.push_str(" | ");
@@ -391,8 +395,12 @@ pub(crate) fn write_named(
                 text.push_str(cell);
                 text.push_str(&" ".repeat(widths[c] - cell.chars().count()));
             }
-            out.push_str(text.trim_end());
-            out.push('\n');
+            out.push_str(&text);
+            out.push_str(" |\n");
+            if l == 0 {
+                let rule: Vec<String> = widths.iter().map(|w| "-".repeat(*w)).collect();
+                out.push_str(&format!("| {} |\n", rule.join(" | ")));
+            }
         }
         let longest = (0..width)
             .filter(|c| computed[*c].is_some())
