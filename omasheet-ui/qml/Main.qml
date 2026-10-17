@@ -368,6 +368,11 @@ ApplicationWindow {
         grid.forceActiveFocus();
     }
 
+    // F2 on a whole column: its header cell takes the new name.
+    signal renameColumnAsked(int col)
+    // The tab whose sheet is being renamed in place, or -1.
+    property int renamingTab: -1
+
     // The text field a formula is being typed into, if any: the cell's own
     // editor or the entry box.
     property var editor: null
@@ -486,8 +491,18 @@ ApplicationWindow {
         if (tabs.length === 0)
             return;
         stopEditing();
-        if (selKind === "column" && selLeft === selRight)
-            selectCell(0, selLeft, false);
+        // A whole column renames it in its header, and the whole sheet in
+        // its tab.
+        if (selKind === "column" || selKind === "all") {
+            if (sheet.isConsts)
+                return;
+            notice = "";
+            if (selKind === "all")
+                renamingTab = tab;
+            else if (selLeft === selRight && sheet.columns[selLeft])
+                renameColumnAsked(selLeft);
+            return;
+        }
         if (!hasCursor || !cellAt(curRow, curCol))
             return;
         formulaField.forceActiveFocus();
@@ -981,6 +996,7 @@ ApplicationWindow {
     // ---- shortcuts ---------------------------------------------------------
 
     readonly property bool typing: editing || formulaField.activeFocus || sourceText.activeFocus || promptDialog.opened
+        || renamingTab >= 0
 
     Shortcut { sequence: "Ctrl+S"; onActivated: win.save() }
     Shortcut { sequence: "Ctrl+Shift+S"; onActivated: saveDialog.open() }
@@ -1082,11 +1098,7 @@ ApplicationWindow {
                     readonly property string source: cell ? cell.s : ""
                     readonly property bool locked: win.sheet.isConsts && win.curCol !== 1
                     readOnly: locked || !cell
-                    placeholderText: cell ? ""
-                        : win.selKind === "row" ? (win.selTop === win.selBottom ? "Whole row selected" : "Whole rows selected")
-                        : win.selKind === "column" ? (win.selLeft === win.selRight ? "Whole column selected" : "Whole columns selected")
-                        : win.selKind === "all" ? "Whole sheet selected"
-                        : "No cell selected"
+                    placeholderText: cell || win.selKind !== "cells" ? "" : "No cell selected"
                     background: Item {}
                     onSourceChanged: if (!activeFocus) text = source
                     onActiveFocusChanged: {
@@ -1262,6 +1274,13 @@ ApplicationWindow {
                                 readonly property var column: win.sheet.columns[index]
                                 // The name is being typed over, in place.
                                 property bool renaming: false
+                                Connections {
+                                    target: win
+                                    function onRenameColumnAsked(col) {
+                                        if (col === headCell.index)
+                                            headCell.renaming = true;
+                                    }
+                                }
                                 width: win.colWidths[index] || 0
                                 height: win.headerHeight
                                 // Cut and waiting to be put down.
@@ -1769,6 +1788,7 @@ ApplicationWindow {
                 Repeater {
                     model: win.tabs.length
                     FooterButton {
+                        id: tabButton
                         required property int index
                         label: win.tabs[index].name
                         active: index === win.tab && !win.showSource
@@ -1779,6 +1799,53 @@ ApplicationWindow {
                         onRightClicked: {
                             tabMenu.index = index;
                             tabMenu.popup();
+                        }
+                        // Renamed in place, from F2 with the whole sheet selected.
+                        Loader {
+                            anchors.verticalCenter: parent.verticalCenter
+                            height: parent.height
+                            active: win.renamingTab === tabButton.index
+                            sourceComponent: TextField {
+                                font.family: win.font.family
+                                font.features: win.font.features
+                                font.pixelSize: win.fontSize - 1
+                                font.bold: true
+                                color: win.textColor
+                                width: Math.max(tabButton.width, contentWidth + leftPadding + rightPadding + 4)
+                                leftPadding: 10
+                                rightPadding: 10
+                                topPadding: 0
+                                bottomPadding: 0
+                                verticalAlignment: TextInput.AlignVCenter
+                                selectByMouse: true
+                                background: Rectangle {
+                                    color: win.pageColor
+                                    radius: 4
+                                    border.width: 2
+                                    border.color: win.accentColor
+                                }
+                                property bool done: false
+                                Component.onCompleted: {
+                                    text = win.tabs[tabButton.index].name;
+                                    forceActiveFocus();
+                                    selectAll();
+                                }
+                                // A name that is refused is said why, and the old one stays.
+                                function finish(keep) {
+                                    if (done)
+                                        return;
+                                    done = true;
+                                    var name = text.trim();
+                                    var old = win.tabs[tabButton.index].name;
+                                    if (keep && name.length > 0 && name !== old)
+                                        win.keeping(0, 0, function() { win.notice = file.renameSheet(win.tab, name); });
+                                    win.renamingTab = -1;
+                                    grid.forceActiveFocus();
+                                }
+                                onAccepted: finish(true)
+                                Keys.onEscapePressed: finish(false)
+                                onActiveFocusChanged: if (!activeFocus) finish(true)
+                            }
                         }
                     }
                 }
