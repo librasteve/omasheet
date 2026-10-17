@@ -88,11 +88,14 @@ fn eval_pure_arithmetic() {
     assert_eq!(stdout(&out), "2/3\n");
     let out = omasheet(&["eval", "0.1 + 0.2"]);
     assert_eq!(stdout(&out), "0.3\n");
-    // A Num is rounded to show it, unless it is asked for in full.
+    // A Num is never rounded to show it; a large Int is shown in e
+    // notation, unless it is asked for in full.
     let out = omasheet(&["eval", "sqrt(2)"]);
-    assert_eq!(stdout(&out), "1.41421…\n");
-    let out = omasheet(&["eval", "--exact", "sqrt(2)"]);
     assert_eq!(stdout(&out), "1.4142135623730951\n");
+    let out = omasheet(&["eval", "2 ** 64"]);
+    assert_eq!(stdout(&out), "1.8446744073709551…e+19\n");
+    let out = omasheet(&["eval", "--exact", "2 ** 64"]);
+    assert_eq!(stdout(&out), "18446744073709551616\n");
 }
 
 #[test]

@@ -1,0 +1,40 @@
+Ctrl+?               Help
+Ctrl+.               Action menu
+Ctrl+Z / Ctrl+Y      Undo / redo
+
+Ctrl++ / Ctrl+-      Zoom in / out
+Ctrl+0               Reset zoom
+
+Ctrl+C / X / V       Copy / cut / paste
+Ctrl+Shift+V         Paste values
+Ctrl+Alt+V           Paste transposed
+Delete               Clear
+Ctrl+Delete          Delete
+
+Ctrl+O / S           Open / save
+Ctrl+Shift+S         Save as
+Ctrl+E               Export as a workbook, CSV or JSON
+
+Ctrl+K               New constant
+Ctrl+N               New sheet after this one
+Ctrl+Shift+N         New window on this file
+
+Ctrl+Enter           Insert row below
+Ctrl+Shift+Enter     Insert row above
+Ctrl+Arrows          Go to end cell
+Ctrl+Alt+L/R         Previous / next sheet
+Ctrl+click           Open link
+
+F1                   View functions
+F2                   Edit in box
+F3                   View source
+F11                  Fullscreen
+
+A cell starting with = is a formula
+Text is Markdown unless in quotes
+Dates and times: {locale}
+
+About
+Omasheet {version}
+Copyright (c) 2026 Stephen Roe · MIT License
+https://github.com/librasteve/omasheet

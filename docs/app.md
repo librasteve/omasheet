@@ -15,6 +15,13 @@ rewrites the text, and saving writes exactly that.
   a window of its own.
 - The box at the top shows the source of the current cell; the grid shows
   the value.
+- Under its name a column shows its type: muted if it comes from the
+  cells, plain if it is declared, and after `:=` in a formula column.
+  Right-click a column's header to **Set type…**, which starts on the type
+  the column has now, or **Clear type**; a cell that does not fit a
+  declared type is an error.
+- F3 shows the source of the whole file, to read or to edit. An edit is
+  taken when the source is left, saved or closed, and undone as one step.
 - Selecting several cells shows their count, sum and average in the footer.
 - Beside that box is the selection, written as a formula would write it:
 
@@ -32,9 +39,15 @@ rewrites the text, and saving writes exactly that.
 - Cells that are copied stay highlighted through as many pastes and inserts
   as you like, until Esc or the next copy. Cells that are cut stay where
   they are, highlighted, until they are pasted.
-- An exact number is shown in full, `19.99` or `1/3`. A `Num` is shown to
-  five digits after the point; `1.41421…` has more, and pointing at it shows
-  the value in full.
+- A number is shown in at most 23 characters: plain from `1e-15` to `1e15`,
+  `19.99` or `1/3`, and in e notation otherwise, `1e+60`. One with more
+  digits than fit is cut and marked, `1.8446744073709551…e+19`, and a
+  `Percent` is rounded, `41.67%`; pointing at it shows the value in full, as
+  does pointing at any text cut off at the cell's edge. A plain number of
+  five digits or more is grouped in threes, and numbers follow your locale:
+  `12,345.678` in Britain, `12.345,678` in Germany. The file does not: a
+  number is typed as a file writes it, `12345.678`, or `12_345.678` to group
+  it, and copying a cell copies it that way.
 - Dates and times follow your locale; the file stays ISO.
 - A file in another time zone is shown on your clocks.
 
@@ -98,7 +111,7 @@ omasheet lint file.omx                # check without calculating
 | `--locale` | show dates and times as this machine's locale writes them |
 | `--now 2025-01-31T09:30` | fix what `today()` and `now()` give |
 | `--zone Europe/London` | stand in for this machine's time zone |
-| `--exact` | show a `Num` in full, `1.4142135623730951`, not rounded, `1.41421…` |
+| `--exact` | show every number in full: `18446744073709551616`, not `1.8446744073709551…e+19`, and `125/3%`, not `41.67%` |
 
 From the source tree, `omasheet` is `cargo run --`.
 

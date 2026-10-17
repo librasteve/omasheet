@@ -18,8 +18,11 @@ info() { printf '  %s\n' "$*"; }
 die() { printf '\e[31mError:\e[0m %s\n' "$*" >&2; exit 1; }
 
 if ! command -v pacman >/dev/null; then
+  # --locked: calamine pulls in zip ^8.6, and the whole 8.x line of zip is
+  # yanked, so a fresh resolve fails; the repo's Cargo.lock still pins a
+  # (yanked but fetchable) 8.x release that works.
   die "this installs a pacman package, and there is no pacman here. Build from source instead:
-  cargo install --git https://github.com/$REPO omasheet-ui"
+  cargo install --git https://github.com/$REPO --locked omasheet-ui"
 fi
 
 ARCH="$(uname -m)"

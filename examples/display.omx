@@ -1,0 +1,112 @@
+# How each kind of number is shown: the display table of the numerics spec,
+# one sheet for each type.
+#
+# A number is shown in at most 23 characters. From 1e-15 up to 1e15 it is
+# plain; smaller or larger, or too wide to be plain, it is in e notation, with
+# its mantissa cut and marked … where even that is too wide. The Spec column
+# is how the spec shows the value in the app, in a locale that writes
+# 12,345.5, to compare with how it is shown there; `print` does not group
+# digits.
+
+sheet Ints
+
+Value : Int
+Spec  : Text
+
+Size   | Value              | Spec
+Small  | 0                  | "0"
+Small  | 7                  | "7"
+Small  | 999999999999999    | "999999999999999"
+Medium | = 10**15           | "1e+15"
+Medium | = 10**60           | "1e+60"
+Medium | 123456789012345678 | "1.23456789012345678e+17"
+Medium | = 10**18 - 1       | "9.99999999999999999e+17"
+Large  | = 10**19 - 1       | "9.9999999999999999…e+18"
+Large  | = 2**64            | "1.8446744073709551…e+19"
+Large  | = 2**200           | "1.6069380442589902…e+60"
+
+sheet Decimals
+
+Value : Decimal
+Spec  : Text
+
+Size   | Value                                         | Spec
+Small  | 0.0000000000000000000000000000000000000000001 | "1e-43"
+Small  | 0.00000000000000012345678901234567890         | "1.2345678901234567…e-16"
+Small  | 0.00000000000000099                           | "9.9e-16"
+Medium | 0.000000000000001                             | "0.000000000000001"
+Medium | 0.0000000000000012345678                      | "1.2345678e-15"
+Medium | 0.125                                         | "0.125"
+Medium | 19.99                                         | "19.99"
+Medium | 200000                                        | "200,000"
+Medium | 0.12345678901234567890123                     | "1.2345678901234567…e-01"
+Medium | 999999999999999.9999999                       | "999999999999999.9999999"
+Large  | 1000000000000000                              | "1e+15"
+Large  | 1234567890123456.5                            | "1.2345678901234565e+15"
+Large  | 123456789012345678.5                          | "1.2345678901234567…e+17"
+
+sheet Fractions
+
+Value : Fraction
+Spec  : Text
+
+Size   | Value                                            | Spec
+Small  | = 1 / (7 * 10**20)                               | "1/700000000000000000000"
+Small  | = 1 / (7 * 10**30)                               | "1.4285714285714285…e-31"
+Medium | 1/3                                              | "1/3"
+Medium | 22/7                                             | "3 1/7"
+Medium | = 1000 / 3                                       | "333 1/3"
+Medium | = 1/3 + 1/7 + 1/11 + 1/13 + 1/17 + 1/19 + 1/23   | "17824139/22309287"
+Medium | 12345666543218/76543141111111                    | "1.6129030457865418…e-01"
+Large  | = 10**15 + 1/3                                   | "1000000000000000 1/3"
+Large  | = (10**20 + 1) / 3                               | "3.3333333333333333…e+19"
+
+sheet Percents
+
+Value : Percent
+Spec  : Text
+
+Size   | Value                | Spec
+Small  | 0.000001%            | "0%"
+Small  | 0.004%               | "0%"
+Medium | 0.005%               | "0.01%"
+Medium | 12.5%                | "12.5%"
+Medium | 20%                  | "20%"
+Medium | = 5 / 12             | "41.67%"
+Medium | 999999999999999.99%  | "999999999999999.99%"
+Large  | = 10**13             | "1e+15%"
+Large  | = 10**18 / 7         | "1.43e+19%"
+
+sheet Nums
+
+Value : Num
+Spec  : Text
+
+Size   | Value                    | Spec
+Small  | 5e-324                   | "5e-324"
+Small  | 9.999999999999999e-16    | "9.999999999999999e-16"
+Medium | 1e-15                    | "0.000000000000001"
+Medium | 1.2345678e-15            | "1.2345678e-15"
+Medium | = (1/3).Num              | "0.3333333333333333"
+Medium | = 0.1.Num + 0.2.Num      | "0.30000000000000004"
+Medium | = 999999999999999.9.Num  | "999999999999999.9"
+Large  | 1e15                     | "1e+15"
+Large  | 1.7976931348623157e308   | "1.7976931348623157e+308"
+
+sheet Complexes
+
+Value : Complex
+Spec  : Text
+
+Size   | Value                               | Spec
+Small  | = 1e-20 + 2e-20 * 1i                | "1e-20+2e-20i"
+Small  | = 5e-324 + 5e-324 * 1i              | "5e-324+5e-324i"
+Medium | 1i                                  | "0+1i"
+Medium | 3+4i                                | "3+4i"
+Medium | 0.5+0.25i                           | "0.5+0.25i"
+Medium | = (1/3).Num + 1i                    | "0.3333333333333333+1i"
+Medium | = (1/3).Num + (1/3).Num * 1i        | "0.3333333…+0.3333333…i"
+Medium | =300000+300000i                     | "300,000+300,000i"
+Large  | = 1e20 + 0i                         | "1e+20+0i"
+Large  | = 1.2345678901234567e20 * (1 + 1i)  | "1.234…e+20+1.234…e+20i"
+Large  | = 1.7976931348623157e308 * (1 + 1i) | "1.79…e+308+1.79…e+308i"

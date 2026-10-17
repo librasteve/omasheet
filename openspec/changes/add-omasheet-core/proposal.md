@@ -23,7 +23,8 @@ Nothing exists yet, so every requirement is ADDED.
 - **omx-expressions** — the OMX formula language: references, `[; ]` indexing,
   ranges, slices, the `*` cursor, filtering, aggregation, conditionals, pipes
   with `filter` and `select`
-- **numerics** — `Int` / `Fraction` / `Num` / `Complex` tower, exact by default
+- **numerics** — `Int` / `Fraction` / `Num` / `Complex` tower, lifted from Raku:
+  exact by default, approximate by explicit choice
 - **evaluation** — compile pipeline, static checking of types and shapes before
   execution, dependency-ordered calculation, cycle detection
 - **cli** — the `omasheet` command: read-only view, `eval`, `lint`, diagnostics

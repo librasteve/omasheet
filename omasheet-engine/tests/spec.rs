@@ -162,6 +162,22 @@ fn decimals() {
     assert!(errors[0].contains("use `.Decimal`"), "{errors:?}");
     assert!(lint_errors(&format!("{prices}Tea | = Half * 1.5 | 1\n")).is_empty());
 
+    // A power with a whole exponent written as it is keeps its base's type;
+    // any other exponent may be negative, so the power is a Fraction.
+    let powers = "sheet W\n\nN : Int\nD : Decimal\n\nN | D\n";
+    assert!(lint_errors(&format!("{powers}= 2 ** 64 | = 1.1 ** 2\n")).is_empty());
+    let errors = lint_errors(&format!("{powers}= 2 ** -1 | 1\n"));
+    assert!(
+        errors[0].contains("declared `Int` but this is `Fraction`"),
+        "{errors:?}"
+    );
+    let errors = lint_errors(&format!("{powers}2 | = 1.1 ** W[N; *]\n"));
+    assert!(
+        errors[0].contains("declared `Decimal` but this is `Fraction`"),
+        "{errors:?}"
+    );
+    assert_eq!(calc("2 ** 64"), "18446744073709551616");
+
     // A Decimal goes where a Fraction is declared.
     let ratios = "sheet R\n\nShare : Fraction\n\nShare\n0.25\n1/7\n3\n= 0.5 * 0.5\n";
     assert!(lint_errors(ratios).is_empty());
@@ -216,20 +232,21 @@ fn percents() {
         assert!(err.contains(message), "{expr}: {err}");
     }
 
-    // `.Percent` takes any number. One that does not end is rounded to two
-    // digits to be shown, and is still held in full.
+    // `.Percent` takes any number. It is rounded to two digits after the
+    // point to be shown, and is still held in full.
     let show = |expr: &str| {
         let out = eval(None, "<expression>", expr);
         assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
         out.output.trim_end().to_string()
     };
-    assert_eq!(show("(5/12).Percent"), "41.67…%");
-    assert_eq!(show("(-5/12).Percent"), "-41.67…%");
-    assert_eq!(show("(1/3).Percent"), "33.33…%");
-    assert_eq!(show("(2/3).Percent"), "66.67…%");
-    assert_eq!(show("[20%, 10%, 10%].avg()"), "13.33…%");
+    assert_eq!(show("(5/12).Percent"), "41.67%");
+    assert_eq!(show("(-5/12).Percent"), "-41.67%");
+    assert_eq!(show("(1/3).Percent"), "33.33%");
+    assert_eq!(show("(2/3).Percent"), "66.67%");
+    assert_eq!(show("[20%, 10%, 10%].avg()"), "13.33%");
     assert_eq!(show("(1/8).Percent"), "12.5%");
-    assert_eq!(show("0.12345%"), "0.12345%");
+    assert_eq!(show("0.12345%"), "0.12%");
+    assert_eq!(calc("0.12345%"), "0.12345%");
     assert_eq!(calc("(0.4).Percent"), "40%");
     assert_eq!(calc("2.Percent"), "200%");
     assert_eq!(calc("(1/8).Percent"), "12.5%");
@@ -384,12 +401,13 @@ fn display_of_rationals() {
     assert_eq!(show("-7/3"), "-2 1/3");
     assert_eq!(show("(11/4).Fraction"), "2 3/4");
     assert_eq!(show("[1/3, 0.5]"), "[1/3, 0.5]");
-    // A Num and each part of a Complex are rounded to five digits, and marked.
+    // A Num and each part of a Complex are never rounded: shown with the
+    // fewest digits that give the same Num back.
     assert_eq!(show("4.Num"), "4");
-    assert_eq!(show("(1/3).Num"), "0.33333…");
-    assert_eq!(show("sqrt(2)"), "1.41421…");
-    assert_eq!(show("sqrt(2) * 1e20"), "1.41421…e+20");
-    assert_eq!(show("sqrt(-2+0i)"), "0+1.41421…i");
+    assert_eq!(show("(1/3).Num"), "0.3333333333333333");
+    assert_eq!(show("sqrt(2)"), "1.4142135623730951");
+    assert_eq!(show("sqrt(2) * 1e20"), "1.4142135623730951e+20");
+    assert_eq!(show("sqrt(-2+0i)"), "0+1.4142135623730951i");
     assert_eq!(show("sqrt(2).Text"), "1.4142135623730951");
     // Only the display: the value is exact still.
     assert_eq!(show("1/3 * 3 == 1"), "true");
@@ -736,6 +754,15 @@ fn math_functions() {
     );
     assert_eq!(calc("[sign(-3), sign(0), sign(1/2)]"), "[-1, 0, 1]");
     assert_eq!(calc("round(2.5e0)"), "3");
+    // With a scale, to the nearest multiple of it, as in Raku: the type is
+    // that of `round(x / scale) * scale`.
+    assert_eq!(calc("round(3.14159, 0.01)"), "3.14");
+    assert_eq!(calc("round(19.74, 0.5)"), "19.5");
+    assert_eq!(calc("round([1234, 1250, -1250], 100)"), "[1200, 1300, -1300]");
+    assert_eq!(calc("round(pi(), 0.5)"), "3");
+    assert_eq!(calc("(3.14159).round(0.001)"), "3.142");
+    assert!(calc_err(None, "round(1, 2, 3)").contains("`round` takes 1 or 2 arguments"));
+    assert!(calc_err(None, "round(1, \"a\")").contains("the scale of `round`"));
     // The rest give a Num.
     assert_eq!(calc("sqrt(16)"), "4");
     assert_eq!(calc("exp(0)"), "1");

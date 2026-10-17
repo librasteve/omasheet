@@ -54,7 +54,11 @@ pub fn snapshot(snap: &Snapshot) -> String {
             field(out, "type", &c.ty);
             out.push(',');
             field(out, "formula", c.formula.as_deref().unwrap_or(""));
-            out.push_str(&format!(",\"computed\":{}}}", c.formula.is_some()));
+            out.push_str(&format!(
+                ",\"computed\":{},\"declared\":{}}}",
+                c.formula.is_some(),
+                c.declared
+            ));
         });
         out.push_str(",\"rows\":");
         list(out, &t.rows, |out, row| {
@@ -66,7 +70,8 @@ pub fn snapshot(snap: &Snapshot) -> String {
                 out.push(',');
                 field(out, "e", cell.error.as_deref().unwrap_or(""));
                 out.push(',');
-                field(out, "x", cell.exact.as_deref().unwrap_or(""));
+                let full = cell.exact.as_deref().filter(|_| cell.shortened);
+                field(out, "x", full.unwrap_or(""));
                 if cell.value.is_markdown() {
                     out.push(',');
                     // The grid draws `<i>`, and has no `<em>`.
@@ -154,7 +159,7 @@ mod tests {
         let json = super::snapshot(doc.snapshot());
         assert!(json.starts_with("{\"sheets\":[{\"name\":\"T\",\"columns\":[{\"name\":\"A\""));
         assert!(json.contains("\"d\":\"say \\\"hi\\\"\""), "{json}");
-        assert!(json.contains("\"formula\":\"B * 2\",\"computed\":true"));
+        assert!(json.contains("\"formula\":\"B * 2\",\"computed\":true,\"declared\":false"));
         assert!(json.contains("\"d\":\"4\""));
         assert!(json.ends_with("\"consts\":[],\"problems\":[]}"));
     }

@@ -737,21 +737,25 @@ impl Scope<'_> {
             ("DATEVALUE", 1) => {
                 Omx::whole(format!("{}.Date", self.one(&args[0])?.at(Tight::Whole)))
             }
+            // To so many digits is to the nearest power of ten: `ROUND(x,2)`
+            // is `round(x, 0.01)`, and `ROUND(x,-2)` is `round(x, 100)`.
             ("ROUND", 1 | 2) => {
                 let x = self.one(&args[0])?;
+                let digits = |n: &str| n.parse::<i32>().ok().filter(|d| d.abs() <= 30);
                 let digits = match args.get(1) {
                     None => 0,
-                    Some(Expr::Num(n)) => n.parse::<u32>().map_err(|_| wrong())?,
+                    Some(Expr::Num(n)) => digits(n).ok_or_else(wrong)?,
+                    Some(Expr::Neg(inner)) => match &**inner {
+                        Expr::Num(n) => -digits(n).ok_or_else(wrong)?,
+                        _ => return Err(wrong()),
+                    },
                     Some(_) => return Err(wrong()),
                 };
-                if digits == 0 {
-                    Omx::whole(format!("round({})", x.at(Tight::Or)))
-                } else {
-                    let unit = format!("1{}", "0".repeat(digits as usize));
-                    Omx {
-                        text: format!("round({} * {unit}) / {unit}", x.at(Tight::Multiply)),
-                        tight: Tight::Multiply,
-                    }
+                let x = x.at(Tight::Or);
+                match digits {
+                    0 => Omx::whole(format!("round({x})")),
+                    d if d > 0 => Omx::whole(format!("round({x}, 0.{}1)", "0".repeat(d as usize - 1))),
+                    d => Omx::whole(format!("round({x}, 1{})", "0".repeat(-d as usize))),
                 }
             }
             ("POWER", 2) => Omx {
@@ -1066,8 +1070,10 @@ mod tests {
             "(if Revenue > 0 and (Cost > 0 or true) then 1 else 2) + 1"
         );
         assert_eq!(omx("NOT(B3>0)"), "not Revenue > 0");
-        assert_eq!(omx("ROUND(B3/3,2)"), "round(Revenue / 3 * 100) / 100");
+        assert_eq!(omx("ROUND(B3/3,2)"), "round(Revenue / 3, 0.01)");
         assert_eq!(omx("ROUND(B3,0)"), "round(Revenue)");
+        assert_eq!(omx("ROUND(B3,1)"), "round(Revenue, 0.1)");
+        assert_eq!(omx("ROUND(B3,-2)"), "round(Revenue, 100)");
         assert_eq!(omx("INT(B3)+ABS(C3)"), "floor(Revenue) + abs(Cost)");
         assert_eq!(omx("POWER(B3,2)"), "Revenue ** 2");
         assert_eq!(omx("YEAR(TODAY())"), "year(today())");

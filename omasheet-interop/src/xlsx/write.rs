@@ -18,6 +18,7 @@ use omasheet_engine::omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_engine::omx::types::S;
 use omasheet_engine::value::format_rat;
 use omasheet_engine::{Engine, Value};
+use num_rational::BigRational;
 
 /// Why a formula was not written.
 pub type Why = &'static str;
@@ -164,6 +165,46 @@ fn whole(program: &Program, node: &Node) -> Option<i64> {
         Ir::Const(i) => whole(program, &program.consts[*i].node),
         Ir::Single(inner) => whole(program, inner),
         _ => None,
+    }
+}
+
+/// An exact number written in the formula, or a constant that is one.
+fn exact(program: &Program, node: &Node) -> Option<BigRational> {
+    match &node.kind {
+        Ir::Lit(Lit::Int(n)) => Some(BigRational::from_integer(n.clone())),
+        Ir::Lit(Lit::Decimal(r) | Lit::Fraction(r)) => Some(r.clone()),
+        Ir::Const(i) => exact(program, &program.consts[*i].node),
+        Ir::Single(inner) => exact(program, inner),
+        _ => None,
+    }
+}
+
+/// `round(x, scale)`, which a file means as `round(x / scale) * scale`, to
+/// a scale that is a power of ten: `x`, and the digits a workbook's `ROUND`
+/// takes for it.
+fn round_digits<'n>(program: &Program, a: &'n Node, b: &Node) -> Option<(&'n Node, i64)> {
+    let Ir::Call(Func::Math(MathFn::Round), args) = &a.kind else {
+        return None;
+    };
+    let Ir::Binary(BinOp::Div, x, scale) = &args.first()?.kind else {
+        return None;
+    };
+    // The one scale, written once: not another that happens to be equal.
+    if scale.span != b.span {
+        return None;
+    }
+    let r = exact(program, scale)?;
+    // How many noughts follow the 1, if it is a 1 and noughts.
+    let noughts = |n: String| {
+        let rest = n.strip_prefix('1')?;
+        rest.bytes().all(|c| c == b'0').then_some(rest.len() as i64)
+    };
+    if r.is_integer() {
+        noughts(r.numer().to_string()).map(|k| (&**x, -k))
+    } else if r.numer().to_string() == "1" {
+        noughts(r.denom().to_string()).map(|k| (&**x, k))
+    } else {
+        None
     }
 }
 
@@ -732,6 +773,17 @@ impl Writer<'_> {
                     Form::Calc => return Err(FALLBACK),
                 };
                 Ok(Some(Expr::atom(text, kind)))
+            }
+            // To a power of ten, as `ROUND` has it: `round(x, 0.01)` is
+            // `ROUND(x,2)`. Any other scale is written as it is meant.
+            Ir::Binary(BinOp::Mul, a, b) if round_digits(self.program, a, b).is_some() => {
+                let Some((x, digits)) = round_digits(self.program, a, b) else {
+                    return Ok(None);
+                };
+                let Some(x) = self.scalar(x, cx)? else {
+                    return Ok(None);
+                };
+                Ok(Some(Expr::atom(format!("ROUND({},{digits})", x.text), Kind::Number)))
             }
             Ir::Binary(op, ..) if *op == BinOp::In || op.range_ends().is_some() => Err(OPERATOR),
             Ir::Binary(op, a, b) => {

@@ -236,8 +236,8 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     doc(
         MATH,
         "round",
-        "round(x)",
-        "The nearest whole number; a half rounds away from zero.",
+        "round(x, scale)",
+        "The nearest whole number, or with a scale the nearest multiple of it: round(x, 0.01) is to the hundredth, round(x, 100) to the hundred. A half rounds away from zero.",
     ),
     doc(
         MATH,

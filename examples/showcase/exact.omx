@@ -1,0 +1,31 @@
+# Exact arithmetic. Every number here is exact unless it is asked to be a
+# Num, a floating-point number, as the Float column is.
+
+sheet Sums
+
+Case            | Exact                 | Float                           | Same
+Tenths          | = 0.1 + 0.2           | = 0.1.Num + 0.2.Num             | *
+Take away       | = 1 - 0.9             | = 1.Num - 0.9.Num               | *
+Squared         | = 1.1 * 1.1           | = 1.1.Num * 1.1.Num             | *
+Big numbers     | = 2**64 + 1 - 2**64   | = 2.Num**64 + 1 - 2.Num**64     | *
+Ten years at 5% | = 1000 * (1 + 5%)**10 | = 1000.Num * (1 + 0.05.Num)**10 | *
+
+Same := Exact == Float
+
+sheet Split
+
+# A bill split three ways stays exact: the shares add back to the bill.
+
+Person | Share
+Ana    | *
+Ben    | *
+Cy     | *
+
+Share := 100 / 3
+
+sheet Check
+
+Item             | Value
+Bill             | 100
+Shares added up  | = Split.Share.sum()
+Nothing lost     | = Split.Share.sum() == 100

@@ -5,11 +5,11 @@
 # Fraction; a Percent holds what a Fraction does and shows it as so many in
 # a hundred.
 #
-# An exact number is shown in full: a Decimal as a decimal, and a Fraction
-# as a fraction. A number worked out from Ints and Decimals is a Decimal if
-# it ends, and a Fraction if not. A Percent that does not end is rounded to
-# two digits and marked with …, and a Num to five; both are still held in
-# full.
+# A number is shown in at most 23 characters: plain from 1e-15 to 1e15, and
+# in e notation otherwise, with digits that do not fit cut and marked with
+# …. A Fraction is a fraction where it fits. A number worked out from Ints
+# and Decimals is a Decimal if it ends, and a Fraction if not. A Percent is
+# rounded to two digits, and a Num is never rounded; all are held in full.
 # `omasheet --exact examples/types.omx` shows them in full.
 
 const Half = 50%
