@@ -29,7 +29,7 @@ omasheet print file.omx                   # calculate and print every sheet
 omasheet lint file.omx                    # check without calculating
 omasheet eval file.omx 'Orders.Net.sum()' # one expression against a file
 omasheet eval '1/3 + 1/6'                  # or on its own
-omasheet eval --exact file.omx '...'      # a Num in full, not 1.41421…
+omasheet eval --exact file.omx '...'      # every number in full, not 1.8446744073709551…e+19
 ```
 
 Errors come as `file:line:col: error: message` with the line and a marker,
@@ -136,14 +136,16 @@ A `Percent` is the number it stands for, so `Net * (1 + VatRate)` works as
 written and gives a plain number. Only percentages added to percentages stay
 a `Percent`. To show a share as a percentage, declare the column, as in
 `Margin : Percent` over `Margin := Profit / Revenue`, or write `x.Percent`;
-do not multiply by 100. One that does not end shows as `41.67…%`.
+do not multiply by 100. It is shown rounded to two digits, `41.67%`.
 
 Arithmetic is exact: `0.1 + 0.2 == 0.3` is true, `1/3 * 3` is `1`, and
 integers do not overflow. An exact number is shown in full: a division
 shows `0.125` if it ends as a decimal, `7 5/7` if it does not. A fraction in a result is correct,
 not a fault: do not "fix" it with `.Num`, and use `round(x)` only when the
-user wants a rounded number. Only a `Num` is shortened, to five digits with
-a `…` mark, and `--exact` shows it in full.
+user wants a rounded number. A number is shown in at most 23 characters:
+from `1e15` up, or below `1e-15`, it is in e notation, `1e+60`, and digits
+that do not fit are cut and marked `…`. Only the display is cut, and
+`--exact` shows it in full.
 
 ## Expressions
 

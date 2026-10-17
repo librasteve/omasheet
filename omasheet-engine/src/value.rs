@@ -535,11 +535,20 @@ pub fn equal(a: &Value, b: &Value) -> Result<Option<bool>, String> {
     Ok(compare(a, b)?.map(|o| o == Ordering::Equal))
 }
 
-/// How many digits a `Fraction` is shown with after the decimal point.
-pub const FRACTION_DIGITS: usize = 5;
+/// The most characters a number is shown in, its sign aside.
+pub const WIDTH: usize = 23;
 
-/// What follows a number that is shown with fewer digits than it has.
+/// What marks a number shown with fewer digits than it has.
 pub const MORE: char = '…';
+
+/// A number below this, other than zero, is small, and is shown in e notation.
+const SMALL: f64 = 1e-15;
+
+/// A number of this or more is large, and is shown in e notation.
+const LARGE: f64 = 1e15;
+
+/// How many digits after the point a `Percent` is rounded to.
+pub const PERCENT_DIGITS: usize = 2;
 
 /// A whole number of `10 ** -scale`s as a decimal with `scale` digits after
 /// the point.
@@ -555,8 +564,8 @@ fn decimal(scaled: &BigInt, negative: bool, scale: usize) -> String {
     }
 }
 
-/// An exact number as it is shown and written: a `Decimal`, a fraction
-/// that ends, as that decimal in full, and any other `Fraction` as `n/d`.
+/// An exact number as it is written: a `Decimal`, a fraction that ends, as
+/// that decimal in full, and any other `Fraction` as `n/d`.
 pub fn format_rat(r: &BigRational) -> String {
     let (two, five, ten) = (BigInt::from(2), BigInt::from(5), BigInt::from(10));
     let mut rest = r.denom().clone();
@@ -581,7 +590,7 @@ pub fn format_rat(r: &BigRational) -> String {
     decimal(&scaled, r.is_negative(), scale)
 }
 
-/// A `Fraction` as it is shown: `3/4`, and one of more than one as a whole
+/// A `Fraction` as a fraction: `3/4`, and one of more than one as a whole
 /// number and a part, `2 3/4` for `11/4`.
 pub fn format_mixed(r: &BigRational) -> String {
     let (whole, part) = (r.trunc().to_integer(), r.fract().abs());
@@ -591,48 +600,132 @@ pub fn format_mixed(r: &BigRational) -> String {
     format!("{whole} {}/{}", part.numer(), part.denom())
 }
 
-/// How many digits a `Percent` that does not end is shown with after the
-/// decimal point.
-pub const PERCENT_DIGITS: usize = 2;
+/// `10 ** e` as an exact number.
+fn power_of_ten(e: i64) -> BigRational {
+    let p = BigRational::from_integer(num_traits::pow(BigInt::from(10), e.unsigned_abs() as usize));
+    if e < 0 { p.recip() } else { p }
+}
 
-/// A `Percent` as it is shown: so many in a hundred, `40%`. One that does
-/// not end is in full as a fraction when `exact`, `125/3%`, and otherwise
-/// rounded to [`PERCENT_DIGITS`] digits, a half away from zero, and marked
-/// with [`MORE`]: `41.67…%`.
+/// The power of ten of a positive exact number: `e` where `10 ** e <= r <
+/// 10 ** (e + 1)`.
+fn magnitude(r: &BigRational) -> i64 {
+    let digits = |n: &BigInt| n.to_string().len() as i64;
+    let e = digits(r.numer()) - digits(r.denom());
+    if *r < power_of_ten(e) { e - 1 } else { e }
+}
+
+/// The exponent of e notation: `e+15`, `e-05`.
+fn exponent(e: i64) -> String {
+    format!("e{}{:02}", if e < 0 { '-' } else { '+' }, e.abs())
+}
+
+/// A positive exact number in e notation, with every significant digit; cut
+/// to [`WIDTH`] and marked with [`MORE`] where that is too wide, as one that
+/// does not end always is.
+fn scientific(r: &BigRational) -> String {
+    let e = magnitude(r);
+    // One digit more than can be shown tells whether any are left out.
+    let scaled = r * power_of_ten(WIDTH as i64 - e);
+    let whole = scaled.trunc().to_integer().to_string();
+    let complete = scaled.is_integer();
+    let digits = if complete {
+        whole.trim_end_matches('0')
+    } else {
+        &whole
+    };
+    let mantissa = match digits.split_at(1) {
+        (first, "") => first.to_string(),
+        (first, rest) => format!("{first}.{rest}"),
+    };
+    let exp = exponent(e);
+    if complete && mantissa.len() + exp.len() <= WIDTH {
+        return format!("{mantissa}{exp}");
+    }
+    let keep = WIDTH - exp.len() - 1;
+    format!("{}{MORE}{exp}", &mantissa[..keep])
+}
+
+/// A positive exact number that ends, plain if it is neither small nor large
+/// and fits, and otherwise in e notation.
+fn shown_decimal(r: &BigRational) -> String {
+    if r.is_zero() {
+        return "0".into();
+    }
+    let plain = format_rat(r);
+    let medium = *r >= power_of_ten(-15) && *r < power_of_ten(15);
+    if medium && plain.len() <= WIDTH {
+        plain
+    } else {
+        scientific(r)
+    }
+}
+
+/// A positive `Fraction`: as a fraction if that fits, and otherwise in e
+/// notation.
+fn shown_fraction(r: &BigRational) -> String {
+    let mixed = format_mixed(r);
+    if mixed.len() <= WIDTH {
+        mixed
+    } else {
+        scientific(r)
+    }
+}
+
+/// A rounded decimal without the zeros, or the point, it ends with.
+fn trimmed(text: String) -> String {
+    if !text.contains('.') {
+        return text;
+    }
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// `r` rounded to [`PERCENT_DIGITS`] digits after the point, a half away
+/// from zero.
+fn rounded(r: &BigRational) -> BigInt {
+    let unit = BigRational::from_integer(num_traits::pow(BigInt::from(10), PERCENT_DIGITS));
+    (r * unit).round().to_integer()
+}
+
+/// A `Percent` as so many in a hundred. In full when `exact`, `125/3%`;
+/// otherwise rounded to [`PERCENT_DIGITS`] digits after the point, `41.67%`,
+/// and from `1e15%` in e notation, `1.43e+19%`. It is never marked with
+/// [`MORE`]: rounding is the rule.
 pub fn format_percent(r: &BigRational, exact: bool) -> String {
     let hundred = r * BigRational::from_integer(BigInt::from(100));
-    if exact || is_decimal(&hundred) {
+    if exact {
         return format!("{}%", format_rat(&hundred));
     }
-    let unit = num_traits::pow(BigInt::from(10), PERCENT_DIGITS);
-    let rounded = (&hundred * BigRational::from_integer(unit))
-        .round()
-        .to_integer();
-    let shown = decimal(&rounded, hundred.is_negative(), PERCENT_DIGITS);
-    format!("{shown}{MORE}%")
+    let size = hundred.abs();
+    let mut scaled = rounded(&size);
+    let shown = if size < power_of_ten(15) {
+        trimmed(decimal(&scaled, false, PERCENT_DIGITS))
+    } else {
+        let mut e = magnitude(&size);
+        scaled = rounded(&(&size / power_of_ten(e)));
+        // `9.999` rounds to ten, which is one of the next power.
+        if scaled >= BigInt::from(1000) {
+            e += 1;
+            scaled = rounded(&(&size / power_of_ten(e)));
+        }
+        format!(
+            "{}{}",
+            trimmed(decimal(&scaled, false, PERCENT_DIGITS)),
+            exponent(e)
+        )
+    };
+    let sign = if hundred.is_negative() && !scaled.is_zero() {
+        "-"
+    } else {
+        ""
+    };
+    format!("{sign}{shown}%")
 }
 
-/// An exact number rounded for a `Num` to be shown as: a decimal with up to
-/// [`FRACTION_DIGITS`] digits after the point. One with more is rounded to that many, a half
-/// away from zero, and marked with [`MORE`].
-pub fn format_fraction(r: &BigRational) -> String {
-    let unit = num_traits::pow(BigInt::from(10), FRACTION_DIGITS);
-    let scaled = r * BigRational::from_integer(unit);
-    if scaled.is_integer() {
-        return format_rat(r);
-    }
-    let rounded = scaled.round().to_integer();
-    format!(
-        "{}{MORE}",
-        decimal(&rounded, r.is_negative(), FRACTION_DIGITS)
-    )
-}
-
-/// A `Num` as Raku writes one: a whole number as `100`, one with a fraction
-/// as `1.5`, and a very large or very small one with an exponent, `1e+21`
-/// or `1.5e-07`. In full when `exact`, with the fewest digits that give the
-/// same `Num` back; otherwise more than [`FRACTION_DIGITS`] digits after the
-/// point are rounded and marked with [`MORE`], as an exact number's are.
+/// A `Num` as Raku writes one, with the fewest digits that give the same
+/// `Num` back: a whole number as `100`, one with a fraction as `1.5`, and a
+/// very large or very small one with an exponent, `1e+21` or `1.5e-07`.
+/// Shown, it is plain from `1e-15` to `1e15` where that fits in [`WIDTH`],
+/// and so never needs [`MORE`]; in full, as when `exact`, only from `1e-4`.
 pub fn format_num(f: f64, exact: bool) -> String {
     if f.is_nan() {
         return "NaN".into();
@@ -640,29 +733,63 @@ pub fn format_num(f: f64, exact: bool) -> String {
     if f.is_infinite() {
         return if f > 0.0 { "Inf" } else { "-Inf" }.into();
     }
-    // A decimal with too many digits to show, rounded.
-    let short = |text: &str| {
-        let digits = text.split_once('.').map_or(0, |(_, frac)| frac.len());
-        if exact || digits <= FRACTION_DIGITS {
-            return None;
-        }
-        Some(format_fraction(&convert::fraction_of(text.parse().ok()?)?))
+    let size = f.abs();
+    let plain = if exact {
+        size == 0.0 || (1e-4..LARGE).contains(&size)
+    } else {
+        size == 0.0 || ((SMALL..LARGE).contains(&size) && format!("{size}").len() <= WIDTH)
     };
+    if plain {
+        return format!("{f}");
+    }
     let scientific = format!("{f:e}");
-    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
-    let mut exponent: i32 = exponent.parse().unwrap_or(0);
-    if (-4..15).contains(&exponent) {
-        let full = format!("{f}");
-        return short(&full).unwrap_or(full);
+    let (mantissa, e) = scientific.split_once('e').unwrap_or((&scientific, "0"));
+    format!("{mantissa}{}", exponent(e.parse().unwrap_or(0)))
+}
+
+/// Shortened to `width` characters and marked with [`MORE`]: a number in e
+/// notation in its mantissa, and any other at its end.
+fn cut(text: String, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text;
     }
-    let mut mantissa = short(mantissa).unwrap_or_else(|| mantissa.to_string());
-    // `9.999999` rounds to ten, which is one of the next power.
-    if mantissa.trim_start_matches('-').starts_with("10.") {
-        mantissa = mantissa.replacen("10.", "1.", 1);
-        exponent += 1;
+    match text.split_once('e') {
+        Some((mantissa, exp)) => {
+            let keep = width.saturating_sub(exp.len() + 2).max(1);
+            format!("{}{MORE}e{exp}", &mantissa[..keep.min(mantissa.len())])
+        }
+        None => format!("{}{MORE}", &text[..width - 1]),
     }
-    let sign = if exponent < 0 { '-' } else { '+' };
-    format!("{mantissa}e{sign}{:02}", exponent.abs())
+}
+
+/// A `Complex` as its parts are written: `3+4i`, `1.5-2i`. Shown, where that
+/// is wider than [`WIDTH`], both parts are cut alike until it fits; as for
+/// any number, a sign is not counted, and that of the imaginary part is
+/// what joins the two.
+fn format_complex(re: f64, im: f64, exact: bool) -> String {
+    let unsigned = |text: String| match text.strip_prefix('-') {
+        Some(size) => ("-", size.to_string()),
+        None => ("", text),
+    };
+    let (re_sign, mut re_text) = unsigned(format_num(re, exact));
+    let (minus, mut im_text) = unsigned(format_num(im, exact));
+    let plus = if minus.is_empty() { "+" } else { minus };
+    // As Raku does, to keep the `i` apart from `Inf` and `NaN`.
+    let i = if im.is_finite() { "i" } else { "\\i" };
+    let room = WIDTH - 1 - i.len();
+    if !exact && re_text.len() + im_text.len() > room {
+        let half = room / 2;
+        let (re_width, im_width) = if re_text.len() <= half {
+            (re_text.len(), room - re_text.len())
+        } else if im_text.len() <= half {
+            (room - im_text.len(), im_text.len())
+        } else {
+            (half, half)
+        };
+        re_text = cut(re_text, re_width);
+        im_text = cut(im_text, im_width);
+    }
+    format!("{re_sign}{re_text}{plus}{im_text}{i}")
 }
 
 /// A single value as text, the way a file shows it. `quoted` puts text in
@@ -682,26 +809,32 @@ pub fn format_exact(v: &Value, quoted: bool, style: &Style) -> String {
     format_value(v, quoted, style, true)
 }
 
+/// `text` with a `-` before it when `negative`.
+fn signed(negative: bool, text: String) -> String {
+    if negative { format!("-{text}") } else { text }
+}
+
 fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
     match v {
         Value::Empty => String::new(),
         Value::Error => "#ERROR".into(),
-        Value::Int(n) => n.to_string(),
-        // A `Decimal` in full, `19.99`. A `Fraction` as a whole number and a
-        // part, `2 3/4`, and as `11/4` when `exact`, which is how it is written.
-        Value::Decimal(r) => format_rat(r),
+        // In full when `exact`, as a file writes it: `19.99`, and a
+        // `Fraction` as `11/4`.
+        Value::Int(n) if exact => n.to_string(),
+        Value::Decimal(r) if exact => format_rat(r),
         Value::Fraction(r) if exact => format!("{}/{}", r.numer(), r.denom()),
-        Value::Fraction(r) => format_mixed(r),
+        // Shown, in at most `WIDTH` characters and a sign: plain from
+        // `1e-15` to `1e15`, and otherwise in e notation, `1e+60`. A
+        // `Fraction` is a fraction where it fits, `2 3/4`.
+        Value::Int(n) => signed(
+            n.is_negative(),
+            shown_decimal(&BigRational::from_integer(n.abs())),
+        ),
+        Value::Decimal(r) => signed(r.is_negative(), shown_decimal(&r.abs())),
+        Value::Fraction(r) => signed(r.is_negative(), shown_fraction(&r.abs())),
         Value::Percent(r) => format_percent(r, exact),
         Value::Num(f) => format_num(*f, exact),
-        // Each part as a `Num` is written: `3+4i`, `1.5-2i`.
-        Value::Complex(re, im) => {
-            let (re, part) = (format_num(*re, exact), format_num(*im, exact));
-            let plus = if part.starts_with('-') { "" } else { "+" };
-            // As Raku does, to keep the `i` apart from `Inf` and `NaN`.
-            let i = if im.is_finite() { "i" } else { "\\i" };
-            format!("{re}{plus}{part}{i}")
-        }
+        Value::Complex(re, im) => format_complex(*re, *im, exact),
         Value::Text(s, _) if quoted => format!("{s:?}"),
         Value::Text(s, _) => s.to_string(),
         Value::Bool(b) => b.to_string(),
@@ -770,14 +903,62 @@ mod tests {
         assert_eq!(format_mixed(&rat(-11, 4)), "-2 3/4");
         assert_eq!(format_mixed(&rat(3, 4)), "3/4");
         assert_eq!(format_mixed(&rat(-1, 3)), "-1/3");
-        assert_eq!(format_fraction(&rat(175, 4)), "43.75");
-        assert_eq!(format_fraction(&rat(1, 100_000)), "0.00001");
-        assert_eq!(format_fraction(&rat(1, 3)), "0.33333…");
-        assert_eq!(format_fraction(&rat(2, 3)), "0.66667…");
-        assert_eq!(format_fraction(&rat(-7, 3)), "-2.33333…");
-        assert_eq!(format_fraction(&rat(1, 64)), "0.01563…");
-        assert_eq!(format_fraction(&rat(-1, 1_000_000)), "-0.00000…");
-        assert_eq!(format_fraction(&rat(1_999_999, 1_000_000)), "2.00000…");
+    }
+
+    #[test]
+    fn shows_exact_numbers_in_23_characters() {
+        let shown = |v: Value| format_scalar(&v, false);
+        let int = |n: &str| Value::Int(n.parse().unwrap());
+        let big = |e: usize| num_traits::pow(BigInt::from(10), e);
+        assert_eq!(shown(int("999999999999999")), "999999999999999");
+        assert_eq!(shown(Value::Int(big(15))), "1e+15");
+        assert_eq!(shown(Value::Int(big(60))), "1e+60");
+        assert_eq!(shown(int("123456789012345678")), "1.23456789012345678e+17");
+        assert_eq!(
+            shown(int("18446744073709551616")),
+            "1.8446744073709551…e+19"
+        );
+        assert_eq!(
+            shown(int("-18446744073709551616")),
+            "-1.8446744073709551…e+19"
+        );
+        assert_eq!(shown(Value::Decimal(rat(1, 8))), "0.125");
+        assert_eq!(
+            shown(Value::Decimal(rat(1, 1_000_000_000_000_000))),
+            "0.000000000000001"
+        );
+        assert_eq!(
+            shown(Value::Decimal(BigRational::new(1.into(), big(43)))),
+            "1e-43"
+        );
+        assert_eq!(
+            shown(Value::Decimal(BigRational::new(
+                "12345678901234567890123".parse().unwrap(),
+                big(23)
+            ))),
+            "1.2345678901234567…e-01"
+        );
+        assert_eq!(shown(Value::Fraction(rat(1000, 3))), "333 1/3");
+        assert_eq!(shown(Value::Fraction(rat(-1, 3))), "-1/3");
+        assert_eq!(
+            shown(Value::Fraction(rat(12_345_666_543_218, 76_543_141_111_111))),
+            "1.6129030457865418…e-01"
+        );
+    }
+
+    #[test]
+    fn rounds_percentages_to_two_places() {
+        let shown = |r| format_percent(&r, false);
+        assert_eq!(shown(rat(5, 12)), "41.67%");
+        assert_eq!(shown(rat(-5, 12)), "-41.67%");
+        assert_eq!(shown(rat(1, 8)), "12.5%");
+        assert_eq!(shown(rat(1, 5)), "20%");
+        assert_eq!(shown(rat(1, 100_000_000)), "0%");
+        assert_eq!(shown(rat(-1, 100_000_000)), "0%");
+        assert_eq!(shown(rat(1, 20_000)), "0.01%");
+        assert_eq!(shown(rat(10_000_000_000_000, 1)), "1e+15%");
+        assert_eq!(shown(rat(1_000_000_000_000_000_000, 7)), "1.43e+19%");
+        assert_eq!(format_percent(&rat(5, 12), true), "125/3%");
     }
 
     #[test]
@@ -827,21 +1008,28 @@ mod tests {
         let complex = |re, im| format_scalar(&Value::Complex(re, im), false);
         assert_eq!(complex(3.0, 4.0), "3+4i");
         assert_eq!(complex(1.5, -2.0), "1.5-2i");
-        assert_eq!(complex(1e20, 1e-7), "1e+20+1e-07i");
+        assert_eq!(complex(1e20, 1e-7), "1e+20+0.0000001i");
+        assert_eq!(complex(1e20, 1e-20), "1e+20+1e-20i");
         assert_eq!(complex(0.0, f64::INFINITY), "0+Inf\\i");
 
-        // More than five digits after the point are rounded, and marked.
+        // Shown, a `Num` is never rounded: plain from `1e-15` to `1e15`
+        // where that fits in 23 characters, and in e notation otherwise.
         let shown = |f| format_num(f, false);
         assert_eq!(shown(1.5), "1.5");
-        assert_eq!(shown(0.00015), "0.00015");
-        assert_eq!(shown(0.1 + 0.2), "0.30000…");
-        assert_eq!(shown(-2.0 / 3.0), "-0.66667…");
-        assert_eq!(shown(123456.789012), "123456.78901…");
+        assert_eq!(shown(0.1 + 0.2), "0.30000000000000004");
+        assert_eq!(shown(-2.0 / 3.0), "-0.6666666666666666");
+        assert_eq!(shown(1e-15), "0.000000000000001");
+        assert_eq!(shown(9.999999999999999e-16), "9.999999999999999e-16");
+        assert_eq!(shown(1.2345678e-15), "1.2345678e-15");
+        assert_eq!(shown(999_999_999_999_999.9), "999999999999999.9");
         assert_eq!(shown(1e15), "1e+15");
-        assert_eq!(shown(123_456_789_012_345_678.0), "1.23457…e+17");
-        assert_eq!(shown(-1.5e-7), "-1.5e-07");
-        assert_eq!(shown(9.9999999e20), "1.00000…e+21");
-        assert_eq!(complex(1.0 / 3.0, -2.0 / 3.0), "0.33333…-0.66667…i");
+        assert_eq!(shown(f64::MAX), "1.7976931348623157e+308");
+        assert_eq!(complex(1.0 / 3.0, 1.0), "0.3333333333333333+1i");
+        assert_eq!(complex(1.0 / 3.0, -1.0 / 3.0), "0.3333333…-0.3333333…i");
+        assert_eq!(
+            complex(1.7976931348623157e308, 1.7976931348623157e308),
+            "1.79…e+308+1.79…e+308i"
+        );
     }
 
     #[test]

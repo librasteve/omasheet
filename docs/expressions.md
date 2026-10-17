@@ -14,18 +14,24 @@ domain: `sqrt(-1)` is `NaN` and `ln(0)` is `-Inf`. They are written as they are 
 `"Inf"`. A `NaN` is not equal to anything, itself included: of the
 comparisons only `!=` is true of one.
 
-An exact number is shown in full: a `Decimal` as a decimal, `0.015625`, and
-a `Fraction` as a fraction, `1/3`. A `Num` is shown with up to five digits
-after the point; one with more is rounded and marked, `1.41421…`. Only the
-display is rounded, and `omasheet eval --exact` gives it in full.
+A number is shown in at most 23 characters, and a `-` before it. From
+`1e-15` up to `1e15` it is plain, `0.015625`; smaller or larger it is in e
+notation, `1e-43` and `1e+60`, and so is one too wide to be plain. An exact
+number in e notation keeps every digit it can, and where they do not all fit
+they are cut and marked: `2 ** 64` is shown as `1.8446744073709551…e+19`.
+Only the display is cut, and `omasheet eval --exact` gives it in full.
+
+A `Num` is never rounded: it is shown with the fewest digits that give the
+same `Num` back, `0.30000000000000004`, and always fits.
 
 A `Percent` is an exact number shown as so many in a hundred: `20%` is `1/5`.
-One that does not end is rounded to two digits and marked, `41.67…%`, and
-`--exact` gives it as a fraction, `125/3%`.
+It is rounded to two digits after the point, `41.67%`, and `--exact` gives it
+in full, as a fraction where it does not end, `125/3%`.
 
-A `Fraction` is never shown as a decimal. One of more than one is shown as a
-whole number and a part: `11/4` as `2 3/4`. `--exact` and `x.Text` give it
-as it is written in the file, `11/4`.
+A `Fraction` is shown as a fraction where it fits: `1/3`, and one of more
+than one as a whole number and a part, `11/4` as `2 3/4`. One too wide is
+shown in e notation, cut and marked. `--exact` and `x.Text` give it as it is
+written in the file, `11/4`.
 
 Whole numbers and decimals divided give a `Decimal` when the result ends,
 `7 / 4` is `1.75`, and a `Fraction` when it does not, `7 / 3` is `2 1/3`.
@@ -37,12 +43,12 @@ Numbers are shown the way Raku shows them:
 
 | Type | Shown |
 |---|---|
-| `Int` | `101` |
-| `Decimal` | `1.01` |
-| `Fraction` | `1/3`, `2 3/4` |
-| `Percent` | `20%`, `12.5%`; `41.67…%` when it does not end |
-| `Num` | `100`, `1.5`, `1.41421…`; `1e+21` or `1.41421…e-07` when very large or small; `Inf`, `-Inf`, `NaN` |
-| `Complex` | each part as a `Num`: `3+4i`, `1.5-2i`, `0+1.41421…i` |
+| `Int` | `101`; `1e+15` and `1.8446744073709551…e+19` from `1e15` |
+| `Decimal` | `1.01`; `1e-43` below `1e-15` |
+| `Fraction` | `1/3`, `2 3/4`; `1.6129030457865418…e-01` when too wide |
+| `Percent` | `20%`, `12.5%`, `41.67%` |
+| `Num` | `100`, `1.5`, `1.4142135623730951`; `1e+21` or `1.5e-16` when very large or small; `Inf`, `-Inf`, `NaN` |
+| `Complex` | each part as a `Num`: `3+4i`, `1.5-2i`, `0+1.4142135623730951i`; both parts cut alike when too wide |
 
 A `Num` that is a whole number looks like an `Int`, but it is still a `Num`.
 
@@ -70,7 +76,7 @@ vector is converted value by value.
 | `x.Int` | a whole number: `19.99` gives `19`, `-19.99` gives `-19` |
 | `x.Decimal` | an exact decimal: `(1/8).Decimal` is `0.125`; `(1/3).Decimal` is an error |
 | `x.Fraction` | the same number as a fraction: `2.75` gives `2 3/4`; a `Num` as the decimal it is shown as |
-| `x.Percent` | the same number as a percentage: `0.4` gives `40%`, `5/12` gives `41.67…%` |
+| `x.Percent` | the same number as a percentage: `0.4` gives `40%`, `5/12` gives `41.67%` |
 | `x.Num` | a floating-point number |
 | `x.Complex` | a complex number from a real one |
 | `x.Text` | any value as text, written the way a file writes it |

@@ -2130,7 +2130,8 @@ impl Document {
         // What a number shown with fewer digits than it has is in full.
         let exact = |v: &Value, quoted: bool, shown: &str| {
             let full = match v {
-                Value::Decimal(_)
+                Value::Int(_)
+                | Value::Decimal(_)
                 | Value::Fraction(_)
                 | Value::Percent(_)
                 | Value::Num(_)

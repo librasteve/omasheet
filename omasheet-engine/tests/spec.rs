@@ -232,20 +232,21 @@ fn percents() {
         assert!(err.contains(message), "{expr}: {err}");
     }
 
-    // `.Percent` takes any number. One that does not end is rounded to two
-    // digits to be shown, and is still held in full.
+    // `.Percent` takes any number. It is rounded to two digits after the
+    // point to be shown, and is still held in full.
     let show = |expr: &str| {
         let out = eval(None, "<expression>", expr);
         assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
         out.output.trim_end().to_string()
     };
-    assert_eq!(show("(5/12).Percent"), "41.67…%");
-    assert_eq!(show("(-5/12).Percent"), "-41.67…%");
-    assert_eq!(show("(1/3).Percent"), "33.33…%");
-    assert_eq!(show("(2/3).Percent"), "66.67…%");
-    assert_eq!(show("[20%, 10%, 10%].avg()"), "13.33…%");
+    assert_eq!(show("(5/12).Percent"), "41.67%");
+    assert_eq!(show("(-5/12).Percent"), "-41.67%");
+    assert_eq!(show("(1/3).Percent"), "33.33%");
+    assert_eq!(show("(2/3).Percent"), "66.67%");
+    assert_eq!(show("[20%, 10%, 10%].avg()"), "13.33%");
     assert_eq!(show("(1/8).Percent"), "12.5%");
-    assert_eq!(show("0.12345%"), "0.12345%");
+    assert_eq!(show("0.12345%"), "0.12%");
+    assert_eq!(calc("0.12345%"), "0.12345%");
     assert_eq!(calc("(0.4).Percent"), "40%");
     assert_eq!(calc("2.Percent"), "200%");
     assert_eq!(calc("(1/8).Percent"), "12.5%");
@@ -400,12 +401,13 @@ fn display_of_rationals() {
     assert_eq!(show("-7/3"), "-2 1/3");
     assert_eq!(show("(11/4).Fraction"), "2 3/4");
     assert_eq!(show("[1/3, 0.5]"), "[1/3, 0.5]");
-    // A Num and each part of a Complex are rounded to five digits, and marked.
+    // A Num and each part of a Complex are never rounded: shown with the
+    // fewest digits that give the same Num back.
     assert_eq!(show("4.Num"), "4");
-    assert_eq!(show("(1/3).Num"), "0.33333…");
-    assert_eq!(show("sqrt(2)"), "1.41421…");
-    assert_eq!(show("sqrt(2) * 1e20"), "1.41421…e+20");
-    assert_eq!(show("sqrt(-2+0i)"), "0+1.41421…i");
+    assert_eq!(show("(1/3).Num"), "0.3333333333333333");
+    assert_eq!(show("sqrt(2)"), "1.4142135623730951");
+    assert_eq!(show("sqrt(2) * 1e20"), "1.4142135623730951e+20");
+    assert_eq!(show("sqrt(-2+0i)"), "0+1.4142135623730951i");
     assert_eq!(show("sqrt(2).Text"), "1.4142135623730951");
     // Only the display: the value is exact still.
     assert_eq!(show("1/3 * 3 == 1"), "true");
