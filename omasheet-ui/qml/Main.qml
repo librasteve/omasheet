@@ -378,6 +378,30 @@ ApplicationWindow {
         return !!editor && !sheet.isConsts && editor.text.trim().charAt(0) === "=";
     }
 
+    // Whether an arrow key should pick a cell rather than move in the text:
+    // while a pick is under way, or where a reference may go: after `=`, a
+    // bracket, a separator or an operator, before the end, a closing bracket,
+    // a separator or an operator, and not inside a reference's `[ ]`.
+    // Anywhere else, such as on or among the references already written,
+    // the arrows move in the text as usual.
+    function arrowPicks() {
+        if (!canPick())
+            return false;
+        if (pickRow >= 0)
+            return true;
+        // Quoted text is no part of the formula's shape.
+        var text = editor.text.replace(/"(\\.|[^"\\])*"?/g, function(q) { return q.replace(/./g, "x"); });
+        var before = text.slice(0, editor.cursorPosition);
+        var after = text.slice(editor.cursorPosition).replace(/^\s+/, "");
+        if ((before.match(/\[/g) || []).length > (before.match(/\]/g) || []).length)
+            return false;
+        // Nor in the middle of an operator such as `//` or `<=`.
+        if (/[=<>!\/*.^]$/.test(before) && /^[=<>!\/*.^]/.test(text.slice(editor.cursorPosition)))
+            return false;
+        return /([=(,;+\-*\/<>!^]|\.\.|\b(and|or|not|in))\s*$/.test(before)
+            && /^($|[),;\]+\-*\/<>=!^]|\.\.|(and|or|in)\b)/.test(after);
+    }
+
     // The reference a cell is written by, from the formula being typed:
     // relative to the edited cell, or by row number when `absolute`.
     function refFor(row, col, absolute) {
@@ -433,6 +457,17 @@ ApplicationWindow {
         pickLen = ref.length;
         editor.cursorPosition = pickAt + ref.length;
         revealAt(pickRow, pickCol);
+        return true;
+    }
+
+    // Take back the reference of a keyboard pick under way, and go on
+    // typing. Returns whether there was one.
+    function cancelPick() {
+        if (pickRow < 0)
+            return false;
+        editor.remove(pickAt, pickAt + pickLen);
+        editor.cursorPosition = pickAt;
+        stopPicking();
         return true;
     }
 
@@ -1571,25 +1606,33 @@ ApplicationWindow {
                                             onAccepted: finish(1, 0)
                                             Keys.onTabPressed: finish(0, 1)
                                             Keys.onBacktabPressed: finish(0, -1)
+                                            // Escape takes back a pick under way, else the edit.
                                             Keys.onEscapePressed: {
+                                                if (win.cancelPick())
+                                                    return;
                                                 done = true;
                                                 win.stopEditing();
                                             }
                                             onActiveFocusChanged: if (!activeFocus) finish(0, 0)
-                                            // While what is typed is a formula, the arrows pick
-                                            // a cell's reference instead of moving in the text.
+                                            // In a formula, the arrows pick a cell's reference
+                                            // where one may go, and with Alt anywhere; elsewhere
+                                            // they move in the text.
                                             Keys.priority: Keys.BeforeItem
                                             Keys.onPressed: function(event) {
                                                 var absolute = (event.modifiers & Qt.ShiftModifier) !== 0;
-                                                switch (event.key) {
-                                                case Qt.Key_Up: event.accepted = win.pickArrow(-1, 0, absolute); break;
-                                                case Qt.Key_Down: event.accepted = win.pickArrow(1, 0, absolute); break;
-                                                case Qt.Key_Left: event.accepted = win.pickArrow(0, -1, absolute); break;
-                                                case Qt.Key_Right: event.accepted = win.pickArrow(0, 1, absolute); break;
-                                                default:
-                                                    win.stopPicking();
-                                                    event.accepted = false;
+                                                var d = event.key === Qt.Key_Up ? [-1, 0]
+                                                    : event.key === Qt.Key_Down ? [1, 0]
+                                                    : event.key === Qt.Key_Left ? [0, -1]
+                                                    : event.key === Qt.Key_Right ? [0, 1] : null;
+                                                if (d) {
+                                                    var picks = (event.modifiers & Qt.AltModifier) ? win.canPick() : win.arrowPicks();
+                                                    event.accepted = picks && win.pickArrow(d[0], d[1], absolute);
+                                                    return;
                                                 }
+                                                // A modifier on its own leaves a pick going.
+                                                if ([Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Control, Qt.Key_Meta].indexOf(event.key) < 0)
+                                                    win.stopPicking();
+                                                event.accepted = false;
                                             }
                                         }
                                     }
