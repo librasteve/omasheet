@@ -339,7 +339,7 @@ cut.
 
 ### Requirement: Digit grouping
 In the app, the digits of a plain number before its point SHALL be grouped in
-threes by `,` where there are five of them or more, `12,345.678`, and the
+threes where there are five of them or more, `12,345.678`, and the
 separators SHALL count toward the 23 characters. A number in e notation, the
 part of a `Fraction` after its whole number, and digits after the point SHALL
 NOT be grouped. A file, `print`, `eval`, text, export, copying and the full
@@ -347,9 +347,22 @@ display SHALL NOT group digits; in a file digits MAY be grouped with
 `_`, `10_000`, as a literal allows.
 
 #### Scenario: Grouped in the app only
-- **WHEN** `12345` and `2025` are shown in the app
+- **WHEN** `12345` and `2025` are shown in the app, in a British locale
 - **THEN** they are shown as `12,345` and `2025`
 - **AND** `omasheet eval '12345'` outputs `12345`
+
+### Requirement: Numbers in the locale
+In the app, a number SHALL be shown with the decimal point and the digit
+group separator of the user's locale (`LC_NUMERIC`), as dates and times
+follow its `LC_TIME`. Where the locale has no separator, digits SHALL be
+grouped by `,`, or by a narrow space where its point is `,`. A file, `print`,
+`eval`, text, export, copying and the full display SHALL always write a
+number with `.` and no separator.
+
+#### Scenario: A German locale
+- **WHEN** `12345.5` and `5/12` as a `Percent` are shown in the app, in a German locale
+- **THEN** they are shown as `12.345,5` and `41,67%`
+- **AND** copying the first gives `12345.5`
 
 #### Scenario: Grouping can make a number too wide to be plain
 - **WHEN** `999999999999999.9999999` is shown in the app

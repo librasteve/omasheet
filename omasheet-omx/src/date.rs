@@ -104,6 +104,8 @@ pub struct Style {
     /// What a number of five digits or more is grouped by in threes, as
     /// `12,345`; `None` to show it ungrouped, as a file writes it.
     pub group: Option<char>,
+    /// What a number's point is shown as: `.` as a file writes it, or `,`.
+    pub point: char,
 }
 
 impl Default for Style {
@@ -120,6 +122,7 @@ impl Style {
         hour12: false,
         iso: true,
         group: None,
+        point: '.',
     };
 
     pub fn new(order: Order, sep: char, hour12: bool) -> Style {
@@ -129,13 +132,16 @@ impl Style {
             hour12,
             iso: false,
             group: None,
+            point: '.',
         }
     }
 
-    /// This style, with numbers grouped by `sep` in threes.
-    pub fn grouped(self, sep: char) -> Style {
+    /// This style, with numbers grouped by `sep` in threes and their point
+    /// shown as `point`: `12,345.5`, or `12.345,5` in Germany.
+    pub fn numbers(self, point: char, sep: char) -> Style {
         Style {
             group: Some(sep),
+            point,
             ..self
         }
     }

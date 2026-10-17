@@ -650,6 +650,11 @@ fn width(text: &str) -> usize {
     text.chars().count()
 }
 
+/// What stands for a separator of digit groups until a number is shown in
+/// a style, when it becomes the style's own. It is one character, as every
+/// separator is, so that a number's width is known before then.
+const GROUP: char = '\u{E000}';
+
 /// A plain number with the digits before its point grouped by `sep` in
 /// threes, where there are five of them or more: `12,345.678`.
 fn grouped(plain: String, sep: Option<char>) -> String {
@@ -846,6 +851,34 @@ pub fn format_exact(v: &Value, quoted: bool, style: &Style) -> String {
     format_value(v, quoted, style, true)
 }
 
+/// What a number shown in `style` groups its digits by, until it is shown.
+fn group(style: &Style) -> Option<char> {
+    style.group.map(|_| GROUP)
+}
+
+/// A number shown as `style` writes one: its point the style's own, and its
+/// digits grouped by the style's separator.
+fn localised(text: String, style: &Style) -> String {
+    let text = if style.point == '.' {
+        text
+    } else {
+        text.replace('.', &style.point.to_string())
+    };
+    match style.group {
+        Some(sep) => text.replace(GROUP, &sep.to_string()),
+        None => text,
+    }
+}
+
+/// As a number shown in `style` is written in a file: `12,345.5` and
+/// `12.345,5` are `12345.5`.
+pub fn delocalised(text: &str, style: &Style) -> String {
+    text.chars()
+        .filter(|&c| Some(c) != style.group)
+        .map(|c| if c == style.point { '.' } else { c })
+        .collect()
+}
+
 /// `text` with a `-` before it when `negative`.
 fn signed(negative: bool, text: String) -> String {
     if negative { format!("-{text}") } else { text }
@@ -864,16 +897,28 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         // `1e-15` to `1e15`, and otherwise in e notation, `1e+60`. A
         // `Fraction` is a fraction where it fits, `2 3/4`.
         // Shown in the app, a plain number of five digits or more is grouped
-        // in threes, `12,345`.
-        Value::Int(n) => signed(
-            n.is_negative(),
-            shown_decimal(&BigRational::from_integer(n.abs()), style.group),
+        // in threes, `12,345`, and its point is the locale's.
+        Value::Int(n) => localised(
+            signed(
+                n.is_negative(),
+                shown_decimal(&BigRational::from_integer(n.abs()), group(style)),
+            ),
+            style,
         ),
-        Value::Decimal(r) => signed(r.is_negative(), shown_decimal(&r.abs(), style.group)),
-        Value::Fraction(r) => signed(r.is_negative(), shown_fraction(&r.abs(), style.group)),
-        Value::Percent(r) => shown_percent(r, exact, style.group),
-        Value::Num(f) => shown_num(*f, exact, style.group),
-        Value::Complex(re, im) => format_complex(*re, *im, exact, style.group),
+        Value::Decimal(r) => localised(
+            signed(r.is_negative(), shown_decimal(&r.abs(), group(style))),
+            style,
+        ),
+        Value::Fraction(r) => localised(
+            signed(r.is_negative(), shown_fraction(&r.abs(), group(style))),
+            style,
+        ),
+        Value::Percent(r) if exact => format_percent(r, true),
+        Value::Percent(r) => localised(shown_percent(r, false, group(style)), style),
+        Value::Num(f) if exact => format_num(*f, true),
+        Value::Num(f) => localised(shown_num(*f, false, group(style)), style),
+        Value::Complex(re, im) if exact => format_complex(*re, *im, true, None),
+        Value::Complex(re, im) => localised(format_complex(*re, *im, false, group(style)), style),
         Value::Text(s, _) if quoted => format!("{s:?}"),
         Value::Text(s, _) => s.to_string(),
         Value::Bool(b) => b.to_string(),
@@ -987,7 +1032,7 @@ mod tests {
 
     #[test]
     fn groups_digits_in_the_app() {
-        let app = Style::ISO.grouped(',');
+        let app = Style::ISO.numbers('.', ',');
         let shown = |v: Value| format_styled(&v, false, &app);
         let int = |n: i64| Value::Int(n.into());
         assert_eq!(shown(int(2025)), "2025");
@@ -1017,6 +1062,28 @@ mod tests {
         // Only the app groups them: a file, and `print`, do not.
         assert_eq!(format_scalar(&int(12345), false), "12345");
         assert_eq!(format_exact(&int(12345), false, &app), "12345");
+    }
+
+    #[test]
+    fn shows_numbers_as_the_locale_does() {
+        let de = Style::ISO.numbers(',', '.');
+        let shown = |v: Value| format_styled(&v, false, &de);
+        assert_eq!(shown(Value::Decimal(rat(123_455, 10))), "12.345,5");
+        assert_eq!(shown(Value::Decimal(rat(1, 8))), "0,125");
+        assert_eq!(shown(Value::Num(1.5e-20)), "1,5e-20");
+        assert_eq!(shown(Value::Percent(rat(5, 12))), "41,67%");
+        assert_eq!(shown(Value::Fraction(rat(1_000_000, 3))), "333.333 1/3");
+        assert_eq!(delocalised("12.345,5", &de), "12345.5");
+        // In full, as a file writes it, whatever the locale.
+        assert_eq!(
+            format_exact(&Value::Decimal(rat(123_455, 10)), false, &de),
+            "12345.5"
+        );
+        let fr = Style::ISO.numbers(',', '\u{202F}');
+        assert_eq!(
+            format_styled(&Value::Int(1_234_567.into()), false, &fr),
+            "1\u{202F}234\u{202F}567"
+        );
     }
 
     #[test]

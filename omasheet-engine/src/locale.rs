@@ -35,6 +35,45 @@ pub fn os_style() -> Style {
     Style::ISO
 }
 
+/// The decimal point and the separator of digit groups of the user's locale
+/// (`LC_NUMERIC`): `.` and `,` in Britain, `,` and `.` in Germany. A locale
+/// with no separator, as the `C` locale has none, groups by `,`, or by a
+/// narrow space where its point is `,`.
+#[cfg(unix)]
+pub fn os_numbers() -> (char, char) {
+    use std::ffi::CStr;
+    let first = |item: libc::nl_item| {
+        // SAFETY: `nl_langinfo` returns a valid string for a valid item; its
+        // first character is taken before the next call can overwrite it.
+        let text = unsafe { CStr::from_ptr(libc::nl_langinfo(item)) };
+        text.to_string_lossy().chars().next()
+    };
+    // SAFETY: a null locale name only queries the current one, which is
+    // copied before it is changed, to be put back after.
+    let before = unsafe {
+        let name = libc::setlocale(libc::LC_NUMERIC, std::ptr::null());
+        (!name.is_null()).then(|| CStr::from_ptr(name).to_owned())
+    };
+    // SAFETY: an empty locale name selects the one named by the environment.
+    let found = unsafe { !libc::setlocale(libc::LC_NUMERIC, c"".as_ptr()).is_null() };
+    let (point, sep) = if found {
+        (first(libc::RADIXCHAR), first(libc::THOUSEP))
+    } else {
+        (None, None)
+    };
+    // SAFETY: the locale is put back as it was, so that nothing else reads
+    // numbers differently.
+    unsafe { libc::setlocale(libc::LC_NUMERIC, before.as_deref().unwrap_or(c"C").as_ptr()) };
+    let point = point.unwrap_or('.');
+    let fallback = if point == ',' { '\u{202F}' } else { ',' };
+    (point, sep.filter(|&s| s != point).unwrap_or(fallback))
+}
+
+#[cfg(not(unix))]
+pub fn os_numbers() -> (char, char) {
+    ('.', ',')
+}
+
 /// The name of the locale that [`os_style`] read, such as `en_GB`, without
 /// its character encoding. Empty if there is none.
 #[cfg(unix)]
@@ -55,4 +94,16 @@ pub fn os_name() -> String {
 #[cfg(not(unix))]
 pub fn os_name() -> String {
     String::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_locale_point_is_never_its_separator() {
+        let (point, sep) = os_numbers();
+        assert!(matches!(point, '.' | ','), "{point:?}");
+        assert_ne!(point, sep);
+    }
 }

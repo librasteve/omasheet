@@ -12,7 +12,7 @@
 
 use crate::Options;
 use crate::eval::Engine;
-use crate::value::{Value, arith, format_exact, format_styled};
+use crate::value::{Value, arith, delocalised, format_exact, format_styled};
 use num_traits::ToPrimitive;
 use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use omasheet_omx::date::{self, Style};
@@ -58,8 +58,11 @@ pub struct CellSnap {
     pub value: Value,
     /// The value as shown in the grid.
     pub display: String,
-    /// The value in full, when it is shown with fewer digits than it has.
+    /// The value in full, as a file writes it, when it is shown otherwise.
     pub exact: Option<String>,
+    /// Whether it is shown with fewer digits than it has, which grouping
+    /// them, or the locale's point, does not make it.
+    pub shortened: bool,
     /// What the cell holds in the file: a literal, or `= expression`. For a
     /// computed column, the column's expression.
     pub source: String,
@@ -2185,8 +2188,12 @@ impl Document {
                         (None, None) => (String::new(), None),
                     };
                     let display = show(&value);
+                    let full = exact(&value, false, &display);
                     row.push(CellSnap {
-                        exact: exact(&value, false, &display),
+                        shortened: full
+                            .as_ref()
+                            .is_some_and(|f| *f != delocalised(&display, &self.style)),
+                        exact: full,
                         display,
                         numeric: value.is_numeric(),
                         value: value.clone(),
@@ -2218,7 +2225,8 @@ impl Document {
                 source: decl.map_or(String::new(), |d| {
                     self.text[d.expr_span.start as usize..d.expr_span.end as usize].to_string()
                 }),
-                exact: exact(&value, true, &display),
+                exact: exact(&value, true, &display)
+                    .filter(|f| *f != delocalised(&display, &self.style)),
                 display,
                 error: decl.and_then(|d| within(d.expr_span)),
             });

@@ -44,9 +44,10 @@ rewrites the text, and saving writes exactly that.
   digits than fit is cut and marked, `1.8446744073709551…e+19`, and a
   `Percent` is rounded, `41.67%`; pointing at it shows the value in full, as
   does pointing at any text cut off at the cell's edge. A plain number of
-  five digits or more is grouped in threes, `12,345.678`; the file is not, and
-  a number is typed with `_` to group it, `10_000`. Copying a cell copies it
-  ungrouped.
+  five digits or more is grouped in threes, and numbers follow your locale:
+  `12,345.678` in Britain, `12.345,678` in Germany. The file does not: a
+  number is typed as a file writes it, `12345.678`, or `12_345.678` to group
+  it, and copying a cell copies it that way.
 - Dates and times follow your locale; the file stays ISO.
 - A file in another time zone is shown on your clocks.
 

@@ -1499,13 +1499,10 @@ ApplicationWindow {
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         property bool picking: false
                                         // Why the cell failed, or a number shown
-                                        // with fewer digits than it has, in full,
-                                        // which grouping its digits does not make
-                                        // it; or what is cut off at the cell's edge.
-                                        readonly property string full: cellItem.cell && cellItem.cell.x
-                                            && cellItem.cell.x !== cellItem.cell.d.replace(/,/g, "") ? cellItem.cell.x : ""
+                                        // with fewer digits than it has, in full;
+                                        // or what is cut off at the cell's edge.
                                         readonly property string tip: cellItem.cell
-                                            ? cellItem.cell.e || full || (cellText.truncated ? cellItem.cell.d : "")
+                                            ? cellItem.cell.e || cellItem.cell.x || (cellText.truncated ? cellItem.cell.d : "")
                                             : ""
                                         ToolTip.visible: containsMouse && !cellMenu.visible && tip.length > 0
                                         ToolTip.delay: 400
