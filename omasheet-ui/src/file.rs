@@ -869,7 +869,10 @@ impl qobject::File {
         if !matches!(ty.as_str(), "Date" | "Time" | "DateTime" | "Bool") {
             return QString::default();
         }
-        QString::from(&entry_hint(&style(), &ty))
+        // The header shows the type already.
+        let hint = entry_hint(&style(), &ty);
+        let hint = hint.strip_prefix(&format!("{ty}: ")).unwrap_or(&hint);
+        QString::from(hint)
     }
 
     fn selection_summary(&self, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {

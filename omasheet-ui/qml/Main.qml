@@ -1075,35 +1075,16 @@ ApplicationWindow {
                     }
                 }
 
-                Text {
-                    // For a cell of the column, or the whole of it.
-                    readonly property var column: win.hasCursor || (win.selKind === "column" && win.selLeft === win.selRight)
-                        ? win.sheet.columns[win.curCol] : undefined
-                    visible: !!column && column.computed && !win.sheet.isConsts
-                    text: "formula column"
-                    color: win.accentColor
-                    font: win.font
-                }
-                Text {
-                    readonly property var column: win.hasCursor || (win.selKind === "column" && win.selLeft === win.selRight)
-                        ? win.sheet.columns[win.curCol] : undefined
-                    visible: !!column && column.declared && !win.sheet.isConsts
-                    text: "typed column"
-                    color: win.textColor
-                    font: win.font
-                }
-
-                // What the column accepts, in the locale's way of writing it.
+                // What the column accepts, in the locale's way of writing it:
+                // nothing for a formula column, whose cells are not typed in.
                 Text {
                     readonly property var column: win.hasCursor ? win.sheet.columns[win.curCol] : undefined
-                    readonly property string hint: column && column.type && !win.sheet.isConsts
+                    readonly property string hint: column && column.type && !column.computed && !win.sheet.isConsts
                         ? file.entryHint(column.type) : ""
                     visible: hint.length > 0
                     text: hint
-                    color: win.mutedColor
-                    font.family: win.font.family
-                    font.features: win.font.features
-                    font.pixelSize: win.fontSize - 1
+                    color: win.textColor
+                    font: win.font
                     Layout.maximumWidth: win.width * 0.45
                     elide: Text.ElideRight
                 }
