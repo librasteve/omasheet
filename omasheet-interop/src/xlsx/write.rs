@@ -9,6 +9,7 @@
 //! that a workbook has no way to say is not written, and the reason is
 //! given: the cell holds its value instead.
 
+use num_rational::BigRational;
 use omasheet_engine::omx::ast::{BinOp, Lit, UnOp};
 use omasheet_engine::omx::check::Program;
 use omasheet_engine::omx::convert::is_decimal;
@@ -18,7 +19,6 @@ use omasheet_engine::omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_engine::omx::types::S;
 use omasheet_engine::value::format_rat;
 use omasheet_engine::{Engine, Value};
-use num_rational::BigRational;
 
 /// Why a formula was not written.
 pub type Why = &'static str;
@@ -783,7 +783,10 @@ impl Writer<'_> {
                 let Some(x) = self.scalar(x, cx)? else {
                     return Ok(None);
                 };
-                Ok(Some(Expr::atom(format!("ROUND({},{digits})", x.text), Kind::Number)))
+                Ok(Some(Expr::atom(
+                    format!("ROUND({},{digits})", x.text),
+                    Kind::Number,
+                )))
             }
             Ir::Binary(op, ..) if *op == BinOp::In || op.range_ends().is_some() => Err(OPERATOR),
             Ir::Binary(op, a, b) => {

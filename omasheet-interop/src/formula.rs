@@ -754,7 +754,9 @@ impl Scope<'_> {
                 let x = x.at(Tight::Or);
                 match digits {
                     0 => Omx::whole(format!("round({x})")),
-                    d if d > 0 => Omx::whole(format!("round({x}, 0.{}1)", "0".repeat(d as usize - 1))),
+                    d if d > 0 => {
+                        Omx::whole(format!("round({x}, 0.{}1)", "0".repeat(d as usize - 1)))
+                    }
                     d => Omx::whole(format!("round({x}, 1{})", "0".repeat(-d as usize))),
                 }
             }
