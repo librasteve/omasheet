@@ -23,7 +23,7 @@ use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile};
 const UNDO_LIMIT: usize = 200;
 
 /// A fresh file: one small empty sheet to type into.
-pub const BLANK: &str = "sheet Sheet1\n\nA | B | C\n  |   |\n  |   |\n  |   |\n  |   |\n  |   |\n";
+pub const BLANK: &str = "sheet Sheet1\n\n| A   | B   | C   |\n| --- | --- | --- |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n";
 
 #[derive(Debug, Default, Clone)]
 pub struct Snapshot {
@@ -853,16 +853,21 @@ impl Grid {
     }
 
     fn blank_row(&self) -> Vec<String> {
-        // A lone empty cell would be a blank line, which is not a row.
-        let cell = if self.header.len() == 1 { "\"\"" } else { "" };
-        let blank = |formula: &bool| if *formula { FORMULA_CELL } else { cell };
+        let blank = |formula: &bool| if *formula { FORMULA_CELL } else { "" };
         self.formula.iter().map(|f| blank(f).to_string()).collect()
     }
 
-    /// Rewrite the sheet's lines in `text`, aligned, touching nothing else.
+    /// Rewrite the sheet's lines in `text` as a Markdown table, aligned,
+    /// touching nothing else: each line between outer pipes, `| a | b |`,
+    /// and a `| --- |` line under the header row.
     fn write(&self, t: &SheetDecl, text: &str) -> String {
         let n = self.header.len();
-        let mut widths: Vec<usize> = self.header.iter().map(|h| h.chars().count()).collect();
+        // At least as wide as the `---` that Markdown asks for.
+        let mut widths: Vec<usize> = self
+            .header
+            .iter()
+            .map(|h| h.chars().count().max(3))
+            .collect();
         for (_, row) in &self.rows {
             for (k, cell) in row.iter().enumerate().take(n) {
                 widths[k] = widths[k].max(cell.chars().count());
@@ -874,9 +879,10 @@ impl Grid {
                 .enumerate()
                 .map(|(k, c)| format!("{c:<width$}", width = widths[k]))
                 .collect();
-            // A trailing empty cell still ends in its separator.
-            padded.join(" | ").trim_end().to_string()
+            format!("| {} |", padded.join(" | "))
         };
+        let rule: Vec<String> = widths.iter().map(|w| "-".repeat(*w)).collect();
+        let rule = line(&rule);
 
         // (start, end, replacement), applied from the end of the text back.
         let mut edits: Vec<(usize, usize, String)> = Vec::new();
@@ -886,9 +892,10 @@ impl Grid {
         let mut anchor = he;
         if let Some(sep) = t.separator_line {
             let (s, e) = range(sep);
-            let rule: Vec<String> = widths.iter().map(|w| "-".repeat(*w)).collect();
-            edits.push((s, e, rule.join("-|-")));
+            edits.push((s, e, rule));
             anchor = e;
+        } else {
+            edits.push((he, he, format!("\n{rule}")));
         }
         let kept: Vec<usize> = self.rows.iter().filter_map(|(o, _)| *o).collect();
         for (i, span) in t.row_lines.iter().enumerate() {
@@ -935,6 +942,28 @@ impl Grid {
         }
         out
     }
+}
+
+/// `text` with the lines of every sheet aligned, as an edit in the grid
+/// leaves them: each column as wide as its widest cell, the `|` of every
+/// line in step. Text that does not parse is left as it is, and so is a
+/// sheet with a row longer than its header row.
+fn aligned(text: &str) -> String {
+    let mut diags = Vec::new();
+    let ast = parse_file(text, 0, &mut diags);
+    if !diags.is_empty() {
+        return text.to_string();
+    }
+    let mut sheets: Vec<&SheetDecl> = ast.sheets.iter().collect();
+    // From the last back, so the lines of those before stay where they were.
+    sheets.sort_by_key(|t| std::cmp::Reverse(t.header_line.start));
+    let mut out = text.to_string();
+    for t in sheets {
+        if t.rows.iter().all(|row| row.len() <= t.header.len()) {
+            out = Grid::of(t).write(t, &out);
+        }
+    }
+    out
 }
 
 /// `text` with the type line of column `name` of a sheet set to `ty`, or
@@ -1102,10 +1131,16 @@ impl Document {
         true
     }
 
-    /// Replace the whole text, as written by hand, as one undoable step.
-    /// Returns whether it changed.
+    /// The text with the lines of every sheet aligned, as the source is
+    /// shown to be edited by hand.
+    pub fn aligned_text(&self) -> String {
+        aligned(&self.text)
+    }
+
+    /// Replace the whole text, as written by hand, as one undoable step,
+    /// with the lines of every sheet aligned. Returns whether it changed.
     pub fn set_text(&mut self, text: &str) -> bool {
-        self.commit(text.to_string())
+        self.commit(aligned(text))
     }
 
     /// Make several edits as one undoable step. Returns whether they
@@ -1186,16 +1221,10 @@ impl Document {
                     let blank = grid.blank_row();
                     grid.rows.push((None, blank));
                 }
-                let single = grid.header.len() == 1;
                 let ty = types.get(*col).map_or("", String::as_str);
-                let cleaned = iso_entry(&style, ty, text)
+                grid.rows[*row].1[*col] = iso_entry(&style, ty, text)
                     .or_else(|| fraction_entry(ty, text))
                     .unwrap_or_else(|| clean_cell(text));
-                grid.rows[*row].1[*col] = if cleaned.is_empty() && single {
-                    "\"\"".to_string()
-                } else {
-                    cleaned
-                };
             }
         })
     }
@@ -1422,10 +1451,6 @@ impl Document {
         };
         for (_, row) in &mut grid.rows {
             *row = pick(row);
-            // A lone empty cell would be a blank line, which is not a row.
-            if row.len() == 1 && row[0].is_empty() {
-                row[0] = "\"\"".to_string();
-            }
         }
         grid.header = order.to_vec();
         grid.formula = order.iter().map(formula).collect();
@@ -1451,7 +1476,8 @@ impl Document {
         let place: Vec<usize> = (0..n).map(|k| if k < named { k } else { k + 1 }).collect();
         let followed = self.followed_to(sheet, false, &place, n + 1);
         let text = self.grid_edited(&followed, sheet, |grid| {
-            // A lone column stored its empty cells as `""`.
+            // A lone column written without outer pipes stored its empty
+            // cells as `""`.
             if grid.header.len() == 1 {
                 for (_, row) in &mut grid.rows {
                     if row[0] == "\"\"" {
@@ -1826,7 +1852,8 @@ impl Document {
             ));
         }
         let mut grid = Grid::of(decl);
-        // A lone column stored its empty cells as `""`.
+        // A lone column written without outer pipes stored its empty
+        // cells as `""`.
         if grid.header.len() == 1 {
             for (_, row) in &mut grid.rows {
                 if row[0] == "\"\"" {
@@ -1961,7 +1988,9 @@ impl Document {
         if taken {
             return Err(format!("the name `{name}` is already used"));
         }
-        let block = format!("sheet {name}\n\nA | B | C\n  |   |\n  |   |\n  |   |\n");
+        let block = format!(
+            "sheet {name}\n\n| A   | B   | C   |\n| --- | --- | --- |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n"
+        );
         let ast = self.ast();
         let text = match self.sheet_decl(&ast, at) {
             Some(decl) => {
@@ -2260,7 +2289,7 @@ impl Document {
 mod tests {
     use super::*;
 
-    const SALES: &str = "# sales\nconst Rate = 20%\n\nsheet Sales\n\nMonth | Revenue | Cost | Profit | Tax\nJan   | 100     | 60   | *      | *\nFeb   | 120     | 70   | *      | *\n\nProfit := Revenue - Cost\nTax := Profit * Rate\n";
+    const SALES: &str = "# sales\nconst Rate = 20%\n\nsheet Sales\n\n| Month | Revenue | Cost | Profit | Tax |\n| ----- | ------- | ---- | ------ | --- |\n| Jan   | 100     | 60   | *      | *   |\n| Feb   | 120     | 70   | *      | *   |\n\nProfit := Revenue - Cost\nTax := Profit * Rate\n";
 
     fn col(doc: &Document, sheet: usize, col: usize) -> Vec<String> {
         doc.snapshot().sheets[sheet]
@@ -2309,7 +2338,7 @@ mod tests {
         assert!(doc.set_column_types(0, &[2], Some("Decimal")));
         assert!(
             doc.text()
-                .contains("sheet Sales\n\nCost : Decimal\n\nMonth | Revenue")
+                .contains("sheet Sales\n\nCost : Decimal\n\n| Month | Revenue")
         );
         let column = &doc.snapshot().sheets[0].columns[2];
         assert!(column.declared && column.ty == "Decimal");
@@ -2317,7 +2346,7 @@ mod tests {
         assert!(doc.set_column_types(0, &[0, 3], Some("Text")));
         assert!(
             doc.text()
-                .contains("\n\nMonth  : Text\nCost   : Decimal\nProfit : Text\n\nMonth | ")
+                .contains("\n\nMonth  : Text\nCost   : Decimal\nProfit : Text\n\n| Month | ")
         );
         // A formula that does not fit its type is an error, not refused.
         assert!(!doc.snapshot().problems.is_empty());
@@ -2330,7 +2359,7 @@ mod tests {
         assert!(doc.set_column_types(0, &[0, 3], None));
         assert!(
             doc.text()
-                .contains("sheet Sales\n\nCost   : Decimal\n\nMonth | ")
+                .contains("sheet Sales\n\nCost   : Decimal\n\n| Month | ")
         );
         assert!(doc.set_column_types(0, &[1, 2], None));
         assert_eq!(doc.text(), SALES);
@@ -2383,7 +2412,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 3), ["40", "50", "70", ""]);
         assert!(
             doc.text().contains(
-                "Feb   | 120     | 70   | *      | *\nMar   | 150     | 80   | *      | *\nApr   |         |      | *      | *\n\nProfit"
+                "| Feb   | 120     | 70   | *      | *   |\n| Mar   | 150     | 80   | *      | *   |\n| Apr   |         |      | *      | *   |\n\nProfit"
             )
         );
         doc.insert_rows(0, 0, 1);
@@ -2392,7 +2421,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 0), ["Feb", "Mar", "Apr"]);
         assert!(
             doc.text()
-                .contains("Month | Revenue | Cost | Profit | Tax\nFeb")
+                .contains("| Month | Revenue | Cost | Profit | Tax |\n| ----- | ------- | ---- | ------ | --- |\n| Feb")
         );
     }
 
@@ -2447,7 +2476,7 @@ mod tests {
         doc.rename_column(0, 1, "Income").unwrap();
         let renamed = doc.text().to_string();
         assert!(renamed.contains(
-            "Month | Income | Cost | Profit | Tax\nJan   | 100    | 60   | *      | *\n"
+            "| Month | Income | Cost | Profit | Tax |\n| ----- | ------ | ---- | ------ | --- |\n| Jan   | 100    | 60   | *      | *   |\n"
         ));
         assert!(renamed.contains("Profit := Income - Cost"));
         assert!(renamed.contains("= Sales.Income.sum()"));
@@ -2509,7 +2538,7 @@ mod tests {
     #[test]
     fn columns_can_be_deleted() {
         let text = "const Rate = 20%\n\nsheet Sales\n\nCost : Int\nRevenue : Int\n\n\
-                    Month | Revenue | Cost | Note       | Profit | Tax\nJan   | 100     | 60   | a          | *      | *\nFeb   | 120     | 70   | = [*-1; *] | *      | *\n\n\
+                    | Month | Revenue | Cost | Note       | Profit | Tax |\n| ----- | ------- | ---- | ---------- | ------ | --- |\n| Jan   | 100     | 60   | a          | *      | *   |\n| Feb   | 120     | 70   | = [*-1; *] | *      | *   |\n\n\
                     Profit := Revenue - Cost\nTax := Profit * Rate\n";
         let mut doc = Document::from_text(text);
         let names = |doc: &Document| -> Vec<String> {
@@ -2522,7 +2551,7 @@ mod tests {
         assert_eq!(names(&doc), ["Revenue", "Cost", "Note", "Profit", "Tax"]);
         assert!(
             doc.text().contains(
-                "Revenue | Cost | Note       | Profit | Tax\n100     | 60   | a          | *      | *\n120     | 70   | = [*-1; *] | *      | *\n"
+                "| Revenue | Cost | Note       | Profit | Tax |\n| ------- | ---- | ---------- | ------ | --- |\n| 100     | 60   | a          | *      | *   |\n| 120     | 70   | = [*-1; *] | *      | *   |\n"
             ),
             "{}",
             doc.text()
@@ -2565,7 +2594,10 @@ mod tests {
         // Down to one column, an empty cell is still a row.
         let mut two = Document::from_text("sheet T\n\nA | B\n  | 1\nx | 2\n");
         two.delete_columns(0, 1, 1).unwrap();
-        assert_eq!(two.text(), "sheet T\n\nA\n\"\"\nx\n");
+        assert_eq!(
+            two.text(),
+            "sheet T\n\n| A   |\n| --- |\n|     |\n| x   |\n"
+        );
         assert_eq!(two.snapshot().sheets[0].rows.len(), 2);
     }
 
@@ -2578,7 +2610,7 @@ mod tests {
         assert!(t.rows[0][1].error.as_ref().unwrap().contains("Revnue"));
         assert_eq!(t.rows[1][3].display, "50");
         assert_eq!(doc.snapshot().problems.len(), 1);
-        assert_eq!(doc.snapshot().problems[0].line, 7);
+        assert_eq!(doc.snapshot().problems[0].line, 8);
     }
 
     #[test]
@@ -2669,6 +2701,34 @@ mod tests {
     }
 
     #[test]
+    fn the_source_is_aligned() {
+        let ragged = "sheet T\n\nA | Bee\n100 | x\n# a note\n2 |\n\nsheet U\n\nC|D\n1|22\n";
+        let mut doc = Document::from_text(ragged);
+        // A Markdown table: outer pipes, a `---` line, every `|` in step.
+        let aligned = "sheet T\n\n| A   | Bee |\n| --- | --- |\n| 100 | x   |\n# a note\n| 2   |     |\n\n\
+                       sheet U\n\n| C   | D   |\n| --- | --- |\n| 1   | 22  |\n";
+        assert_eq!(doc.aligned_text(), aligned);
+        // Shown aligned, but not changed until it is edited.
+        assert_eq!(doc.text(), ragged);
+        assert!(doc.set_text(ragged));
+        assert_eq!(doc.text(), aligned);
+        // Read back as it was: the same cells, the empty one too.
+        assert_eq!(col(&doc, 0, 1), ["x", ""]);
+        assert_eq!(col(&doc, 1, 1), ["22"]);
+        assert!(doc.snapshot().problems.is_empty());
+        // One column is a table too, with an empty cell as a row.
+        let one = Document::from_text("sheet T\n\n| Name |\n|---|\n| Ana |\n|  |\n");
+        assert_eq!(col(&one, 0, 0), ["Ana", ""]);
+        assert_eq!(
+            one.aligned_text(),
+            "sheet T\n\n| Name |\n| ---- |\n| Ana  |\n|      |\n"
+        );
+        // Text that does not parse is left as it is.
+        let broken = "sheet T\n\nA : Whole\n\nA | B\n1 | 2\n";
+        assert_eq!(Document::from_text(broken).aligned_text(), broken);
+    }
+
+    #[test]
     fn entry_hints_follow_the_style() {
         let us = Style::new(date::Order::Mdy, '/', true);
         assert_eq!(
@@ -2733,7 +2793,7 @@ mod tests {
         assert_ne!(cell.display, "2025-07-15T12:00");
         // What is typed is in the file's zone, as the source shows it.
         doc.set_cell(0, 0, 0, "2025-07-15T13:00");
-        assert!(doc.text().contains("\n2025-07-15T13:00\n"));
+        assert!(doc.text().contains("\n| 2025-07-15T13:00 |\n"));
 
         let bad = Document::from_text("zone Mars/Base\n\nsheet T\n\nA\n1\n");
         assert!(bad.snapshot().problems[0].message.contains("no time zone"));
@@ -2776,7 +2836,7 @@ mod tests {
         assert_eq!(names(&doc), ["Revenue", "Cost", "Month", "Profit", "Tax"]);
         assert!(
             doc.text()
-                .contains("Revenue | Cost | Month | Profit | Tax\n100     | 60   | Jan   | *      | *\n120     | 70   | Feb   | *      | *\n")
+                .contains("| Revenue | Cost | Month | Profit | Tax |\n| ------- | ---- | ----- | ------ | --- |\n| 100     | 60   | Jan   | *      | *   |\n| 120     | 70   | Feb   | *      | *   |\n")
         );
         assert_eq!(col(&doc, 0, 2), ["Jan", "Feb"]);
         assert_eq!(col(&doc, 0, 3), ["40", "50"]);
@@ -2792,7 +2852,7 @@ mod tests {
         assert_eq!(names(&doc), ["Revenue", "Cost", "Month", "Tax", "Profit"]);
         assert!(
             doc.text().contains(
-                "Revenue | Cost | Month | Tax | Profit\n100     | 60   | Jan   | *   | *\n"
+                "| Revenue | Cost | Month | Tax | Profit |\n| ------- | ---- | ----- | --- | ------ |\n| 100     | 60   | Jan   | *   | *      |\n"
             )
         );
         assert_eq!(col(&doc, 0, 3), ["8", "10"]);
@@ -2809,9 +2869,10 @@ mod tests {
     #[test]
     fn formula_columns_go_among_data_columns() {
         let text = "const Rate = 20%\n\nsheet Sales\n\n\
-                    Month | Revenue | Cost | Left                  | Profit | Tax\n\
-                    Jan   | 100     | 60   | = [*-1; *] + [*+1; *] | *      | *\n\
-                    Feb   | 120     | 70   | 5                     | *      | *\n\n\
+                    | Month | Revenue | Cost | Left                  | Profit | Tax |\n\
+                    | ----- | ------- | ---- | --------------------- | ------ | --- |\n\
+                    | Jan   | 100     | 60   | = [*-1; *] + [*+1; *] | *      | *   |\n\
+                    | Feb   | 120     | 70   | 5                     | *      | *   |\n\n\
                     Profit := Revenue - Cost\nTax := Profit * Rate\n";
         let mut doc = Document::from_text(text);
         let names = |doc: &Document| -> Vec<String> {
@@ -2832,9 +2893,10 @@ mod tests {
         let now = doc.text();
         assert!(
             now.contains(
-                "Month | Revenue | Profit | Cost | Left                  | Tax\n\
-                 Jan   | 100     | *      | 60   | = [*-1; *] + [*-2; *] | *\n\
-                 Feb   | 120     | *      | 70   | 5                     | *\n"
+                "| Month | Revenue | Profit | Cost | Left                  | Tax |\n\
+                 | ----- | ------- | ------ | ---- | --------------------- | --- |\n\
+                 | Jan   | 100     | *      | 60   | = [*-1; *] + [*-2; *] | *   |\n\
+                 | Feb   | 120     | *      | 70   | 5                     | *   |\n"
             ),
             "{now}"
         );
@@ -2856,7 +2918,7 @@ mod tests {
         doc.insert_rows(0, 2, 1);
         assert!(
             doc.text()
-                .contains("\n      |         | *      |      |                       | *\n")
+                .contains("\n|       |         | *      |      |                       | *   |\n")
         );
         doc.set_cells(
             0,
@@ -2886,8 +2948,8 @@ mod tests {
                 "Month", "Revenue", "Profit", "Cost", "Left", "Tax", "Note", "Net"
             ]
         );
-        assert!(doc.text().contains("| Tax | Note | Net\n"));
-        assert!(doc.text().contains("| *   |      | *\n"));
+        assert!(doc.text().contains("| Tax | Note | Net |\n"));
+        assert!(doc.text().contains("| *   |      | *   |\n"));
         assert!(
             doc.text()
                 .contains("\nTax := Profit * Rate\nNet := Profit - Tax\n")
@@ -2929,7 +2991,10 @@ mod tests {
         assert_eq!(col(&unnamed, 0, 1), ["2"]);
         let mut fixed = unnamed;
         fixed.move_columns(0, 1, 1, 0).unwrap();
-        assert_eq!(fixed.text(), "sheet T\n\nB | A\n* | 1\n\nB := A + 1\n");
+        assert_eq!(
+            fixed.text(),
+            "sheet T\n\n| B   | A   |\n| --- | --- |\n| *   | 1   |\n\nB := A + 1\n"
+        );
         assert!(fixed.snapshot().problems.is_empty());
     }
 
@@ -3016,13 +3081,17 @@ mod tests {
         let mut doc = Document::from_text("sheet T\n\nA | B\n1 | = [*-1; *]\n");
         doc.set_cell(0, 0, 1, "");
         assert!(doc.paste_cut(0, (0, 1), (0, 0), &[vec!["= [*-1; *]".to_string()]]));
-        assert!(doc.text().contains("\n= [*; *] |\n"), "{}", doc.text());
+        assert!(
+            doc.text().contains("\n| = [*; *] |     |\n"),
+            "{}",
+            doc.text()
+        );
         assert!(!doc.snapshot().problems.is_empty());
     }
 
     #[test]
     fn edits_as_one_undo_as_one() {
-        let text = "sheet T\n\nA | B\n1 | 2\n";
+        let text = "sheet T\n\n| A   | B   |\n| --- | --- |\n| 1   | 2   |\n";
         let mut doc = Document::from_text(text);
         assert!(doc.as_one(|doc| {
             doc.set_cell(0, 0, 0, "");
@@ -3176,8 +3245,8 @@ mod tests {
         assert_eq!(names(&doc), ["D", "A", "B", "C", "S"]);
         let now = doc.text();
         assert!(now.contains("const K = T[2; 0] + T[-1; 0]\n"), "{now}");
-        assert!(now.contains("\nD | A | B | C "), "{now}");
-        assert!(now.contains("\n* | 1 | 2 | = "), "{now}");
+        assert!(now.contains("\n| D   | A   | B   | C "), "{now}");
+        assert!(now.contains("\n| *   | 1   | 2   | = "), "{now}");
         assert_eq!(col(&doc, 0, 0), ["2", "6"]);
         assert_eq!(col(&doc, 0, 3), ["23", "3"]);
         assert_eq!(col(&doc, 0, 4), ["3", "7"]);
@@ -3227,7 +3296,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 0), ["b", "c", "a", "d"]);
         assert!(
             doc.text()
-                .contains("Name | N               | Sum\nb    | 2               | *\nc    | = [N; *-1] + 10 | *\na    | 1               | *\nd    | 4               | *\n")
+                .contains("| Name | N               | Sum |\n| ---- | --------------- | --- |\n| b    | 2               | *   |\n| c    | = [N; *-1] + 10 | *   |\n| a    | 1               | *   |\n| d    | 4               | *   |\n")
         );
         assert_eq!(col(&doc, 0, 1), ["2", "12", "1", "4"]);
         assert_eq!(col(&doc, 0, 2), ["2", "14", "13", "5"]);

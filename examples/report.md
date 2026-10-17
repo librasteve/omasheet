@@ -29,10 +29,11 @@ const Target = 4500
 
 sheet Targets
 
-Month | Goal | Profit | Over | Met | Note
-Jan   | 4200 | *      | *    | *   | a **slow** start
-Feb   | 4500 | *      | *    | *   | see the [file format](../docs/format.md)
-Mar   | 5000 | *      | *    | *   | the _best_ month, `Mar`
+| Month | Goal | Profit | Over | Met | Note                                     |
+| ----- | ---- | ------ | ---- | --- | ---------------------------------------- |
+| Jan   | 4200 | *      | *    | *   | a **slow** start                         |
+| Feb   | 4500 | *      | *    | *   | see the [file format](../docs/format.md) |
+| Mar   | 5000 | *      | *    | *   | the _best_ month, `Mar`                  |
 
 Profit := Sales[Profit; *]
 Over   := Profit - Goal

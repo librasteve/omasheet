@@ -191,6 +191,16 @@ fn split_params(inner: &str, start: usize, src: u32) -> Vec<CellSrc> {
     out
 }
 
+/// A line of a sheet written with outer pipes, `| a | b |`, without its
+/// first and last `|`: where what is left starts in the line, and it.
+fn strip_outer(line: &str) -> (usize, &str) {
+    let lead = line.len() - line.trim_start().len();
+    let Some(inner) = line.trim().strip_prefix('|') else {
+        return (0, line);
+    };
+    (lead + 1, inner.strip_suffix('|').unwrap_or(inner))
+}
+
 fn is_separator(line: &str) -> bool {
     line.contains('-')
         && line
@@ -221,6 +231,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
     let mut sheet: Option<SheetDecl> = None;
     let mut in_body = false; // the header row has been read
     let mut after_header = false; // the next line may be a separator row
+    let mut outer = false; // the sheet's lines start and end with `|`
     let mut i = 0;
     // The comment lines directly above the line being read.
     let mut doc: Vec<&str> = Vec::new();
@@ -440,9 +451,21 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             continue;
         }
 
+        // The cells of a line of the sheet, inside its outer pipes if it
+        // is written with them. A header row cannot start with an empty
+        // cell, so a `|` at the start of it says so for the whole sheet.
+        if !in_body {
+            outer = trimmed.starts_with('|');
+        }
+        let (inside, cells_text) = if outer {
+            strip_outer(line.text)
+        } else {
+            (0, line.text)
+        };
+
         if !in_body {
             // The header row.
-            for cell in split_cells(line.text, line.start, src) {
+            for cell in split_cells(cells_text, line.start + inside, src) {
                 if ident_len(&cell.text) == cell.text.len() && !cell.text.is_empty() {
                     t.header.push((cell.text, cell.span));
                 } else {
@@ -471,7 +494,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
         }
         after_header = false;
 
-        let cells = split_cells(line.text, line.start, src);
+        let cells = split_cells(cells_text, line.start + inside, src);
         if cells.len() != t.header.len() {
             diags.push(Diagnostic::new(
                 Span::new(src, at, at + trimmed.len()),
@@ -517,6 +540,32 @@ mod tests {
         let t = &ast.sheets[0];
         assert_eq!((t.header.len(), t.rows.len(), t.computed.len()), (3, 2, 1));
         assert_eq!(t.schema[0].ty, S::Fraction);
+    }
+
+    #[test]
+    fn parses_a_sheet_between_outer_pipes() {
+        let mut diags = Vec::new();
+        let src = "sheet T\n\n| A | B |\n| --- | --- |\n| 1 | \"x | y\" |\n| 2 |  |\n\nsheet One\n\n| Name |\n| Ana |\n|  |\n";
+        let ast = parse_file(src, 0, &mut diags);
+        assert!(diags.is_empty(), "{diags:?}");
+        let texts = |t: &SheetDecl| -> Vec<Vec<String>> {
+            t.rows
+                .iter()
+                .map(|r| r.iter().map(|c| c.text.clone()).collect())
+                .collect()
+        };
+        let t = &ast.sheets[0];
+        assert_eq!(t.header[1].0, "B");
+        assert_eq!(texts(t), [["1", "\"x | y\""], ["2", ""]]);
+        assert!(t.separator_line.is_some());
+        // Spans still point into the file.
+        let span = t.rows[0][1].span;
+        assert_eq!(&src[span.start as usize..span.end as usize], "\"x | y\"");
+        assert_eq!(texts(&ast.sheets[1]), [["Ana"], [""]]);
+        // Without outer pipes, a `|` at the start of a row is an empty cell.
+        let ast = parse_file("sheet T\n\nA | B\n| 2\n", 0, &mut diags);
+        assert!(diags.is_empty(), "{diags:?}");
+        assert_eq!(texts(&ast.sheets[0]), [["", "2"]]);
     }
 
     #[test]

@@ -61,10 +61,11 @@ sheet Orders
 
 Placed : Date
 
-Item   | Placed     | Qty | Price | Net | Gross | Running
-Tea    | 2025-01-31 | 3   | 4.50  | *   | *     | *
-Coffee | 2025-02-01 | 2   | 7.25  | *   | *     | *
-Mugs   | 2025-02-03 | 6   | 9     | *   | *     | *
+| Item   | Placed     | Qty | Price | Net | Gross | Running |
+| ------ | ---------- | --- | ----- | --- | ----- | ------- |
+| Tea    | 2025-01-31 | 3   | 4.50  | *   | *     | *       |
+| Coffee | 2025-02-01 | 2   | 7.25  | *   | *     | *       |
+| Mugs   | 2025-02-03 | 6   | 9     | *   | *     | *       |
 
 Net     := Qty * Price
 Gross   := WithVat(Net)
@@ -72,10 +73,11 @@ Running := [Net; 0..*].sum()
 
 sheet Summary
 
-Label    | Value
-Total    | = Orders.Gross.sum()
-Dearest  | = Orders[; Net == Orders.Net.max()].Item
-Big ones | = Orders[; Qty > 2].Item.count()
+| Label    | Value                                    |
+| -------- | ---------------------------------------- |
+| Total    | = Orders.Gross.sum()                     |
+| Dearest  | = Orders[; Net == Orders.Net.max()].Item |
+| Big ones | = Orders[; Qty > 2].Item.count()         |
 ```
 
 ## The format
@@ -86,9 +88,13 @@ Big ones | = Orders[; Qty > 2].Item.count()
   function sees its parameters, constants and sheets, not the row it was
   called from: pass the row's values in.
 - `zone Europe/London` before the first sheet, if date-times need a zone.
-- `sheet Name`, a blank line, optional `Column : Type` lines, then the header
-  row and the data rows, cells separated by `|`. Line the pipes up; it is
-  what makes the file readable and the diffs small.
+- `sheet Name`, a blank line, optional `Column : Type` lines, then the sheet
+  as a Markdown table: the header row, a `| --- |` line, and the data rows,
+  each line between outer pipes, `| Jan | 100 |`. Line the pipes up; it is
+  what makes the file readable and the diffs small. An empty cell is just
+  spaces between pipes, `|     |`, a sheet of one column too.
+- Older files leave out the outer pipes and the `---` line, `Jan | 100`; they
+  still read. There a `|` at the start or end of a row is an empty cell.
 - Names are identifiers: letters, digits and `_`, no spaces. `UnitPrice`, not
   `Unit Price`.
 - **A computed column** has one formula for every row. Name it in the header

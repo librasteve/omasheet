@@ -48,7 +48,8 @@ pub mod qobject {
         /// The whole file as JSON: sheets, constants and problems.
         #[qinvokable]
         fn snapshot_json(self: &File) -> QString;
-        /// The file as it is written: the text that saving would write.
+        /// The file as it is written, for the source view: every sheet's
+        /// lines aligned, as editing it there will leave them.
         #[qinvokable]
         fn source_text(self: &File) -> QString;
         /// Take `text` as the file: the source as edited by hand.
@@ -395,7 +396,7 @@ impl qobject::File {
     }
 
     fn source_text(&self) -> QString {
-        QString::from(self.rust().doc.text())
+        QString::from(&self.rust().doc.aligned_text())
     }
 
     fn set_source_text(self: Pin<&mut Self>, text: &QString) {

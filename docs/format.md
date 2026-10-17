@@ -17,9 +17,10 @@ sheet Sales
 Revenue : Decimal
 
 # A cell that starts with = is a formula.
-Month | Revenue | Cost         | Profit | Gross
-Jan   | 10000   | 6000         | *      | *
-Feb   | 12000   | = 7000 + 500 | *      | *
+| Month | Revenue | Cost         | Profit | Gross |
+| ----- | ------- | ------------ | ------ | ----- |
+| Jan   | 10000   | 6000         | *      | *     |
+| Feb   | 12000   | = 7000 + 500 | *      | *     |
 
 # A computed column: one formula, every row. The header row names it where
 # it goes, and its cells are *.
@@ -29,8 +30,14 @@ Gross  := WithTax(Revenue)
 
 ## Sheets
 
-- `sheet Name`, then a header row and data rows, cells separated by `|`.
-- A `---|---` line under the header is allowed and ignored.
+- `sheet Name`, then a header row and data rows, written as a Markdown
+  table: each line between outer pipes, `| a | b |`, cells separated by `|`,
+  and a `| --- | --- |` line under the header row. A sheet is then a table
+  wherever the file is shown as Markdown, a sheet of one column too.
+- The outer pipes and the `---` line may be left out, as in older files:
+  `a | b`. A header row that starts with `|` says the sheet has outer pipes.
+  Without them, a `|` at the start or end of a row is an empty cell.
+- The app writes every sheet it changes as a Markdown table, lined up.
 - `Name := expression` after the rows is the formula of a computed column.
   The header row names the column, anywhere among the others, and each of
   its cells is `*`.
@@ -39,9 +46,10 @@ Gross  := WithTax(Revenue)
 ```omx
 sheet Sales
 
-Month | Revenue | Profit | Cost | Tax
-Jan   | 10000   | *      | 6000 | *
-Feb   | 12000   | *      | 7000 | *
+| Month | Revenue | Profit | Cost | Tax |
+| ----- | ------- | ------ | ---- | --- |
+| Jan   | 10000   | *      | 6000 | *   |
+| Feb   | 12000   | *      | 7000 | *   |
 
 Profit := Revenue - Cost
 Tax    := Profit * 20%

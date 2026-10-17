@@ -328,15 +328,41 @@ ApplicationWindow {
             hflick.contentX = x + w - hflick.width;
     }
 
+    // Where each sheet was left, by its name, to come back to: the cursor,
+    // the selection and how far it was scrolled.
+    property var places: ({})
+    function placeKey(t) {
+        return tabs[t].isConsts ? "" : tabs[t].name;
+    }
+
     function switchTab(index) {
         if (index < 0 || index >= tabs.length)
             return;
         stopEditing();
+        // Not when the sheet here is no longer the one that was left, as
+        // after a delete: then `index` is this tab.
+        if (index !== tab && tab < tabs.length)
+            places[placeKey(tab)] = {
+                curRow: curRow, curCol: curCol, anchorRow: anchorRow, anchorCol: anchorCol,
+                byRow: byRow, byCol: byCol, x: hflick.contentX, y: rowsView.contentY
+            };
         tab = index;
-        curRow = 0; curCol = 0; anchorRow = 0; anchorCol = 0;
+        var p = places[placeKey(index)];
+        curRow = p ? p.curRow : 0;
+        curCol = p ? p.curCol : 0;
+        anchorRow = p ? p.anchorRow : 0;
+        anchorCol = p ? p.anchorCol : 0;
+        byRow = p ? p.byRow : false;
+        byCol = p ? p.byCol : false;
         measure();
+        clampCursor();
         hflick.contentX = 0;
         rowsView.positionViewAtBeginning();
+        if (p)
+            Qt.callLater(function() {
+                hflick.contentX = Math.max(0, Math.min(p.x, hflick.contentWidth - hflick.width));
+                rowsView.contentY = Math.max(0, Math.min(p.y, rowsView.contentHeight - rowsView.height));
+            });
         grid.forceActiveFocus();
     }
 
@@ -368,6 +394,11 @@ ApplicationWindow {
         grid.forceActiveFocus();
     }
 
+    // F2 on a whole column: its header cell takes the new name.
+    signal renameColumnAsked(int col)
+    // The tab whose sheet is being renamed in place, or -1.
+    property int renamingTab: -1
+
     // The text field a formula is being typed into, if any: the cell's own
     // editor or the entry box.
     property var editor: null
@@ -376,6 +407,30 @@ ApplicationWindow {
     // being typed, rather than move the selection.
     function canPick() {
         return !!editor && !sheet.isConsts && editor.text.trim().charAt(0) === "=";
+    }
+
+    // Whether an arrow key should pick a cell rather than move in the text:
+    // while a pick is under way, or where a reference may go: after `=`, a
+    // bracket, a separator or an operator, before the end, a closing bracket,
+    // a separator or an operator, and not inside a reference's `[ ]`.
+    // Anywhere else, such as on or among the references already written,
+    // the arrows move in the text as usual.
+    function arrowPicks() {
+        if (!canPick())
+            return false;
+        if (pickRow >= 0)
+            return true;
+        // Quoted text is no part of the formula's shape.
+        var text = editor.text.replace(/"(\\.|[^"\\])*"?/g, function(q) { return q.replace(/./g, "x"); });
+        var before = text.slice(0, editor.cursorPosition);
+        var after = text.slice(editor.cursorPosition).replace(/^\s+/, "");
+        if ((before.match(/\[/g) || []).length > (before.match(/\]/g) || []).length)
+            return false;
+        // Nor in the middle of an operator such as `//` or `<=`.
+        if (/[=<>!\/*.^]$/.test(before) && /^[=<>!\/*.^]/.test(text.slice(editor.cursorPosition)))
+            return false;
+        return /([=(,;+\-*\/<>!^]|\.\.|\b(and|or|not|in))\s*$/.test(before)
+            && /^($|[),;\]+\-*\/<>=!^]|\.\.|(and|or|in)\b)/.test(after);
     }
 
     // The reference a cell is written by, from the formula being typed:
@@ -436,6 +491,17 @@ ApplicationWindow {
         return true;
     }
 
+    // Take back the reference of a keyboard pick under way, and go on
+    // typing. Returns whether there was one.
+    function cancelPick() {
+        if (pickRow < 0)
+            return false;
+        editor.remove(pickAt, pickAt + pickLen);
+        editor.cursorPosition = pickAt;
+        stopPicking();
+        return true;
+    }
+
     // End a keyboard pick under way, so that the next arrow pressed starts
     // a fresh one from the edited cell rather than carrying on from here.
     function stopPicking() {
@@ -451,8 +517,18 @@ ApplicationWindow {
         if (tabs.length === 0)
             return;
         stopEditing();
-        if (selKind === "column" && selLeft === selRight)
-            selectCell(0, selLeft, false);
+        // A whole column renames it in its header, and the whole sheet in
+        // its tab.
+        if (selKind === "column" || selKind === "all") {
+            if (sheet.isConsts)
+                return;
+            notice = "";
+            if (selKind === "all")
+                renamingTab = tab;
+            else if (selLeft === selRight && sheet.columns[selLeft])
+                renameColumnAsked(selLeft);
+            return;
+        }
         if (!hasCursor || !cellAt(curRow, curCol))
             return;
         formulaField.forceActiveFocus();
@@ -784,6 +860,12 @@ ApplicationWindow {
     function keyMenu() {
         if (tabs.length === 0)
             return;
+        // The whole sheet's menu opens above its tab.
+        var tabItem = tabRepeater.itemAt(tab);
+        if (selKind === "all" && !sheet.isConsts && tabItem) {
+            cellMenu.popup(tabItem, 0, -cellMenu.implicitHeight);
+            return;
+        }
         var x = gutterWidth - hflick.contentX;
         for (var c = 0; c < curCol; c++)
             x += colWidths[c];
@@ -869,11 +951,15 @@ ApplicationWindow {
             close();
         } else if (action === "new") {
             file.newDocument();
+            places = ({});
+            tab = 0;
             switchTab(0);
         } else if (action === "open") {
             openDialog.open();
         } else if (action === "openUrl") {
             if (file.openUrl(pendingUrl)) {
+                places = ({});
+                tab = 0;
                 switchTab(0);
                 // What an import changed or left behind.
                 if (file.notes.length > 0)
@@ -946,6 +1032,7 @@ ApplicationWindow {
     // ---- shortcuts ---------------------------------------------------------
 
     readonly property bool typing: editing || formulaField.activeFocus || sourceText.activeFocus || promptDialog.opened
+        || renamingTab >= 0
 
     Shortcut { sequence: "Ctrl+S"; onActivated: win.save() }
     Shortcut { sequence: "Ctrl+Shift+S"; onActivated: saveDialog.open() }
@@ -1047,11 +1134,7 @@ ApplicationWindow {
                     readonly property string source: cell ? cell.s : ""
                     readonly property bool locked: win.sheet.isConsts && win.curCol !== 1
                     readOnly: locked || !cell
-                    placeholderText: cell ? ""
-                        : win.selKind === "row" ? (win.selTop === win.selBottom ? "Whole row selected" : "Whole rows selected")
-                        : win.selKind === "column" ? (win.selLeft === win.selRight ? "Whole column selected" : "Whole columns selected")
-                        : win.selKind === "all" ? "Whole sheet selected"
-                        : "No cell selected"
+                    placeholderText: cell || win.selKind !== "cells" ? "" : "No cell selected"
                     background: Item {}
                     onSourceChanged: if (!activeFocus) text = source
                     onActiveFocusChanged: {
@@ -1213,9 +1296,15 @@ ApplicationWindow {
                             MouseArea {
                                 anchors.fill: parent
                                 enabled: !win.sheet.isConsts
-                                onClicked: {
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                // A right-click opens the sheet's menu, as on its tab.
+                                onClicked: function(mouse) {
                                     win.stopEditing();
                                     win.selectAll();
+                                    if (mouse.button === Qt.RightButton) {
+                                        grid.forceActiveFocus();
+                                        cellMenu.popup();
+                                    }
                                 }
                             }
                         }
@@ -1227,6 +1316,13 @@ ApplicationWindow {
                                 readonly property var column: win.sheet.columns[index]
                                 // The name is being typed over, in place.
                                 property bool renaming: false
+                                Connections {
+                                    target: win
+                                    function onRenameColumnAsked(col) {
+                                        if (col === headCell.index)
+                                            headCell.renaming = true;
+                                    }
+                                }
                                 width: win.colWidths[index] || 0
                                 height: win.headerHeight
                                 // Cut and waiting to be put down.
@@ -1441,11 +1537,9 @@ ApplicationWindow {
                                         linkColor: win.accentColor
                                         clip: marked
                                         color: cellItem.cell && cellItem.cell.e ? win.errorColor : win.textColor
-                                        opacity: cellItem.cell && cellItem.cell.f && cellItem.column && !cellItem.column.computed ? 0.92 : 1
                                         font.family: win.font.family
                                         font.features: win.font.features
                                         font.pixelSize: win.fontSize
-                                        font.italic: !!cellItem.cell && cellItem.cell.f && !!cellItem.column && !cellItem.column.computed
                                         verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: cellItem.cell && cellItem.cell.n ? Text.AlignRight : Text.AlignLeft
                                         elide: Text.ElideRight
@@ -1573,25 +1667,33 @@ ApplicationWindow {
                                             onAccepted: finish(1, 0)
                                             Keys.onTabPressed: finish(0, 1)
                                             Keys.onBacktabPressed: finish(0, -1)
+                                            // Escape takes back a pick under way, else the edit.
                                             Keys.onEscapePressed: {
+                                                if (win.cancelPick())
+                                                    return;
                                                 done = true;
                                                 win.stopEditing();
                                             }
                                             onActiveFocusChanged: if (!activeFocus) finish(0, 0)
-                                            // While what is typed is a formula, the arrows pick
-                                            // a cell's reference instead of moving in the text.
+                                            // In a formula, the arrows pick a cell's reference
+                                            // where one may go, and with Alt anywhere; elsewhere
+                                            // they move in the text.
                                             Keys.priority: Keys.BeforeItem
                                             Keys.onPressed: function(event) {
                                                 var absolute = (event.modifiers & Qt.ShiftModifier) !== 0;
-                                                switch (event.key) {
-                                                case Qt.Key_Up: event.accepted = win.pickArrow(-1, 0, absolute); break;
-                                                case Qt.Key_Down: event.accepted = win.pickArrow(1, 0, absolute); break;
-                                                case Qt.Key_Left: event.accepted = win.pickArrow(0, -1, absolute); break;
-                                                case Qt.Key_Right: event.accepted = win.pickArrow(0, 1, absolute); break;
-                                                default:
-                                                    win.stopPicking();
-                                                    event.accepted = false;
+                                                var d = event.key === Qt.Key_Up ? [-1, 0]
+                                                    : event.key === Qt.Key_Down ? [1, 0]
+                                                    : event.key === Qt.Key_Left ? [0, -1]
+                                                    : event.key === Qt.Key_Right ? [0, 1] : null;
+                                                if (d) {
+                                                    var picks = (event.modifiers & Qt.AltModifier) ? win.canPick() : win.arrowPicks();
+                                                    event.accepted = picks && win.pickArrow(d[0], d[1], absolute);
+                                                    return;
                                                 }
+                                                // A modifier on its own leaves a pick going.
+                                                if ([Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Control, Qt.Key_Meta].indexOf(event.key) < 0)
+                                                    win.stopPicking();
+                                                event.accepted = false;
                                             }
                                         }
                                     }
@@ -1726,8 +1828,10 @@ ApplicationWindow {
                 spacing: 2
 
                 Repeater {
+                    id: tabRepeater
                     model: win.tabs.length
                     FooterButton {
+                        id: tabButton
                         required property int index
                         label: win.tabs[index].name
                         active: index === win.tab && !win.showSource
@@ -1735,9 +1839,65 @@ ApplicationWindow {
                             win.viewSource(false);
                             win.switchTab(index);
                         }
+                        // The sheet's menu, as for the whole of it selected.
                         onRightClicked: {
-                            tabMenu.index = index;
-                            tabMenu.popup();
+                            win.viewSource(false);
+                            if (index !== win.tab)
+                                win.switchTab(index);
+                            if (win.sheet.isConsts) {
+                                tabMenu.index = index;
+                                tabMenu.popup();
+                                return;
+                            }
+                            win.selectAll();
+                            cellMenu.popup();
+                        }
+                        // Renamed in place, from F2 with the whole sheet selected.
+                        Loader {
+                            anchors.verticalCenter: parent.verticalCenter
+                            height: parent.height
+                            active: win.renamingTab === tabButton.index
+                            sourceComponent: TextField {
+                                font.family: win.font.family
+                                font.features: win.font.features
+                                font.pixelSize: win.fontSize - 1
+                                font.bold: true
+                                color: win.textColor
+                                width: Math.max(tabButton.width, contentWidth + leftPadding + rightPadding + 4)
+                                leftPadding: 10
+                                rightPadding: 10
+                                topPadding: 0
+                                bottomPadding: 0
+                                verticalAlignment: TextInput.AlignVCenter
+                                selectByMouse: true
+                                background: Rectangle {
+                                    color: win.pageColor
+                                    radius: 4
+                                    border.width: 2
+                                    border.color: win.accentColor
+                                }
+                                property bool done: false
+                                Component.onCompleted: {
+                                    text = win.tabs[tabButton.index].name;
+                                    forceActiveFocus();
+                                    selectAll();
+                                }
+                                // A name that is refused is said why, and the old one stays.
+                                function finish(keep) {
+                                    if (done)
+                                        return;
+                                    done = true;
+                                    var name = text.trim();
+                                    var old = win.tabs[tabButton.index].name;
+                                    if (keep && name.length > 0 && name !== old)
+                                        win.keeping(0, 0, function() { win.notice = file.renameSheet(win.tab, name); });
+                                    win.renamingTab = -1;
+                                    grid.forceActiveFocus();
+                                }
+                                onAccepted: finish(true)
+                                Keys.onEscapePressed: finish(false)
+                                onActiveFocusChanged: if (!activeFocus) finish(true)
+                            }
                         }
                     }
                 }
@@ -1932,6 +2092,12 @@ ApplicationWindow {
             visible: cellMenu.whole
             enabled: visible
             onTriggered: win.deleteSheet()
+        }
+        MenuEntry {
+            text: "Open in new window"
+            visible: cellMenu.whole
+            enabled: visible
+            onTriggered: win.newWindow(win.tab)
         }
         // Rows, when whole rows are selected.
         MenuRule { visible: cellMenu.rows }
