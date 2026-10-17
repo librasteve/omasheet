@@ -328,15 +328,41 @@ ApplicationWindow {
             hflick.contentX = x + w - hflick.width;
     }
 
+    // Where each sheet was left, by its name, to come back to: the cursor,
+    // the selection and how far it was scrolled.
+    property var places: ({})
+    function placeKey(t) {
+        return tabs[t].isConsts ? "" : tabs[t].name;
+    }
+
     function switchTab(index) {
         if (index < 0 || index >= tabs.length)
             return;
         stopEditing();
+        // Not when the sheet here is no longer the one that was left, as
+        // after a delete: then `index` is this tab.
+        if (index !== tab && tab < tabs.length)
+            places[placeKey(tab)] = {
+                curRow: curRow, curCol: curCol, anchorRow: anchorRow, anchorCol: anchorCol,
+                byRow: byRow, byCol: byCol, x: hflick.contentX, y: rowsView.contentY
+            };
         tab = index;
-        curRow = 0; curCol = 0; anchorRow = 0; anchorCol = 0;
+        var p = places[placeKey(index)];
+        curRow = p ? p.curRow : 0;
+        curCol = p ? p.curCol : 0;
+        anchorRow = p ? p.anchorRow : 0;
+        anchorCol = p ? p.anchorCol : 0;
+        byRow = p ? p.byRow : false;
+        byCol = p ? p.byCol : false;
         measure();
+        clampCursor();
         hflick.contentX = 0;
         rowsView.positionViewAtBeginning();
+        if (p)
+            Qt.callLater(function() {
+                hflick.contentX = Math.max(0, Math.min(p.x, hflick.contentWidth - hflick.width));
+                rowsView.contentY = Math.max(0, Math.min(p.y, rowsView.contentHeight - rowsView.height));
+            });
         grid.forceActiveFocus();
     }
 
@@ -834,6 +860,12 @@ ApplicationWindow {
     function keyMenu() {
         if (tabs.length === 0)
             return;
+        // The whole sheet's menu opens above its tab.
+        var tabItem = tabRepeater.itemAt(tab);
+        if (selKind === "all" && !sheet.isConsts && tabItem) {
+            cellMenu.popup(tabItem, 0, -cellMenu.implicitHeight);
+            return;
+        }
         var x = gutterWidth - hflick.contentX;
         for (var c = 0; c < curCol; c++)
             x += colWidths[c];
@@ -919,11 +951,15 @@ ApplicationWindow {
             close();
         } else if (action === "new") {
             file.newDocument();
+            places = ({});
+            tab = 0;
             switchTab(0);
         } else if (action === "open") {
             openDialog.open();
         } else if (action === "openUrl") {
             if (file.openUrl(pendingUrl)) {
+                places = ({});
+                tab = 0;
                 switchTab(0);
                 // What an import changed or left behind.
                 if (file.notes.length > 0)
@@ -1260,9 +1296,15 @@ ApplicationWindow {
                             MouseArea {
                                 anchors.fill: parent
                                 enabled: !win.sheet.isConsts
-                                onClicked: {
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                // A right-click opens the sheet's menu, as on its tab.
+                                onClicked: function(mouse) {
                                     win.stopEditing();
                                     win.selectAll();
+                                    if (mouse.button === Qt.RightButton) {
+                                        grid.forceActiveFocus();
+                                        cellMenu.popup();
+                                    }
                                 }
                             }
                         }
@@ -1786,6 +1828,7 @@ ApplicationWindow {
                 spacing: 2
 
                 Repeater {
+                    id: tabRepeater
                     model: win.tabs.length
                     FooterButton {
                         id: tabButton
@@ -1796,9 +1839,18 @@ ApplicationWindow {
                             win.viewSource(false);
                             win.switchTab(index);
                         }
+                        // The sheet's menu, as for the whole of it selected.
                         onRightClicked: {
-                            tabMenu.index = index;
-                            tabMenu.popup();
+                            win.viewSource(false);
+                            if (index !== win.tab)
+                                win.switchTab(index);
+                            if (win.sheet.isConsts) {
+                                tabMenu.index = index;
+                                tabMenu.popup();
+                                return;
+                            }
+                            win.selectAll();
+                            cellMenu.popup();
                         }
                         // Renamed in place, from F2 with the whole sheet selected.
                         Loader {
@@ -2040,6 +2092,12 @@ ApplicationWindow {
             visible: cellMenu.whole
             enabled: visible
             onTriggered: win.deleteSheet()
+        }
+        MenuEntry {
+            text: "Open in new window"
+            visible: cellMenu.whole
+            enabled: visible
+            onTriggered: win.newWindow(win.tab)
         }
         // Rows, when whole rows are selected.
         MenuRule { visible: cellMenu.rows }
