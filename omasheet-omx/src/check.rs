@@ -1466,7 +1466,11 @@ impl<'a> Checker<'a> {
             if unknown {
                 S::Any
             } else {
+                // A whole exponent written as it is, `2 ** 64`, cannot be
+                // negative, so the power keeps the type of its base.
+                let whole = matches!(r.kind, ExprKind::Lit(Lit::Int(_)));
                 match (op, a.wider(b)) {
+                    (BinOp::Pow, w @ (S::Int | S::Decimal)) if whole => w,
                     // A quotient or a power of decimals need not end.
                     (BinOp::Div | BinOp::Pow, S::Int | S::Decimal) => S::Fraction,
                     // Percentages add up to a percentage; anything else

@@ -162,6 +162,22 @@ fn decimals() {
     assert!(errors[0].contains("use `.Decimal`"), "{errors:?}");
     assert!(lint_errors(&format!("{prices}Tea | = Half * 1.5 | 1\n")).is_empty());
 
+    // A power with a whole exponent written as it is keeps its base's type;
+    // any other exponent may be negative, so the power is a Fraction.
+    let powers = "sheet W\n\nN : Int\nD : Decimal\n\nN | D\n";
+    assert!(lint_errors(&format!("{powers}= 2 ** 64 | = 1.1 ** 2\n")).is_empty());
+    let errors = lint_errors(&format!("{powers}= 2 ** -1 | 1\n"));
+    assert!(
+        errors[0].contains("declared `Int` but this is `Fraction`"),
+        "{errors:?}"
+    );
+    let errors = lint_errors(&format!("{powers}2 | = 1.1 ** W[N; *]\n"));
+    assert!(
+        errors[0].contains("declared `Decimal` but this is `Fraction`"),
+        "{errors:?}"
+    );
+    assert_eq!(calc("2 ** 64"), "18446744073709551616");
+
     // A Decimal goes where a Fraction is declared.
     let ratios = "sheet R\n\nShare : Fraction\n\nShare\n0.25\n1/7\n3\n= 0.5 * 0.5\n";
     assert!(lint_errors(ratios).is_empty());
