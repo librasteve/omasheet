@@ -955,7 +955,9 @@ fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
     let Some(ty) = ty else {
         let Some(l) = existing else { return out };
         let start = line_start(l.span.start as usize);
-        let end = text[start..].find('\n').map_or(text.len(), |k| start + k + 1);
+        let end = text[start..]
+            .find('\n')
+            .map_or(text.len(), |k| start + k + 1);
         out.replace_range(start..end, "");
         // The last of them takes its blank line with it.
         let alone = decl.schema.len() == 1;
@@ -1008,7 +1010,7 @@ fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
             format!("{line}\n"),
         )),
     }
-    edits.sort_by(|a, b| b.0.cmp(&a.0));
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
     for (at, insert) in edits {
         out.insert_str(at, &insert);
     }
@@ -2326,7 +2328,10 @@ mod tests {
         assert!(!doc.set_column_types(0, &[3], Some("Whole")));
         // Cleared one at a time, and the last takes its blank line.
         assert!(doc.set_column_types(0, &[0, 3], None));
-        assert!(doc.text().contains("sheet Sales\n\nCost   : Decimal\n\nMonth | "));
+        assert!(
+            doc.text()
+                .contains("sheet Sales\n\nCost   : Decimal\n\nMonth | ")
+        );
         assert!(doc.set_column_types(0, &[1, 2], None));
         assert_eq!(doc.text(), SALES);
         assert!(!doc.set_column_types(0, &[2], None));

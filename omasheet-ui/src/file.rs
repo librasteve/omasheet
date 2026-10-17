@@ -788,7 +788,11 @@ impl qobject::File {
         let ty = ty.to_string();
         let cols: Vec<usize> = (index(first)..index(first) + index(count)).collect();
         self.edit(|doc| {
-            doc.set_column_types(index(sheet), &cols, Some(ty.as_str()).filter(|t| !t.is_empty()))
+            doc.set_column_types(
+                index(sheet),
+                &cols,
+                Some(ty.as_str()).filter(|t| !t.is_empty()),
+            )
         });
     }
 
