@@ -645,15 +645,38 @@ fn scientific(r: &BigRational) -> String {
     format!("{}{MORE}{exp}", &mantissa[..keep])
 }
 
+/// How many characters `text` is.
+fn width(text: &str) -> usize {
+    text.chars().count()
+}
+
+/// A plain number with the digits before its point grouped by `sep` in
+/// threes, where there are five of them or more: `12,345.678`.
+fn grouped(plain: String, sep: Option<char>) -> String {
+    let Some(sep) = sep else { return plain };
+    let (whole, rest) = plain.split_at(plain.find('.').unwrap_or(plain.len()));
+    if whole.len() < 5 || !whole.bytes().all(|b| b.is_ascii_digit()) {
+        return plain;
+    }
+    let mut out = String::new();
+    for (k, digit) in whole.chars().enumerate() {
+        if k > 0 && (whole.len() - k) % 3 == 0 {
+            out.push(sep);
+        }
+        out.push(digit);
+    }
+    out + rest
+}
+
 /// A positive exact number that ends, plain if it is neither small nor large
 /// and fits, and otherwise in e notation.
-fn shown_decimal(r: &BigRational) -> String {
+fn shown_decimal(r: &BigRational, sep: Option<char>) -> String {
     if r.is_zero() {
         return "0".into();
     }
-    let plain = format_rat(r);
+    let plain = grouped(format_rat(r), sep);
     let medium = *r >= power_of_ten(-15) && *r < power_of_ten(15);
-    if medium && plain.len() <= WIDTH {
+    if medium && width(&plain) <= WIDTH {
         plain
     } else {
         scientific(r)
@@ -662,9 +685,12 @@ fn shown_decimal(r: &BigRational) -> String {
 
 /// A positive `Fraction`: as a fraction if that fits, and otherwise in e
 /// notation.
-fn shown_fraction(r: &BigRational) -> String {
-    let mixed = format_mixed(r);
-    if mixed.len() <= WIDTH {
+fn shown_fraction(r: &BigRational, sep: Option<char>) -> String {
+    let mixed = match format_mixed(r).split_once(' ') {
+        Some((whole, part)) => format!("{} {part}", grouped(whole.to_string(), sep)),
+        None => format_mixed(r),
+    };
+    if width(&mixed) <= WIDTH {
         mixed
     } else {
         scientific(r)
@@ -691,6 +717,11 @@ fn rounded(r: &BigRational) -> BigInt {
 /// and from `1e15%` in e notation, `1.43e+19%`. It is never marked with
 /// [`MORE`]: rounding is the rule.
 pub fn format_percent(r: &BigRational, exact: bool) -> String {
+    shown_percent(r, exact, None)
+}
+
+/// As [`format_percent`], with the digits grouped by `sep`.
+fn shown_percent(r: &BigRational, exact: bool, sep: Option<char>) -> String {
     let hundred = r * BigRational::from_integer(BigInt::from(100));
     if exact {
         return format!("{}%", format_rat(&hundred));
@@ -698,7 +729,7 @@ pub fn format_percent(r: &BigRational, exact: bool) -> String {
     let size = hundred.abs();
     let mut scaled = rounded(&size);
     let shown = if size < power_of_ten(15) {
-        trimmed(decimal(&scaled, false, PERCENT_DIGITS))
+        grouped(trimmed(decimal(&scaled, false, PERCENT_DIGITS)), sep)
     } else {
         let mut e = magnitude(&size);
         scaled = rounded(&(&size / power_of_ten(e)));
@@ -727,6 +758,11 @@ pub fn format_percent(r: &BigRational, exact: bool) -> String {
 /// Shown, it is plain from `1e-15` to `1e15` where that fits in [`WIDTH`],
 /// and so never needs [`MORE`]; in full, as when `exact`, only from `1e-4`.
 pub fn format_num(f: f64, exact: bool) -> String {
+    shown_num(f, exact, None)
+}
+
+/// As [`format_num`], with the digits grouped by `sep`.
+fn shown_num(f: f64, exact: bool, sep: Option<char>) -> String {
     if f.is_nan() {
         return "NaN".into();
     }
@@ -734,13 +770,12 @@ pub fn format_num(f: f64, exact: bool) -> String {
         return if f > 0.0 { "Inf" } else { "-Inf" }.into();
     }
     let size = f.abs();
-    let plain = if exact {
-        size == 0.0 || (1e-4..LARGE).contains(&size)
-    } else {
-        size == 0.0 || ((SMALL..LARGE).contains(&size) && format!("{size}").len() <= WIDTH)
-    };
-    if plain {
+    if exact && (size == 0.0 || (1e-4..LARGE).contains(&size)) {
         return format!("{f}");
+    }
+    let plain = grouped(format!("{size}"), sep);
+    if !exact && (size == 0.0 || ((SMALL..LARGE).contains(&size) && width(&plain) <= WIDTH)) {
+        return signed(f < 0.0, plain);
     }
     let scientific = format!("{f:e}");
     let (mantissa, e) = scientific.split_once('e').unwrap_or((&scientific, "0"));
@@ -749,16 +784,17 @@ pub fn format_num(f: f64, exact: bool) -> String {
 
 /// Shortened to `width` characters and marked with [`MORE`]: a number in e
 /// notation in its mantissa, and any other at its end.
-fn cut(text: String, width: usize) -> String {
-    if text.chars().count() <= width {
+fn cut(text: String, room: usize) -> String {
+    if width(&text) <= room {
         return text;
     }
+    let first = |text: &str, n: usize| text.chars().take(n).collect::<String>();
     match text.split_once('e') {
         Some((mantissa, exp)) => {
-            let keep = width.saturating_sub(exp.len() + 2).max(1);
-            format!("{}{MORE}e{exp}", &mantissa[..keep.min(mantissa.len())])
+            let keep = room.saturating_sub(exp.len() + 2).max(1);
+            format!("{}{MORE}e{exp}", first(mantissa, keep))
         }
-        None => format!("{}{MORE}", &text[..width - 1]),
+        None => format!("{}{MORE}", first(&text, room - 1)),
     }
 }
 
@@ -766,23 +802,24 @@ fn cut(text: String, width: usize) -> String {
 /// is wider than [`WIDTH`], both parts are cut alike until it fits; as for
 /// any number, a sign is not counted, and that of the imaginary part is
 /// what joins the two.
-fn format_complex(re: f64, im: f64, exact: bool) -> String {
+fn format_complex(re: f64, im: f64, exact: bool, sep: Option<char>) -> String {
     let unsigned = |text: String| match text.strip_prefix('-') {
         Some(size) => ("-", size.to_string()),
         None => ("", text),
     };
-    let (re_sign, mut re_text) = unsigned(format_num(re, exact));
-    let (minus, mut im_text) = unsigned(format_num(im, exact));
+    let (re_sign, mut re_text) = unsigned(shown_num(re, exact, sep));
+    let (minus, mut im_text) = unsigned(shown_num(im, exact, sep));
     let plus = if minus.is_empty() { "+" } else { minus };
     // As Raku does, to keep the `i` apart from `Inf` and `NaN`.
     let i = if im.is_finite() { "i" } else { "\\i" };
     let room = WIDTH - 1 - i.len();
-    if !exact && re_text.len() + im_text.len() > room {
+    let (re_size, im_size) = (width(&re_text), width(&im_text));
+    if !exact && re_size + im_size > room {
         let half = room / 2;
-        let (re_width, im_width) = if re_text.len() <= half {
-            (re_text.len(), room - re_text.len())
-        } else if im_text.len() <= half {
-            (room - im_text.len(), im_text.len())
+        let (re_width, im_width) = if re_size <= half {
+            (re_size, room - re_size)
+        } else if im_size <= half {
+            (room - im_size, im_size)
         } else {
             (half, half)
         };
@@ -826,15 +863,17 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         // Shown, in at most `WIDTH` characters and a sign: plain from
         // `1e-15` to `1e15`, and otherwise in e notation, `1e+60`. A
         // `Fraction` is a fraction where it fits, `2 3/4`.
+        // Shown in the app, a plain number of five digits or more is grouped
+        // in threes, `12,345`.
         Value::Int(n) => signed(
             n.is_negative(),
-            shown_decimal(&BigRational::from_integer(n.abs())),
+            shown_decimal(&BigRational::from_integer(n.abs()), style.group),
         ),
-        Value::Decimal(r) => signed(r.is_negative(), shown_decimal(&r.abs())),
-        Value::Fraction(r) => signed(r.is_negative(), shown_fraction(&r.abs())),
-        Value::Percent(r) => format_percent(r, exact),
-        Value::Num(f) => format_num(*f, exact),
-        Value::Complex(re, im) => format_complex(*re, *im, exact),
+        Value::Decimal(r) => signed(r.is_negative(), shown_decimal(&r.abs(), style.group)),
+        Value::Fraction(r) => signed(r.is_negative(), shown_fraction(&r.abs(), style.group)),
+        Value::Percent(r) => shown_percent(r, exact, style.group),
+        Value::Num(f) => shown_num(*f, exact, style.group),
+        Value::Complex(re, im) => format_complex(*re, *im, exact, style.group),
         Value::Text(s, _) if quoted => format!("{s:?}"),
         Value::Text(s, _) => s.to_string(),
         Value::Bool(b) => b.to_string(),
@@ -944,6 +983,40 @@ mod tests {
             shown(Value::Fraction(rat(12_345_666_543_218, 76_543_141_111_111))),
             "1.6129030457865418…e-01"
         );
+    }
+
+    #[test]
+    fn groups_digits_in_the_app() {
+        let app = Style::ISO.grouped(',');
+        let shown = |v: Value| format_styled(&v, false, &app);
+        let int = |n: i64| Value::Int(n.into());
+        assert_eq!(shown(int(2025)), "2025");
+        assert_eq!(shown(int(12345)), "12,345");
+        assert_eq!(shown(int(-1234567)), "-1,234,567");
+        assert_eq!(shown(int(999_999_999_999_999)), "999,999,999,999,999");
+        assert_eq!(shown(int(1_000_000_000_000_000)), "1e+15");
+        assert_eq!(
+            shown(Value::Decimal(rat(123_456_789, 10_000))),
+            "12,345.6789"
+        );
+        assert_eq!(
+            shown(Value::Decimal(BigRational::new(
+                "9999999999999999999999".parse().unwrap(),
+                10_000_000.into()
+            ))),
+            "9.9999999999999999…e+14"
+        );
+        assert_eq!(shown(Value::Fraction(rat(1_000_000, 3))), "333,333 1/3");
+        assert_eq!(
+            shown(Value::Percent(rat(12_345_678, 100_000))),
+            "12,345.68%"
+        );
+        assert_eq!(shown(Value::Num(1_234_567.5)), "1,234,567.5");
+        assert_eq!(shown(Value::Num(-0.000123)), "-0.000123");
+        assert_eq!(shown(Value::Complex(12345.0, -1.0)), "12,345-1i");
+        // Only the app groups them: a file, and `print`, do not.
+        assert_eq!(format_scalar(&int(12345), false), "12345");
+        assert_eq!(format_exact(&int(12345), false, &app), "12345");
     }
 
     #[test]

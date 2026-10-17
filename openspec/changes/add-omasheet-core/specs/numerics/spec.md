@@ -337,6 +337,24 @@ cut.
 - **WHEN** `0.12345678901234567890123` is displayed
 - **THEN** it is shown as `1.2345678901234567…e-01`
 
+### Requirement: Digit grouping
+In the app, the digits of a plain number before its point SHALL be grouped in
+threes by `,` where there are five of them or more, `12,345.678`, and the
+separators SHALL count toward the 23 characters. A number in e notation, the
+part of a `Fraction` after its whole number, and digits after the point SHALL
+NOT be grouped. A file, `print`, `eval`, text, export, copying and the full
+display SHALL NOT group digits; in a file digits MAY be grouped with
+`_`, `10_000`, as a literal allows.
+
+#### Scenario: Grouped in the app only
+- **WHEN** `12345` and `2025` are shown in the app
+- **THEN** they are shown as `12,345` and `2025`
+- **AND** `omasheet eval '12345'` outputs `12345`
+
+#### Scenario: Grouping can make a number too wide to be plain
+- **WHEN** `999999999999999.9999999` is shown in the app
+- **THEN** it is shown as `9.9999999999999999…e+14`, as `999,999,999,999,999.9999999` would be 27 characters
+
 ### Requirement: Fraction display
 A `Fraction` SHALL be shown as a fraction when that fits in 23 characters: one
 of less than one as `x/y`, and one of more than one as a whole number and a

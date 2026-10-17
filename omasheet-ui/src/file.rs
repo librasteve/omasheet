@@ -338,10 +338,11 @@ impl Default for FileRust {
     }
 }
 
-/// How the user's locale writes dates and times.
+/// How the user's locale writes dates and times, with numbers grouped in
+/// threes, `12,345`.
 fn style() -> Style {
     static STYLE: OnceLock<Style> = OnceLock::new();
-    *STYLE.get_or_init(locale::os_style)
+    *STYLE.get_or_init(|| locale::os_style().grouped(','))
 }
 
 /// A document that shows dates and times the way the user's locale does.

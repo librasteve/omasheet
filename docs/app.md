@@ -43,7 +43,10 @@ rewrites the text, and saving writes exactly that.
   `19.99` or `1/3`, and in e notation otherwise, `1e+60`. One with more
   digits than fit is cut and marked, `1.8446744073709551…e+19`, and a
   `Percent` is rounded, `41.67%`; pointing at it shows the value in full, as
-  does pointing at any text cut off at the cell's edge.
+  does pointing at any text cut off at the cell's edge. A plain number of
+  five digits or more is grouped in threes, `12,345.678`; the file is not, and
+  a number is typed with `_` to group it, `10_000`. Copying a cell copies it
+  ungrouped.
 - Dates and times follow your locale; the file stays ISO.
 - A file in another time zone is shown on your clocks.
 

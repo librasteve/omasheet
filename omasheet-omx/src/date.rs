@@ -101,6 +101,9 @@ pub struct Style {
     pub hour12: bool,
     /// The ISO forms exactly, with `T` between a date and its time.
     iso: bool,
+    /// What a number of five digits or more is grouped by in threes, as
+    /// `12,345`; `None` to show it ungrouped, as a file writes it.
+    pub group: Option<char>,
 }
 
 impl Default for Style {
@@ -116,6 +119,7 @@ impl Style {
         sep: '-',
         hour12: false,
         iso: true,
+        group: None,
     };
 
     pub fn new(order: Order, sep: char, hour12: bool) -> Style {
@@ -124,6 +128,15 @@ impl Style {
             sep,
             hour12,
             iso: false,
+            group: None,
+        }
+    }
+
+    /// This style, with numbers grouped by `sep` in threes.
+    pub fn grouped(self, sep: char) -> Style {
+        Style {
+            group: Some(sep),
+            ..self
         }
     }
 

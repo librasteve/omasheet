@@ -12,7 +12,7 @@
 
 use crate::Options;
 use crate::eval::Engine;
-use crate::value::{Value, arith, format_exact, format_scalar};
+use crate::value::{Value, arith, format_exact, format_styled};
 use num_traits::ToPrimitive;
 use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use omasheet_omx::date::{self, Style};
@@ -1264,7 +1264,8 @@ impl Document {
             None
         } else {
             let avg = arith(BinOp::Div, &sum, &Value::Int(numbers.into())).ok()?;
-            Some((format_scalar(&sum, false), format_scalar(&avg, false)))
+            let show = |v: &Value| format_styled(v, false, &self.style);
+            Some((show(&sum), show(&avg)))
         };
         Some(Summary { count, numbers })
     }
