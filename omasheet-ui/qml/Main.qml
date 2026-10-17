@@ -1499,8 +1499,11 @@ ApplicationWindow {
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         property bool picking: false
                                         // Why the cell failed, or a number shown
-                                        // with fewer digits than it has, in full.
-                                        readonly property string tip: cellItem.cell ? cellItem.cell.e || cellItem.cell.x : ""
+                                        // with fewer digits than it has, in full;
+                                        // or what is cut off at the cell's edge.
+                                        readonly property string tip: cellItem.cell
+                                            ? cellItem.cell.e || cellItem.cell.x || (cellText.truncated ? cellItem.cell.d : "")
+                                            : ""
                                         ToolTip.visible: containsMouse && !cellMenu.visible && tip.length > 0
                                         ToolTip.delay: 400
                                         ToolTip.text: tip
