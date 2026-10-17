@@ -1441,11 +1441,9 @@ ApplicationWindow {
                                         linkColor: win.accentColor
                                         clip: marked
                                         color: cellItem.cell && cellItem.cell.e ? win.errorColor : win.textColor
-                                        opacity: cellItem.cell && cellItem.cell.f && cellItem.column && !cellItem.column.computed ? 0.92 : 1
                                         font.family: win.font.family
                                         font.features: win.font.features
                                         font.pixelSize: win.fontSize
-                                        font.italic: !!cellItem.cell && cellItem.cell.f && !!cellItem.column && !cellItem.column.computed
                                         verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: cellItem.cell && cellItem.cell.n ? Text.AlignRight : Text.AlignLeft
                                         elide: Text.ElideRight
