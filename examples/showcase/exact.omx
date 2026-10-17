@@ -3,12 +3,14 @@
 
 sheet Sums
 
-Case            | Exact                 | Float                           | Same
-Tenths          | = 0.1 + 0.2           | = 0.1.Num + 0.2.Num             | *
-Take away       | = 1 - 0.9             | = 1.Num - 0.9.Num               | *
-Squared         | = 1.1 * 1.1           | = 1.1.Num * 1.1.Num             | *
-Big numbers     | = 2**64 + 1 - 2**64   | = 2.Num**64 + 1 - 2.Num**64     | *
-Ten years at 5% | = 1000 * (1 + 5%)**10 | = 1000.Num * (1 + 0.05.Num)**10 | *
+Float : Num
+
+Case            | Exact                 | Float                   | Same
+Tenths          | = 0.1 + 0.2           | =1e-1+2e-1              | *
+Take away       | = 1 - 0.9             | =1-9e-1                 | *
+Squared         | = 1.1 * 1.1           | = 1.1e0*1.1e0           | *
+Big numbers     | = 2**64 + 1 - 2**64   | = 2e0**64 + 1 - 2e0**64 | *
+Ten years at 5% | = 1000 * (1 + 5%)**10 | = 1e3 * (1 + 5e-2)**10  | *
 
 Same := Exact == Float
 
