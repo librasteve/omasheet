@@ -140,26 +140,55 @@ fn refused(
     }
 }
 
-/// The formula columns that one formula pasted at a block would be the
-/// formula of: `None` unless it is a formula and lands on them alone.
+/// The formulas that cells pasted onto formula columns alone make theirs:
+/// `(column, formula)`. Each column of the block is one formula, the same
+/// in every row; one column of them fills every column it is pasted on.
+/// `None` if they are not all formulas, or land on a data column.
 fn formula_target(
     doc: &Document,
     sheet: usize,
     from: Cell,
     to: Cell,
     block: &[Vec<String>],
-) -> Option<Vec<usize>> {
-    let [line] = block else { return None };
-    let [text] = line.as_slice() else { return None };
-    if !text.trim_start().starts_with('=') {
-        return None;
+) -> Result<Option<Vec<(usize, String)>>, String> {
+    let width = block.iter().map(Vec::len).max().unwrap_or(0);
+    let mut formulas = Vec::new();
+    let mut differ = false;
+    for j in 0..width {
+        let texts: Vec<&str> = block
+            .iter()
+            .map(|line| line.get(j).map_or("", |t| t.trim()))
+            .collect();
+        if !texts.iter().all(|t| t.starts_with('=')) {
+            return Ok(None);
+        }
+        differ |= texts.iter().any(|t| *t != texts[0]);
+        formulas.push(texts[0].to_string());
     }
-    let t = doc.snapshot().sheets.get(sheet)?;
-    let cols: Vec<usize> = (from.1..=to.1.max(from.1)).collect();
+    let Some(t) = doc.snapshot().sheets.get(sheet) else {
+        return Ok(None);
+    };
+    let cols: Vec<usize> = match width {
+        0 => return Ok(None),
+        1 => (from.1..=to.1.max(from.1)).collect(),
+        _ => (from.1..from.1 + width).collect(),
+    };
     let all = cols
         .iter()
         .all(|&c| t.columns.get(c).is_some_and(|c| c.formula.is_some()));
-    all.then_some(cols)
+    if !all {
+        return Ok(None);
+    }
+    if differ {
+        return Err("Cannot paste: these cells have different formulas in each row".into());
+    }
+    let formula = |k: usize| formulas[k.min(width - 1)].clone();
+    Ok(Some(
+        cols.iter()
+            .enumerate()
+            .map(|(k, &c)| (c, formula(k)))
+            .collect(),
+    ))
 }
 
 /// Put a block of cells down at a block; a single cell fills it. Cells
@@ -277,11 +306,11 @@ impl Clip {
         let block = parse_block(text);
         // One formula onto formula columns is their formula, and the cell
         // it was cut from is cleared, in one step.
-        if let Some(cols) = formula_target(doc, sheet, from, to, &block) {
+        if let Some(formulas) = formula_target(doc, sheet, from, to, &block)? {
             let cut = self.take_cut(doc, &block);
             return Ok(doc.as_one(|doc| {
-                for &col in &cols {
-                    doc.set_column_formula(sheet, col, &block[0][0]);
+                for (col, formula) in &formulas {
+                    doc.set_column_formula(sheet, *col, formula);
                 }
                 if let Some(cut) = &cut {
                     doc.set_cells(cut.sheet, &cut.blanks);
@@ -488,6 +517,28 @@ mod tests {
         assert_eq!(clip.paste(&mut doc, 0, (2, 0), (2, 0), &text), Ok(true));
         assert_eq!(held(&doc, 0)[2], "1|2||");
         assert_eq!(held(&doc, 0)[3], "10|20||");
+    }
+
+    #[test]
+    fn formula_cells_are_pasted_onto_formula_columns() {
+        let two =
+            "sheet T\n\nA | B | S | P\n1 | 2 | * | *\n3 | 4 | * | *\n\nS := A + B\nP := A * B\n";
+        let mut doc = Document::from_text(two);
+        let mut clip = Clip::default();
+        // A block of one formula column onto another: its formula.
+        let text = clip.copy(&doc, 0, (0, 2), (1, 2));
+        assert_eq!(clip.paste(&mut doc, 0, (0, 3), (1, 3), &text), Ok(true));
+        assert!(doc.text().contains("P := A + B"));
+        assert!(doc.undo());
+        // Both, each onto its own.
+        let text = "= A - B\t= A / B\n= A - B\t= A / B";
+        assert_eq!(clip.paste(&mut doc, 0, (0, 2), (0, 2), text), Ok(true));
+        assert!(doc.text().contains("S := A - B\nP := A / B"));
+        assert!(doc.undo());
+        // Formulas that differ from row to row are not one formula.
+        let why = Err("Cannot paste: these cells have different formulas in each row".to_string());
+        assert_eq!(clip.paste(&mut doc, 0, (0, 2), (1, 2), "= A\n= B"), why);
+        assert_eq!(doc.text(), two);
     }
 
     #[test]

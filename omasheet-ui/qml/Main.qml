@@ -799,8 +799,24 @@ ApplicationWindow {
     // Paste what was copied turned about: its rows as columns.
     // Several cells copied or cut, to be turned about onto cells: put down
     // from the one selected, or the corner of a block.
+    // Not when any of them is in a formula column.
     readonly property bool canTranspose: marked !== null && selKind === "cells" && !sheet.isConsts
         && (marked.top !== marked.bottom || marked.left !== marked.right)
+        && !spansFormula(marked)
+
+    // Values, not when the cells were in a formula column, or are put in one.
+    readonly property bool canPasteValues: canPaste && !formulaCell
+        && !(marked !== null && spansFormula(marked))
+
+    function spansFormula(m) {
+        var from = m.tab < tabs.length ? tabs[m.tab] : null;
+        if (!from || from.isConsts)
+            return false;
+        for (var c = m.left; c <= m.right; c++)
+            if (from.columns[c] && from.columns[c].computed)
+                return true;
+        return false;
+    }
 
     function pasteTransposed() {
         notice = "";
@@ -1264,8 +1280,9 @@ ApplicationWindow {
                         if (event.modifiers & Qt.AltModifier) {
                             if (win.canTranspose) win.pasteTransposed();
                         }
-                        else if (shift)
-                            win.pasteValues();
+                        else if (shift) {
+                            if (!win.marked || !win.spansFormula(win.marked)) win.pasteValues();
+                        }
                         else
                             win.pasteSelection();
                     } else if (ctrl && event.key === Qt.Key_A) {
@@ -2114,7 +2131,7 @@ ApplicationWindow {
             // One cell copied is one value.
             text: win.marked !== null && win.marked.top === win.marked.bottom
                 && win.marked.left === win.marked.right ? "Paste value" : "Paste values"
-            enabled: cellMenu.hasRows && win.canPaste && !win.formulaCell
+            enabled: cellMenu.hasRows && win.canPasteValues
             onTriggered: win.pasteValues()
         }
         MenuEntry { text: "Paste transposed"; enabled: cellMenu.hasRows && win.canTranspose; onTriggered: win.pasteTransposed() }
