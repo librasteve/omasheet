@@ -26,7 +26,7 @@ Ctrl+Alt+L/R         Previous / next sheet
 Ctrl+click           Open link
 
 F1                   View functions
-F2                   Edit in box
+F2                   Edit
 F3                   View source
 F11                  Fullscreen
 

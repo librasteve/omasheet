@@ -1211,7 +1211,10 @@ ApplicationWindow {
                 case Qt.Key_Enter:
                     // A row goes in beside whole rows, and nothing else.
                     if (ctrl) { if (win.selKind === "row") win.insertRows(!shift, win.selBottom - win.selTop + 1); }
-                    else win.startEditing(null);
+                    // Only a single cell is edited in place: a block, rows,
+                    // columns or the sheet are left as they are.
+                    else if (win.selKind === "cells" && win.selTop === win.selBottom && win.selLeft === win.selRight)
+                        win.startEditing(null);
                     break;
                 case Qt.Key_Delete:
                     if (ctrl) {
