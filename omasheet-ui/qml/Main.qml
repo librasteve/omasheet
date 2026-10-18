@@ -2594,7 +2594,8 @@ ApplicationWindow {
             forceActiveFocus();
             if (kind === "rows") {
                 countBox.forceActiveFocus();
-                countBox.selectAll();
+                countBox.deselect();
+                countBox.cursorPosition = countBox.text.length;
             } else {
                 nameField.forceActiveFocus();
                 nameField.selectAll();
