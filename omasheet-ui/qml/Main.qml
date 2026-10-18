@@ -373,10 +373,14 @@ ApplicationWindow {
             return;
         if (sheet.isConsts && curCol !== 1)
             return;
-        // A formula column has one formula, written in the box at the top.
+        // A formula column has one formula, written in the box at the top:
+        // Enter on any cell of it goes there, and typing does nothing.
         var column = sheet.columns[curCol];
         if (!sheet.isConsts && column && column.computed) {
-            errorDialog.say("`" + column.name + "` is a formula column: click F2 to edit");
+            if (seed === null) {
+                formulaField.forceActiveFocus();
+                formulaField.selectAll();
+            }
             return;
         }
         anchorRow = curRow;
@@ -511,8 +515,8 @@ ApplicationWindow {
         pickLen = 0;
     }
 
-    // Go to the box at the top, to write what the cell holds there: the
-    // one formula of a formula column, from any cell of it or the whole.
+    // Go to the box at the top, to write what the cell holds there. A
+    // cell of a formula column renames the column, as the whole column does.
     function editInBox() {
         if (tabs.length === 0)
             return;
@@ -532,6 +536,11 @@ ApplicationWindow {
         // A block of cells has no one cell to edit.
         if (!hasCursor || selTop !== selBottom || selLeft !== selRight || !cellAt(curRow, curCol))
             return;
+        if (!sheet.isConsts && sheet.columns[curCol] && sheet.columns[curCol].computed) {
+            notice = "";
+            renameColumnAsked(curCol);
+            return;
+        }
         formulaField.forceActiveFocus();
         formulaField.selectAll();
     }
@@ -1914,11 +1923,16 @@ ApplicationWindow {
                     readonly property bool several: !win.sheet.isConsts && win.tabs.length > 0
                         && (win.selTop !== win.selBottom || win.selLeft !== win.selRight)
                     readonly property bool moving: win.grabbedHere
+                    // A cell of a formula column stands for the whole column.
+                    readonly property bool formulaCell: !win.sheet.isConsts && win.hasCursor
+                        && win.selTop === win.selBottom && win.selLeft === win.selRight
+                        && !!win.sheet.columns[win.curCol] && win.sheet.columns[win.curCol].computed
                     // `win.snap` is read so that an edit recalculates it.
                     text: win.notice.length > 0 ? win.notice
                         : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
                         : several && win.snap
                         ? file.selectionSummary(win.tab, win.selTop, win.selLeft, win.selBottom, win.selRight)
+                        : formulaCell ? "This is a formula column, this change will apply to the entire column"
                         : ""
                     visible: text.length > 0
                     color: win.notice.length > 0 ? win.errorColor : win.mutedColor
@@ -2364,6 +2378,8 @@ ApplicationWindow {
         id: errorDialog
         anchors.centerIn: parent
         modal: true
+        // Over the sheet, which is left as it is rather than dimmed.
+        dim: false
         width: 440
         focus: true
         standardButtons: Dialog.Ok
