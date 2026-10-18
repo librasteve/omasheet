@@ -709,9 +709,6 @@ ApplicationWindow {
             } else {
                 file.setCell(tab, row, col, text);
             }
-            // Enter on the last row of a sheet opens a new row to carry on typing.
-            if (dRow > 0 && row === sheet.rows.length - 1 && !sheet.isConsts)
-                file.insertRows(tab, row + 1, 1);
         });
         selectCell(row + dRow, col + dCol, false);
         grid.forceActiveFocus();
@@ -1431,8 +1428,13 @@ ApplicationWindow {
                 case Qt.Key_Backtab: win.selectCell(win.curRow, win.curCol - 1, false); break;
                 case Qt.Key_Return:
                 case Qt.Key_Enter:
-                    // A row goes in beside whole rows, and nothing else.
-                    if (ctrl) { if (win.selKind === "row") win.insertRows(!shift, win.selBottom - win.selTop + 1); }
+                    // A row goes in beside whole rows, or one cell, and nothing else.
+                    if (ctrl) {
+                        if (win.selKind === "row")
+                            win.insertRows(!shift, win.selBottom - win.selTop + 1);
+                        else if (win.selKind === "cells" && win.selTop === win.selBottom && win.selLeft === win.selRight)
+                            win.insertRows(!shift, 1);
+                    }
                     // Only a single cell is edited in place: a block, rows,
                     // columns or the sheet are left as they are.
                     else if (win.selKind === "cells" && win.selTop === win.selBottom && win.selLeft === win.selRight)
@@ -1951,6 +1953,12 @@ ApplicationWindow {
                                             // Elsewhere they move in the text.
                                             Keys.priority: Keys.BeforeItem
                                             Keys.onPressed: function(event) {
+                                                // Ctrl+Enter puts in a row only from the grid, not mid-edit.
+                                                if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                                        && (event.modifiers & Qt.ControlModifier)) {
+                                                    event.accepted = true;
+                                                    return;
+                                                }
                                                 var shift = (event.modifiers & Qt.ShiftModifier) !== 0;
                                                 var d = event.key === Qt.Key_Up ? [-1, 0]
                                                     : event.key === Qt.Key_Down ? [1, 0]
