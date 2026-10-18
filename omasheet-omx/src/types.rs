@@ -88,11 +88,15 @@ impl S {
     }
 
     /// The wider of two numeric types. A `Percent` next to another kind of
-    /// exact number is a `Fraction`.
+    /// exact number is a `Decimal`, or a `Fraction` next to one.
     pub fn wider(self, other: S) -> S {
         let either = self == S::Percent || other == S::Percent;
         if self != other && either && self.is_exact() && other.is_exact() {
-            S::Fraction
+            if self == S::Fraction || other == S::Fraction {
+                S::Fraction
+            } else {
+                S::Decimal
+            }
         } else if self.rank() >= other.rank() {
             self
         } else {
@@ -133,9 +137,9 @@ impl S {
         self == to
             || self == S::Any
             || to == S::Any
-            // An `Int` is a `Decimal`, and a `Decimal` is a `Fraction`. A
-            // `Percent` holds any of them, and is a `Fraction`.
-            || (self.is_exact() && to.is_exact() && self.rank() <= to.rank())
+            // An `Int` is any exact number. A `Decimal`, a `Fraction` and a
+            // `Percent` hold the same numbers, shown in different ways.
+            || (self.is_exact() && to.is_exact() && (to != S::Int || self == S::Int))
     }
 }
 

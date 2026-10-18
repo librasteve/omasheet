@@ -21,6 +21,10 @@ number in e notation keeps every digit it can, and where they do not all fit
 they are cut and marked: `2 ** 64` is shown as `1.8446744073709551…e+19`.
 Only the display is cut, and `omasheet eval --exact` gives it in full.
 
+A `Decimal` that does not end is cut and marked the same way: `1/3` is
+shown as `0.33333333333333333333…`. Pointing at it in the app shows more
+places, and `--exact` gives it as a fraction, `1/3`.
+
 A `Num` is never rounded: it is shown with the fewest digits that give the
 same `Num` back, `0.30000000000000004`, and always fits.
 
@@ -33,11 +37,11 @@ than one as a whole number and a part, `11/4` as `2 3/4`. One too wide is
 shown in e notation, cut and marked. `--exact` and `x.Text` give it as it is
 written in the file, `11/4`.
 
-Whole numbers and decimals divided give a `Decimal` when the result ends,
-`7 / 4` is `1.75`, and a `Fraction` when it does not, `7 / 3` is `2 1/3`.
-Anything worked out from a `Fraction` is a `Fraction`: `x.Fraction * 2`. To
-show a result as a fraction, declare its column `Fraction` or write
-`x.Fraction`; for a decimal, write `x.Decimal`.
+Whole numbers and decimals divided give a `Decimal`, whether or not it
+ends: `7 / 4` is `1.75` and `7 / 3` is `2.33333333333333333333…`, held
+exactly. Anything worked out from a `Fraction` is a `Fraction`:
+`x.Fraction * 2`. To show a result as a fraction, declare its column
+`Fraction` or write `x.Fraction`; for a decimal, write `x.Decimal`.
 
 Numbers are shown the way Raku shows them:
 
@@ -52,12 +56,14 @@ Numbers are shown the way Raku shows them:
 
 A `Num` that is a whole number looks like an `Int`, but it is still a `Num`.
 
-A `Decimal` is an exact number that ends when written as a decimal: `19.99`.
-Adding, subtracting and multiplying decimals gives a `Decimal`. Dividing them
-may not end, `1 / 3`, so a quotient is a `Fraction`, and so is an average. A
-`Decimal` goes anywhere a `Fraction` does.
+A `Decimal`, a `Fraction` and a `Percent` are the same exact numbers shown
+in different ways: `19.99`, `2 3/4` and `20%`. Adding, subtracting,
+multiplying and dividing decimals gives a `Decimal`, and so does an average.
+Each goes anywhere another does: a `Decimal` column shows `1/3` as
+`0.333…`. A column of no declared type with a decimal in it that does not
+end is a `Fraction` column, and shows every number in it as a fraction.
 
-A `Percent` holds what a `Fraction` does. Percentages add up to a percentage:
+Percentages add up to a percentage:
 `20% + 5%` is `25%`, and so are their sum, average, least and greatest.
 Anything else done with one gives the plain number: `100 * 20%` is `20`,
 `1 + 20%` is `1.2`, and `20% == 0.2` is true. To show a result as a
@@ -74,7 +80,7 @@ vector is converted value by value.
 | Written | Gives |
 |---|---|
 | `x.Int` | a whole number: `19.99` gives `19`, `-19.99` gives `-19` |
-| `x.Decimal` | an exact decimal: `(1/8).Decimal` is `0.125`; `(1/3).Decimal` is an error |
+| `x.Decimal` | the same number as a decimal: `(1/8).Decimal` is `0.125`, `(1/3).Decimal` is `0.333…` |
 | `x.Fraction` | the same number as a fraction: `2.75` gives `2 3/4`; a `Num` as the decimal it is shown as |
 | `x.Percent` | the same number as a percentage: `0.4` gives `40%`, `5/12` gives `41.67%` |
 | `x.Num` | a floating-point number |
@@ -119,7 +125,9 @@ outside the sheet is empty, so `[Revenue; *-1] // 0` starts a running value.
 
 Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 
-- Vectors: `sum avg min max count`
+- Vectors: `sum avg min max count`, of one vector or several taken together,
+  with single values among them: `sum([A; 0..3], [A; 7..9], 5)`. A block of
+  cells counts every cell: `sum([0..2; 0..3])`.
 - Sheets: `filter(condition)`, `select(columns)`
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
 - Converting: `Int Decimal Fraction Percent Num Complex Text Bool Date Time DateTime`

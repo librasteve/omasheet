@@ -180,10 +180,8 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
         (Lit::Percent(r), S::Int | S::Decimal | S::Fraction | S::Bool) => {
             let plain = if r.is_integer() {
                 Lit::Int(r.to_integer())
-            } else if is_decimal(r) {
-                Lit::Decimal(r.clone())
             } else {
-                Lit::Fraction(r.clone())
+                Lit::Decimal(r.clone())
             };
             return convert(&plain, to);
         }
@@ -191,16 +189,10 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
         (Lit::Decimal(r) | Lit::Fraction(r), S::Percent) => Lit::Percent(r.clone()),
         (Lit::Int(n), S::Decimal | S::Fraction) => Lit::Int(n.clone()),
         (Lit::Decimal(r) | Lit::Fraction(r), S::Int) => Lit::Int(r.trunc().to_integer()),
-        // Every `Decimal` is a `Fraction`; a `Fraction` is a `Decimal` if it ends.
+        // A `Decimal` and a `Fraction` are the same numbers, shown in
+        // different ways: `1/3` as a decimal is `0.333…`.
         (Lit::Decimal(r), S::Fraction) => Lit::Fraction(r.clone()),
-        (Lit::Fraction(r), S::Decimal) if is_decimal(r) => Lit::Decimal(r.clone()),
-        (Lit::Fraction(r), S::Decimal) => {
-            return Err(format!(
-                "{}/{} does not end as a decimal",
-                r.numer(),
-                r.denom()
-            ));
-        }
+        (Lit::Fraction(r), S::Decimal) => Lit::Decimal(r.clone()),
         (Lit::Num(f), S::Int | S::Decimal | S::Fraction | S::Percent) => match fraction_of(*f) {
             Some(r) if to == S::Percent => Lit::Percent(r),
             Some(r) if to == S::Int || r.is_integer() => Lit::Int(r.trunc().to_integer()),
@@ -272,7 +264,7 @@ mod tests {
         assert_eq!(convert(&lit("0.125"), S::Fraction), Ok(lit("1/8")));
         assert_eq!(
             convert(&lit("1/3"), S::Decimal),
-            Err("1/3 does not end as a decimal".to_string())
+            Ok(Lit::Decimal(num_rational::BigRational::new(1.into(), 3.into())))
         );
         assert_eq!(convert(&lit("-2.5e3"), S::Fraction), Ok(lit("-2500")));
         // A top-heavy fraction is a `Fraction` like any other.

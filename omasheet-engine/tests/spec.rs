@@ -114,8 +114,8 @@ fn no_silent_loss_of_exactness() {
     assert!(calc_err(None, "approx(1/3)").contains("unknown function `approx`"));
 }
 
-/// `Decimal` is an exact number that ends as a decimal: every `Int` is one,
-/// and every `Decimal` is a `Fraction`.
+/// `Decimal` is an exact number shown as a decimal, cut and marked where it
+/// does not end; a `Fraction` is the same numbers shown as fractions.
 #[test]
 fn decimals() {
     // The literal says which: a decimal point is a Decimal, a fraction a
@@ -123,16 +123,16 @@ fn decimals() {
     for (expr, message) in [
         ("19.99 + true", "cannot apply `+` to Decimal and Bool"),
         ("20% + true", "cannot apply `+` to Percent and Bool"),
-        ("(1/7) + true", "cannot apply `+` to Fraction and Bool"),
-        // Sums, differences and products of decimals are decimals; a
-        // quotient need not end, and is a Fraction.
+        ("(1/7).Fraction + true", "cannot apply `+` to Fraction and Bool"),
+        // Sums, differences, products and quotients of decimals are
+        // decimals, though a quotient need not end.
         (
             "19.99 * 3 - 0.5 + true",
             "cannot apply `+` to Decimal and Bool",
         ),
-        ("19.99 / 3 + true", "cannot apply `+` to Fraction and Bool"),
+        ("19.99 / 3 + true", "cannot apply `+` to Decimal and Bool"),
         (
-            "19.99 + 1/7 + true",
+            "19.99 + (1/7).Fraction + true",
             "cannot apply `+` to Fraction and Bool",
         ),
     ] {
@@ -141,7 +141,7 @@ fn decimals() {
     }
 
     // A column of decimals and whole numbers is a Decimal column, and
-    // takes them, but not a fraction, nor a formula that may not end.
+    // takes them, and fractions and formulas that do not end, as decimals.
     let prices = "sheet P\n\nPrice : Decimal\n\nItem | Price | Half\n";
     assert!(
         lint_errors(&format!(
@@ -149,55 +149,50 @@ fn decimals() {
         ))
         .is_empty()
     );
-    let errors = lint_errors(&format!("{prices}Tea | 1/7 | 1\n"));
-    assert!(
-        errors[0].contains("`1/7` is not a `Decimal` literal"),
-        "{errors:?}"
-    );
-    let errors = lint_errors(&format!("{prices}Tea | = Half / 3 | 1\n"));
-    assert!(
-        errors[0].contains("declared `Decimal` but this is `Fraction`"),
-        "{errors:?}"
-    );
-    assert!(errors[0].contains("use `.Decimal`"), "{errors:?}");
+    assert!(lint_errors(&format!("{prices}Tea | 1/7 | 1\n")).is_empty());
+    assert!(lint_errors(&format!("{prices}Tea | = Half / 3 | 1\n")).is_empty());
+    assert!(lint_errors(&format!("{prices}Tea | = (Half / 3).Fraction | 1\n")).is_empty());
     assert!(lint_errors(&format!("{prices}Tea | = Half * 1.5 | 1\n")).is_empty());
 
     // A power with a whole exponent written as it is keeps its base's type;
-    // any other exponent may be negative, so the power is a Fraction.
+    // any other exponent may be negative, so the power is a Decimal.
     let powers = "sheet W\n\nN : Int\nD : Decimal\n\nN | D\n";
     assert!(lint_errors(&format!("{powers}= 2 ** 64 | = 1.1 ** 2\n")).is_empty());
     let errors = lint_errors(&format!("{powers}= 2 ** -1 | 1\n"));
     assert!(
-        errors[0].contains("declared `Int` but this is `Fraction`"),
+        errors[0].contains("declared `Int` but this is `Decimal`"),
         "{errors:?}"
     );
-    let errors = lint_errors(&format!("{powers}2 | = 1.1 ** W[N; *]\n"));
-    assert!(
-        errors[0].contains("declared `Decimal` but this is `Fraction`"),
-        "{errors:?}"
-    );
+    assert!(lint_errors(&format!("{powers}2 | = 1.1 ** W[N; *]\n")).is_empty());
     assert_eq!(calc("2 ** 64"), "18446744073709551616");
 
     // A Decimal goes where a Fraction is declared.
     let ratios = "sheet R\n\nShare : Fraction\n\nShare\n0.25\n1/7\n3\n= 0.5 * 0.5\n";
     assert!(lint_errors(ratios).is_empty());
 
-    // `.Decimal` takes a Fraction that ends, and refuses one that does not.
+    // `.Decimal` takes any Fraction, and one that does not end is shown
+    // cut and marked.
     assert_eq!(calc("(1/8).Decimal"), "0.125");
     assert_eq!(calc("(1.5e3).Decimal + 0.5"), "1500.5");
     assert_eq!(calc("\"20%\".Decimal"), "0.2");
-    assert!(calc_err(None, "(1/3).Decimal").contains("1/3 does not end as a decimal"));
+    let shown = |expr: &str| {
+        let out = eval(None, "<expression>", expr);
+        assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
+        out.output.trim_end().to_string()
+    };
+    assert_eq!(shown("(1/3).Decimal"), "0.33333333333333333333…");
+    assert_eq!(shown("(1/3).Decimal * 3"), "1");
     let file =
         "sheet P\n\nHalf : Decimal\n\nN | Half\n8 | = (1 / N).Decimal\n3 | = (1 / N).Decimal\n";
     assert_eq!(ask(file, "P[Half; 0]"), "0.125");
-    assert!(calc_err(Some(file), "P[Half; 1]").contains("does not end as a decimal"));
+    assert_eq!(ask(file, "P[Half; 1]"), "1/3");
 
-    // An average of decimals is a Fraction; their sum, least and greatest are
-    // decimals.
+    // An average of decimals is a Decimal, as are their sum, least and
+    // greatest.
     let file = "sheet P\n\nPrice\n4.50\n9\n0.25\n";
     assert!(calc_err(Some(file), "P.Price.sum() + true").contains("Decimal and Bool"));
     assert!(calc_err(Some(file), "P.Price.max() + true").contains("Decimal and Bool"));
-    assert!(calc_err(Some(file), "P.Price.avg() + true").contains("Fraction and Bool"));
+    assert!(calc_err(Some(file), "P.Price.avg() + true").contains("Decimal and Bool"));
     assert_eq!(ask(file, "P.Price.sum()"), "13.75");
 }
 
@@ -224,8 +219,8 @@ fn percents() {
     assert_eq!(calc("[20%, 1/3].sum()"), "8/15");
     for (expr, message) in [
         ("20% + 5% + true", "cannot apply `+` to Percent and Bool"),
-        ("20% * 2 + true", "cannot apply `+` to Fraction and Bool"),
-        ("20% + 0.5 + true", "cannot apply `+` to Fraction and Bool"),
+        ("20% * 2 + true", "cannot apply `+` to Decimal and Bool"),
+        ("20% + 0.5 + true", "cannot apply `+` to Decimal and Bool"),
         ("20% + 1.5e0 + true", "cannot apply `+` to Num and Bool"),
     ] {
         let err = calc_err(None, expr);
@@ -269,8 +264,8 @@ fn percents() {
     assert_eq!(ask(file, "S.Margin"), "[125/3%, 40%]");
     assert_eq!(ask(file, "S.Margin.avg()"), "245/6%");
     // A column of percentages is a Percent column; one with a plain number
-    // among them is a Fraction column.
-    assert!(calc_err(Some(file), "S[Rate; 0] + true").contains("Fraction and Bool"));
+    // among them is a Decimal column.
+    assert!(calc_err(Some(file), "S[Rate; 0] + true").contains("Decimal and Bool"));
     assert_eq!(ask(file, "S.Rate"), "[20%, 0.5]");
     // In a Fraction column a percentage is the number it stands for.
     assert_eq!(ask(file, "S.Share"), "[1/5, 1/3]");
@@ -298,11 +293,9 @@ fn percents() {
         errors[0].contains("`20%` is not an `Int` literal"),
         "{errors:?}"
     );
-    let errors = lint_errors(&format!("{rates}20% | 1 | = Rate + 5%\n"));
-    assert!(
-        errors[0].contains("declared `Decimal` but this is `Percent`"),
-        "{errors:?}"
-    );
+    // In a Decimal column a percentage is the number it stands for.
+    let file = format!("{rates}20% | 1 | = Rate + 5%\n");
+    assert!(lint_errors(&file).is_empty());
 }
 
 #[test]
@@ -360,17 +353,16 @@ fn mixed_fractions() {
     assert_eq!(show(typed, "T.F"), "[2 3/4, 1/2, 1/5, 2 1/2]");
     assert_eq!(show(typed, "T.D"), "[5.5, 1, 0.4, 5]");
 
-    // The part is less than one, and a Decimal column takes no fraction.
+    // The part is less than one, and a Decimal column shows a fraction as
+    // a decimal.
     let errors = lint_errors("sheet T\n\nA : Fraction\n\nA\n2 7/4\n");
     assert!(
         errors[0].contains("`2 7/4` is not a `Fraction` literal"),
         "{errors:?}"
     );
-    let errors = lint_errors("sheet T\n\nA : Decimal\n\nA\n2 3/4\n");
-    assert!(
-        errors[0].contains("`2 3/4` is not a `Decimal` literal"),
-        "{errors:?}"
-    );
+    let decimal = "sheet T\n\nA : Decimal\n\nA\n2 3/4\n";
+    assert!(lint_errors(decimal).is_empty());
+    assert_eq!(show(decimal, "T.A"), "[2.75]");
 }
 
 #[test]
@@ -388,19 +380,22 @@ fn display_of_rationals() {
         assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
         out.output.trim_end().to_string()
     };
-    // A Decimal, a fraction that ends, is shown as that decimal in full.
+    // A Decimal that ends is shown as that decimal in full.
     assert_eq!(show("175/4"), "43.75");
     assert_eq!(show("1/100000"), "0.00001");
     assert_eq!(show("-1/64"), "-0.015625");
     assert_eq!(show("19.99 * 3"), "59.97");
     assert_eq!(show("100/3 * 3"), "100");
+    // One that does not end is cut and marked.
+    assert_eq!(show("1/3"), "0.33333333333333333333…");
+    assert_eq!(show("2/6 + 1/3"), "0.66666666666666666666…");
+    assert_eq!(show("-7/3"), "-2.33333333333333333333…");
+    assert_eq!(show("[1/3, 0.5]"), "[0.33333333333333333333…, 0.5]");
     // A Fraction is shown as x/y, in lowest terms, and one of more than one
     // as a whole number and a part.
-    assert_eq!(show("1/3"), "1/3");
-    assert_eq!(show("2/6 + 1/3"), "2/3");
-    assert_eq!(show("-7/3"), "-2 1/3");
+    assert_eq!(show("(1/3).Fraction"), "1/3");
+    assert_eq!(show("(-7/3).Fraction"), "-2 1/3");
     assert_eq!(show("(11/4).Fraction"), "2 3/4");
-    assert_eq!(show("[1/3, 0.5]"), "[1/3, 0.5]");
     // A Num and each part of a Complex are never rounded: shown with the
     // fewest digits that give the same Num back.
     assert_eq!(show("4.Num"), "4");
@@ -1408,4 +1403,20 @@ fn a_column_range_counts_from_the_formulas_own_column() {
     assert!(errors("= sum([*-1..*+1; *])").contains("runs past the last column"));
     assert!(errors("= sum([*-3..*-1; *])").contains("the columns of this row differ"));
     assert!(errors("= sum([*-1..*; *])").contains("circular reference"));
+}
+
+#[test]
+fn aggregates_take_several_vectors_and_blocks_together() {
+    assert_eq!(ask(SALES, "sum(Sales[Revenue; 0..1], Sales[Revenue; 2])"), "370");
+    assert_eq!(ask(SALES, "avg(Sales.Revenue, Sales.Cost)"), "290/3");
+    assert_eq!(ask(SALES, "max(Sales[Cost; 0..1], 75)"), "75");
+    assert_eq!(ask(SALES, "count(Sales.Revenue, Sales[Cost; 0])"), "4");
+    // A block of cells, every one of them.
+    assert_eq!(ask(SALES, "sum(Sales[2..3; 0..1])"), "350");
+    assert_eq!(ask(SALES, "min(Sales[Revenue; 2], Sales[2..3; 0..1])"), "60");
+
+    let errors = lint_errors(&format!("{SALES}\nT := sum(Revenue, Month)\n")).join("\n");
+    assert!(errors.contains("needs values of one type"), "{errors}");
+    let errors = lint_errors(&format!("{SALES}\nT := sum(Sales[1..2; 0..1])\n")).join("\n");
+    assert!(errors.contains("the columns of this block differ"), "{errors}");
 }

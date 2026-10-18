@@ -183,31 +183,31 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         AGG,
         "sum",
         "Sheet.Column.sum()",
-        "The total of a column or vector. Empty cells are skipped.",
+        "The total of a column or vector, a block of cells, or several taken together: sum(A, B). Empty cells are skipped.",
     ),
     doc(
         AGG,
         "avg",
         "Sheet.Column.avg()",
-        "The mean of a column or vector, as an exact fraction where it can be.",
+        "The mean of a column or vector, a block of cells, or several taken together, as an exact fraction where it can be.",
     ),
     doc(
         AGG,
         "min",
         "Sheet.Column.min()",
-        "The smallest value. Works on numbers, text, dates and times.",
+        "The smallest value, of one vector or several. Works on numbers, text, dates and times.",
     ),
     doc(
         AGG,
         "max",
         "Sheet.Column.max()",
-        "The largest value. Works on numbers, text, dates and times.",
+        "The largest value, of one vector or several. Works on numbers, text, dates and times.",
     ),
     doc(
         AGG,
         "count",
         "Sheet.Column.count()",
-        "How many cells are not empty; for a sheet, how many rows.",
+        "How many cells are not empty, of one vector or several; for a sheet, how many rows.",
     ),
     doc(
         SHEET,
@@ -268,9 +268,9 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         CONVERT,
         "Decimal",
         "x.Decimal",
-        "An exact number that ends as a decimal: a Num as the decimal it is shown as, and a \
-         Fraction such as 1/8 as 0.125. One that does not end, such as 1/3, is an error. Also \
-         written Decimal(x).",
+        "The same exact number shown as a decimal: a Num as the decimal it is shown as, and a \
+         Fraction such as 1/8 as 0.125. One that does not end, such as 1/3, is shown cut and \
+         marked, 0.333…, and held in full. Also written Decimal(x).",
     ),
     doc(
         CONVERT,

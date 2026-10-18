@@ -924,6 +924,8 @@ impl<'a> Checker<'a> {
         let fitted = match (parsed, want) {
             (Some(l @ Lit::Int(_)), S::Int | S::Decimal | S::Fraction) => Some(l),
             (Some(l @ Lit::Decimal(_)), S::Decimal) => Some(l),
+            // And any in a `Decimal` column a decimal: `1/3` is `0.333…`.
+            (Some(Lit::Fraction(r)), S::Decimal) => Some(Lit::Decimal(r)),
             // Any exact number in a `Fraction` column is a fraction: `2.75`
             // is `2 3/4`.
             (Some(Lit::Decimal(r)), S::Fraction) => Some(Lit::Fraction(r)),
@@ -1471,12 +1473,13 @@ impl<'a> Checker<'a> {
                 let whole = matches!(r.kind, ExprKind::Lit(Lit::Int(_)));
                 match (op, a.wider(b)) {
                     (BinOp::Pow, w @ (S::Int | S::Decimal)) if whole => w,
-                    // A quotient or a power of decimals need not end.
-                    (BinOp::Div | BinOp::Pow, S::Int | S::Decimal) => S::Fraction,
+                    // A quotient or a power of decimals is a decimal, though
+                    // it need not end.
+                    (BinOp::Div | BinOp::Pow, S::Int | S::Decimal) => S::Decimal,
                     // Percentages add up to a percentage; anything else
                     // done with one gives the plain number.
                     (BinOp::Add | BinOp::Sub, S::Percent) => S::Percent,
-                    (_, S::Percent) => S::Fraction,
+                    (_, S::Percent) => S::Decimal,
                     (_, w) => w,
                 }
             }
@@ -1545,9 +1548,13 @@ impl<'a> Checker<'a> {
         };
         match name {
             "sum" | "avg" | "min" | "max" | "count" => {
-                if !arity(self, 1, &format!("Sales.Revenue.{name}()")) {
+                // Any number of vectors, or single values among them, taken
+                // together: `sum([A; 0..2], [A; 5])`.
+                if args.is_empty() {
+                    arity(self, 1, &format!("Sales.Revenue.{name}()"));
                     return fail;
                 }
+                let many = args.len() > 1;
                 let func = match name {
                     "sum" => Func::Sum,
                     "avg" => Func::Avg,
@@ -1555,12 +1562,20 @@ impl<'a> Checker<'a> {
                     "max" => Func::Max,
                     _ => Func::Count,
                 };
-                let (arg, aty) = self.lower(&args[0], sc);
+                let mut nodes = Vec::new();
+                let mut joined: Option<S> = None;
+                let mut any = false;
+                for a in args {
+                let (arg, aty) = self.lower(a, sc);
                 let (arg, s) = match aty {
-                    Ty::Any => return (Node::new(Ir::Call(func, vec![arg]), span), Ty::Any),
+                    Ty::Any => {
+                        any = true;
+                        (arg, S::Any)
+                    }
+                    Ty::Scalar(s) if many => (arg, s),
                     Ty::Vector(s, _) => (arg, s),
                     Ty::Range => (arg, S::Int),
-                    Ty::Sheet(_) if func == Func::Count => {
+                    Ty::Sheet(_) if func == Func::Count && !many => {
                         return (
                             Node::new(Ir::Call(func, vec![arg]), span),
                             Ty::Scalar(S::Int),
@@ -1582,13 +1597,37 @@ impl<'a> Checker<'a> {
                             None => (arg, S::Any),
                             Some(None) => {
                                 self.err_help(
-                                    args[0].span,
+                                    a.span,
                                     format!("`{name}` needs values of one type, but the columns of this row differ"),
                                     "select columns of the same type, for example `[1..3; *]`",
                                 );
                                 return fail;
                             }
                         }
+                    }
+                    // A block of cells, such as `[0..1; 2..5]`: every cell
+                    // of it, when its columns are of one type.
+                    Ty::Sheet(tt) if tt.cols.len() > 1 => {
+                        let mut s: Option<S> = None;
+                        for &c in tt.cols.iter() {
+                            self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
+                            let ty = self.col_type(tt.sheet, c);
+                            s = match s {
+                                None => Some(ty),
+                                Some(so_far) => match so_far.join(ty) {
+                                    Some(j) => Some(j),
+                                    None => {
+                                        self.err_help(
+                                            a.span,
+                                            format!("`{name}` needs values of one type, but the columns of this block differ"),
+                                            "select columns of the same type, for example `[1..3; 0..5]`",
+                                        );
+                                        return fail;
+                                    }
+                                },
+                            };
+                        }
+                        (arg, s.unwrap_or(S::Any))
                     }
                     Ty::Sheet(tt) if tt.cols.len() == 1 => {
                         let c = tt.cols[0];
@@ -1608,33 +1647,53 @@ impl<'a> Checker<'a> {
                     }
                     other => {
                         self.err_help(
-                            args[0].span,
+                            a.span,
                             format!("`{name}` needs a vector, but this is {}", other.describe()),
                             "select one column, for example `Sales.Revenue`",
                         );
                         return fail;
                     }
                 };
+                joined = match joined {
+                    None => Some(s),
+                    Some(so_far) => match so_far.join(s) {
+                        Some(j) => Some(j),
+                        None => {
+                            self.err_help(
+                                a.span,
+                                format!("`{name}` needs values of one type, but this is {s} and the rest {so_far}"),
+                                "take values of the same type together",
+                            );
+                            return fail;
+                        }
+                    },
+                };
+                nodes.push(arg);
+                }
+                if any {
+                    return (Node::new(Ir::Call(func, nodes), span), Ty::Any);
+                }
+                let s = joined.unwrap_or(S::Any);
                 let out = match func {
                     Func::Count => S::Int,
                     Func::Sum | Func::Avg if !s.is_numeric() => {
                         self.err(
-                            args[0].span,
+                            span,
                             format!("cannot take the `{name}` of {s} values"),
                         );
                         return fail;
                     }
-                    Func::Avg if matches!(s, S::Int | S::Decimal) => S::Fraction,
+                    Func::Avg if matches!(s, S::Int | S::Decimal) => S::Decimal,
                     Func::Min | Func::Max if matches!(s, S::Bool | S::Complex) => {
                         self.err(
-                            args[0].span,
+                            span,
                             format!("{s} values have no order for `{name}`"),
                         );
                         return fail;
                     }
                     _ => s,
                 };
-                (Node::new(Ir::Call(func, vec![arg]), span), Ty::Scalar(out))
+                (Node::new(Ir::Call(func, nodes), span), Ty::Scalar(out))
             }
             "Complex" if args.len() == 2 => {
                 let mut nodes = Vec::new();

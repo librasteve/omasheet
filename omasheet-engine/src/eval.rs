@@ -66,6 +66,9 @@ pub struct Engine<'p> {
     zones: RefCell<HashMap<String, Option<Rc<Zone>>>>,
     /// What `now()` gives.
     now: i64,
+    /// Which columns of no declared type are shown as fractions, by sheet
+    /// and column, once known: see [`Engine::shows_fractions`].
+    fractions: RefCell<HashMap<(usize, usize), bool>>,
 }
 
 /// The complaint about a file that names a time zone there is none of.
@@ -124,6 +127,7 @@ impl<'p> Engine<'p> {
             local,
             zones: RefCell::new(HashMap::new()),
             now,
+            fractions: RefCell::new(HashMap::new()),
         }
     }
 
@@ -223,9 +227,34 @@ impl<'p> Engine<'p> {
         }
     }
 
-    /// A cell for display: failures show as an error value.
+    /// A cell for display: failures show as an error value, and a decimal
+    /// in a column shown as fractions as a fraction.
     pub fn cell_shown(&self, t: usize, c: usize, r: usize) -> Value {
-        self.cell(t, c, r).unwrap_or(Value::Error)
+        match self.cell(t, c, r) {
+            Ok(v @ Value::Decimal(_)) if self.shows_fractions(t, c) => v.fraction(),
+            Ok(v) => v,
+            Err(_) => Value::Error,
+        }
+    }
+
+    /// Whether a column of no declared type is shown as fractions: when a
+    /// decimal in it does not end, `1/3` rather than `0.333…`.
+    pub fn shows_fractions(&self, t: usize, c: usize) -> bool {
+        let Some(col) = self.prog.sheets.get(t).and_then(|s| s.cols.get(c)) else {
+            return false;
+        };
+        if col.declared {
+            return false;
+        }
+        if let Some(&known) = self.fractions.borrow().get(&(t, c)) {
+            return known;
+        }
+        let rows = self.prog.sheets[t].nrows;
+        let found = (0..rows).any(|r| {
+            matches!(self.cell(t, c, r), Ok(Value::Decimal(ref d)) if !omasheet_omx::convert::is_decimal(d))
+        });
+        self.fractions.borrow_mut().insert((t, c), found);
+        found
     }
 
     /// A formula's result must be one value of the column's declared type.
@@ -266,11 +295,9 @@ impl<'p> Engine<'p> {
         } else if col.ty == S::Fraction && matches!(v, Value::Decimal(_) | Value::Percent(_)) {
             // And in a `Fraction` column a fraction: `2.75` is `2 3/4`.
             Ok(v.plain().fraction())
-        } else if let (S::Decimal, Value::Fraction(r)) = (col.ty, &v)
-            && omasheet_omx::convert::is_decimal(r)
-        {
-            // A `Decimal` column holds only what ends as a decimal.
-            Ok(Value::Decimal(r.clone()))
+        } else if let (S::Decimal, Value::Fraction(r) | Value::Percent(r)) = (col.ty, &v) {
+            // And in a `Decimal` column a decimal, though it need not end.
+            Ok(Value::exact(r.clone()))
         } else {
             fail(
                 span,
@@ -721,33 +748,47 @@ impl<'p> Engine<'p> {
                 }
             }
             Func::Sum | Func::Avg | Func::Min | Func::Max | Func::Count => {
-                let items: Rc<Vec<Value>> = match self.eval(&args[0], fr)? {
-                    Value::Vector(items) => items,
-                    Value::Sheet(v) if func == Func::Count => {
-                        return Ok(Value::Int(BigInt::from(v.rows.len())));
+                // Every argument's values, taken together.
+                let mut items: Vec<Value> = Vec::new();
+                for arg in args {
+                    match self.eval(arg, fr)? {
+                        Value::Vector(v) => items.extend(v.iter().cloned()),
+                        Value::Sheet(v) if func == Func::Count && args.len() == 1 => {
+                            return Ok(Value::Int(BigInt::from(v.rows.len())));
+                        }
+                        // A block: its cells, row by row.
+                        Value::Sheet(v) => {
+                            for &r in v.rows.iter() {
+                                for &c in v.cols.iter() {
+                                    items.push(self.cell(v.sheet, c, r)?);
+                                }
+                            }
+                        }
+                        Value::Range {
+                            lo,
+                            hi,
+                            after,
+                            exclusive,
+                        } => {
+                            let lo = if after { lo + 1 } else { lo };
+                            let hi = if exclusive { hi - 1 } else { hi };
+                            items.extend((lo..=hi).map(|n| Value::Int(BigInt::from(n))));
+                        }
+                        Value::Row(row) => {
+                            for &c in row.cols.iter() {
+                                items.push(self.cell(row.sheet, c, row.row)?);
+                            }
+                        }
+                        Value::Empty => {}
+                        other if args.len() > 1 && !matches!(other, Value::Sheet(_)) => items.push(other),
+                        other => {
+                            return fail(
+                                arg.span,
+                                format!("expected a vector to aggregate, found {}", other.kind()),
+                            );
+                        }
                     }
-                    Value::Range {
-                        lo,
-                        hi,
-                        after,
-                        exclusive,
-                    } => {
-                        let lo = if after { lo + 1 } else { lo };
-                        let hi = if exclusive { hi - 1 } else { hi };
-                        Rc::new((lo..=hi).map(|n| Value::Int(BigInt::from(n))).collect())
-                    }
-                    Value::Row(row) => {
-                        let cells = row.cols.iter().map(|&c| self.cell(row.sheet, c, row.row));
-                        Rc::new(cells.collect::<R<Vec<_>>>()?)
-                    }
-                    Value::Empty => Rc::new(Vec::new()),
-                    other => {
-                        return fail(
-                            args[0].span,
-                            format!("expected a vector to aggregate, found {}", other.kind()),
-                        );
-                    }
-                };
+                }
                 let present: Vec<&Value> = items
                     .iter()
                     .filter(|v| !matches!(v, Value::Empty))

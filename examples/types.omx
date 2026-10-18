@@ -1,15 +1,17 @@
 # The numbers, Bool and Text: what each type holds and how it is shown.
 #
 # Int, Decimal, Fraction and Percent are exact, a Num is floating point, and
-# a Complex is a pair of Nums. An Int is a Decimal and a Decimal is a
-# Fraction; a Percent holds what a Fraction does and shows it as so many in
-# a hundred.
+# a Complex is a pair of Nums. Decimal, Fraction and Percent hold the same
+# numbers and show them in different ways: as a decimal, as a fraction, and
+# as so many in a hundred.
 #
 # A number is shown in at most 23 characters: plain from 1e-15 to 1e15, and
 # in e notation otherwise, with digits that do not fit cut and marked with
-# …. A Fraction is a fraction where it fits. A number worked out from Ints
-# and Decimals is a Decimal if it ends, and a Fraction if not. A Percent is
-# rounded to two digits, and a Num is never rounded; all are held in full.
+# …. A Decimal that does not end is cut and marked too, and a Fraction is a
+# fraction where it fits. A number worked out from Ints and Decimals is a
+# Decimal; a column of no declared type with one that does not end is a
+# Fraction column. A Percent is rounded to two digits, and a Num is never
+# rounded; all are held in full.
 # `omasheet --exact examples/types.omx` shows them in full.
 
 const Half = 50%
@@ -46,13 +48,14 @@ sheet Arithmetic
 | minus | *      | *       | *     | *     | *     | *      | *    | *      | *    | *    | *      | *      |
 | huge  | *      | *       | *     | *     | *     | *      | *    | *      | *    | *    | *      | *      |
 
-# Exact stays exact: an Int does not overflow, and a division is a Fraction.
+# Exact stays exact: an Int does not overflow, and a division is held in
+# full.
 Square  := Numbers[Count; *] ** 2
 Inverse := 1 / Numbers[Count; *]
 Whole   := Inverse * Numbers[Count; *]
 
-# Sums and products of Decimals are Decimal; a division is a Fraction, since
-# it need not end.
+# Sums, products and divisions of Decimals are Decimal, though a division
+# need not end.
 Taxed   := Numbers[Price; *] * 1.2
 Split   := Numbers[Price; *] / 3
 
@@ -103,9 +106,8 @@ sheet Converted
 AsInt     := Value.Int
 Rounded   := round(Value)
 
-# `.Decimal` takes a Fraction that ends, and `(1/3).Decimal` is an error,
-# as 1/3 does not end. A Num always has a Decimal: the one it is
-# shown as.
+# `.Decimal` takes any Fraction: `(1/3).Decimal` is shown cut and marked.
+# A Num always has a Decimal: the one it is shown as.
 AsDecimal := Value.Num.Decimal
 AsPercent := Value.Percent
 AsNum     := Value.Num

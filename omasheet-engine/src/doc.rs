@@ -2099,13 +2099,16 @@ impl Document {
             let decl = ast.sheets.iter().find(|d| d.name == sheet.name);
             let mut columns = Vec::new();
             let mut column_errors = Vec::new();
-            for col in &sheet.cols {
+            for (c, col) in sheet.cols.iter().enumerate() {
                 let computed = decl
                     .filter(|_| matches!(col.kind, ColKind::Computed(_)))
                     .and_then(|d| d.computed.iter().find(|c| c.name == col.name));
                 columns.push(ColumnSnap {
                     name: col.name.clone(),
-                    ty: if col.ty == S::Any {
+                    // A decimal in it that does not end makes it a fraction column.
+                    ty: if engine.shows_fractions(t, c) {
+                        S::Fraction.to_string()
+                    } else if col.ty == S::Any {
                         String::new()
                     } else {
                         col.ty.to_string()
@@ -2363,7 +2366,10 @@ mod tests {
                 "Month", "Revenue", "Cost", "Profit", "Tax", "Note", "Margin"
             ]
         );
-        assert_eq!(col(&doc, 0, 6), ["0.4", "5/12"]);
+        // A decimal that does not end makes a column of no declared type a
+        // column of fractions.
+        assert_eq!(col(&doc, 0, 6), ["2/5", "5/12"]);
+        assert_eq!(doc.snapshot().sheets[0].columns[6].ty, "Fraction");
         // An exact number is shown in full, so there is no more of it to
         // show.
         let exact = |doc: &Document| doc.snapshot().sheets[0].rows[1][6].exact.clone();
@@ -2727,7 +2733,10 @@ mod tests {
         assert_eq!((a.count, a.numbers), (3, numbers("3 1/3", "1 1/9")));
         // Text counts but does not add; an empty cell does neither.
         let top = sum((0, 0), (1, 2));
-        assert_eq!((top.count, top.numbers), (5, numbers("3.5", "1 1/6")));
+        assert_eq!(
+            (top.count, top.numbers),
+            (5, numbers("3.5", "1.16666666666666666666…"))
+        );
         // One Num makes the total a Num.
         let b = sum((0, 2), (2, 2));
         assert_eq!((b.count, b.numbers), (2, numbers("100.5", "50.25")));

@@ -85,7 +85,7 @@ fn examples_match_their_expected_output() {
 fn eval_pure_arithmetic() {
     let out = omasheet(&["eval", "1/3 + 1/3"]);
     assert!(out.status.success());
-    assert_eq!(stdout(&out), "2/3\n");
+    assert_eq!(stdout(&out), "0.66666666666666666666…\n");
     let out = omasheet(&["eval", "0.1 + 0.2"]);
     assert_eq!(stdout(&out), "0.3\n");
     // A Num is never rounded to show it; a large Int is shown in e
@@ -123,7 +123,7 @@ fn eval_from_standard_input() {
         .write_all(b"Sales.Revenue.avg()\n")
         .unwrap();
     let out = child.wait_with_output().unwrap();
-    assert_eq!(stdout(&out), "11733 1/3\n");
+    assert_eq!(stdout(&out), "11733.3333333333333333…\n");
 }
 
 #[test]
@@ -161,7 +161,7 @@ fn a_command_needs_no_display() {
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
-    assert_eq!(stdout(&out), "1/2\n");
+    assert_eq!(stdout(&out), "0.5\n");
 }
 
 #[test]
