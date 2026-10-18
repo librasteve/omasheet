@@ -101,6 +101,10 @@ ApplicationWindow {
     // being typed: -1 when no such pick is under way.
     property int pickRow: -1
     property int pickCol: -1
+    // The other corner of a range picked with Shift: the same cell when
+    // only one is picked.
+    property int pickFromRow: -1
+    property int pickFromCol: -1
     // The reference last placed by it, to take back out on the next move.
     property int pickAt: -1
     property int pickLen: 0
@@ -462,6 +466,26 @@ ApplicationWindow {
         }
     }
 
+    // The reference to the cells from `(r0, c0)` to `(r1, c1)`, written as
+    // `refFor` writes one cell, with `..` between the ends that differ.
+    function refForRange(r0, c0, r1, c1, absolute) {
+        if (r0 === r1 && c0 === c1)
+            return refFor(r0, c0, absolute);
+        var top = Math.min(r0, r1), bottom = Math.max(r0, r1);
+        var left = Math.min(c0, c1), right = Math.max(c0, c1);
+        var span = function(a, b, one) { return a === b ? one(a) : one(a) + ".." + one(b); };
+        var step = function(n) { return n === 0 ? "*" : "*" + (n > 0 ? "+" : "-") + Math.abs(n); };
+        var rows = absolute ? span(top, bottom, function(r) { return "" + r; })
+                            : span(top - curRow, bottom - curRow, step);
+        var cols = left === right ? sheet.columns[left].name
+            : absolute ? span(left, right, function(c) { return "" + c; })
+            : span(left - curCol, right - curCol, step);
+        // A formula in one cell counts its columns from itself too.
+        if (left === right && !absolute && !(sheet.columns[curCol] && sheet.columns[curCol].computed))
+            cols = step(left - curCol);
+        return "[" + cols + "; " + rows + "]";
+    }
+
     // Write a reference to a cell at the cursor of the formula being typed.
     function pickCell(row, col, absolute) {
         if (!canPick() || !sheet.columns[col])
@@ -481,7 +505,7 @@ ApplicationWindow {
     // writing (or rewriting, if one is already under way) the reference it
     // lands on, exactly as a click on that cell would. Returns whether
     // there was a formula to pick a cell for.
-    function pickArrow(dRow, dCol, absolute) {
+    function pickArrow(dRow, dCol, absolute, extend, toEnd) {
         if (!canPick() || sheet.rows.length === 0 || sheet.columns.length === 0)
             return false;
         if (pickRow < 0) {
@@ -493,9 +517,23 @@ ApplicationWindow {
         } else {
             editor.remove(pickAt, pickAt + pickLen);
         }
-        pickRow = Math.max(0, Math.min(sheet.rows.length - 1, pickRow + dRow));
-        pickCol = Math.max(0, Math.min(sheet.columns.length - 1, pickCol + dCol));
-        var ref = refFor(pickRow, pickCol, absolute);
+        var clampRow = function(r) { return Math.max(0, Math.min(sheet.rows.length - 1, r)); };
+        var clampCol = function(c) { return Math.max(0, Math.min(sheet.columns.length - 1, c)); };
+        // Shift grows a range from where it started: the next cell, if no
+        // pick was under way. Without it the pick is one cell again.
+        if (extend && pickFromRow < 0) {
+            pickFromRow = clampRow(pickRow + dRow);
+            pickFromCol = clampCol(pickCol + dCol);
+        }
+        // Ctrl goes all the way to the first or last cell.
+        var far = toEnd ? Math.max(sheet.rows.length, sheet.columns.length) : 1;
+        pickRow = clampRow(pickRow + dRow * far);
+        pickCol = clampCol(pickCol + dCol * far);
+        if (!extend) {
+            pickFromRow = pickRow;
+            pickFromCol = pickCol;
+        }
+        var ref = refForRange(pickFromRow, pickFromCol, pickRow, pickCol, absolute);
         editor.insert(pickAt, ref);
         pickLen = ref.length;
         editor.cursorPosition = pickAt + ref.length;
@@ -519,6 +557,8 @@ ApplicationWindow {
     function stopPicking() {
         pickRow = -1;
         pickCol = -1;
+        pickFromRow = -1;
+        pickFromCol = -1;
         pickAt = -1;
         pickLen = 0;
     }
@@ -689,9 +729,13 @@ ApplicationWindow {
         var top = selTop;
         curRow = top;
         anchorRow = Math.min(sheet.rows.length - 1, top + text.split("\n").length - 1);
-        // Shown down to the last of them.
-        var last = anchorRow;
-        Qt.callLater(function() { rowsView.positionViewAtIndex(last, ListView.Contain); });
+        showRow(anchorRow);
+    }
+
+    // Scroll to `row` once the list has been put back where it was after an
+    // edit that added rows.
+    function showRow(row) {
+        Qt.callLater(function() { rowsView.positionViewAtIndex(row, ListView.Contain); });
     }
 
     function isGrabbed(row, col) {
@@ -963,6 +1007,8 @@ ApplicationWindow {
             selectCell(at, col, false);
             selectCell(at + count - 1, col, true);
         }
+        // Shown down to the last of them.
+        showRow(at + count - 1);
     }
 
     function deleteRows() {
@@ -1589,6 +1635,10 @@ ApplicationWindow {
                                     readonly property bool marked: win.isMarked(row, index)
                                     // Where the arrows are pointing a formula reference.
                                     readonly property bool picked: row === win.pickRow && index === win.pickCol
+                                    // In the range it reaches from, with Shift.
+                                    readonly property bool inPick: win.pickRow >= 0
+                                        && row >= Math.min(win.pickRow, win.pickFromRow) && row <= Math.max(win.pickRow, win.pickFromRow)
+                                        && index >= Math.min(win.pickCol, win.pickFromCol) && index <= Math.max(win.pickCol, win.pickFromCol)
                                     width: win.colWidths[index] || 0
                                     height: win.rowHeight
                                     opacity: win.grabbedHere && win.isGrabbed(row, index) ? 0.4 : 1
@@ -1631,6 +1681,11 @@ ApplicationWindow {
                                         color: "transparent"
                                         border.width: 2
                                         border.color: win.accentColor
+                                    }
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        visible: cellItem.inPick
+                                        color: Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.16)
                                     }
                                     Rectangle {
                                         anchors.fill: parent
@@ -1679,7 +1734,7 @@ ApplicationWindow {
                                         }
                                         onClicked: function(mouse) {
                                             if (picking && mouse.button === Qt.LeftButton)
-                                                win.pickCell(cellItem.row, cellItem.index, mouse.modifiers & Qt.ShiftModifier);
+                                                win.pickCell(cellItem.row, cellItem.index, mouse.modifiers & Qt.AltModifier);
                                         }
                                         onPositionChanged: function(mouse) {
                                             if (picking || !(pressedButtons & Qt.LeftButton))
@@ -1749,18 +1804,20 @@ ApplicationWindow {
                                             }
                                             onActiveFocusChanged: if (!activeFocus) finish(0, 0)
                                             // In a formula, the arrows pick a cell's reference
-                                            // where one may go, and with Alt anywhere; elsewhere
-                                            // they move in the text.
+                                            // where one may go, and with Alt anywhere, by row
+                                            // number: Shift picks a range, Ctrl goes to the end.
+                                            // Elsewhere they move in the text.
                                             Keys.priority: Keys.BeforeItem
                                             Keys.onPressed: function(event) {
-                                                var absolute = (event.modifiers & Qt.ShiftModifier) !== 0;
+                                                var shift = (event.modifiers & Qt.ShiftModifier) !== 0;
                                                 var d = event.key === Qt.Key_Up ? [-1, 0]
                                                     : event.key === Qt.Key_Down ? [1, 0]
                                                     : event.key === Qt.Key_Left ? [0, -1]
                                                     : event.key === Qt.Key_Right ? [0, 1] : null;
                                                 if (d) {
                                                     var picks = (event.modifiers & Qt.AltModifier) ? win.canPick() : win.arrowPicks();
-                                                    event.accepted = picks && win.pickArrow(d[0], d[1], absolute);
+                                                    event.accepted = picks && win.pickArrow(d[0], d[1], (event.modifiers & Qt.AltModifier) !== 0, shift,
+                                                        (event.modifiers & Qt.ControlModifier) !== 0);
                                                     return;
                                                 }
                                                 // A modifier on its own leaves a pick going.
