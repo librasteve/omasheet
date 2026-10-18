@@ -304,6 +304,7 @@ ApplicationWindow {
     function deselect() {
         grabbed = null;
         marked = null;
+        movedOnce = false;
         file.forgetCut();
         notice = "";
         byRow = false;
@@ -613,7 +614,12 @@ ApplicationWindow {
             && row >= m.top && row <= m.bottom && col >= m.left && col <= m.right;
     }
 
+    // Cells cut and pasted, still on the clipboard to paste again as copies.
+    property bool movedOnce: false
+    readonly property bool canPaste: marked !== null || movedOnce
+
     function mark(text, cut) {
+        movedOnce = false;
         marked = { tab: tab, top: selTop, left: selLeft, bottom: selBottom, right: selRight, text: text, cut: !!cut };
     }
 
@@ -660,9 +666,12 @@ ApplicationWindow {
             errorDialog.say(problem);
             return;
         }
-        // Cells that were cut have gone to where they were pasted.
-        if (cut)
+        // Cells that were cut have gone to where they were pasted; pasted
+        // again, they are copies.
+        if (cut) {
             marked = null;
+            movedOnce = true;
+        }
     }
 
     function isGrabbed(row, col) {
@@ -2098,14 +2107,14 @@ ApplicationWindow {
         MenuEntry {
             text: "Paste"
             // Only while something copied or cut is waiting to go down.
-            enabled: (win.sheet.rows.length > 0 && win.marked !== null) || win.grabbedHere
+            enabled: (win.sheet.rows.length > 0 && win.canPaste) || win.grabbedHere
             onTriggered: win.pasteSelection()
         }
         MenuEntry {
             // One cell copied is one value.
             text: win.marked !== null && win.marked.top === win.marked.bottom
                 && win.marked.left === win.marked.right ? "Paste value" : "Paste values"
-            enabled: cellMenu.hasRows && win.marked !== null && !win.formulaCell
+            enabled: cellMenu.hasRows && win.canPaste && !win.formulaCell
             onTriggered: win.pasteValues()
         }
         MenuEntry { text: "Paste transposed"; enabled: cellMenu.hasRows && win.canTranspose; onTriggered: win.pasteTransposed() }
