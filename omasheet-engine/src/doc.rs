@@ -1628,23 +1628,6 @@ impl Document {
         self.undo.truncate(mark + 1);
     }
 
-    /// A name for a copy of column `name`: `Name_copy001`, or the first
-    /// after it that is free.
-    fn copy_name(&self, sheet: usize, name: &str) -> String {
-        let snap = &self.snapshot;
-        let taken = |n: &str| {
-            snap.sheets
-                .get(sheet)
-                .is_some_and(|t| t.columns.iter().any(|c| c.name == n))
-                || snap.consts.iter().any(|c| c.name == n)
-                || snap.sheets.iter().any(|t| t.name == n)
-        };
-        (1..)
-            .map(|k| format!("{name}_copy{k:03}"))
-            .find(|n| !taken(n))
-            .unwrap_or_default()
-    }
-
     /// Add an empty data column as column `at`, in one undoable step.
     pub fn insert_column(&mut self, sheet: usize, at: usize, name: &str) -> Result<(), String> {
         let mark = self.undo.len();
@@ -1673,73 +1656,6 @@ impl Document {
         self.move_columns(sheet, last, 1, at.min(last))?;
         self.squash(mark);
         Ok(())
-    }
-
-    /// Put copies of the columns `cols` of a sheet in at column `at`, in one
-    /// undoable step. A data column is copied with its cells as they are
-    /// written, and a formula column with its formula, each under a name
-    /// like `Name_copy001`.
-    pub fn insert_copies(&mut self, sheet: usize, cols: &[usize], at: usize) -> Result<(), String> {
-        let Some(snap) = self.snapshot.sheets.get(sheet) else {
-            return Err("there is no such sheet".into());
-        };
-        if cols.iter().any(|c| *c >= snap.columns.len()) {
-            return Err("there is no such column".into());
-        }
-        let mark = self.undo.len();
-        let mut cols = cols.to_vec();
-        let start = at.min(snap.columns.len());
-        for k in 0..cols.len() {
-            let to = start + k;
-            let column = self.snapshot.sheets[sheet].columns[cols[k]].clone();
-            let name = self.copy_name(sheet, &column.name);
-            match &column.formula {
-                None => self.insert_column(sheet, to, &name)?,
-                Some(expr) => self.insert_computed(sheet, to, &name, expr)?,
-            }
-            for col in &mut cols {
-                if *col >= to {
-                    *col += 1;
-                }
-            }
-            if column.formula.is_none() {
-                let from = cols[k];
-                self.edit_grid(sheet, |grid| {
-                    for (_, row) in &mut grid.rows {
-                        if let Some(cell) = row.get(from).cloned()
-                            && let Some(copy) = row.get_mut(to)
-                        {
-                            *copy = cell;
-                        }
-                    }
-                });
-            }
-        }
-        self.squash(mark);
-        Ok(())
-    }
-
-    /// Add rows at row `row` of a sheet and put `block` in them from column
-    /// `col`, in one undoable step.
-    pub fn insert_cells(
-        &mut self,
-        sheet: usize,
-        (row, col): (usize, usize),
-        block: &[Vec<String>],
-    ) -> bool {
-        let mark = self.undo.len();
-        if !self.insert_rows(sheet, row, block.len()) {
-            return false;
-        }
-        let mut cells = Vec::new();
-        for (i, line) in block.iter().enumerate() {
-            for (j, text) in line.iter().enumerate() {
-                cells.push((row + i, col + j, text.clone()));
-            }
-        }
-        self.set_cells(sheet, &cells);
-        self.squash(mark);
-        true
     }
 
     /// Move `count` rows starting at `first` so that the first of them
@@ -3250,37 +3166,6 @@ mod tests {
         assert_eq!(col(&doc, 0, 0), ["2", "6"]);
         assert_eq!(col(&doc, 0, 3), ["23", "3"]);
         assert_eq!(col(&doc, 0, 4), ["3", "7"]);
-        assert!(doc.undo());
-        assert_eq!(doc.text(), text);
-
-        // Copies: a data column with its cells as written, and a formula
-        // column with its formula, where they are put.
-        doc.insert_copies(0, &[2, 3], 0).unwrap();
-        assert_eq!(names(&doc), ["C_copy001", "S_copy001", "A", "B", "C", "S"]);
-        let now = doc.text();
-        assert!(
-            now.contains("S := A + [3; *]\nS_copy001 := A + [3; *]\n"),
-            "{now}"
-        );
-        assert_eq!(col(&doc, 0, 1), ["3", "7"]);
-        assert_eq!(col(&doc, 0, 5), ["3", "7"]);
-        // The copy counts from where it is, so it reads other cells.
-        assert_eq!(col(&doc, 0, 4), ["23", "3"]);
-        assert!(
-            doc.snapshot().sheets[0].rows[1][0]
-                .source
-                .contains("[*-2; *]")
-        );
-        doc.insert_copies(0, &[4], 5).unwrap();
-        assert_eq!(names(&doc)[4..6], ["C", "C_copy002"]);
-        assert!(doc.undo());
-        assert!(doc.undo());
-        assert_eq!(doc.text(), text);
-
-        // Copied cells, put in as new rows.
-        doc.insert_cells(0, (1, 0), &[vec!["8".into(), "9".into()]]);
-        assert_eq!(col(&doc, 0, 0), ["1", "8", "3"]);
-        assert_eq!(col(&doc, 0, 1), ["2", "9", "4"]);
         assert!(doc.undo());
         assert_eq!(doc.text(), text);
     }

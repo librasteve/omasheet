@@ -105,8 +105,8 @@ pub mod qobject {
         /// Leave the cells that were cut where they are: a paste copies them.
         #[qinvokable]
         fn forget_cut(self: Pin<&mut File>);
-        /// Copy a block of cells as `copy_cells` does, remembering where it
-        /// came from: `columns` says that it is whole columns.
+        /// Copy a block of cells as `copy_cells` does, remembering what was
+        /// copied.
         #[qinvokable]
         fn copy_block(
             self: Pin<&mut File>,
@@ -115,7 +115,6 @@ pub mod qobject {
             col0: i32,
             row1: i32,
             col1: i32,
-            columns: bool,
         ) -> QString;
         /// Paste as `paste_cells` does, but what the copied cells showed and
         /// not their formulas.
@@ -139,17 +138,6 @@ pub mod qobject {
             col0: i32,
             row1: i32,
             col1: i32,
-            text: &QString,
-        ) -> QString;
-        /// Make room for what was copied and put it there: copied columns
-        /// become new columns at `col0`, and anything else new rows at
-        /// `row0`. Returns an error message, or an empty string.
-        #[qinvokable]
-        fn insert_copied(
-            self: Pin<&mut File>,
-            sheet: i32,
-            row0: i32,
-            col0: i32,
             text: &QString,
         ) -> QString;
         /// Paste tab-separated text at a block; a single value fills the block.
@@ -661,10 +649,9 @@ impl qobject::File {
         col0: i32,
         row1: i32,
         col1: i32,
-        columns: bool,
     ) -> QString {
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
-        QString::from(&self.clip(|clip, doc| clip.copy(doc, index(sheet), from, to, columns)))
+        QString::from(&self.clip(|clip, doc| clip.copy(doc, index(sheet), from, to)))
     }
 
     fn cut_cells(
@@ -723,18 +710,6 @@ impl qobject::File {
         let text = text.to_string();
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
         self.pasted(|clip, doc| clip.paste_transposed(doc, index(sheet), from, to, &text))
-    }
-
-    fn insert_copied(
-        self: Pin<&mut Self>,
-        sheet: i32,
-        row0: i32,
-        col0: i32,
-        text: &QString,
-    ) -> QString {
-        let text = text.to_string();
-        let at = (index(row0), index(col0));
-        self.pasted(|clip, doc| clip.insert(doc, index(sheet), at, &text))
     }
 
     fn clear_cells(self: Pin<&mut Self>, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) {

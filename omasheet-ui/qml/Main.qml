@@ -749,7 +749,7 @@ ApplicationWindow {
             }
             text = lines.join("\n");
         } else {
-            text = file.copyBlock(tab, selTop, selLeft, selBottom, selRight, grabKind === "column");
+            text = file.copyBlock(tab, selTop, selLeft, selBottom, selRight);
         }
         mark(text);
         clipboard.put(text);
@@ -794,19 +794,6 @@ ApplicationWindow {
         var text = clipboard.take();
         if (text.length > 0 && !sheet.isConsts)
             pasteWith(text, function() { return file.pasteTransposed(tab, selTop, selLeft, selBottom, selRight, text); });
-    }
-
-    // Make room for what was copied: copied columns become new columns to
-    // the left of the selection, and anything else new rows above it.
-    function insertCopied() {
-        notice = "";
-        grabbed = null;
-        var text = clipboard.take();
-        if (text.length === 0 || sheet.isConsts)
-            return;
-        // After the selection: rows under it, columns to its right.
-        var row = selBottom + 1, col = selKind === "column" ? selRight + 1 : selLeft;
-        pasteWith(text, function() { notice = file.insertCopied(tab, row, col, text); }, row, col);
     }
 
     // A new sheet beside the one shown: asked for by name.
@@ -2117,8 +2104,26 @@ ApplicationWindow {
             onTriggered: win.pasteValues()
         }
         MenuEntry { text: "Paste transposed"; enabled: cellMenu.hasRows && win.isBlock; onTriggered: win.pasteTransposed() }
-        MenuEntry { text: "Insert cells"; enabled: cellMenu.editable && (cellMenu.rows || cellMenu.columns); onTriggered: win.insertCopied() }
         MenuEntry { text: "Clear"; enabled: cellMenu.hasRows && !win.formulaCell; onTriggered: win.clearSelection() }
+        // Delete, for what is selected as a whole.
+        MenuEntry {
+            text: cellMenu.rowCount > 1 ? "Delete " + cellMenu.rowCount + " rows" : "Delete row"
+            visible: cellMenu.rows
+            enabled: visible && cellMenu.hasRows
+            onTriggered: win.deleteRows()
+        }
+        MenuEntry {
+            text: cellMenu.columnCount > 1 ? "Delete " + cellMenu.columnCount + " columns" : "Delete column"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.sheet.columns.length > 1
+            onTriggered: win.deleteColumns()
+        }
+        MenuEntry {
+            text: "Delete sheet"
+            visible: cellMenu.whole
+            enabled: visible
+            onTriggered: win.deleteSheet()
+        }
         // The sheet, when the whole of it is selected.
         MenuRule { visible: cellMenu.whole }
         MenuEntry {
@@ -2138,12 +2143,6 @@ ApplicationWindow {
             visible: cellMenu.whole
             enabled: visible
             onTriggered: promptDialog.ask("renameSheet")
-        }
-        MenuEntry {
-            text: "Delete sheet"
-            visible: cellMenu.whole
-            enabled: visible
-            onTriggered: win.deleteSheet()
         }
         MenuEntry {
             text: "Open in new window"
@@ -2170,12 +2169,6 @@ ApplicationWindow {
             visible: cellMenu.rows
             enabled: visible && cellMenu.editable
             onTriggered: promptDialog.ask("rows")
-        }
-        MenuEntry {
-            text: cellMenu.rowCount > 1 ? "Delete " + cellMenu.rowCount + " rows" : "Delete row"
-            visible: cellMenu.rows
-            enabled: visible && cellMenu.hasRows
-            onTriggered: win.deleteRows()
         }
         // Columns, when whole columns are selected. A column added
         // from the footer goes at the end.
@@ -2214,12 +2207,6 @@ ApplicationWindow {
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.anyDeclared()
             onTriggered: win.setColumnTypes("")
-        }
-        MenuEntry {
-            text: cellMenu.columnCount > 1 ? "Delete " + cellMenu.columnCount + " columns" : "Delete column"
-            visible: cellMenu.columns
-            enabled: visible && cellMenu.editable && win.sheet.columns.length > 1
-            onTriggered: win.deleteColumns()
         }
     }
 
