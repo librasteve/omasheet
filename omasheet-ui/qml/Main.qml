@@ -769,6 +769,15 @@ ApplicationWindow {
             keeping(0, 0, function() { file.clearCells(tab, selTop, selLeft, selBottom, selRight); });
     }
 
+    // Where a paste goes: `[top, left, bottom, right]`. One whole row takes
+    // several rows as one cell takes a block: from there down, at their own
+    // size.
+    function pasteTarget(text) {
+        if (selKind === "row" && selTop === selBottom && text.indexOf("\n") >= 0)
+            return [selTop, selLeft, selTop, selLeft];
+        return [selTop, selLeft, selBottom, selRight];
+    }
+
     function pasteSelection() {
         notice = "";
         if (grabbedHere) {
@@ -780,8 +789,9 @@ ApplicationWindow {
         if (text.length === 0)
             return;
         pasteWith(text, function() {
+            var t = pasteTarget(text);
             if (!sheet.isConsts)
-                return file.pasteCells(tab, selTop, selLeft, selBottom, selRight, text);
+                return file.pasteCells(tab, t[0], t[1], t[2], t[3], text);
             if (curCol === 1)
                 file.setConst(curRow, text.split("\n")[0]);
         });
@@ -793,7 +803,10 @@ ApplicationWindow {
         grabbed = null;
         var text = clipboard.take();
         if (text.length > 0 && !sheet.isConsts)
-            pasteWith(text, function() { return file.pasteValues(tab, selTop, selLeft, selBottom, selRight, text); });
+            pasteWith(text, function() {
+                var t = pasteTarget(text);
+                return file.pasteValues(tab, t[0], t[1], t[2], t[3], text);
+            });
     }
 
     // Paste what was copied turned about: its rows as columns.
