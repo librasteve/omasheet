@@ -404,9 +404,89 @@ ApplicationWindow {
         stopPicking();
     }
 
+    // The cells the formula being typed refers to, highlighted until the
+    // reference is taken out of the text or the edit is done:
+    // `[{top, left, bottom, right}]`.
+    readonly property var refBoxes: (editing || formulaField.activeFocus) && !sheet.isConsts
+        ? refsIn(formulaField.text, curRow, curCol) : []
+
+    // The blocks of this sheet that `[cols; rows]` references in `text`
+    // name, as seen from the cell at `(row, col)`.
+    function refsIn(text, row, col) {
+        var boxes = [];
+        if (text.trim().charAt(0) !== "=")
+            return boxes;
+        var nRows = sheet.rows.length, nCols = sheet.columns.length;
+        // One end of a span: `*`, `*+n`, `*-n`, a position, `-n` from the
+        // end, or for columns a name.
+        var end = function(t, here, n, names) {
+            t = t.trim();
+            var m = /^\*\s*([+-])\s*(\d+)$/.exec(t);
+            if (t === "*")
+                return here;
+            if (m)
+                return here + (m[1] === "+" ? 1 : -1) * Number(m[2]);
+            if (/^\d+$/.test(t))
+                return Number(t);
+            if (/^-\d+$/.test(t))
+                return n + Number(t);
+            if (names)
+                for (var i = 0; i < names.length; i++)
+                    if (names[i].name === t)
+                        return i;
+            return null;
+        };
+        // A whole slot, or `a..b`: `[from, to]`, or null.
+        var span = function(t, here, n, names) {
+            t = t.trim();
+            if (t.length === 0)
+                return [0, n - 1];
+            if (t.indexOf("^") >= 0)
+                return null;
+            var ends = t.split("..");
+            if (ends.length > 2)
+                return null;
+            var a = end(ends[0], here, n, names);
+            var b = ends.length === 2 ? end(ends[1], here, n, names) : a;
+            if (a === null || b === null)
+                return null;
+            return [Math.max(0, Math.min(a, b)), Math.min(n - 1, Math.max(a, b))];
+        };
+        var re = /([A-Za-z_][A-Za-z0-9_]*)?\[([^\[\];]*);([^\[\]]*)\]/g;
+        var m;
+        while ((m = re.exec(text)) !== null) {
+            // Another sheet's cells are not on this one.
+            if (m[1] && m[1] !== sheet.name)
+                continue;
+            var c = span(m[2], col, nCols, sheet.columns);
+            var r = span(m[3], row, nRows, null);
+            if (c && r && c[0] <= c[1] && r[0] <= r[1])
+                boxes.push({ top: r[0], left: c[0], bottom: r[1], right: c[1] });
+        }
+        return boxes;
+    }
+
+    function inRefs(row, col) {
+        var boxes = refBoxes;
+        for (var i = 0; i < boxes.length; i++) {
+            var b = boxes[i];
+            if (row >= b.top && row <= b.bottom && col >= b.left && col <= b.right)
+                return true;
+        }
+        return false;
+    }
+
+    // The box at the top shows what is typed in a cell as it is typed, and
+    // the cell's source again once the edit is done.
+    function resetBox() {
+        if (!formulaField.activeFocus)
+            formulaField.text = formulaField.source;
+    }
+
     function stopEditing() {
         editing = false;
         stopPicking();
+        resetBox();
         grid.forceActiveFocus();
     }
 
@@ -486,19 +566,44 @@ ApplicationWindow {
         return "[" + cols + "; " + rows + "]";
     }
 
-    // Write a reference to a cell at the cursor of the formula being typed.
-    function pickCell(row, col, absolute) {
+    // A press on a cell while a formula is typed: its reference goes in at
+    // the cursor, and a drag from here makes it a range. With `more`, or
+    // straight after another reference, it is one more in a list, after a
+    // comma.
+    property bool pickAbsolute: false
+    function pickPress(row, col, absolute, more) {
         if (!canPick() || !sheet.columns[col])
             return;
-        var ref = refFor(row, col, absolute);
         var at = editor.selectionStart;
         editor.remove(at, editor.selectionEnd);
-        editor.insert(at, ref);
-        editor.cursorPosition = at + ref.length;
+        // Straight after another reference, it is one more in a list too.
+        var before = editor.text.slice(0, at);
+        if ((more && !/(^\s*=|[(,;])\s*$/.test(before)) || /\]\s*$/.test(before)) {
+            editor.insert(at, ", ");
+            at += 2;
+        }
+        pickAbsolute = absolute;
+        pickAt = at;
+        pickLen = 0;
+        pickFromRow = row;
+        pickFromCol = col;
+        pickDrag(row, col);
         editor.forceActiveFocus();
-        // A click picks outright: a pick under way from the keyboard, if
-        // any, does not carry on from here.
-        stopPicking();
+    }
+
+    // Drag a pick begun by `pickPress` to `(row, col)`.
+    function pickDrag(row, col) {
+        if (pickAt < 0 || !editor)
+            return;
+        row = Math.max(0, Math.min(sheet.rows.length - 1, row));
+        col = Math.max(0, Math.min(sheet.columns.length - 1, col));
+        editor.remove(pickAt, pickAt + pickLen);
+        var ref = refForRange(pickFromRow, pickFromCol, row, col, pickAbsolute);
+        editor.insert(pickAt, ref);
+        pickLen = ref.length;
+        editor.cursorPosition = pickAt + ref.length;
+        pickRow = row;
+        pickCol = col;
     }
 
     // Move the keyboard's formula-reference pick by `dRow`/`dCol` cells,
@@ -610,6 +715,7 @@ ApplicationWindow {
         });
         selectCell(row + dRow, col + dCol, false);
         grid.forceActiveFocus();
+        resetBox();
     }
 
     // Whole rows or columns cut with Ctrl+X, waiting to be put down with
@@ -1248,6 +1354,8 @@ ApplicationWindow {
                     readonly property string source: cell ? cell.s : ""
                     readonly property bool locked: win.sheet.isConsts && win.curCol !== 1
                     readOnly: locked || !cell
+                    // Shown too while a cell is edited, where its cursor is there.
+                    cursorVisible: activeFocus || win.editing
                     placeholderText: cell || win.selKind !== "cells" ? "" : "No cell selected"
                     background: Item {}
                     onSourceChanged: if (!activeFocus) text = source
@@ -1491,7 +1599,7 @@ ApplicationWindow {
                                     ToolTip.visible: containsMouse && !cellMenu.visible && hasFormula
                                     ToolTip.delay: 400
                                     ToolTip.text: hasFormula ? headCell.column.name + " := " + headCell.column.formula : ""
-                                    onClicked: function(mouse) {
+                                    onPressed: function(mouse) {
                                         if (mouse.button === Qt.RightButton) {
                                             win.openMenu(-1, headCell.index);
                                             return;
@@ -1505,6 +1613,19 @@ ApplicationWindow {
                                         win.anchorCol = (mouse.modifiers & Qt.ShiftModifier) ? win.anchorCol : headCell.index;
                                         win.curRow = 0;
                                         win.curCol = headCell.index;
+                                    }
+                                    preventStealing: true
+                                    // Drag along the headers for several columns.
+                                    onPositionChanged: function(mouse) {
+                                        if (!(pressedButtons & Qt.LeftButton))
+                                            return;
+                                        var x = mapToItem(rowsView.contentItem, mouse.x, mouse.y).x - win.gutterWidth;
+                                        var c = 0;
+                                        while (c < win.colWidths.length - 1 && x > win.colWidths[c]) {
+                                            x -= win.colWidths[c];
+                                            c++;
+                                        }
+                                        win.selectLine(false, c, true);
                                     }
                                     // Rename the column where its name is.
                                     onDoubleClicked: function(mouse) {
@@ -1598,7 +1719,7 @@ ApplicationWindow {
                                 MouseArea {
                                     anchors.fill: parent
                                     acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                    onClicked: function(mouse) {
+                                    onPressed: function(mouse) {
                                         if (mouse.button === Qt.RightButton) {
                                             win.openMenu(rowItem.index, -1);
                                             return;
@@ -1612,6 +1733,14 @@ ApplicationWindow {
                                         win.anchorRow = (mouse.modifiers & Qt.ShiftModifier) ? win.anchorRow : rowItem.index;
                                         win.curCol = 0;
                                         win.curRow = rowItem.index;
+                                    }
+                                    preventStealing: true
+                                    // Drag down the numbers for several rows.
+                                    onPositionChanged: function(mouse) {
+                                        if (!(pressedButtons & Qt.LeftButton))
+                                            return;
+                                        var p = mapToItem(rowsView.contentItem, mouse.x, mouse.y);
+                                        win.selectLine(true, Math.floor(p.y / win.rowHeight), true);
                                     }
                                 }
                             }
@@ -1635,10 +1764,8 @@ ApplicationWindow {
                                     readonly property bool marked: win.isMarked(row, index)
                                     // Where the arrows are pointing a formula reference.
                                     readonly property bool picked: row === win.pickRow && index === win.pickCol
-                                    // In the range it reaches from, with Shift.
-                                    readonly property bool inPick: win.pickRow >= 0
-                                        && row >= Math.min(win.pickRow, win.pickFromRow) && row <= Math.max(win.pickRow, win.pickFromRow)
-                                        && index >= Math.min(win.pickCol, win.pickFromCol) && index <= Math.max(win.pickCol, win.pickFromCol)
+                                    // Referred to by the formula being typed.
+                                    readonly property bool inPick: win.refBoxes.length > 0 && win.inRefs(row, index)
                                     width: win.colWidths[index] || 0
                                     height: win.rowHeight
                                     opacity: win.grabbedHere && win.isGrabbed(row, index) ? 0.4 : 1
@@ -1700,6 +1827,8 @@ ApplicationWindow {
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                        // A drag selects or picks: the views do not take it to scroll.
+                                        preventStealing: true
                                         property bool picking: false
                                         // Why the cell failed, or a number shown
                                         // with fewer digits than it has, in full;
@@ -1719,27 +1848,31 @@ ApplicationWindow {
                                                 win.openMenu(cellItem.row, cellItem.index);
                                                 return;
                                             }
+                                            // While a formula is typed, a click picks this cell,
+                                            // a drag a range, and Ctrl adds one more to a list.
+                                            picking = win.canPick();
+                                            if (picking) {
+                                                win.pickPress(cellItem.row, cellItem.index,
+                                                    (mouse.modifiers & Qt.AltModifier) !== 0,
+                                                    (mouse.modifiers & Qt.ControlModifier) !== 0);
+                                                return;
+                                            }
                                             if (link.length > 0 && (mouse.modifiers & Qt.ControlModifier)) {
                                                 win.openLink(link);
                                                 return;
                                             }
-                                            // While a formula is typed, a click picks this cell.
-                                            picking = win.canPick();
-                                            if (picking)
-                                                return;
                                             if (win.editing)
                                                 win.stopEditing();
                                             grid.forceActiveFocus();
                                             win.selectCell(cellItem.row, cellItem.index, mouse.modifiers & Qt.ShiftModifier);
                                         }
-                                        onClicked: function(mouse) {
-                                            if (picking && mouse.button === Qt.LeftButton)
-                                                win.pickCell(cellItem.row, cellItem.index, mouse.modifiers & Qt.AltModifier);
-                                        }
+                                        // A pick by the mouse is done when it is let go: the
+                                        // arrows start afresh from the edited cell.
+                                        onReleased: if (picking) win.stopPicking()
                                         onPositionChanged: function(mouse) {
-                                            if (picking || !(pressedButtons & Qt.LeftButton))
+                                            if (!(pressedButtons & Qt.LeftButton))
                                                 return;
-                                            // Drag to extend the selection.
+                                            // Drag to extend the selection, or the pick.
                                             var p = mapToItem(rowsView.contentItem, mouse.x, mouse.y);
                                             var r = Math.floor(p.y / win.rowHeight);
                                             var x = p.x - win.gutterWidth;
@@ -1748,7 +1881,10 @@ ApplicationWindow {
                                                 x -= win.colWidths[c];
                                                 c++;
                                             }
-                                            win.selectCell(r, c, true);
+                                            if (picking)
+                                                win.pickDrag(r, c);
+                                            else
+                                                win.selectCell(r, c, true);
                                         }
                                         onDoubleClicked: function(mouse) {
                                             if (mouse.button === Qt.LeftButton && !picking)
@@ -1776,6 +1912,12 @@ ApplicationWindow {
                                                 border.color: win.accentColor
                                             }
                                             property bool done: false
+                                            // The box at the top echoes the text and where the cursor is in it.
+                                            onTextChanged: if (!formulaField.activeFocus) {
+                                                formulaField.text = text;
+                                                formulaField.cursorPosition = cursorPosition;
+                                            }
+                                            onCursorPositionChanged: if (!formulaField.activeFocus) formulaField.cursorPosition = cursorPosition
                                             Component.onDestruction: if (win.editor === this) win.editor = null
                                             Component.onCompleted: {
                                                 win.editor = this;
