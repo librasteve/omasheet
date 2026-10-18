@@ -217,6 +217,10 @@ ApplicationWindow {
     function selectCell(row, col, extend) {
         if (sheet.rows.length === 0 || sheet.columns.length === 0)
             return;
+        // A block is not started from a cell of a formula column.
+        var from = sheet.columns[anchorCol];
+        if (extend && !sheet.isConsts && from && from.computed)
+            return;
         if (!extend) {
             byRow = false;
             byCol = false;
