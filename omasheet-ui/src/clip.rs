@@ -143,15 +143,15 @@ fn refused(
     }
 }
 
-/// One formula pasted onto formula columns alone becomes their formula,
-/// in one step: whether anything changed, or `None` for any other paste.
-fn formula_put(
-    doc: &mut Document,
+/// The formula columns that one formula pasted at a block would be the
+/// formula of: `None` unless it is a formula and lands on them alone.
+fn formula_target(
+    doc: &Document,
     sheet: usize,
     from: Cell,
     to: Cell,
     block: &[Vec<String>],
-) -> Option<bool> {
+) -> Option<Vec<usize>> {
     let [line] = block else { return None };
     let [text] = line.as_slice() else { return None };
     if !text.trim_start().starts_with('=') {
@@ -162,14 +162,7 @@ fn formula_put(
     let all = cols
         .iter()
         .all(|&c| t.columns.get(c).is_some_and(|c| c.formula.is_some()));
-    if !all {
-        return None;
-    }
-    Some(doc.as_one(|doc| {
-        for col in cols {
-            doc.set_column_formula(sheet, col, text);
-        }
-    }))
+    all.then_some(cols)
 }
 
 /// Put a block of cells down at a block; a single cell fills it. Cells
@@ -291,8 +284,18 @@ impl Clip {
         text: &str,
     ) -> Result<bool, String> {
         let block = parse_block(text);
-        if let Some(changed) = formula_put(doc, sheet, from, to, &block) {
-            return Ok(changed);
+        // One formula onto formula columns is their formula, and the cell
+        // it was cut from is cleared, in one step.
+        if let Some(cols) = formula_target(doc, sheet, from, to, &block) {
+            let cut = self.take_cut(doc, &block);
+            return Ok(doc.as_one(|doc| {
+                for &col in &cols {
+                    doc.set_column_formula(sheet, col, &block[0][0]);
+                }
+                if let Some(cut) = &cut {
+                    doc.set_cells(cut.sheet, &cut.blanks);
+                }
+            }));
         }
         refused(doc, sheet, from, to, &block)?;
         // Cells cut from this sheet, with nothing done since, are moved.
@@ -468,6 +471,47 @@ mod tests {
         assert!(doc.undo());
         assert_eq!(doc.text(), TEXT);
         assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn a_single_cell_cut_is_cleared_where_it_was() {
+        // To another cell of the sheet.
+        let mut doc = doc();
+        let mut clip = Clip::default();
+        let text = clip.cut(&doc, 0, (1, 0), (1, 0));
+        assert_eq!(clip.paste(&mut doc, 0, (2, 1), (2, 1), &text), Ok(true));
+        assert_eq!(held(&doc, 0)[1], "|20||");
+        assert_eq!(held(&doc, 0)[2], "|10||");
+        // Onto a block: moved, it goes to the corner, once.
+        let mut doc = self::doc();
+        let text = clip.cut(&doc, 0, (1, 0), (1, 0));
+        assert_eq!(clip.paste(&mut doc, 0, (2, 0), (2, 1), &text), Ok(true));
+        assert_eq!(held(&doc, 0)[1], "|20||");
+        assert_eq!(held(&doc, 0)[2], "10|||");
+        // To another sheet.
+        let mut doc = self::doc();
+        let text = clip.cut(&doc, 0, (1, 0), (1, 0));
+        assert_eq!(clip.paste(&mut doc, 1, (0, 1), (0, 1), &text), Ok(true));
+        assert_eq!(held(&doc, 0)[1], "|20||");
+        assert_eq!(held(&doc, 1)[0], "|10");
+        // A cell holding a formula.
+        let mut doc = self::doc();
+        let text = clip.cut(&doc, 0, (0, 2), (0, 2));
+        assert_eq!(clip.paste(&mut doc, 0, (1, 2), (1, 2), &text), Ok(true));
+        assert_eq!(held(&doc, 0)[0], "1|2||");
+        assert_eq!(held(&doc, 0)[1], "10|20|= A+B|");
+    }
+
+    #[test]
+    fn a_formula_cut_onto_a_formula_column_is_cleared_where_it_was() {
+        let mut doc = doc();
+        let mut clip = Clip::default();
+        let text = clip.cut(&doc, 0, (0, 2), (0, 2));
+        assert_eq!(clip.paste(&mut doc, 0, (1, 3), (1, 3), &text), Ok(true));
+        assert!(doc.text().contains("Sum := A+B"));
+        assert_eq!(held(&doc, 0)[0], "1|2||");
+        assert!(doc.undo());
+        assert_eq!(doc.text(), TEXT);
     }
 
     #[test]

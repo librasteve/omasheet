@@ -603,7 +603,7 @@ ApplicationWindow {
 
     // The cells last copied or cut, shown as they were selected for as long
     // as they can be pasted, until Esc or the next copy:
-    // `{tab, top, left, bottom, right, text}`, or null.
+    // `{tab, top, left, bottom, right, text, cut}`, or null.
     property var marked: null
     property bool keepMark: false
 
@@ -613,8 +613,8 @@ ApplicationWindow {
             && row >= m.top && row <= m.bottom && col >= m.left && col <= m.right;
     }
 
-    function mark(text) {
-        marked = { tab: tab, top: selTop, left: selLeft, bottom: selBottom, right: selRight, text: text, cut: false };
+    function mark(text, cut) {
+        marked = { tab: tab, top: selTop, left: selLeft, bottom: selBottom, right: selRight, text: text, cut: !!cut };
     }
 
     // Where the rows or columns `first` to `last` are once `by` of them are
@@ -674,14 +674,21 @@ ApplicationWindow {
 
     // Cut: whole rows or columns are picked up to be moved; cells are copied
     // and stay as they are until the next paste, which moves them.
+    // One cell of a formula column, which stands for the whole column.
+    readonly property bool formulaCell: !sheet.isConsts && hasCursor
+        && selTop === selBottom && selLeft === selRight
+        && !!sheet.columns[curCol] && sheet.columns[curCol].computed
+
     function cutSelection() {
+        // A formula column always has its formula: there is nothing to cut.
+        if (formulaCell)
+            return;
         notice = "";
         var kind = grabKind;
         if (kind === "" && !sheet.isConsts) {
             grabbed = null;
             var text = file.cutCells(tab, selTop, selLeft, selBottom, selRight);
-            mark(text);
-            marked.cut = true;
+            mark(text, true);
             clipboard.put(text);
             return;
         }
@@ -1561,10 +1568,11 @@ ApplicationWindow {
                                     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: win.lineColor }
                                     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: win.lineColor }
                                     // The outline of what was copied or cut.
-                                    Rectangle { visible: cellItem.marked && cellItem.row === win.marked.top; width: parent.width; height: 1; color: win.accentColor }
-                                    Rectangle { visible: cellItem.marked && cellItem.row === win.marked.bottom; anchors.bottom: parent.bottom; width: parent.width; height: 1; color: win.accentColor }
-                                    Rectangle { visible: cellItem.marked && cellItem.index === win.marked.left; width: 1; height: parent.height; color: win.accentColor }
-                                    Rectangle { visible: cellItem.marked && cellItem.index === win.marked.right; anchors.right: parent.right; width: 1; height: parent.height; color: win.accentColor }
+                                    // Copied is outlined, cut is dashed.
+                                    MarkEdge { visible: cellItem.marked && cellItem.row === win.marked.top; width: parent.width; height: 1 }
+                                    MarkEdge { visible: cellItem.marked && cellItem.row === win.marked.bottom; anchors.bottom: parent.bottom; width: parent.width; height: 1 }
+                                    MarkEdge { visible: cellItem.marked && cellItem.index === win.marked.left; width: 1; height: parent.height }
+                                    MarkEdge { visible: cellItem.marked && cellItem.index === win.marked.right; anchors.right: parent.right; width: 1; height: parent.height }
                                     Rectangle {
                                         anchors.fill: parent
                                         visible: cellItem.alone
@@ -1923,16 +1931,12 @@ ApplicationWindow {
                     readonly property bool several: !win.sheet.isConsts && win.tabs.length > 0
                         && (win.selTop !== win.selBottom || win.selLeft !== win.selRight)
                     readonly property bool moving: win.grabbedHere
-                    // A cell of a formula column stands for the whole column.
-                    readonly property bool formulaCell: !win.sheet.isConsts && win.hasCursor
-                        && win.selTop === win.selBottom && win.selLeft === win.selRight
-                        && !!win.sheet.columns[win.curCol] && win.sheet.columns[win.curCol].computed
                     // `win.snap` is read so that an edit recalculates it.
                     text: win.notice.length > 0 ? win.notice
                         : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
                         : several && win.snap
                         ? file.selectionSummary(win.tab, win.selTop, win.selLeft, win.selBottom, win.selRight)
-                        : formulaCell ? "This is a formula column, this change will apply to the entire column"
+                        : win.formulaCell ? "This is a formula column, this change will apply to the entire column"
                         : ""
                     visible: text.length > 0
                     color: win.notice.length > 0 ? win.errorColor : win.mutedColor
@@ -1978,6 +1982,29 @@ ApplicationWindow {
     }
 
     // The entries of the right-click menu, close set.
+    // One side of the cells copied or cut: a line, or dashes when cut.
+    component MarkEdge: Item {
+        readonly property bool dashed: win.marked !== null && win.marked.cut
+        readonly property bool across: width >= height
+        readonly property real length: across ? width : height
+        Rectangle {
+            visible: !parent.dashed
+            anchors.fill: parent
+            color: win.accentColor
+        }
+        Repeater {
+            model: parent.dashed ? Math.ceil(parent.length / 8) : 0
+            Rectangle {
+                required property int index
+                x: parent.across ? index * 8 : 0
+                y: parent.across ? 0 : index * 8
+                width: parent.across ? Math.min(4, parent.length - x) : parent.width
+                height: parent.across ? parent.height : Math.min(4, parent.length - y)
+                color: win.accentColor
+            }
+        }
+    }
+
     component MenuEntry: MenuItem {
         // An entry that does not apply takes no room, and the arrow keys
         // pass it by: so each is also disabled while it is hidden.
@@ -2072,19 +2099,26 @@ ApplicationWindow {
 
         MenuEntry {
             text: "Cut"
-            enabled: cellMenu.hasRows || win.grabKind.length > 0
+            enabled: (cellMenu.hasRows || win.grabKind.length > 0) && !win.formulaCell
             onTriggered: win.cutSelection()
         }
         MenuEntry { text: "Copy"; enabled: win.sheet.rows.length > 0; onTriggered: win.copySelection() }
         MenuEntry {
             text: "Paste"
-            enabled: win.sheet.rows.length > 0 || win.grabbedHere
+            // Only while something copied or cut is waiting to go down.
+            enabled: (win.sheet.rows.length > 0 && win.marked !== null) || win.grabbedHere
             onTriggered: win.pasteSelection()
         }
-        MenuEntry { text: "Paste values"; enabled: cellMenu.hasRows; onTriggered: win.pasteValues() }
+        MenuEntry {
+            // One cell copied is one value.
+            text: win.marked !== null && win.marked.top === win.marked.bottom
+                && win.marked.left === win.marked.right ? "Paste value" : "Paste values"
+            enabled: cellMenu.hasRows && win.marked !== null && !win.formulaCell
+            onTriggered: win.pasteValues()
+        }
         MenuEntry { text: "Paste transposed"; enabled: cellMenu.hasRows && win.isBlock; onTriggered: win.pasteTransposed() }
         MenuEntry { text: "Insert cells"; enabled: cellMenu.editable && (cellMenu.rows || cellMenu.columns); onTriggered: win.insertCopied() }
-        MenuEntry { text: "Clear"; enabled: cellMenu.hasRows; onTriggered: win.clearSelection() }
+        MenuEntry { text: "Clear"; enabled: cellMenu.hasRows && !win.formulaCell; onTriggered: win.clearSelection() }
         // The sheet, when the whole of it is selected.
         MenuRule { visible: cellMenu.whole }
         MenuEntry {
