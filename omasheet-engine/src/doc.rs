@@ -2132,8 +2132,8 @@ impl Document {
         diags.extend(engine.take_diags());
         let ast = self.ast();
 
-        // A cell that does not fit its column: say what the column takes,
-        // written the way the user types it.
+        // A cell that does not fit its column says so, and what the column
+        // takes, written the way the user types it.
         for sheet in &program.sheets {
             let Some(decl) = ast.sheets.iter().find(|d| d.name == sheet.name) else {
                 continue;
@@ -2144,10 +2144,11 @@ impl Document {
                     .iter_mut()
                     .filter(|d| d.span == cell.span && d.message.ends_with("` literal"));
                 for d in misfits.filter(|_| !hint.is_empty()) {
-                    d.message = format!("`{}` does not fit column `{}`", cell.text, col.name);
-                    d.help = Some(format!(
-                        "{hint}; to calculate a value, start the cell with `=`"
-                    ));
+                    d.message = format!(
+                        "{} has type {}, {} does not match",
+                        col.name, col.ty, cell.text
+                    );
+                    d.help = Some(hint.clone());
                 }
             }
         }
@@ -2751,14 +2752,13 @@ mod tests {
         assert_eq!(
             doc.snapshot().sheets[0].rows[0][0].error.as_deref(),
             Some(
-                "`soon` does not fit column `On` (Date: MM/DD/YYYY, e.g. 01/31/2025 or ISO; \
-                 to calculate a value, start the cell with `=`)"
+                "On has type Date, soon does not match (Date: MM/DD/YYYY, e.g. 01/31/2025 or ISO)"
             )
         );
         assert!(
             doc.snapshot().problems[0]
                 .message
-                .contains("does not fit column `On`")
+                .contains("On has type Date")
         );
         // Every example is accepted as an entry for its type.
         for ty in ["Date", "Time", "DateTime"] {
