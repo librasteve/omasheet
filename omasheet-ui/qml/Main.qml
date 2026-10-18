@@ -132,6 +132,7 @@ ApplicationWindow {
     }
 
     function reload() {
+        var y = rowsView.contentY;
         // Any edit may renumber the columns that were cut.
         grabbed = null;
         // What was copied stays marked through an edit that says where it
@@ -179,6 +180,12 @@ ApplicationWindow {
             tab = Math.max(0, tabs.length - 1);
         measure();
         clampCursor();
+        // Rows added or taken away start the list again at the top: it is
+        // put back where it was.
+        if (rowsView.contentY !== y)
+            Qt.callLater(function() {
+                rowsView.contentY = Math.max(0, Math.min(y, rowsView.contentHeight - rowsView.height));
+            });
     }
 
     // Open a link from a cell: one with no scheme is a file beside the file.
@@ -664,7 +671,7 @@ ApplicationWindow {
         // A paste that was refused says why, and what was cut is still cut.
         if (problem.length > 0) {
             errorDialog.say(problem);
-            return;
+            return false;
         }
         // Cells that were cut have gone to where they were pasted; pasted
         // again, they are copies.
@@ -672,6 +679,19 @@ ApplicationWindow {
             marked = null;
             movedOnce = true;
         }
+        return true;
+    }
+
+    // After rows are pasted onto one row, they are what is selected.
+    function selectPasted(text) {
+        if (selKind !== "row" || selTop !== selBottom)
+            return;
+        var top = selTop;
+        curRow = top;
+        anchorRow = Math.min(sheet.rows.length - 1, top + text.split("\n").length - 1);
+        // Shown down to the last of them.
+        var last = anchorRow;
+        Qt.callLater(function() { rowsView.positionViewAtIndex(last, ListView.Contain); });
     }
 
     function isGrabbed(row, col) {
@@ -788,13 +808,14 @@ ApplicationWindow {
         var text = clipboard.take();
         if (text.length === 0)
             return;
-        pasteWith(text, function() {
+        if (pasteWith(text, function() {
             var t = pasteTarget(text);
             if (!sheet.isConsts)
                 return file.pasteCells(tab, t[0], t[1], t[2], t[3], text);
             if (curCol === 1)
                 file.setConst(curRow, text.split("\n")[0]);
-        });
+        }))
+            selectPasted(text);
     }
 
     // Paste what the copied cells showed, not their formulas.
@@ -802,11 +823,11 @@ ApplicationWindow {
         notice = "";
         grabbed = null;
         var text = clipboard.take();
-        if (text.length > 0 && !sheet.isConsts)
-            pasteWith(text, function() {
+        if (text.length > 0 && !sheet.isConsts && pasteWith(text, function() {
                 var t = pasteTarget(text);
                 return file.pasteValues(tab, t[0], t[1], t[2], t[3], text);
-            });
+            }))
+            selectPasted(text);
     }
 
     // Paste what was copied turned about: its rows as columns.
