@@ -529,7 +529,8 @@ ApplicationWindow {
                 renameColumnAsked(selLeft);
             return;
         }
-        if (!hasCursor || !cellAt(curRow, curCol))
+        // A block of cells has no one cell to edit.
+        if (!hasCursor || selTop !== selBottom || selLeft !== selRight || !cellAt(curRow, curCol))
             return;
         formulaField.forceActiveFocus();
         formulaField.selectAll();
