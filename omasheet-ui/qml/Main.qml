@@ -788,6 +788,11 @@ ApplicationWindow {
     }
 
     // Paste what was copied turned about: its rows as columns.
+    // Several cells copied or cut, to be turned about onto cells: put down
+    // from the one selected, or the corner of a block.
+    readonly property bool canTranspose: marked !== null && selKind === "cells" && !sheet.isConsts
+        && (marked.top !== marked.bottom || marked.left !== marked.right)
+
     function pasteTransposed() {
         notice = "";
         grabbed = null;
@@ -1248,7 +1253,7 @@ ApplicationWindow {
                         win.cutSelection();
                     } else if (ctrl && event.key === Qt.Key_V) {
                         if (event.modifiers & Qt.AltModifier) {
-                            if (win.isBlock) win.pasteTransposed();
+                            if (win.canTranspose) win.pasteTransposed();
                         }
                         else if (shift)
                             win.pasteValues();
@@ -2103,7 +2108,7 @@ ApplicationWindow {
             enabled: cellMenu.hasRows && win.marked !== null && !win.formulaCell
             onTriggered: win.pasteValues()
         }
-        MenuEntry { text: "Paste transposed"; enabled: cellMenu.hasRows && win.isBlock; onTriggered: win.pasteTransposed() }
+        MenuEntry { text: "Paste transposed"; enabled: cellMenu.hasRows && win.canTranspose; onTriggered: win.pasteTransposed() }
         MenuEntry { text: "Clear"; enabled: cellMenu.hasRows && !win.formulaCell; onTriggered: win.clearSelection() }
         // Delete, for what is selected as a whole.
         MenuEntry {

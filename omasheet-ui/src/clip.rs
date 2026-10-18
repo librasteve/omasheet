@@ -282,10 +282,13 @@ impl Clip {
             }));
         }
         refused(doc, sheet, from, to, &block)?;
-        // Cells cut from this sheet, with nothing done since, are moved.
+        // Cells cut from this sheet, with nothing done since, are moved;
+        // one cell onto several fills them all.
         let cut = self.take_cut(doc, &block);
+        let fills = block.len() == 1 && block[0].len() == 1 && from != to;
         if let Some(cut) = &cut
             && cut.sheet == sheet
+            && !fills
         {
             return Ok(doc.as_one(|doc| {
                 doc.set_cells(cut.sheet, &cut.blanks);
@@ -432,12 +435,12 @@ mod tests {
         assert_eq!(clip.paste(&mut doc, 0, (2, 1), (2, 1), &text), Ok(true));
         assert_eq!(held(&doc, 0)[1], "|20||");
         assert_eq!(held(&doc, 0)[2], "|10||");
-        // Onto a block: moved, it goes to the corner, once.
+        // Onto a block: it fills every cell of it.
         let mut doc = self::doc();
         let text = clip.cut(&doc, 0, (1, 0), (1, 0));
         assert_eq!(clip.paste(&mut doc, 0, (2, 0), (2, 1), &text), Ok(true));
         assert_eq!(held(&doc, 0)[1], "|20||");
-        assert_eq!(held(&doc, 0)[2], "10|||");
+        assert_eq!(held(&doc, 0)[2], "10|10||");
         // To another sheet.
         let mut doc = self::doc();
         let text = clip.cut(&doc, 0, (1, 0), (1, 0));
