@@ -192,8 +192,15 @@ fn put_block(
             }
         }
     } else {
-        for (i, line) in block.iter().enumerate() {
-            for (j, text) in line.iter().enumerate() {
+        // A copy onto a smaller block is cut to its size; onto one cell,
+        // or a larger block, it goes down whole.
+        let clip = cut.is_none() && from != to;
+        let (rows, cols) = match clip {
+            true => (to.0 - from.0 + 1, to.1 - from.1 + 1),
+            false => (usize::MAX, usize::MAX),
+        };
+        for (i, line) in block.iter().enumerate().take(rows) {
+            for (j, text) in line.iter().enumerate().take(cols) {
                 put(from.0 + i, from.1 + j, text);
             }
         }
@@ -465,6 +472,22 @@ mod tests {
         assert_eq!(held(&doc, 0)[0], "1|2||");
         assert!(doc.undo());
         assert_eq!(doc.text(), TEXT);
+    }
+
+    #[test]
+    fn a_copy_onto_a_smaller_block_is_cut_to_its_size() {
+        let mut doc = doc();
+        let mut clip = Clip::default();
+        let text = clip.copy(&doc, 0, (0, 0), (1, 1));
+        // Onto one row of two cells: only the first row of the copy.
+        assert_eq!(clip.paste(&mut doc, 0, (2, 0), (2, 1), &text), Ok(true));
+        assert_eq!(held(&doc, 0).len(), 3);
+        assert_eq!(held(&doc, 0)[2], "1|2||");
+        // Onto one cell: the whole of it, from there.
+        assert!(doc.undo());
+        assert_eq!(clip.paste(&mut doc, 0, (2, 0), (2, 0), &text), Ok(true));
+        assert_eq!(held(&doc, 0)[2], "1|2||");
+        assert_eq!(held(&doc, 0)[3], "10|20||");
     }
 
     #[test]
