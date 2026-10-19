@@ -1,113 +1,95 @@
 # parquet-interop
 
-Parquet is the compatibility format for dataframe tools: one sheet of typed
-columns.
+Parquet in both directions: one sheet of typed columns.
+
+Since `add-polars-dtypes`, an omasheet type *is* a Polars dtype, so the mapping
+below is a naming rather than a conversion. The earlier version of this spec
+converted `Int` and `Fraction` to the nearest Parquet type and accepted the
+loss; that paragraph is gone with those types.
 
 ## ADDED Requirements
 
-### Requirement: Parquet is not the native model
-Parquet import and export SHALL be conversions at the boundary, like XLSX and
-CSV. A Parquet file holds the values and column types of one sheet: it SHALL NOT
-carry formulas, computed-column definitions, constants or functions.
+### Requirement: The type mapping
 
-#### Scenario: Export does not replace the source
-- **WHEN** a file is exported to Parquet
-- **THEN** the `.omx` file is unchanged and remains the source of truth
+A column SHALL be written as the Parquet type its dtype names, and read as the
+omasheet type that names the Parquet type it finds.
 
-### Requirement: Export to Parquet
-Exporting SHALL write one Parquet file per sheet, with one column per sheet
-column under the same name, and computed columns and formula cells written as
-their values. A file with one sheet SHALL be written to `<name>.parquet`; a
-file with several SHALL be written to `<name>.<Sheet>.parquet` for each, unless
-one sheet is chosen. An empty cell SHALL be written as null.
+| Omasheet type | Parquet / Arrow |
+|---|---|
+| `Int` | `int64`, or the narrower width the schema had |
+| `Decimal`, `Percent` | `decimal(38, s)` |
+| `Float` | `double`, or `float` where the schema had it |
+| `Boolean` | `boolean` |
+| `String` | `byte_array`, UTF-8 |
+| `Binary` | `byte_array` |
+| `Date` | `date32` |
+| `Time` | `time64`, nanoseconds |
+| `DateTime` | `timestamp`, microseconds, with the file's zone where it has one |
+| `Duration` | `duration`, microseconds |
+| `Null` | a null in the column's own type |
 
-#### Scenario: One sheet
-- **GIVEN** `budget.omx` with the single sheet `Sales`
-- **WHEN** it is exported to Parquet
-- **THEN** `budget.parquet` is written with the columns `Month`, `Revenue`, `Cost`, `Profit`
+An unsigned column SHALL be read as `Int` and written back unsigned. A
+`Percent` SHALL be written as the `decimal` it holds, its display being no part
+of the value.
 
-#### Scenario: Several sheets
-- **GIVEN** `budget.omx` with sheets `Sales` and `Summary`
-- **WHEN** it is exported to Parquet
-- **THEN** `budget.Sales.parquet` and `budget.Summary.parquet` are written
+#### Scenario: A decimal column round-trips exactly
 
-### Requirement: Column types in Parquet
-Each column SHALL be written with the Parquet type that holds its values, chosen
-from the values of the whole column:
+- **GIVEN** a `Decimal` column holding `19.99` and `5.5`
+- **WHEN** the sheet is exported and imported again
+- **THEN** both values are unchanged
+- **AND** the column is a `Decimal` again
 
-| Omasheet | Parquet | When it does not fit |
-|---|---|---|
-| `Int` | 64-bit integer | decimal of scale 0 up to 38 digits; beyond that, string |
-| `Fraction` | decimal, with the scale the column needs | double, when a value does not terminate or needs more than 38 digits |
-| `Num` | double | |
-| `Complex` | struct of doubles `re`, `im` | |
-| `Text` | string | |
-| `Bool` | boolean | |
-| `Date` | date | |
-| `Time` | time of day | |
-| `DateTime` | timestamp, in the file's time zone when it names one, otherwise with no zone | |
+#### Scenario: A date column round-trips as a date
 
-A column whose values are not all of one type SHALL be written as strings. A
-cell that could not be calculated SHALL be written as null. The export SHALL
-report each column written as something less exact than its values, and each
-cell written as null because it failed.
+- **GIVEN** a `Date` column
+- **WHEN** the sheet is exported
+- **THEN** the column is `date32`
+- **AND** importing it gives a `Date` column, not a number
 
-#### Scenario: Exact decimals
-- **GIVEN** a `Fraction` column holding `19.99` and `5.5`
-- **WHEN** it is exported
-- **THEN** the column is a decimal of scale 2 holding exactly `19.99` and `5.50`, and no notice is given
+#### Scenario: An unsigned column keeps its signedness
 
-#### Scenario: One third
-- **GIVEN** a `Fraction` column holding `1/3`
-- **WHEN** it is exported
-- **THEN** the column is a double and a notice names the column as written in floating point
+- **GIVEN** a Parquet file with a `uint32` column
+- **WHEN** it is imported and exported again
+- **THEN** the column is `uint32` again
+- **AND** it was reported as an `Int` in between
 
-#### Scenario: Large integer
-- **GIVEN** an `Int` column holding `2 ** 100`
-- **WHEN** it is exported
-- **THEN** the column is a decimal of scale 0 holding `1267650600228229401496703205376`
+### Requirement: Types come from the schema
 
-#### Scenario: Time zone
-- **GIVEN** a file with `zone Europe/London` and a `DateTime` column
-- **WHEN** it is exported
-- **THEN** the column is a timestamp in `Europe/London`
+On import, each column's type SHALL be taken from the file's schema and SHALL
+NOT be inferred from the values. The `.omx` source produced SHALL carry a
+`Name : Type` line for each column (D33).
 
-### Requirement: Import from Parquet
-Importing SHALL produce `.omx` source with one sheet, named after the file, with
-a `Name : Type` line for every column, taken from the file's schema and not
-inferred from the values. Integers of any width SHALL become `Int`; decimals
-SHALL become `Fraction`, exactly; floating-point columns SHALL become `Num`; a
-struct of two doubles `re`, `im` SHALL become `Complex`; null SHALL become an
-empty cell. When timestamp columns carry a time zone, the source SHALL begin
-with a `zone` line naming it.
+#### Scenario: A column of digits held as text stays text
 
-A column of a type with no Omasheet equivalent (a list, a map, any other
-struct, binary) SHALL be left out, and the import SHALL report it.
+- **GIVEN** a Parquet column of type `byte_array` holding `"42"` and `"7"`
+- **WHEN** the file is imported
+- **THEN** the column is declared `String`
+- **AND** the values are not read as numbers
 
-#### Scenario: Typed columns
-- **GIVEN** `sales.parquet` with a string column `Month` and a decimal column `Revenue`
-- **WHEN** `omasheet import sales.parquet` is run
-- **THEN** the output contains `sheet sales` with the lines `Month : Text` and `Revenue : Fraction`
+#### Scenario: Import names the sheet after the file
 
-#### Scenario: Floating point stays floating point
-- **GIVEN** a double column `Reading`
+- **WHEN** `sales.parquet` is imported
+- **THEN** the output contains `sheet sales` with a type line for each column
+
+### Requirement: A failed cell, and what Parquet cannot hold
+
+A cell whose calculation failed SHALL be written as a null, with a notice
+saying so. A nested column — a list, a struct, a map — SHALL be dropped on
+import with a notice naming it.
+
+Constants, computed-column formulas and functions SHALL NOT be carried by a
+plain Parquet file; `--meta` is what carries them.
+
+#### Scenario: A nested column is dropped with a notice
+
+- **GIVEN** a Parquet file with a `list` column
 - **WHEN** it is imported
-- **THEN** the column is declared `Reading : Num`
+- **THEN** the other columns are read
+- **AND** a notice names the column that was dropped
 
-#### Scenario: Nested column
-- **GIVEN** a file with a list column `Tags`
-- **WHEN** it is imported
-- **THEN** the sheet has no `Tags` column and a notice says it was left out
+#### Scenario: A failed cell becomes a null
 
-#### Scenario: Round trip
-- **GIVEN** a sheet whose `Fraction` values all terminate
-- **WHEN** it is exported to Parquet and the file is imported
-- **THEN** the imported sheet has the same column types and the same values, exactly
-
-### Requirement: Names on import
-Column and file names SHALL be made into OMX identifiers by the rule in
-`csv-interop`.
-
-#### Scenario: Column with a space
-- **WHEN** a file with the column `Unit Price` is imported
-- **THEN** the column is `UnitPrice` and a notice says `Unit Price` was renamed
+- **GIVEN** a sheet with a cell whose formula failed
+- **WHEN** it is exported
+- **THEN** that cell is a null in the Parquet file
+- **AND** a notice says a failed cell was written as null

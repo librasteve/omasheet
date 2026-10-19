@@ -10,10 +10,14 @@ D/P/Q numbers continue that change's numbering.
 | # | Status | Decision | Notes |
 |---|--------|----------|-------|
 | D10 | Superseded | Use a Rust dataframe library (Polars) for group/join | Replaced by D11 |
-| D11 | Decided | Polars is out of scope; group, join and sort are implemented natively on the exact column kernel | Owner decision, 2026-10-07. Resolves the former Q2 |
+| D11 | Superseded | Polars is out of scope; group, join and sort are implemented natively on the exact column kernel | Owner decision, 2026-10-07. Resolved the former Q2. Superseded by D14 in `add-polars-dtypes`, 2026-10-19: the conflict is settled the other way, by giving up the rational rather than keeping Polars out |
 | P16 | Provisional | Partitioned relative reference `Sales[; *-1 by Region]` | Alternatives seen: `Sales{Region}[; *-1]`, `Revenue[-1 by Region]` |
 
 ## Why not Polars
+
+> Superseded by D14 in `add-polars-dtypes`. The reasoning below held; the
+> conclusion is reversed from the other end, by making an omasheet type a name
+> for a Polars dtype and giving up the rational.
 
 D7 (arbitrary-precision `Int` and `Fraction`) and the earlier D10 conflicted: Polars
 has no arbitrary-precision integer or rational dtype (its Decimal is

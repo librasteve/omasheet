@@ -27,8 +27,12 @@ that conversation).
 2. **One indexing model.** `[]` selects, `;` separates dimensions, `..` builds
    ranges, `*` is the cursor, an empty slot is "all". Scalars, vectors, sheets
    and N-d arrays all use it.
-3. **Exact numerics.** `Int` is arbitrary precision, `Fraction` is an
-   arbitrary-precision rational. Floating point (`Num`) only on request.
+3. **Exact numerics.** An omasheet type is a name for a Polars dtype, so
+   `Int` is a 64-bit integer and `Decimal` a 38-digit fixed-point decimal,
+   exact where the result fits and reported where it does not. Floating
+   point (`Float`) only on request. (`add-polars-dtypes`, D14-D16;
+   arbitrary-precision `Int` and the rational `Fraction` were the earlier
+   reading.)
 4. **Meaning lives in types.** Units, currencies, percentages and uncertainty
    are part of a value's type, declared per column, checked before execution.
    (Base types in Phase 1; units in Phase 4; uncertainty in Phase 5.)
@@ -57,9 +61,10 @@ Alongside the phases, `add-interactive-app` adds the desktop window: an editable
 grid over the same engine. It needs only Phase 1 and gains each later phase's
 features as they land.
 
-Also outside the numbered phases, `add-dataframe-interop` is a draft for a later
-phase: Parquet import and export, and whatever Polars integration is wanted. It
-needs Phase 2.
+Also outside the numbered phases, `add-polars-dtypes` makes an omasheet type
+a name for a Polars dtype, and `add-dataframe-interop` then adds Parquet,
+dataframe-backed tables and elementwise lowering to Polars. The first needs
+Phase 1, the second needs Phase 2 and the first.
 
 Dependencies: every phase needs Phase 1. Phase 3 does not need Phase 2. Phase 4
 adds deltas to Phases 2 and 3 (units on export, units through group/join), and
@@ -72,10 +77,14 @@ pivots, formatting syntax.
 
 - Language: Rust, shipped as a single static binary `omasheet`
 - Parsing: hand-written lexer and recursive-descent parser (no parser library)
-- Numerics: `num-bigint` / `num-rational` (`BigInt`, `BigRational`)
+- Numerics: the Polars dtypes, held as `i64` and a 38-digit fixed-point
+  `i128` in `omasheet-omx::decimal`. Aligning with the dtypes does not
+  need the Polars crate: only Parquet and dataframe-backed tables do
 - Sheet operations (group, join, sort): implemented natively in
-  `omasheet-engine` from Phase 3. Polars and other dataframe libraries are out
-  of scope — none has an arbitrary-precision rational type
+  `omasheet-engine` from Phase 3. Polars was out of scope while the exact
+  numbers were rationals (D11); `add-polars-dtypes` gives that up, and
+  `add-dataframe-interop` then brings Polars in for Parquet, for
+  dataframe-backed tables and for elementwise column work
 - XLSX (Phase 2): `calamine` (read), `rust_xlsxwriter` (write)
 - CSV (Phase 2): `csv`
 - Markdown (Phase 2): `pulldown-cmark`

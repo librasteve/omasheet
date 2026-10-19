@@ -1,0 +1,39 @@
+# file-format
+
+The `.omx` file: its declarations, its sheets and its column schemas.
+
+## MODIFIED Requirements
+
+### Requirement: The declarable type names
+
+A `Name : Type` line SHALL name one of `Int`, `Decimal`, `Percent`, `Float`,
+`String`, `Binary`, `Boolean`, `Date`, `Time`, `DateTime` or `Duration`.
+
+`Bool`, `Text`, `Num`, `Fraction` and `Complex` SHALL NOT be accepted, and a
+file using one SHALL be told the list of names that are.
+
+#### Scenario: An old type name is rejected with the list
+
+- **GIVEN** a column declared `Paid : Bool`
+- **WHEN** the file is checked
+- **THEN** a diagnostic says `Bool` is not a known type
+- **AND** the help lists `Boolean` among the names that are
+
+#### Scenario: The conversion functions carry the same names
+
+- **GIVEN** the expression `0.5.Boolean`
+- **WHEN** it is evaluated
+- **THEN** the result is `true`
+- **AND** `0.5.Bool` is not a conversion
+
+### Requirement: A blank cell is Null
+
+A cell with nothing in it SHALL be `Null`, which is a value of the `Null`
+dtype. A file SHALL continue to write it as nothing at all.
+
+#### Scenario: A blank cell round-trips as nothing
+
+- **GIVEN** a sheet with a blank cell
+- **WHEN** the file is printed
+- **THEN** the cell is written as nothing
+- **AND** reading it back gives `Null`
