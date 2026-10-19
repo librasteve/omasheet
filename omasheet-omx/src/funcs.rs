@@ -183,31 +183,31 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         AGG,
         "sum",
         "Sheet.Column.sum()",
-        "The total of a column or vector. Empty cells are skipped.",
+        "The total of a column or vector, a block of cells, or several taken together: sum(A, B). Empty cells are skipped.",
     ),
     doc(
         AGG,
         "avg",
         "Sheet.Column.avg()",
-        "The mean of a column or vector, as an exact fraction where it can be.",
+        "The mean of a column or vector, a block of cells, or several taken together, as an exact fraction where it can be.",
     ),
     doc(
         AGG,
         "min",
         "Sheet.Column.min()",
-        "The smallest value. Works on numbers, text, dates and times.",
+        "The smallest value, of one vector or several. Works on numbers, text, dates and times.",
     ),
     doc(
         AGG,
         "max",
         "Sheet.Column.max()",
-        "The largest value. Works on numbers, text, dates and times.",
+        "The largest value, of one vector or several. Works on numbers, text, dates and times.",
     ),
     doc(
         AGG,
         "count",
         "Sheet.Column.count()",
-        "How many cells are not empty; for a sheet, how many rows.",
+        "How many cells are not empty, of one vector or several; for a sheet, how many rows.",
     ),
     doc(
         SHEET,
@@ -220,6 +220,12 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "select",
         "Sheet |> select(Column1, Column2)",
         "A sheet with only the named columns.",
+    ),
+    doc(
+        MATH,
+        "succ",
+        "succ(x)",
+        "The next value: a number plus one, or the next text in the way letters and digits count up, AZ to BA. The step a sequence takes when its terms give no other.",
     ),
     doc(
         MATH,
@@ -268,9 +274,9 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         CONVERT,
         "Decimal",
         "x.Decimal",
-        "An exact number that ends as a decimal: a Num as the decimal it is shown as, and a \
-         Fraction such as 1/8 as 0.125. One that does not end, such as 1/3, is an error. Also \
-         written Decimal(x).",
+        "The same exact number shown as a decimal: a Num as the decimal it is shown as, and a \
+         Fraction such as 1/8 as 0.125. One that does not end, such as 1/3, is shown cut and \
+         marked, 0.333…, and held in full. Also written Decimal(x).",
     ),
     doc(
         CONVERT,
@@ -444,6 +450,18 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "day",
         "Sheet.Column.day()",
         "The day of the month of a Date or DateTime.",
+    ),
+    doc(
+        TIME,
+        "add_months",
+        "add_months(x, n)",
+        "A date n months on, keeping the day of the month, or the last day of a month too short for it: a month after 2025-01-31 is 2025-02-28. Write it as x + n.month, and x + n.year for years.",
+    ),
+    doc(
+        TIME,
+        "eom",
+        "eom(x)",
+        "The last day of the month a date is in.",
     ),
     doc(
         TIME,

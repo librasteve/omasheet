@@ -1,0 +1,107 @@
+# Sequences. `terms ... limit` fills a column: the terms given start it,
+# and the rest follow the rule. `$-1` is the term before this one, `$-2`
+# the one before that. With no rule the step is taken from the terms, as a
+# difference or as a ratio. `Inf` runs to the end of the column; any other
+# limit stops there and leaves the rows after it empty.
+
+sheet Numbers
+
+| Odd | Double | Fib | Thirds | Countdown |
+| --- | ------ | --- | ------ | --------- |
+| *   | *      | *   | *      | *         |
+| *   | *      | *   | *      | *         |
+| *   | *      | *   | *      | *         |
+| *   | *      | *   | *      | *         |
+| *   | *      | *   | *      | *         |
+| *   | *      | *   | *      | *         |
+| *   | *      | *   | *      | *         |
+| *   | *      | *   | *      | *         |
+
+# Arithmetic: a constant difference.
+Odd       := 1, 3 ... Inf
+
+# Geometric: a constant ratio.
+Double    := 1, 2, 4 ... Inf
+
+# A rule of its own, reading the two terms before it.
+Fib       := 0, 1, $-1 + $-2 ... Inf
+
+# Two terms are read as a difference, so a ratio needs three. Arithmetic
+# is exact, and a third stays a third rather than 0.333…
+Thirds    := 1, 1/3, 1/9 ... Inf
+
+# A limit the sequence runs down to.
+Countdown := 20, 15 ... 0
+
+sheet Labels
+
+| Col | Pair | Code |
+| --- | ---- | ---- |
+| *   | *    | *    |
+| *   | *    | *    |
+| *   | *    | *    |
+| *   | *    | *    |
+| *   | *    | *    |
+
+# Text counts up the way letters and digits do, carrying at `Z`.
+Col  := "A", "B" ... Inf
+
+# Which is how a workbook's columns are named after the twenty-sixth.
+Pair := "AY" ... "BC"
+
+# Digits carry too, and only the last run of them moves.
+Code := "job-A8" ... "job-B2"
+
+sheet Names
+
+| Day | Short | Month | Period | Quarter |
+| --- | ----- | ----- | ------ | ------- |
+| *   | *     | *     | *      | *       |
+| *   | *     | *     | *      | *       |
+| *   | *     | *     | *      | *       |
+| *   | *     | *     | *      | *       |
+| *   | *     | *     | *      | *       |
+| *   | *     | *     | *      | *       |
+| *   | *     | *     | *      | *       |
+| *   | *     | *     | *      | *       |
+
+# The days of the week and the months of the year are known by name, in
+# full or in three letters, and they go round: Sunday to Monday.
+Day     := "Monday", "Tuesday" ... Inf
+Short   := "Sat", "Sun" ... Inf
+Month   := "January", "February" ... Inf
+
+# A month written with its year carries into the year.
+Period  := "Nov-2026", "Dec-2026" ... Inf
+
+# The step is taken from the terms here too, so these are quarters.
+Quarter := "Jan-2026", "Apr-2026" ... Inf
+
+sheet Dates
+
+| Week | Slot | Stamp | Monthly | MonthEnd | Quarter | Due |
+| ---- | ---- | ----- | ------- | -------- | ------- | --- |
+| *    | *    | *     | *       | *        | *       | *   |
+| *    | *    | *     | *       | *        | *       | *   |
+| *    | *    | *     | *       | *        | *       | *   |
+| *    | *    | *     | *       | *        | *       | *   |
+| *    | *    | *     | *       | *        | *       | *   |
+
+# Dates a fixed number of days apart step by days.
+Week     := 2025-01-01, 2025-01-08 ... Inf
+
+# A time and a date-time step by seconds.
+Slot     := 09:00, 09:30 ... Inf
+Stamp    := 2025-03-01T08:00, 2025-03-01T09:00 ... Inf
+
+# The same day of each month steps by months, however many days that is.
+Monthly  := 2025-01-01, 2025-02-01, 2025-03-01 ... Inf
+
+# The day counted from is the largest given, so the end of February goes
+# on to the end of March rather than back to its 28th.
+MonthEnd := 2025-01-31, 2025-02-28 ... Inf
+Quarter  := 2025-01-15, 2025-04-15 ... Inf
+
+# Or say it outright: `n.month`, `n.year` and `n.week` next to a date, and
+# `eom` for the last day of a month, from wherever the sequence starts.
+Due      := eom(2025-01-10), eom($-1 + 1.month) ... Inf

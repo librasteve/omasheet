@@ -6,7 +6,7 @@
 //! `|>`, `or`, `and`, `not`, `//`, comparison and `in`, `..` and `^n`, `+ -`, `* /`,
 //! unary `-`, `**`, then postfix `[ ]`, `.Name` and calls.
 
-use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
+use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp, reads_back};
 use crate::diag::{Diagnostic, Span};
 use crate::lexer::{Tok, Token, lex};
 
@@ -19,7 +19,7 @@ pub fn parse_expr(text: &str, src: u32, base: usize) -> R<Expr> {
     if p.peek() == &Tok::Eof {
         return Err(Diagnostic::new(p.span(), "expected an expression"));
     }
-    let e = p.expr()?;
+    let e = p.seq()?;
     if p.peek() != &Tok::Eof {
         return Err(p.unexpected("an operator or the end of the expression"));
     }
@@ -88,6 +88,37 @@ impl Parser {
         } else {
             Err(self.unexpected(wanted))
         }
+    }
+
+    /// A sequence, `a, b, rule ... limit`, or a plain expression. Only a
+    /// whole formula may be one: inside brackets and arguments a comma
+    /// still separates, so `sum(a, b)` and `[a, b]` are untouched.
+    fn seq(&mut self) -> R<Expr> {
+        let first = self.expr()?;
+        if !matches!(self.peek(), Tok::Comma | Tok::DotDotDot) {
+            return Ok(first);
+        }
+        let start = first.span;
+        let mut terms = vec![first];
+        while self.eat(&Tok::Comma) {
+            terms.push(self.expr()?);
+        }
+        self.expect(Tok::DotDotDot, "`...` after the terms of a sequence")?;
+        let limit = self.expr()?;
+        // The last term is the rule when it reads a back-reference, and
+        // another seed when it does not.
+        let rule = terms
+            .last()
+            .is_some_and(reads_back)
+            .then(|| Box::new(terms.pop().unwrap()));
+        Ok(Expr {
+            kind: ExprKind::Seq {
+                seeds: terms,
+                rule,
+                limit: Box::new(limit),
+            },
+            span: start.to(self.prev_span()),
+        })
     }
 
     fn expr(&mut self) -> R<Expr> {
@@ -324,6 +355,37 @@ impl Parser {
             Tok::True => lit(Lit::Bool(true)),
             Tok::False => lit(Lit::Bool(false)),
             Tok::Star => ExprKind::Cursor,
+            Tok::Dollar => {
+                self.bump();
+                if !self.eat(&Tok::Minus) {
+                    return Err(Diagnostic::new(
+                        span.to(self.span()),
+                        "a back-reference counts backwards",
+                    )
+                    .with_help("write `$-1` for the term before this one"));
+                }
+                let Tok::Int(n) = self.peek().clone() else {
+                    return Err(self.unexpected("a whole number of terms to go back"));
+                };
+                self.bump();
+                let Ok(n) = u32::try_from(&n) else {
+                    return Err(Diagnostic::new(
+                        span.to(self.prev_span()),
+                        "a back-reference goes back too far",
+                    ));
+                };
+                if n == 0 {
+                    return Err(Diagnostic::new(
+                        span.to(self.prev_span()),
+                        "a back-reference goes back at least one term",
+                    )
+                    .with_help("`$-1` is the term before this one"));
+                }
+                return Ok(Expr {
+                    kind: ExprKind::Back(n),
+                    span: span.to(self.prev_span()),
+                });
+            }
             Tok::Ident(name) => {
                 self.bump();
                 if self.eat(&Tok::LParen) {

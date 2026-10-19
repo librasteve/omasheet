@@ -300,6 +300,17 @@ fn base_sheet(e: &Expr) -> Option<Option<&str>> {
 fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec<(&'a str, Span)>) {
     match &e.kind {
         ExprKind::Lit(_) | ExprKind::Cursor | ExprKind::Own => {}
+        // A back-reference names no column: it is this one.
+        ExprKind::Back(_) => {}
+        ExprKind::Seq { seeds, rule, limit } => {
+            for seed in seeds {
+                sites(seed, nested, out, names);
+            }
+            if let Some(rule) = rule {
+                sites(rule, nested, out, names);
+            }
+            sites(limit, nested, out, names);
+        }
         ExprKind::Name(name) => {
             if !nested {
                 names.push((name, e.span));
@@ -375,7 +386,16 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
 /// indexed or read from.
 fn named(e: &Expr, name: &str, out: &mut Vec<Span>) {
     match &e.kind {
-        ExprKind::Lit(_) | ExprKind::Cursor | ExprKind::Own => {}
+        ExprKind::Lit(_) | ExprKind::Cursor | ExprKind::Own | ExprKind::Back(_) => {}
+        ExprKind::Seq { seeds, rule, limit } => {
+            for seed in seeds {
+                named(seed, name, out);
+            }
+            if let Some(rule) = rule {
+                named(rule, name, out);
+            }
+            named(limit, name, out);
+        }
         ExprKind::Name(n) => {
             if n == name {
                 out.push(e.span);
@@ -817,6 +837,14 @@ fn clean_cell(input: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+/// A name with any `_001` it was copied with taken off.
+fn copy_base(name: &str) -> &str {
+    match name.rsplit_once('_') {
+        Some((base, n)) if n.len() == 3 && n.bytes().all(|b| b.is_ascii_digit()) && !base.is_empty() => base,
+        _ => name,
+    }
+}
+
 fn valid_name(name: &str) -> Result<&str, String> {
     let name = name.trim();
     if name.is_empty() || ident_len(name) != name.len() {
@@ -1115,6 +1143,18 @@ impl Document {
         self.undo.push(std::mem::replace(&mut self.text, next));
         self.rebuild();
         true
+    }
+
+    /// How many steps there are to undo: a mark for [`Document::join_since`].
+    pub fn undo_mark(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// Make every step taken since `mark` one step, undone at once.
+    pub fn join_since(&mut self, mark: usize) {
+        if self.undo.len() > mark + 1 {
+            self.undo.truncate(mark + 1);
+        }
     }
 
     /// Replace the text as one undoable step. Returns whether it changed.
@@ -1628,23 +1668,6 @@ impl Document {
         self.undo.truncate(mark + 1);
     }
 
-    /// A name for a copy of column `name`: `Name_copy001`, or the first
-    /// after it that is free.
-    fn copy_name(&self, sheet: usize, name: &str) -> String {
-        let snap = &self.snapshot;
-        let taken = |n: &str| {
-            snap.sheets
-                .get(sheet)
-                .is_some_and(|t| t.columns.iter().any(|c| c.name == n))
-                || snap.consts.iter().any(|c| c.name == n)
-                || snap.sheets.iter().any(|t| t.name == n)
-        };
-        (1..)
-            .map(|k| format!("{name}_copy{k:03}"))
-            .find(|n| !taken(n))
-            .unwrap_or_default()
-    }
-
     /// Add an empty data column as column `at`, in one undoable step.
     pub fn insert_column(&mut self, sheet: usize, at: usize, name: &str) -> Result<(), String> {
         let mark = self.undo.len();
@@ -1673,73 +1696,6 @@ impl Document {
         self.move_columns(sheet, last, 1, at.min(last))?;
         self.squash(mark);
         Ok(())
-    }
-
-    /// Put copies of the columns `cols` of a sheet in at column `at`, in one
-    /// undoable step. A data column is copied with its cells as they are
-    /// written, and a formula column with its formula, each under a name
-    /// like `Name_copy001`.
-    pub fn insert_copies(&mut self, sheet: usize, cols: &[usize], at: usize) -> Result<(), String> {
-        let Some(snap) = self.snapshot.sheets.get(sheet) else {
-            return Err("there is no such sheet".into());
-        };
-        if cols.iter().any(|c| *c >= snap.columns.len()) {
-            return Err("there is no such column".into());
-        }
-        let mark = self.undo.len();
-        let mut cols = cols.to_vec();
-        let start = at.min(snap.columns.len());
-        for k in 0..cols.len() {
-            let to = start + k;
-            let column = self.snapshot.sheets[sheet].columns[cols[k]].clone();
-            let name = self.copy_name(sheet, &column.name);
-            match &column.formula {
-                None => self.insert_column(sheet, to, &name)?,
-                Some(expr) => self.insert_computed(sheet, to, &name, expr)?,
-            }
-            for col in &mut cols {
-                if *col >= to {
-                    *col += 1;
-                }
-            }
-            if column.formula.is_none() {
-                let from = cols[k];
-                self.edit_grid(sheet, |grid| {
-                    for (_, row) in &mut grid.rows {
-                        if let Some(cell) = row.get(from).cloned()
-                            && let Some(copy) = row.get_mut(to)
-                        {
-                            *copy = cell;
-                        }
-                    }
-                });
-            }
-        }
-        self.squash(mark);
-        Ok(())
-    }
-
-    /// Add rows at row `row` of a sheet and put `block` in them from column
-    /// `col`, in one undoable step.
-    pub fn insert_cells(
-        &mut self,
-        sheet: usize,
-        (row, col): (usize, usize),
-        block: &[Vec<String>],
-    ) -> bool {
-        let mark = self.undo.len();
-        if !self.insert_rows(sheet, row, block.len()) {
-            return false;
-        }
-        let mut cells = Vec::new();
-        for (i, line) in block.iter().enumerate() {
-            for (j, text) in line.iter().enumerate() {
-                cells.push((row + i, col + j, text.clone()));
-            }
-        }
-        self.set_cells(sheet, &cells);
-        self.squash(mark);
-        true
     }
 
     /// Move `count` rows starting at `first` so that the first of them
@@ -2087,17 +2043,7 @@ impl Document {
         let Some(decl) = self.sheet_decl(&ast, sheet) else {
             return Err("there is no such sheet".into());
         };
-        let start = self.line_start(decl.span.start as usize);
-        let ends = [decl.span, decl.header_line]
-            .into_iter()
-            .chain(decl.separator_line)
-            .chain(decl.row_lines.iter().copied())
-            .chain(decl.schema.iter().map(|l| l.span))
-            .chain(decl.computed.iter().map(|c| c.expr_span));
-        let last = ends.map(|s| s.end as usize).max().unwrap_or(start);
-        let mut end = self.text[last..]
-            .find('\n')
-            .map_or(self.text.len(), |k| last + k + 1);
+        let (start, mut end) = self.sheet_lines(decl);
         // The blank lines under it go with it.
         while let Some(rest) = self.text[end..].split_inclusive('\n').next() {
             if !rest.trim().is_empty() {
@@ -2116,6 +2062,113 @@ impl Document {
         Ok(())
     }
 
+    /// Where a sheet's lines start, and end: its own line, its types, its
+    /// rows and its formulas, up to the end of the last of them.
+    fn sheet_lines(&self, decl: &SheetDecl) -> (usize, usize) {
+        let start = self.line_start(decl.span.start as usize);
+        let ends = [decl.span, decl.header_line]
+            .into_iter()
+            .chain(decl.separator_line)
+            .chain(decl.row_lines.iter().copied())
+            .chain(decl.schema.iter().map(|l| l.span))
+            .chain(decl.computed.iter().map(|c| c.expr_span));
+        let last = ends.map(|s| s.end as usize).max().unwrap_or(start);
+        let end = self.text[last..]
+            .find('\n')
+            .map_or(self.text.len(), |k| last + k + 1);
+        (start, end)
+    }
+
+    /// Move sheet `from` to be sheet `to`, with the comment written over it.
+    pub fn move_sheet(&mut self, from: usize, to: usize) -> Result<(), String> {
+        let ast = self.ast();
+        let Some(decl) = self.sheet_decl(&ast, from) else {
+            return Err("there is no such sheet".into());
+        };
+        if from == to {
+            return Ok(());
+        }
+        let (mut start, mut end) = self.sheet_lines(decl);
+        while start > 0 {
+            let above = self.line_start(start - 1);
+            if !self.text[above..start].starts_with('#') {
+                break;
+            }
+            start = above;
+        }
+        let block = self.text[start..end].trim_end().to_string() + "\n";
+        // The blank lines under it go with it.
+        while let Some(rest) = self.text[end..].split_inclusive('\n').next() {
+            if !rest.trim().is_empty() {
+                break;
+            }
+            end += rest.len();
+        }
+        let rest = format!("{}{}", &self.text[..start], &self.text[end..]);
+        let ast = parse_file(&rest, 0, &mut Vec::new());
+        let text = match ast.sheets.get(to) {
+            Some(next) => {
+                let mut at = rest[..next.span.start as usize].rfind('\n').map_or(0, |k| k + 1);
+                while at > 0 {
+                    let above = rest[..at - 1].rfind('\n').map_or(0, |k| k + 1);
+                    if !rest[above..at].starts_with('#') {
+                        break;
+                    }
+                    at = above;
+                }
+                format!("{}{block}\n{}", &rest[..at], &rest[at..]).trim_end().to_string() + "\n"
+            }
+            None => {
+                let mut text = rest.trim_end().to_string();
+                if !text.is_empty() {
+                    text.push_str("\n\n");
+                }
+                text + &block
+            }
+        };
+        self.commit(text);
+        Ok(())
+    }
+
+    /// Make sheet `to` a copy of sheet `from`: its columns, types, rows and
+    /// formulas, under `from`'s name made free with `_001`, `_002`...
+    /// The name it was given.
+    pub fn paste_sheet(&mut self, from: usize, to: usize) -> Result<String, String> {
+        let ast = self.ast();
+        let (Some(source), Some(target)) = (self.sheet_decl(&ast, from), self.sheet_decl(&ast, to))
+        else {
+            return Err("there is no such sheet".into());
+        };
+        if from == to {
+            return Ok(source.name.clone());
+        }
+        let taken = |name: &str| {
+            self.snapshot.consts.iter().any(|c| c.name == name)
+                || self.snapshot.sheets.iter().enumerate().any(|(k, t)| k != to && t.name == name)
+        };
+        let base = copy_base(&source.name);
+        let name = (1..)
+            .map(|n| format!("{base}_{n:03}"))
+            .find(|name| !taken(name))
+            .unwrap_or_default();
+        let (s0, s1) = self.sheet_lines(source);
+        let (t0, t1) = self.sheet_lines(target);
+        // Its own line names it: the name after `sheet`.
+        let mut block = self.text[s0..s1].to_string();
+        let at = source.span.start as usize - s0;
+        let named = block[at..].find(&source.name).map(|k| at + k);
+        let Some(k) = named else {
+            return Err("the sheet's name was not found".into());
+        };
+        block.replace_range(k..k + source.name.len(), &name);
+        if !block.ends_with('\n') {
+            block.push('\n');
+        }
+        let text = format!("{}{block}{}", &self.text[..t0], &self.text[t1..]);
+        self.commit(text);
+        Ok(name)
+    }
+
     fn rebuild(&mut self) {
         let mut sources = Sources::new();
         let src = sources.add("file", self.text.as_str());
@@ -2132,8 +2185,8 @@ impl Document {
         diags.extend(engine.take_diags());
         let ast = self.ast();
 
-        // A cell that does not fit its column: say what the column takes,
-        // written the way the user types it.
+        // A cell that does not fit its column says so, and what the column
+        // takes, written the way the user types it.
         for sheet in &program.sheets {
             let Some(decl) = ast.sheets.iter().find(|d| d.name == sheet.name) else {
                 continue;
@@ -2144,10 +2197,11 @@ impl Document {
                     .iter_mut()
                     .filter(|d| d.span == cell.span && d.message.ends_with("` literal"));
                 for d in misfits.filter(|_| !hint.is_empty()) {
-                    d.message = format!("`{}` does not fit column `{}`", cell.text, col.name);
-                    d.help = Some(format!(
-                        "{hint}; to calculate a value, start the cell with `=`"
-                    ));
+                    d.message = format!(
+                        "{} has type {}, {} does not match",
+                        col.name, col.ty, cell.text
+                    );
+                    d.help = Some(hint.clone());
                 }
             }
         }
@@ -2182,13 +2236,16 @@ impl Document {
             let decl = ast.sheets.iter().find(|d| d.name == sheet.name);
             let mut columns = Vec::new();
             let mut column_errors = Vec::new();
-            for col in &sheet.cols {
+            for (c, col) in sheet.cols.iter().enumerate() {
                 let computed = decl
                     .filter(|_| matches!(col.kind, ColKind::Computed(_)))
                     .and_then(|d| d.computed.iter().find(|c| c.name == col.name));
                 columns.push(ColumnSnap {
                     name: col.name.clone(),
-                    ty: if col.ty == S::Any {
+                    // A decimal in it that does not end makes it a fraction column.
+                    ty: if engine.shows_fractions(t, c) {
+                        S::Fraction.to_string()
+                    } else if col.ty == S::Any {
                         String::new()
                     } else {
                         col.ty.to_string()
@@ -2297,6 +2354,170 @@ mod tests {
             .iter()
             .map(|r| r[col].display.clone())
             .collect()
+    }
+
+    /// A sheet of `rows` empty computed cells in one column, filled by
+    /// the sequence `seq`.
+    fn seq(seq: &str, rows: usize) -> Vec<String> {
+        let cells = "| * |\n".repeat(rows);
+        let text = format!("sheet S\n\n| N |\n| - |\n{cells}\nN := {seq}\n");
+        let doc = Document::from_text(&text);
+        assert!(
+            doc.snapshot().problems.is_empty(),
+            "{seq}: {:?}",
+            doc.snapshot().problems
+        );
+        col(&doc, 0, 0)
+    }
+
+    #[test]
+    fn a_sequence_takes_an_arithmetic_or_geometric_step_from_its_terms() {
+        assert_eq!(seq("1, 3 ... Inf", 4), ["1", "3", "5", "7"]);
+        assert_eq!(seq("1, 2, 4 ... Inf", 4), ["1", "2", "4", "8"]);
+        // Two terms are a difference, so a constant ratio needs three.
+        assert_eq!(seq("1, 1/3 ... Inf", 3), ["1", "1/3", "-1/3"]);
+        assert_eq!(seq("1, 1/3, 1/9 ... Inf", 3), ["1", "1/3", "1/9"]);
+        // One term alone steps by one.
+        assert_eq!(seq("5 ... Inf", 3), ["5", "6", "7"]);
+    }
+
+    #[test]
+    fn a_sequence_may_give_its_own_rule_through_back_references() {
+        assert_eq!(seq("0, 1, $-1 + $-2 ... Inf", 7), ["0", "1", "1", "2", "3", "5", "8"]);
+        assert_eq!(seq("1, $-1 * 3 ... Inf", 4), ["1", "3", "9", "27"]);
+    }
+
+    #[test]
+    fn a_sequence_stops_at_its_limit_and_leaves_the_rest_empty() {
+        assert_eq!(seq("1, 3 ... 9", 7), ["1", "3", "5", "7", "9", "", ""]);
+        // One that steps over its limit stops before it.
+        assert_eq!(seq("1, 3 ... 10", 7), ["1", "3", "5", "7", "9", "", ""]);
+        assert_eq!(seq("20, 15 ... 0", 6), ["20", "15", "10", "5", "0", ""]);
+    }
+
+    #[test]
+    fn a_sequence_of_text_counts_letters_and_digits_up() {
+        assert_eq!(seq(r#""A", "B" ... Inf"#, 3), ["A", "B", "C"]);
+        // It carries at the end of the alphabet, as a workbook's columns do.
+        assert_eq!(seq(r#""Y" ... Inf"#, 4), ["Y", "Z", "AA", "AB"]);
+        assert_eq!(seq(r#""AY" ... "BA""#, 4), ["AY", "AZ", "BA", ""]);
+        // Only the last run of letters and digits moves.
+        assert_eq!(seq(r#""job-A9" ... Inf"#, 2), ["job-A9", "job-B0"]);
+    }
+
+    #[test]
+    fn a_sequence_of_named_days_or_months_goes_round() {
+        assert_eq!(
+            seq(r#""Monday", "Tuesday" ... Inf"#, 3),
+            ["Monday", "Tuesday", "Wednesday"]
+        );
+        // Sunday is followed by Monday, and December by January.
+        assert_eq!(seq(r#""Sat", "Sun" ... Inf"#, 3), ["Sat", "Sun", "Mon"]);
+        assert_eq!(seq(r#""Nov", "Dec" ... Inf"#, 3), ["Nov", "Dec", "Jan"]);
+        assert_eq!(
+            seq(r#""January", "March" ... Inf"#, 3),
+            ["January", "March", "May"]
+        );
+        // A month with its year carries, and the way it is written is kept.
+        assert_eq!(
+            seq(r#""Nov-2026", "Dec-2026" ... Inf"#, 3),
+            ["Nov-2026", "Dec-2026", "Jan-2027"]
+        );
+        assert_eq!(seq(r#""mon", "tue" ... Inf"#, 2), ["mon", "tue"]);
+        assert_eq!(
+            seq(r#""Monday" ... "Wednesday""#, 4),
+            ["Monday", "Tuesday", "Wednesday", ""]
+        );
+        // Text that is no such name still counts up letter by letter.
+        assert_eq!(seq(r#""AY" ... Inf"#, 3), ["AY", "AZ", "BA"]);
+    }
+
+    #[test]
+    fn a_sequence_of_dates_or_times_steps_by_days_or_seconds() {
+        assert_eq!(
+            seq("2025-01-01, 2025-01-08 ... Inf", 3),
+            ["2025-01-01", "2025-01-08", "2025-01-15"]
+        );
+        assert_eq!(seq("09:00, 09:30 ... Inf", 3), ["09:00", "09:30", "10:00"]);
+        assert_eq!(
+            seq("2025-01-30 ... 2025-02-01", 4),
+            ["2025-01-30", "2025-01-31", "2025-02-01", ""]
+        );
+    }
+
+    #[test]
+    fn dates_a_month_apart_step_by_months_rather_than_days() {
+        assert_eq!(
+            seq("2025-01-01, 2025-02-01, 2025-03-01 ... Inf", 4),
+            ["2025-01-01", "2025-02-01", "2025-03-01", "2025-04-01"]
+        );
+        // The day counted from is the largest given, so the end of a short
+        // month goes on to the end of a long one rather than drifting back.
+        assert_eq!(
+            seq("2025-01-31, 2025-02-28 ... Inf", 4),
+            ["2025-01-31", "2025-02-28", "2025-03-31", "2025-04-30"]
+        );
+        assert_eq!(
+            seq("2024-11-30, 2024-12-31 ... Inf", 4),
+            ["2024-11-30", "2024-12-31", "2025-01-31", "2025-02-28"]
+        );
+        // Quarters, where the days between them vary.
+        assert_eq!(
+            seq("2025-01-15, 2025-04-15 ... Inf", 3),
+            ["2025-01-15", "2025-04-15", "2025-07-15"]
+        );
+        // Days still win where the day of the month does not line up.
+        assert_eq!(
+            seq("2025-01-01, 2025-01-08 ... Inf", 3),
+            ["2025-01-01", "2025-01-08", "2025-01-15"]
+        );
+        // One date alone steps by a day, as every other sequence steps by one.
+        assert_eq!(
+            seq("2025-01-30 ... Inf", 3),
+            ["2025-01-30", "2025-01-31", "2025-02-01"]
+        );
+    }
+
+    #[test]
+    fn a_date_takes_a_duration_in_months_weeks_or_years() {
+        assert_eq!(
+            seq("2025-01-15, $-1 + 1.month ... Inf", 3),
+            ["2025-01-15", "2025-02-15", "2025-03-15"]
+        );
+        // `eom` holds a sequence on the end of each month from any start.
+        assert_eq!(
+            seq("eom(2025-01-10), eom($-1 + 1.month) ... Inf", 4),
+            ["2025-01-31", "2025-02-28", "2025-03-31", "2025-04-30"]
+        );
+        assert_eq!(
+            seq("2025-01-01, $-1 + 2.week ... Inf", 3),
+            ["2025-01-01", "2025-01-15", "2025-01-29"]
+        );
+        // A leap day a year on is clamped, and months before go back.
+        assert_eq!(
+            seq("2024-02-29, $-1 + 1.year ... Inf", 2),
+            ["2024-02-29", "2025-02-28"]
+        );
+        assert_eq!(
+            seq("2025-03-31, $-1 - 1.month ... Inf", 3),
+            ["2025-03-31", "2025-02-28", "2025-01-28"]
+        );
+    }
+
+    #[test]
+    fn a_sequence_that_cannot_be_worked_out_is_reported() {
+        let bad = |seq: &str| {
+            let text = format!("sheet S\n\n| N |\n| - |\n| * |\n| * |\n\nN := {seq}\n");
+            let doc = Document::from_text(&text);
+            doc.snapshot()
+                .problems
+                .first()
+                .map(|p| p.message.clone())
+                .unwrap_or_default()
+        };
+        assert!(bad("1, 2, 5 ... Inf").contains("neither an arithmetic nor a geometric"));
+        assert!(bad("2025-01-01, 2025-01-05, 2025-01-20 ... Inf").contains("evenly spaced"));
+        assert!(bad("$-1 + 1 ... Inf").contains("term to start from"));
     }
 
     #[test]
@@ -2446,7 +2667,10 @@ mod tests {
                 "Month", "Revenue", "Cost", "Profit", "Tax", "Note", "Margin"
             ]
         );
-        assert_eq!(col(&doc, 0, 6), ["0.4", "5/12"]);
+        // A decimal that does not end makes a column of no declared type a
+        // column of fractions.
+        assert_eq!(col(&doc, 0, 6), ["2/5", "5/12"]);
+        assert_eq!(doc.snapshot().sheets[0].columns[6].ty, "Fraction");
         // An exact number is shown in full, so there is no more of it to
         // show.
         let exact = |doc: &Document| doc.snapshot().sheets[0].rows[1][6].exact.clone();
@@ -2751,14 +2975,13 @@ mod tests {
         assert_eq!(
             doc.snapshot().sheets[0].rows[0][0].error.as_deref(),
             Some(
-                "`soon` does not fit column `On` (Date: MM/DD/YYYY, e.g. 01/31/2025 or ISO; \
-                 to calculate a value, start the cell with `=`)"
+                "On has type Date, soon does not match (Date: MM/DD/YYYY, e.g. 01/31/2025 or ISO)"
             )
         );
         assert!(
             doc.snapshot().problems[0]
                 .message
-                .contains("does not fit column `On`")
+                .contains("On has type Date")
         );
         // Every example is accepted as an entry for its type.
         for ty in ["Date", "Time", "DateTime"] {
@@ -2811,7 +3034,10 @@ mod tests {
         assert_eq!((a.count, a.numbers), (3, numbers("3 1/3", "1 1/9")));
         // Text counts but does not add; an empty cell does neither.
         let top = sum((0, 0), (1, 2));
-        assert_eq!((top.count, top.numbers), (5, numbers("3.5", "1 1/6")));
+        assert_eq!(
+            (top.count, top.numbers),
+            (5, numbers("3.5", "1.16666666666666666666…"))
+        );
         // One Num makes the total a Num.
         let b = sum((0, 2), (2, 2));
         assert_eq!((b.count, b.numbers), (2, numbers("100.5", "50.25")));
@@ -3111,6 +3337,52 @@ mod tests {
     }
 
     #[test]
+    fn a_sheet_moves_with_its_comment() {
+        let text = "# One\nsheet T\n\n| A |\n| - |\n| 1 |\n\nsheet U\n\n| X |\n| - |\n| 2 |\n\n# Three\nsheet V\n\n| Y |\n| - |\n| 3 |\n";
+        let order = |doc: &Document| doc.snapshot().sheets.iter().map(|t| t.name.clone()).collect::<Vec<_>>();
+        let mut doc = Document::from_text(text);
+        doc.move_sheet(0, 2).unwrap();
+        assert_eq!(order(&doc), ["U", "V", "T"]);
+        assert!(doc.text().contains("# One\nsheet T"));
+        assert!(doc.snapshot().problems.is_empty());
+        doc.move_sheet(2, 1).unwrap();
+        assert_eq!(order(&doc), ["U", "T", "V"]);
+        assert!(doc.text().contains("| 1 |\n\n# Three\nsheet V"));
+        doc.move_sheet(1, 0).unwrap();
+        assert_eq!(doc.text(), text);
+    }
+
+    #[test]
+    fn a_sheet_pasted_onto_another_replaces_it_under_its_name_copied() {
+        let text = "sheet T\n\n| A   | B   |\n| --- | --- |\n| 1   | 2   |\n\nB := A + 1\n\n# Kept\nsheet U\n\n| X |\n| - |\n| 9 |\n";
+        let mut doc = Document::from_text(text);
+        assert_eq!(doc.paste_sheet(0, 1), Ok("T_001".to_string()));
+        let columns = &doc.snapshot().sheets[1].columns;
+        assert_eq!(columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["A", "B"]);
+        assert_eq!(col(&doc, 1, 1), ["2"]);
+        assert_eq!(doc.snapshot().sheets[1].name, "T_001");
+        assert!(doc.text().contains("# Kept\nsheet T_001"));
+        // Pasted again, onto the copy: the next free name.
+        assert_eq!(doc.paste_sheet(1, 0), Ok("T_002".to_string()));
+        assert!(doc.undo());
+        assert!(doc.undo());
+        assert_eq!(doc.text(), text);
+    }
+
+    #[test]
+    fn steps_joined_since_a_mark_undo_as_one() {
+        let text = "sheet T\n\n| A   | B   |\n| --- | --- |\n| 1   | 2   |\n";
+        let mut doc = Document::from_text(text);
+        let mark = doc.undo_mark();
+        doc.set_cell(0, 0, 0, "3");
+        doc.rename_column(0, 1, "B_001").unwrap();
+        doc.join_since(mark);
+        assert!(doc.undo());
+        assert_eq!(doc.text(), text);
+        assert!(!doc.undo());
+    }
+
+    #[test]
     fn moved_rows_keep_a_range_that_starts_after() {
         let text = "sheet T\n\nName | N | M\na | 1 |\nb | 2 |\nc | 3 |\n\
                     d | 4 | = sum([N; 0^..2]) + sum([N; ^2])\n";
@@ -3250,37 +3522,6 @@ mod tests {
         assert_eq!(col(&doc, 0, 0), ["2", "6"]);
         assert_eq!(col(&doc, 0, 3), ["23", "3"]);
         assert_eq!(col(&doc, 0, 4), ["3", "7"]);
-        assert!(doc.undo());
-        assert_eq!(doc.text(), text);
-
-        // Copies: a data column with its cells as written, and a formula
-        // column with its formula, where they are put.
-        doc.insert_copies(0, &[2, 3], 0).unwrap();
-        assert_eq!(names(&doc), ["C_copy001", "S_copy001", "A", "B", "C", "S"]);
-        let now = doc.text();
-        assert!(
-            now.contains("S := A + [3; *]\nS_copy001 := A + [3; *]\n"),
-            "{now}"
-        );
-        assert_eq!(col(&doc, 0, 1), ["3", "7"]);
-        assert_eq!(col(&doc, 0, 5), ["3", "7"]);
-        // The copy counts from where it is, so it reads other cells.
-        assert_eq!(col(&doc, 0, 4), ["23", "3"]);
-        assert!(
-            doc.snapshot().sheets[0].rows[1][0]
-                .source
-                .contains("[*-2; *]")
-        );
-        doc.insert_copies(0, &[4], 5).unwrap();
-        assert_eq!(names(&doc)[4..6], ["C", "C_copy002"]);
-        assert!(doc.undo());
-        assert!(doc.undo());
-        assert_eq!(doc.text(), text);
-
-        // Copied cells, put in as new rows.
-        doc.insert_cells(0, (1, 0), &[vec!["8".into(), "9".into()]]);
-        assert_eq!(col(&doc, 0, 0), ["1", "8", "3"]);
-        assert_eq!(col(&doc, 0, 1), ["2", "9", "4"]);
         assert!(doc.undo());
         assert_eq!(doc.text(), text);
     }

@@ -21,6 +21,10 @@ number in e notation keeps every digit it can, and where they do not all fit
 they are cut and marked: `2 ** 64` is shown as `1.8446744073709551…e+19`.
 Only the display is cut, and `omasheet eval --exact` gives it in full.
 
+A `Decimal` that does not end is cut and marked the same way: `1/3` is
+shown as `0.33333333333333333333…`. Pointing at it in the app shows more
+places, and `--exact` gives it as a fraction, `1/3`.
+
 A `Num` is never rounded: it is shown with the fewest digits that give the
 same `Num` back, `0.30000000000000004`, and always fits.
 
@@ -33,11 +37,11 @@ than one as a whole number and a part, `11/4` as `2 3/4`. One too wide is
 shown in e notation, cut and marked. `--exact` and `x.Text` give it as it is
 written in the file, `11/4`.
 
-Whole numbers and decimals divided give a `Decimal` when the result ends,
-`7 / 4` is `1.75`, and a `Fraction` when it does not, `7 / 3` is `2 1/3`.
-Anything worked out from a `Fraction` is a `Fraction`: `x.Fraction * 2`. To
-show a result as a fraction, declare its column `Fraction` or write
-`x.Fraction`; for a decimal, write `x.Decimal`.
+Whole numbers and decimals divided give a `Decimal`, whether or not it
+ends: `7 / 4` is `1.75` and `7 / 3` is `2.33333333333333333333…`, held
+exactly. Anything worked out from a `Fraction` is a `Fraction`:
+`x.Fraction * 2`. To show a result as a fraction, declare its column
+`Fraction` or write `x.Fraction`; for a decimal, write `x.Decimal`.
 
 Numbers are shown the way Raku shows them:
 
@@ -52,12 +56,14 @@ Numbers are shown the way Raku shows them:
 
 A `Num` that is a whole number looks like an `Int`, but it is still a `Num`.
 
-A `Decimal` is an exact number that ends when written as a decimal: `19.99`.
-Adding, subtracting and multiplying decimals gives a `Decimal`. Dividing them
-may not end, `1 / 3`, so a quotient is a `Fraction`, and so is an average. A
-`Decimal` goes anywhere a `Fraction` does.
+A `Decimal`, a `Fraction` and a `Percent` are the same exact numbers shown
+in different ways: `19.99`, `2 3/4` and `20%`. Adding, subtracting,
+multiplying and dividing decimals gives a `Decimal`, and so does an average.
+Each goes anywhere another does: a `Decimal` column shows `1/3` as
+`0.333…`. A column of no declared type with a decimal in it that does not
+end is a `Fraction` column, and shows every number in it as a fraction.
 
-A `Percent` holds what a `Fraction` does. Percentages add up to a percentage:
+Percentages add up to a percentage:
 `20% + 5%` is `25%`, and so are their sum, average, least and greatest.
 Anything else done with one gives the plain number: `100 * 20%` is `20`,
 `1 + 20%` is `1.2`, and `20% == 0.2` is true. To show a result as a
@@ -74,7 +80,7 @@ vector is converted value by value.
 | Written | Gives |
 |---|---|
 | `x.Int` | a whole number: `19.99` gives `19`, `-19.99` gives `-19` |
-| `x.Decimal` | an exact decimal: `(1/8).Decimal` is `0.125`; `(1/3).Decimal` is an error |
+| `x.Decimal` | the same number as a decimal: `(1/8).Decimal` is `0.125`, `(1/3).Decimal` is `0.333…` |
 | `x.Fraction` | the same number as a fraction: `2.75` gives `2 3/4`; a `Num` as the decimal it is shown as |
 | `x.Percent` | the same number as a percentage: `0.4` gives `40%`, `5/12` gives `41.67%` |
 | `x.Num` | a floating-point number |
@@ -115,15 +121,79 @@ rounds to the nearest 0.01, and `round(x, 100)` to the nearest hundred.
 Inside its own sheet the name can be dropped: `[Revenue; *-1]`. A row
 outside the sheet is empty, so `[Revenue; *-1] // 0` starts a running value.
 
+## Sequences with `...`
+
+A computed column may be written as a sequence, `terms ... limit`. The terms
+given start the column and the rest follow a rule.
+
+| Written | Gives |
+|---|---|
+| `1, 3 ... Inf` | 1, 3, 5, 7, … — a constant difference |
+| `1, 2, 4 ... Inf` | 1, 2, 4, 8, … — a constant ratio |
+| `5 ... Inf` | 5, 6, 7, … — one term alone steps by one |
+| `0, 1, $-1 + $-2 ... Inf` | 0, 1, 1, 2, 3, 5, … — a rule of its own |
+| `1, 3 ... 9` | 1, 3, 5, 7, 9, then empty |
+| `"A", "B" ... Inf` | A, B, … Z, AA, AB, … |
+| `"Monday", "Tuesday" ... Inf` | the days of the week, round and round |
+| `"Jan", "Feb" ... Inf` | the months of the year |
+| `"Jan-2026", "Apr-2026" ... Inf` | quarters, carrying into the year |
+| `"AY" ... "BA"` | AY, AZ, BA, then empty |
+| `2025-01-01, 2025-01-08 ... Inf` | every seventh day |
+| `2025-01-01, 2025-02-01 ... Inf` | the first of each month |
+| `2025-01-31, 2025-02-28 ... Inf` | the last day of each month |
+
+- `$-1` is the term before this one, `$-2` the one before that. The last
+  term before `...` is the rule when it reads one, and another starting
+  term when it does not.
+- With no rule the step is taken from the terms: their difference, or their
+  ratio where three or more share one. Two terms are read as a difference,
+  so a constant ratio needs three.
+- `Inf` fills the column. Any other limit stops the sequence there and
+  leaves the rows after it empty; a sequence that would step over its limit
+  stops before it.
+- The days of the week and the months of the year are known by name,
+  written in full or in three letters, in any case: they go round, so
+  Sunday is followed by Monday and December by January. A month written
+  with its year, `Jan-2026` or `January 2026`, carries into the year
+  instead. Every term must be written the same way, so `"Mon", "Tuesday"`
+  is not one of these.
+- Any other text counts up the way letters and digits do, carrying at `Z`
+  and `9`, and only its last run of letters and digits moves: `job-A9` to
+  `job-B0`. `succ(x)` is that step on its own, and on a number it adds one.
+- Dates a fixed number of days apart step by days, and times and
+  date-times by seconds. Dates on the same day of each month step by
+  months instead, however many days that is, and the day they are counted
+  from is the largest one given: `2025-01-31, 2025-02-28 ... Inf` goes on
+  to the 31st of March, not back to its 28th. One date alone steps by a
+  day.
+- A sequence fills a column: it cannot change how many rows the sheet has,
+  and `... Inf` has no meaning anywhere else.
+
+## Durations
+
+Next to a date, a plain number is days, and `n.day`, `n.week`, `n.month`
+and `n.year` say which: `Placed + 1.month`, `Due - 2.week`. Only a plain
+number takes a unit, so `Placed.month` is still the month of a date.
+
+Months and years keep the day of the month, or the last day of a month too
+short for it: `2025-01-31 + 1.month` is `2025-02-28`. That rounding does
+not come back, so a sequence of month ends is better written with `eom`,
+which gives the last day of a date's month:
+`eom(2025-01-10), eom($-1 + 1.month) ... Inf`.
+
 ## Functions
 
 Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 
-- Vectors: `sum avg min max count`
+- Vectors: `sum avg min max count`, of one vector or several taken together,
+  with single values among them: `sum([A; 0..3], [A; 7..9], 5)`. A block of
+  cells counts every cell: `sum([0..2; 0..3])`.
 - Sheets: `filter(condition)`, `select(columns)`
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
+- Counting up: `succ` — a number plus one, or the next text, `AZ` to `BA`
 - Converting: `Int Decimal Fraction Percent Num Complex Text Bool Date Time DateTime`
 - Dates: `today() now() year month day weekday hour minute second date time`
+- Months: `add_months(x, n)` — what `x + n.month` is — and `eom(x)`
 - Time zones: `to_zone("Asia/Tokyo") utc() local() offset() zone()`
 - Your own: `fn` in the file
 

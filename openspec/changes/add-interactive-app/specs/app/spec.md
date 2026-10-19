@@ -96,6 +96,59 @@ larger selection SHALL fill the selection.
 - **WHEN** it is pasted at the first cell of a new row
 - **THEN** two rows are filled
 
+### Requirement: Keys by selection
+The app SHALL give each kind of selection the keys below; a blank is a key that
+does nothing there. A formula cell is one cell of a formula column, which stands
+for the whole column.
+
+|                  | cell             | formula cell        | cell block       | row              | col              | sheet            |
+|------------------|------------------|---------------------|------------------|------------------|------------------|------------------|
+| move             | ← → ↑ ↓          |                     |                  | ↑ ↓              | ← →              | Ctrl + Alt + ← → |
+| edit             | Enter            | Enter → formula box |                  |                  |                  |                  |
+| edit (F2)        | formula box      | rename in header    |                  |                  | rename in header | rename in tab    |
+| multiselect      | Shift + ← → ↑ ↓  | Shift + ← → ↑ ↓     |                  | Shift + ↑ ↓      | Shift + ← →      |                  |
+| deselect         | Esc              | Esc                 | Esc              | Esc              | Esc              | Esc              |
+| cut              | Ctrl + X         |                     | Ctrl + X         | Ctrl + X         | Ctrl + X         | Ctrl + X         |
+| copy             | Ctrl + C         | Ctrl + C            | Ctrl + C         | Ctrl + C         | Ctrl + C         | Ctrl + C         |
+| paste            | Ctrl + V         | Ctrl + V            | Ctrl + V         | Ctrl + V         | Ctrl + V         | Ctrl + V         |
+| paste values     | Ctrl + Shift + V |                     | Ctrl + Shift + V | Ctrl + Shift + V | Ctrl + Shift + V | Ctrl + Shift + V |
+| paste transposed | Ctrl + Alt + V   |                     | Ctrl + Alt + V   |                  |                  |                  |
+| clear            | Delete           |                     | Delete           | Delete           | Delete           | Delete           |
+| delete           |                  |                     |                  | Ctrl + Delete    | Ctrl + Delete    | Ctrl + Delete    |
+
+#### Scenario: Enter on a block
+- **GIVEN** a 2 × 3 block of cells is selected
+- **WHEN** Enter is pressed
+- **THEN** nothing is edited and the selection stays as it is
+
+### Requirement: Picking references in a formula
+While a formula is typed in a cell, the app SHALL let cells be picked into it as
+references, a single cell, a range or a list, with the keys and clicks below.
+A reference is relative to the edited cell, or absolute by row number with Alt.
+
+| In a formula              | Writes                                                |
+|---------------------------|-------------------------------------------------------|
+| Arrow                     | one cell, relative: `[*; *-1]`                        |
+| Shift + Arrow             | a range, relative: `[*; *-3..*-1]`                    |
+| Ctrl + Arrow              | the first or last cell that way                       |
+| Ctrl + Shift + Arrow      | a range to the first or last cell                     |
+| Click                     | one cell, relative                                    |
+| Drag                      | a range, relative                                     |
+| Ctrl + Click / Drag       | one more in a list, after a comma: `sum([*; *-3], [*+1; *-1])` |
+| Alt with any of the above | absolute, by row number: `[Revenue; 3]`, `[Revenue; 0..2]` |
+
+The cells picked SHALL be highlighted as the pick grows.
+
+#### Scenario: Sum a range by keyboard
+- **GIVEN** `= sum(` is typed in a cell three rows down a column
+- **WHEN** Shift + ↑ is pressed three times
+- **THEN** the formula reads `= sum([*; *-3..*-1]` and those three cells are highlighted
+
+#### Scenario: Sum a list by mouse
+- **GIVEN** `= sum(` is typed in a cell
+- **WHEN** one cell is clicked and another is clicked with Ctrl
+- **THEN** both references are written, separated by a comma
+
 ### Requirement: Rows, columns, sheets and constants
 The app SHALL be able to insert and delete rows, add a data column, add a
 computed column from a name and an expression, add a sheet, and add a constant.

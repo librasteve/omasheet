@@ -70,7 +70,9 @@ pub fn snapshot(snap: &Snapshot) -> String {
                 out.push(',');
                 field(out, "e", cell.error.as_deref().unwrap_or(""));
                 out.push(',');
-                let full = cell.exact.as_deref().filter(|_| cell.shortened);
+                // A decimal that does not end is given to more places.
+                let long = omasheet_engine::value::long_decimal(&cell.value);
+                let full = long.as_deref().or(cell.exact.as_deref().filter(|_| cell.shortened));
                 field(out, "x", full.unwrap_or(""));
                 if cell.value.is_markdown() {
                     out.push(',');

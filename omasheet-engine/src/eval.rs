@@ -15,6 +15,7 @@ use crate::zone::{Zone, Zoned, utc_now};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use omasheet_omx::ast::{BinOp, UnOp};
+use omasheet_omx::cycle;
 use omasheet_omx::date;
 use omasheet_omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_omx::{Cell, ColKind, Column, Diagnostic, Group, Program, S, Span};
@@ -66,6 +67,9 @@ pub struct Engine<'p> {
     zones: RefCell<HashMap<String, Option<Rc<Zone>>>>,
     /// What `now()` gives.
     now: i64,
+    /// Which columns of no declared type are shown as fractions, by sheet
+    /// and column, once known: see [`Engine::shows_fractions`].
+    fractions: RefCell<HashMap<(usize, usize), bool>>,
 }
 
 /// The complaint about a file that names a time zone there is none of.
@@ -124,6 +128,7 @@ impl<'p> Engine<'p> {
             local,
             zones: RefCell::new(HashMap::new()),
             now,
+            fractions: RefCell::new(HashMap::new()),
         }
     }
 
@@ -223,9 +228,34 @@ impl<'p> Engine<'p> {
         }
     }
 
-    /// A cell for display: failures show as an error value.
+    /// A cell for display: failures show as an error value, and a decimal
+    /// in a column shown as fractions as a fraction.
     pub fn cell_shown(&self, t: usize, c: usize, r: usize) -> Value {
-        self.cell(t, c, r).unwrap_or(Value::Error)
+        match self.cell(t, c, r) {
+            Ok(v @ Value::Decimal(_)) if self.shows_fractions(t, c) => v.fraction(),
+            Ok(v) => v,
+            Err(_) => Value::Error,
+        }
+    }
+
+    /// Whether a column of no declared type is shown as fractions: when a
+    /// decimal in it does not end, `1/3` rather than `0.333…`.
+    pub fn shows_fractions(&self, t: usize, c: usize) -> bool {
+        let Some(col) = self.prog.sheets.get(t).and_then(|s| s.cols.get(c)) else {
+            return false;
+        };
+        if col.declared {
+            return false;
+        }
+        if let Some(&known) = self.fractions.borrow().get(&(t, c)) {
+            return known;
+        }
+        let rows = self.prog.sheets[t].nrows;
+        let found = (0..rows).any(|r| {
+            matches!(self.cell(t, c, r), Ok(Value::Decimal(ref d)) if !omasheet_omx::convert::is_decimal(d))
+        });
+        self.fractions.borrow_mut().insert((t, c), found);
+        found
     }
 
     /// A formula's result must be one value of the column's declared type.
@@ -266,11 +296,9 @@ impl<'p> Engine<'p> {
         } else if col.ty == S::Fraction && matches!(v, Value::Decimal(_) | Value::Percent(_)) {
             // And in a `Fraction` column a fraction: `2.75` is `2 3/4`.
             Ok(v.plain().fraction())
-        } else if let (S::Decimal, Value::Fraction(r)) = (col.ty, &v)
-            && omasheet_omx::convert::is_decimal(r)
-        {
-            // A `Decimal` column holds only what ends as a decimal.
-            Ok(Value::Decimal(r.clone()))
+        } else if let (S::Decimal, Value::Fraction(r) | Value::Percent(r)) = (col.ty, &v) {
+            // And in a `Decimal` column a decimal, though it need not end.
+            Ok(Value::exact(r.clone()))
         } else {
             fail(
                 span,
@@ -335,6 +363,11 @@ impl<'p> Engine<'p> {
                 let (t, r) = fr[fr.len() - 1 - depth];
                 self.cell(t, *col, r)
             }
+            Ir::RowIndex { depth } => {
+                let (_, r) = fr[fr.len() - 1 - depth];
+                Ok(Value::Int(BigInt::from(r)))
+            }
+            Ir::Empty => Ok(Value::Empty),
             Ir::Unary(UnOp::UpTo, operand) => Ok(Value::Range {
                 lo: 0,
                 hi: self.int(operand, fr)?,
@@ -571,6 +604,98 @@ impl<'p> Engine<'p> {
                     single => convert(&single),
                 }
             }
+            Func::Succ => {
+                let next = |v: &Value| -> R {
+                    match v {
+                        Value::Empty => Ok(Value::Empty),
+                        Value::Text(s, md) => Ok(Value::Text(Rc::from(succ_text(s).as_str()), *md)),
+                        Value::Date(d) => Ok(Value::Date(d + 1)),
+                        Value::Time(t) => Ok(Value::Time(t + 1)),
+                        Value::DateTime(t) => Ok(Value::DateTime(t + 1)),
+                        v if v.is_numeric() => arith(BinOp::Add, v, &Value::Int(BigInt::from(1)))
+                            .or_else(|m| fail(span, m)),
+                        other => fail(
+                            span,
+                            format!("`succ` takes a number or text, found {}", other.kind()),
+                        ),
+                    }
+                };
+                match self.eval(&args[0], fr)? {
+                    Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                        items.iter().map(next).collect::<R<Vec<_>>>()?,
+                    ))),
+                    single => next(&single),
+                }
+            }
+            Func::Cycle(kind) => {
+                let step = match self.eval(&args[1], fr)? {
+                    Value::Int(n) => n.to_i64().unwrap_or(0),
+                    _ => 0,
+                };
+                match self.eval(&args[0], fr)? {
+                    Value::Empty => Ok(Value::Empty),
+                    Value::Text(s, md) => match cycle::advance(kind, &s, step) {
+                        Some(next) => Ok(Value::Text(Rc::from(next.as_str()), md)),
+                        None => fail(span, format!("`{s}` is not one of these names")),
+                    },
+                    other => fail(
+                        span,
+                        format!("a sequence of names steps through text, found {}", other.kind()),
+                    ),
+                }
+            }
+            Func::AddMonths | Func::EndOfMonth => {
+                let months = match func {
+                    Func::AddMonths => match self.eval(&args[1], fr)? {
+                        Value::Empty => return Ok(Value::Empty),
+                        Value::Int(n) => n.to_i64().unwrap_or(i64::MAX),
+                        other => {
+                            return fail(
+                                span,
+                                format!("a number of months must be Int, found {}", other.kind()),
+                            );
+                        }
+                    },
+                    _ => 0,
+                };
+                // A sequence passes the day of the month to land on.
+                let on = match args.get(2) {
+                    Some(node) => match self.eval(node, fr)? {
+                        Value::Int(n) => n.to_i64(),
+                        _ => None,
+                    },
+                    None => None,
+                };
+                let shift = |days: i32| match func {
+                    Func::AddMonths => date::add_months(days, months, on),
+                    _ => date::end_of_month(days),
+                };
+                let moved = |v: &Value| -> R {
+                    match v {
+                        Value::Empty => Ok(Value::Empty),
+                        Value::Date(d) => match shift(*d) {
+                            Some(d) => Ok(Value::Date(d)),
+                            None => fail(span, "this date falls outside the calendar".to_string()),
+                        },
+                        Value::DateTime(t) => {
+                            let (days, secs) = date::split_datetime(*t);
+                            match shift(days) {
+                                Some(d) => Ok(Value::DateTime(d as i64 * 86_400 + secs as i64)),
+                                None => {
+                                    fail(span, "this date falls outside the calendar".to_string())
+                                }
+                            }
+                        }
+                        other => fail(span, format!("expected a date, found {}", other.kind())),
+                    }
+                };
+                match self.eval(&args[0], fr)? {
+                    Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                        items.iter().map(moved).collect::<R<Vec<_>>>()?,
+                    ))),
+                    single => moved(&single),
+                }
+            }
             Func::Complex => {
                 let mut parts = [0.0; 2];
                 for (part, arg) in parts.iter_mut().zip(args) {
@@ -721,33 +846,47 @@ impl<'p> Engine<'p> {
                 }
             }
             Func::Sum | Func::Avg | Func::Min | Func::Max | Func::Count => {
-                let items: Rc<Vec<Value>> = match self.eval(&args[0], fr)? {
-                    Value::Vector(items) => items,
-                    Value::Sheet(v) if func == Func::Count => {
-                        return Ok(Value::Int(BigInt::from(v.rows.len())));
+                // Every argument's values, taken together.
+                let mut items: Vec<Value> = Vec::new();
+                for arg in args {
+                    match self.eval(arg, fr)? {
+                        Value::Vector(v) => items.extend(v.iter().cloned()),
+                        Value::Sheet(v) if func == Func::Count && args.len() == 1 => {
+                            return Ok(Value::Int(BigInt::from(v.rows.len())));
+                        }
+                        // A block: its cells, row by row.
+                        Value::Sheet(v) => {
+                            for &r in v.rows.iter() {
+                                for &c in v.cols.iter() {
+                                    items.push(self.cell(v.sheet, c, r)?);
+                                }
+                            }
+                        }
+                        Value::Range {
+                            lo,
+                            hi,
+                            after,
+                            exclusive,
+                        } => {
+                            let lo = if after { lo + 1 } else { lo };
+                            let hi = if exclusive { hi - 1 } else { hi };
+                            items.extend((lo..=hi).map(|n| Value::Int(BigInt::from(n))));
+                        }
+                        Value::Row(row) => {
+                            for &c in row.cols.iter() {
+                                items.push(self.cell(row.sheet, c, row.row)?);
+                            }
+                        }
+                        Value::Empty => {}
+                        other if args.len() > 1 && !matches!(other, Value::Sheet(_)) => items.push(other),
+                        other => {
+                            return fail(
+                                arg.span,
+                                format!("expected a vector to aggregate, found {}", other.kind()),
+                            );
+                        }
                     }
-                    Value::Range {
-                        lo,
-                        hi,
-                        after,
-                        exclusive,
-                    } => {
-                        let lo = if after { lo + 1 } else { lo };
-                        let hi = if exclusive { hi - 1 } else { hi };
-                        Rc::new((lo..=hi).map(|n| Value::Int(BigInt::from(n))).collect())
-                    }
-                    Value::Row(row) => {
-                        let cells = row.cols.iter().map(|&c| self.cell(row.sheet, c, row.row));
-                        Rc::new(cells.collect::<R<Vec<_>>>()?)
-                    }
-                    Value::Empty => Rc::new(Vec::new()),
-                    other => {
-                        return fail(
-                            args[0].span,
-                            format!("expected a vector to aggregate, found {}", other.kind()),
-                        );
-                    }
-                };
+                }
                 let present: Vec<&Value> = items
                     .iter()
                     .filter(|v| !matches!(v, Value::Empty))
@@ -1140,4 +1279,38 @@ fn scalar_op(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         },
         _ => return Err(format!("`{}` cannot be applied here", op.symbol())),
     })
+}
+
+/// The next text in the way letters and digits count up, as `AZ` to `BA`:
+/// the rightmost run of letters or digits is raised by one, carrying to the
+/// left, and widening when it runs off the end.
+pub fn succ_text(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let Some(end) = chars.iter().rposition(char::is_ascii_alphanumeric) else {
+        return format!("{s}1");
+    };
+    let mut start = end;
+    while start > 0 && chars[start - 1].is_ascii_alphanumeric() {
+        start -= 1;
+    }
+    let mut out = chars;
+    let mut i = end;
+    loop {
+        let (next, carry) = match out[i] {
+            '9' => ('0', true),
+            'z' => ('a', true),
+            'Z' => ('A', true),
+            c => ((c as u8 + 1) as char, false),
+        };
+        out[i] = next;
+        if !carry {
+            break;
+        }
+        if i == start {
+            out.insert(start, if next == '0' { '1' } else { next });
+            break;
+        }
+        i -= 1;
+    }
+    out.into_iter().collect()
 }

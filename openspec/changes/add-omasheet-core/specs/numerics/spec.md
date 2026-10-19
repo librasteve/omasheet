@@ -60,7 +60,7 @@ sum, `11/4`.
 
 #### Scenario: A fraction in a cell
 - **WHEN** a cell holds `1/7`
-- **THEN** it is a `Fraction`, and is an error in a column declared `Decimal`
+- **THEN** it is a `Fraction`, and in a column declared `Decimal` it is shown as a decimal, `0.14285714285714285714…`
 
 #### Scenario: A top-heavy fraction
 - **WHEN** a cell holds `22/7`
@@ -143,9 +143,10 @@ it stands for, and SHALL give a `Fraction` next to an exact operand.
 - **WHEN** `19.99 * 3 - 0.5` is checked
 - **THEN** its type is `Decimal`
 
-#### Scenario: A quotient is a Fraction
+#### Scenario: A quotient is a Decimal
 - **WHEN** `19.99 / 3` is checked
-- **THEN** its type is `Fraction`, and a column declared `Decimal` rejects it
+- **THEN** its type is `Decimal`, and a column declared `Decimal` takes it
+- **AND** it is held exactly, `1999/300`, and shown cut and marked, `6.66333333333333333333…`
 
 #### Scenario: Decimal sum
 - **WHEN** `0.1 + 0.2` is evaluated
@@ -162,7 +163,7 @@ it stands for, and SHALL give a `Fraction` next to an exact operand.
 #### Scenario: A power with a whole exponent
 - **WHEN** `2 ** 64` and `1.1 ** 2` are checked
 - **THEN** their types are `Int` and `Decimal`
-- **AND** `2 ** -1` is a `Fraction`, and so is a power whose exponent is read
+- **AND** `2 ** -1` is a `Decimal`, and so is a power whose exponent is read
   from a column
 
 ### Requirement: Numeric infectiousness
@@ -248,7 +249,7 @@ reported before anything is calculated.
 #### Scenario: A Fraction as a Decimal
 - **WHEN** `(1/8).Decimal` is evaluated
 - **THEN** the result is the `Decimal` `0.125`
-- **AND** `(1/3).Decimal` is an error saying that `1/3` does not end as a decimal
+- **AND** `(1/3).Decimal` is the `Decimal` exactly equal to `1/3`, shown as `0.33333333333333333333…`
 
 #### Scenario: No conversion
 - **WHEN** `Int(2025-01-31)` is checked

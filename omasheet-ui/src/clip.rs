@@ -11,13 +11,10 @@ type Cell = (usize, usize);
 
 /// A block of cells that was copied.
 struct Copied {
-    sheet: usize,
     /// What went to the clipboard: the cells as they are written.
     text: String,
     /// The same cells as they were shown.
     values: String,
-    /// The names of the columns, if whole columns were copied.
-    columns: Option<Vec<String>>,
 }
 
 /// A block of cells that was cut, to be moved by the next paste.
@@ -68,26 +65,24 @@ pub fn transposed(block: &[Vec<String>]) -> Vec<Vec<String>> {
 }
 
 /// A block of cells as tab-separated text: what they showed if `values`,
-/// otherwise what they hold.
+/// otherwise what they hold, and a cell of a formula column its formula.
 fn block_text(doc: &Document, sheet: usize, from: Cell, to: Cell, values: bool) -> String {
     let Some(t) = doc.snapshot().sheets.get(sheet) else {
         return String::new();
     };
     let mut lines = Vec::new();
     for row in t.rows.iter().take(to.0 + 1).skip(from.0) {
-        let cells: Vec<&str> = row
+        let cells: Vec<String> = row
             .iter()
             .enumerate()
             .take(to.1 + 1)
             .skip(from.1)
-            // A computed cell has no source of its own, so copy its value:
-            // in full, where it is shown with fewer digits than it has.
-            .map(|(c, cell)| {
-                if values || t.columns[c].formula.is_some() {
-                    cell.exact.as_deref().unwrap_or(&cell.display)
-                } else {
-                    cell.source.as_str()
-                }
+            // A value in full, where it is shown with fewer digits than it
+            // has.
+            .map(|(c, cell)| match &t.columns[c].formula {
+                _ if values => cell.exact.clone().unwrap_or_else(|| cell.display.clone()),
+                Some(formula) => format!("= {formula}"),
+                None => cell.source.clone(),
             })
             .collect();
         lines.push(cells.join("\t"));
@@ -137,11 +132,63 @@ fn refused(
     let onto: Vec<_> = t.columns.iter().take(last + 1).skip(from.1).collect();
     match onto.first() {
         Some(first) if onto.iter().all(|c| c.formula.is_some()) => Err(format!(
-            "`{}` is a formula column: click F2 to edit",
+            "`{}` is a formula column: only a formula can be pasted there, \
+             starting with `=`",
             first.name
         )),
         _ => Ok(()),
     }
+}
+
+/// The formulas that cells pasted onto formula columns alone make theirs:
+/// `(column, formula)`. Each column of the block is one formula, the same
+/// in every row; one column of them fills every column it is pasted on.
+/// `None` if they are not all formulas, or land on a data column.
+fn formula_target(
+    doc: &Document,
+    sheet: usize,
+    from: Cell,
+    to: Cell,
+    block: &[Vec<String>],
+) -> Result<Option<Vec<(usize, String)>>, String> {
+    let width = block.iter().map(Vec::len).max().unwrap_or(0);
+    let mut formulas = Vec::new();
+    let mut differ = false;
+    for j in 0..width {
+        let texts: Vec<&str> = block
+            .iter()
+            .map(|line| line.get(j).map_or("", |t| t.trim()))
+            .collect();
+        if !texts.iter().all(|t| t.starts_with('=')) {
+            return Ok(None);
+        }
+        differ |= texts.iter().any(|t| *t != texts[0]);
+        formulas.push(texts[0].to_string());
+    }
+    let Some(t) = doc.snapshot().sheets.get(sheet) else {
+        return Ok(None);
+    };
+    let cols: Vec<usize> = match width {
+        0 => return Ok(None),
+        1 => (from.1..=to.1.max(from.1)).collect(),
+        _ => (from.1..from.1 + width).collect(),
+    };
+    let all = cols
+        .iter()
+        .all(|&c| t.columns.get(c).is_some_and(|c| c.formula.is_some()));
+    if !all {
+        return Ok(None);
+    }
+    if differ {
+        return Err("Cannot paste: these cells have different formulas in each row".into());
+    }
+    let formula = |k: usize| formulas[k.min(width - 1)].clone();
+    Ok(Some(
+        cols.iter()
+            .enumerate()
+            .map(|(k, &c)| (c, formula(k)))
+            .collect(),
+    ))
 }
 
 /// Put a block of cells down at a block; a single cell fills it. Cells
@@ -174,8 +221,15 @@ fn put_block(
             }
         }
     } else {
-        for (i, line) in block.iter().enumerate() {
-            for (j, text) in line.iter().enumerate() {
+        // A copy onto a smaller block is cut to its size; onto one cell,
+        // or a larger block, it goes down whole.
+        let clip = cut.is_none() && from != to;
+        let (rows, cols) = match clip {
+            true => (to.0 - from.0 + 1, to.1 - from.1 + 1),
+            false => (usize::MAX, usize::MAX),
+        };
+        for (i, line) in block.iter().enumerate().take(rows) {
+            for (j, text) in line.iter().enumerate().take(cols) {
                 put(from.0 + i, from.1 + j, text);
             }
         }
@@ -196,26 +250,13 @@ impl Clip {
 
     /// Copy a block of cells: as whole columns, if `columns`. Anything cut
     /// is cut no longer.
-    pub fn copy(
-        &mut self,
-        doc: &Document,
-        sheet: usize,
-        from: Cell,
-        to: Cell,
-        columns: bool,
-    ) -> String {
+    pub fn copy(&mut self, doc: &Document, sheet: usize, from: Cell, to: Cell) -> String {
         let text = block_text(doc, sheet, from, to, false);
         let values = block_text(doc, sheet, from, to, true);
-        let names: Option<Vec<String>> = doc.snapshot().sheets.get(sheet).map(|t| {
-            let picked = t.columns.iter().take(to.1 + 1).skip(from.1);
-            picked.map(|c| c.name.clone()).collect()
-        });
         self.cut = None;
         self.copied = Some(Copied {
-            sheet,
             text: text.clone(),
             values,
-            columns: names.filter(|_| columns),
         });
         text
     }
@@ -263,11 +304,27 @@ impl Clip {
         text: &str,
     ) -> Result<bool, String> {
         let block = parse_block(text);
+        // One formula onto formula columns is their formula, and the cell
+        // it was cut from is cleared, in one step.
+        if let Some(formulas) = formula_target(doc, sheet, from, to, &block)? {
+            let cut = self.take_cut(doc, &block);
+            return Ok(doc.as_one(|doc| {
+                for (col, formula) in &formulas {
+                    doc.set_column_formula(sheet, *col, formula);
+                }
+                if let Some(cut) = &cut {
+                    doc.set_cells(cut.sheet, &cut.blanks);
+                }
+            }));
+        }
         refused(doc, sheet, from, to, &block)?;
-        // Cells cut from this sheet, with nothing done since, are moved.
+        // Cells cut from this sheet, with nothing done since, are moved;
+        // one cell onto several fills them all.
         let cut = self.take_cut(doc, &block);
+        let fills = block.len() == 1 && block[0].len() == 1 && from != to;
         if let Some(cut) = &cut
             && cut.sheet == sheet
+            && !fills
         {
             return Ok(doc.as_one(|doc| {
                 doc.set_cells(cut.sheet, &cut.blanks);
@@ -307,40 +364,6 @@ impl Clip {
         refused(doc, sheet, from, to, &turned)?;
         let cut = self.take_cut(doc, &block);
         Ok(put_block(doc, sheet, from, to, turned, cut))
-    }
-
-    /// Make room for `text` and put it there: whole columns copied from
-    /// this sheet become new columns from column `at.1`, and anything else
-    /// new rows from row `at.0`. Whether anything changed, or why not.
-    pub fn insert(
-        &mut self,
-        doc: &mut Document,
-        sheet: usize,
-        at: Cell,
-        text: &str,
-    ) -> Result<bool, String> {
-        let cut = self.take_cut(doc, &parse_block(text));
-        // Whole columns copied from this sheet go in as columns, if they
-        // are all still there.
-        let columns = self.copied(text).and_then(|copied| {
-            let names = copied.columns.as_ref()?;
-            let t = doc.snapshot().sheets.get(copied.sheet)?;
-            let at = |name: &String| t.columns.iter().position(|c| &c.name == name);
-            let cols: Option<Vec<usize>> = names.iter().map(at).collect();
-            cols.filter(|_| copied.sheet == sheet)
-        });
-        match columns {
-            Some(cols) => doc.insert_copies(sheet, &cols, at.1).map(|()| true),
-            None => {
-                let block = parse_block(text);
-                Ok(doc.as_one(|doc| {
-                    if let Some(cut) = &cut {
-                        doc.set_cells(cut.sheet, &cut.blanks);
-                    }
-                    doc.insert_cells(sheet, at, &block);
-                }))
-            }
-        }
     }
 
     /// Empty a block of cells. Whether anything changed.
@@ -398,7 +421,7 @@ mod tests {
     fn copied_cells_paste_as_often_as_wanted() {
         let mut doc = doc();
         let mut clip = Clip::default();
-        let text = clip.copy(&doc, 0, (0, 0), (0, 1), false);
+        let text = clip.copy(&doc, 0, (0, 0), (0, 1));
         assert_eq!(text, "1\t2");
         assert_eq!(clip.paste(&mut doc, 0, (1, 0), (1, 0), &text), Ok(true));
         assert_eq!(clip.paste(&mut doc, 0, (2, 0), (2, 0), &text), Ok(true));
@@ -411,10 +434,10 @@ mod tests {
     }
 
     #[test]
-    fn a_formula_is_copied_as_written_and_a_formula_column_as_its_value() {
+    fn a_formula_is_copied_as_written_and_a_formula_column_as_its_formula() {
         let doc = doc();
         let mut clip = Clip::default();
-        assert_eq!(clip.copy(&doc, 0, (0, 2), (0, 3), false), "= A+B\t3");
+        assert_eq!(clip.copy(&doc, 0, (0, 2), (0, 3)), "= A+B\t= A + B");
         assert_eq!(Clip::text(&doc, 0, (0, 0), (1, 1)), "1\t2\n10\t20");
     }
 
@@ -437,6 +460,112 @@ mod tests {
         assert!(doc.undo());
         assert_eq!(doc.text(), TEXT);
         assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn a_single_cell_cut_is_cleared_where_it_was() {
+        // To another cell of the sheet.
+        let mut doc = doc();
+        let mut clip = Clip::default();
+        let text = clip.cut(&doc, 0, (1, 0), (1, 0));
+        assert_eq!(clip.paste(&mut doc, 0, (2, 1), (2, 1), &text), Ok(true));
+        assert_eq!(held(&doc, 0)[1], "|20||");
+        assert_eq!(held(&doc, 0)[2], "|10||");
+        // Onto a block: it fills every cell of it.
+        let mut doc = self::doc();
+        let text = clip.cut(&doc, 0, (1, 0), (1, 0));
+        assert_eq!(clip.paste(&mut doc, 0, (2, 0), (2, 1), &text), Ok(true));
+        assert_eq!(held(&doc, 0)[1], "|20||");
+        assert_eq!(held(&doc, 0)[2], "10|10||");
+        // To another sheet.
+        let mut doc = self::doc();
+        let text = clip.cut(&doc, 0, (1, 0), (1, 0));
+        assert_eq!(clip.paste(&mut doc, 1, (0, 1), (0, 1), &text), Ok(true));
+        assert_eq!(held(&doc, 0)[1], "|20||");
+        assert_eq!(held(&doc, 1)[0], "|10");
+        // A cell holding a formula.
+        let mut doc = self::doc();
+        let text = clip.cut(&doc, 0, (0, 2), (0, 2));
+        assert_eq!(clip.paste(&mut doc, 0, (1, 2), (1, 2), &text), Ok(true));
+        assert_eq!(held(&doc, 0)[0], "1|2||");
+        assert_eq!(held(&doc, 0)[1], "10|20|= A+B|");
+    }
+
+    #[test]
+    fn a_formula_cut_onto_a_formula_column_is_cleared_where_it_was() {
+        let mut doc = doc();
+        let mut clip = Clip::default();
+        let text = clip.cut(&doc, 0, (0, 2), (0, 2));
+        assert_eq!(clip.paste(&mut doc, 0, (1, 3), (1, 3), &text), Ok(true));
+        assert!(doc.text().contains("Sum := A+B"));
+        assert_eq!(held(&doc, 0)[0], "1|2||");
+        assert!(doc.undo());
+        assert_eq!(doc.text(), TEXT);
+    }
+
+    #[test]
+    fn a_copy_onto_a_smaller_block_is_cut_to_its_size() {
+        let mut doc = doc();
+        let mut clip = Clip::default();
+        let text = clip.copy(&doc, 0, (0, 0), (1, 1));
+        // Onto one row of two cells: only the first row of the copy.
+        assert_eq!(clip.paste(&mut doc, 0, (2, 0), (2, 1), &text), Ok(true));
+        assert_eq!(held(&doc, 0).len(), 3);
+        assert_eq!(held(&doc, 0)[2], "1|2||");
+        // Onto one cell: the whole of it, from there.
+        assert!(doc.undo());
+        assert_eq!(clip.paste(&mut doc, 0, (2, 0), (2, 0), &text), Ok(true));
+        assert_eq!(held(&doc, 0)[2], "1|2||");
+        assert_eq!(held(&doc, 0)[3], "10|20||");
+    }
+
+    #[test]
+    fn columns_paste_as_a_block_does() {
+        const COLS: &str = "sheet V\n\nA | B | C | D | E\n1 | 2 | 3 | 4 | 5\n6 | 7 | 8 | 9 | 10\n";
+        let mut doc = Document::from_text(COLS);
+        let mut clip = Clip::default();
+        let text = clip.copy(&doc, 0, (0, 0), (1, 1));
+        // Onto one column, given as its top cell: both, from there.
+        assert_eq!(clip.paste(&mut doc, 0, (0, 2), (0, 2), &text), Ok(true));
+        assert_eq!(held(&doc, 0), ["1|2|1|2|5", "6|7|6|7|10"]);
+        // Onto fewer columns: cut to them.
+        assert!(doc.undo());
+        assert_eq!(clip.paste(&mut doc, 0, (0, 2), (1, 2), &text), Ok(true));
+        assert_eq!(held(&doc, 0), ["1|2|1|4|5", "6|7|6|9|10"]);
+        // Onto as many.
+        assert!(doc.undo());
+        assert_eq!(clip.paste(&mut doc, 0, (0, 2), (1, 3), &text), Ok(true));
+        assert_eq!(held(&doc, 0), ["1|2|1|2|5", "6|7|6|7|10"]);
+        // Onto more: whole, and the rest left.
+        assert!(doc.undo());
+        assert_eq!(clip.paste(&mut doc, 0, (0, 2), (1, 4), &text), Ok(true));
+        assert_eq!(held(&doc, 0), ["1|2|1|2|5", "6|7|6|7|10"]);
+        // Onto the last column: what goes past it is left.
+        assert!(doc.undo());
+        assert_eq!(clip.paste(&mut doc, 0, (0, 4), (0, 4), &text), Ok(true));
+        assert_eq!(held(&doc, 0), ["1|2|3|4|1", "6|7|8|9|6"]);
+    }
+
+    #[test]
+    fn formula_cells_are_pasted_onto_formula_columns() {
+        let two =
+            "sheet T\n\nA | B | S | P\n1 | 2 | * | *\n3 | 4 | * | *\n\nS := A + B\nP := A * B\n";
+        let mut doc = Document::from_text(two);
+        let mut clip = Clip::default();
+        // A block of one formula column onto another: its formula.
+        let text = clip.copy(&doc, 0, (0, 2), (1, 2));
+        assert_eq!(clip.paste(&mut doc, 0, (0, 3), (1, 3), &text), Ok(true));
+        assert!(doc.text().contains("P := A + B"));
+        assert!(doc.undo());
+        // Both, each onto its own.
+        let text = "= A - B\t= A / B\n= A - B\t= A / B";
+        assert_eq!(clip.paste(&mut doc, 0, (0, 2), (0, 2), text), Ok(true));
+        assert!(doc.text().contains("S := A - B\nP := A / B"));
+        assert!(doc.undo());
+        // Formulas that differ from row to row are not one formula.
+        let why = Err("Cannot paste: these cells have different formulas in each row".to_string());
+        assert_eq!(clip.paste(&mut doc, 0, (0, 2), (1, 2), "= A\n= B"), why);
+        assert_eq!(doc.text(), two);
     }
 
     #[test]
@@ -502,7 +631,7 @@ mod tests {
         // A copy after a cut.
         let mut doc = self::doc();
         clip.cut(&doc, 0, (0, 0), (0, 1));
-        let text = clip.copy(&doc, 0, (0, 0), (0, 1), false);
+        let text = clip.copy(&doc, 0, (0, 0), (0, 1));
         assert_eq!(clip.paste(&mut doc, 0, (2, 0), (2, 0), &text), Ok(true));
         assert_eq!(held(&doc, 0)[0], "1|2|= A+B|");
     }
@@ -534,10 +663,25 @@ mod tests {
     }
 
     #[test]
+    fn a_formula_pasted_onto_a_formula_column_is_its_formula() {
+        let mut doc = doc();
+        let mut clip = Clip::default();
+        assert_eq!(clip.paste(&mut doc, 0, (1, 3), (1, 3), "= A * B"), Ok(true));
+        assert!(doc.text().contains("Sum := A * B"));
+        assert_eq!(doc.snapshot().sheets[0].rows[1][3].display, "200");
+        // In one step.
+        doc.undo();
+        assert_eq!(doc.text(), TEXT);
+    }
+
+    #[test]
     fn nothing_is_pasted_onto_a_formula_column_alone() {
         let mut doc = doc();
         let mut clip = Clip::default();
-        let why = Err("`Sum` is a formula column: click F2 to edit".to_string());
+        let why = Err(
+            "`Sum` is a formula column: only a formula can be pasted there, starting with `=`"
+                .to_string(),
+        );
         assert_eq!(clip.paste(&mut doc, 0, (0, 3), (0, 3), "5"), why);
         assert_eq!(clip.paste(&mut doc, 0, (0, 3), (2, 3), "5\n6"), why);
         assert_eq!(clip.paste_values(&mut doc, 0, (0, 3), (0, 3), "5"), why);
@@ -568,7 +712,7 @@ mod tests {
     fn values_are_pasted_in_place_of_formulas() {
         let mut doc = doc();
         let mut clip = Clip::default();
-        let text = clip.copy(&doc, 0, (0, 0), (0, 2), false);
+        let text = clip.copy(&doc, 0, (0, 0), (0, 2));
         assert_eq!(text, "1\t2\t= A+B");
         assert_eq!(
             clip.paste_values(&mut doc, 0, (2, 0), (2, 0), &text),
@@ -587,7 +731,7 @@ mod tests {
     fn a_block_is_pasted_turned_about() {
         let mut doc = doc();
         let mut clip = Clip::default();
-        let text = clip.copy(&doc, 0, (0, 0), (0, 1), false);
+        let text = clip.copy(&doc, 0, (0, 0), (0, 1));
         assert_eq!(
             clip.paste_transposed(&mut doc, 1, (0, 0), (0, 0), &text),
             Ok(true)
@@ -604,52 +748,6 @@ mod tests {
         assert!(doc.undo());
         assert_eq!(held(&doc, 0)[1], "10|20||");
         assert_eq!(held(&doc, 1), ["1|", "2|"]);
-    }
-
-    #[test]
-    fn copied_cells_go_in_as_new_rows() {
-        let mut doc = doc();
-        let mut clip = Clip::default();
-        let text = clip.copy(&doc, 0, (0, 0), (1, 1), false);
-        // Under row 1: rows 2 and 3 are new, and the old row 2 is row 4.
-        assert_eq!(clip.insert(&mut doc, 0, (2, 0), &text), Ok(true));
-        assert_eq!(
-            held(&doc, 0),
-            ["1|2|= A+B|", "10|20||", "1|2||", "10|20||", "|||"]
-        );
-        assert!(doc.undo());
-        assert_eq!(doc.text(), TEXT);
-        // After the last row.
-        assert_eq!(clip.insert(&mut doc, 0, (3, 0), &text), Ok(true));
-        assert_eq!(held(&doc, 0).len(), 5);
-        assert_eq!(held(&doc, 0)[4], "10|20||");
-    }
-
-    #[test]
-    fn copied_columns_go_in_as_new_columns_under_new_names() {
-        let mut doc = doc();
-        let mut clip = Clip::default();
-        // A data column and the formula column, to the right of B.
-        let text = clip.copy(&doc, 0, (0, 1), (2, 1), true);
-        assert_eq!(clip.insert(&mut doc, 0, (0, 2), &text), Ok(true));
-        assert_eq!(names(&doc, 0), ["A", "B", "B_copy001", "C", "Sum"]);
-        assert_eq!(held(&doc, 0)[1], "10|20|20||");
-        let text = clip.copy(&doc, 0, (0, 4), (2, 4), true);
-        assert_eq!(clip.insert(&mut doc, 0, (0, 5), &text), Ok(true));
-        assert_eq!(names(&doc, 0)[5], "Sum_copy001");
-        assert_eq!(
-            doc.snapshot().sheets[0].columns[5].formula.as_deref(),
-            Some("A + B")
-        );
-        // One step each.
-        assert!(doc.undo());
-        assert!(doc.undo());
-        assert_eq!(doc.text(), TEXT);
-        // On another sheet they are cells like any others: new rows.
-        let text = clip.copy(&doc, 0, (0, 1), (2, 1), true);
-        assert_eq!(clip.insert(&mut doc, 1, (2, 0), &text), Ok(true));
-        assert_eq!(names(&doc, 1), ["X", "Y"]);
-        assert_eq!(held(&doc, 1), ["|", "|", "2|", "20|"]);
     }
 
     #[test]

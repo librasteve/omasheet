@@ -86,15 +86,13 @@ impl Value {
         Value::Text(Rc::from(s), false)
     }
 
-    /// An exact number: an `Int` when it is whole, a `Decimal` when it ends
-    /// as one, and otherwise a `Fraction`.
+    /// An exact number: an `Int` when it is whole, and otherwise a
+    /// `Decimal`, which need not end: `1/3` is shown as `0.333…`.
     pub fn exact(r: BigRational) -> Value {
         if r.is_integer() {
             Value::Int(r.to_integer())
-        } else if is_decimal(&r) {
-            Value::Decimal(r)
         } else {
-            Value::Fraction(r)
+            Value::Decimal(r)
         }
     }
 
@@ -679,12 +677,44 @@ fn shown_decimal(r: &BigRational, sep: Option<char>) -> String {
     if r.is_zero() {
         return "0".into();
     }
-    let plain = grouped(format_rat(r), sep);
     let medium = *r >= power_of_ten(-15) && *r < power_of_ten(15);
+    // One that does not end is cut and marked: `0.3333333333333333333333…`.
+    if !is_decimal(r) {
+        if !medium {
+            return scientific(r);
+        }
+        let digits: String = grouped(cut_decimal(r, WIDTH), sep).chars().take(WIDTH - 1).collect();
+        return format!("{digits}{MORE}");
+    }
+    let plain = grouped(format_rat(r), sep);
     if medium && width(&plain) <= WIDTH {
         plain
     } else {
         scientific(r)
+    }
+}
+
+/// The first `places` digits after the point of a positive `r`, cut, not
+/// rounded.
+fn cut_decimal(r: &BigRational, places: usize) -> String {
+    let scaled = (r * power_of_ten(places as i64)).trunc().to_integer();
+    decimal(&scaled, false, places)
+}
+
+/// How many digits after the point a `Decimal` that does not end is given
+/// to, in full.
+pub const LONG_DIGITS: usize = 40;
+
+/// A `Decimal` that does not end, as far as [`LONG_DIGITS`] digits after
+/// the point, cut and marked: `2.3333333333333333333333333333333333333333…`.
+/// `None` for anything else.
+pub fn long_decimal(v: &Value) -> Option<String> {
+    match v {
+        Value::Decimal(r) if !is_decimal(r) => Some(format!(
+            "{}{MORE}",
+            signed(r.is_negative(), cut_decimal(&r.abs(), LONG_DIGITS))
+        )),
+        _ => None,
     }
 }
 
@@ -1197,7 +1227,7 @@ mod tests {
     #[test]
     fn division_is_exact() {
         let third = arith(BinOp::Div, &Value::Int(1.into()), &Value::Int(3.into())).unwrap();
-        assert!(matches!(third, Value::Fraction(_)));
+        assert!(matches!(third, Value::Decimal(_)));
         let one = arith(BinOp::Mul, &third, &Value::Int(3.into())).unwrap();
         assert!(matches!(one, Value::Int(n) if n.is_one()));
     }

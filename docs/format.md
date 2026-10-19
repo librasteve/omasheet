@@ -41,6 +41,9 @@ Gross  := WithTax(Revenue)
 - `Name := expression` after the rows is the formula of a computed column.
   The header row names the column, anywhere among the others, and each of
   its cells is `*`.
+- A computed column may be written as a
+  [sequence](expressions.md#sequences-with-), `Odd := 1, 3 ... Inf`, which
+  fills it from the terms given.
 - An empty cell is empty: there is no `null`.
 
 ```omx
@@ -85,8 +88,10 @@ Text written bare may hold Markdown: `a **slow** start`,
 there; a value read from a cell is Markdown or not as that cell is.
 `omasheet print` shows every cell as it is written.
 
-An `Int` is a `Decimal`, and a `Decimal` is a `Fraction`: a `Fraction` column takes
-all three, a `Decimal` column takes whole numbers and decimals, but not `1/7`.
+A `Decimal`, a `Fraction` and a `Percent` hold the same exact numbers, and a
+column of one takes the others, showing them its own way: a `Decimal` column
+shows `1/7` as `0.14285714285714285714…`, and a `Fraction` column `0.25` as
+`1/4`.
 
 A `Percent` column takes any exact number and shows it as a percentage: `0.4`
 there is `40%`, and so is `= Profit / Revenue` when it comes to two fifths.

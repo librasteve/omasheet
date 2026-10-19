@@ -4,6 +4,7 @@
 //! evaluation never looks anything up by text.
 
 use crate::ast::{BinOp, Lit, UnOp};
+use crate::cycle::Cyc;
 use crate::diag::Span;
 use crate::funcs::MathFn;
 use crate::types::S;
@@ -44,6 +45,12 @@ pub enum Ir {
         depth: usize,
         col: usize,
     },
+    /// The position of the row `depth` frames out, counting from zero.
+    RowIndex {
+        depth: usize,
+    },
+    /// No value: what a sequence gives once it is past its limit.
+    Empty,
     Unary(UnOp, Box<Node>),
     Binary(BinOp, Box<Node>, Box<Node>),
     If(Box<Node>, Box<Node>, Box<Node>),
@@ -123,6 +130,17 @@ pub enum Func {
     /// A value as another type: `Int(x)`, `Num(x)` and the rest.
     To(S),
     Complex,
+    /// The next value after this one: a number plus one, or the next text
+    /// in the way letters and digits count up, `AZ` to `BA`.
+    Succ,
+    /// A step through a run of names, `Monday` to `Tuesday`: the value and
+    /// how many places to move it.
+    Cycle(Cyc),
+    /// A date or date-time a whole number of months on, clamped to the
+    /// last day of a month too short for it.
+    AddMonths,
+    /// The last day of the month a date is in.
+    EndOfMonth,
     Today,
     Now,
     Year,

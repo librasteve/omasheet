@@ -105,8 +105,8 @@ pub mod qobject {
         /// Leave the cells that were cut where they are: a paste copies them.
         #[qinvokable]
         fn forget_cut(self: Pin<&mut File>);
-        /// Copy a block of cells as `copy_cells` does, remembering where it
-        /// came from: `columns` says that it is whole columns.
+        /// Copy a block of cells as `copy_cells` does, remembering what was
+        /// copied.
         #[qinvokable]
         fn copy_block(
             self: Pin<&mut File>,
@@ -115,7 +115,6 @@ pub mod qobject {
             col0: i32,
             row1: i32,
             col1: i32,
-            columns: bool,
         ) -> QString;
         /// Paste as `paste_cells` does, but what the copied cells showed and
         /// not their formulas.
@@ -139,17 +138,6 @@ pub mod qobject {
             col0: i32,
             row1: i32,
             col1: i32,
-            text: &QString,
-        ) -> QString;
-        /// Make room for what was copied and put it there: copied columns
-        /// become new columns at `col0`, and anything else new rows at
-        /// `row0`. Returns an error message, or an empty string.
-        #[qinvokable]
-        fn insert_copied(
-            self: Pin<&mut File>,
-            sheet: i32,
-            row0: i32,
-            col0: i32,
             text: &QString,
         ) -> QString;
         /// Paste tab-separated text at a block; a single value fills the block.
@@ -229,6 +217,12 @@ pub mod qobject {
         fn rename_sheet(self: Pin<&mut File>, sheet: i32, name: &QString) -> QString;
         #[qinvokable]
         fn delete_sheet(self: Pin<&mut File>, sheet: i32) -> QString;
+        /// Sheet `from` moved to be sheet `to`.
+        #[qinvokable]
+        fn move_sheet(self: Pin<&mut File>, from: i32, to: i32) -> QString;
+        /// Sheet `to` made a copy of sheet `from`, under its name copied.
+        #[qinvokable]
+        fn paste_sheet(self: Pin<&mut File>, from: i32, to: i32) -> QString;
         #[qinvokable]
         fn add_const(self: Pin<&mut File>, name: &QString, expr: &QString) -> QString;
         #[qinvokable]
@@ -236,6 +230,12 @@ pub mod qobject {
 
         #[qinvokable]
         fn undo(self: Pin<&mut File>);
+        /// How many steps there are to undo, and every step since then
+        /// made one.
+        #[qinvokable]
+        fn undo_mark(&self) -> i32;
+        #[qinvokable]
+        fn join_since(self: Pin<&mut File>, mark: i32);
         #[qinvokable]
         fn redo(self: Pin<&mut File>);
         #[qinvokable]
@@ -661,10 +661,9 @@ impl qobject::File {
         col0: i32,
         row1: i32,
         col1: i32,
-        columns: bool,
     ) -> QString {
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
-        QString::from(&self.clip(|clip, doc| clip.copy(doc, index(sheet), from, to, columns)))
+        QString::from(&self.clip(|clip, doc| clip.copy(doc, index(sheet), from, to)))
     }
 
     fn cut_cells(
@@ -723,18 +722,6 @@ impl qobject::File {
         let text = text.to_string();
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
         self.pasted(|clip, doc| clip.paste_transposed(doc, index(sheet), from, to, &text))
-    }
-
-    fn insert_copied(
-        self: Pin<&mut Self>,
-        sheet: i32,
-        row0: i32,
-        col0: i32,
-        text: &QString,
-    ) -> QString {
-        let text = text.to_string();
-        let at = (index(row0), index(col0));
-        self.pasted(|clip, doc| clip.insert(doc, index(sheet), at, &text))
     }
 
     fn clear_cells(self: Pin<&mut Self>, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) {
@@ -824,6 +811,14 @@ impl qobject::File {
         self.try_edit(|doc| doc.delete_sheet(index(sheet)))
     }
 
+    fn move_sheet(self: Pin<&mut Self>, from: i32, to: i32) -> QString {
+        self.try_edit(|doc| doc.move_sheet(index(from), index(to)))
+    }
+
+    fn paste_sheet(self: Pin<&mut Self>, from: i32, to: i32) -> QString {
+        self.try_edit(|doc| doc.paste_sheet(index(from), index(to)).map(|_| ()))
+    }
+
     fn add_const(self: Pin<&mut Self>, name: &QString, expr: &QString) -> QString {
         let (name, expr) = (name.to_string(), expr.to_string());
         self.try_edit(|doc| doc.add_const(&name, &expr))
@@ -840,6 +835,15 @@ impl qobject::File {
 
     fn redo(self: Pin<&mut Self>) {
         self.edit(|doc| doc.redo());
+    }
+
+    fn undo_mark(&self) -> i32 {
+        self.rust().doc.undo_mark() as i32
+    }
+
+    fn join_since(mut self: Pin<&mut Self>, mark: i32) {
+        // Nothing to show: the text is as it was.
+        self.as_mut().rust_mut().doc.join_since(index(mark));
     }
 
     fn locale_hint(&self) -> QString {
