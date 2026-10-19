@@ -29,7 +29,7 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG || github.sha }}
 
@@ -69,7 +69,7 @@ jobs:
           cp pkgbuild/omasheet-*-${{ matrix.arch }}.pkg.tar.zst "$RUNNER_TEMP/dist/"
           cp pkgbuild/omasheet-*-${{ matrix.arch }}.pkg.tar.zst "$RUNNER_TEMP/dist/omasheet-${{ matrix.arch }}.pkg.tar.zst"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: omasheet-${{ matrix.arch }}
           path: ${{ runner.temp }}/dist/omasheet-*.pkg.tar.zst
@@ -80,7 +80,7 @@ jobs:
     if: ${{ github.event.release.tag_name || inputs.tag }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
 
