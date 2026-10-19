@@ -238,16 +238,9 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         CONVERT,
         "Decimal",
         "x.Decimal",
-        "The same exact number shown as a decimal: a Num as the decimal it is shown as, and a \
-         Fraction such as 1/8 as 0.125. One that does not end, such as 1/3, is shown cut and \
-         marked, 0.333…, and held in full. Also written Decimal(x).",
-    ),
-    doc(
-        CONVERT,
-        "Fraction",
-        "x.Fraction",
-        "The same number as a fraction: 2.75 gives 2 3/4. A Num as the decimal it is shown as. \
-         Also written Fraction(x).",
+        "The same exact number shown as a decimal: a Num as the decimal it is shown as, and \
+         1/8 as 0.125. One that does not end, such as 1/3, is shown cut and marked, 0.333…, \
+         and held in full. Also written Decimal(x).",
     ),
     doc(
         CONVERT,

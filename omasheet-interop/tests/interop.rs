@@ -723,7 +723,7 @@ const KINDS: &str = "\
 sheet T
 
 N : Num
-F : Fraction
+F : Decimal
 
 Name | Count | Price | Rate | N    | F   | On    | Day        | At    | Gap | Bad
 a    | 7     | 19.99 | 20%  | 1e20 | 1/3 | true  | 2025-01-31 | 09:30 |     | = Inf.Int

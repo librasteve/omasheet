@@ -150,7 +150,7 @@ row become a cell. Each formula is written for the row it is on:
 
 | | XLSX | CSV |
 |---|---|---|
-| `Int`, `Decimal`, `Fraction` | the nearest floating-point number | in full; one that does not end, such as `1/3`, as `0.3333333333333333` |
+| `Int`, `Decimal` | the nearest floating-point number | in full; one that does not end, such as `1/3`, as `0.3333333333333333` |
 | `Percent` | that number, formatted as a percentage | `40%`; one that does not end as `33.33333333333333%` |
 | `Date`, `Time`, `DateTime` | a date or time cell | `2025-01-31`, `09:30`, `2025-01-31T09:30` |
 | a cell that failed | empty | empty |
@@ -161,7 +161,7 @@ name. With `--sheet` it is the rows of that sheet alone.
 
 | | JSON |
 |---|---|
-| `Int`, `Decimal`, `Fraction` | a number, in full; one that does not end, such as `1/3`, as `0.3333333333333333` |
+| `Int`, `Decimal` | a number, in full; one that does not end, such as `1/3`, as `0.3333333333333333` |
 | `Percent` | the number it stands for: `20%` is `0.2` |
 | `Num` | a number; `Inf`, `-Inf` and `NaN` as strings |
 | `Text`, `Bool` | a string; `true` or `false` |

@@ -64,15 +64,14 @@ cell of a computed column.
 
 ## Types
 
-`Int`, `Decimal`, `Fraction`, `Percent`, `Num`, `Text`, `Bool`, `Date`,
-`Time`, `DateTime`.
+`Int`, `Decimal`, `Percent`, `Num`, `Text`, `Bool`, `Date`, `Time`,
+`DateTime`.
 A column with no `Name : Type` line takes its type from its cells.
 
 | Type | Written |
 |---|---|
 | `Int` | `42`, `1_000_000` |
-| `Decimal` | `19.99` — exact |
-| `Fraction` | `1/7`, `22/7`, `2 3/4` — exact, shown as a fraction |
+| `Decimal` | `19.99`, `1/7`, `2 3/4` — exact |
 | `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
 | `Num` | `1.5e3`, `Inf`, `-Inf`, `NaN` — floating point |
 | `Text` | `hi` or `"hi"`  (escape \|) |
@@ -88,20 +87,16 @@ Text written bare may hold Markdown: `a **slow** start`,
 there; a value read from a cell is Markdown or not as that cell is.
 `omasheet print` shows every cell as it is written.
 
-A `Decimal`, a `Fraction` and a `Percent` hold the same exact numbers, and a
-column of one takes the others, showing them its own way: a `Decimal` column
-shows `1/7` as `0.14285714285714285714…`, and a `Fraction` column `0.25` as
-`1/4`.
+A `Decimal` and a `Percent` hold the same exact numbers, and a column of
+one takes the other, showing it its own way: a `Decimal` column shows `1/7`
+as `0.14285714285714285714…`.
 
 A `Percent` column takes any exact number and shows it as a percentage: `0.4`
 there is `40%`, and so is `= Profit / Revenue` when it comes to two fifths.
-A `20%` in a `Decimal` or `Fraction` column is the number it stands for, `0.2`
-or `1/5`.
+A `20%` in a `Decimal` column is the number it stands for, `0.2`.
 
-A `Fraction` column shows every number as a fraction, and one of more than
-one as a whole number and a part: `2.75` and `11/4` there are both `2 3/4`.
-A fraction may be written that way too, with a space: `2 3/4` is `11/4`, and
-the app keeps it in the file as `11/4`.
+A fraction of two whole numbers is an exact `Decimal`: `1/7` and `22/7` are
+both read that way, and one may be written with a space, `2 3/4` for `11/4`.
 
 See `examples/types.omx` for every type at work.
 

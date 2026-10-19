@@ -10,7 +10,7 @@
 //!
 //! sheet Sales
 //!
-//! Revenue : Fraction
+//! Revenue : Decimal
 //!
 //! Month | Revenue | Cost | Profit
 //! Jan   | 10000   | 6000 | *
@@ -443,7 +443,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                         format!("unknown type `{ty_text}`"),
                     )
                     .with_help(
-                        "the types are Int, Decimal, Fraction, Percent, Num, Complex, Text, Date, Time, DateTime and Bool",
+                        "the types are Int, Decimal, Percent, Num, Text, Date, Time, DateTime and Bool",
                     ),
                 ),
             }
@@ -533,13 +533,13 @@ mod tests {
     #[test]
     fn parses_a_sheet() {
         let mut diags = Vec::new();
-        let src = "const Rate = 20%\n\nsheet Sales\n\nRevenue : Fraction\n\nMonth | Revenue | Tax\n------|---------|----\nJan | 100 | *\nFeb | 120 | *\n\nTax := Revenue * Rate\n";
+        let src = "const Rate = 20%\n\nsheet Sales\n\nRevenue : Decimal\n\nMonth | Revenue | Tax\n------|---------|----\nJan | 100 | *\nFeb | 120 | *\n\nTax := Revenue * Rate\n";
         let ast = parse_file(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         assert_eq!(ast.consts.len(), 1);
         let t = &ast.sheets[0];
         assert_eq!((t.header.len(), t.rows.len(), t.computed.len()), (3, 2, 1));
-        assert_eq!(t.schema[0].ty, S::Fraction);
+        assert_eq!(t.schema[0].ty, S::Decimal);
     }
 
     #[test]

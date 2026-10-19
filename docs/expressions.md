@@ -23,7 +23,7 @@ Only the display is cut, and `omasheet eval --exact` gives it in full.
 
 A `Decimal` that does not end is cut and marked the same way: `1/3` is
 shown as `0.33333333333333333333…`. Pointing at it in the app shows more
-places, and `--exact` gives it as a fraction, `1/3`.
+places, and `--exact` gives it in full, `1/3`.
 
 A `Num` is never rounded: it is shown with the fewest digits that give the
 same `Num` back, `0.30000000000000004`, and always fits.
@@ -32,16 +32,9 @@ A `Percent` is an exact number shown as so many in a hundred: `20%` is `1/5`.
 It is rounded to two digits after the point, `41.67%`, and `--exact` gives it
 in full, as a fraction where it does not end, `125/3%`.
 
-A `Fraction` is shown as a fraction where it fits: `1/3`, and one of more
-than one as a whole number and a part, `11/4` as `2 3/4`. One too wide is
-shown in e notation, cut and marked. `--exact` and `x.Text` give it as it is
-written in the file, `11/4`.
-
 Whole numbers and decimals divided give a `Decimal`, whether or not it
 ends: `7 / 4` is `1.75` and `7 / 3` is `2.33333333333333333333…`, held
-exactly. Anything worked out from a `Fraction` is a `Fraction`:
-`x.Fraction * 2`. To show a result as a fraction, declare its column
-`Fraction` or write `x.Fraction`; for a decimal, write `x.Decimal`.
+exactly.
 
 Numbers are shown the way Raku shows them:
 
@@ -49,18 +42,15 @@ Numbers are shown the way Raku shows them:
 |---|---|
 | `Int` | `101`; `1e+15` and `1.8446744073709551…e+19` from `1e15` |
 | `Decimal` | `1.01`; `1e-43` below `1e-15` |
-| `Fraction` | `1/3`, `2 3/4`; `1.6129030457865418…e-01` when too wide |
 | `Percent` | `20%`, `12.5%`, `41.67%` |
 | `Num` | `100`, `1.5`, `1.4142135623730951`; `1e+21` or `1.5e-16` when very large or small; `Inf`, `-Inf`, `NaN` |
 
 A `Num` that is a whole number looks like an `Int`, but it is still a `Num`.
 
-A `Decimal`, a `Fraction` and a `Percent` are the same exact numbers shown
-in different ways: `19.99`, `2 3/4` and `20%`. Adding, subtracting,
-multiplying and dividing decimals gives a `Decimal`, and so does an average.
-Each goes anywhere another does: a `Decimal` column shows `1/3` as
-`0.333…`. A column of no declared type with a decimal in it that does not
-end is a `Fraction` column, and shows every number in it as a fraction.
+A `Decimal` and a `Percent` are the same exact numbers shown in different
+ways: `19.99` and `20%`. Adding, subtracting, multiplying and dividing
+decimals gives a `Decimal`, and so does an average. Each goes anywhere the
+other does: a `Decimal` column shows `1/3` as `0.333…`.
 
 Percentages add up to a percentage:
 `20% + 5%` is `25%`, and so are their sum, average, least and greatest.
@@ -80,7 +70,6 @@ vector is converted value by value.
 |---|---|
 | `x.Int` | a whole number: `19.99` gives `19`, `-19.99` gives `-19` |
 | `x.Decimal` | the same number as a decimal: `(1/8).Decimal` is `0.125`, `(1/3).Decimal` is `0.333…` |
-| `x.Fraction` | the same number as a fraction: `2.75` gives `2 3/4`; a `Num` as the decimal it is shown as |
 | `x.Percent` | the same number as a percentage: `0.4` gives `40%`, `5/12` gives `41.67%` |
 | `x.Num` | a floating-point number |
 | `x.Text` | any value as text, written the way a file writes it |
@@ -88,7 +77,7 @@ vector is converted value by value.
 | `x.Date`, `x.Time` | that half of a `DateTime` |
 | `x.DateTime` | a `Date` at midnight |
 
-Text is read the way a cell is: `"42".Int` is `42`, `"20%".Fraction` is `1/5`,
+Text is read the way a cell is: `"42".Int` is `42`, `"20%".Decimal` is `1/5`,
 `"2025-01-31".Date` is that date, and `"abc".Int` is an error. `true.Int` is
 `1`. To round rather than drop the fraction, use `round(x)`; `round(x, 0.01)`
 rounds to the nearest 0.01, and `round(x, 100)` to the nearest hundred.
@@ -189,7 +178,7 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 - Sheets: `filter(condition)`, `select(columns)`
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
 - Counting up: `succ` — a number plus one, or the next text, `AZ` to `BA`
-- Converting: `Int Decimal Fraction Percent Num Text Bool Date Time DateTime`
+- Converting: `Int Decimal Percent Num Text Bool Date Time DateTime`
 - Dates: `today() now() year month day weekday hour minute second date time`
 - Months: `add_months(x, n)` — what `x + n.month` is — and `eom(x)`
 - Time zones: `to_zone("Asia/Tokyo") utc() local() offset() zone()`

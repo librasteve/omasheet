@@ -1,17 +1,14 @@
 # The numbers, Bool and Text: what each type holds and how it is shown.
 #
-# Int, Decimal, Fraction and Percent are exact and a Num is floating
-# point. Decimal, Fraction and Percent hold the same numbers and show them
-# in different ways: as a decimal, as a fraction, and as so many in a
-# hundred.
+# Int, Decimal and Percent are exact and a Num is floating point. Decimal
+# and Percent hold the same numbers and show them in different ways: as a
+# decimal, and as so many in a hundred.
 #
 # A number is shown in at most 23 characters: plain from 1e-15 to 1e15, and
 # in e notation otherwise, with digits that do not fit cut and marked with
-# …. A Decimal that does not end is cut and marked too, and a Fraction is a
-# fraction where it fits. A number worked out from Ints and Decimals is a
-# Decimal; a column of no declared type with one that does not end is a
-# Fraction column. A Percent is rounded to two digits, and a Num is never
-# rounded; all are held in full.
+# …. A Decimal that does not end is cut and marked too. A number worked
+# out from Ints and Decimals is a Decimal. A Percent is rounded to two
+# digits, and a Num is never rounded; all are held in full.
 # `omasheet --exact examples/types.omx` shows them in full.
 
 const Half = 50%
@@ -23,7 +20,7 @@ sheet Numbers
 Name    : Text
 Count   : Int
 Price   : Decimal
-Share   : Fraction
+Share   : Decimal
 Rate    : Percent
 Reading : Num
 Checked : Bool
@@ -88,44 +85,24 @@ Same := Limit == Limit
 # The name of a type converts to it: `x.Int`, `x.Int()` or `Int(x)`.
 sheet Converted
 
-| Value  | AsInt | Rounded | AsDecimal | AsPercent | AsNum | AsBool | AsText | Back |
-| ------ | ----- | ------- | --------- | --------- | ----- | ------ | ------ | ---- |
-| 19.99  | *     | *       | *         | *         | *     | *      | *      | *    |
-| -19.99 | *     | *       | *         | *         | *     | *      | *      | *    |
-| 1/3    | *     | *       | *         | *         | *     | *      | *      | *    |
-| 1/8    | *     | *       | *         | *         | *     | *      | *      | *    |
-| 0.5    | *     | *       | *         | *         | *     | *      | *      | *    |
-| 0      | *     | *       | *         | *         | *     | *      | *      | *    |
+| Value  | AsInt | Rounded | AsDecimal | AsPercent | AsNum | AsBool | AsText |
+| ------ | ----- | ------- | --------- | --------- | ----- | ------ | ------ |
+| 19.99  | *     | *       | *         | *         | *     | *      | *      |
+| -19.99 | *     | *       | *         | *         | *     | *      | *      |
+| 1/3    | *     | *       | *         | *         | *     | *      | *      |
+| 1/8    | *     | *       | *         | *         | *     | *      | *      |
+| 0.5    | *     | *       | *         | *         | *     | *      | *      |
+| 0      | *     | *       | *         | *         | *     | *      | *      |
 
 AsInt     := Value.Int
 Rounded   := round(Value)
 
-# `.Decimal` takes any Fraction: `(1/3).Decimal` is shown cut and marked.
 # A Num always has a Decimal: the one it is shown as.
 AsDecimal := Value.Num.Decimal
 AsPercent := Value.Percent
 AsNum     := Value.Num
 AsBool    := Value.Bool
 AsText    := Value.Text
-Back      := Value.Num.Fraction == Value
-
-# A Fraction is shown as a fraction, and one of more than one as a whole
-# number and a part. It may be written either way: `2 3/4` is `11/4`. In a
-# Fraction column a decimal is a fraction too, and anything worked out from
-# a fraction is one.
-sheet Mixes
-
-Yield : Fraction
-
-| Name   | Yield | Doubled | Share |
-| ------ | ----- | ------- | ----- |
-| mortar | 7/3   | *       | *     |
-| screed | 22/7  | *       | *     |
-| lean   | 2 3/4 | *       | *     |
-| wide   | 0.5   | *       | *     |
-
-Doubled := Yield * 2
-Share   := Yield.Percent
 
 # Text is read the way a cell is.
 sheet Written
@@ -139,7 +116,7 @@ Text : Text
 | 1/8   | *      | *       | *     | *       | *       |
 | 1.5e3 | *      | *       | *     | *       | *       |
 
-Number  := Text.Fraction
+Number  := Text.Decimal
 Doubled := Number * 2
 Whole   := Text.Int
 Decimal := Text.Decimal

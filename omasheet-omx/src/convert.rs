@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! Conversions between the types: what `Int(x)`, `Fraction(x)` and the rest
+//! Conversions between the types: what `Int(x)`, `Decimal(x)` and the rest
 //! do.
 
 use crate::ast::Lit;
@@ -41,13 +41,13 @@ pub fn parse_mixed(text: &str) -> Option<BigRational> {
 /// `2025-01-31`. `None` if the text is anything else.
 pub fn parse_literal(text: &str) -> Option<Lit> {
     if let Some(r) = parse_mixed(text) {
-        return Some(Lit::Fraction(r));
+        return Some(Lit::Decimal(r));
     }
     let toks = lex(text, 0, 0).ok()?;
     let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
     // A fraction of two whole numbers, `1/7`, is an exact number.
     let fraction = |n: &BigInt, d: &BigInt| {
-        (!d.is_zero()).then(|| Lit::Fraction(BigRational::new(n.clone(), d.clone())))
+        (!d.is_zero()).then(|| Lit::Decimal(BigRational::new(n.clone(), d.clone())))
     };
     Some(match toks.as_slice() {
         [Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(n, d)?,
@@ -74,7 +74,6 @@ pub fn lit_type(l: &Lit) -> S {
     match l {
         Lit::Int(_) => S::Int,
         Lit::Decimal(_) => S::Decimal,
-        Lit::Fraction(_) => S::Fraction,
         Lit::Percent(_) => S::Percent,
         Lit::Num(_) => S::Num,
         Lit::Text(_) => S::Text,
@@ -140,7 +139,7 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     let one = |b: bool| BigInt::from(b as u8);
     let real = |l: &Lit| match l {
         Lit::Int(n) => n.to_f64(),
-        Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) => r.to_f64(),
+        Lit::Decimal(r) | Lit::Percent(r) => r.to_f64(),
         Lit::Num(f) => Some(*f),
         Lit::Bool(b) => Some(*b as u8 as f64),
         _ => None,
@@ -156,7 +155,7 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
                 .ok_or_else(|| format!("`{s}` is not {}", a(to)));
         }
         // A `Percent` is the number it stands for: `20%` is `0.2`.
-        (Lit::Percent(r), S::Int | S::Decimal | S::Fraction | S::Bool) => {
+        (Lit::Percent(r), S::Int | S::Decimal | S::Bool) => {
             let plain = if r.is_integer() {
                 Lit::Int(r.to_integer())
             } else {
@@ -165,18 +164,13 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
             return convert(&plain, to);
         }
         (Lit::Int(n), S::Percent) => Lit::Percent(BigRational::from_integer(n.clone())),
-        (Lit::Decimal(r) | Lit::Fraction(r), S::Percent) => Lit::Percent(r.clone()),
-        (Lit::Int(n), S::Decimal | S::Fraction) => Lit::Int(n.clone()),
-        (Lit::Decimal(r) | Lit::Fraction(r), S::Int) => Lit::Int(r.trunc().to_integer()),
-        // A `Decimal` and a `Fraction` are the same numbers, shown in
-        // different ways: `1/3` as a decimal is `0.333…`.
-        (Lit::Decimal(r), S::Fraction) => Lit::Fraction(r.clone()),
-        (Lit::Fraction(r), S::Decimal) => Lit::Decimal(r.clone()),
-        (Lit::Num(f), S::Int | S::Decimal | S::Fraction | S::Percent) => match fraction_of(*f) {
+        (Lit::Decimal(r), S::Percent) => Lit::Percent(r.clone()),
+        (Lit::Int(n), S::Decimal) => Lit::Int(n.clone()),
+        (Lit::Decimal(r), S::Int) => Lit::Int(r.trunc().to_integer()),
+        (Lit::Num(f), S::Int | S::Decimal | S::Percent) => match fraction_of(*f) {
             Some(r) if to == S::Percent => Lit::Percent(r),
             Some(r) if to == S::Int || r.is_integer() => Lit::Int(r.trunc().to_integer()),
-            Some(r) if to == S::Decimal => Lit::Decimal(r),
-            Some(r) => Lit::Fraction(r),
+            Some(r) => Lit::Decimal(r),
             None => {
                 let name = match f {
                     f if f.is_nan() => "NaN",
@@ -186,16 +180,14 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
                 return Err(format!("{name} has no exact value"));
             }
         },
-        (Lit::Bool(b), S::Int | S::Decimal | S::Fraction) => Lit::Int(one(*b)),
-        (
-            Lit::Int(_) | Lit::Decimal(_) | Lit::Fraction(_) | Lit::Percent(_) | Lit::Bool(_),
-            S::Num,
-        ) => match real(lit) {
+        (Lit::Bool(b), S::Int | S::Decimal) => Lit::Int(one(*b)),
+        (Lit::Int(_) | Lit::Decimal(_) | Lit::Percent(_) | Lit::Bool(_), S::Num) => match real(lit)
+        {
             Some(f) => Lit::Num(f),
             None => return no(),
         },
         (Lit::Int(n), S::Bool) => Lit::Bool(!n.is_zero()),
-        (Lit::Decimal(r) | Lit::Fraction(r), S::Bool) => Lit::Bool(!r.is_zero()),
+        (Lit::Decimal(r), S::Bool) => Lit::Bool(!r.is_zero()),
         (Lit::Num(f), S::Bool) => Lit::Bool(*f != 0.0),
         (Lit::DateTime(t), S::Date) => Lit::Date(crate::date::split_datetime(*t).0),
         (Lit::DateTime(t), S::Time) => Lit::Time(crate::date::split_datetime(*t).1),
@@ -208,10 +200,9 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
 mod tests {
     use super::*;
 
-    const TYPES: [S; 10] = [
+    const TYPES: [S; 9] = [
         S::Int,
         S::Decimal,
-        S::Fraction,
         S::Percent,
         S::Num,
         S::Text,
@@ -229,10 +220,8 @@ mod tests {
     fn converts_numbers() {
         assert_eq!(convert(&lit("19.99"), S::Int), Ok(lit("19")));
         assert_eq!(convert(&lit("-19.99"), S::Int), Ok(lit("-19")));
-        assert_eq!(convert(&lit("1e-1"), S::Fraction), Ok(lit("1/10")));
         assert_eq!(convert(&lit("1e-1"), S::Decimal), Ok(lit("0.1")));
         assert_eq!(convert(&lit("1/8"), S::Decimal), Ok(lit("0.125")));
-        assert_eq!(convert(&lit("0.125"), S::Fraction), Ok(lit("1/8")));
         assert_eq!(
             convert(&lit("1/3"), S::Decimal),
             Ok(Lit::Decimal(num_rational::BigRational::new(
@@ -240,11 +229,10 @@ mod tests {
                 3.into()
             )))
         );
-        assert_eq!(convert(&lit("-2.5e3"), S::Fraction), Ok(lit("-2500")));
-        // A top-heavy fraction is a `Fraction` like any other.
+        // A fraction of whole numbers is an exact `Decimal`.
         assert_eq!(
             lit("7/3"),
-            Lit::Fraction(BigRational::new(7.into(), 3.into()))
+            Lit::Decimal(BigRational::new(7.into(), 3.into()))
         );
         assert_eq!(convert(&lit("-22/7"), S::Int), Ok(lit("-3")));
         // A whole number and a part is the fraction they come to.
@@ -268,7 +256,7 @@ mod tests {
         let text = |s: &str| Lit::Text(s.to_string());
         assert_eq!(convert(&text(" 42 "), S::Int), Ok(lit("42")));
         assert_eq!(convert(&text("19.99"), S::Int), Ok(lit("19")));
-        assert_eq!(convert(&text("20%"), S::Fraction), Ok(lit("1/5")));
+        assert_eq!(convert(&text("20%"), S::Decimal), Ok(lit("1/5")));
         assert_eq!(convert(&text("16:10"), S::Time), Ok(lit("16:10")));
         assert_eq!(convert(&text("2025-01-31"), S::Date), Ok(lit("2025-01-31")));
         assert_eq!(

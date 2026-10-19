@@ -80,11 +80,11 @@ fn a_block_is_shown_as_its_sheets_and_prose_quotes_them() {
         "\
 # Report
 
-| Month | Revenue | Share |
-| :---- | ------: | ----: |
-| Jan   |     100 | 10/37 |
-| Feb   |     120 | 12/37 |
-| Mar   |     150 | 15/37 |
+| Month | Revenue |                   Share |
+| :---- | ------: | ----------------------: |
+| Jan   |     100 | 0.27027027027027027027… |
+| Feb   |     120 | 0.32432432432432432432… |
+| Mar   |     150 | 0.40540540540540540540… |
 
 Total revenue: 370
 "

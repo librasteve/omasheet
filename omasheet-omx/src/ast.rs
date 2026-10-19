@@ -12,7 +12,6 @@ pub enum Lit {
     /// Written with a decimal point: `19.99`.
     Decimal(BigRational),
     /// Written as a fraction: `1/7`.
-    Fraction(BigRational),
     /// Written with a `%`: `20%`, held as `1/5`.
     Percent(BigRational),
     Num(f64),

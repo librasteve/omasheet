@@ -11,9 +11,8 @@ pub enum S {
     Any,
     Int,
     /// An exact number that ends when written as a decimal: `19.99`. Every
-    /// `Int` is one, and every `Decimal` is a `Fraction`.
+    /// `Int` is one.
     Decimal,
-    Fraction,
     /// An exact number shown as so many in a hundred: `20%` is `1/5`. It
     /// holds whatever a `Fraction` does.
     Percent,
@@ -31,7 +30,6 @@ impl S {
         Some(match name {
             "Int" => S::Int,
             "Decimal" => S::Decimal,
-            "Fraction" => S::Fraction,
             "Percent" => S::Percent,
             "Num" => S::Num,
             "Text" => S::Text,
@@ -44,15 +42,12 @@ impl S {
     }
 
     pub fn is_numeric(self) -> bool {
-        matches!(
-            self,
-            S::Any | S::Int | S::Decimal | S::Fraction | S::Percent | S::Num
-        )
+        matches!(self, S::Any | S::Int | S::Decimal | S::Percent | S::Num)
     }
 
-    /// An exact number: `Int`, `Decimal`, `Fraction` or `Percent`.
+    /// An exact number: `Int`, `Decimal` or `Percent`.
     pub fn is_exact(self) -> bool {
-        matches!(self, S::Int | S::Decimal | S::Fraction | S::Percent)
+        matches!(self, S::Int | S::Decimal | S::Percent)
     }
 
     /// A date, a time of day, or both.
@@ -79,22 +74,18 @@ impl S {
         match self {
             S::Int => 0,
             S::Decimal => 1,
-            S::Fraction | S::Percent => 2,
+            S::Percent => 2,
             S::Num => 3,
             _ => 4,
         }
     }
 
     /// The wider of two numeric types. A `Percent` next to another kind of
-    /// exact number is a `Decimal`, or a `Fraction` next to one.
+    /// exact number is a `Decimal`.
     pub fn wider(self, other: S) -> S {
         let either = self == S::Percent || other == S::Percent;
         if self != other && either && self.is_exact() && other.is_exact() {
-            if self == S::Fraction || other == S::Fraction {
-                S::Fraction
-            } else {
-                S::Decimal
-            }
+            S::Decimal
         } else if self.rank() >= other.rank() {
             self
         } else {
@@ -123,7 +114,7 @@ impl S {
             || matches!(self, S::Any | S::Text)
             || match to {
                 S::Any | S::Text => true,
-                S::Int | S::Decimal | S::Fraction | S::Num => number || self == S::Bool,
+                S::Int | S::Decimal | S::Num => number || self == S::Bool,
                 S::Percent | S::Bool => number,
                 S::Date | S::Time => self == S::DateTime,
                 S::DateTime => self == S::Date,
@@ -135,8 +126,8 @@ impl S {
         self == to
             || self == S::Any
             || to == S::Any
-            // An `Int` is any exact number. A `Decimal`, a `Fraction` and a
-            // `Percent` hold the same numbers, shown in different ways.
+            // An `Int` is any exact number. A `Decimal` and a `Percent` hold
+            // the same numbers, shown in different ways.
             || (self.is_exact() && to.is_exact() && (to != S::Int || self == S::Int))
     }
 }
@@ -147,7 +138,6 @@ impl fmt::Display for S {
             S::Any => "Any",
             S::Int => "Int",
             S::Decimal => "Decimal",
-            S::Fraction => "Fraction",
             S::Percent => "Percent",
             S::Num => "Num",
             S::Text => "Text",

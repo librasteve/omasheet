@@ -147,7 +147,7 @@ fn letters(col: usize) -> String {
 
 fn kind_of(s: S) -> Kind {
     match s {
-        S::Int | S::Decimal | S::Fraction | S::Percent | S::Num => Kind::Number,
+        S::Int | S::Decimal | S::Percent | S::Num => Kind::Number,
         S::Text => Kind::Text,
         S::Bool => Kind::Bool,
         S::Date => Kind::Date,
@@ -172,7 +172,7 @@ fn whole(program: &Program, node: &Node) -> Option<i64> {
 fn exact(program: &Program, node: &Node) -> Option<BigRational> {
     match &node.kind {
         Ir::Lit(Lit::Int(n)) => Some(BigRational::from_integer(n.clone())),
-        Ir::Lit(Lit::Decimal(r) | Lit::Fraction(r)) => Some(r.clone()),
+        Ir::Lit(Lit::Decimal(r)) => Some(r.clone()),
         Ir::Const(i) => exact(program, &program.consts[*i].node),
         Ir::Single(inner) => exact(program, inner),
         _ => None,
@@ -273,11 +273,7 @@ impl Writer<'_> {
         let worksheet = self.worksheet(t, cx)?;
         let d = if fixed { "$" } else { "" };
         let kind = match self.engine.cell_shown(t, c, r as usize) {
-            Value::Int(_)
-            | Value::Decimal(_)
-            | Value::Fraction(_)
-            | Value::Percent(_)
-            | Value::Num(_) => Kind::Number,
+            Value::Int(_) | Value::Decimal(_) | Value::Percent(_) | Value::Num(_) => Kind::Number,
             Value::Text(..) => Kind::Text,
             Value::Bool(_) => Kind::Bool,
             Value::Date(_) => Kind::Date,
@@ -535,10 +531,8 @@ impl Writer<'_> {
                 number(n.to_string())
             }
             Lit::Int(_) => return Err(LITERAL),
-            Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) if is_decimal(r) => {
-                number(format_rat(r))
-            }
-            Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) => {
+            Lit::Decimal(r) | Lit::Percent(r) if is_decimal(r) => number(format_rat(r)),
+            Lit::Decimal(r) | Lit::Percent(r) => {
                 Expr::new(format!("{}/{}", r.numer(), r.denom()), MUL, Kind::Number)
             }
             Lit::Num(f) if f.is_finite() => {
@@ -651,8 +645,8 @@ impl Writer<'_> {
                 ..x.clone()
             },
             Func::To(S::Int) if number => of("TRUNC", Kind::Number),
-            Func::To(S::Decimal | S::Fraction | S::Percent | S::Num) if number => x.clone(),
-            Func::To(S::Int | S::Decimal | S::Fraction | S::Num) if x.kind == Kind::Bool => {
+            Func::To(S::Decimal | S::Percent | S::Num) if number => x.clone(),
+            Func::To(S::Int | S::Decimal | S::Num) if x.kind == Kind::Bool => {
                 Expr::atom(format!("IF({},1,0)", x.text), Kind::Number)
             }
             Func::To(S::Bool) if number => {

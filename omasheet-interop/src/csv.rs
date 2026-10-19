@@ -41,7 +41,7 @@ pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
 /// A value as a CSV field, and whether it was rounded to write it.
 fn field(v: &Value) -> (String, bool) {
     match v {
-        Value::Decimal(r) | Value::Fraction(r) => {
+        Value::Decimal(r) => {
             let exact = format_rat(r);
             if exact.contains('/') {
                 (to_f64(r).to_string(), true)

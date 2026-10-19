@@ -172,7 +172,6 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
     match ty {
         "Int" => "Int: a whole number, e.g. 42".into(),
         "Decimal" => "Decimal: an exact decimal number, e.g. 19.99 or 20%".into(),
-        "Fraction" => "Fraction: an exact number shown as a fraction, e.g. 1/7 or 2 3/4".into(),
         "Percent" => "Percent: an exact number shown as a percentage, e.g. 20%".into(),
         "Num" => "Num: a floating-point number, e.g. 1.5, 2e-3 or Inf".into(),
         "Complex" => "Complex: e.g. 3+4i or 2.5i".into(),
@@ -2235,7 +2234,6 @@ impl Document {
             let full = match v {
                 Value::Int(_)
                 | Value::Decimal(_)
-                | Value::Fraction(_)
                 | Value::Percent(_)
                 | Value::Num(_)
                 | Value::Vector(_) => format_exact(v, quoted, &self.style),
@@ -2249,16 +2247,13 @@ impl Document {
             let decl = ast.sheets.iter().find(|d| d.name == sheet.name);
             let mut columns = Vec::new();
             let mut column_errors = Vec::new();
-            for (c, col) in sheet.cols.iter().enumerate() {
+            for col in sheet.cols.iter() {
                 let computed = decl
                     .filter(|_| matches!(col.kind, ColKind::Computed(_)))
                     .and_then(|d| d.computed.iter().find(|c| c.name == col.name));
                 columns.push(ColumnSnap {
                     name: col.name.clone(),
-                    // A decimal in it that does not end makes it a fraction column.
-                    ty: if engine.shows_fractions(t, c) {
-                        S::Fraction.to_string()
-                    } else if col.ty == S::Any {
+                    ty: if col.ty == S::Any {
                         String::new()
                     } else {
                         col.ty.to_string()
@@ -2388,8 +2383,14 @@ mod tests {
         assert_eq!(seq("1, 3 ... Inf", 4), ["1", "3", "5", "7"]);
         assert_eq!(seq("1, 2, 4 ... Inf", 4), ["1", "2", "4", "8"]);
         // Two terms are a difference, so a constant ratio needs three.
-        assert_eq!(seq("1, 1/3 ... Inf", 3), ["1", "1/3", "-1/3"]);
-        assert_eq!(seq("1, 1/3, 1/9 ... Inf", 3), ["1", "1/3", "1/9"]);
+        assert_eq!(
+            seq("1, 1/3 ... Inf", 3),
+            ["1", "0.33333333333333333333…", "-0.33333333333333333333…"]
+        );
+        assert_eq!(
+            seq("1, 1/3, 1/9 ... Inf", 3),
+            ["1", "0.33333333333333333333…", "0.11111111111111111111…"]
+        );
         // One term alone steps by one.
         assert_eq!(seq("5 ... Inf", 3), ["5", "6", "7"]);
     }
@@ -2683,16 +2684,18 @@ mod tests {
                 "Month", "Revenue", "Cost", "Profit", "Tax", "Note", "Margin"
             ]
         );
-        // A decimal that does not end makes a column of no declared type a
-        // column of fractions.
-        assert_eq!(col(&doc, 0, 6), ["2/5", "5/12"]);
-        assert_eq!(doc.snapshot().sheets[0].columns[6].ty, "Fraction");
-        // An exact number is shown in full, so there is no more of it to
-        // show.
+        // A column of no declared type takes the type of its values.
+        assert_eq!(col(&doc, 0, 6), ["0.4", "0.41666666666666666666…"]);
+        assert_eq!(doc.snapshot().sheets[0].columns[6].ty, "Decimal");
+        // One that does not end is shown cut and marked, so there is more
+        // of it to show.
         let exact = |doc: &Document| doc.snapshot().sheets[0].rows[1][6].exact.clone();
-        assert_eq!(exact(&doc), None);
+        assert_eq!(exact(&doc).as_deref(), Some("5/12"));
         doc.set_cell(0, 0, 6, "Profit / Cost");
-        assert_eq!(col(&doc, 0, 6), ["2/3", "5/7"]);
+        assert_eq!(
+            col(&doc, 0, 6),
+            ["0.66666666666666666666…", "0.71428571428571428571…"]
+        );
         doc.set_const(0, "50%");
         assert_eq!(col(&doc, 0, 4), ["20", "25"]);
         doc.add_const("Extra", "Sales.Revenue.sum()").unwrap();
@@ -2933,9 +2936,9 @@ mod tests {
         let cell = &mixed.snapshot().sheets[0].rows[0][0];
         assert_eq!(
             (cell.display.as_str(), cell.source.as_str()),
-            ("2 3/4", "11/4")
+            ("2.75", "11/4")
         );
-        assert_eq!(cell.exact.as_deref(), Some("11/4"));
+        assert_eq!(cell.exact, None);
         assert!(loose.text().contains("= 1/2"));
         assert!(loose.text().contains("10.11.12"));
     }
@@ -3047,7 +3050,13 @@ mod tests {
         let numbers = |s: &str, a: &str| Some((s.to_string(), a.to_string()));
         // Exact numbers add up exactly, and are shown as cells are.
         let a = sum((0, 1), (2, 1));
-        assert_eq!((a.count, a.numbers), (3, numbers("3 1/3", "1 1/9")));
+        assert_eq!(
+            (a.count, a.numbers),
+            (
+                3,
+                numbers("3.33333333333333333333…", "1.11111111111111111111…")
+            )
+        );
         // Text counts but does not add; an empty cell does neither.
         let top = sum((0, 0), (1, 2));
         assert_eq!(

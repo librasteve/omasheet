@@ -115,18 +115,14 @@ fn no_silent_loss_of_exactness() {
 }
 
 /// `Decimal` is an exact number shown as a decimal, cut and marked where it
-/// does not end; a `Fraction` is the same numbers shown as fractions.
+/// does not end.
 #[test]
 fn decimals() {
-    // The literal says which: a decimal point is a Decimal, a fraction a
-    // Fraction and a `%` a Percent.
+    // The literal says which: a decimal point or a fraction is a Decimal
+    // and a `%` a Percent.
     for (expr, message) in [
         ("19.99 + true", "cannot apply `+` to Decimal and Bool"),
         ("20% + true", "cannot apply `+` to Percent and Bool"),
-        (
-            "(1/7).Fraction + true",
-            "cannot apply `+` to Fraction and Bool",
-        ),
         // Sums, differences, products and quotients of decimals are
         // decimals, though a quotient need not end.
         (
@@ -134,10 +130,7 @@ fn decimals() {
             "cannot apply `+` to Decimal and Bool",
         ),
         ("19.99 / 3 + true", "cannot apply `+` to Decimal and Bool"),
-        (
-            "19.99 + (1/7).Fraction + true",
-            "cannot apply `+` to Fraction and Bool",
-        ),
+        ("19.99 + 1/7 + true", "cannot apply `+` to Decimal and Bool"),
     ] {
         let err = calc_err(None, expr);
         assert!(err.contains(message), "{expr}: {err}");
@@ -154,7 +147,6 @@ fn decimals() {
     );
     assert!(lint_errors(&format!("{prices}Tea | 1/7 | 1\n")).is_empty());
     assert!(lint_errors(&format!("{prices}Tea | = Half / 3 | 1\n")).is_empty());
-    assert!(lint_errors(&format!("{prices}Tea | = (Half / 3).Fraction | 1\n")).is_empty());
     assert!(lint_errors(&format!("{prices}Tea | = Half * 1.5 | 1\n")).is_empty());
 
     // A power with a whole exponent written as it is keeps its base's type;
@@ -169,12 +161,11 @@ fn decimals() {
     assert!(lint_errors(&format!("{powers}2 | = 1.1 ** W[N; *]\n")).is_empty());
     assert_eq!(calc("2 ** 64"), "18446744073709551616");
 
-    // A Decimal goes where a Fraction is declared.
-    let ratios = "sheet R\n\nShare : Fraction\n\nShare\n0.25\n1/7\n3\n= 0.5 * 0.5\n";
+    // A fraction goes where a Decimal is declared.
+    let ratios = "sheet R\n\nShare : Decimal\n\nShare\n0.25\n1/7\n3\n= 0.5 * 0.5\n";
     assert!(lint_errors(ratios).is_empty());
 
-    // `.Decimal` takes any Fraction, and one that does not end is shown
-    // cut and marked.
+    // One that does not end is shown cut and marked.
     assert_eq!(calc("(1/8).Decimal"), "0.125");
     assert_eq!(calc("(1.5e3).Decimal + 0.5"), "1500.5");
     assert_eq!(calc("\"20%\".Decimal"), "0.2");
@@ -254,12 +245,12 @@ fn percents() {
     assert_eq!(calc("(1.5e-1).Percent"), "15%");
     assert_eq!(calc("\"20%\".Percent"), "20%");
     assert_eq!(calc("20%.Decimal"), "0.2");
-    assert_eq!(calc("20%.Fraction"), "1/5");
+    assert_eq!(calc("20%.Decimal"), "0.2");
     assert_eq!(calc("150%.Int"), "1");
     assert_eq!(calc("20%.Num"), "0.2");
 
     // A Percent column takes any exact number, and shows it as a percentage.
-    let file = "sheet S\n\nMargin : Percent\nShare : Fraction\n\n\
+    let file = "sheet S\n\nMargin : Percent\nShare : Decimal\n\n\
                  Cost | Price | Rate | Margin | Share\n\
                  7 | 12 | 20% | * | 20%\n3 | 5 | 0.5 | * | 1/3\n\n\
                  Margin := (Price - Cost) / Price\n";
@@ -270,8 +261,8 @@ fn percents() {
     // among them is a Decimal column.
     assert!(calc_err(Some(file), "S[Rate; 0] + true").contains("Decimal and Bool"));
     assert_eq!(ask(file, "S.Rate"), "[20%, 0.5]");
-    // In a Fraction column a percentage is the number it stands for.
-    assert_eq!(ask(file, "S.Share"), "[1/5, 1/3]");
+    // In a Decimal column a percentage is the number it stands for.
+    assert_eq!(ask(file, "S.Share"), "[0.2, 1/3]");
 
     // What does not go in one.
     let rates = "sheet R\n\nRate : Percent\nWhole : Int\nEnds : Decimal\n\nRate | Whole | Ends\n";
@@ -302,78 +293,30 @@ fn percents() {
 }
 
 #[test]
-fn top_heavy_fractions() {
-    // A fraction may be more than one. In full it is written as it is kept,
-    // not as a whole number and a part.
-    assert_eq!(calc("7/3"), "7/3");
-    assert_eq!(calc("22/7"), "22/7");
-    assert_eq!(calc("-22/7"), "-22/7");
-    assert_eq!(calc("10/6"), "5/3");
-    assert_eq!(calc("7/3 + 1"), "10/3");
-    assert_eq!(calc("7/3 * 3"), "7");
-    assert_eq!(calc("(7/3).Int"), "2");
-    assert_eq!(calc("\"22/7\".Fraction"), "22/7");
-    // Whole numbers divided give a decimal when it ends.
-    assert_eq!(calc("7/4"), "1.75");
-    let file =
-        "sheet T\n\nA : Fraction\n\nA | Twice\n7/3 | *\n-22/7 | *\n9/3 | *\n\nTwice := A * 2\n";
-    assert!(lint_errors(file).is_empty());
-    assert_eq!(ask(file, "T.A"), "[7/3, -22/7, 3]");
-    assert_eq!(ask(file, "T.Twice"), "[14/3, -44/7, 6]");
-    assert_eq!(ask(file, "T.A.sum()"), "46/21");
-}
-
-#[test]
-fn mixed_fractions() {
-    let show = |file: &str, expr: &str| {
-        let out = eval(Some(("test.omx", file)), "<expression>", expr);
-        assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
-        out.output.trim_end().to_string()
-    };
-    // A whole number and a part in a cell is the fraction they come to, and
-    // a fraction of more than one is shown as a whole number and a part.
-    let file = "sheet T\n\nA | Twice | Less\n2 3/4 | * | *\n11/4 | * | *\n-2 3/4 | * | *\n\
-                 3/4 | * | *\n1 1/3 | * | *\n\nTwice := A * 2\nLess := A - 0.75\n";
-    assert!(lint_errors(file).is_empty(), "{:?}", lint_errors(file));
-    assert_eq!(show(file, "T.A"), "[2 3/4, 2 3/4, -2 3/4, 3/4, 1 1/3]");
-    assert_eq!(ask(file, "T.A"), "[11/4, 11/4, -11/4, 3/4, 4/3]");
-    assert_eq!(show(file, "T[A; 0] == 2.75"), "true");
-    // Anything done with a fraction gives a fraction; a whole one is an Int.
-    assert_eq!(
-        show(file, "T.Twice"),
-        "[5 1/2, 5 1/2, -5 1/2, 1 1/2, 2 2/3]"
-    );
-    assert_eq!(show(file, "T.Less"), "[2, 2, -3 1/2, 0, 7/12]");
-    assert_eq!(show(file, "T[A; 0].Decimal * 2"), "5.5");
-    assert_eq!(show(file, "\"2 3/4\".Fraction"), "2 3/4");
-    assert_eq!(show(file, "T[A; 0].Text"), "11/4");
-
-    // A Fraction column shows a decimal as a fraction, and a Decimal column
-    // a fraction that ends as a decimal.
-    let typed = "sheet T\n\nF : Fraction\nD : Decimal\n\nF | D\n2.75 | *\n0.5 | *\n20% | *\n\
-                 = 5 / 2 | *\n\nD := (F * 2).Decimal\n";
-    assert!(lint_errors(typed).is_empty(), "{:?}", lint_errors(typed));
-    assert_eq!(show(typed, "T.F"), "[2 3/4, 1/2, 1/5, 2 1/2]");
-    assert_eq!(show(typed, "T.D"), "[5.5, 1, 0.4, 5]");
-
-    // The part is less than one, and a Decimal column shows a fraction as
-    // a decimal.
-    let errors = lint_errors("sheet T\n\nA : Fraction\n\nA\n2 7/4\n");
-    assert!(
-        errors[0].contains("`2 7/4` is not a `Fraction` literal"),
-        "{errors:?}"
-    );
-    let decimal = "sheet T\n\nA : Decimal\n\nA\n2 3/4\n";
-    assert!(lint_errors(decimal).is_empty());
-    assert_eq!(show(decimal, "T.A"), "[2.75]");
-}
-
-#[test]
 fn rationals_in_full() {
     assert_eq!(calc("175/4"), "43.75");
     assert_eq!(calc("1/3 + 1/3"), "2/3");
     assert_eq!(calc("1/3"), "1/3");
     assert_eq!(calc("100/3 * 3"), "100");
+    // A fraction of whole numbers is an exact `Decimal`, kept in lowest
+    // terms, and one that is more than one is not split into parts.
+    assert_eq!(calc("7/3"), "7/3");
+    assert_eq!(calc("-22/7"), "-22/7");
+    assert_eq!(calc("10/6"), "5/3");
+    assert_eq!(calc("7/3 * 3"), "7");
+    assert_eq!(calc("(7/3).Int"), "2");
+    assert_eq!(calc("\"22/7\".Decimal"), "22/7");
+    // A whole number and a part may be written with a space, in a cell.
+    assert_eq!(
+        ask("sheet M\n\nA : Decimal\n\nA\n2 3/4\n", "M[A; 0]"),
+        "2.75"
+    );
+    let file =
+        "sheet T\n\nA : Decimal\n\nA | Twice\n7/3 | *\n-22/7 | *\n9/3 | *\n\nTwice := A * 2\n";
+    assert!(lint_errors(file).is_empty());
+    assert_eq!(ask(file, "T.A"), "[7/3, -22/7, 3]");
+    assert_eq!(ask(file, "T.Twice"), "[14/3, -44/7, 6]");
+    assert_eq!(ask(file, "T.A.sum()"), "46/21");
 }
 
 #[test]
@@ -394,11 +337,6 @@ fn display_of_rationals() {
     assert_eq!(show("2/6 + 1/3"), "0.66666666666666666666…");
     assert_eq!(show("-7/3"), "-2.33333333333333333333…");
     assert_eq!(show("[1/3, 0.5]"), "[0.33333333333333333333…, 0.5]");
-    // A Fraction is shown as x/y, in lowest terms, and one of more than one
-    // as a whole number and a part.
-    assert_eq!(show("(1/3).Fraction"), "1/3");
-    assert_eq!(show("(-7/3).Fraction"), "-2 1/3");
-    assert_eq!(show("(11/4).Fraction"), "2 3/4");
     // A Num is never rounded: shown with the fewest digits that give the
     // same Num back.
     assert_eq!(show("4.Num"), "4");
@@ -420,9 +358,9 @@ fn conversions() {
     assert_eq!(calc("(10/4).Int + 1"), "3");
     assert_eq!(calc("Int(1.5e3)"), "1500");
     assert_eq!(calc("Int(true) + Int(false)"), "1");
-    assert_eq!(calc("Fraction(1e-1)"), "1/10");
-    assert_eq!(calc("Fraction(Num(1/3)) == 1/3"), "false");
-    assert_eq!(calc("7.Fraction / 2"), "3.5");
+    assert_eq!(calc("Decimal(1e-1)"), "0.1");
+    assert_eq!(calc("Decimal(Num(1/3)) == 1/3"), "false");
+    assert_eq!(calc("7.Decimal / 2"), "3.5");
     assert_eq!(calc("(1/4).Num"), "0.25");
     assert_eq!(calc("(1/3).Text"), "1/3");
     assert_eq!(calc("Text(2025-01-31)"), "2025-01-31");
@@ -430,7 +368,7 @@ fn conversions() {
     assert_eq!(calc("0.5.Bool"), "true");
     // Text is read the way a cell is.
     assert_eq!(calc("Int(\"42\") + 1"), "43");
-    assert_eq!(calc("\"20%\".Fraction"), "1/5");
+    assert_eq!(calc("\"20%\".Decimal"), "0.2");
     assert_eq!(calc("Date(\"2025-01-31\") + 1"), "2025-02-01");
     assert_eq!(calc("Bool(\"true\")"), "true");
     assert!(calc_err(None, "Int(\"abc\")").contains("`abc` is not an Int"));
@@ -1039,10 +977,10 @@ fn multiple_sheets() {
 #[test]
 fn column_schema() {
     let file =
-        "sheet Items\n\nQty   : Int\nPrice : Fraction\n\nQty | Price\n2   | 19.99\n5   | 0.50\n";
+        "sheet Items\n\nQty   : Int\nPrice : Decimal\n\nQty | Price\n2   | 19.99\n5   | 0.50\n";
     assert_eq!(ask(file, "Items[Price; 0] == 1999/100"), "true");
-    assert_eq!(ask(file, "Items[Qty; 0] * Items[Price; 0]"), "1999/50");
-    let errors = lint_errors("sheet Items\n\nPrise : Fraction\n\nQty | Price\n2 | 1\n");
+    assert_eq!(ask(file, "Items[Qty; 0] * Items[Price; 0]"), "39.98");
+    let errors = lint_errors("sheet Items\n\nPrise : Decimal\n\nQty | Price\n2 | 1\n");
     assert!(errors[0].contains("no column `Prise`"), "{}", errors[0]);
 }
 
@@ -1091,15 +1029,14 @@ fn cell_content() {
     // Text in an undeclared column.
     assert_eq!(ask(SALES, "Sales[Month; 0]"), "Jan");
     // A marked formula in a typed column.
-    let file = "const TaxRate = 20%\n\nsheet T\n\nTax : Fraction\n\nRevenue | Tax\n100 | = Revenue * TaxRate\n";
+    let file = "const TaxRate = 20%\n\nsheet T\n\nTax : Decimal\n\nRevenue | Tax\n100 | = Revenue * TaxRate\n";
     assert_eq!(ask(file, "T[Tax; 0]"), "20");
-    // A fraction of two whole numbers is a Fraction literal, declared or not.
-    let thirds = "sheet T\n\nA : Fraction\n\nA | B\n1/7 | 2/3\n-3/6 | 1/3\n4/2 | x\n";
-    assert_eq!(ask(thirds, "T.A"), "[1/7, -1/2, 2]");
+    // A fraction of two whole numbers is a Decimal literal, declared or not.
+    let thirds = "sheet T\n\nA : Decimal\n\nA | B\n1/7 | 2/3\n-3/6 | 1/3\n4/2 | x\n";
+    assert_eq!(ask(thirds, "T.A"), "[1/7, -0.5, 2]");
     assert_eq!(ask(thirds, "T[B; 0..1].sum()"), "1");
     assert!(
-        lint_errors("sheet T\n\nA : Fraction\n\nA\n1/0\n")[0]
-            .contains("is not a `Fraction` literal")
+        lint_errors("sheet T\n\nA : Decimal\n\nA\n1/0\n")[0].contains("is not a `Decimal` literal")
     );
     assert_eq!(ask("sheet T\n\nA\n1/0\n", "T[A; 0]"), "1/0");
     // An exact number over zero is a Num: `Inf`, `-Inf`, or `NaN` for zero.
@@ -1131,9 +1068,9 @@ fn cell_content() {
     assert_eq!(ask(cells, "T.T"), "[\"Inf\", \"NaN\"]");
     assert_eq!(ask(cells, "T.Quoted"), "[\"NaN\", \"Inf\"]");
     // An unmarked expression in a typed column is an error.
-    let errors = lint_errors("sheet T\n\nTax : Fraction\n\nRevenue | Tax\n100 | Revenue * 2\n");
+    let errors = lint_errors("sheet T\n\nTax : Decimal\n\nRevenue | Tax\n100 | Revenue * 2\n");
     assert!(
-        errors[0].contains("is not a `Fraction` literal"),
+        errors[0].contains("is not a `Decimal` literal"),
         "{}",
         errors[0]
     );

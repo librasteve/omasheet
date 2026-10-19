@@ -142,7 +142,7 @@ fn field(v: &Value) -> (String, bool) {
     match v {
         Value::Empty => ("null".to_string(), false),
         Value::Int(n) => (n.to_string(), false),
-        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => {
+        Value::Decimal(r) | Value::Percent(r) => {
             let exact = format_rat(r);
             if exact.contains('/') {
                 (num(to_f64(r)), true)
