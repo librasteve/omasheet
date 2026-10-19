@@ -11,6 +11,7 @@ pub mod check;
 pub mod convert;
 pub mod cycle;
 pub mod date;
+pub mod decimal;
 pub mod deps;
 pub mod diag;
 pub mod file;
@@ -23,5 +24,6 @@ pub mod types;
 pub use check::{
     Cell, ColKind, Column, Const, Group, Program, Sheet, UserFn, compile, compile_expr,
 };
+pub use decimal::Dec;
 pub use diag::{Diagnostic, Sources, Span};
 pub use types::{S, Ty};

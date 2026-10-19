@@ -5,7 +5,6 @@
 //! [`view`], [`lint`] and [`eval`] are the three things the command line
 //! does; each returns what to print and the diagnostics, already rendered.
 
-pub mod decimal;
 pub mod doc;
 pub mod eval;
 pub mod locale;
