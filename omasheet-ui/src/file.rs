@@ -224,6 +224,12 @@ pub mod qobject {
 
         #[qinvokable]
         fn undo(self: Pin<&mut File>);
+        /// How many steps there are to undo, and every step since then
+        /// made one.
+        #[qinvokable]
+        fn undo_mark(&self) -> i32;
+        #[qinvokable]
+        fn join_since(self: Pin<&mut File>, mark: i32);
         #[qinvokable]
         fn redo(self: Pin<&mut File>);
         #[qinvokable]
@@ -815,6 +821,15 @@ impl qobject::File {
 
     fn redo(self: Pin<&mut Self>) {
         self.edit(|doc| doc.redo());
+    }
+
+    fn undo_mark(&self) -> i32 {
+        self.rust().doc.undo_mark() as i32
+    }
+
+    fn join_since(mut self: Pin<&mut Self>, mark: i32) {
+        // Nothing to show: the text is as it was.
+        self.as_mut().rust_mut().doc.join_since(index(mark));
     }
 
     fn locale_hint(&self) -> QString {

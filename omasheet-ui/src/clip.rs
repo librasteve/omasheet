@@ -520,6 +520,33 @@ mod tests {
     }
 
     #[test]
+    fn columns_paste_as_a_block_does() {
+        const COLS: &str = "sheet V\n\nA | B | C | D | E\n1 | 2 | 3 | 4 | 5\n6 | 7 | 8 | 9 | 10\n";
+        let mut doc = Document::from_text(COLS);
+        let mut clip = Clip::default();
+        let text = clip.copy(&doc, 0, (0, 0), (1, 1));
+        // Onto one column, given as its top cell: both, from there.
+        assert_eq!(clip.paste(&mut doc, 0, (0, 2), (0, 2), &text), Ok(true));
+        assert_eq!(held(&doc, 0), ["1|2|1|2|5", "6|7|6|7|10"]);
+        // Onto fewer columns: cut to them.
+        assert!(doc.undo());
+        assert_eq!(clip.paste(&mut doc, 0, (0, 2), (1, 2), &text), Ok(true));
+        assert_eq!(held(&doc, 0), ["1|2|1|4|5", "6|7|6|9|10"]);
+        // Onto as many.
+        assert!(doc.undo());
+        assert_eq!(clip.paste(&mut doc, 0, (0, 2), (1, 3), &text), Ok(true));
+        assert_eq!(held(&doc, 0), ["1|2|1|2|5", "6|7|6|7|10"]);
+        // Onto more: whole, and the rest left.
+        assert!(doc.undo());
+        assert_eq!(clip.paste(&mut doc, 0, (0, 2), (1, 4), &text), Ok(true));
+        assert_eq!(held(&doc, 0), ["1|2|1|2|5", "6|7|6|7|10"]);
+        // Onto the last column: what goes past it is left.
+        assert!(doc.undo());
+        assert_eq!(clip.paste(&mut doc, 0, (0, 4), (0, 4), &text), Ok(true));
+        assert_eq!(held(&doc, 0), ["1|2|3|4|1", "6|7|8|9|6"]);
+    }
+
+    #[test]
     fn formula_cells_are_pasted_onto_formula_columns() {
         let two =
             "sheet T\n\nA | B | S | P\n1 | 2 | * | *\n3 | 4 | * | *\n\nS := A + B\nP := A * B\n";

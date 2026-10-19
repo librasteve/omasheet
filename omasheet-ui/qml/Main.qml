@@ -313,15 +313,20 @@ ApplicationWindow {
     // Let go of the selection, and of anything cut or copied: one cell is
     // left, where the cursor is.
     function deselect() {
+        unmark();
+        byRow = false;
+        byCol = false;
+        anchorRow = curRow;
+        anchorCol = curCol;
+    }
+
+    // Let go of anything cut or copied, and leave the selection.
+    function unmark() {
         grabbed = null;
         marked = null;
         movedOnce = false;
         file.forgetCut();
         notice = "";
-        byRow = false;
-        byCol = false;
-        anchorRow = curRow;
-        anchorCol = curCol;
     }
 
     function reveal() {
@@ -754,13 +759,25 @@ ApplicationWindow {
 
     // The cells last copied or cut, shown as they were selected for as long
     // as they can be pasted, until Esc or the next copy:
-    // `{tab, top, left, bottom, right, text, cut}`, or null.
+    // `{tab, top, left, bottom, right, text, cut, columns, rows}`, or null;
+    // `columns` when whole columns were copied, marked down from their
+    // headers, and `rows` when whole rows were, marked from their numbers.
     property var marked: null
     property bool keepMark: false
 
+    // What is outlined on this sheet: what was copied or cut, or the rows
+    // or columns cut to be moved; null if nothing.
+    readonly property var outline: grabbedHere
+        ? (grabbed.rows
+            ? { top: grabbed.first, bottom: grabbed.first + grabbed.count - 1,
+                left: 0, right: sheet.columns.length - 1, cut: true, columns: false, rows: true }
+            : { top: 0, bottom: sheet.rows.length - 1,
+                left: grabbed.first, right: grabbed.first + grabbed.count - 1, cut: true, columns: true, rows: false })
+        : marked !== null && marked.tab === tab ? marked : null
+
     function isMarked(row, col) {
-        var m = marked;
-        return m !== null && m.tab === tab
+        var m = outline;
+        return m !== null
             && row >= m.top && row <= m.bottom && col >= m.left && col <= m.right;
     }
 
@@ -770,7 +787,7 @@ ApplicationWindow {
 
     function mark(text, cut) {
         movedOnce = false;
-        marked = { tab: tab, top: selTop, left: selLeft, bottom: selBottom, right: selRight, text: text, cut: !!cut };
+        marked = { tab: tab, top: selTop, left: selLeft, bottom: selBottom, right: selRight, text: text, cut: !!cut, columns: selKind === "column", rows: selKind === "row" };
     }
 
     // Where the rows or columns `first` to `last` are once `by` of them are
@@ -798,7 +815,7 @@ ApplicationWindow {
         var v = shifted(m.top, m.bottom, row, sheet.rows.length - rows);
         var h = shifted(m.left, m.right, col, sheet.columns.length - cols);
         marked = v === null || h === null ? null
-            : { tab: m.tab, top: v[0], left: h[0], bottom: v[1], right: h[1], text: m.text, cut: m.cut };
+            : { tab: m.tab, top: v[0], left: h[0], bottom: v[1], right: h[1], text: m.text, cut: m.cut, columns: m.columns, rows: m.rows };
     }
 
     // Paste `text` with `put`, keeping the mark if it is what was copied.
@@ -825,8 +842,90 @@ ApplicationWindow {
         return true;
     }
 
-    // After rows are pasted onto one row, they are what is selected.
+    // `base` made free of the names `taken` with `_001`, `_002`..., and
+    // then taken.
+    function copyName(base, taken) {
+        base = base.replace(/_\d{3}$/, "");
+        var n = 1, name;
+        do {
+            name = base + "_" + ("00" + n).slice(-3);
+            n++;
+        } while (taken[name]);
+        taken[name] = true;
+        return name;
+    }
+
+    // The names of this sheet's columns, but for `first` to `last`.
+    function namesTaken(first, last) {
+        var taken = {};
+        for (var c = 0; c < sheet.columns.length; c++)
+            if (c < first || c > last)
+                taken[sheet.columns[c].name] = true;
+        return taken;
+    }
+
+    // Columns pasted onto one column past the last are added for them, as
+    // rows are: named as those they were copied from.
+    function growColumns(text, t) {
+        if (selKind !== "column" || t[1] !== t[3])
+            return "";
+        var width = text.split("\n")[0].split("\t").length;
+        var need = t[1] + width - sheet.columns.length;
+        var m = marked !== null && marked.text === text && marked.columns && marked.tab < tabs.length ? marked : null;
+        var taken = namesTaken(-1, -1);
+        var names = [];
+        for (var i = width - need; i < width; i++) {
+            var from = m !== null ? tabs[m.tab].columns[m.left + i] : null;
+            names.push(copyName(from ? from.name : "Column", taken));
+        }
+        var end = sheet.columns.length;
+        for (var k = 0; k < names.length; k++) {
+            var problem = file.insertColumn(tab, end + k, names[k]);
+            if (problem.length > 0)
+                return problem;
+        }
+        return "";
+    }
+
+    // Columns copied and pasted onto others take their names too, each made
+    // free with `_001`, `_002`...
+    function pastedColumns() {
+        var m = marked;
+        if (m === null || !m.columns || selKind !== "column" || m.tab >= tabs.length
+            || (m.tab === tab && m.left === selLeft))
+            return;
+        var count = Math.min(m.right - m.left + 1, selRight - selLeft + 1);
+        var at = selLeft;
+        var taken = namesTaken(at, at + count - 1);
+        var names = [];
+        for (var i = 0; i < count; i++) {
+            var from = tabs[m.tab].columns[m.left + i];
+            if (!from)
+                return;
+            names.push(copyName(from.name, taken));
+        }
+        keeping(sheet.rows.length, sheet.columns.length, function() {
+            for (var i = 0; i < names.length; i++) {
+                if (sheet.columns[at + i].name === names[i])
+                    continue;
+                var problem = file.renameColumn(tab, at + i, names[i]);
+                if (problem.length > 0) {
+                    errorDialog.say(problem);
+                    return;
+                }
+            }
+        });
+    }
+
+    // After rows are pasted onto one row, or columns onto one column, they
+    // are what is selected.
     function selectPasted(text) {
+        if (selKind === "column" && selLeft === selRight) {
+            var width = text.split("\n")[0].split("\t").length;
+            curCol = selLeft;
+            anchorCol = Math.min(sheet.columns.length - 1, selLeft + width - 1);
+        }
+        pastedColumns();
         if (selKind !== "row" || selTop !== selBottom)
             return;
         var top = selTop;
@@ -841,12 +940,6 @@ ApplicationWindow {
         Qt.callLater(function() { rowsView.positionViewAtIndex(row, ListView.Contain); });
     }
 
-    function isGrabbed(row, col) {
-        if (!grabbedHere)
-            return false;
-        var at = grabbed.rows ? row : col;
-        return at >= grabbed.first && at < grabbed.first + grabbed.count;
-    }
 
     // Cut: whole rows or columns are picked up to be moved; cells are copied
     // and stay as they are until the next paste, which moves them.
@@ -869,7 +962,7 @@ ApplicationWindow {
             return;
         }
         copySelection();
-        // Rows and columns picked up are shown dimmed instead.
+        // Rows and columns picked up are outlined dashed, to be moved.
         if (kind !== "")
             marked = null;
         if (kind === "row")
@@ -937,10 +1030,12 @@ ApplicationWindow {
     }
 
     // Where a paste goes: `[top, left, bottom, right]`. One whole row takes
-    // several rows as one cell takes a block: from there down, at their own
-    // size.
+    // several rows, and one whole column several columns, as one cell takes
+    // a block: from there on, at their own size.
     function pasteTarget(text) {
         if (selKind === "row" && selTop === selBottom && text.indexOf("\n") >= 0)
+            return [selTop, selLeft, selTop, selLeft];
+        if (selKind === "column" && selLeft === selRight && text.split("\n")[0].indexOf("\t") >= 0)
             return [selTop, selLeft, selTop, selLeft];
         return [selTop, selLeft, selBottom, selRight];
     }
@@ -953,16 +1048,19 @@ ApplicationWindow {
         }
         grabbed = null;
         var text = clipboard.take();
+        // The paste and the names it gives columns are undone as one.
+        var mark = file.undoMark();
         if (text.length === 0)
             return;
         if (pasteWith(text, function() {
             var t = pasteTarget(text);
             if (!sheet.isConsts)
-                return file.pasteCells(tab, t[0], t[1], t[2], t[3], text);
+                return growColumns(text, t) || file.pasteCells(tab, t[0], t[1], t[2], t[3], text);
             if (curCol === 1)
                 file.setConst(curRow, text.split("\n")[0]);
         }))
             selectPasted(text);
+        file.joinSince(mark);
     }
 
     // Paste what the copied cells showed, not their formulas.
@@ -970,11 +1068,14 @@ ApplicationWindow {
         notice = "";
         grabbed = null;
         var text = clipboard.take();
+        // The paste and the names it gives columns are undone as one.
+        var mark = file.undoMark();
         if (text.length > 0 && !sheet.isConsts && pasteWith(text, function() {
                 var t = pasteTarget(text);
-                return file.pasteValues(tab, t[0], t[1], t[2], t[3], text);
+                return growColumns(text, t) || file.pasteValues(tab, t[0], t[1], t[2], t[3], text);
             }))
             selectPasted(text);
+        file.joinSince(mark);
     }
 
     // Paste what was copied turned about: its rows as columns.
@@ -1452,7 +1553,15 @@ ApplicationWindow {
                     }
                     break;
                 case Qt.Key_Backspace: win.clearSelection(); break;
-                case Qt.Key_Escape: win.deselect(); break;
+                case Qt.Key_Escape:
+                    // Rows or columns copied or cut: Esc lets go of them, and
+                    // leaves them selected for another Esc.
+                    if (win.outline !== null && ((win.outline.columns && win.selKind === "column")
+                                                 || (win.outline.rows && win.selKind === "row")))
+                        win.unmark();
+                    else
+                        win.deselect();
+                    break;
                 case Qt.Key_Menu: win.keyMenu(); break;
                 default:
                     if (ctrl && (event.key === Qt.Key_BraceRight || (shift && event.key === Qt.Key_BracketRight))) {
@@ -1553,8 +1662,6 @@ ApplicationWindow {
                                 }
                                 width: win.colWidths[index] || 0
                                 height: win.headerHeight
-                                // Cut and waiting to be put down.
-                                opacity: win.grabbedHere && !win.grabbed.rows && win.isGrabbed(-1, index) ? 0.4 : 1
                                 color: index >= win.selLeft && index <= win.selRight
                                     ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.16)
                                     : win.panelColor
@@ -1592,6 +1699,12 @@ ApplicationWindow {
                                 }
                                 Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: win.lineColor }
                                 Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: win.lineColor }
+                                // Columns copied or cut are marked from their headers down.
+                                readonly property bool marked: win.outline !== null && win.outline.columns
+                                    && index >= win.outline.left && index <= win.outline.right
+                                MarkEdge { visible: headCell.marked; width: parent.width; height: 1 }
+                                MarkEdge { visible: headCell.marked && headCell.index === win.outline.left; width: 1; height: parent.height }
+                                MarkEdge { visible: headCell.marked && headCell.index === win.outline.right; anchors.right: parent.right; width: 1; height: parent.height }
                                 MouseArea {
                                     anchors.fill: parent
                                     hoverEnabled: true
@@ -1718,6 +1831,12 @@ ApplicationWindow {
                                     font.pixelSize: win.fontSize - 2
                                 }
                                 Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: win.lineColor }
+                                // Rows copied or cut are marked from their numbers across.
+                                readonly property bool marked: win.outline !== null && win.outline.rows
+                                    && rowItem.index >= win.outline.top && rowItem.index <= win.outline.bottom
+                                MarkEdge { visible: parent.marked; width: 1; height: parent.height }
+                                MarkEdge { visible: parent.marked && rowItem.index === win.outline.top; width: parent.width; height: 1 }
+                                MarkEdge { visible: parent.marked && rowItem.index === win.outline.bottom; anchors.bottom: parent.bottom; width: parent.width; height: 1 }
                                 MouseArea {
                                     anchors.fill: parent
                                     acceptedButtons: Qt.LeftButton | Qt.RightButton
@@ -1770,7 +1889,6 @@ ApplicationWindow {
                                     readonly property bool inPick: win.refBoxes.length > 0 && win.inRefs(row, index)
                                     width: win.colWidths[index] || 0
                                     height: win.rowHeight
-                                    opacity: win.grabbedHere && win.isGrabbed(row, index) ? 0.4 : 1
                                     color: (selected && !alone) || marked
                                         ? Qt.rgba(win.selectionFill.r, win.selectionFill.g, win.selectionFill.b, 0.55)
                                         : column && column.computed ? win.computedTint : "transparent"
@@ -1800,10 +1918,10 @@ ApplicationWindow {
                                     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: win.lineColor }
                                     // The outline of what was copied or cut.
                                     // Copied is outlined, cut is dashed.
-                                    MarkEdge { visible: cellItem.marked && cellItem.row === win.marked.top; width: parent.width; height: 1 }
-                                    MarkEdge { visible: cellItem.marked && cellItem.row === win.marked.bottom; anchors.bottom: parent.bottom; width: parent.width; height: 1 }
-                                    MarkEdge { visible: cellItem.marked && cellItem.index === win.marked.left; width: 1; height: parent.height }
-                                    MarkEdge { visible: cellItem.marked && cellItem.index === win.marked.right; anchors.right: parent.right; width: 1; height: parent.height }
+                                    MarkEdge { visible: cellItem.marked && cellItem.row === win.outline.top && !win.outline.columns; width: parent.width; height: 1 }
+                                    MarkEdge { visible: cellItem.marked && cellItem.row === win.outline.bottom; anchors.bottom: parent.bottom; width: parent.width; height: 1 }
+                                    MarkEdge { visible: cellItem.marked && cellItem.index === win.outline.left && !win.outline.rows; width: 1; height: parent.height }
+                                    MarkEdge { visible: cellItem.marked && cellItem.index === win.outline.right; anchors.right: parent.right; width: 1; height: parent.height }
                                     Rectangle {
                                         anchors.fill: parent
                                         visible: cellItem.alone
@@ -2243,7 +2361,7 @@ ApplicationWindow {
     // The entries of the right-click menu, close set.
     // One side of the cells copied or cut: a line, or dashes when cut.
     component MarkEdge: Item {
-        readonly property bool dashed: win.marked !== null && win.marked.cut
+        readonly property bool dashed: win.outline !== null && win.outline.cut
         readonly property bool across: width >= height
         readonly property real length: across ? width : height
         Rectangle {

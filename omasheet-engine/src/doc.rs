@@ -1117,6 +1117,18 @@ impl Document {
         true
     }
 
+    /// How many steps there are to undo: a mark for [`Document::join_since`].
+    pub fn undo_mark(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// Make every step taken since `mark` one step, undone at once.
+    pub fn join_since(&mut self, mark: usize) {
+        if self.undo.len() > mark + 1 {
+            self.undo.truncate(mark + 1);
+        }
+    }
+
     /// Replace the text as one undoable step. Returns whether it changed.
     fn commit(&mut self, text: String) -> bool {
         if text == self.text {
@@ -3032,6 +3044,19 @@ mod tests {
             doc.set_cell(0, 0, 0, "");
             doc.set_cell(0, 0, 0, "1");
         }));
+        assert!(!doc.undo());
+    }
+
+    #[test]
+    fn steps_joined_since_a_mark_undo_as_one() {
+        let text = "sheet T\n\n| A   | B   |\n| --- | --- |\n| 1   | 2   |\n";
+        let mut doc = Document::from_text(text);
+        let mark = doc.undo_mark();
+        doc.set_cell(0, 0, 0, "3");
+        doc.rename_column(0, 1, "B_001").unwrap();
+        doc.join_since(mark);
+        assert!(doc.undo());
+        assert_eq!(doc.text(), text);
         assert!(!doc.undo());
     }
 
