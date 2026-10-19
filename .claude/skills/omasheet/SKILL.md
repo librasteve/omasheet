@@ -173,11 +173,28 @@ that do not fit are cut and marked `…`. Only the display is cut, and
 - Equality is `==`. A single `=` only starts a formula cell or binds a
   `const`.
 - `and`, `or`, `not`, `in`, and `if c then a else b`. There is no `IF()`.
+- A computed column may be a sequence, `terms ... limit`: `1, 3 ... Inf`
+  and `1, 2, 4 ... Inf` take their step from the terms, as a difference or
+  as a ratio (two terms are read as a difference, so a ratio needs three);
+  `0, 1, $-1 + $-2 ... Inf` gives its own rule, where `$-1` is the term
+  before this one. `Inf` fills the column, and any other limit stops there
+  and leaves the rest empty. The days of the week and the months of the
+  year are known by name, in full or in three letters, and go round:
+  `"Monday", "Tuesday" ... Inf`, `"Jan", "Feb" ... Inf`, and
+  `"Jan-2026", "Apr-2026" ... Inf` for quarters. Any other text counts up
+  as letters and digits do, `"A", "B" ... Inf` and `"AY" ... "BA"`. Dates
+  step by whole days and times by seconds, except that the same day of
+  each month steps by months: `2025-01-01, 2025-02-01 ... Inf`, and
+  `2025-01-31, 2025-02-28 ... Inf` for the end of each month.
 - Functions are called `sum(x)`, `x.sum()` or `x |> sum()`:
   `sum avg min max count`, `abs round floor ceil sqrt` and the usual maths,
-  `today() now() year month day weekday`, and the type names as conversions,
+  `today() now() year month day weekday`, `succ` for the next value, and
+  the type names as conversions,
   `x.Int`, `x.Num`, `x.Percent`, `x.Text`.
 - A date plus a whole number is days later; two dates subtract to days.
+  `n.day`, `n.week`, `n.month` and `n.year` next to a date say which unit:
+  `Placed + 1.month`, which keeps the day of the month or clamps it to the
+  last day of a short one. `eom(x)` is the last day of a date's month.
 - A lookup that finds one row fills a cell with its value; none gives empty,
   so add `// "none"`; several is an error.
 

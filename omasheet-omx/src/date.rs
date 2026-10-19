@@ -39,6 +39,37 @@ pub fn from_ymd(y: i64, m: i64, d: i64) -> Option<i32> {
     (civil_from_days(days) == (y, m, d)).then_some(days as i32)
 }
 
+/// How many days the month `m` of year `y` has.
+pub fn days_in_month(y: i64, m: i64) -> i64 {
+    const LENGTHS: [i64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    match m {
+        2 if leap => 29,
+        1..=12 => LENGTHS[(m - 1) as usize],
+        _ => 0,
+    }
+}
+
+/// `n` months on from a date, which is the same day of a later month, or
+/// its last day where the month is too short: a month after the 31st of
+/// January is the 28th of February.
+///
+/// `on` is the day of the month to land on in place of the date's own. A
+/// sequence counts from the largest day its terms give, so that one which
+/// reaches the end of a short month goes on to the end of a long one.
+pub fn add_months(days: i32, n: i64, on: Option<i64>) -> Option<i32> {
+    let (y, m, d) = civil_from_days(days as i64);
+    let total = (y * 12 + m - 1).checked_add(n)?;
+    let (y, m) = (total.div_euclid(12), total.rem_euclid(12) + 1);
+    from_ymd(y, m, on.unwrap_or(d).min(days_in_month(y, m)))
+}
+
+/// The last day of the month a date is in.
+pub fn end_of_month(days: i32) -> Option<i32> {
+    let (y, m, _) = civil_from_days(days as i64);
+    from_ymd(y, m, days_in_month(y, m))
+}
+
 pub fn format(days: i32) -> String {
     let (y, m, d) = civil_from_days(days as i64);
     format!("{y:04}-{m:02}-{d:02}")

@@ -8,6 +8,8 @@
 
 use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use crate::convert::{lit_type, parse_literal};
+use crate::cycle::{self, Cyc};
+use crate::date;
 use crate::deps;
 use crate::diag::{Diagnostic, Span};
 use crate::file::{FileAst, parse_file};
@@ -15,6 +17,8 @@ use crate::funcs::{FUNCTIONS, MathFn};
 use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use crate::parser::parse_expr;
 use crate::types::{DepKind, S, SheetTy, Ty};
+use num_bigint::BigInt;
+use num_rational::BigRational;
 use num_traits::ToPrimitive;
 use std::mem;
 use std::rc::Rc;
@@ -289,10 +293,123 @@ fn static_of(e: &Expr) -> Option<Static> {
     }
 }
 
+/// A seed written as a plain number, for working out the step.
+fn seed_num(e: &Expr) -> Option<BigRational> {
+    match &e.kind {
+        ExprKind::Lit(Lit::Int(i)) => Some(BigRational::from(i.clone())),
+        ExprKind::Lit(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)) => Some(r.clone()),
+        ExprKind::Unary(UnOp::Neg, inner) => seed_num(inner).map(|r| -r),
+        // `1/3` written out, where the lexer did not take it for one.
+        ExprKind::Binary(BinOp::Div, a, b) => {
+            let (a, b) = (seed_num(a)?, seed_num(b)?);
+            (!b.is_integer() || b.to_integer() != BigInt::from(0)).then(|| a / b)
+        }
+        _ => None,
+    }
+}
+
+/// What a sequence does for the rows its terms do not give: an expression
+/// written in terms of `$-1`, or a step through a run of names.
+enum Rule {
+    By(Expr),
+    Named(Cyc, i64),
+    /// Dates a whole number of months apart, counted from the first so
+    /// that a month end stays a month end rather than drifting back.
+    Monthly { first: i32, step: i64, on: i64 },
+}
+
+/// A seed written as a date, time or date-time, as its own count of days
+/// or seconds. Such a sequence only ever steps by a constant.
+fn seed_time(e: &Expr) -> Option<i64> {
+    match &e.kind {
+        ExprKind::Lit(Lit::Date(d)) => Some(*d as i64),
+        ExprKind::Lit(Lit::Time(t)) => Some(*t as i64),
+        ExprKind::Lit(Lit::DateTime(t)) => Some(*t),
+        _ => None,
+    }
+}
+
+/// `1.month` and the rest: how many, and of what. Only a plain number
+/// takes a unit, so `Placed.month` is still the month of a date.
+fn duration_of(e: &Expr) -> Option<(i64, &'static str)> {
+    let (base, name) = match &e.kind {
+        ExprKind::Field(base, name, _) => (&**base, name.as_str()),
+        ExprKind::Call(name, _, args) if args.len() == 1 => (&args[0], name.as_str()),
+        _ => return None,
+    };
+    let unit = ["day", "week", "month", "year"]
+        .into_iter()
+        .find(|u| *u == name)?;
+    let ExprKind::Lit(Lit::Int(n)) = &base.kind else {
+        return None;
+    };
+    Some((n.to_i64()?, unit))
+}
+
+/// A seed written as a plain date, which is the only kind that can step
+/// by months.
+fn seed_date(e: &Expr) -> Option<i32> {
+    match &e.kind {
+        ExprKind::Lit(Lit::Date(d)) => Some(*d),
+        _ => None,
+    }
+}
+
+/// A seed written as plain text.
+fn seed_text(e: &Expr) -> Option<&str> {
+    match &e.kind {
+        ExprKind::Lit(Lit::Text(s)) => Some(s),
+        _ => None,
+    }
+}
+
+/// A worked-out step as a literal: a whole number where it is one.
+fn num_lit(r: BigRational) -> Lit {
+    if r.is_integer() {
+        Lit::Int(r.to_integer())
+    } else {
+        Lit::Decimal(r)
+    }
+}
+
+/// Dates that are a whole number of months apart: the same day of each
+/// month, or the last day where the month is too short. The day they are
+/// counted from is the largest one given, so that the ends of months are
+/// read as ends of months.
+fn monthly_step(seeds: &[Expr]) -> Option<Rule> {
+    if seeds.len() < 2 {
+        return None;
+    }
+    let dates: Vec<i32> = seeds.iter().map(seed_date).collect::<Option<_>>()?;
+    let parts: Vec<(i64, i64, i64)> = dates
+        .iter()
+        .map(|d| date::civil_from_days(*d as i64))
+        .collect();
+    let anchor = parts.iter().map(|(_, _, d)| *d).max()?;
+    if !parts
+        .iter()
+        .all(|(y, m, d)| *d == anchor.min(date::days_in_month(*y, *m)))
+    {
+        return None;
+    }
+    let months: Vec<i64> = parts.iter().map(|(y, m, _)| y * 12 + m).collect();
+    let step = months[1] - months[0];
+    if step == 0 || !months.windows(2).all(|w| w[1] - w[0] == step) {
+        return None;
+    }
+    Some(Rule::Monthly {
+        first: dates[0],
+        step,
+        on: anchor,
+    })
+}
+
 fn has_cursor(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Cursor => true,
-        ExprKind::Lit(_) | ExprKind::Name(_) | ExprKind::Own => false,
+        ExprKind::Lit(_) | ExprKind::Name(_) | ExprKind::Own | ExprKind::Back(_) => false,
+        // A sequence makes its own cursor reads when it is lowered.
+        ExprKind::Seq { .. } => false,
         ExprKind::Unary(_, a) | ExprKind::Field(a, ..) => has_cursor(a),
         ExprKind::Binary(_, a, b) => has_cursor(a) || has_cursor(b),
         ExprKind::If(a, b, c) => has_cursor(a) || has_cursor(b) || has_cursor(c),
@@ -882,6 +999,327 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// A date `n` units on: months and years step by months, and weeks and
+    /// days by days.
+    fn lower_duration(
+        &mut self,
+        base: &Expr,
+        n: i64,
+        unit: &str,
+        span: Span,
+        sc: &mut Scope,
+    ) -> (Node, Ty) {
+        let (node, ty) = self.lower(base, sc);
+        let dated = |s: S| matches!(s, S::Any | S::Date | S::DateTime);
+        let out = match ty {
+            Ty::Any => Ty::Any,
+            Ty::Scalar(s) if dated(s) => Ty::Scalar(s),
+            Ty::Vector(s, k) if dated(s) => Ty::Vector(s, k),
+            other => {
+                self.err_help(
+                    span,
+                    format!("`{n}.{unit}` belongs next to a date, found {}", other.describe()),
+                    "a date plus a plain number is that many days later",
+                );
+                return (Node::error(span), Ty::Any);
+            }
+        };
+        let int = |n: i64| Node::new(Ir::Lit(Lit::Int(BigInt::from(n))), span);
+        let node = match unit {
+            "month" => Node::new(Ir::Call(Func::AddMonths, vec![node, int(n)]), span),
+            "year" => Node::new(Ir::Call(Func::AddMonths, vec![node, int(n * 12)]), span),
+            "week" => Node::new(
+                Ir::Binary(BinOp::Add, Box::new(node), Box::new(int(n * 7))),
+                span,
+            ),
+            _ => Node::new(
+                Ir::Binary(BinOp::Add, Box::new(node), Box::new(int(n))),
+                span,
+            ),
+        };
+        (node, out)
+    }
+
+    /// `$-n` as the index it stands for: this column, `n` rows back. The
+    /// rest of checking then sees an ordinary read of an earlier row.
+    fn back_ref(&mut self, n: u32, span: Span, sc: &Scope) -> Option<Expr> {
+        let Some(c) = sc.col.filter(|_| sc.own && !sc.frames.is_empty()) else {
+            self.err_help(
+                span,
+                "`$-1` needs a column to count back in",
+                "a back-reference belongs in a sequence that fills a column, such as `0, 1, $-1 + $-2 ... Inf`",
+            );
+            return None;
+        };
+        let name = self.sheets[sc.frames[0]].cols[c].name.clone();
+        let at = |kind| Expr { kind, span };
+        Some(at(ExprKind::Index(
+            Box::new(at(ExprKind::Own)),
+            vec![
+                Some(at(ExprKind::Name(name))),
+                Some(at(ExprKind::Binary(
+                    BinOp::Sub,
+                    Box::new(at(ExprKind::Cursor)),
+                    Box::new(at(ExprKind::Lit(Lit::Int(BigInt::from(n))))),
+                ))),
+            ],
+        )))
+    }
+
+    /// A sequence, `seeds ... limit`, as the column it fills: the seeds for
+    /// the first rows, then the rule for the rest, stopping at the limit.
+    fn lower_seq(
+        &mut self,
+        seeds: &[Expr],
+        rule: &Option<Box<Expr>>,
+        limit: &Expr,
+        span: Span,
+        sc: &mut Scope,
+    ) -> (Node, Ty) {
+        let fail = (Node::error(span), Ty::Any);
+        if sc.col.is_none() || !sc.own || sc.frames.is_empty() {
+            self.err_help(
+                span,
+                "a sequence fills a column",
+                "write it as a computed column, such as `Double := 1, 2, 4 ... Inf`",
+            );
+            return fail;
+        }
+        if seeds.is_empty() {
+            self.err_help(
+                span,
+                "a sequence needs a term to start from",
+                "give its first terms before the rule, such as `0, 1, $-1 + $-2 ... Inf`",
+            );
+            return fail;
+        }
+        let (rule_node, rule_ty) = match rule {
+            Some(r) => self.lower(r, sc),
+            None => match self.infer_rule(seeds, span) {
+                Some(Rule::By(e)) => self.lower(&e, sc),
+                Some(Rule::Monthly { first, step, on }) => {
+                    let from = Node::new(Ir::Lit(Lit::Date(first)), span);
+                    let on_months = Node::new(
+                        Ir::Binary(
+                            BinOp::Mul,
+                            Box::new(Node::new(Ir::RowIndex { depth: 0 }, span)),
+                            Box::new(Node::new(Ir::Lit(Lit::Int(BigInt::from(step))), span)),
+                        ),
+                        span,
+                    );
+                    let day = Node::new(Ir::Lit(Lit::Int(BigInt::from(on))), span);
+                    (
+                        Node::new(Ir::Call(Func::AddMonths, vec![from, on_months, day]), span),
+                        Ty::Scalar(S::Date),
+                    )
+                }
+                Some(Rule::Named(kind, step)) => {
+                    let Some(prev) = self.back_ref(1, span, sc) else {
+                        return fail;
+                    };
+                    let (prev, _) = self.lower(&prev, sc);
+                    let step = Node::new(Ir::Lit(Lit::Int(BigInt::from(step))), span);
+                    (
+                        Node::new(Ir::Call(Func::Cycle(kind), vec![prev, step]), span),
+                        Ty::Scalar(S::Text),
+                    )
+                }
+                None => return fail,
+            },
+        };
+        let mut nodes = Vec::with_capacity(seeds.len());
+        let mut ty = rule_ty;
+        for seed in seeds {
+            let (node, s) = self.lower(seed, sc);
+            ty = match (&ty, &s) {
+                (Ty::Scalar(x), Ty::Scalar(y)) => match x.join(*y) {
+                    Some(j) => Ty::Scalar(j),
+                    None => {
+                        self.err(
+                            seed.span,
+                            format!("the terms of a sequence have different types: {x} and {y}"),
+                        );
+                        Ty::Any
+                    }
+                },
+                (x, y) if x == y => x.clone(),
+                _ => Ty::Any,
+            };
+            nodes.push(node);
+        }
+
+        // Which way the sequence runs, for a numeric limit.
+        let nums: Vec<BigRational> = seeds.iter().filter_map(seed_num).collect();
+        let times: Vec<i64> = seeds.iter().filter_map(seed_time).collect();
+        let descends =
+            (nums.len() > 1 && nums[1] < nums[0]) || (times.len() > 1 && times[1] < times[0]);
+        let body = match self.seq_limit(limit, rule_node, descends, span, sc) {
+            Some(node) => node,
+            None => return fail,
+        };
+
+        // `if ROW == 0 then s0 else if ROW == 1 then s1 else … else body`.
+        let int = |n: usize| Node::new(Ir::Lit(Lit::Int(BigInt::from(n))), span);
+        let out = nodes.into_iter().enumerate().rev().fold(body, |rest, (i, seed)| {
+            let at = Node::new(
+                Ir::Binary(
+                    BinOp::Eq,
+                    Box::new(Node::new(Ir::RowIndex { depth: 0 }, span)),
+                    Box::new(int(i)),
+                ),
+                span,
+            );
+            Node::new(Ir::If(Box::new(at), Box::new(seed), Box::new(rest)), span)
+        });
+        (out, ty)
+    }
+
+    /// The rule of a sequence that gives none: the step between its seeds.
+    fn infer_rule(&mut self, seeds: &[Expr], span: Span) -> Option<Rule> {
+        let at = |kind| Expr { kind, span };
+        let back = || at(ExprKind::Back(1));
+        if let Some(words) = seeds.iter().map(seed_text).collect::<Option<Vec<_>>>() {
+            // The days of the week and the months of the year first, so
+            // that `"Monday", "Tuesday"` is not read letter by letter.
+            if let Some((kind, step)) = cycle::detect(&words) {
+                return Some(Rule::Named(kind, step));
+            }
+            return Some(Rule::By(at(ExprKind::Call(
+                "succ".to_string(),
+                span,
+                vec![back()],
+            ))));
+        }
+        if let Some(times) = seeds.iter().map(seed_time).collect::<Option<Vec<_>>>() {
+            // A date plus a whole number is that many days later, and a
+            // time that many seconds later, so the step is a plain number.
+            let step_by = |n: i64| {
+                Some(Rule::By(at(ExprKind::Binary(
+                    BinOp::Add,
+                    Box::new(back()),
+                    Box::new(at(ExprKind::Lit(Lit::Int(BigInt::from(n))))),
+                ))))
+            };
+            if times.len() == 1 {
+                return step_by(1);
+            }
+            // The same day of each month reads as months, not as the days
+            // between them, which vary with the month's length.
+            if let Some(monthly) = monthly_step(seeds) {
+                return Some(monthly);
+            }
+            let diff = times[1] - times[0];
+            if times.windows(2).all(|w| w[1] - w[0] == diff) {
+                return step_by(diff);
+            }
+            self.err_help(
+                span,
+                "these terms are not evenly spaced",
+                "a sequence of dates steps by a fixed number of days or of months, and one of times by seconds: give the rule instead, such as `$-1 + 7`",
+            );
+            return None;
+        }
+        let nums: Option<Vec<BigRational>> = seeds.iter().map(seed_num).collect();
+        let Some(nums) = nums else {
+            self.err_help(
+                span,
+                "the step of this sequence cannot be worked out",
+                "give its rule, such as `0, 1, $-1 + $-2 ... Inf`, or write plain numbers or text as its first terms",
+            );
+            return None;
+        };
+        let step = |op, r: BigRational| {
+            Some(Rule::By(at(ExprKind::Binary(
+                op,
+                Box::new(back()),
+                Box::new(at(ExprKind::Lit(num_lit(r)))),
+            ))))
+        };
+        if nums.len() == 1 {
+            return step(BinOp::Add, BigRational::from(BigInt::from(1)));
+        }
+        let diff = &nums[1] - &nums[0];
+        if nums.windows(2).all(|w| &w[1] - &w[0] == diff) {
+            return step(BinOp::Add, diff);
+        }
+        let zero = BigRational::from(BigInt::from(0));
+        if nums[0] != zero {
+            let ratio = &nums[1] / &nums[0];
+            if nums.windows(2).all(|w| w[0] != zero && &w[1] / &w[0] == ratio) {
+                return step(BinOp::Mul, ratio);
+            }
+        }
+        self.err_help(
+            span,
+            "these terms are neither an arithmetic nor a geometric sequence",
+            "their differences and their ratios both vary: give the rule instead, such as `$-1 + $-2`",
+        );
+        None
+    }
+
+    /// Wrap the rule so that the sequence stops at its limit. `Inf` runs to
+    /// the end of the column and needs no wrapping.
+    fn seq_limit(
+        &mut self,
+        limit: &Expr,
+        rule: Node,
+        descends: bool,
+        span: Span,
+        sc: &mut Scope,
+    ) -> Option<Node> {
+        if matches!(&limit.kind, ExprKind::Lit(Lit::Num(f)) if f.is_infinite() && *f > 0.0) {
+            return Some(rule);
+        }
+        let (stop, stop_ty) = self.lower(limit, sc);
+        let empty = Node::new(Ir::Empty, span);
+        let text = matches!(stop_ty, Ty::Scalar(S::Text));
+        if text {
+            // Letters have no useful order across lengths, so a text
+            // sequence ends on the term that is the limit.
+            let prev = self.back_ref(1, span, sc)?;
+            let (prev, _) = self.lower(&prev, sc);
+            let done = Node::new(
+                Ir::Binary(BinOp::Eq, Box::new(prev), Box::new(stop)),
+                span,
+            );
+            return Some(Node::new(
+                Ir::If(Box::new(done), Box::new(empty), Box::new(rule)),
+                span,
+            ));
+        }
+        let ordered = match stop_ty {
+            Ty::Any => true,
+            Ty::Scalar(s) => {
+                s.is_numeric() || matches!(s, S::Any | S::Date | S::Time | S::DateTime)
+            }
+            _ => false,
+        };
+        if !ordered {
+            self.err(
+                limit.span,
+                format!(
+                    "the limit of a sequence must be a number, date, time, text or `Inf`, found {}",
+                    stop_ty.describe()
+                ),
+            );
+            return None;
+        }
+        // An ordered sequence ends once it passes its limit, in whichever
+        // direction it runs.
+        let past = Node::new(
+            Ir::Binary(
+                if descends { BinOp::Lt } else { BinOp::Gt },
+                Box::new(rule.clone()),
+                Box::new(stop),
+            ),
+            span,
+        );
+        Some(Node::new(
+            Ir::If(Box::new(past), Box::new(empty), Box::new(rule)),
+            span,
+        ))
+    }
+
     fn fit_declared(&mut self, found: S, declared: Option<S>, span: Span, column: &str) -> S {
         let Some(want) = declared else { return found };
         if !found.assignable_to(want) {
@@ -990,6 +1428,11 @@ impl<'a> Checker<'a> {
         match &e.kind {
             ExprKind::Lit(l) => (Node::new(Ir::Lit(l.clone()), span), Ty::Scalar(lit_type(l))),
             ExprKind::Name(name) => self.lower_name(name, span, sc),
+            ExprKind::Back(n) => match self.back_ref(*n, span, sc) {
+                Some(e) => self.lower(&e, sc),
+                None => fail,
+            },
+            ExprKind::Seq { seeds, rule, limit } => self.lower_seq(seeds, rule, limit, span, sc),
             ExprKind::Own => {
                 if !sc.own || sc.frames.is_empty() {
                     self.err_help(
@@ -1058,6 +1501,13 @@ impl<'a> Checker<'a> {
                     None => Ty::Scalar(s),
                 };
                 (Node::new(Ir::Unary(*op, Box::new(node)), span), out)
+            }
+            ExprKind::Binary(op @ (BinOp::Add | BinOp::Sub), l, r)
+                if duration_of(r).is_some() =>
+            {
+                let (n, unit) = duration_of(r).unwrap();
+                let n = if *op == BinOp::Sub { -n } else { n };
+                self.lower_duration(l, n, unit, span, sc)
             }
             ExprKind::Binary(op, l, r) => self.lower_binary(*op, l, r, span, sc),
             ExprKind::If(c, a, b) => {
@@ -1721,6 +2171,66 @@ impl<'a> Checker<'a> {
                     Node::new(Ir::Call(Func::Complex, nodes), span),
                     Ty::Scalar(S::Complex),
                 )
+            }
+            "add_months" | "eom" => {
+                let months = name == "add_months";
+                let shape = if months { "add_months(x, n)" } else { "eom(x)" };
+                if !arity(self, if months { 2 } else { 1 }, shape) {
+                    return fail;
+                }
+                let (date, dty) = self.lower(&args[0], sc);
+                let dated = |s: S| matches!(s, S::Any | S::Date | S::DateTime);
+                let ty = match dty {
+                    Ty::Any => Ty::Any,
+                    Ty::Scalar(s) if dated(s) => Ty::Scalar(s),
+                    Ty::Vector(s, n) if dated(s) => Ty::Vector(s, n),
+                    other => {
+                        self.err(
+                            args[0].span,
+                            format!("`{name}` takes a date, found {}", other.describe()),
+                        );
+                        return fail;
+                    }
+                };
+                let mut nodes = vec![date];
+                if months {
+                    let (n, nty) = self.lower(&args[1], sc);
+                    if !matches!(nty, Ty::Any | Ty::Scalar(S::Int | S::Any)) {
+                        self.err(
+                            args[1].span,
+                            format!(
+                                "a number of months must be Int, found {}",
+                                nty.describe()
+                            ),
+                        );
+                    }
+                    nodes.push(n);
+                }
+                let func = if months { Func::AddMonths } else { Func::EndOfMonth };
+                (Node::new(Ir::Call(func, nodes), span), ty)
+            }
+            "succ" => {
+                if !arity(self, 1, "succ(x)") {
+                    return fail;
+                }
+                let (arg, aty) = self.lower(&args[0], sc);
+                let ty = match aty {
+                    Ty::Any => Ty::Any,
+                    Ty::Scalar(s) if s.is_numeric() || matches!(s, S::Text | S::Any) => {
+                        Ty::Scalar(s)
+                    }
+                    Ty::Vector(s, n) if s.is_numeric() || matches!(s, S::Text | S::Any) => {
+                        Ty::Vector(s, n)
+                    }
+                    other => {
+                        self.err(
+                            args[0].span,
+                            format!("`succ` takes a number or text, found {}", other.describe()),
+                        );
+                        return fail;
+                    }
+                };
+                (Node::new(Ir::Call(Func::Succ, vec![arg]), span), ty)
             }
             "today" | "now" => {
                 if !arity(self, 0, &format!("{name}()")) {

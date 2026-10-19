@@ -300,6 +300,17 @@ fn base_sheet(e: &Expr) -> Option<Option<&str>> {
 fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec<(&'a str, Span)>) {
     match &e.kind {
         ExprKind::Lit(_) | ExprKind::Cursor | ExprKind::Own => {}
+        // A back-reference names no column: it is this one.
+        ExprKind::Back(_) => {}
+        ExprKind::Seq { seeds, rule, limit } => {
+            for seed in seeds {
+                sites(seed, nested, out, names);
+            }
+            if let Some(rule) = rule {
+                sites(rule, nested, out, names);
+            }
+            sites(limit, nested, out, names);
+        }
         ExprKind::Name(name) => {
             if !nested {
                 names.push((name, e.span));
@@ -375,7 +386,16 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
 /// indexed or read from.
 fn named(e: &Expr, name: &str, out: &mut Vec<Span>) {
     match &e.kind {
-        ExprKind::Lit(_) | ExprKind::Cursor | ExprKind::Own => {}
+        ExprKind::Lit(_) | ExprKind::Cursor | ExprKind::Own | ExprKind::Back(_) => {}
+        ExprKind::Seq { seeds, rule, limit } => {
+            for seed in seeds {
+                named(seed, name, out);
+            }
+            if let Some(rule) = rule {
+                named(rule, name, out);
+            }
+            named(limit, name, out);
+        }
         ExprKind::Name(n) => {
             if n == name {
                 out.push(e.span);
@@ -2334,6 +2354,170 @@ mod tests {
             .iter()
             .map(|r| r[col].display.clone())
             .collect()
+    }
+
+    /// A sheet of `rows` empty computed cells in one column, filled by
+    /// the sequence `seq`.
+    fn seq(seq: &str, rows: usize) -> Vec<String> {
+        let cells = "| * |\n".repeat(rows);
+        let text = format!("sheet S\n\n| N |\n| - |\n{cells}\nN := {seq}\n");
+        let doc = Document::from_text(&text);
+        assert!(
+            doc.snapshot().problems.is_empty(),
+            "{seq}: {:?}",
+            doc.snapshot().problems
+        );
+        col(&doc, 0, 0)
+    }
+
+    #[test]
+    fn a_sequence_takes_an_arithmetic_or_geometric_step_from_its_terms() {
+        assert_eq!(seq("1, 3 ... Inf", 4), ["1", "3", "5", "7"]);
+        assert_eq!(seq("1, 2, 4 ... Inf", 4), ["1", "2", "4", "8"]);
+        // Two terms are a difference, so a constant ratio needs three.
+        assert_eq!(seq("1, 1/3 ... Inf", 3), ["1", "1/3", "-1/3"]);
+        assert_eq!(seq("1, 1/3, 1/9 ... Inf", 3), ["1", "1/3", "1/9"]);
+        // One term alone steps by one.
+        assert_eq!(seq("5 ... Inf", 3), ["5", "6", "7"]);
+    }
+
+    #[test]
+    fn a_sequence_may_give_its_own_rule_through_back_references() {
+        assert_eq!(seq("0, 1, $-1 + $-2 ... Inf", 7), ["0", "1", "1", "2", "3", "5", "8"]);
+        assert_eq!(seq("1, $-1 * 3 ... Inf", 4), ["1", "3", "9", "27"]);
+    }
+
+    #[test]
+    fn a_sequence_stops_at_its_limit_and_leaves_the_rest_empty() {
+        assert_eq!(seq("1, 3 ... 9", 7), ["1", "3", "5", "7", "9", "", ""]);
+        // One that steps over its limit stops before it.
+        assert_eq!(seq("1, 3 ... 10", 7), ["1", "3", "5", "7", "9", "", ""]);
+        assert_eq!(seq("20, 15 ... 0", 6), ["20", "15", "10", "5", "0", ""]);
+    }
+
+    #[test]
+    fn a_sequence_of_text_counts_letters_and_digits_up() {
+        assert_eq!(seq(r#""A", "B" ... Inf"#, 3), ["A", "B", "C"]);
+        // It carries at the end of the alphabet, as a workbook's columns do.
+        assert_eq!(seq(r#""Y" ... Inf"#, 4), ["Y", "Z", "AA", "AB"]);
+        assert_eq!(seq(r#""AY" ... "BA""#, 4), ["AY", "AZ", "BA", ""]);
+        // Only the last run of letters and digits moves.
+        assert_eq!(seq(r#""job-A9" ... Inf"#, 2), ["job-A9", "job-B0"]);
+    }
+
+    #[test]
+    fn a_sequence_of_named_days_or_months_goes_round() {
+        assert_eq!(
+            seq(r#""Monday", "Tuesday" ... Inf"#, 3),
+            ["Monday", "Tuesday", "Wednesday"]
+        );
+        // Sunday is followed by Monday, and December by January.
+        assert_eq!(seq(r#""Sat", "Sun" ... Inf"#, 3), ["Sat", "Sun", "Mon"]);
+        assert_eq!(seq(r#""Nov", "Dec" ... Inf"#, 3), ["Nov", "Dec", "Jan"]);
+        assert_eq!(
+            seq(r#""January", "March" ... Inf"#, 3),
+            ["January", "March", "May"]
+        );
+        // A month with its year carries, and the way it is written is kept.
+        assert_eq!(
+            seq(r#""Nov-2026", "Dec-2026" ... Inf"#, 3),
+            ["Nov-2026", "Dec-2026", "Jan-2027"]
+        );
+        assert_eq!(seq(r#""mon", "tue" ... Inf"#, 2), ["mon", "tue"]);
+        assert_eq!(
+            seq(r#""Monday" ... "Wednesday""#, 4),
+            ["Monday", "Tuesday", "Wednesday", ""]
+        );
+        // Text that is no such name still counts up letter by letter.
+        assert_eq!(seq(r#""AY" ... Inf"#, 3), ["AY", "AZ", "BA"]);
+    }
+
+    #[test]
+    fn a_sequence_of_dates_or_times_steps_by_days_or_seconds() {
+        assert_eq!(
+            seq("2025-01-01, 2025-01-08 ... Inf", 3),
+            ["2025-01-01", "2025-01-08", "2025-01-15"]
+        );
+        assert_eq!(seq("09:00, 09:30 ... Inf", 3), ["09:00", "09:30", "10:00"]);
+        assert_eq!(
+            seq("2025-01-30 ... 2025-02-01", 4),
+            ["2025-01-30", "2025-01-31", "2025-02-01", ""]
+        );
+    }
+
+    #[test]
+    fn dates_a_month_apart_step_by_months_rather_than_days() {
+        assert_eq!(
+            seq("2025-01-01, 2025-02-01, 2025-03-01 ... Inf", 4),
+            ["2025-01-01", "2025-02-01", "2025-03-01", "2025-04-01"]
+        );
+        // The day counted from is the largest given, so the end of a short
+        // month goes on to the end of a long one rather than drifting back.
+        assert_eq!(
+            seq("2025-01-31, 2025-02-28 ... Inf", 4),
+            ["2025-01-31", "2025-02-28", "2025-03-31", "2025-04-30"]
+        );
+        assert_eq!(
+            seq("2024-11-30, 2024-12-31 ... Inf", 4),
+            ["2024-11-30", "2024-12-31", "2025-01-31", "2025-02-28"]
+        );
+        // Quarters, where the days between them vary.
+        assert_eq!(
+            seq("2025-01-15, 2025-04-15 ... Inf", 3),
+            ["2025-01-15", "2025-04-15", "2025-07-15"]
+        );
+        // Days still win where the day of the month does not line up.
+        assert_eq!(
+            seq("2025-01-01, 2025-01-08 ... Inf", 3),
+            ["2025-01-01", "2025-01-08", "2025-01-15"]
+        );
+        // One date alone steps by a day, as every other sequence steps by one.
+        assert_eq!(
+            seq("2025-01-30 ... Inf", 3),
+            ["2025-01-30", "2025-01-31", "2025-02-01"]
+        );
+    }
+
+    #[test]
+    fn a_date_takes_a_duration_in_months_weeks_or_years() {
+        assert_eq!(
+            seq("2025-01-15, $-1 + 1.month ... Inf", 3),
+            ["2025-01-15", "2025-02-15", "2025-03-15"]
+        );
+        // `eom` holds a sequence on the end of each month from any start.
+        assert_eq!(
+            seq("eom(2025-01-10), eom($-1 + 1.month) ... Inf", 4),
+            ["2025-01-31", "2025-02-28", "2025-03-31", "2025-04-30"]
+        );
+        assert_eq!(
+            seq("2025-01-01, $-1 + 2.week ... Inf", 3),
+            ["2025-01-01", "2025-01-15", "2025-01-29"]
+        );
+        // A leap day a year on is clamped, and months before go back.
+        assert_eq!(
+            seq("2024-02-29, $-1 + 1.year ... Inf", 2),
+            ["2024-02-29", "2025-02-28"]
+        );
+        assert_eq!(
+            seq("2025-03-31, $-1 - 1.month ... Inf", 3),
+            ["2025-03-31", "2025-02-28", "2025-01-28"]
+        );
+    }
+
+    #[test]
+    fn a_sequence_that_cannot_be_worked_out_is_reported() {
+        let bad = |seq: &str| {
+            let text = format!("sheet S\n\n| N |\n| - |\n| * |\n| * |\n\nN := {seq}\n");
+            let doc = Document::from_text(&text);
+            doc.snapshot()
+                .problems
+                .first()
+                .map(|p| p.message.clone())
+                .unwrap_or_default()
+        };
+        assert!(bad("1, 2, 5 ... Inf").contains("neither an arithmetic nor a geometric"));
+        assert!(bad("2025-01-01, 2025-01-05, 2025-01-20 ... Inf").contains("evenly spaced"));
+        assert!(bad("$-1 + 1 ... Inf").contains("term to start from"));
     }
 
     #[test]

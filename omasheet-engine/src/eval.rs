@@ -15,6 +15,7 @@ use crate::zone::{Zone, Zoned, utc_now};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use omasheet_omx::ast::{BinOp, UnOp};
+use omasheet_omx::cycle;
 use omasheet_omx::date;
 use omasheet_omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_omx::{Cell, ColKind, Column, Diagnostic, Group, Program, S, Span};
@@ -362,6 +363,11 @@ impl<'p> Engine<'p> {
                 let (t, r) = fr[fr.len() - 1 - depth];
                 self.cell(t, *col, r)
             }
+            Ir::RowIndex { depth } => {
+                let (_, r) = fr[fr.len() - 1 - depth];
+                Ok(Value::Int(BigInt::from(r)))
+            }
+            Ir::Empty => Ok(Value::Empty),
             Ir::Unary(UnOp::UpTo, operand) => Ok(Value::Range {
                 lo: 0,
                 hi: self.int(operand, fr)?,
@@ -596,6 +602,98 @@ impl<'p> Engine<'p> {
                         items.iter().map(convert).collect::<R<Vec<_>>>()?,
                     ))),
                     single => convert(&single),
+                }
+            }
+            Func::Succ => {
+                let next = |v: &Value| -> R {
+                    match v {
+                        Value::Empty => Ok(Value::Empty),
+                        Value::Text(s, md) => Ok(Value::Text(Rc::from(succ_text(s).as_str()), *md)),
+                        Value::Date(d) => Ok(Value::Date(d + 1)),
+                        Value::Time(t) => Ok(Value::Time(t + 1)),
+                        Value::DateTime(t) => Ok(Value::DateTime(t + 1)),
+                        v if v.is_numeric() => arith(BinOp::Add, v, &Value::Int(BigInt::from(1)))
+                            .or_else(|m| fail(span, m)),
+                        other => fail(
+                            span,
+                            format!("`succ` takes a number or text, found {}", other.kind()),
+                        ),
+                    }
+                };
+                match self.eval(&args[0], fr)? {
+                    Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                        items.iter().map(next).collect::<R<Vec<_>>>()?,
+                    ))),
+                    single => next(&single),
+                }
+            }
+            Func::Cycle(kind) => {
+                let step = match self.eval(&args[1], fr)? {
+                    Value::Int(n) => n.to_i64().unwrap_or(0),
+                    _ => 0,
+                };
+                match self.eval(&args[0], fr)? {
+                    Value::Empty => Ok(Value::Empty),
+                    Value::Text(s, md) => match cycle::advance(kind, &s, step) {
+                        Some(next) => Ok(Value::Text(Rc::from(next.as_str()), md)),
+                        None => fail(span, format!("`{s}` is not one of these names")),
+                    },
+                    other => fail(
+                        span,
+                        format!("a sequence of names steps through text, found {}", other.kind()),
+                    ),
+                }
+            }
+            Func::AddMonths | Func::EndOfMonth => {
+                let months = match func {
+                    Func::AddMonths => match self.eval(&args[1], fr)? {
+                        Value::Empty => return Ok(Value::Empty),
+                        Value::Int(n) => n.to_i64().unwrap_or(i64::MAX),
+                        other => {
+                            return fail(
+                                span,
+                                format!("a number of months must be Int, found {}", other.kind()),
+                            );
+                        }
+                    },
+                    _ => 0,
+                };
+                // A sequence passes the day of the month to land on.
+                let on = match args.get(2) {
+                    Some(node) => match self.eval(node, fr)? {
+                        Value::Int(n) => n.to_i64(),
+                        _ => None,
+                    },
+                    None => None,
+                };
+                let shift = |days: i32| match func {
+                    Func::AddMonths => date::add_months(days, months, on),
+                    _ => date::end_of_month(days),
+                };
+                let moved = |v: &Value| -> R {
+                    match v {
+                        Value::Empty => Ok(Value::Empty),
+                        Value::Date(d) => match shift(*d) {
+                            Some(d) => Ok(Value::Date(d)),
+                            None => fail(span, "this date falls outside the calendar".to_string()),
+                        },
+                        Value::DateTime(t) => {
+                            let (days, secs) = date::split_datetime(*t);
+                            match shift(days) {
+                                Some(d) => Ok(Value::DateTime(d as i64 * 86_400 + secs as i64)),
+                                None => {
+                                    fail(span, "this date falls outside the calendar".to_string())
+                                }
+                            }
+                        }
+                        other => fail(span, format!("expected a date, found {}", other.kind())),
+                    }
+                };
+                match self.eval(&args[0], fr)? {
+                    Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                        items.iter().map(moved).collect::<R<Vec<_>>>()?,
+                    ))),
+                    single => moved(&single),
                 }
             }
             Func::Complex => {
@@ -1181,4 +1279,38 @@ fn scalar_op(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         },
         _ => return Err(format!("`{}` cannot be applied here", op.symbol())),
     })
+}
+
+/// The next text in the way letters and digits count up, as `AZ` to `BA`:
+/// the rightmost run of letters or digits is raised by one, carrying to the
+/// left, and widening when it runs off the end.
+pub fn succ_text(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let Some(end) = chars.iter().rposition(char::is_ascii_alphanumeric) else {
+        return format!("{s}1");
+    };
+    let mut start = end;
+    while start > 0 && chars[start - 1].is_ascii_alphanumeric() {
+        start -= 1;
+    }
+    let mut out = chars;
+    let mut i = end;
+    loop {
+        let (next, carry) = match out[i] {
+            '9' => ('0', true),
+            'z' => ('a', true),
+            'Z' => ('A', true),
+            c => ((c as u8 + 1) as char, false),
+        };
+        out[i] = next;
+        if !carry {
+            break;
+        }
+        if i == start {
+            out.insert(start, if next == '0' { '1' } else { next });
+            break;
+        }
+        i -= 1;
+    }
+    out.into_iter().collect()
 }

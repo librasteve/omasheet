@@ -223,6 +223,12 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     ),
     doc(
         MATH,
+        "succ",
+        "succ(x)",
+        "The next value: a number plus one, or the next text in the way letters and digits count up, AZ to BA. The step a sequence takes when its terms give no other.",
+    ),
+    doc(
+        MATH,
         "abs",
         "abs(x)",
         "The size of a number without its sign, or the modulus of a complex number.",
@@ -444,6 +450,18 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "day",
         "Sheet.Column.day()",
         "The day of the month of a Date or DateTime.",
+    ),
+    doc(
+        TIME,
+        "add_months",
+        "add_months(x, n)",
+        "A date n months on, keeping the day of the month, or the last day of a month too short for it: a month after 2025-01-31 is 2025-02-28. Write it as x + n.month, and x + n.year for years.",
+    ),
+    doc(
+        TIME,
+        "eom",
+        "eom(x)",
+        "The last day of the month a date is in.",
     ),
     doc(
         TIME,

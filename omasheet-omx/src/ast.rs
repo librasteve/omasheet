@@ -43,6 +43,16 @@ pub enum ExprKind {
     /// The sheet of the current row: the base of `[Revenue; *-1]`, an index
     /// written with no sheet name.
     Own,
+    /// `$-n`: this column `n` rows back, inside a sequence.
+    Back(u32),
+    /// `a, b, c ... limit`: a sequence that fills a column. The last term
+    /// before `...` is the rule when it reads a back-reference, and a seed
+    /// otherwise; with no rule the step is taken from the seeds.
+    Seq {
+        seeds: Vec<Expr>,
+        rule: Option<Box<Expr>>,
+        limit: Box<Expr>,
+    },
     Unary(UnOp, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
@@ -54,6 +64,30 @@ pub enum ExprKind {
     /// `name(args)`, `recv.name(args)` and `recv |> name(args)` all become a
     /// call with the receiver as the first argument.
     Call(String, Span, Vec<Expr>),
+}
+
+/// Whether an expression reads a back-reference, which is what marks the
+/// last term before `...` as the rule rather than another seed.
+pub fn reads_back(e: &Expr) -> bool {
+    let any = |es: &[Expr]| es.iter().any(reads_back);
+    match &e.kind {
+        ExprKind::Back(_) => true,
+        ExprKind::Lit(_) | ExprKind::Name(_) | ExprKind::Cursor | ExprKind::Own => false,
+        ExprKind::Unary(_, x) => reads_back(x),
+        ExprKind::Binary(_, a, b) => reads_back(a) || reads_back(b),
+        ExprKind::If(c, a, b) => reads_back(c) || reads_back(a) || reads_back(b),
+        ExprKind::VecLit(items) => any(items),
+        ExprKind::Index(base, slots) => {
+            reads_back(base) || slots.iter().flatten().any(reads_back)
+        }
+        ExprKind::Field(base, _, _) => reads_back(base),
+        ExprKind::Call(_, _, args) => any(args),
+        ExprKind::Seq { seeds, rule, limit } => {
+            any(seeds)
+                || rule.as_deref().is_some_and(reads_back)
+                || reads_back(limit)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -44,6 +44,7 @@ const LITERAL: Why =
 const OTHER_SHEET: Why =
     "values were written in place of formulas that read a sheet that is not exported";
 const TOO_LONG: Why = "values were written in place of formulas too long for a workbook";
+const SEQUENCE: Why = "values were written in place of sequences made with `...`";
 
 /// The most characters a workbook's formula may have.
 const LONGEST: usize = 8000;
@@ -725,6 +726,9 @@ impl Writer<'_> {
     fn scalar(&self, node: &Node, cx: &Cx) -> Scalar {
         match &node.kind {
             Ir::Lit(lit) => self.literal(lit).map(Some),
+            // A sequence knows its own row, which a workbook formula
+            // copied down cannot say.
+            Ir::RowIndex { .. } | Ir::Empty => Err(SEQUENCE),
             Ir::Const(i) => {
                 let apart = Cx {
                     depth: 0,

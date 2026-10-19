@@ -44,6 +44,10 @@ pub enum Tok {
     Ge,
     Assign,
     SlashSlash,
+    /// `...`, the sequence operator.
+    DotDotDot,
+    /// `$`, which starts a back-reference such as `$-1`.
+    Dollar,
     DotDot,
     DotDotCaret,
     CaretDotDot,
@@ -100,6 +104,8 @@ impl Tok {
             Tok::Ge => ">=",
             Tok::Assign => "=",
             Tok::SlashSlash => "//",
+            Tok::DotDotDot => "...",
+            Tok::Dollar => "$",
             Tok::DotDot => "..",
             Tok::DotDotCaret => "..^",
             Tok::CaretDotDot => "^..",
@@ -246,6 +252,8 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
             (Tok::CaretDotDotCaret, 4)
         } else if rest.starts_with("^..") {
             (Tok::CaretDotDot, 3)
+        } else if rest.starts_with("...") {
+            (Tok::DotDotDot, 3)
         } else if rest.starts_with("..^") {
             (Tok::DotDotCaret, 3)
         } else if rest.starts_with("..") {
@@ -281,6 +289,7 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                 b';' => Tok::Semi,
                 b'.' => Tok::Dot,
                 b'^' => Tok::Caret,
+                b'$' => Tok::Dollar,
                 _ => {
                     let ch = rest.chars().next().unwrap();
                     return Err(Diagnostic::new(

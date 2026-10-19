@@ -41,6 +41,9 @@ Gross  := WithTax(Revenue)
 - `Name := expression` after the rows is the formula of a computed column.
   The header row names the column, anywhere among the others, and each of
   its cells is `*`.
+- A computed column may be written as a
+  [sequence](expressions.md#sequences-with-), `Odd := 1, 3 ... Inf`, which
+  fills it from the terms given.
 - An empty cell is empty: there is no `null`.
 
 ```omx
