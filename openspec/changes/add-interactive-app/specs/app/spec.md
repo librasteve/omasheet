@@ -105,7 +105,7 @@ for the whole column.
 |------------------|------------------|---------------------|------------------|------------------|------------------|------------------|
 | move             | ← → ↑ ↓          |                     |                  | ↑ ↓              | ← →              | Ctrl + Alt + ← → |
 | edit             | Enter            | Enter → formula box |                  |                  |                  |                  |
-| edit (F2)        | formula box      | rename              |                  |                  | rename           | rename in tab    |
+| edit (F2)        | formula box      | rename in header    |                  |                  | rename in header | rename in tab    |
 | multiselect      | Shift + ← → ↑ ↓  | Shift + ← → ↑ ↓     |                  | Shift + ↑ ↓      | Shift + ← →      |                  |
 | deselect         | Esc              | Esc                 | Esc              | Esc              | Esc              | Esc              |
 | cut              | Ctrl + X         |                     | Ctrl + X         | Ctrl + X         | Ctrl + X         | Ctrl + X         |

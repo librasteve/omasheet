@@ -817,6 +817,14 @@ fn clean_cell(input: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+/// A name with any `_001` it was copied with taken off.
+fn copy_base(name: &str) -> &str {
+    match name.rsplit_once('_') {
+        Some((base, n)) if n.len() == 3 && n.bytes().all(|b| b.is_ascii_digit()) && !base.is_empty() => base,
+        _ => name,
+    }
+}
+
 fn valid_name(name: &str) -> Result<&str, String> {
     let name = name.trim();
     if name.is_empty() || ident_len(name) != name.len() {
@@ -2015,17 +2023,7 @@ impl Document {
         let Some(decl) = self.sheet_decl(&ast, sheet) else {
             return Err("there is no such sheet".into());
         };
-        let start = self.line_start(decl.span.start as usize);
-        let ends = [decl.span, decl.header_line]
-            .into_iter()
-            .chain(decl.separator_line)
-            .chain(decl.row_lines.iter().copied())
-            .chain(decl.schema.iter().map(|l| l.span))
-            .chain(decl.computed.iter().map(|c| c.expr_span));
-        let last = ends.map(|s| s.end as usize).max().unwrap_or(start);
-        let mut end = self.text[last..]
-            .find('\n')
-            .map_or(self.text.len(), |k| last + k + 1);
+        let (start, mut end) = self.sheet_lines(decl);
         // The blank lines under it go with it.
         while let Some(rest) = self.text[end..].split_inclusive('\n').next() {
             if !rest.trim().is_empty() {
@@ -2042,6 +2040,113 @@ impl Document {
         }
         self.commit(text);
         Ok(())
+    }
+
+    /// Where a sheet's lines start, and end: its own line, its types, its
+    /// rows and its formulas, up to the end of the last of them.
+    fn sheet_lines(&self, decl: &SheetDecl) -> (usize, usize) {
+        let start = self.line_start(decl.span.start as usize);
+        let ends = [decl.span, decl.header_line]
+            .into_iter()
+            .chain(decl.separator_line)
+            .chain(decl.row_lines.iter().copied())
+            .chain(decl.schema.iter().map(|l| l.span))
+            .chain(decl.computed.iter().map(|c| c.expr_span));
+        let last = ends.map(|s| s.end as usize).max().unwrap_or(start);
+        let end = self.text[last..]
+            .find('\n')
+            .map_or(self.text.len(), |k| last + k + 1);
+        (start, end)
+    }
+
+    /// Move sheet `from` to be sheet `to`, with the comment written over it.
+    pub fn move_sheet(&mut self, from: usize, to: usize) -> Result<(), String> {
+        let ast = self.ast();
+        let Some(decl) = self.sheet_decl(&ast, from) else {
+            return Err("there is no such sheet".into());
+        };
+        if from == to {
+            return Ok(());
+        }
+        let (mut start, mut end) = self.sheet_lines(decl);
+        while start > 0 {
+            let above = self.line_start(start - 1);
+            if !self.text[above..start].starts_with('#') {
+                break;
+            }
+            start = above;
+        }
+        let block = self.text[start..end].trim_end().to_string() + "\n";
+        // The blank lines under it go with it.
+        while let Some(rest) = self.text[end..].split_inclusive('\n').next() {
+            if !rest.trim().is_empty() {
+                break;
+            }
+            end += rest.len();
+        }
+        let rest = format!("{}{}", &self.text[..start], &self.text[end..]);
+        let ast = parse_file(&rest, 0, &mut Vec::new());
+        let text = match ast.sheets.get(to) {
+            Some(next) => {
+                let mut at = rest[..next.span.start as usize].rfind('\n').map_or(0, |k| k + 1);
+                while at > 0 {
+                    let above = rest[..at - 1].rfind('\n').map_or(0, |k| k + 1);
+                    if !rest[above..at].starts_with('#') {
+                        break;
+                    }
+                    at = above;
+                }
+                format!("{}{block}\n{}", &rest[..at], &rest[at..]).trim_end().to_string() + "\n"
+            }
+            None => {
+                let mut text = rest.trim_end().to_string();
+                if !text.is_empty() {
+                    text.push_str("\n\n");
+                }
+                text + &block
+            }
+        };
+        self.commit(text);
+        Ok(())
+    }
+
+    /// Make sheet `to` a copy of sheet `from`: its columns, types, rows and
+    /// formulas, under `from`'s name made free with `_001`, `_002`...
+    /// The name it was given.
+    pub fn paste_sheet(&mut self, from: usize, to: usize) -> Result<String, String> {
+        let ast = self.ast();
+        let (Some(source), Some(target)) = (self.sheet_decl(&ast, from), self.sheet_decl(&ast, to))
+        else {
+            return Err("there is no such sheet".into());
+        };
+        if from == to {
+            return Ok(source.name.clone());
+        }
+        let taken = |name: &str| {
+            self.snapshot.consts.iter().any(|c| c.name == name)
+                || self.snapshot.sheets.iter().enumerate().any(|(k, t)| k != to && t.name == name)
+        };
+        let base = copy_base(&source.name);
+        let name = (1..)
+            .map(|n| format!("{base}_{n:03}"))
+            .find(|name| !taken(name))
+            .unwrap_or_default();
+        let (s0, s1) = self.sheet_lines(source);
+        let (t0, t1) = self.sheet_lines(target);
+        // Its own line names it: the name after `sheet`.
+        let mut block = self.text[s0..s1].to_string();
+        let at = source.span.start as usize - s0;
+        let named = block[at..].find(&source.name).map(|k| at + k);
+        let Some(k) = named else {
+            return Err("the sheet's name was not found".into());
+        };
+        block.replace_range(k..k + source.name.len(), &name);
+        if !block.ends_with('\n') {
+            block.push('\n');
+        }
+        let text = format!("{}{block}{}", &self.text[..t0], &self.text[t1..]);
+        self.commit(text);
+        Ok(name)
     }
 
     fn rebuild(&mut self) {
@@ -3045,6 +3150,39 @@ mod tests {
             doc.set_cell(0, 0, 0, "1");
         }));
         assert!(!doc.undo());
+    }
+
+    #[test]
+    fn a_sheet_moves_with_its_comment() {
+        let text = "# One\nsheet T\n\n| A |\n| - |\n| 1 |\n\nsheet U\n\n| X |\n| - |\n| 2 |\n\n# Three\nsheet V\n\n| Y |\n| - |\n| 3 |\n";
+        let order = |doc: &Document| doc.snapshot().sheets.iter().map(|t| t.name.clone()).collect::<Vec<_>>();
+        let mut doc = Document::from_text(text);
+        doc.move_sheet(0, 2).unwrap();
+        assert_eq!(order(&doc), ["U", "V", "T"]);
+        assert!(doc.text().contains("# One\nsheet T"));
+        assert!(doc.snapshot().problems.is_empty());
+        doc.move_sheet(2, 1).unwrap();
+        assert_eq!(order(&doc), ["U", "T", "V"]);
+        assert!(doc.text().contains("| 1 |\n\n# Three\nsheet V"));
+        doc.move_sheet(1, 0).unwrap();
+        assert_eq!(doc.text(), text);
+    }
+
+    #[test]
+    fn a_sheet_pasted_onto_another_replaces_it_under_its_name_copied() {
+        let text = "sheet T\n\n| A   | B   |\n| --- | --- |\n| 1   | 2   |\n\nB := A + 1\n\n# Kept\nsheet U\n\n| X |\n| - |\n| 9 |\n";
+        let mut doc = Document::from_text(text);
+        assert_eq!(doc.paste_sheet(0, 1), Ok("T_001".to_string()));
+        let columns = &doc.snapshot().sheets[1].columns;
+        assert_eq!(columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["A", "B"]);
+        assert_eq!(col(&doc, 1, 1), ["2"]);
+        assert_eq!(doc.snapshot().sheets[1].name, "T_001");
+        assert!(doc.text().contains("# Kept\nsheet T_001"));
+        // Pasted again, onto the copy: the next free name.
+        assert_eq!(doc.paste_sheet(1, 0), Ok("T_002".to_string()));
+        assert!(doc.undo());
+        assert!(doc.undo());
+        assert_eq!(doc.text(), text);
     }
 
     #[test]

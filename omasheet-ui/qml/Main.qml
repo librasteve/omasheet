@@ -721,7 +721,8 @@ ApplicationWindow {
     }
 
     // Whole rows or columns cut with Ctrl+X, waiting to be put down with
-    // Ctrl+V: `{tab, rows, first, count}`, or null.
+    // Ctrl+V: `{tab, rows, first, count}`; a whole sheet, `{tab, sheet}`;
+    // or null.
     property var grabbed: null
     // Why the last move was refused, shown in the footer.
     property string notice: ""
@@ -755,19 +756,30 @@ ApplicationWindow {
         && (selTop !== selBottom || selLeft !== selRight)
     // What a cut would pick up: "row", "column", or "" for anything else.
     readonly property string grabKind: selKind === "row" || selKind === "column" ? selKind : ""
-    readonly property bool grabbedHere: grabbed !== null && grabbed.tab === tab && !sheet.isConsts
+    readonly property bool grabbedHere: grabbed !== null && !grabbed.sheet && grabbed.tab === tab && !sheet.isConsts
+
+    // The whole sheet copied or cut, outlined on its tab: `{tab, cut}`, or
+    // null.
+    readonly property var sheetMark: grabbed !== null && grabbed.sheet ? { tab: grabbed.tab, cut: true }
+        : marked !== null && marked.sheet ? { tab: marked.tab, cut: marked.cut }
+        : null
 
     // The cells last copied or cut, shown as they were selected for as long
     // as they can be pasted, until Esc or the next copy:
-    // `{tab, top, left, bottom, right, text, cut, columns, rows}`, or null;
-    // `columns` when whole columns were copied, marked down from their
-    // headers, and `rows` when whole rows were, marked from their numbers.
+    // `{tab, top, left, bottom, right, text, cut, columns, rows, sheet}`, or
+    // null; `columns` when whole columns were copied, marked down from their
+    // headers, `rows` when whole rows were, marked from their numbers, and
+    // `sheet` when the whole sheet was.
     property var marked: null
     property bool keepMark: false
 
     // What is outlined on this sheet: what was copied or cut, or the rows
     // or columns cut to be moved; null if nothing.
-    readonly property var outline: grabbedHere
+    readonly property var outline: sheetMark !== null
+        ? (sheetMark.tab !== tab ? null
+            : { top: 0, bottom: sheet.rows.length - 1, left: 0, right: sheet.columns.length - 1,
+                cut: sheetMark.cut, columns: true, rows: true })
+        : grabbedHere
         ? (grabbed.rows
             ? { top: grabbed.first, bottom: grabbed.first + grabbed.count - 1,
                 left: 0, right: sheet.columns.length - 1, cut: true, columns: false, rows: true }
@@ -787,7 +799,8 @@ ApplicationWindow {
 
     function mark(text, cut) {
         movedOnce = false;
-        marked = { tab: tab, top: selTop, left: selLeft, bottom: selBottom, right: selRight, text: text, cut: !!cut, columns: selKind === "column", rows: selKind === "row" };
+        marked = { tab: tab, top: selTop, left: selLeft, bottom: selBottom, right: selRight, text: text, cut: !!cut, columns: selKind === "column", rows: selKind === "row",
+                   sheet: selKind === "all" };
     }
 
     // Where the rows or columns `first` to `last` are once `by` of them are
@@ -815,7 +828,7 @@ ApplicationWindow {
         var v = shifted(m.top, m.bottom, row, sheet.rows.length - rows);
         var h = shifted(m.left, m.right, col, sheet.columns.length - cols);
         marked = v === null || h === null ? null
-            : { tab: m.tab, top: v[0], left: h[0], bottom: v[1], right: h[1], text: m.text, cut: m.cut, columns: m.columns, rows: m.rows };
+            : { tab: m.tab, top: v[0], left: h[0], bottom: v[1], right: h[1], text: m.text, cut: m.cut, columns: m.columns, rows: m.rows, sheet: m.sheet };
     }
 
     // Paste `text` with `put`, keeping the mark if it is what was copied.
@@ -962,6 +975,13 @@ ApplicationWindow {
         if (formulaCell)
             return;
         notice = "";
+        // A whole sheet is picked up, to be moved to where it is pasted.
+        if (selKind === "all" && !sheet.isConsts) {
+            copySelection();
+            marked = null;
+            grabbed = { tab: tab, sheet: true };
+            return;
+        }
         var kind = grabKind;
         if (kind === "" && !sheet.isConsts) {
             grabbed = null;
@@ -1055,12 +1075,39 @@ ApplicationWindow {
             dropGrabbed();
             return;
         }
+        // A whole sheet cut is moved to where the sheet selected is.
+        if (grabbed !== null && grabbed.sheet) {
+            var g = grabbed;
+            grabbed = null;
+            if (selKind !== "all" || sheet.isConsts || g.tab === tab)
+                return;
+            var to = tab;
+            var moved = file.moveSheet(g.tab, to);
+            if (moved.length > 0) {
+                errorDialog.say(moved);
+                return;
+            }
+            switchTab(to);
+            selectAll();
+            return;
+        }
         grabbed = null;
         var text = clipboard.take();
         // The paste and the names it gives columns are undone as one.
         var mark = file.undoMark();
         if (text.length === 0)
             return;
+        // A whole sheet copied onto another whole sheet makes it a copy.
+        var m = marked;
+        if (m !== null && m.sheet && m.text === text && selKind === "all" && m.tab !== tab
+            && m.tab < tabs.length && !tabs[m.tab].isConsts && !sheet.isConsts) {
+            var problem = "";
+            keeping(0, 0, function() { problem = file.pasteSheet(m.tab, tab); });
+            if (problem.length > 0)
+                errorDialog.say(problem);
+            selectAll();
+            return;
+        }
         if (pasteWith(text, function() {
             var t = pasteTarget(text);
             if (!sheet.isConsts)
@@ -1123,7 +1170,15 @@ ApplicationWindow {
         promptDialog.ask("sheet", after ? here + 1 : here);
     }
 
+    // Asked first: a sheet goes with all its cells.
     function deleteSheet() {
+        if (sheet.isConsts || tabs.length === 0)
+            return;
+        stopEditing();
+        deleteSheetDialog.open();
+    }
+
+    function deleteSheetNow() {
         if (sheet.isConsts || tabs.length === 0)
             return;
         notice = file.deleteSheet(tab);
@@ -1182,13 +1237,27 @@ ApplicationWindow {
 
     // The menu a right-click opens, from the keyboard: for the selection as
     // it is, below the cell the cursor is in.
+    // The whole sheet's menu, above its tab.
+    function sheetMenu() {
+        var tabItem = tabRepeater.itemAt(tab);
+        if (tabItem) {
+            cellMenu.popup(tabItem, 0, -cellMenu.implicitHeight);
+            // Its sections fit what is selected only once it is open: lift
+            // it clear of the tabs at its full height.
+            Qt.callLater(function() {
+                var at = tabItem.mapToItem(cellMenu.parent, 0, 0);
+                cellMenu.x = at.x;
+                cellMenu.y = at.y - cellMenu.height - 4;
+            });
+        } else
+            cellMenu.popup();
+    }
+
     function keyMenu() {
         if (tabs.length === 0)
             return;
-        // The whole sheet's menu opens above its tab.
-        var tabItem = tabRepeater.itemAt(tab);
-        if (selKind === "all" && !sheet.isConsts && tabItem) {
-            cellMenu.popup(tabItem, 0, -cellMenu.implicitHeight);
+        if (selKind === "all" && !sheet.isConsts) {
+            sheetMenu();
             return;
         }
         var x = gutterWidth - hflick.contentX;
@@ -1435,7 +1504,7 @@ ApplicationWindow {
                     // names.
                     readonly property string across: win.selRight > win.selLeft
                         ? win.selLeft + ".." + win.selRight
-                        : win.sheet.columns.length > 0 ? win.sheet.columns[win.selLeft].name : ""
+                        : win.selLeft < win.sheet.columns.length ? win.sheet.columns[win.selLeft].name : ""
                     readonly property string down: win.selBottom > win.selTop
                         ? win.selTop + ".." + win.selBottom : "" + win.selTop
                     text: win.sheet.isConsts
@@ -1563,10 +1632,11 @@ ApplicationWindow {
                     break;
                 case Qt.Key_Backspace: win.clearSelection(); break;
                 case Qt.Key_Escape:
-                    // Rows or columns copied or cut: Esc lets go of them, and
-                    // leaves them selected for another Esc.
+                    // Rows, columns or the sheet copied or cut: Esc lets go of
+                    // them, and leaves them selected for another Esc.
                     if (win.outline !== null && ((win.outline.columns && win.selKind === "column")
-                                                 || (win.outline.rows && win.selKind === "row")))
+                                                 || (win.outline.rows && win.selKind === "row")
+                                                 || (win.sheetMark !== null && win.selKind === "all")))
                         win.unmark();
                     else
                         win.deselect();
@@ -1639,17 +1709,21 @@ ApplicationWindow {
                             color: win.selKind === "all"
                                 ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.16)
                                 : win.panelColor
+                            // The whole sheet copied or cut is outlined round its margins.
+                            readonly property bool marked: win.outline !== null && win.outline.rows && win.outline.columns
+                            MarkEdge { visible: parent.marked; width: parent.width; height: 1 }
+                            MarkEdge { visible: parent.marked; width: 1; height: parent.height }
                             MouseArea {
                                 anchors.fill: parent
                                 enabled: !win.sheet.isConsts
                                 acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                // A right-click opens the sheet's menu, as on its tab.
+                                // A right-click opens the sheet's menu, above its tab.
                                 onClicked: function(mouse) {
                                     win.stopEditing();
                                     win.selectAll();
                                     if (mouse.button === Qt.RightButton) {
                                         grid.forceActiveFocus();
-                                        cellMenu.popup();
+                                        win.sheetMenu();
                                     }
                                 }
                             }
@@ -1712,7 +1786,7 @@ ApplicationWindow {
                                 readonly property bool marked: win.outline !== null && win.outline.columns
                                     && index >= win.outline.left && index <= win.outline.right
                                 MarkEdge { visible: headCell.marked; width: parent.width; height: 1 }
-                                MarkEdge { visible: headCell.marked && headCell.index === win.outline.left; width: 1; height: parent.height }
+                                MarkEdge { visible: headCell.marked && headCell.index === win.outline.left && !win.outline.rows; width: 1; height: parent.height }
                                 MarkEdge { visible: headCell.marked && headCell.index === win.outline.right; anchors.right: parent.right; width: 1; height: parent.height }
                                 MouseArea {
                                     anchors.fill: parent
@@ -1844,7 +1918,7 @@ ApplicationWindow {
                                 readonly property bool marked: win.outline !== null && win.outline.rows
                                     && rowItem.index >= win.outline.top && rowItem.index <= win.outline.bottom
                                 MarkEdge { visible: parent.marked; width: 1; height: parent.height }
-                                MarkEdge { visible: parent.marked && rowItem.index === win.outline.top; width: parent.width; height: 1 }
+                                MarkEdge { visible: parent.marked && rowItem.index === win.outline.top && !win.outline.columns; width: parent.width; height: 1 }
                                 MarkEdge { visible: parent.marked && rowItem.index === win.outline.bottom; anchors.bottom: parent.bottom; width: parent.width; height: 1 }
                                 MouseArea {
                                     anchors.fill: parent
@@ -2242,6 +2316,12 @@ ApplicationWindow {
                         required property int index
                         label: win.tabs[index].name
                         active: index === win.tab && !win.showSource
+                        // The whole sheet copied or cut, outlined here too.
+                        readonly property bool marked: win.sheetMark !== null && win.sheetMark.tab === index
+                        MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; width: parent.width; height: 1 }
+                        MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; anchors.bottom: parent.bottom; width: parent.width; height: 1 }
+                        MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; width: 1; height: parent.height }
+                        MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; anchors.right: parent.right; width: 1; height: parent.height }
                         onClicked: {
                             win.viewSource(false);
                             win.switchTab(index);
@@ -2257,7 +2337,7 @@ ApplicationWindow {
                                 return;
                             }
                             win.selectAll();
-                            cellMenu.popup();
+                            win.sheetMenu();
                         }
                         // Renamed in place, from F2 with the whole sheet selected.
                         Loader {
@@ -2370,7 +2450,7 @@ ApplicationWindow {
     // The entries of the right-click menu, close set.
     // One side of the cells copied or cut: a line, or dashes when cut.
     component MarkEdge: Item {
-        readonly property bool dashed: win.outline !== null && win.outline.cut
+        property bool dashed: win.outline !== null && win.outline.cut
         readonly property bool across: width >= height
         readonly property real length: across ? width : height
         Rectangle {
@@ -2834,6 +2914,34 @@ ApplicationWindow {
             font.features: win.font.features
             font.pixelSize: win.dialogSize
         }
+    }
+
+    Dialog {
+        font.pixelSize: win.dialogSize
+        id: deleteSheetDialog
+        anchors.centerIn: parent
+        modal: true
+        width: 440
+        focus: true
+        title: "Delete sheet"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        // Each button names its key.
+        Component.onCompleted: {
+            standardButton(Dialog.Ok).text = "Delete    D";
+            standardButton(Dialog.Cancel).text = "Cancel    C";
+        }
+        Shortcut { sequence: "D"; enabled: deleteSheetDialog.visible; onActivated: deleteSheetDialog.accept() }
+        Shortcut { sequence: "C"; enabled: deleteSheetDialog.visible; onActivated: deleteSheetDialog.reject() }
+        Label {
+            width: parent.width
+            text: "Delete " + win.sheet.name + " and all its cells?"
+            wrapMode: Text.Wrap
+            font.family: win.font.family
+            font.features: win.font.features
+            font.pixelSize: win.dialogSize
+        }
+        onAccepted: win.deleteSheetNow()
+        onClosed: grid.forceActiveFocus()
     }
 
     Dialog {

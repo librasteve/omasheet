@@ -217,6 +217,12 @@ pub mod qobject {
         fn rename_sheet(self: Pin<&mut File>, sheet: i32, name: &QString) -> QString;
         #[qinvokable]
         fn delete_sheet(self: Pin<&mut File>, sheet: i32) -> QString;
+        /// Sheet `from` moved to be sheet `to`.
+        #[qinvokable]
+        fn move_sheet(self: Pin<&mut File>, from: i32, to: i32) -> QString;
+        /// Sheet `to` made a copy of sheet `from`, under its name copied.
+        #[qinvokable]
+        fn paste_sheet(self: Pin<&mut File>, from: i32, to: i32) -> QString;
         #[qinvokable]
         fn add_const(self: Pin<&mut File>, name: &QString, expr: &QString) -> QString;
         #[qinvokable]
@@ -803,6 +809,14 @@ impl qobject::File {
 
     fn delete_sheet(self: Pin<&mut Self>, sheet: i32) -> QString {
         self.try_edit(|doc| doc.delete_sheet(index(sheet)))
+    }
+
+    fn move_sheet(self: Pin<&mut Self>, from: i32, to: i32) -> QString {
+        self.try_edit(|doc| doc.move_sheet(index(from), index(to)))
+    }
+
+    fn paste_sheet(self: Pin<&mut Self>, from: i32, to: i32) -> QString {
+        self.try_edit(|doc| doc.paste_sheet(index(from), index(to)).map(|_| ()))
     }
 
     fn add_const(self: Pin<&mut Self>, name: &QString, expr: &QString) -> QString {
