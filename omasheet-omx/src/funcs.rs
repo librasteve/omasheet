@@ -3,8 +3,6 @@
 //! The functions of OMX: what each is called, and what a person browsing
 //! them is told. The checker and the function directory both read this.
 
-use crate::types::S;
-
 /// A function of one number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MathFn {
@@ -29,18 +27,10 @@ pub enum MathFn {
     Tanh,
     Radians,
     Degrees,
-    /// The real part of a complex number.
-    Re,
-    /// The imaginary part.
-    Im,
-    /// The complex conjugate.
-    Conj,
-    /// The angle of a complex number, in radians.
-    Arg,
 }
 
 impl MathFn {
-    const ALL: [(&'static str, MathFn); 25] = [
+    const ALL: [(&'static str, MathFn); 21] = [
         ("abs", MathFn::Abs),
         ("sign", MathFn::Sign),
         ("round", MathFn::Round),
@@ -62,10 +52,6 @@ impl MathFn {
         ("tanh", MathFn::Tanh),
         ("radians", MathFn::Radians),
         ("degrees", MathFn::Degrees),
-        ("re", MathFn::Re),
-        ("im", MathFn::Im),
-        ("conj", MathFn::Conj),
-        ("arg", MathFn::Arg),
     ];
 
     pub fn from_name(name: &str) -> Option<MathFn> {
@@ -86,30 +72,13 @@ impl MathFn {
     pub fn is_exact(self) -> bool {
         matches!(
             self,
-            MathFn::Abs
-                | MathFn::Sign
-                | MathFn::Round
-                | MathFn::Floor
-                | MathFn::Ceil
-                | MathFn::Re
-                | MathFn::Im
-                | MathFn::Conj
+            MathFn::Abs | MathFn::Sign | MathFn::Round | MathFn::Floor | MathFn::Ceil
         )
     }
 
     /// Whether the result is always a whole number, given an exact one.
     pub fn is_whole(self) -> bool {
-        self.is_exact() && !matches!(self, MathFn::Abs | MathFn::Re | MathFn::Conj)
-    }
-
-    /// The type of the result for a complex number, or `None` if the
-    /// function does not take one.
-    pub fn of_complex(self) -> Option<S> {
-        match self {
-            MathFn::Abs | MathFn::Re | MathFn::Im | MathFn::Arg => Some(S::Num),
-            MathFn::Conj | MathFn::Sqrt | MathFn::Exp | MathFn::Ln => Some(S::Complex),
-            _ => None,
-        }
+        self.is_exact() && !matches!(self, MathFn::Abs)
     }
 
     pub fn apply(self, x: f64) -> f64 {
@@ -136,10 +105,6 @@ impl MathFn {
             MathFn::Tanh => x.tanh(),
             MathFn::Radians => x.to_radians(),
             MathFn::Degrees => x.to_degrees(),
-            MathFn::Re | MathFn::Conj => x,
-            MathFn::Im => 0.0,
-            MathFn::Arg if x < 0.0 => std::f64::consts::PI,
-            MathFn::Arg => 0.0,
         }
     }
 }
@@ -174,7 +139,6 @@ const CONVERT: &str = "Convert";
 const MATH: &str = "Math";
 const LOG: &str = "Log & Exp";
 const TRIG: &str = "Trigonometry";
-const COMPLEX: &str = "Complex";
 const TIME: &str = "Time & Date";
 
 /// Every function, grouped by category in the order the directory shows them.
@@ -394,32 +358,6 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "pi",
         "pi()",
         "The ratio of a circle's circumference to its diameter, 3.14159...",
-    ),
-    doc(
-        COMPLEX,
-        "Complex",
-        "Complex(re, im)",
-        "A complex number from its real and imaginary parts, or from a real number: x.Complex. \
-         Also written 3+4i.",
-    ),
-    doc(COMPLEX, "re", "re(z)", "The real part of a complex number."),
-    doc(
-        COMPLEX,
-        "im",
-        "im(z)",
-        "The imaginary part of a complex number.",
-    ),
-    doc(
-        COMPLEX,
-        "conj",
-        "conj(z)",
-        "The complex conjugate: the imaginary part with its sign changed.",
-    ),
-    doc(
-        COMPLEX,
-        "arg",
-        "arg(z)",
-        "The angle of a complex number, in radians from -pi to pi.",
     ),
     doc(
         TIME,

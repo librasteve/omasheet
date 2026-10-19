@@ -49,26 +49,6 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
     let fraction = |n: &BigInt, d: &BigInt| {
         (!d.is_zero()).then(|| Lit::Fraction(BigRational::new(n.clone(), d.clone())))
     };
-    // A complex number: `4i`, `3+4i`, `-1.5-2i`.
-    let real = |t: &Tok| match t {
-        Tok::Int(n) => n.to_f64(),
-        Tok::Decimal(r) | Tok::Percent(r) => r.to_f64(),
-        Tok::Num(f) => Some(*f),
-        _ => None,
-    };
-    let (negative, rest) = match toks.as_slice() {
-        [Tok::Minus, rest @ ..] => (true, rest),
-        rest => (false, rest),
-    };
-    let sign = if negative { -1.0 } else { 1.0 };
-    match rest {
-        [Tok::Imag(im), Tok::Eof] => return Some(Lit::Complex(0.0, sign * im)),
-        [re, op @ (Tok::Plus | Tok::Minus), Tok::Imag(im), Tok::Eof] => {
-            let im = if **op == Tok::Minus { -im } else { *im };
-            return Some(Lit::Complex(sign * real(re)?, im));
-        }
-        _ => {}
-    }
     Some(match toks.as_slice() {
         [Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(n, d)?,
         [Tok::Minus, Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(&-n, d)?,
@@ -97,7 +77,6 @@ pub fn lit_type(l: &Lit) -> S {
         Lit::Fraction(_) => S::Fraction,
         Lit::Percent(_) => S::Percent,
         Lit::Num(_) => S::Num,
-        Lit::Complex(..) => S::Complex,
         Lit::Text(_) => S::Text,
         Lit::Bool(_) => S::Bool,
         Lit::Date(_) => S::Date,
@@ -215,13 +194,6 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
             Some(f) => Lit::Num(f),
             None => return no(),
         },
-        (
-            Lit::Int(_) | Lit::Decimal(_) | Lit::Fraction(_) | Lit::Percent(_) | Lit::Num(_),
-            S::Complex,
-        ) => match real(lit) {
-            Some(f) => Lit::Complex(f, 0.0),
-            None => return no(),
-        },
         (Lit::Int(n), S::Bool) => Lit::Bool(!n.is_zero()),
         (Lit::Decimal(r) | Lit::Fraction(r), S::Bool) => Lit::Bool(!r.is_zero()),
         (Lit::Num(f), S::Bool) => Lit::Bool(*f != 0.0),
@@ -236,13 +208,12 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
 mod tests {
     use super::*;
 
-    const TYPES: [S; 11] = [
+    const TYPES: [S; 10] = [
         S::Int,
         S::Decimal,
         S::Fraction,
         S::Percent,
         S::Num,
-        S::Complex,
         S::Text,
         S::Bool,
         S::Date,
@@ -264,7 +235,10 @@ mod tests {
         assert_eq!(convert(&lit("0.125"), S::Fraction), Ok(lit("1/8")));
         assert_eq!(
             convert(&lit("1/3"), S::Decimal),
-            Ok(Lit::Decimal(num_rational::BigRational::new(1.into(), 3.into())))
+            Ok(Lit::Decimal(num_rational::BigRational::new(
+                1.into(),
+                3.into()
+            )))
         );
         assert_eq!(convert(&lit("-2.5e3"), S::Fraction), Ok(lit("-2500")));
         // A top-heavy fraction is a `Fraction` like any other.
@@ -284,7 +258,6 @@ mod tests {
         assert_eq!(parse_literal("1 2 3/4"), None);
         assert_eq!(convert(&lit("1.5e3"), S::Int), Ok(lit("1500")));
         assert_eq!(convert(&lit("1/4"), S::Num), Ok(Lit::Num(0.25)));
-        assert_eq!(convert(&lit("3"), S::Complex), Ok(Lit::Complex(3.0, 0.0)));
         assert_eq!(convert(&lit("true"), S::Int), Ok(lit("1")));
         assert_eq!(convert(&lit("0.5"), S::Bool), Ok(lit("true")));
         assert!(convert(&Lit::Num(f64::NAN), S::Int).is_err());
@@ -331,7 +304,6 @@ mod tests {
             lit("1/4"),
             lit("12.5%"),
             lit("1e-1"),
-            lit("3+4i"),
             lit("true"),
             lit("2025-01-31"),
             lit("09:30"),

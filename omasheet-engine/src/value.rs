@@ -36,7 +36,6 @@ pub enum Value {
     /// whole, `100%`.
     Percent(BigRational),
     Num(f64),
-    Complex(f64, f64),
     /// Text, and whether it was written bare in a cell, to be read as
     /// Markdown where a file is shown as a document. Text written in quotes,
     /// or made by a formula, is as it is.
@@ -130,7 +129,6 @@ impl Value {
             Lit::Fraction(r) => Value::exact(r.clone()).fraction(),
             Lit::Percent(r) => Value::Percent(r.clone()),
             Lit::Num(f) => Value::Num(*f),
-            Lit::Complex(re, im) => Value::Complex(*re, *im),
             Lit::Text(s) => Value::text(s),
             Lit::Bool(b) => Value::Bool(*b),
             Lit::Date(d) => Value::Date(*d),
@@ -149,7 +147,6 @@ impl Value {
             Value::Fraction(_) => "Fraction",
             Value::Percent(_) => "Percent",
             Value::Num(_) => "Num",
-            Value::Complex(..) => "Complex",
             Value::Text(..) => "Text",
             Value::Bool(_) => "Bool",
             Value::Date(_) => "Date",
@@ -170,7 +167,6 @@ impl Value {
                 | Value::Fraction(_)
                 | Value::Percent(_)
                 | Value::Num(_)
-                | Value::Complex(..)
         )
     }
 
@@ -183,7 +179,6 @@ impl Value {
             Value::Fraction(r) => Lit::Fraction(r.clone()),
             Value::Percent(r) => Lit::Percent(r.clone()),
             Value::Num(f) => Lit::Num(*f),
-            Value::Complex(re, im) => Lit::Complex(*re, *im),
             Value::Text(s, _) => Lit::Text(s.to_string()),
             Value::Bool(b) => Lit::Bool(*b),
             Value::Date(d) => Lit::Date(*d),
@@ -229,7 +224,6 @@ impl Value {
 enum N {
     Exact(BigRational),
     Num(f64),
-    Complex(f64, f64),
 }
 
 fn number(v: &Value) -> Option<N> {
@@ -237,7 +231,6 @@ fn number(v: &Value) -> Option<N> {
         Value::Int(n) => N::Exact(BigRational::from_integer(n.clone())),
         Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => N::Exact(r.clone()),
         Value::Num(f) => N::Num(*f),
-        Value::Complex(re, im) => N::Complex(*re, *im),
         _ => return None,
     })
 }
@@ -250,14 +243,6 @@ fn real(n: &N) -> f64 {
     match n {
         N::Exact(r) => to_f64(r),
         N::Num(f) => *f,
-        N::Complex(re, _) => *re,
-    }
-}
-
-fn complex(n: &N) -> (f64, f64) {
-    match n {
-        N::Complex(re, im) => (*re, *im),
-        other => (real(other), 0.0),
     }
 }
 
@@ -291,29 +276,6 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
                 v
             }
         }),
-        (N::Complex(..), _) | (_, N::Complex(..)) => {
-            let ((a, b), (c, d)) = (complex(&x), complex(&y));
-            let (re, im) = match op {
-                BinOp::Add => (a + c, b + d),
-                BinOp::Sub => (a - c, b - d),
-                BinOp::Mul => (a * c - b * d, a * d + b * c),
-                BinOp::Div => {
-                    let m = c * c + d * d;
-                    ((a * c + b * d) / m, (b * c - a * d) / m)
-                }
-                _ => {
-                    // z ** w = exp(w * ln z)
-                    if a == 0.0 && b == 0.0 {
-                        (0.0, 0.0)
-                    } else {
-                        let (ln_r, theta) = ((a * a + b * b).sqrt().ln(), b.atan2(a));
-                        let (re, im) = (c * ln_r - d * theta, d * ln_r + c * theta);
-                        (re.exp() * im.cos(), re.exp() * im.sin())
-                    }
-                }
-            };
-            Ok(Value::Complex(re, im))
-        }
         _ => {
             let (x, y) = (real(&x), real(&y));
             Ok(Value::Num(match op {
@@ -433,17 +395,9 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
     let x = match (v, m) {
         (Value::Empty, _) => return Ok(Value::Empty),
         (Value::Percent(r), MathFn::Abs) => return Ok(Value::Percent(r.abs())),
-        (Value::Percent(_), MathFn::Re | MathFn::Conj) => return Ok(v.clone()),
         (Value::Percent(_), _) => return math(m, &v.clone().plain()),
         (Value::Int(n), MathFn::Abs) => return Ok(Value::Int(n.abs())),
         (Value::Int(n), MathFn::Sign) => return Ok(Value::Int(n.signum())),
-        (Value::Int(_) | Value::Decimal(_) | Value::Fraction(_), MathFn::Im) => {
-            return Ok(Value::Int(BigInt::from(0)));
-        }
-        (Value::Decimal(_) | Value::Fraction(_), MathFn::Re | MathFn::Conj) => {
-            return Ok(v.clone());
-        }
-        (Value::Complex(re, im), _) => return complex_math(m, *re, *im),
         (Value::Int(_), _) if m.is_exact() => return Ok(v.clone()),
         (Value::Decimal(r), MathFn::Abs) => return Ok(Value::Decimal(r.abs())),
         (Value::Fraction(r), MathFn::Abs) => return Ok(Value::Fraction(r.abs())),
@@ -469,25 +423,6 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
     Ok(Value::Num(m.apply(x)))
 }
 
-fn complex_math(m: MathFn, re: f64, im: f64) -> Result<Value, String> {
-    let r = re.hypot(im);
-    Ok(match m {
-        MathFn::Abs => Value::Num(r),
-        MathFn::Re => Value::Num(re),
-        MathFn::Im => Value::Num(im),
-        MathFn::Arg => Value::Num(im.atan2(re)),
-        MathFn::Conj => Value::Complex(re, -im),
-        // The root with a real part that is not negative.
-        MathFn::Sqrt => {
-            let half = ((r - re) / 2.0).sqrt();
-            Value::Complex(((r + re) / 2.0).sqrt(), if im < 0.0 { -half } else { half })
-        }
-        MathFn::Exp => Value::Complex(re.exp() * im.cos(), re.exp() * im.sin()),
-        MathFn::Ln => Value::Complex(r.ln(), im.atan2(re)),
-        _ => return Err(format!("`{}` is not defined for Complex", m.name())),
-    })
-}
-
 /// Whether a value is `NaN`, which is not equal to, less than or more than
 /// anything, itself included.
 pub fn is_nan(v: &Value) -> bool {
@@ -509,9 +444,6 @@ pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
         (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
         _ => match (number(a), number(b)) {
             (Some(N::Exact(x)), Some(N::Exact(y))) => x.cmp(&y),
-            (Some(N::Complex(..)), _) | (_, Some(N::Complex(..))) => {
-                return Err("Complex values have no order".into());
-            }
             (Some(x), Some(y)) => match real(&x).partial_cmp(&real(&y)) {
                 Some(o) => o,
                 None => return Ok(None),
@@ -525,11 +457,6 @@ pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
 
 /// Equality of two single values. `None` if either is empty.
 pub fn equal(a: &Value, b: &Value) -> Result<Option<bool>, String> {
-    if let (Some(x), Some(y)) = (number(a), number(b))
-        && (matches!(x, N::Complex(..)) || matches!(y, N::Complex(..)))
-    {
-        return Ok(Some(complex(&x) == complex(&y)));
-    }
     Ok(compare(a, b)?.map(|o| o == Ordering::Equal))
 }
 
@@ -683,7 +610,10 @@ fn shown_decimal(r: &BigRational, sep: Option<char>) -> String {
         if !medium {
             return scientific(r);
         }
-        let digits: String = grouped(cut_decimal(r, WIDTH), sep).chars().take(WIDTH - 1).collect();
+        let digits: String = grouped(cut_decimal(r, WIDTH), sep)
+            .chars()
+            .take(WIDTH - 1)
+            .collect();
         return format!("{digits}{MORE}");
     }
     let plain = grouped(format_rat(r), sep);
@@ -817,53 +747,6 @@ fn shown_num(f: f64, exact: bool, sep: Option<char>) -> String {
     format!("{mantissa}{}", exponent(e.parse().unwrap_or(0)))
 }
 
-/// Shortened to `width` characters and marked with [`MORE`]: a number in e
-/// notation in its mantissa, and any other at its end.
-fn cut(text: String, room: usize) -> String {
-    if width(&text) <= room {
-        return text;
-    }
-    let first = |text: &str, n: usize| text.chars().take(n).collect::<String>();
-    match text.split_once('e') {
-        Some((mantissa, exp)) => {
-            let keep = room.saturating_sub(exp.len() + 2).max(1);
-            format!("{}{MORE}e{exp}", first(mantissa, keep))
-        }
-        None => format!("{}{MORE}", first(&text, room - 1)),
-    }
-}
-
-/// A `Complex` as its parts are written: `3+4i`, `1.5-2i`. Shown, where that
-/// is wider than [`WIDTH`], both parts are cut alike until it fits; as for
-/// any number, a sign is not counted, and that of the imaginary part is
-/// what joins the two.
-fn format_complex(re: f64, im: f64, exact: bool, sep: Option<char>) -> String {
-    let unsigned = |text: String| match text.strip_prefix('-') {
-        Some(size) => ("-", size.to_string()),
-        None => ("", text),
-    };
-    let (re_sign, mut re_text) = unsigned(shown_num(re, exact, sep));
-    let (minus, mut im_text) = unsigned(shown_num(im, exact, sep));
-    let plus = if minus.is_empty() { "+" } else { minus };
-    // As Raku does, to keep the `i` apart from `Inf` and `NaN`.
-    let i = if im.is_finite() { "i" } else { "\\i" };
-    let room = WIDTH - 1 - i.len();
-    let (re_size, im_size) = (width(&re_text), width(&im_text));
-    if !exact && re_size + im_size > room {
-        let half = room / 2;
-        let (re_width, im_width) = if re_size <= half {
-            (re_size, room - re_size)
-        } else if im_size <= half {
-            (room - im_size, im_size)
-        } else {
-            (half, half)
-        };
-        re_text = cut(re_text, re_width);
-        im_text = cut(im_text, im_width);
-    }
-    format!("{re_sign}{re_text}{plus}{im_text}{i}")
-}
-
 /// A single value as text, the way a file shows it. `quoted` puts text in
 /// quotes, as inside a vector.
 pub fn format_scalar(v: &Value, quoted: bool) -> String {
@@ -947,8 +830,6 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         Value::Percent(r) => localised(shown_percent(r, false, group(style)), style),
         Value::Num(f) if exact => format_num(*f, true),
         Value::Num(f) => localised(shown_num(*f, false, group(style)), style),
-        Value::Complex(re, im) if exact => format_complex(*re, *im, true, None),
-        Value::Complex(re, im) => localised(format_complex(*re, *im, false, group(style)), style),
         Value::Text(s, _) if quoted => format!("{s:?}"),
         Value::Text(s, _) => s.to_string(),
         Value::Bool(b) => b.to_string(),
@@ -1088,7 +969,6 @@ mod tests {
         );
         assert_eq!(shown(Value::Num(1_234_567.5)), "1,234,567.5");
         assert_eq!(shown(Value::Num(-0.000123)), "-0.000123");
-        assert_eq!(shown(Value::Complex(12345.0, -1.0)), "12,345-1i");
         // Only the app groups them: a file, and `print`, do not.
         assert_eq!(format_scalar(&int(12345), false), "12345");
         assert_eq!(format_exact(&int(12345), false, &app), "12345");
@@ -1175,13 +1055,6 @@ mod tests {
                 "NaN",
             ]
         );
-        let complex = |re, im| format_scalar(&Value::Complex(re, im), false);
-        assert_eq!(complex(3.0, 4.0), "3+4i");
-        assert_eq!(complex(1.5, -2.0), "1.5-2i");
-        assert_eq!(complex(1e20, 1e-7), "1e+20+0.0000001i");
-        assert_eq!(complex(1e20, 1e-20), "1e+20+1e-20i");
-        assert_eq!(complex(0.0, f64::INFINITY), "0+Inf\\i");
-
         // Shown, a `Num` is never rounded: plain from `1e-15` to `1e15`
         // where that fits in 23 characters, and in e notation otherwise.
         let shown = |f| format_num(f, false);
@@ -1194,12 +1067,6 @@ mod tests {
         assert_eq!(shown(999_999_999_999_999.9), "999999999999999.9");
         assert_eq!(shown(1e15), "1e+15");
         assert_eq!(shown(f64::MAX), "1.7976931348623157e+308");
-        assert_eq!(complex(1.0 / 3.0, 1.0), "0.3333333333333333+1i");
-        assert_eq!(complex(1.0 / 3.0, -1.0 / 3.0), "0.3333333…-0.3333333…i");
-        assert_eq!(
-            complex(1.7976931348623157e308, 1.7976931348623157e308),
-            "1.79…e+308+1.79…e+308i"
-        );
     }
 
     #[test]

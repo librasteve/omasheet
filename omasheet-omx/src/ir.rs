@@ -129,7 +129,6 @@ pub enum Func {
     Count,
     /// A value as another type: `Int(x)`, `Num(x)` and the rest.
     To(S),
-    Complex,
     /// The next value after this one: a number plus one, or the next text
     /// in the way letters and digits count up, `AZ` to `BA`.
     Succ,

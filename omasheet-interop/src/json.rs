@@ -35,9 +35,7 @@ fn datum(value: &Json, nested: &mut bool) -> Datum {
             }
         }
         Json::String(s) => match Datum::read(s) {
-            Datum::Lit(text, ty @ (S::Date | S::Time | S::DateTime | S::Complex)) => {
-                Datum::Lit(text, ty)
-            }
+            Datum::Lit(text, ty @ (S::Date | S::Time | S::DateTime)) => Datum::Lit(text, ty),
             Datum::Lit(text, S::Num) if text.ends_with("Inf") || text == "NaN" => {
                 Datum::Lit(text, S::Num)
             }

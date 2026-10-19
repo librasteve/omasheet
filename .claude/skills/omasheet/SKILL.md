@@ -112,8 +112,8 @@ sheet Summary
 
 ## Types
 
-`Int`, `Decimal`, `Fraction`, `Percent`, `Num`, `Complex`, `Text`, `Bool`,
-`Date`, `Time`, `DateTime`.
+`Int`, `Decimal`, `Fraction`, `Percent`, `Num`, `Text`, `Bool`, `Date`,
+`Time`, `DateTime`.
 A column with no type line takes its type from its cells, which is usually
 what you want; declare one when the cells could be read another way.
 

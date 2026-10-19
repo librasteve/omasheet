@@ -9,7 +9,7 @@
 
 use crate::Options;
 use crate::value::{
-    RowRef, Value, View, arith, compare, equal, format_exact, format_styled, is_nan, math, to_f64,
+    RowRef, Value, View, arith, compare, equal, format_exact, format_styled, is_nan, math,
 };
 use crate::zone::{Zone, Zoned, utc_now};
 use num_bigint::BigInt;
@@ -279,7 +279,6 @@ impl<'p> Engine<'p> {
                     | (Value::Fraction(_), S::Fraction)
                     | (Value::Percent(_), S::Percent)
                     | (Value::Num(_), S::Num)
-                    | (Value::Complex(..), S::Complex)
                     | (Value::Text(..), S::Text)
                     | (Value::Bool(_), S::Bool)
                     | (Value::Date(_), S::Date)
@@ -640,7 +639,10 @@ impl<'p> Engine<'p> {
                     },
                     other => fail(
                         span,
-                        format!("a sequence of names steps through text, found {}", other.kind()),
+                        format!(
+                            "a sequence of names steps through text, found {}",
+                            other.kind()
+                        ),
                     ),
                 }
             }
@@ -695,24 +697,6 @@ impl<'p> Engine<'p> {
                     ))),
                     single => moved(&single),
                 }
-            }
-            Func::Complex => {
-                let mut parts = [0.0; 2];
-                for (part, arg) in parts.iter_mut().zip(args) {
-                    *part = match self.eval(arg, fr)? {
-                        Value::Empty => return Ok(Value::Empty),
-                        Value::Int(n) => n.to_f64().unwrap_or(f64::NAN),
-                        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => to_f64(&r),
-                        Value::Num(f) => f,
-                        other => {
-                            return fail(
-                                arg.span,
-                                format!("`Complex` needs real numbers, found {}", other.kind()),
-                            );
-                        }
-                    };
-                }
-                Ok(Value::Complex(parts[0], parts[1]))
             }
             Func::Today => Ok(Value::Date(date::split_datetime(self.now).0)),
             Func::Now => Ok(Value::DateTime(self.now)),
@@ -878,7 +862,9 @@ impl<'p> Engine<'p> {
                             }
                         }
                         Value::Empty => {}
-                        other if args.len() > 1 && !matches!(other, Value::Sheet(_)) => items.push(other),
+                        other if args.len() > 1 && !matches!(other, Value::Sheet(_)) => {
+                            items.push(other)
+                        }
                         other => {
                             return fail(
                                 arg.span,

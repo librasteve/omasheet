@@ -840,7 +840,11 @@ fn clean_cell(input: &str) -> String {
 /// A name with any `_001` it was copied with taken off.
 fn copy_base(name: &str) -> &str {
     match name.rsplit_once('_') {
-        Some((base, n)) if n.len() == 3 && n.bytes().all(|b| b.is_ascii_digit()) && !base.is_empty() => base,
+        Some((base, n))
+            if n.len() == 3 && n.bytes().all(|b| b.is_ascii_digit()) && !base.is_empty() =>
+        {
+            base
+        }
         _ => name,
     }
 }
@@ -2108,7 +2112,9 @@ impl Document {
         let ast = parse_file(&rest, 0, &mut Vec::new());
         let text = match ast.sheets.get(to) {
             Some(next) => {
-                let mut at = rest[..next.span.start as usize].rfind('\n').map_or(0, |k| k + 1);
+                let mut at = rest[..next.span.start as usize]
+                    .rfind('\n')
+                    .map_or(0, |k| k + 1);
                 while at > 0 {
                     let above = rest[..at - 1].rfind('\n').map_or(0, |k| k + 1);
                     if !rest[above..at].starts_with('#') {
@@ -2116,7 +2122,10 @@ impl Document {
                     }
                     at = above;
                 }
-                format!("{}{block}\n{}", &rest[..at], &rest[at..]).trim_end().to_string() + "\n"
+                format!("{}{block}\n{}", &rest[..at], &rest[at..])
+                    .trim_end()
+                    .to_string()
+                    + "\n"
             }
             None => {
                 let mut text = rest.trim_end().to_string();
@@ -2144,7 +2153,12 @@ impl Document {
         }
         let taken = |name: &str| {
             self.snapshot.consts.iter().any(|c| c.name == name)
-                || self.snapshot.sheets.iter().enumerate().any(|(k, t)| k != to && t.name == name)
+                || self
+                    .snapshot
+                    .sheets
+                    .iter()
+                    .enumerate()
+                    .any(|(k, t)| k != to && t.name == name)
         };
         let base = copy_base(&source.name);
         let name = (1..)
@@ -2224,7 +2238,6 @@ impl Document {
                 | Value::Fraction(_)
                 | Value::Percent(_)
                 | Value::Num(_)
-                | Value::Complex(..)
                 | Value::Vector(_) => format_exact(v, quoted, &self.style),
                 _ => return None,
             };
@@ -2383,7 +2396,10 @@ mod tests {
 
     #[test]
     fn a_sequence_may_give_its_own_rule_through_back_references() {
-        assert_eq!(seq("0, 1, $-1 + $-2 ... Inf", 7), ["0", "1", "1", "2", "3", "5", "8"]);
+        assert_eq!(
+            seq("0, 1, $-1 + $-2 ... Inf", 7),
+            ["0", "1", "1", "2", "3", "5", "8"]
+        );
         assert_eq!(seq("1, $-1 * 3 ... Inf", 4), ["1", "3", "9", "27"]);
     }
 
@@ -3339,7 +3355,13 @@ mod tests {
     #[test]
     fn a_sheet_moves_with_its_comment() {
         let text = "# One\nsheet T\n\n| A |\n| - |\n| 1 |\n\nsheet U\n\n| X |\n| - |\n| 2 |\n\n# Three\nsheet V\n\n| Y |\n| - |\n| 3 |\n";
-        let order = |doc: &Document| doc.snapshot().sheets.iter().map(|t| t.name.clone()).collect::<Vec<_>>();
+        let order = |doc: &Document| {
+            doc.snapshot()
+                .sheets
+                .iter()
+                .map(|t| t.name.clone())
+                .collect::<Vec<_>>()
+        };
         let mut doc = Document::from_text(text);
         doc.move_sheet(0, 2).unwrap();
         assert_eq!(order(&doc), ["U", "V", "T"]);
@@ -3358,7 +3380,10 @@ mod tests {
         let mut doc = Document::from_text(text);
         assert_eq!(doc.paste_sheet(0, 1), Ok("T_001".to_string()));
         let columns = &doc.snapshot().sheets[1].columns;
-        assert_eq!(columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["A", "B"]);
+        assert_eq!(
+            columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+            ["A", "B"]
+        );
         assert_eq!(col(&doc, 1, 1), ["2"]);
         assert_eq!(doc.snapshot().sheets[1].name, "T_001");
         assert!(doc.text().contains("# Kept\nsheet T_001"));

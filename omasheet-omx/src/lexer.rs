@@ -15,8 +15,6 @@ pub enum Tok {
     /// A number with a `%`, already divided by a hundred.
     Percent(BigRational),
     Num(f64),
-    /// An imaginary number, `4i`.
-    Imag(f64),
     Str(String),
     Date(i32),
     Time(i32),
@@ -67,9 +65,7 @@ pub enum Tok {
 impl Tok {
     pub fn describe(&self) -> String {
         match self {
-            Tok::Int(_) | Tok::Decimal(_) | Tok::Percent(_) | Tok::Num(_) | Tok::Imag(_) => {
-                "a number".into()
-            }
+            Tok::Int(_) | Tok::Decimal(_) | Tok::Percent(_) | Tok::Num(_) => "a number".into(),
             Tok::Str(_) => "a string".into(),
             Tok::Date(_) => "a date".into(),
             Tok::Time(_) => "a time".into(),
@@ -186,17 +182,7 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                     } else {
                         f64::NAN
                     };
-                    // As an imaginary part the `i` is kept apart: `Inf\i`.
-                    if b[i..].starts_with(b"\\i")
-                        && !b
-                            .get(i + 2)
-                            .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
-                    {
-                        i += 2;
-                        Tok::Imag(f)
-                    } else {
-                        Tok::Num(f)
-                    }
+                    Tok::Num(f)
                 }
                 _ => Tok::Ident(word.to_string()),
             };
@@ -407,13 +393,6 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
     let raw: String = text[i..j].chars().filter(|&c| c != '_').collect();
     let percent = j < b.len() && b[j] == b'%';
     let end = if percent { j + 1 } else { j };
-    // An imaginary number: `4i`, `2.5i`.
-    if !percent && j < b.len() && b[j] == b'i' && !word(j + 1) {
-        let f: f64 = raw
-            .parse()
-            .map_err(|_| (format!("`{raw}i` is not a number"), i, j + 1))?;
-        return Ok((Tok::Imag(f), j + 1));
-    }
     if word(end) {
         let mut k = end;
         while word(k) {
@@ -473,12 +452,6 @@ mod tests {
             ]
         );
         assert!(lex("10m", 0, 0).is_err());
-        assert_eq!(toks("4i")[0], Tok::Imag(4.0));
-        assert_eq!(
-            toks("3+2.5i"),
-            vec![Tok::Int(3.into()), Tok::Plus, Tok::Imag(2.5), Tok::Eof]
-        );
-        assert!(lex("2in", 0, 0).is_err());
     }
 
     #[test]

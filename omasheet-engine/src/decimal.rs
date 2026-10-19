@@ -144,12 +144,16 @@ impl Dec {
             _ => {
                 let (a, b) = (a.trimmed(), b.trimmed());
                 let scale = a.scale.max(b.scale);
-                Some((a.rescale(scale)?.unscaled, b.rescale(scale)?.unscaled, scale))
+                Some((
+                    a.rescale(scale)?.unscaled,
+                    b.rescale(scale)?.unscaled,
+                    scale,
+                ))
             }
         }
     }
 
-    pub fn add(self, other: Dec) -> Option<Dec> {
+    pub fn checked_add(self, other: Dec) -> Option<Dec> {
         let (x, y, scale) = Dec::align(self, other)?;
         Dec::new(x.checked_add(y)?, scale).or_else(|| {
             // Too wide at this scale: give up digits after the point.
@@ -161,19 +165,19 @@ impl Dec {
         })
     }
 
-    pub fn sub(self, other: Dec) -> Option<Dec> {
-        self.add(other.neg()?)
+    pub fn checked_sub(self, other: Dec) -> Option<Dec> {
+        self.checked_add(other.checked_neg()?)
     }
 
-    pub fn neg(self) -> Option<Dec> {
+    pub fn checked_neg(self) -> Option<Dec> {
         Dec::new(self.unscaled.checked_neg()?, self.scale)
     }
 
-    pub fn abs(self) -> Option<Dec> {
+    pub fn checked_abs(self) -> Option<Dec> {
         Dec::new(self.unscaled.checked_abs()?, self.scale)
     }
 
-    pub fn mul(self, other: Dec) -> Option<Dec> {
+    pub fn checked_mul(self, other: Dec) -> Option<Dec> {
         let (a, b) = (self.trimmed(), other.trimmed());
         let scale = a.scale + b.scale;
         match a.unscaled.checked_mul(b.unscaled) {
@@ -195,7 +199,7 @@ impl Dec {
 
     /// `self / other`, rounded half away from zero at the widest scale the
     /// result will hold. `None` when dividing by zero or it will not fit.
-    pub fn div(self, other: Dec) -> Option<Dec> {
+    pub fn checked_div(self, other: Dec) -> Option<Dec> {
         if other.is_zero() {
             return None;
         }
@@ -249,11 +253,11 @@ impl Dec {
         let mut base = self;
         while n > 0 {
             if n & 1 == 1 {
-                acc = acc.mul(base)?;
+                acc = acc.checked_mul(base)?;
             }
             n >>= 1;
             if n > 0 {
-                base = base.mul(base)?;
+                base = base.checked_mul(base)?;
             }
         }
         Some(acc)
@@ -282,11 +286,7 @@ impl Dec {
         } else {
             format!("0.{}{}", "0".repeat(scale - digits.len()), digits)
         };
-        if negative {
-            format!("-{body}")
-        } else {
-            body
-        }
+        if negative { format!("-{body}") } else { body }
     }
 
     /// Reads `-12.34`, `12`, `.5` and `1e3`. `None` when it is not a number.
@@ -307,7 +307,11 @@ impl Dec {
         if whole.is_empty() && frac.is_empty() {
             return None;
         }
-        if !whole.bytes().chain(frac.bytes()).all(|b| b.is_ascii_digit()) {
+        if !whole
+            .bytes()
+            .chain(frac.bytes())
+            .all(|b| b.is_ascii_digit())
+        {
             return None;
         }
         let unscaled: i128 = format!("{whole}{frac}").parse().ok()?;
@@ -319,7 +323,7 @@ impl Dec {
         } else {
             Dec::new(unscaled, u32::try_from(scale).ok()?)?
         };
-        if negative { d.neg() } else { Some(d) }
+        if negative { d.checked_neg() } else { Some(d) }
     }
 }
 
@@ -362,7 +366,7 @@ impl Eq for Dec {}
 
 impl PartialOrd for Dec {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp_dec(*other))
+        Some(self.cmp(other))
     }
 }
 
@@ -402,30 +406,51 @@ mod tests {
     #[test]
     fn the_readme_case_is_exact() {
         // The floating-point headline: 0.1 + 0.2 is 0.3, not 0.30000000000000004.
-        assert_eq!(d("0.1").add(d("0.2")).unwrap().to_plain_string(), "0.3");
+        assert_eq!(
+            d("0.1").checked_add(d("0.2")).unwrap().to_plain_string(),
+            "0.3"
+        );
     }
 
     #[test]
     fn adds_subtracts_and_multiplies_exactly() {
-        assert_eq!(d("1.5").add(d("2.25")).unwrap().to_plain_string(), "3.75");
-        assert_eq!(d("1").sub(d("0.001")).unwrap().to_plain_string(), "0.999");
-        assert_eq!(d("1.5").mul(d("4")).unwrap().to_plain_string(), "6");
-        assert_eq!(d("0.2").mul(d("0.1")).unwrap().to_plain_string(), "0.02");
-        assert_eq!(d("-2.5").mul(d("2")).unwrap().to_plain_string(), "-5");
+        assert_eq!(
+            d("1.5").checked_add(d("2.25")).unwrap().to_plain_string(),
+            "3.75"
+        );
+        assert_eq!(
+            d("1").checked_sub(d("0.001")).unwrap().to_plain_string(),
+            "0.999"
+        );
+        assert_eq!(d("1.5").checked_mul(d("4")).unwrap().to_plain_string(), "6");
+        assert_eq!(
+            d("0.2").checked_mul(d("0.1")).unwrap().to_plain_string(),
+            "0.02"
+        );
+        assert_eq!(
+            d("-2.5").checked_mul(d("2")).unwrap().to_plain_string(),
+            "-5"
+        );
     }
 
     #[test]
     fn divides_exactly_where_it_can() {
-        assert_eq!(d("1").div(d("2")).unwrap().to_plain_string(), "0.5");
-        assert_eq!(d("1").div(d("8")).unwrap().to_plain_string(), "0.125");
-        assert_eq!(d("10").div(d("5")).unwrap().to_plain_string(), "2");
-        assert_eq!(d("-1").div(d("4")).unwrap().to_plain_string(), "-0.25");
-        assert!(d("1").div(Dec::ZERO).is_none());
+        assert_eq!(d("1").checked_div(d("2")).unwrap().to_plain_string(), "0.5");
+        assert_eq!(
+            d("1").checked_div(d("8")).unwrap().to_plain_string(),
+            "0.125"
+        );
+        assert_eq!(d("10").checked_div(d("5")).unwrap().to_plain_string(), "2");
+        assert_eq!(
+            d("-1").checked_div(d("4")).unwrap().to_plain_string(),
+            "-0.25"
+        );
+        assert!(d("1").checked_div(Dec::ZERO).is_none());
     }
 
     #[test]
     fn thirds_round_at_the_widest_scale() {
-        let third = d("1").div(d("3")).unwrap();
+        let third = d("1").checked_div(d("3")).unwrap();
         assert_eq!(third.scale(), MAX_PRECISION);
         assert_eq!(
             third.to_plain_string(),
@@ -433,7 +458,7 @@ mod tests {
         );
         // Documented loss: a third times three is all nines, not one.
         assert_eq!(
-            third.mul(d("3")).unwrap().to_plain_string(),
+            third.checked_mul(d("3")).unwrap().to_plain_string(),
             "0.99999999999999999999999999999999999999"
         );
     }
@@ -441,9 +466,9 @@ mod tests {
     #[test]
     fn a_third_plus_a_sixth_is_a_half() {
         // The README's `omasheet eval '1/3 + 1/6'`: the rounding cancels.
-        let third = d("1").div(d("3")).unwrap();
-        let sixth = d("1").div(d("6")).unwrap();
-        assert_eq!(third.add(sixth).unwrap().to_plain_string(), "0.5");
+        let third = d("1").checked_div(d("3")).unwrap();
+        let sixth = d("1").checked_div(d("6")).unwrap();
+        assert_eq!(third.checked_add(sixth).unwrap().to_plain_string(), "0.5");
     }
 
     #[test]
@@ -478,7 +503,7 @@ mod tests {
         assert_eq!(wide.scale(), 0);
         assert!(Dec::parse(&"9".repeat(39)).is_none());
         // Adding past the ceiling fails rather than wrapping.
-        assert!(wide.add(wide).is_none());
+        assert!(wide.checked_add(wide).is_none());
         assert!(Dec::new(LIMIT, 0).is_none());
     }
 
@@ -493,8 +518,11 @@ mod tests {
     #[test]
     fn percentages_are_ordinary_numbers() {
         // 20% is a fifth: the display is elsewhere, the number is this.
-        let fifth = d("20").div(d("100")).unwrap();
+        let fifth = d("20").checked_div(d("100")).unwrap();
         assert_eq!(fifth.to_plain_string(), "0.2");
-        assert_eq!(d("10000").mul(fifth).unwrap().to_plain_string(), "2000");
+        assert_eq!(
+            d("10000").checked_mul(fifth).unwrap().to_plain_string(),
+            "2000"
+        );
     }
 }

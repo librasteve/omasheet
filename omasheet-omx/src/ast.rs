@@ -16,8 +16,6 @@ pub enum Lit {
     /// Written with a `%`: `20%`, held as `1/5`.
     Percent(BigRational),
     Num(f64),
-    /// Real and imaginary parts.
-    Complex(f64, f64),
     Text(String),
     Bool(bool),
     /// Days since 1970-01-01.
@@ -77,15 +75,11 @@ pub fn reads_back(e: &Expr) -> bool {
         ExprKind::Binary(_, a, b) => reads_back(a) || reads_back(b),
         ExprKind::If(c, a, b) => reads_back(c) || reads_back(a) || reads_back(b),
         ExprKind::VecLit(items) => any(items),
-        ExprKind::Index(base, slots) => {
-            reads_back(base) || slots.iter().flatten().any(reads_back)
-        }
+        ExprKind::Index(base, slots) => reads_back(base) || slots.iter().flatten().any(reads_back),
         ExprKind::Field(base, _, _) => reads_back(base),
         ExprKind::Call(_, _, args) => any(args),
         ExprKind::Seq { seeds, rule, limit } => {
-            any(seeds)
-                || rule.as_deref().is_some_and(reads_back)
-                || reads_back(limit)
+            any(seeds) || rule.as_deref().is_some_and(reads_back) || reads_back(limit)
         }
     }
 }

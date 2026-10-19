@@ -123,7 +123,10 @@ fn decimals() {
     for (expr, message) in [
         ("19.99 + true", "cannot apply `+` to Decimal and Bool"),
         ("20% + true", "cannot apply `+` to Percent and Bool"),
-        ("(1/7).Fraction + true", "cannot apply `+` to Fraction and Bool"),
+        (
+            "(1/7).Fraction + true",
+            "cannot apply `+` to Fraction and Bool",
+        ),
         // Sums, differences, products and quotients of decimals are
         // decimals, though a quotient need not end.
         (
@@ -396,13 +399,12 @@ fn display_of_rationals() {
     assert_eq!(show("(1/3).Fraction"), "1/3");
     assert_eq!(show("(-7/3).Fraction"), "-2 1/3");
     assert_eq!(show("(11/4).Fraction"), "2 3/4");
-    // A Num and each part of a Complex are never rounded: shown with the
-    // fewest digits that give the same Num back.
+    // A Num is never rounded: shown with the fewest digits that give the
+    // same Num back.
     assert_eq!(show("4.Num"), "4");
     assert_eq!(show("(1/3).Num"), "0.3333333333333333");
     assert_eq!(show("sqrt(2)"), "1.4142135623730951");
     assert_eq!(show("sqrt(2) * 1e20"), "1.4142135623730951e+20");
-    assert_eq!(show("sqrt(-2+0i)"), "0+1.4142135623730951i");
     assert_eq!(show("sqrt(2).Text"), "1.4142135623730951");
     // Only the display: the value is exact still.
     assert_eq!(show("1/3 * 3 == 1"), "true");
@@ -422,8 +424,6 @@ fn conversions() {
     assert_eq!(calc("Fraction(Num(1/3)) == 1/3"), "false");
     assert_eq!(calc("7.Fraction / 2"), "3.5");
     assert_eq!(calc("(1/4).Num"), "0.25");
-    assert_eq!(calc("3.Complex"), "3+0i");
-    assert_eq!(calc("Complex(3, 4)"), "3+4i");
     assert_eq!(calc("(1/3).Text"), "1/3");
     assert_eq!(calc("Text(2025-01-31)"), "2025-01-31");
     assert_eq!(calc("Bool(0)"), "false");
@@ -444,7 +444,6 @@ fn conversions() {
     assert_eq!(ask("sheet T\n\nA | B\n1.5 |\n", "T.B.Int"), "[empty]");
     // What cannot be converted is caught before anything is calculated.
     assert!(calc_err(None, "Int(2025-01-31)").contains("`Int` cannot be applied to Date"));
-    assert!(calc_err(None, "(3+4i).Int").contains("`Int` cannot be applied to Complex"));
     assert!(calc_err(Some(SALES), "Sales.Int").contains("has no column `Int`"));
 }
 
@@ -712,34 +711,6 @@ fn index_with_no_sheet_name() {
 }
 
 #[test]
-fn complex_numbers() {
-    // Written with `i`, and built from parts.
-    assert_eq!(calc("3+4i"), "3+4i");
-    assert_eq!(calc("(1+2i) * (3-1i)"), "5+5i");
-    assert_eq!(calc("2i * 2i"), "-4+0i");
-    assert_eq!(calc("Complex(3, 4) == 3+4i"), "true");
-    assert_eq!(calc("[re(3+4i), im(3+4i), abs(3+4i)]"), "[3, 4, 5]");
-    assert_eq!(calc("conj(3+4i)"), "3-4i");
-    assert_eq!(calc("degrees(arg(2i))"), "90");
-    assert_eq!(calc("sqrt(-4+0i)"), "0+2i");
-    assert_eq!(calc("ln(exp(1+1i))"), "1+1i");
-    // Real numbers have the same parts.
-    assert_eq!(calc("[re(5/2), im(7), conj(3)]"), "[2.5, 0, 3]");
-    assert!(calc_err(None, "sin(1i)").contains("`sin` cannot be applied to Complex"));
-    assert!(calc_err(None, "1i < 2i").contains("cannot compare"));
-    // A column of them: literal cells, a real number, and a formula.
-    let file = "sheet Z\n\nV : Complex\n\nV | Size\n3+4i | *\n-2i | *\n5 | *\n-1.5-2i | *\n= [V; *-4] * 1i | *\n\nSize := abs(V)\n";
-    assert_eq!(ask(file, "Z.V"), "[3+4i, 0-2i, 5+0i, -1.5-2i, -4+3i]");
-    assert_eq!(ask(file, "Z.Size"), "[5, 2, 5, 2.5, 5]");
-    assert_eq!(ask(file, "Z.V.sum()"), "2.5+3i");
-    // Undeclared, a column of them is still Complex.
-    let inferred = file.replace("V : Complex\n\n", "");
-    assert_eq!(ask(&inferred, "Z[V; 1]"), "0-2i");
-    let bad = lint_errors("sheet Z\n\nV : Complex\n\nV\nfour\n");
-    assert!(bad[0].contains("such as `3+4i`"), "{bad:?}");
-}
-
-#[test]
 fn math_functions() {
     // Exact numbers stay exact where they can.
     assert_eq!(calc("abs(-7/2)"), "3.5");
@@ -778,7 +749,6 @@ fn math_functions() {
     assert_eq!(ask(SALES, "Sales.Revenue.sqrt().floor()"), "[10, 10, 12]");
     // Outside the domain, and on the wrong kind of value.
     assert_eq!(calc("[sqrt(-1), ln(0), asin(2)]"), "[NaN, -Inf, NaN]");
-    assert_eq!(calc("ln(0i)"), "-Inf+0i");
     assert!(calc_err(None, "sin(\"x\")").contains("`sin` cannot be applied to Text"));
     assert!(calc_err(None, "sqr(4)").contains("did you mean `sqrt`?"));
     // Every function in the directory is one the checker knows.
@@ -1140,10 +1110,7 @@ fn cell_content() {
     // They are written as they are shown, and text of the same is in quotes.
     assert_eq!(calc("[Inf, -Inf, NaN]"), "[Inf, -Inf, NaN]");
     assert_eq!(calc("[\"Inf\", \"NaN\"]"), "[\"Inf\", \"NaN\"]");
-    assert_eq!(
-        calc("[Inf - Inf, 1 / Inf, Inf + 1, Inf\\i]"),
-        "[NaN, 0, Inf, 0+Inf\\i]"
-    );
+    assert_eq!(calc("[Inf - Inf, 1 / Inf, Inf + 1]"), "[NaN, 0, Inf]");
     assert_eq!(
         calc("[Inf == Inf, 1 < Inf, -Inf < 1]"),
         "[true, true, true]"
@@ -1155,7 +1122,7 @@ fn cell_content() {
     );
     assert_eq!(calc("[[1, NaN, 3].max(), [1, Inf, 3].max()]"), "[NaN, Inf]");
     assert!(calc_err(None, "Inf.Int").contains("Inf has no exact value"));
-    let cells = "sheet T\n\nN : Num\nT : Text\n\nN | T | Any | Quoted | Z\nInf | Inf | -Inf | \"NaN\" | 1+NaN\\i\nNaN | NaN | NaN | \"Inf\" | *\n";
+    let cells = "sheet T\n\nN : Num\nT : Text\n\nN | T | Any | Quoted\nInf | Inf | -Inf | \"NaN\"\nNaN | NaN | NaN | \"Inf\"\n";
     assert_eq!(ask(cells, "T.N"), "[Inf, NaN]");
     assert_eq!(
         ask(cells, "[T[Any; 0] < 0, T[Any; 1] != T[Any; 1]]"),
@@ -1163,7 +1130,6 @@ fn cell_content() {
     );
     assert_eq!(ask(cells, "T.T"), "[\"Inf\", \"NaN\"]");
     assert_eq!(ask(cells, "T.Quoted"), "[\"NaN\", \"Inf\"]");
-    assert_eq!(ask(cells, "T[Z; 0]"), "1+NaN\\i");
     // An unmarked expression in a typed column is an error.
     let errors = lint_errors("sheet T\n\nTax : Fraction\n\nRevenue | Tax\n100 | Revenue * 2\n");
     assert!(
@@ -1407,16 +1373,25 @@ fn a_column_range_counts_from_the_formulas_own_column() {
 
 #[test]
 fn aggregates_take_several_vectors_and_blocks_together() {
-    assert_eq!(ask(SALES, "sum(Sales[Revenue; 0..1], Sales[Revenue; 2])"), "370");
+    assert_eq!(
+        ask(SALES, "sum(Sales[Revenue; 0..1], Sales[Revenue; 2])"),
+        "370"
+    );
     assert_eq!(ask(SALES, "avg(Sales.Revenue, Sales.Cost)"), "290/3");
     assert_eq!(ask(SALES, "max(Sales[Cost; 0..1], 75)"), "75");
     assert_eq!(ask(SALES, "count(Sales.Revenue, Sales[Cost; 0])"), "4");
     // A block of cells, every one of them.
     assert_eq!(ask(SALES, "sum(Sales[2..3; 0..1])"), "350");
-    assert_eq!(ask(SALES, "min(Sales[Revenue; 2], Sales[2..3; 0..1])"), "60");
+    assert_eq!(
+        ask(SALES, "min(Sales[Revenue; 2], Sales[2..3; 0..1])"),
+        "60"
+    );
 
     let errors = lint_errors(&format!("{SALES}\nT := sum(Revenue, Month)\n")).join("\n");
     assert!(errors.contains("needs values of one type"), "{errors}");
     let errors = lint_errors(&format!("{SALES}\nT := sum(Sales[1..2; 0..1])\n")).join("\n");
-    assert!(errors.contains("the columns of this block differ"), "{errors}");
+    assert!(
+        errors.contains("the columns of this block differ"),
+        "{errors}"
+    );
 }

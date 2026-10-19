@@ -52,7 +52,6 @@ Numbers are shown the way Raku shows them:
 | `Fraction` | `1/3`, `2 3/4`; `1.6129030457865418…e-01` when too wide |
 | `Percent` | `20%`, `12.5%`, `41.67%` |
 | `Num` | `100`, `1.5`, `1.4142135623730951`; `1e+21` or `1.5e-16` when very large or small; `Inf`, `-Inf`, `NaN` |
-| `Complex` | each part as a `Num`: `3+4i`, `1.5-2i`, `0+1.4142135623730951i`; both parts cut alike when too wide |
 
 A `Num` that is a whole number looks like an `Int`, but it is still a `Num`.
 
@@ -84,7 +83,6 @@ vector is converted value by value.
 | `x.Fraction` | the same number as a fraction: `2.75` gives `2 3/4`; a `Num` as the decimal it is shown as |
 | `x.Percent` | the same number as a percentage: `0.4` gives `40%`, `5/12` gives `41.67%` |
 | `x.Num` | a floating-point number |
-| `x.Complex` | a complex number from a real one |
 | `x.Text` | any value as text, written the way a file writes it |
 | `x.Bool` | `false` for zero, `true` for any other number |
 | `x.Date`, `x.Time` | that half of a `DateTime` |
@@ -191,7 +189,7 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 - Sheets: `filter(condition)`, `select(columns)`
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
 - Counting up: `succ` — a number plus one, or the next text, `AZ` to `BA`
-- Converting: `Int Decimal Fraction Percent Num Complex Text Bool Date Time DateTime`
+- Converting: `Int Decimal Fraction Percent Num Text Bool Date Time DateTime`
 - Dates: `today() now() year month day weekday hour minute second date time`
 - Months: `add_months(x, n)` — what `x + n.month` is — and `eom(x)`
 - Time zones: `to_zone("Asia/Tokyo") utc() local() offset() zone()`

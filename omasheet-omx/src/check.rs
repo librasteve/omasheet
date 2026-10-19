@@ -315,7 +315,11 @@ enum Rule {
     Named(Cyc, i64),
     /// Dates a whole number of months apart, counted from the first so
     /// that a month end stays a month end rather than drifting back.
-    Monthly { first: i32, step: i64, on: i64 },
+    Monthly {
+        first: i32,
+        step: i64,
+        on: i64,
+    },
 }
 
 /// A seed written as a date, time or date-time, as its own count of days
@@ -1018,7 +1022,10 @@ impl<'a> Checker<'a> {
             other => {
                 self.err_help(
                     span,
-                    format!("`{n}.{unit}` belongs next to a date, found {}", other.describe()),
+                    format!(
+                        "`{n}.{unit}` belongs next to a date, found {}",
+                        other.describe()
+                    ),
                     "a date plus a plain number is that many days later",
                 );
                 return (Node::error(span), Ty::Any);
@@ -1160,17 +1167,21 @@ impl<'a> Checker<'a> {
 
         // `if ROW == 0 then s0 else if ROW == 1 then s1 else … else body`.
         let int = |n: usize| Node::new(Ir::Lit(Lit::Int(BigInt::from(n))), span);
-        let out = nodes.into_iter().enumerate().rev().fold(body, |rest, (i, seed)| {
-            let at = Node::new(
-                Ir::Binary(
-                    BinOp::Eq,
-                    Box::new(Node::new(Ir::RowIndex { depth: 0 }, span)),
-                    Box::new(int(i)),
-                ),
-                span,
-            );
-            Node::new(Ir::If(Box::new(at), Box::new(seed), Box::new(rest)), span)
-        });
+        let out = nodes
+            .into_iter()
+            .enumerate()
+            .rev()
+            .fold(body, |rest, (i, seed)| {
+                let at = Node::new(
+                    Ir::Binary(
+                        BinOp::Eq,
+                        Box::new(Node::new(Ir::RowIndex { depth: 0 }, span)),
+                        Box::new(int(i)),
+                    ),
+                    span,
+                );
+                Node::new(Ir::If(Box::new(at), Box::new(seed), Box::new(rest)), span)
+            });
         (out, ty)
     }
 
@@ -1245,7 +1256,10 @@ impl<'a> Checker<'a> {
         let zero = BigRational::from(BigInt::from(0));
         if nums[0] != zero {
             let ratio = &nums[1] / &nums[0];
-            if nums.windows(2).all(|w| w[0] != zero && &w[1] / &w[0] == ratio) {
+            if nums
+                .windows(2)
+                .all(|w| w[0] != zero && &w[1] / &w[0] == ratio)
+            {
                 return step(BinOp::Mul, ratio);
             }
         }
@@ -1278,10 +1292,7 @@ impl<'a> Checker<'a> {
             // sequence ends on the term that is the limit.
             let prev = self.back_ref(1, span, sc)?;
             let (prev, _) = self.lower(&prev, sc);
-            let done = Node::new(
-                Ir::Binary(BinOp::Eq, Box::new(prev), Box::new(stop)),
-                span,
-            );
+            let done = Node::new(Ir::Binary(BinOp::Eq, Box::new(prev), Box::new(stop)), span);
             return Some(Node::new(
                 Ir::If(Box::new(done), Box::new(empty), Box::new(rule)),
                 span,
@@ -1383,12 +1394,6 @@ impl<'a> Checker<'a> {
                 r.to_f64().map(Lit::Num)
             }
             (Some(l @ Lit::Num(_)), S::Num) => Some(l),
-            (Some(l @ Lit::Complex(..)), S::Complex) => Some(l),
-            (Some(Lit::Int(n)), S::Complex) => n.to_f64().map(|x| Lit::Complex(x, 0.0)),
-            (Some(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)), S::Complex) => {
-                r.to_f64().map(|x| Lit::Complex(x, 0.0))
-            }
-            (Some(Lit::Num(x)), S::Complex) => Some(Lit::Complex(x, 0.0)),
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
             (Some(l @ Lit::DateTime(_)), S::DateTime) => Some(l),
@@ -1406,9 +1411,6 @@ impl<'a> Checker<'a> {
                     S::Fraction => "enter a number such as `1/7`, `2 3/4` or `19.99`, or start the cell with `=` for a formula",
                     S::Percent => "enter a percentage such as `20%`, or start the cell with `=` for a formula",
                     S::Num => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
-                    S::Complex => {
-                        "enter a complex number such as `3+4i`, or start the cell with `=` for a formula"
-                    }
                     S::Bool => "enter `true` or `false`, or start the cell with `=` for a formula",
                     S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
                     S::Time => "enter a time such as `09:30` or `09:30:15`, or start the cell with `=` for a formula",
@@ -1502,9 +1504,7 @@ impl<'a> Checker<'a> {
                 };
                 (Node::new(Ir::Unary(*op, Box::new(node)), span), out)
             }
-            ExprKind::Binary(op @ (BinOp::Add | BinOp::Sub), l, r)
-                if duration_of(r).is_some() =>
-            {
+            ExprKind::Binary(op @ (BinOp::Add | BinOp::Sub), l, r) if duration_of(r).is_some() => {
                 let (n, unit) = duration_of(r).unwrap();
                 let n = if *op == BinOp::Sub { -n } else { n };
                 self.lower_duration(l, n, unit, span, sc)
@@ -1937,7 +1937,7 @@ impl<'a> Checker<'a> {
             let equality = matches!(op, BinOp::Eq | BinOp::Ne);
             let ok = unknown
                 || match a.join(b) {
-                    Some(S::Complex | S::Bool) => equality,
+                    Some(S::Bool) => equality,
                     Some(_) => true,
                     None => false,
                 };
@@ -2016,109 +2016,112 @@ impl<'a> Checker<'a> {
                 let mut joined: Option<S> = None;
                 let mut any = false;
                 for a in args {
-                let (arg, aty) = self.lower(a, sc);
-                let (arg, s) = match aty {
-                    Ty::Any => {
-                        any = true;
-                        (arg, S::Any)
-                    }
-                    Ty::Scalar(s) if many => (arg, s),
-                    Ty::Vector(s, _) => (arg, s),
-                    Ty::Range => (arg, S::Int),
-                    Ty::Sheet(_) if func == Func::Count && !many => {
-                        return (
-                            Node::new(Ir::Call(func, vec![arg]), span),
-                            Ty::Scalar(S::Int),
-                        );
-                    }
-                    // The cells of one row, such as `[*-4..*-1; *]`.
-                    Ty::Row(tt) => {
-                        let mut s: Option<Option<S>> = None;
-                        for &c in tt.cols.iter() {
-                            self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
-                            let ty = self.col_type(tt.sheet, c);
-                            s = Some(match s {
-                                None => Some(ty),
-                                Some(so_far) => so_far.and_then(|x| x.join(ty)),
-                            });
+                    let (arg, aty) = self.lower(a, sc);
+                    let (arg, s) = match aty {
+                        Ty::Any => {
+                            any = true;
+                            (arg, S::Any)
                         }
-                        match s {
-                            Some(Some(s)) => (arg, s),
-                            None => (arg, S::Any),
-                            Some(None) => {
-                                self.err_help(
+                        Ty::Scalar(s) if many => (arg, s),
+                        Ty::Vector(s, _) => (arg, s),
+                        Ty::Range => (arg, S::Int),
+                        Ty::Sheet(_) if func == Func::Count && !many => {
+                            return (
+                                Node::new(Ir::Call(func, vec![arg]), span),
+                                Ty::Scalar(S::Int),
+                            );
+                        }
+                        // The cells of one row, such as `[*-4..*-1; *]`.
+                        Ty::Row(tt) => {
+                            let mut s: Option<Option<S>> = None;
+                            for &c in tt.cols.iter() {
+                                self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
+                                let ty = self.col_type(tt.sheet, c);
+                                s = Some(match s {
+                                    None => Some(ty),
+                                    Some(so_far) => so_far.and_then(|x| x.join(ty)),
+                                });
+                            }
+                            match s {
+                                Some(Some(s)) => (arg, s),
+                                None => (arg, S::Any),
+                                Some(None) => {
+                                    self.err_help(
                                     a.span,
                                     format!("`{name}` needs values of one type, but the columns of this row differ"),
                                     "select columns of the same type, for example `[1..3; *]`",
                                 );
-                                return fail;
+                                    return fail;
+                                }
                             }
                         }
-                    }
-                    // A block of cells, such as `[0..1; 2..5]`: every cell
-                    // of it, when its columns are of one type.
-                    Ty::Sheet(tt) if tt.cols.len() > 1 => {
-                        let mut s: Option<S> = None;
-                        for &c in tt.cols.iter() {
-                            self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
-                            let ty = self.col_type(tt.sheet, c);
-                            s = match s {
-                                None => Some(ty),
-                                Some(so_far) => match so_far.join(ty) {
-                                    Some(j) => Some(j),
-                                    None => {
-                                        self.err_help(
+                        // A block of cells, such as `[0..1; 2..5]`: every cell
+                        // of it, when its columns are of one type.
+                        Ty::Sheet(tt) if tt.cols.len() > 1 => {
+                            let mut s: Option<S> = None;
+                            for &c in tt.cols.iter() {
+                                self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
+                                let ty = self.col_type(tt.sheet, c);
+                                s = match s {
+                                    None => Some(ty),
+                                    Some(so_far) => match so_far.join(ty) {
+                                        Some(j) => Some(j),
+                                        None => {
+                                            self.err_help(
                                             a.span,
                                             format!("`{name}` needs values of one type, but the columns of this block differ"),
                                             "select columns of the same type, for example `[1..3; 0..5]`",
                                         );
-                                        return fail;
-                                    }
-                                },
-                            };
+                                            return fail;
+                                        }
+                                    },
+                                };
+                            }
+                            (arg, s.unwrap_or(S::Any))
                         }
-                        (arg, s.unwrap_or(S::Any))
-                    }
-                    Ty::Sheet(tt) if tt.cols.len() == 1 => {
-                        let c = tt.cols[0];
-                        self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
-                        let s = self.col_type(tt.sheet, c);
-                        let arg_span = arg.span;
-                        (
-                            Node::new(
-                                Ir::Field {
-                                    base: Box::new(arg),
-                                    col: c,
-                                },
-                                arg_span,
-                            ),
-                            s,
-                        )
-                    }
-                    other => {
-                        self.err_help(
-                            a.span,
-                            format!("`{name}` needs a vector, but this is {}", other.describe()),
-                            "select one column, for example `Sales.Revenue`",
-                        );
-                        return fail;
-                    }
-                };
-                joined = match joined {
-                    None => Some(s),
-                    Some(so_far) => match so_far.join(s) {
-                        Some(j) => Some(j),
-                        None => {
+                        Ty::Sheet(tt) if tt.cols.len() == 1 => {
+                            let c = tt.cols[0];
+                            self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
+                            let s = self.col_type(tt.sheet, c);
+                            let arg_span = arg.span;
+                            (
+                                Node::new(
+                                    Ir::Field {
+                                        base: Box::new(arg),
+                                        col: c,
+                                    },
+                                    arg_span,
+                                ),
+                                s,
+                            )
+                        }
+                        other => {
                             self.err_help(
+                                a.span,
+                                format!(
+                                    "`{name}` needs a vector, but this is {}",
+                                    other.describe()
+                                ),
+                                "select one column, for example `Sales.Revenue`",
+                            );
+                            return fail;
+                        }
+                    };
+                    joined = match joined {
+                        None => Some(s),
+                        Some(so_far) => match so_far.join(s) {
+                            Some(j) => Some(j),
+                            None => {
+                                self.err_help(
                                 a.span,
                                 format!("`{name}` needs values of one type, but this is {s} and the rest {so_far}"),
                                 "take values of the same type together",
                             );
-                            return fail;
-                        }
-                    },
-                };
-                nodes.push(arg);
+                                return fail;
+                            }
+                        },
+                    };
+                    nodes.push(arg);
                 }
                 if any {
                     return (Node::new(Ir::Call(func, nodes), span), Ty::Any);
@@ -2127,50 +2130,17 @@ impl<'a> Checker<'a> {
                 let out = match func {
                     Func::Count => S::Int,
                     Func::Sum | Func::Avg if !s.is_numeric() => {
-                        self.err(
-                            span,
-                            format!("cannot take the `{name}` of {s} values"),
-                        );
+                        self.err(span, format!("cannot take the `{name}` of {s} values"));
                         return fail;
                     }
                     Func::Avg if matches!(s, S::Int | S::Decimal) => S::Decimal,
-                    Func::Min | Func::Max if matches!(s, S::Bool | S::Complex) => {
-                        self.err(
-                            span,
-                            format!("{s} values have no order for `{name}`"),
-                        );
+                    Func::Min | Func::Max if matches!(s, S::Bool) => {
+                        self.err(span, format!("{s} values have no order for `{name}`"));
                         return fail;
                     }
                     _ => s,
                 };
                 (Node::new(Ir::Call(func, nodes), span), Ty::Scalar(out))
-            }
-            "Complex" if args.len() == 2 => {
-                let mut nodes = Vec::new();
-                for a in args {
-                    let (node, ty) = self.lower(a, sc);
-                    if !matches!(
-                        ty,
-                        Ty::Any
-                            | Ty::Scalar(
-                                S::Any | S::Int | S::Decimal | S::Fraction | S::Percent | S::Num
-                            )
-                    ) {
-                        self.err(
-                            a.span,
-                            format!(
-                                "`Complex` needs real numbers, but this is {}",
-                                ty.describe()
-                            ),
-                        );
-                        return fail;
-                    }
-                    nodes.push(node);
-                }
-                (
-                    Node::new(Ir::Call(Func::Complex, nodes), span),
-                    Ty::Scalar(S::Complex),
-                )
             }
             "add_months" | "eom" => {
                 let months = name == "add_months";
@@ -2198,15 +2168,16 @@ impl<'a> Checker<'a> {
                     if !matches!(nty, Ty::Any | Ty::Scalar(S::Int | S::Any)) {
                         self.err(
                             args[1].span,
-                            format!(
-                                "a number of months must be Int, found {}",
-                                nty.describe()
-                            ),
+                            format!("a number of months must be Int, found {}", nty.describe()),
                         );
                     }
                     nodes.push(n);
                 }
-                let func = if months { Func::AddMonths } else { Func::EndOfMonth };
+                let func = if months {
+                    Func::AddMonths
+                } else {
+                    Func::EndOfMonth
+                };
                 (Node::new(Ir::Call(func, nodes), span), ty)
             }
             "succ" => {
@@ -2439,7 +2410,7 @@ impl<'a> Checker<'a> {
                     return fail;
                 }
                 if !matches!(sty, Ty::Any | Ty::Scalar(S::Any)) {
-                    let numeric = matches!(sty, Ty::Scalar(s) if s.is_numeric() && s != S::Complex);
+                    let numeric = matches!(sty, Ty::Scalar(s) if s.is_numeric());
                     if !numeric {
                         self.err_help(
                             args[1].span,
@@ -2476,7 +2447,6 @@ impl<'a> Checker<'a> {
                 // An exact number stays exact where the function allows it.
                 let out = |s: S| match s {
                     S::Any => Some(S::Any),
-                    S::Complex => m.of_complex(),
                     s if s.is_exact() && m.is_whole() => Some(S::Int),
                     s if s.is_exact() && m.is_exact() => Some(s),
                     s if s.is_exact() || s == S::Num => Some(S::Num),

@@ -18,7 +18,6 @@ pub enum S {
     /// holds whatever a `Fraction` does.
     Percent,
     Num,
-    Complex,
     Text,
     Bool,
     Date,
@@ -35,7 +34,6 @@ impl S {
             "Fraction" => S::Fraction,
             "Percent" => S::Percent,
             "Num" => S::Num,
-            "Complex" => S::Complex,
             "Text" => S::Text,
             "Date" => S::Date,
             "Time" => S::Time,
@@ -48,7 +46,7 @@ impl S {
     pub fn is_numeric(self) -> bool {
         matches!(
             self,
-            S::Any | S::Int | S::Decimal | S::Fraction | S::Percent | S::Num | S::Complex
+            S::Any | S::Int | S::Decimal | S::Fraction | S::Percent | S::Num
         )
     }
 
@@ -126,7 +124,7 @@ impl S {
             || match to {
                 S::Any | S::Text => true,
                 S::Int | S::Decimal | S::Fraction | S::Num => number || self == S::Bool,
-                S::Percent | S::Complex | S::Bool => number,
+                S::Percent | S::Bool => number,
                 S::Date | S::Time => self == S::DateTime,
                 S::DateTime => self == S::Date,
             }
@@ -152,7 +150,6 @@ impl fmt::Display for S {
             S::Fraction => "Fraction",
             S::Percent => "Percent",
             S::Num => "Num",
-            S::Complex => "Complex",
             S::Text => "Text",
             S::Bool => "Bool",
             S::Date => "Date",

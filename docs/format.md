@@ -64,8 +64,8 @@ cell of a computed column.
 
 ## Types
 
-`Int`, `Decimal`, `Fraction`, `Percent`, `Num`, `Complex`, `Text`, `Bool`,
-`Date`, `Time`, `DateTime`.
+`Int`, `Decimal`, `Fraction`, `Percent`, `Num`, `Text`, `Bool`, `Date`,
+`Time`, `DateTime`.
 A column with no `Name : Type` line takes its type from its cells.
 
 | Type | Written |

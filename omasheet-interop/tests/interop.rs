@@ -724,11 +724,10 @@ sheet T
 
 N : Num
 F : Fraction
-Z : Complex
 
-Name | Count | Price | Rate | N    | F   | Z    | On    | Day        | At    | Gap | Bad
-a    | 7     | 19.99 | 20%  | 1e20 | 1/3 | 3+4i | true  | 2025-01-31 | 09:30 |     | = Inf.Int
-\"42\" | -3    | 0.125 | -5%  | Inf  | 1/8 | 2i   | false | 2025-02-01 | 17:05 | x   | 1
+Name | Count | Price | Rate | N    | F   | On    | Day        | At    | Gap | Bad
+a    | 7     | 19.99 | 20%  | 1e20 | 1/3 | true  | 2025-01-31 | 09:30 |     | = Inf.Int
+\"42\" | -3    | 0.125 | -5%  | Inf  | 1/8 | false | 2025-02-01 | 17:05 | x   | 1
 ";
 
 fn json_of(text: &str, sheet: Option<&str>) -> Exported {
@@ -764,9 +763,9 @@ fn json_writes_each_kind_of_value() {
         text_of(&out, 0),
         "[\n  \
          {\"Name\": \"a\", \"Count\": 7, \"Price\": 19.99, \"Rate\": 0.2, \"N\": 1e+20, \"F\": 0.3333333333333333, \
-         \"Z\": \"3+4i\", \"On\": true, \"Day\": \"2025-01-31\", \"At\": \"09:30\", \"Gap\": null, \"Bad\": null},\n  \
+         \"On\": true, \"Day\": \"2025-01-31\", \"At\": \"09:30\", \"Gap\": null, \"Bad\": null},\n  \
          {\"Name\": \"42\", \"Count\": -3, \"Price\": 0.125, \"Rate\": -0.05, \"N\": \"Inf\", \"F\": 0.125, \
-         \"Z\": \"0+2i\", \"On\": false, \"Day\": \"2025-02-01\", \"At\": \"17:05\", \"Gap\": \"x\", \"Bad\": 1}\n]\n"
+         \"On\": false, \"Day\": \"2025-02-01\", \"At\": \"17:05\", \"Gap\": \"x\", \"Bad\": 1}\n]\n"
     );
     assert_eq!(
         out.notices,
@@ -785,7 +784,6 @@ fn json_comes_back_as_the_values_it_was_written_from() {
     assert_eq!(eval(&back.source, "T.Count"), "[7, -3]");
     assert_eq!(eval(&back.source, "T.Price.sum()"), "20.115");
     assert_eq!(eval(&back.source, "T.N"), "[1e+20, Inf]");
-    assert_eq!(eval(&back.source, "T.Z"), "[3+4i, 0+2i]");
     assert_eq!(eval(&back.source, "T.On"), "[true, false]");
     assert_eq!(eval(&back.source, "T[Day; 1] - T[Day; 0]"), "1");
     assert_eq!(eval(&back.source, "T.At"), "[09:30, 17:05]");

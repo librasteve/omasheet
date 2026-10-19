@@ -53,8 +53,8 @@ an object of such lists is a sheet for each, named by its key.
   `Decimal`, and `1.5e3` a `Num`. `true` and `false` are `Bool`, and `null`
   is an empty cell.
 - JSON has no dates, so a string that is a date, a time or a date-time is
-  one. So is a string that is a `Complex`, `"3+4i"`, or `"Inf"`, `"-Inf"`
-  or `"NaN"`. Any other string is text, a number in quotes too: `"42"`.
+  one. So is `"Inf"`, `"-Inf"` or `"NaN"`. Any other string is text, a
+  number in quotes too: `"42"`.
 - A list or an object inside a row is kept as text, and reported.
 
 ### Formulas
@@ -153,7 +153,6 @@ row become a cell. Each formula is written for the row it is on:
 | `Int`, `Decimal`, `Fraction` | the nearest floating-point number | in full; one that does not end, such as `1/3`, as `0.3333333333333333` |
 | `Percent` | that number, formatted as a percentage | `40%`; one that does not end as `33.33333333333333%` |
 | `Date`, `Time`, `DateTime` | a date or time cell | `2025-01-31`, `09:30`, `2025-01-31T09:30` |
-| `Complex` | text | `3+4i` |
 | a cell that failed | empty | empty |
 
 JSON is written as it is read: an object holding each sheet by name as a
@@ -166,7 +165,7 @@ name. With `--sheet` it is the rows of that sheet alone.
 | `Percent` | the number it stands for: `20%` is `0.2` |
 | `Num` | a number; `Inf`, `-Inf` and `NaN` as strings |
 | `Text`, `Bool` | a string; `true` or `false` |
-| `Date`, `Time`, `DateTime`, `Complex` | a string, as a file writes it: `"2025-01-31"`, `"3+4i"` |
+| `Date`, `Time`, `DateTime` | a string, as a file writes it: `"2025-01-31"` |
 | an empty cell, or one that failed | `null` |
 
 Anything written less exactly than the file holds it is reported, with the
