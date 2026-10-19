@@ -904,14 +904,23 @@ ApplicationWindow {
                 return;
             names.push(copyName(from.name, taken));
         }
+        // A name may be one another of these columns has now: each is
+        // first given a name no column has, then its own.
+        var spare = namesTaken(-1, -1);
+        for (var k = 0; k < names.length; k++)
+            spare[names[k]] = true;
+        var steps = [];
+        for (var j = 0; j < names.length; j++)
+            if (sheet.columns[at + j].name !== names[j])
+                steps.push([at + j, copyName("Pasting", spare), names[j]]);
         keeping(sheet.rows.length, sheet.columns.length, function() {
-            for (var i = 0; i < names.length; i++) {
-                if (sheet.columns[at + i].name === names[i])
-                    continue;
-                var problem = file.renameColumn(tab, at + i, names[i]);
-                if (problem.length > 0) {
-                    errorDialog.say(problem);
-                    return;
+            for (var pass = 1; pass <= 2; pass++) {
+                for (var i = 0; i < steps.length; i++) {
+                    var problem = file.renameColumn(tab, steps[i][0], steps[i][pass]);
+                    if (problem.length > 0) {
+                        errorDialog.say(problem);
+                        return;
+                    }
                 }
             }
         });
@@ -2801,10 +2810,26 @@ ApplicationWindow {
         }
         onClosed: grid.forceActiveFocus()
         Shortcut { sequence: "Return"; enabled: errorDialog.visible; onActivated: errorDialog.close() }
-        contentItem: Text {
+        // Selectable, to be copied: Ctrl+C copies what is selected, or all
+        // of it.
+        contentItem: TextEdit {
+            id: errorText
             text: errorDialog.message
+            readOnly: true
+            selectByMouse: true
+            selectByKeyboard: true
+            focus: true
             color: win.textColor
+            selectionColor: win.accentColor
             wrapMode: Text.Wrap
+            Keys.onPressed: function(event) {
+                if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_C) {
+                    if (selectedText.length === 0)
+                        selectAll();
+                    copy();
+                    event.accepted = true;
+                }
+            }
             font.family: win.font.family
             font.features: win.font.features
             font.pixelSize: win.dialogSize
