@@ -11,12 +11,11 @@ pub enum Lit {
     Int(BigInt),
     /// Written with a decimal point: `19.99`.
     Decimal(BigRational),
-    /// Written as a fraction: `1/7`.
     /// Written with a `%`: `20%`, held as `1/5`.
     Percent(BigRational),
-    Num(f64),
-    Text(String),
-    Bool(bool),
+    Float(f64),
+    String(String),
+    Boolean(bool),
     /// Days since 1970-01-01.
     Date(i32),
     /// Seconds since midnight.

@@ -146,7 +146,7 @@ fn lint_reports_a_located_type_error() {
     assert_eq!(out.status.code(), Some(1));
     let err = stderr(&out);
     assert!(
-        err.contains(".omx:6:8: error: cannot apply `+` to Int and Text"),
+        err.contains(".omx:6:8: error: cannot apply `+` to Int and String"),
         "{err}"
     );
     assert!(err.contains("6 | Bad := Revenue + Month"), "{err}");

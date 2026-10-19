@@ -50,7 +50,7 @@ an object of such lists is a sheet for each, named by its key.
   they are first met, and one that a row does not have is empty there. A
   row may be a list of values instead, with the names as the first row.
 - A number is read as it is written, every digit of it: `19.99` is a
-  `Decimal`, and `1.5e3` a `Num`. `true` and `false` are `Bool`, and `null`
+  `Decimal`, and `1.5e3` a `Float`. `true` and `false` are `Boolean`, and `null`
   is an empty cell.
 - JSON has no dates, so a string that is a date, a time or a date-time is
   one. So is `"Inf"`, `"-Inf"` or `"NaN"`. Any other string is text, a
@@ -163,8 +163,8 @@ name. With `--sheet` it is the rows of that sheet alone.
 |---|---|
 | `Int`, `Decimal` | a number, in full; one that does not end, such as `1/3`, as `0.3333333333333333` |
 | `Percent` | the number it stands for: `20%` is `0.2` |
-| `Num` | a number; `Inf`, `-Inf` and `NaN` as strings |
-| `Text`, `Bool` | a string; `true` or `false` |
+| `Float` | a number; `Inf`, `-Inf` and `NaN` as strings |
+| `String`, `Boolean` | a string; `true` or `false` |
 | `Date`, `Time`, `DateTime` | a string, as a file writes it: `"2025-01-31"` |
 | an empty cell, or one that failed | `null` |
 

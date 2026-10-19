@@ -43,7 +43,7 @@ sheet Labels
 | *   | *    | *    |
 | *   | *    | *    |
 
-# Text counts up the way letters and digits do, carrying at `Z`.
+# String counts up the way letters and digits do, carrying at `Z`.
 Col  := "A", "B" ... Inf
 
 # Which is how a workbook's columns are named after the twenty-sixth.

@@ -1,6 +1,6 @@
-# The numbers, Bool and Text: what each type holds and how it is shown.
+# The numbers, Boolean and String: what each type holds and how it is shown.
 #
-# Int, Decimal and Percent are exact and a Num is floating point. Decimal
+# Int, Decimal and Percent are exact and a Float is floating point. Decimal
 # and Percent hold the same numbers and show them in different ways: as a
 # decimal, and as so many in a hundred.
 #
@@ -8,7 +8,7 @@
 # in e notation otherwise, with digits that do not fit cut and marked with
 # …. A Decimal that does not end is cut and marked too. A number worked
 # out from Ints and Decimals is a Decimal. A Percent is rounded to two
-# digits, and a Num is never rounded; all are held in full.
+# digits, and a Float is never rounded; all are held in full.
 # `omasheet --exact examples/types.omx` shows them in full.
 
 const Half = 50%
@@ -17,13 +17,13 @@ const Root2 = sqrt(2)
 
 sheet Numbers
 
-Name    : Text
+Name    : String
 Count   : Int
 Price   : Decimal
 Share   : Decimal
 Rate    : Percent
-Reading : Num
-Checked : Bool
+Reading : Float
+Checked : Boolean
 
 | Name  | Count                      | Price | Share | Rate  | Reading  | Checked |
 | ----- | -------------------------- | ----- | ----- | ----- | -------- | ------- |
@@ -59,13 +59,13 @@ Split   := Numbers[Price; *] / 3
 Raised  := Numbers[Rate; *] + 5%
 Part    := Numbers[Price; *] * Numbers[Rate; *]
 
-# One Num makes the result a Num.
+# One Float makes the result a Float.
 Scaled  := Numbers[Share; *] * Numbers[Reading; *]
 Root    := sqrt(Numbers[Reading; *].abs())
 
 Likely  := Numbers[Checked; *] and Numbers[Share; *] < Half
 
-# No exact number is a division by zero, so that is a Num: Inf, -Inf, or NaN
+# No exact number is a division by zero, so that is a Float: Inf, -Inf, or NaN
 # for zero over zero. So is a function outside its domain. Each is written
 # in a cell as it is shown, and the text of one is in quotes. A NaN is not
 # equal to anything, itself included.
@@ -97,27 +97,27 @@ sheet Converted
 AsInt     := Value.Int
 Rounded   := round(Value)
 
-# A Num always has a Decimal: the one it is shown as.
-AsDecimal := Value.Num.Decimal
+# A Float always has a Decimal: the one it is shown as.
+AsDecimal := Value.Float.Decimal
 AsPercent := Value.Percent
-AsNum     := Value.Num
-AsBool    := Value.Bool
-AsText    := Value.Text
+AsNum     := Value.Float
+AsBool    := Value.Boolean
+AsText    := Value.String
 
-# Text is read the way a cell is.
+# String is read the way a cell is.
 sheet Written
 
-Text : Text
+String : String
 
-| Text  | Number | Doubled | Whole | Decimal | Percent |
+| String  | Number | Doubled | Whole | Decimal | Percent |
 | ----- | ------ | ------- | ----- | ------- | ------- |
 | 42    | *      | *       | *     | *       | *       |
 | 20%   | *      | *       | *     | *       | *       |
 | 1/8   | *      | *       | *     | *       | *       |
 | 1.5e3 | *      | *       | *     | *       | *       |
 
-Number  := Text.Decimal
+Number  := String.Decimal
 Doubled := Number * 2
-Whole   := Text.Int
-Decimal := Text.Decimal
-Percent := Text.Percent
+Whole   := String.Int
+Decimal := String.Decimal
+Percent := String.Percent

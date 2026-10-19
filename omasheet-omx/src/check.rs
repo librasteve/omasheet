@@ -362,7 +362,7 @@ fn seed_date(e: &Expr) -> Option<i32> {
 /// A seed written as plain text.
 fn seed_text(e: &Expr) -> Option<&str> {
     match &e.kind {
-        ExprKind::Lit(Lit::Text(s)) => Some(s),
+        ExprKind::Lit(Lit::String(s)) => Some(s),
         _ => None,
     }
 }
@@ -822,7 +822,7 @@ impl<'a> Checker<'a> {
                                 widen(lit_type(&lit));
                                 cells.push(match lit {
                                     // In quotes it is text as it is.
-                                    Lit::Text(s) if !quoted(&cell.text) => Cell::Markdown(s),
+                                    Lit::String(s) if !quoted(&cell.text) => Cell::Markdown(s),
                                     lit => Cell::Lit(lit),
                                 });
                             }
@@ -1128,7 +1128,7 @@ impl<'a> Checker<'a> {
                     let step = Node::new(Ir::Lit(Lit::Int(BigInt::from(step))), span);
                     (
                         Node::new(Ir::Call(Func::Cycle(kind), vec![prev, step]), span),
-                        Ty::Scalar(S::Text),
+                        Ty::Scalar(S::String),
                     )
                 }
                 None => return fail,
@@ -1281,12 +1281,12 @@ impl<'a> Checker<'a> {
         span: Span,
         sc: &mut Scope,
     ) -> Option<Node> {
-        if matches!(&limit.kind, ExprKind::Lit(Lit::Num(f)) if f.is_infinite() && *f > 0.0) {
+        if matches!(&limit.kind, ExprKind::Lit(Lit::Float(f)) if f.is_infinite() && *f > 0.0) {
             return Some(rule);
         }
         let (stop, stop_ty) = self.lower(limit, sc);
         let empty = Node::new(Ir::Empty, span);
-        let text = matches!(stop_ty, Ty::Scalar(S::Text));
+        let text = matches!(stop_ty, Ty::Scalar(S::String));
         if text {
             // Letters have no useful order across lengths, so a text
             // sequence ends on the term that is the limit.
@@ -1335,7 +1335,7 @@ impl<'a> Checker<'a> {
         let Some(want) = declared else { return found };
         if !found.assignable_to(want) {
             let help = match (found, want) {
-                (S::Int | S::Decimal | S::Percent, S::Num) => "use `.Num` to convert to Num",
+                (S::Int | S::Decimal | S::Percent, S::Float) => "use `.Float` to convert to Float",
                 (S::Percent, S::Int) => "declare the column as `Percent`, or use `.Int`",
                 (S::Percent, S::Decimal) => "declare the column as `Percent`, or use `.Decimal`",
                 (S::Decimal, S::Int) => "declare the column as `Decimal`, or use `.Int`",
@@ -1354,12 +1354,12 @@ impl<'a> Checker<'a> {
     fn literal_cell(&mut self, text: &str, span: Span, declared: Option<S>) -> Option<Lit> {
         let parsed = parse_literal(text);
         let Some(want) = declared else {
-            return Some(parsed.unwrap_or_else(|| Lit::Text(text.to_string())));
+            return Some(parsed.unwrap_or_else(|| Lit::String(text.to_string())));
         };
-        if want == S::Text {
+        if want == S::String {
             return Some(match parsed {
-                Some(Lit::Text(s)) => Lit::Text(s),
-                _ => Lit::Text(text.to_string()),
+                Some(Lit::String(s)) => Lit::String(s),
+                _ => Lit::String(text.to_string()),
             });
         }
         let fitted = match (parsed, want) {
@@ -1373,13 +1373,13 @@ impl<'a> Checker<'a> {
             }
             (Some(Lit::Decimal(r)), S::Percent) => Some(Lit::Percent(r)),
             (Some(l @ Lit::Percent(_)), S::Decimal) => crate::convert::convert(&l, want).ok(),
-            (Some(Lit::Int(n)), S::Num) => n.to_f64().map(Lit::Num),
-            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Num) => r.to_f64().map(Lit::Num),
-            (Some(l @ Lit::Num(_)), S::Num) => Some(l),
+            (Some(Lit::Int(n)), S::Float) => n.to_f64().map(Lit::Float),
+            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Float) => r.to_f64().map(Lit::Float),
+            (Some(l @ Lit::Float(_)), S::Float) => Some(l),
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
             (Some(l @ Lit::DateTime(_)), S::DateTime) => Some(l),
-            (Some(l @ Lit::Bool(_)), S::Bool) => Some(l),
+            (Some(l @ Lit::Boolean(_)), S::Boolean) => Some(l),
             _ => None,
         };
         if fitted.is_none() {
@@ -1391,8 +1391,8 @@ impl<'a> Checker<'a> {
                     S::Int => "enter a whole number such as `42`, or start the cell with `=` for a formula",
                     S::Decimal => "enter a number such as `19.99`, `1/7` or `20%`, or start the cell with `=` for a formula",
                     S::Percent => "enter a percentage such as `20%`, or start the cell with `=` for a formula",
-                    S::Num => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
-                    S::Bool => "enter `true` or `false`, or start the cell with `=` for a formula",
+                    S::Float => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
+                    S::Boolean => "enter `true` or `false`, or start the cell with `=` for a formula",
                     S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
                     S::Time => "enter a time such as `09:30` or `09:30:15`, or start the cell with `=` for a formula",
                     S::DateTime => "enter a date-time such as `2025-01-31T09:30`, or start the cell with `=` for a formula",
@@ -1472,7 +1472,7 @@ impl<'a> Checker<'a> {
                 };
                 let ok = match op {
                     UnOp::Neg => s.is_numeric(),
-                    UnOp::Not => matches!(s, S::Bool | S::Any),
+                    UnOp::Not => matches!(s, S::Boolean | S::Any),
                     UnOp::UpTo => false,
                 };
                 if !ok {
@@ -1493,11 +1493,11 @@ impl<'a> Checker<'a> {
             ExprKind::Binary(op, l, r) => self.lower_binary(*op, l, r, span, sc),
             ExprKind::If(c, a, b) => {
                 let (cn, cty) = self.lower(c, sc);
-                if !matches!(cty, Ty::Any | Ty::Scalar(S::Bool | S::Any)) {
+                if !matches!(cty, Ty::Any | Ty::Scalar(S::Boolean | S::Any)) {
                     self.err(
                         c.span,
                         format!(
-                            "the condition of `if` must be Bool, found {}",
+                            "the condition of `if` must be Boolean, found {}",
                             cty.describe()
                         ),
                     );
@@ -1851,7 +1851,7 @@ impl<'a> Checker<'a> {
                     );
                     return fail;
                 }
-                return (node, Ty::Scalar(S::Bool));
+                return (node, Ty::Scalar(S::Boolean));
             }
             _ => {}
         }
@@ -1918,7 +1918,7 @@ impl<'a> Checker<'a> {
             let equality = matches!(op, BinOp::Eq | BinOp::Ne);
             let ok = unknown
                 || match a.join(b) {
-                    Some(S::Bool) => equality,
+                    Some(S::Boolean) => equality,
                     Some(_) => true,
                     None => false,
                 };
@@ -1926,16 +1926,16 @@ impl<'a> Checker<'a> {
                 self.err(span, format!("cannot compare {a} and {b} with `{sym}`"));
                 return fail;
             }
-            S::Bool
+            S::Boolean
         } else {
-            if !matches!(a, S::Bool | S::Any) || !matches!(b, S::Bool | S::Any) {
+            if !matches!(a, S::Boolean | S::Any) || !matches!(b, S::Boolean | S::Any) {
                 self.err(
                     span,
-                    format!("`{sym}` needs Bool on both sides, found {a} and {b}"),
+                    format!("`{sym}` needs Boolean on both sides, found {a} and {b}"),
                 );
                 return fail;
             }
-            S::Bool
+            S::Boolean
         };
         let ty = match (av, bv) {
             (None, None) => Ty::Scalar(elem),
@@ -2115,7 +2115,7 @@ impl<'a> Checker<'a> {
                         return fail;
                     }
                     Func::Avg if matches!(s, S::Int | S::Decimal) => S::Decimal,
-                    Func::Min | Func::Max if matches!(s, S::Bool) => {
+                    Func::Min | Func::Max if matches!(s, S::Boolean) => {
                         self.err(span, format!("{s} values have no order for `{name}`"));
                         return fail;
                     }
@@ -2168,10 +2168,10 @@ impl<'a> Checker<'a> {
                 let (arg, aty) = self.lower(&args[0], sc);
                 let ty = match aty {
                     Ty::Any => Ty::Any,
-                    Ty::Scalar(s) if s.is_numeric() || matches!(s, S::Text | S::Any) => {
+                    Ty::Scalar(s) if s.is_numeric() || matches!(s, S::String | S::Any) => {
                         Ty::Scalar(s)
                     }
-                    Ty::Vector(s, n) if s.is_numeric() || matches!(s, S::Text | S::Any) => {
+                    Ty::Vector(s, n) if s.is_numeric() || matches!(s, S::String | S::Any) => {
                         Ty::Vector(s, n)
                     }
                     other => {
@@ -2247,7 +2247,7 @@ impl<'a> Checker<'a> {
                     "utc" => (Func::Utc, S::DateTime),
                     "local" => (Func::Local, S::DateTime),
                     "offset" => (Func::Offset, S::Int),
-                    _ => (Func::ZoneName, S::Text),
+                    _ => (Func::ZoneName, S::String),
                 };
                 let (arg, aty) = self.lower(&args[0], sc);
                 let ty = match aty {
@@ -2271,7 +2271,7 @@ impl<'a> Checker<'a> {
                 let mut nodes = vec![arg];
                 if takes_zone {
                     let (zone, zty) = self.lower(&args[1], sc);
-                    if !matches!(zty, Ty::Any | Ty::Scalar(S::Any | S::Text)) {
+                    if !matches!(zty, Ty::Any | Ty::Scalar(S::Any | S::String)) {
                         self.err_help(
                             args[1].span,
                             format!(
@@ -2361,7 +2361,7 @@ impl<'a> Checker<'a> {
                 let func = if name == "pi" { Func::Pi } else { Func::E };
                 (
                     Node::new(Ir::Call(func, Vec::new()), span),
-                    Ty::Scalar(S::Num),
+                    Ty::Scalar(S::Float),
                 )
             }
             _ if S::from_name(name).is_some() => {
@@ -2430,7 +2430,7 @@ impl<'a> Checker<'a> {
                     S::Any => Some(S::Any),
                     s if s.is_exact() && m.is_whole() => Some(S::Int),
                     s if s.is_exact() && m.is_exact() => Some(s),
-                    s if s.is_exact() || s == S::Num => Some(S::Num),
+                    s if s.is_exact() || s == S::Float => Some(S::Float),
                     _ => None,
                 };
                 let (arg, aty) = self.lower(&args[0], sc);
@@ -2695,7 +2695,7 @@ impl<'a> Checker<'a> {
             sc.frames.push(t);
             let (node, ty) = self.lower(e, sc);
             sc.frames.pop();
-            if ty == Ty::Scalar(S::Bool) {
+            if ty == Ty::Scalar(S::Boolean) {
                 return RowPick {
                     sel: RowSel::Pred(Box::new(node)),
                     one: false,
@@ -2748,7 +2748,7 @@ impl<'a> Checker<'a> {
                 len: None,
                 kind: DepKind::Whole,
             },
-            Ty::Vector(S::Bool, len) => {
+            Ty::Vector(S::Boolean, len) => {
                 if let (Some(a), Some(b)) = (len, nrows)
                     && a != b
                 {
@@ -3079,5 +3079,5 @@ fn unop_text(op: UnOp) -> &'static str {
 
 /// Whether the text of a cell is text written in quotes.
 fn quoted(cell: &str) -> bool {
-    matches!(parse_literal(cell), Some(Lit::Text(_)))
+    matches!(parse_literal(cell), Some(Lit::String(_)))
 }

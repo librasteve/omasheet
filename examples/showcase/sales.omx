@@ -6,7 +6,7 @@ const VatRate = 20%
 sheet Orders
 
 Placed : Date
-Region : Text
+Region : String
 
 | Placed     | Region | Product | Qty | Price  | Net | Vat | Gross |
 | ---------- | ------ | ------- | --- | ------ | --- | --- | ----- |

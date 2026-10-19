@@ -14,11 +14,11 @@ pub enum S {
     /// `Int` is one.
     Decimal,
     /// An exact number shown as so many in a hundred: `20%` is `1/5`. It
-    /// holds whatever a `Fraction` does.
+    /// holds whatever a `Decimal` does.
     Percent,
-    Num,
-    Text,
-    Bool,
+    Float,
+    String,
+    Boolean,
     Date,
     Time,
     DateTime,
@@ -31,18 +31,18 @@ impl S {
             "Int" => S::Int,
             "Decimal" => S::Decimal,
             "Percent" => S::Percent,
-            "Num" => S::Num,
-            "Text" => S::Text,
+            "Float" => S::Float,
+            "String" => S::String,
             "Date" => S::Date,
             "Time" => S::Time,
             "DateTime" => S::DateTime,
-            "Bool" => S::Bool,
+            "Boolean" => S::Boolean,
             _ => return None,
         })
     }
 
     pub fn is_numeric(self) -> bool {
-        matches!(self, S::Any | S::Int | S::Decimal | S::Percent | S::Num)
+        matches!(self, S::Any | S::Int | S::Decimal | S::Percent | S::Float)
     }
 
     /// An exact number: `Int`, `Decimal` or `Percent`.
@@ -75,7 +75,7 @@ impl S {
             S::Int => 0,
             S::Decimal => 1,
             S::Percent => 2,
-            S::Num => 3,
+            S::Float => 3,
             _ => 4,
         }
     }
@@ -109,13 +109,13 @@ impl S {
     /// Whether the conversion named `to` takes a value of type `self`. Text
     /// is read as whatever is asked for, and anything can be written as text.
     pub fn converts_to(self, to: S) -> bool {
-        let number = self.is_exact() || self == S::Num;
+        let number = self.is_exact() || self == S::Float;
         self == to
-            || matches!(self, S::Any | S::Text)
+            || matches!(self, S::Any | S::String)
             || match to {
-                S::Any | S::Text => true,
-                S::Int | S::Decimal | S::Num => number || self == S::Bool,
-                S::Percent | S::Bool => number,
+                S::Any | S::String => true,
+                S::Int | S::Decimal | S::Float => number || self == S::Boolean,
+                S::Percent | S::Boolean => number,
                 S::Date | S::Time => self == S::DateTime,
                 S::DateTime => self == S::Date,
             }
@@ -139,9 +139,9 @@ impl fmt::Display for S {
             S::Int => "Int",
             S::Decimal => "Decimal",
             S::Percent => "Percent",
-            S::Num => "Num",
-            S::Text => "Text",
-            S::Bool => "Bool",
+            S::Float => "Float",
+            S::String => "String",
+            S::Boolean => "Boolean",
             S::Date => "Date",
             S::Time => "Time",
             S::DateTime => "DateTime",

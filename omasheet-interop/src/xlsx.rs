@@ -81,8 +81,8 @@ fn real(v: &Value) -> Option<f64> {
     match v {
         Value::Int(n) => n.to_string().parse().ok(),
         Value::Decimal(r) | Value::Percent(r) => Some(to_f64(r)),
-        Value::Num(f) => Some(*f),
-        Value::Bool(b) => Some(*b as u8 as f64),
+        Value::Float(f) => Some(*f),
+        Value::Boolean(b) => Some(*b as u8 as f64),
         _ => None,
     }
 }
@@ -91,7 +91,7 @@ fn real(v: &Value) -> Option<f64> {
 /// are the same when they agree as far as a workbook holds them.
 fn agrees(cached: &Datum, v: &Value) -> bool {
     let text = match v {
-        Value::Empty => String::new(),
+        Value::Null => String::new(),
         v => format_exact(v, false, &date::Style::ISO),
     };
     match cached {
@@ -222,7 +222,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
                     Data::String(s) => Datum::Text(s.clone()),
                     Data::Int(n) => Datum::Lit(n.to_string(), S::Int),
                     Data::Float(f) => number(*f),
-                    Data::Bool(b) => Datum::Lit(b.to_string(), S::Bool),
+                    Data::Bool(b) => Datum::Lit(b.to_string(), S::Boolean),
                     Data::DateTime(t) if t.is_duration() => number(t.as_f64() * DAY as f64),
                     Data::DateTime(t) => moment(t.as_f64()),
                     Data::DateTimeIso(s) | Data::DurationIso(s) => Datum::read(s),
@@ -417,7 +417,7 @@ fn shown<'f>(
 ) -> Option<Shown<'f>> {
     let day = DAY as f64;
     Some(match value {
-        Value::Empty => return None,
+        Value::Null => return None,
         Value::Int(n) => {
             let (f, same) = double(&BigRational::from_integer(n.clone()));
             if !f.is_finite() {
@@ -443,9 +443,9 @@ fn shown<'f>(
             }
             Shown::Number(f, Some(&formats.percent))
         }
-        Value::Num(f) if f.is_finite() => Shown::Number(*f, None),
-        Value::Text(s, _) => Shown::Text(s.to_string()),
-        Value::Bool(b) => Shown::Bool(*b),
+        Value::Float(f) if f.is_finite() => Shown::Number(*f, None),
+        Value::String(s, _) => Shown::Text(s.to_string()),
+        Value::Boolean(b) => Shown::Bool(*b),
         Value::Date(d) => Shown::Number((*d as i64 + EPOCH) as f64, Some(&formats.date)),
         Value::Time(t) => Shown::Number(*t as f64 / day, Some(&formats.time)),
         Value::DateTime(t) => {

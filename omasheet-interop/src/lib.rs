@@ -60,7 +60,7 @@ impl Datum {
             return Datum::Empty;
         }
         match parse_literal(trimmed) {
-            Some(Lit::Text(_)) | None => Datum::Text(text.to_string()),
+            Some(Lit::String(_)) | None => Datum::Text(text.to_string()),
             Some(lit) => Datum::Lit(trimmed.to_string(), lit_type(&lit)),
         }
     }
@@ -210,7 +210,7 @@ fn column_type(cells: &[&Datum]) -> (Option<S>, bool) {
             // What a formula gives is for the file to say.
             Datum::Formula(_) => return (None, false),
             Datum::Lit(_, ty) => *ty,
-            Datum::Text(_) => S::Text,
+            Datum::Text(_) => S::String,
         };
         if !seen.contains(&ty) {
             seen.push(ty);
@@ -218,10 +218,10 @@ fn column_type(cells: &[&Datum]) -> (Option<S>, bool) {
     }
     let exact = |s: &S| s.is_exact();
     match seen.as_slice() {
-        [] | [S::Text] => (None, false),
+        [] | [S::String] => (None, false),
         all if all.iter().all(exact) => (None, false),
         [one] => (Some(*one), false),
-        all if all.iter().all(|s| exact(s) || *s == S::Num) => (Some(S::Num), false),
+        all if all.iter().all(|s| exact(s) || *s == S::Float) => (Some(S::Float), false),
         _ => (None, true),
     }
 }

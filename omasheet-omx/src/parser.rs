@@ -346,13 +346,13 @@ impl Parser {
             Tok::Int(n) => lit(Lit::Int(n)),
             Tok::Decimal(r) => lit(Lit::Decimal(r)),
             Tok::Percent(r) => lit(Lit::Percent(r)),
-            Tok::Num(f) => lit(Lit::Num(f)),
-            Tok::Str(s) => lit(Lit::Text(s)),
+            Tok::Float(f) => lit(Lit::Float(f)),
+            Tok::Str(s) => lit(Lit::String(s)),
             Tok::Date(d) => lit(Lit::Date(d)),
             Tok::Time(t) => lit(Lit::Time(t)),
             Tok::DateTime(t) => lit(Lit::DateTime(t)),
-            Tok::True => lit(Lit::Bool(true)),
-            Tok::False => lit(Lit::Bool(false)),
+            Tok::True => lit(Lit::Boolean(true)),
+            Tok::False => lit(Lit::Boolean(false)),
             Tok::Star => ExprKind::Cursor,
             Tok::Dollar => {
                 self.bump();

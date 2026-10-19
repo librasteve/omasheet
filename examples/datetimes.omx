@@ -7,12 +7,12 @@ const Day = 86400
 
 sheet Shifts
 
-Who    : Text
+Who    : String
 On     : Date
 Start  : Time
 End    : Time
 Rate   : Decimal
-Paid   : Bool
+Paid   : Boolean
 Logged : DateTime
 
 | Who   | On         | Start | End   | Rate  | Paid  | Logged              | Begins | Seconds | Hours | Pay | Due | Weekday | Month | Delay | Late | Sydney |

@@ -37,7 +37,7 @@ pub struct Translated {
 
 #[derive(Clone, Debug, PartialEq)]
 enum Tok {
-    Num(String),
+    Float(String),
     Str(String),
     /// A word: a function, a name, `TRUE`, or the letters of a column.
     Word(String),
@@ -187,7 +187,7 @@ fn lex(text: &str) -> R<Vec<Tok>> {
                     j = k;
                 }
             }
-            toks.push(Tok::Num(text[i..j].to_string()));
+            toks.push(Tok::Float(text[i..j].to_string()));
             i = j;
         } else if let Some((cell, len)) = cell(rest) {
             toks.push(Tok::Cell(cell));
@@ -316,7 +316,7 @@ impl Parser {
             return Err(UNREADABLE.into());
         }
         match tok {
-            Tok::Num(n) => Ok(Expr::Num(n)),
+            Tok::Float(n) => Ok(Expr::Num(n)),
             Tok::Str(s) => Ok(Expr::Str(s)),
             Tok::Open => {
                 let e = self.binary(0)?;

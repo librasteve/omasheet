@@ -158,7 +158,7 @@ fn iso_entry(style: &Style, ty: &str, input: &str) -> Option<String> {
 /// A whole number and a part typed into a cell, `2 3/4`, as the fraction a
 /// file keeps, `11/4`. `None` if it is not one, or the column is `Text`.
 fn fraction_entry(ty: &str, input: &str) -> Option<String> {
-    let r = omasheet_omx::convert::parse_mixed(input.trim()).filter(|_| ty != "Text")?;
+    let r = omasheet_omx::convert::parse_mixed(input.trim()).filter(|_| ty != "String")?;
     Some(format!("{}/{}", r.numer(), r.denom()))
 }
 
@@ -173,10 +173,9 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
         "Int" => "Int: a whole number, e.g. 42".into(),
         "Decimal" => "Decimal: an exact decimal number, e.g. 19.99 or 20%".into(),
         "Percent" => "Percent: an exact number shown as a percentage, e.g. 20%".into(),
-        "Num" => "Num: a floating-point number, e.g. 1.5, 2e-3 or Inf".into(),
-        "Complex" => "Complex: e.g. 3+4i or 2.5i".into(),
-        "Bool" => "Bool: true or false".into(),
-        "Text" => "Text".into(),
+        "Float" => "Float: a floating-point number, e.g. 1.5, 2e-3 or Inf".into(),
+        "Boolean" => "Boolean: true or false".into(),
+        "String" => "String".into(),
         "Date" => format!(
             "Date: {}, e.g. {}{also_iso}",
             style.date_pattern(),
@@ -1329,7 +1328,7 @@ impl Document {
         let (mut count, mut numbers) = (0, 0);
         let mut sum = Value::Int(0.into());
         for value in values {
-            if !matches!(value, Value::Empty | Value::Error) {
+            if !matches!(value, Value::Null | Value::Error) {
                 count += 1;
             }
             if value.is_numeric() {
@@ -2235,7 +2234,7 @@ impl Document {
                 Value::Int(_)
                 | Value::Decimal(_)
                 | Value::Percent(_)
-                | Value::Num(_)
+                | Value::Float(_)
                 | Value::Vector(_) => format_exact(v, quoted, &self.style),
                 _ => return None,
             };
@@ -2312,8 +2311,8 @@ impl Document {
             let decl = ast.consts.iter().find(|d| d.name == c.name);
             let value = engine.const_value(i).unwrap_or(Value::Error);
             let display = match &value {
-                Value::Empty => "empty".to_string(),
-                Value::Vector(_) | Value::Text(..) => engine.show(&value, true),
+                Value::Null => "empty".to_string(),
+                Value::Vector(_) | Value::String(..) => engine.show(&value, true),
                 other => show(other),
             };
             snapshot.consts.push(ConstSnap {
@@ -2581,10 +2580,10 @@ mod tests {
         let column = &doc.snapshot().sheets[0].columns[2];
         assert!(column.declared && column.ty == "Decimal");
         // The rest follow the header row, their colons in line.
-        assert!(doc.set_column_types(0, &[0, 3], Some("Text")));
+        assert!(doc.set_column_types(0, &[0, 3], Some("String")));
         assert!(
             doc.text()
-                .contains("\n\nMonth  : Text\nCost   : Decimal\nProfit : Text\n\n| Month | ")
+                .contains("\n\nMonth  : String\nCost   : Decimal\nProfit : String\n\n| Month | ")
         );
         // A formula that does not fit its type is an error, not refused.
         assert!(!doc.snapshot().problems.is_empty());
@@ -2922,7 +2921,7 @@ mod tests {
         assert!(loose.text().contains("2026-10-08 | 09:30"));
 
         // A whole number and a part is kept as the fraction it comes to.
-        let mut mixed = Document::from_text("sheet T\n\nN : Text\n\nA | N\n  |\n  |\n");
+        let mut mixed = Document::from_text("sheet T\n\nN : String\n\nA | N\n  |\n  |\n");
         mixed.set_cells(
             0,
             &[

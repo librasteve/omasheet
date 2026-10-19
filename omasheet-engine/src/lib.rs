@@ -104,7 +104,7 @@ fn render_file(program: &Program, engine: &Engine) -> String {
         let shown = match engine.const_value(i) {
             Ok(Value::Sheet(_)) => "<sheet>".to_string(),
             Ok(Value::Row(_)) => "<row>".to_string(),
-            Ok(Value::Empty) => "empty".to_string(),
+            Ok(Value::Null) => "empty".to_string(),
             Ok(v) => engine.show(&v, true),
             Err(_) => engine.show(&Value::Error, false),
         };

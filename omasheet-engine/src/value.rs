@@ -20,9 +20,10 @@ use std::rc::Rc;
 
 #[derive(Clone, Debug, Default)]
 pub enum Value {
-    /// No value: a blank cell, or a row offset outside the sheet.
+    /// No value: a blank cell, or a row offset outside the sheet. SQL-style,
+    /// so arithmetic with it is `Null` and aggregates pass over it.
     #[default]
-    Empty,
+    Null,
     /// A cell whose calculation failed; the diagnostic was already reported.
     Error,
     Int(BigInt),
@@ -32,12 +33,12 @@ pub enum Value {
     /// An exact number shown as a percentage: `1/5` for `20%`. It may be
     /// whole, `100%`.
     Percent(BigRational),
-    Num(f64),
+    Float(f64),
     /// Text, and whether it was written bare in a cell, to be read as
     /// Markdown where a file is shown as a document. Text written in quotes,
     /// or made by a formula, is as it is.
-    Text(Rc<str>, bool),
-    Bool(bool),
+    String(Rc<str>, bool),
+    Boolean(bool),
     Date(i32),
     Time(i32),
     /// What the clocks of the file's time zone show.
@@ -73,13 +74,13 @@ pub struct RowRef {
 }
 
 impl Value {
-    /// Whether this is text to be read as Markdown: see [`Value::Text`].
+    /// Whether this is text to be read as Markdown: see [`Value::String`].
     pub fn is_markdown(&self) -> bool {
-        matches!(self, Value::Text(_, true))
+        matches!(self, Value::String(_, true))
     }
 
     pub fn text(s: &str) -> Value {
-        Value::Text(Rc::from(s), false)
+        Value::String(Rc::from(s), false)
     }
 
     /// An exact number: an `Int` when it is whole, and otherwise a
@@ -115,9 +116,9 @@ impl Value {
             Lit::Int(n) => Value::Int(n.clone()),
             Lit::Decimal(r) => Value::exact(r.clone()),
             Lit::Percent(r) => Value::Percent(r.clone()),
-            Lit::Num(f) => Value::Num(*f),
-            Lit::Text(s) => Value::text(s),
-            Lit::Bool(b) => Value::Bool(*b),
+            Lit::Float(f) => Value::Float(*f),
+            Lit::String(s) => Value::text(s),
+            Lit::Boolean(b) => Value::Boolean(*b),
             Lit::Date(d) => Value::Date(*d),
             Lit::Time(t) => Value::Time(*t),
             Lit::DateTime(t) => Value::DateTime(*t),
@@ -127,14 +128,14 @@ impl Value {
     /// What kind of value this is, for messages.
     pub fn kind(&self) -> &'static str {
         match self {
-            Value::Empty => "empty",
+            Value::Null => "null",
             Value::Error => "an error",
             Value::Int(_) => "Int",
             Value::Decimal(_) => "Decimal",
             Value::Percent(_) => "Percent",
-            Value::Num(_) => "Num",
-            Value::Text(..) => "Text",
-            Value::Bool(_) => "Bool",
+            Value::Float(_) => "Float",
+            Value::String(..) => "String",
+            Value::Boolean(_) => "Boolean",
             Value::Date(_) => "Date",
             Value::Time(_) => "Time",
             Value::DateTime(_) | Value::Zoned(_) => "DateTime",
@@ -148,7 +149,7 @@ impl Value {
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
-            Value::Int(_) | Value::Decimal(_) | Value::Percent(_) | Value::Num(_)
+            Value::Int(_) | Value::Decimal(_) | Value::Percent(_) | Value::Float(_)
         )
     }
 
@@ -159,9 +160,9 @@ impl Value {
             Value::Int(n) => Lit::Int(n.clone()),
             Value::Decimal(r) => Lit::Decimal(r.clone()),
             Value::Percent(r) => Lit::Percent(r.clone()),
-            Value::Num(f) => Lit::Num(*f),
-            Value::Text(s, _) => Lit::Text(s.to_string()),
-            Value::Bool(b) => Lit::Bool(*b),
+            Value::Float(f) => Lit::Float(*f),
+            Value::String(s, _) => Lit::String(s.to_string()),
+            Value::Boolean(b) => Lit::Boolean(*b),
             Value::Date(d) => Lit::Date(*d),
             Value::Time(t) => Lit::Time(*t),
             Value::DateTime(t) => Lit::DateTime(*t),
@@ -174,8 +175,8 @@ impl Value {
     /// give. Empty stays empty.
     pub fn converted(&self, to: S) -> Result<Value, String> {
         let fits = match (self, to) {
-            (Value::Empty, _) | (_, S::Any) => true,
-            (Value::Zoned(_), S::DateTime) | (Value::Text(..), S::Text) => true,
+            (Value::Null, _) | (_, S::Any) => true,
+            (Value::Zoned(_), S::DateTime) | (Value::String(..), S::String) => true,
             // A whole `Decimal` is held as an `Int`.
             (Value::Int(_), S::Int | S::Decimal) => true,
             (Value::Decimal(_), S::Decimal) => true,
@@ -188,7 +189,7 @@ impl Value {
         let Some(lit) = self.to_lit() else {
             return Err(format!("{} cannot be made a `{to}`", self.kind()));
         };
-        if to == S::Text {
+        if to == S::String {
             return Ok(Value::text(&format_exact(self, false, &Style::ISO)));
         }
         convert::convert(&lit, to).map(|l| Value::from_lit(&l))
@@ -204,14 +205,14 @@ impl Value {
 
 enum N {
     Exact(BigRational),
-    Num(f64),
+    Float(f64),
 }
 
 fn number(v: &Value) -> Option<N> {
     Some(match v {
         Value::Int(n) => N::Exact(BigRational::from_integer(n.clone())),
         Value::Decimal(r) | Value::Percent(r) => N::Exact(r.clone()),
-        Value::Num(f) => N::Num(*f),
+        Value::Float(f) => N::Float(*f),
         _ => return None,
     })
 }
@@ -223,14 +224,14 @@ pub fn to_f64(r: &BigRational) -> f64 {
 fn real(n: &N) -> f64 {
     match n {
         N::Exact(r) => to_f64(r),
-        N::Num(f) => *f,
+        N::Float(f) => *f,
     }
 }
 
 /// `+ - * / **` on two single values. Empty in, empty out.
 pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
-    if matches!(a, Value::Empty) || matches!(b, Value::Empty) {
-        return Ok(Value::Empty);
+    if matches!(a, Value::Null) || matches!(b, Value::Null) {
+        return Ok(Value::Null);
     }
     if let Some(shifted) = shift(op, a, b) {
         return shifted;
@@ -252,7 +253,7 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         (N::Exact(x), N::Exact(y)) => exact_arith(op, x, y),
         _ => {
             let (x, y) = (real(&x), real(&y));
-            Ok(Value::Num(match op {
+            Ok(Value::Float(match op {
                 BinOp::Add => x + y,
                 BinOp::Sub => x - y,
                 BinOp::Mul => x * y,
@@ -341,21 +342,22 @@ fn exact_arith(op: BinOp, x: &BigRational, y: &BigRational) -> Result<Value, Str
         BinOp::Mul => x * y,
         BinOp::Div => {
             if y.is_zero() {
-                return Ok(Value::Num(over_zero(x)));
+                return Ok(Value::Float(over_zero(x)));
             }
             x / y
         }
         _ => {
             if !y.is_integer() {
                 return Err(
-                    "`**` with a fractional exponent is not exact; use `.Num` on an operand".into(),
+                    "`**` with a fractional exponent is not exact; use `.Float` on an operand"
+                        .into(),
                 );
             }
             let Some(e) = y.to_integer().to_i32().filter(|e| e.abs() <= 1_000_000) else {
                 return Err("the exponent is too large".into());
             };
             if x.is_zero() && e < 0 {
-                return Ok(Value::Num(f64::INFINITY));
+                return Ok(Value::Float(f64::INFINITY));
             }
             x.pow(e)
         }
@@ -367,7 +369,7 @@ fn exact_arith(op: BinOp, x: &BigRational, y: &BigRational) -> Result<Value, Str
 pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
     let whole = |r: BigRational| Value::Int(r.to_integer());
     let x = match (v, m) {
-        (Value::Empty, _) => return Ok(Value::Empty),
+        (Value::Null, _) => return Ok(Value::Null),
         (Value::Percent(r), MathFn::Abs) => return Ok(Value::Percent(r.abs())),
         (Value::Percent(_), _) => return math(m, &v.clone().plain()),
         (Value::Int(n), MathFn::Abs) => return Ok(Value::Int(n.abs())),
@@ -382,7 +384,7 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
         (Value::Decimal(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
         (Value::Int(n), _) => n.to_f64().unwrap_or(f64::NAN),
         (Value::Decimal(r), _) => to_f64(r),
-        (Value::Num(f), _) => *f,
+        (Value::Float(f), _) => *f,
         (other, _) => {
             return Err(format!(
                 "`{}` cannot be applied to {}",
@@ -393,20 +395,20 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
     };
     // Outside the function's domain it is as Raku has it: `sqrt(-1)` is
     // `NaN` and `ln(0)` is `-Inf`.
-    Ok(Value::Num(m.apply(x)))
+    Ok(Value::Float(m.apply(x)))
 }
 
 /// Whether a value is `NaN`, which is not equal to, less than or more than
 /// anything, itself included.
 pub fn is_nan(v: &Value) -> bool {
-    matches!(v, Value::Num(f) if f.is_nan())
+    matches!(v, Value::Float(f) if f.is_nan())
 }
 
 /// Order two single values. `None` if either is empty, or `NaN`.
 pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
     Ok(Some(match (a, b) {
-        (Value::Empty, _) | (_, Value::Empty) => return Ok(None),
-        (Value::Text(x, _), Value::Text(y, _)) => x.cmp(y),
+        (Value::Null, _) | (_, Value::Null) => return Ok(None),
+        (Value::String(x, _), Value::String(y, _)) => x.cmp(y),
         (Value::Date(x), Value::Date(y)) => x.cmp(y),
         (Value::Time(x), Value::Time(y)) => x.cmp(y),
         (Value::DateTime(x), Value::DateTime(y)) => x.cmp(y),
@@ -414,7 +416,7 @@ pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
         (Value::Zoned(x), Value::Zoned(y)) => x.utc.cmp(&y.utc),
         (Value::DateTime(x), Value::Zoned(y)) => x.cmp(&y.home_wall()),
         (Value::Zoned(x), Value::DateTime(y)) => x.home_wall().cmp(y),
-        (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
+        (Value::Boolean(x), Value::Boolean(y)) => x.cmp(y),
         _ => match (number(a), number(b)) {
             (Some(N::Exact(x)), Some(N::Exact(y))) => x.cmp(&y),
             (Some(x), Some(y)) => match real(&x).partial_cmp(&real(&y)) {
@@ -671,12 +673,12 @@ fn shown_percent(r: &BigRational, exact: bool, sep: Option<char>) -> String {
 /// very large or very small one with an exponent, `1e+21` or `1.5e-07`.
 /// Shown, it is plain from `1e-15` to `1e15` where that fits in [`WIDTH`],
 /// and so never needs [`MORE`]; in full, as when `exact`, only from `1e-4`.
-pub fn format_num(f: f64, exact: bool) -> String {
-    shown_num(f, exact, None)
+pub fn format_float(f: f64, exact: bool) -> String {
+    shown_float(f, exact, None)
 }
 
-/// As [`format_num`], with the digits grouped by `sep`.
-fn shown_num(f: f64, exact: bool, sep: Option<char>) -> String {
+/// As [`format_float`], with the digits grouped by `sep`.
+fn shown_float(f: f64, exact: bool, sep: Option<char>) -> String {
     if f.is_nan() {
         return "NaN".into();
     }
@@ -748,7 +750,7 @@ fn signed(negative: bool, text: String) -> String {
 
 fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
     match v {
-        Value::Empty => String::new(),
+        Value::Null => String::new(),
         Value::Error => "#ERROR".into(),
         // In full when `exact`, as a file writes it: `19.99`, and one that
         // does not end as `11/4`.
@@ -771,11 +773,11 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         ),
         Value::Percent(r) if exact => format_percent(r, true),
         Value::Percent(r) => localised(shown_percent(r, false, group(style)), style),
-        Value::Num(f) if exact => format_num(*f, true),
-        Value::Num(f) => localised(shown_num(*f, false, group(style)), style),
-        Value::Text(s, _) if quoted => format!("{s:?}"),
-        Value::Text(s, _) => s.to_string(),
-        Value::Bool(b) => b.to_string(),
+        Value::Float(f) if exact => format_float(*f, true),
+        Value::Float(f) => localised(shown_float(*f, false, group(style)), style),
+        Value::String(s, _) if quoted => format!("{s:?}"),
+        Value::String(s, _) => s.to_string(),
+        Value::Boolean(b) => b.to_string(),
         Value::Date(d) => style.date(*d),
         Value::Time(t) => style.time(*t),
         Value::DateTime(t) => style.datetime(*t),
@@ -804,7 +806,7 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
             let parts: Vec<String> = items
                 .iter()
                 .map(|x| match x {
-                    Value::Empty => "empty".to_string(),
+                    Value::Null => "empty".to_string(),
                     other => format_value(other, true, style, exact),
                 })
                 .collect();
@@ -900,8 +902,8 @@ mod tests {
             shown(Value::Percent(rat(12_345_678, 100_000))),
             "12,345.68%"
         );
-        assert_eq!(shown(Value::Num(1_234_567.5)), "1,234,567.5");
-        assert_eq!(shown(Value::Num(-0.000123)), "-0.000123");
+        assert_eq!(shown(Value::Float(1_234_567.5)), "1,234,567.5");
+        assert_eq!(shown(Value::Float(-0.000123)), "-0.000123");
         // Only the app groups them: a file, and `print`, do not.
         assert_eq!(format_scalar(&int(12345), false), "12345");
         assert_eq!(format_exact(&int(12345), false, &app), "12345");
@@ -913,7 +915,7 @@ mod tests {
         let shown = |v: Value| format_styled(&v, false, &de);
         assert_eq!(shown(Value::Decimal(rat(123_455, 10))), "12.345,5");
         assert_eq!(shown(Value::Decimal(rat(1, 8))), "0,125");
-        assert_eq!(shown(Value::Num(1.5e-20)), "1,5e-20");
+        assert_eq!(shown(Value::Float(1.5e-20)), "1,5e-20");
         assert_eq!(shown(Value::Percent(rat(5, 12))), "41,67%");
         assert_eq!(delocalised("12.345,5", &de), "12345.5");
         // In full, as a file writes it, whatever the locale.
@@ -964,7 +966,7 @@ mod tests {
             f64::NAN,
         ]
         .iter()
-        .map(|f| format_num(*f, true))
+        .map(|f| format_float(*f, true))
         .collect();
         assert_eq!(
             shown,
@@ -989,7 +991,7 @@ mod tests {
         );
         // Shown, a `Num` is never rounded: plain from `1e-15` to `1e15`
         // where that fits in 23 characters, and in e notation otherwise.
-        let shown = |f| format_num(f, false);
+        let shown = |f| format_float(f, false);
         assert_eq!(shown(1.5), "1.5");
         assert_eq!(shown(0.1 + 0.2), "0.30000000000000004");
         assert_eq!(shown(-2.0 / 3.0), "-0.6666666666666666");
@@ -1006,14 +1008,14 @@ mod tests {
         let third = Value::Decimal(rat(-7, 3));
         let shown = |v: Result<Value, String>| format_exact(&v.unwrap(), true, &Style::ISO);
         assert_eq!(shown(third.converted(S::Int)), "-2");
-        assert_eq!(shown(third.converted(S::Text)), "\"-7/3\"");
-        assert_eq!(shown(Value::Num(0.1).converted(S::Decimal)), "0.1");
+        assert_eq!(shown(third.converted(S::String)), "\"-7/3\"");
+        assert_eq!(shown(Value::Float(0.1).converted(S::Decimal)), "0.1");
         assert_eq!(shown(Value::text("1/8").converted(S::Decimal)), "0.125");
         assert_eq!(
             shown(Value::Date(1).converted(S::DateTime)),
             "1970-01-02T00:00"
         );
-        assert_eq!(shown(Value::Empty.converted(S::Int)), "");
+        assert_eq!(shown(Value::Null.converted(S::Int)), "");
         assert!(Value::Date(1).converted(S::Int).is_err());
         assert!(
             Value::Vector(Rc::new(Vec::new()))
@@ -1034,7 +1036,7 @@ mod tests {
     fn division_by_zero_is_a_num() {
         let over_zero = |n: i64| {
             let v = arith(BinOp::Div, &Value::Int(n.into()), &Value::Int(0.into())).unwrap();
-            assert!(matches!(v, Value::Num(_)));
+            assert!(matches!(v, Value::Float(_)));
             format_scalar(&v, false)
         };
         assert_eq!(over_zero(1), "Inf");
@@ -1072,7 +1074,7 @@ mod tests {
 
     #[test]
     fn num_is_contagious() {
-        let v = arith(BinOp::Div, &Value::Num(1.0), &Value::Int(3.into())).unwrap();
-        assert!(matches!(v, Value::Num(_)));
+        let v = arith(BinOp::Div, &Value::Float(1.0), &Value::Int(3.into())).unwrap();
+        assert!(matches!(v, Value::Float(_)));
     }
 }

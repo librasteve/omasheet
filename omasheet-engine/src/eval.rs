@@ -202,9 +202,9 @@ impl<'p> Engine<'p> {
         let result = match &col.kind {
             ColKind::Computed(node) => formula(node),
             ColKind::Data(cells) => match &cells[r] {
-                Cell::Empty => Ok(Value::Empty),
+                Cell::Empty => Ok(Value::Null),
                 Cell::Lit(l) => Ok(Value::from_lit(l)),
-                Cell::Markdown(s) => Ok(Value::Text(Rc::from(s.as_str()), true)),
+                Cell::Markdown(s) => Ok(Value::String(Rc::from(s.as_str()), true)),
                 Cell::Formula(node) => formula(node),
                 Cell::Invalid => Err(Fail::Poison),
             },
@@ -246,14 +246,14 @@ impl<'p> Engine<'p> {
         let ok = !col.declared
             || matches!(
                 (&v, col.ty),
-                (Value::Empty, _)
+                (Value::Null, _)
                     | (_, S::Any)
                     | (Value::Int(_), S::Int | S::Decimal)
                     | (Value::Decimal(_), S::Decimal)
                     | (Value::Percent(_), S::Percent)
-                    | (Value::Num(_), S::Num)
-                    | (Value::Text(..), S::Text)
-                    | (Value::Bool(_), S::Bool)
+                    | (Value::Float(_), S::Float)
+                    | (Value::String(..), S::String)
+                    | (Value::Boolean(_), S::Boolean)
                     | (Value::Date(_), S::Date)
                     | (Value::Time(_), S::Time)
                     | (Value::DateTime(_) | Value::Zoned(_), S::DateTime)
@@ -334,7 +334,7 @@ impl<'p> Engine<'p> {
                 let (_, r) = fr[fr.len() - 1 - depth];
                 Ok(Value::Int(BigInt::from(r)))
             }
-            Ir::Empty => Ok(Value::Empty),
+            Ir::Empty => Ok(Value::Null),
             Ir::Unary(UnOp::UpTo, operand) => Ok(Value::Range {
                 lo: 0,
                 hi: self.int(operand, fr)?,
@@ -345,8 +345,8 @@ impl<'p> Engine<'p> {
                 let v = self.eval(operand, fr)?;
                 let apply = |v: &Value| -> R {
                     match (op, v) {
-                        (_, Value::Empty) => Ok(Value::Empty),
-                        (UnOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
+                        (_, Value::Null) => Ok(Value::Null),
+                        (UnOp::Not, Value::Boolean(b)) => Ok(Value::Boolean(!b)),
                         (UnOp::Neg, Value::Percent(r)) => Ok(Value::Percent(-r)),
                         (UnOp::Neg, v) if v.is_numeric() => {
                             arith(BinOp::Sub, &Value::Int(BigInt::from(0)), v)
@@ -366,12 +366,15 @@ impl<'p> Engine<'p> {
             }
             Ir::Binary(op, l, r) => self.binary(*op, l, r, span, fr),
             Ir::If(c, a, b) => match self.eval(c, fr)? {
-                Value::Bool(true) => self.eval(a, fr),
-                Value::Bool(false) => self.eval(b, fr),
-                Value::Empty => Ok(Value::Empty),
+                Value::Boolean(true) => self.eval(a, fr),
+                Value::Boolean(false) => self.eval(b, fr),
+                Value::Null => Ok(Value::Null),
                 other => fail(
                     c.span,
-                    format!("the condition of `if` must be Bool, found {}", other.kind()),
+                    format!(
+                        "the condition of `if` must be Boolean, found {}",
+                        other.kind()
+                    ),
                 ),
             },
             Ir::VecLit(items) => {
@@ -388,7 +391,7 @@ impl<'p> Engine<'p> {
             Ir::Field { base, col } => match self.eval(base, fr)? {
                 Value::Sheet(v) => self.column(v.sheet, *col, &v.rows),
                 Value::Row(r) => self.cell(r.sheet, *col, r.row),
-                Value::Empty => Ok(Value::Empty),
+                Value::Null => Ok(Value::Null),
                 other => fail(
                     span,
                     format!(
@@ -422,7 +425,7 @@ impl<'p> Engine<'p> {
             },
             Ir::Single(inner) => match self.eval(inner, fr)? {
                 Value::Vector(items) => match items.len() {
-                    0 => Ok(Value::Empty),
+                    0 => Ok(Value::Null),
                     1 => Ok(items[0].clone()),
                     n => Err(Fail::Diag(
                         Diagnostic::new(
@@ -442,7 +445,7 @@ impl<'p> Engine<'p> {
             BinOp::Fallback => {
                 let left = match self.eval(l, fr)? {
                     Value::Vector(items) => match items.len() {
-                        0 => Value::Empty,
+                        0 => Value::Null,
                         1 => items[0].clone(),
                         n => {
                             return Err(Fail::Diag(
@@ -457,7 +460,7 @@ impl<'p> Engine<'p> {
                     other => other,
                 };
                 match left {
-                    Value::Empty => self.eval(r, fr),
+                    Value::Null => self.eval(r, fr),
                     v => Ok(v),
                 }
             }
@@ -474,24 +477,24 @@ impl<'p> Engine<'p> {
             }
             BinOp::In => {
                 let needle = self.eval(l, fr)?;
-                if matches!(needle, Value::Empty) {
-                    return Ok(Value::Empty);
+                if matches!(needle, Value::Null) {
+                    return Ok(Value::Null);
                 }
                 match self.eval(r, fr)? {
                     Value::Vector(items) => {
                         for item in items.iter() {
                             if equal(&needle, item).or_else(|m| fail(span, m))? == Some(true) {
-                                return Ok(Value::Bool(true));
+                                return Ok(Value::Boolean(true));
                             }
                         }
-                        Ok(Value::Bool(false))
+                        Ok(Value::Boolean(false))
                     }
                     Value::Range {
                         lo,
                         hi,
                         after,
                         exclusive,
-                    } => Ok(Value::Bool(match needle.as_i64() {
+                    } => Ok(Value::Boolean(match needle.as_i64() {
                         Some(n) => {
                             (n > lo || (n == lo && !after)) && (n < hi || (n == hi && !exclusive))
                         }
@@ -506,10 +509,10 @@ impl<'p> Engine<'p> {
             BinOp::And | BinOp::Or => {
                 // Short-circuit when the left side settles it.
                 let left = self.eval(l, fr)?;
-                if let Value::Bool(b) = left
+                if let Value::Boolean(b) = left
                     && b == (op == BinOp::Or)
                 {
-                    return Ok(Value::Bool(b));
+                    return Ok(Value::Boolean(b));
                 }
                 let right = self.eval(r, fr)?;
                 self.broadcast(op, &left, &right, span)
@@ -574,8 +577,10 @@ impl<'p> Engine<'p> {
             Func::Succ => {
                 let next = |v: &Value| -> R {
                     match v {
-                        Value::Empty => Ok(Value::Empty),
-                        Value::Text(s, md) => Ok(Value::Text(Rc::from(succ_text(s).as_str()), *md)),
+                        Value::Null => Ok(Value::Null),
+                        Value::String(s, md) => {
+                            Ok(Value::String(Rc::from(succ_text(s).as_str()), *md))
+                        }
                         Value::Date(d) => Ok(Value::Date(d + 1)),
                         Value::Time(t) => Ok(Value::Time(t + 1)),
                         Value::DateTime(t) => Ok(Value::DateTime(t + 1)),
@@ -600,9 +605,9 @@ impl<'p> Engine<'p> {
                     _ => 0,
                 };
                 match self.eval(&args[0], fr)? {
-                    Value::Empty => Ok(Value::Empty),
-                    Value::Text(s, md) => match cycle::advance(kind, &s, step) {
-                        Some(next) => Ok(Value::Text(Rc::from(next.as_str()), md)),
+                    Value::Null => Ok(Value::Null),
+                    Value::String(s, md) => match cycle::advance(kind, &s, step) {
+                        Some(next) => Ok(Value::String(Rc::from(next.as_str()), md)),
                         None => fail(span, format!("`{s}` is not one of these names")),
                     },
                     other => fail(
@@ -617,7 +622,7 @@ impl<'p> Engine<'p> {
             Func::AddMonths | Func::EndOfMonth => {
                 let months = match func {
                     Func::AddMonths => match self.eval(&args[1], fr)? {
-                        Value::Empty => return Ok(Value::Empty),
+                        Value::Null => return Ok(Value::Null),
                         Value::Int(n) => n.to_i64().unwrap_or(i64::MAX),
                         other => {
                             return fail(
@@ -642,7 +647,7 @@ impl<'p> Engine<'p> {
                 };
                 let moved = |v: &Value| -> R {
                     match v {
-                        Value::Empty => Ok(Value::Empty),
+                        Value::Null => Ok(Value::Null),
                         Value::Date(d) => match shift(*d) {
                             Some(d) => Ok(Value::Date(d)),
                             None => fail(span, "this date falls outside the calendar".to_string()),
@@ -668,8 +673,8 @@ impl<'p> Engine<'p> {
             }
             Func::Today => Ok(Value::Date(date::split_datetime(self.now).0)),
             Func::Now => Ok(Value::DateTime(self.now)),
-            Func::Pi => Ok(Value::Num(std::f64::consts::PI)),
-            Func::E => Ok(Value::Num(std::f64::consts::E)),
+            Func::Pi => Ok(Value::Float(std::f64::consts::PI)),
+            Func::E => Ok(Value::Float(std::f64::consts::E)),
             Func::Math(m) => {
                 let apply =
                     |v: &Value| -> R { math(m, v).or_else(|message| fail(args[0].span, message)) };
@@ -683,8 +688,8 @@ impl<'p> Engine<'p> {
             Func::ToZone | Func::Utc | Func::Local | Func::Offset | Func::ZoneName => {
                 let target = match func {
                     Func::ToZone => match self.eval(&args[1], fr)? {
-                        Value::Empty => return Ok(Value::Empty),
-                        Value::Text(name, _) => Some(self.zone(&name, args[1].span)?),
+                        Value::Null => return Ok(Value::Null),
+                        Value::String(name, _) => Some(self.zone(&name, args[1].span)?),
                         other => {
                             return fail(
                                 args[1].span,
@@ -700,7 +705,7 @@ impl<'p> Engine<'p> {
                 let one = |v: &Value| -> R {
                     // The instant, and the zone the value is in.
                     let (utc, wall, zone) = match v {
-                        Value::Empty => return Ok(Value::Empty),
+                        Value::Null => return Ok(Value::Null),
                         Value::DateTime(t) => match self.home.to_utc(*t) {
                             Some(utc) => (utc, *t, &self.home),
                             None => return out_of_range(),
@@ -745,7 +750,7 @@ impl<'p> Engine<'p> {
             | Func::TimeOf => {
                 let part = |v: &Value| -> R {
                     let (days, time) = match v {
-                        Value::Empty => return Ok(Value::Empty),
+                        Value::Null => return Ok(Value::Null),
                         Value::Date(d) => (Some(*d), None),
                         Value::Time(t) => (None, Some(*t)),
                         Value::DateTime(t) => {
@@ -829,7 +834,7 @@ impl<'p> Engine<'p> {
                                 items.push(self.cell(row.sheet, c, row.row)?);
                             }
                         }
-                        Value::Empty => {}
+                        Value::Null => {}
                         other if args.len() > 1 && !matches!(other, Value::Sheet(_)) => {
                             items.push(other)
                         }
@@ -841,10 +846,8 @@ impl<'p> Engine<'p> {
                         }
                     }
                 }
-                let present: Vec<&Value> = items
-                    .iter()
-                    .filter(|v| !matches!(v, Value::Empty))
-                    .collect();
+                let present: Vec<&Value> =
+                    items.iter().filter(|v| !matches!(v, Value::Null)).collect();
                 let sum = || -> R {
                     let mut total = Value::Int(BigInt::from(0));
                     for v in &present {
@@ -859,7 +862,7 @@ impl<'p> Engine<'p> {
                 match func {
                     Func::Count => Ok(Value::Int(BigInt::from(present.len()))),
                     Func::Sum => sum().map(kept),
-                    Func::Avg if present.is_empty() => Ok(Value::Empty),
+                    Func::Avg if present.is_empty() => Ok(Value::Null),
                     Func::Avg => arith(
                         BinOp::Div,
                         &sum()?,
@@ -887,7 +890,7 @@ impl<'p> Engine<'p> {
                                 }
                             };
                         }
-                        Ok(best.cloned().unwrap_or(Value::Empty))
+                        Ok(best.cloned().unwrap_or(Value::Null))
                     }
                 }
             }
@@ -992,12 +995,12 @@ impl<'p> Engine<'p> {
                     let v = self.eval(node, fr);
                     fr.pop();
                     match v? {
-                        Value::Bool(true) => keep.push(p),
-                        Value::Bool(false) | Value::Empty => {}
+                        Value::Boolean(true) => keep.push(p),
+                        Value::Boolean(false) | Value::Null => {}
                         other => {
                             return fail(
                                 node.span,
-                                format!("a row condition must be Bool, found {}", other.kind()),
+                                format!("a row condition must be Boolean, found {}", other.kind()),
                             );
                         }
                     }
@@ -1006,7 +1009,7 @@ impl<'p> Engine<'p> {
             }
             RowSel::Mask(node) => {
                 let Value::Vector(mask) = self.eval(node, fr)? else {
-                    return fail(node.span, "expected a vector of Bool");
+                    return fail(node.span, "expected a vector of Boolean");
                 };
                 if mask.len() != len {
                     return fail(
@@ -1020,12 +1023,12 @@ impl<'p> Engine<'p> {
                 let mut keep = Vec::new();
                 for (p, v) in mask.iter().enumerate() {
                     match v {
-                        Value::Bool(true) => keep.push(p),
-                        Value::Bool(false) | Value::Empty => {}
+                        Value::Boolean(true) => keep.push(p),
+                        Value::Boolean(false) | Value::Null => {}
                         other => {
                             return fail(
                                 node.span,
-                                format!("a mask must hold Bool values, found {}", other.kind()),
+                                format!("a mask must hold Boolean values, found {}", other.kind()),
                             );
                         }
                     }
@@ -1037,7 +1040,7 @@ impl<'p> Engine<'p> {
 
     fn index(&self, base: Value, rows: &RowSel, cols: &ColSel, span: Span, fr: &mut Frames) -> R {
         match base {
-            Value::Empty => Ok(Value::Empty),
+            Value::Null => Ok(Value::Null),
             Value::Sheet(v) => {
                 let picked = self.rows(rows, v.rows.len(), Some((v.sheet, &v.rows)), span, fr)?;
                 let sub_cols = |cols: &ColSel| match cols {
@@ -1045,7 +1048,7 @@ impl<'p> Engine<'p> {
                     _ => v.cols.clone(),
                 };
                 Ok(match (picked, cols) {
-                    (Rows::One(None), _) => Value::Empty,
+                    (Rows::One(None), _) => Value::Null,
                     (Rows::One(Some(p)), ColSel::One(c)) => self.cell(v.sheet, *c, v.rows[p])?,
                     (Rows::One(Some(p)), cols) => Value::Row(RowRef {
                         sheet: v.sheet,
@@ -1064,7 +1067,7 @@ impl<'p> Engine<'p> {
                 })
             }
             Value::Vector(items) => Ok(match self.rows(rows, items.len(), None, span, fr)? {
-                Rows::One(None) => Value::Empty,
+                Rows::One(None) => Value::Null,
                 Rows::One(Some(p)) => items[p].clone(),
                 Rows::Many(ps) => {
                     Value::Vector(Rc::new(ps.iter().map(|&p| items[p].clone()).collect()))
@@ -1137,7 +1140,7 @@ impl<'p> Engine<'p> {
             let mut line = Vec::with_capacity(v.cols.len());
             for (k, &c) in v.cols.iter().enumerate() {
                 let value = self.cell_shown(v.sheet, c, r);
-                if !matches!(value, Value::Empty | Value::Error) && !value.is_numeric() {
+                if !matches!(value, Value::Null | Value::Error) && !value.is_numeric() {
                     numeric[k] = false;
                 }
                 line.push(self.show(&value, false));
@@ -1190,27 +1193,27 @@ impl<'p> Engine<'p> {
                 rows: Rc::new(vec![row.row]),
                 cols: row.cols.clone(),
             }),
-            Value::Empty => "empty\n".to_string(),
+            Value::Null => "empty\n".to_string(),
             other => format!("{}\n", self.show(other, false)),
         }
     }
 }
 
 fn scalar_op(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
-    let empty = matches!(a, Value::Empty) || matches!(b, Value::Empty);
+    let empty = matches!(a, Value::Null) || matches!(b, Value::Null);
     Ok(match op {
         _ if op.is_arithmetic() => arith(op, a, b)?,
         // As Raku has it: only `!=` is true of a `NaN`.
         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
             if !empty && (is_nan(a) || is_nan(b)) =>
         {
-            Value::Bool(op == BinOp::Ne)
+            Value::Boolean(op == BinOp::Ne)
         }
-        BinOp::Eq => equal(a, b)?.map_or(Value::Empty, Value::Bool),
-        BinOp::Ne => equal(a, b)?.map_or(Value::Empty, |e| Value::Bool(!e)),
+        BinOp::Eq => equal(a, b)?.map_or(Value::Null, Value::Boolean),
+        BinOp::Ne => equal(a, b)?.map_or(Value::Null, |e| Value::Boolean(!e)),
         BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => match compare(a, b)? {
-            None => Value::Empty,
-            Some(o) => Value::Bool(match op {
+            None => Value::Null,
+            Some(o) => Value::Boolean(match op {
                 BinOp::Lt => o == Ordering::Less,
                 BinOp::Gt => o == Ordering::Greater,
                 BinOp::Le => o != Ordering::Greater,
@@ -1218,13 +1221,13 @@ fn scalar_op(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
             }),
         },
         BinOp::And | BinOp::Or => match (a, b) {
-            (Value::Bool(x), Value::Bool(y)) => {
-                Value::Bool(if op == BinOp::And { *x && *y } else { *x || *y })
+            (Value::Boolean(x), Value::Boolean(y)) => {
+                Value::Boolean(if op == BinOp::And { *x && *y } else { *x || *y })
             }
-            _ if empty => Value::Empty,
+            _ if empty => Value::Null,
             _ => {
                 return Err(format!(
-                    "`{}` needs Bool on both sides, found {} and {}",
+                    "`{}` needs Boolean on both sides, found {} and {}",
                     op.symbol(),
                     a.kind(),
                     b.kind()

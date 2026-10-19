@@ -122,7 +122,7 @@ fn xlsx_writes_a_percentage_as_its_number() {
 
 #[test]
 fn csv_quotes_as_rfc_4180() {
-    let file = "sheet T\n\nWho : Text\n\nWho\n\"Smith, J \\\"Jay\\\"\"\n";
+    let file = "sheet T\n\nWho : String\n\nWho\n\"Smith, J \\\"Jay\\\"\"\n";
     assert_eq!(
         text_of(&csv_of(file, None), 0),
         "Who\n\"Smith, J \"\"Jay\"\"\"\n"
@@ -184,7 +184,7 @@ fn csv_types_its_columns() {
     let out = csv::import("log", data.as_bytes()).unwrap();
     assert!(
         out.source
-            .contains("\n\nWhen : Date\nOk   : Bool\nAt   : Time\n\n"),
+            .contains("\n\nWhen : Date\nOk   : Boolean\nAt   : Time\n\n"),
         "{}",
         out.source
     );
@@ -513,7 +513,7 @@ Closed : DateTime
 
 sheet Customers
 
-Column2 : Bool
+Column2 : Boolean
 
 | Name | Column2 |
 | ---- | ------- |
@@ -722,7 +722,7 @@ fn not_a_workbook() {
 const KINDS: &str = "\
 sheet T
 
-N : Num
+N : Float
 F : Decimal
 
 Name | Count | Price | Rate | N    | F   | On    | Day        | At    | Gap | Bad

@@ -5,9 +5,9 @@ Try any of these with `omasheet eval [file.omx] '<expression>'`.
 ## Numbers
 
 Arithmetic is exact: `1/3 + 1/6` is `0.5`, `0.1 + 0.2` is `0.3`, and integers
-do not overflow. `x.Num` gives a floating-point `Num`.
+do not overflow. `x.Float` gives a floating-point `Float`.
 
-No exact number is a division by zero, so that gives a `Num`: `1/0` is `Inf`,
+No exact number is a division by zero, so that gives a `Float`: `1/0` is `Inf`,
 `-1/0` is `-Inf` and `0/0` is `NaN`. So does a function outside its
 domain: `sqrt(-1)` is `NaN` and `ln(0)` is `-Inf`. They are written as they are shown,
 `Inf`, `-Inf` and `NaN`, in a formula or a cell; the text is in quotes,
@@ -25,8 +25,8 @@ A `Decimal` that does not end is cut and marked the same way: `1/3` is
 shown as `0.33333333333333333333…`. Pointing at it in the app shows more
 places, and `--exact` gives it in full, `1/3`.
 
-A `Num` is never rounded: it is shown with the fewest digits that give the
-same `Num` back, `0.30000000000000004`, and always fits.
+A `Float` is never rounded: it is shown with the fewest digits that give the
+same `Float` back, `0.30000000000000004`, and always fits.
 
 A `Percent` is an exact number shown as so many in a hundred: `20%` is `1/5`.
 It is rounded to two digits after the point, `41.67%`, and `--exact` gives it
@@ -43,9 +43,9 @@ Numbers are shown the way Raku shows them:
 | `Int` | `101`; `1e+15` and `1.8446744073709551…e+19` from `1e15` |
 | `Decimal` | `1.01`; `1e-43` below `1e-15` |
 | `Percent` | `20%`, `12.5%`, `41.67%` |
-| `Num` | `100`, `1.5`, `1.4142135623730951`; `1e+21` or `1.5e-16` when very large or small; `Inf`, `-Inf`, `NaN` |
+| `Float` | `100`, `1.5`, `1.4142135623730951`; `1e+21` or `1.5e-16` when very large or small; `Inf`, `-Inf`, `NaN` |
 
-A `Num` that is a whole number looks like an `Int`, but it is still a `Num`.
+A `Float` that is a whole number looks like an `Int`, but it is still a `Float`.
 
 A `Decimal` and a `Percent` are the same exact numbers shown in different
 ways: `19.99` and `20%`. Adding, subtracting, multiplying and dividing
@@ -71,9 +71,9 @@ vector is converted value by value.
 | `x.Int` | a whole number: `19.99` gives `19`, `-19.99` gives `-19` |
 | `x.Decimal` | the same number as a decimal: `(1/8).Decimal` is `0.125`, `(1/3).Decimal` is `0.333…` |
 | `x.Percent` | the same number as a percentage: `0.4` gives `40%`, `5/12` gives `41.67%` |
-| `x.Num` | a floating-point number |
-| `x.Text` | any value as text, written the way a file writes it |
-| `x.Bool` | `false` for zero, `true` for any other number |
+| `x.Float` | a floating-point number |
+| `x.String` | any value as text, written the way a file writes it |
+| `x.Boolean` | `false` for zero, `true` for any other number |
 | `x.Date`, `x.Time` | that half of a `DateTime` |
 | `x.DateTime` | a `Date` at midnight |
 
@@ -178,7 +178,7 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 - Sheets: `filter(condition)`, `select(columns)`
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
 - Counting up: `succ` — a number plus one, or the next text, `AZ` to `BA`
-- Converting: `Int Decimal Percent Num Text Bool Date Time DateTime`
+- Converting: `Int Decimal Percent Float String Boolean Date Time DateTime`
 - Dates: `today() now() year month day weekday hour minute second date time`
 - Months: `add_months(x, n)` — what `x + n.month` is — and `eom(x)`
 - Time zones: `to_zone("Asia/Tokyo") utc() local() offset() zone()`

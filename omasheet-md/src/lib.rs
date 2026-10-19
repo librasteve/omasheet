@@ -256,7 +256,7 @@ fn take_zone(text: &mut String) -> Option<(String, usize)> {
 fn place(engine: &Engine, value: &Value, format: Format) -> String {
     let text = engine.show(value, false);
     if !value.is_markdown() {
-        if format == Format::Markdown && !matches!(value, Value::Text(..)) {
+        if format == Format::Markdown && !matches!(value, Value::String(..)) {
             return text;
         }
         let marks = ['\\', '`', '*', '_', '[', ']', '<', '>', '&', '#', '~'];
@@ -367,7 +367,7 @@ fn sheet(
         let mut line = Vec::with_capacity(view.cols.len());
         for (k, &c) in view.cols.iter().enumerate() {
             let value = engine.cell_shown(view.sheet, c, r);
-            if !matches!(value, Value::Empty | Value::Error) && !value.is_numeric() {
+            if !matches!(value, Value::Null | Value::Error) && !value.is_numeric() {
                 numeric[k] = false;
             }
             let shown = place(engine, &value, format);

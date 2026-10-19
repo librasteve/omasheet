@@ -875,7 +875,7 @@ impl qobject::File {
     fn entry_hint(&self, ty: &QString) -> QString {
         // Only where the way to write a value is not plain from its type.
         let ty = ty.to_string();
-        if !matches!(ty.as_str(), "Date" | "Time" | "DateTime" | "Bool") {
+        if !matches!(ty.as_str(), "Date" | "Time" | "DateTime" | "Boolean") {
             return QString::default();
         }
         // The header shows the type already.

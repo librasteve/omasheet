@@ -4,7 +4,7 @@
 sheet Ledger
 
 When : DateTime
-Memo : Text
+Memo : String
 
 | When                | Memo                                            | Amount | Balance | Average |
 | ------------------- | ----------------------------------------------- | ------ | ------- | ------- |

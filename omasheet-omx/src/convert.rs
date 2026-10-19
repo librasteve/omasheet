@@ -55,17 +55,17 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
         [Tok::Int(n), Tok::Eof] => Lit::Int(n.clone()),
         [Tok::Decimal(r), Tok::Eof] => Lit::Decimal(r.clone()),
         [Tok::Percent(r), Tok::Eof] => Lit::Percent(r.clone()),
-        [Tok::Num(f), Tok::Eof] => Lit::Num(*f),
+        [Tok::Float(f), Tok::Eof] => Lit::Float(*f),
         [Tok::Minus, Tok::Int(n), Tok::Eof] => Lit::Int(-n.clone()),
         [Tok::Minus, Tok::Decimal(r), Tok::Eof] => Lit::Decimal(-r.clone()),
         [Tok::Minus, Tok::Percent(r), Tok::Eof] => Lit::Percent(-r.clone()),
-        [Tok::Minus, Tok::Num(f), Tok::Eof] => Lit::Num(-*f),
-        [Tok::Str(s), Tok::Eof] => Lit::Text(s.clone()),
+        [Tok::Minus, Tok::Float(f), Tok::Eof] => Lit::Float(-*f),
+        [Tok::Str(s), Tok::Eof] => Lit::String(s.clone()),
         [Tok::Date(d), Tok::Eof] => Lit::Date(*d),
         [Tok::Time(t), Tok::Eof] => Lit::Time(*t),
         [Tok::DateTime(t), Tok::Eof] => Lit::DateTime(*t),
-        [Tok::True, Tok::Eof] => Lit::Bool(true),
-        [Tok::False, Tok::Eof] => Lit::Bool(false),
+        [Tok::True, Tok::Eof] => Lit::Boolean(true),
+        [Tok::False, Tok::Eof] => Lit::Boolean(false),
         _ => return None,
     })
 }
@@ -75,9 +75,9 @@ pub fn lit_type(l: &Lit) -> S {
         Lit::Int(_) => S::Int,
         Lit::Decimal(_) => S::Decimal,
         Lit::Percent(_) => S::Percent,
-        Lit::Num(_) => S::Num,
-        Lit::Text(_) => S::Text,
-        Lit::Bool(_) => S::Bool,
+        Lit::Float(_) => S::Float,
+        Lit::String(_) => S::String,
+        Lit::Boolean(_) => S::Boolean,
         Lit::Date(_) => S::Date,
         Lit::Time(_) => S::Time,
         Lit::DateTime(_) => S::DateTime,
@@ -140,22 +140,22 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     let real = |l: &Lit| match l {
         Lit::Int(n) => n.to_f64(),
         Lit::Decimal(r) | Lit::Percent(r) => r.to_f64(),
-        Lit::Num(f) => Some(*f),
-        Lit::Bool(b) => Some(*b as u8 as f64),
+        Lit::Float(f) => Some(*f),
+        Lit::Boolean(b) => Some(*b as u8 as f64),
         _ => None,
     };
     if from == to || to == S::Any {
         return Ok(lit.clone());
     }
     Ok(match (lit, to) {
-        (Lit::Text(s), _) => {
-            let read = parse_literal(s.trim()).filter(|l| !matches!(l, Lit::Text(_)));
+        (Lit::String(s), _) => {
+            let read = parse_literal(s.trim()).filter(|l| !matches!(l, Lit::String(_)));
             return read
                 .and_then(|l| convert(&l, to).ok())
                 .ok_or_else(|| format!("`{s}` is not {}", a(to)));
         }
         // A `Percent` is the number it stands for: `20%` is `0.2`.
-        (Lit::Percent(r), S::Int | S::Decimal | S::Bool) => {
+        (Lit::Percent(r), S::Int | S::Decimal | S::Boolean) => {
             let plain = if r.is_integer() {
                 Lit::Int(r.to_integer())
             } else {
@@ -167,7 +167,7 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
         (Lit::Decimal(r), S::Percent) => Lit::Percent(r.clone()),
         (Lit::Int(n), S::Decimal) => Lit::Int(n.clone()),
         (Lit::Decimal(r), S::Int) => Lit::Int(r.trunc().to_integer()),
-        (Lit::Num(f), S::Int | S::Decimal | S::Percent) => match fraction_of(*f) {
+        (Lit::Float(f), S::Int | S::Decimal | S::Percent) => match fraction_of(*f) {
             Some(r) if to == S::Percent => Lit::Percent(r),
             Some(r) if to == S::Int || r.is_integer() => Lit::Int(r.trunc().to_integer()),
             Some(r) => Lit::Decimal(r),
@@ -180,15 +180,16 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
                 return Err(format!("{name} has no exact value"));
             }
         },
-        (Lit::Bool(b), S::Int | S::Decimal) => Lit::Int(one(*b)),
-        (Lit::Int(_) | Lit::Decimal(_) | Lit::Percent(_) | Lit::Bool(_), S::Num) => match real(lit)
-        {
-            Some(f) => Lit::Num(f),
-            None => return no(),
-        },
-        (Lit::Int(n), S::Bool) => Lit::Bool(!n.is_zero()),
-        (Lit::Decimal(r), S::Bool) => Lit::Bool(!r.is_zero()),
-        (Lit::Num(f), S::Bool) => Lit::Bool(*f != 0.0),
+        (Lit::Boolean(b), S::Int | S::Decimal) => Lit::Int(one(*b)),
+        (Lit::Int(_) | Lit::Decimal(_) | Lit::Percent(_) | Lit::Boolean(_), S::Float) => {
+            match real(lit) {
+                Some(f) => Lit::Float(f),
+                None => return no(),
+            }
+        }
+        (Lit::Int(n), S::Boolean) => Lit::Boolean(!n.is_zero()),
+        (Lit::Decimal(r), S::Boolean) => Lit::Boolean(!r.is_zero()),
+        (Lit::Float(f), S::Boolean) => Lit::Boolean(*f != 0.0),
         (Lit::DateTime(t), S::Date) => Lit::Date(crate::date::split_datetime(*t).0),
         (Lit::DateTime(t), S::Time) => Lit::Time(crate::date::split_datetime(*t).1),
         (Lit::Date(d), S::DateTime) => Lit::DateTime(*d as i64 * 86_400),
@@ -204,9 +205,9 @@ mod tests {
         S::Int,
         S::Decimal,
         S::Percent,
-        S::Num,
-        S::Text,
-        S::Bool,
+        S::Float,
+        S::String,
+        S::Boolean,
         S::Date,
         S::Time,
         S::DateTime,
@@ -245,15 +246,15 @@ mod tests {
         assert_eq!(parse_literal("2 3"), None);
         assert_eq!(parse_literal("1 2 3/4"), None);
         assert_eq!(convert(&lit("1.5e3"), S::Int), Ok(lit("1500")));
-        assert_eq!(convert(&lit("1/4"), S::Num), Ok(Lit::Num(0.25)));
+        assert_eq!(convert(&lit("1/4"), S::Float), Ok(Lit::Float(0.25)));
         assert_eq!(convert(&lit("true"), S::Int), Ok(lit("1")));
-        assert_eq!(convert(&lit("0.5"), S::Bool), Ok(lit("true")));
-        assert!(convert(&Lit::Num(f64::NAN), S::Int).is_err());
+        assert_eq!(convert(&lit("0.5"), S::Boolean), Ok(lit("true")));
+        assert!(convert(&Lit::Float(f64::NAN), S::Int).is_err());
     }
 
     #[test]
     fn reads_text() {
-        let text = |s: &str| Lit::Text(s.to_string());
+        let text = |s: &str| Lit::String(s.to_string());
         assert_eq!(convert(&text(" 42 "), S::Int), Ok(lit("42")));
         assert_eq!(convert(&text("19.99"), S::Int), Ok(lit("19")));
         assert_eq!(convert(&text("20%"), S::Decimal), Ok(lit("1/5")));
@@ -301,7 +302,7 @@ mod tests {
             let from = lit_type(sample);
             for to in TYPES {
                 // Text is another matter: it depends on what the text says.
-                if to == S::Text {
+                if to == S::String {
                     continue;
                 }
                 assert_eq!(

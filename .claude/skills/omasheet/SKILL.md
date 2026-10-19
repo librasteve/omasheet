@@ -112,7 +112,7 @@ sheet Summary
 
 ## Types
 
-`Int`, `Decimal`, `Percent`, `Num`, `Text`, `Bool`, `Date`, `Time`,
+`Int`, `Decimal`, `Percent`, `Float`, `String`, `Boolean`, `Date`, `Time`,
 `DateTime`.
 A column with no type line takes its type from its cells, which is usually
 what you want; declare one when the cells could be read another way.
@@ -122,8 +122,8 @@ what you want; declare one when the cells could be read another way.
 | `Int` | `42`, `1_000_000` |
 | `Decimal` | `19.99`, `1/7`, `2 3/4` — exact |
 | `Percent` | `20%` — exact, shown as a percentage |
-| `Num` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `"Inf"`), which is what a division by zero gives |
-| `Bool` | `true`, `false` |
+| `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `"Inf"`), which is what a division by zero gives |
+| `Boolean` | `true`, `false` |
 | `Date`, `Time`, `DateTime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO |
 
 An `Int` is a `Decimal`. Sums, products, divisions and averages of decimals
@@ -139,7 +139,7 @@ do not multiply by 100. It is shown rounded to two digits, `41.67%`.
 Arithmetic is exact: `0.1 + 0.2 == 0.3` is true, `1/3 * 3` is `1`, and
 integers do not overflow. An exact number is shown in full: a division
 shows `0.125` if it ends as a decimal, and is cut and marked if it does
-not. Do not "fix" a long decimal with `.Num`, and use `round(x)` only when
+not. Do not "fix" a long decimal with `.Float`, and use `round(x)` only when
 the user wants a rounded number. A number is shown in at most 23 characters:
 from `1e15` up, or below `1e-15`, it is in e notation, `1e+60`, and digits
 that do not fit are cut and marked `…`. Only the display is cut, and
@@ -182,7 +182,7 @@ that do not fit are cut and marked `…`. Only the display is cut, and
   `sum avg min max count`, `abs round floor ceil sqrt` and the usual maths,
   `today() now() year month day weekday`, `succ` for the next value, and
   the type names as conversions,
-  `x.Int`, `x.Num`, `x.Percent`, `x.Text`.
+  `x.Int`, `x.Float`, `x.Percent`, `x.String`.
 - A date plus a whole number is days later; two dates subtract to days.
   `n.day`, `n.week`, `n.month` and `n.year` next to a date say which unit:
   `Placed + 1.month`, which keeps the day of the month or clamps it to the

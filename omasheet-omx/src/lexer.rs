@@ -14,7 +14,7 @@ pub enum Tok {
     Decimal(BigRational),
     /// A number with a `%`, already divided by a hundred.
     Percent(BigRational),
-    Num(f64),
+    Float(f64),
     Str(String),
     Date(i32),
     Time(i32),
@@ -65,7 +65,7 @@ pub enum Tok {
 impl Tok {
     pub fn describe(&self) -> String {
         match self {
-            Tok::Int(_) | Tok::Decimal(_) | Tok::Percent(_) | Tok::Num(_) => "a number".into(),
+            Tok::Int(_) | Tok::Decimal(_) | Tok::Percent(_) | Tok::Float(_) => "a number".into(),
             Tok::Str(_) => "a string".into(),
             Tok::Date(_) => "a date".into(),
             Tok::Time(_) => "a time".into(),
@@ -182,7 +182,7 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                     } else {
                         f64::NAN
                     };
-                    Tok::Num(f)
+                    Tok::Float(f)
                 }
                 _ => Tok::Ident(word.to_string()),
             };
@@ -405,7 +405,7 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
         let f: f64 = raw
             .parse()
             .map_err(|_| (format!("`{raw}` is not a number"), i, j))?;
-        Tok::Num(if percent { f / 100.0 } else { f })
+        Tok::Float(if percent { f / 100.0 } else { f })
     } else if is_decimal || percent {
         let digits: String = raw.chars().filter(|&c| c != '.').collect();
         let numer: BigInt = digits.parse().unwrap();
@@ -441,7 +441,7 @@ mod tests {
             toks("20%")[0],
             Tok::Percent(BigRational::new(1.into(), 5.into()))
         );
-        assert_eq!(toks("1e-100")[0], Tok::Num(1e-100));
+        assert_eq!(toks("1e-100")[0], Tok::Float(1e-100));
         assert_eq!(
             toks("0..2"),
             vec![

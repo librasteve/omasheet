@@ -107,10 +107,10 @@ fn exact_arithmetic() {
 
 #[test]
 fn no_silent_loss_of_exactness() {
-    assert_eq!(calc("(1/3).Num"), "0.3333333333333333");
-    assert_eq!(calc("Num(1) / 3"), "0.3333333333333333");
+    assert_eq!(calc("(1/3).Float"), "0.3333333333333333");
+    assert_eq!(calc("Float(1) / 3"), "0.3333333333333333");
     assert_eq!(calc("1/3 + 1/7 + 1/11 + 1/13 + 1/17"), "35881/51051");
-    assert!(calc_err(None, "2 ** 0.5").contains("`.Num`"));
+    assert!(calc_err(None, "2 ** 0.5").contains("`.Float`"));
     assert!(calc_err(None, "approx(1/3)").contains("unknown function `approx`"));
 }
 
@@ -121,16 +121,22 @@ fn decimals() {
     // The literal says which: a decimal point or a fraction is a Decimal
     // and a `%` a Percent.
     for (expr, message) in [
-        ("19.99 + true", "cannot apply `+` to Decimal and Bool"),
-        ("20% + true", "cannot apply `+` to Percent and Bool"),
+        ("19.99 + true", "cannot apply `+` to Decimal and Boolean"),
+        ("20% + true", "cannot apply `+` to Percent and Boolean"),
         // Sums, differences, products and quotients of decimals are
         // decimals, though a quotient need not end.
         (
             "19.99 * 3 - 0.5 + true",
-            "cannot apply `+` to Decimal and Bool",
+            "cannot apply `+` to Decimal and Boolean",
         ),
-        ("19.99 / 3 + true", "cannot apply `+` to Decimal and Bool"),
-        ("19.99 + 1/7 + true", "cannot apply `+` to Decimal and Bool"),
+        (
+            "19.99 / 3 + true",
+            "cannot apply `+` to Decimal and Boolean",
+        ),
+        (
+            "19.99 + 1/7 + true",
+            "cannot apply `+` to Decimal and Boolean",
+        ),
     ] {
         let err = calc_err(None, expr);
         assert!(err.contains(message), "{expr}: {err}");
@@ -184,9 +190,9 @@ fn decimals() {
     // An average of decimals is a Decimal, as are their sum, least and
     // greatest.
     let file = "sheet P\n\nPrice\n4.50\n9\n0.25\n";
-    assert!(calc_err(Some(file), "P.Price.sum() + true").contains("Decimal and Bool"));
-    assert!(calc_err(Some(file), "P.Price.max() + true").contains("Decimal and Bool"));
-    assert!(calc_err(Some(file), "P.Price.avg() + true").contains("Decimal and Bool"));
+    assert!(calc_err(Some(file), "P.Price.sum() + true").contains("Decimal and Boolean"));
+    assert!(calc_err(Some(file), "P.Price.max() + true").contains("Decimal and Boolean"));
+    assert!(calc_err(Some(file), "P.Price.avg() + true").contains("Decimal and Boolean"));
     assert_eq!(ask(file, "P.Price.sum()"), "13.75");
 }
 
@@ -212,10 +218,16 @@ fn percents() {
     assert_eq!(calc("[20%, 10%].max()"), "20%");
     assert_eq!(calc("[20%, 1/3].sum()"), "8/15");
     for (expr, message) in [
-        ("20% + 5% + true", "cannot apply `+` to Percent and Bool"),
-        ("20% * 2 + true", "cannot apply `+` to Decimal and Bool"),
-        ("20% + 0.5 + true", "cannot apply `+` to Decimal and Bool"),
-        ("20% + 1.5e0 + true", "cannot apply `+` to Num and Bool"),
+        ("20% + 5% + true", "cannot apply `+` to Percent and Boolean"),
+        ("20% * 2 + true", "cannot apply `+` to Decimal and Boolean"),
+        (
+            "20% + 0.5 + true",
+            "cannot apply `+` to Decimal and Boolean",
+        ),
+        (
+            "20% + 1.5e0 + true",
+            "cannot apply `+` to Float and Boolean",
+        ),
     ] {
         let err = calc_err(None, expr);
         assert!(err.contains(message), "{expr}: {err}");
@@ -241,13 +253,13 @@ fn percents() {
     assert_eq!(calc("(1/8).Percent"), "12.5%");
     assert_eq!(calc("(5/12).Percent"), "125/3%");
     assert_eq!(calc("(5/12).Percent * 12"), "5");
-    assert_eq!(calc("(5/12).Percent.Text"), "125/3%");
+    assert_eq!(calc("(5/12).Percent.String"), "125/3%");
     assert_eq!(calc("(1.5e-1).Percent"), "15%");
     assert_eq!(calc("\"20%\".Percent"), "20%");
     assert_eq!(calc("20%.Decimal"), "0.2");
     assert_eq!(calc("20%.Decimal"), "0.2");
     assert_eq!(calc("150%.Int"), "1");
-    assert_eq!(calc("20%.Num"), "0.2");
+    assert_eq!(calc("20%.Float"), "0.2");
 
     // A Percent column takes any exact number, and shows it as a percentage.
     let file = "sheet S\n\nMargin : Percent\nShare : Decimal\n\n\
@@ -259,7 +271,7 @@ fn percents() {
     assert_eq!(ask(file, "S.Margin.avg()"), "245/6%");
     // A column of percentages is a Percent column; one with a plain number
     // among them is a Decimal column.
-    assert!(calc_err(Some(file), "S[Rate; 0] + true").contains("Decimal and Bool"));
+    assert!(calc_err(Some(file), "S[Rate; 0] + true").contains("Decimal and Boolean"));
     assert_eq!(ask(file, "S.Rate"), "[20%, 0.5]");
     // In a Decimal column a percentage is the number it stands for.
     assert_eq!(ask(file, "S.Share"), "[0.2, 1/3]");
@@ -279,7 +291,7 @@ fn percents() {
     );
     let errors = lint_errors(&format!("{rates}= 1.5e0 | 1 | 1\n"));
     assert!(
-        errors[0].contains("declared `Percent` but this is `Num`"),
+        errors[0].contains("declared `Percent` but this is `Float`"),
         "{errors:?}"
     );
     let errors = lint_errors(&format!("{rates}20% | 20% | 1\n"));
@@ -339,14 +351,14 @@ fn display_of_rationals() {
     assert_eq!(show("[1/3, 0.5]"), "[0.33333333333333333333…, 0.5]");
     // A Num is never rounded: shown with the fewest digits that give the
     // same Num back.
-    assert_eq!(show("4.Num"), "4");
-    assert_eq!(show("(1/3).Num"), "0.3333333333333333");
+    assert_eq!(show("4.Float"), "4");
+    assert_eq!(show("(1/3).Float"), "0.3333333333333333");
     assert_eq!(show("sqrt(2)"), "1.4142135623730951");
     assert_eq!(show("sqrt(2) * 1e20"), "1.4142135623730951e+20");
-    assert_eq!(show("sqrt(2).Text"), "1.4142135623730951");
+    assert_eq!(show("sqrt(2).String"), "1.4142135623730951");
     // Only the display: the value is exact still.
     assert_eq!(show("1/3 * 3 == 1"), "true");
-    assert_eq!(show("(1/3).Text"), "1/3");
+    assert_eq!(show("(1/3).String"), "1/3");
 }
 
 #[test]
@@ -359,18 +371,18 @@ fn conversions() {
     assert_eq!(calc("Int(1.5e3)"), "1500");
     assert_eq!(calc("Int(true) + Int(false)"), "1");
     assert_eq!(calc("Decimal(1e-1)"), "0.1");
-    assert_eq!(calc("Decimal(Num(1/3)) == 1/3"), "false");
+    assert_eq!(calc("Decimal(Float(1/3)) == 1/3"), "false");
     assert_eq!(calc("7.Decimal / 2"), "3.5");
-    assert_eq!(calc("(1/4).Num"), "0.25");
-    assert_eq!(calc("(1/3).Text"), "1/3");
-    assert_eq!(calc("Text(2025-01-31)"), "2025-01-31");
-    assert_eq!(calc("Bool(0)"), "false");
-    assert_eq!(calc("0.5.Bool"), "true");
+    assert_eq!(calc("(1/4).Float"), "0.25");
+    assert_eq!(calc("(1/3).String"), "1/3");
+    assert_eq!(calc("String(2025-01-31)"), "2025-01-31");
+    assert_eq!(calc("Boolean(0)"), "false");
+    assert_eq!(calc("0.5.Boolean"), "true");
     // Text is read the way a cell is.
     assert_eq!(calc("Int(\"42\") + 1"), "43");
     assert_eq!(calc("\"20%\".Decimal"), "0.2");
     assert_eq!(calc("Date(\"2025-01-31\") + 1"), "2025-02-01");
-    assert_eq!(calc("Bool(\"true\")"), "true");
+    assert_eq!(calc("Boolean(\"true\")"), "true");
     assert!(calc_err(None, "Int(\"abc\")").contains("`abc` is not an Int"));
     // Dates and times.
     assert_eq!(calc("2025-01-31T09:30.Date"), "2025-01-31");
@@ -378,7 +390,7 @@ fn conversions() {
     assert_eq!(calc("2025-01-31.DateTime"), "2025-01-31T00:00");
     // Each value of a vector, and empty stays empty.
     assert_eq!(ask(SALES, "(Sales.Revenue / 7).Int"), "[14, 17, 21]");
-    assert_eq!(ask(SALES, "Sales.Revenue.Num.sum()"), "370");
+    assert_eq!(ask(SALES, "Sales.Revenue.Float.sum()"), "370");
     assert_eq!(ask("sheet T\n\nA | B\n1.5 |\n", "T.B.Int"), "[empty]");
     // What cannot be converted is caught before anything is calculated.
     assert!(calc_err(None, "Int(2025-01-31)").contains("`Int` cannot be applied to Date"));
@@ -687,7 +699,7 @@ fn math_functions() {
     assert_eq!(ask(SALES, "Sales.Revenue.sqrt().floor()"), "[10, 10, 12]");
     // Outside the domain, and on the wrong kind of value.
     assert_eq!(calc("[sqrt(-1), ln(0), asin(2)]"), "[NaN, -Inf, NaN]");
-    assert!(calc_err(None, "sin(\"x\")").contains("`sin` cannot be applied to Text"));
+    assert!(calc_err(None, "sin(\"x\")").contains("`sin` cannot be applied to String"));
     assert!(calc_err(None, "sqr(4)").contains("did you mean `sqrt`?"));
     // Every function in the directory is one the checker knows.
     for f in omasheet_engine::omx::funcs::FUNCTIONS {
@@ -1059,7 +1071,7 @@ fn cell_content() {
     );
     assert_eq!(calc("[[1, NaN, 3].max(), [1, Inf, 3].max()]"), "[NaN, Inf]");
     assert!(calc_err(None, "Inf.Int").contains("Inf has no exact value"));
-    let cells = "sheet T\n\nN : Num\nT : Text\n\nN | T | Any | Quoted\nInf | Inf | -Inf | \"NaN\"\nNaN | NaN | NaN | \"Inf\"\n";
+    let cells = "sheet T\n\nN : Float\nT : String\n\nN | T | Any | Quoted\nInf | Inf | -Inf | \"NaN\"\nNaN | NaN | NaN | \"Inf\"\n";
     assert_eq!(ask(cells, "T.N"), "[Inf, NaN]");
     assert_eq!(
         ask(cells, "[T[Any; 0] < 0, T[Any; 1] != T[Any; 1]]"),
@@ -1075,7 +1087,7 @@ fn cell_content() {
         errors[0]
     );
     // An unmarked expression in a text column is text.
-    let file = "sheet T\n\nNote : Text\n\nRevenue | Note\n100 | Revenue - Cost\n200 | \"= see appendix\"\n";
+    let file = "sheet T\n\nNote : String\n\nRevenue | Note\n100 | Revenue - Cost\n200 | \"= see appendix\"\n";
     assert_eq!(
         ask(file, "T.Note"),
         "[\"Revenue - Cost\", \"= see appendix\"]"
@@ -1119,7 +1131,7 @@ fn one_type_error_blocks_execution() {
     let out = view("test.omx", file);
     assert_eq!(out.errors.len(), 1);
     assert!(
-        out.errors[0].contains("cannot apply `+` to Int and Text"),
+        out.errors[0].contains("cannot apply `+` to Int and String"),
         "{}",
         out.errors[0]
     );
@@ -1255,7 +1267,7 @@ fn custom_function_does_not_see_the_callers_row() {
 fn custom_function_is_checked_for_each_call() {
     let err = calc_err(Some(FUNCS), "WithTax(\"ten\")");
     assert!(
-        err.contains("in `WithTax`: cannot apply `*` to Text"),
+        err.contains("in `WithTax`: cannot apply `*` to String"),
         "{err}"
     );
     let err = calc_err(Some(FUNCS), "Margin(1)");
@@ -1263,7 +1275,7 @@ fn custom_function_is_checked_for_each_call() {
     assert!(err.contains("Margin(revenue, cost)"), "{err}");
     let err = calc_err(Some(FUNCS), "Margin(\"ten\", 1)");
     assert!(
-        err.contains("in `Margin`: cannot apply `-` to Text"),
+        err.contains("in `Margin`: cannot apply `-` to String"),
         "{err}"
     );
     // Nothing is a tenth of nothing, and that is a value, not an error.

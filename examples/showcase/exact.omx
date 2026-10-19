@@ -1,9 +1,9 @@
 # Exact arithmetic. Every number here is exact unless it is asked to be a
-# Num, a floating-point number, as the Float column is.
+# Float, a floating-point number, as the Float column is.
 
 sheet Sums
 
-Float : Num
+Float : Float
 
 | Case            | Exact                 | Float                   | Same |
 | --------------- | --------------------- | ----------------------- | ---- |

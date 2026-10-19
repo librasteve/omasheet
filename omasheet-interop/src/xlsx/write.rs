@@ -147,9 +147,9 @@ fn letters(col: usize) -> String {
 
 fn kind_of(s: S) -> Kind {
     match s {
-        S::Int | S::Decimal | S::Percent | S::Num => Kind::Number,
-        S::Text => Kind::Text,
-        S::Bool => Kind::Bool,
+        S::Int | S::Decimal | S::Percent | S::Float => Kind::Number,
+        S::String => Kind::Text,
+        S::Boolean => Kind::Bool,
         S::Date => Kind::Date,
         S::Time => Kind::Time,
         S::DateTime => Kind::DateTime,
@@ -273,13 +273,13 @@ impl Writer<'_> {
         let worksheet = self.worksheet(t, cx)?;
         let d = if fixed { "$" } else { "" };
         let kind = match self.engine.cell_shown(t, c, r as usize) {
-            Value::Int(_) | Value::Decimal(_) | Value::Percent(_) | Value::Num(_) => Kind::Number,
-            Value::Text(..) => Kind::Text,
-            Value::Bool(_) => Kind::Bool,
+            Value::Int(_) | Value::Decimal(_) | Value::Percent(_) | Value::Float(_) => Kind::Number,
+            Value::String(..) => Kind::Text,
+            Value::Boolean(_) => Kind::Bool,
             Value::Date(_) => Kind::Date,
             Value::Time(_) => Kind::Time,
             Value::DateTime(_) | Value::Zoned(_) => Kind::DateTime,
-            Value::Empty => kind_of(sheet.cols[c].ty),
+            Value::Null => kind_of(sheet.cols[c].ty),
             _ => Kind::Unknown,
         };
         Ok(Some(Expr {
@@ -535,7 +535,7 @@ impl Writer<'_> {
             Lit::Decimal(r) | Lit::Percent(r) => {
                 Expr::new(format!("{}/{}", r.numer(), r.denom()), MUL, Kind::Number)
             }
-            Lit::Num(f) if f.is_finite() => {
+            Lit::Float(f) if f.is_finite() => {
                 let size = f.abs();
                 number(if size == 0.0 || (1e-5..1e15).contains(&size) {
                     format!("{f}")
@@ -543,12 +543,12 @@ impl Writer<'_> {
                     format!("{f:E}")
                 })
             }
-            Lit::Num(_) => return Err(LITERAL),
-            Lit::Text(s) if s.chars().count() <= LONGEST_TEXT => {
+            Lit::Float(_) => return Err(LITERAL),
+            Lit::String(s) if s.chars().count() <= LONGEST_TEXT => {
                 Expr::atom(format!("\"{}\"", s.replace('"', "\"\"")), Kind::Text)
             }
-            Lit::Text(_) => return Err(LITERAL),
-            Lit::Bool(b) => Expr::atom(if *b { "TRUE" } else { "FALSE" }.into(), Kind::Bool),
+            Lit::String(_) => return Err(LITERAL),
+            Lit::Boolean(b) => Expr::atom(if *b { "TRUE" } else { "FALSE" }.into(), Kind::Bool),
             Lit::Date(d) => Expr::atom(ymd(*d), Kind::Date),
             Lit::Time(t) => Expr::atom(hms(*t), Kind::Time),
             Lit::DateTime(t) => {
@@ -645,11 +645,11 @@ impl Writer<'_> {
                 ..x.clone()
             },
             Func::To(S::Int) if number => of("TRUNC", Kind::Number),
-            Func::To(S::Decimal | S::Percent | S::Num) if number => x.clone(),
-            Func::To(S::Int | S::Decimal | S::Num) if x.kind == Kind::Bool => {
+            Func::To(S::Decimal | S::Percent | S::Float) if number => x.clone(),
+            Func::To(S::Int | S::Decimal | S::Float) if x.kind == Kind::Bool => {
                 Expr::atom(format!("IF({},1,0)", x.text), Kind::Number)
             }
-            Func::To(S::Bool) if number => {
+            Func::To(S::Boolean) if number => {
                 Expr::new(format!("{}<>0", x.within(COMPARE + 1)), COMPARE, Kind::Bool)
             }
             Func::Math(m) if number => {

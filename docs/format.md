@@ -64,7 +64,7 @@ cell of a computed column.
 
 ## Types
 
-`Int`, `Decimal`, `Percent`, `Num`, `Text`, `Bool`, `Date`, `Time`,
+`Int`, `Decimal`, `Percent`, `Float`, `String`, `Boolean`, `Date`, `Time`,
 `DateTime`.
 A column with no `Name : Type` line takes its type from its cells.
 
@@ -73,9 +73,9 @@ A column with no `Name : Type` line takes its type from its cells.
 | `Int` | `42`, `1_000_000` |
 | `Decimal` | `19.99`, `1/7`, `2 3/4` — exact |
 | `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
-| `Num` | `1.5e3`, `Inf`, `-Inf`, `NaN` — floating point |
-| `Text` | `hi` or `"hi"`  (escape \|) |
-| `Bool` | `true`, `false` |
+| `Float` | `1.5e3`, `Inf`, `-Inf`, `NaN` — floating point |
+| `String` | `hi` or `"hi"`  (escape \|) |
+| `Boolean` | `true`, `false` |
 | `Date` | `2025-01-31` |
 | `Time` | `09:30`, `09:30:15` |
 | `DateTime` | `2025-01-31T09:30` |

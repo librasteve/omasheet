@@ -9,7 +9,7 @@ fn Share(x) = round(x / People, 0.01)
 sheet Bills
 
 Due  : Date
-Note : Text
+Note : String
 
 | Bill        | Due        | Amount  | Each | Paid  | Note                                      |
 | ----------- | ---------- | ------- | ---- | ----- | ----------------------------------------- |
