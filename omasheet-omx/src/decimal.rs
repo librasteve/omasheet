@@ -111,6 +111,87 @@ impl Dec {
         self.unscaled as f64 / 10f64.powi(self.scale as i32)
     }
 
+    /// The shortest decimal that reads back as the same `f64`. `None` for an
+    /// infinity or a `NaN`, which no decimal stands for.
+    pub fn from_f64(f: f64) -> Option<Dec> {
+        if !f.is_finite() {
+            return None;
+        }
+        Dec::parse(&format!("{f:e}"))
+    }
+
+    /// Whether this was rounded at the widest scale there is, which is as
+    /// near as a fixed-point decimal comes to "does not end".
+    pub fn is_long(self) -> bool {
+        self.scale >= MAX_PRECISION
+    }
+
+    /// The significant digits, with no leading or trailing zeros, and the
+    /// power of ten of the first of them: `19.99` gives `("1999", 1)` and
+    /// `1000` gives `("1", 3)`. Zero gives `("0", 0)`.
+    pub fn digits_and_exponent(self) -> (String, i64) {
+        if self.unscaled == 0 {
+            return ("0".to_string(), 0);
+        }
+        let digits = self.unscaled.unsigned_abs().to_string();
+        let exponent = digits.len() as i64 - 1 - self.scale as i64;
+        let trimmed = digits.trim_end_matches('0');
+        let digits = if trimmed.is_empty() { "0" } else { trimmed };
+        (digits.to_string(), exponent)
+    }
+
+    /// The power of ten of this number: `e` where `10^e <= |self| < 10^(e+1)`.
+    pub fn magnitude(self) -> i64 {
+        self.digits_and_exponent().1
+    }
+
+    /// `-1`, `0` or `1` by sign.
+    pub fn signum(self) -> i64 {
+        self.unscaled.signum() as i64
+    }
+
+    /// Towards zero.
+    pub fn trunc(self) -> Dec {
+        match pow10(self.scale) {
+            Some(factor) => Dec {
+                unscaled: self.unscaled / factor,
+                scale: 0,
+            },
+            None => self,
+        }
+    }
+
+    /// Towards negative infinity.
+    pub fn floor(self) -> Dec {
+        let whole = self.trunc();
+        if self.unscaled < 0 && whole.unscaled * pow10(self.scale).unwrap_or(1) != self.unscaled {
+            Dec {
+                unscaled: whole.unscaled - 1,
+                scale: 0,
+            }
+        } else {
+            whole
+        }
+    }
+
+    /// Towards positive infinity.
+    pub fn ceil(self) -> Dec {
+        let whole = self.trunc();
+        if self.unscaled > 0 && whole.unscaled * pow10(self.scale).unwrap_or(1) != self.unscaled {
+            Dec {
+                unscaled: whole.unscaled + 1,
+                scale: 0,
+            }
+        } else {
+            whole
+        }
+    }
+
+    /// To the nearest whole number, half away from zero.
+    pub fn round(self) -> Dec {
+        self.rescale(0).unwrap_or_else(|| self.trunc())
+    }
+
     /// The same number at `scale`, or `None` if widening it overflows. A
     /// narrower scale rounds half away from zero.
     pub fn rescale(self, scale: u32) -> Option<Dec> {
@@ -241,7 +322,9 @@ impl Dec {
                 0
             };
             if let Some(d) = Dec::new(q + bump, want) {
-                return Some(d);
+                // Trimmed, so that a quotient that terminates is not left
+                // padded out to the widest scale and mistaken for a long one.
+                return Some(d.trimmed());
             }
         }
         None
@@ -513,6 +596,56 @@ mod tests {
         assert_eq!(d("-1.25").rescale(1).unwrap().to_plain_string(), "-1.3");
         assert_eq!(d("1.24").rescale(1).unwrap().to_plain_string(), "1.2");
         assert_eq!(d("1.5").rescale(0).unwrap().to_plain_string(), "2");
+    }
+
+    #[test]
+    fn reads_floats_at_their_shortest() {
+        assert_eq!(Dec::from_f64(0.1).unwrap().to_plain_string(), "0.1");
+        assert_eq!(Dec::from_f64(1.5e3).unwrap().to_plain_string(), "1500");
+        assert_eq!(Dec::from_f64(-0.25).unwrap().to_plain_string(), "-0.25");
+        assert_eq!(
+            Dec::from_f64(1.0 / 3.0).unwrap().to_plain_string(),
+            "0.3333333333333333"
+        );
+        assert!(Dec::from_f64(f64::INFINITY).is_none());
+        assert!(Dec::from_f64(f64::NAN).is_none());
+    }
+
+    #[test]
+    fn splits_into_digits_and_an_exponent() {
+        assert_eq!(d("19.99").digits_and_exponent(), ("1999".into(), 1));
+        assert_eq!(d("1000").digits_and_exponent(), ("1".into(), 3));
+        assert_eq!(d("0.001").digits_and_exponent(), ("1".into(), -3));
+        assert_eq!(d("-7").digits_and_exponent(), ("7".into(), 0));
+        assert_eq!(Dec::ZERO.digits_and_exponent(), ("0".into(), 0));
+        let third = d("1").checked_div(d("3")).unwrap();
+        assert_eq!(third.magnitude(), -1);
+        assert_eq!(d("1000").magnitude(), 3);
+    }
+
+    #[test]
+    fn a_value_rounded_at_the_limit_reads_as_long() {
+        assert!(d("1").checked_div(d("3")).unwrap().is_long());
+        assert!(d("1").checked_div(d("7")).unwrap().is_long());
+        assert!(!d("0.125").is_long());
+        assert!(!d("1").checked_div(d("8")).unwrap().is_long());
+    }
+
+    #[test]
+    fn rounds_to_whole_numbers_each_way() {
+        for (s, trunc, floor, ceil, round) in [
+            ("2.75", "2", "2", "3", "3"),
+            ("-2.75", "-2", "-3", "-2", "-3"),
+            ("2.25", "2", "2", "3", "2"),
+            ("-7", "-7", "-7", "-7", "-7"),
+        ] {
+            assert_eq!(d(s).trunc().to_plain_string(), trunc, "trunc {s}");
+            assert_eq!(d(s).floor().to_plain_string(), floor, "floor {s}");
+            assert_eq!(d(s).ceil().to_plain_string(), ceil, "ceil {s}");
+            assert_eq!(d(s).round().to_plain_string(), round, "round {s}");
+        }
+        assert_eq!(d("-2.75").signum(), -1);
+        assert_eq!(Dec::ZERO.signum(), 0);
     }
 
     #[test]
