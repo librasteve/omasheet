@@ -209,6 +209,8 @@ omasheet export file.omx --xlsx          # file.xlsx
 omasheet export file.omx --csv --sheet Orders -o orders.csv
 omasheet import orders.json              # a list of row objects, or {"Sheet": [rows]}
 omasheet export file.omx --json          # file.json: {"Sheet": [{"Col": value}]}
+omasheet import sales.parquet            # types come from the file's schema
+omasheet export file.omx --parquet       # a file for each sheet, typed
 omasheet render report.md --html -o report.html
 ```
 

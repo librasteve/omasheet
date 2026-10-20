@@ -291,7 +291,7 @@ fn export_needs_a_format_and_a_file_that_compiles() {
     let out = omasheet(&["export", "examples/budget.omx"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(
-        stderr(&out).contains("--xlsx, --csv or --json"),
+        stderr(&out).contains("--xlsx, --csv, --json or --parquet"),
         "{}",
         stderr(&out)
     );
@@ -348,7 +348,7 @@ fn import_says_what_it_can_read() {
     let out = omasheet(&["import", "README.md"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(
-        stderr(&out).contains("(.xlsx), a CSV file (.csv) or JSON (.json)"),
+        stderr(&out).contains("(.xlsx), a CSV file (.csv), JSON (.json) or Parquet (.parquet)"),
         "{}",
         stderr(&out)
     );

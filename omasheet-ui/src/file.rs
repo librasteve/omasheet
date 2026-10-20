@@ -425,6 +425,7 @@ impl qobject::File {
                 match kind {
                     "xlsx" => omasheet_interop::xlsx::import(&bytes),
                     "json" => omasheet_interop::json::import(&stem, &bytes),
+                    "parquet" => omasheet_interop::parquet::import(&stem, &bytes),
                     _ => omasheet_interop::csv::import(&stem, &bytes),
                 }
             });
@@ -453,7 +454,7 @@ impl qobject::File {
     fn open_file(mut self: Pin<&mut Self>, path: PathBuf) -> bool {
         let kind = path.extension().unwrap_or_default().to_string_lossy();
         let kind = kind.to_ascii_lowercase();
-        if matches!(kind.as_str(), "xlsx" | "csv" | "json") {
+        if matches!(kind.as_str(), "xlsx" | "csv" | "json" | "parquet") {
             return self.import_file(path, &kind);
         }
         match std::fs::read_to_string(&path) {
@@ -529,7 +530,7 @@ impl qobject::File {
             .extension()
             .map(|e| e.to_string_lossy().to_ascii_lowercase());
         let kind = match named {
-            Some(named) if matches!(named.as_str(), "xlsx" | "csv" | "json") => named,
+            Some(named) if matches!(named.as_str(), "xlsx" | "csv" | "json" | "parquet") => named,
             _ => {
                 let kind = kind.to_string();
                 path.as_mut_os_string().push(format!(".{kind}"));
@@ -537,8 +538,8 @@ impl qobject::File {
             }
         };
         let sheet = sheet.to_string();
-        if kind == "csv" && sheet.is_empty() {
-            let message = "CSV holds one sheet: show the sheet to export first";
+        if matches!(kind.as_str(), "csv" | "parquet") && sheet.is_empty() {
+            let message = "one sheet to a file: show the sheet to export first";
             self.as_mut().set_status(QString::from(message));
             return false;
         }
@@ -547,6 +548,9 @@ impl qobject::File {
         let exported = match kind.as_str() {
             "csv" => omasheet_interop::csv::export(&name, &text, Some(&sheet), Options::default()),
             "json" => omasheet_interop::json::export(&name, &text, None, Options::default()),
+            "parquet" => {
+                omasheet_interop::parquet::export(&name, &text, Some(&sheet), Options::default())
+            }
             _ => omasheet_interop::xlsx::export(&name, &text, None, Options::default()),
         };
         let written = exported
@@ -580,7 +584,7 @@ impl qobject::File {
         let kind = kind.to_string();
         // As the command line names them: budget.Sales.csv, unless the
         // file has the one sheet.
-        if kind == "csv" && rust.doc.snapshot().sheets.len() > 1 {
+        if matches!(kind.as_str(), "csv" | "parquet") && rust.doc.snapshot().sheets.len() > 1 {
             name.push('.');
             name.push_str(&sheet.to_string());
         }

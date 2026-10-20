@@ -302,8 +302,10 @@ impl Dec {
 
     /// The widest scale this number can be written at and still fit: it needs
     /// `magnitude + 1` digits before the point, and the rest are free. `1`
-    /// reaches 37 places where `0.3` reaches 38.
-    fn max_scale(self) -> u32 {
+    /// reaches 37 places where `0.3` reaches 38. A column written at one
+    /// scale, as a Parquet decimal is, can use no more than the least of
+    /// these over its values.
+    pub fn max_scale(self) -> u32 {
         if self.unscaled == 0 {
             return MAX_PRECISION;
         }

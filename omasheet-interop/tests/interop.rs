@@ -4,7 +4,7 @@
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use omasheet_engine::Options;
-use omasheet_interop::{Datum, Exported, csv, json, xlsx};
+use omasheet_interop::{Datum, Exported, csv, json, parquet, xlsx};
 use rust_xlsxwriter::{Format, Formula, Workbook};
 use std::io::Cursor;
 
@@ -834,4 +834,123 @@ fn json_reads_a_list_of_rows_as_one_sheet() {
     for bad in ["{", "42", "{}", "[]", r#"{"T": 1}"#] {
         assert!(json::import("x", bad.as_bytes()).is_err(), "{bad}");
     }
+}
+
+// ---- Parquet ---------------------------------------------------------------
+
+fn parquet_of(text: &str, sheet: Option<&str>) -> Exported {
+    parquet::export("file.omx", text, sheet, options()).expect("the file exports")
+}
+
+#[test]
+fn parquet_writes_a_file_for_each_sheet() {
+    let out = parquet_of(BUDGET, None);
+    assert_eq!(out.files.len(), 2);
+    assert_eq!(out.files[0].sheet.as_deref(), Some("Sales"));
+    assert_eq!(out.files[1].sheet.as_deref(), Some("Summary"));
+    // Parquet files begin and end with its magic.
+    for file in &out.files {
+        assert_eq!(&file.bytes[..4], b"PAR1", "not a Parquet file");
+        assert_eq!(&file.bytes[file.bytes.len() - 4..], b"PAR1");
+    }
+}
+
+#[test]
+fn parquet_takes_each_column_type_from_the_schema() {
+    let file = "sheet T\n\n\
+                N : Int\nP : Decimal\nR : Percent\nF : Float\nS : String\n\
+                B : Boolean\nD : Date\nA : Time\nW : DateTime\n\n\
+                N | P | R | F | S | B | D | A | W\n\
+                7 | 19.99 | 20% | 1.5e3 | hi | true | 2025-01-31 | 09:30 | 2025-01-31T09:30\n\
+                -3 | 0.125 | 12.5% | Inf | \"42\" | false | 2025-02-01 | 17:05 | 2025-02-01T17:05\n";
+    let out = parquet_of(file, None);
+    assert_eq!(out.files.len(), 1);
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    // A schema line is written where re-reading the text would give
+    // something else: a `Float`, a `Boolean` and the dates and times. A
+    // whole number and a decimal need none, since their text reads back as
+    // what they are.
+    for line in [
+        "F : Float",
+        "B : Boolean",
+        "D : Date",
+        "A : Time",
+        "W : DateTime",
+    ] {
+        assert!(
+            back.source.contains(line),
+            "{line} missing:\n{}",
+            back.source
+        );
+    }
+    // And the values with them.
+    assert_eq!(eval(&back.source, "t[N; 0]"), "7");
+    assert_eq!(eval(&back.source, "t[P; 0]"), "19.99");
+    assert_eq!(eval(&back.source, "t[D; 1]"), "2025-02-01");
+    assert_eq!(eval(&back.source, "t[A; 0]"), "09:30");
+    assert_eq!(eval(&back.source, "t[W; 1]"), "2025-02-01T17:05");
+    assert_eq!(eval(&back.source, "t[B; 0]"), "true");
+}
+
+#[test]
+fn parquet_keeps_a_decimal_exact() {
+    // A decimal column is written as a Parquet decimal, so every digit of it
+    // survives the trip: this is what CSV cannot do.
+    let file = "sheet T\n\nA : Decimal\n\nA\n19.99\n0.0009765625\n= 1/3\n";
+    let out = parquet_of(file, None);
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    assert_eq!(eval(&back.source, "t[A; 0]"), "19.99");
+    assert_eq!(eval(&back.source, "t[A; 1]"), "0.0009765625");
+    // A Parquet column has one scale for all its values, so the widest it
+    // can use is the narrowest any of them allows: `19.99` needs two digits
+    // before the point, which leaves thirty-six after it. A third is written
+    // to that scale rather than its own thirty-eight.
+    assert_eq!(
+        eval(&back.source, "t[A; 2]"),
+        "0.333333333333333333333333333333333333"
+    );
+}
+
+#[test]
+fn parquet_leaves_a_failed_cell_empty() {
+    let file = "sheet T\n\nA\n= Inf.Int\n1\n";
+    let out = parquet_of(file, None);
+    assert_eq!(
+        out.notices,
+        ["cells that could not be calculated were left empty: T.A"]
+    );
+}
+
+#[test]
+fn parquet_round_trips_the_examples() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
+    let mut seen = 0;
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "omx") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        let first = parquet_of(&text, None);
+        for file in 0..first.files.len() {
+            let name = first.files[file].sheet.as_deref().unwrap_or("T");
+            let imported = parquet::import(name, &first.files[file].bytes)
+                .unwrap_or_else(|e| panic!("{} sheet {name}: {e}", path.display()));
+            lints(&imported.source);
+            // A second trip changes nothing: the types are carried, so there
+            // is nothing left to read differently.
+            let second = parquet_of(&imported.source, None);
+            let again = parquet::import(name, &second.files[0].bytes).unwrap();
+            assert_eq!(
+                imported.source,
+                again.source,
+                "{} sheet {name} is not a fixed point",
+                path.display()
+            );
+            seen += 1;
+        }
+    }
+    assert!(seen > 5, "only {seen} sheets seen");
 }

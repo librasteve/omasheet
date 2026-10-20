@@ -32,7 +32,10 @@ files, and elementwise column work.
 ## Impact
 
 - Depends on `add-interop` for the `omasheet-interop` crate and its `.omx`
-  writer, and on `add-polars-dtypes` for the types
+  writer, and on `add-polars-dtypes` for the types. It is the second of the
+  two stages: the Parquet boundary needs only the types that change has
+  already made Polars ones, and the types it has still to add reach Parquet
+  as they land
 - `polars` as an unconditional workspace dependency: no Cargo feature, no
   `cfg` branches. Every build and every CI run pays the compile cost, the
   shipped binary grows from about 1.7 MB, and the `curl | bash` install line

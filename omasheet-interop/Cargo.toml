@@ -12,4 +12,5 @@ omasheet-md.workspace = true
 calamine.workspace = true
 rust_xlsxwriter.workspace = true
 csv.workspace = true
+polars.workspace = true
 serde_json.workspace = true

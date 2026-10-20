@@ -133,17 +133,22 @@ enum Command {
         file: PathBuf,
 
         /// Write a workbook, with a worksheet for each sheet
-        #[arg(long, conflicts_with_all = ["csv", "json"])]
+        #[arg(long, conflicts_with_all = ["csv", "json", "parquet"])]
         xlsx: bool,
 
         /// Write CSV, a file for each sheet
-        #[arg(long, conflicts_with = "json")]
+        #[arg(long, conflicts_with_all = ["json", "parquet"])]
         csv: bool,
 
         /// Write JSON: the values of each sheet as a list of rows by
         /// column name, and of a sheet given with --sheet as that list alone
-        #[arg(long)]
+        #[arg(long, conflicts_with = "parquet")]
         json: bool,
+
+        /// Write Parquet, a file for each sheet, with each column as the
+        /// Parquet type its own type names
+        #[arg(long)]
+        parquet: bool,
 
         /// Export this sheet alone
         #[arg(long, value_name = "NAME")]
@@ -210,9 +215,9 @@ fn extension(path: &Path) -> String {
 
 fn import(file: &Path, output: Option<&Path>) -> Result<ExitCode, ExitCode> {
     let kind = extension(file);
-    if !matches!(kind.as_str(), "xlsx" | "csv" | "json") {
+    if !matches!(kind.as_str(), "xlsx" | "csv" | "json" | "parquet") {
         return usage(&format!(
-            "cannot import {}: give a workbook (.xlsx), a CSV file (.csv) or JSON (.json)",
+            "cannot import {}: give a workbook (.xlsx), a CSV file (.csv), JSON (.json) or Parquet (.parquet)",
             file.display()
         ));
     }
@@ -224,6 +229,7 @@ fn import(file: &Path, output: Option<&Path>) -> Result<ExitCode, ExitCode> {
     let imported = match kind.as_str() {
         "xlsx" => omasheet_interop::xlsx::import(&bytes),
         "json" => omasheet_interop::json::import(&stem, &bytes),
+        "parquet" => omasheet_interop::parquet::import(&stem, &bytes),
         _ => omasheet_interop::csv::import(&stem, &bytes),
     };
     let imported = match imported {
@@ -253,6 +259,7 @@ fn export(
     let exported = match ext {
         "xlsx" => omasheet_interop::xlsx::export(&name, &text, sheet, options),
         "json" => omasheet_interop::json::export(&name, &text, sheet, options),
+        "parquet" => omasheet_interop::parquet::export(&name, &text, sheet, options),
         _ => omasheet_interop::csv::export(&name, &text, sheet, options),
     };
     let exported = match exported {
@@ -373,15 +380,19 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
             xlsx,
             csv,
             json,
+            parquet,
             sheet,
             output,
             env,
         }) => {
-            let ext = match (xlsx, csv, json) {
+            let ext = match (xlsx, csv, json, parquet) {
                 (true, ..) => "xlsx",
-                (_, true, _) => "csv",
-                (.., true) => "json",
-                _ => return usage("say what to export as: --xlsx, --csv or --json"),
+                (_, true, ..) => "csv",
+                (_, _, true, _) => "json",
+                (.., true) => "parquet",
+                _ => {
+                    return usage("say what to export as: --xlsx, --csv, --json or --parquet");
+                }
             };
             let options = env.options()?;
             export(&file, ext, sheet.as_deref(), output.as_deref(), options)

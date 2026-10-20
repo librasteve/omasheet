@@ -67,7 +67,7 @@ omasheet                                # the app, on a new file
 omasheet examples/budget.omx            # the app, on a .omx, .csv, .json or .xlsx file
 omasheet print examples/budget.omx      # print the calculated file
 omasheet eval '1/3 + 1/6'               # 0.5, exactly
-omasheet export examples/budget.omx --xlsx [or --csv | --json]
+omasheet export examples/budget.omx --xlsx [or --csv | --json | --parquet]
 omasheet render examples/report.md --html
 ```
 

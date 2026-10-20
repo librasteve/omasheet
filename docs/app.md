@@ -4,7 +4,7 @@
 
 ```sh
 omasheet                # a new file
-omasheet file.omx       # open a file, a workbook (.xlsx) or a CSV file
+omasheet file.omx       # open a file, a workbook (.xlsx), a CSV file or Parquet
 ```
 
 `omasheet` with no command opens the app. Needs Qt 6 (`qt6-base`, `qt6-declarative`). The text is the file: every edit

@@ -1,7 +1,12 @@
 # Tasks: Parquet, and tables backed by a dataframe
 
-Needs `add-polars-dtypes` finished: the type mapping below is a naming, not a
-conversion, only once an omasheet type *is* a Polars dtype.
+The second of two stages, on the `polars-parquet` branch, built on
+`add-polars-dtypes` (the `polars-dtypes` branch). The type mapping below is a
+naming, not a conversion, only once an omasheet type *is* a Polars dtype:
+sections 1 to 4 of that change made it so for the types there are now, and
+section 2 here uses them. The types still to come there — `Binary`,
+`Duration`, a `DateTime` with a zone, and unsigned widths — reach Parquet as
+2.9 once they land.
 
 ## 0. Settle the open questions
 
@@ -10,26 +15,30 @@ conversion, only once an omasheet type *is* a Polars dtype.
 
 ## 1. The dependency
 
-- [ ] 1.1 `polars` in `[workspace.dependencies]`, with the features the work
+- [x] 1.1 `polars` in `[workspace.dependencies]`, with the features the work
       needs and no more: lazy frames, Parquet, and the dtypes
 - [ ] 1.2 Record the release binary size and the `cargo build` time before and
       after, per the risk in `design.md`
 
 ## 2. Parquet at the boundary (`parquet-interop`, `cli`)
 
-- [ ] 2.1 `omasheet-interop/src/parquet.rs`, with the two free functions the
+- [x] 2.1 `omasheet-interop/src/parquet.rs`, with the two free functions the
       other formats expose — `import(name, bytes)` and `export(name, text,
       sheet, options)` — reusing `Grid`, `Datum`, `write_omx` and `with_file`
       so diagnostics and `--sheet` behave as they do elsewhere
-- [ ] 2.2 Each column's type from the schema, never inferred (D33)
-- [ ] 2.3 Nested columns dropped with a notice
-- [ ] 2.4 `--parquet` on `omasheet export`, with the existing mutual-exclusion
+- [x] 2.2 Each column's type from the schema, never inferred (D33)
+- [x] 2.3 Nested columns dropped with a notice
+- [x] 2.4 `--parquet` on `omasheet export`, with the existing mutual-exclusion
       pattern, and `.parquet` in `omasheet import`
-- [ ] 2.5 The four hard-coded format lists: the CLI's import allow-list and
+- [x] 2.5 The four hard-coded format lists: the CLI's import allow-list and
       export match, and the app's import match and export suggestion
-- [ ] 2.6 The two CLI tests that assert the format list in a message
+- [x] 2.6 The two CLI tests that assert the format list in a message
 - [ ] 2.7 `--meta`, once 0.1 is settled
-- [ ] 2.8 A round-trip over the `examples/` corpus, asserting a second trip is
+- [ ] 2.9 Once `add-polars-dtypes` section 5 lands: `Binary` and `Duration`
+      columns read and written rather than left out, a `DateTime`'s zone kept,
+      and an integer column written back at the width and signedness its
+      schema had rather than as `int64`
+- [x] 2.8 A round-trip over the `examples/` corpus, asserting a second trip is
       a fixed point — the shape of the CSV round-trip test
 
 ## 3. The table statement (`file-format`)
@@ -74,10 +83,10 @@ conversion, only once an omasheet type *is* a Polars dtype.
 
 ## 7. The documents
 
-- [ ] 7.1 `docs/interop.md`: Parquet, `--meta`, and the type table
+- [x] 7.1 `docs/interop.md`: Parquet, `--meta`, and the type table
 - [ ] 7.2 `docs/format.md`: the `table` statement
 - [ ] 7.3 `docs/expressions.md`: `.head(n)`
-- [ ] 7.4 `.claude/skills/omasheet/SKILL.md`: the statement, the command and
+- [x] 7.4 `.claude/skills/omasheet/SKILL.md`: the statement, the command and
       the types
 - [ ] 7.5 `openspec/project.md`: the Roadmap line and the Tech Stack
 

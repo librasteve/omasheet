@@ -9,6 +9,7 @@
 pub mod csv;
 pub mod formula;
 pub mod json;
+pub mod parquet;
 pub mod xlsx;
 
 use omasheet_engine::omx::types::S;

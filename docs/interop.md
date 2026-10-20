@@ -1,7 +1,7 @@
-# Workbooks, CSV, JSON and Markdown
+# Workbooks, CSV, JSON, Parquet and Markdown
 
-The `.omx` file is the original. A workbook, a CSV file or JSON is a way in or out,
-and each command says what it could not carry across.
+The `.omx` file is the original. A workbook, a CSV file, JSON or Parquet is a way
+in or out, and each command says what it could not carry across.
 
 Import and export are a helper, not a full conversion. A file and a
 workbook are built differently: named, typed sheets and exact numbers on one
@@ -180,6 +180,41 @@ columns it happened in.
   JSON (J), or the sheet shown as CSV (C). It then asks where.
 - What was changed, rounded or left behind is listed, and stays under
   `notes` in the footer.
+
+## Parquet
+
+Parquet carries column types where CSV carries only text, so it is the one
+format that needs no guessing in either direction.
+
+```sh
+omasheet import sales.parquet            # one sheet, named after the file
+omasheet export file.omx --parquet       # a file for each sheet
+omasheet export file.omx --parquet --sheet Sales -o sales.parquet
+```
+
+An omasheet type *is* a Polars dtype, so a column is written as the Parquet
+type its own name stands for rather than converted into something near it.
+
+| | Parquet |
+|---|---|
+| `Int` | `int64` |
+| `Decimal`, `Percent` | `decimal(38, s)`, at the widest scale the column needs |
+| `Float` | `double` |
+| `Boolean` | `boolean` |
+| `String` | UTF-8 `byte_array` |
+| `Date` | `date32` |
+| `Time` | `time64`, in nanoseconds |
+| `DateTime` | `timestamp`, in microseconds |
+| a blank cell | a null |
+| a cell that failed | a null, and it is reported |
+
+On the way in, each column's type is taken from the file's schema and never
+guessed from its values, so a column of `"42"` and `"7"` held as text stays
+`String`. A column Parquet holds in a shape a sheet has no room for — a list,
+a struct, a map — is left out and named in a notice.
+
+A `Percent` is written as the decimal it holds: `20%` is `0.2`. Its display
+is no part of its value, so it comes back as a `Decimal`.
 
 ## Markdown
 
