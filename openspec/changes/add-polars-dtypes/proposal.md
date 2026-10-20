@@ -46,13 +46,16 @@ bump and a note in the README.
 
 ## Open Questions
 
-- Whether a result that overflows `i64` should fail or widen to `Decimal`.
-  D14 settles it as a diagnostic; widening would keep `2 ** 64` working and is
-  the kinder reading of "exact by default", at the cost of a column's type
-  depending on its values.
-- What `--exact` writes for a value that was rounded at 38 digits. There is no
-  `1/3` to fall back on once the rational is gone, so it can only write the 38
-  digits it holds.
+Both of the questions this proposal opened are settled, as D25 and D35: a
+whole number past an `i64` widens to a `Decimal` and is only reported past
+38 digits, and `--exact` writes every digit a value holds.
+
+What remains open is narrower:
+
+- A ratio of thirds is no longer inferred for a sequence, because squaring a
+  rounded third does not give a ninth back. `examples/sequences.omx` is given
+  its rule instead. Whether to infer a ratio within some tolerance is left
+  open; it would be the first place exactness was traded for convenience.
 
 ## Out of Scope
 

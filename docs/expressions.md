@@ -21,16 +21,19 @@ number in e notation keeps every digit it can, and where they do not all fit
 they are cut and marked: `2 ** 64` is shown as `1.8446744073709551…e+19`.
 Only the display is cut, and `omasheet eval --exact` gives it in full.
 
-A `Decimal` that does not end is cut and marked the same way: `1/3` is
-shown as `0.33333333333333333333…`. Pointing at it in the app shows more
-places, and `--exact` gives it in full, `1/3`.
+A `Decimal` holds 38 digits, so one that does not end within them is
+rounded there: `1/3` is held as 38 threes and shown cut and marked,
+`0.33333333333333333333…`. Pointing at it in the app shows the rest, and
+`--exact` gives every digit it holds. Because it is rounded, taking it back
+out again need not give what went in: `1/3 * 3` is `0.999…9`, where
+`1/8 * 8` is exactly `1`.
 
 A `Float` is never rounded: it is shown with the fewest digits that give the
 same `Float` back, `0.30000000000000004`, and always fits.
 
 A `Percent` is an exact number shown as so many in a hundred: `20%` is `1/5`.
-It is rounded to two digits after the point, `41.67%`, and `--exact` gives it
-in full, as a fraction where it does not end, `125/3%`.
+It is rounded to two digits after the point, `41.67%`, and `--exact` gives
+every digit it holds.
 
 Whole numbers and decimals divided give a `Decimal`, whether or not it
 ends: `7 / 4` is `1.75` and `7 / 3` is `2.33333333333333333333…`, held

@@ -22,7 +22,9 @@ and D13 are taken by `add-interop` and `add-packaging`.
 | D22 | Decided | `Duration` has no literal. It is inferred from the difference of two dates or times, and read from a schema | Reverses `Date - Date → Int` |
 | D23 | Decided | Unsigned columns are read and preserved but not namable: there is no `UInt` type | Nothing omasheet writes from scratch is unsigned |
 | D24 | Decided | A column list (a vector of columns) is a required concept, for the Polars operations that take several columns | Was raised as "col list" |
-| P25 | Provisional | A value too wide for `i64` is a diagnostic rather than widening to `Decimal` | Widening would keep `2 ** 64` working; see the open question |
+| D25 | Decided | A whole number past an `i64` widens to a `Decimal`; past 38 digits it is a diagnostic | Built 2026-10-20. Keeps `2 ** 64` exact at `18446744073709551616`, and `10 ** 1000` says the number is too large rather than wrapping. Resolves the former P25 |
+| D35 | Decided | `--exact` writes every digit a value holds; there is no `n/d` form to fall back to | Follows from D14: once the rational is gone, 38 digits is all there is of `1/3` |
+| D36 | Decided | A number of ordinary size too wide to print is cut and marked; e notation is only for the genuinely small or large | Keeps `0.33333333333333333333…`, which the documents and examples already showed. Whether a value "does not end" is no longer a property it has |
 
 ## The type table
 

@@ -44,7 +44,9 @@ Gross  := WithTax(Revenue)
 - A computed column may be written as a
   [sequence](expressions.md#sequences-with-), `Odd := 1, 3 ... Inf`, which
   fills it from the terms given.
-- An empty cell is empty: there is no `null`.
+- An empty cell is `Null`, and shown as nothing. Arithmetic with it gives
+  `Null`, comparison with it is neither true nor false, and an aggregate
+  passes over it rather than counting it as zero.
 
 ```omx
 sheet Sales

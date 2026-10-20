@@ -12,9 +12,12 @@ The spreadsheet becomes a readable, diffable and composable document, not just a
 
 Named, typed data and array expressions connect spreadsheet authoring to dataframe-style transformations.
 
-🔢 **Exact arithmetic as a semantic guarantee**
+🔢 **Exact decimal arithmetic as a semantic guarantee**
 
-Numeric values retain their exact decimal or rational meaning instead of floating-point approximations.
+Numeric values retain their exact decimal meaning instead of floating-point
+approximations: `0.1 + 0.2` is exactly `0.3`. Numbers are held the way Polars
+holds them — a 64-bit `Int` and a 38-digit `Decimal` — so a value too wide to
+hold is reported rather than quietly rounded.
 
 _Automatically follows system dark/light mode._
 
