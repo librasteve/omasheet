@@ -9,10 +9,9 @@ use crate::{
     names, with_file, write_named,
 };
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
-use num_rational::BigRational;
 use omasheet_engine::omx::check::{Cell, ColKind};
-use omasheet_engine::omx::convert::fraction_of;
 use omasheet_engine::omx::date;
+use omasheet_engine::omx::decimal::Dec;
 use omasheet_engine::omx::types::S;
 use omasheet_engine::omx::{Sources, compile};
 use omasheet_engine::value::{format_exact, format_rat, to_f64};
@@ -39,9 +38,11 @@ fn a1(row: u32, col: u32) -> String {
 
 /// A number of a workbook as the exact number its shortest decimal is.
 fn number(f: f64) -> Datum {
-    match fraction_of(f) {
-        Some(r) if r.is_integer() => Datum::Lit(r.to_integer().to_string(), S::Int),
-        Some(r) => Datum::Lit(format_rat(&r), S::Decimal),
+    match Dec::from_f64(f) {
+        Some(r) => match r.to_i64() {
+            Some(n) => Datum::Lit(n.to_string(), S::Int),
+            None => Datum::Lit(format_rat(&r), S::Decimal),
+        },
         None => Datum::Empty,
     }
 }
@@ -388,9 +389,9 @@ const AS_TEXT: &str = "values a workbook has no type for were written as text";
 const ZONES: &str = "date-times in another time zone were written on the clocks of the file's";
 
 /// The nearest double to an exact number, and whether it is that number.
-fn double(r: &BigRational) -> (f64, bool) {
-    let f = to_f64(r);
-    (f, BigRational::from_float(f).as_ref() == Some(r))
+fn double(r: &Dec) -> (f64, bool) {
+    let f = r.to_f64();
+    (f, Dec::from_f64(f).as_ref() == Some(r))
 }
 
 struct Formats {
@@ -419,7 +420,7 @@ fn shown<'f>(
     Some(match value {
         Value::Null => return None,
         Value::Int(n) => {
-            let (f, same) = double(&BigRational::from_integer(n.clone()));
+            let (f, same) = double(&Dec::from_i64(*n));
             if !f.is_finite() {
                 lose(AS_TEXT);
                 return Some(Shown::Written(n.to_string()));

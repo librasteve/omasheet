@@ -12,8 +12,6 @@ use crate::value::{
     RowRef, Value, View, arith, compare, equal, format_exact, format_styled, is_nan, math,
 };
 use crate::zone::{Zone, Zoned, utc_now};
-use num_bigint::BigInt;
-use num_traits::ToPrimitive;
 use omasheet_omx::ast::{BinOp, UnOp};
 use omasheet_omx::cycle;
 use omasheet_omx::date;
@@ -265,7 +263,7 @@ impl<'p> Engine<'p> {
             Ok(v.percent())
         } else if let (S::Decimal, Value::Percent(r)) = (col.ty, &v) {
             // And in a `Decimal` column a decimal, though it need not end.
-            Ok(Value::exact(r.clone()))
+            Ok(Value::exact(*r))
         } else {
             fail(
                 span,
@@ -332,7 +330,7 @@ impl<'p> Engine<'p> {
             }
             Ir::RowIndex { depth } => {
                 let (_, r) = fr[fr.len() - 1 - depth];
-                Ok(Value::Int(BigInt::from(r)))
+                Ok(Value::Int(r as i64))
             }
             Ir::Empty => Ok(Value::Null),
             Ir::Unary(UnOp::UpTo, operand) => Ok(Value::Range {
@@ -347,10 +345,12 @@ impl<'p> Engine<'p> {
                     match (op, v) {
                         (_, Value::Null) => Ok(Value::Null),
                         (UnOp::Not, Value::Boolean(b)) => Ok(Value::Boolean(!b)),
-                        (UnOp::Neg, Value::Percent(r)) => Ok(Value::Percent(-r)),
+                        (UnOp::Neg, Value::Percent(r)) => r
+                            .checked_neg()
+                            .map(Value::Percent)
+                            .map_or_else(|| fail(span, "the number is too large".to_string()), Ok),
                         (UnOp::Neg, v) if v.is_numeric() => {
-                            arith(BinOp::Sub, &Value::Int(BigInt::from(0)), v)
-                                .or_else(|m| fail(span, m))
+                            arith(BinOp::Sub, &Value::Int(0), v).or_else(|m| fail(span, m))
                         }
                         (UnOp::Not, v) => fail(span, format!("cannot apply `not` to {}", v.kind())),
                         (UnOp::Neg, v) => fail(span, format!("cannot negate {}", v.kind())),
@@ -584,8 +584,9 @@ impl<'p> Engine<'p> {
                         Value::Date(d) => Ok(Value::Date(d + 1)),
                         Value::Time(t) => Ok(Value::Time(t + 1)),
                         Value::DateTime(t) => Ok(Value::DateTime(t + 1)),
-                        v if v.is_numeric() => arith(BinOp::Add, v, &Value::Int(BigInt::from(1)))
-                            .or_else(|m| fail(span, m)),
+                        v if v.is_numeric() => {
+                            arith(BinOp::Add, v, &Value::Int(1)).or_else(|m| fail(span, m))
+                        }
                         other => fail(
                             span,
                             format!("`succ` takes a number or text, found {}", other.kind()),
@@ -601,7 +602,7 @@ impl<'p> Engine<'p> {
             }
             Func::Cycle(kind) => {
                 let step = match self.eval(&args[1], fr)? {
-                    Value::Int(n) => n.to_i64().unwrap_or(0),
+                    Value::Int(n) => n,
                     _ => 0,
                 };
                 match self.eval(&args[0], fr)? {
@@ -623,7 +624,7 @@ impl<'p> Engine<'p> {
                 let months = match func {
                     Func::AddMonths => match self.eval(&args[1], fr)? {
                         Value::Null => return Ok(Value::Null),
-                        Value::Int(n) => n.to_i64().unwrap_or(i64::MAX),
+                        Value::Int(n) => n,
                         other => {
                             return fail(
                                 span,
@@ -636,7 +637,7 @@ impl<'p> Engine<'p> {
                 // A sequence passes the day of the month to land on.
                 let on = match args.get(2) {
                     Some(node) => match self.eval(node, fr)? {
-                        Value::Int(n) => n.to_i64(),
+                        Value::Int(n) => Some(n),
                         _ => None,
                     },
                     None => None,
@@ -728,7 +729,7 @@ impl<'p> Engine<'p> {
                         (Some(target), _) => Zoned::at(utc, target, &self.home)
                             .map(|z| Value::Zoned(Rc::new(z)))
                             .map_or_else(out_of_range, Ok),
-                        (None, Func::Offset) => Ok(Value::Int(BigInt::from(wall - utc))),
+                        (None, Func::Offset) => Ok(Value::Int(wall - utc)),
                         (None, _) => Ok(Value::text(zone.name())),
                     }
                 };
@@ -791,7 +792,7 @@ impl<'p> Engine<'p> {
                         }
                     };
                     match found {
-                        Some(n) => Ok(Value::Int(BigInt::from(n))),
+                        Some(n) => Ok(Value::Int(n)),
                         None => fail(args[0].span, format!("{} has no such part", v.kind())),
                     }
                 };
@@ -809,7 +810,7 @@ impl<'p> Engine<'p> {
                     match self.eval(arg, fr)? {
                         Value::Vector(v) => items.extend(v.iter().cloned()),
                         Value::Sheet(v) if func == Func::Count && args.len() == 1 => {
-                            return Ok(Value::Int(BigInt::from(v.rows.len())));
+                            return Ok(Value::Int(v.rows.len() as i64));
                         }
                         // A block: its cells, row by row.
                         Value::Sheet(v) => {
@@ -827,7 +828,7 @@ impl<'p> Engine<'p> {
                         } => {
                             let lo = if after { lo + 1 } else { lo };
                             let hi = if exclusive { hi - 1 } else { hi };
-                            items.extend((lo..=hi).map(|n| Value::Int(BigInt::from(n))));
+                            items.extend((lo..=hi).map(Value::Int));
                         }
                         Value::Row(row) => {
                             for &c in row.cols.iter() {
@@ -849,7 +850,7 @@ impl<'p> Engine<'p> {
                 let present: Vec<&Value> =
                     items.iter().filter(|v| !matches!(v, Value::Null)).collect();
                 let sum = || -> R {
-                    let mut total = Value::Int(BigInt::from(0));
+                    let mut total = Value::Int(0);
                     for v in &present {
                         total = arith(BinOp::Add, &total, v).or_else(|m| fail(span, m))?;
                     }
@@ -860,16 +861,12 @@ impl<'p> Engine<'p> {
                     !present.is_empty() && present.iter().all(|v| matches!(v, Value::Percent(_)));
                 let kept = |v: Value| if percent { v.percent() } else { v };
                 match func {
-                    Func::Count => Ok(Value::Int(BigInt::from(present.len()))),
+                    Func::Count => Ok(Value::Int(present.len() as i64)),
                     Func::Sum => sum().map(kept),
                     Func::Avg if present.is_empty() => Ok(Value::Null),
-                    Func::Avg => arith(
-                        BinOp::Div,
-                        &sum()?,
-                        &Value::Int(BigInt::from(present.len())),
-                    )
-                    .map(kept)
-                    .or_else(|m| fail(span, m)),
+                    Func::Avg => arith(BinOp::Div, &sum()?, &Value::Int(present.len() as i64))
+                        .map(kept)
+                        .or_else(|m| fail(span, m)),
                     _ => {
                         let want = if func == Func::Min {
                             Ordering::Less

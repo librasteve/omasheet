@@ -3,17 +3,15 @@
 //! Tokens for OMX expressions.
 
 use crate::date;
+use crate::decimal::Dec;
 use crate::diag::{Diagnostic, Span};
-use num_bigint::BigInt;
-use num_rational::BigRational;
-use num_traits::pow::Pow;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
-    Int(BigInt),
-    Decimal(BigRational),
+    Int(i64),
+    Decimal(Dec),
     /// A number with a `%`, already divided by a hundred.
-    Percent(BigRational),
+    Percent(Dec),
     Float(f64),
     Str(String),
     Date(i32),
@@ -408,16 +406,30 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
         Tok::Float(if percent { f / 100.0 } else { f })
     } else if is_decimal || percent {
         let digits: String = raw.chars().filter(|&c| c != '.').collect();
-        let numer: BigInt = digits.parse().unwrap();
         let scale = frac_digits + if percent { 2 } else { 0 };
-        let r = BigRational::new(numer, Pow::pow(BigInt::from(10), scale as u32));
+        let unscaled: i128 = digits
+            .parse()
+            .map_err(|_| (format!("`{raw}` is too large a number"), i, j))?;
+        let d = Dec::new(unscaled, scale as u32)
+            .ok_or_else(|| (format!("`{raw}` is too large a number"), i, j))?;
         if percent {
-            Tok::Percent(r)
+            Tok::Percent(d)
         } else {
-            Tok::Decimal(r)
+            Tok::Decimal(d)
         }
     } else {
-        Tok::Int(raw.parse().unwrap())
+        // A whole number past `i64` is still exact as a decimal.
+        match raw.parse::<i64>() {
+            Ok(n) => Tok::Int(n),
+            Err(_) => {
+                let unscaled: i128 = raw
+                    .parse()
+                    .map_err(|_| (format!("`{raw}` is too large a number"), i, j))?;
+                let d = Dec::new(unscaled, 0)
+                    .ok_or_else(|| (format!("`{raw}` is too large a number"), i, j))?;
+                Tok::Decimal(d)
+            }
+        }
     };
     Ok((tok, end))
 }
@@ -432,15 +444,12 @@ mod tests {
 
     #[test]
     fn numbers() {
-        assert_eq!(toks("42")[0], Tok::Int(42.into()));
+        assert_eq!(toks("42")[0], Tok::Int(42));
         assert_eq!(
             toks("1_000_000.50")[0],
-            Tok::Decimal(BigRational::new(2_000_001.into(), 2.into()))
+            Tok::Decimal(Dec::parse("1000000.50").unwrap())
         );
-        assert_eq!(
-            toks("20%")[0],
-            Tok::Percent(BigRational::new(1.into(), 5.into()))
-        );
+        assert_eq!(toks("20%")[0], Tok::Percent(Dec::parse("0.2").unwrap()));
         assert_eq!(toks("1e-100")[0], Tok::Float(1e-100));
         assert_eq!(
             toks("0..2"),

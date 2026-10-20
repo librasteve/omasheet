@@ -75,13 +75,10 @@ fn csv_of_one_sheet_has_values_for_computed_columns() {
     assert_eq!(
         text_of(&out, 0),
         "Month,Revenue,Cost,Profit,Share\n\
-         Jan,10000,6000,4000,1333.3333333333333\n\
-         Feb,12000,7000,5000,1666.6666666666667\n"
+         Jan,10000,6000,4000,1333.3333333333333333333333333333333333\n\
+         Feb,12000,7000,5000,1666.6666666666666666666666666666666667\n"
     );
-    assert_eq!(
-        out.notices,
-        ["exact rationals that do not end were written as decimals: Sales.Share"]
-    );
+    assert!(out.notices.is_empty(), "{:?}", out.notices);
 }
 
 #[test]
@@ -90,9 +87,11 @@ fn csv_keeps_exact_what_ends() {
     let out = csv_of(file, None);
     assert_eq!(
         text_of(&out, 0),
-        "A\n19.99\n1267650600228229401496703205376\n0.3333333333333333\n0.0009765625\n"
+        "A\n19.99\n1267650600228229401496703205376\n0.33333333333333333333333333333333333333\n0.0009765625\n"
     );
-    assert_eq!(out.notices.len(), 1);
+    // Nothing is rounded to write it: a decimal holds every digit there
+    // is of it, so there is nothing to report.
+    assert!(out.notices.is_empty(), "{:?}", out.notices);
 }
 
 #[test]
@@ -101,10 +100,10 @@ fn csv_keeps_percentages() {
     let out = csv_of(file, None);
     let text = text_of(&out, 0);
     assert!(
-        text.starts_with("A,B\n20%,40%\n12.5%,33.33333333333333"),
+        text.starts_with("A,B\n20%,40%\n12.5%,33.3333333333333333"),
         "{text}"
     );
-    assert_eq!(out.notices.len(), 1);
+    assert!(out.notices.is_empty(), "{:?}", out.notices);
     // And reads them back as percentages.
     let back = csv::import("t", text.as_bytes()).unwrap();
     lints(&back.source);
@@ -165,9 +164,11 @@ fn csv_imports_a_sheet_named_after_the_file() {
 #[test]
 fn csv_reads_every_digit() {
     let out = csv::import("t", b"A\n0.12345678901234567890123\n").unwrap();
+    // Every digit is read and kept; multiplying out brings them back, as
+    // far as the thirty-eight a decimal holds.
     assert_eq!(
-        eval(&out.source, "t[A; 0] * 100000000000000000000000"),
-        "12345678901234567890123"
+        eval(&out.source, "t[A; 0] * 1000000000000000"),
+        "123456789012345.67890123"
     );
 }
 
@@ -694,7 +695,10 @@ sheet YearEnd
     // The file works out what the workbook held.
     assert_eq!(eval(&out.source, "Sales.Running"), "[4000, 9000, 14700]");
     assert_eq!(eval(&out.source, "Sales.Margin"), "[0.4, 0.4167, 0.4318]");
-    assert_eq!(eval(&out.source, "YearEnd[Value; 4]"), "147/352");
+    assert_eq!(
+        eval(&out.source, "YearEnd[Value; 4]"),
+        "0.4176136363636363636363636363636364"
+    );
     assert_eq!(eval(&out.source, "YearEnd[Value; 5]"), "yes");
 }
 
@@ -741,14 +745,11 @@ fn json_holds_every_sheet_as_rows_by_column_name() {
     assert_eq!(
         text_of(&out, 0),
         "{\n  \"Sales\": [\n    \
-         {\"Month\": \"Jan\", \"Revenue\": 10000, \"Cost\": 6000, \"Profit\": 4000, \"Share\": 1333.3333333333333},\n    \
-         {\"Month\": \"Feb\", \"Revenue\": 12000, \"Cost\": 7000, \"Profit\": 5000, \"Share\": 1666.6666666666667}\n  ],\n  \
+         {\"Month\": \"Jan\", \"Revenue\": 10000, \"Cost\": 6000, \"Profit\": 4000, \"Share\": 1333.3333333333333333333333333333333333},\n    \
+         {\"Month\": \"Feb\", \"Revenue\": 12000, \"Cost\": 7000, \"Profit\": 5000, \"Share\": 1666.6666666666666666666666666666666667}\n  ],\n  \
          \"Summary\": [\n    {\"Item\": \"Revenue\", \"Value\": 22000}\n  ]\n}\n"
     );
-    assert_eq!(
-        out.notices,
-        ["exact rationals that do not end were written as decimals: Sales.Share"]
-    );
+    assert!(out.notices.is_empty(), "{:?}", out.notices);
     // A sheet that is named is its rows alone.
     assert_eq!(
         text_of(&json_of(BUDGET, Some("Summary")), 0),
@@ -762,17 +763,14 @@ fn json_writes_each_kind_of_value() {
     assert_eq!(
         text_of(&out, 0),
         "[\n  \
-         {\"Name\": \"a\", \"Count\": 7, \"Price\": 19.99, \"Rate\": 0.2, \"N\": 1e+20, \"F\": 0.3333333333333333, \
+         {\"Name\": \"a\", \"Count\": 7, \"Price\": 19.99, \"Rate\": 0.2, \"N\": 1e+20, \"F\": 0.33333333333333333333333333333333333333, \
          \"On\": true, \"Day\": \"2025-01-31\", \"At\": \"09:30\", \"Gap\": null, \"Bad\": null},\n  \
          {\"Name\": \"42\", \"Count\": -3, \"Price\": 0.125, \"Rate\": -0.05, \"N\": \"Inf\", \"F\": 0.125, \
          \"On\": false, \"Day\": \"2025-02-01\", \"At\": \"17:05\", \"Gap\": \"x\", \"Bad\": 1}\n]\n"
     );
     assert_eq!(
         out.notices,
-        [
-            "exact rationals that do not end were written as decimals: T.F",
-            "cells that could not be calculated were left empty: T.Bad"
-        ]
+        ["cells that could not be calculated were left empty: T.Bad"]
     );
 }
 

@@ -9,11 +9,10 @@
 //! that a workbook has no way to say is not written, and the reason is
 //! given: the cell holds its value instead.
 
-use num_rational::BigRational;
 use omasheet_engine::omx::ast::{BinOp, Lit, UnOp};
 use omasheet_engine::omx::check::Program;
-use omasheet_engine::omx::convert::is_decimal;
 use omasheet_engine::omx::date;
+use omasheet_engine::omx::decimal::Dec;
 use omasheet_engine::omx::funcs::MathFn;
 use omasheet_engine::omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_engine::omx::types::S;
@@ -160,7 +159,7 @@ fn kind_of(s: S) -> Kind {
 /// A whole number written in the formula, such as the `1` of `*-1`.
 fn whole(program: &Program, node: &Node) -> Option<i64> {
     match &node.kind {
-        Ir::Lit(Lit::Int(n)) => i64::try_from(n).ok(),
+        Ir::Lit(Lit::Int(n)) => Some(*n),
         Ir::Unary(UnOp::Neg, inner) => whole(program, inner).map(|n| -n),
         Ir::Const(i) => whole(program, &program.consts[*i].node),
         Ir::Single(inner) => whole(program, inner),
@@ -169,10 +168,10 @@ fn whole(program: &Program, node: &Node) -> Option<i64> {
 }
 
 /// An exact number written in the formula, or a constant that is one.
-fn exact(program: &Program, node: &Node) -> Option<BigRational> {
+fn exact(program: &Program, node: &Node) -> Option<Dec> {
     match &node.kind {
-        Ir::Lit(Lit::Int(n)) => Some(BigRational::from_integer(n.clone())),
-        Ir::Lit(Lit::Decimal(r)) => Some(r.clone()),
+        Ir::Lit(Lit::Int(n)) => Some(Dec::from_i64(*n)),
+        Ir::Lit(Lit::Decimal(r)) => Some(*r),
         Ir::Const(i) => exact(program, &program.consts[*i].node),
         Ir::Single(inner) => exact(program, inner),
         _ => None,
@@ -194,18 +193,11 @@ fn round_digits<'n>(program: &Program, a: &'n Node, b: &Node) -> Option<(&'n Nod
         return None;
     }
     let r = exact(program, scale)?;
-    // How many noughts follow the 1, if it is a 1 and noughts.
-    let noughts = |n: String| {
-        let rest = n.strip_prefix('1')?;
-        rest.bytes().all(|c| c == b'0').then_some(rest.len() as i64)
-    };
-    if r.is_integer() {
-        noughts(r.numer().to_string()).map(|k| (&**x, -k))
-    } else if r.numer().to_string() == "1" {
-        noughts(r.denom().to_string()).map(|k| (&**x, k))
-    } else {
-        None
-    }
+    // A power of ten is one digit and an exponent: `1000` is `1e3`, and
+    // `0.001` is `1e-3`. Excel rounds to a number of places, so the power is
+    // taken the other way round.
+    let (digits, e) = r.digits_and_exponent();
+    (digits == "1").then_some((&**x, -e))
 }
 
 /// The sheet, rows and columns a selection reads; no columns is all of
@@ -531,10 +523,8 @@ impl Writer<'_> {
                 number(n.to_string())
             }
             Lit::Int(_) => return Err(LITERAL),
-            Lit::Decimal(r) | Lit::Percent(r) if is_decimal(r) => number(format_rat(r)),
-            Lit::Decimal(r) | Lit::Percent(r) => {
-                Expr::new(format!("{}/{}", r.numer(), r.denom()), MUL, Kind::Number)
-            }
+            Lit::Decimal(r) | Lit::Percent(r) if !r.is_long() => number(format_rat(r)),
+            Lit::Decimal(r) | Lit::Percent(r) => number(r.to_plain_string()),
             Lit::Float(f) if f.is_finite() => {
                 let size = f.abs();
                 number(if size == 0.0 || (1e-5..1e15).contains(&size) {

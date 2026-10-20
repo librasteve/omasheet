@@ -7,7 +7,7 @@ use crate::{
 };
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::omx::types::S;
-use omasheet_engine::value::{format_exact, format_float, format_rat, to_f64};
+use omasheet_engine::value::{format_exact, format_float, format_rat};
 use omasheet_engine::{Options, Value};
 use serde_json::Value as Json;
 
@@ -142,14 +142,8 @@ fn field(v: &Value) -> (String, bool) {
     match v {
         Value::Null => ("null".to_string(), false),
         Value::Int(n) => (n.to_string(), false),
-        Value::Decimal(r) | Value::Percent(r) => {
-            let exact = format_rat(r);
-            if exact.contains('/') {
-                (num(to_f64(r)), true)
-            } else {
-                (exact, false)
-            }
-        }
+        // An exact number is written in full: every digit it holds.
+        Value::Decimal(r) | Value::Percent(r) => (format_rat(r), false),
         Value::Float(f) => (num(*f), false),
         Value::Boolean(b) => (b.to_string(), false),
         v => (quoted(&format_exact(v, false, &Style::ISO)), false),

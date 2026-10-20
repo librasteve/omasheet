@@ -30,7 +30,7 @@ Checked : Boolean
 | seven | 7                          | 19.99 | 1/7   | 20%   | 1.5      | true    |
 | cent  | 100                        | 0.125 | 2/3   | 12.5% | 100      | false   |
 | minus | -3                         | -4.5  | 5/2   | -5%   | -1.6e-19 | true    |
-| huge  | 10_000_000_000_000_000_000 | 1000  | 3     | 0.5   | 6.02e23  | false   |
+| huge  | 9_000_000_000_000_000_000  | 1000  | 3     | 0.5   | 6.02e23  | false   |
 
 # What is done with the numbers above. A column with no type takes the type
 # of its formula.
@@ -43,8 +43,9 @@ sheet Arithmetic
 | minus | *      | *       | *     | *     | *     | *      | *    | *      | *    | *      |
 | huge  | *      | *       | *     | *     | *     | *      | *    | *      | *    | *      |
 
-# Exact stays exact: an Int does not overflow, and a division is held in
-# full.
+# Exact stays exact as far as it fits: an Int reaches 64 bits and a
+# Decimal thirty-eight digits, and past that it is reported rather than
+# wrapped. A division is held to the same thirty-eight digits.
 Square  := Numbers[Count; *] ** 2
 Inverse := 1 / Numbers[Count; *]
 Whole   := Inverse * Numbers[Count; *]

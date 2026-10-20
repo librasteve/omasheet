@@ -367,7 +367,7 @@ impl Parser {
                     return Err(self.unexpected("a whole number of terms to go back"));
                 };
                 self.bump();
-                let Ok(n) = u32::try_from(&n) else {
+                let Ok(n) = u32::try_from(n) else {
                     return Err(Diagnostic::new(
                         span.to(self.prev_span()),
                         "a back-reference goes back too far",

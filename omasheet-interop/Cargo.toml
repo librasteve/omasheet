@@ -9,7 +9,6 @@ repository.workspace = true
 [dependencies]
 omasheet-engine.workspace = true
 omasheet-md.workspace = true
-num-rational.workspace = true
 calamine.workspace = true
 rust_xlsxwriter.workspace = true
 csv.workspace = true

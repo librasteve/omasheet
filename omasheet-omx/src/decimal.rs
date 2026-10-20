@@ -216,22 +216,29 @@ impl Dec {
         }
     }
 
+    /// The widest scale this number can be written at and still fit: it needs
+    /// `magnitude + 1` digits before the point, and the rest are free. `1`
+    /// reaches 37 places where `0.3` reaches 38.
+    fn max_scale(self) -> u32 {
+        if self.unscaled == 0 {
+            return MAX_PRECISION;
+        }
+        let places = MAX_PRECISION as i64 - 1 - self.magnitude();
+        places.clamp(0, MAX_PRECISION as i64) as u32
+    }
+
     /// Both numbers at one scale, as wide as will hold them.
     fn align(a: Dec, b: Dec) -> Option<(i128, i128, u32)> {
-        let scale = a.scale.max(b.scale);
-        match (a.rescale(scale), b.rescale(scale)) {
-            (Some(x), Some(y)) => Some((x.unscaled, y.unscaled, scale)),
-            // Lining them up overflowed, so trim what we can and try again.
-            _ => {
-                let (a, b) = (a.trimmed(), b.trimmed());
-                let scale = a.scale.max(b.scale);
-                Some((
-                    a.rescale(scale)?.unscaled,
-                    b.rescale(scale)?.unscaled,
-                    scale,
-                ))
-            }
-        }
+        let (a, b) = (a.trimmed(), b.trimmed());
+        // The wider of the two scales, brought down to one that holds them
+        // both. Bringing it down rounds, which is the only way two numbers of
+        // very different sizes can meet at a single scale at all.
+        let scale = a.scale.max(b.scale).min(a.max_scale()).min(b.max_scale());
+        Some((
+            a.rescale(scale)?.unscaled,
+            b.rescale(scale)?.unscaled,
+            scale,
+        ))
     }
 
     pub fn checked_add(self, other: Dec) -> Option<Dec> {
@@ -266,11 +273,15 @@ impl Dec {
                 Dec::new(unscaled, scale).or_else(|| narrow(Dec { unscaled, scale }))
             }
             Some(unscaled) => narrow(Dec { unscaled, scale }),
-            // The product of the digits does not fit; round an operand down
-            // and multiply again so a wide result degrades rather than fails.
+            // The product of the digits does not fit. Give up decimal places
+            // on both sides, evenly, so that a wide result loses its last
+            // digits rather than an operand losing all of them.
             None => {
-                let room = MAX_PRECISION.saturating_sub(digits(b.unscaled));
-                let a = a.rescale(a.scale.min(room))?;
+                let excess =
+                    digits(a.unscaled) as i64 + digits(b.unscaled) as i64 - MAX_PRECISION as i64;
+                let half = excess.div_euclid(2).max(0) as u32;
+                let a = a.rescale(a.scale.saturating_sub(half + excess.rem_euclid(2) as u32))?;
+                let b = b.rescale(b.scale.saturating_sub(half))?;
                 let scale = a.scale + b.scale;
                 let unscaled = a.unscaled.checked_mul(b.unscaled)?;
                 narrow(Dec { unscaled, scale })
@@ -292,12 +303,11 @@ impl Dec {
         // Room for the whole part, then as many decimal places as are left.
         // A quotient below one spends no digits on its whole part, so it gets
         // the full width; the loop below drops back if that does not fit.
-        let whole = (a.unscaled / b.unscaled).unsigned_abs();
-        let room = if whole == 0 {
-            MAX_PRECISION
-        } else {
-            MAX_PRECISION.saturating_sub(digits(whole as i128))
-        };
+        // How big the quotient is, and so how many decimal places are left
+        // for it. Taken from the two magnitudes, not from dividing the
+        // unscaled digits, which ignores where the points are.
+        let e = a.magnitude() - b.magnitude();
+        let room = (MAX_PRECISION as i64 - e).clamp(0, MAX_PRECISION as i64) as u32;
 
         // scale of a/b before rounding is a.scale - b.scale; lift the
         // numerator so the quotient lands at `want` places.

@@ -2,17 +2,16 @@
 
 //! Syntax trees for OMX expressions.
 
+use crate::decimal::Dec;
 use crate::diag::Span;
-use num_bigint::BigInt;
-use num_rational::BigRational;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Lit {
-    Int(BigInt),
+    Int(i64),
     /// Written with a decimal point: `19.99`.
-    Decimal(BigRational),
-    /// Written with a `%`: `20%`, held as `1/5`.
-    Percent(BigRational),
+    Decimal(Dec),
+    /// Written with a `%`: `20%`, held as `0.2`.
+    Percent(Dec),
     Float(f64),
     String(String),
     Boolean(bool),

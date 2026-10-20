@@ -7,12 +7,10 @@
 //! an exact number into a `Num` unless the other operand already is one.
 
 use crate::zone::{Zoned, format_offset};
-use num_bigint::BigInt;
-use num_rational::BigRational;
-use num_traits::{One, Signed, ToPrimitive, Zero};
 use omasheet_omx::ast::{BinOp, Lit};
-use omasheet_omx::convert::{self, is_decimal};
+use omasheet_omx::convert;
 use omasheet_omx::date::Style;
+use omasheet_omx::decimal::{Dec, MAX_PRECISION};
 use omasheet_omx::funcs::MathFn;
 use omasheet_omx::types::S;
 use std::cmp::Ordering;
@@ -26,13 +24,12 @@ pub enum Value {
     Null,
     /// A cell whose calculation failed; the diagnostic was already reported.
     Error,
-    Int(BigInt),
-    /// An exact number that is not whole and ends as a decimal, shown as
-    /// one: `2.75`.
-    Decimal(BigRational),
-    /// An exact number shown as a percentage: `1/5` for `20%`. It may be
+    Int(i64),
+    /// An exact number that is not whole, shown as a decimal: `2.75`.
+    Decimal(Dec),
+    /// An exact number shown as a percentage: `0.2` for `20%`. It may be
     /// whole, `100%`.
-    Percent(BigRational),
+    Percent(Dec),
     Float(f64),
     /// Text, and whether it was written bare in a cell, to be read as
     /// Markdown where a file is shown as a document. Text written in quotes,
@@ -83,20 +80,19 @@ impl Value {
         Value::String(Rc::from(s), false)
     }
 
-    /// An exact number: an `Int` when it is whole, and otherwise a
-    /// `Decimal`, which need not end: `1/3` is shown as `0.333…`.
-    pub fn exact(r: BigRational) -> Value {
-        if r.is_integer() {
-            Value::Int(r.to_integer())
-        } else {
-            Value::Decimal(r)
+    /// An exact number: an `Int` when it is whole and fits one, and
+    /// otherwise a `Decimal`.
+    pub fn exact(r: Dec) -> Value {
+        match r.to_i64() {
+            Some(n) => Value::Int(n),
+            None => Value::Decimal(r),
         }
     }
 
     /// An exact number as a percentage; anything else as it is.
     pub fn percent(self) -> Value {
         match self {
-            Value::Int(n) => Value::Percent(BigRational::from_integer(n)),
+            Value::Int(n) => Value::Percent(Dec::from_i64(n)),
             Value::Decimal(r) => Value::Percent(r),
             other => other,
         }
@@ -113,9 +109,9 @@ impl Value {
 
     pub fn from_lit(l: &Lit) -> Value {
         match l {
-            Lit::Int(n) => Value::Int(n.clone()),
-            Lit::Decimal(r) => Value::exact(r.clone()),
-            Lit::Percent(r) => Value::Percent(r.clone()),
+            Lit::Int(n) => Value::Int(*n),
+            Lit::Decimal(r) => Value::exact(*r),
+            Lit::Percent(r) => Value::Percent(*r),
             Lit::Float(f) => Value::Float(*f),
             Lit::String(s) => Value::text(s),
             Lit::Boolean(b) => Value::Boolean(*b),
@@ -157,9 +153,9 @@ impl Value {
     /// clocks show. `None` for empty, an error, or more than one value.
     fn to_lit(&self) -> Option<Lit> {
         Some(match self {
-            Value::Int(n) => Lit::Int(n.clone()),
-            Value::Decimal(r) => Lit::Decimal(r.clone()),
-            Value::Percent(r) => Lit::Percent(r.clone()),
+            Value::Int(n) => Lit::Int(*n),
+            Value::Decimal(r) => Lit::Decimal(*r),
+            Value::Percent(r) => Lit::Percent(*r),
             Value::Float(f) => Lit::Float(*f),
             Value::String(s, _) => Lit::String(s.to_string()),
             Value::Boolean(b) => Lit::Boolean(*b),
@@ -197,33 +193,33 @@ impl Value {
 
     pub fn as_i64(&self) -> Option<i64> {
         match self {
-            Value::Int(n) => n.to_i64(),
+            Value::Int(n) => Some(*n),
             _ => None,
         }
     }
 }
 
 enum N {
-    Exact(BigRational),
+    Exact(Dec),
     Float(f64),
 }
 
 fn number(v: &Value) -> Option<N> {
     Some(match v {
-        Value::Int(n) => N::Exact(BigRational::from_integer(n.clone())),
-        Value::Decimal(r) | Value::Percent(r) => N::Exact(r.clone()),
+        Value::Int(n) => N::Exact(Dec::from_i64(*n)),
+        Value::Decimal(r) | Value::Percent(r) => N::Exact(*r),
         Value::Float(f) => N::Float(*f),
         _ => return None,
     })
 }
 
-pub fn to_f64(r: &BigRational) -> f64 {
-    r.to_f64().unwrap_or(f64::NAN)
+pub fn to_f64(r: &Dec) -> f64 {
+    r.to_f64()
 }
 
 fn real(n: &N) -> f64 {
     match n {
-        N::Exact(r) => to_f64(r),
+        N::Exact(r) => r.to_f64(),
         N::Float(f) => *f,
     }
 }
@@ -239,7 +235,15 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     // Percentages add up to a percentage; anything else done with one gives
     // the plain number.
     if let (Value::Percent(x), Value::Percent(y), BinOp::Add | BinOp::Sub) = (a, b, op) {
-        return Ok(Value::Percent(if op == BinOp::Add { x + y } else { x - y }));
+        let sum = if op == BinOp::Add {
+            x.checked_add(*y)
+        } else {
+            x.checked_sub(*y)
+        };
+        return match sum {
+            Some(d) => Ok(Value::Percent(d)),
+            None => Err(TOO_LARGE.to_string()),
+        };
     }
     let (Some(x), Some(y)) = (number(a), number(b)) else {
         return Err(format!(
@@ -273,34 +277,30 @@ fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
         BinOp::Sub => true,
         _ => return None,
     };
-    let count = |n: &BigInt| {
-        n.to_i64()
-            .ok_or_else(|| "the number is too large".to_string())
-    };
     let signed = |n: i64| if minus { n.checked_neg() } else { Some(n) };
-    let date = |d: i32, n: &BigInt| {
-        let days = signed(count(n)?).and_then(|n| (d as i64).checked_add(n));
+    let date = |d: i32, n: &i64| {
+        let days = signed(*n).and_then(|n| (d as i64).checked_add(n));
         match days.and_then(|d| i32::try_from(d).ok()) {
             Some(d) => Ok(Value::Date(d)),
             None => Err("the date is out of range".to_string()),
         }
     };
-    let datetime = |t: i64, n: &BigInt| match signed(count(n)?).and_then(|n| t.checked_add(n)) {
+    let datetime = |t: i64, n: &i64| match signed(*n).and_then(|n| t.checked_add(n)) {
         // Every date-time must have a day that is a valid date.
         Some(t) if i32::try_from(t.div_euclid(86_400)).is_ok() => Ok(Value::DateTime(t)),
         _ => Err("the date-time is out of range".to_string()),
     };
-    let zoned = |z: &Zoned, n: &BigInt| match signed(count(n)?).and_then(|n| z.shifted(n)) {
+    let zoned = |z: &Zoned, n: &i64| match signed(*n).and_then(|n| z.shifted(n)) {
         Some(z) => Ok(Value::Zoned(Rc::new(z))),
         None => Err("the date-time is out of range".to_string()),
     };
     // A time of day wraps round midnight.
-    let time = |t: i32, n: &BigInt| {
-        let n = (n % BigInt::from(86_400)).to_i64().unwrap_or(0);
+    let time = |t: i32, n: &i64| {
+        let n = n % 86_400;
         let n = if minus { -n } else { n };
         Ok(Value::Time((t as i64 + n).rem_euclid(86_400) as i32))
     };
-    let int = |n: i64| Ok(Value::Int(BigInt::from(n)));
+    let int = |n: i64| Ok(Value::Int(n));
     Some(match (a, b) {
         (Value::Date(d), Value::Int(n)) => date(*d, n),
         (Value::DateTime(t), Value::Int(n)) => datetime(*t, n),
@@ -323,9 +323,12 @@ fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
     })
 }
 
+/// What a number too wide to hold is reported as.
+const TOO_LARGE: &str = "the number is too large: a decimal holds 38 digits";
+
 /// An exact number divided by zero, which no exact number is: `Inf` or
 /// `-Inf` by its sign, and `NaN` for zero.
-fn over_zero(x: &BigRational) -> f64 {
+fn over_zero(x: &Dec) -> f64 {
     if x.is_zero() {
         f64::NAN
     } else if x.is_negative() {
@@ -335,16 +338,17 @@ fn over_zero(x: &BigRational) -> f64 {
     }
 }
 
-fn exact_arith(op: BinOp, x: &BigRational, y: &BigRational) -> Result<Value, String> {
-    Ok(Value::exact(match op {
-        BinOp::Add => x + y,
-        BinOp::Sub => x - y,
-        BinOp::Mul => x * y,
+fn exact_arith(op: BinOp, x: &Dec, y: &Dec) -> Result<Value, String> {
+    let (x, y) = (*x, *y);
+    let out = match op {
+        BinOp::Add => x.checked_add(y),
+        BinOp::Sub => x.checked_sub(y),
+        BinOp::Mul => x.checked_mul(y),
         BinOp::Div => {
             if y.is_zero() {
-                return Ok(Value::Float(over_zero(x)));
+                return Ok(Value::Float(over_zero(&x)));
             }
-            x / y
+            x.checked_div(y)
         }
         _ => {
             if !y.is_integer() {
@@ -353,37 +357,59 @@ fn exact_arith(op: BinOp, x: &BigRational, y: &BigRational) -> Result<Value, Str
                         .into(),
                 );
             }
-            let Some(e) = y.to_integer().to_i32().filter(|e| e.abs() <= 1_000_000) else {
+            let Some(e) = y.to_i64().and_then(|e| i32::try_from(e).ok()) else {
                 return Err("the exponent is too large".into());
             };
             if x.is_zero() && e < 0 {
                 return Ok(Value::Float(f64::INFINITY));
             }
-            x.pow(e)
+            match e {
+                0 => Some(Dec::ONE),
+                e if e > 0 => x.powi(e.unsigned_abs()),
+                e => x
+                    .powi(e.unsigned_abs())
+                    .and_then(|p| Dec::ONE.checked_div(p)),
+            }
         }
-    }))
+    };
+    out.map(Value::exact).ok_or_else(|| TOO_LARGE.to_string())
 }
 
 /// A function of one real number. An exact number stays exact where the
 /// function allows it; otherwise the result is a `Num`.
 pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
-    let whole = |r: BigRational| Value::Int(r.to_integer());
+    let whole = |r: Dec| Value::exact(r);
     let x = match (v, m) {
         (Value::Null, _) => return Ok(Value::Null),
-        (Value::Percent(r), MathFn::Abs) => return Ok(Value::Percent(r.abs())),
+        (Value::Percent(r), MathFn::Abs) => {
+            return r
+                .checked_abs()
+                .map(Value::Percent)
+                .ok_or_else(|| TOO_LARGE.to_string());
+        }
         (Value::Percent(_), _) => return math(m, &v.clone().plain()),
-        (Value::Int(n), MathFn::Abs) => return Ok(Value::Int(n.abs())),
+        (Value::Int(n), MathFn::Abs) => {
+            return n
+                .checked_abs()
+                .map(Value::Int)
+                .ok_or_else(|| TOO_LARGE.to_string());
+        }
         (Value::Int(n), MathFn::Sign) => return Ok(Value::Int(n.signum())),
         (Value::Int(_), _) if m.is_exact() => return Ok(v.clone()),
-        (Value::Decimal(r), MathFn::Abs) => return Ok(Value::Decimal(r.abs())),
+        (Value::Decimal(r), MathFn::Abs) => {
+            return r
+                .checked_abs()
+                .map(Value::Decimal)
+                .ok_or_else(|| TOO_LARGE.to_string());
+        }
         (Value::Decimal(r), MathFn::Sign) => {
-            return Ok(Value::Int(r.numer().signum()));
+            return Ok(Value::Int(r.signum()));
         }
         (Value::Decimal(r), MathFn::Round) => return Ok(whole(r.round())),
         (Value::Decimal(r), MathFn::Floor) => return Ok(whole(r.floor())),
         (Value::Decimal(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
-        (Value::Int(n), _) => n.to_f64().unwrap_or(f64::NAN),
-        (Value::Decimal(r), _) => to_f64(r),
+        (Value::Int(n), _) => *n as f64,
+        (Value::Decimal(r), _) => r.to_f64(),
         (Value::Float(f), _) => *f,
         (other, _) => {
             return Err(format!(
@@ -450,58 +476,11 @@ const LARGE: f64 = 1e15;
 /// How many digits after the point a `Percent` is rounded to.
 pub const PERCENT_DIGITS: usize = 2;
 
-/// A whole number of `10 ** -scale`s as a decimal with `scale` digits after
-/// the point.
-fn decimal(scaled: &BigInt, negative: bool, scale: usize) -> String {
-    let digits = scaled.abs().to_string();
-    let digits = format!("{digits:0>width$}", width = scale + 1);
-    let (whole, frac) = digits.split_at(digits.len() - scale);
-    let sign = if negative { "-" } else { "" };
-    if scale == 0 {
-        format!("{sign}{whole}")
-    } else {
-        format!("{sign}{whole}.{frac}")
-    }
-}
-
-/// An exact number as it is written: one that ends as that decimal in
-/// full, and any other as `n/d`.
-pub fn format_rat(r: &BigRational) -> String {
-    let (two, five, ten) = (BigInt::from(2), BigInt::from(5), BigInt::from(10));
-    let mut rest = r.denom().clone();
-    let (mut twos, mut fives) = (0usize, 0usize);
-    while (&rest % &two).is_zero() {
-        rest /= &two;
-        twos += 1;
-    }
-    while (&rest % &five).is_zero() {
-        rest /= &five;
-        fives += 1;
-    }
-    if !rest.is_one() {
-        return format!("{}/{}", r.numer(), r.denom());
-    }
-    let scale = twos.max(fives);
-    let mut scaled = r.numer().clone();
-    for _ in 0..scale {
-        scaled *= &ten;
-    }
-    scaled /= r.denom();
-    decimal(&scaled, r.is_negative(), scale)
-}
-
-/// `10 ** e` as an exact number.
-fn power_of_ten(e: i64) -> BigRational {
-    let p = BigRational::from_integer(num_traits::pow(BigInt::from(10), e.unsigned_abs() as usize));
-    if e < 0 { p.recip() } else { p }
-}
-
-/// The power of ten of a positive exact number: `e` where `10 ** e <= r <
-/// 10 ** (e + 1)`.
-fn magnitude(r: &BigRational) -> i64 {
-    let digits = |n: &BigInt| n.to_string().len() as i64;
-    let e = digits(r.numer()) - digits(r.denom());
-    if *r < power_of_ten(e) { e - 1 } else { e }
+/// An exact number as it is written: every digit it holds, with no grouping
+/// and no cutting. A value rounded at the widest scale is written at that
+/// scale, since that is all there is of it.
+pub fn format_rat(r: &Dec) -> String {
+    r.to_plain_string()
 }
 
 /// The exponent of e notation: `e+15`, `e-05`.
@@ -510,25 +489,15 @@ fn exponent(e: i64) -> String {
 }
 
 /// A positive exact number in e notation, with every significant digit; cut
-/// to [`WIDTH`] and marked with [`MORE`] where that is too wide, as one that
-/// does not end always is.
-fn scientific(r: &BigRational) -> String {
-    let e = magnitude(r);
-    // One digit more than can be shown tells whether any are left out.
-    let scaled = r * power_of_ten(WIDTH as i64 - e);
-    let whole = scaled.trunc().to_integer().to_string();
-    let complete = scaled.is_integer();
-    let digits = if complete {
-        whole.trim_end_matches('0')
-    } else {
-        &whole
-    };
+/// to [`WIDTH`] and marked with [`MORE`] where that is too wide.
+fn scientific(r: &Dec) -> String {
+    let (digits, e) = r.digits_and_exponent();
     let mantissa = match digits.split_at(1) {
         (first, "") => first.to_string(),
         (first, rest) => format!("{first}.{rest}"),
     };
     let exp = exponent(e);
-    if complete && mantissa.len() + exp.len() <= WIDTH {
+    if mantissa.len() + exp.len() <= WIDTH {
         return format!("{mantissa}{exp}");
     }
     let keep = WIDTH - exp.len() - 1;
@@ -563,54 +532,39 @@ fn grouped(plain: String, sep: Option<char>) -> String {
     out + rest
 }
 
-/// A positive exact number that ends, plain if it is neither small nor large
-/// and fits, and otherwise in e notation.
-fn shown_decimal(r: &BigRational, sep: Option<char>) -> String {
+/// A positive exact number, plain if it is neither small nor large and fits,
+/// and otherwise in e notation or cut and marked.
+fn shown_decimal(r: &Dec, sep: Option<char>) -> String {
     if r.is_zero() {
         return "0".into();
     }
-    let medium = *r >= power_of_ten(-15) && *r < power_of_ten(15);
-    // One that does not end is cut and marked: `0.3333333333333333333333…`.
-    if !is_decimal(r) {
-        if !medium {
-            return scientific(r);
-        }
-        let digits: String = grouped(cut_decimal(r, WIDTH), sep)
-            .chars()
-            .take(WIDTH - 1)
-            .collect();
+    let e = r.magnitude();
+    let medium = (-15..15).contains(&e);
+    let plain = grouped(r.to_plain_string(), sep);
+    if medium && width(&plain) <= WIDTH {
+        return plain;
+    }
+    // A number of ordinary size that will not fit reads better cut and
+    // marked, `0.33333333333333333333…`, than in e notation. Only the
+    // genuinely small or large go to e notation.
+    if medium {
+        let digits: String = plain.chars().take(WIDTH - 1).collect();
         return format!("{digits}{MORE}");
     }
-    let plain = grouped(format_rat(r), sep);
-    if medium && width(&plain) <= WIDTH {
-        plain
-    } else {
-        scientific(r)
-    }
+    scientific(r)
 }
 
-/// The first `places` digits after the point of a positive `r`, cut, not
-/// rounded.
-fn cut_decimal(r: &BigRational, places: usize) -> String {
-    let scaled = (r * power_of_ten(places as i64)).trunc().to_integer();
-    decimal(&scaled, false, places)
-}
+/// How many digits after the point a long `Decimal` is given to, in full.
+pub const LONG_DIGITS: usize = MAX_PRECISION as usize;
 
-/// How many digits after the point a `Decimal` that does not end is given
-/// to, in full.
-pub const LONG_DIGITS: usize = 40;
-
-/// A `Decimal` that does not end, as far as [`LONG_DIGITS`] digits after
-/// the point, cut and marked: `2.3333333333333333333333333333333333333333…`.
-/// `None` for anything else.
+/// A `Decimal` whose shown form was cut, written out in full, for the app to
+/// show when the cut form is pointed at. `None` for anything else, and for
+/// one the shown form already gives whole.
 pub fn long_decimal(v: &Value) -> Option<String> {
-    match v {
-        Value::Decimal(r) if !is_decimal(r) => Some(format!(
-            "{}{MORE}",
-            signed(r.is_negative(), cut_decimal(&r.abs(), LONG_DIGITS))
-        )),
-        _ => None,
-    }
+    let Value::Decimal(r) = v else { return None };
+    let plain = r.to_plain_string();
+    let medium = (-15..15).contains(&r.magnitude());
+    (medium && width(&plain) > WIDTH).then_some(plain)
 }
 
 /// A rounded decimal without the zeros, or the point, it ends with.
@@ -621,50 +575,47 @@ fn trimmed(text: String) -> String {
     text.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-/// `r` rounded to [`PERCENT_DIGITS`] digits after the point, a half away
-/// from zero.
-fn rounded(r: &BigRational) -> BigInt {
-    let unit = BigRational::from_integer(num_traits::pow(BigInt::from(10), PERCENT_DIGITS));
-    (r * unit).round().to_integer()
-}
-
-/// A `Percent` as so many in a hundred. In full when `exact`, `125/3%`;
+/// A `Percent` as so many in a hundred. In full when `exact`, `12.5%`;
 /// otherwise rounded to [`PERCENT_DIGITS`] digits after the point, `41.67%`,
 /// and from `1e15%` in e notation, `1.43e+19%`. It is never marked with
 /// [`MORE`]: rounding is the rule.
-pub fn format_percent(r: &BigRational, exact: bool) -> String {
+pub fn format_percent(r: &Dec, exact: bool) -> String {
     shown_percent(r, exact, None)
 }
 
 /// As [`format_percent`], with the digits grouped by `sep`.
-fn shown_percent(r: &BigRational, exact: bool, sep: Option<char>) -> String {
-    let hundred = r * BigRational::from_integer(BigInt::from(100));
+fn shown_percent(r: &Dec, exact: bool, sep: Option<char>) -> String {
+    let hundred = r.checked_mul(Dec::from_i64(100));
     if exact {
-        return format!("{}%", format_rat(&hundred));
+        return match hundred {
+            Some(h) => format!("{}%", h.to_plain_string()),
+            None => format!("{}%", r.to_plain_string()),
+        };
     }
-    let size = hundred.abs();
-    let mut scaled = rounded(&size);
-    let shown = if size < power_of_ten(15) {
-        grouped(trimmed(decimal(&scaled, false, PERCENT_DIGITS)), sep)
+    // The size in hundredths, as digits and a power of ten, which is exact
+    // even where multiplying by a hundred would not fit.
+    let (digits, e) = r.digits_and_exponent();
+    let e = e + 2;
+    let shown = if e < 15 {
+        let size = hundred.and_then(|h| h.checked_abs()).unwrap_or(Dec::ZERO);
+        let rounded = size
+            .rescale(PERCENT_DIGITS as u32)
+            .unwrap_or(size)
+            .to_plain_string();
+        grouped(trimmed(rounded), sep)
     } else {
-        let mut e = magnitude(&size);
-        scaled = rounded(&(&size / power_of_ten(e)));
-        // `9.999` rounds to ten, which is one of the next power.
-        if scaled >= BigInt::from(1000) {
-            e += 1;
-            scaled = rounded(&(&size / power_of_ten(e)));
-        }
-        format!(
-            "{}{}",
-            trimmed(decimal(&scaled, false, PERCENT_DIGITS)),
-            exponent(e)
-        )
+        let mantissa = match digits.split_at(1) {
+            (first, "") => first.to_string(),
+            (first, rest) => format!("{first}.{rest}"),
+        };
+        let rounded = Dec::parse(&mantissa)
+            .and_then(|m| m.rescale(PERCENT_DIGITS as u32))
+            .map(|m| m.to_plain_string())
+            .unwrap_or(mantissa);
+        format!("{}{}", trimmed(rounded), exponent(e))
     };
-    let sign = if hundred.is_negative() && !scaled.is_zero() {
-        "-"
-    } else {
-        ""
-    };
+    let zero = shown.bytes().all(|b| !b.is_ascii_digit() || b == b'0');
+    let sign = if r.is_negative() && !zero { "-" } else { "" };
     format!("{sign}{shown}%")
 }
 
@@ -763,12 +714,15 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         Value::Int(n) => localised(
             signed(
                 n.is_negative(),
-                shown_decimal(&BigRational::from_integer(n.abs()), group(style)),
+                shown_decimal(&Dec::from_i64(n.abs()), group(style)),
             ),
             style,
         ),
         Value::Decimal(r) => localised(
-            signed(r.is_negative(), shown_decimal(&r.abs(), group(style))),
+            signed(
+                r.is_negative(),
+                shown_decimal(&r.checked_abs().unwrap_or(*r), group(style)),
+            ),
             style,
         ),
         Value::Percent(r) if exact => format_percent(r, true),
@@ -822,58 +776,68 @@ mod tests {
     use super::*;
     use omasheet_omx::date;
 
-    fn rat(n: i64, d: i64) -> BigRational {
-        BigRational::new(n.into(), d.into())
+    fn rat(n: i64, d: i64) -> Dec {
+        Dec::from_i64(n)
+            .checked_div(Dec::from_i64(d))
+            .expect("divides")
     }
 
     #[test]
     fn formats_rationals() {
         assert_eq!(format_rat(&rat(175, 4)), "43.75");
-        assert_eq!(format_rat(&rat(1, 3)), "1/3");
+        assert_eq!(
+            format_rat(&rat(1, 3)),
+            "0.33333333333333333333333333333333333333"
+        );
         assert_eq!(format_rat(&rat(-1, 8)), "-0.125");
         assert_eq!(format_rat(&rat(1, 20)), "0.05");
-        assert_eq!(format_rat(&rat(-7, 3)), "-7/3");
+        assert_eq!(
+            format_rat(&rat(-7, 3)),
+            "-2.3333333333333333333333333333333333333"
+        );
     }
 
     #[test]
     fn shows_rationals() {
-        assert_eq!(format_rat(&rat(22, 7)), "22/7");
+        assert_eq!(
+            format_rat(&rat(22, 7)),
+            "3.142857142857142857142857142857142857"
+        );
         assert_eq!(format_rat(&rat(11, 4)), "2.75");
-        assert_eq!(format_rat(&rat(-1, 3)), "-1/3");
+        assert_eq!(
+            format_rat(&rat(-1, 3)),
+            "-0.33333333333333333333333333333333333333"
+        );
     }
 
     #[test]
     fn shows_exact_numbers_in_23_characters() {
         let shown = |v: Value| format_scalar(&v, false);
-        let int = |n: &str| Value::Int(n.parse().unwrap());
-        let big = |e: usize| num_traits::pow(BigInt::from(10), e);
-        assert_eq!(shown(int("999999999999999")), "999999999999999");
-        assert_eq!(shown(Value::Int(big(15))), "1e+15");
-        assert_eq!(shown(Value::Int(big(60))), "1e+60");
-        assert_eq!(shown(int("123456789012345678")), "1.23456789012345678e+17");
+        let int = |n: i64| Value::Int(n);
+        let dec = |s: &str| Value::Decimal(Dec::parse(s).expect("parses"));
+        assert_eq!(shown(int(999_999_999_999_999)), "999999999999999");
+        assert_eq!(shown(int(1_000_000_000_000_000)), "1e+15");
         assert_eq!(
-            shown(int("18446744073709551616")),
+            shown(int(123_456_789_012_345_678)),
+            "1.23456789012345678e+17"
+        );
+        // Past an `i64` a whole number is still exact, as a decimal.
+        assert_eq!(
+            shown(dec("18446744073709551616")),
             "1.8446744073709551…e+19"
         );
         assert_eq!(
-            shown(int("-18446744073709551616")),
+            shown(dec("-18446744073709551616")),
             "-1.8446744073709551…e+19"
         );
-        assert_eq!(shown(Value::Decimal(rat(1, 8))), "0.125");
+        assert_eq!(shown(dec("0.125")), "0.125");
+        assert_eq!(shown(dec("0.000000000000001")), "0.000000000000001");
+        // The widest and the narrowest a 38-digit decimal reaches.
+        assert_eq!(shown(dec("1e-38")), "1e-38");
+        assert_eq!(shown(dec(&"9".repeat(38))), "9.9999999999999999…e+37");
         assert_eq!(
-            shown(Value::Decimal(rat(1, 1_000_000_000_000_000))),
-            "0.000000000000001"
-        );
-        assert_eq!(
-            shown(Value::Decimal(BigRational::new(1.into(), big(43)))),
-            "1e-43"
-        );
-        assert_eq!(
-            shown(Value::Decimal(BigRational::new(
-                "12345678901234567890123".parse().unwrap(),
-                big(23)
-            ))),
-            "1.2345678901234567…e-01"
+            shown(dec("0.12345678901234567890123")),
+            "0.12345678901234567890…"
         );
     }
 
@@ -881,7 +845,7 @@ mod tests {
     fn groups_digits_in_the_app() {
         let app = Style::ISO.numbers('.', ',');
         let shown = |v: Value| format_styled(&v, false, &app);
-        let int = |n: i64| Value::Int(n.into());
+        let int = |n: i64| Value::Int(n);
         assert_eq!(shown(int(2025)), "2025");
         assert_eq!(shown(int(12345)), "12,345");
         assert_eq!(shown(int(-1234567)), "-1,234,567");
@@ -892,11 +856,10 @@ mod tests {
             "12,345.6789"
         );
         assert_eq!(
-            shown(Value::Decimal(BigRational::new(
-                "9999999999999999999999".parse().unwrap(),
-                10_000_000.into()
-            ))),
-            "9.9999999999999999…e+14"
+            shown(Value::Decimal(
+                Dec::parse("999999999999999.9999999").expect("parses")
+            )),
+            "999,999,999,999,999.99…"
         );
         assert_eq!(
             shown(Value::Percent(rat(12_345_678, 100_000))),
@@ -942,7 +905,10 @@ mod tests {
         assert_eq!(shown(rat(1, 20_000)), "0.01%");
         assert_eq!(shown(rat(10_000_000_000_000, 1)), "1e+15%");
         assert_eq!(shown(rat(1_000_000_000_000_000_000, 7)), "1.43e+19%");
-        assert_eq!(format_percent(&rat(5, 12), true), "125/3%");
+        assert_eq!(
+            format_percent(&rat(5, 12), true),
+            "41.6666666666666666666666666666666667%"
+        );
     }
 
     #[test]
@@ -1008,7 +974,10 @@ mod tests {
         let third = Value::Decimal(rat(-7, 3));
         let shown = |v: Result<Value, String>| format_exact(&v.unwrap(), true, &Style::ISO);
         assert_eq!(shown(third.converted(S::Int)), "-2");
-        assert_eq!(shown(third.converted(S::String)), "\"-7/3\"");
+        assert_eq!(
+            shown(third.converted(S::String)),
+            "\"-2.3333333333333333333333333333333333333\""
+        );
         assert_eq!(shown(Value::Float(0.1).converted(S::Decimal)), "0.1");
         assert_eq!(shown(Value::text("1/8").converted(S::Decimal)), "0.125");
         assert_eq!(
@@ -1025,17 +994,27 @@ mod tests {
     }
 
     #[test]
-    fn division_is_exact() {
-        let third = arith(BinOp::Div, &Value::Int(1.into()), &Value::Int(3.into())).unwrap();
+    fn division_is_exact_where_it_can_be() {
+        let third = arith(BinOp::Div, &Value::Int(1), &Value::Int(3)).unwrap();
         assert!(matches!(third, Value::Decimal(_)));
-        let one = arith(BinOp::Mul, &third, &Value::Int(3.into())).unwrap();
-        assert!(matches!(one, Value::Int(n) if n.is_one()));
+        // A third is rounded at the widest scale there is, so taking it
+        // back out again does not give one. This is the cost of a
+        // fixed-point decimal in place of a rational, and is deliberate.
+        let back = arith(BinOp::Mul, &third, &Value::Int(3)).unwrap();
+        assert_eq!(
+            format_exact(&back, false, &Style::ISO),
+            "0.99999999999999999999999999999999999999"
+        );
+        // One that ends comes back exactly.
+        let eighth = arith(BinOp::Div, &Value::Int(1), &Value::Int(8)).unwrap();
+        let one = arith(BinOp::Mul, &eighth, &Value::Int(8)).unwrap();
+        assert!(matches!(one, Value::Int(n) if n == 1));
     }
 
     #[test]
     fn division_by_zero_is_a_num() {
         let over_zero = |n: i64| {
-            let v = arith(BinOp::Div, &Value::Int(n.into()), &Value::Int(0.into())).unwrap();
+            let v = arith(BinOp::Div, &Value::Int(n), &Value::Int(0)).unwrap();
             assert!(matches!(v, Value::Float(_)));
             format_scalar(&v, false)
         };
@@ -1046,7 +1025,7 @@ mod tests {
 
     #[test]
     fn dates_and_times_shift() {
-        let int = |n: i64| Value::Int(n.into());
+        let int = |n: i64| Value::Int(n);
         let day = date::from_ymd(2025, 1, 31).unwrap();
         let shown = |op, a: &Value, b: &Value| format_scalar(&arith(op, a, b).unwrap(), false);
         assert_eq!(shown(BinOp::Add, &Value::Date(day), &int(1)), "2025-02-01");

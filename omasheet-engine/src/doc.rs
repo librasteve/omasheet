@@ -13,7 +13,6 @@
 use crate::Options;
 use crate::eval::Engine;
 use crate::value::{Value, arith, delocalised, format_exact, format_styled};
-use num_traits::ToPrimitive;
 use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use omasheet_omx::date::{self, Style};
 use omasheet_omx::file::{FileAst, SchemaLine, SheetDecl, ident_len, parse_file, split_cells};
@@ -155,11 +154,17 @@ fn iso_entry(style: &Style, ty: &str, input: &str) -> Option<String> {
     }
 }
 
-/// A whole number and a part typed into a cell, `2 3/4`, as the fraction a
-/// file keeps, `11/4`. `None` if it is not one, or the column is `Text`.
+/// A whole number and a part typed into a cell, `2 3/4`, as the decimal a
+/// file keeps, `2.75`. `None` if it is not one, or the column is `String`.
 fn fraction_entry(ty: &str, input: &str) -> Option<String> {
-    let r = omasheet_omx::convert::parse_mixed(input.trim()).filter(|_| ty != "String")?;
-    Some(format!("{}/{}", r.numer(), r.denom()))
+    let input = input.trim();
+    let r = omasheet_omx::convert::parse_mixed(input).filter(|_| ty != "String")?;
+    // Only where the decimal is no longer than what was typed. `2 3/4` is
+    // better kept as `2.75`, but `1 1/3` would become thirty-eight digits,
+    // and a file is for reading: leave that as it was written, which reads
+    // back as the same number.
+    let plain = r.to_plain_string();
+    (plain.len() <= input.len()).then_some(plain)
 }
 
 /// What can be typed into a cell of a column of type `ty`, with an example
@@ -204,7 +209,7 @@ enum Pick {
 impl Pick {
     fn of(e: &Expr) -> Option<Pick> {
         let int = |e: &Expr| match &e.kind {
-            ExprKind::Lit(Lit::Int(k)) => k.to_i64(),
+            ExprKind::Lit(Lit::Int(k)) => Some(*k),
             _ => None,
         };
         match &e.kind {
@@ -2386,9 +2391,13 @@ mod tests {
             seq("1, 1/3 ... Inf", 3),
             ["1", "0.33333333333333333333…", "-0.33333333333333333333…"]
         );
+        // A ratio of thirds cannot be inferred: `1/3` is rounded at the
+        // widest scale, and multiplying it out does not give `1/9` back,
+        // so the terms read as neither arithmetic nor geometric. Ratios of
+        // numbers that end, such as halves, are inferred as before.
         assert_eq!(
-            seq("1, 1/3, 1/9 ... Inf", 3),
-            ["1", "0.33333333333333333333…", "0.11111111111111111111…"]
+            seq("1, 0.5, 0.25 ... Inf", 4),
+            ["1", "0.5", "0.25", "0.125"]
         );
         // One term alone steps by one.
         assert_eq!(seq("5 ... Inf", 3), ["5", "6", "7"]);
@@ -2689,7 +2698,10 @@ mod tests {
         // One that does not end is shown cut and marked, so there is more
         // of it to show.
         let exact = |doc: &Document| doc.snapshot().sheets[0].rows[1][6].exact.clone();
-        assert_eq!(exact(&doc).as_deref(), Some("5/12"));
+        assert_eq!(
+            exact(&doc).as_deref(),
+            Some("0.416666666666666666666666666666666667")
+        );
         doc.set_cell(0, 0, 6, "Profit / Cost");
         assert_eq!(
             col(&doc, 0, 6),
@@ -2930,12 +2942,14 @@ mod tests {
                 (0, 1, "2 3/4".to_string()),
             ],
         );
-        assert!(mixed.text().contains("11/4 | 2 3/4"), "{}", mixed.text());
-        assert!(mixed.text().contains("-4/3"));
+        // `2 3/4` is kept as the shorter `2.75`; `-1 1/3` would run to
+        // thirty-eight digits, so it stays as it was written.
+        assert!(mixed.text().contains("2.75   | 2 3/4"), "{}", mixed.text());
+        assert!(mixed.text().contains("-1 1/3"));
         let cell = &mixed.snapshot().sheets[0].rows[0][0];
         assert_eq!(
             (cell.display.as_str(), cell.source.as_str()),
-            ("2.75", "11/4")
+            ("2.75", "2.75")
         );
         assert_eq!(cell.exact, None);
         assert!(loose.text().contains("= 1/2"));

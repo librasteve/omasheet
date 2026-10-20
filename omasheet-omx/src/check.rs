@@ -10,6 +10,7 @@ use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use crate::convert::{lit_type, parse_literal};
 use crate::cycle::{self, Cyc};
 use crate::date;
+use crate::decimal::Dec;
 use crate::deps;
 use crate::diag::{Diagnostic, Span};
 use crate::file::{FileAst, parse_file};
@@ -17,9 +18,6 @@ use crate::funcs::{FUNCTIONS, MathFn};
 use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use crate::parser::parse_expr;
 use crate::types::{DepKind, S, SheetTy, Ty};
-use num_bigint::BigInt;
-use num_rational::BigRational;
-use num_traits::ToPrimitive;
 use std::mem;
 use std::rc::Rc;
 
@@ -278,7 +276,7 @@ pub fn compile_expr(prog: &Program, text: &str, src: u32) -> Result<(Node, Ty), 
 fn static_of(e: &Expr) -> Option<Static> {
     fn int(e: &Expr) -> Option<i64> {
         match &e.kind {
-            ExprKind::Lit(Lit::Int(n)) => n.to_i64(),
+            ExprKind::Lit(Lit::Int(n)) => Some(*n),
             ExprKind::Unary(UnOp::Neg, inner) => int(inner).map(|n| -n),
             _ => None,
         }
@@ -294,15 +292,15 @@ fn static_of(e: &Expr) -> Option<Static> {
 }
 
 /// A seed written as a plain number, for working out the step.
-fn seed_num(e: &Expr) -> Option<BigRational> {
+fn seed_num(e: &Expr) -> Option<Dec> {
     match &e.kind {
-        ExprKind::Lit(Lit::Int(i)) => Some(BigRational::from(i.clone())),
-        ExprKind::Lit(Lit::Decimal(r) | Lit::Percent(r)) => Some(r.clone()),
-        ExprKind::Unary(UnOp::Neg, inner) => seed_num(inner).map(|r| -r),
+        ExprKind::Lit(Lit::Int(i)) => Some(Dec::from_i64(*i)),
+        ExprKind::Lit(Lit::Decimal(r) | Lit::Percent(r)) => Some(*r),
+        ExprKind::Unary(UnOp::Neg, inner) => seed_num(inner).and_then(|r| r.checked_neg()),
         // `1/3` written out, where the lexer did not take it for one.
         ExprKind::Binary(BinOp::Div, a, b) => {
             let (a, b) = (seed_num(a)?, seed_num(b)?);
-            (!b.is_integer() || b.to_integer() != BigInt::from(0)).then(|| a / b)
+            a.checked_div(b)
         }
         _ => None,
     }
@@ -347,7 +345,7 @@ fn duration_of(e: &Expr) -> Option<(i64, &'static str)> {
     let ExprKind::Lit(Lit::Int(n)) = &base.kind else {
         return None;
     };
-    Some((n.to_i64()?, unit))
+    Some((*n, unit))
 }
 
 /// A seed written as a plain date, which is the only kind that can step
@@ -368,11 +366,10 @@ fn seed_text(e: &Expr) -> Option<&str> {
 }
 
 /// A worked-out step as a literal: a whole number where it is one.
-fn num_lit(r: BigRational) -> Lit {
-    if r.is_integer() {
-        Lit::Int(r.to_integer())
-    } else {
-        Lit::Decimal(r)
+fn num_lit(r: Dec) -> Lit {
+    match r.to_i64() {
+        Some(n) => Lit::Int(n),
+        None => Lit::Decimal(r),
     }
 }
 
@@ -1031,7 +1028,7 @@ impl<'a> Checker<'a> {
                 return (Node::error(span), Ty::Any);
             }
         };
-        let int = |n: i64| Node::new(Ir::Lit(Lit::Int(BigInt::from(n))), span);
+        let int = |n: i64| Node::new(Ir::Lit(Lit::Int(n)), span);
         let node = match unit {
             "month" => Node::new(Ir::Call(Func::AddMonths, vec![node, int(n)]), span),
             "year" => Node::new(Ir::Call(Func::AddMonths, vec![node, int(n * 12)]), span),
@@ -1067,7 +1064,7 @@ impl<'a> Checker<'a> {
                 Some(at(ExprKind::Binary(
                     BinOp::Sub,
                     Box::new(at(ExprKind::Cursor)),
-                    Box::new(at(ExprKind::Lit(Lit::Int(BigInt::from(n))))),
+                    Box::new(at(ExprKind::Lit(Lit::Int(n as i64)))),
                 ))),
             ],
         )))
@@ -1110,11 +1107,11 @@ impl<'a> Checker<'a> {
                         Ir::Binary(
                             BinOp::Mul,
                             Box::new(Node::new(Ir::RowIndex { depth: 0 }, span)),
-                            Box::new(Node::new(Ir::Lit(Lit::Int(BigInt::from(step))), span)),
+                            Box::new(Node::new(Ir::Lit(Lit::Int(step)), span)),
                         ),
                         span,
                     );
-                    let day = Node::new(Ir::Lit(Lit::Int(BigInt::from(on))), span);
+                    let day = Node::new(Ir::Lit(Lit::Int(on)), span);
                     (
                         Node::new(Ir::Call(Func::AddMonths, vec![from, on_months, day]), span),
                         Ty::Scalar(S::Date),
@@ -1125,7 +1122,7 @@ impl<'a> Checker<'a> {
                         return fail;
                     };
                     let (prev, _) = self.lower(&prev, sc);
-                    let step = Node::new(Ir::Lit(Lit::Int(BigInt::from(step))), span);
+                    let step = Node::new(Ir::Lit(Lit::Int(step)), span);
                     (
                         Node::new(Ir::Call(Func::Cycle(kind), vec![prev, step]), span),
                         Ty::Scalar(S::String),
@@ -1156,7 +1153,7 @@ impl<'a> Checker<'a> {
         }
 
         // Which way the sequence runs, for a numeric limit.
-        let nums: Vec<BigRational> = seeds.iter().filter_map(seed_num).collect();
+        let nums: Vec<Dec> = seeds.iter().filter_map(seed_num).collect();
         let times: Vec<i64> = seeds.iter().filter_map(seed_time).collect();
         let descends =
             (nums.len() > 1 && nums[1] < nums[0]) || (times.len() > 1 && times[1] < times[0]);
@@ -1166,7 +1163,7 @@ impl<'a> Checker<'a> {
         };
 
         // `if ROW == 0 then s0 else if ROW == 1 then s1 else … else body`.
-        let int = |n: usize| Node::new(Ir::Lit(Lit::Int(BigInt::from(n))), span);
+        let int = |n: usize| Node::new(Ir::Lit(Lit::Int(n as i64)), span);
         let out = nodes
             .into_iter()
             .enumerate()
@@ -1208,7 +1205,7 @@ impl<'a> Checker<'a> {
                 Some(Rule::By(at(ExprKind::Binary(
                     BinOp::Add,
                     Box::new(back()),
-                    Box::new(at(ExprKind::Lit(Lit::Int(BigInt::from(n))))),
+                    Box::new(at(ExprKind::Lit(Lit::Int(n)))),
                 ))))
             };
             if times.len() == 1 {
@@ -1230,7 +1227,7 @@ impl<'a> Checker<'a> {
             );
             return None;
         }
-        let nums: Option<Vec<BigRational>> = seeds.iter().map(seed_num).collect();
+        let nums: Option<Vec<Dec>> = seeds.iter().map(seed_num).collect();
         let Some(nums) = nums else {
             self.err_help(
                 span,
@@ -1239,7 +1236,7 @@ impl<'a> Checker<'a> {
             );
             return None;
         };
-        let step = |op, r: BigRational| {
+        let step = |op, r: Dec| {
             Some(Rule::By(at(ExprKind::Binary(
                 op,
                 Box::new(back()),
@@ -1247,18 +1244,26 @@ impl<'a> Checker<'a> {
             ))))
         };
         if nums.len() == 1 {
-            return step(BinOp::Add, BigRational::from(BigInt::from(1)));
+            return step(BinOp::Add, Dec::ONE);
         }
-        let diff = &nums[1] - &nums[0];
-        if nums.windows(2).all(|w| &w[1] - &w[0] == diff) {
+        let diff = nums[1].checked_sub(nums[0]);
+        if let Some(diff) = diff
+            && nums
+                .windows(2)
+                .all(|w| w[1].checked_sub(w[0]) == Some(diff))
+        {
             return step(BinOp::Add, diff);
         }
-        let zero = BigRational::from(BigInt::from(0));
+        let zero = Dec::ZERO;
         if nums[0] != zero {
-            let ratio = &nums[1] / &nums[0];
-            if nums
-                .windows(2)
-                .all(|w| w[0] != zero && &w[1] / &w[0] == ratio)
+            let ratio = nums[1].checked_div(nums[0]);
+            // Checked by multiplying out rather than dividing each pair: a
+            // ratio of rounded decimals does not come back the same when it
+            // is taken again, where multiplying by it does.
+            if let Some(ratio) = ratio
+                && nums
+                    .windows(2)
+                    .all(|w| w[0] != zero && w[0].checked_mul(ratio) == Some(w[1]))
             {
                 return step(BinOp::Mul, ratio);
             }
@@ -1368,13 +1373,11 @@ impl<'a> Checker<'a> {
             // Any exact number in a `Percent` column is a percentage: `0.4`
             // is `40%`. A `20%` elsewhere is the number it stands for.
             (Some(l @ Lit::Percent(_)), S::Percent) => Some(l),
-            (Some(Lit::Int(n)), S::Percent) => {
-                Some(Lit::Percent(num_rational::BigRational::from_integer(n)))
-            }
+            (Some(Lit::Int(n)), S::Percent) => Some(Lit::Percent(Dec::from_i64(n))),
             (Some(Lit::Decimal(r)), S::Percent) => Some(Lit::Percent(r)),
             (Some(l @ Lit::Percent(_)), S::Decimal) => crate::convert::convert(&l, want).ok(),
-            (Some(Lit::Int(n)), S::Float) => n.to_f64().map(Lit::Float),
-            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Float) => r.to_f64().map(Lit::Float),
+            (Some(Lit::Int(n)), S::Float) => Some(Lit::Float(n as f64)),
+            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Float) => Some(Lit::Float(r.to_f64())),
             (Some(l @ Lit::Float(_)), S::Float) => Some(l),
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),

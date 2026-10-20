@@ -4,17 +4,14 @@
 //! do.
 
 use crate::ast::Lit;
+use crate::decimal::Dec;
 use crate::lexer::{Tok, lex};
 use crate::types::S;
-use num_bigint::BigInt;
-use num_rational::BigRational;
-use num_traits::{ToPrimitive, Zero};
-use std::str::FromStr;
 
 /// A whole number and a part written on their own, `2 3/4` or `-2 3/4`, as
-/// the fraction they come to, `11/4`. The part is less than one. `None` if
-/// the text is anything else.
-pub fn parse_mixed(text: &str) -> Option<BigRational> {
+/// the exact number they come to, `2.75`. The part is less than one. `None`
+/// if the text is anything else.
+pub fn parse_mixed(text: &str) -> Option<Dec> {
     let toks = lex(text, 0, 0).ok()?;
     let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
     let (negative, rest) = match toks.as_slice() {
@@ -31,10 +28,11 @@ pub fn parse_mixed(text: &str) -> Option<BigRational> {
     else {
         return None;
     };
-    let r = (n < d).then(|| {
-        BigRational::from_integer(whole.clone()) + BigRational::new(n.clone(), d.clone())
-    })?;
-    Some(if negative { -r } else { r })
+    let part = (n < d)
+        .then(|| Dec::from_i64(*n).checked_div(Dec::from_i64(*d)))
+        .flatten()?;
+    let r = Dec::from_i64(*whole).checked_add(part)?;
+    if negative { r.checked_neg() } else { Some(r) }
 }
 
 /// A value written on its own, such as `42`, `-1/7`, `2 3/4`, `3+4i` or
@@ -46,19 +44,21 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
     let toks = lex(text, 0, 0).ok()?;
     let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
     // A fraction of two whole numbers, `1/7`, is an exact number.
-    let fraction = |n: &BigInt, d: &BigInt| {
-        (!d.is_zero()).then(|| Lit::Decimal(BigRational::new(n.clone(), d.clone())))
+    let fraction = |n: i64, d: i64| {
+        Dec::from_i64(n)
+            .checked_div(Dec::from_i64(d))
+            .map(Lit::Decimal)
     };
     Some(match toks.as_slice() {
-        [Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(n, d)?,
-        [Tok::Minus, Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(&-n, d)?,
-        [Tok::Int(n), Tok::Eof] => Lit::Int(n.clone()),
-        [Tok::Decimal(r), Tok::Eof] => Lit::Decimal(r.clone()),
-        [Tok::Percent(r), Tok::Eof] => Lit::Percent(r.clone()),
+        [Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(*n, *d)?,
+        [Tok::Minus, Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(-*n, *d)?,
+        [Tok::Int(n), Tok::Eof] => Lit::Int(*n),
+        [Tok::Decimal(r), Tok::Eof] => Lit::Decimal(*r),
+        [Tok::Percent(r), Tok::Eof] => Lit::Percent(*r),
         [Tok::Float(f), Tok::Eof] => Lit::Float(*f),
-        [Tok::Minus, Tok::Int(n), Tok::Eof] => Lit::Int(-n.clone()),
-        [Tok::Minus, Tok::Decimal(r), Tok::Eof] => Lit::Decimal(-r.clone()),
-        [Tok::Minus, Tok::Percent(r), Tok::Eof] => Lit::Percent(-r.clone()),
+        [Tok::Minus, Tok::Int(n), Tok::Eof] => Lit::Int(-*n),
+        [Tok::Minus, Tok::Decimal(r), Tok::Eof] => Lit::Decimal(r.checked_neg()?),
+        [Tok::Minus, Tok::Percent(r), Tok::Eof] => Lit::Percent(r.checked_neg()?),
         [Tok::Minus, Tok::Float(f), Tok::Eof] => Lit::Float(-*f),
         [Tok::Str(s), Tok::Eof] => Lit::String(s.clone()),
         [Tok::Date(d), Tok::Eof] => Lit::Date(*d),
@@ -84,45 +84,6 @@ pub fn lit_type(l: &Lit) -> S {
     }
 }
 
-/// Whether an exact number ends when written as a decimal: `1/8` does, as
-/// `0.125`, and `1/3` does not. It does if its denominator has no prime
-/// factor but 2 and 5.
-pub fn is_decimal(r: &BigRational) -> bool {
-    let mut rest = r.denom().clone();
-    for prime in [2, 5] {
-        let prime = BigInt::from(prime);
-        while (&rest % &prime).is_zero() {
-            rest /= &prime;
-        }
-    }
-    rest == BigInt::from(1)
-}
-
-/// The exact number a `Num` is shown as: `0.1`, not the binary fraction
-/// nearest to it. `None` if it is not finite.
-pub fn fraction_of(f: f64) -> Option<BigRational> {
-    if !f.is_finite() {
-        return None;
-    }
-    // The shortest decimal that reads back as the same `Num`.
-    let text = format!("{f:e}");
-    let (mantissa, exponent) = text.split_once('e')?;
-    let (negative, mantissa) = match mantissa.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, mantissa),
-    };
-    let (whole, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    let digits = BigInt::from_str(&format!("{whole}{frac}")).ok()?;
-    let power = exponent.parse::<i64>().ok()? - frac.len() as i64;
-    let scale = num_traits::pow(BigInt::from(10), power.unsigned_abs() as usize);
-    let r = if power >= 0 {
-        BigRational::from_integer(digits * scale)
-    } else {
-        BigRational::new(digits, scale)
-    };
-    Some(if negative { -r } else { r })
-}
-
 /// The name of a type with `a` or `an` before it.
 fn a(to: S) -> String {
     let article = if to == S::Int { "an" } else { "a" };
@@ -136,10 +97,9 @@ fn a(to: S) -> String {
 pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     let from = lit_type(lit);
     let no = || Err(format!("{from} cannot be made {}", a(to)));
-    let one = |b: bool| BigInt::from(b as u8);
     let real = |l: &Lit| match l {
-        Lit::Int(n) => n.to_f64(),
-        Lit::Decimal(r) | Lit::Percent(r) => r.to_f64(),
+        Lit::Int(n) => Some(*n as f64),
+        Lit::Decimal(r) | Lit::Percent(r) => Some(r.to_f64()),
         Lit::Float(f) => Some(*f),
         Lit::Boolean(b) => Some(*b as u8 as f64),
         _ => None,
@@ -156,21 +116,29 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
         }
         // A `Percent` is the number it stands for: `20%` is `0.2`.
         (Lit::Percent(r), S::Int | S::Decimal | S::Boolean) => {
-            let plain = if r.is_integer() {
-                Lit::Int(r.to_integer())
-            } else {
-                Lit::Decimal(r.clone())
+            let plain = match r.to_i64() {
+                Some(n) => Lit::Int(n),
+                None => Lit::Decimal(*r),
             };
             return convert(&plain, to);
         }
-        (Lit::Int(n), S::Percent) => Lit::Percent(BigRational::from_integer(n.clone())),
-        (Lit::Decimal(r), S::Percent) => Lit::Percent(r.clone()),
-        (Lit::Int(n), S::Decimal) => Lit::Int(n.clone()),
-        (Lit::Decimal(r), S::Int) => Lit::Int(r.trunc().to_integer()),
-        (Lit::Float(f), S::Int | S::Decimal | S::Percent) => match fraction_of(*f) {
+        (Lit::Int(n), S::Percent) => Lit::Percent(Dec::from_i64(*n)),
+        (Lit::Decimal(r), S::Percent) => Lit::Percent(*r),
+        (Lit::Int(n), S::Decimal) => Lit::Int(*n),
+        (Lit::Decimal(r), S::Int) => match r.trunc().to_i64() {
+            Some(n) => Lit::Int(n),
+            None => return Err("the number is too large for an Int".to_string()),
+        },
+        (Lit::Float(f), S::Int | S::Decimal | S::Percent) => match Dec::from_f64(*f) {
             Some(r) if to == S::Percent => Lit::Percent(r),
-            Some(r) if to == S::Int || r.is_integer() => Lit::Int(r.trunc().to_integer()),
-            Some(r) => Lit::Decimal(r),
+            Some(r) if to == S::Int => match r.trunc().to_i64() {
+                Some(n) => Lit::Int(n),
+                None => return Err("the number is too large for an Int".to_string()),
+            },
+            Some(r) => match r.to_i64() {
+                Some(n) => Lit::Int(n),
+                None => Lit::Decimal(r),
+            },
             None => {
                 let name = match f {
                     f if f.is_nan() => "NaN",
@@ -180,14 +148,14 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
                 return Err(format!("{name} has no exact value"));
             }
         },
-        (Lit::Boolean(b), S::Int | S::Decimal) => Lit::Int(one(*b)),
+        (Lit::Boolean(b), S::Int | S::Decimal) => Lit::Int(*b as i64),
         (Lit::Int(_) | Lit::Decimal(_) | Lit::Percent(_) | Lit::Boolean(_), S::Float) => {
             match real(lit) {
                 Some(f) => Lit::Float(f),
                 None => return no(),
             }
         }
-        (Lit::Int(n), S::Boolean) => Lit::Boolean(!n.is_zero()),
+        (Lit::Int(n), S::Boolean) => Lit::Boolean(*n != 0),
         (Lit::Decimal(r), S::Boolean) => Lit::Boolean(!r.is_zero()),
         (Lit::Float(f), S::Boolean) => Lit::Boolean(*f != 0.0),
         (Lit::DateTime(t), S::Date) => Lit::Date(crate::date::split_datetime(*t).0),
@@ -223,17 +191,11 @@ mod tests {
         assert_eq!(convert(&lit("-19.99"), S::Int), Ok(lit("-19")));
         assert_eq!(convert(&lit("1e-1"), S::Decimal), Ok(lit("0.1")));
         assert_eq!(convert(&lit("1/8"), S::Decimal), Ok(lit("0.125")));
-        assert_eq!(
-            convert(&lit("1/3"), S::Decimal),
-            Ok(Lit::Decimal(num_rational::BigRational::new(
-                1.into(),
-                3.into()
-            )))
-        );
+        assert_eq!(convert(&lit("1/3"), S::Decimal), Ok(lit("1/3")));
         // A fraction of whole numbers is an exact `Decimal`.
         assert_eq!(
             lit("7/3"),
-            Lit::Decimal(BigRational::new(7.into(), 3.into()))
+            Lit::Decimal(Dec::from_i64(7).checked_div(Dec::from_i64(3)).unwrap())
         );
         assert_eq!(convert(&lit("-22/7"), S::Int), Ok(lit("-3")));
         // A whole number and a part is the fraction they come to.
