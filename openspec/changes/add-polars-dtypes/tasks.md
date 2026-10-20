@@ -1,5 +1,10 @@
 # Tasks: The Polars dtypes become the representation
 
+The first of two stages. This change is on the `polars-dtypes` branch;
+`add-dataframe-interop`, the second, is on `polars-parquet`, which is built on
+it. Sections 1 to 4 are what the Parquet boundary needed, and are done; the
+rest goes on here while that change goes on there.
+
 ## 0. Settle the open questions
 
 - [x] 0.1 P25: does a result past `i64` fail, or widen to `Decimal`? `2 ** 64`
@@ -66,6 +71,9 @@
       `to_zone`, `utc`, `local`, `offset` and `zone` returning it
 - [ ] 5.4 Unsigned dtypes read and preserved, with a notice for a `UInt64`
       above `i64::MAX`
+
+Each of these is then carried through Parquet, as task 2.9 of
+`add-dataframe-interop`.
 
 ## 6. Column lists (`omx-expressions`)
 
