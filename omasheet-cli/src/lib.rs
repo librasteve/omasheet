@@ -22,8 +22,8 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// An .omx file, workbook or CSV file to open in the app; a new file if
-    /// none is given
+    /// An .omx file, XLSX Workbook, CSV file or Parquet file to open in the
+    /// app; a new file if none is given
     file: Option<PathBuf>,
 }
 
@@ -111,28 +111,30 @@ enum Command {
         /// The file to check
         file: PathBuf,
     },
-    /// Write a workbook (.xlsx), a CSV file (.csv) or JSON (.json) as an .omx file
+    /// Write an XLSX Workbook, a CSV file, JSON or Parquet as an .omx file
     ///
     /// The file is printed, and anything that was changed or left behind
     /// is reported.
     Import {
-        /// The workbook, CSV or JSON file to read
+        /// The XLSX Workbook, CSV, JSON or Parquet file to read
         file: PathBuf,
 
         /// Write the file to this file rather than printing it
         #[arg(short, long, value_name = "FILE")]
         output: Option<PathBuf>,
     },
-    /// Write the calculated sheets of a file as a workbook, CSV or JSON
+    /// Write the calculated sheets of a file as an XLSX Workbook, CSV, JSON
+    /// or Parquet
     ///
     /// The file is written beside the file: budget.omx as budget.xlsx,
-    /// budget.csv or budget.json. CSV holds one sheet, so a file with
-    /// several is written as budget.Sales.csv, budget.Summary.csv.
+    /// budget.csv, budget.json or budget.parquet. CSV and Parquet hold one
+    /// sheet, so a file with several is written as budget.Sales.csv,
+    /// budget.Summary.csv.
     Export {
         /// The file to export
         file: PathBuf,
 
-        /// Write a workbook, with a worksheet for each sheet
+        /// Write an XLSX Workbook, with a worksheet for each sheet
         #[arg(long, conflicts_with_all = ["csv", "json", "parquet"])]
         xlsx: bool,
 
@@ -217,7 +219,7 @@ fn import(file: &Path, output: Option<&Path>) -> Result<ExitCode, ExitCode> {
     let kind = extension(file);
     if !matches!(kind.as_str(), "xlsx" | "csv" | "json" | "parquet") {
         return usage(&format!(
-            "cannot import {}: give a workbook (.xlsx), a CSV file (.csv), JSON (.json) or Parquet (.parquet)",
+            "cannot import {}: give an XLSX Workbook (.xlsx), a CSV file (.csv), JSON (.json) or Parquet (.parquet)",
             file.display()
         ));
     }
