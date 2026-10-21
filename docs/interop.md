@@ -22,9 +22,14 @@ omasheet import orders.json                  # a sheet for each list of rows
 - A number is read exactly: `19.99` is `1999/100`. An XLSX Workbook holds
   every number as floating point, so it is read from the shortest decimal
   that gives the same number; CSV is read as it is written, every digit of it.
-- A column of dates, times, date-times or `true` / `false` is given its
-  type. A column of numbers and text together has none: each cell is what
-  it reads as.
+- A column of dates, times, date-times, `true` / `false` or floating-point
+  numbers is declared, because the written cells alone would not give that
+  type back: a `Float` column of `22` and `7.25` would read as an `Int` and
+  a `Decimal` without the line. A column of exact numbers, or of text, is
+  left undeclared, as its cells read as that type anyway, and the app shows
+  such a type muted. A column of numbers and text together has none either:
+  each cell is what it reads as. See
+  [Types](format.md#types).
 - A formula in an XLSX Workbook is translated to OMX where OMX can say it:
   see [Formulas](#formulas). Where it cannot, the value is imported, and
   the cells are listed with the reason.
@@ -211,7 +216,12 @@ type its own name stands for rather than converted into something near it.
 
 On the way in, each column's type is taken from the file's schema and never
 guessed from its values, so a column of `"42"` and `"7"` held as text stays
-`String`. A column Parquet holds in a shape a sheet has no room for — a list,
+`String`. The `.omx` written from it declares that type only where the cells
+would not read back as it: a `double` column becomes `Age : Float`, while an
+`int64` or a text column needs no line and shows muted in the app — muted
+there is still the schema's type, not a guess. A column that is all nulls,
+or whose values do not go together, has no line to hold it and reads as its
+cells do. A column Parquet holds in a shape a sheet has no room for — a list,
 a struct, a map — is left out and named in a notice.
 
 A `Percent` is written as the decimal it holds: `20%` is `0.2`. Its display

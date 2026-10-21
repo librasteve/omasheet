@@ -83,6 +83,17 @@ A column with no `Name : Type` line takes its type from its cells.
 | `Time` | `09:30`, `09:30:15` |
 | `DateTime` | `2025-01-31T09:30` |
 
+A cell's written form carries its type where that form is distinctive:
+`true`, `2025-01-31`, `09:30`, `20%` and `1.5e3` read as a `Boolean`, a
+`Date`, a `Time`, a `Percent` and a `Float` wherever they stand. A
+`Name : Type` line is what makes the type the whole column's, and is needed
+where the written values would not carry it: a `Float` column of `22` and
+`7.25`, which read as an `Int` and a `Decimal` on their own, or a `Fraction`
+or `Percent` column over numbers written plainly. Nothing is lost by leaving
+a line out where the cells already say it — the app shows a type
+[muted](app.md#the-app) where it comes from the cells and plain where it is
+declared.
+
 Text written bare may hold Markdown: `a **slow** start`,
 `see the [lease](lease.pdf)`. The app shows it as that, and so does a
 [rendered document](interop.md#markdown). Text in quotes is as it is:
