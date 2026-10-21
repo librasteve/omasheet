@@ -1,12 +1,11 @@
 # Tasks: Parquet, and tables backed by a dataframe
 
-The second of two stages, on the `polars-parquet` branch, built on
-`add-polars-dtypes` (the `polars-dtypes` branch). The type mapping below is a
-naming, not a conversion, only once an omasheet type *is* a Polars dtype:
-sections 1 to 4 of that change made it so for the types there are now, and
-section 2 here uses them. The types still to come there — `Binary`,
-`Duration`, a `DateTime` with a zone, and unsigned widths — reach Parquet as
-2.9 once they land.
+The second of two stages, built on `add-polars-dtypes`; both are on the
+`polars` branch. The type mapping below is a naming, not a conversion, only
+once an omasheet type *is* a Polars dtype: sections 1 to 4 of that change made
+it so for the types there are now, and section 2 here uses them. The types
+still to come there — `Binary`, `Duration`, a `DateTime` with a zone, and
+unsigned widths — reach Parquet as 2.9 once they land.
 
 ## 0. Settle the open questions
 

@@ -1,9 +1,9 @@
 # Tasks: The Polars dtypes become the representation
 
-The first of two stages. This change is on the `polars-dtypes` branch;
-`add-dataframe-interop`, the second, is on `polars-parquet`, which is built on
-it. Sections 1 to 4 are what the Parquet boundary needed, and are done; the
-rest goes on here while that change goes on there.
+The first of two stages. Both changes are on the `polars` branch:
+`add-dataframe-interop`, the second, is built on this one. Sections 1 to 4 are
+what the Parquet boundary needed, and are done; the rest goes on here while
+that change goes on beside it.
 
 ## 0. Settle the open questions
 
