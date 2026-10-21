@@ -1340,10 +1340,13 @@ impl<'a> Checker<'a> {
         let Some(want) = declared else { return found };
         if !found.assignable_to(want) {
             let help = match (found, want) {
-                (S::Int | S::Decimal | S::Percent, S::Float) => "use `.Float` to convert to Float",
+                (S::Int | S::Decimal | S::Fraction | S::Percent, S::Float) => {
+                    "use `.Float` to convert to Float"
+                }
                 (S::Percent, S::Int) => "declare the column as `Percent`, or use `.Int`",
                 (S::Percent, S::Decimal) => "declare the column as `Percent`, or use `.Decimal`",
                 (S::Decimal, S::Int) => "declare the column as `Decimal`, or use `.Int`",
+                (S::Fraction, S::Int) => "declare the column as `Fraction`, or use `.Int`",
                 _ => "change the declared type or the formula",
             };
             self.err_help(
@@ -1368,14 +1371,16 @@ impl<'a> Checker<'a> {
             });
         }
         let fitted = match (parsed, want) {
-            (Some(l @ Lit::Int(_)), S::Int | S::Decimal) => Some(l),
-            (Some(l @ Lit::Decimal(_)), S::Decimal) => Some(l),
+            (Some(l @ Lit::Int(_)), S::Int | S::Decimal | S::Fraction) => Some(l),
+            (Some(l @ Lit::Decimal(_)), S::Decimal | S::Fraction) => Some(l),
             // Any exact number in a `Percent` column is a percentage: `0.4`
             // is `40%`. A `20%` elsewhere is the number it stands for.
             (Some(l @ Lit::Percent(_)), S::Percent) => Some(l),
             (Some(Lit::Int(n)), S::Percent) => Some(Lit::Percent(Dec::from_i64(n))),
             (Some(Lit::Decimal(r)), S::Percent) => Some(Lit::Percent(r)),
-            (Some(l @ Lit::Percent(_)), S::Decimal) => crate::convert::convert(&l, want).ok(),
+            (Some(l @ Lit::Percent(_)), S::Decimal | S::Fraction) => {
+                crate::convert::convert(&l, S::Decimal).ok()
+            }
             (Some(Lit::Int(n)), S::Float) => Some(Lit::Float(n as f64)),
             (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Float) => Some(Lit::Float(r.to_f64())),
             (Some(l @ Lit::Float(_)), S::Float) => Some(l),
@@ -1393,6 +1398,7 @@ impl<'a> Checker<'a> {
                 match want {
                     S::Int => "enter a whole number such as `42`, or start the cell with `=` for a formula",
                     S::Decimal => "enter a number such as `19.99`, `1/7` or `20%`, or start the cell with `=` for a formula",
+                    S::Fraction => "enter a number such as `1/7`, `2 3/4` or `19.99`, or start the cell with `=` for a formula",
                     S::Percent => "enter a percentage such as `20%`, or start the cell with `=` for a formula",
                     S::Float => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
                     S::Boolean => "enter `true` or `false`, or start the cell with `=` for a formula",

@@ -43,7 +43,9 @@ pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
 /// digit there is of it.
 fn field(v: &Value) -> (String, bool) {
     match v {
-        Value::Decimal(r) => (format_rat(r), false),
+        // A `Fraction` goes out as the decimal it holds: a CSV is read by
+        // anything, and `1/7` in one is not a number anywhere else.
+        Value::Decimal(r) | Value::Fraction(r) => (format_rat(r), false),
         Value::Percent(_) => (format_exact(v, false, &Style::ISO), false),
         v => (format_exact(v, false, &Style::ISO), false),
     }

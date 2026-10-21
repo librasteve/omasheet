@@ -6,9 +6,9 @@ The expression language: its literals, its operators and its functions.
 
 ### Requirement: The conversion functions
 
-The conversions SHALL be `Int`, `Decimal`, `Percent`, `Float`, `String`,
-`Binary`, `Boolean`, `Date`, `Time` and `DateTime`, each written `x.Name`,
-`x.Name()` or `Name(x)`.
+The conversions SHALL be `Int`, `Decimal`, `Fraction`, `Percent`, `Float`,
+`String`, `Binary`, `Boolean`, `Date`, `Time` and `DateTime`, each written
+`x.Name`, `x.Name()` or `Name(x)`.
 
 #### Scenario: Converting to a floating-point number
 
@@ -16,6 +16,19 @@ The conversions SHALL be `Int`, `Decimal`, `Percent`, `Float`, `String`,
 - **WHEN** it is evaluated
 - **THEN** the result is `0.3333333333333333`
 - **AND** it is a `Float`
+
+### Requirement: The fraction conversion
+
+`x.Fraction` SHALL convert to the `Fraction` display of an exact number, the
+fraction recovered from the number rather than held, so that a fraction nobody
+wrote is found too. It is no longer a conversion to a rational
+representation, since there is none.
+
+#### Scenario: A fraction is recovered from the number
+
+- **GIVEN** the expressions `(1/8).Fraction` and `(2/7 + 3/7).Fraction`
+- **WHEN** each is evaluated
+- **THEN** they are shown as `1/8` and `5/7`
 
 ## ADDED Requirements
 
@@ -43,8 +56,3 @@ complex number. The lexer does not produce an imaginary token.
 `re`, `im`, `conj` and `arg` are no longer functions, and `Complex(re, im)` is
 no longer a constructor. `abs`, `sqrt`, `exp` and `ln` keep their real
 behaviour and no longer have a complex one.
-
-### Requirement: The fraction conversions
-
-`x.Fraction` is no longer a conversion. A fraction written in a cell is read as
-an exact `Decimal`, so `x.Decimal` covers what it did.

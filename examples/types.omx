@@ -1,14 +1,20 @@
 # The numbers, Boolean and String: what each type holds and how it is shown.
 #
-# Int, Decimal and Percent are exact and a Float is floating point. Decimal
-# and Percent hold the same numbers and show them in different ways: as a
-# decimal, and as so many in a hundred.
+# Int, Decimal, Fraction and Percent are exact and a Float is floating
+# point. Decimal, Fraction and Percent hold the same numbers and show them
+# in different ways: as a decimal, as a fraction, and as so many in a
+# hundred.
 #
 # A number is shown in at most 23 characters: plain from 1e-15 to 1e15, and
 # in e notation otherwise, with digits that do not fit cut and marked with
-# …. A Decimal that does not end is cut and marked too. A number worked
-# out from Ints and Decimals is a Decimal. A Percent is rounded to two
-# digits, and a Float is never rounded; all are held in full.
+# …. A Decimal that does not end is cut and marked too, and a Fraction is a
+# fraction where there is one of a small enough denominator. A number worked
+# out from Ints and Decimals is a Decimal; a Fraction column is declared. A
+# Percent is rounded to two digits, and a Float is never rounded.
+#
+# Thirty of the thirty-eight digits an exact number holds are shown; the
+# last eight are working room, so that two ways of reaching one number
+# agree. 1/3 * 3 is 1, and 2/7 + 3/7 == 5/7.
 # `omasheet --exact examples/types.omx` shows them in full.
 
 const Half = 50%
@@ -20,7 +26,7 @@ sheet Numbers
 Name    : String
 Count   : Int
 Price   : Decimal
-Share   : Decimal
+Share   : Fraction
 Rate    : Percent
 Reading : Float
 Checked : Boolean
@@ -104,6 +110,22 @@ AsPercent := Value.Percent
 AsNum     := Value.Float
 AsBool    := Value.Boolean
 AsText    := Value.String
+
+# A Fraction column shows what it holds as a fraction, and anything worked
+# out from one is a fraction too.
+sheet Mixes
+
+Yield : Fraction
+
+| Name   | Yield | Doubled | Share |
+| ------ | ----- | ------- | ----- |
+| mortar | 7/3   | *       | *     |
+| screed | 22/7  | *       | *     |
+| lean   | 2 3/4 | *       | *     |
+| wide   | 0.5   | *       | *     |
+
+Doubled := Yield * 2
+Share   := Yield.Percent
 
 # String is read the way a cell is.
 sheet Written

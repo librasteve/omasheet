@@ -39,6 +39,11 @@ the widest scale the result will hold.
 
 Arithmetic SHALL NOT wrap. A result that will not fit SHALL be reported.
 
+The last 8 of the 38 digits SHALL be guard digits: held, but neither compared
+nor shown. A number SHALL be compared, shown and written at 30 significant
+digits, and a number of 30 or fewer significant digits SHALL be untouched by
+this.
+
 #### Scenario: Decimal addition is exact
 
 - **GIVEN** the expression `0.1 + 0.2`
@@ -51,7 +56,22 @@ Arithmetic SHALL NOT wrap. A result that will not fit SHALL be reported.
 - **GIVEN** the expression `1 / 3`
 - **WHEN** it is evaluated
 - **THEN** the result holds 38 digits after the point
-- **AND** `(1 / 3) * 3` is not `1`
+- **AND** 30 of them are shown, cut and marked
+
+#### Scenario: The guard digits carry the rounding, so two ways to one number agree
+
+- **GIVEN** the expressions `1/7 + 1/7` and `2/7`
+- **WHEN** each is evaluated
+- **THEN** the two values differ in the digits they hold
+- **AND** `1/7 + 1/7 == 2/7` is true
+- **AND** `2/7 + 3/7 == 5/7` is true
+- **AND** `(1 / 3) * 3` is `1`
+
+#### Scenario: Guarding is on significant digits, so the smallest numbers survive
+
+- **GIVEN** the exact number `1e-38`, whose every digit is significant
+- **WHEN** it is shown and compared
+- **THEN** it is itself, and not zero
 
 #### Scenario: A result too wide to hold is reported
 
@@ -62,8 +82,9 @@ Arithmetic SHALL NOT wrap. A result that will not fit SHALL be reported.
 
 ### Requirement: Exactness is decimal, not rational
 
-An exact number SHALL be a decimal. There SHALL be no rational type, and no
-value SHALL be shown as a fraction.
+An exact number SHALL be a decimal. There SHALL be no rational type: a value
+shown as a fraction SHALL be a decimal whose fraction was recovered from it,
+not a numerator and a denominator that were held.
 
 A fraction of two whole numbers, and a whole number followed by a part, SHALL
 remain literal syntax and SHALL be read as the exact decimal they come to,
@@ -81,9 +102,57 @@ rounded at 38 digits where they do not terminate.
 - **GIVEN** a cell holding `1/7`
 - **WHEN** the file is read
 - **THEN** the value holds 38 digits after the point
-- **AND** it is shown cut and marked
+- **AND** it is shown cut and marked, unless the column is a `Fraction`
 
 ## ADDED Requirements
+
+### Requirement: The Fraction type is a display of a Decimal
+
+`Fraction` SHALL be a declarable type holding what a `Decimal` holds, shown as
+a fraction of whole numbers with a whole part where there is one. A `Fraction`
+column SHALL take any exact number, and anything worked out from a fraction
+SHALL be a fraction.
+
+#### Scenario: A Fraction column shows what it holds as a fraction
+
+- **GIVEN** a `Fraction` column holding `1/7`, `2 3/4`, `0.5` and `3`
+- **WHEN** the sheet is shown
+- **THEN** the cells are `1/7`, `2 3/4`, `1/2` and `3`
+
+#### Scenario: A column worked out from a fraction is a fraction
+
+- **GIVEN** a `Fraction` column `Yield` and a column `Doubled := Yield * 2`
+- **WHEN** the sheet is shown
+- **THEN** `Doubled` shows fractions without being declared
+
+### Requirement: A fraction is recovered, not remembered
+
+The fraction SHALL be worked out from the number rather than remembered from
+where it was written, so that one nobody wrote is found too. Only a
+denominator of at most 10000 SHALL be looked for.
+
+#### Scenario: A fraction nobody wrote is found
+
+- **GIVEN** the expression `(2/7 + 3/7).Fraction`
+- **WHEN** it is evaluated
+- **THEN** it is shown as `5/7`
+
+#### Scenario: Past the denominator looked for, it is a decimal
+
+- **GIVEN** the expression `(1/10001).Fraction`
+- **WHEN** it is evaluated
+- **THEN** it is shown as a decimal, cut and marked
+
+### Requirement: A fraction is written as a number everywhere but the file
+
+`--exact` SHALL write a fraction as `n/d`, which is how an `.omx` file carries
+one. XLSX, CSV, JSON and Parquet SHALL take the number it holds instead.
+
+#### Scenario: A fraction goes to CSV as a decimal
+
+- **GIVEN** a `Fraction` column holding `1/7`
+- **WHEN** the sheet is exported as CSV
+- **THEN** the field is the decimal, not `1/7`
 
 ### Requirement: Null is SQL-style
 
@@ -134,11 +203,6 @@ or a date-time, seconds.
 
 `Int` is no longer arbitrary precision. It is `Int64`, and a value past that
 range is reported rather than held.
-
-### Requirement: The Fraction type
-
-There is no `Fraction` type, no mixed-number display, and no `x.Fraction`
-conversion. The literal syntax survives under `Decimal`.
 
 ### Requirement: The Complex type
 

@@ -23,16 +23,20 @@ bump and a note in the README.
 
 - **numerics** — MODIFIED: `Int` is `i64` and `Decimal` is a 38-digit
   fixed-point `i128`, both the dtypes Polars holds; arithmetic is exact where
-  the result fits and says so where it does not; REMOVED: arbitrary-precision
-  `Int`, the `Fraction` type, the `Complex` type
+  the result fits and says so where it does not; the last 8 of the 38 digits
+  are guard digits, held but neither compared nor shown (D37); `Fraction`
+  stays, no longer a representation but a display of a `Decimal`, the
+  fraction recovered from the number (D38); REMOVED: arbitrary-precision
+  `Int`, the `Complex` type
 - **omx-expressions** — REMOVED: imaginary literals (`4i`, `Inf\i`) and the
-  `re`, `im`, `conj` and `arg` functions; `x.Fraction` and `x.Complex`;
+  `re`, `im`, `conj` and `arg` functions; `x.Complex`;
   MODIFIED: `x.Bool` is `x.Boolean`, `x.Text` is `x.String`, `x.Num` is
   `x.Float`; ADDED: `Binary` and `Duration` types, and `Duration` inferred from
   the difference of two dates or times
 - **file-format** — MODIFIED: the declarable type names are the Polars ones,
   and a blank cell is `Null` rather than a value called empty; a fraction of
-  whole numbers and a whole number with a part are read as exact `Decimal`s
+  whole numbers and a whole number with a part are read as exact `Decimal`s,
+  and a `Fraction` column shows what it holds as one
 
 ## Impact
 

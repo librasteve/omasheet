@@ -2700,7 +2700,7 @@ mod tests {
         let exact = |doc: &Document| doc.snapshot().sheets[0].rows[1][6].exact.clone();
         assert_eq!(
             exact(&doc).as_deref(),
-            Some("0.416666666666666666666666666666666667")
+            Some("0.416666666666666666666666666667")
         );
         doc.set_cell(0, 0, 6, "Profit / Cost");
         assert_eq!(

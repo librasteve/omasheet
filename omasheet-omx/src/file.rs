@@ -443,7 +443,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                         format!("unknown type `{ty_text}`"),
                     )
                     .with_help(
-                        "the types are Int, Decimal, Percent, Float, String, Date, Time, DateTime and Boolean",
+                        "the types are Int, Decimal, Fraction, Percent, Float, String, Date, Time, DateTime and Boolean",
                     ),
                 ),
             }

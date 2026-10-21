@@ -6,10 +6,11 @@ The `.omx` file: its declarations, its sheets and its column schemas.
 
 ### Requirement: The declarable type names
 
-A `Name : Type` line SHALL name one of `Int`, `Decimal`, `Percent`, `Float`,
-`String`, `Binary`, `Boolean`, `Date`, `Time`, `DateTime` or `Duration`.
+A `Name : Type` line SHALL name one of `Int`, `Decimal`, `Fraction`,
+`Percent`, `Float`, `String`, `Binary`, `Boolean`, `Date`, `Time`, `DateTime`
+or `Duration`.
 
-`Bool`, `Text`, `Num`, `Fraction` and `Complex` SHALL NOT be accepted, and a
+`Bool`, `Text`, `Num` and `Complex` SHALL NOT be accepted, and a
 file using one SHALL be told the list of names that are.
 
 #### Scenario: An old type name is rejected with the list

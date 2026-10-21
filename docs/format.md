@@ -66,14 +66,15 @@ cell of a computed column.
 
 ## Types
 
-`Int`, `Decimal`, `Percent`, `Float`, `String`, `Boolean`, `Date`, `Time`,
-`DateTime`.
+`Int`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,
+`Date`, `Time`, `DateTime`.
 A column with no `Name : Type` line takes its type from its cells.
 
 | Type | Written |
 |---|---|
 | `Int` | `42`, `1_000_000` |
 | `Decimal` | `19.99`, `1/7`, `2 3/4` — exact |
+| `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction |
 | `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
 | `Float` | `1.5e3`, `Inf`, `-Inf`, `NaN` — floating point |
 | `String` | `hi` or `"hi"`  (escape \|) |
@@ -89,16 +90,27 @@ Text written bare may hold Markdown: `a **slow** start`,
 there; a value read from a cell is Markdown or not as that cell is.
 `omasheet print` shows every cell as it is written.
 
-A `Decimal` and a `Percent` hold the same exact numbers, and a column of
-one takes the other, showing it its own way: a `Decimal` column shows `1/7`
-as `0.14285714285714285714…`.
+A `Decimal`, a `Fraction` and a `Percent` hold the same exact numbers, and a
+column of one takes the others, showing what it holds its own way: `1/7` is
+`0.14285714285714285714…` in a `Decimal` column, `1/7` in a `Fraction`
+column, and `14.29%` in a `Percent` column.
 
 A `Percent` column takes any exact number and shows it as a percentage: `0.4`
 there is `40%`, and so is `= Profit / Revenue` when it comes to two fifths.
 A `20%` in a `Decimal` column is the number it stands for, `0.2`.
 
+A `Fraction` column takes any exact number and shows it as a fraction of
+whole numbers, with a whole part where there is one: `0.125` there is `1/8`
+and `2.75` is `2 3/4`. The fraction is worked out from the number rather
+than remembered from the cell, so one nobody wrote is found too — a seventh
+added to a seventh shows as `2/7`. Only a fraction whose denominator is
+10000 or less is looked for; past that the number is shown as a decimal.
+Anything worked out from a fraction is a fraction, so a `:=` column over one
+shows fractions without being declared.
+
 A fraction of two whole numbers is an exact `Decimal`: `1/7` and `22/7` are
 both read that way, and one may be written with a space, `2 3/4` for `11/4`.
+Writing `1/7` in a cell does not make the column a `Fraction`; declare it.
 
 See `examples/types.omx` for every type at work.
 

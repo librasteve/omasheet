@@ -146,7 +146,7 @@ fn letters(col: usize) -> String {
 
 fn kind_of(s: S) -> Kind {
     match s {
-        S::Int | S::Decimal | S::Percent | S::Float => Kind::Number,
+        S::Int | S::Decimal | S::Fraction | S::Percent | S::Float => Kind::Number,
         S::String => Kind::Text,
         S::Boolean => Kind::Bool,
         S::Date => Kind::Date,
@@ -265,7 +265,11 @@ impl Writer<'_> {
         let worksheet = self.worksheet(t, cx)?;
         let d = if fixed { "$" } else { "" };
         let kind = match self.engine.cell_shown(t, c, r as usize) {
-            Value::Int(_) | Value::Decimal(_) | Value::Percent(_) | Value::Float(_) => Kind::Number,
+            Value::Int(_)
+            | Value::Decimal(_)
+            | Value::Fraction(_)
+            | Value::Percent(_)
+            | Value::Float(_) => Kind::Number,
             Value::String(..) => Kind::Text,
             Value::Boolean(_) => Kind::Bool,
             Value::Date(_) => Kind::Date,

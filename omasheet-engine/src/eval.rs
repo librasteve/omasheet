@@ -201,7 +201,13 @@ impl<'p> Engine<'p> {
             ColKind::Computed(node) => formula(node),
             ColKind::Data(cells) => match &cells[r] {
                 Cell::Empty => Ok(Value::Null),
-                Cell::Lit(l) => Ok(Value::from_lit(l)),
+                // Any exact number in a `Fraction` column is shown as a
+                // fraction; there is no fraction literal to carry it, since
+                // `1/7` is a division.
+                Cell::Lit(l) => Ok(match col.ty {
+                    S::Fraction => Value::from_lit(l).fraction(),
+                    _ => Value::from_lit(l),
+                }),
                 Cell::Markdown(s) => Ok(Value::String(Rc::from(s.as_str()), true)),
                 Cell::Formula(node) => formula(node),
                 Cell::Invalid => Err(Fail::Poison),
@@ -248,6 +254,7 @@ impl<'p> Engine<'p> {
                     | (_, S::Any)
                     | (Value::Int(_), S::Int | S::Decimal)
                     | (Value::Decimal(_), S::Decimal)
+                    | (Value::Fraction(_), S::Fraction)
                     | (Value::Percent(_), S::Percent)
                     | (Value::Float(_), S::Float)
                     | (Value::String(..), S::String)
@@ -261,7 +268,10 @@ impl<'p> Engine<'p> {
         } else if col.ty == S::Percent && matches!(v, Value::Int(_) | Value::Decimal(_)) {
             // Any exact number in a `Percent` column is a percentage.
             Ok(v.percent())
-        } else if let (S::Decimal, Value::Percent(r)) = (col.ty, &v) {
+        } else if col.ty == S::Fraction && matches!(v, Value::Int(_) | Value::Decimal(_)) {
+            // And in a `Fraction` column a fraction, which may be whole.
+            Ok(v.fraction())
+        } else if let (S::Decimal, Value::Percent(r) | Value::Fraction(r)) = (col.ty, &v) {
             // And in a `Decimal` column a decimal, though it need not end.
             Ok(Value::exact(*r))
         } else {

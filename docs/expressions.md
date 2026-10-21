@@ -24,9 +24,17 @@ Only the display is cut, and `omasheet eval --exact` gives it in full.
 A `Decimal` holds 38 digits, so one that does not end within them is
 rounded there: `1/3` is held as 38 threes and shown cut and marked,
 `0.33333333333333333333…`. Pointing at it in the app shows the rest, and
-`--exact` gives every digit it holds. Because it is rounded, taking it back
-out again need not give what went in: `1/3 * 3` is `0.999…9`, where
-`1/8 * 8` is exactly `1`.
+`--exact` gives every digit of it.
+
+The last eight of those 38 digits are working room. They are held, so that a
+long calculation has room to be right, but they are not compared and not
+shown: 30 digits are. That is what makes two ways of reaching one number
+reach one answer, since no fixed-point decimal is closed under division —
+held in full, a seventh doubled and two sevenths differ in their last digit.
+So `1/3 * 3` is `1`, `1/7 * 7` is `1`, `2/7 + 3/7 == 5/7` is true and
+`1/7 + 1/7 == 2/7` is true. Thirty digits is far more than a calculation of
+any ordinary length will spend; a long enough one can still drift past the
+working room, and then it has a last digit of its own.
 
 A `Float` is never rounded: it is shown with the fewest digits that give the
 same `Float` back, `0.30000000000000004`, and always fits.
@@ -45,15 +53,24 @@ Numbers are shown the way Raku shows them:
 |---|---|
 | `Int` | `101`; `1e+15` and `1.8446744073709551…e+19` from `1e15` |
 | `Decimal` | `1.01`; `1e-43` below `1e-15` |
+| `Fraction` | `1/7`, `3/4`, `2 3/4`, `333 1/3`; `3` when it is whole |
 | `Percent` | `20%`, `12.5%`, `41.67%` |
 | `Float` | `100`, `1.5`, `1.4142135623730951`; `1e+21` or `1.5e-16` when very large or small; `Inf`, `-Inf`, `NaN` |
 
 A `Float` that is a whole number looks like an `Int`, but it is still a `Float`.
 
-A `Decimal` and a `Percent` are the same exact numbers shown in different
-ways: `19.99` and `20%`. Adding, subtracting, multiplying and dividing
-decimals gives a `Decimal`, and so does an average. Each goes anywhere the
-other does: a `Decimal` column shows `1/3` as `0.333…`.
+A `Decimal`, a `Fraction` and a `Percent` are the same exact numbers shown in
+different ways: `19.99`, `1/7` and `20%`. Adding, subtracting, multiplying
+and dividing decimals gives a `Decimal`, and so does an average. Each goes
+anywhere the others do: a `Decimal` column shows `1/3` as `0.333…`.
+
+A `Fraction` is an exact number shown as a fraction of whole numbers, with a
+whole part where there is one: `x.Fraction` gives `1/8` for `0.125` and
+`2 3/4` for `2.75`. The fraction is worked out from the number, not
+remembered from where it was written, so `(2/7 + 3/7).Fraction` is `5/7`.
+Only a denominator of 10000 or less is looked for; past that the number is
+shown as a decimal. Anything done with a fraction gives a fraction, and
+`--exact` writes it as `n/d`, which is how a file carries one.
 
 Percentages add up to a percentage:
 `20% + 5%` is `25%`, and so are their sum, average, least and greatest.

@@ -2,15 +2,16 @@
 
 //! Runtime values and exact arithmetic.
 //!
-//! Exact numbers are `Int` (arbitrary precision) or `Decimal` (an
-//! arbitrary-precision exact number that is not whole). Nothing here turns
-//! an exact number into a `Num` unless the other operand already is one.
+//! Exact numbers are `Int`, `Decimal`, `Fraction` or `Percent`; the last
+//! three hold the same fixed-point number and differ only in how it is
+//! shown. Nothing here turns an exact number into a `Float` unless the other
+//! operand already is one.
 
 use crate::zone::{Zoned, format_offset};
 use omasheet_omx::ast::{BinOp, Lit};
 use omasheet_omx::convert;
 use omasheet_omx::date::Style;
-use omasheet_omx::decimal::{Dec, MAX_PRECISION};
+use omasheet_omx::decimal::{Dec, MAX_DENOMINATOR, SHOWN_PRECISION};
 use omasheet_omx::funcs::MathFn;
 use omasheet_omx::types::S;
 use std::cmp::Ordering;
@@ -27,6 +28,9 @@ pub enum Value {
     Int(i64),
     /// An exact number that is not whole, shown as a decimal: `2.75`.
     Decimal(Dec),
+    /// An exact number that is not whole, shown as a fraction: `1/3`, and
+    /// `2 3/4` for `2.75`.
+    Fraction(Dec),
     /// An exact number shown as a percentage: `0.2` for `20%`. It may be
     /// whole, `100%`.
     Percent(Dec),
@@ -89,11 +93,21 @@ impl Value {
         }
     }
 
+    /// An exact number as a fraction, `2.75` as `2 3/4`; anything else as it
+    /// is. It may be whole, and is shown plainly when it is: `3`, not `3/1`.
+    pub fn fraction(self) -> Value {
+        match self {
+            Value::Int(n) => Value::Fraction(Dec::from_i64(n)),
+            Value::Decimal(r) => Value::Fraction(r),
+            other => other,
+        }
+    }
+
     /// An exact number as a percentage; anything else as it is.
     pub fn percent(self) -> Value {
         match self {
             Value::Int(n) => Value::Percent(Dec::from_i64(n)),
-            Value::Decimal(r) => Value::Percent(r),
+            Value::Decimal(r) | Value::Fraction(r) => Value::Percent(r),
             other => other,
         }
     }
@@ -102,7 +116,7 @@ impl Value {
     /// is.
     pub fn plain(self) -> Value {
         match self {
-            Value::Percent(r) => Value::exact(r),
+            Value::Percent(r) | Value::Fraction(r) => Value::exact(r),
             other => other,
         }
     }
@@ -128,6 +142,7 @@ impl Value {
             Value::Error => "an error",
             Value::Int(_) => "Int",
             Value::Decimal(_) => "Decimal",
+            Value::Fraction(_) => "Fraction",
             Value::Percent(_) => "Percent",
             Value::Float(_) => "Float",
             Value::String(..) => "String",
@@ -145,7 +160,11 @@ impl Value {
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
-            Value::Int(_) | Value::Decimal(_) | Value::Percent(_) | Value::Float(_)
+            Value::Int(_)
+                | Value::Decimal(_)
+                | Value::Fraction(_)
+                | Value::Percent(_)
+                | Value::Float(_)
         )
     }
 
@@ -154,7 +173,9 @@ impl Value {
     fn to_lit(&self) -> Option<Lit> {
         Some(match self {
             Value::Int(n) => Lit::Int(*n),
-            Value::Decimal(r) => Lit::Decimal(*r),
+            // A `Fraction` is a `Decimal` shown another way; there is no
+            // fraction literal to be had.
+            Value::Decimal(r) | Value::Fraction(r) => Lit::Decimal(*r),
             Value::Percent(r) => Lit::Percent(*r),
             Value::Float(f) => Lit::Float(*f),
             Value::String(s, _) => Lit::String(s.to_string()),
@@ -176,11 +197,17 @@ impl Value {
             // A whole `Decimal` is held as an `Int`.
             (Value::Int(_), S::Int | S::Decimal) => true,
             (Value::Decimal(_), S::Decimal) => true,
+            (Value::Fraction(_), S::Fraction) => true,
             (Value::Percent(_), S::Percent) => true,
             _ => false,
         };
         if fits {
             return Ok(self.clone());
+        }
+        // A `Fraction` is a `Decimal` shown as a fraction, so asking for one
+        // is a change of display and not of value.
+        if to == S::Fraction {
+            return Ok(self.converted(S::Decimal)?.fraction());
         }
         let Some(lit) = self.to_lit() else {
             return Err(format!("{} cannot be made a `{to}`", self.kind()));
@@ -207,7 +234,7 @@ enum N {
 fn number(v: &Value) -> Option<N> {
     Some(match v {
         Value::Int(n) => N::Exact(Dec::from_i64(*n)),
-        Value::Decimal(r) | Value::Percent(r) => N::Exact(*r),
+        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => N::Exact(*r),
         Value::Float(f) => N::Float(*f),
         _ => return None,
     })
@@ -254,7 +281,14 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         ));
     };
     match (&x, &y) {
-        (N::Exact(x), N::Exact(y)) => exact_arith(op, x, y),
+        // Anything done with a fraction gives a fraction.
+        (N::Exact(x), N::Exact(y)) => exact_arith(op, x, y).map(|v| {
+            if matches!(a, Value::Fraction(_)) || matches!(b, Value::Fraction(_)) {
+                v.fraction()
+            } else {
+                v
+            }
+        }),
         _ => {
             let (x, y) = (real(&x), real(&y));
             Ok(Value::Float(match op {
@@ -402,14 +436,20 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
                 .map(Value::Decimal)
                 .ok_or_else(|| TOO_LARGE.to_string());
         }
-        (Value::Decimal(r), MathFn::Sign) => {
+        (Value::Fraction(r), MathFn::Abs) => {
+            return r
+                .checked_abs()
+                .map(Value::Fraction)
+                .ok_or_else(|| TOO_LARGE.to_string());
+        }
+        (Value::Decimal(r) | Value::Fraction(r), MathFn::Sign) => {
             return Ok(Value::Int(r.signum()));
         }
-        (Value::Decimal(r), MathFn::Round) => return Ok(whole(r.round())),
-        (Value::Decimal(r), MathFn::Floor) => return Ok(whole(r.floor())),
-        (Value::Decimal(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
+        (Value::Decimal(r) | Value::Fraction(r), MathFn::Round) => return Ok(whole(r.round())),
+        (Value::Decimal(r) | Value::Fraction(r), MathFn::Floor) => return Ok(whole(r.floor())),
+        (Value::Decimal(r) | Value::Fraction(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
         (Value::Int(n), _) => *n as f64,
-        (Value::Decimal(r), _) => r.to_f64(),
+        (Value::Decimal(r) | Value::Fraction(r), _) => r.to_f64(),
         (Value::Float(f), _) => *f,
         (other, _) => {
             return Err(format!(
@@ -476,11 +516,37 @@ const LARGE: f64 = 1e15;
 /// How many digits after the point a `Percent` is rounded to.
 pub const PERCENT_DIGITS: usize = 2;
 
-/// An exact number as it is written: every digit it holds, with no grouping
-/// and no cutting. A value rounded at the widest scale is written at that
-/// scale, since that is all there is of it.
+/// An exact number as it is written: every digit of it, with no grouping and
+/// no cutting. The guard digits are not part of the number, so they are not
+/// written: see [`omasheet_omx::decimal`].
 pub fn format_rat(r: &Dec) -> String {
-    r.to_plain_string()
+    r.guarded().to_plain_string()
+}
+
+/// An exact number as a fraction of whole numbers, `1/3`, where one of a
+/// small enough denominator comes to it. A whole one is written plainly.
+pub fn format_fraction(r: &Dec) -> Option<String> {
+    let (n, d) = r.to_fraction(MAX_DENOMINATOR)?;
+    Some(if d == 1 {
+        n.to_string()
+    } else {
+        format!("{n}/{d}")
+    })
+}
+
+/// A fraction as a whole number and a part where it is more than one,
+/// `2 3/4` for `2.75`, and as a plain fraction otherwise, `3/4`.
+pub fn format_mixed(r: &Dec) -> Option<String> {
+    let (n, d) = r.to_fraction(MAX_DENOMINATOR)?;
+    if d == 1 {
+        return Some(n.to_string());
+    }
+    let (whole, part) = (n / d, (n % d).abs());
+    Some(if whole == 0 {
+        format!("{n}/{d}")
+    } else {
+        format!("{whole} {part}/{d}")
+    })
 }
 
 /// The exponent of e notation: `e+15`, `e-05`.
@@ -535,6 +601,7 @@ fn grouped(plain: String, sep: Option<char>) -> String {
 /// A positive exact number, plain if it is neither small nor large and fits,
 /// and otherwise in e notation or cut and marked.
 fn shown_decimal(r: &Dec, sep: Option<char>) -> String {
+    let r = &r.guarded();
     if r.is_zero() {
         return "0".into();
     }
@@ -554,14 +621,29 @@ fn shown_decimal(r: &Dec, sep: Option<char>) -> String {
     scientific(r)
 }
 
+/// A positive exact number as a fraction, where one is to be had and it
+/// fits: `2 3/4`, with the whole part grouped. `None` otherwise, and the
+/// number is shown as a decimal instead.
+fn shown_fraction(r: &Dec, sep: Option<char>) -> Option<String> {
+    let mixed = format_mixed(&r.guarded())?;
+    let mixed = match mixed.split_once(' ') {
+        Some((whole, part)) => format!("{} {part}", grouped(whole.to_string(), sep)),
+        None => mixed,
+    };
+    (width(&mixed) <= WIDTH).then_some(mixed)
+}
+
 /// How many digits after the point a long `Decimal` is given to, in full.
-pub const LONG_DIGITS: usize = MAX_PRECISION as usize;
+pub const LONG_DIGITS: usize = SHOWN_PRECISION as usize;
 
 /// A `Decimal` whose shown form was cut, written out in full, for the app to
 /// show when the cut form is pointed at. `None` for anything else, and for
 /// one the shown form already gives whole.
 pub fn long_decimal(v: &Value) -> Option<String> {
-    let Value::Decimal(r) = v else { return None };
+    let (Value::Decimal(r) | Value::Fraction(r)) = v else {
+        return None;
+    };
+    let r = r.guarded();
     let plain = r.to_plain_string();
     let medium = (-15..15).contains(&r.magnitude());
     (medium && width(&plain) > WIDTH).then_some(plain)
@@ -585,6 +667,7 @@ pub fn format_percent(r: &Dec, exact: bool) -> String {
 
 /// As [`format_percent`], with the digits grouped by `sep`.
 fn shown_percent(r: &Dec, exact: bool, sep: Option<char>) -> String {
+    let r = &r.guarded();
     let hundred = r.checked_mul(Dec::from_i64(100));
     if exact {
         return match hundred {
@@ -707,6 +790,9 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         // does not end as `11/4`.
         Value::Int(n) if exact => n.to_string(),
         Value::Decimal(r) if exact => format_rat(r),
+        // A `Fraction` in full is the fraction itself, which is the only way
+        // to write one that does not end and read it back.
+        Value::Fraction(r) if exact => format_fraction(r).unwrap_or_else(|| format_rat(r)),
         // Shown, in at most `WIDTH` characters and a sign: plain from
         // `1e-15` to `1e15`, and otherwise in e notation, `1e+60`.
         // Shown in the app, a plain number of five digits or more is grouped
@@ -725,6 +811,19 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
             ),
             style,
         ),
+        // A fraction where there is one to be had, `2 3/4`, and the decimal
+        // otherwise.
+        Value::Fraction(r) => {
+            let size = r.checked_abs().unwrap_or(*r);
+            localised(
+                signed(
+                    r.is_negative(),
+                    shown_fraction(&size, group(style))
+                        .unwrap_or_else(|| shown_decimal(&size, group(style))),
+                ),
+                style,
+            )
+        }
         Value::Percent(r) if exact => format_percent(r, true),
         Value::Percent(r) => localised(shown_percent(r, false, group(style)), style),
         Value::Float(f) if exact => format_float(*f, true),
@@ -785,29 +884,44 @@ mod tests {
     #[test]
     fn formats_rationals() {
         assert_eq!(format_rat(&rat(175, 4)), "43.75");
-        assert_eq!(
-            format_rat(&rat(1, 3)),
-            "0.33333333333333333333333333333333333333"
-        );
+        assert_eq!(format_rat(&rat(1, 3)), "0.333333333333333333333333333333");
         assert_eq!(format_rat(&rat(-1, 8)), "-0.125");
         assert_eq!(format_rat(&rat(1, 20)), "0.05");
-        assert_eq!(
-            format_rat(&rat(-7, 3)),
-            "-2.3333333333333333333333333333333333333"
-        );
+        assert_eq!(format_rat(&rat(-7, 3)), "-2.33333333333333333333333333333");
     }
 
     #[test]
     fn shows_rationals() {
-        assert_eq!(
-            format_rat(&rat(22, 7)),
-            "3.142857142857142857142857142857142857"
-        );
+        assert_eq!(format_rat(&rat(22, 7)), "3.14285714285714285714285714286");
         assert_eq!(format_rat(&rat(11, 4)), "2.75");
+        assert_eq!(format_rat(&rat(-1, 3)), "-0.333333333333333333333333333333");
+    }
+
+    #[test]
+    fn shows_fractions() {
+        let shown = |n: i64, d: i64| format_scalar(&Value::Fraction(rat(n, d)), false);
+        assert_eq!(shown(22, 7), "3 1/7");
+        assert_eq!(shown(11, 4), "2 3/4");
+        assert_eq!(shown(-11, 4), "-2 3/4");
+        assert_eq!(shown(3, 4), "3/4");
+        assert_eq!(shown(-1, 3), "-1/3");
+        assert_eq!(shown(1000, 3), "333 1/3");
+        assert_eq!(shown(1, 8), "1/8");
+        // In full it is the fraction itself, which is how a file writes one.
         assert_eq!(
-            format_rat(&rat(-1, 3)),
-            "-0.33333333333333333333333333333333333333"
+            format_exact(&Value::Fraction(rat(-11, 4)), false, &Style::ISO),
+            "-11/4"
         );
+        // One with no fraction of a small enough denominator is a decimal.
+        assert_eq!(shown(1, 10_001), "0.00009999000099990000…");
+        // Anything done with a fraction gives a fraction.
+        let sum = arith(
+            BinOp::Add,
+            &Value::Fraction(rat(1, 3)),
+            &Value::Decimal(rat(1, 6)),
+        )
+        .expect("adds");
+        assert_eq!(format_scalar(&sum, false), "1/2");
     }
 
     #[test]
@@ -907,7 +1021,7 @@ mod tests {
         assert_eq!(shown(rat(1_000_000_000_000_000_000, 7)), "1.43e+19%");
         assert_eq!(
             format_percent(&rat(5, 12), true),
-            "41.6666666666666666666666666666666667%"
+            "41.6666666666666666666666666667%"
         );
     }
 
@@ -976,7 +1090,7 @@ mod tests {
         assert_eq!(shown(third.converted(S::Int)), "-2");
         assert_eq!(
             shown(third.converted(S::String)),
-            "\"-2.3333333333333333333333333333333333333\""
+            "\"-2.33333333333333333333333333333\""
         );
         assert_eq!(shown(Value::Float(0.1).converted(S::Decimal)), "0.1");
         assert_eq!(shown(Value::text("1/8").converted(S::Decimal)), "0.125");
@@ -1001,10 +1115,7 @@ mod tests {
         // back out again does not give one. This is the cost of a
         // fixed-point decimal in place of a rational, and is deliberate.
         let back = arith(BinOp::Mul, &third, &Value::Int(3)).unwrap();
-        assert_eq!(
-            format_exact(&back, false, &Style::ISO),
-            "0.99999999999999999999999999999999999999"
-        );
+        assert_eq!(format_exact(&back, false, &Style::ISO), "1");
         // One that ends comes back exactly.
         let eighth = arith(BinOp::Div, &Value::Int(1), &Value::Int(8)).unwrap();
         let one = arith(BinOp::Mul, &eighth, &Value::Int(8)).unwrap();

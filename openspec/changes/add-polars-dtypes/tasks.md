@@ -32,9 +32,11 @@ rest goes on here while that change goes on there.
 - [x] 2.1 `Complex`: the type, imaginary literals in the lexer, `re`, `im`,
       `conj`, `arg`, and `Func::Complex`
 - [x] 2.2 `Fraction`: the type and the mixed-number display, keeping `1/7` and
-      `2 3/4` as literal syntax read as exact `Decimal`s
+      `2 3/4` as literal syntax read as exact `Decimal`s. Reversed by section
+      9: the type is back as a display of a `Decimal`
 - [x] 2.3 The `Complexes` and `Fractions` sheets of `examples/display.omx` and
-      the `Mixes` sheet of `examples/types.omx`
+      the `Mixes` sheet of `examples/types.omx`. `Fractions` and `Mixes` are
+      back, with section 9
 
 ## 3. The names (`file-format`)
 
@@ -101,3 +103,39 @@ Each of these is then carried through Parquet, as task 2.9 of
       `1/7 * 7`, `Date - Date`, and whatever 0.1 settles for `2 ** 64`
 - [ ] 8.3 Property-test the scalar path against a one-row Polars series for
       each dtype pair, once `add-dataframe-interop` brings the crate in
+
+## 9. Guard digits, and `Fraction` as a display (D37, D38)
+
+Built 2026-10-21, after sections 1 to 4. Both are display-and-comparison
+work over the representation that is already there: no dtype changes, so
+nothing here touches what `add-dataframe-interop` lowers to Polars.
+
+- [x] 9.1 `GUARD_DIGITS`, `SHOWN_PRECISION`, `Dec::precision` and
+      `Dec::guarded` in `decimal.rs`; `is_long` becomes "holds more digits
+      than it shows"
+- [x] 9.2 `cmp_dec` compares guarded values, so `Eq` and `Ord` — and every
+      sort, group and lookup over them — agree
+- [x] 9.3 `format_rat`, `shown_decimal`, `shown_percent` and `long_decimal`
+      show guarded values, so what is written, shown and compared is one
+      number. A literal of more than 30 digits is shown at 30
+- [x] 9.4 `Dec::to_fraction`: the convergents of the continued fraction,
+      stopping at `MAX_DENOMINATOR`
+- [x] 9.5 `S::Fraction` and `Value::Fraction`, with `wider`, `rank`,
+      `is_exact`, `assignable_to` and `converts_to` as they were before D17
+- [x] 9.6 `format_fraction` and `format_mixed`: `n/d` in full, `2 3/4`
+      shown, falling back to the decimal where no fraction is found
+- [x] 9.7 The column coercions: a literal cell and a `:=` result in a
+      `Fraction` column become fractions, and a fraction in a `Decimal`
+      column becomes a decimal
+- [x] 9.8 `x.Fraction` in the function directory, `Fraction` in the schema
+      type list, and the entry hint for a `Fraction` cell
+- [x] 9.9 The interop writers: a `Fraction` goes to CSV, JSON and XLSX as
+      the number it holds, never as `1/7`
+- [x] 9.10 Tests: the identities (`2/7 + 3/7 == 5/7`, `1/7 + 1/7 == 2/7`,
+      `1/3 * 3 == 1`), that `1e-38` survives guarding, fraction recovery
+      including the denominator limit, and the type end to end
+- [x] 9.11 The documents: `format.md`, `expressions.md`, `interop.md`,
+      `SKILL.md`, `README.md`, and the `Fractions` and `Mixes` example sheets
+- [ ] 9.12 Once `add-dataframe-interop` section 4 lands: a `group_by`, join
+      or `unique` pushed to Polars must round to `SHOWN_PRECISION` first, or
+      two cells that compare equal here land in different groups there

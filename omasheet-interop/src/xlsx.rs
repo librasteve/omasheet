@@ -81,7 +81,7 @@ struct Formula {
 fn real(v: &Value) -> Option<f64> {
     match v {
         Value::Int(n) => n.to_string().parse().ok(),
-        Value::Decimal(r) | Value::Percent(r) => Some(to_f64(r)),
+        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => Some(to_f64(r)),
         Value::Float(f) => Some(*f),
         Value::Boolean(b) => Some(*b as u8 as f64),
         _ => None,
@@ -430,7 +430,7 @@ fn shown<'f>(
             }
             Shown::Number(f, None)
         }
-        Value::Decimal(r) => {
+        Value::Decimal(r) | Value::Fraction(r) => {
             let (f, same) = double(r);
             if !same {
                 lose(ROUNDED);

@@ -244,6 +244,14 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     ),
     doc(
         CONVERT,
+        "Fraction",
+        "x.Fraction",
+        "The same exact number shown as a fraction of whole numbers: 0.125 gives 1/8, 1/7 stays \
+         1/7, and 2.75 gives 2 3/4. One with no fraction of a small enough denominator is shown \
+         as a decimal. Also written Fraction(x).",
+    ),
+    doc(
+        CONVERT,
         "Percent",
         "x.Percent",
         "The same number as a percentage: 0.4 gives 40% and 5/12 gives 41.67…%. Also written \

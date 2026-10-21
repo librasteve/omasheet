@@ -9,13 +9,33 @@
 //! Arithmetic is exact wherever the result fits: adding and subtracting line
 //! the scales up, multiplying adds them. Division is the one operation that
 //! need not terminate, so it rounds half away from zero at the widest scale
-//! the result can hold, which is why `1/3 * 3` is all nines rather than one.
+//! the result can hold.
+//!
+//! No fixed-point decimal is closed under division, so the last digits of a
+//! long one are where the rounding of every operation before it has
+//! collected: `1/7 + 1/7` and `2/7` are both a seventh of two, and differ in
+//! the thirty-eighth digit. The last [`GUARD_DIGITS`] digits are therefore
+//! working room: they are held, so that a long sum of long numbers has room
+//! to be right, but they are not compared and not shown. That is what makes
+//! `2/7 + 3/7 == 5/7`, and `1/3 * 3` one rather than all nines.
 
 use std::cmp::Ordering;
 use std::fmt;
 
 /// The most digits a `Decimal128` holds.
 pub const MAX_PRECISION: u32 = 38;
+
+/// How many of the digits a `Decimal128` carries are working room: held, but
+/// neither compared nor shown, so that the rounding a long calculation
+/// collects in them does not reach the number anybody reads. See the module
+/// documentation.
+pub const GUARD_DIGITS: u32 = 8;
+
+/// How many significant digits a number is compared and shown to.
+pub const SHOWN_PRECISION: u32 = MAX_PRECISION - GUARD_DIGITS;
+
+/// The largest denominator [`Dec::to_fraction`] will answer with.
+pub const MAX_DENOMINATOR: i64 = 10_000;
 
 /// `10^MAX_PRECISION`, the first value too wide to store.
 const LIMIT: i128 = 10i128.pow(MAX_PRECISION);
@@ -120,10 +140,74 @@ impl Dec {
         Dec::parse(&format!("{f:e}"))
     }
 
-    /// Whether this was rounded at the widest scale there is, which is as
-    /// near as a fixed-point decimal comes to "does not end".
+    /// How many significant digits this number holds: `19.99` holds four and
+    /// `1e-38` one.
+    pub fn precision(self) -> u32 {
+        let d = self.trimmed();
+        if d.unscaled == 0 {
+            0
+        } else {
+            digits(d.unscaled)
+        }
+    }
+
+    /// This number without its guard digits: kept to [`SHOWN_PRECISION`]
+    /// significant digits, which is the number as it is compared and shown.
+    /// One of fewer digits than that is itself, so money, any other decimal
+    /// that ends, and the smallest numbers there are, whose every digit is
+    /// significant, are all untouched.
+    pub fn guarded(self) -> Dec {
+        let d = self.trimmed();
+        let held = d.precision();
+        if held <= SHOWN_PRECISION {
+            return d;
+        }
+        let scale = d.scale.saturating_sub(held - SHOWN_PRECISION);
+        d.rescale(scale).unwrap_or(d).trimmed()
+    }
+
+    /// Whether this number holds more digits than it shows, so that what is
+    /// held is a rounding of it: a quotient keeps every digit it can, so one
+    /// that reaches into the guard digits is one that did not end.
     pub fn is_long(self) -> bool {
-        self.scale >= MAX_PRECISION
+        self.precision() > SHOWN_PRECISION
+    }
+
+    /// The simplest fraction that comes to this number, with a denominator of
+    /// at most `max_den`: `0.142857…` gives `(1, 7)` and `0.125` gives
+    /// `(1, 8)`. `None` when no such fraction comes to it.
+    ///
+    /// The convergents of the continued fraction of the number are the
+    /// simplest fractions there are at each size of denominator, so the
+    /// first of them that comes back to the number is the answer. "Comes
+    /// back to" is this type's own equality, which ignores the guard digits,
+    /// and that is what lets a seventh be read back out of a number that was
+    /// rounded to hold it.
+    pub fn to_fraction(self, max_den: i64) -> Option<(i64, i64)> {
+        let whole = self.guarded();
+        let size = whole.checked_abs()?;
+        // `n / d` is the number exactly, as two whole numbers.
+        let mut n = size.unscaled;
+        let mut d = pow10(size.scale)?;
+        let (mut h_prev, mut h) = (0i128, 1i128);
+        let (mut k_prev, mut k) = (1i128, 0i128);
+        while d != 0 {
+            let q = n / d;
+            (n, d) = (d, n - q * d);
+            let h_next = q.checked_mul(h)?.checked_add(h_prev)?;
+            let k_next = q.checked_mul(k)?.checked_add(k_prev)?;
+            (h_prev, h) = (h, h_next);
+            (k_prev, k) = (k, k_next);
+            if k > max_den as i128 {
+                return None;
+            }
+            let (num, den) = (i64::try_from(h).ok()?, i64::try_from(k).ok()?);
+            if den > 0 && Dec::from_i64(num).checked_div(Dec::from_i64(den))? == size {
+                let num = if self.is_negative() { -num } else { num };
+                return Some((num, den));
+            }
+        }
+        None
     }
 
     /// The significant digits, with no leading or trailing zeros, and the
@@ -356,11 +440,15 @@ impl Dec {
         Some(acc)
     }
 
+    /// Two numbers compared without their guard digits, so that two ways of
+    /// reaching the same number reach the same answer: see the module
+    /// documentation.
     pub fn cmp_dec(self, other: Dec) -> Ordering {
-        match Dec::align(self, other) {
+        let (a, b) = (self.guarded(), other.guarded());
+        match Dec::align(a, b) {
             Some((x, y, _)) => x.cmp(&y),
             // Beyond a common scale, the wider magnitude decides.
-            None => self.to_f64().total_cmp(&other.to_f64()),
+            None => a.to_f64().total_cmp(&b.to_f64()),
         }
     }
 
@@ -562,6 +650,71 @@ mod tests {
         let third = d("1").checked_div(d("3")).unwrap();
         let sixth = d("1").checked_div(d("6")).unwrap();
         assert_eq!(third.checked_add(sixth).unwrap().to_plain_string(), "0.5");
+    }
+
+    #[test]
+    fn the_guard_digits_are_neither_compared_nor_shown() {
+        let seventh = |n: i64| Dec::from_i64(n).checked_div(d("7")).unwrap();
+        // Held, a seventh of one doubled and a seventh of two differ in
+        // their last digit, since the two round opposite ways.
+        assert_ne!(
+            seventh(1)
+                .checked_add(seventh(1))
+                .unwrap()
+                .to_plain_string(),
+            seventh(2).to_plain_string()
+        );
+        // Without their guard digits they are one number.
+        assert_eq!(seventh(1).checked_add(seventh(1)).unwrap(), seventh(2));
+        assert_eq!(
+            seventh(2).checked_add(seventh(3)).unwrap(),
+            seventh(5),
+            "2/7 + 3/7 == 5/7"
+        );
+        let third = d("1").checked_div(d("3")).unwrap();
+        assert_eq!(third.checked_mul(d("3")).unwrap(), Dec::ONE);
+        assert_eq!(
+            third
+                .checked_mul(d("3"))
+                .unwrap()
+                .guarded()
+                .to_plain_string(),
+            "1"
+        );
+        // Thirty significant digits are shown, of the thirty-eight held.
+        assert_eq!(third.precision(), MAX_PRECISION);
+        assert_eq!(third.guarded().precision(), SHOWN_PRECISION);
+        assert!(third.is_long());
+        // A number that ends is untouched, and so is the smallest there is,
+        // whose every digit is significant.
+        for text in ["19.99", "0.125", "0", "-7", "1e-38"] {
+            assert_eq!(d(text).guarded(), d(text), "{text}");
+            assert!(!d(text).is_long(), "{text}");
+        }
+    }
+
+    #[test]
+    fn fractions_are_read_back_out() {
+        let frac = |text: &str| d(text).to_fraction(MAX_DENOMINATOR);
+        assert_eq!(frac("0.125"), Some((1, 8)));
+        assert_eq!(frac("2.75"), Some((11, 4)));
+        assert_eq!(frac("-2.75"), Some((-11, 4)));
+        assert_eq!(frac("3"), Some((3, 1)));
+        assert_eq!(frac("0"), Some((0, 1)));
+        // A seventh is rounded to be held, and comes back a seventh.
+        let seventh = d("1").checked_div(d("7")).unwrap();
+        assert_eq!(seventh.to_fraction(MAX_DENOMINATOR), Some((1, 7)));
+        let five_sevenths = d("5").checked_div(d("7")).unwrap();
+        assert_eq!(five_sevenths.to_fraction(MAX_DENOMINATOR), Some((5, 7)));
+        // Past the denominator asked for there is no answer.
+        assert_eq!(
+            d("1").checked_div(d("10001")).unwrap().to_fraction(10_000),
+            None
+        );
+        assert_eq!(
+            d("1").checked_div(d("10000")).unwrap().to_fraction(10_000),
+            Some((1, 10_000))
+        );
     }
 
     #[test]

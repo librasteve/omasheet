@@ -75,8 +75,8 @@ fn csv_of_one_sheet_has_values_for_computed_columns() {
     assert_eq!(
         text_of(&out, 0),
         "Month,Revenue,Cost,Profit,Share\n\
-         Jan,10000,6000,4000,1333.3333333333333333333333333333333333\n\
-         Feb,12000,7000,5000,1666.6666666666666666666666666666666667\n"
+         Jan,10000,6000,4000,1333.33333333333333333333333333\n\
+         Feb,12000,7000,5000,1666.66666666666666666666666667\n"
     );
     assert!(out.notices.is_empty(), "{:?}", out.notices);
 }
@@ -87,7 +87,7 @@ fn csv_keeps_exact_what_ends() {
     let out = csv_of(file, None);
     assert_eq!(
         text_of(&out, 0),
-        "A\n19.99\n1267650600228229401496703205376\n0.33333333333333333333333333333333333333\n0.0009765625\n"
+        "A\n19.99\n1267650600228229401496703205376\n0.333333333333333333333333333333\n0.0009765625\n"
     );
     // Nothing is rounded to write it: a decimal holds every digit there
     // is of it, so there is nothing to report.
@@ -697,7 +697,7 @@ sheet YearEnd
     assert_eq!(eval(&out.source, "Sales.Margin"), "[0.4, 0.4167, 0.4318]");
     assert_eq!(
         eval(&out.source, "YearEnd[Value; 4]"),
-        "0.4176136363636363636363636363636364"
+        "0.417613636363636363636363636364"
     );
     assert_eq!(eval(&out.source, "YearEnd[Value; 5]"), "yes");
 }
@@ -745,8 +745,8 @@ fn json_holds_every_sheet_as_rows_by_column_name() {
     assert_eq!(
         text_of(&out, 0),
         "{\n  \"Sales\": [\n    \
-         {\"Month\": \"Jan\", \"Revenue\": 10000, \"Cost\": 6000, \"Profit\": 4000, \"Share\": 1333.3333333333333333333333333333333333},\n    \
-         {\"Month\": \"Feb\", \"Revenue\": 12000, \"Cost\": 7000, \"Profit\": 5000, \"Share\": 1666.6666666666666666666666666666666667}\n  ],\n  \
+         {\"Month\": \"Jan\", \"Revenue\": 10000, \"Cost\": 6000, \"Profit\": 4000, \"Share\": 1333.33333333333333333333333333},\n    \
+         {\"Month\": \"Feb\", \"Revenue\": 12000, \"Cost\": 7000, \"Profit\": 5000, \"Share\": 1666.66666666666666666666666667}\n  ],\n  \
          \"Summary\": [\n    {\"Item\": \"Revenue\", \"Value\": 22000}\n  ]\n}\n"
     );
     assert!(out.notices.is_empty(), "{:?}", out.notices);
@@ -763,7 +763,7 @@ fn json_writes_each_kind_of_value() {
     assert_eq!(
         text_of(&out, 0),
         "[\n  \
-         {\"Name\": \"a\", \"Count\": 7, \"Price\": 19.99, \"Rate\": 0.2, \"N\": 1e+20, \"F\": 0.33333333333333333333333333333333333333, \
+         {\"Name\": \"a\", \"Count\": 7, \"Price\": 19.99, \"Rate\": 0.2, \"N\": 1e+20, \"F\": 0.333333333333333333333333333333, \
          \"On\": true, \"Day\": \"2025-01-31\", \"At\": \"09:30\", \"Gap\": null, \"Bad\": null},\n  \
          {\"Name\": \"42\", \"Count\": -3, \"Price\": 0.125, \"Rate\": -0.05, \"N\": \"Inf\", \"F\": 0.125, \
          \"On\": false, \"Day\": \"2025-02-01\", \"At\": \"17:05\", \"Gap\": \"x\", \"Bad\": 1}\n]\n"

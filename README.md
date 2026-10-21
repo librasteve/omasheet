@@ -17,7 +17,10 @@ Named, typed data and array expressions connect spreadsheet authoring to datafra
 Numeric values retain their exact decimal meaning instead of floating-point
 approximations: `0.1 + 0.2` is exactly `0.3`. Numbers are held the way Polars
 holds them — a 64-bit `Int` and a 38-digit `Decimal` — so a value too wide to
-hold is reported rather than quietly rounded.
+hold is reported rather than quietly rounded. The last 8 of those 38 digits
+are working room: held but neither compared nor shown, so that two ways of
+reaching one number agree — `1/3 * 3` is `1` and `2/7 + 3/7 == 5/7` is true.
+A `Fraction` column shows what it holds as a fraction, `1/7` and `2 3/4`.
 
 _Automatically follows system dark/light mode._
 

@@ -112,8 +112,8 @@ sheet Summary
 
 ## Types
 
-`Int`, `Decimal`, `Percent`, `Float`, `String`, `Boolean`, `Date`, `Time`,
-`DateTime`.
+`Int`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,
+`Date`, `Time`, `DateTime`.
 A column with no type line takes its type from its cells, which is usually
 what you want; declare one when the cells could be read another way.
 
@@ -121,6 +121,7 @@ what you want; declare one when the cells could be read another way.
 |---|---|
 | `Int` | `42`, `1_000_000` |
 | `Decimal` | `19.99`, `1/7`, `2 3/4` — exact |
+| `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction, `1/7` and `2 3/4` |
 | `Percent` | `20%` — exact, shown as a percentage |
 | `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `"Inf"`), which is what a division by zero gives |
 | `Boolean` | `true`, `false` |
@@ -137,12 +138,19 @@ a `Percent`. To show a share as a percentage, declare the column, as in
 `Margin : Percent` over `Margin := Profit / Revenue`, or write `x.Percent`;
 do not multiply by 100. It is shown rounded to two digits, `41.67%`.
 
+A `Fraction` is the same number shown as a fraction of whole numbers: to
+show a column that way, declare it, as in `Share : Fraction`, or write
+`x.Fraction`. The fraction is worked out from the number, so
+`(2/7 + 3/7).Fraction` is `5/7`; a denominator past 10000 is shown as a
+decimal instead. Anything worked out from a fraction is a fraction.
+
 Arithmetic is exact decimal arithmetic: `0.1 + 0.2 == 0.3` is true, and
 nothing wraps. A division that does not end within 38 digits is rounded
-there, so `1/3 * 3` is `0.999…9` while `1/8 * 8` is `1`; when a result must
-come back exactly, divide by something that ends. A long decimal shown cut
-and marked is correct, not a fault: do not "fix" it with `.Float`, and use
-`round(x)` only when the user wants a rounded number. A number is shown in at most 23 characters:
+there, but the last 8 of those digits are working room and are neither
+compared nor shown, so `1/3 * 3` is `1`, `2/7 + 3/7 == 5/7` is true and 30
+digits are shown. A long decimal shown cut and marked is correct, not a
+fault: do not "fix" it with `.Float`, and use `round(x)` only when the user
+wants a rounded number. A number is shown in at most 23 characters:
 from `1e15` up, or below `1e-15`, it is in e notation, `1e+60`, and digits
 that do not fit are cut and marked `…`. Only the display is cut, and
 `--exact` shows it in full.
@@ -184,7 +192,7 @@ that do not fit are cut and marked `…`. Only the display is cut, and
   `sum avg min max count`, `abs round floor ceil sqrt` and the usual maths,
   `today() now() year month day weekday`, `succ` for the next value, and
   the type names as conversions,
-  `x.Int`, `x.Float`, `x.Percent`, `x.String`.
+  `x.Int`, `x.Float`, `x.Fraction`, `x.Percent`, `x.String`.
 - A date plus a whole number is days later; two dates subtract to days.
   `n.day`, `n.week`, `n.month` and `n.year` next to a date say which unit:
   `Placed + 1.month`, which keeps the day of the month or clamps it to the
