@@ -6,7 +6,7 @@ What Markdown is to text, Omasheet is to numbers.
 
 📄 **String as the source of truth**
 
-The spreadsheet becomes a readable, diffable and composable document, not just a binary workbook.
+The spreadsheet becomes a readable, diffable and composable document, not just a binary XLSX Workbook.
 
 📊 **Columns as the computational model**
 

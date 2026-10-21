@@ -4,7 +4,7 @@
 
 ```sh
 omasheet                # a new file
-omasheet file.omx       # open a file, a workbook (.xlsx), a CSV file or Parquet
+omasheet file.omx       # open a file, an XLSX Workbook, a CSV file or Parquet
 ```
 
 `omasheet` with no command opens the app. Needs Qt 6 (`qt6-base`, `qt6-declarative`). The text is the file: every edit
@@ -68,7 +68,7 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+Delete | Delete the selected rows, columns or sheet |
 | Ctrl+O / S | Open / save |
 | Ctrl+Shift+S | Save as |
-| Ctrl+E | Export as a workbook, CSV or JSON |
+| Ctrl+E | Export as an XLSX Workbook, CSV or JSON |
 | Ctrl+K | New constant |
 | Ctrl+N | New sheet after this one |
 | Ctrl+Shift+N | New window on this file |

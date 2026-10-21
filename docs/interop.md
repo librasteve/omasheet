@@ -1,10 +1,10 @@
-# Workbooks, CSV, JSON, Parquet and Markdown
+# XLSX Workbooks, CSV, JSON, Parquet and Markdown
 
-The `.omx` file is the original. A workbook, a CSV file, JSON or Parquet is a way
-in or out, and each command says what it could not carry across.
+The `.omx` file is the original. An XLSX Workbook, a CSV file, JSON or Parquet
+is a way in or out, and each command says what it could not carry across.
 
-Import and export are a helper, not a full conversion. A file and a
-workbook are built differently: named, typed sheets and exact numbers on one
+Import and export are a helper, not a full conversion. A file and an XLSX
+Workbook are built differently: named, typed sheets and exact numbers on one
 side, a grid of cells and floating point on the other. Those differences
 keep either direction from covering everything, so check what the command
 reports.
@@ -19,15 +19,15 @@ omasheet import orders.json                  # a sheet for each list of rows
 
 - The first row is the column names. A name that is not an identifier is
   made one: `Unit Price` becomes `UnitPrice`.
-- A number is read exactly: `19.99` is `1999/100`. A workbook holds every
-  number as floating point, so it is read from the shortest decimal that
-  gives the same number; CSV is read as it is written, every digit of it.
+- A number is read exactly: `19.99` is `1999/100`. An XLSX Workbook holds
+  every number as floating point, so it is read from the shortest decimal
+  that gives the same number; CSV is read as it is written, every digit of it.
 - A column of dates, times, date-times or `true` / `false` is given its
   type. A column of numbers and text together has none: each cell is what
   it reads as.
-- A formula in a workbook is translated to OMX where OMX can say it: see
-  [Formulas](#formulas). Where it cannot, the value is imported, and the
-  cells are listed with the reason.
+- A formula in an XLSX Workbook is translated to OMX where OMX can say it:
+  see [Formulas](#formulas). Where it cannot, the value is imported, and
+  the cells are listed with the reason.
 - Text that looks like a formula, `=SUM(A1:A3)`, stays text.
 - Text is imported as it is, not as Markdown: `*new*` is written in quotes,
   `"*new*"`, so its asterisks are kept.
@@ -62,7 +62,7 @@ an object of such lists is a sheet for each, named by its key.
 A worksheet becomes a sheet whose first row is the header, so a cell of a
 formula becomes a column and a row:
 
-| In the workbook, on row 3 | In the file |
+| In the XLSX Workbook, on row 3 | In the file |
 |---|---|
 | `=B3-C3` | `= Revenue - Cost` |
 | `=B2` | `= [Revenue; *-1]`, the row above |
@@ -80,16 +80,17 @@ formula becomes a column and a row:
   `LOG10`, `PI` and the trigonometry; `TODAY`, `NOW`, `YEAR`, `MONTH`, `DAY`,
   `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `DATEVALUE`.
 - These are not, and the value is imported: joining text with `&`, lookups
-  such as `VLOOKUP`, `DATE(y, m, d)`, names defined in the workbook, lists
-  in `{ }`, and a cell in the header row or outside the sheet.
+  such as `VLOOKUP`, `DATE(y, m, d)`, names defined in the XLSX Workbook,
+  lists in `{ }`, and a cell in the header row or outside the sheet.
 - Every translation is checked. The file is worked out, and a formula that
-  does not give the value the workbook holds for its cell is dropped for
-  that value. The commonest cause is an empty cell: a workbook adds it up as
-  nothing, and in OMX what is worked out from an empty cell is empty.
+  does not give the value the XLSX Workbook holds for its cell is dropped
+  for that value. The commonest cause is an empty cell: an XLSX Workbook
+  adds it up as nothing, and in OMX what is worked out from an empty cell
+  is empty.
   `TODAY()` and `NOW()` are not checked, as they give another answer each
   day.
-- A workbook counts the days of the week from Sunday and OMX from Monday, so
-  `WEEKDAY(A2)=1` becomes `weekday(Date) == 7`.
+- An XLSX Workbook counts the days of the week from Sunday and OMX from
+  Monday, so `WEEKDAY(A2)=1` becomes `weekday(Date) == 7`.
 - A `SWITCH` or an `IFS` with nothing for when no case fits takes its last
   case for that.
 
@@ -103,7 +104,7 @@ omasheet export budget.omx --json            # budget.json, every sheet
 omasheet export budget.omx --json --sheet Sales   # the rows of Sales alone
 ```
 
-A workbook is written with the formulas of the file, and each with its
+An XLSX Workbook is written with the formulas of the file, and each with its
 calculated value, so it reads the same before anything works it out again.
 CSV and JSON hold the calculated values alone. Constants are not exported: a
 formula that reads one is written with what the constant is.
@@ -111,7 +112,7 @@ formula that reads one is written with what the constant is.
 A sheet becomes a worksheet whose first row is the header, so a column and a
 row become a cell. Each formula is written for the row it is on:
 
-| In the file, on row 1 of `Sales` | In the workbook |
+| In the file, on row 1 of `Sales` | In the XLSX Workbook |
 |---|---|
 | `Revenue - Cost` | `=B3-C3` |
 | `[Revenue; *-1]`, the row above | `=B2` |
@@ -137,15 +138,15 @@ row become a cell. Each formula is written for the row it is on:
   reported with the columns it happened in.
 - A cell that comes to nothing, or that failed, is left empty, with no
   formula.
-- A workbook counts a time in days and a file in seconds, so `At - 09:00`
-  is written `=ROUND((C3-TIME(9,0,0))*86400,0)`.
+- An XLSX Workbook counts a time in days and a file in seconds, so
+  `At - 09:00` is written `=ROUND((C3-TIME(9,0,0))*86400,0)`.
 - A sheet exported alone with `--sheet` cannot read another: those formulas
   are written as values.
-- A formula is not checked in a workbook, as nothing here works one out. It
-  is exact in the file and floating point there, so the last digits may
-  differ.
-- Importing the workbook again brings back most formulas, but not all: the
-  import has no translation for `ISBLANK` or `IFERROR`, and takes those
+- A formula is not checked in an XLSX Workbook, as nothing here works one
+  out. It is exact in the file and floating point there, so the last digits
+  may differ.
+- Importing the XLSX Workbook again brings back most formulas, but not all:
+  the import has no translation for `ISBLANK` or `IFERROR`, and takes those
   cells as values.
 
 | | XLSX | CSV |
@@ -174,10 +175,10 @@ columns it happened in.
 
 ## In the app
 
-- Ctrl+O opens a workbook, a CSV file or JSON as well as an `.omx` file. It is
-  imported as a new file, not yet saved.
-- Ctrl+E exports, and asks what as: every sheet as a workbook (X) or as
-  JSON (J), or the sheet shown as CSV (C). It then asks where.
+- Ctrl+O opens an XLSX Workbook, a CSV file or JSON as well as an `.omx`
+  file. It is imported as a new file, not yet saved.
+- Ctrl+E exports, and asks what as: every sheet as an XLSX Workbook (X) or
+  as JSON (J), or the sheet shown as CSV (C). It then asks where.
 - What was changed, rounded or left behind is listed, and stays under
   `notes` in the footer.
 
