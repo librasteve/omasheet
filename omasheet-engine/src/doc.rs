@@ -45,6 +45,10 @@ pub struct SheetSnap {
     /// sheet that holds its own rows. A table is a read-only view: the file
     /// is never written back, so no edit of it is taken (D49).
     pub source: Option<String>,
+    /// The sheet is written as `:=` lines alone, so it has no text behind a
+    /// cell and no row of its own to change: it is shown and not edited,
+    /// as a table is.
+    pub derived: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -909,6 +913,11 @@ impl Grid {
     /// touching nothing else: each line between outer pipes, `| a | b |`,
     /// and a `| --- |` line under the header row.
     fn write(&self, t: &SheetDecl, text: &str) -> String {
+        // A sheet with no header row has no table in the text: there is
+        // nothing to line up, and no line to write it over.
+        if t.header.is_empty() {
+            return text.to_string();
+        }
         let n = self.header.len();
         // At least as wide as the `---` that Markdown asks for.
         let mut widths: Vec<usize> = self
@@ -1249,6 +1258,22 @@ impl Document {
         ))
     }
 
+    /// Why sheet `sheet` has no cell to take an edit: a table's rows are in
+    /// a file, and a sheet of `:=` lines alone has no rows of its own. Its
+    /// formulas are its text, so those are edited as any other sheet's.
+    fn no_cells(&self, sheet: usize) -> Option<String> {
+        if let Some(why) = self.read_only(sheet) {
+            return Some(why);
+        }
+        let snap = self.snapshot.sheets.get(sheet)?;
+        snap.derived.then(|| {
+            format!(
+                "sheet `{}` has no rows of its own: every column is calculated",
+                snap.name
+            )
+        })
+    }
+
     /// `text` with the grid of sheet `sheet` changed.
     fn grid_edited(
         &self,
@@ -1256,7 +1281,7 @@ impl Document {
         sheet: usize,
         change: impl FnOnce(&mut Grid),
     ) -> Option<String> {
-        if self.read_only(sheet).is_some() {
+        if self.no_cells(sheet).is_some() {
             return None;
         }
         let ast = parse_file(text, 0, &mut Vec::new());
@@ -1406,7 +1431,7 @@ impl Document {
     /// type, or with `None` leave them to take their type from their cells.
     /// One undoable step. A cell that does not fit is left to be an error.
     pub fn set_column_types(&mut self, sheet: usize, cols: &[usize], ty: Option<&str>) -> bool {
-        if self.read_only(sheet).is_some() {
+        if self.no_cells(sheet).is_some() {
             return false;
         }
         let ty = match ty.map(S::from_name) {
@@ -1464,7 +1489,7 @@ impl Document {
         first: usize,
         count: usize,
     ) -> Result<(), String> {
-        if let Some(why) = self.read_only(sheet) {
+        if let Some(why) = self.no_cells(sheet) {
             return Err(why);
         }
         let Some(snap) = self.snapshot.sheets.get(sheet) else {
@@ -1547,7 +1572,7 @@ impl Document {
 
     /// Add an empty data column at the end of the header row.
     pub fn add_column(&mut self, sheet: usize, name: &str) -> Result<(), String> {
-        if let Some(why) = self.read_only(sheet) {
+        if let Some(why) = self.no_cells(sheet) {
             return Err(why);
         }
         let name = valid_name(name)?.to_string();
@@ -1724,7 +1749,7 @@ impl Document {
 
     /// Add an empty data column as column `at`, in one undoable step.
     pub fn insert_column(&mut self, sheet: usize, at: usize, name: &str) -> Result<(), String> {
-        if let Some(why) = self.read_only(sheet) {
+        if let Some(why) = self.no_cells(sheet) {
             return Err(why);
         }
         let mark = self.undo.len();
@@ -1768,7 +1793,7 @@ impl Document {
         count: usize,
         to: usize,
     ) -> Result<(), String> {
-        if let Some(why) = self.read_only(sheet) {
+        if let Some(why) = self.no_cells(sheet) {
             return Err(why);
         }
         let Some(snap) = self.snapshot.sheets.get(sheet) else {
@@ -1813,7 +1838,7 @@ impl Document {
         count: usize,
         to: usize,
     ) -> Result<(), String> {
-        if let Some(why) = self.read_only(sheet) {
+        if let Some(why) = self.no_cells(sheet) {
             return Err(why);
         }
         let Some(snap) = self.snapshot.sheets.get(sheet) else {
@@ -2376,6 +2401,7 @@ impl Document {
                 columns,
                 rows,
                 source: sheet.source.as_ref().map(|s| s.path.clone()),
+                derived: sheet.rows_from.is_some(),
             });
         }
         for (i, c) in program.consts.iter().enumerate() {
@@ -2853,6 +2879,55 @@ mod tests {
         assert!(doc.text().contains("fn Sold() = Sales.Income.sum()"));
         assert!(doc.text().contains("Profit := Net(Income, Cost)"));
         assert!(doc.snapshot().problems.is_empty());
+    }
+
+    #[test]
+    fn a_sheet_of_formulas_alone_is_shown_and_not_edited() {
+        // There is no text behind a cell of such a sheet and no row of its
+        // own to change, so every edit of it is refused and the file is left
+        // as it was.
+        let text = "sheet Data\n\n| Month | Revenue |\n| ----- | ------- |\n| Jan   | 10000   |\n| Feb   | 12000   |\n\nsheet Analysis\n\nTwice := Data[Revenue; *] * 2\n";
+        let mut doc = Document::from_text(text);
+        assert!(doc.snapshot().problems.is_empty());
+        assert_eq!(col(&doc, 1, 0), ["20000", "24000"]);
+        assert!(doc.snapshot().sheets[1].derived);
+        let why = doc.no_cells(1).unwrap();
+        assert!(why.contains("Analysis"), "{why}");
+        assert!(doc.read_only(1).is_none());
+        assert!(!doc.set_cells(1, &[(0, 0, "9".to_string())]));
+        assert!(!doc.insert_rows(1, 0, 1));
+        assert!(!doc.delete_rows(1, 0, 1));
+        assert_eq!(doc.add_column(1, "Extra").unwrap_err(), why);
+        assert_eq!(doc.insert_column(1, 0, "Extra").unwrap_err(), why);
+        assert_eq!(doc.delete_columns(1, 0, 1).unwrap_err(), why);
+        assert!(!doc.set_column_types(1, &[0], Some("Int")));
+        assert_eq!(doc.text(), text);
+
+        // Its formulas are its text, so they are edited as any sheet's: the
+        // expression, the name, and another column after it. Typing into a
+        // cell of a computed column is how the app reaches the formula, and
+        // every column of this sheet is one.
+        assert!(doc.set_cell(1, 0, 0, "Data[Revenue; *] * 3"));
+        assert_eq!(col(&doc, 1, 0), ["30000", "36000"]);
+        doc.rename_column(1, 0, "Thrice").unwrap();
+        assert!(doc.text().contains("Thrice := Data[Revenue; *] * 3\n"));
+        doc.add_computed(1, "Half", "Thrice / 6").unwrap();
+        assert_eq!(
+            doc.text(),
+            "sheet Data\n\n| Month | Revenue |\n| ----- | ------- |\n| Jan   | 10000   |\n| Feb   | 12000   |\n\nsheet Analysis\n\nThrice := Data[Revenue; *] * 3\nHalf := Thrice / 6\n"
+        );
+        assert_eq!(col(&doc, 1, 1), ["5000", "6000"]);
+        assert!(doc.snapshot().problems.is_empty());
+        // One step each to undo, back to the file as it was.
+        for _ in 0..3 {
+            assert!(doc.undo());
+        }
+        assert_eq!(doc.text(), text);
+
+        // The sheet that holds the rows is edited as ever, and the derived
+        // one follows it.
+        assert!(doc.set_cell(0, 1, 1, "20000"));
+        assert_eq!(col(&doc, 1, 0), ["20000", "40000"]);
     }
 
     #[test]

@@ -46,6 +46,12 @@ pub struct Sheet {
     /// columns are `ColKind::Frame`, and both the rows and `nrows` are filled
     /// in after checking by whoever can read the file.
     pub source: Option<Source>,
+    /// The sheets this one's formulas read row for row, for a sheet written
+    /// with no rows of its own: its `nrows` is the longest of theirs, or one
+    /// row when it reads none, which [`resolve_rows`] works out once their
+    /// own counts are known. `None` for a sheet whose rows are in the text
+    /// or in a file.
+    pub rows_from: Option<Vec<usize>>,
 }
 
 /// The file a `table`'s rows live in: a path, which may be a glob.
@@ -171,6 +177,8 @@ struct SheetInfo {
     cols: Vec<ColInfo>,
     nrows: usize,
     source: Option<Source>,
+    /// Written with no table of its own: every column is a `:=` line.
+    rowless: bool,
 }
 
 struct ConstInfo {
@@ -244,6 +252,9 @@ struct Checker<'a> {
     col_state: Vec<Vec<St<S>>>,
     col_out: Vec<Vec<Option<ColKind>>>,
     col_deps: Vec<Vec<Vec<Dep>>>,
+    /// Per sheet, the other sheets its formulas pick a row of with the
+    /// cursor, each once. A sheet that holds no rows is as long as these.
+    row_reads: Vec<Vec<usize>>,
     const_state: Vec<St<Ty>>,
     const_out: Vec<Option<Node>>,
     const_deps: Vec<Vec<Dep>>,
@@ -274,7 +285,43 @@ pub fn compile(text: &str, src: u32) -> (Program, Vec<Diagnostic>) {
     let order = ck.order();
     diags.append(&mut ck.done);
     diags.sort_by_key(|d| (d.span.start, d.span.end));
-    (ck.finish(order), diags)
+    let mut program = ck.finish(order);
+    resolve_rows(&mut program);
+    (program, diags)
+}
+
+/// Fix the row count of every sheet written with no rows of its own: the
+/// longest of the sheets its formulas read row for row, or one row when
+/// they read none. A `table`'s own count is not known until its file is
+/// read, so this is called again once it is, and a sheet that reads another
+/// rowless sheet settles after it rather than in the same pass.
+pub fn resolve_rows(program: &mut Program) {
+    let plan: Vec<(usize, Vec<usize>)> = program
+        .sheets
+        .iter()
+        .enumerate()
+        .filter_map(|(t, sheet)| sheet.rows_from.clone().map(|from| (t, from)))
+        .collect();
+    for _ in 0..plan.len() {
+        let mut moved = false;
+        for (t, from) in &plan {
+            let rows = match from.as_slice() {
+                [] => 1,
+                read => read
+                    .iter()
+                    .map(|&s| program.sheets[s].nrows)
+                    .max()
+                    .unwrap_or(0),
+            };
+            if program.sheets[*t].nrows != rows {
+                program.sheets[*t].nrows = rows;
+                moved = true;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
 }
 
 /// Compile one expression that may refer to the sheets and constants of
@@ -497,6 +544,7 @@ impl<'a> Checker<'a> {
             col_state: Vec::new(),
             col_out: Vec::new(),
             col_deps: Vec::new(),
+            row_reads: Vec::new(),
             const_state: Vec::new(),
             const_out: Vec::new(),
             const_deps: Vec::new(),
@@ -512,11 +560,13 @@ impl<'a> Checker<'a> {
         for (i, t) in prog.sheets.iter().enumerate() {
             ck.col_state
                 .push(t.cols.iter().map(|c| St::Done(c.ty)).collect());
+            ck.row_reads.push(Vec::new());
             ck.sheets.push(SheetInfo {
                 name: t.name.clone(),
                 decl: i,
                 nrows: t.nrows,
                 source: t.source.clone(),
+                rowless: t.rows_from.is_some(),
                 cols: t
                     .cols
                     .iter()
@@ -557,6 +607,13 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let mut cols: Vec<ColInfo> = Vec::new();
+            // A sheet written as `:=` lines alone holds no rows: its columns
+            // are those lines, in the order they are written, and its row
+            // count is the one of the sheets they read.
+            let rowless = t.source.is_none()
+                && t.header.is_empty()
+                && t.rows.is_empty()
+                && !t.computed.is_empty();
             // A `table` has no rows in the text: its columns are the schema
             // lines, in the order they are written, and what they are read
             // from is the source.
@@ -631,7 +688,7 @@ impl<'a> Checker<'a> {
                     }
                     continue;
                 }
-                if t.source.is_none() {
+                if t.source.is_none() && !rowless {
                     ck.done.push(
                         Diagnostic::new(
                             cd.span,
@@ -690,14 +747,17 @@ impl<'a> Checker<'a> {
                 .push(cols.iter().map(|_| St::Pending).collect());
             ck.col_out.push(cols.iter().map(|_| None).collect());
             ck.col_deps.push(cols.iter().map(|_| Vec::new()).collect());
+            ck.row_reads.push(Vec::new());
             ck.sheets.push(SheetInfo {
                 name: t.name.clone(),
                 decl,
                 cols,
                 // A table's rows are not here to count: the row count comes
-                // from the file when the source is read.
+                // from the file when the source is read, and a rowless
+                // sheet's from the sheets its formulas read.
                 nrows: t.rows.len(),
                 source,
+                rowless,
             });
         }
 
@@ -1408,6 +1468,22 @@ impl<'a> Checker<'a> {
             Ir::If(Box::new(past), Box::new(empty), Box::new(rule)),
             span,
         ))
+    }
+
+    /// Note that the sheet being checked picks a row of `sheet` with the
+    /// cursor, as `Sales[Revenue; *]` does: a sheet that holds no rows of
+    /// its own is as long as the sheets it reads this way. A cursor on the
+    /// sheet's own rows says nothing about its length, and nor does an
+    /// aggregate, which reads a whole column rather than a row.
+    fn aligns_with(&mut self, sheet: Option<usize>, sc: &Scope) {
+        if let Some(s) = sheet
+            && sc.own
+            && let Some(&own) = sc.frames.first()
+            && s != own
+            && !self.row_reads[own].contains(&s)
+        {
+            self.row_reads[own].push(s);
+        }
     }
 
     /// The path in `dataframe["<path>"]`, the one source a `table` may have.
@@ -2743,6 +2819,7 @@ impl<'a> Checker<'a> {
             if !need_row(self, e) {
                 return RowPick::all(nrows);
             }
+            self.aligns_with(sheet, sc);
             let (off, known) = self.offset(form, sc);
             let kind = match known {
                 Some(0) if own => DepKind::Same,
@@ -2766,6 +2843,7 @@ impl<'a> Checker<'a> {
                 if !need_row(self, e) {
                     return RowPick::all(nrows);
                 }
+                self.aligns_with(sheet, sc);
                 let mut bound = |ck: &mut Checker, e: &Expr| match cursor_form(e) {
                     Some(form) => {
                         let (off, known) = ck.offset(form, sc);
@@ -3149,6 +3227,7 @@ impl<'a> Checker<'a> {
     fn finish(mut self, order: Vec<Group>) -> Program {
         let mut sheets = Vec::new();
         for (t, info) in mem::take(&mut self.sheets).into_iter().enumerate() {
+            let rows_from = info.rowless.then(|| self.row_reads[t].clone());
             let mut cols = Vec::new();
             for (c, col) in info.cols.into_iter().enumerate() {
                 let ty = match &self.col_state[t][c] {
@@ -3171,6 +3250,7 @@ impl<'a> Checker<'a> {
                 cols,
                 nrows: info.nrows,
                 source: info.source,
+                rows_from,
             });
         }
         let mut consts = Vec::new();

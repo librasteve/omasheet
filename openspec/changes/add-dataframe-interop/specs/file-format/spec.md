@@ -155,3 +155,58 @@ the data, because it is fixed before evaluation begins.
 - **WHEN** the file is opened
 - **THEN** the sheet reports a million rows
 - **AND** no row group has been read
+
+### Requirement: A sheet of formulas alone
+
+A sheet written as `:=` lines with no table of its own SHALL hold no rows in
+the text: its columns SHALL be those lines, in the order they are written,
+and no header row or `*` cell SHALL be required or allowed.
+
+```omx
+sheet PerHead
+
+Fare      := Passengers[Fare; *]
+GroupSize := Passengers[Family; *] + 1
+```
+
+Its row count SHALL be the greatest row count of the sheets whose rows its
+formulas pick with the cursor, which for a table is known only once the
+source has been read. A sheet whose formulas pick no row of another sheet
+SHALL be one row long. A row past the end of a shorter sheet it reads SHALL
+be empty, as any row outside a sheet is.
+
+An edit that needs a cell or a row of such a sheet's own SHALL be refused,
+naming the sheet: there is no text behind a cell, and no row to add or
+delete. Its `:=` lines SHALL be edited as any sheet's are, since they are
+its text: the expression, the name of a column, and a column added after
+the others.
+
+#### Scenario: A derived sheet over a table
+
+- **GIVEN** a table of 891 rows and a sheet of `:=` lines alone whose
+  formulas read it with `*`
+- **WHEN** the file is calculated
+- **THEN** the sheet has 891 rows
+- **AND** no row of `*` was written in the text
+
+#### Scenario: A sheet of aggregates is one row
+
+- **GIVEN** a sheet of `:=` lines alone whose formulas are aggregates
+- **WHEN** the file is calculated
+- **THEN** the sheet has one row
+
+#### Scenario: Such a sheet takes no cell or row
+
+- **GIVEN** a sheet of `:=` lines alone
+- **WHEN** a literal cell of it is written, or a row added or deleted, or a
+  data column added or deleted
+- **THEN** the edit is refused, naming the sheet
+- **AND** the text of the file is unchanged
+
+#### Scenario: Its formulas are edited as any sheet's
+
+- **GIVEN** a sheet of `:=` lines alone
+- **WHEN** a cell of one of its columns is typed into
+- **THEN** that column's formula is changed, as it is for a computed column
+  of any sheet
+- **AND** the column may be renamed, and another `:=` column added

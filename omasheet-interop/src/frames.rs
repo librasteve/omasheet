@@ -44,6 +44,9 @@ pub fn read(program: &mut Program, dir: &Path, diags: &mut Vec<Diagnostic>) {
             )),
         }
     }
+    // A sheet of formulas alone is as long as the sheets it reads, which for
+    // a table is only now known.
+    omasheet_engine::omx::check::resolve_rows(program);
 }
 
 /// The row count of a source, from the footer alone: no row group is read. A

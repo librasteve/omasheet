@@ -110,6 +110,13 @@ sheet Summary
   row where it should appear, put `*` in each of its cells, and write
   `Name := expression` after the rows. Leaving it out of the header, or
   putting anything but `*` in its cells, is an error.
+- A sheet of `:=` lines alone, with no table under `sheet Name`, holds no
+  rows: its columns are those lines and there is no header row or `*` to
+  write. It is as long as the sheets its formulas pick a row of with `*`,
+  `Fare := Passengers[Fare; *]`, so write one for a derived sheet over a
+  table rather than hundreds of rows of `*`; a sheet of aggregates alone,
+  `Total := Sales.Revenue.sum()`, is one row. It has no cell to write and no
+  row to add; its `:=` lines are edited as any sheet's.
 - **A formula cell** starts with `=`. Everything else is a literal, so
   `Revenue - Cost` in a cell is text. A `:=` line and a `const` take no `=`.
 - An empty cell is empty. There is no `null` or `NA`; leave it blank.

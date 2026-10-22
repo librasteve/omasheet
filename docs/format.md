@@ -115,6 +115,50 @@ itself.
 
 `examples/analysis.omx` is a working one, over `examples/titanic.parquet`.
 
+## Sheets of formulas alone
+
+A sheet written as `:=` lines with no table of its own has no cells to
+write:
+
+```omx
+sheet PerHead
+
+Class       := Passengers[Pclass; *]
+Fare        := Passengers[Fare; *].Decimal.round(0.01)
+GroupSize   := Passengers[Family; *] + 1
+FarePerHead := (Fare / GroupSize).round(0.01)
+```
+
+Its columns are those lines, in the order they are written, and there is no
+header row and no `*` to write for a cell. Its length is the length of the
+sheets its formulas pick a row of with `*`: `PerHead` has a row for every
+row of `Passengers`, whether those rows are in the text or in a Parquet
+file. Where several are read, the longest says how many rows there are, and
+a row past the end of a shorter one is empty, as any row outside a sheet is.
+
+An aggregate reads a whole column rather than a row, so a sheet of
+aggregates is one row long:
+
+```omx
+sheet Summary
+
+Aboard   := Passengers.Survived.count()
+Lived    := Passengers.Survived.sum()
+MeanFare := Passengers.Fare.avg().round(0.01)
+```
+
+Otherwise the sheet is a sheet: its columns are selected and indexed as any
+other, and an aggregate reads the whole column. What it cannot hold is a
+written cell: there is no text behind one, and no row of its own to add or
+delete, so the app refuses those, and a data column with them. Its formulas
+are its text, so those are edited as any sheet's — typing into one of its
+cells changes that column's formula, a column may be renamed, and another
+`:=` column added after it.
+
+Exporting one writes its rows like any other sheet's; importing them back
+gives the header row and the `*` cells, since nothing in a worksheet says a
+sheet's rows were derived.
+
 ## Types
 
 `Int`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,

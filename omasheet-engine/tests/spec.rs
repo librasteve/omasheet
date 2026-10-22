@@ -1126,6 +1126,40 @@ fn column_schema() {
 }
 
 #[test]
+fn a_sheet_may_be_formulas_alone() {
+    // Written as `:=` lines with no table of its own, a sheet has no cells
+    // to write: its columns are those lines, in the order they are written,
+    // and its length is the length of the sheets its formulas pick a row of
+    // with `*`.
+    let margin = format!(
+        "{SALES}\nsheet Margin\n\nTake := Sales[Revenue; *] - Sales[Cost; *]\nOver := Take > 50\n"
+    );
+    assert_eq!(lint_errors(&margin), Vec::<String>::new());
+    assert_eq!(ask(&margin, "Margin.Take"), "[40, 50, 70]");
+    assert_eq!(ask(&margin, "Margin.Over"), "[false, false, true]");
+    assert_eq!(
+        shown(&margin).split("sheet Margin").nth(1).unwrap(),
+        "\n\nTake | Over\n-----|------\n  40 | false\n  50 | false\n  70 | true\n"
+    );
+    // A row of the longest, where several are read; a row past the end of a
+    // shorter one is empty, as any row outside a sheet is.
+    let both = format!(
+        "{SALES}\nsheet Two\n\nA | B\n1 | 2\n\nsheet Both\n\nPair := Sales[Revenue; *] + (Two[A; *] // 0)\n"
+    );
+    assert_eq!(ask(&both, "Both.Pair"), "[101, 120, 150]");
+    // An aggregate reads a whole column rather than a row, so a sheet of
+    // aggregates is one row long.
+    let summary = format!("{SALES}\nsheet Summary\n\nTotal := Sales.Revenue.sum()\n");
+    assert_eq!(
+        shown(&summary).split("sheet Summary").nth(1).unwrap(),
+        "\n\nTotal\n-----\n  370\n"
+    );
+    // The sheet is a sheet: what reads it selects and aggregates as ever.
+    assert_eq!(ask(&margin, "Margin.Take.sum()"), "160");
+    assert_eq!(ask(&margin, "Margin[Take; -1]"), "70");
+}
+
+#[test]
 fn computed_columns() {
     let file = sales_with("Profit := Revenue - Cost\n");
     assert_eq!(ask(&file, "Sales.Profit"), "[40, 50, 70]");

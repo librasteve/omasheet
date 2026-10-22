@@ -1022,6 +1022,25 @@ fn a_table_is_declared_and_read() {
 }
 
 #[test]
+fn a_sheet_of_formulas_alone_is_as_long_as_the_table_it_reads() {
+    let dir = scratch("table_rowless");
+    parquet_file(&dir, "sales.parquet");
+    // A table's own length is not known until its file is read, so a sheet
+    // that holds no rows of its own takes its length from the table only
+    // then.
+    let text = format!(
+        "{TABLE}\nsheet Margin\n\nTake := Sales[Revenue; *] - Sales[Cost; *]\nAll := Sales.Revenue.sum()\n"
+    );
+    let out = with_tables(&dir, &text);
+    assert!(out.ok(), "{:?}", out.errors);
+    let margin = out.output.split("sheet Margin").nth(1).unwrap();
+    assert_eq!(
+        margin, "\n\nTake | All\n-----|------\n4000 | 22000\n5000 | 22000\n",
+        "{margin}"
+    );
+}
+
+#[test]
 fn a_computed_column_over_a_table_reads_its_columns() {
     let dir = scratch("table-sum");
     parquet_file(&dir, "sales.parquet");
