@@ -389,6 +389,18 @@ impl qobject::File {
         self.as_mut().set_file_path(QString::from(&full));
         self.as_mut().rust_mut().path = path;
         self.as_mut().rust_mut().origin = None;
+        // A `table` names its Parquet beside the file, so where the rows
+        // are read from changes with the file's own place.
+        let dir = match self.rust().path.as_ref().and_then(|p| p.parent()) {
+            Some(dir) => dir.to_path_buf(),
+            None => PathBuf::new(),
+        };
+        self.as_mut()
+            .rust_mut()
+            .doc
+            .set_sources(move |program, diags| {
+                omasheet_interop::frames::read(program, &dir, diags)
+            });
     }
 
     fn snapshot_json(&self) -> QString {
@@ -610,6 +622,23 @@ impl qobject::File {
         }
     }
 
+    /// Edit sheet `sheet`, and say why in the status bar when it takes no
+    /// edit at all: a `table` is a read-only view of its Parquet file.
+    fn edit_sheet(
+        mut self: Pin<&mut Self>,
+        sheet: i32,
+        change: impl FnOnce(&mut Document) -> bool,
+    ) {
+        let changed = change(&mut self.as_mut().rust_mut().doc);
+        if changed {
+            self.refresh("");
+            return;
+        }
+        if let Some(why) = self.rust().doc.read_only(index(sheet)) {
+            self.as_mut().set_status(QString::from(&why));
+        }
+    }
+
     /// Run an edit that can be refused, returning the reason.
     fn try_edit(
         mut self: Pin<&mut Self>,
@@ -627,7 +656,9 @@ impl qobject::File {
 
     fn set_cell(self: Pin<&mut Self>, sheet: i32, row: i32, col: i32, text: &QString) {
         let text = text.to_string();
-        self.edit(|doc| doc.set_cell(index(sheet), index(row), index(col), &text));
+        self.edit_sheet(sheet, |doc| {
+            doc.set_cell(index(sheet), index(row), index(col), &text)
+        });
     }
 
     /// Cut, copy or paste: with what was last cut or copied, and the document.
@@ -730,15 +761,19 @@ impl qobject::File {
 
     fn clear_cells(self: Pin<&mut Self>, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) {
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
-        self.edit(|doc| Clip::clear(doc, index(sheet), from, to));
+        self.edit_sheet(sheet, |doc| Clip::clear(doc, index(sheet), from, to));
     }
 
     fn insert_rows(self: Pin<&mut Self>, sheet: i32, at: i32, count: i32) {
-        self.edit(|doc| doc.insert_rows(index(sheet), index(at), index(count)));
+        self.edit_sheet(sheet, |doc| {
+            doc.insert_rows(index(sheet), index(at), index(count))
+        });
     }
 
     fn delete_rows(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32) {
-        self.edit(|doc| doc.delete_rows(index(sheet), index(first), index(count)));
+        self.edit_sheet(sheet, |doc| {
+            doc.delete_rows(index(sheet), index(first), index(count))
+        });
     }
 
     fn add_column(self: Pin<&mut Self>, sheet: i32, name: &QString) -> QString {
@@ -779,7 +814,7 @@ impl qobject::File {
     fn set_column_types(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, ty: &QString) {
         let ty = ty.to_string();
         let cols: Vec<usize> = (index(first)..index(first) + index(count)).collect();
-        self.edit(|doc| {
+        self.edit_sheet(sheet, |doc| {
             doc.set_column_types(
                 index(sheet),
                 &cols,

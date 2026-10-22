@@ -567,6 +567,8 @@ pub fn export(
                             Some(Cell::Formula(node)) => Some(node),
                             _ => None,
                         },
+                        // A frame column holds values, never formulas.
+                        ColKind::Frame(_) => None,
                     };
                     // A value with no type in a workbook has no formula there.
                     let node = node.filter(|_| !matches!(shown, Shown::Written(_)));

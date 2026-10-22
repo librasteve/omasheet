@@ -163,6 +163,10 @@ pub enum Func {
     ZoneName,
     /// A function of one real number, such as `sqrt`.
     Math(MathFn),
+    /// The nearest multiple of a scale: `round(x, 0.01)`. It means
+    /// `round(x / scale) * scale`, and is one step so that the scaling is
+    /// worked out exactly, which that form cannot do for a Float.
+    RoundTo,
     Pi,
     /// The base of the natural logarithm.
     E,

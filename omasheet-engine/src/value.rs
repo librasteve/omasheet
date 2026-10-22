@@ -464,6 +464,37 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
     Ok(Value::Float(m.apply(x)))
 }
 
+/// The nearest multiple of `scale`, which is what `round(x, 0.01)` means:
+/// `round(x / scale) * scale`.
+///
+/// Where a Float is on either side the multiple is worked out exactly, from
+/// the number the Float's digits say, and put back as a Float. In floating
+/// point the scaling lands a hair off the number the scale names, 2.78 as
+/// 2.7800000000000002, and a half lands below it, 2.785 to 2.78 where the
+/// digits say 2.79. A Float with no exact value, `Inf` or `NaN`, is left to
+/// the arithmetic, as are two exact numbers, which it already works out
+/// exactly.
+pub fn round_to(x: &Value, scale: &Value) -> Result<Value, String> {
+    let float = matches!(x, Value::Float(_)) || matches!(scale, Value::Float(_));
+    let exact = |v: &Value| match number(v) {
+        Some(N::Exact(r)) => Some(r),
+        Some(N::Float(f)) => Dec::from_f64(f),
+        None => None,
+    };
+    if float && let (Some(x), Some(s)) = (exact(x), exact(scale)) {
+        let multiple = (!s.is_zero())
+            .then(|| x.checked_div(s))
+            .flatten()
+            .map(|q| q.round())
+            .and_then(|whole| whole.checked_mul(s));
+        if let Some(r) = multiple {
+            return Ok(Value::Float(r.to_f64()));
+        }
+    }
+    let whole = math(MathFn::Round, &arith(BinOp::Div, x, scale)?)?;
+    arith(BinOp::Mul, &whole, scale)
+}
+
 /// Whether a value is `NaN`, which is not equal to, less than or more than
 /// anything, itself included.
 pub fn is_nan(v: &Value) -> bool {

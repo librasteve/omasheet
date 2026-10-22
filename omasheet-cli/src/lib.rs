@@ -409,10 +409,14 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
         Some(Command::Print { file, env }) => {
             let options = env.options()?;
             let text = read(&file)?;
-            Ok(finish(omasheet_engine::view_with(
+            // A `table` reads its rows from beside the file, so the file's
+            // own directory is what its source is relative to.
+            let dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
+            Ok(finish(omasheet_engine::view_sourced(
                 &file.to_string_lossy(),
                 &text,
                 options,
+                &mut |program, diags| omasheet_interop::frames::read(program, &dir, diags),
             )))
         }
     }

@@ -10,7 +10,8 @@ unsigned widths — reach Parquet as 2.9 once they land.
 ## 0. Settle the open questions
 
 - [ ] 0.1 P34: what `--meta` carries, and what a reader that ignores it sees
-- [ ] 0.2 Whether a dataframe-backed table is editable, or read-only for now
+- [x] 0.2 D49: a dataframe-backed table is a read-only view. The app shows
+      its rows and takes no edit of them; to edit, import the Parquet
 
 ## 1. The dependency
 
@@ -42,17 +43,39 @@ unsigned widths — reach Parquet as 2.9 once they land.
 
 ## 3. The table statement (`file-format`)
 
-- [ ] 3.1 A `table` arm in `parse_file`, beside `sheet`, for
-      `table Sales := dataframe["data/*.parquet"]`, plus a `FileAst` field and
-      the catch-all keyword message
-- [ ] 3.2 Recognise `Index(Name("dataframe"), [Lit::String])` in the checker
+- [x] 3.1 A `table` arm in `parse_file`, beside `sheet`, for
+      `table Sales := dataframe["data/sales.parquet"]`, plus a
+      `SheetDecl.source`
+      field (a table is a sheet with a source, per D28, so it keeps its place
+      among the sheets) and the catch-all keyword message
+- [x] 3.2 Recognise `Index(Name("dataframe"), [Lit::String])` in the checker
       and lower it to a source rather than a selection
-- [ ] 3.3 `Sheet.source` and `ColKind::Frame`, and every match over `ColKind`
-      in the engine, the interop crate and the app
-- [ ] 3.4 `nrows` from the Parquet footer, a metadata-only read
-- [ ] 3.5 The schema written into the `.omx` text and checked against the
-      footer on load, with a diagnostic on a mismatch (D29)
-- [ ] 3.6 A glob matching several files, read as one frame
+- [x] 3.3 `Sheet.source` and `ColKind::Frame`, and every match over `ColKind`
+      in the engine and the interop crate. The app's one use is a `matches!`
+      for a computed column and needed no arm; the app does not yet read a
+      source, which is section 6 and waits on 0.2
+- [ ] 3.4 `nrows` from the Parquet footer, a metadata-only read.
+      `frames::rows` does exactly this and is there for a caller that wants
+      only the count, but `frames::read` sets `nrows` from the frame it has
+      just read, because without the pushdown of section 4 the values are
+      read anyway. The spec scenario "a large table opens without reading its
+      rows" is therefore not met yet
+- [x] 3.5 The schema checked against the file on load, with a diagnostic on a
+      mismatch (D29): a column the file types differently, a column the file
+      has and the schema does not, and a column the schema has and the file
+      does not. Writing the schema into the `.omx` text on a first load is
+      not done; a table with no schema lines takes its columns from the file
+      instead
+- [ ] 3.6 ~~A glob matching several files~~: not wanted. The `*` in the
+      example stood for a file name, not a pattern (owner, 2026-10-21), so a
+      source names one Parquet file and a missing one is reported as missing
+- [x] 3.7 D50: a `from` clause on a schema line,
+      `SiblingsSpousesAboard : Int from "Siblings/Spouses Aboard"`, so a
+      Parquet column whose name is not an omasheet name can be read at all.
+      The quoted name is what the column is found and checked by; a `from`
+      on a sheet of its own rows is reported, and the diagnostic for a
+      column no schema line names offers a name formed from the file's own.
+      `examples/analysis.omx` reads `titanic.parquet` through two of them
 
 ## 4. Pushdown and lowering (`evaluation`)
 
@@ -75,15 +98,18 @@ unsigned widths — reach Parquet as 2.9 once they land.
 
 ## 6. The app (`app`)
 
-- [ ] 6.1 The editing API refuses or diverts on a dataframe-backed table,
-      which has a declaration line but no cell spans
+- [x] 6.1 The editing API refuses on a dataframe-backed table, which has a
+      declaration line but no cell spans: `Document` reads a table's rows
+      through `set_sources`, and every call that would write one back
+      answers "table `Sales` is a read-only view of `sales.parquet`:
+      import that file to make edits"
 - [ ] 6.2 The table's source and row count shown, so it is plain the rows are
       not in the file
 
 ## 7. The documents
 
 - [x] 7.1 `docs/interop.md`: Parquet, `--meta`, and the type table
-- [ ] 7.2 `docs/format.md`: the `table` statement
+- [x] 7.2 `docs/format.md`: the `table` statement
 - [ ] 7.3 `docs/expressions.md`: `.head(n)`
 - [x] 7.4 `.claude/skills/omasheet/SKILL.md`: the statement, the command and
       the types

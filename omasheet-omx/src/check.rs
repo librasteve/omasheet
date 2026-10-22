@@ -13,7 +13,7 @@ use crate::date;
 use crate::decimal::Dec;
 use crate::deps;
 use crate::diag::{Diagnostic, Span};
-use crate::file::{FileAst, parse_file};
+use crate::file::{FileAst, SourceDecl, parse_file};
 use crate::funcs::{FUNCTIONS, MathFn};
 use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use crate::parser::parse_expr;
@@ -42,6 +42,18 @@ pub struct Sheet {
     pub name: String,
     pub cols: Vec<Column>,
     pub nrows: usize,
+    /// Where the rows come from, for a sheet declared with `table`. Its
+    /// columns are `ColKind::Frame`, and both the rows and `nrows` are filled
+    /// in after checking by whoever can read the file.
+    pub source: Option<Source>,
+}
+
+/// The file a `table`'s rows live in: a path, which may be a glob.
+#[derive(Clone, Debug)]
+pub struct Source {
+    pub path: String,
+    /// The string in the `table` line, for a diagnostic to point at.
+    pub span: Span,
 }
 
 #[derive(Debug)]
@@ -52,12 +64,18 @@ pub struct Column {
     /// The type was written in the schema rather than inferred.
     pub declared: bool,
     pub kind: ColKind,
+    /// The name the file holds this column under, when a `from` clause
+    /// says it is not [`Column::name`]. Only a table's column has one.
+    pub from: Option<String>,
 }
 
 #[derive(Debug)]
 pub enum ColKind {
     Data(Vec<Cell>),
     Computed(Node),
+    /// A column whose rows come from the sheet's [`Source`] rather than from
+    /// the text, so its cells have no spans. Empty until it is read.
+    Frame(Vec<Cell>),
 }
 
 #[derive(Debug)]
@@ -131,6 +149,8 @@ type Dep = (DepNode, DepKind);
 enum ColSrc {
     /// Index into the header row.
     Data(usize),
+    /// A column of a `table`: its rows are read from the sheet's source.
+    Frame,
     /// Index into the sheet's computed declarations.
     Computed(usize),
     /// Already checked (when compiling an expression against a program).
@@ -142,6 +162,7 @@ struct ColInfo {
     span: Span,
     declared: Option<S>,
     src: ColSrc,
+    from: Option<String>,
 }
 
 struct SheetInfo {
@@ -149,6 +170,7 @@ struct SheetInfo {
     decl: usize,
     cols: Vec<ColInfo>,
     nrows: usize,
+    source: Option<Source>,
 }
 
 struct ConstInfo {
@@ -494,6 +516,7 @@ impl<'a> Checker<'a> {
                 name: t.name.clone(),
                 decl: i,
                 nrows: t.nrows,
+                source: t.source.clone(),
                 cols: t
                     .cols
                     .iter()
@@ -502,6 +525,7 @@ impl<'a> Checker<'a> {
                         span: c.span,
                         declared: None,
                         src: ColSrc::Done,
+                        from: c.from.clone(),
                     })
                     .collect(),
             });
@@ -533,6 +557,33 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let mut cols: Vec<ColInfo> = Vec::new();
+            // A `table` has no rows in the text: its columns are the schema
+            // lines, in the order they are written, and what they are read
+            // from is the source.
+            let source = t.source.as_ref().and_then(|s| ck.source_path(s, &t.name));
+            if t.source.is_some() {
+                if !t.rows.is_empty() || !t.header.is_empty() {
+                    ck.done.push(
+                        Diagnostic::new(
+                            t.header_line,
+                            format!("table `{}` has rows of its own", t.name),
+                        )
+                        .with_help("a table's rows come from its source: remove them"),
+                    );
+                }
+                for line in &t.schema {
+                    if cols.iter().any(|c| c.name == line.name) {
+                        continue;
+                    }
+                    cols.push(ColInfo {
+                        name: line.name.clone(),
+                        span: line.span,
+                        declared: None,
+                        src: ColSrc::Frame,
+                        from: line.from.clone(),
+                    });
+                }
+            }
             for (h, (name, span)) in t.header.iter().enumerate() {
                 if cols.iter().any(|c| &c.name == name) {
                     ck.done.push(Diagnostic::new(
@@ -566,6 +617,7 @@ impl<'a> Checker<'a> {
                     span: *span,
                     declared: None,
                     src,
+                    from: None,
                 });
             }
             for (k, cd) in t.computed.iter().enumerate() {
@@ -579,19 +631,21 @@ impl<'a> Checker<'a> {
                     }
                     continue;
                 }
-                ck.done.push(
-                    Diagnostic::new(
-                        cd.span,
-                        format!(
-                            "formula column `{}` is not in the header row of sheet `{}`",
-                            cd.name, t.name
-                        ),
-                    )
-                    .with_help(format!(
-                        "name `{}` in the header row where it goes, and write `*` in its cells",
-                        cd.name
-                    )),
-                );
+                if t.source.is_none() {
+                    ck.done.push(
+                        Diagnostic::new(
+                            cd.span,
+                            format!(
+                                "formula column `{}` is not in the header row of sheet `{}`",
+                                cd.name, t.name
+                            ),
+                        )
+                        .with_help(format!(
+                            "name `{}` in the header row where it goes, and write `*` in its cells",
+                            cd.name
+                        )),
+                    );
+                }
                 // It is still a column, so that what reads it is not also
                 // reported.
                 cols.push(ColInfo {
@@ -599,9 +653,21 @@ impl<'a> Checker<'a> {
                     span: cd.span,
                     declared: None,
                     src: ColSrc::Computed(k),
+                    from: None,
                 });
             }
             for line in &t.schema {
+                if line.from.is_some() && t.source.is_none() {
+                    ck.done.push(
+                        Diagnostic::new(
+                            line.from_span,
+                            format!("sheet `{}` reads no file", t.name),
+                        )
+                        .with_help(
+                            "`from` names a column of a table's Parquet; this sheet holds its own rows",
+                        ),
+                    );
+                }
                 match cols.iter_mut().find(|c| c.name == line.name) {
                     Some(c) if c.declared.is_some() => ck.done.push(Diagnostic::new(
                         line.span,
@@ -628,7 +694,10 @@ impl<'a> Checker<'a> {
                 name: t.name.clone(),
                 decl,
                 cols,
+                // A table's rows are not here to count: the row count comes
+                // from the file when the source is read.
                 nrows: t.rows.len(),
+                source,
             });
         }
 
@@ -793,6 +862,11 @@ impl<'a> Checker<'a> {
                         declared.unwrap_or(S::Any),
                     ),
                 }
+            }
+            ColSrc::Frame => {
+                // The rows are not in the text. The type is the declared one,
+                // and the cells arrive when the source is read.
+                (ColKind::Frame(Vec::new()), declared.unwrap_or(S::Any))
             }
             ColSrc::Data(h) => {
                 // Literal cells first, so that formulas in the column that
@@ -1334,6 +1408,31 @@ impl<'a> Checker<'a> {
             Ir::If(Box::new(past), Box::new(empty), Box::new(rule)),
             span,
         ))
+    }
+
+    /// The path in `dataframe["<path>"]`, the one source a `table` may have.
+    /// `None`, with a diagnostic, for anything else written there.
+    fn source_path(&mut self, decl: &SourceDecl, sheet: &str) -> Option<Source> {
+        let expr = decl.expr.as_ref()?;
+        if let ExprKind::Index(base, slots) = &expr.kind
+            && let ExprKind::Name(name) = &base.kind
+            && name == "dataframe"
+            && let [Some(arg)] = slots.as_slice()
+            && let ExprKind::Lit(Lit::String(path)) = &arg.kind
+        {
+            return Some(Source {
+                path: path.clone(),
+                span: arg.span,
+            });
+        }
+        self.done.push(
+            Diagnostic::new(
+                decl.expr_span,
+                format!("table `{sheet}` does not say what to read"),
+            )
+            .with_help("a table is written `table <Name> := dataframe[\"<path>\"]`"),
+        );
+        None
     }
 
     fn fit_declared(&mut self, found: S, declared: Option<S>, span: Span, column: &str) -> S {
@@ -2382,8 +2481,12 @@ impl<'a> Checker<'a> {
                 self.convert(name, to, arg, aty, args[0].span, span)
             }
             // `round(x, scale)`: to the nearest multiple of `scale`, as in
-            // Raku. It is `round(x / scale) * scale`, so its type is that of
-            // the arithmetic: `round(19.99, 0.1)` is a Decimal.
+            // Raku. It means `round(x / scale) * scale`, so its type is that
+            // of the arithmetic: `round(19.99, 0.1)` is a Decimal. That form
+            // is lowered to find the type and to say what is wrong with it,
+            // and the multiple is then taken as one step: scaling a rounded
+            // Float back up lands it a hair off the number the scale names,
+            // `2.78` as `2.7800000000000002`.
             "round" if args.len() != 1 => {
                 if args.len() != 2 {
                     self.err_help(
@@ -2425,7 +2528,21 @@ impl<'a> Checker<'a> {
                     Box::new(whole),
                     Box::new(args[1].clone()),
                 ));
-                self.lower(&rounded, sc)
+                let (node, ty) = self.lower(&rounded, sc);
+                // `x` comes back out of the form it was lowered in, rather
+                // than being lowered a second time; the scale is the one
+                // lowered above.
+                let Ir::Binary(BinOp::Mul, product, _) = &node.kind else {
+                    return (node, ty);
+                };
+                let Ir::Call(Func::Math(MathFn::Round), quotient) = &product.kind else {
+                    return (node, ty);
+                };
+                let Some(Ir::Binary(BinOp::Div, x, _)) = quotient.first().map(|q| &q.kind) else {
+                    return (node, ty);
+                };
+                let args = vec![(**x).clone(), scale];
+                (Node::new(Ir::Call(Func::RoundTo, args), span), ty)
             }
             _ if MathFn::from_name(name).is_some() => {
                 if !arity(self, 1, &format!("{name}(x)")) {
@@ -3043,6 +3160,7 @@ impl<'a> Checker<'a> {
                     span: col.span,
                     ty,
                     declared: col.declared.is_some(),
+                    from: col.from,
                     kind: self.col_out[t][c]
                         .take()
                         .unwrap_or(ColKind::Computed(Node::error(col.span))),
@@ -3052,6 +3170,7 @@ impl<'a> Checker<'a> {
                 name: info.name,
                 cols,
                 nrows: info.nrows,
+                source: info.source,
             });
         }
         let mut consts = Vec::new();

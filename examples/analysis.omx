@@ -1,0 +1,27 @@
+# A sheet whose rows are not here: they are read from the Parquet file
+# beside this one, and nothing is ever written back to it. The schema lines
+# are the table's columns, checked against the file's own schema on load.
+#
+# Two of the file's columns are named `Siblings/Spouses Aboard` and
+# `Parents/Children Aboard`, which no formula could refer to. A `from`
+# clause gives each a name that one can, keeping every word of the file's
+# own: a shorter name would say something the column does not.
+
+table Passengers := dataframe["titanic.parquet"]
+
+Survived              : Int
+Pclass                : Int
+Name                  : String
+Sex                   : String
+Age                   : Float
+Fare                  : Float
+SiblingsSpousesAboard : Int from "Siblings/Spouses Aboard"
+ParentsChildrenAboard : Int from "Parents/Children Aboard"
+
+Family := SiblingsSpousesAboard + ParentsChildrenAboard
+
+const Aboard   = Passengers.Survived.count()
+const Lived    = Passengers.Survived.sum()
+const Lost     = Aboard - Lived
+const MeanFare = Passengers.Fare.avg()
+const Eldest   = Passengers.Age.max()

@@ -21,9 +21,11 @@ files, and elementwise column work.
   type taken from the schema rather than inferred from the values
 - **cli** — ADDED: `.parquet` in `omasheet import`, `omasheet export
   --parquet`, and `--meta` to carry what no format round-trips today
-- **file-format** — ADDED: `table Sales := dataframe["data/*.parquet"]`, a
-  sheet whose rows live in Parquet files, with its schema kept in the `.omx`
-  text
+- **file-format** — ADDED: `table Sales := dataframe["data/sales.parquet"]`,
+  a sheet whose rows live in a Parquet file, with its schema kept in the
+  `.omx` text; and a `from` clause,
+  `SiblingsSpousesAboard : Int from "Siblings/Spouses Aboard"`, naming a
+  column as the file names it
 - **omx-expressions** — ADDED: `.head(n)`, a selection of the first `n` rows
 - **evaluation** — ADDED: row and column selections pushed down to Polars, and
   elementwise computed columns lowered to Polars expressions; MODIFIED: a
@@ -43,15 +45,17 @@ files, and elementwise column work.
 - `Sheet` gains a source and `ColKind` a frame variant, so every match over
   them is touched, in the engine, in the interop crate and in the app
 - The app's editing API is written against cells that have spans in the text.
-  A dataframe-backed table has no such cells, so those calls must refuse or
-  divert
+  A dataframe-backed table has no such cells, so those calls refuse, naming
+  the file and pointing at import (D49)
 
 ## Open Questions
 
 - What `--meta` carries exactly, and whether an importer that does not know it
   should see a usable file without it
-- Whether a dataframe-backed table is editable at all, or read-only until a
-  later change
+- Whether the app offers a round trip for the data a table shows: import the
+  Parquet to edit it, and write the edited sheets back to Parquet on the way
+  out. D49 makes the table itself read-only, which is what raises the
+  question (owner, 2026-10-22)
 - Which compression codecs to read. Snappy and Zstandard cover the defaults of
   pandas, Spark, Polars and DuckDB
 

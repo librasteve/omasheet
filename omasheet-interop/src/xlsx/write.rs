@@ -178,26 +178,15 @@ fn exact(program: &Program, node: &Node) -> Option<Dec> {
     }
 }
 
-/// `round(x, scale)`, which a file means as `round(x / scale) * scale`, to
-/// a scale that is a power of ten: `x`, and the digits a workbook's `ROUND`
-/// takes for it.
-fn round_digits<'n>(program: &Program, a: &'n Node, b: &Node) -> Option<(&'n Node, i64)> {
-    let Ir::Call(Func::Math(MathFn::Round), args) = &a.kind else {
-        return None;
-    };
-    let Ir::Binary(BinOp::Div, x, scale) = &args.first()?.kind else {
-        return None;
-    };
-    // The one scale, written once: not another that happens to be equal.
-    if scale.span != b.span {
-        return None;
-    }
+/// The digits a workbook's `ROUND` takes for a scale that is a power of
+/// ten, as `round(x, 0.01)` rounds to two places.
+fn round_digits(program: &Program, scale: &Node) -> Option<i64> {
     let r = exact(program, scale)?;
     // A power of ten is one digit and an exponent: `1000` is `1e3`, and
     // `0.001` is `1e-3`. Excel rounds to a number of places, so the power is
     // taken the other way round.
     let (digits, e) = r.digits_and_exponent();
-    (digits == "1").then_some((&**x, -e))
+    (digits == "1").then_some(-e)
 }
 
 /// The sheet, rows and columns a selection reads; no columns is all of
@@ -613,6 +602,29 @@ impl Writer<'_> {
             Func::E => return Ok(Some(Expr::atom("EXP(1)".into(), Kind::Number))),
             _ => {}
         }
+        // To a power of ten, as `ROUND` has it: `round(x, 0.01)` is
+        // `ROUND(x,2)`. Any other scale goes out as the multiple it means.
+        if matches!(func, Func::RoundTo) {
+            let [x, scale] = args else { return Err(FUNCTION) };
+            let digits = round_digits(self.program, scale);
+            let (Some(x), Some(s)) = (self.scalar(x, cx)?, self.scalar(scale, cx)?) else {
+                return Ok(None);
+            };
+            if x.kind != Kind::Number || s.kind != Kind::Number {
+                return Err(TYPE);
+            }
+            return match digits {
+                Some(digits) => Ok(Some(Expr::atom(
+                    format!("ROUND({},{digits})", x.text),
+                    Kind::Number,
+                ))),
+                None => {
+                    let quotient = self.arithmetic(BinOp::Div, x, s.clone())?;
+                    let whole = Expr::atom(format!("ROUND({},0)", quotient.text), Kind::Number);
+                    self.arithmetic(BinOp::Mul, whole, s).map(Some)
+                }
+            };
+        }
         let [arg] = args else { return Err(FUNCTION) };
         let Some(x) = self.scalar(arg, cx)? else {
             return Ok(None);
@@ -761,20 +773,6 @@ impl Writer<'_> {
                     Form::Calc => return Err(FALLBACK),
                 };
                 Ok(Some(Expr::atom(text, kind)))
-            }
-            // To a power of ten, as `ROUND` has it: `round(x, 0.01)` is
-            // `ROUND(x,2)`. Any other scale is written as it is meant.
-            Ir::Binary(BinOp::Mul, a, b) if round_digits(self.program, a, b).is_some() => {
-                let Some((x, digits)) = round_digits(self.program, a, b) else {
-                    return Ok(None);
-                };
-                let Some(x) = self.scalar(x, cx)? else {
-                    return Ok(None);
-                };
-                Ok(Some(Expr::atom(
-                    format!("ROUND({},{digits})", x.text),
-                    Kind::Number,
-                )))
             }
             Ir::Binary(op, ..) if *op == BinOp::In || op.range_ends().is_some() => Err(OPERATOR),
             Ir::Binary(op, a, b) => {

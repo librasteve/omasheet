@@ -59,6 +59,13 @@ impl Outcome {
     }
 }
 
+/// Fills in the sheets a file reads from elsewhere: a `table` arrives from
+/// the checker with its source and no rows, and this gives it both its rows
+/// and its row count. It is taken as a parameter because reading a Parquet
+/// file needs a reader this crate does not have; `omasheet-interop` provides
+/// one, and anything with no tables to read needs none.
+pub type ReadSources<'a> = &'a mut dyn FnMut(&mut Program, &mut Vec<Diagnostic>);
+
 /// Parse and statically check a file without evaluating it.
 pub fn lint(name: &str, text: &str) -> Outcome {
     let mut sources = Sources::new();
@@ -76,14 +83,29 @@ pub fn view(name: &str, text: &str) -> Outcome {
 }
 
 pub fn view_with(name: &str, text: &str, options: Options) -> Outcome {
+    view_sourced(name, text, options, &mut |_, _| {})
+}
+
+/// [`view_with`], with the sheets a file reads from elsewhere filled in
+/// between checking and evaluating.
+pub fn view_sourced(
+    name: &str,
+    text: &str,
+    options: Options,
+    read_sources: ReadSources,
+) -> Outcome {
     let mut sources = Sources::new();
     let src = sources.add(name, text);
-    let (program, diags) = compile(text, src);
+    let (mut program, mut diags) = compile(text, src);
     let mut out = Outcome::default();
+    if diags.is_empty() {
+        read_sources(&mut program, &mut diags);
+    }
     if !diags.is_empty() {
         out.report(&sources, &diags);
         return out;
     }
+    let program = program;
     let engine = Engine::with_options(&program, options);
     let zone_diags = engine.take_diags();
     if !zone_diags.is_empty() {

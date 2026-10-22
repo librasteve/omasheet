@@ -10,6 +10,7 @@
 use crate::Options;
 use crate::value::{
     RowRef, Value, View, arith, compare, equal, format_exact, format_styled, is_nan, math,
+    round_to,
 };
 use crate::zone::{Zone, Zoned, utc_now};
 use omasheet_omx::ast::{BinOp, UnOp};
@@ -199,18 +200,21 @@ impl<'p> Engine<'p> {
         };
         let result = match &col.kind {
             ColKind::Computed(node) => formula(node),
-            ColKind::Data(cells) => match &cells[r] {
-                Cell::Empty => Ok(Value::Null),
+            // A frame column holds the same cells, read from the sheet's
+            // source rather than from the text; a row it does not reach is
+            // empty, as a short row in the text is.
+            ColKind::Data(cells) | ColKind::Frame(cells) => match cells.get(r) {
+                None | Some(Cell::Empty) => Ok(Value::Null),
                 // Any exact number in a `Fraction` column is shown as a
                 // fraction; there is no fraction literal to carry it, since
                 // `1/7` is a division.
-                Cell::Lit(l) => Ok(match col.ty {
+                Some(Cell::Lit(l)) => Ok(match col.ty {
                     S::Fraction => Value::from_lit(l).fraction(),
                     _ => Value::from_lit(l),
                 }),
-                Cell::Markdown(s) => Ok(Value::String(Rc::from(s.as_str()), true)),
-                Cell::Formula(node) => formula(node),
-                Cell::Invalid => Err(Fail::Poison),
+                Some(Cell::Markdown(s)) => Ok(Value::String(Rc::from(s.as_str()), true)),
+                Some(Cell::Formula(node)) => formula(node),
+                Some(Cell::Invalid) => Err(Fail::Poison),
             },
         };
         let value = match result {
@@ -690,6 +694,19 @@ impl<'p> Engine<'p> {
                 let apply =
                     |v: &Value| -> R { math(m, v).or_else(|message| fail(args[0].span, message)) };
                 match self.eval(&args[0], fr)? {
+                    Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                        items.iter().map(apply).collect::<R<Vec<_>>>()?,
+                    ))),
+                    single => apply(&single),
+                }
+            }
+            Func::RoundTo => {
+                let x = self.eval(&args[0], fr)?;
+                let scale = self.eval(&args[1], fr)?;
+                let apply = |v: &Value| -> R {
+                    round_to(v, &scale).or_else(|message| fail(args[0].span, message))
+                };
+                match x {
                     Value::Vector(items) => Ok(Value::Vector(Rc::new(
                         items.iter().map(apply).collect::<R<Vec<_>>>()?,
                     ))),

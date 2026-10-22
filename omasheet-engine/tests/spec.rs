@@ -797,6 +797,15 @@ fn math_functions() {
     );
     assert_eq!(calc("round(pi(), 0.5)"), "3");
     assert_eq!(calc("(3.14159).round(0.001)"), "3.142");
+    // A Float is scaled from the digits it shows, so a half goes away from
+    // zero: `2.785 / 0.01` in floating point is 278.49999999999994, which
+    // rounds down.
+    assert_eq!(calc("round(2.785e0, 0.01)"), "2.79");
+    // And the result is the multiple the scale names, not a hair off it:
+    // `278 * 0.01` in floating point is 2.7800000000000002.
+    assert_eq!(calc("round(2.78e0, 0.01)"), "2.78");
+    // An Inf has no digits to work from, and is left to the arithmetic.
+    assert_eq!(calc("round(1/0, 0.01)"), "Inf");
     assert!(calc_err(None, "round(1, 2, 3)").contains("`round` takes 1 or 2 arguments"));
     assert!(calc_err(None, "round(1, \"a\")").contains("the scale of `round`"));
     // The rest give a Num.

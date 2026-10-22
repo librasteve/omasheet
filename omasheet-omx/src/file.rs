@@ -59,10 +59,22 @@ pub struct FuncDecl {
     pub doc: String,
 }
 
+/// `table <Name> := dataframe["<path>"]`: where a sheet's rows come from,
+/// when they are not in the file.
+#[derive(Debug)]
+pub struct SourceDecl {
+    /// `None` if the expression did not parse.
+    pub expr: Option<Expr>,
+    /// The source text of the expression, parsed or not.
+    pub expr_span: Span,
+}
+
 #[derive(Debug)]
 pub struct SheetDecl {
     pub name: String,
     pub span: Span,
+    /// `Some` for a `table`: its rows live outside the file.
+    pub source: Option<SourceDecl>,
     pub schema: Vec<SchemaLine>,
     pub header: Vec<(String, Span)>,
     pub rows: Vec<Vec<CellSrc>>,
@@ -79,6 +91,12 @@ pub struct SchemaLine {
     pub name: String,
     pub span: Span,
     pub ty: S,
+    /// The name the file holds this column under, when it is not the name
+    /// used here: `Siblings : Int from "Siblings/Spouses Aboard"`. Only a
+    /// table's column is read from a file, so only a table's line has one.
+    pub from: Option<String>,
+    /// The quoted name, for a diagnostic about it; default without one.
+    pub from_span: Span,
 }
 
 #[derive(Debug)]
@@ -109,6 +127,33 @@ pub fn ident_len(s: &str) -> usize {
     b.iter()
         .take_while(|c| c.is_ascii_alphanumeric() || **c == b'_')
         .count()
+}
+
+/// The text of a double-quoted string at the start of `s`, and the length
+/// of the string as written. `\\"` and `\\\\` stand for what they quote, as in
+/// an expression. `None` if `s` does not open with a quote or does not close.
+fn quoted(s: &str) -> Option<(String, usize)> {
+    let b = s.as_bytes();
+    if b.first() != Some(&b'"') {
+        return None;
+    }
+    let mut out = String::new();
+    let mut i = 1;
+    while i < b.len() {
+        match b[i] {
+            b'"' => return Some((out, i + 1)),
+            b'\\' if i + 1 < b.len() => {
+                out.push(b[i + 1] as char);
+                i += 2;
+            }
+            _ => {
+                let c = s[i..].chars().next()?;
+                out.push(c);
+                i += c.len_utf8();
+            }
+        }
+    }
+    None
 }
 
 /// `keyword` followed by whitespace: the rest of the line, trimmed at the left.
@@ -291,6 +336,35 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                 sheet = Some(SheetDecl {
                     name: rest[..n].to_string(),
                     span: Span::new(src, name_at, name_at + n),
+                    source: None,
+                    schema: Vec::new(),
+                    header: Vec::new(),
+                    header_line: Span::default(),
+                    separator_line: None,
+                    row_lines: Vec::new(),
+                    rows: Vec::new(),
+                    computed: Vec::new(),
+                });
+                in_body = false;
+                after_header = false;
+                i += 1;
+                continue;
+            }
+        }
+
+        // table <Name> := <expr>
+        if let Some(rest) = after_keyword(trimmed, "table") {
+            let n = ident_len(rest);
+            let tail = rest[n..].trim_start();
+            if n > 0 && tail.starts_with(":=") {
+                ast.sheets.extend(sheet.take());
+                let name_at = at + (trimmed.len() - rest.len());
+                let expr_at = at + (trimmed.len() - tail.len()) + 2;
+                let (expr, expr_span) = expression(&mut i, expr_at, diags);
+                sheet = Some(SheetDecl {
+                    name: rest[..n].to_string(),
+                    span: Span::new(src, name_at, name_at + n),
+                    source: Some(SourceDecl { expr, expr_span }),
                     schema: Vec::new(),
                     header: Vec::new(),
                     header_line: Span::default(),
@@ -397,7 +471,8 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             diags.push(
                 Diagnostic::new(
                     Span::new(src, at, at + trimmed.len()),
-                    "expected `sheet <Name>`, `const <Name> = <expression>`, \
+                    "expected `sheet <Name>`, `table <Name> := dataframe[\"<path>\"]`, \
+                     `const <Name> = <expression>`, \
                      `fn <Name>(<parameters>) = <expression>` or `zone <Area/City>`",
                 )
                 .with_help("rows of data belong under a `sheet` line"),
@@ -426,16 +501,44 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
 
         // <Column> : <Type>, before the header row only
         if !in_body && n > 0 && tail.starts_with(':') && !trimmed.contains('|') {
-            let ty_text = tail[1..].trim();
+            let body = tail[1..].trim();
             let ty_at = at
                 + (trimmed.len() - tail.len())
                 + 1
                 + (tail[1..].len() - tail[1..].trim_start().len());
+            // `Int from "Siblings/Spouses Aboard"`: the type, and the name
+            // the file holds the column under. A name Polars allows and
+            // omasheet does not is reached this way and no other.
+            let k = ident_len(body);
+            let (ty_text, after) = match after_keyword(body[k..].trim_start(), "from") {
+                Some(rest) if k > 0 => (&body[..k], Some(rest)),
+                _ => (body, None),
+            };
+            let mut from = None;
+            let mut from_span = Span::default();
+            if let Some(rest) = after {
+                let rest_at = ty_at + (body.len() - rest.len());
+                match quoted(rest) {
+                    Some((name, used)) if rest[used..].trim().is_empty() => {
+                        from_span = Span::new(src, rest_at, rest_at + used);
+                        from = Some(name);
+                    }
+                    _ => diags.push(
+                        Diagnostic::new(
+                            Span::new(src, rest_at, rest_at + rest.trim_end().len()),
+                            "a `from` names the column in the file".to_string(),
+                        )
+                        .with_help("the name is in quotes, as `from \"Siblings/Spouses Aboard\"`"),
+                    ),
+                }
+            }
             match S::from_name(ty_text) {
                 Some(ty) => t.schema.push(SchemaLine {
                     name: trimmed[..n].to_string(),
                     span: Span::new(src, at, at + n),
                     ty,
+                    from,
+                    from_span,
                 }),
                 None => diags.push(
                     Diagnostic::new(
@@ -566,6 +669,38 @@ mod tests {
         let ast = parse_file("sheet T\n\nA | B\n| 2\n", 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         assert_eq!(texts(&ast.sheets[0]), [["", "2"]]);
+    }
+
+    #[test]
+    fn parses_a_from_clause() {
+        let mut diags = Vec::new();
+        let src = "table T := dataframe[\"x.parquet\"]\n\nSiblings : Int from \"Siblings/Spouses Aboard\"\nAge : Float\n";
+        let ast = parse_file(src, 0, &mut diags);
+        assert!(diags.is_empty(), "{diags:?}");
+        let schema = &ast.sheets[0].schema;
+        assert_eq!(schema[0].ty, S::Int);
+        assert_eq!(schema[0].from.as_deref(), Some("Siblings/Spouses Aboard"));
+        // The span covers the quoted name, for a diagnostic about it.
+        let span = schema[0].from_span;
+        assert_eq!(
+            &src[span.start as usize..span.end as usize],
+            "\"Siblings/Spouses Aboard\""
+        );
+        // A column of its own name has none.
+        assert_eq!(schema[1].from, None);
+
+        // A `from` with no name in quotes says so, and the type still reads.
+        let mut diags = Vec::new();
+        let ast = parse_file(
+            "table T := dataframe[\"x\"]\n\nA : Int from B\n",
+            0,
+            &mut diags,
+        );
+        assert_eq!(ast.sheets[0].schema[0].ty, S::Int);
+        assert!(
+            diags.iter().any(|d| d.message.contains("names the column")),
+            "{diags:?}"
+        );
     }
 
     #[test]

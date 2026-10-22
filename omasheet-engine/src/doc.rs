@@ -17,9 +17,13 @@ use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use omasheet_omx::date::{self, Style};
 use omasheet_omx::file::{FileAst, SchemaLine, SheetDecl, ident_len, parse_file, split_cells};
 use omasheet_omx::parser::parse_expr;
-use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile};
+use omasheet_omx::{ColKind, Diagnostic, Program, S, Sources, Span, compile};
 
 const UNDO_LIMIT: usize = 200;
+
+/// What reads the rows of every `table` in a document: the owned form of
+/// [`crate::ReadSources`], since a document keeps it between edits.
+pub type ReadRows = Box<dyn FnMut(&mut Program, &mut Vec<Diagnostic>)>;
 
 /// A fresh file: one small empty sheet to type into.
 pub const BLANK: &str = "sheet Sheet1\n\n| A   | B   | C   |\n| --- | --- | --- |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n";
@@ -37,6 +41,10 @@ pub struct SheetSnap {
     pub name: String,
     pub columns: Vec<ColumnSnap>,
     pub rows: Vec<Vec<CellSnap>>,
+    /// The Parquet file the rows are read from, for a `table`; `None` for a
+    /// sheet that holds its own rows. A table is a read-only view: the file
+    /// is never written back, so no edit of it is taken (D49).
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +126,11 @@ pub struct Document {
     style: Style,
     /// Show date-times on the clocks of this machine.
     local: bool,
+    /// Reads the rows of every `table`. `None` in a document that was not
+    /// given one, which shows such a sheet with no rows: reading Parquet
+    /// takes Polars, which is not in this crate. See
+    /// [`Document::set_sources`].
+    sources: Option<ReadRows>,
 }
 
 impl Default for Document {
@@ -1102,9 +1115,18 @@ impl Document {
             redo: Vec::new(),
             style,
             local,
+            sources: None,
         };
         doc.rebuild();
         doc
+    }
+
+    /// Read the rows of every `table` with `read`, now and after each
+    /// edit. The front end supplies it: a document is re-read from its own
+    /// text, and what a `table` names is not in that text.
+    pub fn set_sources(&mut self, read: impl FnMut(&mut Program, &mut Vec<Diagnostic>) + 'static) {
+        self.sources = Some(Box::new(read));
+        self.rebuild();
     }
 
     /// How dates and times are shown, and how they may be typed into a cell.
@@ -1214,6 +1236,19 @@ impl Document {
         ast.sheets.iter().find(|t| &t.name == name)
     }
 
+    /// Why sheet `sheet` takes no edit, if it takes none: its rows are a
+    /// Parquet file's, and nothing is ever written back to that file (D49).
+    /// `None` for a sheet that holds its own rows. Every edit of such a
+    /// sheet is refused, and a front end can say so before one is tried.
+    pub fn read_only(&self, sheet: usize) -> Option<String> {
+        let snap = self.snapshot.sheets.get(sheet)?;
+        let path = snap.source.as_ref()?;
+        Some(format!(
+            "table `{}` is a read-only view of `{path}`: import that file to make edits",
+            snap.name
+        ))
+    }
+
     /// `text` with the grid of sheet `sheet` changed.
     fn grid_edited(
         &self,
@@ -1221,6 +1256,9 @@ impl Document {
         sheet: usize,
         change: impl FnOnce(&mut Grid),
     ) -> Option<String> {
+        if self.read_only(sheet).is_some() {
+            return None;
+        }
         let ast = parse_file(text, 0, &mut Vec::new());
         let decl = self.sheet_decl(&ast, sheet)?;
         let mut grid = Grid::of(decl);
@@ -1368,6 +1406,9 @@ impl Document {
     /// type, or with `None` leave them to take their type from their cells.
     /// One undoable step. A cell that does not fit is left to be an error.
     pub fn set_column_types(&mut self, sheet: usize, cols: &[usize], ty: Option<&str>) -> bool {
+        if self.read_only(sheet).is_some() {
+            return false;
+        }
         let ty = match ty.map(S::from_name) {
             Some(None) => return false,
             Some(found) => found,
@@ -1423,6 +1464,9 @@ impl Document {
         first: usize,
         count: usize,
     ) -> Result<(), String> {
+        if let Some(why) = self.read_only(sheet) {
+            return Err(why);
+        }
         let Some(snap) = self.snapshot.sheets.get(sheet) else {
             return Err("there is no such sheet".into());
         };
@@ -1506,6 +1550,9 @@ impl Document {
 
     /// Add an empty data column at the end of the header row.
     pub fn add_column(&mut self, sheet: usize, name: &str) -> Result<(), String> {
+        if let Some(why) = self.read_only(sheet) {
+            return Err(why);
+        }
         let name = valid_name(name)?.to_string();
         let Some(snap) = self.snapshot.sheets.get(sheet) else {
             return Err("there is no such sheet".into());
@@ -1546,6 +1593,9 @@ impl Document {
 
     /// Rename a column, and every reference to it, in one undoable step.
     pub fn rename_column(&mut self, sheet: usize, col: usize, name: &str) -> Result<(), String> {
+        if let Some(why) = self.read_only(sheet) {
+            return Err(why);
+        }
         let new = valid_name(name)?.to_string();
         let Some(snap) = self.snapshot.sheets.get(sheet) else {
             return Err("there is no such sheet".into());
@@ -1677,6 +1727,9 @@ impl Document {
 
     /// Add an empty data column as column `at`, in one undoable step.
     pub fn insert_column(&mut self, sheet: usize, at: usize, name: &str) -> Result<(), String> {
+        if let Some(why) = self.read_only(sheet) {
+            return Err(why);
+        }
         let mark = self.undo.len();
         let ast = self.ast();
         let named = self.sheet_decl(&ast, sheet).map(|d| d.header.len());
@@ -1718,6 +1771,9 @@ impl Document {
         count: usize,
         to: usize,
     ) -> Result<(), String> {
+        if let Some(why) = self.read_only(sheet) {
+            return Err(why);
+        }
         let Some(snap) = self.snapshot.sheets.get(sheet) else {
             return Err("there is no such sheet".into());
         };
@@ -1760,6 +1816,9 @@ impl Document {
         count: usize,
         to: usize,
     ) -> Result<(), String> {
+        if let Some(why) = self.read_only(sheet) {
+            return Err(why);
+        }
         let Some(snap) = self.snapshot.sheets.get(sheet) else {
             return Err("there is no such sheet".into());
         };
@@ -1789,6 +1848,9 @@ impl Document {
     /// Add `Name := expression` to a sheet, as its last column: the header
     /// row names it, with `*` for its cells.
     pub fn add_computed(&mut self, sheet: usize, name: &str, expr: &str) -> Result<(), String> {
+        if let Some(why) = self.read_only(sheet) {
+            return Err(why);
+        }
         let name = valid_name(name)?.to_string();
         let expr = expr.trim().trim_start_matches('=').trim();
         if expr.is_empty() {
@@ -1852,6 +1914,9 @@ impl Document {
 
     /// Change the expression of a computed column.
     pub fn set_column_formula(&mut self, sheet: usize, col: usize, expr: &str) -> bool {
+        if self.read_only(sheet).is_some() {
+            return false;
+        }
         let expr = expr
             .trim()
             .trim_start_matches('=')
@@ -2189,7 +2254,10 @@ impl Document {
     fn rebuild(&mut self) {
         let mut sources = Sources::new();
         let src = sources.add("file", self.text.as_str());
-        let (program, mut diags) = compile(&self.text, src);
+        let (mut program, mut diags) = compile(&self.text, src);
+        if let Some(read) = self.sources.as_mut() {
+            read(&mut program, &mut diags);
+        }
         let engine = Engine::with_options(
             &program,
             Options {
@@ -2310,6 +2378,7 @@ impl Document {
                 name: sheet.name.clone(),
                 columns,
                 rows,
+                source: sheet.source.as_ref().map(|s| s.path.clone()),
             });
         }
         for (i, c) in program.consts.iter().enumerate() {

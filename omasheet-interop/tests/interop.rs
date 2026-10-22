@@ -963,3 +963,381 @@ fn parquet_round_trips_the_examples() {
     }
     assert!(seen > 5, "only {seen} sheets seen");
 }
+
+// The scenarios of the `file-format` spec for a dataframe-backed table: a
+// sheet whose rows live in Parquet files rather than in its own text.
+
+/// Three columns and two rows, to be written out as the file a table reads.
+const ROWS: &str = "\
+sheet Sales
+
+Month | Revenue | Cost
+Jan   | 10000   | 6000
+Feb   | 12000   | 7000
+";
+
+/// A table over those three columns, with a formula over two of them.
+const TABLE: &str = "\
+table Sales := dataframe[\"sales.parquet\"]
+
+Month   : String
+Revenue : Int
+Cost    : Int
+
+Profit := Revenue - Cost
+";
+
+fn scratch(name: &str) -> std::path::PathBuf {
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// `ROWS` as a Parquet file in `dir`, under `name`.
+fn parquet_file(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let exported = parquet_of(ROWS, Some("Sales"));
+    let path = dir.join(name);
+    std::fs::write(&path, &exported.files[0].bytes).unwrap();
+    path
+}
+
+/// A file read with its tables filled in from `dir`.
+fn with_tables(dir: &std::path::Path, text: &str) -> omasheet_engine::Outcome {
+    omasheet_engine::view_sourced("file.omx", text, options(), &mut |program, diags| {
+        omasheet_interop::frames::read(program, dir, diags)
+    })
+}
+
+#[test]
+fn a_table_is_declared_and_read() {
+    let dir = scratch("table");
+    parquet_file(&dir, "sales.parquet");
+    let out = with_tables(&dir, TABLE);
+    assert!(out.ok(), "{:?}", out.errors);
+    // The rows came from the file, and the formula ran over them.
+    assert!(out.output.contains("Jan"), "{}", out.output);
+    assert!(out.output.contains("4000"), "{}", out.output);
+    assert!(out.output.contains("5000"), "{}", out.output);
+}
+
+#[test]
+fn a_computed_column_over_a_table_reads_its_columns() {
+    let dir = scratch("table-sum");
+    parquet_file(&dir, "sales.parquet");
+    // An aggregate reads the whole column, so the row count must be the
+    // file's and not the text's.
+    let text = format!("{TABLE}\nconst Total = Sales.Revenue.sum()\n");
+    let out = with_tables(&dir, &text);
+    assert!(out.ok(), "{:?}", out.errors);
+    assert!(out.output.contains("22000"), "{}", out.output);
+}
+
+#[test]
+fn a_missing_source_is_reported() {
+    let dir = scratch("table-missing");
+    let out = with_tables(&dir, TABLE);
+    assert!(!out.ok());
+    assert!(
+        out.errors.iter().any(|e| e.contains("sales.parquet")),
+        "{:?}",
+        out.errors
+    );
+}
+
+#[test]
+fn a_changed_source_is_reported() {
+    let dir = scratch("table-changed");
+    parquet_file(&dir, "sales.parquet");
+    // The file has a `Cost` the schema does not mention.
+    let text = TABLE
+        .replace("Cost    : Int\n", "")
+        .replace("Profit := Revenue - Cost\n", "");
+    let out = with_tables(&dir, &text);
+    assert!(!out.ok());
+    assert!(
+        out.errors.iter().any(|e| e.contains("Cost")),
+        "{:?}",
+        out.errors
+    );
+}
+
+#[test]
+fn a_declared_type_the_file_does_not_hold_is_reported() {
+    let dir = scratch("table-type");
+    parquet_file(&dir, "sales.parquet");
+    let text = TABLE.replace("Revenue : Int", "Revenue : String");
+    let out = with_tables(&dir, &text);
+    assert!(!out.ok());
+    assert!(
+        out.errors
+            .iter()
+            .any(|e| e.contains("Revenue") && e.contains("String")),
+        "{:?}",
+        out.errors
+    );
+}
+
+#[test]
+fn a_table_with_rows_of_its_own_is_reported() {
+    let dir = scratch("table-rows");
+    parquet_file(&dir, "sales.parquet");
+    let text = format!("{TABLE}\nMonth | Revenue | Cost\nMar   | 1       | 2\n");
+    let out = with_tables(&dir, &text);
+    assert!(!out.ok());
+    assert!(
+        out.errors.iter().any(|e| e.contains("rows of its own")),
+        "{:?}",
+        out.errors
+    );
+}
+
+#[test]
+fn a_source_that_is_not_a_dataframe_is_reported() {
+    let dir = scratch("table-source");
+    let out = with_tables(&dir, "table Sales := 1 + 1\n");
+    assert!(!out.ok());
+    assert!(
+        out.errors
+            .iter()
+            .any(|e| e.contains("does not say what to read")),
+        "{:?}",
+        out.errors
+    );
+}
+
+/// A document over `text`, reading its tables from `dir`, as the app does.
+fn document(dir: &std::path::Path, text: &str) -> omasheet_engine::Document {
+    let mut doc = omasheet_engine::Document::from_text(text);
+    let dir = dir.to_path_buf();
+    doc.set_sources(move |program, diags| {
+        omasheet_interop::frames::read(program, dir.as_path(), diags)
+    });
+    doc
+}
+
+#[test]
+fn a_document_shows_a_table_and_takes_no_edit() {
+    let dir = scratch("table-doc");
+    parquet_file(&dir, "sales.parquet");
+    let mut doc = document(&dir, TABLE);
+
+    // The rows of the file are there to look at, formula and all.
+    let sheet = &doc.snapshot().sheets[0];
+    assert_eq!(sheet.source.as_deref(), Some("sales.parquet"));
+    assert_eq!(sheet.rows.len(), 2);
+    assert_eq!(sheet.rows[0][0].display, "Jan");
+    assert_eq!(sheet.rows[0][3].display, "4000");
+
+    // Nothing of it can be edited, and the text is left as it was.
+    let before = doc.text().to_string();
+    let why =
+        "table `Sales` is a read-only view of `sales.parquet`: import that file to make edits";
+    assert!(!doc.set_cell(0, 0, 0, "Mar"));
+    assert!(!doc.insert_rows(0, 0, 1));
+    assert!(!doc.delete_rows(0, 0, 1));
+    assert!(!doc.set_column_types(0, &[1], Some("Float")));
+    assert!(!doc.set_column_formula(0, 3, "Revenue"));
+    assert_eq!(doc.add_column(0, "Extra").unwrap_err(), why);
+    assert_eq!(doc.insert_column(0, 0, "Extra").unwrap_err(), why);
+    assert_eq!(doc.rename_column(0, 0, "When").unwrap_err(), why);
+    assert_eq!(doc.delete_columns(0, 0, 1).unwrap_err(), why);
+    assert_eq!(doc.move_rows(0, 0, 1, 1).unwrap_err(), why);
+    assert_eq!(doc.move_columns(0, 0, 1, 1).unwrap_err(), why);
+    assert_eq!(
+        doc.add_computed(0, "Twice", "Revenue * 2").unwrap_err(),
+        why
+    );
+    assert_eq!(doc.text(), before);
+}
+
+#[test]
+fn a_sheet_of_its_own_rows_is_edited_as_before() {
+    let dir = scratch("table-own");
+    let mut doc = document(&dir, ROWS);
+    assert_eq!(doc.snapshot().sheets[0].source, None);
+    assert!(doc.set_cell(0, 0, 0, "Mar"));
+    assert!(doc.text().contains("Mar"), "{}", doc.text());
+}
+
+/// A Parquet file holding a column under a name no formula could write.
+fn odd_named_file(dir: &std::path::Path) -> std::path::PathBuf {
+    use polars::prelude::*;
+    let mut df = df![
+        "Month" => ["Jan", "Feb"],
+        "Units/Boxes Sold" => [3i64, 4],
+    ]
+    .unwrap();
+    let path = dir.join("odd.parquet");
+    let mut file = std::fs::File::create(&path).unwrap();
+    ParquetWriter::new(&mut file).finish(&mut df).unwrap();
+    path
+}
+
+#[test]
+fn a_column_is_read_under_the_name_the_file_holds_it_by() {
+    let dir = scratch("table-from");
+    odd_named_file(&dir);
+    let text = "\
+table Sales := dataframe[\"odd.parquet\"]
+
+Month : String
+Units : Int from \"Units/Boxes Sold\"
+
+Double := Units * 2
+
+const Total = Sales.Units.sum()
+";
+    let out = with_tables(&dir, text);
+    assert!(out.ok(), "{:?}", out.errors);
+    // The column is there under its own name, and the formula reads it.
+    assert!(out.output.contains("Units"), "{}", out.output);
+    assert!(out.output.contains("const Total = 7"), "{}", out.output);
+    assert!(
+        out.output.contains("Jan   |     3 |      6"),
+        "{}",
+        out.output
+    );
+}
+
+#[test]
+fn a_column_the_schema_does_not_name_says_how_to_name_it() {
+    let dir = scratch("table-from-missing");
+    odd_named_file(&dir);
+    let text = "table Sales := dataframe[\"odd.parquet\"]\n\nMonth : String\n";
+    let out = with_tables(&dir, text);
+    assert!(!out.ok());
+    // The help offers the one form that can name it, under a name made
+    // from the file's own rather than a placeholder.
+    assert!(
+        out.errors
+            .iter()
+            .any(|e| e.contains("UnitsBoxesSold : Int from \"Units/Boxes Sold\"")),
+        "{:?}",
+        out.errors
+    );
+}
+
+#[test]
+fn a_from_on_a_sheet_of_its_own_rows_is_reported() {
+    let dir = scratch("table-from-sheet");
+    let text = "sheet Sales\n\nUnits : Int from \"Units/Boxes Sold\"\n\nUnits\n3\n";
+    let out = with_tables(&dir, text);
+    assert!(!out.ok());
+    assert!(
+        out.errors.iter().any(|e| e.contains("reads no file")),
+        "{:?}",
+        out.errors
+    );
+}
+
+#[test]
+fn parquet_imports_a_null_column_as_empty_cells() {
+    // Parquet names a whole column `null` where it has no type of its own.
+    // There is no type line to write for it, so the cells are left empty.
+    let dir = scratch("import-null");
+    let path = null_column_file(&dir);
+    let bytes = std::fs::read(path).unwrap();
+    let back = parquet::import("t", &bytes).expect("imports");
+    lints(&back.source);
+    assert!(back.source.contains("| Month | Note |"), "{}", back.source);
+    // No type line: there is no type the column could be given.
+    assert!(!back.source.contains(" : "), "{}", back.source);
+    for row in ["| Jan   |      |", "| Feb   |      |"] {
+        assert!(back.source.contains(row), "{row} missing:\n{}", back.source);
+    }
+}
+
+/// A Parquet file holding a column of nothing but nulls: the dtype Polars
+/// gives a column that has no type of its own.
+fn null_column_file(dir: &std::path::Path) -> std::path::PathBuf {
+    use polars::prelude::*;
+    let mut df = DataFrame::new(vec![
+        Series::new("Month".into(), ["Jan", "Feb"]).into_column(),
+        Series::new_null("Note".into(), 2).into_column(),
+    ])
+    .unwrap();
+    let path = dir.join("null.parquet");
+    let mut file = std::fs::File::create(&path).unwrap();
+    ParquetWriter::new(&mut file).finish(&mut df).unwrap();
+    path
+}
+
+#[test]
+fn a_column_of_nulls_fits_the_declared_type() {
+    let dir = scratch("table-null");
+    null_column_file(&dir);
+    // The file holds nothing in `Note`, so it contradicts no declaration:
+    // the type is the text's to say.
+    let text = "\
+table Sales := dataframe[\"null.parquet\"]
+
+Month : String
+Note  : String
+";
+    let out = with_tables(&dir, text);
+    assert!(out.ok(), "{:?}", out.errors);
+    assert!(out.output.contains("Note"), "{}", out.output);
+    assert!(out.output.contains("Jan"), "{}", out.output);
+}
+
+#[test]
+fn a_column_of_nulls_the_schema_does_not_name_is_said_without_a_type() {
+    let dir = scratch("table-null-missing");
+    null_column_file(&dir);
+    let text = "table Sales := dataframe[\"null.parquet\"]\n\nMonth : String\n";
+    let out = with_tables(&dir, text);
+    assert!(!out.ok());
+    // There is no type to offer, and `Any` is not one that can be written.
+    assert!(
+        out.errors
+            .iter()
+            .any(|e| e.contains("add `Note`") && e.contains("the type the file will hold")),
+        "{:?}",
+        out.errors
+    );
+    assert!(
+        !out.errors.iter().any(|e| e.contains("Any")),
+        "{:?}",
+        out.errors
+    );
+}
+
+#[test]
+fn a_declared_type_the_file_fits_is_read_as_declared() {
+    let dir = scratch("table-wider");
+    parquet_file(&dir, "sales.parquet");
+    // The file holds `Revenue` as an integer, and a `Decimal` holds every
+    // integer: the declaration stands, and the column is read as one.
+    let text = TABLE.replace("Revenue : Int", "Revenue : Decimal");
+    let out = with_tables(&dir, &text);
+    assert!(out.ok(), "{:?}", out.errors);
+    assert!(out.output.contains("4000"), "{}", out.output);
+}
+
+#[test]
+fn a_declared_type_narrower_than_the_file_is_reported() {
+    let dir = scratch("table-narrower");
+    // A decimal is not held by an `Int`, so the narrower declaration is a
+    // mismatch where the wider one was not.
+    let exported = parquet_of(
+        "sheet Prices\n\nMonth | Price\nJan   | 19.99\n",
+        Some("Prices"),
+    );
+    std::fs::write(dir.join("price.parquet"), &exported.files[0].bytes).unwrap();
+    let text = "\
+table Prices := dataframe[\"price.parquet\"]
+
+Month : String
+Price : Int
+";
+    let out = with_tables(&dir, text);
+    assert!(!out.ok());
+    assert!(
+        out.errors
+            .iter()
+            .any(|e| e.contains("Price") && e.contains("Decimal")),
+        "{:?}",
+        out.errors
+    );
+}

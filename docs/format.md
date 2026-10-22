@@ -64,6 +64,57 @@ Tax    := Profit * 20%
 of its name in the header row is an error, and so is anything but `*` in a
 cell of a computed column.
 
+## Tables: a sheet whose rows are in Parquet
+
+A sheet may read its rows from a Parquet file instead of holding them:
+
+```omx
+table Sales := dataframe["data/sales.parquet"]
+
+Month   : String
+Revenue : Int
+Cost    : Int
+
+Profit := Revenue - Cost
+```
+
+`table` takes the place of `sheet` and closes the sheet before it. The
+string names one Parquet file, read from beside the `.omx` file. No row is
+written in the file, and the row count comes from the Parquet.
+
+A column whose name in the file is not a name a formula could write — one
+with a space or a slash in it, which Parquet allows and omasheet does not —
+is given a name here with a `from` clause:
+
+```omx
+SiblingsSpousesAboard : Int from "Siblings/Spouses Aboard"
+```
+
+The quoted name is the file's, used to find the column and to check it; the
+name on the left is what formulas use. Form it from the file's own, dropping
+whatever a name has no room for, rather than shortening it: `Siblings` would
+say something this column does not. A column the file holds and no schema
+line names is reported with such a name in the help. Nothing in the file is
+renamed, and a sheet that holds its own rows has no use for a `from`, so one
+there is reported.
+
+The schema lines are the columns, in the order they are written, and they
+say what the file is expected to hold: a column the file holds under another
+type, or holds and the schema does not mention, is reported rather than
+quietly taken from either side. A table with no schema lines at all takes
+its columns from the file, which is how a source is read before its schema
+has been written down.
+
+Otherwise the sheet is a sheet: its columns are selected and indexed as any
+other, a `:=` column over them calculates for every row, and an aggregate
+reads the whole column. What it cannot do is hold an edited cell — there is
+no text behind a cell whose row lives in Parquet — so the app shows such a
+sheet without editing it, and says so if you try: the way to edit the data
+is `omasheet import sales.parquet`, which makes an `.omx` holding the rows
+itself.
+
+`examples/analysis.omx` is a working one, over `examples/titanic.parquet`.
+
 ## Types
 
 `Int`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,
