@@ -45,7 +45,18 @@ sha256sums=()
 
 build() {
   cd "$startdir/.."
-  cargo build --release --locked --package omasheet-ui
+  # The size levers live here, not in Cargo.toml, so that a working build stays
+  # quick: they are what the released binary is worth paying for, and they cost
+  # about eight minutes of link time. Fat LTO and a single codegen unit fold the
+  # Polars generics that most of the binary is; `panic = abort` drops the unwind
+  # tables, which were 4M of it. `opt-level` stays at 3, as "s" would cost
+  # Polars its hot loops. This LTO is Rust's own, and not the `!lto` above,
+  # which is about GCC reading `-flto` in the C++ of the Qt bridge.
+  CARGO_PROFILE_RELEASE_STRIP=true \
+  CARGO_PROFILE_RELEASE_LTO=fat \
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+  CARGO_PROFILE_RELEASE_PANIC=abort \
+    cargo build --release --locked --package omasheet-ui
 }
 
 package() {
