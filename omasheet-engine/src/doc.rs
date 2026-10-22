@@ -1455,9 +1455,9 @@ impl Document {
 
     /// Delete `count` columns starting at `first`, with their cells or
     /// formulas and their type lines, in one undoable step. A sheet keeps at
-    /// least one data column. A column that a formula picks by counting is
-    /// still the column it was; a formula that reads a deleted column is
-    /// left to be shown as an error.
+    /// least one column, a computed one as readily as a data one. A column
+    /// that a formula picks by counting is still the column it was; a
+    /// formula that reads a deleted column is left to be shown as an error.
     pub fn delete_columns(
         &mut self,
         sheet: usize,
@@ -1474,14 +1474,11 @@ impl Document {
         if count == 0 || first + count > n {
             return Err("there is no such column".into());
         }
+        if count == n {
+            return Err("a sheet keeps at least one column".into());
+        }
         let gone = first..first + count;
         let kept = |k: &usize| !gone.contains(k);
-        if !(0..n)
-            .filter(kept)
-            .any(|k| snap.columns[k].formula.is_none())
-        {
-            return Err("a sheet keeps at least one data column".into());
-        }
         let name = |k: usize| snap.columns[k].name.clone();
         let names: Vec<String> = gone.clone().map(name).collect();
         let order: Vec<String> = (0..n).filter(kept).map(name).collect();
@@ -2906,9 +2903,24 @@ mod tests {
         assert!(doc.undo());
         assert_eq!(doc.text(), text);
 
-        // Not every data column, and not off the sheet.
+        // Every data column may go: a sheet of nothing but computed
+        // columns keeps the rows it had, each cell a `*`.
+        doc.delete_columns(0, 0, 4).unwrap();
+        assert_eq!(names(&doc), ["Profit", "Tax"]);
+        assert_eq!(doc.snapshot().sheets[0].rows.len(), 2);
         assert!(
-            doc.delete_columns(0, 0, 4)
+            doc.text().contains(
+                "| Profit | Tax |\n| ------ | --- |\n| *      | *   |\n| *      | *   |\n"
+            ),
+            "{}",
+            doc.text()
+        );
+        assert!(doc.undo());
+        assert_eq!(doc.text(), text);
+
+        // Not every column, and not off the sheet.
+        assert!(
+            doc.delete_columns(0, 0, 6)
                 .unwrap_err()
                 .contains("at least one")
         );
