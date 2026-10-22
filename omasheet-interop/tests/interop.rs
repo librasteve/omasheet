@@ -906,10 +906,19 @@ fn parquet_keeps_a_decimal_exact() {
     // A Parquet column has one scale for all its values, so the widest it
     // can use is the narrowest any of them allows: `19.99` needs two digits
     // before the point, which leaves thirty-six after it. A third is written
-    // to that scale rather than its own thirty-eight.
+    // to that scale rather than its own thirty-eight, and the cell it comes
+    // back as carries every one of those digits.
+    assert!(
+        back.source
+            .contains("0.333333333333333333333333333333333333"),
+        "{}",
+        back.source
+    );
+    // Shown, it is the guarded form: the last eight of the thirty-eight
+    // digits are working room, so thirty of them are read.
     assert_eq!(
         eval(&back.source, "t[A; 2]"),
-        "0.333333333333333333333333333333333333"
+        "0.333333333333333333333333333333"
     );
 }
 
