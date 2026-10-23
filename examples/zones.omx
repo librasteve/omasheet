@@ -6,7 +6,7 @@
 #    taken in the file's zone, so a cell never shifts by being re-entered.
 #    The command line shows what is stored unless you pass `--locale`.
 #
-# 2. It is `.to_zone("Asia/Tokyo")`, not `.in(...)`: `in` is the membership
+# 2. It is `.convert_time_zone("Asia/Tokyo")`, not `.in(...)`: `in` is the membership
 #    operator. A converted date-time prints its offset from UTC; one in the
 #    file's own zone prints none.
 #
@@ -20,7 +20,7 @@ zone America/New_York
 
 sheet Calls
 
-Placed : DateTime
+Placed : Datetime
 
 | Placed           | With  | Offset | UTC | London | Tokyo | TokyoOn | Zone | Back | Same |
 | ---------------- | ----- | ------ | --- | ------ | ----- | ------- | ---- | ---- | ---- |
@@ -30,16 +30,16 @@ Placed : DateTime
 
 # The same instant on other clocks. New York is 5 hours behind UTC in winter
 # and 4 in summer; Tokyo keeps no daylight saving.
-Offset  := Placed.offset() / 3600
+Offset  := Placed.base_utc_offset() / 3600
 UTC     := Placed.utc()
-London  := Placed.to_zone("Europe/London")
-Tokyo   := Placed.to_zone("Asia/Tokyo")
+London  := Placed.convert_time_zone("Europe/London")
+Tokyo   := Placed.convert_time_zone("Asia/Tokyo")
 # The parts are those of the zone the value is in: Linus's call is already
 # next year in Tokyo.
 TokyoOn := Tokyo.date()
-Zone    := Tokyo.zone()
+Zone    := Tokyo.time_zone()
 # Back in the file's own zone it is an ordinary date-time again.
-Back    := Tokyo.to_zone("America/New_York")
+Back    := Tokyo.convert_time_zone("America/New_York")
 # A converted value is still the same instant.
 Same    := Tokyo == Placed
 
@@ -60,4 +60,4 @@ Elapsed := (To.utc() - From.utc()) / 3600
 
 # 02:30 on 9 March 2025 does not exist in New York. It is read as if the
 # clocks had not gone forward, so through UTC and back it comes out as 03:30.
-const Skipped = (2025-03-09 + 02:30).utc().to_zone("America/New_York")
+const Skipped = (2025-03-09 + 02:30).utc().convert_time_zone("America/New_York")

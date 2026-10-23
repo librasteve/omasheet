@@ -19,9 +19,9 @@ pub enum MathFn {
     Sin,
     Cos,
     Tan,
-    Asin,
-    Acos,
-    Atan,
+    Arcsin,
+    Arccos,
+    Arctan,
     Sinh,
     Cosh,
     Tanh,
@@ -30,42 +30,17 @@ pub enum MathFn {
 }
 
 impl MathFn {
-    const ALL: [(&'static str, MathFn); 21] = [
-        ("abs", MathFn::Abs),
-        ("sign", MathFn::Sign),
-        ("round", MathFn::Round),
-        ("floor", MathFn::Floor),
-        ("ceil", MathFn::Ceil),
-        ("sqrt", MathFn::Sqrt),
-        ("exp", MathFn::Exp),
-        ("ln", MathFn::Ln),
-        ("log10", MathFn::Log10),
-        ("log2", MathFn::Log2),
-        ("sin", MathFn::Sin),
-        ("cos", MathFn::Cos),
-        ("tan", MathFn::Tan),
-        ("asin", MathFn::Asin),
-        ("acos", MathFn::Acos),
-        ("atan", MathFn::Atan),
-        ("sinh", MathFn::Sinh),
-        ("cosh", MathFn::Cosh),
-        ("tanh", MathFn::Tanh),
-        ("radians", MathFn::Radians),
-        ("degrees", MathFn::Degrees),
-    ];
-
+    /// The function directory is the one name table: an entry made with
+    /// [`math_doc`] carries the `MathFn` it names.
     pub fn from_name(name: &str) -> Option<MathFn> {
-        MathFn::ALL
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, m)| *m)
+        FUNCTIONS.iter().find(|f| f.name == name)?.math
     }
 
     pub fn name(self) -> &'static str {
-        MathFn::ALL
+        FUNCTIONS
             .iter()
-            .find(|(_, m)| *m == self)
-            .map_or("", |(n, _)| n)
+            .find(|f| f.math == Some(self))
+            .map_or("", |f| f.name)
     }
 
     /// Whether an exact number gives an exact result.
@@ -97,9 +72,9 @@ impl MathFn {
             MathFn::Sin => x.sin(),
             MathFn::Cos => x.cos(),
             MathFn::Tan => x.tan(),
-            MathFn::Asin => x.asin(),
-            MathFn::Acos => x.acos(),
-            MathFn::Atan => x.atan(),
+            MathFn::Arcsin => x.asin(),
+            MathFn::Arccos => x.acos(),
+            MathFn::Arctan => x.atan(),
             MathFn::Sinh => x.sinh(),
             MathFn::Cosh => x.cosh(),
             MathFn::Tanh => x.tanh(),
@@ -117,6 +92,8 @@ pub struct FuncDoc {
     /// How it is written, such as `Sheet.Column.sum()`.
     pub usage: &'static str,
     pub summary: &'static str,
+    /// The function of one real number this is the name of, where it is one.
+    pub math: Option<MathFn>,
 }
 
 const fn doc(
@@ -130,6 +107,25 @@ const fn doc(
         category,
         usage,
         summary,
+        math: None,
+    }
+}
+
+/// One entry for a function of one real number, which is also how
+/// [`MathFn::from_name`] finds it.
+const fn math_doc(
+    category: &'static str,
+    name: &'static str,
+    usage: &'static str,
+    summary: &'static str,
+    math: MathFn,
+) -> FuncDoc {
+    FuncDoc {
+        name,
+        category,
+        usage,
+        summary,
+        math: Some(math),
     }
 }
 
@@ -151,8 +147,8 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     ),
     doc(
         AGG,
-        "avg",
-        "Sheet.Column.avg()",
+        "mean",
+        "Sheet.Column.mean()",
         "The mean of a column or vector, a block of cells, or several taken together, as an exact fraction where it can be.",
     ),
     doc(
@@ -171,7 +167,55 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         AGG,
         "count",
         "Sheet.Column.count()",
-        "How many cells are not empty, of one vector or several; for a sheet, how many rows.",
+        "How many cells are not empty, of one vector or several. For how many rows a sheet has, see len.",
+    ),
+    doc(
+        AGG,
+        "len",
+        "Sheet.len()",
+        "How many rows a sheet has, or how many cells a column or vector has, empty ones included.",
+    ),
+    doc(
+        AGG,
+        "median",
+        "Sheet.Column.median()",
+        "The middle value of a column or vector, or the mean of the two middle ones. Empty cells are skipped.",
+    ),
+    doc(
+        AGG,
+        "product",
+        "Sheet.Column.product()",
+        "Every value multiplied together. Empty cells are skipped.",
+    ),
+    doc(
+        AGG,
+        "first",
+        "Sheet.Column.first()",
+        "The first value, empty or not.",
+    ),
+    doc(
+        AGG,
+        "last",
+        "Sheet.Column.last()",
+        "The last value, empty or not.",
+    ),
+    doc(
+        AGG,
+        "std",
+        "Sheet.Column.std()",
+        "The standard deviation, of a sample. std(x, 0) is of a whole population.",
+    ),
+    doc(
+        AGG,
+        "var",
+        "Sheet.Column.var()",
+        "The variance, of a sample. var(x, 0) is of a whole population.",
+    ),
+    doc(
+        AGG,
+        "quantile",
+        "Sheet.Column.quantile(0.9)",
+        "The value a fraction of the way through the values in order: quantile(x, 0.5) is the median.",
     ),
     doc(
         SHEET,
@@ -186,46 +230,100 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "A sheet with only the named columns.",
     ),
     doc(
+        SHEET,
+        "head",
+        "Sheet |> head(5)",
+        "The first rows of a sheet, or cells of a column.",
+    ),
+    doc(
+        SHEET,
+        "tail",
+        "Sheet |> tail(5)",
+        "The last rows of a sheet, or cells of a column.",
+    ),
+    doc(
+        SHEET,
+        "shift",
+        "Sheet.Column.shift(1)",
+        "The value a number of rows back, empty where there is no such row.",
+    ),
+    doc(
+        CONVERT,
+        "cast",
+        "cast(x, Int)",
+        "A value as another type, named by the type: the same as Int(x) and x.Int.",
+    ),
+    doc(
+        MATH,
+        "is_null",
+        "Sheet.Column.is_null()",
+        "Whether a cell is empty.",
+    ),
+    doc(
+        MATH,
+        "is_not_null",
+        "Sheet.Column.is_not_null()",
+        "Whether a cell holds a value.",
+    ),
+    doc(
+        MATH,
+        "fill_null",
+        "fill_null(x, 0)",
+        "The value, or something else where it is empty. The same as x // 0.",
+    ),
+    doc(
+        MATH,
+        "is_in",
+        "is_in(x, [1, 2, 3])",
+        "Whether a value is one of several. The same as x in [1, 2, 3].",
+    ),
+    doc(
         MATH,
         "succ",
         "succ(x)",
         "The next value: a number plus one, or the next text in the way letters and digits count up, AZ to BA. The step a sequence takes when its terms give no other.",
     ),
-    doc(
+    math_doc(
         MATH,
         "abs",
         "abs(x)",
         "The size of a number without its sign, or the modulus of a complex number.",
+        MathFn::Abs,
     ),
-    doc(
+    math_doc(
         MATH,
         "sign",
         "sign(x)",
         "-1, 0 or 1 according to the sign of a number.",
+        MathFn::Sign,
     ),
-    doc(
+    math_doc(
         MATH,
         "round",
-        "round(x, scale)",
-        "The nearest whole number, or with a scale the nearest multiple of it: round(x, 0.01) is to the hundredth, round(x, 100) to the hundred. A half rounds away from zero.",
+        "round(x, 2)",
+        "The nearest whole number, or with a count of places the nearest at that many decimal places. A half rounds away from zero. For the nearest multiple of something, round(x / 100) * 100.",
+        MathFn::Round,
     ),
-    doc(
+    math_doc(
         MATH,
         "floor",
         "floor(x)",
         "The largest whole number not above x.",
+        MathFn::Floor,
     ),
-    doc(
+    math_doc(
         MATH,
         "ceil",
         "ceil(x)",
         "The smallest whole number not below x.",
+        MathFn::Ceil,
     ),
-    doc(
+    math_doc(
         MATH,
         "sqrt",
         "sqrt(x)",
         "The square root, as a Float. A negative x needs a complex number: sqrt(-4+0i).",
+        MathFn::Sqrt,
     ),
     doc(
         CONVERT,
@@ -279,80 +377,130 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         CONVERT,
         "Date",
         "x.Date",
-        "The Date of a DateTime, or of text such as \"2025-01-31\". Also written Date(x).",
+        "The Date of a Datetime, or of text such as \"2025-01-31\". Also written Date(x).",
     ),
     doc(
         CONVERT,
         "Time",
         "x.Time",
-        "The Time of a DateTime, or of text such as \"09:30\". Also written Time(x).",
+        "The Time of a Datetime, or of text such as \"09:30\". Also written Time(x).",
     ),
     doc(
         CONVERT,
-        "DateTime",
-        "x.DateTime",
-        "A Date at midnight, or text such as \"2025-01-31T09:30\". Also written DateTime(x).",
+        "Datetime",
+        "x.Datetime",
+        "A Date at midnight, or text such as \"2025-01-31T09:30\". Also written Datetime(x).",
     ),
-    doc(LOG, "exp", "exp(x)", "e raised to the power x."),
+    math_doc(
+        LOG,
+        "exp",
+        "exp(x)",
+        "e raised to the power x.",
+        MathFn::Exp,
+    ),
     doc(
         LOG,
         "e",
         "e()",
         "The base of the natural logarithm, 2.71828...",
     ),
-    doc(
+    math_doc(
         LOG,
         "ln",
         "ln(x)",
         "The natural logarithm. x must be positive.",
+        MathFn::Ln,
     ),
-    doc(
+    math_doc(
         LOG,
         "log10",
         "log10(x)",
         "The logarithm to base 10. x must be positive.",
+        MathFn::Log10,
     ),
-    doc(
+    math_doc(
         LOG,
         "log2",
         "log2(x)",
         "The logarithm to base 2. x must be positive.",
+        MathFn::Log2,
     ),
-    doc(TRIG, "sin", "sin(x)", "The sine of an angle in radians."),
-    doc(TRIG, "cos", "cos(x)", "The cosine of an angle in radians."),
-    doc(TRIG, "tan", "tan(x)", "The tangent of an angle in radians."),
-    doc(
+    math_doc(
         TRIG,
-        "asin",
-        "asin(x)",
+        "sin",
+        "sin(x)",
+        "The sine of an angle in radians.",
+        MathFn::Sin,
+    ),
+    math_doc(
+        TRIG,
+        "cos",
+        "cos(x)",
+        "The cosine of an angle in radians.",
+        MathFn::Cos,
+    ),
+    math_doc(
+        TRIG,
+        "tan",
+        "tan(x)",
+        "The tangent of an angle in radians.",
+        MathFn::Tan,
+    ),
+    math_doc(
+        TRIG,
+        "arcsin",
+        "arcsin(x)",
         "The angle in radians whose sine is x, for x from -1 to 1.",
+        MathFn::Arcsin,
     ),
-    doc(
+    math_doc(
         TRIG,
-        "acos",
-        "acos(x)",
+        "arccos",
+        "arccos(x)",
         "The angle in radians whose cosine is x, for x from -1 to 1.",
+        MathFn::Arccos,
     ),
-    doc(
+    math_doc(
         TRIG,
-        "atan",
-        "atan(x)",
+        "arctan",
+        "arctan(x)",
         "The angle in radians whose tangent is x.",
+        MathFn::Arctan,
     ),
-    doc(TRIG, "sinh", "sinh(x)", "The hyperbolic sine."),
-    doc(TRIG, "cosh", "cosh(x)", "The hyperbolic cosine."),
-    doc(TRIG, "tanh", "tanh(x)", "The hyperbolic tangent."),
-    doc(
+    math_doc(
+        TRIG,
+        "sinh",
+        "sinh(x)",
+        "The hyperbolic sine.",
+        MathFn::Sinh,
+    ),
+    math_doc(
+        TRIG,
+        "cosh",
+        "cosh(x)",
+        "The hyperbolic cosine.",
+        MathFn::Cosh,
+    ),
+    math_doc(
+        TRIG,
+        "tanh",
+        "tanh(x)",
+        "The hyperbolic tangent.",
+        MathFn::Tanh,
+    ),
+    math_doc(
         TRIG,
         "radians",
         "radians(180)",
         "An angle in degrees, in radians.",
+        MathFn::Radians,
     ),
-    doc(
+    math_doc(
         TRIG,
         "degrees",
         "degrees(pi())",
         "An angle in radians, in degrees.",
+        MathFn::Degrees,
     ),
     doc(
         TRIG,
@@ -376,19 +524,19 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         TIME,
         "year",
         "Sheet.Column.year()",
-        "The year of a Date or DateTime.",
+        "The year of a Date or Datetime.",
     ),
     doc(
         TIME,
         "month",
         "Sheet.Column.month()",
-        "The month, 1 to 12, of a Date or DateTime.",
+        "The month, 1 to 12, of a Date or Datetime.",
     ),
     doc(
         TIME,
         "day",
         "Sheet.Column.day()",
-        "The day of the month of a Date or DateTime.",
+        "The day of the month of a Date or Datetime.",
     ),
     doc(
         TIME,
@@ -398,9 +546,33 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     ),
     doc(
         TIME,
-        "eom",
-        "eom(x)",
+        "month_end",
+        "month_end(x)",
         "The last day of the month a date is in.",
+    ),
+    doc(
+        TIME,
+        "month_start",
+        "month_start(x)",
+        "The first day of the month a date is in.",
+    ),
+    doc(
+        TIME,
+        "quarter",
+        "Sheet.Column.quarter()",
+        "The quarter of the year, 1 to 4.",
+    ),
+    doc(
+        TIME,
+        "week",
+        "Sheet.Column.week()",
+        "The ISO week of the year, 1 to 53. A week belongs to the year its Thursday is in.",
+    ),
+    doc(
+        TIME,
+        "ordinal_day",
+        "Sheet.Column.ordinal_day()",
+        "The day of the year, 1 to 366.",
     ),
     doc(
         TIME,
@@ -412,36 +584,36 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         TIME,
         "hour",
         "Sheet.Column.hour()",
-        "The hour, 0 to 23, of a Time or DateTime.",
+        "The hour, 0 to 23, of a Time or Datetime.",
     ),
     doc(
         TIME,
         "minute",
         "Sheet.Column.minute()",
-        "The minute of a Time or DateTime.",
+        "The minute of a Time or Datetime.",
     ),
     doc(
         TIME,
         "second",
         "Sheet.Column.second()",
-        "The second of a Time or DateTime.",
+        "The second of a Time or Datetime.",
     ),
     doc(
         TIME,
         "date",
         "Sheet.Column.date()",
-        "The Date half of a DateTime.",
+        "The Date half of a Datetime.",
     ),
     doc(
         TIME,
         "time",
         "Sheet.Column.time()",
-        "The Time half of a DateTime.",
+        "The Time half of a Datetime.",
     ),
     doc(
         TIME,
-        "to_zone",
-        "Column.to_zone(\"Australia/Adelaide\")",
+        "convert_time_zone",
+        "Column.convert_time_zone(\"Australia/Adelaide\")",
         "The same instant on the clocks of a named time zone.",
     ),
     doc(
@@ -458,15 +630,15 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     ),
     doc(
         TIME,
-        "offset",
-        "Column.offset()",
-        "The seconds a DateTime is ahead of UTC.",
+        "base_utc_offset",
+        "Column.base_utc_offset()",
+        "The seconds a Datetime is ahead of UTC.",
     ),
     doc(
         TIME,
-        "zone",
-        "Column.zone()",
-        "The name of a DateTime's time zone.",
+        "time_zone",
+        "Column.time_zone()",
+        "The name of a Datetime's time zone.",
     ),
 ];
 
@@ -484,9 +656,16 @@ mod tests {
             );
             assert!(f.usage.contains(f.name), "{}", f.name);
         }
-        for (name, m) in MathFn::ALL {
-            assert_eq!(MathFn::from_name(name), Some(m));
-            assert!(FUNCTIONS.iter().any(|f| f.name == name), "{name}");
+        // One table: a `MathFn` is found by the name it is listed under,
+        // and is listed exactly once.
+        for f in FUNCTIONS {
+            if let Some(m) = f.math {
+                assert_eq!(MathFn::from_name(f.name), Some(m), "{}", f.name);
+                assert_eq!(m.name(), f.name);
+            }
+        }
+        for m in [MathFn::Abs, MathFn::Round, MathFn::Arcsin, MathFn::Degrees] {
+            assert!(!m.name().is_empty());
         }
     }
 }

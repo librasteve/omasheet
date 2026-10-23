@@ -3,7 +3,7 @@
 
 sheet Ledger
 
-When : DateTime
+When : Datetime
 Memo : String
 
 | When                | Memo                                            | Amount | Balance | Average |
@@ -15,4 +15,4 @@ Memo : String
 | 2025-02-02T13:30    | Electricity, meter `E-4471`                     | -64.15 | *       | *       |
 
 Balance := (Ledger[Balance; *-1] // 0) + Amount
-Average := Ledger[Amount; 0..*].avg()
+Average := Ledger[Amount; 0..*].mean()

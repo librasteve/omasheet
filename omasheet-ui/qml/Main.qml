@@ -2712,13 +2712,12 @@ ApplicationWindow {
         TypeEntry { typeName: "Decimal" }
         TypeEntry { typeName: "Fraction" }
         TypeEntry { typeName: "Percent" }
-        TypeEntry { typeName: "Num" }
-        TypeEntry { typeName: "Complex" }
-        TypeEntry { typeName: "Text" }
-        TypeEntry { typeName: "Bool" }
+        TypeEntry { typeName: "Float" }
+        TypeEntry { typeName: "String" }
+        TypeEntry { typeName: "Boolean" }
         TypeEntry { typeName: "Date" }
         TypeEntry { typeName: "Time" }
-        TypeEntry { typeName: "DateTime" }
+        TypeEntry { typeName: "Datetime" }
     }
 
     // Right-click on a sheet's tab.

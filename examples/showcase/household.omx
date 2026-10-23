@@ -4,7 +4,7 @@
 const People = 3
 
 # One person's part of a bill, to the penny.
-fn Share(x) = round(x / People, 0.01)
+fn Share(x) = round(x / People, 2)
 
 sheet Bills
 

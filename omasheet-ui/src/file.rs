@@ -914,7 +914,7 @@ impl qobject::File {
     fn entry_hint(&self, ty: &QString) -> QString {
         // Only where the way to write a value is not plain from its type.
         let ty = ty.to_string();
-        if !matches!(ty.as_str(), "Date" | "Time" | "DateTime" | "Boolean") {
+        if !matches!(ty.as_str(), "Date" | "Time" | "Datetime" | "Boolean") {
             return QString::default();
         }
         // The header shows the type already.
@@ -930,8 +930,8 @@ impl qobject::File {
             return QString::default();
         };
         let mut text = format!("Count {}", summary.count);
-        if let Some((sum, average)) = summary.numbers {
-            text.push_str(&format!("   Sum {sum}   Average {average}"));
+        if let Some((sum, mean)) = summary.numbers {
+            text.push_str(&format!("   Sum {sum}   Mean {mean}"));
         }
         QString::from(&text)
     }

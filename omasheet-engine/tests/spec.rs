@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! The scenarios of the Phase 1 specs (`openspec/changes/add-omasheet-core`),
-//! one test per scenario where it can be checked from the outside.
+//! The scenarios of the Phase 1 specs (`openspec/changes/add-omasheet-core`)
+//! and of `align-polars-vocabulary`, one test per scenario where it can be
+//! checked from the outside.
 
 use omasheet_engine::omx::date::{Order, Style};
 use omasheet_engine::{Options, eval, eval_with, lint, view, view_with};
@@ -220,7 +221,7 @@ fn decimals() {
     let file = "sheet P\n\nPrice\n4.50\n9\n0.25\n";
     assert!(calc_err(Some(file), "P.Price.sum() + true").contains("Decimal and Boolean"));
     assert!(calc_err(Some(file), "P.Price.max() + true").contains("Decimal and Boolean"));
-    assert!(calc_err(Some(file), "P.Price.avg() + true").contains("Decimal and Boolean"));
+    assert!(calc_err(Some(file), "P.Price.mean() + true").contains("Decimal and Boolean"));
     assert_eq!(ask(file, "P.Price.sum()"), "13.75");
 }
 
@@ -243,7 +244,7 @@ fn percents() {
     assert_eq!(calc("20% / 3"), "0.0666666666666666666666666666667");
     assert_eq!(calc("[20%, 10%].sum()"), "30%");
     assert_eq!(
-        calc("[20%, 10%, 10%].avg()"),
+        calc("[20%, 10%, 10%].mean()"),
         "13.3333333333333333333333333333%"
     );
     assert_eq!(calc("[20%, 10%].max()"), "20%");
@@ -275,7 +276,7 @@ fn percents() {
     assert_eq!(show("(-5/12).Percent"), "-41.67%");
     assert_eq!(show("(1/3).Percent"), "33.33%");
     assert_eq!(show("(2/3).Percent"), "66.67%");
-    assert_eq!(show("[20%, 10%, 10%].avg()"), "13.33%");
+    assert_eq!(show("[20%, 10%, 10%].mean()"), "13.33%");
     assert_eq!(show("(1/8).Percent"), "12.5%");
     assert_eq!(show("0.12345%"), "0.12%");
     assert_eq!(calc("0.12345%"), "0.12345%");
@@ -308,7 +309,7 @@ fn percents() {
         "[41.6666666666666666666666666667%, 40%]"
     );
     assert_eq!(
-        ask(file, "S.Margin.avg()"),
+        ask(file, "S.Margin.mean()"),
         "40.8333333333333333333333333333%"
     );
     // A column of percentages is a Percent column; one with a plain number
@@ -504,7 +505,7 @@ fn conversions() {
     // Dates and times.
     assert_eq!(calc("2025-01-31T09:30.Date"), "2025-01-31");
     assert_eq!(calc("2025-01-31T09:30.Time"), "09:30");
-    assert_eq!(calc("2025-01-31.DateTime"), "2025-01-31T00:00");
+    assert_eq!(calc("2025-01-31.Datetime"), "2025-01-31T00:00");
     // Each value of a vector, and empty stays empty.
     assert_eq!(ask(SALES, "(Sales.Revenue / 7).Int"), "[14, 17, 21]");
     assert_eq!(ask(SALES, "Sales.Revenue.Float.sum()"), "370");
@@ -547,11 +548,11 @@ fn positional_indexing() {
 
 #[test]
 fn ranges() {
-    assert_eq!(ask(SALES, "Sales[; 0..2].count()"), "3");
-    assert_eq!(ask(SALES, "Sales[; 0..^2].count()"), "2");
-    assert_eq!(ask(SALES, "Sales[; 0^..2].count()"), "2");
-    assert_eq!(ask(SALES, "Sales[; 0^..^2].count()"), "1");
-    assert_eq!(ask(SALES, "Sales[; ^2].count()"), "2");
+    assert_eq!(ask(SALES, "Sales[; 0..2].len()"), "3");
+    assert_eq!(ask(SALES, "Sales[; 0..^2].len()"), "2");
+    assert_eq!(ask(SALES, "Sales[; 0^..2].len()"), "2");
+    assert_eq!(ask(SALES, "Sales[; 0^..^2].len()"), "1");
+    assert_eq!(ask(SALES, "Sales[; ^2].len()"), "2");
     assert_eq!(calc("sum(0^..10)"), "55");
     assert_eq!(calc("sum(^5)"), "10");
     assert_eq!(
@@ -568,7 +569,7 @@ fn ranges() {
 #[test]
 fn row_cursor() {
     let file = sales_with(
-        "Prev := Sales[Revenue; *-1]\nGrowth := Revenue / Sales[Revenue; *-1] - 1\nRunning := Sales[Revenue; 0..*].sum()\nWindow := Sales[Revenue; *-1..*].avg()\n",
+        "Prev := Sales[Revenue; *-1]\nGrowth := Revenue / Sales[Revenue; *-1] - 1\nRunning := Sales[Revenue; 0..*].sum()\nWindow := Sales[Revenue; *-1..*].mean()\n",
     );
     assert_eq!(ask(&file, "Sales.Prev"), "[empty, 100, 120]");
     assert_eq!(ask(&file, "Sales.Growth"), "[empty, 0.2, 0.25]");
@@ -600,7 +601,7 @@ fn predicate_selection() {
 
 #[test]
 fn datetime_columns() {
-    let file = "sheet Log\n\nAt : DateTime\n\nAt | N\n2025-03-01T09:30 | 1\n2025-03-01T17:45:10 | 10\n2025-03-02T00:00 | 100\n";
+    let file = "sheet Log\n\nAt : Datetime\n\nAt | N\n2025-03-01T09:30 | 1\n2025-03-01T17:45:10 | 10\n2025-03-02T00:00 | 100\n";
     assert_eq!(
         ask(
             file,
@@ -610,15 +611,15 @@ fn datetime_columns() {
     );
     assert_eq!(ask(file, "Log.At.max()"), "2025-03-02T00:00");
     assert_eq!(ask(file, "Log[At; 1]"), "2025-03-01T17:45:10");
-    // An undeclared column infers DateTime from its cells.
-    let inferred = file.replace("At : DateTime\n\n", "");
+    // An undeclared column infers Datetime from its cells.
+    let inferred = file.replace("At : Datetime\n\n", "");
     assert_eq!(ask(&inferred, "Log.At.min()"), "2025-03-01T09:30");
-    // A Date is not a DateTime.
+    // A Date is not a Datetime.
     let err = calc_err(Some(file), "Log[; At >= 2025-03-01].N.sum()");
-    assert!(err.contains("cannot compare DateTime and Date"), "{err}");
-    let bad = "sheet Log\n\nAt : DateTime\n\nAt\n2025-03-01\n";
+    assert!(err.contains("cannot compare Datetime and Date"), "{err}");
+    let bad = "sheet Log\n\nAt : Datetime\n\nAt\n2025-03-01\n";
     let errs = lint_errors(bad);
-    assert!(errs[0].contains("is not a `DateTime` literal"), "{errs:?}");
+    assert!(errs[0].contains("is not a `Datetime` literal"), "{errs:?}");
 }
 
 #[test]
@@ -669,7 +670,7 @@ fn date_and_time_arithmetic() {
         ("2025-01-31 - 09:30", "cannot apply `-` to Date and Time"),
         (
             "2025-01-31T09:30 - 2025-01-31",
-            "cannot apply `-` to DateTime and Date",
+            "cannot apply `-` to Datetime and Date",
         ),
     ] {
         let err = calc_err(None, expr);
@@ -678,10 +679,10 @@ fn date_and_time_arithmetic() {
 
     let file = "sheet Jobs\n\nDue : Date\n\nStart | Days | Due\n2025-01-30 | 3 | = Start + Days\n";
     assert_eq!(ask(file, "Jobs[Due; 0]"), "2025-02-02");
-    let bad = file.replace("Due : Date", "Due : DateTime");
-    assert!(lint_errors(&bad)[0].contains("declared `DateTime` but this is `Date`"));
+    let bad = file.replace("Due : Date", "Due : Datetime");
+    assert!(lint_errors(&bad)[0].contains("declared `Datetime` but this is `Date`"));
     // A conversion makes it fit.
-    let fixed = bad.replace("= Start + Days", "= (Start + Days).DateTime");
+    let fixed = bad.replace("= Start + Days", "= (Start + Days).Datetime");
     assert_eq!(ask(&fixed, "Jobs[Due; 0]"), "2025-02-02T00:00");
 }
 
@@ -701,8 +702,8 @@ fn date_and_time_parts() {
     assert_eq!(calc("2026-10-08T17:47.year()"), "2026");
     assert_eq!(calc("2026-10-08T17:47.hour()"), "17");
     assert_eq!(calc("[2025-01-31, 2026-02-28].month()"), "[1, 2]");
-    assert!(calc_err(None, "09:30.year()").contains("`year` needs a Date or a DateTime"));
-    assert!(calc_err(None, "2026-10-08.hour()").contains("`hour` needs a Time or a DateTime"));
+    assert!(calc_err(None, "09:30.year()").contains("`year` needs a Date or a Datetime"));
+    assert!(calc_err(None, "2026-10-08.hour()").contains("`hour` needs a Time or a Datetime"));
     assert!(calc_err(None, "year(2026)").contains("but this is Int"));
 }
 
@@ -787,27 +788,29 @@ fn math_functions() {
     );
     assert_eq!(calc("[sign(-3), sign(0), sign(1/2)]"), "[-1, 0, 1]");
     assert_eq!(calc("round(2.5e0)"), "3");
-    // With a scale, to the nearest multiple of it, as in Raku: the type is
-    // that of `round(x / scale) * scale`.
-    assert_eq!(calc("round(3.14159, 0.01)"), "3.14");
-    assert_eq!(calc("round(19.74, 0.5)"), "19.5");
+    // With a second argument, to that many decimal places, as Polars has
+    // it. The number keeps its own type, and a half goes away from zero.
+    assert_eq!(calc("round(3.14159, 2)"), "3.14");
+    assert_eq!(calc("round(19.74, 1)"), "19.7");
     assert_eq!(
-        calc("round([1234, 1250, -1250], 100)"),
-        "[1200, 1300, -1300]"
+        calc("round([1.234, 1.235, -1.235], 2)"),
+        "[1.23, 1.24, -1.24]"
     );
-    assert_eq!(calc("round(pi(), 0.5)"), "3");
-    assert_eq!(calc("(3.14159).round(0.001)"), "3.142");
-    // A Float is scaled from the digits it shows, so a half goes away from
-    // zero: `2.785 / 0.01` in floating point is 278.49999999999994, which
-    // rounds down.
-    assert_eq!(calc("round(2.785e0, 0.01)"), "2.79");
-    // And the result is the multiple the scale names, not a hair off it:
-    // `278 * 0.01` in floating point is 2.7800000000000002.
-    assert_eq!(calc("round(2.78e0, 0.01)"), "2.78");
-    // An Inf has no digits to work from, and is left to the arithmetic.
-    assert_eq!(calc("round(1/0, 0.01)"), "Inf");
+    assert_eq!(calc("round(pi(), 3)"), "3.142");
+    assert_eq!(calc("(3.14159).round(3)"), "3.142");
+    // Scaling by a power of ten keeps a Float and a Decimal in agreement
+    // here, where dividing by the multiple would not have: 2.785 as a Float
+    // is a shade over it, and 2.785 / 0.01 is 278.49999999999994.
+    assert_eq!(calc("round(2.785, 2)"), "2.79");
+    assert_eq!(calc("round(2.785e0, 2)"), "2.79");
+    // A whole number has no places to lose, and an Inf none to round to.
+    assert_eq!(calc("round(1234, 2)"), "1234");
+    assert_eq!(calc("round(1/0, 2)"), "Inf");
+    // The nearest hundred is said as the arithmetic it is.
+    assert_eq!(calc("round(1250 / 100) * 100"), "1300");
     assert!(calc_err(None, "round(1, 2, 3)").contains("`round` takes 1 or 2 arguments"));
-    assert!(calc_err(None, "round(1, \"a\")").contains("the scale of `round`"));
+    assert!(calc_err(None, "round(1, 0.01)").contains("number of decimal places"));
+    assert!(calc_err(None, "round(1, \"a\")").contains("number of decimal places"));
     // The rest give a Num.
     assert_eq!(calc("sqrt(16)"), "4");
     assert_eq!(calc("exp(0)"), "1");
@@ -820,11 +823,11 @@ fn math_functions() {
     assert_eq!(calc("e() == exp(1)"), "true");
     assert!(calc_err(None, "e(1)").contains("`e` takes 0 arguments"));
     assert_eq!(calc("round(sin(radians(30)) * 1000)"), "500");
-    assert_eq!(calc("round(degrees(atan(1)))"), "45");
+    assert_eq!(calc("round(degrees(arctan(1)))"), "45");
     // Over a column, and as a method.
     assert_eq!(ask(SALES, "Sales.Revenue.sqrt().floor()"), "[10, 10, 12]");
     // Outside the domain, and on the wrong kind of value.
-    assert_eq!(calc("[sqrt(-1), ln(0), asin(2)]"), "[NaN, -Inf, NaN]");
+    assert_eq!(calc("[sqrt(-1), ln(0), arcsin(2)]"), "[NaN, -Inf, NaN]");
     assert!(calc_err(None, "sin(\"x\")").contains("`sin` cannot be applied to String"));
     assert!(calc_err(None, "sqr(4)").contains("did you mean `sqrt`?"));
     // Every function in the directory is one the checker knows.
@@ -856,49 +859,54 @@ fn time_zones() {
 
     // The same instant on other clocks, with daylight saving.
     assert_eq!(
-        at("2025-07-15T12:00.to_zone(\"Asia/Tokyo\")"),
+        at("2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\")"),
         "2025-07-15T20:00+09:00"
     );
     assert_eq!(at("2025-07-15T12:00.utc()"), "2025-07-15T11:00+00:00");
     assert_eq!(at("2025-01-15T12:00.utc()"), "2025-01-15T12:00+00:00");
     assert_eq!(
-        at("2025-07-15T12:00.to_zone(\"America/St_Johns\")"),
+        at("2025-07-15T12:00.convert_time_zone(\"America/St_Johns\")"),
         "2025-07-15T08:30-02:30"
     );
-    assert_eq!(at("2025-07-15T12:00.offset()"), "3600");
-    assert_eq!(at("2025-01-15T12:00.offset()"), "0");
-    assert_eq!(at("2025-07-15T12:00.zone()"), "Europe/London");
-    assert_eq!(at("2025-07-15T12:00.utc().zone()"), "UTC");
-    assert_eq!(at("2025-07-15T12:00.utc().offset()"), "0");
+    assert_eq!(at("2025-07-15T12:00.base_utc_offset()"), "3600");
+    assert_eq!(at("2025-01-15T12:00.base_utc_offset()"), "0");
+    assert_eq!(at("2025-07-15T12:00.time_zone()"), "Europe/London");
+    assert_eq!(at("2025-07-15T12:00.utc().time_zone()"), "UTC");
+    assert_eq!(at("2025-07-15T12:00.utc().base_utc_offset()"), "0");
     // Back to the file's own zone it is an ordinary date-time again.
     assert_eq!(
-        at("2025-07-15T12:00.to_zone(\"Asia/Tokyo\").to_zone(\"Europe/London\")"),
+        at(
+            "2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\").convert_time_zone(\"Europe/London\")"
+        ),
         "2025-07-15T12:00"
     );
     assert_eq!(at("2025-07-15T12:00.utc().local()"), "2025-07-15T12:00");
 
     // The parts are those of the zone it is in.
-    assert_eq!(at("2025-07-15T20:00.to_zone(\"Asia/Tokyo\").hour()"), "4");
     assert_eq!(
-        at("2025-07-15T20:00.to_zone(\"Asia/Tokyo\").date()"),
+        at("2025-07-15T20:00.convert_time_zone(\"Asia/Tokyo\").hour()"),
+        "4"
+    );
+    assert_eq!(
+        at("2025-07-15T20:00.convert_time_zone(\"Asia/Tokyo\").date()"),
         "2025-07-16"
     );
     // Seconds are added on its own clocks.
     assert_eq!(
-        at("2025-07-15T12:00.to_zone(\"Asia/Tokyo\") + 3600"),
+        at("2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\") + 3600"),
         "2025-07-15T21:00+09:00"
     );
     // Across zones it is the instant that is compared and subtracted.
     assert_eq!(
-        at("2025-07-15T12:00.to_zone(\"Asia/Tokyo\") == 2025-07-15T12:00"),
+        at("2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\") == 2025-07-15T12:00"),
         "true"
     );
     assert_eq!(
-        at("2025-07-15T12:00.utc() < 2025-07-15T12:00:01.to_zone(\"Asia/Tokyo\")"),
+        at("2025-07-15T12:00.utc() < 2025-07-15T12:00:01.convert_time_zone(\"Asia/Tokyo\")"),
         "true"
     );
     assert_eq!(
-        at("2025-07-15T13:00.to_zone(\"Asia/Tokyo\") - 2025-07-15T12:00.utc()"),
+        at("2025-07-15T13:00.convert_time_zone(\"Asia/Tokyo\") - 2025-07-15T12:00.utc()"),
         "3600"
     );
     assert_eq!(at("2025-07-15T13:00 - 2025-07-15T12:00.utc()"), "3600");
@@ -917,25 +925,25 @@ fn time_zones() {
     let out = eval_with(
         None,
         "<expression>",
-        "2025-07-15T12:00.to_zone(\"Mars/Base\")",
+        "2025-07-15T12:00.convert_time_zone(\"Mars/Base\")",
         london.clone(),
     );
     assert!(out.errors[0].contains("there is no time zone `Mars/Base`"));
-    assert!(calc_err(None, "2025-07-15.utc()").contains("`utc` needs a DateTime"));
-    assert!(calc_err(None, "now().to_zone(3)").contains("needs the name of a time zone"));
+    assert!(calc_err(None, "2025-07-15.utc()").contains("`utc` needs a Datetime"));
+    assert!(calc_err(None, "now().convert_time_zone(3)").contains("needs the name of a time zone"));
 
     // A file names the zone its date-times are in.
     let file = "zone America/New_York\n\nsheet Calls\n\nAt | Tokyo\n2025-03-03T09:12 | *\n\n\
-                 Tokyo := At.to_zone(\"Asia/Tokyo\")\n";
+                 Tokyo := At.convert_time_zone(\"Asia/Tokyo\")\n";
     let ny = |expr: &str| with(&london, Some(file), expr);
     assert_eq!(ny("Calls[At; 0]"), "2025-03-03T09:12");
-    assert_eq!(ny("Calls[At; 0].zone()"), "America/New_York");
-    assert_eq!(ny("Calls[At; 0].offset()"), "-18000");
+    assert_eq!(ny("Calls[At; 0].time_zone()"), "America/New_York");
+    assert_eq!(ny("Calls[At; 0].base_utc_offset()"), "-18000");
     assert_eq!(ny("Calls[Tokyo; 0]"), "2025-03-03T23:12+09:00");
     assert_eq!(ny("Calls[At; 0].local()"), "2025-03-03T14:12+00:00");
     assert_eq!(ny("Calls[At; 0].utc() == Calls[At; 0]"), "true");
     // `now()` is on the file's clocks: five hours behind London in winter.
-    assert_eq!(ny("now().zone()"), "America/New_York");
+    assert_eq!(ny("now().time_zone()"), "America/New_York");
     assert_eq!(ny("now().local() == now()"), "true");
     let fixed = Options {
         now: Some(20_734 * 86_400),
@@ -1058,7 +1066,7 @@ fn value_shapes() {
 fn aggregation_methods() {
     assert_eq!(ask(SALES, "Sales.Revenue.sum()"), "370");
     assert_eq!(
-        ask(SALES, "Sales.Revenue.avg()"),
+        ask(SALES, "Sales.Revenue.mean()"),
         "123.333333333333333333333333333"
     );
     assert_eq!(ask(SALES, "Sales.Revenue.min()"), "100");
@@ -1095,7 +1103,7 @@ fn minimal_sheet_and_optional_separator() {
         "sheet Sales\n\nMonth | Revenue | Cost\nJan   | 10000   | 6000\nFeb   | 12000   | 7000\n";
     let ruled = "sheet Sales\n\nMonth | Revenue | Cost\n------|---------|-----\nJan   | 10000   | 6000\nFeb   | 12000   | 7000\n";
     assert_eq!(shown(plain), shown(ruled));
-    assert_eq!(ask(plain, "Sales.count()"), "2");
+    assert_eq!(ask(plain, "Sales.len()"), "2");
 }
 
 #[test]
@@ -1230,18 +1238,20 @@ fn cell_content() {
         calc("[Inf == Inf, 1 < Inf, -Inf < 1]"),
         "[true, true, true]"
     );
-    // Only `!=` is true of a NaN.
+    // A NaN is greatest and equal to itself, as Polars orders it.
     assert_eq!(
         calc("[NaN == NaN, NaN != NaN, NaN < 1, 1 <= NaN]"),
-        "[false, true, false, false]"
+        "[true, false, false, true]"
     );
     assert_eq!(calc("[[1, NaN, 3].max(), [1, Inf, 3].max()]"), "[NaN, Inf]");
+    // Least is the least of the numbers, since a NaN is greatest.
+    assert_eq!(calc("[1, NaN, 3].min()"), "1");
     assert!(calc_err(None, "Inf.Int").contains("Inf has no exact value"));
     let cells = "sheet T\n\nN : Float\nT : String\n\nN | T | Any | Quoted\nInf | Inf | -Inf | \"NaN\"\nNaN | NaN | NaN | \"Inf\"\n";
     assert_eq!(ask(cells, "T.N"), "[Inf, NaN]");
     assert_eq!(
         ask(cells, "[T[Any; 0] < 0, T[Any; 1] != T[Any; 1]]"),
-        "[true, true]"
+        "[true, false]"
     );
     assert_eq!(ask(cells, "T.T"), "[\"Inf\", \"NaN\"]");
     assert_eq!(ask(cells, "T.Quoted"), "[\"NaN\", \"Inf\"]");
@@ -1472,7 +1482,7 @@ fn custom_function_definitions_are_checked() {
 fn a_column_range_counts_from_the_formulas_own_column() {
     let file = "sheet T\n\nN | A | B   | C | D | E | F\n\
                  x | 1 | 2   | 3 | 4 | = sum([*-4..*-1; *])     | = [*-5..^*-2; *].max()\n\
-                 y | 1 | 2.5 | 3 | 4 | = sum([1..*-1; *])       | = avg([*-5..-4; *])\n\
+                 y | 1 | 2.5 | 3 | 4 | = sum([1..*-1; *])       | = mean([*-5..-4; *])\n\
                  z | 1 | 2   | 3 | 4 | = [*-4..*-1; *].count()  | = min([*-3..*-2; *])\n";
     assert_eq!(ask(file, "T.E"), "[10, 10.5, 4]");
     assert_eq!(ask(file, "T.F"), "[3, 2.16666666666666666666666666667, 3]");
@@ -1493,7 +1503,7 @@ fn aggregates_take_several_vectors_and_blocks_together() {
         "370"
     );
     assert_eq!(
-        ask(SALES, "avg(Sales.Revenue, Sales.Cost)"),
+        ask(SALES, "mean(Sales.Revenue, Sales.Cost)"),
         "96.6666666666666666666666666667"
     );
     assert_eq!(ask(SALES, "max(Sales[Cost; 0..1], 75)"), "75");
@@ -1512,4 +1522,124 @@ fn aggregates_take_several_vectors_and_blocks_together() {
         errors.contains("the columns of this block differ"),
         "{errors}"
     );
+}
+
+// The scenarios of `align-polars-vocabulary`: the names are Polars' names.
+
+/// A sheet whose `Note` is empty in one row, for counting and for emptiness.
+const NOTES: &str = "\
+sheet T
+
+Note | N
+a    | 1
+     | 2
+c    | 3
+d    | 4
+";
+
+#[test]
+fn counting_values_and_counting_rows() {
+    assert_eq!(ask(NOTES, "T.Note.count()"), "3");
+    assert_eq!(ask(NOTES, "T.Note.len()"), "4");
+    assert_eq!(ask(NOTES, "T.len()"), "4");
+    assert_eq!(ask(NOTES, "T[; N > 2].len()"), "2");
+    // One name asked two questions; now each has its own.
+    let errors = calc_err(Some(NOTES), "T.count()");
+    assert!(
+        errors.contains("for the rows of a sheet, write `len`"),
+        "{errors}"
+    );
+}
+
+#[test]
+fn the_spread_and_the_middle() {
+    assert_eq!(calc("[1, 3, 2, 4].median()"), "2.5");
+    assert_eq!(calc("[1, 3, 2].median()"), "2");
+    assert_eq!(calc("[2, 3, 4].product()"), "24");
+    assert_eq!(calc("[5, 6, 7].first()"), "5");
+    assert_eq!(calc("[5, 6, 7].last()"), "7");
+    // The textbook set: a population deviation of 2, and a sample's above it.
+    let set = "[2, 4, 4, 4, 5, 5, 7, 9]";
+    assert_eq!(calc(&format!("{set}.std(0)")), "2");
+    assert_eq!(calc(&format!("{set}.var(0)")), "4");
+    assert_eq!(calc(&format!("{set}.std()")), "2.138089935299395");
+    // A quantile is taken at the nearest value, as Polars takes it, so it is
+    // one of the values and keeps their type.
+    assert_eq!(calc("[1, 2, 3, 4].quantile(0)"), "1");
+    assert_eq!(calc("[1, 2, 3, 4].quantile(0.5)"), "3");
+    assert_eq!(calc("[1, 2, 3, 4].quantile(1)"), "4");
+    let errors = calc_err(None, "[1, 2].quantile(2)");
+    assert!(errors.contains("from 0 to 1"), "{errors}");
+}
+
+#[test]
+fn the_first_rows_the_last_and_the_one_before() {
+    // Each is the selection it is equivalent to, for a sheet and a column.
+    assert_eq!(ask(SALES, "(Sales |> head(2)).Month"), "[\"Jan\", \"Feb\"]");
+    assert_eq!(ask(SALES, "(Sales |> tail(2)).Month"), "[\"Feb\", \"Mar\"]");
+    assert_eq!(
+        ask(SALES, "Sales |> head(2) |> select(Revenue) |> sum()"),
+        "220"
+    );
+    assert_eq!(ask(SALES, "Sales.Revenue.head(2)"), "[100, 120]");
+    assert_eq!(ask(SALES, "Sales.Revenue.tail(2)"), "[120, 150]");
+    assert_eq!(
+        ask(SALES, "Sales[Revenue; ^2]"),
+        ask(SALES, "Sales.Revenue.head(2)")
+    );
+    // A shift is the cursor offset written as a function, so the row before
+    // the first is empty.
+    let file = sales_with("Prev := Sales.Revenue.shift(1)\nSame := Sales[Revenue; *-1]\n");
+    assert_eq!(ask(&file, "Sales.Prev"), "[empty, 100, 120]");
+    assert_eq!(ask(&file, "Sales.Prev"), ask(&file, "Sales.Same"));
+    // It reads the cursor, so like `*` it belongs in a sheet's own formula.
+    let errors = calc_err(Some(SALES), "Sales.Revenue.shift(1)");
+    assert!(errors.contains("needs a current row"), "{errors}");
+}
+
+#[test]
+fn empty_or_not() {
+    assert_eq!(
+        ask(NOTES, "T.Note.is_null()"),
+        "[false, true, false, false]"
+    );
+    assert_eq!(
+        ask(NOTES, "T.Note.is_not_null()"),
+        "[true, false, true, true]"
+    );
+    // The function and the operator it stands for are the same thing, and
+    // each takes one value.
+    assert_eq!(ask(NOTES, "fill_null(T[Note; 1], \"none\")"), "none");
+    assert_eq!(
+        ask(NOTES, "T[Note; 1] // \"none\""),
+        ask(NOTES, "fill_null(T[Note; 1], \"none\")")
+    );
+    assert_eq!(
+        ask(NOTES, "is_in(T[N; 0], [1, 2])"),
+        ask(NOTES, "T[N; 0] in [1, 2]")
+    );
+}
+
+#[test]
+fn casting_is_converting() {
+    // Four spellings of one conversion.
+    assert_eq!(calc("cast(19.99, Int)"), "19");
+    assert_eq!(calc("Int(19.99)"), "19");
+    assert_eq!(calc("(19.99).Int()"), "19");
+    assert_eq!(calc("(19.99).Int"), "19");
+    let errors = calc_err(None, "cast(1, Nope)");
+    assert!(errors.contains("unknown type `Nope`"), "{errors}");
+}
+
+#[test]
+fn the_parts_of_a_year() {
+    assert_eq!(calc("month_start(2025-02-10)"), "2025-02-01");
+    assert_eq!(calc("month_end(2025-02-10)"), "2025-02-28");
+    assert_eq!(calc("[2025-02-10, 2025-12-31].quarter()"), "[1, 4]");
+    assert_eq!(calc("[2025-01-01, 2025-12-31].ordinal_day()"), "[1, 365]");
+    // The ISO week belongs to the year its Thursday is in, so the last days
+    // of 2025 are week 1 of 2026, and the first day of 2027 is week 53.
+    assert_eq!(calc("2025-01-01.week()"), "1");
+    assert_eq!(calc("2025-12-29.week()"), "1");
+    assert_eq!(calc("2027-01-01.week()"), "53");
 }

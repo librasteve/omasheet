@@ -88,7 +88,7 @@ pub struct CellSnap {
 pub struct Summary {
     /// How many of the cells hold a value.
     pub count: usize,
-    /// The sum and the average of the numbers among them, as text; `None`
+    /// The sum and the mean of the numbers among them, as text; `None`
     /// if there are no numbers.
     pub numbers: Option<(String, String)>,
 }
@@ -158,7 +158,7 @@ fn iso_entry(style: &Style, ty: &str, input: &str) -> Option<String> {
         "Date" => date(),
         "Time" => time(),
         // A date alone is the start of that day.
-        "DateTime" => datetime().or_else(|| Some(format!("{}T00:00", date()?))),
+        "Datetime" => datetime().or_else(|| Some(format!("{}T00:00", date()?))),
         // With no type to go by, only what cannot be anything else: a date
         // needs its year in full.
         "" => {
@@ -204,8 +204,8 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
             style.date(day)
         ),
         "Time" => format!("Time: e.g. {}", style.time(time)),
-        "DateTime" => format!(
-            "DateTime: e.g. {}{also_iso}",
+        "Datetime" => format!(
+            "Datetime: e.g. {}{also_iso}",
             style.datetime(day as i64 * 86_400 + time as i64)
         ),
         _ => String::new(),
@@ -1407,9 +1407,9 @@ impl Document {
         let numbers = if numbers == 0 {
             None
         } else {
-            let avg = arith(BinOp::Div, &sum, &Value::Int(numbers.into())).ok()?;
+            let mean = arith(BinOp::Div, &sum, &Value::Int(numbers.into())).ok()?;
             let show = |v: &Value| format_styled(v, false, &self.style);
-            Some((show(&sum), show(&avg)))
+            Some((show(&sum), show(&mean)))
         };
         Some(Summary { count, numbers })
     }
@@ -2601,9 +2601,9 @@ mod tests {
             seq("2025-01-15, $-1 + 1.month ... Inf", 3),
             ["2025-01-15", "2025-02-15", "2025-03-15"]
         );
-        // `eom` holds a sequence on the end of each month from any start.
+        // `month_end` holds a sequence on the end of each month from any start.
         assert_eq!(
-            seq("eom(2025-01-10), eom($-1 + 1.month) ... Inf", 4),
+            seq("month_end(2025-01-10), month_end($-1 + 1.month) ... Inf", 4),
             ["2025-01-31", "2025-02-28", "2025-03-31", "2025-04-30"]
         );
         assert_eq!(
@@ -2850,7 +2850,7 @@ mod tests {
         assert!(doc.rename_column(0, 1, "bad name").is_err());
         // `Value` inside `Sales[...]` would be captured by the renamed column.
         let capture =
-            format!("{SALES}\nsheet Top\n\nValue\n100\n\nN := Sales[; Revenue > Value].count()\n");
+            format!("{SALES}\nsheet Top\n\nValue\n100\n\nN := Sales[; Revenue > Value].len()\n");
         let mut other = Document::from_text(&capture);
         assert!(other.rename_column(0, 1, "Value").is_err());
         assert_eq!(other.text(), capture);
@@ -3026,7 +3026,7 @@ mod tests {
     #[test]
     fn dates_follow_the_style_but_the_text_stays_iso() {
         use omasheet_omx::date::Order;
-        let text = "sheet Log\n\nDay : Date\nAt : Time\nSeen : DateTime\n\n\
+        let text = "sheet Log\n\nDay : Date\nAt : Time\nSeen : Datetime\n\n\
                     Day | At | Seen | Note\n2026-10-08 | 17:47 | 2026-10-08T17:47 | a\n";
         let mut doc = Document::from_text(text);
         let row = |doc: &Document, r: usize| -> Vec<String> {
@@ -3149,12 +3149,12 @@ mod tests {
         );
         assert_eq!(entry_hint(&us, "Time"), "Time: e.g. 5:05 PM");
         assert_eq!(
-            entry_hint(&us, "DateTime"),
-            "DateTime: e.g. 01/31/2025 5:05 PM or ISO"
+            entry_hint(&us, "Datetime"),
+            "Datetime: e.g. 01/31/2025 5:05 PM or ISO"
         );
         assert_eq!(
-            entry_hint(&Style::ISO, "DateTime"),
-            "DateTime: e.g. 2025-01-31T17:05"
+            entry_hint(&Style::ISO, "Datetime"),
+            "Datetime: e.g. 2025-01-31T17:05"
         );
         assert_eq!(entry_hint(&us, ""), "");
         // A cell that does not fit says what would.
@@ -3172,7 +3172,7 @@ mod tests {
                 .contains("On has type Date")
         );
         // Every example is accepted as an entry for its type.
-        for ty in ["Date", "Time", "DateTime"] {
+        for ty in ["Date", "Time", "Datetime"] {
             let hint = entry_hint(&us, ty);
             let example = hint
                 .split("e.g. ")

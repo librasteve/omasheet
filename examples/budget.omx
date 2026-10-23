@@ -4,7 +4,7 @@ const TaxRate = 20%
 
 sheet Sales
 
-Closed : DateTime
+Closed : Datetime
 Margin : Percent
 Growth : Percent
 
@@ -26,5 +26,5 @@ sheet Summary
 | Revenue        | = Sales.Revenue.sum()                                   |
 | Profit         | = Sales.Profit.sum()                                    |
 | Best month     | = Sales[; Profit == Sales.Profit.max()].Month // "none" |
-| Average margin | = Sales.Margin.avg()                                    |
+| Average margin | = Sales.Margin.mean()                                    |
 | Books closed   | = Sales.Closed.max()                                    |

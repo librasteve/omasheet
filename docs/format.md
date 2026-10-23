@@ -124,9 +124,9 @@ write:
 sheet PerHead
 
 Class       := Passengers[Pclass; *]
-Fare        := Passengers[Fare; *].Decimal.round(0.01)
+Fare        := Passengers[Fare; *].Decimal.round(2)
 GroupSize   := Passengers[Family; *] + 1
-FarePerHead := (Fare / GroupSize).round(0.01)
+FarePerHead := (Fare / GroupSize).round(2)
 ```
 
 Its columns are those lines, in the order they are written, and there is no
@@ -144,7 +144,7 @@ sheet Summary
 
 Aboard   := Passengers.Survived.count()
 Lived    := Passengers.Survived.sum()
-MeanFare := Passengers.Fare.avg().round(0.01)
+MeanFare := Passengers.Fare.mean().round(2)
 ```
 
 Otherwise the sheet is a sheet: its columns are selected and indexed as any
@@ -162,7 +162,7 @@ sheet's rows were derived.
 ## Types
 
 `Int`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,
-`Date`, `Time`, `DateTime`.
+`Date`, `Time`, `Datetime`.
 A column with no `Name : Type` line takes its type from its cells.
 
 | Type | Written |
@@ -176,7 +176,7 @@ A column with no `Name : Type` line takes its type from its cells.
 | `Boolean` | `true`, `false` |
 | `Date` | `2025-01-31` |
 | `Time` | `09:30`, `09:30:15` |
-| `DateTime` | `2025-01-31T09:30` |
+| `Datetime` | `2025-01-31T09:30` |
 
 A cell's written form carries its type where that form is distinctive:
 `true`, `2025-01-31`, `09:30`, `20%` and `1.5e3` read as a `Boolean`, a

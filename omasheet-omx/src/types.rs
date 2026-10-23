@@ -39,7 +39,7 @@ impl S {
             "String" => S::String,
             "Date" => S::Date,
             "Time" => S::Time,
-            "DateTime" => S::DateTime,
+            "Datetime" => S::DateTime,
             "Boolean" => S::Boolean,
             _ => return None,
         })
@@ -64,7 +64,7 @@ impl S {
 
     /// The type of `self + other`, or of `self - other` when `minus`, where
     /// at least one side is a date or time. A whole number counts days next
-    /// to a `Date` and seconds next to a `Time` or `DateTime`. `None` if the
+    /// to a `Date` and seconds next to a `Time` or `Datetime`. `None` if the
     /// two cannot be combined.
     pub fn shift(self, minus: bool, other: S) -> Option<S> {
         Some(match (self, other) {
@@ -156,7 +156,7 @@ impl fmt::Display for S {
             S::Boolean => "Boolean",
             S::Date => "Date",
             S::Time => "Time",
-            S::DateTime => "DateTime",
+            S::DateTime => "Datetime",
         })
     }
 }

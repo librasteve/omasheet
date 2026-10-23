@@ -22,14 +22,14 @@ Family := Siblings + Parents
 const Aboard   = Passengers.Survived.count()
 const Lived    = Passengers.Survived.sum()
 const Lost     = Aboard - Lived
-const MeanFare = Passengers.Fare.avg()
+const MeanFare = Passengers.Fare.mean()
 const Eldest   = Passengers.Age.max()
 
 # Since `Analysis` holds no rows of its own, it is written as just `:=` lines
 
 sheet Analysis
 
-Fare        := Passengers[Fare;*].Decimal.round(0.01)
+Fare        := Passengers[Fare;*].Decimal.round(2)
 GroupSize   := sum(Passengers[Siblings;*], Passengers[Parents;*], Passengers[Family;*])
-FarePerHead := (Fare / (if GroupSize != 0 then GroupSize else 1)).round(0.01)
+FarePerHead := (Fare / (if GroupSize != 0 then GroupSize else 1)).round(2)
 Class       := Passengers[Pclass;*]

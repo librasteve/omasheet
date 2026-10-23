@@ -123,10 +123,26 @@ pub enum ColSel {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Func {
     Sum,
-    Avg,
+    Mean,
     Min,
     Max,
+    /// How many values are not empty.
     Count,
+    /// How many rows a sheet has, or elements a vector has, empty or not.
+    Len,
+    /// The middle value, or the mean of the two middle ones.
+    Median,
+    /// The product of every value.
+    Product,
+    /// The first and last values, empty ones included.
+    First,
+    Last,
+    /// The standard deviation and the variance, each taking the degrees of
+    /// freedom to subtract: one by default, as Polars has it.
+    Std,
+    Var,
+    /// The value a fraction of the way through the sorted values.
+    Quantile,
     /// A value as another type: `Int(x)`, `Num(x)` and the rest.
     To(S),
     /// The next value after this one: a number plus one, or the next text
@@ -140,12 +156,22 @@ pub enum Func {
     AddMonths,
     /// The last day of the month a date is in.
     EndOfMonth,
+    /// The first day of the month a date is in.
+    StartOfMonth,
+    /// Whether a value is empty.
+    IsNull,
     Today,
     Now,
     Year,
     Month,
     Day,
     Weekday,
+    /// 1 to 4 by the quarter of the year.
+    Quarter,
+    /// The ISO week of the year, 1 to 53.
+    Week,
+    /// The day of the year, 1 to 366.
+    OrdinalDay,
     Hour,
     Minute,
     Second,
@@ -163,10 +189,10 @@ pub enum Func {
     ZoneName,
     /// A function of one real number, such as `sqrt`.
     Math(MathFn),
-    /// The nearest multiple of a scale: `round(x, 0.01)`. It means
-    /// `round(x / scale) * scale`, and is one step so that the scaling is
-    /// worked out exactly, which that form cannot do for a Float.
-    RoundTo,
+    /// To a number of decimal places: `round(x, 2)`, as Polars rounds.
+    /// A half goes away from zero, and a number with fewer places than
+    /// that is itself.
+    RoundDigits,
     Pi,
     /// The base of the natural logarithm.
     E,

@@ -23,5 +23,5 @@ Family := SiblingsSpousesAboard + ParentsChildrenAboard
 const Aboard   = Passengers.Survived.count()
 const Lived    = Passengers.Survived.sum()
 const Lost     = Aboard - Lived
-const MeanFare = Passengers.Fare.avg()
+const MeanFare = Passengers.Fare.mean()
 const Eldest   = Passengers.Age.max()

@@ -2070,7 +2070,7 @@ impl<'a> Checker<'a> {
                     span,
                     format!("cannot apply `{sym}` to {a} and {b}"),
                     "add or subtract whole days with a Date, whole seconds with a Time or \
-                     DateTime; subtract two of the same kind; add a Date and a Time",
+                     Datetime; subtract two of the same kind; add a Date and a Time",
                 );
                 return fail;
             };
@@ -2162,7 +2162,8 @@ impl<'a> Checker<'a> {
             }
         };
         match name {
-            "sum" | "avg" | "min" | "max" | "count" => {
+            "sum" | "mean" | "min" | "max" | "count" | "len" | "median" | "product" | "first"
+            | "last" => {
                 // Any number of vectors, or single values among them, taken
                 // together: `sum([A; 0..2], [A; 5])`.
                 if args.is_empty() {
@@ -2172,10 +2173,15 @@ impl<'a> Checker<'a> {
                 let many = args.len() > 1;
                 let func = match name {
                     "sum" => Func::Sum,
-                    "avg" => Func::Avg,
+                    "mean" => Func::Mean,
                     "min" => Func::Min,
                     "max" => Func::Max,
-                    _ => Func::Count,
+                    "count" => Func::Count,
+                    "median" => Func::Median,
+                    "product" => Func::Product,
+                    "first" => Func::First,
+                    "last" => Func::Last,
+                    _ => Func::Len,
                 };
                 let mut nodes = Vec::new();
                 let mut joined: Option<S> = None;
@@ -2190,11 +2196,19 @@ impl<'a> Checker<'a> {
                         Ty::Scalar(s) if many => (arg, s),
                         Ty::Vector(s, _) => (arg, s),
                         Ty::Range => (arg, S::Int),
-                        Ty::Sheet(_) if func == Func::Count && !many => {
+                        Ty::Sheet(_) if func == Func::Len && !many => {
                             return (
                                 Node::new(Ir::Call(func, vec![arg]), span),
                                 Ty::Scalar(S::Int),
                             );
+                        }
+                        Ty::Sheet(_) if func == Func::Count && !many => {
+                            self.err_help(
+                                a.span,
+                                "`count` counts the values of a column, not the rows of a sheet",
+                                "for the rows of a sheet, write `len`",
+                            );
+                            return fail;
                         }
                         // The cells of one row, such as `[*-4..*-1; *]`.
                         Ty::Row(tt) => {
@@ -2293,12 +2307,12 @@ impl<'a> Checker<'a> {
                 }
                 let s = joined.unwrap_or(S::Any);
                 let out = match func {
-                    Func::Count => S::Int,
-                    Func::Sum | Func::Avg if !s.is_numeric() => {
+                    Func::Count | Func::Len => S::Int,
+                    Func::Sum | Func::Mean | Func::Median | Func::Product if !s.is_numeric() => {
                         self.err(span, format!("cannot take the `{name}` of {s} values"));
                         return fail;
                     }
-                    Func::Avg if matches!(s, S::Int | S::Decimal) => S::Decimal,
+                    Func::Mean | Func::Median if matches!(s, S::Int | S::Decimal) => S::Decimal,
                     Func::Min | Func::Max if matches!(s, S::Boolean) => {
                         self.err(span, format!("{s} values have no order for `{name}`"));
                         return fail;
@@ -2307,9 +2321,217 @@ impl<'a> Checker<'a> {
                 };
                 (Node::new(Ir::Call(func, nodes), span), Ty::Scalar(out))
             }
-            "add_months" | "eom" => {
+            // One vector and a number: the degrees of freedom to subtract,
+            // or the fraction of the way through.
+            // Selections written as functions, each the selection it is
+            // equivalent to: no new IR and nothing new to evaluate.
+            // The function spellings of `//` and `in`, which already mean
+            // exactly this.
+            "fill_null" | "is_in" => {
+                let op = if name == "fill_null" {
+                    BinOp::Fallback
+                } else {
+                    BinOp::In
+                };
+                if !arity(self, 2, &format!("{name}(x, y)")) {
+                    return fail;
+                }
+                let form = Expr {
+                    kind: ExprKind::Binary(
+                        op,
+                        Box::new(args[0].clone()),
+                        Box::new(args[1].clone()),
+                    ),
+                    span,
+                };
+                self.lower(&form, sc)
+            }
+            "is_null" | "is_not_null" => {
+                if !arity(self, 1, &format!("Sheet.Column.{name}()")) {
+                    return fail;
+                }
+                // The negative one is the positive one, negated.
+                if name == "is_not_null" {
+                    let inner = Expr {
+                        kind: ExprKind::Call(
+                            "is_null".to_string(),
+                            name_span,
+                            vec![args[0].clone()],
+                        ),
+                        span,
+                    };
+                    let form = Expr {
+                        kind: ExprKind::Unary(UnOp::Not, Box::new(inner)),
+                        span,
+                    };
+                    return self.lower(&form, sc);
+                }
+                let (arg, aty) = self.lower(&args[0], sc);
+                let ty = match aty {
+                    Ty::Vector(_, n) => Ty::Vector(S::Boolean, n),
+                    Ty::Any | Ty::Scalar(_) => Ty::Scalar(S::Boolean),
+                    other => {
+                        if !matches!(arg.kind, Ir::Error) {
+                            self.err(
+                                args[0].span,
+                                format!(
+                                    "`is_null` needs a value, but this is {}",
+                                    other.describe()
+                                ),
+                            );
+                        }
+                        return fail;
+                    }
+                };
+                (Node::new(Ir::Call(Func::IsNull, vec![arg]), span), ty)
+            }
+            // `cast(x, Int)`, the Polars spelling of `Int(x)`.
+            "cast" => {
+                if !arity(self, 2, "cast(x, Int)") {
+                    return fail;
+                }
+                let ExprKind::Name(to_name) = &args[1].kind else {
+                    self.err_help(
+                        args[1].span,
+                        "`cast` takes the name of a type",
+                        "usage: `cast(x, Int)`",
+                    );
+                    return fail;
+                };
+                let Some(to) = S::from_name(to_name) else {
+                    self.err(args[1].span, format!("unknown type `{to_name}`"));
+                    return fail;
+                };
+                let to_name = to_name.clone();
+                let (arg, aty) = self.lower(&args[0], sc);
+                self.convert(&to_name, to, arg, aty, args[0].span, span)
+            }
+            "head" | "tail" | "shift" => {
+                let usage = match name {
+                    "head" => "Sales |> head(5)",
+                    "tail" => "Sales |> tail(5)",
+                    _ => "Sales.Revenue.shift(1)",
+                };
+                if !arity(self, 2, usage) {
+                    return fail;
+                }
+                let at = |kind| Expr { kind, span };
+                let n = Box::new(args[1].clone());
+                let slot = match name {
+                    // The first `n` rows.
+                    "head" => at(ExprKind::Unary(UnOp::UpTo, n)),
+                    // From `n` back of the end to the end.
+                    "tail" => at(ExprKind::Binary(
+                        BinOp::Range,
+                        Box::new(at(ExprKind::Unary(UnOp::Neg, n))),
+                        Box::new(at(ExprKind::Lit(Lit::Int(-1)))),
+                    )),
+                    // The row `n` back of this one.
+                    _ => at(ExprKind::Binary(
+                        BinOp::Sub,
+                        Box::new(at(ExprKind::Cursor)),
+                        n,
+                    )),
+                };
+                let (b, bty) = self.lower(&args[0], sc);
+                // A sheet takes `[columns; rows]` and a column takes the
+                // rows alone.
+                let slots: Vec<Option<&Expr>> = if matches!(bty, Ty::Sheet(_)) {
+                    vec![None, Some(&slot)]
+                } else {
+                    vec![Some(&slot)]
+                };
+                self.index(b, bty, &slots, span, sc)
+            }
+            "std" | "var" | "quantile" => {
+                let takes_q = name == "quantile";
+                let usage = if takes_q {
+                    "Sheet.Column.quantile(0.9)".to_string()
+                } else {
+                    format!("Sheet.Column.{name}()")
+                };
+                let wrong = if takes_q {
+                    args.len() != 2
+                } else {
+                    args.is_empty() || args.len() > 2
+                };
+                if wrong {
+                    self.err_help(
+                        span,
+                        format!(
+                            "`{name}` takes {} arguments, found {}",
+                            if takes_q { "2" } else { "1 or 2" },
+                            args.len()
+                        ),
+                        format!("usage: `{usage}`"),
+                    );
+                    return fail;
+                }
+                let (v, vty) = self.lower(&args[0], sc);
+                let numeric = match vty {
+                    Ty::Any => true,
+                    Ty::Vector(s, _) => s.is_numeric() || s == S::Any,
+                    _ => false,
+                };
+                if !numeric {
+                    if !matches!(v.kind, Ir::Error) {
+                        self.err_help(
+                            args[0].span,
+                            format!(
+                                "`{name}` needs a vector of numbers, but this is {}",
+                                vty.describe()
+                            ),
+                            "select one column, for example `Sales.Revenue`",
+                        );
+                    }
+                    return fail;
+                }
+                let mut nodes = vec![v];
+                if let Some(a) = args.get(1) {
+                    let (n, nty) = self.lower(a, sc);
+                    let ok = matches!(nty, Ty::Any | Ty::Scalar(S::Any))
+                        || matches!(nty, Ty::Scalar(s) if s.is_numeric());
+                    if !ok {
+                        if !matches!(n.kind, Ir::Error) {
+                            self.err(
+                                a.span,
+                                format!(
+                                    "`{name}` needs a single number, but this is {}",
+                                    nty.describe()
+                                ),
+                            );
+                        }
+                        return fail;
+                    }
+                    nodes.push(n);
+                }
+                let func = match name {
+                    "std" => Func::Std,
+                    "var" => Func::Var,
+                    _ => Func::Quantile,
+                };
+                // A variance is exact where its values are, a standard
+                // deviation needs a root, and a quantile taken at the
+                // nearest value is one of the values.
+                let s = match vty {
+                    Ty::Vector(s, _) => s,
+                    _ => S::Any,
+                };
+                let ty = match func {
+                    _ if s == S::Any => Ty::Any,
+                    Func::Std => Ty::Scalar(S::Float),
+                    Func::Var if matches!(s, S::Int | S::Decimal) => Ty::Scalar(S::Decimal),
+                    _ => Ty::Scalar(s),
+                };
+                (Node::new(Ir::Call(func, nodes), span), ty)
+            }
+            "add_months" | "month_end" | "month_start" => {
                 let months = name == "add_months";
-                let shape = if months { "add_months(x, n)" } else { "eom(x)" };
+                let shape = if months {
+                    "add_months(x, n)"
+                } else {
+                    "month_end(x)"
+                };
                 if !arity(self, if months { 2 } else { 1 }, shape) {
                     return fail;
                 }
@@ -2338,10 +2560,10 @@ impl<'a> Checker<'a> {
                     }
                     nodes.push(n);
                 }
-                let func = if months {
-                    Func::AddMonths
-                } else {
-                    Func::EndOfMonth
+                let func = match name {
+                    "add_months" => Func::AddMonths,
+                    "month_end" => Func::EndOfMonth,
+                    _ => Func::StartOfMonth,
                 };
                 (Node::new(Ir::Call(func, nodes), span), ty)
             }
@@ -2380,7 +2602,7 @@ impl<'a> Checker<'a> {
                 (Node::new(Ir::Call(func, Vec::new()), span), Ty::Scalar(s))
             }
             "year" | "month" | "day" | "weekday" | "hour" | "minute" | "second" | "date"
-            | "time" => {
+            | "time" | "quarter" | "week" | "ordinal_day" => {
                 if !arity(self, 1, &format!("Orders.Placed.{name}()")) {
                     return fail;
                 }
@@ -2389,6 +2611,9 @@ impl<'a> Checker<'a> {
                     "month" => (Func::Month, S::Date, S::Int),
                     "day" => (Func::Day, S::Date, S::Int),
                     "weekday" => (Func::Weekday, S::Date, S::Int),
+                    "quarter" => (Func::Quarter, S::Date, S::Int),
+                    "week" => (Func::Week, S::Date, S::Int),
+                    "ordinal_day" => (Func::OrdinalDay, S::Date, S::Int),
                     "hour" => (Func::Hour, S::Time, S::Int),
                     "minute" => (Func::Minute, S::Time, S::Int),
                     "second" => (Func::Second, S::Time, S::Int),
@@ -2406,7 +2631,7 @@ impl<'a> Checker<'a> {
                             self.err(
                                 args[0].span,
                                 format!(
-                                    "`{name}` needs a {from} or a DateTime, but this is {}",
+                                    "`{name}` needs a {from} or a Datetime, but this is {}",
                                     other.describe()
                                 ),
                             );
@@ -2416,10 +2641,10 @@ impl<'a> Checker<'a> {
                 };
                 (Node::new(Ir::Call(func, vec![arg]), span), ty)
             }
-            "to_zone" | "utc" | "local" | "offset" | "zone" => {
-                let takes_zone = name == "to_zone";
+            "convert_time_zone" | "utc" | "local" | "base_utc_offset" | "time_zone" => {
+                let takes_zone = name == "convert_time_zone";
                 let usage = if takes_zone {
-                    "Orders.Placed.to_zone(\"Asia/Tokyo\")".to_string()
+                    "Orders.Placed.convert_time_zone(\"Asia/Tokyo\")".to_string()
                 } else {
                     format!("Orders.Placed.{name}()")
                 };
@@ -2427,10 +2652,10 @@ impl<'a> Checker<'a> {
                     return fail;
                 }
                 let (func, out) = match name {
-                    "to_zone" => (Func::ToZone, S::DateTime),
+                    "convert_time_zone" => (Func::ToZone, S::DateTime),
                     "utc" => (Func::Utc, S::DateTime),
                     "local" => (Func::Local, S::DateTime),
-                    "offset" => (Func::Offset, S::Int),
+                    "base_utc_offset" => (Func::Offset, S::Int),
                     _ => (Func::ZoneName, S::String),
                 };
                 let (arg, aty) = self.lower(&args[0], sc);
@@ -2442,11 +2667,11 @@ impl<'a> Checker<'a> {
                             self.err_help(
                                 args[0].span,
                                 format!(
-                                    "`{name}` needs a DateTime, but this is {}",
+                                    "`{name}` needs a Datetime, but this is {}",
                                     other.describe()
                                 ),
                                 "a Date or a Time alone is in no time zone; add them to make a \
-                                 DateTime",
+                                 Datetime",
                             );
                         }
                         return fail;
@@ -2459,7 +2684,7 @@ impl<'a> Checker<'a> {
                         self.err_help(
                             args[1].span,
                             format!(
-                                "`to_zone` needs the name of a time zone, but this is {}",
+                                "`convert_time_zone` needs the name of a time zone, but this is {}",
                                 zty.describe()
                             ),
                             "for example `\"Europe/London\"`",
@@ -2563,62 +2788,54 @@ impl<'a> Checker<'a> {
             // and the multiple is then taken as one step: scaling a rounded
             // Float back up lands it a hair off the number the scale names,
             // `2.78` as `2.7800000000000002`.
+            // `round(x, n)` is to `n` decimal places, as Polars has it. The
+            // nearest multiple of something is `round(x / m) * m`, which says
+            // so and needs no function of its own.
             "round" if args.len() != 1 => {
                 if args.len() != 2 {
                     self.err_help(
                         span,
                         format!("`round` takes 1 or 2 arguments, found {}", args.len()),
-                        "usage: `round(x)`, or `round(x, 0.01)` to the nearest 0.01",
+                        "usage: `round(x)`, or `round(x, 2)` to two decimal places",
                     );
                     return fail;
                 }
-                // The scale on its own first, so that what is wrong with it
-                // is said once.
-                let (scale, sty) = self.lower(&args[1], sc);
-                if matches!(scale.kind, Ir::Error) {
+                // The places first, so that what is wrong with them is said
+                // once and the number itself is not blamed for it.
+                let (places, pty) = self.lower(&args[1], sc);
+                if matches!(places.kind, Ir::Error) {
                     return fail;
                 }
-                if !matches!(sty, Ty::Any | Ty::Scalar(S::Any)) {
-                    let numeric = matches!(sty, Ty::Scalar(s) if s.is_numeric());
-                    if !numeric {
-                        self.err_help(
-                            args[1].span,
-                            format!(
-                                "the scale of `round` must be a single real number, found {}",
-                                sty.describe()
-                            ),
-                            "usage: `round(x, 0.01)` to the nearest 0.01",
-                        );
+                if !matches!(pty, Ty::Any | Ty::Scalar(S::Any | S::Int)) {
+                    self.err_help(
+                        args[1].span,
+                        format!(
+                            "the second argument of `round` is a number of decimal places, \
+                             found {}",
+                            pty.describe()
+                        ),
+                        "usage: `round(x, 2)` to two places. For the nearest multiple \
+                         of something, divide, round and multiply back: \
+                         `round(x / 100) * 100`",
+                    );
+                    return fail;
+                }
+                let (x, xty) = self.lower(&args[0], sc);
+                let ty = match xty {
+                    Ty::Any => Ty::Any,
+                    Ty::Scalar(s) if s.is_numeric() || s == S::Any => Ty::Scalar(s),
+                    Ty::Vector(s, n) if s.is_numeric() || s == S::Any => Ty::Vector(s, n),
+                    other => {
+                        if !matches!(x.kind, Ir::Error) {
+                            self.err(args[0].span, format!("cannot round {}", other.describe()));
+                        }
                         return fail;
                     }
-                }
-                let at = |kind| Expr { kind, span };
-                let quotient = at(ExprKind::Binary(
-                    BinOp::Div,
-                    Box::new(args[0].clone()),
-                    Box::new(args[1].clone()),
-                ));
-                let whole = at(ExprKind::Call(name.to_string(), name_span, vec![quotient]));
-                let rounded = at(ExprKind::Binary(
-                    BinOp::Mul,
-                    Box::new(whole),
-                    Box::new(args[1].clone()),
-                ));
-                let (node, ty) = self.lower(&rounded, sc);
-                // `x` comes back out of the form it was lowered in, rather
-                // than being lowered a second time; the scale is the one
-                // lowered above.
-                let Ir::Binary(BinOp::Mul, product, _) = &node.kind else {
-                    return (node, ty);
                 };
-                let Ir::Call(Func::Math(MathFn::Round), quotient) = &product.kind else {
-                    return (node, ty);
-                };
-                let Some(Ir::Binary(BinOp::Div, x, _)) = quotient.first().map(|q| &q.kind) else {
-                    return (node, ty);
-                };
-                let args = vec![(**x).clone(), scale];
-                (Node::new(Ir::Call(Func::RoundTo, args), span), ty)
+                (
+                    Node::new(Ir::Call(Func::RoundDigits, vec![x, places]), span),
+                    ty,
+                )
             }
             _ if MathFn::from_name(name).is_some() => {
                 if !arity(self, 1, &format!("{name}(x)")) {

@@ -94,13 +94,14 @@ vector is converted value by value.
 | `x.Float` | a floating-point number |
 | `x.String` | any value as text, written the way a file writes it |
 | `x.Boolean` | `false` for zero, `true` for any other number |
-| `x.Date`, `x.Time` | that half of a `DateTime` |
-| `x.DateTime` | a `Date` at midnight |
+| `x.Date`, `x.Time` | that half of a `Datetime` |
+| `x.Datetime` | a `Date` at midnight |
 
 Text is read the way a cell is: `"42".Int` is `42`, `"20%".Decimal` is `1/5`,
 `"2025-01-31".Date` is that date, and `"abc".Int` is an error. `true.Int` is
-`1`. To round rather than drop the fraction, use `round(x)`; `round(x, 0.01)`
-rounds to the nearest 0.01, and `round(x, 100)` to the nearest hundred.
+`1`. To round rather than drop the fraction, use `round(x)`; `round(x, 2)`
+rounds to two decimal places. For the nearest hundred, divide, round and
+multiply back: `round(x / 100) * 100`.
 
 ## Names
 
@@ -184,24 +185,38 @@ number takes a unit, so `Placed.month` is still the month of a date.
 
 Months and years keep the day of the month, or the last day of a month too
 short for it: `2025-01-31 + 1.month` is `2025-02-28`. That rounding does
-not come back, so a sequence of month ends is better written with `eom`,
+not come back, so a sequence of month ends is better written with `month_end`,
 which gives the last day of a date's month:
-`eom(2025-01-10), eom($-1 + 1.month) ... Inf`.
+`month_end(2025-01-10), month_end($-1 + 1.month) ... Inf`.
 
 ## Functions
 
 Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 
-- Vectors: `sum avg min max count`, of one vector or several taken together,
-  with single values among them: `sum([A; 0..3], [A; 7..9], 5)`. A block of
-  cells counts every cell: `sum([0..2; 0..3])`.
-- Sheets: `filter(condition)`, `select(columns)`
+- Vectors: `sum mean min max count len median product first last`, of one
+  vector or several taken together, with single values among them:
+  `sum([A; 0..3], [A; 7..9], 5)`. A block of cells counts every cell:
+  `sum([0..2; 0..3])`. `count` counts what is not empty and `len` counts
+  every cell, or a sheet's rows.
+- Spread: `std(x)` and `var(x)`, of a sample; `std(x, 0)` and `var(x, 0)` of
+  a whole population; `quantile(x, 0.9)`, the value that far through the
+  values in order
+- Sheets: `filter(condition)`, `select(columns)`, `head(n)`, `tail(n)`,
+  `shift(n)` — the value `n` rows back
+- Empty or not: `is_null(x)` and `is_not_null(x)`, of a value or of every
+  cell of a column; `fill_null(x, 0)`, which is `x // 0`, and
+  `is_in(x, [1, 2])`, which is `x in [1, 2]` — these two take one value, as
+  the operators they stand for do
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
 - Counting up: `succ` — a number plus one, or the next text, `AZ` to `BA`
-- Converting: `Int Decimal Percent Float String Boolean Date Time DateTime`
-- Dates: `today() now() year month day weekday hour minute second date time`
-- Months: `add_months(x, n)` — what `x + n.month` is — and `eom(x)`
-- Time zones: `to_zone("Asia/Tokyo") utc() local() offset() zone()`
+- Converting: `Int Decimal Percent Float String Boolean Date Time Datetime`,
+  each also written `cast(x, Int)`
+- Dates: `today() now() year month day weekday quarter week ordinal_day
+  hour minute second date time`
+- Months: `add_months(x, n)` — what `x + n.month` is — `month_end(x)` and
+  `month_start(x)`
+- Time zones: `convert_time_zone("Asia/Tokyo") utc() local()
+  base_utc_offset() time_zone()`
 - Your own: `fn` in the file
 
 The app lists them all under `fn()` (F1).
@@ -209,9 +224,9 @@ The app lists them all under `fn()` (F1).
 ## Dates and times
 
 - A whole number is days next to a `Date`, seconds next to a `Time` or
-  `DateTime`: `2025-01-31 + 1` is `2025-02-01`.
+  `Datetime`: `2025-01-31 + 1` is `2025-02-01`.
 - Two of a kind subtract to a number: `2025-03-01 - 2024-03-01` is `365`.
-- `Date + Time` is a `DateTime`.
+- `Date + Time` is a `Datetime`.
 - Across time zones, comparison and subtraction use the instant.
 
 ---

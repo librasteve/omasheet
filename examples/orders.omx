@@ -11,7 +11,7 @@ sheet Customers
 
 sheet Orders
 
-Placed : DateTime
+Placed : Datetime
 
 | Placed           | CustomerID | Qty | Price | Customer | Region | Total | Discount | Rush |
 | ---------------- | ---------- | --- | ----- | -------- | ------ | ----- | -------- | ---- |
@@ -34,5 +34,5 @@ sheet ByRegion
 | US     | *     | *     |
 | FI     | *     | *     |
 
-Count := Orders[; Region == ByRegion[Region; *]].count()
+Count := Orders[; Region == ByRegion[Region; *]].len()
 Sales := Orders[; Region == ByRegion[Region; *]].Total.sum()

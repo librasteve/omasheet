@@ -129,7 +129,7 @@ sheet Summary
 ## Types
 
 `Int`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,
-`Date`, `Time`, `DateTime`.
+`Date`, `Time`, `Datetime`.
 A column with no type line takes its type from its cells, which is usually
 what you want; declare one when the cells could be read another way.
 
@@ -141,7 +141,7 @@ what you want; declare one when the cells could be read another way.
 | `Percent` | `20%` — exact, shown as a percentage |
 | `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `"Inf"`), which is what a division by zero gives |
 | `Boolean` | `true`, `false` |
-| `Date`, `Time`, `DateTime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO |
+| `Date`, `Time`, `Datetime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO |
 
 An `Int` is a `Decimal`. Sums, products, divisions and averages of decimals
 are all `Decimal`. An `Int` holds 64 bits and a `Decimal` 38 digits; a
@@ -205,14 +205,17 @@ that do not fit are cut and marked `…`. Only the display is cut, and
   each month steps by months: `2025-01-01, 2025-02-01 ... Inf`, and
   `2025-01-31, 2025-02-28 ... Inf` for the end of each month.
 - Functions are called `sum(x)`, `x.sum()` or `x |> sum()`:
-  `sum avg min max count`, `abs round floor ceil sqrt` and the usual maths,
-  `today() now() year month day weekday`, `succ` for the next value, and
-  the type names as conversions,
+  `sum mean min max count len median`, `abs round floor ceil sqrt` and the
+  usual maths, `today() now() year month day weekday`, `succ` for the next
+  value, and the type names as conversions,
   `x.Int`, `x.Float`, `x.Fraction`, `x.Percent`, `x.String`.
 - A date plus a whole number is days later; two dates subtract to days.
   `n.day`, `n.week`, `n.month` and `n.year` next to a date say which unit:
   `Placed + 1.month`, which keeps the day of the month or clamps it to the
-  last day of a short one. `eom(x)` is the last day of a date's month.
+  last day of a short one. `month_end(x)` is the last day of a date's month.
+- The names are Polars': `mean` not `avg`, `len` for a sheet's rows where
+  `count` counts what is not empty, `month_end` not `eom`, `arcsin` not
+  `asin`, and `round(x, 2)` is two decimal places, not the nearest 0.01.
 - A lookup that finds one row fills a cell with its value; none gives empty,
   so add `// "none"`; several is an error.
 

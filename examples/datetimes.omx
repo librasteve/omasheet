@@ -1,5 +1,5 @@
 # Every column type, with dates and times: a Date counts in days, a Time and
-# a DateTime in seconds. A file always writes them the ISO way, and may say
+# a Datetime in seconds. A file always writes them the ISO way, and may say
 # which time zone its date-times are in.
 
 zone Europe/London
@@ -13,7 +13,7 @@ Start  : Time
 End    : Time
 Rate   : Decimal
 Paid   : Boolean
-Logged : DateTime
+Logged : Datetime
 
 | Who   | On         | Start | End   | Rate  | Paid  | Logged              | Begins | Seconds | Hours | Pay | Due | Weekday | Month | Delay | Late | Sydney |
 | ----- | ---------- | ----- | ----- | ----- | ----- | ------------------- | ------ | ------- | ----- | --- | --- | ------- | ----- | ----- | ---- | ------ |
@@ -30,7 +30,7 @@ Weekday := On.weekday()
 Month   := On.month()
 Delay   := (Logged - Begins) / 3600
 Late    := Logged.date() > On
-Sydney  := Logged.to_zone("Australia/Sydney")
+Sydney  := Logged.convert_time_zone("Australia/Sydney")
 
 sheet Totals
 

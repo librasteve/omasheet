@@ -120,7 +120,7 @@ fn eval_from_standard_input() {
         .stdin
         .take()
         .unwrap()
-        .write_all(b"Sales.Revenue.avg()\n")
+        .write_all(b"Sales.Revenue.mean()\n")
         .unwrap();
     let out = child.wait_with_output().unwrap();
     assert_eq!(stdout(&out), "11733.3333333333333333…\n");
@@ -207,7 +207,7 @@ fn dates_are_iso_unless_the_locale_is_asked_for() {
 
 #[test]
 fn time_zones_can_be_given() {
-    let expr = "2025-07-15T12:00.to_zone(\"Asia/Tokyo\")";
+    let expr = "2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\")";
     let out = omasheet(&["eval", "--zone", "Europe/London", expr]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stdout(&out), "2025-07-15T20:00+09:00\n");
@@ -274,7 +274,7 @@ fn export_writes_beside_the_file_and_leaves_it_alone() {
     let out = omasheet(&["import", &path(&dir, "budget.json")]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(
-        stdout(&out).starts_with("sheet Sales\n\nClosed : DateTime\n"),
+        stdout(&out).starts_with("sheet Sales\n\nClosed : Datetime\n"),
         "{}",
         stdout(&out)
     );

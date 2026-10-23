@@ -74,8 +74,9 @@ Likely  := Numbers[Checked; *] and Numbers[Share; *] < Half
 
 # No exact number is a division by zero, so that is a Float: Inf, -Inf, or NaN
 # for zero over zero. So is a function outside its domain. Each is written
-# in a cell as it is shown, and the text of one is in quotes. A NaN is not
-# equal to anything, itself included.
+# in a cell as it is shown, and the text of one is in quotes. A NaN is
+# ordered greatest and equal to itself, as a dataframe orders it, so Same is
+# true of one.
 sheet Limits
 
 | Top | Over | Root | Log | Limit | Same | Word   | Add           | Multiply      |

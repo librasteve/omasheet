@@ -22,11 +22,11 @@ huge  | 8.1e+37 |  1.1111111111111111…e-19 | 0.99999999999999999999 |   1200 |
 
 sheet Limits
 
-Top | Over | Root | Log  | Limit | Same  | Word | Add | Multiply
-----|------|------|------|-------|-------|------|-----|---------
-  1 |  Inf |    1 |    0 |   Inf | true  | Inf  | Inf |      Inf
- -1 | -Inf |  NaN |  NaN |  -Inf | true  | -Inf | NaN |      NaN
-  0 |  NaN |    0 | -Inf |   NaN | false | NaN  | NaN |      NaN
+Top | Over | Root | Log  | Limit | Same | Word | Add | Multiply
+----|------|------|------|-------|------|------|-----|---------
+  1 |  Inf |    1 |    0 |   Inf | true | Inf  | Inf |      Inf
+ -1 | -Inf |  NaN |  NaN |  -Inf | true | -Inf | NaN |      NaN
+  0 |  NaN |    0 | -Inf |   NaN | true | NaN  | NaN |      NaN
 
 sheet Converted
 

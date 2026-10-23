@@ -53,7 +53,7 @@ verified and archived before the next begins.
 |-------|--------|----------|-----------|
 | 1 | `add-omasheet-core` | Numerics, OMX, the `.omx` format, compile / check / evaluate, `omasheet eval`, `lint` and the read-only view | An `.omx` with computed columns, cursor references, filters and lookups evaluates exactly from the CLI, with no dataframe dependency |
 | 2 | `add-interop` | XLSX and CSV import and export; Markdown `{{ }}` and `omx` blocks; `import`, `export`, `render` | A workbook or CSV file imports to `.omx` and exports back; `omasheet render report.md` produces HTML |
-| 3 | `add-sheet-operations` | Group, join, the `group` pipe stage, partitioned cursor offsets, incremental recalculation | `Sales \|> group(Region) \|> sum(Revenue)` and a left join give exact results, on Omasheet's own engine |
+| 3 | `add-sheet-operations` | Group, join, the `group_by` pipe stage, partitioned cursor offsets, incremental recalculation | `Sales \|> group_by(Region) \|> agg(Revenue.sum())` and a left join give exact results |
 | 4 | `add-units` | Unit literals, dimension checking, currencies, column units, user-defined units, display units | `Revenue + Weight` is rejected by `lint`; unit columns export to XLSX |
 | 5 | `add-uncertainty` | `±` values, propagation, `Uncertain<…>` columns, display | `10 ± 0.1 m` propagates through arithmetic and aggregation |
 

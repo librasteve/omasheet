@@ -9,13 +9,13 @@
 
 use crate::Options;
 use crate::value::{
-    RowRef, Value, View, arith, compare, equal, format_exact, format_styled, is_nan, math,
-    round_to,
+    RowRef, Value, View, arith, compare, equal, format_exact, format_styled, math, round_digits,
 };
 use crate::zone::{Zone, Zoned, utc_now};
 use omasheet_omx::ast::{BinOp, UnOp};
 use omasheet_omx::cycle;
 use omasheet_omx::date;
+use omasheet_omx::funcs::MathFn;
 use omasheet_omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_omx::{Cell, ColKind, Column, Diagnostic, Group, Program, S, Span};
 use std::cell::RefCell;
@@ -634,7 +634,7 @@ impl<'p> Engine<'p> {
                     ),
                 }
             }
-            Func::AddMonths | Func::EndOfMonth => {
+            Func::AddMonths | Func::EndOfMonth | Func::StartOfMonth => {
                 let months = match func {
                     Func::AddMonths => match self.eval(&args[1], fr)? {
                         Value::Null => return Ok(Value::Null),
@@ -658,6 +658,7 @@ impl<'p> Engine<'p> {
                 };
                 let shift = |days: i32| match func {
                     Func::AddMonths => date::add_months(days, months, on),
+                    Func::StartOfMonth => date::add_months(days, 0, Some(1)),
                     _ => date::end_of_month(days),
                 };
                 let moved = |v: &Value| -> R {
@@ -686,6 +687,15 @@ impl<'p> Engine<'p> {
                     single => moved(&single),
                 }
             }
+            Func::IsNull => {
+                let empty = |v: &Value| -> R { Ok(Value::Boolean(matches!(v, Value::Null))) };
+                match self.eval(&args[0], fr)? {
+                    Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                        items.iter().map(empty).collect::<R<Vec<_>>>()?,
+                    ))),
+                    single => empty(&single),
+                }
+            }
             Func::Today => Ok(Value::Date(date::split_datetime(self.now).0)),
             Func::Now => Ok(Value::DateTime(self.now)),
             Func::Pi => Ok(Value::Float(std::f64::consts::PI)),
@@ -700,11 +710,23 @@ impl<'p> Engine<'p> {
                     single => apply(&single),
                 }
             }
-            Func::RoundTo => {
+            Func::RoundDigits => {
                 let x = self.eval(&args[0], fr)?;
-                let scale = self.eval(&args[1], fr)?;
+                let places = match self.eval(&args[1], fr)? {
+                    Value::Null => return Ok(Value::Null),
+                    Value::Int(n) => n,
+                    other => {
+                        return fail(
+                            args[1].span,
+                            format!(
+                                "expected a number of decimal places, found {}",
+                                other.kind()
+                            ),
+                        );
+                    }
+                };
                 let apply = |v: &Value| -> R {
-                    round_to(v, &scale).or_else(|message| fail(args[0].span, message))
+                    round_digits(v, places).or_else(|message| fail(args[0].span, message))
                 };
                 match x {
                     Value::Vector(items) => Ok(Value::Vector(Rc::new(
@@ -742,7 +764,7 @@ impl<'p> Engine<'p> {
                         other => {
                             return fail(
                                 args[0].span,
-                                format!("expected a DateTime, found {}", other.kind()),
+                                format!("expected a Datetime, found {}", other.kind()),
                             );
                         }
                     };
@@ -771,6 +793,9 @@ impl<'p> Engine<'p> {
             | Func::Month
             | Func::Day
             | Func::Weekday
+            | Func::Quarter
+            | Func::Week
+            | Func::OrdinalDay
             | Func::Hour
             | Func::Minute
             | Func::Second
@@ -802,6 +827,14 @@ impl<'p> Engine<'p> {
                         Func::Month => ymd.map(|(_, m, _)| m),
                         Func::Day => ymd.map(|(_, _, d)| d),
                         Func::Weekday => days.map(date::weekday),
+                        Func::Quarter => ymd.map(|(_, m, _)| (m - 1) / 3 + 1),
+                        Func::OrdinalDay => days.map(ordinal_day),
+                        // The ISO week is the week of its Thursday, and the
+                        // year it belongs to is that Thursday's year.
+                        Func::Week => days.map(|d| {
+                            let thursday = d + (4 - date::weekday(d)) as i32;
+                            (ordinal_day(thursday) - 1) / 7 + 1
+                        }),
                         Func::Hour => time.map(|t| t as i64 / 3600),
                         Func::Minute => time.map(|t| t as i64 / 60 % 60),
                         Func::Second => time.map(|t| t as i64 % 60),
@@ -830,13 +863,110 @@ impl<'p> Engine<'p> {
                     single => part(&single),
                 }
             }
-            Func::Sum | Func::Avg | Func::Min | Func::Max | Func::Count => {
+            Func::Std | Func::Var | Func::Quantile => {
+                let values = match self.eval(&args[0], fr)? {
+                    Value::Null => return Ok(Value::Null),
+                    Value::Vector(v) => v,
+                    other => {
+                        return fail(
+                            args[0].span,
+                            format!("expected a vector to aggregate, found {}", other.kind()),
+                        );
+                    }
+                };
+                let present: Vec<&Value> = values
+                    .iter()
+                    .filter(|v| !matches!(v, Value::Null))
+                    .collect();
+                let real = |v: &Value| -> Option<f64> {
+                    match v {
+                        Value::Int(i) => Some(*i as f64),
+                        Value::Decimal(d) | Value::Fraction(d) | Value::Percent(d) => {
+                            Some(d.to_f64())
+                        }
+                        Value::Float(f) => Some(*f),
+                        _ => None,
+                    }
+                };
+                let second = match args.get(1) {
+                    None => None,
+                    Some(a) => match self.eval(a, fr)? {
+                        Value::Null => return Ok(Value::Null),
+                        v => match real(&v) {
+                            Some(n) => Some(n),
+                            None => {
+                                return fail(
+                                    a.span,
+                                    format!("expected a number, found {}", v.kind()),
+                                );
+                            }
+                        },
+                    },
+                };
+                if present.is_empty() {
+                    return Ok(Value::Null);
+                }
+                if func == Func::Quantile {
+                    let Some(q) = second else {
+                        return fail(span, "`quantile` needs the fraction to take".to_string());
+                    };
+                    if !(0.0..=1.0).contains(&q) {
+                        return fail(
+                            args[1].span,
+                            "the fraction of a `quantile` is from 0 to 1".to_string(),
+                        );
+                    }
+                    let mut sorted = present.clone();
+                    sorted.sort_by(|a, b| compare(a, b).ok().flatten().unwrap_or(Ordering::Equal));
+                    // The nearest value, as Polars interpolates by default.
+                    let at = (q * (sorted.len() - 1) as f64).round() as usize;
+                    return Ok((*sorted[at.min(sorted.len() - 1)]).clone());
+                }
+                // One degree of freedom by default, the sample's, as Polars
+                // has it.
+                let ddof = second.unwrap_or(1.0).round() as i64;
+                let n = present.len() as i64;
+                if n - ddof <= 0 {
+                    return Ok(Value::Null);
+                }
+                let fold = |op: BinOp, seed: Value, each: &dyn Fn(&Value) -> R| -> R {
+                    let mut total = seed;
+                    for v in &present {
+                        let term = each(v)?;
+                        total = arith(op, &total, &term).or_else(|m| fail(span, m))?;
+                    }
+                    Ok(total)
+                };
+                let total = fold(BinOp::Add, Value::Int(0), &|v| Ok(v.clone()))?;
+                let mean = arith(BinOp::Div, &total, &Value::Int(n)).or_else(|m| fail(span, m))?;
+                let squares = fold(BinOp::Add, Value::Int(0), &|v| {
+                    let d = arith(BinOp::Sub, v, &mean).or_else(|m| fail(span, m))?;
+                    arith(BinOp::Mul, &d, &d).or_else(|m| fail(span, m))
+                })?;
+                let var = arith(BinOp::Div, &squares, &Value::Int(n - ddof))
+                    .or_else(|m| fail(span, m))?;
+                if func == Func::Var {
+                    Ok(var)
+                } else {
+                    math(MathFn::Sqrt, &var).or_else(|m| fail(span, m))
+                }
+            }
+            Func::Sum
+            | Func::Mean
+            | Func::Min
+            | Func::Max
+            | Func::Count
+            | Func::Len
+            | Func::Median
+            | Func::Product
+            | Func::First
+            | Func::Last => {
                 // Every argument's values, taken together.
                 let mut items: Vec<Value> = Vec::new();
                 for arg in args {
                     match self.eval(arg, fr)? {
                         Value::Vector(v) => items.extend(v.iter().cloned()),
-                        Value::Sheet(v) if func == Func::Count && args.len() == 1 => {
+                        Value::Sheet(v) if func == Func::Len && args.len() == 1 => {
                             return Ok(Value::Int(v.rows.len() as i64));
                         }
                         // A block: its cells, row by row.
@@ -889,21 +1019,47 @@ impl<'p> Engine<'p> {
                 let kept = |v: Value| if percent { v.percent() } else { v };
                 match func {
                     Func::Count => Ok(Value::Int(present.len() as i64)),
+                    // What is empty counts here, which is the whole
+                    // difference between `len` and `count`.
+                    Func::Len => Ok(Value::Int(items.len() as i64)),
                     Func::Sum => sum().map(kept),
-                    Func::Avg if present.is_empty() => Ok(Value::Null),
-                    Func::Avg => arith(BinOp::Div, &sum()?, &Value::Int(present.len() as i64))
+                    Func::Mean if present.is_empty() => Ok(Value::Null),
+                    Func::Mean => arith(BinOp::Div, &sum()?, &Value::Int(present.len() as i64))
                         .map(kept)
                         .or_else(|m| fail(span, m)),
+                    Func::Median if present.is_empty() => Ok(Value::Null),
+                    Func::Median => {
+                        let mut sorted = present.clone();
+                        sorted.sort_by(|a, b| {
+                            compare(a, b).ok().flatten().unwrap_or(Ordering::Equal)
+                        });
+                        let n = sorted.len();
+                        if n % 2 == 1 {
+                            Ok((*sorted[n / 2]).clone())
+                        } else {
+                            let pair = arith(BinOp::Add, sorted[n / 2 - 1], sorted[n / 2])
+                                .or_else(|m| fail(span, m))?;
+                            arith(BinOp::Div, &pair, &Value::Int(2))
+                                .map(kept)
+                                .or_else(|m| fail(span, m))
+                        }
+                    }
+                    Func::Product => {
+                        let mut total = Value::Int(1);
+                        for v in &present {
+                            total = arith(BinOp::Mul, &total, v).or_else(|m| fail(span, m))?;
+                        }
+                        Ok(total)
+                    }
+                    // Empty or not: the first value is the first value.
+                    Func::First => Ok(items.first().cloned().unwrap_or(Value::Null)),
+                    Func::Last => Ok(items.last().cloned().unwrap_or(Value::Null)),
                     _ => {
                         let want = if func == Func::Min {
                             Ordering::Less
                         } else {
                             Ordering::Greater
                         };
-                        // A `NaN` has no order, so it is the answer.
-                        if let Some(&nan) = present.iter().find(|v| is_nan(v)) {
-                            return Ok(nan.clone());
-                        }
                         let mut best: Option<&Value> = None;
                         for &v in &present {
                             best = match best {
@@ -1223,16 +1379,16 @@ impl<'p> Engine<'p> {
     }
 }
 
+/// The day of the year a date falls on, 1 to 366.
+fn ordinal_day(days: i32) -> i64 {
+    let (y, _, _) = date::civil_from_days(days as i64);
+    days as i64 - date::days_from_civil(y, 1, 1) + 1
+}
+
 fn scalar_op(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     let empty = matches!(a, Value::Null) || matches!(b, Value::Null);
     Ok(match op {
         _ if op.is_arithmetic() => arith(op, a, b)?,
-        // As Raku has it: only `!=` is true of a `NaN`.
-        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
-            if !empty && (is_nan(a) || is_nan(b)) =>
-        {
-            Value::Boolean(op == BinOp::Ne)
-        }
         BinOp::Eq => equal(a, b)?.map_or(Value::Null, Value::Boolean),
         BinOp::Ne => equal(a, b)?.map_or(Value::Null, |e| Value::Boolean(!e)),
         BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => match compare(a, b)? {

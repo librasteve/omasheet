@@ -149,7 +149,7 @@ impl Value {
             Value::Boolean(_) => "Boolean",
             Value::Date(_) => "Date",
             Value::Time(_) => "Time",
-            Value::DateTime(_) | Value::Zoned(_) => "DateTime",
+            Value::DateTime(_) | Value::Zoned(_) => "Datetime",
             Value::Range { .. } => "a range",
             Value::Vector(_) => "a vector",
             Value::Sheet(_) => "a sheet",
@@ -303,7 +303,7 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
 }
 
 /// `+` and `-` where a side is a date or time: a whole number counts days
-/// next to a `Date` and seconds next to a `Time` or `DateTime`. `None` if
+/// next to a `Date` and seconds next to a `Time` or `Datetime`. `None` if
 /// neither side is one, or the two do not combine.
 fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
     let minus = match op {
@@ -467,41 +467,35 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
 /// The nearest multiple of `scale`, which is what `round(x, 0.01)` means:
 /// `round(x / scale) * scale`.
 ///
-/// Where a Float is on either side the multiple is worked out exactly, from
-/// the number the Float's digits say, and put back as a Float. In floating
-/// point the scaling lands a hair off the number the scale names, 2.78 as
-/// 2.7800000000000002, and a half lands below it, 2.785 to 2.78 where the
-/// digits say 2.79. A Float with no exact value, `Inf` or `NaN`, is left to
-/// the arithmetic, as are two exact numbers, which it already works out
-/// exactly.
-pub fn round_to(x: &Value, scale: &Value) -> Result<Value, String> {
-    let float = matches!(x, Value::Float(_)) || matches!(scale, Value::Float(_));
-    let exact = |v: &Value| match number(v) {
-        Some(N::Exact(r)) => Some(r),
-        Some(N::Float(f)) => Dec::from_f64(f),
-        None => None,
-    };
-    if float && let (Some(x), Some(s)) = (exact(x), exact(scale)) {
-        let multiple = (!s.is_zero())
-            .then(|| x.checked_div(s))
-            .flatten()
-            .map(|q| q.round())
-            .and_then(|whole| whole.checked_mul(s));
-        if let Some(r) = multiple {
-            return Ok(Value::Float(r.to_f64()));
+/// A number to `places` decimal places, as Polars rounds it: a half away
+/// from zero, and a number already shown in fewer places left as it is,
+/// since a `Decimal` carries its scale and widening it would only add
+/// zeros. An `Int` is whole already, so it is itself.
+pub fn round_digits(x: &Value, places: i64) -> Result<Value, String> {
+    let places = u32::try_from(places.max(0)).unwrap_or(u32::MAX);
+    let narrowed = |d: &Dec| d.rescale(places.min(d.scale())).unwrap_or(*d);
+    Ok(match x {
+        Value::Null => Value::Null,
+        Value::Int(_) => x.clone(),
+        Value::Decimal(d) => Value::Decimal(narrowed(d)),
+        Value::Fraction(d) => Value::Fraction(narrowed(d)),
+        Value::Percent(d) => Value::Percent(narrowed(d)),
+        // An infinity and a `NaN` have no places to round to.
+        Value::Float(f) if !f.is_finite() => Value::Float(*f),
+        Value::Float(f) => {
+            let factor = 10f64.powi(places.min(17) as i32);
+            Value::Float((f * factor).round() / factor)
         }
-    }
-    let whole = math(MathFn::Round, &arith(BinOp::Div, x, scale)?)?;
-    arith(BinOp::Mul, &whole, scale)
+        other => return Err(format!("cannot round {}", other.kind())),
+    })
 }
 
-/// Whether a value is `NaN`, which is not equal to, less than or more than
-/// anything, itself included.
+/// Whether a value is `NaN`, which is ordered greatest and equal to itself.
 pub fn is_nan(v: &Value) -> bool {
     matches!(v, Value::Float(f) if f.is_nan())
 }
 
-/// Order two single values. `None` if either is empty, or `NaN`.
+/// Order two single values. `None` if either is empty.
 pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
     Ok(Some(match (a, b) {
         (Value::Null, _) | (_, Value::Null) => return Ok(None),
@@ -516,10 +510,18 @@ pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
         (Value::Boolean(x), Value::Boolean(y)) => x.cmp(y),
         _ => match (number(a), number(b)) {
             (Some(N::Exact(x)), Some(N::Exact(y))) => x.cmp(&y),
-            (Some(x), Some(y)) => match real(&x).partial_cmp(&real(&y)) {
-                Some(o) => o,
-                None => return Ok(None),
-            },
+            (Some(x), Some(y)) => {
+                let (x, y) = (real(&x), real(&y));
+                // A `NaN` is greatest and equal to itself, as Polars orders
+                // it. Raku has it unordered, which would have kept every
+                // column holding one off the dataframe.
+                match (x.is_nan(), y.is_nan()) {
+                    (true, true) => Ordering::Equal,
+                    (true, false) => Ordering::Greater,
+                    (false, true) => Ordering::Less,
+                    (false, false) => x.partial_cmp(&y).unwrap_or(Ordering::Equal),
+                }
+            }
             _ => {
                 return Err(format!("cannot compare {} and {}", a.kind(), b.kind()));
             }

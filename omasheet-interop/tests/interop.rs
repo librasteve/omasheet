@@ -384,7 +384,7 @@ Net   := N * (1 - Rate) + Fee
 First := [N; 0] + [N; -1]
 Next  := On + 7
 Late  := At - 09:00
-Hits  := count(Rates[; Code == T[Code; *]])
+Hits  := len(Rates[; Code == T[Code; *]])
 Paid  := sum(Rates[Fee; Code == T[Code; *]])
 Odd   := [N; *] in [10, 30]
 ";
@@ -505,7 +505,7 @@ fn xlsx_imports_a_sheet_for_each_worksheet() {
         "\
 sheet Sales
 
-Closed : DateTime
+Closed : Datetime
 
 | Month | Revenue | UnitCost | Closed           | Total                |
 | ----- | ------- | -------- | ---------------- | -------------------- |
@@ -617,32 +617,29 @@ fn ledger() -> Vec<u8> {
 }
 
 #[test]
-fn xlsx_round_to_a_scale() {
+fn xlsx_round_to_a_number_of_places() {
     let file = "\
 sheet T
 
-X     | Cents | Hundreds | Halves | Whole
-1.005 | *     | *        | *      | *
--1250 | *     | *        | *      | *
+X     | Cents | Whole | Hundreds
+1.005 | *     | *     | *
+-1250 | *     | *     | *
 
-Cents    := round(X, 0.01)
-Hundreds := round(X, 100)
-Halves   := round(X, 0.5)
+Cents    := round(X, 2)
 Whole    := round(X)
+Hundreds := round(X / 100) * 100
 ";
     let out = xlsx::export("t.omx", file, None, options()).unwrap();
     let bytes = &out.files[0].bytes;
     let at = |cell: &str| formula_at(bytes, "T", cell);
-    // To a power of ten, as a workbook rounds to so many digits.
+    // A count of places goes out as the count it is.
     assert_eq!(at("B2"), "ROUND(A2,2)");
-    assert_eq!(at("C3"), "ROUND(A3,-2)");
-    // To any other scale, as it is meant.
-    assert!(at("D2").starts_with("ROUND(A2/0.5,0)*"), "{}", at("D2"));
-    assert_eq!(at("E2"), "ROUND(A2,0)");
+    assert_eq!(at("C2"), "ROUND(A2,0)");
+    // The nearest hundred is arithmetic in OMX, and goes out as arithmetic.
+    assert!(at("D2").starts_with("ROUND(A2/100,0)*"), "{}", at("D2"));
     // And back again.
     let back = xlsx::import(bytes).unwrap().source;
-    assert!(back.contains("round(X, 0.01)"), "{back}");
-    assert!(back.contains("round(X, 100)"), "{back}");
+    assert!(back.contains("round(X, 2)"), "{back}");
 }
 
 #[test]
@@ -661,7 +658,7 @@ sheet Sales
 
 Profit  := Revenue - Cost
 Running := [Profit; 0..*].sum()
-Margin  := round(Profit / Revenue, 0.0001)
+Margin  := round(Profit / Revenue, 4)
 
 sheet YearEnd
 
@@ -859,7 +856,7 @@ fn parquet_writes_a_file_for_each_sheet() {
 fn parquet_takes_each_column_type_from_the_schema() {
     let file = "sheet T\n\n\
                 N : Int\nP : Decimal\nR : Percent\nF : Float\nS : String\n\
-                B : Boolean\nD : Date\nA : Time\nW : DateTime\n\n\
+                B : Boolean\nD : Date\nA : Time\nW : Datetime\n\n\
                 N | P | R | F | S | B | D | A | W\n\
                 7 | 19.99 | 20% | 1.5e3 | hi | true | 2025-01-31 | 09:30 | 2025-01-31T09:30\n\
                 -3 | 0.125 | 12.5% | Inf | \"42\" | false | 2025-02-01 | 17:05 | 2025-02-01T17:05\n";
@@ -876,7 +873,7 @@ fn parquet_takes_each_column_type_from_the_schema() {
         "B : Boolean",
         "D : Date",
         "A : Time",
-        "W : DateTime",
+        "W : Datetime",
     ] {
         assert!(
             back.source.contains(line),

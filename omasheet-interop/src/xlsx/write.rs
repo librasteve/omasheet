@@ -12,7 +12,6 @@
 use omasheet_engine::omx::ast::{BinOp, Lit, UnOp};
 use omasheet_engine::omx::check::Program;
 use omasheet_engine::omx::date;
-use omasheet_engine::omx::decimal::Dec;
 use omasheet_engine::omx::funcs::MathFn;
 use omasheet_engine::omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_engine::omx::types::S;
@@ -165,28 +164,6 @@ fn whole(program: &Program, node: &Node) -> Option<i64> {
         Ir::Single(inner) => whole(program, inner),
         _ => None,
     }
-}
-
-/// An exact number written in the formula, or a constant that is one.
-fn exact(program: &Program, node: &Node) -> Option<Dec> {
-    match &node.kind {
-        Ir::Lit(Lit::Int(n)) => Some(Dec::from_i64(*n)),
-        Ir::Lit(Lit::Decimal(r)) => Some(*r),
-        Ir::Const(i) => exact(program, &program.consts[*i].node),
-        Ir::Single(inner) => exact(program, inner),
-        _ => None,
-    }
-}
-
-/// The digits a workbook's `ROUND` takes for a scale that is a power of
-/// ten, as `round(x, 0.01)` rounds to two places.
-fn round_digits(program: &Program, scale: &Node) -> Option<i64> {
-    let r = exact(program, scale)?;
-    // A power of ten is one digit and an exponent: `1000` is `1e3`, and
-    // `0.001` is `1e-3`. Excel rounds to a number of places, so the power is
-    // taken the other way round.
-    let (digits, e) = r.digits_and_exponent();
-    (digits == "1").then_some(-e)
 }
 
 /// The sheet, rows and columns a selection reads; no columns is all of
@@ -401,9 +378,12 @@ impl Writer<'_> {
         let [arg] = args else { return Err(VECTOR) };
         let name = match func {
             Func::Sum => "SUM",
-            Func::Avg => "AVERAGE",
+            Func::Mean => "AVERAGE",
             Func::Min => "MIN",
             Func::Max => "MAX",
+            // `count` skips what is empty and `len` does not, which is
+            // COUNTA and ROWS.
+            Func::Len => "ROWS",
             _ => "COUNTA",
         };
         if let Ir::VecLit(items) = &arg.kind {
@@ -417,7 +397,7 @@ impl Writer<'_> {
                     parts.push(e.text);
                 }
             }
-            if parts.is_empty() || func == Func::Count {
+            if parts.is_empty() || matches!(func, Func::Count | Func::Len) {
                 return Err(VECTOR);
             }
             let kind = kind.unwrap_or(Kind::Unknown);
@@ -429,7 +409,7 @@ impl Writer<'_> {
         let (t, sel, cols) = target(arg).ok_or(VECTOR)?;
         let sheet = &self.program.sheets[t];
         let kind = match (func, cols.as_slice()) {
-            (Func::Count, _) => Kind::Number,
+            (Func::Count | Func::Len, _) => Kind::Number,
             (_, [c, ..]) => kind_of(sheet.cols[*c].ty),
             _ => return Err(VECTOR),
         };
@@ -453,12 +433,12 @@ impl Writer<'_> {
                     parts.push(value.text.clone());
                 }
                 match (func, cols.as_slice()) {
-                    (Func::Count, []) => format!("COUNTIFS({})", parts.join(",")),
+                    (Func::Len, []) => format!("COUNTIFS({})", parts.join(",")),
                     (Func::Count, [c]) => {
                         let read = self.column(cx, t, *c)?;
                         format!("COUNTIFS({},{read},\"<>\")", parts.join(","))
                     }
-                    (Func::Sum | Func::Avg, [c]) => {
+                    (Func::Sum | Func::Mean, [c]) => {
                         let read = self.column(cx, t, *c)?;
                         let name = if func == Func::Sum {
                             "SUMIFS"
@@ -590,7 +570,7 @@ impl Writer<'_> {
     fn call(&self, func: Func, args: &[Node], cx: &Cx) -> Scalar {
         if matches!(
             func,
-            Func::Sum | Func::Avg | Func::Min | Func::Max | Func::Count
+            Func::Sum | Func::Mean | Func::Min | Func::Max | Func::Count | Func::Len
         ) {
             return self.aggregate(func, args, cx);
         }
@@ -602,28 +582,21 @@ impl Writer<'_> {
             Func::E => return Ok(Some(Expr::atom("EXP(1)".into(), Kind::Number))),
             _ => {}
         }
-        // To a power of ten, as `ROUND` has it: `round(x, 0.01)` is
-        // `ROUND(x,2)`. Any other scale goes out as the multiple it means.
-        if matches!(func, Func::RoundTo) {
-            let [x, scale] = args else { return Err(FUNCTION) };
-            let digits = round_digits(self.program, scale);
-            let (Some(x), Some(s)) = (self.scalar(x, cx)?, self.scalar(scale, cx)?) else {
+        // `round(x, n)` is Excel's own `ROUND(x,n)`.
+        if matches!(func, Func::RoundDigits) {
+            let [x, places] = args else {
+                return Err(FUNCTION);
+            };
+            let (Some(x), Some(n)) = (self.scalar(x, cx)?, self.scalar(places, cx)?) else {
                 return Ok(None);
             };
-            if x.kind != Kind::Number || s.kind != Kind::Number {
+            if x.kind != Kind::Number || n.kind != Kind::Number {
                 return Err(TYPE);
             }
-            return match digits {
-                Some(digits) => Ok(Some(Expr::atom(
-                    format!("ROUND({},{digits})", x.text),
-                    Kind::Number,
-                ))),
-                None => {
-                    let quotient = self.arithmetic(BinOp::Div, x, s.clone())?;
-                    let whole = Expr::atom(format!("ROUND({},0)", quotient.text), Kind::Number);
-                    self.arithmetic(BinOp::Mul, whole, s).map(Some)
-                }
-            };
+            return Ok(Some(Expr::atom(
+                format!("ROUND({},{})", x.text, n.text),
+                Kind::Number,
+            )));
         }
         let [arg] = args else { return Err(FUNCTION) };
         let Some(x) = self.scalar(arg, cx)? else {
@@ -669,9 +642,9 @@ impl Writer<'_> {
                     MathFn::Sin => "SIN",
                     MathFn::Cos => "COS",
                     MathFn::Tan => "TAN",
-                    MathFn::Asin => "ASIN",
-                    MathFn::Acos => "ACOS",
-                    MathFn::Atan => "ATAN",
+                    MathFn::Arcsin => "ASIN",
+                    MathFn::Arccos => "ACOS",
+                    MathFn::Arctan => "ATAN",
                     MathFn::Sinh => "SINH",
                     MathFn::Cosh => "COSH",
                     MathFn::Tanh => "TANH",

@@ -130,8 +130,8 @@ row become a cell. Each formula is written for the row it is on:
 | `if Revenue > Cost then "up" else "down"` | `=IF(B3>C3,"up","down")` |
 
 - These are written: `+ - * / **` and the comparisons; `and`, `or`, `not`,
-  `if`; `sum`, `avg`, `min`, `max` and `count` of a column, a range of rows
-  or a list; `sum`, `avg` and `count` of the rows where columns equal
+  `if`; `sum`, `mean`, `min`, `max`, `count` and `len` of a column, a range
+  of rows or a list; `sum`, `mean` and `len` of the rows where columns equal
   values; a row found where one column equals a value; `abs`, `round`,
   `floor`, `ceil`, `sqrt`, the logarithms and the trigonometry; `today`,
   `now`, `year` to `second`, `weekday`, `date` and `time`; `x.Int`, and a
@@ -159,7 +159,7 @@ row become a cell. Each formula is written for the row it is on:
 | `Int`, `Decimal` | the nearest floating-point number | in full, to the 30 digits it shows; one that does not end, such as `1/3`, as `0.333333333333333333333333333333` |
 | `Fraction` | the nearest floating-point number | the decimal it holds, not `1/7`: a CSV is read by anything, and a fraction is not a number elsewhere |
 | `Percent` | that number, formatted as a percentage | `40%`; one that does not end as `33.3333333333333333333333333333%` |
-| `Date`, `Time`, `DateTime` | a date or time cell | `2025-01-31`, `09:30`, `2025-01-31T09:30` |
+| `Date`, `Time`, `Datetime` | a date or time cell | `2025-01-31`, `09:30`, `2025-01-31T09:30` |
 | a cell that failed | empty | empty |
 
 JSON is written as it is read: an object holding each sheet by name as a
@@ -172,7 +172,7 @@ name. With `--sheet` it is the rows of that sheet alone.
 | `Percent` | the number it stands for: `20%` is `0.2` |
 | `Float` | a number; `Inf`, `-Inf` and `NaN` as strings |
 | `String`, `Boolean` | a string; `true` or `false` |
-| `Date`, `Time`, `DateTime` | a string, as a file writes it: `"2025-01-31"` |
+| `Date`, `Time`, `Datetime` | a string, as a file writes it: `"2025-01-31"` |
 | an empty cell, or one that failed | `null` |
 
 Anything written less exactly than the file holds it is reported, with the
@@ -210,7 +210,7 @@ type its own name stands for rather than converted into something near it.
 | `String` | UTF-8 `byte_array` |
 | `Date` | `date32` |
 | `Time` | `time64`, in nanoseconds |
-| `DateTime` | `timestamp`, in microseconds |
+| `Datetime` | `timestamp`, in microseconds |
 | a blank cell | a null |
 | a cell that failed | a null, and it is reported |
 
