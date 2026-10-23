@@ -96,9 +96,21 @@ what stops a table's rows being exploded into cells.
       which matters when the goldens are what stands between a subtle
       difference and a wrong answer. `cell_shown`, the xlsx writer and
       `summary` are untouched
-- [ ] 3.5 The memo grid narrowed to `Vec<Vec<Option<Vec<Slot>>>>`, allocated
+- [x] 3.5 The memo grid narrowed to `Vec<Vec<Option<Vec<Slot>>>>`, allocated
       per column on first use. Contained: the field, its construction, and
-      three accesses, all inside `Engine::cell`
+      three accesses, all inside `Engine::cell`.
+
+      It does not mean a frame column never gets slots: `Engine::cell`
+      memoises one like any other, so showing a table still makes a slot
+      vector per column shown. What goes is the allocation up front from
+      `nrows × ncols`, and `run()` walks only computed columns and
+      constants — so `eval 'T.len()'` over a million rows now makes none,
+      where it used to make the whole grid before evaluating anything.
+
+      Measured: a `Cell` is 96 bytes and a slot holds a `Value` (48 bytes)
+      and its tag. A million rows of ten columns was therefore about 960 MB
+      of cells, from the loop section 3 deleted, and about 560 MB of slots,
+      from the allocation this one deletes.
 - [ ] 3.6 **Checkpoint: no lowering, everything correct, and opening a large
       table no longer materialises it.**
 

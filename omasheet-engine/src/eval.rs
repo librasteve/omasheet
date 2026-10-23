@@ -55,7 +55,11 @@ pub struct Engine<'p> {
     /// The columns of every `table`, as their files hold them. Empty for a
     /// program with no table, and for one whose sources were not read.
     tables: Tables,
-    cells: RefCell<Vec<Vec<Vec<Slot>>>>,
+    /// A memoisation slot per cell, by sheet, column and row. A column's
+    /// slots are made when a cell of it is first asked for: a sheet of a
+    /// million rows whose columns all come from a file needs none of them,
+    /// and merely opening such a file should not pay for them.
+    cells: RefCell<Vec<Vec<Option<Vec<Slot>>>>>,
     consts: RefCell<Vec<Slot>>,
     /// The arguments of the file's own functions being evaluated, the
     /// innermost call last.
@@ -116,7 +120,7 @@ impl<'p> Engine<'p> {
             cells: RefCell::new(
                 prog.sheets
                     .iter()
-                    .map(|t| vec![vec![Slot::Pending; t.nrows]; t.cols.len()])
+                    .map(|t| vec![None; t.cols.len()])
                     .collect(),
             ),
             consts: RefCell::new(vec![Slot::Pending; prog.consts.len()]),
@@ -195,18 +199,24 @@ impl<'p> Engine<'p> {
     /// The value of one cell, calculating it if needed.
     pub fn cell(&self, t: usize, c: usize, r: usize) -> R {
         let col = &self.prog.sheets[t].cols[c];
-        match &self.cells.borrow()[t][c][r] {
-            Slot::Done(Value::Error) => return Err(Fail::Poison),
-            Slot::Done(v) => return Ok(v.clone()),
-            Slot::Busy => {
-                return fail(
-                    col.span,
-                    format!("circular reference in column `{}` at row {r}", col.name),
-                );
+        {
+            let mut cells = self.cells.borrow_mut();
+            let slots =
+                cells[t][c].get_or_insert_with(|| vec![Slot::Pending; self.prog.sheets[t].nrows]);
+            // Taken out of the slot, so that marking it `Busy` below is not
+            // a second borrow of what the match is reading.
+            match slots[r].clone() {
+                Slot::Done(Value::Error) => return Err(Fail::Poison),
+                Slot::Done(v) => return Ok(v),
+                Slot::Busy => {
+                    return fail(
+                        col.span,
+                        format!("circular reference in column `{}` at row {r}", col.name),
+                    );
+                }
+                Slot::Pending => slots[r] = Slot::Busy,
             }
-            Slot::Pending => {}
         }
-        self.cells.borrow_mut()[t][c][r] = Slot::Busy;
         let formula = |node: &Node| {
             let v = self.eval(node, &mut vec![(t, r)])?;
             self.fit(v, col, node.span)
@@ -255,7 +265,9 @@ impl<'p> Engine<'p> {
             }
             Err(Fail::Poison) => Value::Error,
         };
-        self.cells.borrow_mut()[t][c][r] = Slot::Done(value.clone());
+        if let Some(slots) = self.cells.borrow_mut()[t][c].as_mut() {
+            slots[r] = Slot::Done(value.clone());
+        }
         match value {
             Value::Error => Err(Fail::Poison),
             v => Ok(v),
