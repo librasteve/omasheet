@@ -24,12 +24,10 @@ decimal edges, a value with no dtype — and hands it the rest.
   microseconds, as Polars holds them, so that no sub-second value is lost at
   the Parquet boundary. ADDED: neither `/` nor `mean` is lowered on an exact
   column, the two places Polars' decimal arithmetic and `Dec` disagree
-- **file-format** — MODIFIED: a `table`'s columns arrive as Polars columns
-  rather than as cells, so only the rows and columns a selection asks for are
-  read
-- **omx-expressions** — MODIFIED: a date-time with a zone is a Polars dtype,
-  so a zoned column is lowered like any other; a column whose values are in
-  more than one zone is not
+A `table`'s columns arriving as Polars columns, and a zoned date-time being a
+Polars dtype after all, need no delta of their own: the `evaluation`
+requirements above are where both are said, under *A sheet's data is held as
+columns* and *What is not lowered*.
 
 ## Impact
 

@@ -27,9 +27,14 @@ omasheet-cli = { path = "omasheet-cli" }
 calamine = "0.36"
 rust_xlsxwriter = "0.99"
 csv = "1"
-# Polars, for Parquet and for the dataframe-backed tables of
-# `add-dataframe-interop`. Unconditional, per D26.
+# Polars, for Parquet, for the dataframe-backed tables of
+# `add-dataframe-interop`, and for the evaluation of `add-columnar-core`.
+# Unconditional, per D26. `lazy` is what `Expr`, `col()` and the aggregates
+# live behind; `propagate_nans` is a passthrough to it, and is what would
+# make `max` over a NaN agree with the engine (D71a).
 polars = { version = "0.51", default-features = false, features = [
+    "lazy",
+    "propagate_nans",
     "parquet",
     "dtype-decimal",
     "dtype-date",
