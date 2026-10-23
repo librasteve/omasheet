@@ -158,9 +158,16 @@ what stops a table's rows being exploded into cells.
       `Datetime` pass through unscaled, being already in the units Polars
       holds them in
 - [ ] 4.4 The sub-second values Parquet holds, which the old division
-      truncated, kept
-- [ ] 4.5 `millisecond`, `microsecond` and `nanosecond`, which this makes
-      meaningful
+      truncated, kept. **Still truncated, deliberately**: no literal can
+      write a fraction of a second, so a value holding one would show as
+      something the file could not write back. It arrives with the syntax,
+      below
+- [ ] 4.5 Fractional seconds in a literal and in what is shown, and then
+      `millisecond`, `microsecond` and `nanosecond`. With them comes a
+      question the finer units raise: the difference of two times is an
+      `Int` of seconds, which would truncate once a sub-second value can
+      exist, so either it becomes a `Decimal` — and the checker must type it
+      so — or the truncation is stated and meant
 
 ## 5. The two gates (D66, D67, D74)
 
