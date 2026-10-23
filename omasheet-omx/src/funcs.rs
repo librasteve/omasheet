@@ -267,6 +267,18 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     ),
     doc(
         MATH,
+        "is_nan",
+        "Sheet.Column.is_nan()",
+        "Whether a cell holds a NaN, the Float a division of zero by zero gives. Empty of an empty cell, which is not a NaN but a missing value.",
+    ),
+    doc(
+        MATH,
+        "is_not_nan",
+        "Sheet.Column.is_not_nan()",
+        "Whether a cell holds a number that is not a NaN.",
+    ),
+    doc(
+        MATH,
         "fill_null",
         "fill_null(x, 0)",
         "The value, or something else where it is empty. The same as x // 0.",

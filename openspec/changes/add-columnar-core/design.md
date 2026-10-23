@@ -38,9 +38,12 @@ polars 0.51, eagerly, with the features this workspace already has:
 | `mean` | `Decimal(38, 2)` | **`f64`** | a `Decimal`, exact — **differs** |
 | `max`, `min` | `Decimal(38, 2)` | `Decimal(38, 2)` | agrees |
 | `max`, `min` | `Float64` holding a `NaN` | the NaN is **skipped**: `3.0` and `1.0` | `NaN` and `1` — **differs for `max`** |
+| `nan_max`, `nan_min` | same | `NaN` and `NaN` | `NaN` and `1` — **differs for `min`** |
 | `sum`, `mean` | same | `NaN` | `NaN` — agrees |
-| sort | same | `[1.0, 3.0, NaN]`, the NaN last | D56 — agrees |
-| `NaN == NaN` | same | `true` | D56 — agrees |
+| sort | same | `null, 1.0, 3.0, NaN, NaN` | D56 — agrees |
+| `NaN == NaN` | same | `true`, on both paths | D56 — agrees |
+| `is_nan` of a null | same | `null`, not `false` | there is no `is_nan` yet (D71b) |
+| `group_by` over a NaN | same | the NaNs are one key | — |
 
 Three things follow, and they are the shape of this change rather than
 details of it:
@@ -53,12 +56,21 @@ details of it:
    column comes back `f64`. So D72 covers both: neither is lowered on an
    exact column. `mean` as `sum / len` is no escape, since it is the same
    division.
-3. **D56 was the right call and is now cheap.** Equality and sort order agree
-   with Polars by construction. Only `max` over a NaN-bearing Float column
-   differs, and `propagate_nans` — which would fix it — is
-   `["polars-lazy?/propagate_nans"]`, so it does nothing on the eager path.
-   A NaN-bearing Float column therefore keeps `min`/`max` on the engine until
-   aggregates are lowered through the lazy API.
+3. **D56 was the right call.** `NaN == NaN` is `true` in polars 0.51 on both
+   the eager path and through the expression engine — measured over two
+   distinct columns, so it is not a self-comparison shortcut — and a NaN
+   sorts last. Polars has moved to total-ordering semantics for float
+   equality; IEEE, pandas and older Polars say otherwise, and a table saying
+   `False` describes one of those rather than 0.51.
+
+   What does not line up is the pair `min` and `max`, and neither Polars
+   setting gives both. Omasheet holds a NaN to be greatest, so its `max` is
+   the NaN and its `min` is the least of the numbers. Polars' default `max`
+   and `min` skip the NaN; `nan_max` and `nan_min`, which `propagate_nans`
+   adds, both answer the NaN. So omasheet's `max` is Polars' `nan_max` and
+   omasheet's `min` is Polars' default `min` — except over a column of
+   nothing but NaNs, where the default `min` is null and omasheet answers the
+   NaN. D71a is refined accordingly rather than refusing both.
 
 One smaller finding to carry: a lowered result's dtype comes back with
 precision `None` (`Decimal(None, 4)`), not `Decimal(38, 4)`. Whatever writes
@@ -80,7 +92,8 @@ Parquet write will disagree with the schema in the text.
 | D69 | Decided | `Percent` and `Fraction` stay display-only; the wrapper is re-applied from `Column::ty` after a lowered aggregate | "The sum and the mean of percentages are percentages" infers the wrapper from the values, and a Polars aggregate returns a bare `Decimal` |
 | D70 | Decided | A `Zoned` value **is** lowered: Polars' `Datetime(TimeUnit, Option<TimeZone>)` carries a zone, and `dtype-datetime` is already on | Owner decision, 2026-10-23, bringing forward "a `DateTime` with a zone" from `add-polars-dtypes` section 5. The column holds `utc` in µs, the dtype holds the zone, `wall` is derived on read and `home` comes from the file's `zone`. **The zone is on the dtype, so one column is one zone**: a column whose values are in different zones stays on the row path. `convert_time_zone` then is Polars' own |
 | D71 | Decided | A `NaN` is ordered greatest and equal to itself | Taken in `align-polars-vocabulary` as D56, and the spike confirms Polars agrees on equality and on sort order |
-| D71a | Decided | `min` and `max` over a Float column holding a `NaN` are not lowered | The spike: Polars skips the NaN eagerly, where omasheet answers it. `propagate_nans` is a passthrough to `polars-lazy`, so it cannot help the eager path. Revisit when aggregates go through the lazy API |
+| D71a | Decided | `max` is lowered to Polars' `nan_max`, and `min` to Polars' default `min`. A Float column of nothing but `NaN`s is not lowered for `min` | The spike, measured with `propagate_nans` on. Omasheet holds a NaN greatest, which makes its `max` exactly `nan_max` and its `min` exactly the default `min` — the two differ only when there is no number to be least, where the default gives null and omasheet gives the NaN. That case is one `is_not_nan().any()` to detect and is left on the engine |
+| D71b | Decided | `is_nan` and `is_not_nan` are added, and `is_nan` of an empty cell is empty rather than false | Polars has both, and without them OMX can ask whether a cell is missing but not whether it is a `NaN` — half of the distinction the two kinds of absence draw. Polars' `is_nan` returns null for a null, which is the answer a missing value deserves, and `is_null` already answers the other question. `fill_nan` waits: `fill_null` is the function spelling of `//` and takes one value, so the pair should widen together |
 | D72 | Decided | Neither `/` nor `mean` is lowered on an exact column; `*` is lowered, its scale having been checked against `Dec`'s | The spike. Division is fixed at scale 6 in Polars against up to 30 digits here, and a Polars `mean` over a Decimal column returns `f64` |
 | D72a | Decided | A lowered column's dtype is re-stamped to `Decimal(38, s)` before it is stored | Polars returns `Decimal(None, s)` from arithmetic, and the precision is what a Parquet write and the schema in the text agree on |
 | D73 | Open | A row count below which the row path is used even for a lowerable column | Needs a measurement, not a guess. A LazyFrame build, an optimiser pass and a `collect()` are slower than the row loop for a ten-row sheet, and a ten-row sheet is omasheet's typical document. Start at 1024 and measure |
@@ -114,7 +127,8 @@ Parquet write will disagree with the schema in the text.
 ## Open questions
 
 - D73, the threshold (owner, after the measurement).
-- Whether aggregates should go through the lazy API rather than the eager
-  one, which is what would let `propagate_nans` settle D71a.
+- Whether `fill_null` and `is_in` — and so `fill_nan` — should widen from one
+  value to a whole column, which is a change to the operators `//` and `in`
+  rather than to the functions that spell them.
 - Whether `Value::Series` is needed at all, which is a measurement rather
   than a decision.

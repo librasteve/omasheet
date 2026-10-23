@@ -216,6 +216,9 @@ that do not fit are cut and marked `…`. Only the display is cut, and
 - The names are Polars': `mean` not `avg`, `len` for a sheet's rows where
   `count` counts what is not empty, `month_end` not `eom`, `arcsin` not
   `asin`, and `round(x, 2)` is two decimal places, not the nearest 0.01.
+- An empty cell and a `NaN` are different absences. `is_null(x)` asks whether
+  a cell is empty and `is_nan(x)` whether it holds a `NaN`, which is what a
+  division of zero by zero gives; `is_nan` of an empty cell is empty.
 - A lookup that finds one row fills a cell with its value; none gives empty,
   so add `// "none"`; several is an error.
 

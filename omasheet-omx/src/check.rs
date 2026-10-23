@@ -2346,15 +2346,15 @@ impl<'a> Checker<'a> {
                 };
                 self.lower(&form, sc)
             }
-            "is_null" | "is_not_null" => {
+            "is_null" | "is_not_null" | "is_nan" | "is_not_nan" => {
                 if !arity(self, 1, &format!("Sheet.Column.{name}()")) {
                     return fail;
                 }
                 // The negative one is the positive one, negated.
-                if name == "is_not_null" {
+                if let Some(positive) = name.strip_prefix("is_not_") {
                     let inner = Expr {
                         kind: ExprKind::Call(
-                            "is_null".to_string(),
+                            format!("is_{positive}"),
                             name_span,
                             vec![args[0].clone()],
                         ),
@@ -2374,16 +2374,18 @@ impl<'a> Checker<'a> {
                         if !matches!(arg.kind, Ir::Error) {
                             self.err(
                                 args[0].span,
-                                format!(
-                                    "`is_null` needs a value, but this is {}",
-                                    other.describe()
-                                ),
+                                format!("`{name}` needs a value, but this is {}", other.describe()),
                             );
                         }
                         return fail;
                     }
                 };
-                (Node::new(Ir::Call(Func::IsNull, vec![arg]), span), ty)
+                let func = if name == "is_nan" {
+                    Func::IsNan
+                } else {
+                    Func::IsNull
+                };
+                (Node::new(Ir::Call(func, vec![arg]), span), ty)
             }
             // `cast(x, Int)`, the Polars spelling of `Int(x)`.
             "cast" => {

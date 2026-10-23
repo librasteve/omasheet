@@ -160,6 +160,9 @@ pub enum Func {
     StartOfMonth,
     /// Whether a value is empty.
     IsNull,
+    /// Whether a value is a `NaN`. Empty of an empty cell, which is a
+    /// different kind of absence and has no answer to this.
+    IsNan,
     Today,
     Now,
     Year,

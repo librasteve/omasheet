@@ -1621,6 +1621,23 @@ fn empty_or_not() {
 }
 
 #[test]
+fn a_nan_and_a_missing_value_are_different_absences() {
+    // A NaN is a Float; an empty cell is a missing value. So `is_nan` of an
+    // empty cell has no answer, where `is_null` of it has one.
+    assert_eq!(calc("[is_nan(0/0), is_null(0/0)]"), "[true, false]");
+    assert_eq!(calc("[is_nan(1), is_not_nan(1)]"), "[false, true]");
+    // An infinity is a number, however large.
+    assert_eq!(calc("[is_nan(1/0), is_not_nan(1/0)]"), "[false, true]");
+    assert_eq!(ask(NOTES, "is_nan(T[Note; 1])"), "empty");
+    assert_eq!(ask(NOTES, "is_null(T[Note; 1])"), "true");
+    // Over a column, each cell in turn.
+    assert_eq!(
+        ask(NOTES, "T.Note.is_nan()"),
+        "[false, empty, false, false]"
+    );
+}
+
+#[test]
 fn casting_is_converting() {
     // Four spellings of one conversion.
     assert_eq!(calc("cast(19.99, Int)"), "19");

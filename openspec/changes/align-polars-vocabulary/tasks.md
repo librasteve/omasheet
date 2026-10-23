@@ -91,7 +91,11 @@ Selections, which desugar and need no `Func`:
 
 Elementwise:
 
-- [x] 5.9 `is_null`, `is_not_null`
+- [x] 5.9 `is_null`, `is_not_null`, `is_nan` and `is_not_nan`, the last two
+      answering a question OMX could not ask at all: `is_nan` of an empty
+      cell is empty, as Polars has it, since a `NaN` and a missing value are
+      different kinds of absence. `fill_nan` waits for `fill_null` to widen
+      from one value to a column, which is a change to `//`
 - [x] 5.10 `fill_null(x, v)` and `is_in(x, v)` as the function spellings of
       `//` and `in` (D58)
 - [x] 5.11 `cast(x, T)`, beside the `Int(x)` / `x.Int` spellings that stay

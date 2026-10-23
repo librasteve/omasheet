@@ -687,13 +687,21 @@ impl<'p> Engine<'p> {
                     single => moved(&single),
                 }
             }
-            Func::IsNull => {
-                let empty = |v: &Value| -> R { Ok(Value::Boolean(matches!(v, Value::Null))) };
+            Func::IsNull | Func::IsNan => {
+                let absent = |v: &Value| -> R {
+                    Ok(match (func, v) {
+                        (Func::IsNull, v) => Value::Boolean(matches!(v, Value::Null)),
+                        // An empty cell is missing, not a `NaN`, so it has no
+                        // answer to this; Polars answers a null the same way.
+                        (_, Value::Null) => Value::Null,
+                        (_, v) => Value::Boolean(matches!(v, Value::Float(f) if f.is_nan())),
+                    })
+                };
                 match self.eval(&args[0], fr)? {
                     Value::Vector(items) => Ok(Value::Vector(Rc::new(
-                        items.iter().map(empty).collect::<R<Vec<_>>>()?,
+                        items.iter().map(absent).collect::<R<Vec<_>>>()?,
                     ))),
-                    single => empty(&single),
+                    single => absent(&single),
                 }
             }
             Func::Today => Ok(Value::Date(date::split_datetime(self.now).0)),

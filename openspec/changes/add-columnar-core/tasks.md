@@ -17,14 +17,27 @@ what stops a table's rows being exploded into cells.
 
 ## 1. The dependency
 
-- [ ] 1.1 `lazy` in the Polars features, and `propagate_nans` with it
-- [ ] 1.2 The release binary size and the `cargo build` time before and
-      after, recorded here. The figures to beat: 1.7 MB before Polars, 44 MB
-      plain release, 20 MB with the PKGBUILD levers, about eight minutes of
-      link time at `lto=fat`
-- [ ] 1.3 If the figures are unacceptable, enumerate the features rather than
-      taking `lazy`'s defaults, and add this change's and the next one's
-      separately
+- [x] 1.1 `lazy` in the Polars features, and `propagate_nans` with it
+- [x] 1.2 Measured, on this machine, `cargo build --release` from a warm
+      tree so that the figures are the feature's marginal cost rather than a
+      cold build's:
+
+      | | Before | After |
+      |---|---|---|
+      | `target/release/omasheet` | 44,553,400 bytes | 50,379,032 bytes |
+      | Polars crates compiled | 14 | 19 |
+      | That build | 35 s (the omasheet crates alone) | 12 m 07 s |
+
+      So `lazy` costs **5.8 MB, about 13%**, and the five crates are
+      `polars-lazy`, `polars-plan`, `polars-expr`, `polars-mem-engine` and
+      `polars-stream`. For the record the earlier figures stand: 1.7 MB
+      before Polars at all, and 20 MB from the 44 MB with the PKGBUILD
+      levers, which this change has not re-measured.
+- [ ] 1.3 Whether 13% is worth enumerating features to avoid. It is the
+      owner's call and the figure is now known; nothing here depends on it
+- [ ] 1.4 The PKGBUILD levers re-measured once the lowering lands, since fat
+      LTO folding the Polars generics is where the 44 MB became 20 MB and the
+      lazy stack is more of the same generics
 
 ## 2. The layering (D61, D62)
 
@@ -81,8 +94,9 @@ what stops a table's rows being exploded into cells.
       reporting per column whether lowering was attempted and refused
 - [ ] 5.6 D72: `/` and `mean` not lowered on an exact column; `*` lowered
       with its scale checked; D72a: the precision re-stamped to 38
-- [ ] 5.7 D71a: `min` and `max` not lowered over a Float column holding a
-      `NaN`
+- [ ] 5.7 D71a: `max` lowered to Polars' `nan_max` and `min` to its default
+      `min`, with a Float column of nothing but `NaN`s left on the engine for
+      `min` — the one case where the two disagree
 - [ ] 5.8 D70: a zoned column lowered, one zone per column, and a column of
       mixed zones left on the row path
 

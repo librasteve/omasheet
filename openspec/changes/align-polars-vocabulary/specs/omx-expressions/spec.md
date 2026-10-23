@@ -131,6 +131,12 @@ the current row, so it SHALL be written in a sheet's own formula, as `*` is.
 `is_null(x)` and `is_not_null(x)` SHALL say whether a value is empty, of one
 value or of each of a column's.
 
+`is_nan(x)` and `is_not_nan(x)` SHALL say whether a value is a `NaN`. A `NaN`
+and an empty cell are different kinds of absence — one is a floating-point
+value and the other is a missing one — so `is_nan` of an empty cell SHALL be
+empty rather than false, as it is in Polars, and `is_null` SHALL answer the
+other question.
+
 `fill_null(x, v)` SHALL give `v` where `x` is empty, and `is_in(x, v)` SHALL
 say whether `x` is among `v`. Each SHALL mean exactly what the operators `//`
 and `in` already mean, so that a Polars reader finds the name and an OMX
@@ -144,6 +150,13 @@ operators do, rather than a whole column.
 - **THEN** the results are equal
 - **AND** `is_in(Sales[Region; 0], ["UK", "US"])` equals
   `Sales[Region; 0] in ["UK", "US"]`
+
+#### Scenario: A NaN and a missing value are different absences
+
+- **WHEN** `is_nan(0/0)`, `is_null(0/0)`, `is_nan(1)` and `is_not_nan(1)` are
+  evaluated
+- **THEN** the results are `true`, `false`, `false` and `true`
+- **AND** `is_nan` of an empty cell is empty, where `is_null` of it is `true`
 
 #### Scenario: Each cell of a column
 

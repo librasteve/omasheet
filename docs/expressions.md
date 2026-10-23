@@ -207,6 +207,10 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
   cell of a column; `fill_null(x, 0)`, which is `x // 0`, and
   `is_in(x, [1, 2])`, which is `x in [1, 2]` — these two take one value, as
   the operators they stand for do
+- A `NaN` or not: `is_nan(x)` and `is_not_nan(x)`. A `NaN` is a Float and an
+  empty cell is a missing value, so they are different absences:
+  `is_nan(0/0)` is true, `is_null(0/0)` is false, and `is_nan` of an empty
+  cell is empty
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
 - Counting up: `succ` — a number plus one, or the next text, `AZ` to `BA`
 - Converting: `Int Decimal Percent Float String Boolean Date Time Datetime`,

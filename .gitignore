@@ -4,3 +4,6 @@ coinvent-omasheet-format-chatgpt.md
 /pkgbuild/src
 /pkgbuild/*.pkg.tar.*
 .DS_Store
+
+# Machine-specific Claude Code settings.
+.claude/settings.local.json
