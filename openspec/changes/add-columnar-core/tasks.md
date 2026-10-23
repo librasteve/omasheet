@@ -111,7 +111,7 @@ what stops a table's rows being exploded into cells.
       and its tag. A million rows of ten columns was therefore about 960 MB
       of cells, from the loop section 3 deleted, and about 560 MB of slots,
       from the allocation this one deletes.
-- [ ] 3.6 **Checkpoint: no lowering, everything correct, and opening a large
+- [x] 3.6 **Checkpoint: no lowering, everything correct, and opening a large
       table no longer materialises it.**
 
       What this section does **not** do, so that the gain is not overstated:
@@ -121,7 +121,12 @@ what stops a table's rows being exploded into cells.
       conversion once for values nothing asks for. Reading only the rows and
       columns a selection asks for is section 6, and `table::rows` — the
       row count from the footer alone, with no row group read — is the tool
-      written for it and still called by nothing (task 2.6)
+      written for it and still called by nothing (task 2.6).
+
+      Reached: 287 tests, every `examples/*.expected` byte-identical, and
+      the whole workspace clean under `fmt` and `clippy`. The goldens were
+      confirmed by the owner running `cargo test -p omasheet-cli`, the run
+      here having been stopped for system memory rather than for failing.
 
 ## 4. The units (D68)
 
