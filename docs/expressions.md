@@ -11,8 +11,13 @@ No exact number is a division by zero, so that gives a `Float`: `1/0` is `Inf`,
 `-1/0` is `-Inf` and `0/0` is `NaN`. So does a function outside its
 domain: `sqrt(-1)` is `NaN` and `ln(0)` is `-Inf`. They are written as they are shown,
 `Inf`, `-Inf` and `NaN`, in a formula or a cell; the text is in quotes,
-`"Inf"`. A `NaN` is not equal to anything, itself included: of the
-comparisons only `!=` is true of one.
+`"Inf"`. A `NaN` is ordered greatest and equal to itself, so `NaN == NaN` is
+true, a `NaN` sorts last, and the largest of a column holding one is the
+`NaN`. That is a dataframe's rule rather than IEEE's, where a `NaN` equals
+nothing at all: it is kept so that a column of floats gives the same answer
+whichever works it out. To ask whether a value is one, `is_nan(x)`; an
+empty cell is a missing value rather than a `NaN`, so `is_nan` of one is
+empty and `is_null` is what answers for it.
 
 A number is shown in at most 23 characters, and a `-` before it. From
 `1e-15` up to `1e15` it is plain, `0.015625`; smaller or larger it is in e
