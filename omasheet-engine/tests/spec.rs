@@ -4,6 +4,7 @@
 //! and of `align-polars-vocabulary`, one test per scenario where it can be
 //! checked from the outside.
 
+use omasheet_engine::omx::date::MICROS;
 use omasheet_engine::omx::date::{Order, Style};
 use omasheet_engine::{Options, eval, eval_with, lint, view, view_with};
 
@@ -710,7 +711,7 @@ fn date_and_time_parts() {
 #[test]
 fn today_and_now_come_from_the_options() {
     let options = Options {
-        now: Some(20_734 * 86_400 + 17 * 3600 + 47 * 60),
+        now: Some((20_734 * 86_400 + 17 * 3600 + 47 * 60) * MICROS),
         ..Options::default()
     };
     let at = |expr: &str, options: &Options| {
@@ -946,7 +947,7 @@ fn time_zones() {
     assert_eq!(ny("now().time_zone()"), "America/New_York");
     assert_eq!(ny("now().local() == now()"), "true");
     let fixed = Options {
-        now: Some(20_734 * 86_400),
+        now: Some(20_734 * 86_400 * MICROS),
         ..london.clone()
     };
     assert_eq!(with(&fixed, Some(file), "now()"), "2026-10-08T00:00");

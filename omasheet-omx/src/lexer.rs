@@ -15,7 +15,7 @@ pub enum Tok {
     Float(f64),
     Str(String),
     Date(i32),
-    Time(i32),
+    Time(i64),
     DateTime(i64),
     Ident(String),
     If,
@@ -482,8 +482,11 @@ mod tests {
         assert!(lex("2025-01-01T24:00", 0, 0).is_err());
         assert!(lex("2025-01-01T09", 0, 0).is_err());
         assert!(lex("2025-01-01T09:30:1", 0, 0).is_err());
-        assert_eq!(toks("09:30")[0], Tok::Time(9 * 3600 + 30 * 60));
-        assert_eq!(toks("23:59:59")[0], Tok::Time(86_399));
+        assert_eq!(
+            toks("09:30")[0],
+            Tok::Time((9 * 3600 + 30 * 60) * date::NANOS)
+        );
+        assert_eq!(toks("23:59:59")[0], Tok::Time(86_399 * date::NANOS));
         assert!(lex("24:00", 0, 0).is_err());
         assert!(lex("9:30", 0, 0).is_err());
         assert!(lex("09:30:1", 0, 0).is_err());

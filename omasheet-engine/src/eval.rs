@@ -638,8 +638,10 @@ impl<'p> Engine<'p> {
                             Ok(Value::String(Rc::from(succ_text(s).as_str()), *md))
                         }
                         Value::Date(d) => Ok(Value::Date(d + 1)),
-                        Value::Time(t) => Ok(Value::Time(t + 1)),
-                        Value::DateTime(t) => Ok(Value::DateTime(t + 1)),
+                        // The next second, which is what it was before
+                        // either was held any finer.
+                        Value::Time(t) => Ok(Value::Time(t + date::NANOS)),
+                        Value::DateTime(t) => Ok(Value::DateTime(t + date::MICROS)),
                         v if v.is_numeric() => {
                             arith(BinOp::Add, v, &Value::Int(1)).or_else(|m| fail(span, m))
                         }
@@ -711,9 +713,11 @@ impl<'p> Engine<'p> {
                             None => fail(span, "this date falls outside the calendar".to_string()),
                         },
                         Value::DateTime(t) => {
-                            let (days, secs) = date::split_datetime(*t);
+                            let (days, time) = date::split_datetime(*t);
                             match shift(days) {
-                                Some(d) => Ok(Value::DateTime(d as i64 * 86_400 + secs as i64)),
+                                Some(d) => Ok(Value::DateTime(
+                                    d as i64 * date::DAY_MICROS + time / date::NANOS_PER_MICRO,
+                                )),
                                 None => {
                                     fail(span, "this date falls outside the calendar".to_string())
                                 }
@@ -828,7 +832,9 @@ impl<'p> Engine<'p> {
                         (Some(target), _) => Zoned::at(utc, target, &self.home)
                             .map(|z| Value::Zoned(Rc::new(z)))
                             .map_or_else(out_of_range, Ok),
-                        (None, Func::Offset) => Ok(Value::Int(wall - utc)),
+                        (None, Func::Offset) => {
+                            Ok(Value::Int((wall - utc).div_euclid(date::MICROS)))
+                        }
                         (None, _) => Ok(Value::text(zone.name())),
                     }
                 };
@@ -885,9 +891,9 @@ impl<'p> Engine<'p> {
                             let thursday = d + (4 - date::weekday(d)) as i32;
                             (ordinal_day(thursday) - 1) / 7 + 1
                         }),
-                        Func::Hour => time.map(|t| t as i64 / 3600),
-                        Func::Minute => time.map(|t| t as i64 / 60 % 60),
-                        Func::Second => time.map(|t| t as i64 % 60),
+                        Func::Hour => time.map(|t| date::hms(t).0),
+                        Func::Minute => time.map(|t| date::hms(t).1),
+                        Func::Second => time.map(|t| date::hms(t).2),
                         Func::DateOf => {
                             return days
                                 .map(Value::Date)

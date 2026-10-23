@@ -152,7 +152,9 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
                 let v: Vec<Option<i64>> = cells
                     .iter()
                     .map(|v| match v {
-                        Value::Time(s) => Some(*s as i64 * NANOS),
+                        // No scaling: a `Time` is held in the nanoseconds
+                        // Polars holds one in.
+                        Value::Time(ns) => Some(*ns),
                         _ => None,
                     })
                     .collect();
@@ -164,8 +166,8 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
                 let v: Vec<Option<i64>> = cells
                     .iter()
                     .map(|v| match v {
-                        Value::DateTime(s) => Some(*s * MICROS),
-                        Value::Zoned(z) => Some(z.wall * MICROS),
+                        Value::DateTime(us) => Some(*us),
+                        Value::Zoned(z) => Some(z.wall),
                         _ => None,
                     })
                     .collect();
@@ -262,11 +264,11 @@ fn cell(value: AnyValue<'_>, ty: S) -> Datum {
                 TimeUnit::Milliseconds => n.div_euclid(1_000),
             };
             match i32::try_from(secs.div_euclid(DAY)) {
-                Ok(_) => Datum::Lit(date::format_datetime(secs), S::DateTime),
+                Ok(_) => Datum::Lit(date::format_datetime(secs * MICROS), S::DateTime),
                 Err(_) => Datum::Empty,
             }
         }
-        AnyValue::Time(ns) => Datum::Lit(date::format_time(ns.div_euclid(NANOS) as i32), S::Time),
+        AnyValue::Time(ns) => Datum::Lit(date::format_time(ns.div_euclid(NANOS) * NANOS), S::Time),
         // Anything else is written the way Polars shows it, as text.
         other => Datum::Lit(other.to_string(), ty),
     }

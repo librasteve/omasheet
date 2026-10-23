@@ -393,11 +393,15 @@ enum Rule {
 
 /// A seed written as a date, time or date-time, as its own count of days
 /// or seconds. Such a sequence only ever steps by a constant.
+/// A seed of a sequence of dates or times, in the unit a whole number
+/// beside it means: days for a `Date`, seconds for a `Time` or a
+/// `Datetime`. That is the unit the step is then written in, so it is the
+/// unit the terms must be compared in — not the finer one they are held in.
 fn seed_time(e: &Expr) -> Option<i64> {
     match &e.kind {
         ExprKind::Lit(Lit::Date(d)) => Some(*d as i64),
-        ExprKind::Lit(Lit::Time(t)) => Some(*t as i64),
-        ExprKind::Lit(Lit::DateTime(t)) => Some(*t),
+        ExprKind::Lit(Lit::Time(t)) => Some(t.div_euclid(date::NANOS)),
+        ExprKind::Lit(Lit::DateTime(t)) => Some(t.div_euclid(date::MICROS)),
         _ => None,
     }
 }

@@ -489,7 +489,12 @@ impl Writer<'_> {
             let (y, m, d) = date::civil_from_days(days as i64);
             format!("DATE({y},{m},{d})")
         };
-        let hms = |secs: i32| format!("TIME({},{},{})", secs / 3600, secs / 60 % 60, secs % 60);
+        // A time is held in nanoseconds, and a workbook's `TIME` takes the
+        // three parts of the clock.
+        let hms = |nanos: i64| {
+            let (h, m, s, _) = date::hms(nanos);
+            format!("TIME({h},{m},{s})")
+        };
         Ok(match lit {
             // A workbook holds fifteen digits.
             Lit::Int(n) if n.to_string().trim_start_matches('-').len() <= 15 => {
@@ -515,11 +520,11 @@ impl Writer<'_> {
             Lit::Date(d) => Expr::atom(ymd(*d), Kind::Date),
             Lit::Time(t) => Expr::atom(hms(*t), Kind::Time),
             Lit::DateTime(t) => {
-                let (days, secs) = date::split_datetime(*t);
-                if secs == 0 {
+                let (days, time) = date::split_datetime(*t);
+                if time == 0 {
                     Expr::atom(ymd(days), Kind::DateTime)
                 } else {
-                    Expr::new(format!("{}+{}", ymd(days), hms(secs)), ADD, Kind::DateTime)
+                    Expr::new(format!("{}+{}", ymd(days), hms(time)), ADD, Kind::DateTime)
                 }
             }
         })

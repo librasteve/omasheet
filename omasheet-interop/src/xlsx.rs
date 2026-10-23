@@ -53,11 +53,14 @@ fn moment(serial: f64) -> Datum {
     let secs = (serial * DAY as f64).round() as i64;
     let (days, time) = (secs.div_euclid(DAY), secs.rem_euclid(DAY));
     if days == 0 {
-        Datum::Lit(date::format_time(time as i32), S::Time)
+        Datum::Lit(date::format_time(time * date::NANOS), S::Time)
     } else if time == 0 {
         Datum::Lit(date::format((days - EPOCH) as i32), S::Date)
     } else {
-        Datum::Lit(date::format_datetime(secs - EPOCH * DAY), S::DateTime)
+        Datum::Lit(
+            date::format_datetime((secs - EPOCH * DAY) * date::MICROS),
+            S::DateTime,
+        )
     }
 }
 
@@ -448,13 +451,16 @@ fn shown<'f>(
         Value::String(s, _) => Shown::Text(s.to_string()),
         Value::Boolean(b) => Shown::Bool(*b),
         Value::Date(d) => Shown::Number((*d as i64 + EPOCH) as f64, Some(&formats.date)),
-        Value::Time(t) => Shown::Number(*t as f64 / day, Some(&formats.time)),
+        Value::Time(t) => {
+            Shown::Number(*t as f64 / (day * date::NANOS as f64), Some(&formats.time))
+        }
         Value::DateTime(t) => {
-            Shown::Number(*t as f64 / day + EPOCH as f64, Some(&formats.datetime))
+            let days = *t as f64 / (day * date::MICROS as f64);
+            Shown::Number(days + EPOCH as f64, Some(&formats.datetime))
         }
         Value::Zoned(z) => {
             lose(ZONES);
-            let serial = z.home_wall() as f64 / day + EPOCH as f64;
+            let serial = z.home_wall() as f64 / (day * date::MICROS as f64) + EPOCH as f64;
             Shown::Number(serial, Some(&formats.datetime))
         }
         other => {

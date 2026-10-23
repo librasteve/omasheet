@@ -130,10 +130,33 @@ what stops a table's rows being exploded into cells.
 
 ## 4. The units (D68)
 
-- [ ] 4.1 `Value::Time` in nanoseconds of day, `i64`
-- [ ] 4.2 `Value::DateTime` in microseconds
-- [ ] 4.3 `+ 1` still one second, and `examples/datetimes.expected` and
-      `zones.expected` read before and after rather than only diffed
+- [x] 4.1 `Value::Time` in nanoseconds of day, `i64`
+- [x] 4.2 `Value::DateTime` in microseconds, and `Zoned`'s wall and instant
+      with it. `date.rs` is the one module that knows the factors: `DAY`,
+      `NANOS`, `MICROS`, `NANOS_PER_MICRO`, `DAY_NANOS`, `DAY_MICROS` and an
+      `hms` that splits a time into its clock parts. The copies `dtype.rs`
+      and the interop modules kept are gone
+- [x] 4.3 `+ 1` still one second, and every golden byte-identical — which
+      was the point of doing the rescale on its own, with no literal able to
+      hold a fraction of a second yet: a golden that moved would be a bug
+      rather than an expectation.
+
+      It found four things the compiler could not. `hour`, `minute` and
+      `second` divided nanoseconds by 3600 and 60. A sequence of times took
+      its step from the raw difference of its terms, which an `Int` step
+      then read as seconds, so `09:00, 09:30 ... Inf` stepped to 17:30.
+      `succ` of a time advanced one nanosecond. And the CLI's `--now` had
+      two units in one expression — `parse_datetime` in microseconds beside
+      a fallback in seconds — which overflowed and silently fell back to the
+      real clock, so `--now` was ignored.
+
+      `Options::now` is therefore microseconds now, as a date-time is, and
+      the only places that still speak seconds are the two a person reads:
+      `base_utc_offset`, and a whole number written beside a date or a time.
+
+      The Parquet export's scaling is gone outright: a `Time` and a
+      `Datetime` pass through unscaled, being already in the units Polars
+      holds them in
 - [ ] 4.4 The sub-second values Parquet holds, which the old division
       truncated, kept
 - [ ] 4.5 `millisecond`, `microsecond` and `nanosecond`, which this makes

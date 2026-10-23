@@ -201,7 +201,7 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
         "Time" => format!("Time: e.g. {}", style.time(time)),
         "Datetime" => format!(
             "Datetime: e.g. {}{also_iso}",
-            style.datetime(day as i64 * 86_400 + time as i64)
+            style.datetime(day as i64 * date::DAY_MICROS + time / date::NANOS_PER_MICRO)
         ),
         _ => String::new(),
     }

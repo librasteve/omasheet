@@ -4,6 +4,7 @@
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use omasheet_engine::Options;
+use omasheet_engine::omx::date::MICROS;
 use omasheet_interop::{Datum, Exported, csv, json, parquet, xlsx};
 use rust_xlsxwriter::{Format, Formula, Workbook};
 use std::io::Cursor;
@@ -28,7 +29,7 @@ Revenue | = Sales.Revenue.sum()
 
 fn options() -> Options {
     Options {
-        now: Some(1_750_000_000),
+        now: Some(1_750_000_000 * MICROS),
         ..Options::default()
     }
 }

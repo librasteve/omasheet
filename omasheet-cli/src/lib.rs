@@ -4,7 +4,7 @@
 //! the app when there is none.
 
 use clap::{Args, Parser, Subcommand};
-use omasheet_engine::omx::date::Style;
+use omasheet_engine::omx::date::{self, Style};
 use omasheet_engine::zone::Zone;
 use omasheet_engine::{Options, Outcome, locale};
 use std::io::Read;
@@ -71,7 +71,7 @@ impl Env {
         }
         if let Some(text) = &self.now {
             let iso = Style::ISO;
-            let day = || Some(iso.parse_date(text)? as i64 * 86_400);
+            let day = || Some(iso.parse_date(text)? as i64 * date::DAY_MICROS);
             options.now = Some(iso.parse_datetime(text).or_else(day).ok_or_else(|| {
                 eprintln!("omasheet: `{text}` is not a date-time; write it like 2025-01-31T17:05");
                 ExitCode::from(2)

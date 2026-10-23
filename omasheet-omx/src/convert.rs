@@ -160,7 +160,7 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
         (Lit::Float(f), S::Boolean) => Lit::Boolean(*f != 0.0),
         (Lit::DateTime(t), S::Date) => Lit::Date(crate::date::split_datetime(*t).0),
         (Lit::DateTime(t), S::Time) => Lit::Time(crate::date::split_datetime(*t).1),
-        (Lit::Date(d), S::DateTime) => Lit::DateTime(*d as i64 * 86_400),
+        (Lit::Date(d), S::DateTime) => Lit::DateTime(*d as i64 * crate::date::DAY_MICROS),
         _ => return no(),
     })
 }

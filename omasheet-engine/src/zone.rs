@@ -8,6 +8,7 @@
 
 use jiff::Timestamp;
 use jiff::tz::{Offset, TimeZone};
+use omasheet_omx::date::MICROS;
 use std::rc::Rc;
 
 #[derive(Clone, Debug)]
@@ -49,30 +50,39 @@ impl Zone {
     /// The instant at which the clocks of this zone show `wall`. A time the
     /// clocks skip is taken as if they had not gone forward, and a time they
     /// show twice as the first of the two. `None` if it is out of range.
+    ///
+    /// In microseconds, as a date-time is held. An offset is a whole number
+    /// of seconds, so whatever is finer than a second is carried across
+    /// untouched.
     pub fn to_utc(&self, wall: i64) -> Option<i64> {
-        let civil = Offset::UTC.to_datetime(Timestamp::from_second(wall).ok()?);
+        let (secs, rest) = (wall.div_euclid(MICROS), wall.rem_euclid(MICROS));
+        let civil = Offset::UTC.to_datetime(Timestamp::from_second(secs).ok()?);
         let instant = self.tz.to_ambiguous_timestamp(civil).compatible().ok()?;
-        Some(instant.as_second())
+        instant.as_second().checked_mul(MICROS)?.checked_add(rest)
     }
 
-    /// What the clocks of this zone show at the instant `utc`.
+    /// What the clocks of this zone show at the instant `utc`, in
+    /// microseconds.
     pub fn from_utc(&self, utc: i64) -> Option<i64> {
-        let offset = self.tz.to_offset(Timestamp::from_second(utc).ok()?);
-        utc.checked_add(offset.seconds() as i64)
+        let (secs, rest) = (utc.div_euclid(MICROS), utc.rem_euclid(MICROS));
+        let offset = self.tz.to_offset(Timestamp::from_second(secs).ok()?);
+        secs.checked_add(offset.seconds() as i64)?
+            .checked_mul(MICROS)?
+            .checked_add(rest)
     }
 }
 
-/// The instant now, as seconds since the start of 1970-01-01 in UTC.
+/// The instant now, as microseconds since the start of 1970-01-01 in UTC.
 pub fn utc_now() -> i64 {
-    Timestamp::now().as_second()
+    Timestamp::now().as_microsecond()
 }
 
 /// A date-time in a zone other than the file's own.
 #[derive(Clone, Debug)]
 pub struct Zoned {
-    /// What the clocks of `zone` show.
+    /// What the clocks of `zone` show, in microseconds.
     pub wall: i64,
-    /// The instant, in UTC.
+    /// The instant, in microseconds UTC.
     pub utc: i64,
     pub zone: Rc<Zone>,
     /// The zone of the file, to compare with its own date-times.
@@ -95,9 +105,12 @@ impl Zoned {
         self.home.from_utc(self.utc).unwrap_or(self.wall)
     }
 
-    /// The clocks of the same zone, `secs` later.
+    /// The clocks of the same zone, `secs` later. A whole number beside a
+    /// date-time is seconds, whatever it is held in.
     pub fn shifted(&self, secs: i64) -> Option<Zoned> {
-        let wall = self.wall.checked_add(secs)?;
+        let wall = secs
+            .checked_mul(MICROS)
+            .and_then(|d| self.wall.checked_add(d))?;
         Some(Zoned {
             wall,
             utc: self.zone.to_utc(wall)?,
@@ -107,7 +120,7 @@ impl Zoned {
 
     /// Seconds ahead of UTC.
     pub fn offset(&self) -> i64 {
-        self.wall - self.utc
+        (self.wall - self.utc).div_euclid(MICROS)
     }
 }
 

@@ -33,8 +33,9 @@ pub struct Options {
     pub base: Option<std::path::PathBuf>,
     /// How dates and times are shown. A file's text is always ISO.
     pub style: Style,
-    /// What `now()` gives in place of the clock, as seconds since the start
-    /// of 1970-01-01 on the clocks of the file's time zone.
+    /// What `now()` gives in place of the clock, as microseconds since the
+    /// start of 1970-01-01 on the clocks of the file's time zone — the unit
+    /// a date-time is held in.
     pub now: Option<i64>,
     /// The time zone of this machine, in place of the one it is set to. It
     /// is also the zone of a file that names none.

@@ -10,6 +10,7 @@
 use crate::zone::{Zoned, format_offset};
 use omasheet_omx::ast::{BinOp, Lit};
 use omasheet_omx::convert;
+use omasheet_omx::date;
 use omasheet_omx::date::Style;
 use omasheet_omx::decimal::{Dec, MAX_DENOMINATOR, SHOWN_PRECISION};
 use omasheet_omx::funcs::MathFn;
@@ -41,8 +42,11 @@ pub enum Value {
     String(Rc<str>, bool),
     Boolean(bool),
     Date(i32),
-    Time(i32),
+    /// Nanoseconds since midnight, as Polars holds a `Time`.
+    Time(i64),
     /// What the clocks of the file's time zone show.
+    /// Microseconds since the start of 1970-01-01, on the clocks of the
+    /// file's own zone, as Polars holds a `Datetime`.
     DateTime(i64),
     /// A date-time moved to another time zone.
     Zoned(Rc<Zoned>),
@@ -319,20 +323,30 @@ fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
             None => Err("the date is out of range".to_string()),
         }
     };
-    let datetime = |t: i64, n: &i64| match signed(*n).and_then(|n| t.checked_add(n)) {
-        // Every date-time must have a day that is a valid date.
-        Some(t) if i32::try_from(t.div_euclid(86_400)).is_ok() => Ok(Value::DateTime(t)),
-        _ => Err("the date-time is out of range".to_string()),
+    // A whole number beside a date-time is that many seconds, which is the
+    // promise the unit it is held in does not change.
+    let datetime = |t: i64, n: &i64| {
+        let moved = signed(*n)
+            .and_then(|n| n.checked_mul(date::MICROS))
+            .and_then(|n| t.checked_add(n));
+        match moved {
+            // Every date-time must have a day that is a valid date.
+            Some(t) if i32::try_from(t.div_euclid(date::DAY_MICROS)).is_ok() => {
+                Ok(Value::DateTime(t))
+            }
+            _ => Err("the date-time is out of range".to_string()),
+        }
     };
     let zoned = |z: &Zoned, n: &i64| match signed(*n).and_then(|n| z.shifted(n)) {
         Some(z) => Ok(Value::Zoned(Rc::new(z))),
         None => Err("the date-time is out of range".to_string()),
     };
-    // A time of day wraps round midnight.
-    let time = |t: i32, n: &i64| {
-        let n = n % 86_400;
+    // A time of day wraps round midnight, and a whole number beside one is
+    // that many seconds.
+    let time = |t: i64, n: &i64| {
+        let n = (n % date::DAY) * date::NANOS;
         let n = if minus { -n } else { n };
-        Ok(Value::Time((t as i64 + n).rem_euclid(86_400) as i32))
+        Ok(Value::Time((t + n).rem_euclid(date::DAY_NANOS)))
     };
     let int = |n: i64| Ok(Value::Int(n));
     Some(match (a, b) {
@@ -344,15 +358,22 @@ fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
         (Value::Int(n), Value::DateTime(t)) if !minus => datetime(*t, n),
         (Value::Int(n), Value::Zoned(z)) if !minus => zoned(z, n),
         (Value::Int(n), Value::Time(t)) if !minus => time(*t, n),
-        (Value::Date(d), Value::Time(t)) | (Value::Time(t), Value::Date(d)) if !minus => {
-            Ok(Value::DateTime(*d as i64 * 86_400 + *t as i64))
-        }
+        (Value::Date(d), Value::Time(t)) | (Value::Time(t), Value::Date(d)) if !minus => Ok(
+            Value::DateTime(*d as i64 * date::DAY_MICROS + t / date::NANOS_PER_MICRO),
+        ),
+        // A difference is in seconds, whatever the two are held in.
         (Value::Date(x), Value::Date(y)) if minus => int(*x as i64 - *y as i64),
-        (Value::Time(x), Value::Time(y)) if minus => int(*x as i64 - *y as i64),
-        (Value::DateTime(x), Value::DateTime(y)) if minus => int(x - y),
-        (Value::Zoned(x), Value::Zoned(y)) if minus => int(x.utc - y.utc),
-        (Value::DateTime(x), Value::Zoned(y)) if minus => int(x - y.home_wall()),
-        (Value::Zoned(x), Value::DateTime(y)) if minus => int(x.home_wall() - y),
+        (Value::Time(x), Value::Time(y)) if minus => int((x - y).div_euclid(date::NANOS)),
+        (Value::DateTime(x), Value::DateTime(y)) if minus => int((x - y).div_euclid(date::MICROS)),
+        (Value::Zoned(x), Value::Zoned(y)) if minus => {
+            int((x.utc - y.utc).div_euclid(date::MICROS))
+        }
+        (Value::DateTime(x), Value::Zoned(y)) if minus => {
+            int((x - y.home_wall()).div_euclid(date::MICROS))
+        }
+        (Value::Zoned(x), Value::DateTime(y)) if minus => {
+            int((x.home_wall() - y).div_euclid(date::MICROS))
+        }
         _ => return None,
     })
 }
@@ -1181,12 +1202,24 @@ mod tests {
             shown(BinOp::Sub, &Value::Date(day), &Value::Date(0)),
             "20119"
         );
-        assert_eq!(shown(BinOp::Sub, &Value::Time(60), &int(120)), "23:59");
         assert_eq!(
-            shown(BinOp::Add, &Value::Date(day), &Value::Time(34_200)),
+            shown(BinOp::Sub, &Value::Time(60 * date::NANOS), &int(120)),
+            "23:59"
+        );
+        assert_eq!(
+            shown(
+                BinOp::Add,
+                &Value::Date(day),
+                &Value::Time(34_200 * date::NANOS)
+            ),
             "2025-01-31T09:30"
         );
-        let noon = arith(BinOp::Add, &Value::Date(day), &Value::Time(43_200)).unwrap();
+        let noon = arith(
+            BinOp::Add,
+            &Value::Date(day),
+            &Value::Time(43_200 * date::NANOS),
+        )
+        .unwrap();
         assert_eq!(shown(BinOp::Add, &noon, &int(86_400)), "2025-02-01T12:00");
         assert_eq!(shown(BinOp::Sub, &noon, &noon), "0");
         assert!(arith(BinOp::Sub, &int(1), &Value::Date(day)).is_err());

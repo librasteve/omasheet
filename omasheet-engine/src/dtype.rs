@@ -6,18 +6,10 @@
 
 use omasheet_omx::ast::Lit;
 use omasheet_omx::check::Cell;
+use omasheet_omx::date::{DAY, MICROS, NANOS};
 use omasheet_omx::decimal::Dec;
 use omasheet_omx::types::S;
 use polars::prelude::*;
-
-/// Seconds in a day, for a date-time past the end of a day.
-const DAY: i64 = 86_400;
-
-/// Microseconds in a second, the unit a date-time is written in.
-const MICROS: i64 = 1_000_000;
-
-/// Nanoseconds in a second, the unit a time of day is written in.
-const NANOS: i64 = 1_000_000_000;
 
 /// The omasheet type a Polars dtype is named by, or `None` for a shape a
 /// sheet has no room for: a list, a struct, a map.
@@ -78,18 +70,24 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
             Dec::new(unscaled, scale as u32).map_or(Cell::Invalid, exact)
         }
         AnyValue::Date(days) => Cell::Lit(Lit::Date(days)),
+        // Still read to the whole second, as before the units changed: no
+        // literal can write a fraction of one yet, so a value holding one
+        // would show as something the file could not write back.
         AnyValue::Datetime(n, unit, _) | AnyValue::DatetimeOwned(n, unit, _) => {
             let secs = match unit {
                 TimeUnit::Nanoseconds => n.div_euclid(NANOS),
                 TimeUnit::Microseconds => n.div_euclid(MICROS),
                 TimeUnit::Milliseconds => n.div_euclid(1_000),
             };
-            match i32::try_from(secs.div_euclid(DAY)) {
-                Ok(_) => Cell::Lit(Lit::DateTime(secs)),
-                Err(_) => Cell::Invalid,
+            match (
+                i32::try_from(secs.div_euclid(DAY)),
+                secs.checked_mul(MICROS),
+            ) {
+                (Ok(_), Some(micros)) => Cell::Lit(Lit::DateTime(micros)),
+                _ => Cell::Invalid,
             }
         }
-        AnyValue::Time(ns) => Cell::Lit(Lit::Time(ns.div_euclid(NANOS) as i32)),
+        AnyValue::Time(ns) => Cell::Lit(Lit::Time(ns.div_euclid(NANOS) * NANOS)),
         // Anything else is held as Polars shows it.
         other => Cell::Lit(Lit::String(other.to_string())),
     }
