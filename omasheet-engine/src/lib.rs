@@ -13,6 +13,9 @@ pub mod zone;
 
 pub use doc::Document;
 pub use eval::Engine;
+pub mod dtype;
+pub mod table;
+
 pub use omasheet_omx as omx;
 pub use value::Value;
 
@@ -24,6 +27,10 @@ use zone::Zone;
 /// style, and the clock and time zone of this machine.
 #[derive(Clone, Debug, Default)]
 pub struct Options {
+    /// The directory a sheet's source is read relative to: the directory of
+    /// the `.omx` file, not the one the command was run in. `None` is the
+    /// working directory, which is what an expression with no file has.
+    pub base: Option<std::path::PathBuf>,
     /// How dates and times are shown. A file's text is always ISO.
     pub style: Style,
     /// What `now()` gives in place of the clock, as seconds since the start
@@ -59,12 +66,14 @@ impl Outcome {
     }
 }
 
-/// Fills in the sheets a file reads from elsewhere: a `table` arrives from
-/// the checker with its source and no rows, and this gives it both its rows
-/// and its row count. It is taken as a parameter because reading a Parquet
-/// file needs a reader this crate does not have; `omasheet-interop` provides
-/// one, and anything with no tables to read needs none.
-pub type ReadSources<'a> = &'a mut dyn FnMut(&mut Program, &mut Vec<Diagnostic>);
+/// Where a sheet's source is read from: beside the file, or the working
+/// directory for an expression that has no file.
+fn base_of(options: &Options) -> &std::path::Path {
+    options
+        .base
+        .as_deref()
+        .unwrap_or_else(|| std::path::Path::new("."))
+}
 
 /// Parse and statically check a file without evaluating it.
 pub fn lint(name: &str, text: &str) -> Outcome {
@@ -83,23 +92,12 @@ pub fn view(name: &str, text: &str) -> Outcome {
 }
 
 pub fn view_with(name: &str, text: &str, options: Options) -> Outcome {
-    view_sourced(name, text, options, &mut |_, _| {})
-}
-
-/// [`view_with`], with the sheets a file reads from elsewhere filled in
-/// between checking and evaluating.
-pub fn view_sourced(
-    name: &str,
-    text: &str,
-    options: Options,
-    read_sources: ReadSources,
-) -> Outcome {
     let mut sources = Sources::new();
     let src = sources.add(name, text);
     let (mut program, mut diags) = compile(text, src);
     let mut out = Outcome::default();
     if diags.is_empty() {
-        read_sources(&mut program, &mut diags);
+        table::read(&mut program, base_of(&options), &mut diags);
     }
     if !diags.is_empty() {
         out.report(&sources, &diags);
@@ -161,7 +159,10 @@ pub fn eval_with(
     let program = match file {
         Some((name, text)) => {
             let src = sources.add(name, text);
-            let (program, diags) = compile(text, src);
+            let (mut program, mut diags) = compile(text, src);
+            if diags.is_empty() {
+                table::read(&mut program, base_of(&options), &mut diags);
+            }
             if !diags.is_empty() {
                 out.report(&sources, &diags);
                 return out;

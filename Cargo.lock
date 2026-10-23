@@ -1878,6 +1878,7 @@ dependencies = [
  "jiff",
  "libc",
  "omasheet-omx",
+ "polars",
 ]
 
 [[package]]

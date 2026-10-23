@@ -17,13 +17,9 @@ use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use omasheet_omx::date::{self, Style};
 use omasheet_omx::file::{FileAst, SchemaLine, SheetDecl, ident_len, parse_file, split_cells};
 use omasheet_omx::parser::parse_expr;
-use omasheet_omx::{ColKind, Diagnostic, Program, S, Sources, Span, compile};
+use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile};
 
 const UNDO_LIMIT: usize = 200;
-
-/// What reads the rows of every `table` in a document: the owned form of
-/// [`crate::ReadSources`], since a document keeps it between edits.
-pub type ReadRows = Box<dyn FnMut(&mut Program, &mut Vec<Diagnostic>)>;
 
 /// A fresh file: one small empty sheet to type into.
 pub const BLANK: &str = "sheet Sheet1\n\n| A   | B   | C   |\n| --- | --- | --- |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n";
@@ -130,11 +126,10 @@ pub struct Document {
     style: Style,
     /// Show date-times on the clocks of this machine.
     local: bool,
-    /// Reads the rows of every `table`. `None` in a document that was not
-    /// given one, which shows such a sheet with no rows: reading Parquet
-    /// takes Polars, which is not in this crate. See
-    /// [`Document::set_sources`].
-    sources: Option<ReadRows>,
+    /// The directory a `table`'s source is read relative to: the directory
+    /// of the file, not the one the program was started in. `None` is the
+    /// working directory. See [`Document::set_base`].
+    base: Option<std::path::PathBuf>,
 }
 
 impl Default for Document {
@@ -1124,17 +1119,17 @@ impl Document {
             redo: Vec::new(),
             style,
             local,
-            sources: None,
+            base: None,
         };
         doc.rebuild();
         doc
     }
 
-    /// Read the rows of every `table` with `read`, now and after each
-    /// edit. The front end supplies it: a document is re-read from its own
-    /// text, and what a `table` names is not in that text.
-    pub fn set_sources(&mut self, read: impl FnMut(&mut Program, &mut Vec<Diagnostic>) + 'static) {
-        self.sources = Some(Box::new(read));
+    /// The directory a `table`'s source is read relative to, which the
+    /// front end knows and the text does not: a document is re-read from
+    /// its own text, and what a `table` names is beside the file.
+    pub fn set_base(&mut self, dir: impl Into<std::path::PathBuf>) {
+        self.base = Some(dir.into());
         self.rebuild();
     }
 
@@ -2277,8 +2272,9 @@ impl Document {
         let mut sources = Sources::new();
         let src = sources.add("file", self.text.as_str());
         let (mut program, mut diags) = compile(&self.text, src);
-        if let Some(read) = self.sources.as_mut() {
-            read(&mut program, &mut diags);
+        if diags.is_empty() {
+            let base = self.base.clone().unwrap_or_else(|| ".".into());
+            crate::table::read(&mut program, &base, &mut diags);
         }
         let engine = Engine::with_options(
             &program,

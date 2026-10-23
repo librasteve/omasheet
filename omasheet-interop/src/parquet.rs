@@ -11,6 +11,7 @@
 use crate::{
     Datum, Exported, FAILED, Grid, Imported, Losses, Output, is_failure, with_file, write_omx,
 };
+use omasheet_engine::dtype::type_of;
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::omx::decimal::{Dec, MAX_PRECISION};
 use omasheet_engine::omx::types::S;
@@ -220,30 +221,6 @@ pub fn export(
         }
         exported.notices = losses.notices();
         Ok(exported)
-    })
-}
-
-/// The omasheet type a Parquet column is read as, or `None` for one a sheet
-/// of cells has no room for.
-fn type_of(dtype: &DataType) -> Option<S> {
-    Some(match dtype {
-        DataType::Boolean => S::Boolean,
-        DataType::Int8
-        | DataType::Int16
-        | DataType::Int32
-        | DataType::Int64
-        | DataType::UInt8
-        | DataType::UInt16
-        | DataType::UInt32
-        | DataType::UInt64 => S::Int,
-        DataType::Float32 | DataType::Float64 => S::Float,
-        DataType::Decimal(..) => S::Decimal,
-        DataType::String => S::String,
-        DataType::Date => S::Date,
-        DataType::Time => S::Time,
-        DataType::Datetime(..) => S::DateTime,
-        DataType::Null => S::Any,
-        _ => return None,
     })
 }
 

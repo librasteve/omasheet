@@ -41,20 +41,33 @@ what stops a table's rows being exploded into cells.
 
 ## 2. The layering (D61, D62)
 
-- [ ] 2.1 `polars` in `omasheet-engine`; `omasheet-omx` unchanged and still
+- [x] 2.1 `polars` in `omasheet-engine`; `omasheet-omx` unchanged and still
       without dependencies
-- [ ] 2.2 `omasheet-interop/src/frames.rs` → `omasheet-engine/src/table.rs`
-- [ ] 2.3 `omasheet-engine/src/dtype.rs`: `dtype(S)`, `type_of(&DataType)`,
-      `column_from_cells(..)` and `value_of(AnyValue, S)`. The two
-      near-duplicate `cell` functions in `frames.rs` and `parquet.rs`
-      collapse into `value_of`
-- [ ] 2.4 `ReadSources`, `Document::set_sources` and `view_sourced` deleted,
+- [x] 2.2 `omasheet-interop/src/frames.rs` → `omasheet-engine/src/table.rs`
+- [x] 2.3 `omasheet-engine/src/dtype.rs`: `type_of(&DataType)` and
+      `cell_of(AnyValue, S)`, with the units a date-time is written in.
+      `parquet.rs`'s duplicate `type_of` is deleted and imports this one.
+      Named `cell_of` and not `value_of` because it makes a `Cell`; the
+      `Value`-making twin, and `dtype(S)` and `column_from_cells`, arrive
+      with section 3, where there is something to make them from and a
+      scale to give a decimal
+- [x] 2.4 `ReadSources`, `Document::set_sources` and `view_sourced` deleted,
       with their call sites in `omasheet-cli` and `omasheet-ui`
-- [ ] 2.5 `Options { base: Option<PathBuf> }` and a `Document` field for it,
+- [x] 2.5 `Options { base: Option<PathBuf> }` and a `Document` field for it,
       so a source is still read beside the `.omx` and not from the cwd. This
       passes every test and breaks for every real user if it is lost
 - [ ] 2.6 `add-dataframe-interop` task 3.4 — `nrows` from the Parquet footer,
       a metadata-only read — which this makes natural
+- [x] 2.7 `omasheet eval file.omx` reads a `table`'s rows, which it never
+      did: the inversion reached only `view_sourced` and `Document`, so the
+      eval path saw a table with no rows. Putting the read inside the engine
+      made it fall out
+- [ ] 2.8 The three other places that compile a program and build an engine
+      without reading sources, so a `table` can be neither exported nor
+      rendered into a document: `omasheet-interop/src/lib.rs` (the shared
+      export path), `omasheet-interop/src/xlsx.rs` (which does not even take
+      the caller's options) and `omasheet-md/src/lib.rs`. The gap predates
+      this change; closing it is a line each plus the options to carry
 
 ## 3. The frame store (D63, D64, D65)
 

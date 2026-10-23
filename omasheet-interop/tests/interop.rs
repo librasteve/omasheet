@@ -1001,9 +1001,11 @@ fn parquet_file(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
 
 /// A file read with its tables filled in from `dir`.
 fn with_tables(dir: &std::path::Path, text: &str) -> omasheet_engine::Outcome {
-    omasheet_engine::view_sourced("file.omx", text, options(), &mut |program, diags| {
-        omasheet_interop::frames::read(program, dir, diags)
-    })
+    let options = omasheet_engine::Options {
+        base: Some(dir.to_path_buf()),
+        ..options()
+    };
+    omasheet_engine::view_with("file.omx", text, options)
 }
 
 #[test]
@@ -1125,10 +1127,7 @@ fn a_source_that_is_not_a_dataframe_is_reported() {
 /// A document over `text`, reading its tables from `dir`, as the app does.
 fn document(dir: &std::path::Path, text: &str) -> omasheet_engine::Document {
     let mut doc = omasheet_engine::Document::from_text(text);
-    let dir = dir.to_path_buf();
-    doc.set_sources(move |program, diags| {
-        omasheet_interop::frames::read(program, dir.as_path(), diags)
-    });
+    doc.set_base(dir);
     doc
 }
 

@@ -7,25 +7,15 @@
 //! row count from the file's footer, each column's cells, and a diagnostic
 //! where the text and the file disagree about a column.
 
-use omasheet_engine::omx::Program;
-use omasheet_engine::omx::ast::Lit;
-use omasheet_engine::omx::check::{Cell, ColKind, Column, Source};
-use omasheet_engine::omx::decimal::Dec;
-use omasheet_engine::omx::diag::Diagnostic;
-use omasheet_engine::omx::file::ident_len;
-use omasheet_engine::omx::types::S;
+use crate::dtype::{cell_of, type_of};
+use omasheet_omx::Program;
+use omasheet_omx::check::{Cell, ColKind, Column, Source};
+use omasheet_omx::diag::Diagnostic;
+use omasheet_omx::file::ident_len;
+use omasheet_omx::types::S;
 use polars::prelude::*;
 use std::fs::File;
 use std::path::Path;
-
-/// Seconds in a day, for a date-time past the end of a day.
-const DAY: i64 = 86_400;
-
-/// Microseconds in a second, the unit a date-time is written in.
-const MICROS: i64 = 1_000_000;
-
-/// Nanoseconds in a second, the unit a time of day is written in.
-const NANOS: i64 = 1_000_000_000;
 
 /// Fill in every sheet that reads its rows from elsewhere. `dir` is the
 /// directory the file's own path is relative to, so that a source is read
@@ -46,7 +36,7 @@ pub fn read(program: &mut Program, dir: &Path, diags: &mut Vec<Diagnostic>) {
     }
     // A sheet of formulas alone is as long as the sheets it reads, which for
     // a table is only now known.
-    omasheet_engine::omx::check::resolve_rows(program);
+    omasheet_omx::check::resolve_rows(program);
 }
 
 /// The row count of a source, from the footer alone: no row group is read. A
@@ -79,7 +69,7 @@ fn frame(path: &Path) -> Result<DataFrame, String> {
 /// disagree. The text is not corrected from the file and the file is not
 /// read as the text says: a mismatch is reported and left (D29).
 fn fill(
-    sheet: &mut omasheet_engine::omx::check::Sheet,
+    sheet: &mut omasheet_omx::check::Sheet,
     df: &DataFrame,
     source: &Source,
     diags: &mut Vec<Diagnostic>,
@@ -176,7 +166,7 @@ fn fill(
         let mut cells = Vec::with_capacity(height);
         for r in 0..height {
             cells.push(match column.get(r) {
-                Ok(value) => cell(value, col.ty),
+                Ok(value) => cell_of(value, col.ty),
                 Err(_) => Cell::Invalid,
             });
         }
@@ -218,80 +208,4 @@ fn suggest(name: &str) -> String {
 /// column's own name where there is none.
 fn held_as(col: &Column) -> &str {
     col.from.as_deref().unwrap_or(&col.name)
-}
-
-/// The omasheet type a Polars dtype is named by, or `None` for a shape a
-/// sheet has no room for: a list, a struct, a map.
-fn type_of(dtype: &DataType) -> Option<S> {
-    Some(match dtype {
-        DataType::Boolean => S::Boolean,
-        DataType::Int8
-        | DataType::Int16
-        | DataType::Int32
-        | DataType::Int64
-        | DataType::UInt8
-        | DataType::UInt16
-        | DataType::UInt32
-        | DataType::UInt64 => S::Int,
-        DataType::Float32 | DataType::Float64 => S::Float,
-        DataType::Decimal(..) => S::Decimal,
-        DataType::String => S::String,
-        DataType::Date => S::Date,
-        DataType::Time => S::Time,
-        DataType::Datetime(..) => S::DateTime,
-        DataType::Null => S::Any,
-        _ => return None,
-    })
-}
-
-/// One value of a frame as a cell. The column's own type decides how an
-/// exact number is held, so that a `Percent` column holds percentages and a
-/// `Fraction` column fractions, as a sheet of text does.
-fn cell(value: AnyValue<'_>, ty: S) -> Cell {
-    let exact = |d: Dec| match ty {
-        S::Percent => Cell::Lit(Lit::Percent(d)),
-        _ => Cell::Lit(Lit::Decimal(d)),
-    };
-    let whole = |n: i64| match ty {
-        S::Decimal | S::Fraction | S::Percent => exact(Dec::from_i64(n)),
-        _ => Cell::Lit(Lit::Int(n)),
-    };
-    match value {
-        AnyValue::Null => Cell::Empty,
-        AnyValue::Boolean(b) => Cell::Lit(Lit::Boolean(b)),
-        AnyValue::String(s) => Cell::Lit(Lit::String(s.to_string())),
-        AnyValue::StringOwned(s) => Cell::Lit(Lit::String(s.to_string())),
-        AnyValue::Int8(n) => whole(n as i64),
-        AnyValue::Int16(n) => whole(n as i64),
-        AnyValue::Int32(n) => whole(n as i64),
-        AnyValue::Int64(n) => whole(n),
-        AnyValue::UInt8(n) => whole(n as i64),
-        AnyValue::UInt16(n) => whole(n as i64),
-        AnyValue::UInt32(n) => whole(n as i64),
-        // A `u64` past an `i64` is still exact as a decimal.
-        AnyValue::UInt64(n) => match i64::try_from(n) {
-            Ok(n) => whole(n),
-            Err(_) => Dec::new(n as i128, 0).map_or(Cell::Invalid, exact),
-        },
-        AnyValue::Float32(f) => Cell::Lit(Lit::Float(f as f64)),
-        AnyValue::Float64(f) => Cell::Lit(Lit::Float(f)),
-        AnyValue::Decimal(unscaled, scale) => {
-            Dec::new(unscaled, scale as u32).map_or(Cell::Invalid, exact)
-        }
-        AnyValue::Date(days) => Cell::Lit(Lit::Date(days)),
-        AnyValue::Datetime(n, unit, _) | AnyValue::DatetimeOwned(n, unit, _) => {
-            let secs = match unit {
-                TimeUnit::Nanoseconds => n.div_euclid(NANOS),
-                TimeUnit::Microseconds => n.div_euclid(MICROS),
-                TimeUnit::Milliseconds => n.div_euclid(1_000),
-            };
-            match i32::try_from(secs.div_euclid(DAY)) {
-                Ok(_) => Cell::Lit(Lit::DateTime(secs)),
-                Err(_) => Cell::Invalid,
-            }
-        }
-        AnyValue::Time(ns) => Cell::Lit(Lit::Time(ns.div_euclid(NANOS) as i32)),
-        // Anything else is held as Polars shows it.
-        other => Cell::Lit(Lit::String(other.to_string())),
-    }
 }

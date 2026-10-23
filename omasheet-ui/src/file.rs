@@ -395,12 +395,7 @@ impl qobject::File {
             Some(dir) => dir.to_path_buf(),
             None => PathBuf::new(),
         };
-        self.as_mut()
-            .rust_mut()
-            .doc
-            .set_sources(move |program, diags| {
-                omasheet_interop::frames::read(program, &dir, diags)
-            });
+        self.as_mut().rust_mut().doc.set_base(dir);
     }
 
     fn snapshot_json(&self) -> QString {

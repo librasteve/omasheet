@@ -344,7 +344,7 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
             mut args,
             env,
         }) => {
-            let options = env.options()?;
+            let mut options = env.options()?;
             // `eval FILE EXPR` is the same as `eval --file FILE EXPR`.
             let file = match (file, args.len()) {
                 (None, 2) => Some(PathBuf::from(args.remove(0))),
@@ -368,7 +368,10 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
                 }
             };
             let loaded = match &file {
-                Some(path) => Some((path.to_string_lossy().into_owned(), read(path)?)),
+                Some(path) => {
+                    options.base = Some(beside(path));
+                    Some((path.to_string_lossy().into_owned(), read(path)?))
+                }
                 None => None,
             };
             let file_ref = loaded.as_ref().map(|(n, t)| (n.as_str(), t.as_str()));
@@ -407,19 +410,23 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
         }) => render(&file, html, output.as_deref(), env.options()?),
         None => Ok(open(cli.file.as_deref())),
         Some(Command::Print { file, env }) => {
-            let options = env.options()?;
+            let mut options = env.options()?;
             let text = read(&file)?;
             // A `table` reads its rows from beside the file, so the file's
             // own directory is what its source is relative to.
-            let dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
-            Ok(finish(omasheet_engine::view_sourced(
+            options.base = Some(beside(&file));
+            Ok(finish(omasheet_engine::view_with(
                 &file.to_string_lossy(),
                 &text,
                 options,
-                &mut |program, diags| omasheet_interop::frames::read(program, &dir, diags),
             )))
         }
     }
+}
+
+/// The directory a file's own sources are read relative to.
+fn beside(file: &Path) -> PathBuf {
+    file.parent().unwrap_or(Path::new(".")).to_path_buf()
 }
 
 /// Run the command line this program was started with. With no command,

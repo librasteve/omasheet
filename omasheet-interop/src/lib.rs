@@ -8,7 +8,6 @@
 
 pub mod csv;
 pub mod formula;
-pub mod frames;
 pub mod json;
 pub mod parquet;
 pub mod xlsx;
