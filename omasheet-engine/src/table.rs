@@ -7,27 +7,80 @@
 //! row count from the file's footer, each column's cells, and a diagnostic
 //! where the text and the file disagree about a column.
 
-use crate::dtype::{cell_of, type_of};
+use crate::dtype::type_of;
 use omasheet_omx::Program;
-use omasheet_omx::check::{Cell, ColKind, Column, Source};
+use omasheet_omx::check::{ColKind, Column, Source};
 use omasheet_omx::diag::Diagnostic;
 use omasheet_omx::file::ident_len;
 use omasheet_omx::types::S;
+use polars::prelude::Column as PlColumn;
 use polars::prelude::*;
 use std::fs::File;
 use std::path::Path;
 
-/// Fill in every sheet that reads its rows from elsewhere. `dir` is the
-/// directory the file's own path is relative to, so that a source is read
-/// from beside the `.omx` rather than from wherever the command was run.
-pub fn read(program: &mut Program, dir: &Path, diags: &mut Vec<Diagnostic>) {
-    for sheet in program.sheets.iter_mut() {
+/// What a column of a `table` holds.
+pub enum Held {
+    /// The column the source holds, as it holds it.
+    Column(PlColumn),
+    /// The source has no such column. The mismatch is said once, as a
+    /// diagnostic; every cell of it is then in error rather than empty,
+    /// which is what a column of errors standing in for it gave.
+    Absent,
+}
+
+/// Every sheet's columns that come from a source, by sheet and column. A
+/// column the text itself holds has no entry: it is read from the cells it
+/// is written in.
+#[derive(Default)]
+pub struct Tables {
+    sheets: Vec<Vec<Option<Held>>>,
+}
+
+impl Tables {
+    /// Room for the sheets a program has, so that the usual case sets a
+    /// column without growing anything.
+    pub fn for_program(prog: &Program) -> Tables {
+        Tables {
+            sheets: prog
+                .sheets
+                .iter()
+                .map(|s| (0..s.cols.len()).map(|_| None).collect())
+                .collect(),
+        }
+    }
+
+    pub fn get(&self, t: usize, c: usize) -> Option<&Held> {
+        self.sheets.get(t)?.get(c)?.as_ref()
+    }
+
+    /// Hold `held` for one column, making room for it where a table gained
+    /// its columns from the file rather than from the text.
+    pub fn set(&mut self, t: usize, c: usize, held: Held) {
+        if self.sheets.len() <= t {
+            self.sheets.resize_with(t + 1, Vec::new);
+        }
+        let cols = &mut self.sheets[t];
+        if cols.len() <= c {
+            cols.resize_with(c + 1, || None);
+        }
+        cols[c] = Some(held);
+    }
+}
+
+/// Read every sheet that takes its rows from elsewhere: the schema it
+/// declares is checked against the file, its row count is fixed, and its
+/// columns are kept as the file holds them. `dir` is the directory the
+/// file's own path is relative to, so that a source is read from beside the
+/// `.omx` rather than from wherever the command was run.
+pub fn read(program: &mut Program, dir: &Path, diags: &mut Vec<Diagnostic>) -> Tables {
+    let mut frames = Tables::for_program(program);
+    for (t, sheet) in program.sheets.iter_mut().enumerate() {
         let Some(source) = sheet.source.clone() else {
             continue;
         };
         let path = dir.join(&source.path);
         match frame(&path) {
-            Ok(df) => fill(sheet, &df, &source, diags),
+            Ok(df) => fill(t, sheet, &df, &source, diags, &mut frames),
             Err(why) => diags.push(Diagnostic::new(
                 source.span,
                 format!("cannot read `{}`: {why}", source.path),
@@ -37,6 +90,7 @@ pub fn read(program: &mut Program, dir: &Path, diags: &mut Vec<Diagnostic>) {
     // A sheet of formulas alone is as long as the sheets it reads, which for
     // a table is only now known.
     omasheet_omx::check::resolve_rows(program);
+    frames
 }
 
 /// The row count of a source, from the footer alone: no row group is read. A
@@ -69,10 +123,12 @@ fn frame(path: &Path) -> Result<DataFrame, String> {
 /// disagree. The text is not corrected from the file and the file is not
 /// read as the text says: a mismatch is reported and left (D29).
 fn fill(
+    t: usize,
     sheet: &mut omasheet_omx::check::Sheet,
     df: &DataFrame,
     source: &Source,
     diags: &mut Vec<Diagnostic>,
+    frames: &mut Tables,
 ) {
     let held: Vec<(String, S)> = df
         .get_columns()
@@ -89,7 +145,7 @@ fn fill(
                 span: source.span,
                 ty: *ty,
                 declared: false,
-                kind: ColKind::Frame(Vec::new()),
+                kind: ColKind::Frame,
                 from: None,
             });
         }
@@ -132,7 +188,7 @@ fn fill(
     let height = df.height();
     let names: Vec<String> = sheet.cols.iter().map(|c| held_as(c).to_string()).collect();
     for (c, col) in sheet.cols.iter_mut().enumerate() {
-        if !matches!(col.kind, ColKind::Frame(_)) {
+        if !matches!(col.kind, ColKind::Frame) {
             continue;
         }
         let Ok(column) = df.column(&names[c]) else {
@@ -140,7 +196,7 @@ fn fill(
                 col.span,
                 format!("the file has no column `{}`", names[c]),
             ));
-            col.kind = ColKind::Frame((0..height).map(|_| Cell::Invalid).collect());
+            frames.set(t, c, Held::Absent);
             continue;
         };
         match type_of(column.dtype()) {
@@ -163,14 +219,10 @@ fn fill(
                 ),
             )),
         }
-        let mut cells = Vec::with_capacity(height);
-        for r in 0..height {
-            cells.push(match column.get(r) {
-                Ok(value) => cell_of(value, col.ty),
-                Err(_) => Cell::Invalid,
-            });
-        }
-        col.kind = ColKind::Frame(cells);
+        // The column is kept as the file holds it. Nothing is read from it
+        // until a cell is asked for, and a column nothing asks for is never
+        // read at all.
+        frames.set(t, c, Held::Column(column.clone()));
     }
     sheet.nrows = height;
 }

@@ -8,6 +8,8 @@
 //! row by row rather than by deep recursion.
 
 use crate::Options;
+use crate::dtype::cell_of;
+use crate::table::{Held, Tables};
 use crate::value::{
     RowRef, Value, View, arith, compare, equal, format_exact, format_styled, math, round_digits,
 };
@@ -50,6 +52,9 @@ enum Rows {
 
 pub struct Engine<'p> {
     prog: &'p Program,
+    /// The columns of every `table`, as their files hold them. Empty for a
+    /// program with no table, and for one whose sources were not read.
+    tables: Tables,
     cells: RefCell<Vec<Vec<Vec<Slot>>>>,
     consts: RefCell<Vec<Slot>>,
     /// The arguments of the file's own functions being evaluated, the
@@ -91,6 +96,13 @@ impl<'p> Engine<'p> {
     /// A file that names a time zone there is none of is evaluated in the
     /// zone of this machine, with a diagnostic to take before running.
     pub fn with_options(prog: &'p Program, options: Options) -> Engine<'p> {
+        Engine::with_tables(prog, options, Tables::default())
+    }
+
+    /// [`Engine::with_options`], over the tables [`crate::table::read`]
+    /// has already read. A program with a `table` and no tables here shows
+    /// that sheet with no rows.
+    pub fn with_tables(prog: &'p Program, options: Options, tables: Tables) -> Engine<'p> {
         let local = Rc::new(options.zone.clone().unwrap_or_else(Zone::system));
         let named = prog.zone.as_ref().and_then(|(name, _)| Zone::named(name));
         let home = named.map_or_else(|| local.clone(), Rc::new);
@@ -100,6 +112,7 @@ impl<'p> Engine<'p> {
             .unwrap_or(0);
         Engine {
             prog,
+            tables,
             cells: RefCell::new(
                 prog.sheets
                     .iter()
@@ -198,24 +211,41 @@ impl<'p> Engine<'p> {
             let v = self.eval(node, &mut vec![(t, r)])?;
             self.fit(v, col, node.span)
         };
+        // One cell, however it is held. A row nothing reaches is empty, as a
+        // short row in the text is.
+        let value_of = |cell: Option<&Cell>| match cell {
+            None | Some(Cell::Empty) => Ok(Value::Null),
+            // Any exact number in a `Fraction` column is shown as a
+            // fraction; there is no fraction literal to carry it, since
+            // `1/7` is a division.
+            Some(Cell::Lit(l)) => Ok(match col.ty {
+                S::Fraction => Value::from_lit(l).fraction(),
+                _ => Value::from_lit(l),
+            }),
+            Some(Cell::Markdown(s)) => Ok(Value::String(Rc::from(s.as_str()), true)),
+            Some(Cell::Formula(node)) => formula(node),
+            Some(Cell::Invalid) => Err(Fail::Poison),
+        };
         let result = match &col.kind {
             ColKind::Computed(node) => formula(node),
-            // A frame column holds the same cells, read from the sheet's
-            // source rather than from the text; a row it does not reach is
-            // empty, as a short row in the text is.
-            ColKind::Data(cells) | ColKind::Frame(cells) => match cells.get(r) {
-                None | Some(Cell::Empty) => Ok(Value::Null),
-                // Any exact number in a `Fraction` column is shown as a
-                // fraction; there is no fraction literal to carry it, since
-                // `1/7` is a division.
-                Some(Cell::Lit(l)) => Ok(match col.ty {
-                    S::Fraction => Value::from_lit(l).fraction(),
-                    _ => Value::from_lit(l),
-                }),
-                Some(Cell::Markdown(s)) => Ok(Value::String(Rc::from(s.as_str()), true)),
-                Some(Cell::Formula(node)) => formula(node),
-                Some(Cell::Invalid) => Err(Fail::Poison),
-            },
+            ColKind::Data(cells) => value_of(cells.get(r)),
+            // A frame column's values are where the source holds them. One
+            // is made into a cell as it is asked for, and goes through the
+            // same reading as a cell of the text, so that the two cannot
+            // come to disagree.
+            ColKind::Frame => {
+                let held = match self.tables.get(t, c) {
+                    Some(Held::Column(column)) => match column.get(r) {
+                        Ok(v) => Some(cell_of(v, col.ty)),
+                        Err(_) => Some(Cell::Invalid),
+                    },
+                    // The file has no such column: said once as a
+                    // diagnostic, and in error here.
+                    Some(Held::Absent) => Some(Cell::Invalid),
+                    None => None,
+                };
+                value_of(held.as_ref())
+            }
         };
         let value = match result {
             Ok(v) => v,

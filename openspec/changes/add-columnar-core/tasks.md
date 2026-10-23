@@ -71,16 +71,45 @@ what stops a table's rows being exploded into cells.
 
 ## 3. The frame store (D63, D64, D65)
 
-- [ ] 3.1 `ColKind::Frame` loses its `Vec<Cell>` and becomes a marker
-- [ ] 3.2 `omasheet-engine/src/frame.rs`: `Frames`, `SheetFrame`,
-      `Frames::new(&Program)` from the authored cells, `get`, `set`, `lazy`
-- [ ] 3.3 A table's rows read as whole columns, not value by value
-- [ ] 3.4 `Engine::cell`'s frame fast path, so every existing caller —
-      `cell_shown`, the xlsx writer, `summary` — works unchanged
+- [x] 3.1 `ColKind::Frame` loses its `Vec<Cell>` and becomes a marker
+- [x] 3.2 `Tables` and `Held`, in `table.rs` beside the reader that fills
+      them. Two departures from the sketch, both deliberate:
+
+      It holds a `table`'s columns only, **not every sheet's**. Building
+      Polars columns from authored cells would add a conversion pass at
+      construction and then serve those cells by per-element Arrow access,
+      which D31 itself calls pathologically slow — so it would make an
+      ordinary file slower for no gain until section 6 gives the columns a
+      column-wise reader. An authored column stays `Vec<Cell>` and is served
+      exactly as before.
+
+      `Tables` and not `Frames`, because `eval.rs` already has a `Frames`:
+      the cursor's stack of rows in scope.
+- [x] 3.3 A table's columns kept as the file holds them, not read value by
+      value. `Held::Absent` is the third state the store needs: a column the
+      file lacks was a column of `Cell::Invalid`, so its cells show as
+      errors, and with only "column or nothing" that would have quietly
+      become empty cells in the app
+- [x] 3.4 `Engine::cell`'s frame path, which makes a transient `Cell` of the
+      element and sends it through the same reading as a cell of the text.
+      One conversion rather than two, so they cannot come to disagree —
+      which matters when the goldens are what stands between a subtle
+      difference and a wrong answer. `cell_shown`, the xlsx writer and
+      `summary` are untouched
 - [ ] 3.5 The memo grid narrowed to `Vec<Vec<Option<Vec<Slot>>>>`, allocated
-      per column on first use
+      per column on first use. Contained: the field, its construction, and
+      three accesses, all inside `Engine::cell`
 - [ ] 3.6 **Checkpoint: no lowering, everything correct, and opening a large
-      table no longer materialises it.** Release here
+      table no longer materialises it.**
+
+      What this section does **not** do, so that the gain is not overstated:
+      the file is still read whole, eagerly, by `ParquetReader::finish()`.
+      What goes is the second copy — reading every value into a `Cell`
+      before evaluation begins, which cost the memory twice and the
+      conversion once for values nothing asks for. Reading only the rows and
+      columns a selection asks for is section 6, and `table::rows` — the
+      row count from the footer alone, with no row group read — is the tool
+      written for it and still called by nothing (task 2.6)
 
 ## 4. The units (D68)
 

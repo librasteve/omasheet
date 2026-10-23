@@ -96,15 +96,16 @@ pub fn view_with(name: &str, text: &str, options: Options) -> Outcome {
     let src = sources.add(name, text);
     let (mut program, mut diags) = compile(text, src);
     let mut out = Outcome::default();
+    let mut tables = table::Tables::default();
     if diags.is_empty() {
-        table::read(&mut program, base_of(&options), &mut diags);
+        tables = table::read(&mut program, base_of(&options), &mut diags);
     }
     if !diags.is_empty() {
         out.report(&sources, &diags);
         return out;
     }
     let program = program;
-    let engine = Engine::with_options(&program, options);
+    let engine = Engine::with_tables(&program, options, tables);
     let zone_diags = engine.take_diags();
     if !zone_diags.is_empty() {
         out.report(&sources, &zone_diags);
@@ -156,12 +157,13 @@ pub fn eval_with(
 ) -> Outcome {
     let mut sources = Sources::new();
     let mut out = Outcome::default();
+    let mut tables = table::Tables::default();
     let program = match file {
         Some((name, text)) => {
             let src = sources.add(name, text);
             let (mut program, mut diags) = compile(text, src);
             if diags.is_empty() {
-                table::read(&mut program, base_of(&options), &mut diags);
+                tables = table::read(&mut program, base_of(&options), &mut diags);
             }
             if !diags.is_empty() {
                 out.report(&sources, &diags);
@@ -181,7 +183,7 @@ pub fn eval_with(
     };
     // Calculate the file first, in order, so the expression reads finished
     // cells. Failures in cells the expression never reads do not matter.
-    let engine = Engine::with_options(&program, options);
+    let engine = Engine::with_tables(&program, options, tables);
     let zone_diags = engine.take_diags();
     if !zone_diags.is_empty() {
         out.report(&sources, &zone_diags);

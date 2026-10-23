@@ -2272,17 +2272,19 @@ impl Document {
         let mut sources = Sources::new();
         let src = sources.add("file", self.text.as_str());
         let (mut program, mut diags) = compile(&self.text, src);
+        let mut tables = crate::table::Tables::default();
         if diags.is_empty() {
             let base = self.base.clone().unwrap_or_else(|| ".".into());
-            crate::table::read(&mut program, &base, &mut diags);
+            tables = crate::table::read(&mut program, &base, &mut diags);
         }
-        let engine = Engine::with_options(
+        let engine = Engine::with_tables(
             &program,
             Options {
                 style: self.style,
                 local: self.local,
                 ..Options::default()
             },
+            tables,
         );
         engine.run();
         diags.extend(engine.take_diags());

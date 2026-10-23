@@ -79,9 +79,11 @@ pub struct Column {
 pub enum ColKind {
     Data(Vec<Cell>),
     Computed(Node),
-    /// A column whose rows come from the sheet's [`Source`] rather than from
-    /// the text, so its cells have no spans. Empty until it is read.
-    Frame(Vec<Cell>),
+    /// A column whose rows come from the sheet's [`Source`] rather than
+    /// from the text, so it has no cells here and none with spans. Its
+    /// values stay where the source holds them, and whoever reads the
+    /// source keeps them.
+    Frame,
 }
 
 #[derive(Debug)]
@@ -926,7 +928,7 @@ impl<'a> Checker<'a> {
             ColSrc::Frame => {
                 // The rows are not in the text. The type is the declared one,
                 // and the cells arrive when the source is read.
-                (ColKind::Frame(Vec::new()), declared.unwrap_or(S::Any))
+                (ColKind::Frame, declared.unwrap_or(S::Any))
             }
             ColSrc::Data(h) => {
                 // Literal cells first, so that formulas in the column that
