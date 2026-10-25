@@ -1,0 +1,16 @@
+# omastore.toml — listing for OmaStore (https://github.com/KitsuneForgering/OmaStore).
+# Every field is optional; these declare what the store would otherwise guess.
+kind = "app"
+name = "Omasheet"
+summary = "Spreadsheets meet Markdown for Omarchy"
+categories = ["Office", "Spreadsheet"]
+icon = "pkgbuild/omasheet.svg"
+
+# Each release ships two packages per architecture: the versioned one and an
+# unversioned alias. Match the versioned file; `*` absorbs the pkgrel so the
+# pattern survives a rebuild of the same version.
+[linux.x86_64]
+asset = "omasheet-{version}-*-x86_64.pkg.tar.zst"
+
+[linux.aarch64]
+asset = "omasheet-{version}-*-aarch64.pkg.tar.zst"
