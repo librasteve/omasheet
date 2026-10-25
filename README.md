@@ -38,6 +38,12 @@ Running := [Revenue; 0..*].sum()
 
 ## Install
 
+**From OmaStore** — Omasheet is listed under Office in
+[OmaStore](https://github.com/KitsuneForgering/OmaStore), the community app
+store for Omarchy. Search for it there and click `install`.
+
+**With pacman:**
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/librasteve/omasheet/main/install.sh | bash
 ```
