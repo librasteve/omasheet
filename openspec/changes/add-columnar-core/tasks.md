@@ -56,8 +56,11 @@ what stops a table's rows being exploded into cells.
 - [x] 2.5 `Options { base: Option<PathBuf> }` and a `Document` field for it,
       so a source is still read beside the `.omx` and not from the cwd. This
       passes every test and breaks for every real user if it is lost
-- [ ] 2.6 `add-dataframe-interop` task 3.4 — `nrows` from the Parquet footer,
-      a metadata-only read — which this makes natural
+- [x] 2.6 `add-dataframe-interop` task 3.4 — `nrows` from the Parquet footer,
+      a metadata-only read — which this makes natural. Done by 6.2, which
+      needed it: with the file scanned lazily there is no frame to take a
+      height from, so `table::read` asks `table::rows` for it, and the tool
+      written in section 3 and called by nothing now has its caller
 - [x] 2.7 `omasheet eval file.omx` reads a `table`'s rows, which it never
       did: the inversion reached only `view_sourced` and `Document`, so the
       eval path saw a table with no rows. Putting the read inside the engine
@@ -106,6 +109,11 @@ what stops a table's rows being exploded into cells.
       `nrows × ncols`, and `run()` walks only computed columns and
       constants — so `eval 'T.len()'` over a million rows now makes none,
       where it used to make the whole grid before evaluating anything.
+
+      That last clause was not true when it was written: `run()` walked
+      every column, a frame column included, so it made a slot vector per
+      column and read every column of the file. Task 6.2 made it true,
+      needing it to be.
 
       Measured: a `Cell` is 96 bytes and a slot holds a `Value` (48 bytes)
       and its tag. A million rows of ten columns was therefore about 960 MB
@@ -306,7 +314,36 @@ what stops a table's rows being exploded into cells.
       `Survived == 1 and Pclass == 1` is the engine's however ordinary it
       looks. Widening that is worth more here than anywhere else in the
       change, filters being where those two are written most
-- [ ] 6.2 `.head(5)` over a large file reads only the first row group
+- [ ] 6.2 `.head(5)` over a large file reads only the first row group.
+      **Half of it is done — the projection, not the limit.**
+
+      Done: the source is scanned rather than read.
+      `LazyFrame::scan_parquet` in place of `ParquetReader::finish`, the
+      schema from `collect_schema` and the row count from the footer (2.6),
+      so opening a file of a million rows and twenty columns reads neither
+      the rows nor the columns. Each of a table's columns is a plan that
+      reads that column alone, collected the first time a cell of it is
+      asked for and kept from then on, and `Engine::reads` says which were
+      read. One column summed out of the eight in `titanic.parquet` reads
+      one.
+
+      `Engine::run` had to stop walking frame columns for any of that to
+      bite: it calculated every cell of every column, a column whose values
+      are in a file included, so every column was read before anything was
+      asked. A column with no formula has nothing to calculate, so the group
+      is skipped and the column is read when a cell of it is shown or a
+      calculation wants it. A column of cells stays, a cell of it being able
+      to hold a formula of its own.
+
+      Not done: the limit. A column is still collected whole the first time
+      it is touched, so `head(5)` over a file of many row groups reads every
+      row group of the columns it shows. Pushing the limit down needs the
+      row range to reach the scan, and the engine asks for cells one at a
+      time by position — so it means either a sliced materialisation
+      (`pl_column` taking the rows wanted, which the snapshot could give it
+      once D75's column-wise pass exists) or the selection staying lazy
+      until it is read. 10.3 is what would show it working, and that is
+      where the row groups read are counted
 - [x] 6.3 An aggregate over a frame column taken by Polars, with `fit_agg`
       re-applying the `Percent` or `Fraction` wrapper from `Column::ty`
       (D69) — `examples/budget.expected` is what catches a slip.

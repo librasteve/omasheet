@@ -93,6 +93,10 @@ pub struct Engine<'p> {
     aggregates: RefCell<Vec<(usize, usize, Attempt)>>,
     /// And of each condition picking rows of a sheet, by that sheet.
     filters: RefCell<Vec<(usize, Attempt)>>,
+    /// Which of a `table`'s columns have been read from its file, by sheet
+    /// and column, in the order they were read. What is not here was never
+    /// read.
+    reads: RefCell<Vec<(usize, usize)>>,
     /// A memoisation slot per cell, by sheet, column and row. A column's
     /// slots are made when a cell of it is first asked for: a sheet of a
     /// million rows whose columns all come from a file needs none of them,
@@ -183,6 +187,7 @@ impl<'p> Engine<'p> {
             attempts: RefCell::new(Vec::new()),
             aggregates: RefCell::new(Vec::new()),
             filters: RefCell::new(Vec::new()),
+            reads: RefCell::new(Vec::new()),
             cells: RefCell::new(
                 prog.sheets
                     .iter()
@@ -221,6 +226,19 @@ impl<'p> Engine<'p> {
                     let Some(&(t, _)) = cols.first() else {
                         continue;
                     };
+                    // A column whose values are in a file has nothing to
+                    // calculate, so there is nothing here to do for it and
+                    // no reason to read it: it is read when a cell of it is
+                    // shown or a calculation asks for it, and a column
+                    // nothing asks for is never read at all. A column of
+                    // cells stays, a cell of it being able to hold a
+                    // formula of its own.
+                    if cols
+                        .iter()
+                        .all(|&(t, c)| matches!(self.prog.sheets[t].cols[c].kind, ColKind::Frame))
+                    {
+                        continue;
+                    }
                     if self.run_lowered(cols) {
                         continue;
                     }
@@ -258,6 +276,14 @@ impl<'p> Engine<'p> {
     /// in the order they were asked.
     pub fn filters(&self) -> Vec<(usize, Attempt)> {
         self.filters.borrow().clone()
+    }
+
+    /// Which of a `table`'s columns were read from its file, by sheet and
+    /// column, in the order they were read. Each is read once and kept, so
+    /// a column is here at most once, and a column nothing asked for is not
+    /// here at all.
+    pub fn reads(&self) -> Vec<(usize, usize)> {
+        self.reads.borrow().clone()
     }
 
     /// Calculate a group of columns in one step, over the whole column, and
@@ -510,7 +536,14 @@ impl<'p> Engine<'p> {
             return Some(held);
         }
         match self.tables.get(t, c) {
-            Some(Held::Column(column)) => return Some(column.clone()),
+            // The file's own column, read now and kept: the dataframe is
+            // the authority for it, as it is for a lowered one.
+            Some(held @ Held::Column(_)) => {
+                let column = held.read()?;
+                self.reads.borrow_mut().push((t, c));
+                self.held.borrow_mut()[t][c] = Some(column.clone());
+                return Some(column);
+            }
             // The file has no such column, so every cell of it is in error.
             Some(Held::Absent) => return None,
             None => {}
@@ -616,10 +649,17 @@ impl<'p> Engine<'p> {
             (Some(cell), _) => value_of(Some(&cell)),
             (None, ColKind::Computed(node)) => formula(node),
             (None, ColKind::Data(cells)) => value_of(cells.get(r)),
-            // A frame column's values are where the source holds them.
+            // A frame column's values are where the source holds them. The
+            // column is read from the file the first time a cell of it is
+            // asked for, and kept from then on; a file that will not give
+            // it any more is in error rather than empty, as a column the
+            // file never had is.
             (None, ColKind::Frame) => {
                 let held = match self.tables.get(t, c) {
-                    Some(Held::Column(column)) => Some(held_cell(column, r, col.ty)),
+                    Some(Held::Column(_)) => Some(
+                        self.pl_column(t, c)
+                            .map_or(Cell::Invalid, |column| held_cell(&column, r, col.ty)),
+                    ),
                     // The file has no such column: said once as a
                     // diagnostic, and in error here.
                     Some(Held::Absent) => Some(Cell::Invalid),

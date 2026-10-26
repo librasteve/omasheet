@@ -20,12 +20,26 @@ use std::path::Path;
 
 /// What a column of a `table` holds.
 pub enum Held {
-    /// The column the source holds, as it holds it.
-    Column(PlColumn),
+    /// A plan that reads this one column of the source, and nothing else of
+    /// it. Nothing is read until it is collected, and the projection is why
+    /// a column nothing asks for is never read from the file at all. Boxed
+    /// because a plan is 288 bytes beside a column that has none.
+    Column(Box<LazyFrame>),
     /// The source has no such column. The mismatch is said once, as a
     /// diagnostic; every cell of it is then in error rather than empty,
     /// which is what a column of errors standing in for it gave.
     Absent,
+}
+
+impl Held {
+    /// The column itself, read now. `None` where the file will not give it,
+    /// which is a file changed or taken away since its schema was read.
+    pub fn read(&self) -> Option<PlColumn> {
+        match self {
+            Held::Column(frame) => frame.clone().collect().ok()?.get_columns().first().cloned(),
+            Held::Absent => None,
+        }
+    }
 }
 
 /// Every sheet's columns that come from a source, by sheet and column. A
@@ -68,10 +82,16 @@ impl Tables {
 }
 
 /// Read every sheet that takes its rows from elsewhere: the schema it
-/// declares is checked against the file, its row count is fixed, and its
-/// columns are kept as the file holds them. `dir` is the directory the
-/// file's own path is relative to, so that a source is read from beside the
-/// `.omx` rather than from wherever the command was run.
+/// declares is checked against the file's, its row count is fixed from the
+/// file's footer, and each of its columns gets a plan that reads that
+/// column alone. `dir` is the directory the file's own path is relative to,
+/// so that a source is read from beside the `.omx` rather than from
+/// wherever the command was run.
+///
+/// No row group is read here. What is read is the schema and the row count,
+/// both of which Parquet holds in its footer, so that opening a file of a
+/// million rows and twenty columns reads neither the rows nor the columns —
+/// and a column no formula mentions is never read at all.
 pub fn read(program: &mut Program, dir: &Path, diags: &mut Vec<Diagnostic>) -> Tables {
     let mut frames = Tables::for_program(program);
     for (t, sheet) in program.sheets.iter_mut().enumerate() {
@@ -79,8 +99,11 @@ pub fn read(program: &mut Program, dir: &Path, diags: &mut Vec<Diagnostic>) -> T
             continue;
         };
         let path = dir.join(&source.path);
-        match frame(&path) {
-            Ok(df) => fill(t, sheet, &df, &source, diags, &mut frames),
+        match scan(&path).and_then(|frame| {
+            let height = rows(dir, &source)?;
+            Ok((frame, height))
+        }) {
+            Ok((frame, height)) => fill(t, sheet, frame, height, &source, diags, &mut frames),
             Err(why) => diags.push(Diagnostic::new(
                 source.span,
                 format!("cannot read `{}`: {why}", source.path),
@@ -112,11 +135,16 @@ fn open(path: &Path) -> Result<File, String> {
     })
 }
 
-/// A source's file as a frame.
-fn frame(path: &Path) -> Result<DataFrame, String> {
-    ParquetReader::new(open(path)?)
-        .finish()
-        .map_err(|e| e.to_string())
+/// A plan that reads a source's file, with nothing read yet.
+fn scan(path: &Path) -> Result<LazyFrame, String> {
+    // The file is opened first so that a missing one is said to be missing
+    // in the words `open` gives it, rather than in Polars'.
+    open(path)?;
+    LazyFrame::scan_parquet(
+        PlPath::from_str(&path.to_string_lossy()),
+        Default::default(),
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// The sheet's rows, and a diagnostic for each way the text and the file
@@ -125,15 +153,22 @@ fn frame(path: &Path) -> Result<DataFrame, String> {
 fn fill(
     t: usize,
     sheet: &mut omasheet_omx::check::Sheet,
-    df: &DataFrame,
+    mut frame: LazyFrame,
+    height: usize,
     source: &Source,
     diags: &mut Vec<Diagnostic>,
     frames: &mut Tables,
 ) {
-    let held: Vec<(String, S)> = df
-        .get_columns()
+    let Ok(schema) = frame.collect_schema() else {
+        diags.push(Diagnostic::new(
+            source.span,
+            format!("cannot read the schema of `{}`", source.path),
+        ));
+        return;
+    };
+    let held: Vec<(String, S)> = schema
         .iter()
-        .filter_map(|c| type_of(c.dtype()).map(|ty| (c.name().to_string(), ty)))
+        .filter_map(|(name, dtype)| type_of(dtype).map(|ty| (name.to_string(), ty)))
         .collect();
 
     // A table with no schema lines takes its columns from the file, so that
@@ -186,13 +221,13 @@ fn fill(
         }
     }
 
-    let height = df.height();
+    let schema = schema.clone();
     let names: Vec<String> = sheet.cols.iter().map(|c| held_as(c).to_string()).collect();
     for (c, col) in sheet.cols.iter_mut().enumerate() {
         if !matches!(col.kind, ColKind::Frame) {
             continue;
         }
-        let Ok(column) = df.column(&names[c]) else {
+        let Some(dtype) = schema.get(names[c].as_str()) else {
             diags.push(Diagnostic::new(
                 col.span,
                 format!("the file has no column `{}`", names[c]),
@@ -200,7 +235,7 @@ fn fill(
             frames.set(t, c, Held::Absent);
             continue;
         };
-        match type_of(column.dtype()) {
+        match type_of(dtype) {
             Some(ty) if col.declared && !ty.assignable_to(col.ty) => diags.push(
                 Diagnostic::new(
                     col.span,
@@ -220,10 +255,13 @@ fn fill(
                 ),
             )),
         }
-        // The column is kept as the file holds it. Nothing is read from it
-        // until a cell is asked for, and a column nothing asks for is never
-        // read at all.
-        frames.set(t, c, Held::Column(column.clone()));
+        // A plan that reads this column and nothing else of the file.
+        // Nothing is read until a cell is asked for, and a column nothing
+        // asks for is never read at all.
+        let one = frame
+            .clone()
+            .select([polars::prelude::col(names[c].as_str())]);
+        frames.set(t, c, Held::Column(Box::new(one)));
     }
     sheet.nrows = height;
 }

@@ -2076,3 +2076,44 @@ Same := Note == \"x\"
         assert_eq!(markdown, [true, true], "{lowering:?}");
     }
 }
+
+#[test]
+fn unselected_columns_are_not_read() {
+    // A `table`'s columns are a plan each, and nothing of the file is read
+    // until a cell or a calculation asks for one.
+    let dir = std::path::Path::new("../examples");
+    let open = |expr: Option<&str>| {
+        let (mut program, mut diags) = compile(TABLE, 0);
+        let tables = omasheet_engine::table::read(&mut program, dir, &mut diags);
+        assert!(diags.is_empty(), "{diags:?}");
+        let program = program;
+        let engine = Engine::with_tables(
+            &program,
+            Options {
+                base: Some(dir.to_path_buf()),
+                lowering: Lowering::Always,
+                ..Options::default()
+            },
+            tables,
+        );
+        engine.run();
+        if let Some(expr) = expr {
+            let (node, _) = compile_expr(&program, expr, 1).expect("the expression checks");
+            engine.eval_top(&node).expect("a value");
+        }
+        engine.reads()
+    };
+    // Opened and calculated, with nothing asked of it: the schema and the
+    // row count come from the footer, so no column is read at all.
+    assert_eq!(open(None), [], "opened and calculated, nothing asked");
+    // One column summed: that column, and none of the other seven.
+    assert_eq!(open(Some("Passengers.Fare.sum()")), [(0, 5)]);
+    // A condition over one column and a count of another: those two of
+    // the eight. `Name` is read because a column selection answers with a
+    // vector of its values, which `len` then counts — counting the rows
+    // kept without reading them is work for another day.
+    assert_eq!(
+        open(Some("Passengers[; Pclass == 1].Name.len()")),
+        [(0, 1), (0, 2)]
+    );
+}
