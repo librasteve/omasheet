@@ -14,6 +14,7 @@ pub mod zone;
 pub use doc::Document;
 pub use eval::Engine;
 pub mod dtype;
+pub mod lower;
 pub mod table;
 
 pub use omasheet_omx as omx;
@@ -47,7 +48,37 @@ pub struct Options {
     /// decimal it is rounded to for display, `1.41421…`. An exact number
     /// is always shown in full: `19.99`, `1/3`.
     pub exact: bool,
+    /// Whether a column that can be calculated in one step over the whole
+    /// dataframe is (D74).
+    pub lowering: Lowering,
 }
+
+/// Whether a column is calculated by Polars over the whole column or by the
+/// engine row by row, where both can do it.
+///
+/// The two agree, which is what the differential test over the example
+/// corpus checks; this is the lever that test pulls, the bisection tool
+/// when a result changes, and the way out for a file that miscalculates in
+/// the field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Lowering {
+    /// By Polars where there are enough rows for it to pay: see
+    /// [`ROW_THRESHOLD`].
+    #[default]
+    Auto,
+    /// Always by the engine, row by row, as before there was a dataframe.
+    Never,
+    /// By Polars wherever it can be, however few the rows, and what was
+    /// refused is recorded.
+    Always,
+}
+
+/// How many rows a sheet needs before a column of it is lowered under
+/// [`Lowering::Auto`]. Building a plan, optimising it and collecting it are
+/// slower than the row loop for a sheet of ten rows, and a sheet of ten
+/// rows is omasheet's usual document. The figure is a starting point and
+/// not yet a measurement (D73).
+pub const ROW_THRESHOLD: usize = 1024;
 
 /// What a command produced: text for standard output, and rendered
 /// diagnostics. Any diagnostic means the command failed.

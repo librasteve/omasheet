@@ -7,19 +7,21 @@
 //! calculation order so that long chains (a running balance) are filled in
 //! row by row rather than by deep recursion.
 
-use crate::Options;
-use crate::dtype::cell_of;
+use crate::dtype::{cell_of, column_of};
 use crate::table::{Held, Tables};
 use crate::value::{
     RowRef, Value, View, arith, compare, equal, format_exact, format_styled, math, round_digits,
 };
 use crate::zone::{Zone, Zoned, utc_now};
+use crate::{Lowering, Options, ROW_THRESHOLD, lower};
 use omasheet_omx::ast::{BinOp, UnOp};
 use omasheet_omx::cycle;
 use omasheet_omx::date;
 use omasheet_omx::funcs::MathFn;
 use omasheet_omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_omx::{Cell, ColKind, Column, Diagnostic, Group, Program, S, Span};
+use polars::prelude::Column as PlColumn;
+use polars::prelude::{DataFrame, DataType, Expr, IntoLazy};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -44,6 +46,21 @@ enum Slot {
     Done(Value),
 }
 
+/// What became of a column the first gate said could be calculated in one
+/// step: see [`Engine::attempts`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Attempt {
+    /// Calculated by Polars, over the whole column.
+    Lowered,
+    /// Polars has no answer of its own for some part of it, so the engine
+    /// calculated it row by row.
+    Refused,
+    /// Lowered, and then given up: the plan would not collect, so the
+    /// result was discarded whole and the engine calculated the column
+    /// row by row instead.
+    Failed,
+}
+
 enum Rows {
     /// One position, or `None` for a cursor offset outside the sheet.
     One(Option<usize>),
@@ -55,6 +72,14 @@ pub struct Engine<'p> {
     /// The columns of every `table`, as their files hold them. Empty for a
     /// program with no table, and for one whose sources were not read.
     tables: Tables,
+    /// A column the dataframe holds: one calculated in one step by Polars,
+    /// or one built out of calculated values so that another could be. Both
+    /// are read the way a `table`'s columns are — a value is made into a
+    /// cell as it is asked for — so a column nothing asks for is never read.
+    held: RefCell<Vec<Vec<Option<PlColumn>>>>,
+    /// What became of each column that could have been calculated in one
+    /// step, in the order they were tried.
+    attempts: RefCell<Vec<(usize, usize, Attempt)>>,
     /// A memoisation slot per cell, by sheet, column and row. A column's
     /// slots are made when a cell of it is first asked for: a sheet of a
     /// million rows whose columns all come from a file needs none of them,
@@ -92,6 +117,15 @@ fn fail<T>(span: Span, message: impl Into<String>) -> R<T> {
     Err(Fail::Diag(Diagnostic::new(span, message)))
 }
 
+/// One value of a column the dataframe holds, as a cell. A row the column
+/// has not got is in error rather than empty, as a column the file lacks is.
+fn held_cell(column: &PlColumn, r: usize, ty: S) -> Cell {
+    match column.get(r) {
+        Ok(v) => cell_of(v, ty),
+        Err(_) => Cell::Invalid,
+    }
+}
+
 impl<'p> Engine<'p> {
     pub fn new(prog: &'p Program) -> Engine<'p> {
         Engine::with_options(prog, Options::default())
@@ -117,6 +151,13 @@ impl<'p> Engine<'p> {
         Engine {
             prog,
             tables,
+            held: RefCell::new(
+                prog.sheets
+                    .iter()
+                    .map(|t| vec![None; t.cols.len()])
+                    .collect(),
+            ),
+            attempts: RefCell::new(Vec::new()),
             cells: RefCell::new(
                 prog.sheets
                     .iter()
@@ -155,6 +196,9 @@ impl<'p> Engine<'p> {
                     let Some(&(t, _)) = cols.first() else {
                         continue;
                     };
+                    if self.run_lowered(cols) {
+                        continue;
+                    }
                     let n = self.prog.sheets[t].nrows;
                     for k in 0..n {
                         let r = if *reverse { n - 1 - k } else { k };
@@ -167,6 +211,142 @@ impl<'p> Engine<'p> {
                 }
             }
         }
+    }
+
+    /// What became of every column that could have been calculated in one
+    /// step, as [`Lowering`] allowed it to be tried: what was lowered, what
+    /// Polars had no answer for, and what was lowered and then given up. A
+    /// column the row count left on the engine is not here, having never
+    /// been tried; nor is one the first gate ruled out.
+    pub fn attempts(&self) -> Vec<(usize, usize, Attempt)> {
+        self.attempts.borrow().clone()
+    }
+
+    /// Calculate a group of columns in one step, over the whole column, and
+    /// say whether it was done. `false` leaves the group to the row loop,
+    /// which is the only path that can say which row failed.
+    ///
+    /// A group of more than one column is two columns that read each other,
+    /// which for same-row reads is a circular reference and for any other
+    /// kind is not elementwise — so a group that can be lowered is one
+    /// column, and that is what this looks for.
+    fn run_lowered(&self, cols: &[(usize, usize)]) -> bool {
+        if self.options.lowering == Lowering::Never {
+            return false;
+        }
+        let &[(t, c)] = cols else {
+            return false;
+        };
+        let col = &self.prog.sheets[t].cols[c];
+        let ColKind::Computed(node) = &col.kind else {
+            return false;
+        };
+        let nrows = self.prog.sheets[t].nrows;
+        // A plan, an optimiser pass and a collect are slower than the row
+        // loop for a sheet of ten rows (D73). An empty sheet has nothing to
+        // calculate either way.
+        if !col.elementwise
+            || nrows == 0
+            || (self.options.lowering == Lowering::Auto && nrows < ROW_THRESHOLD)
+        {
+            return false;
+        }
+        let Some((frame, expr)) = self.plan(t, c, node) else {
+            self.attempts.borrow_mut().push((t, c, Attempt::Refused));
+            return false;
+        };
+        // Nothing of the frame is borrowed from here on: the plan is built
+        // and the columns owned before the collect, which Polars runs on a
+        // pool of its own threads (D67's `RefCell` discipline).
+        let collected = frame
+            .lazy()
+            .select([expr])
+            .collect()
+            .ok()
+            .and_then(|df| df.get_columns().first().cloned());
+        let Some(column) = collected.filter(|column| column.len() == nrows) else {
+            // Whole or nothing: the result is discarded, no diagnostic is
+            // filed for the attempt, and the group is calculated again row
+            // by row — which is what produces a per-cell error with the row
+            // in it (D67).
+            self.attempts.borrow_mut().push((t, c, Attempt::Failed));
+            return false;
+        };
+        // Polars gives arithmetic a dtype of precision `None`; the full 38
+        // is what a Parquet write and the schema in the text agree on
+        // (D72a).
+        let column = match column.dtype() {
+            DataType::Decimal(None, Some(scale)) => {
+                let wanted = crate::dtype::decimal(*scale as u32);
+                match column.cast(&wanted) {
+                    Ok(stamped) => stamped,
+                    Err(_) => {
+                        self.attempts.borrow_mut().push((t, c, Attempt::Failed));
+                        return false;
+                    }
+                }
+            }
+            _ => column,
+        };
+        self.held.borrow_mut()[t][c] = Some(column);
+        self.attempts.borrow_mut().push((t, c, Attempt::Lowered));
+        true
+    }
+
+    /// The frame a column's formula is evaluated over and the one
+    /// expression that calculates it, or `None` where Polars has no answer
+    /// of its own for some part of it.
+    fn plan(&self, t: usize, c: usize, node: &Node) -> Option<(DataFrame, Expr)> {
+        let col = &self.prog.sheets[t].cols[c];
+        let column = |cc| self.pl_column(t, cc);
+        let constant = |i| self.const_value(i).ok();
+        let cx = lower::Cx::new(&column, &constant);
+        let out = lower::expr(node, &cx)?;
+        // The same answer the row path's `fit` gives: a column that says
+        // what it holds holds it, and a lowered result of another type is
+        // one the two paths would disagree about.
+        if col.declared && !out.ty()?.assignable_to(col.ty) {
+            return None;
+        }
+        let columns = cx.taken();
+        // An expression reading no column at all is one value repeated, and
+        // the row loop has already memoised it by the second row.
+        if columns.is_empty() {
+            return None;
+        }
+        let frame = DataFrame::new(columns).ok()?;
+        Some((frame, out.expr.alias(col.name.as_str())))
+    }
+
+    /// One column of a sheet as the dataframe holds it: a `table`'s own
+    /// column, a column already calculated in one step, or one built here
+    /// out of calculated values. `None` for a column that has no one dtype
+    /// to be held as, or that holds a value which does not fit the type the
+    /// column says it has.
+    fn pl_column(&self, t: usize, c: usize) -> Option<PlColumn> {
+        if let Some(held) = self.held.borrow()[t][c].clone() {
+            return Some(held);
+        }
+        match self.tables.get(t, c) {
+            // Cloning a Polars column clones the handles, not the buffers.
+            Some(Held::Column(column)) => return Some(column.clone()),
+            // The file has no such column, so every cell of it is in error.
+            Some(Held::Absent) => return None,
+            None => {}
+        }
+        let col = &self.prog.sheets[t].cols[c];
+        let values: Vec<Value> = (0..self.prog.sheets[t].nrows)
+            .map(|r| self.cell_shown(t, c, r))
+            .collect();
+        // A column holding an error is not lowered over: an error is poison
+        // with a diagnostic already filed, and a dataframe has no element
+        // for one (D67).
+        if values.iter().any(|v| matches!(v, Value::Error)) {
+            return None;
+        }
+        let built = column_of(&col.name, col.ty, &values)?;
+        self.held.borrow_mut()[t][c] = Some(built.clone());
+        Some(built)
     }
 
     /// Diagnostics raised during evaluation so far.
@@ -236,19 +416,25 @@ impl<'p> Engine<'p> {
             Some(Cell::Formula(node)) => formula(node),
             Some(Cell::Invalid) => Err(Fail::Poison),
         };
-        let result = match &col.kind {
-            ColKind::Computed(node) => formula(node),
-            ColKind::Data(cells) => value_of(cells.get(r)),
-            // A frame column's values are where the source holds them. One
-            // is made into a cell as it is asked for, and goes through the
-            // same reading as a cell of the text, so that the two cannot
-            // come to disagree.
-            ColKind::Frame => {
+        // A value the dataframe holds is made into a cell as it is asked
+        // for, and goes through the same reading as a cell of the text, so
+        // that the two cannot come to disagree. The borrow is dropped
+        // before the cell is read: reading one evaluates nothing, but a
+        // borrow held into `value_of` would be a borrow held into the
+        // engine.
+        let held = self.held.borrow()[t][c]
+            .as_ref()
+            .map(|column| held_cell(column, r, col.ty));
+        let result = match (held, &col.kind) {
+            // A column calculated in one step: its values are in the
+            // dataframe, so the formula is not evaluated again here.
+            (Some(cell), _) => value_of(Some(&cell)),
+            (None, ColKind::Computed(node)) => formula(node),
+            (None, ColKind::Data(cells)) => value_of(cells.get(r)),
+            // A frame column's values are where the source holds them.
+            (None, ColKind::Frame) => {
                 let held = match self.tables.get(t, c) {
-                    Some(Held::Column(column)) => match column.get(r) {
-                        Ok(v) => Some(cell_of(v, col.ty)),
-                        Err(_) => Some(Cell::Invalid),
-                    },
+                    Some(Held::Column(column)) => Some(held_cell(column, r, col.ty)),
                     // The file has no such column: said once as a
                     // diagnostic, and in error here.
                     Some(Held::Absent) => Some(Cell::Invalid),

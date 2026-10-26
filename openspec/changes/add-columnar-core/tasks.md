@@ -163,11 +163,56 @@ what stops a table's rows being exploded into cells.
       something the file could not write back. It arrives with the syntax,
       below
 - [ ] 4.5 Fractional seconds in a literal and in what is shown, and then
-      `millisecond`, `microsecond` and `nanosecond`. With them comes a
-      question the finer units raise: the difference of two times is an
-      `Int` of seconds, which would truncate once a sub-second value can
-      exist, so either it becomes a `Decimal` — and the checker must type it
-      so — or the truncation is stated and meant
+      `millisecond`, `microsecond` and `nanosecond`.
+
+      The difference of two times is not a question here: `add-polars-dtypes`
+      D22 decided it is a `Duration`, inferred from the difference of two
+      dates, times or date-times and written as an ISO 8601 literal
+      (`PT1H30M`), which reverses
+      `Date - Date -> Int`. So the subtraction never truncates once that
+      lands, and nothing here needs it to be a `Decimal`. It is that
+      change's task 5.2, and the whole of its section 5 is outstanding;
+      `dtype.rs`'s `type_of` returns `None` for `DataType::Duration` until
+      it does, so a Parquet `Duration` column cannot be read at all.
+
+      The literal is ISO 8601, as the Duration literal is (owner,
+      2026-10-26): a `.` and the fractional digits after the seconds, so
+      `09:30:00.123`, `09:30:00.123456`, `09:30:00.123456789`, and
+      `2025-01-31T09:30:00.123456`. The fractional part is only written
+      where the seconds are, since `09:30.5` would say which of minutes or
+      seconds the fraction belongs to only by convention.
+
+      Nine digits are accepted for a date-time as well as for a time, and
+      the only limit is the one Polars' own types impose (owner,
+      2026-10-26): a date-time is held in the unit its value needs, so
+      `...09:30:00.123456` is a `Datetime("us")` and
+      `...09:30:00.123456789` a `Datetime("ns")`. omasheet imposes no cap
+      of its own -- `DataType::Datetime` is parameterised
+      `Nanoseconds | Microseconds | Milliseconds`, and only `Time` is fixed
+      (always nanoseconds of day, no time unit, which a day of nanoseconds
+      is far inside an `i64`).
+
+      What is a diagnostic is the `i64` running out: nanoseconds reach only
+      1677-09-21 to 2262-04-11, so a value needing nanosecond precision
+      outside those dates cannot be held and is reported as such. Inside
+      them it is held exactly. Either way nothing is truncated silently,
+      which is the bug 4.4 is holding the line against.
+
+      This reaches D68, which made `Value::DateTime` a bare `i64` of
+      microseconds. A literal with nine digits cannot be held in one, so
+      the value must either carry its `TimeUnit` or be nanoseconds
+      throughout -- and nanoseconds throughout would cap every date-time at
+      1678-2262, which is the thing µs was chosen to avoid. **Carrying the
+      unit is the only option that does both; D68 needs amending to say so
+      before this is built.**
+
+      The lexer must take the fraction inside the time branch
+      (`omasheet-omx/src/lexer.rs:309,347`). Today `09:30:00.5` lexes as
+      `Tok::Time` followed by `.5`, because `.` is not a word character and
+      so does not stop the time token.
+
+      Then `millisecond`, `microsecond` and `nanosecond` as the accessors,
+      beside `hour`, `minute` and `second`
 
 ## 5. The two gates (D66, D67, D74)
 
@@ -178,21 +223,67 @@ what stops a table's rows being exploded into cells.
       false for a column that is not a formula at all — cells of its own, or
       a file's rows — so that it cannot be read as a promise about something
       there is nothing of to lower
-- [ ] 5.2 `omasheet-engine/src/lower.rs`: `expr(&Node) -> Option<Expr>`,
-      total, `None` for anything it does not handle
-- [ ] 5.3 `Engine::plan` and `Engine::run_lowered`, with the borrows scoped
-      so that none is held across a `collect()`
-- [ ] 5.4 The whole-or-nothing fallback: a failed `collect()` discards the
-      lowered result, files nothing, and re-runs the group row-wise
-- [ ] 5.5 `Options { lowering: Auto | Never | Always }`, and `Always`
-      reporting per column whether lowering was attempted and refused
-- [ ] 5.6 D72: `/` and `mean` not lowered on an exact column; `*` lowered
-      with its scale checked; D72a: the precision re-stamped to 38
+- [x] 5.2 `omasheet-engine/src/lower.rs`: `expr(&Node) -> Option<Expr>`,
+      total, `None` for anything it does not handle. It takes a `Cx` beside
+      the node, which the signature in this line did not allow for: a
+      constant's value and the columns in scope come from outside the
+      expression, and the `Cx` is also what remembers which columns were
+      read, so that the frame built for the plan holds exactly those. It
+      answers an `Out`, the expression and its dtype, because the dtype is
+      what decides whether the operation above it may be lowered in turn.
+
+      What it handles: a literal and a constant, a read of its own row, `+`,
+      `-` and `*` on exact numbers and all four of those and `/` on
+      floating-point ones, the six comparisons, `//`, `if`, and `-` and
+      `not`. Everything else is declined, which is 44 of the corpus's 54
+      elementwise columns (task 8.3) — a function call above all, since no
+      call of any kind is lowered yet
+- [x] 5.3 `Engine::plan` and `Engine::run_lowered`, with the borrows scoped
+      so that none is held across a `collect()`: the plan is built and the
+      columns owned before the collect, and `Cx::taken` consumes the context
+      rather than lending it out. `Engine::pl_column` is the store's reader —
+      a `table`'s own column, a column already lowered, or one built out of
+      calculated values by `dtype::column_of`, which is task 2.3's
+      `column_from_cells` arriving where there is something to make it from.
+
+      A group of more than one column is not lowered, and does not need to
+      be: a group is an SCC, so more than one column in it is columns that
+      read each other, which for same-row reads is a circular reference and
+      for any other kind is not elementwise
+- [x] 5.4 The whole-or-nothing fallback: a failed `collect()` discards the
+      lowered result, files nothing, and re-runs the group row-wise. A
+      column that comes back the wrong length, and a re-stamp that will not
+      cast, go the same way
+- [x] 5.5 `Options { lowering: Auto | Never | Always }`, and `Always`
+      reporting per column whether lowering was attempted and refused:
+      `Engine::attempts`, as `Lowered`, `Refused` or `Failed`. A column the
+      row count left alone is not in it, having never been tried.
+      `Lowering::Auto` is above `ROW_THRESHOLD`, which is 1024 until D73 is
+      measured. **Not exposed on the command line**: D74 wants it as the way
+      out for a user whose file miscalculates in the field, and that is a
+      flag and its help text, which is the owner's to word
+- [x] 5.6 D72: `/` and `mean` not lowered on an exact column; `*` lowered
+      with its scale checked; D72a: the precision re-stamped to 38. The
+      scale checked is the one the engine would give — the wider of the two
+      for `+` and `-`, the sum of them for `*` — and a scale past the 38
+      digits a decimal holds is where `Dec` gives up digits after the point,
+      so it is refused. Both sides widen to a `Decimal(38, s)`, an `Int64`
+      included, because a `Dec` holds 38 digits where an `i64` holds 19 and
+      a column of whole numbers that overflows Polars' addition still has an
+      answer on the engine. `mean` is not reachable from here at all, an
+      aggregate reading a whole column rather than its own row; it is
+      restated with the aggregates in 6.3
 - [ ] 5.7 D71a: `max` lowered to Polars' `nan_max` and `min` to its default
       `min`, with a Float column of nothing but `NaN`s left on the engine for
-      `min` — the one case where the two disagree
+      `min` — the one case where the two disagree. Nothing of this is
+      reachable until an aggregate is lowered, which is 6.3: an aggregate
+      reads a whole column, so the first gate never offers it here
 - [ ] 5.8 D70: a zoned column lowered, one zone per column, and a column of
-      mixed zones left on the row path
+      mixed zones left on the row path. Declined for now, and `zones.omx` is
+      ten elementwise columns refused: a `Zoned` is a value with its own
+      zone here, where Polars carries one zone on the column's dtype, so
+      lowering one is a column type this store has no entry for rather than
+      an expression `lower::expr` is missing
 
 ## 6. Selections and aggregates (the old 4.1, 5.2)
 
@@ -219,9 +310,19 @@ what stops a table's rows being exploded into cells.
       frame. Table-driven plus a seeded LCG, the seed printed on failure.
       No new dev-dependency: the workspace has none
 - [ ] 8.2 The corpus differential: for each `examples/*.omx`, `Never` and
-      `Always` byte-identical to each other and to the committed `.expected`
+      `Always` byte-identical to each other and to the committed `.expected`.
+      Half of it is in `omasheet-engine/tests/spec.rs` as
+      `every_example_calculates_the_same_either_way`: all twelve examples
+      give the same output and the same diagnostics either way. What is left
+      is the `.expected` side, which only the CLI's own golden test reads,
+      and which it reads under `Auto` alone
 - [ ] 8.3 The coverage number that falls out of 8.2 — how much of the corpus
-      actually lowers
+      actually lowers. Measured once, by hand, at the end of section 5: of
+      100 computed columns in the twelve examples, 54 are elementwise, and
+      with lowering forced 10 are lowered, 44 refused and none failed. The
+      44 are nearly all a function call — a cast, a date part, a zone, a
+      rounding — none of which `lower::expr` handles yet. The harness that
+      prints this rather than a test that was read once is what is left
 
 ## 9. The documents
 

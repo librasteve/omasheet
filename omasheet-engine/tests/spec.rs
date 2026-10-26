@@ -4,9 +4,11 @@
 //! and of `align-polars-vocabulary`, one test per scenario where it can be
 //! checked from the outside.
 
+use omasheet_engine::eval::Attempt;
+use omasheet_engine::omx::compile;
 use omasheet_engine::omx::date::MICROS;
 use omasheet_engine::omx::date::{Order, Style};
-use omasheet_engine::{Options, eval, eval_with, lint, view, view_with};
+use omasheet_engine::{Engine, Lowering, Options, eval, eval_with, lint, view, view_with};
 
 const SALES: &str = "\
 sheet Sales
@@ -1660,4 +1662,136 @@ fn the_parts_of_a_year() {
     assert_eq!(calc("2025-01-01.week()"), "1");
     assert_eq!(calc("2025-12-29.week()"), "1");
     assert_eq!(calc("2027-01-01.week()"), "53");
+}
+
+// ---- a columnar core: the two gates ---------------------------------------
+
+/// A file whose columns are lowered or not for a reason each.
+const GATES: &str = "\
+const Rate = 20%
+
+sheet Sales
+
+| Month | Revenue | Cost | Profit | Tax | Share | Running | Big   |
+| ----- | ------- | ---- | ------ | --- | ----- | ------- | ----- |
+| Jan   | 100     | 60   | *      | *   | *     | *       | *     |
+| Feb   | 120     | 70   | *      | *   | *     | *       | *     |
+| Mar   | 150     | 80   | *      | *   | *     | *       | *     |
+
+Profit  := Revenue - Cost
+Tax     := Profit * Rate
+Share   := Revenue / 7
+Running := Profit + [Running; *-1] // 0
+Big     := Revenue > Cost
+";
+
+/// A file calculated one way or the other, as an engine of its own: what
+/// became of each column it could have lowered, and every cell of it as it
+/// is shown.
+fn calculated(file: &str, lowering: Lowering) -> (Vec<(String, Attempt)>, Vec<String>) {
+    let (program, diags) = compile(file, 0);
+    assert!(diags.is_empty(), "{diags:?}");
+    let options = Options {
+        lowering,
+        exact: true,
+        ..Options::default()
+    };
+    let engine = Engine::with_options(&program, options);
+    engine.run();
+    let attempts = engine
+        .attempts()
+        .into_iter()
+        .map(|(t, c, a)| (program.sheets[t].cols[c].name.clone(), a))
+        .collect();
+    let mut shown = Vec::new();
+    for (t, sheet) in program.sheets.iter().enumerate() {
+        for c in 0..sheet.cols.len() {
+            for r in 0..sheet.nrows {
+                shown.push(engine.show(&engine.cell_shown(t, c, r), true));
+            }
+        }
+    }
+    (attempts, shown)
+}
+
+/// What became of one column, with lowering forced.
+fn attempt(file: &str, name: &str) -> Option<Attempt> {
+    calculated(file, Lowering::Always)
+        .0
+        .into_iter()
+        .find(|(col, _)| col == name)
+        .map(|(_, a)| a)
+}
+
+#[test]
+fn an_elementwise_column_is_computed_in_one_step() {
+    assert_eq!(attempt(GATES, "Profit"), Some(Attempt::Lowered));
+    // And the values are the engine's, to the digit.
+    assert_eq!(ask(GATES, "Sales.Profit"), "[40, 50, 70]");
+}
+
+#[test]
+fn a_row_recursive_column_stays_on_the_engine() {
+    // It reads the row before it, so the first gate never offers it.
+    assert_eq!(attempt(GATES, "Running"), None);
+    assert_eq!(ask(GATES, "Sales.Running"), "[0, 50, 120]");
+}
+
+#[test]
+fn a_column_the_dataframe_has_no_answer_for() {
+    // A quotient is scale 6 in Polars and every digit a decimal holds here.
+    assert_eq!(attempt(GATES, "Share"), Some(Attempt::Refused));
+    assert_eq!(
+        ask(GATES, "Sales.Share"),
+        "[14.2857142857142857142857142857, 17.1428571428571428571428571429, 21.4285714285714285714285714286]"
+    );
+}
+
+#[test]
+fn a_percentage_in_a_formula_is_not_lowered() {
+    // `Rate` is `20%`, and what omasheet makes of a percentage met in the
+    // middle of a sum is its own rule rather than arithmetic (D69). The
+    // dress a column wears is another matter: it is put back on as a value
+    // is read out of the dataframe, exactly as the row path puts it on.
+    assert_eq!(attempt(GATES, "Tax"), Some(Attempt::Refused));
+}
+
+#[test]
+fn a_comparison_is_lowered() {
+    assert_eq!(attempt(GATES, "Big"), Some(Attempt::Lowered));
+    assert_eq!(ask(GATES, "Sales.Big"), "[true, true, true]");
+}
+
+#[test]
+fn a_file_calculates_the_same_either_way() {
+    let rows = calculated(GATES, Lowering::Never).1;
+    let columns = calculated(GATES, Lowering::Always).1;
+    assert_eq!(rows, columns);
+}
+
+#[test]
+fn every_example_calculates_the_same_either_way() {
+    let dir = std::path::Path::new("../examples");
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .expect("the example corpus is beside the crates")
+        .filter_map(|entry| {
+            let path = entry.expect("a readable directory entry").path();
+            (path.extension()? == "omx").then_some(path)
+        })
+        .collect();
+    files.sort();
+    assert!(!files.is_empty(), "no examples found");
+    for path in &files {
+        let text = std::fs::read_to_string(path).expect("a readable example");
+        let name = path.file_name().expect("a file name").to_string_lossy();
+        let options = |lowering| Options {
+            base: Some(dir.to_path_buf()),
+            lowering,
+            ..Options::default()
+        };
+        let never = view_with(&name, &text, options(Lowering::Never));
+        let always = view_with(&name, &text, options(Lowering::Always));
+        assert_eq!(never.output, always.output, "{name}");
+        assert_eq!(never.errors, always.errors, "{name}");
+    }
 }
