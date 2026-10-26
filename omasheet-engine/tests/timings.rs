@@ -317,4 +317,33 @@ fn where_the_time_goes() {
         }
     }
     println!("\nmilliseconds; the snapshot alone, per cell against per column\n");
+
+    // The shape the case for lowering rests on, which `budget.omx` is not:
+    // every column of it lowers, so `run` is columnar throughout rather
+    // than one column in four.
+    println!(
+        "{:>9}  {:<7}  {:>9}  {:>9}  {:>9}  {:>9}  columns",
+        "rows", "mode", "compile", "run", "snapshot", "total"
+    );
+    for rows in ROWS {
+        let text = wide(5, rows);
+        for lowering in [Lowering::Never, Lowering::Always] {
+            let t = Timing::best(
+                (0..RUNS)
+                    .map(|_| measure(&text, lowering, Snap::Columns))
+                    .collect(),
+            );
+            println!(
+                "{rows:>9}  {:<7}  {:>9}  {:>9}  {:>9}  {:>9}  {} lowered, {} refused",
+                format!("{lowering:?}"),
+                ms(t.compile),
+                ms(t.run),
+                ms(t.snapshot),
+                ms(t.total()),
+                t.lowered,
+                t.refused,
+            );
+        }
+    }
+    println!("\nmilliseconds; five columns, every one of them lowerable\n");
 }

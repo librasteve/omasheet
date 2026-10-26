@@ -523,6 +523,40 @@ what stops a table's rows being exploded into cells.
       sheet, and nothing in it scales down with the rows. So a fifty-column
       sheet of ten rows is 4.4 ms against 0.2 ms — twenty-two times slower —
       and that is a keystroke, not a batch.
+
+      **A fourth table, and the one that answers what lowering is worth.**
+      The two above understate it badly, and it took asking whether it was
+      worth doing at all to see why: `budget.omx` lowers one computed column
+      of four, and one of the three it refuses is
+      `Growth := Revenue / Sales[Revenue; *-1] - 1`, which reads the row
+      before it and so is a sequential row walk that nothing can lower. Its
+      `run` is the engine's row loop either way, with a columnar garnish.
+      The same five-column sheet as above, every column of it lowerable, at
+      the four row counts instead of ten rows:
+
+      | rows | mode | compile | run | snapshot | total |
+      |---|---|---|---|---|---|
+      | 10³ | Never | 0.7 | 0.8 | 0.8 | **2.3** |
+      | 10³ | Always | 0.7 | 0.6 | 0.7 | **2.0** |
+      | 10⁵ | Never | 82.1 | 82.4 | 77.3 | **241.8** |
+      | 10⁵ | Always | 82.8 | **10.4** | 77.8 | **171.0** |
+      | 10⁶ | Never | 951.6 | 833.1 | 807.6 | **2592.4** |
+      | 10⁶ | Always | 912.9 | **103.4** | 819.5 | **1836.0** |
+
+      **`run` is eight times quicker lowered** — 833.1 ms to 103.4 at a
+      million rows, and 82.4 to 10.4 at a hundred thousand, the same factor
+      twice. The rebuild as a whole comes down 29%, which is the one
+      difference in any of these tables that a person would notice rather
+      than measure.
+
+      So the gate works and **coverage is what is left**: 8.3's figure is
+      that of 54 elementwise columns in the corpus only 10 lower, and the 44
+      refused are nearly all a function call, which `lower::expr` does not
+      handle at all. Each one of those is a column moved from the 833 to the
+      103. That is worth more than anything left in section 7, and it is
+      what the risk paragraph's conclusion should now read against: the
+      snapshot and `compile` dominate a rebuild *of a sheet whose columns do
+      not lower*, which today is nearly all of them.
 - [ ] 7.4 D73: the threshold, from a committed timing harness over
       `budget.omx` at 10, 10³, 10⁵ and 10⁶ rows. The harness is 7.3 and the
       figures are above; the number is the owner's. What they support is
