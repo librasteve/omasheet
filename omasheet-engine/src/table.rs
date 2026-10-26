@@ -147,6 +147,7 @@ fn fill(
                 declared: false,
                 kind: ColKind::Frame,
                 from: None,
+                elementwise: false,
             });
         }
     }

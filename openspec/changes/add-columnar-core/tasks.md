@@ -171,8 +171,13 @@ what stops a table's rows being exploded into cells.
 
 ## 5. The two gates (D66, D67, D74)
 
-- [ ] 5.1 `Column::elementwise`, computed in `Checker::order` where
-      `col_deps` is still alive and carried through `finish`
+- [x] 5.1 `Column::elementwise`, computed in `Checker::order` where
+      `col_deps` is still alive and carried through `finish`. A read of a
+      constant does not count against it: a constant is one value for every
+      row, so it says nothing about which row a formula reaches. The flag is
+      false for a column that is not a formula at all — cells of its own, or
+      a file's rows — so that it cannot be read as a promise about something
+      there is nothing of to lower
 - [ ] 5.2 `omasheet-engine/src/lower.rs`: `expr(&Node) -> Option<Expr>`,
       total, `None` for anything it does not handle
 - [ ] 5.3 `Engine::plan` and `Engine::run_lowered`, with the borrows scoped

@@ -73,6 +73,13 @@ pub struct Column {
     /// The name the file holds this column under, when a `from` clause
     /// says it is not [`Column::name`]. Only a table's column has one.
     pub from: Option<String>,
+    /// Every reference the formula makes reaches the row it is evaluated
+    /// for, so the whole column is one expression over the columns it
+    /// reads rather than a calculation per row. The dependency analysis
+    /// already decides this, in [`DepKind::Same`]; it is kept here for
+    /// whoever evaluates the column. False for a column whose values are
+    /// not a formula at all, which has nothing to be lowered.
+    pub elementwise: bool,
 }
 
 #[derive(Debug)]
@@ -254,6 +261,10 @@ struct Checker<'a> {
     col_state: Vec<Vec<St<S>>>,
     col_out: Vec<Vec<Option<ColKind>>>,
     col_deps: Vec<Vec<Vec<Dep>>>,
+    /// Per sheet and column, whether every column it reads it reads in the
+    /// same row: [`Column::elementwise`]. Worked out in [`Checker::order`],
+    /// which is where the dependencies are still to hand.
+    elementwise: Vec<Vec<bool>>,
     /// Per sheet, the other sheets its formulas pick a row of with the
     /// cursor, each once. A sheet that holds no rows is as long as these.
     row_reads: Vec<Vec<usize>>,
@@ -550,6 +561,7 @@ impl<'a> Checker<'a> {
             col_state: Vec::new(),
             col_out: Vec::new(),
             col_deps: Vec::new(),
+            elementwise: Vec::new(),
             row_reads: Vec::new(),
             const_state: Vec::new(),
             const_out: Vec::new(),
@@ -3382,6 +3394,24 @@ impl<'a> Checker<'a> {
 
     /// Order the calculation and report circular references.
     fn order(&mut self) -> Vec<Group> {
+        // Which columns are elementwise, while the dependencies are still
+        // here to say so. A constant is one value for every row, so reading
+        // one says nothing about which row a formula reaches; only a read of
+        // another column does, and `Same` is the kind that reaches its own.
+        self.elementwise = self
+            .col_deps
+            .iter()
+            .map(|cols| {
+                cols.iter()
+                    .map(|deps| {
+                        deps.iter().all(|&(to, kind)| match to {
+                            DepNode::Col(..) => kind == DepKind::Same,
+                            DepNode::Const(_) => true,
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
         let nconsts = self.consts.len();
         let mut nodes: Vec<DepNode> = (0..nconsts).map(DepNode::Const).collect();
         for (t, sheet) in self.sheets.iter().enumerate() {
@@ -3459,15 +3489,20 @@ impl<'a> Checker<'a> {
                     St::Done(s) | St::Busy(s) => *s,
                     St::Pending => S::Any,
                 };
+                let kind = self.col_out[t][c]
+                    .take()
+                    .unwrap_or(ColKind::Computed(Node::error(col.span)));
                 cols.push(Column {
                     name: col.name,
                     span: col.span,
                     ty,
                     declared: col.declared.is_some(),
                     from: col.from,
-                    kind: self.col_out[t][c]
-                        .take()
-                        .unwrap_or(ColKind::Computed(Node::error(col.span))),
+                    // A column of cells or of a file's own rows is not a
+                    // formula, so there is nothing of it to lower, whatever
+                    // the cells' own formulas read.
+                    elementwise: matches!(kind, ColKind::Computed(_)) && self.elementwise[t][c],
+                    kind,
                 });
             }
             sheets.push(Sheet {
@@ -3513,4 +3548,72 @@ fn unop_text(op: UnOp) -> &'static str {
 /// Whether the text of a cell is text written in quotes.
 fn quoted(cell: &str) -> bool {
     matches!(parse_literal(cell), Some(Lit::String(_)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A sheet of the four columns `Month`, `Revenue`, `Cost` and `Balance`,
+    /// with `formulas` added as computed columns.
+    fn sheet(formulas: &str) -> Program {
+        let names: Vec<&str> = formulas
+            .lines()
+            .filter_map(|l| l.split_once(":=").map(|(name, _)| name.trim()))
+            .collect();
+        let header = names.iter().map(|n| format!(" {n} |")).collect::<String>();
+        let cells = names.iter().map(|_| " * |").collect::<String>();
+        let text = format!(
+            "sheet Sales\n\n\
+             | Month | Revenue | Cost |{header}\n\
+             | Jan   | 100     | 60   |{cells}\n\
+             | Feb   | 120     | 70   |{cells}\n\n\
+             {formulas}\n"
+        );
+        let (program, diags) = compile(&text, 0);
+        assert!(diags.is_empty(), "{text}\n{diags:?}");
+        program
+    }
+
+    /// Whether the column named `name` of the first sheet is elementwise.
+    fn is_elementwise(program: &Program, name: &str) -> bool {
+        let col = program.sheets[0]
+            .cols
+            .iter()
+            .find(|c| c.name == name)
+            .expect("the column is there");
+        col.elementwise
+    }
+
+    #[test]
+    fn a_same_row_formula_is_elementwise() {
+        let p = sheet("Profit := Revenue - Cost");
+        assert!(is_elementwise(&p, "Profit"));
+    }
+
+    #[test]
+    fn a_formula_of_literals_is_elementwise() {
+        let p = sheet("One := 1 + 1");
+        assert!(is_elementwise(&p, "One"));
+    }
+
+    #[test]
+    fn reading_an_earlier_row_is_not_elementwise() {
+        let p = sheet("Running := Revenue + [Running; *-1] // 0");
+        assert!(!is_elementwise(&p, "Running"));
+    }
+
+    #[test]
+    fn reading_a_whole_column_is_not_elementwise() {
+        let p = sheet("Share := Revenue / Sales.Revenue.sum()");
+        assert!(!is_elementwise(&p, "Share"));
+    }
+
+    #[test]
+    fn a_column_of_cells_is_not_elementwise() {
+        let p = sheet("Profit := Revenue - Cost");
+        // `Revenue` holds cells of its own, so there is no formula of it to
+        // be lowered, elementwise or not.
+        assert!(!is_elementwise(&p, "Revenue"));
+    }
 }
