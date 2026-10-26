@@ -67,8 +67,17 @@ that change goes on beside it.
 ## 5. The new types (`numerics`, `file-format`)
 
 - [ ] 5.1 `Binary`, over `Rc<[u8]>`
-- [ ] 5.2 `Duration`, with no literal, and `S::shift` giving it for the
-      difference of two dates or times, with `Date ± Duration → Date`
+- [ ] 5.2 `Duration`, and `S::shift` giving it for the difference of two
+      dates or times, with `Date ± Duration → Date`
+- [ ] 5.2a The ISO 8601 literal (D22, amended): `PT30M`, `PT1H30M`, `P1DT6H`,
+      `PT0.5S`, `P2W`, and `-PT30M` for a negative one. Fixed-length units
+      only -- `W`, `D`, `H`, `M`, `S` -- with `Y` and a calendar `M` a
+      diagnostic, since a `Duration` holds a count of time units and nothing
+      else. The lexer must not take `P1DT6H` for a name, and the `-` must not
+      be read as subtraction
+- [ ] 5.2b The shown form, the same ISO 8601 the literal is written in, so a
+      computed duration round-trips through the file. A selectable display
+      format is later work and out of this change
 - [ ] 5.3 `DateTime` subsumes `Zoned`: one type carrying an optional zone, and
       `to_zone`, `utc`, `local`, `offset` and `zone` returning it
 - [ ] 5.4 Unsigned dtypes read and preserved, with a notice for a `UInt64`

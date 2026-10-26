@@ -19,7 +19,7 @@ and D13 are taken by `add-interop` and `add-packaging`.
 | D19 | Decided | Type names match the dtype names: `Boolean`, `String`, `Float`, `Null` | `Bool`, `Text`, `Num` and the value called empty are gone |
 | D20 | Decided | `Null` replaces the empty cell and is SQL-style: `Null + 1` is `Null`, and aggregates pass over it | Almost a rename: the empty cell already behaved this way |
 | D21 | Decided | `DateTime` subsumes `Zoned`; the zone rides in the dtype as `Datetime(tu, tz)` | One type, as Polars has it |
-| D22 | Decided | `Duration` has no literal. It is inferred from the difference of two dates or times, and read from a schema | Reverses `Date - Date → Int` |
+| D22 | Decided | `Duration` is inferred from the difference of two dates or times and read from a schema, **and has an ISO 8601 literal**: `PT30M`, `PT1H30M`, `P1DT6H`, `PT0.5S` | Reverses `Date - Date → Int`. Amended 2026-10-26 (owner): the literal, dropped in the original decision, is restored so a duration can be written in the app and a computed one can be written back to the file. ISO 8601 because it is unambiguous, parseable, and already the form an XLSX duration arrives in (`Data::DurationIso`). It is the shown form too, for now; a selectable display format is later work and not part of this change |
 | D23 | Decided | Unsigned columns are read and preserved but not namable: there is no `UInt` type | Nothing omasheet writes from scratch is unsigned |
 | D24 | Decided | A column list (a vector of columns) is a required concept, for the Polars operations that take several columns | Was raised as "col list" |
 | D25 | Decided | A whole number past an `i64` widens to a `Decimal`; past 38 digits it is a diagnostic | Built 2026-10-20. Keeps `2 ** 64` exact at `18446744073709551616`, and `10 ** 1000` says the number is too large rather than wrapping. Resolves the former P25 |
@@ -44,7 +44,7 @@ and D13 are taken by `add-interop` and `add-packaging`.
 | `Date` | `Date` | `Date` |
 | `Time` | `Time` | `Time` (ns) |
 | `DateTime` | `Datetime("us", None)` | `Datetime("ms"/"us"/"ns", None \| tz)` |
-| `Duration` | `Duration("us")` | `Duration("ms"/"us"/"ns")` — no literal, inferred |
+| `Duration` | `Duration("us")` | `Duration("ms"/"us"/"ns")` — ISO 8601 literal, or inferred |
 | `Null` | `Null` | `Null` |
 
 Column 2 is what omasheet writes and what an undeclared column defaults to;

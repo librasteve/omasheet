@@ -177,9 +177,23 @@ the empty string.
 
 ### Requirement: Duration
 
-`Duration` SHALL be a type with no literal syntax. The difference of two dates,
-two times or two date-times SHALL be a `Duration`, and a `Duration` added to or
-subtracted from a date SHALL give a date.
+A `Duration` SHALL be written as an ISO 8601 duration: `P` for the period, `T`
+before the time-of-day part, and each number followed by its unit letter --
+`PT30M`, `PT1H30M`, `P1DT6H`, `PT0.5S`, `P2W`. A leading `-` SHALL negate it, as
+`-PT30M`, since the difference of two times may be negative.
+
+Only the fixed-length units SHALL be accepted: `W`, `D`, `H`, `M` and `S`, with
+`M` meaning minutes after the `T`. A calendar unit -- `Y`, or `M` before the `T`
+-- SHALL be a diagnostic, because a year and a month are not a fixed count of
+time units and a `Duration` holds nothing else.
+
+A `Duration` SHALL also be inferred from the difference of two dates, two times
+or two date-times, and read from a schema. A `Duration` added to or subtracted
+from a date SHALL give a date.
+
+A `Duration` SHALL be shown in the same ISO 8601 form it is written in, so that
+a computed duration can be written back to the file. A selectable display format
+is later work.
 
 A whole number next to a date SHALL continue to count days, and next to a time
 or a date-time, seconds.
@@ -190,6 +204,25 @@ or a date-time, seconds.
 - **WHEN** it is evaluated
 - **THEN** the result is a `Duration` of 365 days
 - **AND** it is not the number 365
+- **AND** it is shown as `P365D`
+
+#### Scenario: A duration is written as a literal
+
+- **GIVEN** the expression `09:00 + PT1H30M`
+- **WHEN** it is evaluated
+- **THEN** the result is the time `10:30`
+
+#### Scenario: A negative duration
+
+- **GIVEN** the expression `09:00 - 10:30`
+- **WHEN** it is evaluated
+- **THEN** the result is a `Duration` shown as `-PT1H30M`
+
+#### Scenario: A calendar unit is a diagnostic
+
+- **GIVEN** the literal `P1Y` or `P1M`
+- **WHEN** it is checked
+- **THEN** a diagnostic says a duration holds no calendar units
 
 #### Scenario: A whole number still counts days
 

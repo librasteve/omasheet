@@ -182,29 +182,21 @@ what stops a table's rows being exploded into cells.
       where the seconds are, since `09:30.5` would say which of minutes or
       seconds the fraction belongs to only by convention.
 
-      Nine digits are accepted for a date-time as well as for a time, and
-      the only limit is the one Polars' own types impose (owner,
-      2026-10-26): a date-time is held in the unit its value needs, so
-      `...09:30:00.123456` is a `Datetime("us")` and
-      `...09:30:00.123456789` a `Datetime("ns")`. omasheet imposes no cap
-      of its own -- `DataType::Datetime` is parameterised
-      `Nanoseconds | Microseconds | Milliseconds`, and only `Time` is fixed
-      (always nanoseconds of day, no time unit, which a day of nanoseconds
-      is far inside an `i64`).
+      A time takes up to nine fractional digits and a date-time six, which
+      is not an inconsistency but the two units D68 settled, and D68 stands
+      (owner, 2026-10-26). Polars' `Time` has no time unit at all -- it is
+      always nanoseconds of day, and a day of nanoseconds sits far inside
+      an `i64`. `DataType::Datetime` is parameterised
+      `Nanoseconds | Microseconds | Milliseconds`, so microseconds is
+      omasheet's own choice, made to keep the calendar: nanoseconds would
+      reach only 1677-09-21 to 2262-04-11, and a spreadsheet holding a date
+      outside that is ordinary.
 
-      What is a diagnostic is the `i64` running out: nanoseconds reach only
-      1677-09-21 to 2262-04-11, so a value needing nanosecond precision
-      outside those dates cannot be held and is reported as such. Inside
-      them it is held exactly. Either way nothing is truncated silently,
-      which is the bug 4.4 is holding the line against.
-
-      This reaches D68, which made `Value::DateTime` a bare `i64` of
-      microseconds. A literal with nine digits cannot be held in one, so
-      the value must either carry its `TimeUnit` or be nanoseconds
-      throughout -- and nanoseconds throughout would cap every date-time at
-      1678-2262, which is the thing µs was chosen to avoid. **Carrying the
-      unit is the only option that does both; D68 needs amending to say so
-      before this is built.**
+      A date-time literal with a seventh fractional digit is therefore a
+      diagnostic, saying that a date-time holds microseconds -- not a
+      silent truncation, which is the bug 4.4 is holding the line against.
+      `Value::DateTime` stays a bare `i64` of microseconds, as D68 has it,
+      with no `TimeUnit` to carry.
 
       The lexer must take the fraction inside the time branch
       (`omasheet-omx/src/lexer.rs:309,347`). Today `09:30:00.5` lexes as
