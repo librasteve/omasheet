@@ -138,6 +138,16 @@ fn fail<T>(span: Span, message: impl Into<String>) -> R<T> {
     Err(Fail::Diag(Diagnostic::new(span, message)))
 }
 
+/// One literal as a value of a column of this type. Any exact number in a
+/// `Fraction` column is shown as a fraction; there is no fraction literal to
+/// carry it, since `1/7` is a division.
+fn lit_value(l: &Lit, ty: S) -> Value {
+    match ty {
+        S::Fraction => Value::from_lit(l).fraction(),
+        _ => Value::from_lit(l),
+    }
+}
+
 /// One value of a column the dataframe holds, as a cell. A row the column
 /// has not got is in error rather than empty, as a column the file lacks is.
 fn held_cell(column: &PlColumn, r: usize, ty: S) -> Cell {
@@ -622,13 +632,7 @@ impl<'p> Engine<'p> {
         // short row in the text is.
         let value_of = |cell: Option<&Cell>| match cell {
             None | Some(Cell::Empty) => Ok(Value::Null),
-            // Any exact number in a `Fraction` column is shown as a
-            // fraction; there is no fraction literal to carry it, since
-            // `1/7` is a division.
-            Some(Cell::Lit(l)) => Ok(match col.ty {
-                S::Fraction => Value::from_lit(l).fraction(),
-                _ => Value::from_lit(l),
-            }),
+            Some(Cell::Lit(l)) => Ok(lit_value(l, col.ty)),
             Some(Cell::Markdown(s)) => Ok(Value::String(Rc::from(s.as_str()), true)),
             Some(Cell::Formula(node)) => formula(node),
             Some(Cell::Invalid) => Err(Fail::Poison),
@@ -691,6 +695,80 @@ impl<'p> Engine<'p> {
             Ok(v) => v,
             Err(_) => Value::Error,
         }
+    }
+
+    /// Every row of a column at once, where taking it at once is quicker
+    /// than a cell at a time, and `None` where it is not (D75).
+    ///
+    /// `Some` is a column the dataframe is the authority for: one calculated
+    /// in one step, or a `table`'s own. It is walked in order here rather
+    /// than asked for a row at a time, because a Polars column is held in
+    /// chunks, so asking it for row `r` finds the chunk that holds `r`
+    /// first where walking it does not — and since task 6.2 a `table`'s
+    /// column is not calculated by [`Engine::run`] at all, so the snapshot
+    /// is what touches it first and pays that per row. Measured over a
+    /// sheet whose columns all lower, this is 12% of the snapshot at 10⁵
+    /// rows and 13% at 10⁶.
+    ///
+    /// `None` is every other column, and it is not a failure: those values
+    /// are in the memoisation slots already, [`Engine::cell_shown`] is a
+    /// slot away from them, and collecting a million of them into a vector
+    /// first was measurably *slower* than reading them one at a time — 8%
+    /// of the snapshot on the same sheet, 16% on `budget.omx`. So the
+    /// caller reads those cell by cell, and this says which they are.
+    ///
+    /// Where it answers, the values are the same values: the same
+    /// [`cell_of`] and the same reading of the literal it gives, and a cell
+    /// already read is given back as it was read, so the two paths cannot
+    /// come to disagree. What it does **not** do is fill the slots. A column
+    /// the dataframe holds needs none — the dataframe is the authority, and
+    /// reading it twice gives the same answer twice — and making them for a
+    /// sheet of a million rows is the cost those slots are made per column
+    /// to avoid.
+    pub fn column_shown(&self, t: usize, c: usize) -> Option<Vec<Value>> {
+        let sheet = &self.prog.sheets[t];
+        let (nrows, ty) = (sheet.nrows, sheet.cols[c].ty);
+        // The borrow is a statement of its own: `pl_column` borrows `held`
+        // mutably, and a temporary held into the match below would still be
+        // holding it.
+        let got = self.held.borrow()[t][c].clone();
+        let held = match got {
+            Some(column) => Some(column),
+            // A `table`'s column is read from its file now, as one cell of
+            // it being asked for would have read it.
+            None if matches!(self.tables.get(t, c), Some(Held::Column(_))) => self.pl_column(t, c),
+            None => None,
+        };
+        let column = held?;
+        // In one chunk, which is what walking it in order needs. A column
+        // of one chunk already — a lowered one, usually — is handed back as
+        // it is; one read from a file of several row groups is a chunk per
+        // group, and joining them is the one pass that asking for a row at
+        // a time pays per row.
+        let series = column.as_materialized_series().rechunk();
+        let cells = self.cells.borrow();
+        let slots = cells[t][c].as_deref();
+        let mut values = Vec::with_capacity(nrows);
+        for (r, value) in series.iter().take(nrows).enumerate() {
+            values.push(match slots.map(|slots| &slots[r]) {
+                // A cell already read is the value it was read as.
+                Some(Slot::Done(v)) => v.clone(),
+                // Nothing here evaluates, so nothing here can be in a
+                // cycle; this is what `cell` would say if it were.
+                Some(Slot::Busy) => Value::Error,
+                _ => match cell_of(value, ty) {
+                    Cell::Empty => Value::Null,
+                    Cell::Lit(l) => lit_value(&l, ty),
+                    // `cell_of` gives one of the three.
+                    _ => Value::Error,
+                },
+            });
+        }
+        // A row the column has not got is in error rather than empty, as
+        // `held_cell` has it: a file that will not give a value is not a
+        // file that gives nothing.
+        values.resize(nrows, Value::Error);
+        Some(values)
     }
 
     /// A formula's result must be one value of the column's declared type.

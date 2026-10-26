@@ -73,13 +73,15 @@ fn budget(rows: usize) -> String {
 /// How many lowerable columns the wide sheet is measured at.
 const COLS: [usize; 3] = [5, 20, 50];
 
-/// A sheet of ten rows and `cols` columns, every one of them lowerable:
+/// A sheet of `rows` rows and `cols` columns, every one of them lowerable:
 /// `C0 := Revenue - Cost`, and so on.
 ///
-/// The other shape, and the one the threshold is really for. A plan is
-/// built, optimised and collected per column, so a small sheet pays that
-/// cost as many times as it has columns, where `budget.omx` pays it once.
-fn wide(cols: usize) -> String {
+/// Short, it is the other shape, and the one the threshold is really for: a
+/// plan is built, optimised and collected per column, so a small sheet pays
+/// that cost as many times as it has columns where `budget.omx` pays it
+/// once. Long, it is the shape the snapshot question needs, since every
+/// column of it is one the dataframe holds.
+fn wide(cols: usize, rows: usize) -> String {
     let names: Vec<String> = (0..cols).map(|c| format!("C{c}")).collect();
     let mut text = String::from("sheet Wide\n\n| Revenue | Cost |");
     for name in &names {
@@ -90,7 +92,7 @@ fn wide(cols: usize) -> String {
         text.push_str(" --- |");
     }
     text.push('\n');
-    for r in 0..10 {
+    for r in 0..rows {
         text.push_str(&format!("| {} | {} |", 10_000 + r * 13, 6_000 + r * 7));
         for _ in &names {
             text.push_str(" * |");
@@ -102,6 +104,15 @@ fn wide(cols: usize) -> String {
         text.push_str(&format!("{name} := Revenue - Cost\n"));
     }
     text
+}
+
+/// Which way the snapshot is taken: every cell asked for in turn, as
+/// `Document::rebuild` did before task 7.2, or a column at a time, as it
+/// does now (D75).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Snap {
+    Cells,
+    Columns,
 }
 
 struct Timing {
@@ -135,7 +146,7 @@ impl Timing {
 }
 
 /// One file calculated one way, with each phase timed on its own.
-fn measure(text: &str, lowering: Lowering) -> Timing {
+fn measure(text: &str, lowering: Lowering, snap: Snap) -> Timing {
     let start = Instant::now();
     let (program, diags) = compile(text, 0);
     let compile_time = start.elapsed();
@@ -157,12 +168,32 @@ fn measure(text: &str, lowering: Lowering) -> Timing {
 
     // The snapshot: every cell of every sheet, formatted as it is shown.
     // `black_box` so that the formatting is not optimised away for being
-    // thrown back.
+    // thrown back. The formatting is the same work either way; what the two
+    // styles differ in is how the value reaches it.
     let start = Instant::now();
     for (t, sheet) in program.sheets.iter().enumerate() {
         for c in 0..sheet.cols.len() {
-            for r in 0..sheet.nrows {
-                std::hint::black_box(engine.show(&engine.cell_shown(t, c, r), false));
+            match snap {
+                Snap::Cells => {
+                    for r in 0..sheet.nrows {
+                        std::hint::black_box(engine.show(&engine.cell_shown(t, c, r), false));
+                    }
+                }
+                // As `Document::rebuild` does it: the column at once
+                // where there is anything to gain by it, and a cell at a
+                // time where there is not.
+                Snap::Columns => match engine.column_shown(t, c) {
+                    Some(values) => {
+                        for value in values {
+                            std::hint::black_box(engine.show(&value, false));
+                        }
+                    }
+                    None => {
+                        for r in 0..sheet.nrows {
+                            std::hint::black_box(engine.show(&engine.cell_shown(t, c, r), false));
+                        }
+                    }
+                },
             }
         }
     }
@@ -191,7 +222,7 @@ fn ms(d: Duration) -> String {
 fn first_collect() -> Duration {
     let text = budget(2);
     let start = Instant::now();
-    measure(&text, Lowering::Always);
+    measure(&text, Lowering::Always, Snap::Columns);
     start.elapsed()
 }
 
@@ -209,7 +240,11 @@ fn where_the_time_goes() {
     for rows in ROWS {
         let text = budget(rows);
         for lowering in [Lowering::Never, Lowering::Always] {
-            let t = Timing::best((0..RUNS).map(|_| measure(&text, lowering)).collect());
+            let t = Timing::best(
+                (0..RUNS)
+                    .map(|_| measure(&text, lowering, Snap::Columns))
+                    .collect(),
+            );
             println!(
                 "{rows:>9}  {:<7}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {} lowered, {} refused",
                 format!("{lowering:?}"),
@@ -233,9 +268,13 @@ fn where_the_time_goes() {
         "columns", "mode", "compile", "build", "run", "snapshot", "total"
     );
     for cols in COLS {
-        let text = wide(cols);
+        let text = wide(cols, 10);
         for lowering in [Lowering::Never, Lowering::Always] {
-            let t = Timing::best((0..RUNS).map(|_| measure(&text, lowering)).collect());
+            let t = Timing::best(
+                (0..RUNS)
+                    .map(|_| measure(&text, lowering, Snap::Columns))
+                    .collect(),
+            );
             println!(
                 "{cols:>9}  {:<7}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {} lowered, {} refused",
                 format!("{lowering:?}"),
@@ -250,4 +289,32 @@ fn where_the_time_goes() {
         }
     }
     println!("\nmilliseconds; ten rows, every column lowerable\n");
+
+    // Tasks 7.1 and 7.2: the snapshot alone, each style on an engine of
+    // its own so that neither is reading what the other left behind. Two
+    // shapes, because the two have nothing to do with each other: in
+    // `budget.omx` one computed column of eight is lowered, so seven of
+    // them are the row loop either way; in the wide sheet every column is
+    // one the dataframe holds, which is the case D75 is about.
+    println!(
+        "{:>9}  {:<9}  {:<7}  {:>9}  {:>9}",
+        "rows", "sheet", "mode", "cells", "columns"
+    );
+    for rows in ROWS {
+        for (name, text) in [("budget", budget(rows)), ("wide", wide(5, rows))] {
+            for lowering in [Lowering::Never, Lowering::Always] {
+                let snapshot = |snap| {
+                    Timing::best((0..RUNS).map(|_| measure(&text, lowering, snap)).collect())
+                        .snapshot
+                };
+                println!(
+                    "{rows:>9}  {name:<9}  {:<7}  {:>9}  {:>9}",
+                    format!("{lowering:?}"),
+                    ms(snapshot(Snap::Cells)),
+                    ms(snapshot(Snap::Columns)),
+                );
+            }
+        }
+    }
+    println!("\nmilliseconds; the snapshot alone, per cell against per column\n");
 }

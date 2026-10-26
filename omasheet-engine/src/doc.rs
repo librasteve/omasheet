@@ -2357,11 +2357,24 @@ impl Document {
                 });
                 column_errors.push(computed.and_then(|c| within(c.expr_span)));
             }
+            // Column-wise before row-wise (D75): a column the dataframe
+            // holds is walked once here, where asking for it a cell at a
+            // time would find its chunk once per row. A column it does not
+            // hold is `None` and is read a cell at a time below, which for
+            // one already calculated is quicker than collecting it first.
+            let mut shown: Vec<Option<Vec<Value>>> = (0..sheet.cols.len())
+                .map(|c| engine.column_shown(t, c))
+                .collect();
             let mut rows = Vec::with_capacity(sheet.nrows);
             for r in 0..sheet.nrows {
                 let mut row = Vec::with_capacity(sheet.cols.len());
                 for (c, column) in columns.iter().enumerate() {
-                    let value = engine.cell_shown(t, c, r);
+                    // Taken rather than copied: the snapshot below keeps
+                    // the value, and nothing reads this column again.
+                    let value = match &mut shown[c] {
+                        Some(values) => std::mem::take(&mut values[r]),
+                        None => engine.cell_shown(t, c, r),
+                    };
                     let failed = matches!(value, Value::Error);
                     let src_cell = decl
                         .filter(|d| c < d.header.len())

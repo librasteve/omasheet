@@ -381,8 +381,69 @@ what stops a table's rows being exploded into cells.
 
 ## 7. The snapshot (D75)
 
-- [ ] 7.1 `Engine::column_shown(t, c) -> Vec<Shown>`, one pass per column
-- [ ] 7.2 `Document::rebuild` looping columns then rows
+- [x] 7.1 `Engine::column_shown(t, c) -> Option<Vec<Value>>`, one pass per
+      column. `Vec<Value>` rather than a `Vec<Shown>`: nothing defined a
+      `Shown`, and a `Value` is what all three of the snapshot's readers
+      want — `doc.rs` formats one and keeps it, `render_view` and
+      `omasheet-md` format one and throw it away.
+
+      `Some` is a column the dataframe is the authority for: one lowered, or
+      a `table`'s own. It is walked in order, which needs the column in one
+      chunk, so it is rechunked first — a lowered column usually is one
+      already and is handed straight back; one read from a file of several
+      row groups is a chunk per group, and joining them once is what asking
+      for a row at a time pays per row.
+
+      **`None` is every other column, and that is the measurement, not a
+      shortcut.** Collecting a calculated column into a vector before
+      reading it is *slower* than reading it a cell at a time — those values
+      are in the memoisation slots already and `cell_shown` is one clone
+      from them, so the vector is a million-element allocation that buys
+      nothing. Taken at once first, before this was understood, it cost 16%
+      of `budget.omx`'s snapshot at 10⁶ rows and 8% of the wide sheet's. So
+      the method says which columns are worth taking at once and the caller
+      reads the rest cell by cell.
+
+      It does not fill the memoisation slots either, for the same reason the
+      slots are made per column and not per sheet: a million-row column the
+      dataframe holds needs none of them, the dataframe being the authority
+      and giving the same answer twice. It does *read* a slot already
+      filled, so a cell read before the walk is given back as it was read.
+- [x] 7.2 `Document::rebuild` looping columns then rows: every column of a
+      sheet taken first, then the rows formatted out of what is in hand, and
+      the value moved rather than copied so the snapshot costs what it did
+      before. A column `column_shown` declines is read cell by cell in the
+      row loop as it always was.
+
+      The harness of 7.3 grew a third table for this: the snapshot alone,
+      each style on an engine of its own so neither reads what the other
+      left behind, over two shapes — `budget.omx`, where one computed column
+      of eight is lowered, and the wide sheet with rows, where every column
+      is one the dataframe holds.
+
+      | rows | sheet | mode | per cell | per column |
+      |---|---|---|---|---|
+      | 10³ | budget | Never | 1.6 | 1.6 |
+      | 10³ | wide | Always | 0.9 | 0.8 |
+      | 10⁵ | budget | Always | 158.4 | 158.1 |
+      | 10⁵ | wide | Always | **93.8** | **79.5** |
+      | 10⁶ | budget | Never | 1580.8 | 1591.1 |
+      | 10⁶ | budget | Always | 1607.0 | 1658.3 |
+      | 10⁶ | wide | Never | 821.7 | 853.3 |
+      | 10⁶ | wide | Always | **995.7** | **821.1** |
+
+      **Where every column is one the dataframe holds it is 15% of the
+      snapshot at 10⁵ rows and 18% at 10⁶**, which is D75's claim and the
+      only row of the table that shows anything. Everywhere else the two
+      styles are now the same code reading the same slots, so the figures
+      are a machine with other things to do and should be read as level —
+      the 3% and 4% against are the noise this harness has shown all along,
+      not a cost.
+
+      Which also says what the gain is worth: 18% of a snapshot is 5% of a
+      rebuild, because `compile` is still the half of it that nothing here
+      touches. 7.3's own table is unchanged within noise by the switch, so
+      it stands as measured.
 - [x] 7.3 `compile()`, `Engine::new`, `run()` and the snapshot timed
       separately on `examples/budget.omx`, before any threshold is chosen.
       `omasheet-engine/tests/timings.rs`, ignored by default since it is a

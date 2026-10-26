@@ -2117,3 +2117,115 @@ fn unselected_columns_are_not_read() {
         [(0, 1), (0, 2)]
     );
 }
+
+// ---- the snapshot (D75) ---------------------------------------------------
+
+/// Values as their `Debug`, which is the strictest comparison there is of
+/// them: `Value` has no `PartialEq`, and what is shown would hide the very
+/// differences worth catching — the Markdown flag on a string, a `Zoned`
+/// where a `DateTime` was expected, an `Int` where a `Decimal` was.
+fn debugged(values: &[omasheet_engine::Value]) -> Vec<String> {
+    values.iter().map(|v| format!("{v:?}")).collect()
+}
+
+/// Every column of every example, walked column-wise and read cell by cell,
+/// has to come to the same values: the snapshot is the one place a wrong
+/// value would be seen and the engine would not know it (D75, task 7.1).
+#[test]
+fn a_column_walked_at_once_holds_what_its_cells_hold() {
+    let dir = std::path::Path::new("../examples");
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .expect("the example corpus is beside the crates")
+        .filter_map(|entry| {
+            let path = entry.expect("a readable directory entry").path();
+            (path.extension()? == "omx").then_some(path)
+        })
+        .collect();
+    files.sort();
+    assert!(!files.is_empty(), "no examples found");
+    let mut taken = 0;
+    for path in &files {
+        let text = std::fs::read_to_string(path).expect("a readable example");
+        let name = path.file_name().expect("a file name").to_string_lossy();
+        for lowering in [Lowering::Never, Lowering::Always] {
+            let (mut program, mut diags) = compile(&text, 0);
+            if !diags.is_empty() {
+                continue;
+            }
+            let tables = omasheet_engine::table::read(&mut program, dir, &mut diags);
+            let program = program;
+            let engine = Engine::with_tables(
+                &program,
+                Options {
+                    base: Some(dir.to_path_buf()),
+                    lowering,
+                    ..Options::default()
+                },
+                tables,
+            );
+            engine.run();
+            for (t, sheet) in program.sheets.iter().enumerate() {
+                for c in 0..sheet.cols.len() {
+                    // The column first, so that the walk is reading the
+                    // dataframe rather than slots the cells have filled.
+                    let Some(walked) = engine.column_shown(t, c) else {
+                        continue;
+                    };
+                    taken += 1;
+                    let asked: Vec<_> = (0..sheet.nrows)
+                        .map(|r| engine.cell_shown(t, c, r))
+                        .collect();
+                    assert_eq!(
+                        walked.len(),
+                        sheet.nrows,
+                        "{name}: {}.{} is not {} rows",
+                        sheet.name,
+                        sheet.cols[c].name,
+                        sheet.nrows
+                    );
+                    assert_eq!(
+                        debugged(&walked),
+                        debugged(&asked),
+                        "{name} {lowering:?}: {}.{}",
+                        sheet.name,
+                        sheet.cols[c].name
+                    );
+                }
+            }
+        }
+    }
+    // Lest the whole thing pass by checking nothing. Sixteen of the
+    // corpus's columns come from a file — eight of `analysis.omx` and
+    // eight of `analysis2.omx` — and those are taken at once whichever way
+    // the rest is calculated, which is 32 of the 42. The other ten are
+    // 8.3's ten: the columns lowering forced calculates in one step.
+    assert_eq!(taken, 42, "the columns taken at once");
+}
+
+/// The other order: the cells first, then the column. A value already read
+/// is the value the walk gives back, so a `table`'s column read one cell at
+/// a time cannot then be shown as something else.
+#[test]
+fn a_column_walked_after_its_cells_gives_back_what_they_gave() {
+    let (mut program, mut diags) = compile(TABLE, 0);
+    assert!(diags.is_empty(), "{diags:?}");
+    let dir = std::path::Path::new("../examples");
+    let tables = omasheet_engine::table::read(&mut program, dir, &mut diags);
+    assert!(diags.is_empty(), "{diags:?}");
+    let program = program;
+    let engine = Engine::with_tables(&program, Options::default(), tables);
+    engine.run();
+    let sheet = &program.sheets[0];
+    for c in 0..sheet.cols.len() {
+        let asked: Vec<_> = (0..sheet.nrows)
+            .map(|r| engine.cell_shown(0, c, r))
+            .collect();
+        let walked = engine.column_shown(0, c).expect("a column of the file");
+        assert_eq!(
+            debugged(&walked),
+            debugged(&asked),
+            "{}",
+            sheet.cols[c].name
+        );
+    }
+}
