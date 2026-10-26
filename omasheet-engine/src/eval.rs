@@ -14,6 +14,7 @@ use crate::value::{
 };
 use crate::zone::{Zone, Zoned, utc_now};
 use crate::{Lowering, Options, ROW_THRESHOLD, lower};
+use omasheet_omx::ast::Lit;
 use omasheet_omx::ast::{BinOp, UnOp};
 use omasheet_omx::cycle;
 use omasheet_omx::date;
@@ -21,7 +22,7 @@ use omasheet_omx::funcs::MathFn;
 use omasheet_omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_omx::{Cell, ColKind, Column, Diagnostic, Group, Program, S, Span};
 use polars::prelude::Column as PlColumn;
-use polars::prelude::{DataFrame, DataType, Expr, IntoLazy};
+use polars::prelude::{AnyValue, DataFrame, DataType, Expr, IntoLazy};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -80,6 +81,9 @@ pub struct Engine<'p> {
     /// What became of each column that could have been calculated in one
     /// step, in the order they were tried.
     attempts: RefCell<Vec<(usize, usize, Attempt)>>,
+    /// And of each aggregate over a whole column, by the column it was
+    /// taken over. One column may be here more than once.
+    aggregates: RefCell<Vec<(usize, usize, Attempt)>>,
     /// A memoisation slot per cell, by sheet, column and row. A column's
     /// slots are made when a cell of it is first asked for: a sheet of a
     /// million rows whose columns all come from a file needs none of them,
@@ -158,6 +162,7 @@ impl<'p> Engine<'p> {
                     .collect(),
             ),
             attempts: RefCell::new(Vec::new()),
+            aggregates: RefCell::new(Vec::new()),
             cells: RefCell::new(
                 prog.sheets
                     .iter()
@@ -220,6 +225,13 @@ impl<'p> Engine<'p> {
     /// been tried; nor is one the first gate ruled out.
     pub fn attempts(&self) -> Vec<(usize, usize, Attempt)> {
         self.attempts.borrow().clone()
+    }
+
+    /// What became of every aggregate over a whole column, by the column it
+    /// was taken over, in the order they were taken. A column aggregated
+    /// twice is here twice.
+    pub fn aggregates(&self) -> Vec<(usize, usize, Attempt)> {
+        self.aggregates.borrow().clone()
     }
 
     /// Calculate a group of columns in one step, over the whole column, and
@@ -291,6 +303,84 @@ impl<'p> Engine<'p> {
         self.held.borrow_mut()[t][c] = Some(column);
         self.attempts.borrow_mut().push((t, c, Attempt::Lowered));
         true
+    }
+
+    /// An aggregate over one whole column of a sheet, taken by Polars.
+    /// `None` leaves it to the engine, which reads the column a value at a
+    /// time; nothing is reported either way, as nothing can fail.
+    ///
+    /// The argument has to be a whole column and nothing else: a selection
+    /// of rows, a vector, several arguments together, or a block all go to
+    /// the engine. Those are section 6's remaining tasks rather than this
+    /// one's.
+    fn run_agg(&self, func: Func, args: &[Node]) -> Option<Value> {
+        if self.options.lowering == Lowering::Never {
+            return None;
+        }
+        let [arg] = args else {
+            return None;
+        };
+        let Ir::Column { sheet: t, col: c } = arg.kind else {
+            return None;
+        };
+        let nrows = self.prog.sheets[t].nrows;
+        if nrows == 0 || (self.options.lowering == Lowering::Auto && nrows < ROW_THRESHOLD) {
+            return None;
+        }
+        let refused = |engine: &Engine| {
+            engine
+                .aggregates
+                .borrow_mut()
+                .push((t, c, Attempt::Refused));
+            None
+        };
+        let Some(column) = self.pl_column(t, c) else {
+            return refused(self);
+        };
+        let (name, dtype) = (column.name().clone(), column.dtype().clone());
+        let Some(expr) = lower::aggregate(func, &name, &dtype) else {
+            return refused(self);
+        };
+        // D71a: `min` over a floating-point column of nothing but `NaN`s is
+        // null in Polars and the `NaN` here, so the question is asked in the
+        // same plan and the column handed back where the answer is no.
+        let guard = func == Func::Min && lower::float(&dtype);
+        let mut select = vec![expr.alias("agg")];
+        if guard {
+            select.push(lower::has_a_number(&name).alias("number"));
+        }
+        let frame = DataFrame::new(vec![column]).ok()?;
+        let Ok(out) = frame.lazy().select(select).collect() else {
+            self.aggregates.borrow_mut().push((t, c, Attempt::Failed));
+            return None;
+        };
+        if guard
+            && !matches!(
+                out.column("number").ok()?.get(0),
+                Ok(AnyValue::Boolean(true))
+            )
+        {
+            return refused(self);
+        }
+        let any = out.column("agg").ok()?.get(0).ok()?;
+        // The dress a column wears is put back on, a Polars aggregate
+        // answering a bare number (D69): the sum of percentages is a
+        // percentage, as it is on the row path.
+        let ty = self.prog.sheets[t].cols[c].ty;
+        let value = match func {
+            // A count is a count of things, whatever the column holds.
+            Func::Len | Func::Count => Value::from_lit(&Lit::Int(any.try_extract::<i64>().ok()?)),
+            _ => Value::from_lit(match &cell_of(any, ty) {
+                Cell::Lit(l) => l,
+                _ => return refused(self),
+            }),
+        };
+        let value = match (ty, &value) {
+            (S::Fraction, Value::Int(_) | Value::Decimal(_)) => value.fraction(),
+            _ => value,
+        };
+        self.aggregates.borrow_mut().push((t, c, Attempt::Lowered));
+        Some(value)
     }
 
     /// The frame a column's formula is evaluated over and the one
@@ -805,6 +895,12 @@ impl<'p> Engine<'p> {
     }
 
     fn call(&self, func: Func, args: &[Node], span: Span, fr: &mut Frames) -> R {
+        // An aggregate over a whole column the dataframe holds is Polars'
+        // to take, which is a pass over a column rather than a value read
+        // per row. Anything else falls through to the engine below.
+        if let Some(value) = self.run_agg(func, args) {
+            return Ok(value);
+        }
         match func {
             Func::To(to) => {
                 let convert =

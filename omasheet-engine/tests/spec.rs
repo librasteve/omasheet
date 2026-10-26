@@ -5,9 +5,9 @@
 //! checked from the outside.
 
 use omasheet_engine::eval::Attempt;
-use omasheet_engine::omx::compile;
 use omasheet_engine::omx::date::MICROS;
 use omasheet_engine::omx::date::{Order, Style};
+use omasheet_engine::omx::{compile, compile_expr};
 use omasheet_engine::{Engine, Lowering, Options, eval, eval_with, lint, view, view_with};
 
 const SALES: &str = "\
@@ -1794,4 +1794,165 @@ fn every_example_calculates_the_same_either_way() {
         assert_eq!(never.output, always.output, "{name}");
         assert_eq!(never.errors, always.errors, "{name}");
     }
+}
+
+// ---- a columnar core: aggregates ------------------------------------------
+
+/// One expression asked of a file, with lowering as given: what it answers,
+/// and what became of every aggregate it took. `dir` is where the file's
+/// sources are read from, for a `table`.
+fn asked(file: &str, expr: &str, lowering: Lowering, dir: Option<&str>) -> (String, Vec<Attempt>) {
+    let (mut program, mut diags) = compile(file, 0);
+    assert!(diags.is_empty(), "{diags:?}");
+    let base = dir.map(std::path::PathBuf::from);
+    let tables = match &base {
+        Some(dir) => omasheet_engine::table::read(&mut program, dir, &mut diags),
+        None => Default::default(),
+    };
+    assert!(diags.is_empty(), "{diags:?}");
+    let program = program;
+    let engine = Engine::with_tables(
+        &program,
+        Options {
+            base,
+            lowering,
+            exact: true,
+            ..Options::default()
+        },
+        tables,
+    );
+    engine.run();
+    let (node, _) = compile_expr(&program, expr, 1).expect("the expression checks");
+    let shown = match engine.eval_top(&node) {
+        Some(v) => engine.show(&v, true),
+        None => "<error>".to_string(),
+    };
+    let attempts = engine.aggregates().into_iter().map(|a| a.2).collect();
+    (shown, attempts)
+}
+
+/// The same expression both ways: the answer, which must be the same, and
+/// what became of the aggregates when lowering was forced.
+fn both_ways(file: &str, expr: &str, dir: Option<&str>) -> (String, Vec<Attempt>) {
+    let (rows, _) = asked(file, expr, Lowering::Never, dir);
+    let (columns, attempts) = asked(file, expr, Lowering::Always, dir);
+    assert_eq!(rows, columns, "`{expr}` differs between the two paths");
+    (columns, attempts)
+}
+
+/// `examples/analysis2.omx`'s table, whose 887 rows are in a Parquet file.
+const TABLE: &str = "\
+table Passengers := dataframe[\"titanic.parquet\"]
+
+Survived : Int
+Pclass   : Int
+Name     : String
+Sex      : String
+Age      : Float
+Fare     : Float
+Siblings : Int from \"Siblings/Spouses Aboard\"
+Parents  : Int from \"Parents/Children Aboard\"
+";
+
+#[test]
+fn an_aggregate_over_a_frame_column_is_taken_by_polars() {
+    let dir = Some("../examples");
+    for (expr, answer) in [
+        ("Passengers.Survived.sum()", "342"),
+        ("Passengers.Survived.count()", "887"),
+        ("Passengers.Survived.len()", "887"),
+        ("Passengers.Age.max()", "80"),
+        ("Passengers.Age.min()", "0.42"),
+    ] {
+        let (shown, attempts) = both_ways(TABLE, expr, dir);
+        assert_eq!(shown, answer, "{expr}");
+        assert_eq!(attempts, [Attempt::Lowered], "{expr}");
+    }
+}
+
+#[test]
+fn a_mean_of_decimals_is_exact() {
+    // D72: a Polars mean over a decimal column is an `f64`, and over a
+    // floating-point one it is the same division. Neither is lowered.
+    let dir = Some("../examples");
+    let (_, attempts) = both_ways(TABLE, "Passengers.Survived.mean()", dir);
+    assert_eq!(attempts, [Attempt::Refused]);
+    let (_, attempts) = both_ways(TABLE, "Passengers.Fare.mean()", dir);
+    assert_eq!(attempts, [Attempt::Refused]);
+}
+
+#[test]
+fn a_sum_of_floats_stays_on_the_engine() {
+    // Addition of floating-point numbers is not associative, so a sum
+    // collected in parallel and a sum folded from the left are not the same
+    // number. `max` and `min` do not care in which order they look.
+    let dir = Some("../examples");
+    assert_eq!(
+        both_ways(TABLE, "Passengers.Fare.sum()", dir).1,
+        [Attempt::Refused]
+    );
+    assert_eq!(
+        both_ways(TABLE, "Passengers.Fare.max()", dir).1,
+        [Attempt::Lowered]
+    );
+}
+
+#[test]
+fn the_dress_a_column_wears_survives_a_lowered_aggregate() {
+    // D69: a Polars aggregate answers a bare number, and the wrapper is put
+    // back on from the column's own type. `Survived` holds 0 and 1, and the
+    // file's dtype is the same either way.
+    let dir = Some("../examples");
+    let percent = TABLE.replace("Survived : Int", "Survived : Percent");
+    let (shown, attempts) = both_ways(&percent, "Passengers.Survived.sum()", dir);
+    assert_eq!(shown, "34200%");
+    assert_eq!(attempts, [Attempt::Lowered]);
+
+    let fraction = TABLE.replace("Survived : Int", "Survived : Fraction");
+    let (shown, attempts) = both_ways(&fraction, "Passengers.Survived.sum()", dir);
+    assert_eq!(shown, "342");
+    assert_eq!(attempts, [Attempt::Lowered]);
+}
+
+#[test]
+fn the_least_of_a_column_of_nothing_but_nans_is_the_nan() {
+    // D71a, the one case where Polars and omasheet disagree: its `min` over
+    // a floating-point column holding no number is null, and omasheet
+    // answers the `NaN`. So `min` is handed back and `max`, which is
+    // Polars' `nan_max`, is not.
+    let file = "\
+sheet T
+
+N : Float
+
+| X | N |
+| - | - |
+| 1 | * |
+| 2 | * |
+| 3 | * |
+
+N := (0/0).Float
+";
+    assert_eq!(
+        both_ways(file, "T.N.min()", None),
+        ("NaN".into(), vec![Attempt::Refused])
+    );
+    assert_eq!(
+        both_ways(file, "T.N.max()", None),
+        ("NaN".into(), vec![Attempt::Lowered])
+    );
+}
+
+#[test]
+fn an_aggregate_over_a_selection_stays_on_the_engine() {
+    // The argument has to be a whole column: a selection of rows is section
+    // 6's remaining work, not this task's.
+    let dir = Some("../examples");
+    let (shown, attempts) = both_ways(TABLE, "Passengers[; Survived == 1].Age.max()", dir);
+    assert_eq!(shown, "80");
+    assert!(attempts.is_empty());
+    // And the selection is real: 342 of the 887 rows survived.
+    let (shown, attempts) = both_ways(TABLE, "Passengers[; Survived == 1].Age.len()", dir);
+    assert_eq!(shown, "342");
+    assert!(attempts.is_empty());
 }

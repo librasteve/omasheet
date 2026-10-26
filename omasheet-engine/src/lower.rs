@@ -37,7 +37,7 @@ use crate::Value;
 use crate::dtype::{decimal, type_of};
 use omasheet_omx::ast::{BinOp, Lit, UnOp};
 use omasheet_omx::decimal::MAX_PRECISION;
-use omasheet_omx::ir::{Ir, Node};
+use omasheet_omx::ir::{Func, Ir, Node};
 use omasheet_omx::types::S;
 use polars::prelude::Column as PlColumn;
 use polars::prelude::*;
@@ -128,6 +128,61 @@ pub fn expr(node: &Node, cx: &Cx) -> Option<Out> {
         }
         _ => None,
     }
+}
+
+/// An aggregate over one whole column as a Polars expression, or `None`
+/// where Polars' answer is not the engine's.
+///
+/// `mean` is never here (D72): over an exact column Polars answers with an
+/// `f64` where the engine answers exactly, and over a floating-point one it
+/// is the same division. Nor is any aggregate that adds floating-point
+/// numbers up — `sum`, `product`, and `mean` again — because addition of
+/// them is not associative, so a sum collected in parallel and a sum folded
+/// from the left are not the same number. `min` and `max` do not care in
+/// which order they look, so a float is no trouble to them.
+pub fn aggregate(func: Func, name: &PlSmallStr, dtype: &DataType) -> Option<Expr> {
+    let column = || col(name.clone());
+    // A sum or an extreme of exact numbers widens to a decimal first, an
+    // `Int64` included, for the reason `arith` widens: a `Dec` holds 38
+    // digits where an `i64` holds 19, so a column whose total overflows
+    // Polars' own addition still has an answer on the engine.
+    let exact = exact_scale(dtype).map(|scale| column().strict_cast(decimal(scale)));
+    Some(match func {
+        // How many rows there are, and how many of them hold a value:
+        // Polars' `len` counts the rows and its `count` the values that are
+        // not null, which is the same pair and the whole difference between
+        // the two here.
+        Func::Len => column().len(),
+        Func::Count => column().count(),
+        Func::Sum => exact?.sum(),
+        // D71a, with `propagate_nans` on: omasheet holds a `NaN` to be
+        // greatest, which makes its `max` exactly Polars' `nan_max` and its
+        // `min` exactly Polars' default `min`. The two part company over a
+        // column of nothing but `NaN`s, where the default `min` is null and
+        // omasheet answers the `NaN`, and the caller is what detects that.
+        Func::Max => match exact {
+            Some(exact) => exact.max(),
+            None if is_float(dtype) => column().nan_max(),
+            None => return None,
+        },
+        Func::Min => match exact {
+            Some(exact) => exact.min(),
+            None if is_float(dtype) => column().min(),
+            None => return None,
+        },
+        _ => return None,
+    })
+}
+
+/// Whether a column holds a number at all, for the one case D71a leaves on
+/// the engine: `min` over a floating-point column of nothing but `NaN`s.
+pub fn has_a_number(name: &PlSmallStr) -> Expr {
+    col(name.clone()).is_not_nan().any(true)
+}
+
+/// Whether this is a dtype a floating-point number is held as.
+pub fn float(dtype: &DataType) -> bool {
+    is_float(dtype)
 }
 
 /// A literal as a Polars one. An exact number is a `Decimal(38, s)`, which

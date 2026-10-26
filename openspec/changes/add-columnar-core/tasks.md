@@ -265,11 +265,13 @@ what stops a table's rows being exploded into cells.
       answer on the engine. `mean` is not reachable from here at all, an
       aggregate reading a whole column rather than its own row; it is
       restated with the aggregates in 6.3
-- [ ] 5.7 D71a: `max` lowered to Polars' `nan_max` and `min` to its default
+- [x] 5.7 D71a: `max` lowered to Polars' `nan_max` and `min` to its default
       `min`, with a Float column of nothing but `NaN`s left on the engine for
-      `min` — the one case where the two disagree. Nothing of this is
-      reachable until an aggregate is lowered, which is 6.3: an aggregate
-      reads a whole column, so the first gate never offers it here
+      `min` — the one case where the two disagree. Landed with 6.3, which is
+      what made it reachable. The `NaN`-only column is detected by asking
+      `is_not_nan().any()` in the same plan as the `min`, so the one case
+      that must go back to the engine costs one more expression rather than
+      a pass of its own
 - [ ] 5.8 D70: a zoned column lowered, one zone per column, and a column of
       mixed zones left on the row path. Declined for now, and `zones.omx` is
       ten elementwise columns refused: a `Zoned` is a value with its own
@@ -282,9 +284,40 @@ what stops a table's rows being exploded into cells.
 - [ ] 6.1 `Ir::Index` intercepted: `RowSel::Pred` → `filter`, `ColSel` → a
       projection, `head` → a limit
 - [ ] 6.2 `.head(5)` over a large file reads only the first row group
-- [ ] 6.3 An aggregate over a frame column taken by Polars, with `fit_agg`
+- [x] 6.3 An aggregate over a frame column taken by Polars, with `fit_agg`
       re-applying the `Percent` or `Fraction` wrapper from `Column::ty`
-      (D69) — `examples/budget.expected` is what catches a slip
+      (D69) — `examples/budget.expected` is what catches a slip.
+      `Engine::run_agg` intercepts in `call` before the argument is
+      evaluated, and `lower::aggregate` is the gate. `Engine::aggregates`
+      reports what became of each, beside `attempts` for columns.
+
+      Taken: `sum`, `min` and `max` of exact numbers, `min` and `max` of
+      floating-point ones, `count` and `len` of anything held. A sum or an
+      extreme of exact numbers widens to a `Decimal(38, s)` first, an
+      `Int64` included, for the reason `arith` widens.
+
+      Not taken, each for a reason:
+
+      - `mean`, over any column (D72). Over an exact one Polars answers with
+        an `f64`; over a floating-point one it is the same division.
+      - **`sum` and `product` of floating-point numbers**, which the design
+        did not call out and should have: addition of them is not
+        associative, so a sum collected in parallel and a sum folded from
+        the left are not the same number. `min` and `max` do not care in
+        which order they look, so a float is no trouble to them.
+      - `median`, `std`, `var`, `quantile`, `first` and `last`, which are
+        not refused for a reason so much as not yet written.
+      - An aggregate over anything but a whole column: a selection of rows,
+        a vector, a block, or several arguments together. That is 6.1's
+        work, and `Passengers[; Survived == 1].Age.max()` is the test that
+        says so.
+
+      `budget.expected` catches nothing here after all, and `analysis2` is
+      what does: a `Percent` or `Fraction` column of the text cannot be held
+      as a Polars column at all (`column_of` declines the pair), so the
+      wrapper D69 asks for is only ever put back on a **table's** column
+      declared as one. `Survived : Percent` over `titanic.parquet` is the
+      test, and its sum is `34200%` either way
 
 ## 7. The snapshot (D75)
 
