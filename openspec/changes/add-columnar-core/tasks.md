@@ -290,10 +290,101 @@ what stops a table's rows being exploded into cells.
 
 - [ ] 7.1 `Engine::column_shown(t, c) -> Vec<Shown>`, one pass per column
 - [ ] 7.2 `Document::rebuild` looping columns then rows
-- [ ] 7.3 `compile()`, `Engine::new`, `run()` and the snapshot timed
-      separately on `examples/budget.omx`, before any threshold is chosen
+- [x] 7.3 `compile()`, `Engine::new`, `run()` and the snapshot timed
+      separately on `examples/budget.omx`, before any threshold is chosen.
+      `omasheet-engine/tests/timings.rs`, ignored by default since it is a
+      measurement and not an assertion:
+
+      ```text
+      cargo test -p omasheet-engine --test timings --release -- --ignored --nocapture
+      ```
+
+      It grows `budget.omx`'s `Sales` sheet to each row count, keeping its
+      columns, its formulas and its constant, and leaves `Summary` out: every
+      line of that is an aggregate or a lookup over the whole of `Sales`, none
+      of it lowered until section 6, so it would time a row-wise scan of a
+      million rows and hide the phases this is asking about. Each figure is
+      the quickest of three runs — two single runs of the same work came out
+      20% apart.
+
+      Milliseconds, release, this machine, with the thread pool warm:
+
+      | rows | mode | compile | build | run | snapshot | total |
+      |---|---|---|---|---|---|---|
+      | 10 | Never | 0.0 | 0.0 | 0.0 | 0.0 | **0.1** |
+      | 10 | Always | 0.0 | 0.0 | 0.1 | 0.0 | **0.2** |
+      | 10³ | Never | 1.2 | 0.0 | 1.0 | 1.6 | **3.7** |
+      | 10³ | Always | 1.1 | 0.0 | 1.0 | 1.5 | **3.7** |
+      | 10⁵ | Never | 133.2 | 0.0 | 98.0 | 158.3 | **389.5** |
+      | 10⁵ | Always | 132.9 | 0.0 | 89.3 | 158.3 | **380.6** |
+      | 10⁶ | Never | 1504.6 | 0.2 | 1029.0 | 1604.8 | **4138.6** |
+      | 10⁶ | Always | 1364.0 | 0.2 | 932.2 | 1589.3 | **3885.7** |
+
+      Taken twice, the two runs of the whole table came out about 20% apart
+      in their absolute figures and the same in their proportions — a
+      measurement of a machine that has other things to do. The figures
+      below 10⁵ are a millisecond or two either way and should be read as
+      "nothing in it" rather than as a difference.
+
+      Polars starts a thread pool the first time anything collects, which
+      costs **6.6 ms once** and is measured on a file of its own so that it
+      is not charged to the first row of the table.
+
+      Four things it says, and the first is the one that matters:
+
+      1. **`compile` and the snapshot are the rebuild, and `run` is a
+         quarter of it.** At a million rows they are 1.50 s and 1.60 s
+         against `run`'s 1.03 s: 76% of a rebuild is work lowering cannot
+         touch.
+         This is the question the design's risk paragraph asked, and the
+         answer it said would follow — D75 and a viewport-driven snapshot
+         matter more to the app than lowering does, and lowering is
+         justified by large tables rather than by the keystroke.
+      2. **Lowering's gain here is 9% of `run` and 6% of the rebuild**, and
+         that is this gate's gain rather than lowering's ceiling: one of
+         `budget.omx`'s four computed columns lowers. `Tax` reads a
+         percentage, `Margin` divides exact numbers, `Growth` reads the row
+         before it. A sheet whose columns all lower would move this figure
+         and the threshold with it.
+      3. **It costs a fraction of a millisecond to be wrong at the small
+         end**: a tenth of a millisecond at ten rows and nothing measurable
+         at a thousand — but per lowered column, so a wide small sheet pays
+         it per column.
+      4. **`Engine::new` is free**, 0.2 ms at a million rows, which is task
+         3.5's narrowed memo grid showing up in a measurement.
+
+      The harness measures a second shape, the one the threshold is really
+      for: ten rows, and every column lowerable.
+
+      | columns | mode | run | total |
+      |---|---|---|---|
+      | 5 | Never | 0.0 | **0.0** |
+      | 5 | Always | 0.4 | **0.5** |
+      | 20 | Never | 0.0 | **0.1** |
+      | 20 | Always | 1.8 | **1.9** |
+      | 50 | Never | 0.1 | **0.2** |
+      | 50 | Always | 4.3 | **4.4** |
+
+      A plan costs about **0.085 ms per column**, paid per column and not per
+      sheet, and nothing in it scales down with the rows. So a fifty-column
+      sheet of ten rows is 4.4 ms against 0.2 ms — twenty-two times slower —
+      and that is a keystroke, not a batch.
 - [ ] 7.4 D73: the threshold, from a committed timing harness over
-      `budget.omx` at 10, 10³, 10⁵ and 10⁶ rows
+      `budget.omx` at 10, 10³, 10⁵ and 10⁶ rows. The harness is 7.3 and the
+      figures are above; the number is the owner's. What they support is
+      less than was expected of them: lowering is clearly ahead at 10⁵ and
+      10⁶, level at 10³, and a tenth of a millisecond behind at 10, so the
+      measurement does not single out a crossover — there is no row count
+      below which lowering visibly costs anything. **The 1024 in
+      `ROW_THRESHOLD` is as defensible as any number between 10² and 10⁴,
+      and nothing measured here argues for moving it.**
+
+      What the threshold is for is in 7.3's second table, and it is not the
+      long sheet: it is the wide short one. At 0.085 ms a column, paid per
+      column and not shrinking with the rows, fifty lowerable columns over
+      ten rows cost 4.4 ms a keystroke against the row path's 0.2 ms. That
+      is what `Auto` exists to refuse, and it is a stronger case for the
+      threshold than the long-sheet figures make
 
 ## 8. The tests
 
