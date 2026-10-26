@@ -2038,3 +2038,41 @@ fn a_condition_over_a_selection_already_made_stays_on_the_engine() {
     assert_eq!(ran.shown, "5");
     assert_eq!(ran.filters, [Attempt::Lowered]);
 }
+
+#[test]
+fn a_copy_made_for_a_plan_is_never_read_back_as_the_column() {
+    // Text written bare in a cell is Markdown where a file is shown as a
+    // document, and no Polars string carries that. So a copy of a column,
+    // made only so that something else could be lowered over it, must not
+    // become what the column's own cells are read from.
+    let file = "\
+sheet T
+
+| N | Note       | Same |
+| - | ---------- | ---- |
+| 1 | **bold**   | *    |
+| 2 | plain text | *    |
+
+Same := Note == \"x\"
+";
+    for lowering in [Lowering::Never, Lowering::Always] {
+        let (program, diags) = compile(file, 0);
+        assert!(diags.is_empty(), "{diags:?}");
+        let engine = Engine::with_options(
+            &program,
+            Options {
+                lowering,
+                ..Options::default()
+            },
+        );
+        engine.run();
+        // `Same` is lowered over `Note`, so `Note` is copied into a frame.
+        if lowering == Lowering::Always {
+            assert_eq!(engine.attempts(), [(0, 2, Attempt::Lowered)]);
+        }
+        let markdown: Vec<bool> = (0..2)
+            .map(|r| engine.cell_shown(0, 1, r).is_markdown())
+            .collect();
+        assert_eq!(markdown, [true, true], "{lowering:?}");
+    }
+}

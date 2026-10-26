@@ -73,11 +73,18 @@ pub struct Engine<'p> {
     /// The columns of every `table`, as their files hold them. Empty for a
     /// program with no table, and for one whose sources were not read.
     tables: Tables,
-    /// A column the dataframe holds: one calculated in one step by Polars,
-    /// or one built out of calculated values so that another could be. Both
-    /// are read the way a `table`'s columns are — a value is made into a
-    /// cell as it is asked for — so a column nothing asks for is never read.
+    /// A column the dataframe holds and is the authority for: one
+    /// calculated in one step by Polars. Its values are read the way a
+    /// `table`'s columns are — a value is made into a cell as it is asked
+    /// for — so a column nothing asks for is never read.
     held: RefCell<Vec<Vec<Option<PlColumn>>>>,
+    /// And a copy of a column already calculated, made so that something
+    /// else could be lowered over it. It is **not** read back as the
+    /// column's values, and [`Engine::cell`] never looks here: a copy
+    /// passes through a dtype, and a dtype does not carry everything a
+    /// value does — text written bare in a cell is Markdown where a file is
+    /// shown as a document, and no Polars string holds that.
+    copies: RefCell<Vec<Vec<Option<PlColumn>>>>,
     /// What became of each column that could have been calculated in one
     /// step, in the order they were tried.
     attempts: RefCell<Vec<(usize, usize, Attempt)>>,
@@ -162,6 +169,12 @@ impl<'p> Engine<'p> {
             prog,
             tables,
             held: RefCell::new(
+                prog.sheets
+                    .iter()
+                    .map(|t| vec![None; t.cols.len()])
+                    .collect(),
+            ),
+            copies: RefCell::new(
                 prog.sheets
                     .iter()
                     .map(|t| vec![None; t.cols.len()])
@@ -492,15 +505,18 @@ impl<'p> Engine<'p> {
     /// to be held as, or that holds a value which does not fit the type the
     /// column says it has.
     fn pl_column(&self, t: usize, c: usize) -> Option<PlColumn> {
+        // Cloning a Polars column clones the handles, not the buffers.
         if let Some(held) = self.held.borrow()[t][c].clone() {
             return Some(held);
         }
         match self.tables.get(t, c) {
-            // Cloning a Polars column clones the handles, not the buffers.
             Some(Held::Column(column)) => return Some(column.clone()),
             // The file has no such column, so every cell of it is in error.
             Some(Held::Absent) => return None,
             None => {}
+        }
+        if let Some(copy) = self.copies.borrow()[t][c].clone() {
+            return Some(copy);
         }
         let col = &self.prog.sheets[t].cols[c];
         let values: Vec<Value> = (0..self.prog.sheets[t].nrows)
@@ -513,7 +529,7 @@ impl<'p> Engine<'p> {
             return None;
         }
         let built = column_of(&col.name, col.ty, &values)?;
-        self.held.borrow_mut()[t][c] = Some(built.clone());
+        self.copies.borrow_mut()[t][c] = Some(built.clone());
         Some(built)
     }
 
@@ -584,12 +600,13 @@ impl<'p> Engine<'p> {
             Some(Cell::Formula(node)) => formula(node),
             Some(Cell::Invalid) => Err(Fail::Poison),
         };
-        // A value the dataframe holds is made into a cell as it is asked
-        // for, and goes through the same reading as a cell of the text, so
-        // that the two cannot come to disagree. The borrow is dropped
-        // before the cell is read: reading one evaluates nothing, but a
-        // borrow held into `value_of` would be a borrow held into the
-        // engine.
+        // A value the dataframe is the authority for is made into a cell as
+        // it is asked for, and goes through the same reading as a cell of
+        // the text, so that the two cannot come to disagree. A copy made
+        // for a plan is not here, so nothing a copy cannot carry is read
+        // back out of one. The borrow is dropped before the cell is read:
+        // reading one evaluates nothing, but a borrow held into `value_of`
+        // would be a borrow held into the engine.
         let held = self.held.borrow()[t][c]
             .as_ref()
             .map(|column| held_cell(column, r, col.ty));
