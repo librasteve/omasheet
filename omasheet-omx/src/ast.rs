@@ -17,9 +17,10 @@ pub enum Lit {
     Boolean(bool),
     /// Days since 1970-01-01.
     Date(i32),
-    /// Seconds since midnight.
+    /// Nanoseconds since midnight, as Polars holds a `Time`.
     Time(i64),
-    /// Seconds since the start of 1970-01-01.
+    /// Microseconds since the start of 1970-01-01, on the clocks of the
+    /// file's own zone, as Polars holds a `Datetime`.
     DateTime(i64),
 }
 
