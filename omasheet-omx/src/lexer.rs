@@ -14,8 +14,12 @@ pub enum Tok {
     Percent(Dec),
     Float(f64),
     Str(String),
+    /// Days since 1970-01-01.
     Date(i32),
+    /// Nanoseconds since midnight, as Polars holds a `Time`.
     Time(i64),
+    /// Microseconds since the start of 1970-01-01, on the clocks of the
+    /// file's own zone, as Polars holds a `Datetime`.
     DateTime(i64),
     Ident(String),
     If,
