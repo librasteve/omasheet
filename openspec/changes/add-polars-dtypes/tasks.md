@@ -78,8 +78,32 @@ that change goes on beside it.
 - [ ] 5.2b The shown form, the same ISO 8601 the literal is written in, so a
       computed duration round-trips through the file. A selectable display
       format is later work and out of this change
-- [ ] 5.3 `DateTime` subsumes `Zoned`: one type carrying an optional zone, and
-      `to_zone`, `utc`, `local`, `offset` and `zone` returning it
+- [ ] 5.3 `DateTime` subsumes `Zoned`: one type carrying an optional zone,
+      with `convert_time_zone`, `utc`, `local`, `base_utc_offset` and
+      `time_zone` returning it
+- [ ] 5.3a A column may **declare** its zone, which today only a computed
+      column can have (owner, 2026-10-26): `Logged : Datetime("Europe/London")`,
+      mirroring how Polars prints the dtype, and unambiguous because `Time`
+      and `Duration` take no argument. The rejected alternative was a clause,
+      `Datetime zone Europe/London`, which reads better in a schema block but
+      adds a keyword.
+
+      The zone lives in the schema and is not repeated per cell: a cell holds
+      the wall clock of that column's zone, as `Lit::DateTime(z.wall)` already
+      writes one. What is typed into the column is taken in the column's zone,
+      so a cell never shifts by being re-entered -- the rule the file's own
+      zone already follows.
+
+      It is shown with its offset, as a converted value is today
+      (`value.rs:892`, the wall date-time then `format_offset`), and the
+      offset follows the zone's own daylight saving: `+00:00` in March and
+      `+01:00` in July for `Europe/London`. A column in the file's own zone
+      shows none. Comparison and subtraction stay on the instant, so a
+      declared-zone column and a plain one holding the same instant are equal.
+
+      `file.rs`'s `is_zone_name` checks only the shape of the name, so a zone
+      the engine cannot find is a diagnostic at check time, as a `zone`
+      declaration's is
 - [ ] 5.4 Unsigned dtypes read and preserved, with a notice for a `UInt64`
       above `i64::MAX`
 
