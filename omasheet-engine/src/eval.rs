@@ -22,7 +22,7 @@ use omasheet_omx::funcs::MathFn;
 use omasheet_omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_omx::{Cell, ColKind, Column, Diagnostic, Group, Program, S, Span};
 use polars::prelude::Column as PlColumn;
-use polars::prelude::{AnyValue, DataFrame, DataType, Expr, IntoLazy};
+use polars::prelude::{AnyValue, DataFrame, DataType, Expr, IntoLazy, col};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -84,6 +84,8 @@ pub struct Engine<'p> {
     /// And of each aggregate over a whole column, by the column it was
     /// taken over. One column may be here more than once.
     aggregates: RefCell<Vec<(usize, usize, Attempt)>>,
+    /// And of each condition picking rows of a sheet, by that sheet.
+    filters: RefCell<Vec<(usize, Attempt)>>,
     /// A memoisation slot per cell, by sheet, column and row. A column's
     /// slots are made when a cell of it is first asked for: a sheet of a
     /// million rows whose columns all come from a file needs none of them,
@@ -116,6 +118,10 @@ fn no_zone(name: &str, span: Span) -> Diagnostic {
     Diagnostic::new(span, format!("there is no time zone `{name}`"))
         .with_help("use a name from the time zone database, such as `Europe/London` or `UTC`")
 }
+
+/// The column a lowered selection counts rows in. No omasheet column can
+/// be called this, so it cannot be one of the sheet's own.
+const ROW_INDEX: &str = "#row";
 
 fn fail<T>(span: Span, message: impl Into<String>) -> R<T> {
     Err(Fail::Diag(Diagnostic::new(span, message)))
@@ -163,6 +169,7 @@ impl<'p> Engine<'p> {
             ),
             attempts: RefCell::new(Vec::new()),
             aggregates: RefCell::new(Vec::new()),
+            filters: RefCell::new(Vec::new()),
             cells: RefCell::new(
                 prog.sheets
                     .iter()
@@ -234,6 +241,12 @@ impl<'p> Engine<'p> {
         self.aggregates.borrow().clone()
     }
 
+    /// And of every condition that picked rows of a sheet, by that sheet,
+    /// in the order they were asked.
+    pub fn filters(&self) -> Vec<(usize, Attempt)> {
+        self.filters.borrow().clone()
+    }
+
     /// Calculate a group of columns in one step, over the whole column, and
     /// say whether it was done. `false` leaves the group to the row loop,
     /// which is the only path that can say which row failed.
@@ -303,6 +316,71 @@ impl<'p> Engine<'p> {
         self.held.borrow_mut()[t][c] = Some(column);
         self.attempts.borrow_mut().push((t, c, Attempt::Lowered));
         true
+    }
+
+    /// The rows of a sheet a condition keeps, picked by Polars in one pass
+    /// rather than by evaluating the condition for each row. `None` leaves
+    /// it to the engine.
+    ///
+    /// What comes back is positions in `rows`, which is what the engine's
+    /// own selection answers with, so nothing downstream knows the
+    /// difference: a selection still makes a view of row numbers and reads
+    /// no cell.
+    fn run_filter(&self, t: usize, rows: &[usize], node: &Node) -> Option<Vec<usize>> {
+        if self.options.lowering == Lowering::Never {
+            return None;
+        }
+        let nrows = self.prog.sheets[t].nrows;
+        if nrows == 0 || (self.options.lowering == Lowering::Auto && nrows < ROW_THRESHOLD) {
+            return None;
+        }
+        // The whole sheet, in its own order. A condition over a selection
+        // already made would have to gather those rows first, which is a
+        // copy of them, and is left for when there is a reason to pay it.
+        if rows.len() != nrows || rows.iter().enumerate().any(|(p, &r)| p != r) {
+            return None;
+        }
+        let refused = |engine: &Engine| {
+            engine.filters.borrow_mut().push((t, Attempt::Refused));
+            None
+        };
+        let column = |c| self.pl_column(t, c);
+        let constant = |i| self.const_value(i).ok();
+        let cx = lower::Cx::new(&column, &constant);
+        let Some(out) = lower::expr(node, &cx) else {
+            return refused(self);
+        };
+        // A condition answers true, false or nothing, here and in Polars,
+        // and a row is kept only where it answers true.
+        if out.dtype != DataType::Boolean {
+            return refused(self);
+        }
+        let columns = cx.taken();
+        // A condition reading no column is the same answer for every row,
+        // and the engine has it without a plan.
+        if columns.is_empty() {
+            return refused(self);
+        }
+        let Ok(frame) = DataFrame::new(columns) else {
+            return refused(self);
+        };
+        // `#row` is a name no omasheet column can have, so it cannot be one
+        // of the sheet's own.
+        let kept = frame
+            .lazy()
+            .with_row_index(ROW_INDEX, None)
+            .filter(out.expr)
+            .select([col(ROW_INDEX)])
+            .collect()
+            .ok()
+            .and_then(|df| df.column(ROW_INDEX).ok()?.u32().ok().cloned());
+        let Some(kept) = kept else {
+            self.filters.borrow_mut().push((t, Attempt::Failed));
+            return None;
+        };
+        let keep: Option<Vec<usize>> = kept.into_iter().map(|p| Some(p? as usize)).collect();
+        self.filters.borrow_mut().push((t, Attempt::Lowered));
+        keep
     }
 
     /// An aggregate over one whole column of a sheet, taken by Polars.
@@ -1507,6 +1585,9 @@ impl<'p> Engine<'p> {
                 let Some((t, file_rows)) = sheet else {
                     return fail(node.span, "a condition needs a sheet to select from");
                 };
+                if let Some(keep) = self.run_filter(t, file_rows, node) {
+                    return Ok(Rows::Many(keep));
+                }
                 let mut keep = Vec::new();
                 for (p, &r) in file_rows.iter().enumerate() {
                     fr.push((t, r));

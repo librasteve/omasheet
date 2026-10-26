@@ -1798,10 +1798,17 @@ fn every_example_calculates_the_same_either_way() {
 
 // ---- a columnar core: aggregates ------------------------------------------
 
-/// One expression asked of a file, with lowering as given: what it answers,
-/// and what became of every aggregate it took. `dir` is where the file's
-/// sources are read from, for a `table`.
-fn asked(file: &str, expr: &str, lowering: Lowering, dir: Option<&str>) -> (String, Vec<Attempt>) {
+/// What one expression came to: what it answers, and what became of every
+/// aggregate it took and every condition it picked rows with.
+struct Ran {
+    shown: String,
+    aggregates: Vec<Attempt>,
+    filters: Vec<Attempt>,
+}
+
+/// One expression asked of a file, with lowering as given. `dir` is where
+/// the file's sources are read from, for a `table`.
+fn asked(file: &str, expr: &str, lowering: Lowering, dir: Option<&str>) -> Ran {
     let (mut program, mut diags) = compile(file, 0);
     assert!(diags.is_empty(), "{diags:?}");
     let base = dir.map(std::path::PathBuf::from);
@@ -1827,17 +1834,23 @@ fn asked(file: &str, expr: &str, lowering: Lowering, dir: Option<&str>) -> (Stri
         Some(v) => engine.show(&v, true),
         None => "<error>".to_string(),
     };
-    let attempts = engine.aggregates().into_iter().map(|a| a.2).collect();
-    (shown, attempts)
+    Ran {
+        shown,
+        aggregates: engine.aggregates().into_iter().map(|a| a.2).collect(),
+        filters: engine.filters().into_iter().map(|f| f.1).collect(),
+    }
 }
 
-/// The same expression both ways: the answer, which must be the same, and
-/// what became of the aggregates when lowering was forced.
-fn both_ways(file: &str, expr: &str, dir: Option<&str>) -> (String, Vec<Attempt>) {
-    let (rows, _) = asked(file, expr, Lowering::Never, dir);
-    let (columns, attempts) = asked(file, expr, Lowering::Always, dir);
-    assert_eq!(rows, columns, "`{expr}` differs between the two paths");
-    (columns, attempts)
+/// The same expression both ways: it must answer the same, and what comes
+/// back is what became of it when lowering was forced.
+fn both_ways(file: &str, expr: &str, dir: Option<&str>) -> Ran {
+    let rows = asked(file, expr, Lowering::Never, dir);
+    let columns = asked(file, expr, Lowering::Always, dir);
+    assert_eq!(
+        rows.shown, columns.shown,
+        "`{expr}` differs between the two paths"
+    );
+    columns
 }
 
 /// `examples/analysis2.omx`'s table, whose 887 rows are in a Parquet file.
@@ -1864,9 +1877,9 @@ fn an_aggregate_over_a_frame_column_is_taken_by_polars() {
         ("Passengers.Age.max()", "80"),
         ("Passengers.Age.min()", "0.42"),
     ] {
-        let (shown, attempts) = both_ways(TABLE, expr, dir);
-        assert_eq!(shown, answer, "{expr}");
-        assert_eq!(attempts, [Attempt::Lowered], "{expr}");
+        let ran = both_ways(TABLE, expr, dir);
+        assert_eq!(ran.shown, answer, "{expr}");
+        assert_eq!(ran.aggregates, [Attempt::Lowered], "{expr}");
     }
 }
 
@@ -1875,10 +1888,10 @@ fn a_mean_of_decimals_is_exact() {
     // D72: a Polars mean over a decimal column is an `f64`, and over a
     // floating-point one it is the same division. Neither is lowered.
     let dir = Some("../examples");
-    let (_, attempts) = both_ways(TABLE, "Passengers.Survived.mean()", dir);
-    assert_eq!(attempts, [Attempt::Refused]);
-    let (_, attempts) = both_ways(TABLE, "Passengers.Fare.mean()", dir);
-    assert_eq!(attempts, [Attempt::Refused]);
+    let survived = both_ways(TABLE, "Passengers.Survived.mean()", dir);
+    assert_eq!(survived.aggregates, [Attempt::Refused]);
+    let fare = both_ways(TABLE, "Passengers.Fare.mean()", dir);
+    assert_eq!(fare.aggregates, [Attempt::Refused]);
 }
 
 #[test]
@@ -1888,11 +1901,11 @@ fn a_sum_of_floats_stays_on_the_engine() {
     // number. `max` and `min` do not care in which order they look.
     let dir = Some("../examples");
     assert_eq!(
-        both_ways(TABLE, "Passengers.Fare.sum()", dir).1,
+        both_ways(TABLE, "Passengers.Fare.sum()", dir).aggregates,
         [Attempt::Refused]
     );
     assert_eq!(
-        both_ways(TABLE, "Passengers.Fare.max()", dir).1,
+        both_ways(TABLE, "Passengers.Fare.max()", dir).aggregates,
         [Attempt::Lowered]
     );
 }
@@ -1904,14 +1917,14 @@ fn the_dress_a_column_wears_survives_a_lowered_aggregate() {
     // file's dtype is the same either way.
     let dir = Some("../examples");
     let percent = TABLE.replace("Survived : Int", "Survived : Percent");
-    let (shown, attempts) = both_ways(&percent, "Passengers.Survived.sum()", dir);
-    assert_eq!(shown, "34200%");
-    assert_eq!(attempts, [Attempt::Lowered]);
+    let ran = both_ways(&percent, "Passengers.Survived.sum()", dir);
+    assert_eq!(ran.shown, "34200%");
+    assert_eq!(ran.aggregates, [Attempt::Lowered]);
 
     let fraction = TABLE.replace("Survived : Int", "Survived : Fraction");
-    let (shown, attempts) = both_ways(&fraction, "Passengers.Survived.sum()", dir);
-    assert_eq!(shown, "342");
-    assert_eq!(attempts, [Attempt::Lowered]);
+    let ran = both_ways(&fraction, "Passengers.Survived.sum()", dir);
+    assert_eq!(ran.shown, "342");
+    assert_eq!(ran.aggregates, [Attempt::Lowered]);
 }
 
 #[test]
@@ -1933,14 +1946,12 @@ N : Float
 
 N := (0/0).Float
 ";
-    assert_eq!(
-        both_ways(file, "T.N.min()", None),
-        ("NaN".into(), vec![Attempt::Refused])
-    );
-    assert_eq!(
-        both_ways(file, "T.N.max()", None),
-        ("NaN".into(), vec![Attempt::Lowered])
-    );
+    let least = both_ways(file, "T.N.min()", None);
+    assert_eq!(least.shown, "NaN");
+    assert_eq!(least.aggregates, [Attempt::Refused]);
+    let most = both_ways(file, "T.N.max()", None);
+    assert_eq!(most.shown, "NaN");
+    assert_eq!(most.aggregates, [Attempt::Lowered]);
 }
 
 #[test]
@@ -1948,11 +1959,82 @@ fn an_aggregate_over_a_selection_stays_on_the_engine() {
     // The argument has to be a whole column: a selection of rows is section
     // 6's remaining work, not this task's.
     let dir = Some("../examples");
-    let (shown, attempts) = both_ways(TABLE, "Passengers[; Survived == 1].Age.max()", dir);
-    assert_eq!(shown, "80");
-    assert!(attempts.is_empty());
+    let oldest = both_ways(TABLE, "Passengers[; Survived == 1].Age.max()", dir);
+    assert_eq!(oldest.shown, "80");
+    assert!(oldest.aggregates.is_empty());
     // And the selection is real: 342 of the 887 rows survived.
-    let (shown, attempts) = both_ways(TABLE, "Passengers[; Survived == 1].Age.len()", dir);
-    assert_eq!(shown, "342");
-    assert!(attempts.is_empty());
+    let survivors = both_ways(TABLE, "Passengers[; Survived == 1].Age.len()", dir);
+    assert_eq!(survivors.shown, "342");
+    assert!(survivors.aggregates.is_empty());
+}
+
+// ---- a columnar core: selections ------------------------------------------
+
+#[test]
+fn a_condition_picks_rows_in_one_pass() {
+    let dir = Some("../examples");
+    for (expr, answer) in [
+        ("Passengers[; Survived == 1].Age.len()", "342"),
+        ("Passengers[; Pclass == 1].Name.len()", "216"),
+        ("Passengers[; Age > 60].Age.len()", "26"),
+        ("Passengers[; Sex == \"female\"].Age.len()", "314"),
+    ] {
+        let ran = both_ways(TABLE, expr, dir);
+        assert_eq!(ran.shown, answer, "{expr}");
+        assert_eq!(ran.filters, [Attempt::Lowered], "{expr}");
+    }
+}
+
+#[test]
+fn the_rows_a_condition_keeps_stay_in_their_order() {
+    // A selection answers positions, so what follows it — `head`, a column
+    // read, another selection — sees the sheet's own order either way.
+    let dir = Some("../examples");
+    let ran = both_ways(
+        TABLE,
+        "Passengers |> filter(Survived == 1) |> head(3) |> select(Name) |> len()",
+        dir,
+    );
+    assert_eq!(ran.shown, "3");
+    assert_eq!(ran.filters, [Attempt::Lowered]);
+    let first = both_ways(TABLE, "Passengers[Name; Survived == 1][0]", dir);
+    assert_eq!(
+        first.shown,
+        "\"Mrs. John Bradley (Florence Briggs Thayer) Cumings\""
+    );
+}
+
+#[test]
+fn a_condition_the_dataframe_has_no_answer_for() {
+    let dir = Some("../examples");
+    // `is_null` is a call, and no call of any kind is lowered yet.
+    let null = both_ways(TABLE, "Passengers[; is_null(Age)].Age.len()", dir);
+    assert_eq!(null.shown, "0");
+    assert_eq!(null.filters, [Attempt::Refused]);
+    // And `and` short-circuits here where it is Kleene's in Polars, so two
+    // conditions written together are the engine's, however ordinary they
+    // look.
+    let both = both_ways(
+        TABLE,
+        "Passengers[; Survived == 1 and Pclass == 1].Age.len()",
+        dir,
+    );
+    assert_eq!(both.shown, "136");
+    assert_eq!(both.filters, [Attempt::Refused]);
+}
+
+#[test]
+fn a_condition_over_a_selection_already_made_stays_on_the_engine() {
+    // The first condition is over the whole sheet and is lowered. The
+    // second is over the rows the first kept, which would have to be
+    // gathered into a frame of their own first, so it is never offered to
+    // the gate at all — one `Lowered` and nothing beside it.
+    let dir = Some("../examples");
+    let ran = both_ways(
+        TABLE,
+        "Passengers[; Survived == 1][; Age > 60].Age.len()",
+        dir,
+    );
+    assert_eq!(ran.shown, "5");
+    assert_eq!(ran.filters, [Attempt::Lowered]);
 }

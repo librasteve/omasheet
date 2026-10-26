@@ -281,8 +281,31 @@ what stops a table's rows being exploded into cells.
 
 ## 6. Selections and aggregates (the old 4.1, 5.2)
 
-- [ ] 6.1 `Ir::Index` intercepted: `RowSel::Pred` → `filter`, `ColSel` → a
-      projection, `head` → a limit
+- [x] 6.1 `Ir::Index` intercepted: `RowSel::Pred` → `filter`, `ColSel` → a
+      projection, `head` → a limit. Only the first of the three is work on
+      the eager path, and it is done: `Engine::run_filter`, intercepting in
+      `Engine::rows` where the condition would otherwise be evaluated once
+      per candidate row. The condition goes through `lower::expr` like any
+      other expression, and what comes back from Polars is the row index
+      column of the filtered frame — positions, which is what the engine's
+      own selection answers with, so a view is still made of row numbers and
+      no cell is read.
+
+      `ColSel` and `head` need no interception here, and saying they do
+      would overstate it: a column selection is already indices on the view
+      and reads nothing, and `head` resolves to positions by arithmetic over
+      the row count. A projection and a limit are things to push at the
+      **file**, which is 6.2, and until the file is read lazily there is
+      nothing for either to save.
+
+      Two conditions it does not take. One over rows already selected: the
+      rows would have to be gathered into a frame of their own first, which
+      is a copy, and it is left until there is a reason to pay for it — such
+      a condition is not offered to the gate at all. And one written with
+      `and` or `or`, which `lower::expr` refuses for Kleene's logic, so
+      `Survived == 1 and Pclass == 1` is the engine's however ordinary it
+      looks. Widening that is worth more here than anywhere else in the
+      change, filters being where those two are written most
 - [ ] 6.2 `.head(5)` over a large file reads only the first row group
 - [x] 6.3 An aggregate over a frame column taken by Polars, with `fit_agg`
       re-applying the `Percent` or `Fraction` wrapper from `Column::ty`
