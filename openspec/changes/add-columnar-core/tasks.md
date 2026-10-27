@@ -365,6 +365,12 @@ what stops a table's rows being exploded into cells.
         associative, so a sum collected in parallel and a sum folded from
         the left are not the same number. `min` and `max` do not care in
         which order they look, so a float is no trouble to them.
+      - `min` and `max` of a `Datetime`, a `Date` or a `Time`, which is an
+        oversight rather than a refusal: the gate asks `exact_scale` or a
+        float and a temporal column is neither, though an extreme of one is
+        order-preserving under any encoding. 7.3's fifth table prices it —
+        `Closed.max()` is one of the two refusals that are most of what the
+        `Summary` sheet still costs lowered.
       - `median`, `std`, `var`, `quantile`, `first` and `last`, which are
         not refused for a reason so much as not yet written.
       - An aggregate over anything but a whole column: a selection of rows,
@@ -557,6 +563,42 @@ what stops a table's rows being exploded into cells.
       what the risk paragraph's conclusion should now read against: the
       snapshot and `compile` dominate a rebuild *of a sheet whose columns do
       not lower*, which today is nearly all of them.
+
+      **A fifth table: the aggregates and the filters**, which the four
+      above leave out by leaving `Summary` out. `budget.omx`'s `Sales` with
+      a `Summary` beside it of six lines — `Revenue.sum()`, `Profit.sum()`,
+      `Margin.mean()`, `Closed.max()`, and a sum and a `len()` over
+      `Sales[; Profit > 10000]`. The example's own `Best month` line is left
+      out, not for being awkward but for being quadratic row-wise: an
+      aggregate nested in a condition is evaluated once per candidate row
+      and nothing memoises it, so at a million rows it does not finish.
+
+      | rows | mode | compile | run | snapshot | total | aggregates | selections |
+      |---|---|---|---|---|---|---|---|
+      | 10 | Never | 0.0 | 0.0 | 0.0 | **0.1** | — | — |
+      | 10 | Always | 0.0 | 0.3 | 0.0 | **0.4** | 2 of 4 | 2 of 2 |
+      | 10³ | Never | 1.2 | 1.8 | 1.6 | **4.5** | — | — |
+      | 10³ | Always | 1.1 | 1.5 | 1.5 | **4.1** | 2 of 4 | 2 of 2 |
+      | 10⁵ | Never | 133.9 | 179.0 | 158.2 | **471.1** | — | — |
+      | 10⁵ | Always | 135.7 | **123.6** | 158.5 | **417.8** | 2 of 4 | 2 of 2 |
+      | 10⁶ | Never | 1790.5 | 2252.5 | 1606.8 | **5650.0** | — | — |
+      | 10⁶ | Always | 1681.1 | **1547.8** | 1613.5 | **4842.6** | 2 of 4 | 2 of 2 |
+
+      **`run` comes down 31%**, at 10⁵ and at 10⁶ alike — 2252.5 ms to
+      1547.8 at a million rows — and the rebuild as a whole 14%.
+
+      The `Summary` sheet's own cost is the difference from the first table,
+      whose `Sales` is the same sheet without it: 2252.5 − 1047.7 = 1205 ms
+      row-wise against 1547.8 − 1056.8 = 491 ms lowered. **The aggregate and
+      filter work alone is 2.5 times quicker**, about 200 ms a line at a
+      million rows row-wise.
+
+      And it does that with **half the aggregates refused**. The two taken
+      are the sums; `Margin.mean()` is D72 and `Closed.max()` is a
+      `Datetime`, which `lower::aggregate` declines because `exact_scale`
+      says no and it is not a float. Those two are most of the 491 ms left.
+      Both selections' conditions are taken — 6.1 — but their sums stay on
+      the engine, which is 6.3's last bullet.
 - [ ] 7.4 D73: the threshold, from a committed timing harness over
       `budget.omx` at 10, 10³, 10⁵ and 10⁶ rows. The harness is 7.3 and the
       figures are above; the number is the owner's. What they support is

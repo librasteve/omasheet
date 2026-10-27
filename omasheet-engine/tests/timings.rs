@@ -70,6 +70,30 @@ fn budget(rows: usize) -> String {
     text
 }
 
+/// `examples/budget.omx`'s `Summary` sheet, over whatever `Sales` holds: a
+/// line per aggregate, and two over a selection.
+///
+/// The example's own `Best month` line is left out. It is
+/// `Sales[; Profit == Sales.Profit.max()].Month`, and an aggregate inside a
+/// condition is evaluated once per row with nothing memoising it, so
+/// row-wise it is quadratic — at a million rows a million maxima of a
+/// million values, which is not a measurement anybody waits for. The two
+/// lines over a selection here ask what it asked without nesting.
+///
+/// Four of these are a whole column, which is what [`Engine::run_agg`]
+/// takes; two are over a selection, which it does not, so the condition is
+/// one Polars pass (task 6.1) and the sum of what it picked is the engine's.
+const SUMMARY: &str = "\n\
+     sheet Summary\n\n\
+     | Item     | Value                                  |\n\
+     | -------- | -------------------------------------- |\n\
+     | Revenue  | = Sales.Revenue.sum()                  |\n\
+     | Profit   | = Sales.Profit.sum()                   |\n\
+     | Margin   | = Sales.Margin.mean()                  |\n\
+     | Closed   | = Sales.Closed.max()                   |\n\
+     | Big sum  | = Sales[; Profit > 10000].Revenue.sum() |\n\
+     | Big rows | = Sales[; Profit > 10000].Revenue.len() |\n";
+
 /// How many lowerable columns the wide sheet is measured at.
 const COLS: [usize; 3] = [5, 20, 50];
 
@@ -122,6 +146,10 @@ struct Timing {
     snapshot: Duration,
     lowered: usize,
     refused: usize,
+    /// Aggregates over a whole column, taken and refused.
+    aggs: (usize, usize),
+    /// And conditions picking rows.
+    picks: (usize, usize),
 }
 
 impl Timing {
@@ -141,6 +169,8 @@ impl Timing {
             snapshot: least(&|t| t.snapshot),
             lowered: runs[0].lowered,
             refused: runs[0].refused,
+            aggs: runs[0].aggs,
+            picks: runs[0].picks,
         }
     }
 }
@@ -200,6 +230,8 @@ fn measure(text: &str, lowering: Lowering, snap: Snap) -> Timing {
     let snapshot = start.elapsed();
 
     let attempts = engine.attempts();
+    let aggregates = engine.aggregates();
+    let filters = engine.filters();
     Timing {
         compile: compile_time,
         build,
@@ -207,6 +239,20 @@ fn measure(text: &str, lowering: Lowering, snap: Snap) -> Timing {
         snapshot,
         lowered: attempts.iter().filter(|a| a.2 == Attempt::Lowered).count(),
         refused: attempts.iter().filter(|a| a.2 == Attempt::Refused).count(),
+        aggs: (
+            aggregates
+                .iter()
+                .filter(|a| a.2 == Attempt::Lowered)
+                .count(),
+            aggregates
+                .iter()
+                .filter(|a| a.2 != Attempt::Lowered)
+                .count(),
+        ),
+        picks: (
+            filters.iter().filter(|f| f.1 == Attempt::Lowered).count(),
+            filters.iter().filter(|f| f.1 != Attempt::Lowered).count(),
+        ),
     }
 }
 
@@ -346,4 +392,38 @@ fn where_the_time_goes() {
         }
     }
     println!("\nmilliseconds; five columns, every one of them lowerable\n");
+
+    // The `Summary` sheet, which is what section 6 is for: an aggregate
+    // over a whole column taken by Polars, and a condition picking rows in
+    // one pass of it.
+    println!(
+        "{:>9}  {:<7}  {:>9}  {:>9}  {:>9}  {:>9}  aggregates / selections",
+        "rows", "mode", "compile", "run", "snapshot", "total"
+    );
+    for rows in ROWS {
+        let text = budget(rows) + SUMMARY;
+        for lowering in [Lowering::Never, Lowering::Always] {
+            let t = Timing::best(
+                (0..RUNS)
+                    .map(|_| measure(&text, lowering, Snap::Columns))
+                    .collect(),
+            );
+            println!(
+                "{rows:>9}  {:<7}  {:>9}  {:>9}  {:>9}  {:>9}  {} taken {} refused / {} taken {} refused",
+                format!("{lowering:?}"),
+                ms(t.compile),
+                ms(t.run),
+                ms(t.snapshot),
+                ms(t.total()),
+                t.aggs.0,
+                t.aggs.1,
+                t.picks.0,
+                t.picks.1,
+            );
+        }
+    }
+    println!(
+        "\nmilliseconds; `budget.omx`'s Sales and its Summary, four aggregates \
+         over a whole column and two over a selection\n"
+    );
 }
