@@ -2039,6 +2039,17 @@ fn scalar_op(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
             (Value::Boolean(x), Value::Boolean(y)) => {
                 Value::Boolean(if op == BinOp::And { *x && *y } else { *x || *y })
             }
+            // Kleene's rule, which is Polars' and SQL's: an empty cell is an
+            // unknown, and an unknown that cannot change the answer does not
+            // decide it. So `false and` is false and `true or` is true
+            // whichever side the empty cell falls on. Before this only the
+            // left one settled it, by the short-circuit in `eval`, which
+            // made `and` read differently each way round.
+            (Value::Boolean(d), Value::Null) | (Value::Null, Value::Boolean(d))
+                if *d == (op == BinOp::Or) =>
+            {
+                Value::Boolean(*d)
+            }
             _ if empty => Value::Null,
             _ => {
                 return Err(format!(

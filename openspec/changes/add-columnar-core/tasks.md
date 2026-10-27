@@ -306,14 +306,20 @@ what stops a table's rows being exploded into cells.
       **file**, which is 6.2, and until the file is read lazily there is
       nothing for either to save.
 
-      Two conditions it does not take. One over rows already selected: the
+      One condition it does not take: one over rows already selected. The
       rows would have to be gathered into a frame of their own first, which
       is a copy, and it is left until there is a reason to pay for it — such
-      a condition is not offered to the gate at all. And one written with
-      `and` or `or`, which `lower::expr` refuses for Kleene's logic, so
-      `Survived == 1 and Pclass == 1` is the engine's however ordinary it
-      looks. Widening that is worth more here than anywhere else in the
-      change, filters being where those two are written most
+      a condition is not offered to the gate at all.
+
+      It used to refuse a second kind, one written with `and` or `or`, so
+      that `Survived == 1 and Pclass == 1` was the engine's however ordinary
+      it looked. That is now taken (D76). The reason it was refused was that
+      Polars has Kleene's logic and omasheet had half of it: the
+      short-circuit in `eval` made `false and null` false and
+      `null and false` null, so `and` read differently each way round. The
+      two were brought into line rather than the condition left behind,
+      which is also the one widening with a measured case for it — a
+      condition is where `and` and `or` are written most
 - [ ] 6.2 `.head(5)` over a large file reads only the first row group.
       **Half of it is done — the projection, not the limit.**
 
@@ -357,7 +363,7 @@ what stops a table's rows being exploded into cells.
       `Decimal(38, s)` first, an `Int64` included, for the reason `arith`
       widens.
 
-      **A sum is bounded before it is believed (D71b).** This said that a
+      **A sum is bounded before it is believed (D72d).** This said that a
       column whose total overflows Polars' own addition "still has an
       answer on the engine", which was true of the engine and not of the
       gate: Polars adds decimals in an `i128` and wraps without saying so,
@@ -633,7 +639,7 @@ what stops a table's rows being exploded into cells.
 
       **The aggregate taken at ten rows and handed back at a hundred
       thousand is the interesting one.** All four are taken up to 10³; from
-      10⁵ `Margin.mean()` is not, and it is D71b that hands it back rather
+      10⁵ `Margin.mean()` is not, and it is D72d that hands it back rather
       than any of D69a, D72b or the dress: `Margin := Profit / Revenue`
       holds its quotients at `Decimal(38, 34)`, and a hundred thousand of
       those have nowhere to put the total's integer part. Before that bound

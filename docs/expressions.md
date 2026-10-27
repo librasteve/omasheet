@@ -86,6 +86,17 @@ percentage, declare its column `Percent` or write `x.Percent`.
 `+ - * / **`, `== != < > <= >=`, `and or not`, `in`, and `a // b` (b when a
 is empty). `if c then a else b`.
 
+An empty cell in a comparison or a sum gives an empty answer: anything done
+with a missing value is missing. `and` and `or` are the exception, and they
+read an empty cell as an unknown rather than as a gap: an unknown that
+cannot change the answer does not decide it. So `false and` is false and
+`true or` is true whatever is on the other side, empty cell included, while
+`true and` and `false or` an empty cell are empty, as is `not` of one. This
+is the rule a dataframe and SQL both use, and it is kept for the reason the
+`NaN` ordering above is kept — so that a column gives the same answer
+whichever works it out. Where the answer should be false rather than empty,
+`a // false` says so.
+
 ## Converting
 
 The name of a type converts to it, written `x.Int`, `x.Int()` or `Int(x)`. A

@@ -219,6 +219,10 @@ that do not fit are cut and marked `…`. Only the display is cut, and
 - An empty cell and a `NaN` are different absences. `is_null(x)` asks whether
   a cell is empty and `is_nan(x)` whether it holds a `NaN`, which is what a
   division of zero by zero gives; `is_nan` of an empty cell is empty.
+- Anything done with an empty cell is empty, except `and` and `or`, which
+  read one as an unknown: `false and` is false and `true or` is true
+  whatever is beside them, while `true and` and `false or` an empty cell are
+  empty. Write `a // false` where the answer should be false.
 - A lookup that finds one row fills a cell with its value; none gives empty,
   so add `// "none"`; several is an error.
 

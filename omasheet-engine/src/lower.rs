@@ -23,9 +23,6 @@
 //!   rather than a dtype (D69). The dress is a column's, re-applied when a
 //!   value is read back out of one, and what omasheet makes of a percentage
 //!   met in the middle of a sum is its own rule rather than arithmetic.
-//! - **`and` and `or`**, which short-circuit here and are Kleene's in
-//!   Polars: omasheet answers `null and false` with null where Polars
-//!   answers false.
 //! - **Dates and times in arithmetic.** A whole number beside one counts
 //!   days, or seconds, which is a scaling per type rather than an addition.
 //!   The two are compared, though, both sides being whole numbers of the
@@ -149,7 +146,7 @@ pub fn aggregate(func: Func, name: &PlSmallStr, dtype: &DataType) -> Option<Expr
     // Polars' own addition still has an answer on the engine. Getting that
     // answer is the caller's part — 38 digits is not every total either,
     // and Polars wraps rather than refusing, so the caller bounds the sum
-    // before it believes it (D71b).
+    // before it believes it (D72d).
     let exact = exact_scale(dtype).map(|scale| column().strict_cast(decimal(scale)));
     Some(match func {
         // How many rows there are, and how many of them hold a value:
@@ -269,6 +266,21 @@ fn binary(op: BinOp, l: Out, r: Out) -> Option<Out> {
         BinOp::Fallback => {
             let (l, r, dtype) = pair(l, r)?;
             Out::new(l.fill_null(r), dtype)
+        }
+        // Kleene's logic both sides now, so the two agree on an empty cell:
+        // one that cannot change the answer does not decide it. Polars has
+        // no short-circuit, so where the engine stops at a decisive left
+        // operand this calculates both — the same answer, and the same
+        // caveat as `//` above.
+        BinOp::And | BinOp::Or => {
+            if l.dtype != DataType::Boolean || r.dtype != DataType::Boolean {
+                return None;
+            }
+            let expr = match op {
+                BinOp::And => l.expr.and(r.expr),
+                _ => l.expr.or(r.expr),
+            };
+            Out::new(expr, DataType::Boolean)
         }
         _ => None,
     }

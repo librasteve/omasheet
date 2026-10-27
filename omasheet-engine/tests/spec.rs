@@ -2160,6 +2160,62 @@ fn the_rows_a_condition_keeps_stay_in_their_order() {
     );
 }
 
+/// A sheet of every pairing of `true`, `false` and an empty cell.
+const LOGIC: &str = "\
+sheet T
+
+A : Boolean
+B : Boolean
+
+| A     | B     |
+| ----- | ----- |
+| false |       |
+|       | false |
+| true  |       |
+|       | true  |
+|       |       |
+";
+
+#[test]
+fn an_empty_cell_in_a_condition_is_an_unknown() {
+    // Kleene's rule, which is Polars' and SQL's: an unknown that cannot
+    // change the answer does not decide it, so `false and` is false and
+    // `true or` is true whichever side the empty cell falls on. It used to
+    // be the left side only, by the short-circuit in `eval`, which made
+    // `and` read differently each way round.
+    assert_eq!(ask(LOGIC, "T[A; 0] and T[B; 0]"), "false");
+    assert_eq!(ask(LOGIC, "T[A; 1] and T[B; 1]"), "false");
+    assert_eq!(ask(LOGIC, "T[A; 2] or T[B; 2]"), "true");
+    assert_eq!(ask(LOGIC, "T[A; 3] or T[B; 3]"), "true");
+    // An unknown that could still change it stays unknown, and `not` of one
+    // was always this.
+    assert_eq!(ask(LOGIC, "T[A; 2] and T[B; 2]"), "empty");
+    assert_eq!(ask(LOGIC, "T[A; 0] or T[B; 0]"), "empty");
+    assert_eq!(ask(LOGIC, "T[A; 4] and T[B; 4]"), "empty");
+    assert_eq!(ask(LOGIC, "not T[A; 4]"), "empty");
+}
+
+#[test]
+fn the_two_paths_agree_on_an_unknown() {
+    // The whole reason for the change: a column of `and` is now one Polars
+    // expression, and it answers what the row loop answers.
+    let file = format!("{LOGIC}\nBoth := A and B\nEither := A or B\n")
+        .replace("| A     | B     |", "| A     | B     | Both | Either |")
+        .replace("| ----- | ----- |", "| ----- | ----- | ---- | ------ |")
+        .replace("| false |       |", "| false |       | *    | *      |")
+        .replace("|       | false |", "|       | false | *    | *      |")
+        .replace("| true  |       |", "| true  |       | *    | *      |")
+        .replace("|       | true  |", "|       | true  | *    | *      |")
+        .replace("|       |       |", "|       |       | *    | *      |");
+    assert_eq!(attempt(&file, "Both"), Some(Attempt::Lowered));
+    assert_eq!(attempt(&file, "Either"), Some(Attempt::Lowered));
+    // `both_ways` is the check: it asks each column both ways and fails if
+    // the two do not show the same thing.
+    for expr in ["T.Both", "T.Either"] {
+        both_ways(&file, expr, None);
+    }
+}
+
 #[test]
 fn a_condition_the_dataframe_has_no_answer_for() {
     let dir = Some("../examples");
@@ -2167,16 +2223,28 @@ fn a_condition_the_dataframe_has_no_answer_for() {
     let null = both_ways(TABLE, "Passengers[; is_null(Age)].Age.len()", dir);
     assert_eq!(null.shown, "0");
     assert_eq!(null.filters, [Attempt::Refused]);
-    // And `and` short-circuits here where it is Kleene's in Polars, so two
-    // conditions written together are the engine's, however ordinary they
-    // look.
-    let both = both_ways(
-        TABLE,
-        "Passengers[; Survived == 1 and Pclass == 1].Age.len()",
-        dir,
-    );
-    assert_eq!(both.shown, "136");
-    assert_eq!(both.filters, [Attempt::Refused]);
+}
+
+#[test]
+fn two_conditions_written_together_are_lowered() {
+    // `and` and `or` are Kleene's on both paths now, so the commonest
+    // condition of all is one Polars pass rather than a row walk.
+    let dir = Some("../examples");
+    for (expr, answer) in [
+        (
+            "Passengers[; Survived == 1 and Pclass == 1].Age.len()",
+            "136",
+        ),
+        ("Passengers[; Pclass == 1 or Pclass == 2].Age.len()", "400"),
+        (
+            "Passengers[; Survived == 1 and Pclass == 1 and Sex == \"female\"].Age.len()",
+            "91",
+        ),
+    ] {
+        let ran = both_ways(TABLE, expr, dir);
+        assert_eq!(ran.shown, answer, "{expr}");
+        assert_eq!(ran.filters, [Attempt::Lowered], "{expr}");
+    }
 }
 
 #[test]
