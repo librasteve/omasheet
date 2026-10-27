@@ -404,6 +404,11 @@ struct Formats {
     percent: Format,
 }
 
+/// A value as text, for a cell that cannot hold it as itself.
+fn written(value: &Value) -> String {
+    format_exact(value, false, &date::Style::ISO)
+}
+
 /// What a cell of a workbook holds for a value.
 enum Shown<'f> {
     Number(f64, Option<&'f Format>),
@@ -435,6 +440,13 @@ fn shown<'f>(
         }
         Value::Decimal(r) | Value::Fraction(r) => {
             let (f, same) = double(r);
+            // A number whose point sits past where a double reaches has no
+            // number cell to go in, so it is written out the way a whole
+            // number too large for one is.
+            if !f.is_finite() {
+                lose(AS_TEXT);
+                return Some(Shown::Written(written(value)));
+            }
             if !same {
                 lose(ROUNDED);
             }
@@ -442,6 +454,10 @@ fn shown<'f>(
         }
         Value::Percent(r) => {
             let (f, same) = double(r);
+            if !f.is_finite() {
+                lose(AS_TEXT);
+                return Some(Shown::Written(written(value)));
+            }
             if !same {
                 lose(ROUNDED);
             }
@@ -465,7 +481,7 @@ fn shown<'f>(
         }
         other => {
             lose(AS_TEXT);
-            Shown::Written(format_exact(other, false, &date::Style::ISO))
+            Shown::Written(written(other))
         }
     })
 }

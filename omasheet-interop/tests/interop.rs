@@ -438,6 +438,24 @@ Odd   := [N; *] in [10, 30]
 }
 
 #[test]
+fn xlsx_writes_a_number_past_a_double_as_text() {
+    // A workbook holds its numbers as doubles, and a number whose point
+    // sits past where a double reaches is no double at all. Rather than
+    // put an infinity in the cell, the write spells the number out.
+    let file = "sheet T\n\nA | B\n= 10**1000 | 2.5\n";
+    let out = xlsx::export("t.omx", file, None, options()).unwrap();
+    let rows = cells(&out.files[0].bytes, "T");
+    assert_eq!(rows[1][0], Data::String("1e+1000".to_string()));
+    assert_eq!(rows[1][1], Data::Float(2.5));
+    assert!(
+        out.notices
+            .contains(&"values a workbook has no type for were written as text: T.A".to_string()),
+        "{:?}",
+        out.notices
+    );
+}
+
+#[test]
 fn xlsx_writes_one_third_as_the_nearest_double() {
     let file = "sheet T\n\nA | B | C | D\n= 1/3 | 0.5 | true | 2025-01-31\n";
     let out = xlsx::export("t.omx", file, None, options()).unwrap();
