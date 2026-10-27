@@ -1270,6 +1270,19 @@ ApplicationWindow {
             cellMenu.popup();
     }
 
+    // Show the sheet of a tab with the whole of it selected, as it would be
+    // to act on it from the grid: what the entries of its menu act on, but
+    // for opening it in a window of its own.
+    function goToSheet(index) {
+        if (index < 0 || index >= tabs.length)
+            return;
+        viewSource(false);
+        if (index !== tab)
+            switchTab(index);
+        if (!sheet.isConsts)
+            selectAll();
+    }
+
     function keyMenu() {
         if (tabs.length === 0)
             return;
@@ -2481,111 +2494,140 @@ ApplicationWindow {
                 anchors.rightMargin: 12
                 spacing: 2
 
-                Repeater {
-                    id: tabRepeater
-                    model: win.tabs.length
-                    FooterButton {
-                        id: tabButton
-                        required property int index
-                        label: win.tabs[index].name
-                        active: index === win.tab && !win.showSource
-                        // The whole sheet copied or cut, outlined here too.
-                        readonly property bool marked: win.sheetMark !== null && win.sheetMark.tab === index
-                        MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; width: parent.width; height: 1 }
-                        MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; anchors.bottom: parent.bottom; width: parent.width; height: 1 }
-                        MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; width: 1; height: parent.height }
-                        MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; anchors.right: parent.right; width: 1; height: parent.height }
-                        onClicked: {
-                            win.viewSource(false);
-                            win.switchTab(index);
-                        }
-                        // The sheet's menu, as for the whole of it selected.
-                        onRightClicked: {
-                            win.viewSource(false);
-                            if (index !== win.tab)
-                                win.switchTab(index);
-                            if (win.sheet.isConsts) {
-                                tabMenu.index = index;
-                                tabMenu.popup();
-                                return;
-                            }
-                            win.selectAll();
-                            win.sheetMenu();
-                        }
-                        // Renamed in place, from F2 with the whole sheet selected.
-                        Loader {
-                            anchors.verticalCenter: parent.verticalCenter
-                            height: parent.height
-                            active: win.renamingTab === tabButton.index
-                            sourceComponent: TextField {
-                                font.family: win.font.family
-                                font.features: win.font.features
-                                font.pixelSize: win.fontSize - 1
-                                font.bold: true
-                                color: win.textColor
-                                width: Math.max(tabButton.width, contentWidth + leftPadding + rightPadding + 4)
-                                leftPadding: 10
-                                rightPadding: 10
-                                topPadding: 0
-                                bottomPadding: 0
-                                verticalAlignment: TextInput.AlignVCenter
-                                selectByMouse: true
-                                background: Rectangle {
-                                    color: win.pageColor
-                                    radius: 4
-                                    border.width: 2
-                                    border.color: win.accentColor
+                FooterButton {
+                    label: "\u2039"
+                    quiet: true
+                    visible: tabStrip.scrolls
+                    enabled: tabStrip.contentX > 0
+                    onClicked: tabStrip.step(-1)
+                }
+
+                // The tabs, which scroll when there are more of them than
+                // the bar has room for: the one shown is kept in view.
+                Flickable {
+                    id: tabStrip
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: tabRow.implicitWidth
+                    Layout.maximumWidth: tabRow.implicitWidth
+                    contentWidth: tabRow.implicitWidth
+                    clip: true
+                    flickableDirection: Flickable.HorizontalFlick
+                    boundsBehavior: Flickable.StopAtBounds
+                    readonly property bool scrolls: contentWidth > width + 1
+                    readonly property real furthest: Math.max(0, contentWidth - width)
+                    // An arrow moves it by most of what is in view.
+                    function step(by) {
+                        contentX = Math.max(0, Math.min(furthest, contentX + by * Math.max(40, width * 0.8)));
+                    }
+                    // Enough of the tab shown to see it all, and no more.
+                    function reveal() {
+                        var item = tabRepeater.itemAt(win.tab);
+                        if (!item)
+                            return;
+                        var x = item.x < contentX ? item.x
+                            : item.x + item.width > contentX + width ? item.x + item.width - width
+                            : contentX;
+                        contentX = Math.max(0, Math.min(furthest, x));
+                    }
+                    readonly property int shown: win.tab
+                    onShownChanged: Qt.callLater(reveal)
+                    onWidthChanged: Qt.callLater(reveal)
+                    // A sheet added, taken away or renamed changes how much
+                    // room the tabs take.
+                    onContentWidthChanged: Qt.callLater(reveal)
+                    Component.onCompleted: Qt.callLater(reveal)
+
+                    RowLayout {
+                        id: tabRow
+                        height: tabStrip.height
+                        width: implicitWidth
+                        spacing: 2
+                        Repeater {
+                            id: tabRepeater
+                            model: win.tabs.length
+                            FooterButton {
+                                id: tabButton
+                                required property int index
+                                label: win.tabs[index].name
+                                active: index === win.tab && !win.showSource
+                                // The whole sheet copied or cut, outlined here too.
+                                readonly property bool marked: win.sheetMark !== null && win.sheetMark.tab === index
+                                MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; width: parent.width; height: 1 }
+                                MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; anchors.bottom: parent.bottom; width: parent.width; height: 1 }
+                                MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; width: 1; height: parent.height }
+                                MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; anchors.right: parent.right; width: 1; height: parent.height }
+                                onClicked: {
+                                    win.viewSource(false);
+                                    win.switchTab(index);
                                 }
-                                property bool done: false
-                                Component.onCompleted: {
-                                    text = win.tabs[tabButton.index].name;
-                                    forceActiveFocus();
-                                    selectAll();
+                                // The tab's own menu: the sheet shown stays as it is,
+                                // so that this one can be opened in a window beside it.
+                                onRightClicked: {
+                                    tabMenu.index = index;
+                                    tabMenu.popup();
                                 }
-                                // A name that is refused is said why, and the old one stays.
-                                function finish(keep) {
-                                    if (done)
-                                        return;
-                                    done = true;
-                                    var name = text.trim();
-                                    var old = win.tabs[tabButton.index].name;
-                                    if (keep && name.length > 0 && name !== old)
-                                        win.keeping(0, 0, function() { win.notice = file.renameSheet(win.tab, name); });
-                                    win.renamingTab = -1;
-                                    grid.forceActiveFocus();
+                                // Renamed in place, from F2 with the whole sheet selected.
+                                Loader {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    height: parent.height
+                                    active: win.renamingTab === tabButton.index
+                                    sourceComponent: TextField {
+                                        font.family: win.font.family
+                                        font.features: win.font.features
+                                        font.pixelSize: win.fontSize - 1
+                                        font.bold: true
+                                        color: win.textColor
+                                        width: Math.max(tabButton.width, contentWidth + leftPadding + rightPadding + 4)
+                                        leftPadding: 10
+                                        rightPadding: 10
+                                        topPadding: 0
+                                        bottomPadding: 0
+                                        verticalAlignment: TextInput.AlignVCenter
+                                        selectByMouse: true
+                                        background: Rectangle {
+                                            color: win.pageColor
+                                            radius: 4
+                                            border.width: 2
+                                            border.color: win.accentColor
+                                        }
+                                        property bool done: false
+                                        Component.onCompleted: {
+                                            text = win.tabs[tabButton.index].name;
+                                            forceActiveFocus();
+                                            selectAll();
+                                        }
+                                        // A name that is refused is said why, and the old one stays.
+                                        function finish(keep) {
+                                            if (done)
+                                                return;
+                                            done = true;
+                                            var name = text.trim();
+                                            var old = win.tabs[tabButton.index].name;
+                                            if (keep && name.length > 0 && name !== old)
+                                                win.keeping(0, 0, function() { win.notice = file.renameSheet(win.tab, name); });
+                                            win.renamingTab = -1;
+                                            grid.forceActiveFocus();
+                                        }
+                                        onAccepted: finish(true)
+                                        Keys.onEscapePressed: finish(false)
+                                        onActiveFocusChanged: if (!activeFocus) finish(true)
+                                    }
                                 }
-                                onAccepted: finish(true)
-                                Keys.onEscapePressed: finish(false)
-                                onActiveFocusChanged: if (!activeFocus) finish(true)
                             }
                         }
                     }
                 }
+                FooterButton {
+                    label: "\u203a"
+                    quiet: true
+                    visible: tabStrip.scrolls
+                    enabled: tabStrip.contentX < tabStrip.furthest
+                    onClicked: tabStrip.step(1)
+                }
                 FooterButton { label: "+ Sheet"; quiet: true; onClicked: promptDialog.ask("sheet") }
 
                 Item { Layout.fillWidth: true }
-
-                // What a selection of several cells adds up to.
-                Text {
-                    readonly property bool several: !win.sheet.isConsts && win.tabs.length > 0
-                        && (win.selTop !== win.selBottom || win.selLeft !== win.selRight)
-                    readonly property bool moving: win.grabbedHere
-                    // `win.snap` is read so that an edit recalculates it.
-                    text: win.notice.length > 0 ? win.notice
-                        : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
-                        : several && win.snap
-                        ? file.selectionSummary(win.tab, win.selTop, win.selLeft, win.selBottom, win.selRight)
-                        : win.formulaCell ? "This is a formula column, this change will apply to the entire column"
-                        : ""
-                    visible: text.length > 0
-                    color: win.notice.length > 0 ? win.errorColor : win.mutedColor
-                    elide: Text.ElideRight
-                    Layout.maximumWidth: 520
-                    font.family: win.font.family
-                    font.features: win.font.features
-                    font.pixelSize: win.fontSize - 2
-                    rightPadding: 10
-                }
 
                 Text {
                     visible: file.status.length > 0
@@ -2616,6 +2658,41 @@ ApplicationWindow {
                 FooterButton { label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
                 FooterButton { label: "</>"; quiet: true; active: win.showSource; onClicked: win.viewSource(!win.showSource) }
                 FooterButton { label: "?"; quiet: true; onClicked: helpDialog.open() }
+            }
+        }
+
+        // Below it, a bar of its own for what the app has to say, which has
+        // the width for a long message: why a move was refused, what a
+        // selection of several cells adds up to, how to put down what is
+        // being moved, or that a formula column is being changed. Most of
+        // the time there is nothing to say and it is empty.
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: win.fontSize + 10
+            color: win.panelColor
+
+            Rectangle { width: parent.width; height: 1; color: win.lineColor }
+
+            Text {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                verticalAlignment: Text.AlignVCenter
+                readonly property bool several: !win.sheet.isConsts && win.tabs.length > 0
+                    && (win.selTop !== win.selBottom || win.selLeft !== win.selRight)
+                readonly property bool moving: win.grabbedHere
+                // `win.snap` is read so that an edit recalculates it.
+                text: win.notice.length > 0 ? win.notice
+                    : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
+                    : several && win.snap
+                    ? file.selectionSummary(win.tab, win.selTop, win.selLeft, win.selBottom, win.selRight)
+                    : win.formulaCell ? "This is a formula column, this change will apply to the entire column"
+                    : ""
+                color: win.notice.length > 0 ? win.errorColor : win.mutedColor
+                elide: Text.ElideRight
+                font.family: win.font.family
+                font.features: win.font.features
+                font.pixelSize: win.fontSize - 2
             }
         }
     }
@@ -2680,6 +2757,9 @@ ApplicationWindow {
         signal rightClicked()
         implicitWidth: buttonText.implicitWidth + 22
         implicitHeight: win.fontSize * 2
+        // In the footer's row these keep their width: the tabs, which can
+        // scroll, are what gives way when there is not room for everything.
+        Layout.minimumWidth: implicitWidth
         Layout.alignment: Qt.AlignVCenter
         radius: 4
         opacity: enabled ? 1 : 0.35
@@ -2898,12 +2978,75 @@ ApplicationWindow {
     // Right-click on a sheet's tab.
     Menu {
         id: tabMenu
+        // The tab this menu was opened on, which is not the tab shown unless
+        // it already was.
         property int index: 0
-        onClosed: grid.forceActiveFocus()
+        // The constants are a sheet of their own, which is not edited here.
+        readonly property bool isSheet: index < win.tabs.length && !win.tabs[index].isConsts
+        // An entry may have opened a dialog, which keeps the keyboard.
+        onClosed: {
+            if (promptDialog.visible)
+                promptDialog.takeFocus();
+            else
+                grid.forceActiveFocus();
+        }
         topPadding: 4
         bottomPadding: 4
         width: Math.round(win.fontSize * 15)
 
+        // Each of these shows the sheet first, with the whole of it
+        // selected, as the same entry does from the grid.
+        MenuEntry {
+            text: "Cut"
+            visible: tabMenu.isSheet
+            enabled: visible
+            onTriggered: { win.goToSheet(tabMenu.index); win.cutSelection(); }
+        }
+        MenuEntry {
+            text: "Copy"
+            visible: tabMenu.isSheet
+            enabled: visible
+            onTriggered: { win.goToSheet(tabMenu.index); win.copySelection(); }
+        }
+        MenuEntry {
+            text: "Paste"
+            visible: tabMenu.isSheet
+            enabled: visible && (win.canPaste || win.grabbed !== null)
+            onTriggered: { win.goToSheet(tabMenu.index); win.pasteSelection(); }
+        }
+        MenuEntry {
+            text: "Clear"
+            visible: tabMenu.isSheet
+            enabled: visible
+            onTriggered: { win.goToSheet(tabMenu.index); win.clearSelection(); }
+        }
+        MenuEntry {
+            text: "Delete sheet"
+            visible: tabMenu.isSheet
+            enabled: visible
+            onTriggered: { win.goToSheet(tabMenu.index); win.deleteSheet(); }
+        }
+        MenuRule { visible: tabMenu.isSheet }
+        MenuEntry {
+            text: "Insert sheet before"
+            visible: tabMenu.isSheet
+            enabled: visible
+            onTriggered: { win.goToSheet(tabMenu.index); win.newSheet(false); }
+        }
+        MenuEntry {
+            text: "Insert sheet after"
+            visible: tabMenu.isSheet
+            enabled: visible
+            onTriggered: { win.goToSheet(tabMenu.index); win.newSheet(true); }
+        }
+        MenuEntry {
+            text: "Rename sheet\u2026"
+            visible: tabMenu.isSheet
+            enabled: visible
+            onTriggered: { win.goToSheet(tabMenu.index); promptDialog.ask("renameSheet"); }
+        }
+        // This one leaves the sheet shown as it is: the two are then side
+        // by side, a window each.
         MenuEntry { text: "Open in new window"; onTriggered: win.newWindow(tabMenu.index) }
     }
 
@@ -2963,6 +3106,7 @@ ApplicationWindow {
         Shortcut { sequence: "X"; enabled: exportChoice.visible; onActivated: exportChoice.choose("xlsx") }
         Shortcut { sequence: "C"; enabled: exportChoice.visible && exportChoice.oneSheet; onActivated: exportChoice.choose("csv") }
         Shortcut { sequence: "J"; enabled: exportChoice.visible; onActivated: exportChoice.choose("json") }
+        Shortcut { sequence: "P"; enabled: exportChoice.visible && exportChoice.oneSheet; onActivated: exportChoice.choose("parquet") }
         ColumnLayout {
             width: parent.width
             spacing: 10
@@ -2998,6 +3142,17 @@ ApplicationWindow {
                 Keys.onReturnPressed: clicked()
                 Keys.onEnterPressed: clicked()
             }
+            Button {
+                Layout.fillWidth: true
+                enabled: exportChoice.oneSheet
+                text: "Parquet (.parquet): " + (exportChoice.oneSheet ? "this sheet" : "show a sheet first") + "    P"
+                font.family: win.font.family
+                font.features: win.font.features
+                font.pixelSize: win.dialogSize
+                onClicked: exportChoice.choose("parquet")
+                Keys.onReturnPressed: clicked()
+                Keys.onEnterPressed: clicked()
+            }
         }
         standardButtons: Dialog.Cancel
     }
@@ -3007,14 +3162,47 @@ ApplicationWindow {
         id: exportDialog
         property string kind: "xlsx"
         title: kind === "csv" ? "Export " + win.sheet.name + " as CSV"
+             : kind === "parquet" ? "Export " + win.sheet.name + " as Parquet"
              : kind === "json" ? "Export as JSON" : "Export as a workbook"
         fileMode: Dialogs.FileDialog.SaveFile
-        nameFilters: kind === "csv" ? ["CSV (*.csv)"] : kind === "json" ? ["JSON (*.json)"] : ["Workbook (*.xlsx)"]
+        nameFilters: kind === "csv" ? ["CSV (*.csv)"]
+                   : kind === "parquet" ? ["Parquet (*.parquet)"]
+                   : kind === "json" ? ["JSON (*.json)"] : ["Workbook (*.xlsx)"]
         defaultSuffix: kind
-        onAccepted: {
+        onAccepted: write(false)
+        // Run the export to see what it would lose; where it would write a
+        // null in place of a number, nothing is written until that is
+        // answered, and answering it runs the export again.
+        function write(force) {
             var name = win.sheet.isConsts ? "" : win.sheet.name;
-            if (file.exportUrl(selectedFile, kind, name) && file.notes.length > 0)
-                notesDialog.open();
+            if (file.exportUrl(selectedFile, kind, name, force)) {
+                if (file.notes.length > 0)
+                    notesDialog.open();
+            } else if (file.exportWarning.length > 0) {
+                exportWarning.open();
+            }
+        }
+    }
+
+    // What an export would lose, put before it writes anything.
+    Dialog {
+        font.pixelSize: win.dialogSize
+        id: exportWarning
+        anchors.centerIn: parent
+        modal: true
+        focus: true
+        width: Math.min(win.width - 80, 620)
+        title: "Export"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onClosed: grid.forceActiveFocus()
+        onAccepted: exportDialog.write(true)
+        contentItem: Text {
+            text: file.exportWarning
+            wrapMode: Text.WordWrap
+            color: win.textColor
+            font.family: win.font.family
+            font.features: win.font.features
+            font.pixelSize: win.dialogSize
         }
     }
 

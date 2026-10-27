@@ -931,6 +931,24 @@ fn parquet_leaves_a_failed_cell_empty() {
 }
 
 #[test]
+fn parquet_writes_null_for_a_value_wider_than_the_column_type() {
+    // A number past the digits Polars can name has nowhere to sit in a
+    // `Decimal(38, s)`, so its cell is written null and the write says so.
+    // The rest of the column is untouched: `2.5` keeps its point rather
+    // than being dragged to the one scale the monster would allow.
+    let file = "sheet T\n\nA : Decimal\n\nA\n= 10**1000\n2.5\n";
+    let out = parquet_of(file, None);
+    assert_eq!(
+        out.notices,
+        ["values too wide for the column's type were written as null: T.A"]
+    );
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    assert_eq!(eval(&back.source, "t[A; 0]"), "empty");
+    assert_eq!(eval(&back.source, "t[A; 1]"), "2.5");
+}
+
+#[test]
 fn parquet_round_trips_the_examples() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
     let mut seen = 0;

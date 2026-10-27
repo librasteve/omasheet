@@ -21,7 +21,10 @@ use polars::prelude::*;
 use std::io::Cursor;
 
 /// Said of a column whose values do not all fit the type it is written as.
-const WIDE: &str = "values too wide for the column's type were written as null";
+/// A value no `Decimal(38, s)` holds — its point outside the scale a
+/// Parquet decimal names — is written as a null. Public so that the app can
+/// run an export, see this coming and ask before it writes the file.
+pub const WIDE: &str = "values too wide for the column's type were written as null";
 
 /// Said of a column Parquet has no type for, written as text instead.
 const AS_TEXT: &str = "columns of no one type were written as text";
@@ -72,7 +75,13 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
                     .iter()
                     .map(|v| match v {
                         Value::Int(n) => Some(*n),
-                        _ => None,
+                        Value::Null => None,
+                        // A whole number past an `i64`, which an `Int64`
+                        // column has no room for: a null, and said so.
+                        _ => {
+                            losses.add(WIDE, file.column(t, c));
+                            None
+                        }
                     })
                     .collect();
                 Series::new(name, v)
@@ -82,16 +91,22 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
                 // the widest scale any value needs, but no wider than the
                 // narrowest any of them can be written at: one long value
                 // must not push the others past what they can hold.
+                // Only the values a Parquet decimal can hold have a say in
+                // its scale: one whose point sits outside `0..=38` is
+                // written as a null below, and must not drag the scale of
+                // the values around it down with it.
                 let wanted = cells
                     .iter()
                     .filter_map(exact)
                     .map(|d| d.scale())
+                    .filter(|s| (0..=MAX_PRECISION as i32).contains(s))
                     .max()
                     .unwrap_or(0);
                 let room = cells
                     .iter()
                     .filter_map(exact)
                     .map(|d| d.max_scale())
+                    .filter(|s| *s >= 0)
                     .min()
                     .unwrap_or(MAX_PRECISION as i32);
                 // A Parquet decimal names a scale of `0..=38`, so a value

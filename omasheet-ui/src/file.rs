@@ -10,6 +10,7 @@ use cxx_qt_lib::{QString, QUrl};
 use omasheet_engine::doc::{BLANK, entry_hint};
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::{Document, Options, locale};
+use omasheet_interop::parquet;
 use omasheet_interop::{Exported, Imported};
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -42,6 +43,7 @@ pub mod qobject {
         #[qproperty(QString, theme_selection)]
         #[qproperty(QString, theme_muted)]
         #[qproperty(QString, theme_error)]
+        #[qproperty(QString, export_warning)]
         #[qproperty(QString, snapshot_path)]
         type File = super::FileRust;
 
@@ -68,11 +70,22 @@ pub mod qobject {
         #[qinvokable]
         fn save_url(self: Pin<&mut File>, url: &QUrl) -> bool;
         /// Write the calculated file as `kind`: a workbook, `xlsx`, or
-        /// `json`, or the sheet named as `csv`. A file named `.xlsx`, `.csv`
-        /// or `.json` is written as that. What could not be written exactly
-        /// is left in `notes`.
+        /// `json`, or the sheet named as `csv` or `parquet`. A file named
+        /// `.xlsx`, `.csv`, `.json` or `.parquet` is written as that. What
+        /// could not be written exactly is left in `notes`.
+        ///
+        /// An export that would write a number as a null because no Parquet
+        /// decimal holds it writes nothing: the warning is left in
+        /// `export_warning` for the app to put to the user, who answers it
+        /// by asking again with `force`.
         #[qinvokable]
-        fn export_url(self: Pin<&mut File>, url: &QUrl, kind: &QString, sheet: &QString) -> bool;
+        fn export_url(
+            self: Pin<&mut File>,
+            url: &QUrl,
+            kind: &QString,
+            sheet: &QString,
+            force: bool,
+        ) -> bool;
         /// Where an export would go unless told otherwise: beside the file
         /// and under its name, or in `folder` if the file is not saved yet.
         #[qinvokable]
@@ -295,6 +308,8 @@ pub struct FileRust {
     system_dark: bool,
     /// Whether the Omarchy theme is being watched.
     watching: bool,
+    /// What an export would lose, asked before it is written.
+    export_warning: QString,
     /// Development aid: where to save a picture of the window, then quit.
     snapshot_path: QString,
 
@@ -318,6 +333,7 @@ impl Default for FileRust {
             revision: 0,
             status: QString::default(),
             notes: QString::default(),
+            export_warning: QString::default(),
             can_undo: false,
             can_redo: false,
             dark_mode: theme.dark,
@@ -357,6 +373,11 @@ fn document(text: &str) -> Document {
 fn index(n: i32) -> usize {
     n.max(0) as usize
 }
+
+/// What the app asks before an export writes a null in place of a number
+/// held at a scale no Parquet decimal names.
+const WIDE_WARNING: &str =
+    "values too large/small for Polars Decimal128, click to export anyway";
 
 impl qobject::File {
     /// Publish the document's state after it changed.
@@ -528,7 +549,14 @@ impl qobject::File {
         self.save_file(path)
     }
 
-    fn export_url(mut self: Pin<&mut Self>, url: &QUrl, kind: &QString, sheet: &QString) -> bool {
+    fn export_url(
+        mut self: Pin<&mut Self>,
+        url: &QUrl,
+        kind: &QString,
+        sheet: &QString,
+        force: bool,
+    ) -> bool {
+        self.as_mut().set_export_warning(QString::default());
         let mut path = PathBuf::from(url.to_local_file_or_default().to_string());
         if path.as_os_str().is_empty() {
             return false;
@@ -563,12 +591,21 @@ impl qobject::File {
         let written = exported
             .map_err(|_| "the file has problems to put right first".to_string())
             .and_then(|Exported { files, notices }| {
+                // Nothing is written until the loss is answered for: the
+                // export was run to find it, and is run again to keep it.
+                if !force && notices.iter().any(|n| n.starts_with(parquet::WIDE)) {
+                    return Ok(None);
+                }
                 let bytes = files.first().map_or(&[][..], |f| &f.bytes);
                 std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
-                Ok(notices)
+                Ok(Some(notices))
             });
         match written {
-            Ok(notices) => {
+            Ok(None) => {
+                self.as_mut().set_export_warning(QString::from(WIDE_WARNING));
+                false
+            }
+            Ok(Some(notices)) => {
                 self.as_mut().set_notes(QString::from(&notices.join("\n")));
                 let message = format!("Exported {}", path.display());
                 self.as_mut().set_status(QString::from(&message));
