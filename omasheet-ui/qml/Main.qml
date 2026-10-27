@@ -1832,7 +1832,7 @@ ApplicationWindow {
                 id: hflick
                 anchors.fill: parent
                 anchors.rightMargin: vbar.width
-                anchors.bottomMargin: hbar.height
+                anchors.bottomMargin: hbar.needed ? hbar.height : 0
                 contentWidth: win.gutterWidth + win.totalWidth
                 contentHeight: height
                 flickableDirection: Flickable.HorizontalFlick
@@ -2400,12 +2400,14 @@ ApplicationWindow {
                 anchors.top: parent.top
                 anchors.topMargin: win.headerHeight
                 anchors.bottom: parent.bottom
-                anchors.bottomMargin: hbar.height
+                anchors.bottomMargin: hbar.needed ? hbar.height : 0
                 policy: ScrollBar.AsNeeded
             }
 
             ScrollBar {
                 id: hbar
+                // The bar takes no room until the sheet is wider than the view.
+                readonly property bool needed: size < 1
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.rightMargin: vbar.width
