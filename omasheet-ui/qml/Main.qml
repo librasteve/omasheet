@@ -797,6 +797,23 @@ ApplicationWindow {
     property bool movedOnce: false
     readonly property bool canPaste: marked !== null || movedOnce
 
+    // Whole rows waiting to go in as rows of their own, rather than blank
+    // ones: cut, to be moved there, or copied, to go in as copies.
+    // `{cut, count}`, or null when none are.
+    readonly property var rowsOnHand: grabbedHere && grabbed.rows
+        ? { cut: true, count: grabbed.count }
+        : marked !== null && marked.rows && !sheet.isConsts && marked.tab < tabs.length
+            && marked.text.length > 0
+        ? { cut: false, count: marked.bottom - marked.top + 1 }
+        : null
+    // The same for whole columns.
+    readonly property var colsOnHand: grabbedHere && !grabbed.rows
+        ? { cut: true, count: grabbed.count }
+        : marked !== null && marked.columns && !sheet.isConsts && marked.tab < tabs.length
+            && marked.text.length > 0
+        ? { cut: false, count: marked.right - marked.left + 1 }
+        : null
+
     function mark(text, cut) {
         movedOnce = false;
         marked = { tab: tab, top: selTop, left: selLeft, bottom: selBottom, right: selRight, text: text, cut: !!cut, columns: selKind === "column", rows: selKind === "row",
@@ -1293,6 +1310,119 @@ ApplicationWindow {
         showRow(at + count - 1);
     }
 
+    // Rows go in above or below the selection: the ones cut or copied as
+    // whole rows if any are waiting, else `count` blank ones.
+    function insertRowsHere(below, count) {
+        if (rowsOnHand !== null)
+            insertRowsOnHand(below);
+        else
+            insertRows(below, count);
+    }
+
+    // Put the rows cut or copied as whole rows in above or below the
+    // selection, where blank ones would go: cut rows move there, and copied
+    // rows go in as copies, still on the clipboard to go in again.
+    function insertRowsOnHand(below) {
+        var hand = rowsOnHand;
+        if (hand === null || sheet.isConsts)
+            return;
+        notice = "";
+        var at = sheet.rows.length === 0 ? 0 : (below ? selBottom + 1 : selTop);
+        var count = hand.count;
+        var whole = selKind === "row";
+        var col = selLeft;
+        if (hand.cut) {
+            var g = grabbed;
+            grabbed = null;
+            // Where they are already: nothing to move.
+            if (at >= g.first && at <= g.first + g.count)
+                return;
+            // Once they are up, the rows above them have closed up.
+            at = at < g.first ? at : at - g.count;
+            notice = file.moveRows(tab, g.first, g.count, at);
+            if (notice.length > 0)
+                return;
+        } else {
+            // The rows and what goes in them are undone as one. They go
+            // down from the first cell of the first new row, whole.
+            var text = marked.text;
+            var mark = file.undoMark();
+            var problem = "";
+            keeping(at, 0, function() {
+                file.insertRows(tab, at, count);
+                problem = file.pasteCells(tab, at, 0, at, 0, text);
+            });
+            file.joinSince(mark);
+            if (problem.length > 0) {
+                errorDialog.say(problem);
+                return;
+            }
+        }
+        // Leave them selected, as whole rows if whole rows were.
+        if (whole) {
+            selectLine(true, at, false);
+            selectLine(true, at + count - 1, true);
+        } else {
+            selectCell(at, col, false);
+            selectCell(at + count - 1, col, true);
+        }
+        showRow(at + count - 1);
+    }
+
+    // Columns go in before or after the selection: the ones cut or copied as
+    // whole columns if any are waiting, else one new one, asked for by name.
+    function insertColumnsHere(after) {
+        if (colsOnHand !== null)
+            insertColumnsOnHand(after);
+        else
+            promptDialog.ask("column", after ? selRight + 1 : selLeft);
+    }
+
+    // Put the columns cut or copied as whole columns in before or after the
+    // selection: cut columns move there, and copied ones go in as copies,
+    // named as those they came from, each made free with `_001`, `_002`...
+    function insertColumnsOnHand(after) {
+        var hand = colsOnHand;
+        if (hand === null || sheet.isConsts)
+            return;
+        notice = "";
+        var at = after ? selRight + 1 : selLeft;
+        var count = hand.count;
+        if (hand.cut) {
+            var g = grabbed;
+            grabbed = null;
+            if (at >= g.first && at <= g.first + g.count)
+                return;
+            at = at < g.first ? at : at - g.count;
+            notice = file.moveColumns(tab, g.first, g.count, at);
+            if (notice.length > 0)
+                return;
+        } else {
+            var m = marked;
+            var from = tabs[m.tab].columns;
+            var taken = namesTaken(-1, -1);
+            var names = [];
+            for (var i = 0; i < count; i++)
+                names.push(copyName(from[m.left + i] ? from[m.left + i].name : "Column", taken));
+            var text = m.text;
+            var mark = file.undoMark();
+            var problem = "";
+            keeping(0, at, function() {
+                for (var k = 0; k < names.length && problem.length === 0; k++)
+                    problem = file.insertColumn(tab, at + k, names[k]);
+                if (problem.length === 0)
+                    problem = file.pasteCells(tab, 0, at, 0, at, text);
+            });
+            file.joinSince(mark);
+            if (problem.length > 0) {
+                errorDialog.say(problem);
+                return;
+            }
+        }
+        selectLine(false, at, false);
+        selectLine(false, at + count - 1, true);
+    }
+
     function deleteRows() {
         if (sheet.isConsts || sheet.rows.length === 0)
             return;
@@ -1610,9 +1740,9 @@ ApplicationWindow {
                     // A row goes in beside whole rows, or one cell, and nothing else.
                     if (ctrl) {
                         if (win.selKind === "row")
-                            win.insertRows(!shift, win.selBottom - win.selTop + 1);
+                            win.insertRowsHere(!shift, win.selBottom - win.selTop + 1);
                         else if (win.selKind === "cells" && win.selTop === win.selBottom && win.selLeft === win.selRight)
-                            win.insertRows(!shift, 1);
+                            win.insertRowsHere(!shift, 1);
                     }
                     // Only a single cell is edited in place: a block, rows,
                     // columns or the sheet are left as they are.
@@ -2675,16 +2805,18 @@ ApplicationWindow {
         // Rows, when whole rows are selected.
         MenuRule { visible: cellMenu.rows }
         MenuEntry {
-            text: cellMenu.rowCount > 1 ? "Insert " + cellMenu.rowCount + " rows above" : "Insert row above"
+            text: win.rowsOnHand !== null ? "Insert cells above"
+                : cellMenu.rowCount > 1 ? "Insert " + cellMenu.rowCount + " rows above" : "Insert row above"
             visible: cellMenu.rows
             enabled: visible && cellMenu.editable
-            onTriggered: win.insertRows(false, cellMenu.rowCount)
+            onTriggered: win.insertRowsHere(false, cellMenu.rowCount)
         }
         MenuEntry {
-            text: cellMenu.rowCount > 1 ? "Insert " + cellMenu.rowCount + " rows below" : "Insert row below"
+            text: win.rowsOnHand !== null ? "Insert cells below"
+                : cellMenu.rowCount > 1 ? "Insert " + cellMenu.rowCount + " rows below" : "Insert row below"
             visible: cellMenu.rows
             enabled: visible && cellMenu.editable
-            onTriggered: win.insertRows(true, cellMenu.rowCount)
+            onTriggered: win.insertRowsHere(true, cellMenu.rowCount)
         }
         MenuEntry {
             text: "Insert rows…"
@@ -2696,16 +2828,16 @@ ApplicationWindow {
         // from the footer goes at the end.
         MenuRule { visible: cellMenu.columns }
         MenuEntry {
-            text: "Insert column before"
+            text: win.colsOnHand !== null ? "Insert cells before" : "Insert column before"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable
-            onTriggered: promptDialog.ask("column", win.selLeft)
+            onTriggered: win.insertColumnsHere(false)
         }
         MenuEntry {
-            text: "Insert column after"
+            text: win.colsOnHand !== null ? "Insert cells after" : "Insert column after"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable
-            onTriggered: promptDialog.ask("column", win.selRight + 1)
+            onTriggered: win.insertColumnsHere(true)
         }
         MenuEntry {
             text: "Rename column…"
