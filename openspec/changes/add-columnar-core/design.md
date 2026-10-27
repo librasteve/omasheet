@@ -54,8 +54,11 @@ details of it:
 2. **Divide does not, and nor does `mean`.** Polars fixes a quotient at scale
    6 where omasheet holds up to 30 digits, and a Polars `mean` over a Decimal
    column comes back `f64`. So D72 covers both: neither is lowered on an
-   exact column. `mean` as `sum / len` is no escape, since it is the same
-   division.
+   exact column. `mean` as `sum / count` *is* an escape all the same, which
+   this said it was not — not because the division is any different, but
+   because there is one of it: the two halves that are a pass over the
+   column are Polars' and the single division is the engine's, which is
+   D72b.
 3. **D56 was the right call.** `NaN == NaN` is `true` in polars 0.51 on both
    the eager path and through the expression engine — measured over two
    distinct columns, so it is not a self-comparison shortcut — and a NaN
@@ -96,6 +99,8 @@ Parquet write will disagree with the schema in the text.
 | D71b | Decided | `is_nan` and `is_not_nan` are added, and `is_nan` of an empty cell is empty rather than false | Polars has both, and without them OMX can ask whether a cell is missing but not whether it is a `NaN` — half of the distinction the two kinds of absence draw. Polars' `is_nan` returns null for a null, which is the answer a missing value deserves, and `is_null` already answers the other question. `fill_nan` waits: `fill_null` is the function spelling of `//` and takes one value, so the pair should widen together |
 | D72 | Decided | Neither `/` nor `mean` is lowered on an exact column; `*` is lowered, its scale having been checked against `Dec`'s | The spike. Division is fixed at scale 6 in Polars against up to 30 digits here, and a Polars `mean` over a Decimal column returns `f64` |
 | D72a | Decided | A lowered column's dtype is re-stamped to `Decimal(38, s)` before it is stored | Polars returns `Decimal(None, s)` from arithmetic, and the precision is what a Parquet write and the schema in the text agree on |
+| D72b | Decided | `mean` over an exact column is lowered as a `sum` and a `count` taken together, and the one division between them is the engine's `Dec` | D72 refuses the division, not the column walk. The walk is what costs O(n) and the division is one scalar operation, so taking the first and keeping the second gives the row path's answer to the digit. A floating-point column is still refused, its `sum` being the half that addition order matters to |
+| D72c | Decided | `min` and `max` of a `Date`, a `Time` or a `Datetime` are lowered | An extreme of a temporal column is the extreme of the whole number it is held as, which is the order `value::compare` puts two of them in. The gate asked for an exact scale or a float and so declined these by omission rather than for a reason |
 | D73 | Open | A row count below which the row path is used even for a lowerable column | Needs a measurement, not a guess. A LazyFrame build, an optimiser pass and a `collect()` are slower than the row loop for a ten-row sheet, and a ten-row sheet is omasheet's typical document. Start at 1024 and measure |
 | D74 | Decided | `Options { lowering: Auto \| Never \| Always }` | The differential test's lever, the bisection tool when a result changes, and the workaround for a user whose file miscalculates in the field |
 | D75 | Decided | The snapshot goes column-wise, through `Engine::column_shown` | `doc.rs:2366` formats every cell of every sheet per keystroke; per-element Arrow access there would be slower than today |

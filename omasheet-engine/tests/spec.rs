@@ -1885,13 +1885,85 @@ fn an_aggregate_over_a_frame_column_is_taken_by_polars() {
 
 #[test]
 fn a_mean_of_decimals_is_exact() {
-    // D72: a Polars mean over a decimal column is an `f64`, and over a
-    // floating-point one it is the same division. Neither is lowered.
+    // D72: a Polars `mean` over a decimal column is an `f64` where the
+    // engine answers exactly, so the `mean` itself is never lowered — but
+    // the `sum` and the `count` it is made of both are, and the division
+    // between them is the engine's own. `both_ways` is what says the two
+    // paths agree to the digit.
     let dir = Some("../examples");
     let survived = both_ways(TABLE, "Passengers.Survived.mean()", dir);
-    assert_eq!(survived.aggregates, [Attempt::Refused]);
+    assert_eq!(survived.aggregates, [Attempt::Lowered]);
+    // Over a floating-point column it stays on the engine, the sum half of
+    // it being the one addition order matters to.
     let fare = both_ways(TABLE, "Passengers.Fare.mean()", dir);
     assert_eq!(fare.aggregates, [Attempt::Refused]);
+}
+
+#[test]
+fn a_mean_of_a_column_of_nothing_is_nothing() {
+    // The row path divides by the values that are not empty, so a column
+    // with none has no mean. Polars sums such a column to zero rather than
+    // to null, so it is the count that has to say so.
+    let file = "\
+sheet T
+
+N : Decimal
+
+| X | N |
+| - | - |
+| 1 |   |
+| 2 |   |
+";
+    let empty = both_ways(file, "T.N.mean()", None);
+    assert_eq!(empty.shown, "");
+    assert_eq!(empty.aggregates, [Attempt::Lowered]);
+}
+
+#[test]
+fn the_dress_a_column_wears_survives_a_lowered_mean() {
+    // A division takes a percentage off, here as on the row path, so the
+    // mean of a `Percent` column has it put back on afterwards. A fraction
+    // needs no such thing: anything done with one gives one.
+    let dir = Some("../examples");
+    let percent = TABLE.replace("Survived : Int", "Survived : Percent");
+    let ran = both_ways(&percent, "Passengers.Survived.mean()", dir);
+    assert_eq!(ran.aggregates, [Attempt::Lowered]);
+
+    let fraction = TABLE.replace("Survived : Int", "Survived : Fraction");
+    let ran = both_ways(&fraction, "Passengers.Survived.mean()", dir);
+    assert_eq!(ran.aggregates, [Attempt::Lowered]);
+}
+
+#[test]
+fn an_extreme_of_a_date_or_a_time_is_taken_by_polars() {
+    // An extreme of a temporal column is the extreme of the whole number it
+    // is held as, which is the order the engine compares two of them in, so
+    // there is nothing in the way of lowering it.
+    let file = "\
+sheet Stamps
+
+Day   : Date
+Clock : Time
+When  : Datetime
+
+| Day        | Clock    | When                |
+| ---------- | -------- | ------------------- |
+| 2024-03-01 | 09:30:00 | 2024-03-01T09:30:00 |
+| 2023-12-25 | 23:59:00 | 2023-12-25T23:59:00 |
+| 2025-01-15 | 00:01:00 | 2025-01-15T00:01:00 |
+";
+    for (expr, answer) in [
+        ("Stamps.Day.max()", "2025-01-15"),
+        ("Stamps.Day.min()", "2023-12-25"),
+        ("Stamps.Clock.max()", "23:59"),
+        ("Stamps.Clock.min()", "00:01"),
+        ("Stamps.When.max()", "2025-01-15T00:01"),
+        ("Stamps.When.min()", "2023-12-25T23:59"),
+    ] {
+        let ran = both_ways(file, expr, None);
+        assert_eq!(ran.shown, answer, "{expr}");
+        assert_eq!(ran.aggregates, [Attempt::Lowered], "{expr}");
+    }
 }
 
 #[test]

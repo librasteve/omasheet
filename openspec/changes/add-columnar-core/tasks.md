@@ -351,26 +351,39 @@ what stops a table's rows being exploded into cells.
       evaluated, and `lower::aggregate` is the gate. `Engine::aggregates`
       reports what became of each, beside `attempts` for columns.
 
-      Taken: `sum`, `min` and `max` of exact numbers, `min` and `max` of
-      floating-point ones, `count` and `len` of anything held. A sum or an
-      extreme of exact numbers widens to a `Decimal(38, s)` first, an
-      `Int64` included, for the reason `arith` widens.
+      Taken: `sum`, `mean`, `min` and `max` of exact numbers, `min` and
+      `max` of floating-point ones and of temporal ones, `count` and `len`
+      of anything held. A sum or an extreme of exact numbers widens to a
+      `Decimal(38, s)` first, an `Int64` included, for the reason `arith`
+      widens.
+
+      `mean` is there because of what 7.3's fifth table priced it at, and
+      it is lowered in halves (D72b): the `sum` and the `count` are asked
+      of Polars in the one plan and the single division between them is the
+      engine's `Dec`, which is the whole of what D72 was refusing. The row
+      path divides the sum it has already dressed and puts a percentage
+      back on afterwards, a division being one of the things that takes it
+      off, so this does the same; a fraction needs no such thing, anything
+      done with one giving one. A column of nothing has no mean, and since
+      Polars sums such a column to zero rather than to null it is the count
+      that says so.
+
+      `min` and `max` of a `Date`, a `Time` or a `Datetime` are there for
+      the same reason (D72c), and were refused by omission rather than for
+      one: an extreme of such a column is the extreme of the whole number
+      it is held as, which is the order `value::compare` puts two of them
+      in. A `Datetime` of another unit or in a zone is not one a sheet
+      holds and is still left alone.
 
       Not taken, each for a reason:
 
-      - `mean`, over any column (D72). Over an exact one Polars answers with
-        an `f64`; over a floating-point one it is the same division.
+      - `mean` of a floating-point column, the `sum` half of it being the
+        one addition order matters to.
       - **`sum` and `product` of floating-point numbers**, which the design
         did not call out and should have: addition of them is not
         associative, so a sum collected in parallel and a sum folded from
         the left are not the same number. `min` and `max` do not care in
         which order they look, so a float is no trouble to them.
-      - `min` and `max` of a `Datetime`, a `Date` or a `Time`, which is an
-        oversight rather than a refusal: the gate asks `exact_scale` or a
-        float and a temporal column is neither, though an extreme of one is
-        order-preserving under any encoding. 7.3's fifth table prices it —
-        `Closed.max()` is one of the two refusals that are most of what the
-        `Summary` sheet still costs lowered.
       - `median`, `std`, `var`, `quantile`, `first` and `last`, which are
         not refused for a reason so much as not yet written.
       - An aggregate over anything but a whole column: a selection of rows,
@@ -576,28 +589,46 @@ what stops a table's rows being exploded into cells.
       | rows | mode | compile | run | snapshot | total | aggregates | selections |
       |---|---|---|---|---|---|---|---|
       | 10 | Never | 0.0 | 0.0 | 0.0 | **0.1** | — | — |
-      | 10 | Always | 0.0 | 0.3 | 0.0 | **0.4** | 2 of 4 | 2 of 2 |
+      | 10 | Always | 0.0 | 0.4 | 0.0 | **0.5** | 3 of 4 | 2 of 2 |
       | 10³ | Never | 1.2 | 1.8 | 1.6 | **4.5** | — | — |
-      | 10³ | Always | 1.1 | 1.5 | 1.5 | **4.1** | 2 of 4 | 2 of 2 |
-      | 10⁵ | Never | 133.9 | 179.0 | 158.2 | **471.1** | — | — |
-      | 10⁵ | Always | 135.7 | **123.6** | 158.5 | **417.8** | 2 of 4 | 2 of 2 |
-      | 10⁶ | Never | 1790.5 | 2252.5 | 1606.8 | **5650.0** | — | — |
-      | 10⁶ | Always | 1681.1 | **1547.8** | 1613.5 | **4842.6** | 2 of 4 | 2 of 2 |
+      | 10³ | Always | 1.3 | 1.7 | 1.6 | **4.5** | 3 of 4 | 2 of 2 |
+      | 10⁵ | Never | 131.4 | 179.7 | 158.8 | **469.8** | — | — |
+      | 10⁵ | Always | 131.1 | **118.9** | 158.3 | **408.3** | 3 of 4 | 2 of 2 |
+      | 10⁶ | Never | 1831.9 | 2294.5 | 1605.4 | **5732.0** | — | — |
+      | 10⁶ | Always | 2025.1 | **1645.6** | 1654.7 | **5325.6** | 3 of 4 | 2 of 2 |
 
-      **`run` comes down 31%**, at 10⁵ and at 10⁶ alike — 2252.5 ms to
-      1547.8 at a million rows — and the rebuild as a whole 14%.
+      **`run` comes down 34% at 10⁵** — 179.7 ms to 118.9 — and 28% at 10⁶,
+      and the rebuild as a whole 13% and 7%.
 
-      The `Summary` sheet's own cost is the difference from the first table,
-      whose `Sales` is the same sheet without it: 2252.5 − 1047.7 = 1205 ms
-      row-wise against 1547.8 − 1056.8 = 491 ms lowered. **The aggregate and
-      filter work alone is 2.5 times quicker**, about 200 ms a line at a
-      million rows row-wise.
+      The `Summary` sheet's own cost is the difference from the `Sales`-only
+      shape, taken from the same run of the harness so that the two are of
+      the same machine: its `run` was 99.5 ms `Never` and 91.3 `Always` at
+      10⁵, and 1118.4 / 1008.7 at 10⁶. So the `Summary` work alone is
+      **80.2 → 27.6 ms at 10⁵, which is 2.9 times quicker**, and
+      1176 → 637 at 10⁶, which is 1.8. Those two should agree and the 10⁶
+      column is where they do not: every table of that run came out some 6%
+      slower in its absolutes than the run before it, which is the 20% this
+      section already warns about, so the proportion is what to read there
+      and not the millisecond.
 
-      And it does that with **half the aggregates refused**. The two taken
-      are the sums; `Margin.mean()` is D72 and `Closed.max()` is a
-      `Datetime`, which `lower::aggregate` declines because `exact_scale`
-      says no and it is not a float. Those two are most of the 491 ms left.
-      Both selections' conditions are taken — 6.1 — but their sums stay on
+      **Three of the four whole-column aggregates are taken**: both sums,
+      and `Closed.max()`, which D72c added. The fourth, `Margin.mean()`, is
+      not refused by the gate at all — `Margin : Percent` is a column of the
+      text, and `column_of` declines a `Percent` or a `Fraction` for want of
+      one dtype to hold it as, so `pl_column` answers `None` before
+      `lower::aggregate` is ever asked. D72b's `mean` does not fire on this
+      fixture at all, and that one line is what is left of the `Summary`'s
+      cost.
+
+      So the next thing here is not an aggregate: it is **holding a
+      `Percent` or a `Fraction` column as the `Decimal(38, s)` it already
+      is**. The dress is display (D69) and `cell_of` puts it back on from
+      `Column::ty` on the way out, which is what a table's column declared
+      as one already relies on; `column_of` declining the pair is what keeps
+      a sheet's own from the dataframe. It would unblock this `mean`, and
+      every elementwise column of such a sheet with it.
+
+      Both selections' conditions are taken (6.1), but their sums stay on
       the engine, which is 6.3's last bullet.
 - [ ] 7.4 D73: the threshold, from a committed timing harness over
       `budget.omx` at 10, 10³, 10⁵ and 10⁶ rows. The harness is 7.3 and the

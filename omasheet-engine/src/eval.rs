@@ -465,7 +465,13 @@ impl<'p> Engine<'p> {
             return refused(self);
         };
         let (name, dtype) = (column.name().clone(), column.dtype().clone());
-        let Some(expr) = lower::aggregate(func, &name, &dtype) else {
+        // `mean` is a sum over a count, and both halves lower where the
+        // whole does not (D72): Polars' own `mean` answers an exact column
+        // with an `f64`, but its `sum` and its `count` are exact, and the
+        // division between them is done below as the row path does it.
+        let mean = func == Func::Mean;
+        let Some(expr) = lower::aggregate(if mean { Func::Sum } else { func }, &name, &dtype)
+        else {
             return refused(self);
         };
         // D71a: `min` over a floating-point column of nothing but `NaN`s is
@@ -475,6 +481,14 @@ impl<'p> Engine<'p> {
         let mut select = vec![expr.alias("agg")];
         if guard {
             select.push(lower::has_a_number(&name).alias("number"));
+        }
+        if mean {
+            // How many values it is a mean of: the row path divides by the
+            // values that are not empty, which is what `count` counts.
+            let Some(count) = lower::aggregate(Func::Count, &name, &dtype) else {
+                return refused(self);
+            };
+            select.push(count.alias("count"));
         }
         let frame = DataFrame::new(vec![column]).ok()?;
         let Ok(out) = frame.lazy().select(select).collect() else {
@@ -505,6 +519,31 @@ impl<'p> Engine<'p> {
         let value = match (ty, &value) {
             (S::Fraction, Value::Int(_) | Value::Decimal(_)) => value.fraction(),
             _ => value,
+        };
+        // The division `mean` is, taken here rather than by Polars so that
+        // it is a `Dec`'s. The row path divides the sum it has already
+        // dressed and puts the percentage back on after, a division being
+        // one of the things that takes it off, so this does the same.
+        // Nothing to divide by is a column of nothing, whose mean is empty.
+        let value = match mean {
+            false => value,
+            true => match out
+                .column("count")
+                .ok()?
+                .get(0)
+                .ok()?
+                .try_extract::<i64>()
+                .ok()?
+            {
+                0 => Value::Null,
+                n => {
+                    let mean = arith(BinOp::Div, &value, &Value::Int(n)).ok()?;
+                    match ty {
+                        S::Percent => mean.percent(),
+                        _ => mean,
+                    }
+                }
+            },
         };
         self.aggregates.borrow_mut().push((t, c, Attempt::Lowered));
         Some(value)

@@ -133,13 +133,14 @@ pub fn expr(node: &Node, cx: &Cx) -> Option<Out> {
 /// An aggregate over one whole column as a Polars expression, or `None`
 /// where Polars' answer is not the engine's.
 ///
-/// `mean` is never here (D72): over an exact column Polars answers with an
-/// `f64` where the engine answers exactly, and over a floating-point one it
-/// is the same division. Nor is any aggregate that adds floating-point
-/// numbers up — `sum`, `product`, and `mean` again — because addition of
-/// them is not associative, so a sum collected in parallel and a sum folded
-/// from the left are not the same number. `min` and `max` do not care in
-/// which order they look, so a float is no trouble to them.
+/// `mean` is never here (D72): Polars answers it with an `f64` where the
+/// engine answers exactly. The caller lowers it all the same, as a `sum`
+/// and a `count` asked for here and divided by the engine, so the division
+/// is a `Dec`'s own. Nor is any aggregate that adds floating-point numbers
+/// up — `sum`, `product`, and `mean` again — because addition of them is
+/// not associative, so a sum collected in parallel and a sum folded from
+/// the left are not the same number. `min` and `max` do not care in which
+/// order they look, so a float is no trouble to them.
 pub fn aggregate(func: Func, name: &PlSmallStr, dtype: &DataType) -> Option<Expr> {
     let column = || col(name.clone());
     // A sum or an extreme of exact numbers widens to a decimal first, an
@@ -163,11 +164,13 @@ pub fn aggregate(func: Func, name: &PlSmallStr, dtype: &DataType) -> Option<Expr
         Func::Max => match exact {
             Some(exact) => exact.max(),
             None if is_float(dtype) => column().nan_max(),
+            None if temporal(dtype) => column().max(),
             None => return None,
         },
         Func::Min => match exact {
             Some(exact) => exact.min(),
             None if is_float(dtype) => column().min(),
+            None if temporal(dtype) => column().min(),
             None => return None,
         },
         _ => return None,
@@ -377,6 +380,19 @@ fn exact_scale(dtype: &DataType) -> Option<u32> {
 
 fn is_float(dtype: &DataType) -> bool {
     matches!(dtype, DataType::Float32 | DataType::Float64)
+}
+
+/// Whether a column holds a date, a time or a timestamp. An extreme of one
+/// is the extreme of the whole number it is held as, which is the order
+/// `value::compare` puts two of them in, so `min` and `max` of such a
+/// column are Polars' to take. A `Datetime` of another unit or in a zone is
+/// not one a sheet holds and is left alone.
+fn temporal(dtype: &DataType) -> bool {
+    match dtype {
+        DataType::Datetime(unit, zone) => *unit == TimeUnit::Microseconds && zone.is_none(),
+        DataType::Date | DataType::Time => true,
+        _ => false,
+    }
 }
 
 /// Whether a dtype is one a sheet holds values of, with no conversion
