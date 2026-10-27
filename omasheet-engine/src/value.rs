@@ -379,7 +379,7 @@ fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
 }
 
 /// What a number too wide to hold is reported as.
-const TOO_LARGE: &str = "the number is too large: a decimal holds 38 digits";
+const TOO_LARGE: &str = "the number is too large for the Decimal type";
 
 /// An exact number divided by zero, which no exact number is: `Inf` or
 /// `-Inf` by its sign, and `NaN` for zero.
@@ -493,7 +493,7 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
 /// since a `Decimal` carries its scale and widening it would only add
 /// zeros. An `Int` is whole already, so it is itself.
 pub fn round_digits(x: &Value, places: i64) -> Result<Value, String> {
-    let places = u32::try_from(places.max(0)).unwrap_or(u32::MAX);
+    let places = i32::try_from(places.max(0)).unwrap_or(i32::MAX);
     let narrowed = |d: &Dec| d.rescale(places.min(d.scale())).unwrap_or(*d);
     Ok(match x {
         Value::Null => Value::Null,
@@ -504,7 +504,7 @@ pub fn round_digits(x: &Value, places: i64) -> Result<Value, String> {
         // An infinity and a `NaN` have no places to round to.
         Value::Float(f) if !f.is_finite() => Value::Float(*f),
         Value::Float(f) => {
-            let factor = 10f64.powi(places.min(17) as i32);
+            let factor = 10f64.powi(places.min(17));
             Value::Float((f * factor).round() / factor)
         }
         other => return Err(format!("cannot round {}", other.kind())),
@@ -736,7 +736,7 @@ fn shown_percent(r: &Dec, exact: bool, sep: Option<char>) -> String {
     let shown = if e < 15 {
         let size = hundred.and_then(|h| h.checked_abs()).unwrap_or(Dec::ZERO);
         let rounded = size
-            .rescale(PERCENT_DIGITS as u32)
+            .rescale(PERCENT_DIGITS as i32)
             .unwrap_or(size)
             .to_plain_string();
         grouped(trimmed(rounded), sep)
@@ -746,7 +746,7 @@ fn shown_percent(r: &Dec, exact: bool, sep: Option<char>) -> String {
             (first, rest) => format!("{first}.{rest}"),
         };
         let rounded = Dec::parse(&mantissa)
-            .and_then(|m| m.rescale(PERCENT_DIGITS as u32))
+            .and_then(|m| m.rescale(PERCENT_DIGITS as i32))
             .map(|m| m.to_plain_string())
             .unwrap_or(mantissa);
         format!("{}{}", trimmed(rounded), exponent(e))

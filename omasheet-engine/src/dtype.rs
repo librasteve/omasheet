@@ -69,7 +69,7 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
         AnyValue::Float32(f) => Cell::Lit(Lit::Float(f as f64)),
         AnyValue::Float64(f) => Cell::Lit(Lit::Float(f)),
         AnyValue::Decimal(unscaled, scale) => {
-            Dec::new(unscaled, scale as u32).map_or(Cell::Invalid, exact)
+            Dec::new(unscaled, scale as i32).map_or(Cell::Invalid, exact)
         }
         AnyValue::Date(days) => Cell::Lit(Lit::Date(days)),
         // Still read to the whole second, as before the units changed: no
@@ -148,18 +148,30 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
     // written at that scale is not written at all, so the column is
     // declined.
     let decimals = |name: PlSmallStr, pick: &dyn Fn(&Value) -> Option<Dec>| -> Option<Series> {
+        // A Polars decimal names a scale of `0..=38` and no other, so a
+        // value whose point sits outside that is one this column cannot
+        // hold: the scale is clamped, and the rescale below then declines.
         let scale = values
             .iter()
             .filter_map(pick)
             .map(|d| d.scale())
             .max()
             .unwrap_or(0)
-            .min(MAX_PRECISION);
+            .clamp(0, MAX_PRECISION as i32);
         let digits: Vec<Option<i128>> = values
             .iter()
             .map(|v| match v {
                 v if null(v) => Some(None),
-                v => Some(Some(pick(v)?.rescale(scale)?.unscaled())),
+                v => {
+                    let d = pick(v)?;
+                    let at = d.rescale(scale)?;
+                    // A value rounded away to nothing is a value lost, and
+                    // this column is the lossless one.
+                    if at.is_zero() && !d.is_zero() {
+                        return None;
+                    }
+                    Some(Some(at.unscaled()))
+                }
             })
             .collect::<Option<_>>()?;
         // The values are unscaled digits already, so the series is built as

@@ -93,14 +93,23 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
                     .filter_map(exact)
                     .map(|d| d.max_scale())
                     .min()
-                    .unwrap_or(MAX_PRECISION);
-                let scale = wanted.min(room).min(MAX_PRECISION);
+                    .unwrap_or(MAX_PRECISION as i32);
+                // A Parquet decimal names a scale of `0..=38`, so a value
+                // whose point sits outside that is written as a null.
+                let scale = wanted.min(room).clamp(0, MAX_PRECISION as i32);
                 let v: Vec<Option<i128>> = cells
                     .iter()
                     .map(|v| {
                         let d = exact(v)?;
                         match d.rescale(scale) {
-                            Some(d) => Some(d.unscaled()),
+                            // A value rounded away to nothing was too small
+                            // for the column, as one that will not rescale
+                            // at all was too large.
+                            Some(r) if r.is_zero() && !d.is_zero() => {
+                                losses.add(WIDE, file.column(t, c));
+                                None
+                            }
+                            Some(r) => Some(r.unscaled()),
                             None => {
                                 losses.add(WIDE, file.column(t, c));
                                 None
@@ -252,7 +261,7 @@ fn cell(value: AnyValue<'_>, ty: S) -> Datum {
         ),
         AnyValue::Float32(f) => Datum::Lit(float_text(f as f64), S::Float),
         AnyValue::Float64(f) => Datum::Lit(float_text(f), S::Float),
-        AnyValue::Decimal(unscaled, scale) => match Dec::new(unscaled, scale as u32) {
+        AnyValue::Decimal(unscaled, scale) => match Dec::new(unscaled, scale as i32) {
             Some(d) => Datum::Lit(d.to_plain_string(), S::Decimal),
             None => Datum::Empty,
         },

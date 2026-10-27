@@ -29,7 +29,9 @@ that conversation).
    and N-d arrays all use it.
 3. **Exact numerics.** An omasheet type is a name for a Polars dtype, so
    `Int` is a 64-bit integer and `Decimal` a 38-digit fixed-point decimal,
-   exact where the result fits and reported where it does not. Floating
+   exact where the result fits and reported where it does not. Its scale is
+   signed and wider than a Polars decimal's, so a number past 38 digits
+   keeps them and moves the point, and such a column stays on the engine. Floating
    point (`Float`) only on request. (`add-polars-dtypes`, D14-D16;
    arbitrary-precision `Int` and the rational `Fraction` were the earlier
    reading.)
@@ -78,7 +80,7 @@ pivots, formatting syntax.
 - Language: Rust, shipped as a single static binary `omasheet`
 - Parsing: hand-written lexer and recursive-descent parser (no parser library)
 - Numerics: the Polars dtypes, held as `i64` and a 38-digit fixed-point
-  `i128` in `omasheet-omx::decimal`. Aligning with the dtypes does not
+  `i128` with an `i32` scale in `omasheet-omx::decimal`. Aligning with the dtypes does not
   need the Polars crate: only Parquet and dataframe-backed tables do
 - Sheet operations (group, join, sort): implemented natively in
   `omasheet-engine` from Phase 3. Polars was out of scope while the exact

@@ -31,6 +31,14 @@ rounded there: `1/3` is held as 38 threes and shown cut and marked,
 `0.33333333333333333333…`. Pointing at it in the app shows the rest, and
 `--exact` gives every digit of it.
 
+The 38 digits are significant digits, not a size: the point sits where it
+needs to, left of them or right of them. So `10**1000` is a number, and an
+exact one, held as the single digit it was given; it is only past where the
+point itself reaches, around `1e2147483685`, that a number is too large to
+hold and that is reported. A number this size is no Polars decimal, whose
+point sits within its digits, so a column of them is calculated on the
+engine, and a Parquet or XLSX write puts a null in its place and says so.
+
 The last eight of those 38 digits are working room. They are held, so that a
 long calculation has room to be right, but they are not compared and not
 shown: 30 digits are. That is what makes two ways of reaching one number

@@ -1,10 +1,17 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! A fixed-point decimal, held the way Polars holds one: an `i128` of
-//! unscaled digits and a scale saying where the point sits, so that
-//! `unscaled / 10^scale` is the number. Thirty-eight digits is the most a
-//! `Decimal128` carries, and every operation here keeps inside that or says
-//! it cannot.
+//! A fixed-point decimal: an `i128` of unscaled digits and a scale saying
+//! where the point sits, so that `unscaled / 10^scale` is the number.
+//! Thirty-eight digits is the most an `i128` carries, and every operation
+//! here keeps inside that or says it cannot.
+//!
+//! The digits are the ones a Polars `Decimal128` holds, and so is a scale of
+//! `0..=38`; the scale here is wider than that one, and signed. A negative
+//! scale puts the point to the right of the digits, which is what lets a
+//! number far past 38 digits — `1e80`, one digit at a scale of `-80` — be
+//! held exactly to the digits it was given. Such a number has no Polars
+//! decimal to be, so a column of them stays on the engine and a Parquet
+//! write puts a null in its place and says so.
 //!
 //! Arithmetic is exact wherever the result fits: adding and subtracting line
 //! the scales up, multiplying adds them. Division is the one operation that
@@ -25,6 +32,16 @@ use std::fmt;
 /// The most digits a `Decimal128` holds.
 pub const MAX_PRECISION: u32 = 38;
 
+/// The furthest the point can sit to the left of the digits, and so the
+/// smallest number there is: `1e-2147483647`. The bound is symmetric with
+/// [`MIN_SCALE`] because `i32::MIN` has no positive counterpart, and
+/// negating a scale must always hold.
+pub const MAX_SCALE: i32 = i32::MAX;
+
+/// The furthest the point can sit to the right of the digits, and so the
+/// largest number there is: `(10^38 - 1) * 10^2147483647`.
+pub const MIN_SCALE: i32 = -i32::MAX;
+
 /// How many of the digits a `Decimal128` carries are working room: held, but
 /// neither compared nor shown, so that the rounding a long calculation
 /// collects in them does not reach the number anybody reads. See the module
@@ -33,6 +50,11 @@ pub const GUARD_DIGITS: u32 = 8;
 
 /// How many significant digits a number is compared and shown to.
 pub const SHOWN_PRECISION: u32 = MAX_PRECISION - GUARD_DIGITS;
+
+/// The most characters [`Dec::to_plain_string`] will write out before it
+/// gives the number in e notation instead. A scale reaches into the
+/// billions, and a number is read by somebody.
+const PLAIN_WIDTH: usize = 64;
 
 /// The largest denominator [`Dec::to_fraction`] will answer with.
 pub const MAX_DENOMINATOR: i64 = 10_000;
@@ -44,7 +66,7 @@ const LIMIT: i128 = 10i128.pow(MAX_PRECISION);
 #[derive(Clone, Copy, Debug)]
 pub struct Dec {
     unscaled: i128,
-    scale: u32,
+    scale: i32,
 }
 
 /// Ten to the `n`, or `None` when that will not fit.
@@ -75,8 +97,8 @@ impl Dec {
     }
 
     /// `unscaled / 10^scale`, or `None` if it is too wide to hold.
-    pub fn new(unscaled: i128, scale: u32) -> Option<Dec> {
-        if scale > MAX_PRECISION || unscaled.unsigned_abs() >= LIMIT as u128 {
+    pub fn new(unscaled: i128, scale: i32) -> Option<Dec> {
+        if !(MIN_SCALE..=MAX_SCALE).contains(&scale) || unscaled.unsigned_abs() >= LIMIT as u128 {
             None
         } else {
             Some(Dec { unscaled, scale })
@@ -87,7 +109,7 @@ impl Dec {
         self.unscaled
     }
 
-    pub fn scale(self) -> u32 {
+    pub fn scale(self) -> i32 {
         self.scale
     }
 
@@ -101,18 +123,21 @@ impl Dec {
 
     /// Whether this is a whole number.
     pub fn is_integer(self) -> bool {
-        self.trimmed().scale == 0
+        self.trimmed().scale <= 0
     }
 
     /// The same number with no needless trailing zeros.
     pub fn trimmed(self) -> Dec {
         let mut d = self;
+        // Nothing has no digits to give up, and a scale to walk down from
+        // that reaches into the billions.
+        if d.unscaled == 0 {
+            d.scale = 0;
+            return d;
+        }
         while d.scale > 0 && d.unscaled % 10 == 0 {
             d.unscaled /= 10;
             d.scale -= 1;
-        }
-        if d.unscaled == 0 {
-            d.scale = 0;
         }
         d
     }
@@ -120,15 +145,18 @@ impl Dec {
     /// This number as a whole number, when it is one and it fits.
     pub fn to_i64(self) -> Option<i64> {
         let d = self.trimmed();
-        if d.scale == 0 {
-            i64::try_from(d.unscaled).ok()
-        } else {
-            None
+        match d.scale {
+            0 => i64::try_from(d.unscaled).ok(),
+            // A negative scale is a whole number with zeros after its
+            // digits: it is one an `i64` holds only when writing them out
+            // fits, which for anything past `1e18` it does not.
+            s if s < 0 => i64::try_from(d.rescale(0)?.unscaled).ok(),
+            _ => None,
         }
     }
 
     pub fn to_f64(self) -> f64 {
-        self.unscaled as f64 / 10f64.powi(self.scale as i32)
+        self.unscaled as f64 / 10f64.powi(self.scale)
     }
 
     /// The shortest decimal that reads back as the same `f64`. `None` for an
@@ -162,7 +190,11 @@ impl Dec {
         if held <= SHOWN_PRECISION {
             return d;
         }
-        let scale = d.scale.saturating_sub(held - SHOWN_PRECISION);
+        // Only digits after the point are given up: the guard digits are
+        // where the rounding of a long calculation collects, and a whole
+        // number has none of them. `2**100` is exact in 31 digits, so all
+        // 31 of them are shown.
+        let scale = (d.scale - (held - SHOWN_PRECISION) as i32).max(d.scale.min(0));
         d.rescale(scale).unwrap_or(d).trimmed()
     }
 
@@ -188,7 +220,9 @@ impl Dec {
         let size = whole.checked_abs()?;
         // `n / d` is the number exactly, as two whole numbers.
         let mut n = size.unscaled;
-        let mut d = pow10(size.scale)?;
+        // No fraction of a number past the digits there are: its point is
+        // right of them, so it is whole and vastly beyond any denominator.
+        let mut d = pow10(u32::try_from(size.scale).ok()?)?;
         let (mut h_prev, mut h) = (0i128, 1i128);
         let (mut k_prev, mut k) = (1i128, 0i128);
         while d != 0 {
@@ -234,21 +268,34 @@ impl Dec {
         self.unscaled.signum() as i64
     }
 
+    /// Whether anything of this number sits after the point.
+    fn has_fraction(self) -> bool {
+        match self.scale {
+            s if s <= 0 => false,
+            // Past 38 places every digit is after the point, since there are
+            // at most 38 of them: the number is below one.
+            s if s > MAX_PRECISION as i32 => self.unscaled != 0,
+            s => self.unscaled % pow10(s as u32).unwrap_or(1) != 0,
+        }
+    }
+
     /// Towards zero.
     pub fn trunc(self) -> Dec {
-        match pow10(self.scale) {
-            Some(factor) => Dec {
-                unscaled: self.unscaled / factor,
+        match self.scale {
+            // Already whole: the point is at or right of the digits.
+            s if s <= 0 => self,
+            s if s > MAX_PRECISION as i32 => Dec::ZERO,
+            s => Dec {
+                unscaled: self.unscaled / pow10(s as u32).unwrap_or(1),
                 scale: 0,
             },
-            None => self,
         }
     }
 
     /// Towards negative infinity.
     pub fn floor(self) -> Dec {
         let whole = self.trunc();
-        if self.unscaled < 0 && whole.unscaled * pow10(self.scale).unwrap_or(1) != self.unscaled {
+        if self.unscaled < 0 && self.has_fraction() {
             Dec {
                 unscaled: whole.unscaled - 1,
                 scale: 0,
@@ -261,7 +308,7 @@ impl Dec {
     /// Towards positive infinity.
     pub fn ceil(self) -> Dec {
         let whole = self.trunc();
-        if self.unscaled > 0 && whole.unscaled * pow10(self.scale).unwrap_or(1) != self.unscaled {
+        if self.unscaled > 0 && self.has_fraction() {
             Dec {
                 unscaled: whole.unscaled + 1,
                 scale: 0,
@@ -278,16 +325,24 @@ impl Dec {
 
     /// The same number at `scale`, or `None` if widening it overflows. A
     /// narrower scale rounds half away from zero.
-    pub fn rescale(self, scale: u32) -> Option<Dec> {
+    pub fn rescale(self, scale: i32) -> Option<Dec> {
         if scale == self.scale {
             return Some(self);
         }
+        let step = (scale as i64 - self.scale as i64).unsigned_abs();
         if scale > self.scale {
-            let factor = pow10(scale - self.scale)?;
+            // Widening multiplies the digits, so a step past the 38 there
+            // are is one no number can take.
+            let factor = pow10(u32::try_from(step).ok()?)?;
             let unscaled = self.unscaled.checked_mul(factor)?;
             Dec::new(unscaled, scale)
+        } else if step > MAX_PRECISION as u64 {
+            // Narrowing by more than the digits there are leaves nothing of
+            // them: every one lands after the point, and the first is a
+            // zero, so the number rounds away.
+            Dec::new(0, scale)
         } else {
-            let factor = pow10(self.scale - scale)?;
+            let factor = pow10(step as u32)?;
             let whole = self.unscaled / factor;
             let rest = self.unscaled % factor;
             // Half away from zero.
@@ -302,19 +357,20 @@ impl Dec {
 
     /// The widest scale this number can be written at and still fit: it needs
     /// `magnitude + 1` digits before the point, and the rest are free. `1`
-    /// reaches 37 places where `0.3` reaches 38. A column written at one
-    /// scale, as a Parquet decimal is, can use no more than the least of
-    /// these over its values.
-    pub fn max_scale(self) -> u32 {
+    /// reaches 37 places where `0.3` reaches 38, and `1e80` reaches `-43`,
+    /// its point still 43 places right of its one digit. A column written at
+    /// one scale, as a Parquet decimal is, can use no more than the least of
+    /// these over its values, and no less than nothing.
+    pub fn max_scale(self) -> i32 {
         if self.unscaled == 0 {
-            return MAX_PRECISION;
+            return MAX_SCALE;
         }
         let places = MAX_PRECISION as i64 - 1 - self.magnitude();
-        places.clamp(0, MAX_PRECISION as i64) as u32
+        places.clamp(MIN_SCALE as i64, MAX_SCALE as i64) as i32
     }
 
     /// Both numbers at one scale, as wide as will hold them.
-    fn align(a: Dec, b: Dec) -> Option<(i128, i128, u32)> {
+    fn align(a: Dec, b: Dec) -> Option<(i128, i128, i32)> {
         let (a, b) = (a.trimmed(), b.trimmed());
         // The wider of the two scales, brought down to one that holds them
         // both. Bringing it down rounds, which is the only way two numbers of
@@ -329,14 +385,21 @@ impl Dec {
 
     pub fn checked_add(self, other: Dec) -> Option<Dec> {
         let (x, y, scale) = Dec::align(self, other)?;
-        Dec::new(x.checked_add(y)?, scale).or_else(|| {
+        match x.checked_add(y) {
             // Too wide at this scale: give up digits after the point.
-            let wide = Dec {
-                unscaled: x.checked_add(y)?,
-                scale,
-            };
-            narrow(wide)
-        })
+            Some(sum) => Dec::new(sum, scale).or_else(|| narrow(Dec { unscaled: sum, scale })),
+            // The digits themselves do not add up: an `i128` holds a little
+            // over `1.7e38`, where two 38-digit numbers reach `2e38`. Each
+            // side gives up its last digit first, so the sum has the room
+            // and the loss is the one `narrow` would have taken anyway.
+            None => {
+                let back = |n: i128| {
+                    let (whole, rest) = (n / 10, n % 10);
+                    whole + if rest.unsigned_abs() * 2 >= 10 { n.signum() } else { 0 }
+                };
+                Dec::new(back(x).checked_add(back(y))?, scale.checked_sub(1)?)
+            }
+        }
     }
 
     pub fn checked_sub(self, other: Dec) -> Option<Dec> {
@@ -353,22 +416,19 @@ impl Dec {
 
     pub fn checked_mul(self, other: Dec) -> Option<Dec> {
         let (a, b) = (self.trimmed(), other.trimmed());
-        let scale = a.scale + b.scale;
+        let scale = a.scale.checked_add(b.scale)?;
         match a.unscaled.checked_mul(b.unscaled) {
-            Some(unscaled) if scale <= MAX_PRECISION => {
-                Dec::new(unscaled, scale).or_else(|| narrow(Dec { unscaled, scale }))
-            }
-            Some(unscaled) => narrow(Dec { unscaled, scale }),
+            Some(unscaled) => Dec::new(unscaled, scale).or_else(|| narrow(Dec { unscaled, scale })),
             // The product of the digits does not fit. Give up decimal places
             // on both sides, evenly, so that a wide result loses its last
             // digits rather than an operand losing all of them.
             None => {
                 let excess =
                     digits(a.unscaled) as i64 + digits(b.unscaled) as i64 - MAX_PRECISION as i64;
-                let half = excess.div_euclid(2).max(0) as u32;
-                let a = a.rescale(a.scale.saturating_sub(half + excess.rem_euclid(2) as u32))?;
-                let b = b.rescale(b.scale.saturating_sub(half))?;
-                let scale = a.scale + b.scale;
+                let half = excess.div_euclid(2).max(0) as i32;
+                let a = a.rescale(a.scale - half - excess.rem_euclid(2) as i32)?;
+                let b = b.rescale(b.scale - half)?;
+                let scale = a.scale.checked_add(b.scale)?;
                 let unscaled = a.unscaled.checked_mul(b.unscaled)?;
                 narrow(Dec { unscaled, scale })
             }
@@ -393,11 +453,15 @@ impl Dec {
         // for it. Taken from the two magnitudes, not from dividing the
         // unscaled digits, which ignores where the points are.
         let e = a.magnitude() - b.magnitude();
-        let room = (MAX_PRECISION as i64 - e).clamp(0, MAX_PRECISION as i64) as u32;
+        // The widest scale a quotient of this size can be written at, and
+        // the narrowest worth trying: 38 steps below it every digit is
+        // gone. Both may be negative, which is a quotient past 38 digits.
+        let top = (MAX_PRECISION as i64 - e).clamp(MIN_SCALE as i64, MAX_SCALE as i64) as i32;
+        let bottom = top.saturating_sub(MAX_PRECISION as i32).max(MIN_SCALE);
 
         // scale of a/b before rounding is a.scale - b.scale; lift the
         // numerator so the quotient lands at `want` places.
-        for want in (0..=room).rev() {
+        for want in (bottom..=top).rev() {
             let lift = want as i64 + b.scale as i64 - a.scale as i64;
             let (num, den) = if lift >= 0 {
                 match pow10(lift as u32).and_then(|f| a.unscaled.checked_mul(f)) {
@@ -449,8 +513,13 @@ impl Dec {
         let (a, b) = (self.guarded(), other.guarded());
         match Dec::align(a, b) {
             Some((x, y, _)) => x.cmp(&y),
-            // Beyond a common scale, the wider magnitude decides.
-            None => a.to_f64().total_cmp(&b.to_f64()),
+            // Beyond a common scale, sign and then size decide: two numbers
+            // this far apart cannot have their digits meet, and nor do they
+            // need to.
+            None => a.signum().cmp(&b.signum()).then_with(|| {
+                let order = a.magnitude().cmp(&b.magnitude());
+                if a.is_negative() { order.reverse() } else { order }
+            }),
         }
     }
 
@@ -460,14 +529,28 @@ impl Dec {
         let d = self.trimmed();
         let negative = d.unscaled < 0;
         let digits = d.unscaled.unsigned_abs().to_string();
+        if d.scale < 0 {
+            // The point sits right of the digits: zeros fill the gap, and
+            // past a readable width e notation stands in for them.
+            let zeros = -d.scale as usize;
+            let body = if digits.len() + zeros <= PLAIN_WIDTH {
+                format!("{digits}{}", "0".repeat(zeros))
+            } else {
+                exponential(d)
+            };
+            return if negative { format!("-{body}") } else { body };
+        }
         let scale = d.scale as usize;
         let body = if scale == 0 {
             digits
         } else if digits.len() > scale {
             let point = digits.len() - scale;
             format!("{}.{}", &digits[..point], &digits[point..])
-        } else {
+        } else if scale - digits.len() + 2 <= PLAIN_WIDTH {
             format!("0.{}{}", "0".repeat(scale - digits.len()), digits)
+        } else {
+            // Too small to write out: as above, e notation stands in.
+            exponential(d)
         };
         if negative { format!("-{body}") } else { body }
     }
@@ -498,16 +581,31 @@ impl Dec {
             return None;
         }
         let unscaled: i128 = format!("{whole}{frac}").parse().ok()?;
-        let scale = frac.len() as i64 - exp;
+        let scale = i32::try_from(frac.len() as i64 - exp).ok()?;
         let d = if scale < 0 {
-            Dec::new(unscaled, 0)?.rescale(0)?;
-            let factor = pow10((-scale) as u32)?;
-            Dec::new(unscaled.checked_mul(factor)?, 0)?
+            // The digits written out, as a number read from text has always
+            // been; where they will not fit, the point stays right of them.
+            u32::try_from(-(scale as i64))
+                .ok()
+                .and_then(pow10)
+                .and_then(|factor| unscaled.checked_mul(factor))
+                .and_then(|unscaled| Dec::new(unscaled, 0))
+                .or_else(|| Dec::new(unscaled, scale))?
         } else {
-            Dec::new(unscaled, u32::try_from(scale).ok()?)?
+            Dec::new(unscaled, scale)?
         };
         if negative { d.checked_neg() } else { Some(d) }
     }
+}
+
+/// A number in e notation, signed as the app writes one: `1e+1000`.
+fn exponential(d: Dec) -> String {
+    let (digits, e) = d.digits_and_exponent();
+    let mantissa = match digits.split_at(1) {
+        (first, "") => first.to_string(),
+        (first, rest) => format!("{first}.{rest}"),
+    };
+    format!("{mantissa}e{}{}", if e < 0 { '-' } else { '+' }, e.abs())
 }
 
 /// How many digits a magnitude is written with.
@@ -521,18 +619,15 @@ fn digits(n: i128) -> u32 {
     d
 }
 
-/// A value too wide to hold, rounded back by giving up decimal places.
+/// A value too wide to hold, rounded back by giving up decimal places: the
+/// point moves left, below zero where it must, so that a sum past 38 digits
+/// keeps its significant ones and loses only its last. A second step is
+/// there for the rounding that carries into a new digit, `999…9` to `100…0`.
 fn narrow(wide: Dec) -> Option<Dec> {
-    for scale in (0..wide.scale).rev() {
-        let factor = pow10(wide.scale - scale)?;
-        let whole = wide.unscaled / factor;
-        let rest = wide.unscaled % factor;
-        let bump = if rest.unsigned_abs() * 2 >= factor.unsigned_abs() {
-            if wide.unscaled < 0 { -1 } else { 1 }
-        } else {
-            0
-        };
-        if let Some(d) = Dec::new(whole + bump, scale) {
+    let excess = digits(wide.unscaled).saturating_sub(MAX_PRECISION).max(1);
+    for back in excess..=excess + 1 {
+        let scale = wide.scale.checked_sub(back as i32)?;
+        if let Some(d) = wide.rescale(scale) {
             return Some(d);
         }
     }
@@ -634,7 +729,7 @@ mod tests {
     #[test]
     fn thirds_round_at_the_widest_scale() {
         let third = d("1").checked_div(d("3")).unwrap();
-        assert_eq!(third.scale(), MAX_PRECISION);
+        assert_eq!(third.scale(), MAX_PRECISION as i32);
         assert_eq!(
             third.to_plain_string(),
             "0.33333333333333333333333333333333333333"
@@ -750,8 +845,12 @@ mod tests {
         let wide = Dec::parse(&"9".repeat(38)).expect("38 digits fit");
         assert_eq!(wide.scale(), 0);
         assert!(Dec::parse(&"9".repeat(39)).is_none());
-        // Adding past the ceiling fails rather than wrapping.
-        assert!(wide.checked_add(wide).is_none());
+        // Adding past the ceiling moves the point right of the digits
+        // rather than wrapping: the answer keeps the 38 digits it holds and
+        // its last one is the loss.
+        let sum = wide.checked_add(wide).expect("the point has room");
+        assert_eq!(sum.scale(), -1);
+        assert_eq!(sum.magnitude(), 38);
         assert!(Dec::new(LIMIT, 0).is_none());
     }
 
@@ -822,5 +921,55 @@ mod tests {
             d("10000").checked_mul(fifth).unwrap().to_plain_string(),
             "2000"
         );
+    }
+
+    #[test]
+    fn a_number_past_38_digits_keeps_its_point_right_of_them() {
+        // `1e80` is one digit at a scale of -80, which no Polars decimal
+        // names and this type does.
+        let big = d("1e80");
+        assert_eq!(big.scale(), -80);
+        assert_eq!(big.magnitude(), 80);
+        // Avogadro's number, whole and exact.
+        let mole = d("6.02214076e23");
+        assert_eq!(mole.to_plain_string(), "602214076000000000000000");
+        // Added to, a number this size swallows a small one: the two
+        // cannot meet at any scale, and the answer is the larger of them.
+        assert_eq!(big.checked_add(d("1")).unwrap(), big);
+        // Multiplied, the scales add, so the product is further out still.
+        let square = big.checked_mul(big).unwrap();
+        assert_eq!(square.magnitude(), 160);
+        assert_eq!(square.scale(), -160);
+        // And divided back down again.
+        assert_eq!(square.checked_div(big).unwrap(), big);
+        // The atoms in the universe, which 38 digits could not hold. Too
+        // wide to write out, so e notation stands in for the zeros.
+        assert_eq!(d("1e80").to_plain_string(), "1e+80");
+    }
+
+    #[test]
+    fn a_sum_past_38_digits_gives_up_its_last_digits_not_its_answer() {
+        // Two 38-digit numbers added: the sum needs 39 digits, so the point
+        // moves right of them and the last digit is the one given up.
+        let wide = d(&"9".repeat(38));
+        let sum = wide.checked_add(wide).unwrap();
+        assert_eq!(sum.magnitude(), 38);
+        assert_eq!(sum.scale(), -1);
+        assert_eq!(sum.to_plain_string(), "200000000000000000000000000000000000000");
+    }
+
+    #[test]
+    fn the_scale_runs_out_in_the_end() {
+        // The largest number there is: 38 digits with the point as far
+        // right of them as it reaches. A tenth more has nowhere to go, and
+        // it says so rather than wrapping or rounding.
+        let largest = Dec::new(LIMIT - 1, MIN_SCALE).expect("fits");
+        assert_eq!(largest.magnitude(), MAX_SCALE as i64 + 37);
+        assert!(largest.checked_mul(d("10")).is_none());
+        assert!(largest.checked_add(largest).is_none());
+        // At the other end a quotient rounds away to nothing, as one below
+        // the narrowest scale always has.
+        let smallest = Dec::new(1, MAX_SCALE).expect("fits");
+        assert!(smallest.checked_div(d("10")).expect("rounds").is_zero());
     }
 }

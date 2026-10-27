@@ -144,9 +144,11 @@ what you want; declare one when the cells could be read another way.
 | `Date`, `Time`, `Datetime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO |
 
 An `Int` is a `Decimal`. Sums, products, divisions and averages of decimals
-are all `Decimal`. An `Int` holds 64 bits and a `Decimal` 38 digits; a
-whole number past an `Int` becomes a `Decimal`, and past 38 digits it is
-reported rather than rounded away.
+are all `Decimal`. An `Int` holds 64 bits and a `Decimal` 38 significant digits; a
+whole number past an `Int` becomes a `Decimal`, and one past 38 digits
+keeps its 38 and moves the point, so `10**1000` is exact in one digit.
+Only past `1e2147483685`, where the point stops, is a number reported as
+too large rather than rounded away.
 
 A `Percent` is the number it stands for, so `Net * (1 + VatRate)` works as
 written and gives a plain number. Only percentages added to percentages stay

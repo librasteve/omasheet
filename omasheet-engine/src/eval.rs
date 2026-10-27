@@ -540,7 +540,7 @@ impl<'p> Engine<'p> {
             let room = i128::try_from(widest)
                 .ok()
                 .and_then(|w| w.checked_mul(nrows as i128))
-                .and_then(|bound| Dec::new(bound, scale));
+                .and_then(|bound| Dec::new(bound, scale as i32));
             if room.is_none() {
                 return refused(self);
             }

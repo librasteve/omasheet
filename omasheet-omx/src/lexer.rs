@@ -414,7 +414,7 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
         let unscaled: i128 = digits
             .parse()
             .map_err(|_| (format!("`{raw}` is too large a number"), i, j))?;
-        let d = Dec::new(unscaled, scale as u32)
+        let d = Dec::new(unscaled, scale)
             .ok_or_else(|| (format!("`{raw}` is too large a number"), i, j))?;
         if percent {
             Tok::Percent(d)

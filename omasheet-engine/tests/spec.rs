@@ -82,15 +82,21 @@ fn lint_errors(file: &str) -> Vec<String> {
 // ---- numerics ------------------------------------------------------------
 
 #[test]
-fn large_integers_reach_thirty_eight_digits_and_then_say_so() {
+fn large_integers_keep_thirty_eight_digits_and_move_the_point() {
     // Past an `i64` a whole number is still exact, as a decimal.
     assert_eq!(calc("2 ** 64"), "18446744073709551616");
     let n = calc("10**37");
     assert_eq!(n.len(), 38);
     assert!(n.starts_with('1') && n[1..].chars().all(|c| c == '0'));
-    // Past thirty-eight digits there is nowhere to put it, and that is
-    // said rather than wrapped or quietly rounded.
-    assert!(calc_err(None, "10**1000").contains("too large"));
+    // Past thirty-eight digits the point moves right of them, so a number
+    // far larger than any Polars decimal is still an exact one, kept to the
+    // digits it was given.
+    assert_eq!(calc("10**1000"), "1e+1000");
+    // Past where the scale itself reaches there is nowhere to put it, and
+    // that is said rather than wrapped or quietly rounded.
+    assert!(
+        calc_err(None, "10**2000000000 * 10**2000000000").contains("too large")
+    );
 }
 
 #[test]
