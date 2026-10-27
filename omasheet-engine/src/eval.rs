@@ -18,6 +18,7 @@ use omasheet_omx::ast::Lit;
 use omasheet_omx::ast::{BinOp, UnOp};
 use omasheet_omx::cycle;
 use omasheet_omx::date;
+use omasheet_omx::decimal::Dec;
 use omasheet_omx::funcs::MathFn;
 use omasheet_omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_omx::{Cell, ColKind, Column, Diagnostic, Group, Program, S, Span};
@@ -490,6 +491,28 @@ impl<'p> Engine<'p> {
             };
             select.push(count.alias("count"));
         }
+        // Polars adds decimals in an `i128` and wraps on overflow rather
+        // than saying so, so a tall column at a wide scale sums to the
+        // wrong number silently: a hundred thousand quotients held at
+        // `Decimal(38, 34)` have nowhere to put the total's integer part.
+        // The plan asks for the two extremes as well, `|sum|` being at most
+        // the rows times the wider of them, and where that bound has no
+        // room the engine's fold is the only sum that is right. The bound
+        // is checked against `Dec`'s 38 digits rather than an `i128`'s 39,
+        // which refuses a shade early rather than ever wrapping.
+        let total = matches!(func, Func::Sum | Func::Mean)
+            .then(|| lower::exact_scale(&dtype))
+            .flatten();
+        if total.is_some() {
+            let (Some(lo), Some(hi)) = (
+                lower::aggregate(Func::Min, &name, &dtype),
+                lower::aggregate(Func::Max, &name, &dtype),
+            ) else {
+                return refused(self);
+            };
+            select.push(lo.alias("lo"));
+            select.push(hi.alias("hi"));
+        }
         let frame = DataFrame::new(vec![column]).ok()?;
         let Ok(out) = frame.lazy().select(select).collect() else {
             self.aggregates.borrow_mut().push((t, c, Attempt::Failed));
@@ -502,6 +525,25 @@ impl<'p> Engine<'p> {
             )
         {
             return refused(self);
+        }
+        if let Some(scale) = total {
+            // An empty column has no extremes and sums to nothing, which
+            // has room anywhere.
+            let unscaled = |key: &str| match out.column(key).ok()?.get(0).ok()? {
+                AnyValue::Decimal(n, _) => Some(n),
+                AnyValue::Null => Some(0),
+                _ => None,
+            };
+            let widest = unscaled("lo")?
+                .unsigned_abs()
+                .max(unscaled("hi")?.unsigned_abs());
+            let room = i128::try_from(widest)
+                .ok()
+                .and_then(|w| w.checked_mul(nrows as i128))
+                .and_then(|bound| Dec::new(bound, scale));
+            if room.is_none() {
+                return refused(self);
+            }
         }
         let any = out.column("agg").ok()?.get(0).ok()?;
         // The dress a column wears is put back on, a Polars aggregate

@@ -146,7 +146,10 @@ pub fn aggregate(func: Func, name: &PlSmallStr, dtype: &DataType) -> Option<Expr
     // A sum or an extreme of exact numbers widens to a decimal first, an
     // `Int64` included, for the reason `arith` widens: a `Dec` holds 38
     // digits where an `i64` holds 19, so a column whose total overflows
-    // Polars' own addition still has an answer on the engine.
+    // Polars' own addition still has an answer on the engine. Getting that
+    // answer is the caller's part — 38 digits is not every total either,
+    // and Polars wraps rather than refusing, so the caller bounds the sum
+    // before it believes it (D71b).
     let exact = exact_scale(dtype).map(|scale| column().strict_cast(decimal(scale)));
     Some(match func {
         // How many rows there are, and how many of them hold a value:
@@ -363,7 +366,7 @@ fn pair(l: Out, r: Out) -> Option<(Expr, Expr, DataType)> {
 
 /// The scale an exact number is held at, or `None` for a dtype that is not
 /// one. A whole number is an exact number of scale nothing.
-fn exact_scale(dtype: &DataType) -> Option<u32> {
+pub fn exact_scale(dtype: &DataType) -> Option<u32> {
     match dtype {
         DataType::Int8
         | DataType::Int16

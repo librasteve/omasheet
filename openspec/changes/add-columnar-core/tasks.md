@@ -357,6 +357,20 @@ what stops a table's rows being exploded into cells.
       `Decimal(38, s)` first, an `Int64` included, for the reason `arith`
       widens.
 
+      **A sum is bounded before it is believed (D71b).** This said that a
+      column whose total overflows Polars' own addition "still has an
+      answer on the engine", which was true of the engine and not of the
+      gate: Polars adds decimals in an `i128` and wraps without saying so,
+      and nothing here was looking. A hundred thousand quotients held at
+      `Decimal(38, 34)` summed to `6481.74` where the row path folds
+      `40509.98` — a wrong number, shown, with no diagnostic. So the plan
+      takes the two extremes as well, `|sum|` being at most the rows times
+      the wider of them, and where that bound will not fit in 38 digits the
+      sum is handed back. It is a bound rather than the sum, so it refuses a
+      shade early; `Dec`'s 38 digits rather than an `i128`'s 39 is the same
+      caution. The bug was there before this task's `mean` and was found by
+      measuring it.
+
       `mean` is there because of what 7.3's fifth table priced it at, and
       it is lowered in halves (D72b): the `sum` and the `count` are asked
       of Polars in the one plan and the single division between them is the
@@ -392,11 +406,20 @@ what stops a table's rows being exploded into cells.
         says so.
 
       `budget.expected` catches nothing here after all, and `analysis2` is
-      what does: a `Percent` or `Fraction` column of the text cannot be held
-      as a Polars column at all (`column_of` declines the pair), so the
-      wrapper D69 asks for is only ever put back on a **table's** column
-      declared as one. `Survived : Percent` over `titanic.parquet` is the
-      test, and its sum is `34200%` either way
+      what does: `Survived : Percent` over `titanic.parquet` is the test,
+      and its sum is `34200%` either way.
+
+      It was the only test for a while, because `column_of` declined a
+      `Percent` or a `Fraction` outright — "there is no one dtype to hold it
+      as" — so the wrapper D69 asks for was only ever put back on a
+      **table's** column. That was wrong, and the fifth table of 7.3 is what
+      caught it: the dress is display and `cell_of` puts it back on from
+      `Column::ty`, which is exactly what a table's column declared as one
+      relies on, so a sheet's own is held as the `Decimal(38, s)` its values
+      already are and only the matching dress is read into it (D69a). An
+      aggregate over such a column is now taken, and — the larger half —
+      the column is one any lowered expression can read, where before it
+      was a wall
 
 ## 7. The snapshot (D75)
 
@@ -589,44 +612,42 @@ what stops a table's rows being exploded into cells.
       | rows | mode | compile | run | snapshot | total | aggregates | selections |
       |---|---|---|---|---|---|---|---|
       | 10 | Never | 0.0 | 0.0 | 0.0 | **0.1** | — | — |
-      | 10 | Always | 0.0 | 0.4 | 0.0 | **0.5** | 3 of 4 | 2 of 2 |
-      | 10³ | Never | 1.2 | 1.8 | 1.6 | **4.5** | — | — |
-      | 10³ | Always | 1.3 | 1.7 | 1.6 | **4.5** | 3 of 4 | 2 of 2 |
-      | 10⁵ | Never | 131.4 | 179.7 | 158.8 | **469.8** | — | — |
-      | 10⁵ | Always | 131.1 | **118.9** | 158.3 | **408.3** | 3 of 4 | 2 of 2 |
-      | 10⁶ | Never | 1831.9 | 2294.5 | 1605.4 | **5732.0** | — | — |
-      | 10⁶ | Always | 2025.1 | **1645.6** | 1654.7 | **5325.6** | 3 of 4 | 2 of 2 |
+      | 10 | Always | 0.0 | 0.6 | 0.0 | **0.6** | 4 of 4 | 2 of 2 |
+      | 10³ | Never | 1.2 | 1.8 | 1.5 | **4.5** | — | — |
+      | 10³ | Always | 1.1 | 1.6 | 1.6 | **4.3** | 4 of 4 | 2 of 2 |
+      | 10⁵ | Never | 147.6 | 187.4 | 162.0 | **497.0** | — | — |
+      | 10⁵ | Always | 141.4 | **122.9** | 164.0 | **428.3** | 3 of 4 | 2 of 2 |
+      | 10⁶ | Never | 1682.1 | 2171.3 | 1634.4 | **5488.1** | — | — |
+      | 10⁶ | Always | 1569.2 | **1394.9** | 1644.3 | **4608.7** | 3 of 4 | 2 of 2 |
 
-      **`run` comes down 34% at 10⁵** — 179.7 ms to 118.9 — and 28% at 10⁶,
-      and the rebuild as a whole 13% and 7%.
+      **`run` comes down 34% at 10⁵** — 187.4 ms to 122.9 — and 36% at 10⁶,
+      and the rebuild as a whole 14% and 16%.
 
       The `Summary` sheet's own cost is the difference from the `Sales`-only
       shape, taken from the same run of the harness so that the two are of
-      the same machine: its `run` was 99.5 ms `Never` and 91.3 `Always` at
-      10⁵, and 1118.4 / 1008.7 at 10⁶. So the `Summary` work alone is
-      **80.2 → 27.6 ms at 10⁵, which is 2.9 times quicker**, and
-      1176 → 637 at 10⁶, which is 1.8. Those two should agree and the 10⁶
-      column is where they do not: every table of that run came out some 6%
-      slower in its absolutes than the run before it, which is the 20% this
-      section already warns about, so the proportion is what to read there
-      and not the millisecond.
+      the same machine: its `run` was 101.5 ms `Never` and 90.4 `Always` at
+      10⁵, and 1022.0 / 952.0 at 10⁶. So the `Summary` work alone is
+      **85.9 → 32.5 ms at 10⁵ and 1149.3 → 442.9 at 10⁶, which is 2.6
+      times quicker at both** — two row counts a factor of ten apart
+      agreeing on the figure, which an earlier pair of these did not.
 
-      **Three of the four whole-column aggregates are taken**: both sums,
-      and `Closed.max()`, which D72c added. The fourth, `Margin.mean()`, is
-      not refused by the gate at all — `Margin : Percent` is a column of the
-      text, and `column_of` declines a `Percent` or a `Fraction` for want of
-      one dtype to hold it as, so `pl_column` answers `None` before
-      `lower::aggregate` is ever asked. D72b's `mean` does not fire on this
-      fixture at all, and that one line is what is left of the `Summary`'s
-      cost.
+      **The aggregate taken at ten rows and handed back at a hundred
+      thousand is the interesting one.** All four are taken up to 10³; from
+      10⁵ `Margin.mean()` is not, and it is D71b that hands it back rather
+      than any of D69a, D72b or the dress: `Margin := Profit / Revenue`
+      holds its quotients at `Decimal(38, 34)`, and a hundred thousand of
+      those have nowhere to put the total's integer part. Before that bound
+      existed the same measurement showed four of four taken and `run` at
+      101.9 ms, which was quicker only because the number was wrong.
 
-      So the next thing here is not an aggregate: it is **holding a
-      `Percent` or a `Fraction` column as the `Decimal(38, s)` it already
-      is**. The dress is display (D69) and `cell_of` puts it back on from
-      `Column::ty` on the way out, which is what a table's column declared
-      as one already relies on; `column_of` declining the pair is what keeps
-      a sheet's own from the dataframe. It would unblock this `mean`, and
-      every elementwise column of such a sheet with it.
+      So what is left of the `Summary`'s cost is still that one line, and
+      what holds it there is no longer the dress but **one scale for the
+      whole column meeting a division's 38 digits**. A quotient keeps every
+      digit it can, which is the most expensive scale a column can be held
+      at and far more than anyone reads; the useful question for a later
+      change is whether an exact column has to offer Polars every digit it
+      holds, or whether a sum may be taken at a scale wide enough for the
+      answer and no wider.
 
       Both selections' conditions are taken (6.1), but their sums stay on
       the engine, which is 6.3's last bullet.

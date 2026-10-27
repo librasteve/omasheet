@@ -1748,6 +1748,58 @@ fn a_column_the_dataframe_has_no_answer_for() {
 }
 
 #[test]
+fn a_percentage_or_a_fraction_column_of_the_text_is_held_as_a_decimal() {
+    // D69's dress is display, and `cell_of` puts it back on from the
+    // column's own type, so such a column is held as the `Decimal(38, s)`
+    // its values already are. `column_of` used to decline the pair, and
+    // every aggregate over one was refused for want of a column to take.
+    let file = "\
+sheet T
+
+Share : Percent
+Part  : Fraction
+
+| Item | Share | Part |
+| ---- | ----- | ---- |
+| a    | 20%   | 1/2  |
+| b    | 10%   | 1/4  |
+| c    | 30%   | 1/8  |
+";
+    for expr in [
+        "T.Share.sum()",
+        "T.Share.mean()",
+        "T.Share.max()",
+        "T.Part.sum()",
+        "T.Part.mean()",
+        "T.Part.min()",
+    ] {
+        let ran = both_ways(file, expr, None);
+        assert_eq!(ran.aggregates, [Attempt::Lowered], "{expr}");
+    }
+}
+
+#[test]
+fn a_column_reading_a_percentage_column_is_lowered() {
+    // The win is not the aggregate: a column of the text declared `Percent`
+    // or `Fraction` is now a column any lowered expression can read, and
+    // before this one it was a wall.
+    let file = "\
+sheet T
+
+Rate : Percent
+
+| Base | Rate | Fee |
+| ---- | ---- | --- |
+| 100  | 20%  | *   |
+| 200  | 10%  | *   |
+
+Fee := Base * Rate
+";
+    assert_eq!(attempt(file, "Fee"), Some(Attempt::Lowered));
+    assert_eq!(ask(file, "T.Fee"), "[20, 20]");
+}
+
+#[test]
 fn a_percentage_in_a_formula_is_not_lowered() {
     // `Rate` is `20%`, and what omasheet makes of a percentage met in the
     // middle of a sum is its own rule rather than arithmetic (D69). The
@@ -1964,6 +2016,38 @@ When  : Datetime
         assert_eq!(ran.shown, answer, "{expr}");
         assert_eq!(ran.aggregates, [Attempt::Lowered], "{expr}");
     }
+}
+
+#[test]
+fn a_sum_with_no_room_for_its_total_stays_on_the_engine() {
+    // Polars adds decimals in an `i128` and wraps on overflow rather than
+    // saying so, so the plan bounds the total before trusting it: `|sum|` is
+    // at most the rows times the wider extreme, and four quotients held at
+    // scale 38 are already past what 38 digits hold. The engine's fold has
+    // an answer for them, and the bound is what hands it back. It is a bound
+    // and not the sum, so it refuses a shade early — these four do add up to
+    // less than one.
+    let sheet = |rows: usize| {
+        let mut text = String::from("sheet T\n\nShare : Decimal\n\n| N | Share |\n| - | ----- |\n");
+        for r in 0..rows {
+            text.push_str(&format!("| {} | * |\n", r + 1));
+        }
+        text.push_str("\nShare := 1 / (N + 2)\n");
+        text
+    };
+    assert_eq!(
+        both_ways(&sheet(2), "T.Share.sum()", None).aggregates,
+        [Attempt::Lowered]
+    );
+    assert_eq!(
+        both_ways(&sheet(4), "T.Share.sum()", None).aggregates,
+        [Attempt::Refused]
+    );
+    // A `mean` is that same sum, so it is handed back with it.
+    assert_eq!(
+        both_ways(&sheet(4), "T.Share.mean()", None).aggregates,
+        [Attempt::Refused]
+    );
 }
 
 #[test]
