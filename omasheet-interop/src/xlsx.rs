@@ -404,6 +404,12 @@ struct Formats {
     percent: Format,
 }
 
+/// Whether a double stands for the number at all. An infinity, or a zero
+/// where the number is not one, is not a near miss but a different number.
+fn stands_for(f: f64, r: &Dec) -> bool {
+    f.is_finite() && (f != 0.0 || r.is_zero())
+}
+
 /// A value as text, for a cell that cannot hold it as itself.
 fn written(value: &Value) -> String {
     format_exact(value, false, &date::Style::ISO)
@@ -440,10 +446,10 @@ fn shown<'f>(
         }
         Value::Decimal(r) | Value::Fraction(r) => {
             let (f, same) = double(r);
-            // A number whose point sits past where a double reaches has no
-            // number cell to go in, so it is written out the way a whole
-            // number too large for one is.
-            if !f.is_finite() {
+            // A number whose point sits past either end of what a double
+            // reaches has no number cell to go in, so it is written out the
+            // way a whole number too large for one is.
+            if !stands_for(f, r) {
                 lose(AS_TEXT);
                 return Some(Shown::Written(written(value)));
             }
@@ -454,7 +460,7 @@ fn shown<'f>(
         }
         Value::Percent(r) => {
             let (f, same) = double(r);
-            if !f.is_finite() {
+            if !stands_for(f, r) {
                 lose(AS_TEXT);
                 return Some(Shown::Written(written(value)));
             }

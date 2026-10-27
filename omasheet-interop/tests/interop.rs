@@ -442,14 +442,19 @@ fn xlsx_writes_a_number_past_a_double_as_text() {
     // A workbook holds its numbers as doubles, and a number whose point
     // sits past where a double reaches is no double at all. Rather than
     // put an infinity in the cell, the write spells the number out.
-    let file = "sheet T\n\nA | B\n= 10**1000 | 2.5\n";
+    // The same holds at the other end: a point far enough to the right
+    // leaves a double with nothing but a zero to offer, and a zero is not
+    // the number either.
+    let file = "sheet T\n\nA | B | C\n= 10**1000 | = 1/10**2000 | 2.5\n";
     let out = xlsx::export("t.omx", file, None, options()).unwrap();
     let rows = cells(&out.files[0].bytes, "T");
     assert_eq!(rows[1][0], Data::String("1e+1000".to_string()));
-    assert_eq!(rows[1][1], Data::Float(2.5));
+    assert_eq!(rows[1][1], Data::String("1e-2000".to_string()));
+    assert_eq!(rows[1][2], Data::Float(2.5));
     assert!(
-        out.notices
-            .contains(&"values a workbook has no type for were written as text: T.A".to_string()),
+        out.notices.contains(
+            &"values a workbook has no type for were written as text: T.A, T.B".to_string()
+        ),
         "{:?}",
         out.notices
     );
