@@ -16,9 +16,12 @@
 //!
 //! What it does not handle, on purpose rather than for want of writing:
 //!
-//! - **Division and the mean of exact numbers** (D72). A Polars quotient is
-//!   fixed at scale 6 where `Dec` keeps every digit it can hold, and a
-//!   Polars mean over a decimal column comes back `f64`.
+//! - **Division and the mean of exact numbers** (D72). A Polars quotient has
+//!   `max(x, y) + 4` digits after the point and cannot be given more than
+//!   21, where `Dec` is only equal to itself down to 30; and a Polars mean
+//!   over a decimal column comes back `f64`. Over floating-point numbers
+//!   both are lowered — a quotient by `arith` and a mean by its `sum` and
+//!   its `count` (D72b).
 //! - **A percentage or a fraction**, which are an exact number in a dress
 //!   rather than a dtype (D69). The dress is a column's, re-applied when a
 //!   value is read back out of one, and what omasheet makes of a percentage
@@ -382,7 +385,9 @@ fn arith(op: BinOp, l: Out, r: Out) -> Option<Out> {
             let scale = match op {
                 BinOp::Add | BinOp::Sub => x.max(y),
                 BinOp::Mul => x + y,
-                // A quotient is scale 6 in Polars and up to 30 digits here.
+                // A quotient cannot be had at the scale the engine gives
+                // it: Polars offers at most 21 digits after the point and
+                // `Dec` is equal to itself only down to 30 (D72).
                 _ => return None,
             };
             if scale > MAX_PRECISION {

@@ -13,7 +13,24 @@ what stops a table's rows being exploded into cells.
 - [x] 0.1 The spike: what polars 0.51 does with `Decimal(38, s)` arithmetic
       and with a `NaN`. Recorded in `design.md` under *What the spike found*.
       Add, subtract and multiply agree with `Dec`; divide and `mean` do not;
-      equality and sort order agree on a `NaN`; `max` over one does not
+      equality and sort order agree on a `NaN`; `max` over one does not.
+
+      Its reading of division was one case taken for the rule — "scale 6" —
+      and the rule is `max(x, y) + 4`, from an intermediate of
+      `2 max(x, y) + 4` that has to fit in 38. So the widest quotient Polars
+      can give is **21 digits after the point**, at an input scale of 17,
+      and there it answers *null* rather than a number; at 18 it is an
+      error. The engine needs 30, a `Dec` being equal to itself rescaled to
+      30 and not to 29. **No pair of input scales would do**, which makes
+      D72 a wall rather than the caution it was written as, and the eight
+      guard digits are no slack to spend: they have to be there while the
+      arithmetic happens, so `2/7 + 3/7 == 5/7` goes false if both sides are
+      narrowed to 30 first.
+
+      A spike read once and quoted thereafter is how "scale 6" outlived
+      being true, so this is pinned by a test now —
+      `polars_cannot_divide_exact_numbers_the_way_the_engine_does` — and a
+      polars upgrade that moves the rule will say so
 
 ## 1. The dependency
 
@@ -712,7 +729,7 @@ what stops a table's rows being exploded into cells.
       |---|---|
       | A conversion: `Value.Int`, `String.Decimal`, `Yield.Percent` | 10 |
       | A zone call, or a column reading one that was refused | 9 |
-      | A division (D72, decided) | 6 |
+      | A division of exact numbers (D72, and now measured: 6 of these) | 6 |
       | A maths function behind a polars feature: `abs`, `ln`, `round` | 4 |
       | A sequence, `2025-01-01, 2025-02-01 ... Inf` | 3 |
       | A whole number beside a date, which scales per type | 3 |
@@ -728,8 +745,11 @@ what stops a table's rows being exploded into cells.
       figures above are from the measurement rather than from the grep.
 
       **So the calls are nearer exhausted than that note implied.** Of what
-      is left, the division is decided and the sequence is row-recursive by
-      nature; the conversions and the zones are omasheet's own rules, each a
+      is left, the division is closed rather than merely decided — the
+      measurement under 0.1 says Polars cannot give a quotient more than 21
+      digits after the point where the engine needs 30, and that narrowing
+      to free the guard digits changes the arithmetic — and the sequence is
+      row-recursive by nature; the conversions and the zones are omasheet's own rules, each a
       change of its own; and the four maths functions are a size question
       (1.3) and not a semantic one. The harness that prints this rather than
       a measurement read by hand three times is still what is left

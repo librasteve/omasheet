@@ -2019,6 +2019,96 @@ When  : Datetime
 }
 
 #[test]
+fn polars_cannot_divide_exact_numbers_the_way_the_engine_does() {
+    // Why D72 refuses an exact quotient, measured rather than asserted —
+    // and pinned here because the version of this reason that was written
+    // from the spike ("scale 6") was already out of date.
+    //
+    // Polars gives a quotient `max(x, y) + 4` digits after the point, from
+    // an intermediate of `2 max(x, y) + 4` that has to fit in 38. So the
+    // widest quotient it can give is 21 digits, at an input scale of 17 —
+    // where the division answers *null*, not a number — and at 18 it is an
+    // error. The engine needs 30: `Dec` ignores what is past the 30th digit
+    // when it compares, and a third rescaled to 29 is no longer a third.
+    // 21 < 30, so there is no pair of input scales that would do, and this
+    // is a wall rather than a conservative choice.
+    use omasheet_engine::dtype::decimal;
+    use omasheet_omx::decimal::Dec;
+    use polars::prelude::*;
+
+    let third = |x: u32, y: u32| -> Result<DataType, String> {
+        let one: Int128Chunked = [Some(10i128.pow(x))].into_iter().collect_ca("a".into());
+        let three: Int128Chunked = [Some(3 * 10i128.pow(y))].into_iter().collect_ca("b".into());
+        let frame = DataFrame::new(vec![
+            one.into_decimal_unchecked(Some(38), x as usize)
+                .into_series()
+                .into_column(),
+            three
+                .into_decimal_unchecked(Some(38), y as usize)
+                .into_series()
+                .with_name("b".into())
+                .into_column(),
+        ])
+        .expect("two columns of one row");
+        let out = frame
+            .lazy()
+            .select([(col("a") / col("b")).alias("q")])
+            .collect()
+            .map_err(|e| e.to_string())?;
+        let column = out.column("q").expect("the quotient");
+        if matches!(column.get(0), Ok(AnyValue::Null)) {
+            return Err("null".to_string());
+        }
+        Ok(column.dtype().clone())
+    };
+    for (x, y, scale) in [
+        (0u32, 0u32, 4u32),
+        (2, 2, 6),
+        (2, 0, 6),
+        (10, 2, 14),
+        (14, 0, 18),
+    ] {
+        assert_eq!(
+            third(x, y),
+            Ok(DataType::Decimal(None, Some(scale as usize))),
+            "Decimal(38, {x}) / Decimal(38, {y})"
+        );
+    }
+    // The edge, and past it.
+    assert_eq!(third(17, 0), Err("null".to_string()));
+    assert!(third(18, 0).is_err());
+
+    // And the 30 the engine needs, which is `SHOWN_PRECISION`: a third is
+    // still a third rescaled to 30 and is not at 29.
+    let third_exact = Dec::from_i64(1)
+        .checked_div(Dec::from_i64(3))
+        .expect("a third");
+    assert_eq!(third_exact.rescale(30).expect("it fits"), third_exact);
+    assert_ne!(third_exact.rescale(29).expect("it fits"), third_exact);
+    // Narrowing is no way round it either: the guard digits have to be
+    // there while the arithmetic happens, not merely when it is compared.
+    // `2/7 + 3/7 == 5/7` is the property, and it fails if the two are
+    // rescaled to 30 first.
+    let seventh = |n: i64| {
+        Dec::from_i64(n)
+            .checked_div(Dec::from_i64(7))
+            .expect("a seventh")
+    };
+    assert_eq!(
+        seventh(2).checked_add(seventh(3)).expect("a sum"),
+        seventh(5)
+    );
+    let narrowed = |n: i64| seventh(n).rescale(30).expect("it fits");
+    assert_ne!(
+        narrowed(2).checked_add(narrowed(3)).expect("a sum"),
+        narrowed(5)
+    );
+    // `decimal` is what the lowering would have asked for, had there been
+    // a scale to ask for.
+    assert_eq!(decimal(30), DataType::Decimal(Some(38), Some(30)));
+}
+
+#[test]
 fn a_sum_with_no_room_for_its_total_stays_on_the_engine() {
     // Polars adds decimals in an `i128` and wraps on overflow rather than
     // saying so, so the plan bounds the total before trusting it: `|sum|` is

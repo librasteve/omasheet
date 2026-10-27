@@ -51,14 +51,30 @@ details of it:
 1. **Add, subtract and multiply agree exactly**, which is what makes an
    elementwise Decimal column lowerable at all. `Dec` was built to be a
    Polars `Decimal(38, s)` and it is one.
-2. **Divide does not, and nor does `mean`.** Polars fixes a quotient at scale
-   6 where omasheet holds up to 30 digits, and a Polars `mean` over a Decimal
-   column comes back `f64`. So D72 covers both: neither is lowered on an
-   exact column. `mean` as `sum / count` *is* an escape all the same, which
-   this said it was not — not because the division is any different, but
-   because there is one of it: the two halves that are a pass over the
-   column are Polars' and the single division is the engine's, which is
-   D72b.
+2. **Divide does not, and nor does `mean`.** This said Polars fixes a
+   quotient at scale 6, which was the spike reading one case. Measured
+   across input scales, and pinned by
+   `polars_cannot_divide_exact_numbers_the_way_the_engine_does`: a Polars
+   quotient has `max(x, y) + 4` digits after the point, from an intermediate
+   of `2 max(x, y) + 4` that has to fit in 38. So the widest it can give is
+   **21 digits, at an input scale of 17 — where the division answers null
+   rather than a number** — and at 18 it is an error. The engine needs 30,
+   `Dec` being equal to itself rescaled to 30 and not to 29. There is no
+   pair of input scales that would do, so D72's refusal of an exact quotient
+   is a wall and not a caution.
+
+   Nor is narrowing a way round it. A quotient is equal to itself at any
+   scale from 30 to 38, so the eight guard digits look spare — but they have
+   to be there *while the arithmetic happens*, not only when it is compared:
+   `2/7 + 3/7 == 5/7` is true, and false if the two are rescaled to 30
+   first. That closes the same door on relaxing D72d's bound and on the
+   product that fails in 8.3.
+
+   `mean` as `sum / count` *is* an escape all the same, which this said it
+   was not — not because the division is any different, but because there is
+   one of it: the two halves that are a pass over the column are Polars' and
+   the single division is the engine's, which is D72b. A quotient *column*
+   has none of that relief, there being one division per row.
 3. **D56 was the right call.** `NaN == NaN` is `true` in polars 0.51 on both
    the eager path and through the expression engine — measured over two
    distinct columns, so it is not a self-comparison shortcut — and a NaN
@@ -98,7 +114,7 @@ Parquet write will disagree with the schema in the text.
 | D71 | Decided | A `NaN` is ordered greatest and equal to itself | Taken in `align-polars-vocabulary` as D56, and the spike confirms Polars agrees on equality and on sort order |
 | D71a | Decided | `max` is lowered to Polars' `nan_max`, and `min` to Polars' default `min`. A Float column of nothing but `NaN`s is not lowered for `min` | The spike, measured with `propagate_nans` on. Omasheet holds a NaN greatest, which makes its `max` exactly `nan_max` and its `min` exactly the default `min` — the two differ only when there is no number to be least, where the default gives null and omasheet gives the NaN. That case is one `is_not_nan().any()` to detect and is left on the engine |
 | D71b | Decided | `is_nan` and `is_not_nan` are added, and `is_nan` of an empty cell is empty rather than false | Polars has both, and without them OMX can ask whether a cell is missing but not whether it is a `NaN` — half of the distinction the two kinds of absence draw. Polars' `is_nan` returns null for a null, which is the answer a missing value deserves, and `is_null` already answers the other question. `fill_nan` waits: `fill_null` is the function spelling of `//` and takes one value, so the pair should widen together |
-| D72 | Decided | Neither `/` nor `mean` is lowered on an exact column; `*` is lowered, its scale having been checked against `Dec`'s | The spike. Division is fixed at scale 6 in Polars against up to 30 digits here, and a Polars `mean` over a Decimal column returns `f64` |
+| D72 | Decided | Neither `/` nor `mean` is lowered on an exact column; `*` is lowered, its scale having been checked against `Dec`'s | Measured, not the spike's one case: a Polars quotient has `max(x, y) + 4` digits after the point and cannot exceed 21, where the engine needs 30 — so no pair of input scales would do, and narrowing to free the guard digits changes the arithmetic. A Polars `mean` over a Decimal column returns `f64`. A quotient over **floating-point** numbers is lowered, and always was: `arith`'s float arm takes all four operations |
 | D72a | Decided | A lowered column's dtype is re-stamped to `Decimal(38, s)` before it is stored | Polars returns `Decimal(None, s)` from arithmetic, and the precision is what a Parquet write and the schema in the text agree on |
 | D72b | Decided | `mean` over an exact column is lowered as a `sum` and a `count` taken together, and the one division between them is the engine's `Dec` | D72 refuses the division, not the column walk. The walk is what costs O(n) and the division is one scalar operation, so taking the first and keeping the second gives the row path's answer to the digit. A floating-point column is still refused, its `sum` being the half that addition order matters to |
 | D72c | Decided | `min` and `max` of a `Date`, a `Time` or a `Datetime` are lowered | An extreme of a temporal column is the extreme of the whole number it is held as, which is the order `value::compare` puts two of them in. The gate asked for an exact scale or a float and so declined these by omission rather than for a reason |
