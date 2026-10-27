@@ -1,0 +1,9 @@
+sheet Applications
+
+Name | Score | Refs | Passed | Enough | Decided | Rejected | Settled
+-----|-------|------|--------|--------|---------|----------|--------
+Ada  |    72 |    2 | true   | true   | true    | false    | true
+Brin |    41 |      | false  |        | false   | true     | false
+Cho  |       |    1 |        | false  | false   | true     | false
+Dara |    88 |      | true   |        |         |          | false
+Eze  |       |      |        |        |         |          | false

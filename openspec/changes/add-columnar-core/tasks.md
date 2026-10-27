@@ -598,10 +598,10 @@ what stops a table's rows being exploded into cells.
       than measure.
 
       So the gate works and **coverage is what is left**: 8.3's figure is
-      that of 54 elementwise columns in the corpus only 10 lower, and the 44
-      refused are nearly all a function call, which `lower::expr` does not
-      handle at all. Each one of those is a column moved from the 833 to the
-      103. That is worth more than anything left in section 7, and it is
+      that of the corpus's 59 elementwise columns only 15 lower, and 27 of
+      the 43 refused are a function call or a conversion, which
+      `lower::expr` does not handle at all. Each one of those is a column
+      moved from the 833 to the 103. That is worth more than anything left in section 7, and it is
       what the risk paragraph's conclusion should now read against: the
       snapshot and `compile` dominate a rebuild *of a sheet whose columns do
       not lower*, which today is nearly all of them.
@@ -688,12 +688,34 @@ what stops a table's rows being exploded into cells.
       is the `.expected` side, which only the CLI's own golden test reads,
       and which it reads under `Auto` alone
 - [ ] 8.3 The coverage number that falls out of 8.2 — how much of the corpus
-      actually lowers. Measured once, by hand, at the end of section 5: of
-      100 computed columns in the twelve examples, 54 are elementwise, and
-      with lowering forced 10 are lowered, 44 refused and none failed. The
-      44 are nearly all a function call — a cast, a date part, a zone, a
-      rounding — none of which `lower::expr` handles yet. The harness that
-      prints this rather than a test that was read once is what is left
+      actually lowers. Measured by hand twice now, which is the argument for
+      the harness: at the end of section 5, of 100 computed columns in the
+      twelve examples 54 were elementwise, and with lowering forced 10 were
+      lowered, 44 refused and none failed.
+
+      Measured again after `and`/`or` (D76) and `logic.omx`: **59 offered,
+      15 lowered, 43 refused, 1 failed.** The one that fails is
+      `types.omx`'s `Mixes.Doubled := Yield * 2` over `Yield : Fraction`,
+      and it fails *because* of D69a — the column is now held, so the plan
+      is built and collected where before it was refused for want of a
+      column. D67 catches it, the answer is the row path's and
+      `types.expected` is byte-identical, but a plan is built and thrown
+      away: `Decimal(38, 37) * 2` is a product with no room for its integer
+      part, which is D72d's question asked of elementwise arithmetic rather
+      than of a sum. Worth its own bound; not worth guessing at.
+
+      Of the 43 refused, **27 are a function call or a conversion** —
+      eleven are a cast (`Value.Int`, `String.Decimal`, `Yield.Percent`),
+      seven a zone (`convert_time_zone`, `utc`, `time_zone`,
+      `base_utc_offset`), two a user function, and the rest a date part,
+      `round`, `sqrt`, `ln`, `abs`, `date`. None of those is handled at all.
+      The others are a division (D72), a sequence, a whole number beside a
+      date, a percentage literal, a comparison of zoned values (5.8) and one
+      reading another sheet by row. **So a call is the single widening worth
+      most**, and the eleven casts are the cheapest end of it.
+
+      The harness that prints this rather than a measurement read twice by
+      hand is what is left
 
 ## 9. The documents
 

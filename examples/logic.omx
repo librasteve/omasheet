@@ -1,0 +1,23 @@
+# An empty cell is an unknown rather than a no, and `and` and `or` read it
+# that way: one that cannot change the answer does not decide it. So a check
+# still waiting leaves a decision empty, except where the other check has
+# already settled it. Write `a // false` to read a gap as a no instead.
+
+sheet Applications
+
+Score : Int
+Refs  : Int
+
+| Name | Score | Refs | Passed | Enough | Decided | Rejected | Settled |
+| ---- | ----- | ---- | ------ | ------ | ------- | -------- | ------- |
+| Ada  | 72    | 2    | *      | *      | *       | *        | *       |
+| Brin | 41    |      | *      | *      | *       | *        | *       |
+| Cho  |       | 1    | *      | *      | *       | *        | *       |
+| Dara | 88    |      | *      | *      | *       | *        | *       |
+| Eze  |       |      | *      | *      | *       | *        | *       |
+
+Passed   := Score >= 60
+Enough   := Refs >= 2
+Decided  := Passed and Enough
+Rejected := not Passed or not Enough
+Settled  := (Passed // false) and (Enough // false)

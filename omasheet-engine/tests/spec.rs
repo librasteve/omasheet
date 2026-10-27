@@ -2421,9 +2421,11 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // Lest the whole thing pass by checking nothing. Sixteen of the
     // corpus's columns come from a file — eight of `analysis.omx` and
     // eight of `analysis2.omx` — and those are taken at once whichever way
-    // the rest is calculated, which is 32 of the 42. The other ten are
-    // 8.3's ten: the columns lowering forced calculates in one step.
-    assert_eq!(taken, 42, "the columns taken at once");
+    // the rest is calculated, which is 32 of the 47. The other fifteen are
+    // the columns lowering forced calculates in one step: 8.3's ten, and
+    // the five of `logic.omx`, every one of which is a comparison, an
+    // `and`, an `or` or a `//`.
+    assert_eq!(taken, 47, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read
