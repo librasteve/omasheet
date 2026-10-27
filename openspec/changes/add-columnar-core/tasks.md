@@ -598,9 +598,8 @@ what stops a table's rows being exploded into cells.
       than measure.
 
       So the gate works and **coverage is what is left**: 8.3's figure is
-      that of the corpus's 59 elementwise columns only 15 lower, and 27 of
-      the 43 refused are a function call or a conversion, which
-      `lower::expr` does not handle at all. Each one of those is a column
+      that of the corpus's 59 elementwise columns 18 lower, and its table
+      says what keeps the other 40 out. Each one brought in is a column
       moved from the 833 to the 103. That is worth more than anything left in section 7, and it is
       what the risk paragraph's conclusion should now read against: the
       snapshot and `compile` dominate a rebuild *of a sheet whose columns do
@@ -693,8 +692,9 @@ what stops a table's rows being exploded into cells.
       twelve examples 54 were elementwise, and with lowering forced 10 were
       lowered, 44 refused and none failed.
 
-      Measured again after `and`/`or` (D76) and `logic.omx`: **59 offered,
-      15 lowered, 43 refused, 1 failed.** The one that fails is
+      Measured again after `and`/`or` (D76) and `logic.omx`: 59 offered, 15
+      lowered, 43 refused, 1 failed. And again after the calls of D77:
+      **59 offered, 18 lowered, 40 refused, 1 failed.** The one that fails is
       `types.omx`'s `Mixes.Doubled := Yield * 2` over `Yield : Fraction`,
       and it fails *because* of D69a — the column is now held, so the plan
       is built and collected where before it was refused for want of a
@@ -704,18 +704,35 @@ what stops a table's rows being exploded into cells.
       part, which is D72d's question asked of elementwise arithmetic rather
       than of a sum. Worth its own bound; not worth guessing at.
 
-      Of the 43 refused, **27 are a function call or a conversion** —
-      eleven are a cast (`Value.Int`, `String.Decimal`, `Yield.Percent`),
-      seven a zone (`convert_time_zone`, `utc`, `time_zone`,
-      `base_utc_offset`), two a user function, and the rest a date part,
-      `round`, `sqrt`, `ln`, `abs`, `date`. None of those is handled at all.
-      The others are a division (D72), a sequence, a whole number beside a
-      date, a percentage literal, a comparison of zoned values (5.8) and one
-      reading another sheet by row. **So a call is the single widening worth
-      most**, and the eleven casts are the cheapest end of it.
+      The 40 refused, each counted once against the first reason it meets —
+      and this list is worth more than the number, because it says what is
+      left and what is not:
 
-      The harness that prints this rather than a measurement read twice by
-      hand is what is left
+      | Why | Columns |
+      |---|---|
+      | A conversion: `Value.Int`, `String.Decimal`, `Yield.Percent` | 10 |
+      | A zone call, or a column reading one that was refused | 9 |
+      | A division (D72, decided) | 6 |
+      | A maths function behind a polars feature: `abs`, `ln`, `round` | 4 |
+      | A sequence, `2025-01-01, 2025-02-01 ... Inf` | 3 |
+      | A whole number beside a date, which scales per type | 3 |
+      | A user function | 2 |
+      | A percentage literal met in the middle of a sum (D69) | 2 |
+      | Reading another sheet by row | 1 |
+
+      Which reads differently from the earlier note here, and that note was
+      wrong: it said 27 of the refusals were a call or a conversion, with
+      eleven casts. The mistake was a `grep` taking the first column of a
+      name from whichever example came first, so `datetimes.omx`'s
+      `Month := On.month()` was read as `sequences.omx`'s sequence. The
+      figures above are from the measurement rather than from the grep.
+
+      **So the calls are nearer exhausted than that note implied.** Of what
+      is left, the division is decided and the sequence is row-recursive by
+      nature; the conversions and the zones are omasheet's own rules, each a
+      change of its own; and the four maths functions are a size question
+      (1.3) and not a semantic one. The harness that prints this rather than
+      a measurement read by hand three times is still what is left
 
 ## 9. The documents
 

@@ -2216,13 +2216,147 @@ fn the_two_paths_agree_on_an_unknown() {
     }
 }
 
+/// Dates chosen for the parts that are easy to get wrong: an ISO week that
+/// belongs to the year before, one that belongs to the year after, a leap
+/// day, and a date before the epoch, whose day number is negative.
+const PARTS: &str = "\
+sheet Stamps
+
+Day   : Date
+Clock : Time
+When  : Datetime
+
+| Day        | Clock    | When                |
+| ---------- | -------- | ------------------- |
+| 2021-01-01 | 00:00:00 | 2021-01-01T00:00:00 |
+| 2020-02-29 | 23:59:59 | 2020-02-29T23:59:59 |
+| 2024-12-31 | 12:34:56 | 2024-12-31T12:34:56 |
+| 1969-07-20 | 20:17:40 | 1969-07-20T20:17:40 |
+| 2025-03-09 | 06:30:00 | 2025-03-09T06:30:00 |
+";
+
 #[test]
-fn a_condition_the_dataframe_has_no_answer_for() {
+fn a_part_of_a_date_or_a_time_is_lowered() {
+    // Polars counts the days of the week from Monday as `date::weekday`
+    // does, and its week is the ISO week the engine works out from each
+    // Thursday. The dates above are what says so.
+    let parts = [
+        ("Y", "year", "Day"),
+        ("M", "month", "Day"),
+        ("D", "day", "Day"),
+        ("W", "weekday", "Day"),
+        ("Q", "quarter", "Day"),
+        ("Wk", "week", "Day"),
+        ("O", "ordinal_day", "Day"),
+        ("H", "hour", "Clock"),
+        ("Mi", "minute", "Clock"),
+        ("S", "second", "Clock"),
+        ("ZY", "year", "When"),
+        ("ZW", "week", "When"),
+        ("ZH", "hour", "When"),
+        ("ZS", "second", "When"),
+        ("ZD", "date", "When"),
+        ("ZT", "time", "When"),
+    ];
+    let mut file = PARTS.replace(
+        "| Day        | Clock    | When                |",
+        &format!(
+            "| Day        | Clock    | When                |{}",
+            parts
+                .iter()
+                .map(|(n, ..)| format!(" {n} |"))
+                .collect::<String>()
+        ),
+    );
+    file = file.replace(
+        "| ---------- | -------- | ------------------- |",
+        &format!(
+            "| ---------- | -------- | ------------------- |{}",
+            parts.iter().map(|_| " - |").collect::<String>()
+        ),
+    );
+    let cells: String = parts.iter().map(|_| " * |").collect();
+    for row in [
+        "| 2021-01-01 | 00:00:00 | 2021-01-01T00:00:00 |",
+        "| 2020-02-29 | 23:59:59 | 2020-02-29T23:59:59 |",
+        "| 2024-12-31 | 12:34:56 | 2024-12-31T12:34:56 |",
+        "| 1969-07-20 | 20:17:40 | 1969-07-20T20:17:40 |",
+        "| 2025-03-09 | 06:30:00 | 2025-03-09T06:30:00 |",
+    ] {
+        file = file.replace(row, &format!("{row}{cells}"));
+    }
+    for (name, call, column) in parts {
+        file.push_str(&format!("{name} := {column}.{call}()\n"));
+    }
+    for (name, call, column) in parts {
+        assert_eq!(
+            attempt(&file, name),
+            Some(Attempt::Lowered),
+            "{column}.{call}()"
+        );
+    }
+    // And each one answers what the row loop answers.
+    for (name, ..) in parts {
+        both_ways(&file, &format!("Stamps.{name}"), None);
+    }
+    // A `Date` has no hour and a `Time` no month. The checker refuses the
+    // pairing before lowering is asked — "`hour` needs a Time or a
+    // Datetime, but this is Date" — so `lower::part` gates on the dtype
+    // only because it has to be total on its own, not because anything
+    // reaches it.
+    // The ISO weeks the dates were picked for: 2021-01-01 is week 53 of the
+    // year before and 2024-12-31 is week 1 of the year after.
+    assert_eq!(ask(&file, "Stamps.Wk"), "[53, 9, 1, 29, 10]");
+    assert_eq!(ask(&file, "Stamps.W"), "[5, 6, 2, 7, 7]");
+    // The day and the time of a date-time, which before the epoch is a
+    // division that has to floor rather than truncate.
+    assert_eq!(
+        ask(&file, "Stamps.ZD"),
+        "[2021-01-01, 2020-02-29, 2024-12-31, 1969-07-20, 2025-03-09]"
+    );
+    assert_eq!(
+        ask(&file, "Stamps.ZT"),
+        "[00:00, 23:59:59, 12:34:56, 20:17:40, 06:30]"
+    );
+}
+
+#[test]
+fn asking_whether_a_cell_is_empty_is_lowered() {
+    // The one call that asks about the absence rather than the value, so
+    // every dtype answers it and the answer is never itself empty.
     let dir = Some("../examples");
-    // `is_null` is a call, and no call of any kind is lowered yet.
-    let null = both_ways(TABLE, "Passengers[; is_null(Age)].Age.len()", dir);
-    assert_eq!(null.shown, "0");
-    assert_eq!(null.filters, [Attempt::Refused]);
+    let ran = both_ways(TABLE, "Passengers[; is_null(Age)].Age.len()", dir);
+    assert_eq!(ran.shown, "0");
+    assert_eq!(ran.filters, [Attempt::Lowered]);
+    let some = both_ways(TABLE, "Passengers[; is_not_null(Age)].Age.len()", dir);
+    assert_eq!(some.shown, "887");
+    assert_eq!(some.filters, [Attempt::Lowered]);
+}
+
+#[test]
+fn asking_whether_a_cell_is_a_nan_is_lowered_over_floats_alone() {
+    // A `NaN` is a thing only a floating-point column holds. Over any other
+    // the engine answers `false` for every value it has and Polars has no
+    // answer at all, so it is left alone.
+    let file = "\
+sheet T
+
+F : Float
+N : Int
+
+| F     | N | Bad | Fine |
+| ----- | - | --- | ---- |
+| 1.5   | 1 | *   | *    |
+| 0     | 2 | *   | *    |
+|       | 3 | *   | *    |
+
+Bad  := is_nan(N)
+Fine := is_nan(F)
+";
+    assert_eq!(attempt(file, "Fine"), Some(Attempt::Lowered));
+    assert_eq!(attempt(file, "Bad"), Some(Attempt::Refused));
+    both_ways(file, "T.Fine", None);
+    both_ways(file, "T.Bad", None);
 }
 
 #[test]
@@ -2421,11 +2555,10 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // Lest the whole thing pass by checking nothing. Sixteen of the
     // corpus's columns come from a file — eight of `analysis.omx` and
     // eight of `analysis2.omx` — and those are taken at once whichever way
-    // the rest is calculated, which is 32 of the 47. The other fifteen are
-    // the columns lowering forced calculates in one step: 8.3's ten, and
-    // the five of `logic.omx`, every one of which is a comparison, an
-    // `and`, an `or` or a `//`.
-    assert_eq!(taken, 47, "the columns taken at once");
+    // the rest is calculated, which is 32 of the 50. The other eighteen are
+    // the columns lowering forced calculates in one step, and 8.3 is where
+    // that number is read.
+    assert_eq!(taken, 50, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read

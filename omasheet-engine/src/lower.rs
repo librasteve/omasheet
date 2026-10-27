@@ -29,6 +29,11 @@
 //!   same unit.
 //! - **A value with no dtype to be held as**: anything the checker typed
 //!   `Any`, and a vector, a sheet or a row.
+//! - **Most calls.** [`call`] says which are here and why the rest are not;
+//!   the short of it is that a conversion, a rounding and a zone are
+//!   omasheet's own rules rather than Polars', and that `abs`, `sign`,
+//!   `round`, `floor`, `ceil`, `exp`, `log` and the trigonometric functions
+//!   are Polars' but behind a feature this build does not enable.
 
 use crate::Value;
 use crate::dtype::{decimal, type_of};
@@ -112,6 +117,7 @@ pub fn expr(node: &Node, cx: &Cx) -> Option<Out> {
         // first gate has already refused, and one reaching a row of an
         // enclosing sheet is a frame this expression is not over.
         Ir::RowCol { depth: 0, col } => cx.read(*col),
+        Ir::Call(func, args) => call(*func, args, cx),
         Ir::Unary(op, operand) => unary(*op, expr(operand, cx)?),
         Ir::Binary(op, l, r) => binary(*op, expr(l, cx)?, expr(r, cx)?),
         Ir::If(cond, yes, no) => {
@@ -251,6 +257,77 @@ fn unary(op: UnOp, operand: Out) -> Option<Out> {
             Out::new(operand.expr.not(), DataType::Boolean)
         }
         // `^n` is a range, which no column holds.
+        _ => None,
+    }
+}
+
+/// A call of one argument as one Polars expression, or `None` where Polars
+/// has not the same answer for it.
+///
+/// Most calls are not here, and two kinds of reason keep them out. Some are
+/// omasheet's own and not Polars': every conversion reads and writes a
+/// value the way the text does, `round` and the exact `floor` and `ceil`
+/// work on a `Dec`, and a zone call answers from the engine's own tables.
+/// The rest are Polars' but behind a feature this build does not enable —
+/// `abs`, `sign`, `round`, `floor`, `ceil`, `exp`, `log` and every
+/// trigonometric function among them — which is a size question (task 1.3)
+/// rather than a semantic one.
+fn call(func: Func, args: &[Node], cx: &Cx) -> Option<Out> {
+    let [arg] = args else {
+        return None;
+    };
+    let out = expr(arg, cx)?;
+    Some(match func {
+        // Whether a cell is empty, which is the one call that asks about
+        // the absence rather than the value, so every dtype answers it and
+        // the answer is never itself empty.
+        Func::IsNull => Out::new(out.expr.is_null(), DataType::Boolean)?,
+        // Whether it holds a `NaN`, which only a floating-point column can.
+        // Over any other the engine answers `false` for every value it
+        // holds, and Polars has no answer at all, so it is left alone.
+        Func::IsNan if is_float(&out.dtype) => Out::new(out.expr.is_nan(), DataType::Boolean)?,
+        // A part of a date or a time. The dtype says which parts there are:
+        // a `Date` has no hour and a `Time` no month, and the engine
+        // reports either as an error, so a column with the wrong half is
+        // not lowered rather than lowered to something that differs.
+        // Polars counts the days of the week from Monday as `date::weekday`
+        // does, and its week is the ISO week, which is the one the engine
+        // works out from each Thursday.
+        _ => return part(func, out),
+    })
+}
+
+/// A date or time part, cast to the `Int64` a whole number is held as:
+/// Polars answers these in an `Int32` or a `UInt32`, and a column of them
+/// should be the width every other whole number in a sheet has.
+fn part(func: Func, out: Out) -> Option<Out> {
+    let dated = matches!(
+        out.dtype,
+        DataType::Date | DataType::Datetime(TimeUnit::Microseconds, None)
+    );
+    let timed = matches!(
+        out.dtype,
+        DataType::Time | DataType::Datetime(TimeUnit::Microseconds, None)
+    );
+    let dt = out.expr.clone().dt();
+    let whole = |expr: Expr| Out::new(expr.cast(DataType::Int64), DataType::Int64);
+    match func {
+        Func::Year if dated => whole(dt.year()),
+        Func::Month if dated => whole(dt.month()),
+        Func::Day if dated => whole(dt.day()),
+        Func::Weekday if dated => whole(dt.weekday()),
+        Func::Quarter if dated => whole(dt.quarter()),
+        Func::Week if dated => whole(dt.week()),
+        Func::OrdinalDay if dated => whole(dt.ordinal_day()),
+        Func::Hour if timed => whole(dt.hour()),
+        Func::Minute if timed => whole(dt.minute()),
+        Func::Second if timed => whole(dt.second()),
+        // The day a date-time falls on, and the time of day it is at. Both
+        // are a whole division of the microseconds since the epoch, and
+        // before it that division has to floor rather than truncate, which
+        // is why the dates these are tested over include one in 1969.
+        Func::DateOf if dated => Out::new(out.expr.cast(DataType::Date), DataType::Date),
+        Func::TimeOf if timed => Out::new(out.expr.cast(DataType::Time), DataType::Time),
         _ => None,
     }
 }
