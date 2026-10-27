@@ -275,8 +275,8 @@ what stops a table's rows being exploded into cells.
       reporting per column whether lowering was attempted and refused:
       `Engine::attempts`, as `Lowered`, `Refused` or `Failed`. A column the
       row count left alone is not in it, having never been tried.
-      `Lowering::Auto` is above `ROW_THRESHOLD`, which is 1024 until D73 is
-      measured. **Not exposed on the command line**: D74 wants it as the way
+      `Lowering::Auto` is above `ROW_THRESHOLD`, which is 1024, measured
+      and kept (D73, task 7.4). **Not exposed on the command line**: D74 wants it as the way
       out for a user whose file miscalculates in the field, and that is a
       flag and its help text, which is the owner's to word
 - [x] 5.6 D72: `/` and `mean` not lowered on an exact column; `*` lowered
@@ -673,9 +673,11 @@ what stops a table's rows being exploded into cells.
 
       Both selections' conditions are taken (6.1), but their sums stay on
       the engine, which is 6.3's last bullet.
-- [ ] 7.4 D73: the threshold, from a committed timing harness over
+- [x] 7.4 D73: the threshold, from a committed timing harness over
       `budget.omx` at 10, 10³, 10⁵ and 10⁶ rows. The harness is 7.3 and the
-      figures are above; the number is the owner's. What they support is
+      figures are above. **The number is 1024, kept as it stood**, which is
+      the owner's decision on the measurement rather than anything the
+      measurement forced. What the figures support is
       less than was expected of them: lowering is clearly ahead at 10⁵ and
       10⁶, level at 10³, and a tenth of a millisecond behind at 10, so the
       measurement does not single out a crossover — there is no row count

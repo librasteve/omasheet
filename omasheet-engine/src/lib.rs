@@ -76,8 +76,11 @@ pub enum Lowering {
 /// How many rows a sheet needs before a column of it is lowered under
 /// [`Lowering::Auto`]. Building a plan, optimising it and collecting it are
 /// slower than the row loop for a sheet of ten rows, and a sheet of ten
-/// rows is omasheet's usual document. The figure is a starting point and
-/// not yet a measurement (D73).
+/// rows is omasheet's usual document. Measured, and kept (D73): a plan
+/// costs 0.085 ms a column however few the rows, so a wide short sheet is
+/// what this refuses. No row count below which lowering visibly costs
+/// anything came out of the measurement, which leaves any figure between
+/// 10² and 10⁴ as defensible as this one.
 pub const ROW_THRESHOLD: usize = 1024;
 
 /// What a command produced: text for standard output, and rendered
