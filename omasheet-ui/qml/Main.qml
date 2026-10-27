@@ -2115,12 +2115,19 @@ ApplicationWindow {
                                                 border.color: win.accentColor
                                             }
                                             property bool done: false
+                                            // The arrow key last pressed with nowhere further to go:
+                                            // pressed again it leaves the cell. 0 for none.
+                                            property int nudged: 0
                                             // The box at the top echoes the text and where the cursor is in it.
                                             onTextChanged: if (!formulaField.activeFocus) {
                                                 formulaField.text = text;
                                                 formulaField.cursorPosition = cursorPosition;
                                             }
-                                            onCursorPositionChanged: if (!formulaField.activeFocus) formulaField.cursorPosition = cursorPosition
+                                            onCursorPositionChanged: {
+                                                nudged = 0;
+                                                if (!formulaField.activeFocus)
+                                                    formulaField.cursorPosition = cursorPosition;
+                                            }
                                             Component.onDestruction: if (win.editor === this) win.editor = null
                                             Component.onCompleted: {
                                                 win.editor = this;
@@ -2151,13 +2158,23 @@ ApplicationWindow {
                                             // In a formula, the arrows pick a cell's reference
                                             // where one may go, and with Alt anywhere, by row
                                             // number: Shift picks a range, Ctrl goes to the end.
-                                            // Elsewhere they move in the text.
+                                            // Elsewhere they move in the text, and pressed twice
+                                            // with nowhere further to go leave the cell for the grid.
                                             Keys.priority: Keys.BeforeItem
                                             Keys.onPressed: function(event) {
                                                 // Ctrl+Enter puts in a row only from the grid, not mid-edit.
                                                 if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
                                                         && (event.modifiers & Qt.ControlModifier)) {
                                                     event.accepted = true;
+                                                    return;
+                                                }
+                                                // Enter while the arrows are picking takes the reference
+                                                // as it stands and goes on typing: the next one writes
+                                                // the cell.
+                                                if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                                        && win.pickRow >= 0) {
+                                                    event.accepted = true;
+                                                    win.stopPicking();
                                                     return;
                                                 }
                                                 var shift = (event.modifiers & Qt.ShiftModifier) !== 0;
@@ -2167,13 +2184,39 @@ ApplicationWindow {
                                                     : event.key === Qt.Key_Right ? [0, 1] : null;
                                                 if (d) {
                                                     var picks = (event.modifiers & Qt.AltModifier) ? win.canPick() : win.arrowPicks();
-                                                    event.accepted = picks && win.pickArrow(d[0], d[1], (event.modifiers & Qt.AltModifier) !== 0, shift,
-                                                        (event.modifiers & Qt.ControlModifier) !== 0);
+                                                    if (picks && win.pickArrow(d[0], d[1], (event.modifiers & Qt.AltModifier) !== 0, shift,
+                                                            (event.modifiers & Qt.ControlModifier) !== 0)) {
+                                                        nudged = 0;
+                                                        event.accepted = true;
+                                                        return;
+                                                    }
+                                                    // Up and Down have nowhere to go in the cell's one
+                                                    // line, and Left at the start of the text or Right at
+                                                    // its end have nowhere further. The first press stays
+                                                    // where it is; the same key pressed again writes what
+                                                    // is typed and selects the cell that way, as Tab does.
+                                                    // Held down, it does neither.
+                                                    if ((event.modifiers & (Qt.ShiftModifier | Qt.ControlModifier | Qt.AltModifier)) === 0
+                                                            && (d[0] !== 0 || (selectedText.length === 0
+                                                                && cursorPosition === (d[1] < 0 ? 0 : text.length)))) {
+                                                        event.accepted = true;
+                                                        if (!event.isAutoRepeat) {
+                                                            if (nudged === event.key)
+                                                                finish(d[0], d[1]);
+                                                            else
+                                                                nudged = event.key;
+                                                        }
+                                                        return;
+                                                    }
+                                                    nudged = 0;
+                                                    event.accepted = false;
                                                     return;
                                                 }
                                                 // A modifier on its own leaves a pick going.
-                                                if ([Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Control, Qt.Key_Meta].indexOf(event.key) < 0)
+                                                if ([Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Control, Qt.Key_Meta].indexOf(event.key) < 0) {
                                                     win.stopPicking();
+                                                    nudged = 0;
+                                                }
                                                 event.accepted = false;
                                             }
                                         }
