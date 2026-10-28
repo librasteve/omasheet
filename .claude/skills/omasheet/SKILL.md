@@ -141,7 +141,7 @@ what you want; declare one when the cells could be read another way.
 | `Percent` | `20%` — exact, shown as a percentage |
 | `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `"Inf"`), which is what a division by zero gives |
 | `Boolean` | `true`, `false` |
-| `Date`, `Time`, `Datetime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO |
+| `Date`, `Time`, `Datetime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO. A fraction of a second goes after the seconds, `09:30:15.5`: nine digits for a `Time`, six for a `Datetime` |
 | `Url`, `Email`, `Uuid` | `https://example.com`, `name@example.com`, `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f` — text read as something narrower |
 
 `Url`, `Email` and `Uuid` are never taken from the cells: declare one, or

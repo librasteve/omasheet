@@ -14,7 +14,7 @@ a file computes, and the one rule that decides every future name.
 
 | # | Status | Decision | Notes |
 |---|--------|----------|-------|
-| D51 | Provisional | A Polars name flattens by dropping its namespace, and takes the namespace's noun as a prefix only where dropping it would collide or mislead: `dt.month_end` → `month_end`, but `str.len_chars` → `len_chars` and `list.len` → `list_len`, not either of them `len` | Polars disambiguates with namespaces and OMX has one flat namespace, so "the Polars name" is under-determined without a rule. Low stakes today, since `len` is the only name in this change the rule touches; it decides every name the `.str` namespace would later bring, which is the largest block Polars has to offer. Owner to settle |
+| D51 | Decided | A Polars name flattens by dropping its namespace, and takes the namespace's noun as a prefix only where dropping it would collide or mislead: `dt.month_end` → `month_end`, but `str.len_chars` → `len_chars` and `list.len` → `list_len`, not either of them `len` | Owner decision, 2026-10-28, adopting the rule as it stood. Polars disambiguates with namespaces and OMX has one flat namespace, so "the Polars name" is under-determined without a rule. Low stakes in this change, `len` being the only name it touches; settled now because it decides every name the `.str` namespace would later bring, which is the largest block Polars has to offer, and because the three kinds of text just added (`Url`, `Email`, `Uuid`) arrive in a tree with no string function in it at all — so the first `upper` or `contains` written is the moment the rule stops being cheap to change |
 | D52 | Decided | A cutover: an old name is gone, and `lower_call`'s existing `_` arm reports it unknown. No rename table, no deprecation, no migration help | Owner decision, 2026-10-23, in those words: "nope just cutover". `closest` filters on edit distance ≤ 2 and will not reach `avg` → `mean` (4), so the message is the plain unknown-function one. Pre-1.0 is the moment |
 | D53 | Decided | `count` counts values that are not empty; `len` counts rows, empties included. `Sheet.count()` becomes `Sheet.len()` | Polars asks the two questions separately and OMX answered both with one name, which meant `Sales.count()` and `Sales.Revenue.count()` were different questions spelled the same. The split falls on two arms of `Engine::call` that already exist |
 | D54 | Decided | `round(x, n)` is to `n` decimal places, as Polars has it. The nearest-multiple form is withdrawn rather than renamed | Owner decision, 2026-10-23. `round(x, 2)` is legal in both languages and means different things in each, so leaving it alone would ship a trap. Withdrawn and not renamed to `round_to` because the owner chose the smaller surface; `round(x / 100) * 100` says it where it is wanted. `Func::RoundTo` is deleted and `Func::RoundDigits` added, leaving `MathFn::Round` one-argument and `MathFn::ALL` untouched |
@@ -97,7 +97,7 @@ is wholly aligned:
 
 ## Open questions
 
-- D51, the flattening rule (owner).
+- ~~D51, the flattening rule (owner).~~ Settled 2026-10-28.
 - Whether `quantile` should expose Polars' `interpolation` argument at all
   before there is a way to write a keyword argument. It defaults to `nearest`
   and the positional form `quantile(x, 0.9, nearest)` would need the

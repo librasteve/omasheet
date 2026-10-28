@@ -1733,6 +1733,50 @@ fn a_conversion_that_fails_marks_its_own_cell_and_leaves_the_file_calculating() 
 }
 
 #[test]
+fn a_fraction_of_a_second_is_written_and_read_back() {
+    // A time keeps nine digits of a second, and shows the digits it holds
+    // rather than the nine it could.
+    assert_eq!(calc("09:30:00.5"), "09:30:00.5");
+    assert_eq!(calc("09:30:00.123456789"), "09:30:00.123456789");
+    assert_eq!(calc("00:00:00.000000001"), "00:00:00.000000001");
+    // A date-time keeps six, that being the unit it is held in (D68).
+    assert_eq!(calc("2025-01-31T09:30:00.5"), "2025-01-31T09:30:00.5");
+    assert_eq!(
+        calc("2025-01-31T09:30:00.123456"),
+        "2025-01-31T09:30:00.123456"
+    );
+    // Without a fraction nothing changes: the seconds are shown only when
+    // they are not zero, as before.
+    assert_eq!(calc("09:30:00"), "09:30");
+    assert_eq!(calc("2025-01-31T09:30:00"), "2025-01-31T09:30");
+}
+
+#[test]
+fn a_second_past_what_the_unit_keeps_is_reported() {
+    // A seventh digit on a date-time is said, not silently dropped.
+    let errors = calc_err(None, "2025-01-31T09:30:00.0000001");
+    assert!(errors.contains("a date-time holds 6 digits"), "{errors}");
+    let errors = calc_err(None, "09:30:00.0000000001");
+    assert!(errors.contains("a time holds 9 digits"), "{errors}");
+}
+
+#[test]
+fn the_parts_of_a_second() {
+    // Each is what is left after the second, in its own unit.
+    assert_eq!(calc("09:30:00.5.millisecond()"), "500");
+    assert_eq!(calc("09:30:00.5.microsecond()"), "500000");
+    assert_eq!(calc("09:30:00.5.nanosecond()"), "500000000");
+    assert_eq!(calc("09:30:00.123456789.nanosecond()"), "123456789");
+    // The second itself is unchanged by the fraction beside it.
+    assert_eq!(calc("09:30:15.5.second()"), "15");
+    // A date-time answers too, to the microsecond it holds.
+    assert_eq!(calc("2025-01-31T09:30:00.25.millisecond()"), "250");
+    assert_eq!(calc("2025-01-31T09:30:00.25.microsecond()"), "250000");
+    // Nothing after the second is zero, not empty.
+    assert_eq!(calc("09:30:15.millisecond()"), "0");
+}
+
+#[test]
 fn the_parts_of_a_year() {
     assert_eq!(calc("month_start(2025-02-10)"), "2025-02-01");
     assert_eq!(calc("month_end(2025-02-10)"), "2025-02-28");

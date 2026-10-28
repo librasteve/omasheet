@@ -240,7 +240,7 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 - Converting: `Integer Decimal Percent Float String Boolean Date Time Datetime`,
   each also written `cast(x, Integer)`
 - Dates: `today() now() year month day weekday quarter week ordinal_day
-  hour minute second date time`
+  hour minute second millisecond microsecond nanosecond date time`
 - Months: `add_months(x, n)` — what `x + n.month` is — `month_end(x)` and
   `month_start(x)`
 - Time zones: `convert_time_zone("Asia/Tokyo") utc() local()

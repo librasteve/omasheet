@@ -612,6 +612,24 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     ),
     doc(
         TIME,
+        "millisecond",
+        "Sheet.Column.millisecond()",
+        "The milliseconds left over after the second of a Time or Datetime: 500 of 09:30:00.5.",
+    ),
+    doc(
+        TIME,
+        "microsecond",
+        "Sheet.Column.microsecond()",
+        "The microseconds left over after the second of a Time or Datetime: 500000 of 09:30:00.5.",
+    ),
+    doc(
+        TIME,
+        "nanosecond",
+        "Sheet.Column.nanosecond()",
+        "The nanoseconds left over after the second of a Time: 500000000 of 09:30:00.5. A Datetime is held to the microsecond, so its nanoseconds end in three zeros.",
+    ),
+    doc(
+        TIME,
         "date",
         "Sheet.Column.date()",
         "The Date half of a Datetime.",

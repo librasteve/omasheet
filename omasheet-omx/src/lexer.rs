@@ -317,13 +317,49 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
     });
     let at = |k: usize, c: u8| k < b.len() && b[k] == c;
     let pair = |k: usize| digit(k) && digit(k + 1);
-    let time_end =
+    // How far the digits of a fraction of a second run from `k`, and what
+    // they come to in a unit of `places` digits. `None` where there is no
+    // fraction; the error where there are more digits than the unit keeps.
+    let fraction = |k: usize, places: u32, held: &str| -> Option<Result<(i64, usize), NumErr>> {
+        if !(at(k, b'.') && digit(k + 1)) {
+            return None;
+        }
+        let start = k + 1;
+        let mut end = start;
+        while digit(end) {
+            end += 1;
+        }
+        let digits = &text[start..end];
+        if digits.len() > places as usize {
+            return Some(Err((
+                format!(
+                    "a {held} holds {places} digits of a second, so `.{digits}` is more of one than it can keep"
+                ),
+                k,
+                end,
+            )));
+        }
+        let scale = 10i64.pow(places - digits.len() as u32);
+        Some(Ok((digits.parse::<i64>().unwrap() * scale, end)))
+    };
+    let mut seconds_of_datetime = false;
+    let mut datetime_frac = 0i64;
+    let mut time_end =
         if is_date && at(i + 10, b'T') && pair(i + 11) && at(i + 13, b':') && pair(i + 14) {
-            let seconds = at(i + 16, b':') && pair(i + 17);
-            Some(i + if seconds { 19 } else { 16 })
+            seconds_of_datetime = at(i + 16, b':') && pair(i + 17);
+            Some(i + if seconds_of_datetime { 19 } else { 16 })
         } else {
             None
         };
+    // A date-time is held to the microsecond (D68), so six digits.
+    let after_seconds = seconds_of_datetime
+        .then(|| fraction(i + 19, 6, "date-time"))
+        .flatten();
+    if let Some(found) = after_seconds {
+        let (micros, end) = found?;
+        datetime_frac = micros;
+        time_end = Some(end);
+    }
     let end = time_end.unwrap_or(i + 10);
     if is_date && !word(end) {
         let part = |s: usize, e: usize| text[i + s..i + e].parse::<i64>().unwrap();
@@ -337,9 +373,9 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
         if time_end.is_none() {
             return Ok((Tok::Date(days), end));
         }
-        let secs = if end == i + 19 { part(17, 19) } else { 0 };
+        let secs = if seconds_of_datetime { part(17, 19) } else { 0 };
         return match date::datetime_from(days, part(11, 13), part(14, 16), secs) {
-            Some(t) => Ok((Tok::DateTime(t), end)),
+            Some(t) => Ok((Tok::DateTime(t + datetime_frac), end)),
             None => Err((
                 format!("`{}` is not a real time", &text[i + 11..end]),
                 i + 11,
@@ -348,15 +384,23 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
         };
     }
 
-    // A time: hh:mm or hh:mm:ss.
+    // A time: hh:mm or hh:mm:ss, either with a fraction of a second.
     if pair(i) && at(i + 2, b':') && pair(i + 3) {
         let seconds = at(i + 5, b':') && pair(i + 6);
-        let end = i + if seconds { 8 } else { 5 };
+        let mut end = i + if seconds { 8 } else { 5 };
+        // A time of day is held in nanoseconds (D68), so nine digits.
+        let mut frac = 0i64;
+        let after_seconds = seconds.then(|| fraction(end, 9, "time")).flatten();
+        if let Some(found) = after_seconds {
+            let (nanos, after) = found?;
+            frac = nanos;
+            end = after;
+        }
         if !word(end) && !at(end, b':') {
             let part = |s: usize| text[i + s..i + s + 2].parse::<i64>().unwrap();
             let secs = if seconds { part(6) } else { 0 };
             return match date::time_from(part(0), part(3), secs) {
-                Some(t) => Ok((Tok::Time(t), end)),
+                Some(t) => Ok((Tok::Time(t + frac), end)),
                 None => Err((format!("`{}` is not a real time", &text[i..end]), i, end)),
             };
         }
@@ -444,6 +488,35 @@ mod tests {
 
     fn toks(s: &str) -> Vec<Tok> {
         lex(s, 0, 0).unwrap().into_iter().map(|t| t.tok).collect()
+    }
+
+    #[test]
+    fn a_fraction_of_a_second() {
+        // A time is nanoseconds of day, so nine digits of a second.
+        assert_eq!(
+            toks("09:30:00.5")[0],
+            Tok::Time(date::time_from(9, 30, 0).unwrap() + 500_000_000)
+        );
+        assert_eq!(toks("00:00:00.000000001")[0], Tok::Time(1));
+        // A date-time is microseconds, so six.
+        let day = date::from_ymd(2025, 1, 31).unwrap();
+        let noon = date::datetime_from(day, 12, 0, 0).unwrap();
+        assert_eq!(
+            toks("2025-01-31T12:00:00.5")[0],
+            Tok::DateTime(noon + 500_000)
+        );
+        assert_eq!(
+            toks("2025-01-31T12:00:00.000001")[0],
+            Tok::DateTime(noon + 1)
+        );
+        // Past what the unit keeps is said rather than quietly dropped.
+        let why = |text: &str| lex(text, 0, 0).unwrap_err().message;
+        let said = why("2025-01-31T12:00:00.0000001");
+        assert!(said.contains("a date-time holds 6 digits"), "{said}");
+        let said = why("09:30:00.0000000001");
+        assert!(said.contains("a time holds 9 digits"), "{said}");
+        // The fraction goes with the seconds, so this is not one time.
+        assert!(toks("09:30.5").len() > 2);
     }
 
     #[test]

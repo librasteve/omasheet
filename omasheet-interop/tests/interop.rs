@@ -257,8 +257,8 @@ fn csv_round_trips_the_examples() {
             continue;
         }
         let text = std::fs::read_to_string(&path).unwrap();
-        let first = csv::export("file.omx", &text, None, options_beside(dir))
-            .expect("the file exports");
+        let first =
+            csv::export("file.omx", &text, None, options_beside(dir)).expect("the file exports");
         for file in 0..first.files.len() {
             let name = first.files[file].sheet.as_deref().unwrap_or("T");
             let imported = csv::import(name, &first.files[file].bytes).unwrap();

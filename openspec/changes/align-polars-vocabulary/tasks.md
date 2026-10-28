@@ -11,8 +11,10 @@ name is a lexer keyword.
 
 ## 0. Settle the open questions
 
-- [ ] 0.1 D51: the namespace flattening rule, which decides every name the
-      `.str` namespace would later bring
+- [x] 0.1 D51: the namespace flattening rule, which decides every name the
+      `.str` namespace would later bring. Settled as it stood (owner,
+      2026-10-28): drop the namespace, and keep its noun as a prefix only
+      where dropping it would collide or mislead
 
 ## 1. The renames (`omx-expressions`)
 
@@ -60,7 +62,7 @@ the usage and help strings that embed the name.
       `equal` follows `compare` and `NaN == NaN` is true
 - [x] 4.3 The `NaN`-is-the-answer scan in `min`/`max` is deleted; `max` still
       answers `NaN` because a `NaN` is greatest
-- [ ] 4.4 ~~`propagate_nans` in the Polars features~~: moved to
+- [x] 4.4 ~~`propagate_nans` in the Polars features~~: moved to
       `add-columnar-core`. The feature is
       `propagate_nans = ["polars-lazy?/propagate_nans"]`, so it does nothing
       until `lazy` is on and there is a Polars aggregate to agree with

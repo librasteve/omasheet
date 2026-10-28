@@ -72,24 +72,24 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
             Dec::new(unscaled, scale as i32).map_or(Cell::Invalid, exact)
         }
         AnyValue::Date(days) => Cell::Lit(Lit::Date(days)),
-        // Still read to the whole second, as before the units changed: no
-        // literal can write a fraction of one yet, so a value holding one
-        // would show as something the file could not write back.
+        // The fraction of a second is kept, now that a literal can write
+        // one (4.4, 4.5). A date-time is held to the microsecond (D68), so
+        // a Parquet column in nanoseconds keeps what that unit reaches and
+        // no more; that is the unit's own limit rather than a truncation
+        // the file would hide, since what is kept is what it writes back.
         AnyValue::Datetime(n, unit, _) | AnyValue::DatetimeOwned(n, unit, _) => {
-            let secs = match unit {
-                TimeUnit::Nanoseconds => n.div_euclid(NANOS),
-                TimeUnit::Microseconds => n.div_euclid(MICROS),
-                TimeUnit::Milliseconds => n.div_euclid(1_000),
+            let micros = match unit {
+                TimeUnit::Nanoseconds => Some(n.div_euclid(NANOS / MICROS)),
+                TimeUnit::Microseconds => Some(n),
+                TimeUnit::Milliseconds => n.checked_mul(MICROS / 1_000),
             };
-            match (
-                i32::try_from(secs.div_euclid(DAY)),
-                secs.checked_mul(MICROS),
-            ) {
-                (Ok(_), Some(micros)) => Cell::Lit(Lit::DateTime(micros)),
-                _ => Cell::Invalid,
+            match micros.filter(|m| i32::try_from(m.div_euclid(DAY * MICROS)).is_ok()) {
+                Some(micros) => Cell::Lit(Lit::DateTime(micros)),
+                None => Cell::Invalid,
             }
         }
-        AnyValue::Time(ns) => Cell::Lit(Lit::Time(ns.div_euclid(NANOS) * NANOS)),
+        // A time of day is nanoseconds, which is what Polars holds too.
+        AnyValue::Time(ns) => Cell::Lit(Lit::Time(ns)),
         // Anything else is held as Polars shows it.
         other => Cell::Lit(Lit::String(other.to_string())),
     }

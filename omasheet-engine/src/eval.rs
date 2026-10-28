@@ -1467,6 +1467,9 @@ impl<'p> Engine<'p> {
             | Func::Hour
             | Func::Minute
             | Func::Second
+            | Func::Millisecond
+            | Func::Microsecond
+            | Func::Nanosecond
             | Func::DateOf
             | Func::TimeOf => {
                 let part = |v: &Value| -> R {
@@ -1506,6 +1509,10 @@ impl<'p> Engine<'p> {
                         Func::Hour => time.map(|t| date::hms(t).0),
                         Func::Minute => time.map(|t| date::hms(t).1),
                         Func::Second => time.map(|t| date::hms(t).2),
+                        // What is left of a second, in the unit asked for.
+                        Func::Millisecond => time.map(|t| date::hms(t).3 / (date::NANOS / 1_000)),
+                        Func::Microsecond => time.map(|t| date::hms(t).3 / date::NANOS_PER_MICRO),
+                        Func::Nanosecond => time.map(|t| date::hms(t).3),
                         Func::DateOf => {
                             return days
                                 .map(Value::Date)

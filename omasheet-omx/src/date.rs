@@ -125,10 +125,22 @@ pub fn hms(nanos: i64) -> (i64, i64, i64, i64) {
     )
 }
 
-/// `09:30`, with the seconds only when they are not zero.
+/// `09:30`, with the seconds only when they are not zero, and a fraction
+/// of a second after them only when that is not zero either.
+///
+/// The fraction is written to the digits it holds and no further, so
+/// `09:30:00.5` rather than `09:30:00.500000000`, and it always carries its
+/// seconds: `09:30.5` would say which of minutes or seconds the fraction
+/// belonged to only by convention. A date-time's nanoseconds are always a
+/// whole number of microseconds, so this writes at most six digits for one
+/// and nine for a time.
 pub fn format_time(nanos: i64) -> String {
-    let (h, m, s, _) = hms(nanos);
-    if s == 0 {
+    let (h, m, s, frac) = hms(nanos);
+    if frac != 0 {
+        let digits = format!("{frac:09}");
+        let digits = digits.trim_end_matches('0');
+        format!("{h:02}:{m:02}:{s:02}.{digits}")
+    } else if s == 0 {
         format!("{h:02}:{m:02}")
     } else {
         format!("{h:02}:{m:02}:{s:02}")

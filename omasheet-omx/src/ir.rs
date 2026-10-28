@@ -178,6 +178,9 @@ pub enum Func {
     Hour,
     Minute,
     Second,
+    Millisecond,
+    Microsecond,
+    Nanosecond,
     /// The day of a date-time.
     DateOf,
     /// The time of day of a date-time.

@@ -2642,8 +2642,9 @@ impl<'a> Checker<'a> {
                 };
                 (Node::new(Ir::Call(func, Vec::new()), span), Ty::Scalar(s))
             }
-            "year" | "month" | "day" | "weekday" | "hour" | "minute" | "second" | "date"
-            | "time" | "quarter" | "week" | "ordinal_day" => {
+            "year" | "month" | "day" | "weekday" | "hour" | "minute" | "second" | "millisecond"
+            | "microsecond" | "nanosecond" | "date" | "time" | "quarter" | "week"
+            | "ordinal_day" => {
                 if !arity(self, 1, &format!("Orders.Placed.{name}()")) {
                     return fail;
                 }
@@ -2658,6 +2659,11 @@ impl<'a> Checker<'a> {
                     "hour" => (Func::Hour, S::Time, S::Int),
                     "minute" => (Func::Minute, S::Time, S::Int),
                     "second" => (Func::Second, S::Time, S::Int),
+                    // The fraction of a second, each as a whole number of
+                    // its own unit: `09:30:00.5` is 500 milliseconds.
+                    "millisecond" => (Func::Millisecond, S::Time, S::Int),
+                    "microsecond" => (Func::Microsecond, S::Time, S::Int),
+                    "nanosecond" => (Func::Nanosecond, S::Time, S::Int),
                     "date" => (Func::DateOf, S::Date, S::Date),
                     _ => (Func::TimeOf, S::Time, S::Time),
                 };

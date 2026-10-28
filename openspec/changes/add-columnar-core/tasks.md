@@ -224,13 +224,36 @@ what stops a table's rows being exploded into cells.
       The Parquet export's scaling is gone outright: a `Time` and a
       `Datetime` pass through unscaled, being already in the units Polars
       holds them in
-- [ ] 4.4 The sub-second values Parquet holds, which the old division
-      truncated, kept. **Still truncated, deliberately**: no literal can
+- [x] 4.4 The sub-second values Parquet holds, which the old division
+      truncated, kept. ~~**Still truncated, deliberately**: no literal can
       write a fraction of a second, so a value holding one would show as
-      something the file could not write back. It arrives with the syntax,
-      below
-- [ ] 4.5 Fractional seconds in a literal and in what is shown, and then
+      something the file could not write back.~~ It arrived with the syntax
+      below, and `cell_of` keeps the fraction now. A Parquet `Time` keeps
+      its nanoseconds outright, both holding the same unit. A `Datetime`
+      keeps microseconds, and a nanosecond-unit column keeps what that
+      reaches — the unit's own limit (D68) rather than something the file
+      would hide, since what is kept is now exactly what it writes back
+- [x] 4.5 Fractional seconds in a literal and in what is shown, and then
       `millisecond`, `microsecond` and `nanosecond`.
+
+      **Done, as designed below.** One `fraction` helper in the lexer
+      serves both branches, taking the digits of a second and scaling them
+      to the unit: nine for a `Time`, six for a `Datetime`. Past that is a
+      diagnostic naming the unit, which is what 4.4 was holding the line
+      for. `format_time` writes the fraction trimmed to the digits held, so
+      `09:30:00.5` and not `09:30:00.500000000`, and always with its
+      seconds; with no fraction nothing it wrote before changes. The three
+      accessors are the leftover in their own unit, so `09:30:00.5` gives
+      500, 500000 and 500000000.
+
+      `09:30:00.5.millisecond()` reads as the time and then the call
+      without any help: the fraction scan takes digits only, so it stops at
+      the `.` that begins an identifier and the time token closes there.
+      Pinned by a test, having been the one thing about the syntax that
+      looked as though it might need the lexer to look ahead.
+
+      Duration is still outstanding in `add-polars-dtypes` section 5, and
+      nothing here needed it, as this task said.
 
       The difference of two times is not a question here: `add-polars-dtypes`
       D22 decided it is a `Duration`, inferred from the difference of two
