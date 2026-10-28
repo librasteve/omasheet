@@ -15,8 +15,14 @@ unsigned widths — reach Parquet as 2.9 once they land.
 
 ## 1. The dependency
 
-- [x] 1.1 `polars` in `[workspace.dependencies]`, with the features the work
-      needs and no more: lazy frames, Parquet, and the dtypes
+- [ ] 1.1 `polars` in `[workspace.dependencies]`, with the features the work
+      needs and no more: lazy frames, Parquet, and the dtypes.
+
+      **The tick is struck.** Parquet and the dtypes were on; lazy frames
+      were not — `Cargo.toml` named no `lazy` feature and `polars-lazy` was
+      never compiled, so the claim was read off the intent rather than off
+      the file. `add-columnar-core` task 1.1 turns the feature on and 1.2
+      measures what it costs
 - [ ] 1.2 Record the release binary size and the `cargo build` time before and
       after, per the risk in `design.md`
 
@@ -77,24 +83,31 @@ unsigned widths — reach Parquet as 2.9 once they land.
       column no schema line names offers a name formed from the file's own.
       `examples/analysis.omx` reads `titanic.parquet` through two of them
 
-## 4. Pushdown and lowering (`evaluation`)
+## 4. Pushdown and lowering (`evaluation`) — moved
 
-- [ ] 4.1 Intercept `Ir::Index` so `RowSel` and `ColSel` become Polars
-      `limit`, `filter` and projection (D31)
-- [ ] 4.2 Lower an elementwise computed column to a Polars expression, using
-      the existing `DepKind`/`reverse` analysis to pick the columns that
-      qualify (D30)
-- [ ] 4.3 Leave row-recursive columns on the engine, and test a running
-      balance beside a lowered column in one sheet
-- [ ] 4.4 Property-test the scalar path in `value.rs` against a one-row Polars
-      series for each dtype pair
+**Moved to `add-columnar-core`.** Lowering a column needs the sheet's data
+to be held as columns in the first place, which this change does not do: it
+reads a table's rows as a `DataFrame` and then explodes them into cells.
+The decision of 2026-10-23 puts the frame at the centre, and the lowering
+goes with it. Where each task went:
 
-## 5. `.head(n)` (`omx-expressions`)
+- 4.1 Intercept `Ir::Index` → section 6, which is named for it
+- 4.2 Lower an elementwise computed column → section 5, the two gates:
+      `Column::elementwise` is the first and `lower::expr` the second
+- 4.3 Leave row-recursive columns on the engine → section 5 with it, where
+      it is what the second gate refuses
+- 4.4 Property-test the scalar path against a one-row series → task 8.1,
+      the kernel differential, which asks it of a column each way rather
+      than of `scalar_op` directly
 
-- [ ] 5.1 A `lower_call` arm desugaring `.head(n)` to `[; ^n]`, following
-      `filter` and `select`, plus an entry in the function directory
-- [ ] 5.2 Check that `.head(5)` over a large file reads only the first row
-      group
+## 5. `.head(n)` (`omx-expressions`) — moved
+
+**Moved, and the two tasks went different ways.** The desugaring to
+`[; ^n]` was wanted sooner than this change, because the name had to be
+settled with the rest of the vocabulary: it is `align-polars-vocabulary`
+task 5.6, done. The row groups a `.head(5)` reads is `add-columnar-core`
+task 6.2, which is where it belongs — it is a question about the plan, and
+there is no plan here.
 
 ## 6. The app (`app`)
 

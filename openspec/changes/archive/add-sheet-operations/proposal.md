@@ -1,5 +1,15 @@
 # Proposal: Sheet operations (Phase 3)
 
+> **Superseded**, and nothing of it was built. The decision of 2026-10-23
+> puts the dataframe at the centre of evaluation, where this change had
+> Phase 3 on a column kernel of omasheet's own and ruled a dataframe out
+> (D11). What replaces it: `align-polars-vocabulary` for the names,
+> `add-columnar-core` for the columns the operations will run over, and
+> `add-sheet-operations-polars` for the operations themselves. Its two
+> open questions go to the last of those — the `by <Column>` clause (P16)
+> and multiple matches on a lookup (Q10) — and D11 is superseded by
+> `add-polars-dtypes`.
+
 ## Why
 
 The Phase 1 core evaluates row-wise formulas, filters, aggregates and lookups on

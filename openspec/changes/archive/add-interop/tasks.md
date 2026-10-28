@@ -30,4 +30,4 @@
 - [x] 5.1 `docs/interop.md`, README, an `examples/report.md`
 - [x] 5.2 Import and export in the app: Open reads `.xlsx` and `.csv`, Ctrl+E exports
 - [x] 5.4 JSON (`json-interop`): `omasheet import` of `.json`, `omasheet export --json`, and both in the app
-- [ ] 5.3 Archive the change
+- [x] 5.3 Archive the change

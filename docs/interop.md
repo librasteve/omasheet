@@ -227,6 +227,29 @@ a struct, a map — is left out and named in a notice.
 A `Percent` is written as the decimal it holds: `20%` is `0.2`. Its display
 is no part of its value, so it comes back as a `Decimal`.
 
+### What a table reads
+
+An import copies the rows into the `.omx`. A `table` leaves them where they
+are — `table Sales := dataframe["sales.parquet"]`, written up in
+[the format guide](format.md) — and then reads as little of the file as the
+question needs.
+
+Opening one reads the footer and nothing else: the schema, which is where
+the columns and their types come from, and the row count, which is the
+sheet's length. A file of a million rows and twenty columns costs that much
+to open, whatever is asked of it afterwards.
+
+Each column is then read on its own, the first time something asks for it,
+and kept from then on. A column no formula names and no view shows is never
+read at all: summing one column of the eight in `examples/titanic.parquet`
+reads one of them. What is read stays a column — a formula over it is
+calculated over the whole column at once wherever Polars has the same
+answer as the engine, rather than a row at a time.
+
+A column is read whole, though, so `head(5)` over a file of many row groups
+reads every row group of the columns it shows. It is the rows that are not
+narrowed, never the columns.
+
 ## Markdown
 
 ```sh

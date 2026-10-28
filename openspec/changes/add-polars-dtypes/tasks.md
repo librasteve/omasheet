@@ -125,7 +125,8 @@ Each of these is then carried through Parquet, as task 2.9 of
       exact decimal or rational meaning" both need rewording
 - [ ] 7.4 `openspec/project.md`: Design Principle 3, the Tech Stack numerics
       and Polars lines, and the Roadmap
-- [ ] 7.5 Mark D11 superseded in `add-sheet-operations/design.md`
+- [ ] 7.5 Mark D11 superseded in
+      `archive/add-sheet-operations/design.md`
 - [ ] 7.6 Version bump, and a note that the change is breaking
 
 ## 8. Verification

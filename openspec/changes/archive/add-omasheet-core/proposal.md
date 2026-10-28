@@ -1,5 +1,10 @@
 # Proposal: Omasheet core (Phase 1)
 
+> **Archived**: built, verified and shipped. Task 0.4 is left open on
+> purpose — the provisional syntax choices it would confirm (P17, P18)
+> have been in use since, and confirming them is a question for whoever
+> next finds them wanting rather than work this change is waiting on.
+
 ## Why
 
 Spreadsheets have no plain-text source format. XLSX is opaque to editors, diffs,

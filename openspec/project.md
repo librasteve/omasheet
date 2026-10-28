@@ -48,14 +48,20 @@ that conversation).
 
 ## Roadmap
 
-Delivery is phased. Each phase is one OpenSpec change under `changes/`, built,
-verified and archived before the next begins.
+Delivery is phased. Each phase is one OpenSpec change under
+`openspec/changes/`, built, verified and archived before the next begins.
+Archived means moved to `changes/archive/`, with a note at the top of its
+proposal saying whether it was built or superseded, and by what where it was
+superseded. So `changes/` holds what is live — under way, or written and not
+yet begun — and the archive holds the rest. Phases 1 and 2 are there, and
+`add-sheet-operations` with them as the first change to be superseded rather
+than built.
 
 | Phase | Change | Delivers | Done when |
 |-------|--------|----------|-----------|
 | 1 | `add-omasheet-core` | Numerics, OMX, the `.omx` format, compile / check / evaluate, `omasheet eval`, `lint` and the read-only view | An `.omx` with computed columns, cursor references, filters and lookups evaluates exactly from the CLI, with no dataframe dependency |
 | 2 | `add-interop` | XLSX and CSV import and export; Markdown `{{ }}` and `omx` blocks; `import`, `export`, `render` | A workbook or CSV file imports to `.omx` and exports back; `omasheet render report.md` produces HTML |
-| 3 | `add-sheet-operations` | Group, join, the `group_by` pipe stage, partitioned cursor offsets, incremental recalculation | `Sales \|> group_by(Region) \|> agg(Revenue.sum())` and a left join give exact results |
+| 3 | `add-sheet-operations-polars` | Group, join, sort, the `group_by` pipe stage, partitioned cursor offsets — Polars' own, over the columnar core | `Sales \|> group_by(Region) \|> agg(Revenue.sum())` and a left join give exact results |
 | 4 | `add-units` | Unit literals, dimension checking, currencies, column units, user-defined units, display units | `Revenue + Weight` is rejected by `lint`; unit columns export to XLSX |
 | 5 | `add-uncertainty` | `±` values, propagation, `Uncertain<…>` columns, display | `10 ± 0.1 m` propagates through arithmetic and aggregation |
 
@@ -64,13 +70,21 @@ grid over the same engine. It needs only Phase 1 and gains each later phase's
 features as they land.
 
 Also outside the numbered phases, `add-polars-dtypes` makes an omasheet type
-a name for a Polars dtype, and `add-dataframe-interop` then adds Parquet,
-dataframe-backed tables and elementwise lowering to Polars. The first needs
-Phase 1, the second needs Phase 2 and the first.
+a name for a Polars dtype, and `add-dataframe-interop` then adds Parquet and
+dataframe-backed tables. The first needs Phase 1, the second needs Phase 2
+and the first.
 
-Dependencies: every phase needs Phase 1. Phase 3 does not need Phase 2. Phase 4
-adds deltas to Phases 2 and 3 (units on export, units through group/join), and
-Phase 5 builds on Phase 4.
+Then the owner's decision of 2026-10-23 put the dataframe at the centre, and
+three changes on the `polars-core` branch carry it: `align-polars-vocabulary`
+takes Polars' vocabulary as OMX's, `add-columnar-core` holds a sheet's data as
+Polars columns and lowers to Polars every column it can — the lowering that
+`add-dataframe-interop` had carried, which moves here with it — and
+`add-sheet-operations-polars` is Phase 3 on top of that. `add-sheet-operations`,
+which had Phase 3 on a kernel of omasheet's own, is superseded by the three.
+
+Dependencies: every phase needs Phase 1. Phase 3 now needs Phase 2, through
+the columnar core it is built on. Phase 4 adds deltas to Phases 2 and 3 (units
+on export, units through group/join), and Phase 5 builds on Phase 4.
 
 Not yet in any change: matrices and the matrix product, REPL, LSP server, Neovim plugin, TUI viewer, charts,
 pivots, formatting syntax.
@@ -81,12 +95,19 @@ pivots, formatting syntax.
 - Parsing: hand-written lexer and recursive-descent parser (no parser library)
 - Numerics: the Polars dtypes, held as `i64` and a 38-digit fixed-point
   `i128` with an `i32` scale in `omasheet-omx::decimal`. Aligning with the dtypes does not
-  need the Polars crate: only Parquet and dataframe-backed tables do
-- Sheet operations (group, join, sort): implemented natively in
-  `omasheet-engine` from Phase 3. Polars was out of scope while the exact
-  numbers were rationals (D11); `add-polars-dtypes` gives that up, and
-  `add-dataframe-interop` then brings Polars in for Parquet, for
-  dataframe-backed tables and for elementwise column work
+  need the Polars crate — `omasheet-omx` has no dependency at all — and
+  everything that holds or calculates a column does
+- Evaluation: Polars, from `add-columnar-core`. A sheet's data is held as
+  Polars columns and a column that can be calculated in one step over the
+  whole of them is; the engine keeps what Polars cannot do — a row-recursive
+  column, the exact decimal edges, a value with no dtype — and the two are
+  held to the same answer by a differential test. Sheet operations (group,
+  join, sort) are Polars' too, from Phase 3. Polars was out of scope while
+  the exact numbers were rationals (D11), and native sheet operations were
+  the reading that followed from that; `add-polars-dtypes` gives the
+  rationals up, `add-dataframe-interop` brings Polars in for Parquet and for
+  dataframe-backed tables, and the decision of 2026-10-23 brings it into
+  evaluation
 - XLSX (Phase 2): `calamine` (read), `rust_xlsxwriter` (write)
 - CSV (Phase 2): `csv`
 - Markdown (Phase 2): `pulldown-cmark`
@@ -99,8 +120,9 @@ pivots, formatting syntax.
 ```
 omasheet/
 ├── omasheet-omx      lexer, parser, AST, type checker, dependency analysis
-├── omasheet-engine   values, numerics, execution (Phase 1); sheet operations,
-│                     recalc (3); units (4); uncertainty (5)
+├── omasheet-engine   values, numerics, execution (Phase 1); the Polars
+│                     columns a sheet is held in (`add-columnar-core`);
+│                     sheet operations (3); units (4); uncertainty (5)
 ├── omasheet-interop  XLSX and CSV import/export (Phase 2)
 ├── omasheet-md       Markdown: `{{ }}`, `omx` blocks, render (Phase 2)
 ├── omasheet-cli      the commands of `omasheet`: print, eval, lint, import, export, render

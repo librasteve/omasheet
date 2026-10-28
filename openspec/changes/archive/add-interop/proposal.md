@@ -1,5 +1,8 @@
 # Proposal: XLSX, CSV and Markdown interop (Phase 2)
 
+> **Archived**: built, verified and shipped, JSON included. Parquet was
+> deferred from here to `add-dataframe-interop`, which is live.
+
 ## Why
 
 A text-native spreadsheet is only adoptable if existing workbooks can be brought

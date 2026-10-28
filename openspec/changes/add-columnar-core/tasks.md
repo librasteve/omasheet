@@ -818,13 +818,68 @@ what stops a table's rows being exploded into cells.
 
 ## 9. The documents
 
-- [ ] 9.1 `openspec/project.md`: the Tech Stack bullet that says group, join
-      and sort are native, the Phase 3 row, and the Roadmap paragraph
-- [ ] 9.2 `add-dataframe-interop`: sections 4 and 5 marked moved here, task
-      1.1's tick struck
-- [ ] 9.3 `add-sheet-operations` superseded, and the archive convention
-      settled — it is the first change to be superseded
-- [ ] 9.4 `docs/interop.md` on what a `table` now reads
+- [x] 9.1 `openspec/project.md`: the Tech Stack bullet that says group, join
+      and sort are native, the Phase 3 row, and the Roadmap paragraph.
+
+      The bullet is now *Evaluation*, and says what the engine keeps as
+      well as what Polars takes, since that line is the whole of the design
+      and "sheet operations are Polars'" alone would read as a rewrite.
+      Phase 3 is `add-sheet-operations-polars`, group, join and sort over
+      the columnar core, and incremental recalculation drops out of the row
+      — it was `add-sheet-operations`' and has no consumer. The Roadmap
+      gains a paragraph for the three changes on this branch, and two
+      sentences elsewhere went with them: *Phase 3 does not need Phase 2*
+      is no longer true, Phase 3 being built on a change that needs it, and
+      the numerics bullet's *only Parquet and dataframe-backed tables need
+      the Polars crate* is no longer true either
+- [x] 9.2 `add-dataframe-interop`: sections 4 and 5 marked moved here, task
+      1.1's tick struck.
+
+      Each old task says where it went rather than the sections being
+      struck whole, because the mapping is not one to one: 4.1 is this
+      change's section 6, 4.2 and 4.3 its section 5, and 4.4 is 8.1, the
+      kernel differential. Section 5 split — `head(n)`'s desugaring was
+      wanted before the plan was, and went to `align-polars-vocabulary`
+      task 5.6; only the row groups it reads are here, as 6.2. Task 1.1's
+      tick is struck with the reason: Parquet and the dtypes were on, lazy
+      frames were not, and the tick was read off the intent rather than off
+      `Cargo.toml`
+- [x] 9.3 `add-sheet-operations` superseded, and the archive convention
+      settled — it is the first change to be superseded.
+
+      The convention, the owner's decision: a change no longer live moves
+      to `openspec/changes/archive/`, with a note at the top of its
+      proposal saying whether it was built or superseded, and by what where
+      it was superseded. `changes/` then holds what is live, whether under
+      way or not yet begun. It is written down in the Roadmap, where the
+      word *archived* was already used and had never meant anything.
+
+      Three changes move: `add-sheet-operations`, superseded by the three
+      on this branch, with its two open questions sent to
+      `add-sheet-operations-polars`; and Phases 1 and 2, built and shipped.
+      `add-omasheet-core`'s task 0.4 is left open and said to be so in its
+      note — the provisional syntax it would confirm has been in use for
+      months — and `add-interop`'s last task was *archive the change*,
+      which this is.
+
+      `add-polars-dtypes` and `add-packaging` stay in `changes/` against
+      the owner's answer, which named them finished: the first has
+      `Binary`, `Duration`, the zone work and unsigned widths open, and the
+      second has the release tag and the OmaStore recipe. Both are live
+      work rather than bookkeeping, and archiving them would say they were
+      done. `align-polars-vocabulary` stays too, its D51 question being
+      open, though it is otherwise built
+- [x] 9.4 `docs/interop.md` on what a `table` now reads.
+
+      A *What a table reads* section under Parquet: that opening one reads
+      the footer alone, the schema and the row count; that each column is
+      read on its own the first time something asks for it, so one column
+      summed out of the eight in `titanic.parquet` reads one; and that what
+      is read stays a column. It also says what is not narrowed — a column
+      comes back whole, so `head(5)` over many row groups reads them all —
+      because a reader who is told about the projection will assume the
+      limit. The statement itself stays in `docs/format.md`, which the
+      section links
 
 ## 10. Verification
 
