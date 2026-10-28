@@ -53,7 +53,10 @@ columns* and *What is not lowered*.
   needs this change
 - A viewport-driven snapshot — formatting only the rows the grid shows. It is
   what actually makes a large table viewable, it is independent of this work,
-  and it is probably worth more per unit of effort for the app
+  and it is probably worth more per unit of effort for the app.
+  `hold-less-of-a-big-file` carries it, with the two other places a big file
+  is materialised whole: the limit that does not reach the scan, and the
+  value per row a whole-column read builds
 - Incremental recalculation, which `add-sheet-operations` carried and which
   has no consumer: with a columnar core the per-keystroke cost is dominated
   by the recompile and the snapshot

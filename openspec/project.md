@@ -81,6 +81,9 @@ Polars columns and lowers to Polars every column it can — the lowering that
 `add-dataframe-interop` had carried, which moves here with it — and
 `add-sheet-operations-polars` is Phase 3 on top of that. `add-sheet-operations`,
 which had Phase 3 on a kernel of omasheet's own, is superseded by the three.
+After them comes `hold-less-of-a-big-file`, the snagging change: the three
+places a big Parquet is materialised whole where a part of it would do, each
+measured by the change that left it.
 
 Dependencies: every phase needs Phase 1. Phase 3 now needs Phase 2, through
 the columnar core it is built on. Phase 4 adds deltas to Phases 2 and 3 (units

@@ -337,8 +337,13 @@ what stops a table's rows being exploded into cells.
       two were brought into line rather than the condition left behind,
       which is also the one widening with a measured case for it — a
       condition is where `and` and `or` are written most
-- [ ] 6.2 `.head(5)` over a large file reads only the first row group.
-      **Half of it is done — the projection, not the limit.**
+- [x] 6.2 `.head(5)` over a large file reads only the first row group.
+      **The projection is done here and the limit moves to
+      `hold-less-of-a-big-file`**, the snagging change, where it is section
+      1. It is ticked here on the projection and on the measurement, which
+      is what this change owed: the limit is a change to how a plan is
+      built rather than a gap in one, and it travels with the two other
+      places a big file is materialised whole.
 
       Done: the source is scanned rather than read.
       `LazyFrame::scan_parquet` in place of `ParquetReader::finish`, the
@@ -373,7 +378,8 @@ what stops a table's rows being exploded into cells.
       where the answer is in the first. The same file opened and calculated
       with nothing asked of it reads none at all, and a sum of one of its
       two columns reads that column only, so it is the limit alone that
-      does not reach the scan
+      does not reach the scan. `rowgroups.rs` holds that figure, and is the
+      before of the change that lands the limit
 - [x] 6.3 An aggregate over a frame column taken by Polars, with `fit_agg`
       re-applying the `Percent` or `Fraction` wrapper from `Column::ty`
       (D69) — `examples/budget.expected` is what catches a slip.
@@ -953,8 +959,22 @@ what stops a table's rows being exploded into cells.
       the day the limit reaches the scan this test fails with what it has
       become rather than passing quietly
 
-## 11. If the measurement says so
+## 11. If the measurement says so — moved
 
-- [ ] 11.1 `Value::Series(Rc<Column>)`, with a `materialised()` that turns it
-      into a `Vector` at the top of the generic paths. Only if 7.3 says
-      `Ir::Column` escaping into generic code is actually costing anything
+**Moved to `hold-less-of-a-big-file`**, the snagging change, as its
+sections 0 and 2.
+
+- 11.1 `Value::Series(Rc<Column>)`, with a `materialised()` that turns it
+      into a `Vector` at the top of the generic paths, was conditional on
+      7.3 saying that `Ir::Column` escaping into generic code costs
+      something. 7.3 never said: it timed the phases of a rebuild, not the
+      width of a value, so the condition was left neither met nor refused.
+      The measurement that would settle it is the first task there, and the
+      variant is the second, conditional on it as it has always been.
+
+      It goes there rather than staying here because it is one of three
+      places a big file is materialised whole, and the three are one piece
+      of work: the row groups read (6.2's limit), the values a column read
+      builds, and the cells the snapshot formats. Taken apart they are
+      three measurements of the same thing; taken together they are what
+      decides whether a file bigger than memory can be opened at all
