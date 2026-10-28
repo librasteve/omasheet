@@ -902,9 +902,28 @@ what stops a table's rows being exploded into cells.
 ## 10. Verification
 
 - [ ] 10.1 `cargo fmt --all --check`, `cargo clippy --workspace
-      --all-targets -- -D warnings`, `cargo test --workspace`
-- [ ] 10.2 Every `examples/*.expected` byte-identical, under both `Never`
-      and `Always`
+      --all-targets -- -D warnings`, `cargo test --workspace`.
+
+      **Two of the three.** `cargo fmt --all --check` passes, after the ten
+      places on this branch it had never been run over; so does
+      `cargo clippy --workspace --all-targets -- -D warnings`, over every
+      crate including the app.
+
+      `cargo test --workspace` has not run whole. Every library crate
+      passes — `omasheet-omx`, `omasheet-engine`, `omasheet-interop` and
+      `omasheet-md`, 311 tests — but `omasheet-cli`'s suite builds the app
+      binary to run it, and the app would not build while `Main.qml` was
+      being edited elsewhere. Nothing of this change is implicated; the
+      run is owed, not the fix
+- [x] 10.2 Every `examples/*.expected` byte-identical, under both `Never`
+      and `Always`.
+
+      `every_example_matches_its_expected_output_either_way` (8.2) is this,
+      and it passes: twelve files, three lowerings — `Never`, `Auto` and
+      `Always` — each output read against the committed `.expected`, and no
+      diagnostic allowed. The CLI's own golden reads the same files through
+      the binary under `Auto`, which is a path rather than a lowering, and
+      it is owed the run 10.1 is owed
 - [x] 10.3 A real multi-row-group Parquet opened, and the row groups read
       counted.
 
