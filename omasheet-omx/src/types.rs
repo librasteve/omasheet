@@ -25,12 +25,24 @@ pub enum S {
     Date,
     Time,
     DateTime,
+    /// Text that reads as a web address: a scheme, then the rest of the
+    /// address. It holds whatever a `String` does.
+    Url,
+    /// Text that reads as an email address: one `@`, with a name before it
+    /// and a domain after. It holds whatever a `String` does.
+    Email,
+    /// Text that reads as a UUID: `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f`.
+    /// It holds whatever a `String` does.
+    Uuid,
 }
 
 impl S {
     /// A type that can be written in a column schema.
     pub fn from_name(name: &str) -> Option<S> {
         Some(match name {
+            "Integer" => S::Int,
+            // `Int` is what this type was called before, and is still read
+            // so that a file written then still opens. It is not written.
             "Int" => S::Int,
             "Decimal" => S::Decimal,
             "Fraction" => S::Fraction,
@@ -41,6 +53,9 @@ impl S {
             "Time" => S::Time,
             "Datetime" => S::DateTime,
             "Boolean" => S::Boolean,
+            "Url" => S::Url,
+            "Email" => S::Email,
+            "Uuid" => S::Uuid,
             _ => return None,
         })
     }
@@ -60,6 +75,11 @@ impl S {
     /// A date, a time of day, or both.
     pub fn is_temporal(self) -> bool {
         matches!(self, S::Date | S::Time | S::DateTime)
+    }
+
+    /// Text, or one of the kinds of text that read as something narrower.
+    pub fn is_text(self) -> bool {
+        matches!(self, S::String | S::Url | S::Email | S::Uuid)
     }
 
     /// The type of `self + other`, or of `self - other` when `minus`, where
@@ -112,6 +132,9 @@ impl S {
             Some(S::Any)
         } else if self.is_numeric() && other.is_numeric() {
             Some(self.wider(other))
+        } else if self.is_text() && other.is_text() {
+            // Two kinds of text together are text, which both of them are.
+            Some(S::String)
         } else {
             None
         }
@@ -122,9 +145,12 @@ impl S {
     pub fn converts_to(self, to: S) -> bool {
         let number = self.is_exact() || self == S::Float;
         self == to
-            || matches!(self, S::Any | S::String)
+            || self == S::Any
+            || self.is_text()
             || match to {
                 S::Any | S::String => true,
+                // Only text reads as one of these, and text is taken above.
+                S::Url | S::Email | S::Uuid => false,
                 S::Int | S::Decimal | S::Fraction | S::Float => number || self == S::Boolean,
                 S::Percent | S::Boolean => number,
                 S::Date | S::Time => self == S::DateTime,
@@ -140,6 +166,9 @@ impl S {
             // An `Int` is any exact number. A `Decimal`, a `Fraction` and a
             // `Percent` hold the same numbers, shown in different ways.
             || (self.is_exact() && to.is_exact() && (to != S::Int || self == S::Int))
+            // A web address, an email address and a UUID are all text. Text
+            // is not one of them until it has been read as one.
+            || (self.is_text() && to == S::String)
     }
 }
 
@@ -147,7 +176,7 @@ impl fmt::Display for S {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             S::Any => "Any",
-            S::Int => "Int",
+            S::Int => "Integer",
             S::Decimal => "Decimal",
             S::Fraction => "Fraction",
             S::Percent => "Percent",
@@ -157,6 +186,9 @@ impl fmt::Display for S {
             S::Date => "Date",
             S::Time => "Time",
             S::DateTime => "Datetime",
+            S::Url => "Url",
+            S::Email => "Email",
+            S::Uuid => "Uuid",
         })
     }
 }

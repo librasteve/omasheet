@@ -8,14 +8,14 @@
 
 table Passengers := dataframe["titanic.parquet"]
 
-Survived : Int
-Pclass   : Int
+Survived : Integer
+Pclass   : Integer
 Name     : String
 Sex      : String
 Age      : Float
 Fare     : Float
-Siblings : Int from "Siblings/Spouses Aboard"
-Parents  : Int from "Parents/Children Aboard"
+Siblings : Integer from "Siblings/Spouses Aboard"
+Parents  : Integer from "Parents/Children Aboard"
 
 Family := Siblings + Parents
 

@@ -339,10 +339,10 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     ),
     doc(
         CONVERT,
-        "Int",
-        "x.Int",
+        "Integer",
+        "x.Integer",
         "A whole number: a fraction loses its fractional part, so 19.99 gives 19 and -19.99 \
-         gives -19. Also written Int(x).",
+         gives -19. Also written Integer(x).",
     ),
     doc(
         CONVERT,

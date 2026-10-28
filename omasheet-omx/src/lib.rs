@@ -19,6 +19,7 @@ pub mod funcs;
 pub mod ir;
 pub mod lexer;
 pub mod parser;
+pub mod text;
 pub mod types;
 
 pub use check::{

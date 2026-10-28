@@ -5,8 +5,8 @@
 
 sheet Applications
 
-Score : Int
-Refs  : Int
+Score : Integer
+Refs  : Integer
 
 | Name | Score | Refs | Passed | Enough | Decided | Rejected | Settled |
 | ---- | ----- | ---- | ------ | ------ | ------- | -------- | ------- |

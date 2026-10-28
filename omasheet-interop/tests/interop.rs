@@ -971,6 +971,45 @@ fn parquet_writes_null_for_a_value_wider_than_the_column_type() {
     assert_eq!(eval(&back.source, "t[A; 1]"), "2.5");
 }
 
+/// Every kind of text goes out as the text it holds, in each format, and
+/// comes back as text: no format but `.omx` says what the text was read as.
+#[test]
+fn a_kind_of_text_goes_out_as_the_text_it_holds() {
+    const UUID: &str = "7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f";
+    let file = format!(
+        "sheet T\n\nSite : Url\nContact : Email\nRef : Uuid\n\n\
+         Site | Contact | Ref\n\
+         https://example.com | name@example.com | {UUID}\n"
+    );
+    lints(&file);
+
+    assert_eq!(
+        text_of(&csv_of(&file, None), 0),
+        format!("Site,Contact,Ref\nhttps://example.com,name@example.com,{UUID}\n")
+    );
+
+    let book = xlsx::export("t.omx", &file, None, options()).unwrap();
+    let back = xlsx::import(&book.files[0].bytes).unwrap();
+    lints(&back.source);
+    assert_eq!(eval(&back.source, "T[Contact; 0]"), "name@example.com");
+
+    let written = text_of(&json_of(&file, None), 0);
+    let back = json::import("t", written.as_bytes()).unwrap();
+    lints(&back.source);
+    assert_eq!(eval(&back.source, "T[Ref; 0]"), UUID);
+
+    // Parquet holds it as the String column it is, so nothing goes out as
+    // text that was not text already and no loss is reported.
+    let out = parquet_of(&file, None);
+    assert!(out.notices.is_empty(), "{:?}", out.notices);
+    let back = parquet::import("t", &out.files[0].bytes).unwrap();
+    lints(&back.source);
+    assert_eq!(eval(&back.source, "t[Site; 0]"), "https://example.com");
+    // And no schema line comes back: text reads back as text, and the
+    // narrower reading is not Parquet's to hold.
+    assert!(!back.source.contains(": Email"), "{}", back.source);
+}
+
 #[test]
 fn parquet_round_trips_the_examples() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
@@ -1269,7 +1308,7 @@ fn a_column_the_schema_does_not_name_says_how_to_name_it() {
     assert!(
         out.errors
             .iter()
-            .any(|e| e.contains("UnitsBoxesSold : Int from \"Units/Boxes Sold\"")),
+            .any(|e| e.contains("UnitsBoxesSold : Integer from \"Units/Boxes Sold\"")),
         "{:?}",
         out.errors
     );
@@ -1375,7 +1414,7 @@ fn a_declared_type_the_file_fits_is_read_as_declared() {
 #[test]
 fn a_declared_type_narrower_than_the_file_is_reported() {
     let dir = scratch("table-narrower");
-    // A decimal is not held by an `Int`, so the narrower declaration is a
+    // A decimal is not held by an `Integer`, so the narrower declaration is a
     // mismatch where the wider one was not.
     let exported = parquet_of(
         "sheet Prices\n\nMonth | Price\nJan   | 19.99\n",

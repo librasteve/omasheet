@@ -64,13 +64,13 @@ Numbers are shown the way Raku shows them:
 
 | Type | Shown |
 |---|---|
-| `Int` | `101`; `1e+15` and `1.8446744073709551…e+19` from `1e15` |
+| `Integer` | `101`; `1e+15` and `1.8446744073709551…e+19` from `1e15` |
 | `Decimal` | `1.01`; `1e-43` below `1e-15` |
 | `Fraction` | `1/7`, `3/4`, `2 3/4`, `333 1/3`; `3` when it is whole |
 | `Percent` | `20%`, `12.5%`, `41.67%` |
 | `Float` | `100`, `1.5`, `1.4142135623730951`; `1e+21` or `1.5e-16` when very large or small; `Inf`, `-Inf`, `NaN` |
 
-A `Float` that is a whole number looks like an `Int`, but it is still a `Float`.
+A `Float` that is a whole number looks like an `Integer`, but it is still a `Float`.
 
 A `Decimal`, a `Fraction` and a `Percent` are the same exact numbers shown in
 different ways: `19.99`, `1/7` and `20%`. Adding, subtracting, multiplying
@@ -107,12 +107,12 @@ whichever works it out. Where the answer should be false rather than empty,
 
 ## Converting
 
-The name of a type converts to it, written `x.Int`, `x.Int()` or `Int(x)`. A
+The name of a type converts to it, written `x.Integer`, `x.Integer()` or `Integer(x)`. A
 vector is converted value by value.
 
 | Written | Gives |
 |---|---|
-| `x.Int` | a whole number: `19.99` gives `19`, `-19.99` gives `-19` |
+| `x.Integer` | a whole number: `19.99` gives `19`, `-19.99` gives `-19` |
 | `x.Decimal` | the same number as a decimal: `(1/8).Decimal` is `0.125`, `(1/3).Decimal` is `0.333…` |
 | `x.Percent` | the same number as a percentage: `0.4` gives `40%`, `5/12` gives `41.67%` |
 | `x.Float` | a floating-point number |
@@ -121,8 +121,8 @@ vector is converted value by value.
 | `x.Date`, `x.Time` | that half of a `Datetime` |
 | `x.Datetime` | a `Date` at midnight |
 
-Text is read the way a cell is: `"42".Int` is `42`, `"20%".Decimal` is `1/5`,
-`"2025-01-31".Date` is that date, and `"abc".Int` is an error. `true.Int` is
+Text is read the way a cell is: `"42".Integer` is `42`, `"20%".Decimal` is `1/5`,
+`"2025-01-31".Date` is that date, and `"abc".Integer` is an error. `true.Integer` is
 `1`. To round rather than drop the fraction, use `round(x)`; `round(x, 2)`
 rounds to two decimal places. For the nearest hundred, divide, round and
 multiply back: `round(x / 100) * 100`.
@@ -237,8 +237,8 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
   cell is empty
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
 - Counting up: `succ` — a number plus one, or the next text, `AZ` to `BA`
-- Converting: `Int Decimal Percent Float String Boolean Date Time Datetime`,
-  each also written `cast(x, Int)`
+- Converting: `Integer Decimal Percent Float String Boolean Date Time Datetime`,
+  each also written `cast(x, Integer)`
 - Dates: `today() now() year month day weekday quarter week ordinal_day
   hour minute second date time`
 - Months: `add_months(x, n)` — what `x + n.month` is — `month_end(x)` and

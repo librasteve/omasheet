@@ -21,7 +21,7 @@ use omasheet_engine::{Engine, Lowering, Options, table, view_with};
 /// worth asking about, since the two paths reach it by different rules.
 const TYPES: [(&str, &[&str]); 10] = [
     (
-        "Int",
+        "Integer",
         &[
             "0",
             "1",
@@ -206,7 +206,7 @@ impl Lcg {
     /// and this is the middle ground between them.
     fn value(&mut self, ty: &str, edges: &[&str]) -> String {
         match ty {
-            "Int" => format!("{}", self.next() as i64 - (1 << 31)),
+            "Integer" => format!("{}", self.next() as i64 - (1 << 31)),
             "Decimal" => {
                 let digits = self.next() % 1_000_000_000;
                 let scale = self.below(12) as usize;

@@ -72,8 +72,8 @@ A sheet may read its rows from a Parquet file instead of holding them:
 table Sales := dataframe["data/sales.parquet"]
 
 Month   : String
-Revenue : Int
-Cost    : Int
+Revenue : Integer
+Cost    : Integer
 
 Profit := Revenue - Cost
 ```
@@ -87,7 +87,7 @@ with a space or a slash in it, which Parquet allows and omasheet does not —
 is given a name here with a `from` clause:
 
 ```omx
-SiblingsSpousesAboard : Int from "Siblings/Spouses Aboard"
+SiblingsSpousesAboard : Integer from "Siblings/Spouses Aboard"
 ```
 
 The quoted name is the file's, used to find the column and to check it; the
@@ -161,13 +161,15 @@ sheet's rows were derived.
 
 ## Types
 
-`Int`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,
-`Date`, `Time`, `Datetime`.
+`Integer`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,
+`Date`, `Time`, `Datetime`, `Url`, `Email`, `Uuid`.
 A column with no `Name : Type` line takes its type from its cells.
+`Integer` was called `Int` before, and a column declared that way is still
+read as one; `Integer` is what is written.
 
 | Type | Written |
 |---|---|
-| `Int` | `42`, `1_000_000` |
+| `Integer` | `42`, `1_000_000` |
 | `Decimal` | `19.99`, `1/7`, `2 3/4` — exact |
 | `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction |
 | `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
@@ -177,13 +179,16 @@ A column with no `Name : Type` line takes its type from its cells.
 | `Date` | `2025-01-31` |
 | `Time` | `09:30`, `09:30:15` |
 | `Datetime` | `2025-01-31T09:30` |
+| `Url` | `https://example.com`, `mailto:name@example.com` |
+| `Email` | `name@example.com` |
+| `Uuid` | `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f` |
 
 A cell's written form carries its type where that form is distinctive:
 `true`, `2025-01-31`, `09:30`, `20%` and `1.5e3` read as a `Boolean`, a
 `Date`, a `Time`, a `Percent` and a `Float` wherever they stand. A
 `Name : Type` line is what makes the type the whole column's, and is needed
 where the written values would not carry it: a `Float` column of `22` and
-`7.25`, which read as an `Int` and a `Decimal` on their own, or a `Fraction`
+`7.25`, which read as an `Integer` and a `Decimal` on their own, or a `Fraction`
 or `Percent` column over numbers written plainly. Nothing is lost by leaving
 a line out where the cells already say it — the app shows a type
 [muted](app.md#the-app) where it comes from the cells and plain where it is
@@ -195,6 +200,23 @@ Text written bare may hold Markdown: `a **slow** start`,
 `"2 * 3 * 4"`. So is the text a formula makes, as it is written in quotes
 there; a value read from a cell is Markdown or not as that cell is.
 `omasheet print` shows every cell as it is written.
+
+A `Url`, an `Email` and a `Uuid` are text read as something narrower. A
+column of one keeps the text that was written and takes only text that reads
+as one, so a cell that is not an address says so where it is. No cell carries
+one of these by its written form, so a column is one only where the line says
+it: text that came in from another file stays text until it is declared, or
+read as one by name — `Contact.Email`, which marks the cells that do not read
+as one and leaves the rest of the file calculating.
+
+What reads as one is kept plain. A `Url` needs a scheme and then the rest of
+the address, so `https://example.com` and `mailto:name@example.com` are ones
+and bare `example.com` is not. An `Email` needs one `@`, a name before it,
+and a domain carrying a dot after it; nothing else about the name is read
+into, so `a.b+tag@example.co.uk` is one. A `Uuid` is the thirty-six character
+form, `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f`, in either case. None of them
+may hold a space. Only `.omx` keeps which one a column is: through CSV, an
+XLSX Workbook, JSON or Parquet the text goes out and comes back as text.
 
 A `Decimal`, a `Fraction` and a `Percent` hold the same exact numbers, and a
 column of one takes the others, showing what it holds its own way: `1/7` is

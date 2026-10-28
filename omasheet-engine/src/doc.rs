@@ -17,7 +17,7 @@ use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use omasheet_omx::date::{self, Style};
 use omasheet_omx::file::{FileAst, SchemaLine, SheetDecl, ident_len, parse_file, split_cells};
 use omasheet_omx::parser::parse_expr;
-use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile};
+use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile, text};
 
 const UNDO_LIMIT: usize = 200;
 
@@ -116,6 +116,10 @@ pub struct Problem {
     pub line: usize,
     pub column: usize,
     pub message: String,
+    /// The cell the problem is in, as (sheet, row, column), for going
+    /// straight to it. `None` for a problem no cell claimed: one in the
+    /// text around the sheets, or in a sheet that did not compile.
+    pub cell: Option<(usize, usize, usize)>,
 }
 
 pub struct Document {
@@ -135,6 +139,47 @@ pub struct Document {
 impl Default for Document {
     fn default() -> Self {
         Document::from_text(BLANK)
+    }
+}
+
+/// The narrowest kind of text every cell of a column reads as. `None`
+/// where they are not all text, not all one kind of it, or there are none.
+///
+/// This is the app's own reading, for what a column's type is shown as
+/// where the file does not say. The checker is not told and the file is not
+/// changed, so the column is still held to `String`: a column that gains an
+/// odd value later is never in breach of a type it did not declare.
+fn narrower_text_type(rows: &[Vec<CellSnap>], col: usize) -> Option<&'static str> {
+    // One pass, and it gives up as soon as no kind is left: this is read
+    // again for every column each time the file is rebuilt, which is once
+    // per edit.
+    let (mut url, mut email, mut uuid) = (true, true, true);
+    let mut held_any = false;
+    for row in rows {
+        let held = match row.get(col).map(|cell| &cell.value) {
+            Some(Value::String(held, _)) => held,
+            // An empty cell says nothing either way.
+            Some(Value::Null) => continue,
+            _ => return None,
+        };
+        held_any = true;
+        url = url && text::is_url(held);
+        email = email && text::is_email(held);
+        uuid = uuid && text::is_uuid(held);
+        if !(url || email || uuid) {
+            return None;
+        }
+    }
+    if !held_any {
+        return None;
+    }
+    // A `mailto:` address reads as both a web address and an email address,
+    // so the web address is taken first.
+    match (url, email, uuid) {
+        (true, ..) => Some("Url"),
+        (_, true, _) => Some("Email"),
+        (.., true) => Some("Uuid"),
+        _ => None,
     }
 }
 
@@ -167,10 +212,11 @@ fn iso_entry(style: &Style, ty: &str, input: &str) -> Option<String> {
 }
 
 /// A whole number and a part typed into a cell, `2 3/4`, as the decimal a
-/// file keeps, `2.75`. `None` if it is not one, or the column is `String`.
+/// file keeps, `2.75`. `None` if it is not one, or the column holds text.
 fn fraction_entry(ty: &str, input: &str) -> Option<String> {
     let input = input.trim();
-    let r = omasheet_omx::convert::parse_mixed(input).filter(|_| ty != "String")?;
+    let text = matches!(ty, "String" | "Url" | "Email" | "Uuid");
+    let r = omasheet_omx::convert::parse_mixed(input).filter(|_| !text)?;
     // Only where the decimal is no longer than what was typed. `2 3/4` is
     // better kept as `2.75`, but `1 1/3` would become thirty-eight digits,
     // and a file is for reading: leave that as it was written, which reads
@@ -187,12 +233,15 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
     let time = date::time_from(17, 5, 0).unwrap_or(0);
     let also_iso = if style.is_iso() { "" } else { " or ISO" };
     match ty {
-        "Int" => "Int: a whole number, e.g. 42".into(),
+        "Integer" => "Integer: a whole number, e.g. 42".into(),
         "Decimal" => "Decimal: an exact decimal number, e.g. 19.99 or 20%".into(),
         "Percent" => "Percent: an exact number shown as a percentage, e.g. 20%".into(),
         "Float" => "Float: a floating-point number, e.g. 1.5, 2e-3 or Inf".into(),
         "Boolean" => "Boolean: true or false".into(),
         "String" => "String".into(),
+        "Url" => "Url: a web address, e.g. https://example.com".into(),
+        "Email" => "Email: an email address, e.g. name@example.com".into(),
+        "Uuid" => "Uuid: a UUID, e.g. 7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f".into(),
         "Date" => format!(
             "Date: {}, e.g. {}{also_iso}",
             style.date_pattern(),
@@ -2335,10 +2384,14 @@ impl Document {
         };
 
         let mut snapshot = Snapshot::default();
+        // Where each problem is, for the problems list to go there. Only a
+        // cell that holds one is kept, so this stays as short as the list.
+        let mut located: Vec<(Span, usize, usize, usize)> = Vec::new();
         for (t, sheet) in program.sheets.iter().enumerate() {
             let decl = ast.sheets.iter().find(|d| d.name == sheet.name);
             let mut columns = Vec::new();
             let mut column_errors = Vec::new();
+            let mut column_spans = Vec::new();
             for col in sheet.cols.iter() {
                 let computed = decl
                     .filter(|_| matches!(col.kind, ColKind::Computed(_)))
@@ -2355,7 +2408,8 @@ impl Document {
                         self.text[c.expr_span.start as usize..c.expr_span.end as usize].to_string()
                     }),
                 });
-                column_errors.push(computed.and_then(|c| within(c.expr_span)));
+                column_spans.push(computed.map(|ce| ce.expr_span));
+                column_errors.push(computed.and_then(|ce| within(ce.expr_span)));
             }
             // Column-wise before row-wise (D75): a column the dataframe
             // holds is walked once here, where asking for it a cell at a
@@ -2381,11 +2435,26 @@ impl Document {
                         .and_then(|d| d.rows.get(r))
                         .and_then(|row| row.get(c));
                     let (source, error) = match (&column.formula, src_cell) {
-                        (Some(formula), _) => (
-                            format!("= {formula}"),
-                            failed.then(|| column_errors[c].clone()).flatten(),
-                        ),
-                        (None, Some(cell)) => (cell.text.clone(), within(cell.span)),
+                        (Some(formula), _) => {
+                            // One formula is one span over every row, so
+                            // the rows that failed are where a problem in
+                            // it can be gone to, and row 0 would be a cell
+                            // that is perfectly well.
+                            if let Some(span) = column_spans[c].filter(|_| failed) {
+                                located.push((span, t, r, c));
+                            }
+                            (
+                                format!("= {formula}"),
+                                failed.then(|| column_errors[c].clone()).flatten(),
+                            )
+                        }
+                        (None, Some(cell)) => {
+                            let error = within(cell.span);
+                            if error.is_some() {
+                                located.push((cell.span, t, r, c));
+                            }
+                            (cell.text.clone(), error)
+                        }
                         (None, None) => (String::new(), None),
                     };
                     let display = show(&value);
@@ -2406,6 +2475,17 @@ impl Document {
                     });
                 }
                 rows.push(row);
+            }
+            // A column of addresses says so in its header, where the file
+            // leaves its type to the cells. It stays undeclared, so it is
+            // shown muted and nothing holds its cells to it.
+            for (c, column) in columns.iter_mut().enumerate() {
+                if column.declared || column.formula.is_some() || column.ty != "String" {
+                    continue;
+                }
+                if let Some(found) = narrower_text_type(&rows, c) {
+                    column.ty = found.to_string();
+                }
             }
             snapshot.sheets.push(SheetSnap {
                 name: sheet.name.clone(),
@@ -2442,14 +2522,30 @@ impl Document {
                 doc: f.doc.clone(),
             });
         }
+        // A formula's span is one for every row it failed in, so each
+        // problem takes a cell of its own: without that, every failure in
+        // one column would be gone to at the same row.
+        let mut taken = vec![false; located.len()];
         snapshot.problems = diags
             .iter()
             .map(|d| {
                 let (line, column) = sources.line_col(d.span.src, d.span.start);
+                let at = located
+                    .iter()
+                    .enumerate()
+                    .find(|(i, (span, ..))| !taken[*i] && contains(*span, d.span))
+                    .map(|(i, _)| i);
+                if let Some(i) = at {
+                    taken[i] = true;
+                }
                 Problem {
                     line,
                     column,
                     message: message(d),
+                    cell: at.map(|i| {
+                        let (_, t, r, c) = located[i];
+                        (t, r, c)
+                    }),
                 }
             })
             .collect();
@@ -2911,7 +3007,7 @@ mod tests {
         assert_eq!(doc.add_column(1, "Extra").unwrap_err(), why);
         assert_eq!(doc.insert_column(1, 0, "Extra").unwrap_err(), why);
         assert_eq!(doc.delete_columns(1, 0, 1).unwrap_err(), why);
-        assert!(!doc.set_column_types(1, &[0], Some("Int")));
+        assert!(!doc.set_column_types(1, &[0], Some("Integer")));
         assert_eq!(doc.text(), text);
 
         // Its formulas are its text, so they are edited as any sheet's: the
@@ -3032,6 +3128,100 @@ mod tests {
         assert_eq!(t.rows[1][3].display, "50");
         assert_eq!(doc.snapshot().problems.len(), 1);
         assert_eq!(doc.snapshot().problems[0].line, 8);
+        // And the problem says which cell holds it, to be gone to.
+        assert_eq!(doc.snapshot().problems[0].cell, Some((0, 0, 1)));
+    }
+
+    #[test]
+    fn a_kind_of_text_says_which_cell_does_not_read_as_one() {
+        let text = "sheet Contacts\n\nContact : Email\n\n\
+                    Contact | Note\nname@example.com | a\nnope | b\n";
+        let doc = Document::from_text(text);
+        let rows = &doc.snapshot().sheets[0].rows;
+        assert_eq!(rows[0][0].display, "name@example.com");
+        assert_eq!(rows[1][0].display, "#ERROR");
+        // The message is the app's own, with what can be typed as its help.
+        assert_eq!(
+            rows[1][0].error.as_deref(),
+            Some(
+                "Contact has type Email, nope does not match \
+                 (Email: an email address, e.g. name@example.com)"
+            )
+        );
+        // The rest of the sheet is still there.
+        assert_eq!(rows[1][1].display, "b");
+        // And the problem names the cell: sheet 0, row 1, column 0.
+        let problems = &doc.snapshot().problems;
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].cell, Some((0, 1, 0)));
+    }
+
+    #[test]
+    fn a_failed_conversion_is_gone_to_at_the_row_that_failed() {
+        let text = "sheet Contacts\n\n\
+                    Written | Checked\nname@example.com | *\nnope | *\nalso bad | *\n\n\
+                    Checked := Written.Email\n";
+        let doc = Document::from_text(text);
+        let rows = &doc.snapshot().sheets[0].rows;
+        assert_eq!(rows[0][1].display, "name@example.com");
+        assert_eq!(rows[1][1].display, "#ERROR");
+        assert_eq!(rows[2][1].display, "#ERROR");
+        // Two failures, each gone to at the row it happened in, and neither
+        // at row 0, which holds a cell that is perfectly well.
+        let problems = &doc.snapshot().problems;
+        let cells: Vec<_> = problems.iter().map(|p| p.cell).collect();
+        assert_eq!(cells, [Some((0, 1, 1)), Some((0, 2, 1))]);
+    }
+
+    #[test]
+    fn a_column_of_addresses_offers_the_kind_of_text_it_holds() {
+        let text = "sheet T\n\n\
+             Contact | Site | Ref | Mixed | Count\n\
+             a@example.com | https://example.com | 7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f | a@example.com | 7\n\
+             b@example.co.uk | https://example.org/x | 00000000-0000-0000-0000-000000000000 | nope | 12\n";
+        let doc = Document::from_text(text);
+        let shown: Vec<&str> = doc.snapshot().sheets[0]
+            .columns
+            .iter()
+            .map(|column| column.ty.as_str())
+            .collect();
+        // Each column says in its header what its cells read as, and a
+        // column with one odd cell, or of numbers, says what it did before.
+        assert_eq!(shown, ["Email", "Url", "Uuid", "String", "Integer"]);
+        // Nothing is declared by saying so: the header is shown muted, and
+        // the file has no type line to go with it.
+        assert!(doc.snapshot().sheets[0].columns.iter().all(|c| !c.declared));
+        assert!(!doc.text().contains(": Email"));
+    }
+
+    #[test]
+    fn an_empty_cell_does_not_stop_a_kind_of_text_being_offered() {
+        let text = "sheet T\n\n\
+                    Contact | Link\n\
+                    a@example.com | mailto:a@example.com\n\
+                    | mailto:b@example.com\n";
+        let doc = Document::from_text(text);
+        let ty = |c: usize| doc.snapshot().sheets[0].columns[c].ty.clone();
+        assert_eq!(ty(0), "Email");
+        // A `mailto:` address reads as both, and the web address wins.
+        assert_eq!(ty(1), "Url");
+        // A column with nothing in it says nothing.
+        let empty = Document::from_text("sheet T\n\nA | B\n| \n");
+        assert_eq!(empty.snapshot().sheets[0].columns[0].ty, "");
+    }
+
+    #[test]
+    fn each_kind_of_text_is_shown_an_example_that_reads_as_one() {
+        let example = |ty| {
+            let hint = entry_hint(&Style::ISO, ty);
+            hint.split("e.g. ")
+                .nth(1)
+                .unwrap_or_else(|| panic!("no example in `{hint}`"))
+                .to_string()
+        };
+        assert!(omasheet_omx::text::is_url(&example("Url")));
+        assert!(omasheet_omx::text::is_email(&example("Email")));
+        assert!(omasheet_omx::text::is_uuid(&example("Uuid")));
     }
 
     #[test]

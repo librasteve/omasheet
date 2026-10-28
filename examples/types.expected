@@ -56,3 +56,10 @@ String | Number | Doubled | Whole | Decimal | Percent
 20%    |    0.2 |     0.4 |     0 |     0.2 |     20%
 1/8    |  0.125 |    0.25 |     0 |   0.125 |   12.5%
 1.5e3  |   1500 |    3000 |  1500 |    1500 | 150000%
+
+sheet Text
+
+Site                   | Contact               | Ref                                  | Written           | Checked           | AsText
+-----------------------|-----------------------|--------------------------------------|-------------------|-------------------|----------------------
+https://example.com    | name@example.com      | 7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f | sales@example.com | sales@example.com | name@example.com
+mailto:help@example.uk | a.b+tag@example.co.uk | 00000000-0000-0000-0000-000000000000 | ops@example.co.uk | ops@example.co.uk | a.b+tag@example.co.uk

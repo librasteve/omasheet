@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Stephen Roe
 
-//! Conversions between the types: what `Int(x)`, `Decimal(x)` and the rest
+//! Conversions between the types: what `Integer(x)`, `Decimal(x)` and the rest
 //! do.
 
 use crate::ast::Lit;
@@ -86,12 +86,16 @@ pub fn lit_type(l: &Lit) -> S {
 
 /// The name of a type with `a` or `an` before it.
 fn a(to: S) -> String {
-    let article = if to == S::Int { "an" } else { "a" };
+    let article = if matches!(to, S::Int | S::Email) {
+        "an"
+    } else {
+        "a"
+    };
     format!("{article} {to}")
 }
 
 /// A value as the type `to`, as the conversion of that name gives it. A
-/// fraction loses its fractional part as an `Int`; text is read the way a
+/// fraction loses its fractional part as an `Integer`; text is read the way a
 /// cell is. The error says why it cannot be done. Writing a value as `Text`
 /// is not done here: how it is written is the engine's business.
 pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
@@ -108,6 +112,20 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
         return Ok(lit.clone());
     }
     Ok(match (lit, to) {
+        // A narrower kind of text is the text itself, once it reads as one.
+        // Surrounding space goes, as it does when text is read as a number.
+        (Lit::String(s), S::Url | S::Email | S::Uuid) => {
+            let s = s.trim();
+            let reads = match to {
+                S::Url => crate::text::is_url(s),
+                S::Email => crate::text::is_email(s),
+                _ => crate::text::is_uuid(s),
+            };
+            if !reads {
+                return Err(format!("`{s}` is not {}", a(to)));
+            }
+            Lit::String(s.to_string())
+        }
         (Lit::String(s), _) => {
             let read = parse_literal(s.trim()).filter(|l| !matches!(l, Lit::String(_)));
             return read
@@ -127,13 +145,13 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
         (Lit::Int(n), S::Decimal) => Lit::Int(*n),
         (Lit::Decimal(r), S::Int) => match r.trunc().to_i64() {
             Some(n) => Lit::Int(n),
-            None => return Err("the number is too large for an Int".to_string()),
+            None => return Err("the number is too large for an Integer".to_string()),
         },
         (Lit::Float(f), S::Int | S::Decimal | S::Percent) => match Dec::from_f64(*f) {
             Some(r) if to == S::Percent => Lit::Percent(r),
             Some(r) if to == S::Int => match r.trunc().to_i64() {
                 Some(n) => Lit::Int(n),
-                None => return Err("the number is too large for an Int".to_string()),
+                None => return Err("the number is too large for an Integer".to_string()),
             },
             Some(r) => match r.to_i64() {
                 Some(n) => Lit::Int(n),
@@ -169,7 +187,7 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
 mod tests {
     use super::*;
 
-    const TYPES: [S; 9] = [
+    const TYPES: [S; 12] = [
         S::Int,
         S::Decimal,
         S::Percent,
@@ -179,6 +197,9 @@ mod tests {
         S::Date,
         S::Time,
         S::DateTime,
+        S::Url,
+        S::Email,
+        S::Uuid,
     ];
 
     fn lit(text: &str) -> Lit {
@@ -224,9 +245,39 @@ mod tests {
         assert_eq!(convert(&text("2025-01-31"), S::Date), Ok(lit("2025-01-31")));
         assert_eq!(
             convert(&text("abc"), S::Int),
-            Err("`abc` is not an Int".to_string())
+            Err("`abc` is not an Integer".to_string())
         );
         assert!(convert(&text("2025-01-31"), S::Int).is_err());
+    }
+
+    #[test]
+    fn reads_the_narrower_kinds_of_text() {
+        let text = |s: &str| Lit::String(s.to_string());
+        let same = |s: &str, to| convert(&text(s), to) == Ok(text(s));
+        assert!(same("https://example.com", S::Url));
+        assert!(same("name@example.com", S::Email));
+        assert!(same("7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f", S::Uuid));
+        // Surrounding space goes, as it does when text is read as a number.
+        assert_eq!(
+            convert(&text(" name@example.com "), S::Email),
+            Ok(text("name@example.com"))
+        );
+        assert_eq!(
+            convert(&text("name"), S::Email),
+            Err("`name` is not an Email".to_string())
+        );
+        assert_eq!(
+            convert(&text("example.com"), S::Url),
+            Err("`example.com` is not a Url".to_string())
+        );
+        // One kind of text is not another, and a number is none of them.
+        assert!(convert(&text("https://example.com"), S::Email).is_err());
+        assert!(convert(&lit("42"), S::Email).is_err());
+        // Any of them is text, which is the engine's to write.
+        assert_eq!(
+            convert(&text("name@example.com"), S::String),
+            Ok(text("name@example.com"))
+        );
     }
 
     #[test]

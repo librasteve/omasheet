@@ -107,7 +107,12 @@ pub fn snapshot(snap: &Snapshot) -> String {
     list(&mut out, &snap.problems, |out, p| {
         out.push_str(&format!("{{\"line\":{},\"column\":{},", p.line, p.column));
         field(out, "message", &p.message);
-        out.push('}');
+        // Where to go to reach it, or -1 where no cell holds it.
+        let (sheet, row, col) = match p.cell {
+            Some((t, r, c)) => (t as i64, r as i64, c as i64),
+            None => (-1, -1, -1),
+        };
+        out.push_str(&format!(",\"sheet\":{sheet},\"row\":{row},\"col\":{col}}}"));
     });
     out.push('}');
     out

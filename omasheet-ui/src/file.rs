@@ -271,6 +271,10 @@ pub mod qobject {
         /// What can be typed into a column of the named type.
         #[qinvokable]
         fn entry_hint(self: &File, ty: &QString) -> QString;
+        /// The text size the desktop is set to, in pixels; 0 where the
+        /// desktop does not say.
+        #[qinvokable]
+        fn desktop_font_size(self: &File) -> i32;
         /// The count, sum and average of a block of cells, for the footer.
         #[qinvokable]
         fn selection_summary(
@@ -943,10 +947,17 @@ impl qobject::File {
         ))
     }
 
+    fn desktop_font_size(&self) -> i32 {
+        crate::theme::base_font_size().map_or(0, |size| size as i32)
+    }
+
     fn entry_hint(&self, ty: &QString) -> QString {
         // Only where the way to write a value is not plain from its type.
         let ty = ty.to_string();
-        if !matches!(ty.as_str(), "Date" | "Time" | "Datetime" | "Boolean") {
+        if !matches!(
+            ty.as_str(),
+            "Date" | "Time" | "Datetime" | "Boolean" | "Url" | "Email" | "Uuid"
+        ) {
             return QString::default();
         }
         // The header shows the type already.

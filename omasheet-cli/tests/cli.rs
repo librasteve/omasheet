@@ -88,7 +88,7 @@ fn eval_pure_arithmetic() {
     assert_eq!(stdout(&out), "0.66666666666666666666…\n");
     let out = omasheet(&["eval", "0.1 + 0.2"]);
     assert_eq!(stdout(&out), "0.3\n");
-    // A Num is never rounded to show it; a large Int is shown in e
+    // A Num is never rounded to show it; a large Integer is shown in e
     // notation, unless it is asked for in full.
     let out = omasheet(&["eval", "sqrt(2)"]);
     assert_eq!(stdout(&out), "1.4142135623730951\n");
@@ -146,7 +146,7 @@ fn lint_reports_a_located_type_error() {
     assert_eq!(out.status.code(), Some(1));
     let err = stderr(&out);
     assert!(
-        err.contains(".omx:6:8: error: cannot apply `+` to Int and String"),
+        err.contains(".omx:6:8: error: cannot apply `+` to Integer and String"),
         "{err}"
     );
     assert!(err.contains("6 | Bad := Revenue + Month"), "{err}");

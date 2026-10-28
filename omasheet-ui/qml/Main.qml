@@ -28,17 +28,37 @@ ApplicationWindow {
     readonly property color panelColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.05)
     readonly property color computedTint: Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.07)
 
+    // The size the desktop is set to: on Omarchy `[font] base-size`, which
+    // `omarchy display text size` writes and its own shell scales from, so
+    // omasheet reads as the rest of the desktop does. 14 where there is no
+    // desktop to ask, which is the size it was before it asked.
+    //
+    // One pixel more than the desktop: a grid of monospace reads smaller
+    // than the desktop's own face at the same size, and a sheet is read a
+    // cell at a time rather than a line at a time.
+    readonly property int baseFontSize: {
+        var desktop = file.desktopFontSize();
+        return desktop > 0 ? Math.max(8, Math.min(40, desktop + 1)) : 14;
+    }
     // Ctrl+plus and Ctrl+minus change the size; everything scales from it.
-    property int fontSize: 14
+    property int fontSize: baseFontSize
+    // The smaller sizes are a share of it rather than so many pixels off,
+    // so they keep their proportions at any size: a fixed `- 3` is a tenth
+    // off at 30 and a third off at 9. The shares are Omarchy's own type
+    // scale, and 8px is the floor, as it is there.
+    readonly property int smallSize: Math.max(8, Math.round(fontSize * 0.917))
+    readonly property int captionSize: Math.max(8, Math.round(fontSize * 0.833))
+    readonly property int noteSize: Math.max(8, Math.round(fontSize * 0.786))
+    readonly property int fineSize: Math.max(8, Math.round(fontSize * 0.714))
     // Dialogs are set a little smaller than the file.
-    readonly property int dialogSize: fontSize - 2
+    readonly property int dialogSize: captionSize
     readonly property int rowHeight: fontSize * 2
     readonly property int headerHeight: Math.round(fontSize * 3.3)
     readonly property int gutterWidth: Math.round(fontSize * 3.4)
     onFontSizeChanged: Qt.callLater(function() { win.measure(); win.reveal(); })
 
     function zoom(step) {
-        fontSize = step === 0 ? 14 : Math.max(8, Math.min(40, fontSize + step));
+        fontSize = step === 0 ? baseFontSize : Math.max(8, Math.min(40, fontSize + step));
     }
 
     Material.theme: file.darkMode ? Material.Dark : Material.Light
@@ -1283,6 +1303,17 @@ ApplicationWindow {
             selectAll();
     }
 
+    // The cell a problem is in, from the problems list. A problem no cell
+    // holds has nowhere to go.
+    function goToProblem(item) {
+        if (!item || item.sheet < 0 || item.sheet >= tabs.length)
+            return;
+        viewSource(false);
+        if (item.sheet !== tab)
+            switchTab(item.sheet);
+        selectCell(item.row, item.col, false);
+    }
+
     function keyMenu() {
         if (tabs.length === 0)
             return;
@@ -1919,7 +1950,7 @@ ApplicationWindow {
                                         color: win.mutedColor
                                         font.family: win.font.family
                                         font.features: win.font.features
-                                        font.pixelSize: win.fontSize - 3
+                                        font.pixelSize: win.noteSize
                                         elide: Text.ElideRight
                                     }
                                 }
@@ -2054,7 +2085,7 @@ ApplicationWindow {
                                     color: win.mutedColor
                                     font.family: win.font.family
                                     font.features: win.font.features
-                                    font.pixelSize: win.fontSize - 2
+                                    font.pixelSize: win.captionSize
                                 }
                                 Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: win.lineColor }
                                 // Rows copied or cut are marked from their numbers across.
@@ -2577,7 +2608,7 @@ ApplicationWindow {
                                     sourceComponent: TextField {
                                         font.family: win.font.family
                                         font.features: win.font.features
-                                        font.pixelSize: win.fontSize - 1
+                                        font.pixelSize: win.smallSize
                                         font.bold: true
                                         color: win.textColor
                                         width: Math.max(tabButton.width, contentWidth + leftPadding + rightPadding + 4)
@@ -2637,7 +2668,7 @@ ApplicationWindow {
                     color: win.mutedColor
                     font.family: win.font.family
                     font.features: win.font.features
-                    font.pixelSize: win.fontSize - 2
+                    font.pixelSize: win.captionSize
                     elide: Text.ElideMiddle
                     Layout.maximumWidth: 320
                 }
@@ -2694,7 +2725,7 @@ ApplicationWindow {
                 elide: Text.ElideRight
                 font.family: win.font.family
                 font.features: win.font.features
-                font.pixelSize: win.fontSize - 2
+                font.pixelSize: win.captionSize
             }
         }
     }
@@ -2735,12 +2766,15 @@ ApplicationWindow {
         rightPadding: 12
         font.family: win.font.family
         font.features: win.font.features
-        font.pixelSize: win.fontSize - 1
+        font.pixelSize: win.smallSize
     }
     // A type to declare the selected columns as: ticked if they are.
     component TypeEntry: MenuEntry {
         required property string typeName
-        text: (typeMenu.current === typeName ? "\u2713 " : "  ") + typeName
+        /// A narrower kind of the type above it, shown indented under it.
+        property bool narrower: false
+        text: (typeMenu.current === typeName ? "\u2713 " : "  ")
+              + (narrower ? "   " : "") + typeName
         onTriggered: win.setColumnTypes(typeName)
     }
     component MenuRule: MenuSeparator {
@@ -2774,7 +2808,7 @@ ApplicationWindow {
             color: button.quiet ? win.mutedColor : button.textColor
             font.family: win.font.family
             font.features: win.font.features
-            font.pixelSize: win.fontSize - 1
+            font.pixelSize: win.smallSize
             font.bold: button.active
         }
         MouseArea {
@@ -2965,12 +2999,15 @@ ApplicationWindow {
         bottomPadding: 4
         width: Math.round(win.fontSize * 11)
 
-        TypeEntry { typeName: "Int" }
+        TypeEntry { typeName: "Integer" }
         TypeEntry { typeName: "Decimal" }
-        TypeEntry { typeName: "Fraction" }
-        TypeEntry { typeName: "Percent" }
+        TypeEntry { typeName: "Fraction"; narrower: true }
+        TypeEntry { typeName: "Percent"; narrower: true }
         TypeEntry { typeName: "Float" }
         TypeEntry { typeName: "String" }
+        TypeEntry { typeName: "Url"; narrower: true }
+        TypeEntry { typeName: "Email"; narrower: true }
+        TypeEntry { typeName: "Uuid"; narrower: true }
         TypeEntry { typeName: "Boolean" }
         TypeEntry { typeName: "Date" }
         TypeEntry { typeName: "Time" }
@@ -3231,7 +3268,7 @@ ApplicationWindow {
                 wrapMode: Text.Wrap
                 font.family: win.font.family
                 font.features: win.font.features
-                font.pixelSize: win.dialogSize - 1
+                font.pixelSize: win.noteSize
             }
         }
     }
@@ -3544,7 +3581,7 @@ ApplicationWindow {
                 wrapMode: Text.Wrap
                 font.family: win.font.family
                 font.features: win.font.features
-                font.pixelSize: win.dialogSize - 1
+                font.pixelSize: win.noteSize
             }
         }
     }
@@ -3566,13 +3603,27 @@ ApplicationWindow {
             delegate: Text {
                 required property int index
                 readonly property var item: win.snap.problems[index]
+                // Whether a cell holds it, and so whether it can be gone to.
+                readonly property bool goes: item && item.sheet >= 0
                 width: ListView.view.width
                 text: item ? "line " + item.line + ": " + item.message : ""
                 color: win.textColor
                 wrapMode: Text.Wrap
                 font.family: win.font.family
                 font.features: win.font.features
-                font.pixelSize: win.dialogSize - 1
+                font.pixelSize: win.noteSize
+                font.underline: goes && toCell.containsMouse
+                MouseArea {
+                    id: toCell
+                    anchors.fill: parent
+                    enabled: parent.goes
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        problemsDialog.close();
+                        win.goToProblem(parent.item);
+                    }
+                }
             }
         }
     }
@@ -3696,7 +3747,7 @@ ApplicationWindow {
                             wrapMode: Text.Wrap
                             font.family: win.font.family
                             font.features: win.font.features
-                            font.pixelSize: win.dialogSize - 1
+                            font.pixelSize: win.noteSize
                         }
                         Text {
                             width: parent.width
@@ -3706,7 +3757,7 @@ ApplicationWindow {
                             wrapMode: Text.Wrap
                             font.family: win.font.family
                             font.features: win.font.features
-                            font.pixelSize: win.dialogSize - 2
+                            font.pixelSize: win.fineSize
                         }
                     }
                     MouseArea {
@@ -3729,7 +3780,7 @@ ApplicationWindow {
                 color: win.mutedColor
                 font.family: win.font.family
                 font.features: win.font.features
-                font.pixelSize: win.dialogSize - 2
+                font.pixelSize: win.fineSize
             }
         }
     }

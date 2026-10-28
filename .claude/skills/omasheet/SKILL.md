@@ -102,7 +102,7 @@ sheet Summary
   edited and nothing is written back to the files.
 - Names are identifiers: letters, digits and `_`, no spaces. `UnitPrice`, not
   `Unit Price`. A table's column that the file names otherwise is given one
-  with `from`: `SiblingsSpousesAboard : Int from "Siblings/Spouses Aboard"`.
+  with `from`: `SiblingsSpousesAboard : Integer from "Siblings/Spouses Aboard"`.
   Form the name on the left from the file's own, dropping whatever a name
   has no room for; do not shorten it, or it says something the column does
   not.
@@ -128,24 +128,31 @@ sheet Summary
 
 ## Types
 
-`Int`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,
-`Date`, `Time`, `Datetime`.
+`Integer`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,
+`Date`, `Time`, `Datetime`, `Url`, `Email`, `Uuid`.
 A column with no type line takes its type from its cells, which is usually
 what you want; declare one when the cells could be read another way.
 
 | Type | Written |
 |---|---|
-| `Int` | `42`, `1_000_000` |
+| `Integer` | `42`, `1_000_000` |
 | `Decimal` | `19.99`, `1/7`, `2 3/4` — exact |
 | `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction, `1/7` and `2 3/4` |
 | `Percent` | `20%` — exact, shown as a percentage |
 | `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `"Inf"`), which is what a division by zero gives |
 | `Boolean` | `true`, `false` |
 | `Date`, `Time`, `Datetime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO |
+| `Url`, `Email`, `Uuid` | `https://example.com`, `name@example.com`, `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f` — text read as something narrower |
 
-An `Int` is a `Decimal`. Sums, products, divisions and averages of decimals
-are all `Decimal`. An `Int` holds 64 bits and a `Decimal` 38 significant digits; a
-whole number past an `Int` becomes a `Decimal`, and one past 38 digits
+`Url`, `Email` and `Uuid` are never taken from the cells: declare one, or
+read text as one by name — `Checked := Written.Email`, which marks the cells
+that do not read as one and leaves the rest of the file calculating. A
+declared one stops the file until every cell reads, so for data that came in
+from elsewhere, read it by name first and declare it once it is clean.
+
+An `Integer` is a `Decimal`. Sums, products, divisions and averages of decimals
+are all `Decimal`. An `Integer` holds 64 bits and a `Decimal` 38 significant digits; a
+whole number past an `Integer` becomes a `Decimal`, and one past 38 digits
 keeps its 38 and moves the point, so `10**1000` is exact in one digit.
 Only past `1e2147483685`, where the point stops, is a number reported as
 too large rather than rounded away.
@@ -210,7 +217,7 @@ that do not fit are cut and marked `…`. Only the display is cut, and
   `sum mean min max count len median`, `abs round floor ceil sqrt` and the
   usual maths, `today() now() year month day weekday`, `succ` for the next
   value, and the type names as conversions,
-  `x.Int`, `x.Float`, `x.Fraction`, `x.Percent`, `x.String`.
+  `x.Integer`, `x.Float`, `x.Fraction`, `x.Percent`, `x.String`.
 - A date plus a whole number is days later; two dates subtract to days.
   `n.day`, `n.week`, `n.month` and `n.year` next to a date say which unit:
   `Placed + 1.month`, which keeps the day of the month or clamps it to the

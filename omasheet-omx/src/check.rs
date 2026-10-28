@@ -1536,10 +1536,10 @@ impl<'a> Checker<'a> {
                 (S::Int | S::Decimal | S::Fraction | S::Percent, S::Float) => {
                     "use `.Float` to convert to Float"
                 }
-                (S::Percent, S::Int) => "declare the column as `Percent`, or use `.Int`",
+                (S::Percent, S::Int) => "declare the column as `Percent`, or use `.Integer`",
                 (S::Percent, S::Decimal) => "declare the column as `Percent`, or use `.Decimal`",
-                (S::Decimal, S::Int) => "declare the column as `Decimal`, or use `.Int`",
-                (S::Fraction, S::Int) => "declare the column as `Fraction`, or use `.Int`",
+                (S::Decimal, S::Int) => "declare the column as `Decimal`, or use `.Integer`",
+                (S::Fraction, S::Int) => "declare the column as `Fraction`, or use `.Integer`",
                 _ => "change the declared type or the formula",
             };
             self.err_help(
@@ -1581,10 +1581,28 @@ impl<'a> Checker<'a> {
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
             (Some(l @ Lit::DateTime(_)), S::DateTime) => Some(l),
             (Some(l @ Lit::Boolean(_)), S::Boolean) => Some(l),
+            // A narrower kind of text is the text itself, once it reads as
+            // one. Quoted text is read as what it holds.
+            (parsed, S::Url | S::Email | S::Uuid) => {
+                let held = match parsed {
+                    Some(Lit::String(s)) => s,
+                    _ => text.to_string(),
+                };
+                let reads = match want {
+                    S::Url => crate::text::is_url(&held),
+                    S::Email => crate::text::is_email(&held),
+                    _ => crate::text::is_uuid(&held),
+                };
+                reads.then_some(Lit::String(held))
+            }
             _ => None,
         };
         if fitted.is_none() {
-            let article = if want == S::Int { "an" } else { "a" };
+            let article = if matches!(want, S::Int | S::Email) {
+                "an"
+            } else {
+                "a"
+            };
             self.err_help(
                 span,
                 format!("`{text}` is not {article} `{want}` literal"),
@@ -1598,6 +1616,9 @@ impl<'a> Checker<'a> {
                     S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
                     S::Time => "enter a time such as `09:30` or `09:30:15`, or start the cell with `=` for a formula",
                     S::DateTime => "enter a date-time such as `2025-01-31T09:30`, or start the cell with `=` for a formula",
+                    S::Url => "enter a web address such as `https://example.com`, or start the cell with `=` for a formula",
+                    S::Email => "enter an email address such as `name@example.com`, or start the cell with `=` for a formula",
+                    S::Uuid => "enter a UUID such as `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f`, or start the cell with `=` for a formula",
                     _ => "a formula cell starts with `=`",
                 },
             );

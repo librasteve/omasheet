@@ -98,14 +98,15 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
 /// The Polars dtype an omasheet type is held as, with the scale an exact
 /// number is held at. A percentage and a fraction are an exact number in a
 /// dress rather than a dtype of their own (D69), so each is the decimal its
-/// values are and [`cell_of`] puts the dress back on. `None` only for a
+/// values are and [`cell_of`] puts the dress back on. A web address, an email
+/// address and a UUID are text in a dress the same way. `None` only for a
 /// column of anything, which no one dtype holds.
 pub fn dtype(ty: S, scale: u32) -> Option<DataType> {
     Some(match ty {
         S::Int => DataType::Int64,
         S::Decimal | S::Fraction | S::Percent => decimal(scale),
         S::Float => DataType::Float64,
-        S::String => DataType::String,
+        S::String | S::Url | S::Email | S::Uuid => DataType::String,
         S::Boolean => DataType::Boolean,
         S::Date => DataType::Date,
         S::Time => DataType::Time,
@@ -219,7 +220,7 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
                 .collect::<Option<_>>()?;
             Series::new(name, v)
         }
-        S::String => {
+        S::String | S::Url | S::Email | S::Uuid => {
             let v: Vec<Option<&str>> = values
                 .iter()
                 .map(|v| match v {

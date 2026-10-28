@@ -807,6 +807,17 @@ what stops a table's rows being exploded into cells.
       next measurement. It reproduces the hand figures exactly: **59
       offered, 18 lowered, 40 refused, 1 failed.**
 
+      Measured again after the kinds of text (`Url`, `Email`, `Uuid`):
+      **61 offered, 18 lowered, 42 refused, 1 failed.** `types.omx` gained a
+      `Text` sheet, and both of its computed columns are conversions —
+      `Checked := Written.Email` and `AsText := Contact.String` — so both
+      meet the reason already at the head of the table, which goes from 10
+      columns to 12. Nothing that lowered stopped lowering, and the one that
+      fails is the same one. A conversion to one of these reads the text to
+      see whether it is an address, which is omasheet's own rule and not a
+      Polars expression, so it is refused for the reason conversions already
+      are rather than for one of its own.
+
       Under `--nocapture` it also prints each column it did not lower, with
       its formula beside its name — which is the material the reason table
       is read off, and the answer to the grep that got the measurement

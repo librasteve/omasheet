@@ -1,6 +1,7 @@
-# The numbers, Boolean and String: what each type holds and how it is shown.
+# The numbers, Boolean and the kinds of text: what each type holds and how
+# it is shown.
 #
-# Int, Decimal, Fraction and Percent are exact and a Float is floating
+# Integer, Decimal, Fraction and Percent are exact and a Float is floating
 # point. Decimal, Fraction and Percent hold the same numbers and show them
 # in different ways: as a decimal, as a fraction, and as so many in a
 # hundred.
@@ -24,7 +25,7 @@ const Root2 = sqrt(2)
 sheet Numbers
 
 Name    : String
-Count   : Int
+Count   : Integer
 Price   : Decimal
 Share   : Fraction
 Rate    : Percent
@@ -49,7 +50,7 @@ sheet Arithmetic
 | minus | *      | *       | *     | *     | *     | *      | *    | *      | *    | *      |
 | huge  | *      | *       | *     | *     | *     | *      | *    | *      | *    | *      |
 
-# Exact stays exact as far as it fits: an Int reaches 64 bits and a
+# Exact stays exact as far as it fits: an Integer reaches 64 bits and a
 # Decimal thirty-eight digits, and past that it is reported rather than
 # wrapped. A division is held to the same thirty-eight digits.
 Square  := Numbers[Count; *] ** 2
@@ -90,7 +91,7 @@ Root := sqrt(Top)
 Log  := ln(Top)
 Same := Limit == Limit
 
-# The name of a type converts to it: `x.Int`, `x.Int()` or `Int(x)`.
+# The name of a type converts to it: `x.Integer`, `x.Integer()` or `Integer(x)`.
 sheet Converted
 
 | Value  | AsInt | Rounded | AsDecimal | AsPercent | AsNum | AsBool | AsText |
@@ -102,7 +103,7 @@ sheet Converted
 | 0.5    | *     | *       | *         | *         | *     | *      | *      |
 | 0      | *     | *       | *         | *         | *     | *      | *      |
 
-AsInt     := Value.Int
+AsInt     := Value.Integer
 Rounded   := round(Value)
 
 # A Float always has a Decimal: the one it is shown as.
@@ -142,6 +143,28 @@ String : String
 
 Number  := String.Decimal
 Doubled := Number * 2
-Whole   := String.Int
+Whole   := String.Integer
 Decimal := String.Decimal
 Percent := String.Percent
+
+# A web address, an email address and a UUID are text read as something
+# narrower: the cell keeps the text that was written, and the column says
+# what it was read as. A column declared as one takes only text that reads
+# as one, so a cell that is not an address says so where it is.
+sheet Text
+
+Site    : Url
+Contact : Email
+Ref     : Uuid
+
+| Site                   | Contact               | Ref                                  | Written           | Checked | AsText |
+| ---------------------- | --------------------- | ------------------------------------ | ----------------- | ------- | ------ |
+| https://example.com    | name@example.com      | 7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f | sales@example.com | *       | *      |
+| mailto:help@example.uk | a.b+tag@example.co.uk | 00000000-0000-0000-0000-000000000000 | ops@example.co.uk | *       | *      |
+
+# Text that came in from a file is read as one of them by the type's name,
+# which is how a column of it is checked a row at a time.
+Checked := Written.Email
+
+# Any of them is text, and goes where text is asked for.
+AsText  := Contact.String

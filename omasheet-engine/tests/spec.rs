@@ -199,7 +199,7 @@ fn decimals() {
     assert!(lint_errors(&format!("{powers}= 2 ** 64 | = 1.1 ** 2\n")).is_empty());
     let errors = lint_errors(&format!("{powers}= 2 ** -1 | 1\n"));
     assert!(
-        errors[0].contains("declared `Int` but this is `Decimal`"),
+        errors[0].contains("declared `Integer` but this is `Decimal`"),
         "{errors:?}"
     );
     assert!(lint_errors(&format!("{powers}2 | = 1.1 ** W[N; *]\n")).is_empty());
@@ -351,7 +351,7 @@ fn percents() {
     );
     let errors = lint_errors(&format!("{rates}20% | 20% | 1\n"));
     assert!(
-        errors[0].contains("`20%` is not an `Int` literal"),
+        errors[0].contains("`20%` is not an `Integer` literal"),
         "{errors:?}"
     );
     // In a Decimal column a percentage is the number it stands for.
@@ -674,7 +674,7 @@ fn date_and_time_arithmetic() {
             "2025-01-31 + 2025-01-31",
             "cannot apply `+` to Date and Date",
         ),
-        ("1 - 2025-01-31", "cannot apply `-` to Int and Date"),
+        ("1 - 2025-01-31", "cannot apply `-` to Integer and Date"),
         ("2025-01-31 + 1.5", "cannot apply `+` to Date and Decimal"),
         ("2025-01-31 - 09:30", "cannot apply `-` to Date and Time"),
         (
@@ -1316,7 +1316,7 @@ fn one_type_error_blocks_execution() {
     let out = view("test.omx", file);
     assert_eq!(out.errors.len(), 1);
     assert!(
-        out.errors[0].contains("cannot apply `+` to Int and String"),
+        out.errors[0].contains("cannot apply `+` to Integer and String"),
         "{}",
         out.errors[0]
     );
@@ -1649,12 +1649,87 @@ fn a_nan_and_a_missing_value_are_different_absences() {
 #[test]
 fn casting_is_converting() {
     // Four spellings of one conversion.
-    assert_eq!(calc("cast(19.99, Int)"), "19");
-    assert_eq!(calc("Int(19.99)"), "19");
-    assert_eq!(calc("(19.99).Int()"), "19");
+    assert_eq!(calc("cast(19.99, Integer)"), "19");
+    assert_eq!(calc("Integer(19.99)"), "19");
+    assert_eq!(calc("(19.99).Integer()"), "19");
+    assert_eq!(calc("(19.99).Integer"), "19");
+    // `Int` is what this type was called before, and is still read.
     assert_eq!(calc("(19.99).Int"), "19");
+    assert_eq!(calc("cast(19.99, Int)"), "19");
     let errors = calc_err(None, "cast(1, Nope)");
     assert!(errors.contains("unknown type `Nope`"), "{errors}");
+}
+
+// ---- the kinds of text ---------------------------------------------------
+
+#[test]
+fn text_is_read_as_a_narrower_kind_of_text() {
+    // The same four spellings a number's conversion has.
+    let address = "name@example.com";
+    assert_eq!(calc(&format!("cast(\"{address}\", Email)")), address);
+    assert_eq!(calc(&format!("Email(\"{address}\")")), address);
+    assert_eq!(calc(&format!("\"{address}\".Email()")), address);
+    assert_eq!(calc(&format!("\"{address}\".Email")), address);
+    assert_eq!(calc("\"https://example.com\".Url"), "https://example.com");
+    let uuid = "7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f";
+    assert_eq!(calc(&format!("\"{uuid}\".Uuid")), uuid);
+    // Any of them is text, and goes where text is asked for.
+    assert_eq!(calc(&format!("\"{address}\".Email.String")), address);
+}
+
+#[test]
+fn text_that_does_not_read_as_one_says_so() {
+    let errors = calc_err(None, "Email(\"nope\")");
+    assert!(errors.contains("`nope` is not an Email"), "{errors}");
+    let errors = calc_err(None, "Url(\"example.com\")");
+    assert!(errors.contains("`example.com` is not a Url"), "{errors}");
+    // One kind of text is not another, and a number is none of them.
+    assert!(calc_err(None, "Uuid(\"https://example.com\")").contains("not a Uuid"));
+    let errors = calc_err(None, "Email(42)");
+    assert!(errors.contains("cannot be applied"), "{errors}");
+}
+
+/// The declared route: a cell that does not read as the column's kind of
+/// text is a problem in the text, found before anything is calculated.
+#[test]
+fn a_column_declared_a_kind_of_text_takes_only_text_that_reads_as_one() {
+    let file = |contact: &str| {
+        format!("sheet Contacts\n\nContact : Email\n\n| Contact |\n| ------- |\n| {contact} |\n")
+    };
+    assert!(shown(&file("name@example.com")).contains("name@example.com"));
+    for bad in ["nope", "42"] {
+        let errors = lint_errors(&file(bad));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains(&format!("`{bad}` is not an `Email` literal"))),
+            "{bad}: {errors:?}"
+        );
+    }
+    // A `String` column still takes anything, as it always has.
+    let text = "sheet Contacts\n\nContact : String\n\n| Contact |\n| ------- |\n| nope |\n";
+    assert!(shown(text).contains("nope"));
+}
+
+/// The converting route, which is how a column of text that came in from a
+/// file is cleaned: the cell that does not read says so and the rest of the
+/// file is still calculated and still written out. The declared route above
+/// stops the file instead, so these two are not the same thing.
+#[test]
+fn a_conversion_that_fails_marks_its_own_cell_and_leaves_the_file_calculating() {
+    let file = "sheet Contacts\n\n| Written          | Checked |\n| ---------------- | ------- |\n| name@example.com | *       |\n| nope             | *       |\n\nChecked := Written.Email\n";
+    let out = view_with("test.omx", file, exact());
+    // The good row is calculated, the bad one is an error where it is.
+    assert!(out.output.contains("name@example.com"), "{}", out.output);
+    assert!(out.output.contains("#ERROR"), "{}", out.output);
+    // And the failure is reported, without taking the file's output away.
+    assert!(
+        out.errors
+            .iter()
+            .any(|e| e.contains("`nope` is not an Email")),
+        "{:?}",
+        out.errors
+    );
 }
 
 #[test]
@@ -1958,7 +2033,7 @@ fn how_much_of_the_corpus_lowers() {
     // moved.
     assert_eq!(
         (offered, lowered, refused, failed),
-        (59, 18, 40, 1),
+        (61, 18, 42, 1),
         "the corpus lowers differently than task 8.3 records"
     );
 }
@@ -2686,7 +2761,7 @@ fn unselected_columns_are_not_read() {
 /// Values as their `Debug`, which is the strictest comparison there is of
 /// them: `Value` has no `PartialEq`, and what is shown would hide the very
 /// differences worth catching — the Markdown flag on a string, a `Zoned`
-/// where a `DateTime` was expected, an `Int` where a `Decimal` was.
+/// where a `DateTime` was expected, an `Integer` where a `Decimal` was.
 fn debugged(values: &[omasheet_engine::Value]) -> Vec<String> {
     values.iter().map(|v| format!("{v:?}")).collect()
 }

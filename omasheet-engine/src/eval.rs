@@ -904,7 +904,7 @@ impl<'p> Engine<'p> {
                     | (Value::Fraction(_), S::Fraction)
                     | (Value::Percent(_), S::Percent)
                     | (Value::Float(_), S::Float)
-                    | (Value::String(..), S::String)
+                    | (Value::String(..), S::String | S::Url | S::Email | S::Uuid)
                     | (Value::Boolean(_), S::Boolean)
                     | (Value::Date(_), S::Date)
                     | (Value::Time(_), S::Time)

@@ -24,7 +24,7 @@ omasheet import orders.json                  # a sheet for each list of rows
   that gives the same number; CSV is read as it is written, every digit of it.
 - A column of dates, times, date-times, `true` / `false` or floating-point
   numbers is declared, because the written cells alone would not give that
-  type back: a `Float` column of `22` and `7.25` would read as an `Int` and
+  type back: a `Float` column of `22` and `7.25` would read as an `Integer` and
   a `Decimal` without the line. A column of exact numbers, or of text, is
   left undeclared, as its cells read as that type anyway, and the app shows
   such a type muted. A column of numbers and text together has none either:
@@ -134,7 +134,7 @@ row become a cell. Each formula is written for the row it is on:
   of rows or a list; `sum`, `mean` and `len` of the rows where columns equal
   values; a row found where one column equals a value; `abs`, `round`,
   `floor`, `ceil`, `sqrt`, the logarithms and the trigonometry; `today`,
-  `now`, `year` to `second`, `weekday`, `date` and `time`; `x.Int`, and a
+  `now`, `year` to `second`, `weekday`, `date` and `time`; `x.Integer`, and a
   function the file defines.
 - These are not, and the value is written: a calculation on a whole column
   at once, `Sales.Revenue * 2`; rows picked by any other condition, by a
@@ -156,7 +156,7 @@ row become a cell. Each formula is written for the row it is on:
 
 | | XLSX | CSV |
 |---|---|---|
-| `Int`, `Decimal` | the nearest floating-point number | in full, to the 30 digits it shows; one that does not end, such as `1/3`, as `0.333333333333333333333333333333` |
+| `Integer`, `Decimal` | the nearest floating-point number | in full, to the 30 digits it shows; one that does not end, such as `1/3`, as `0.333333333333333333333333333333` |
 | `Fraction` | the nearest floating-point number | the decimal it holds, not `1/7`: a CSV is read by anything, and a fraction is not a number elsewhere |
 | `Percent` | that number, formatted as a percentage | `40%`; one that does not end as `33.3333333333333333333333333333%` |
 | `Date`, `Time`, `Datetime` | a date or time cell | `2025-01-31`, `09:30`, `2025-01-31T09:30` |
@@ -168,7 +168,7 @@ name. With `--sheet` it is the rows of that sheet alone.
 
 | | JSON |
 |---|---|
-| `Int`, `Decimal`, `Fraction` | a number, in full; one that does not end, such as `1/3`, as `0.333333333333333333333333333333` |
+| `Integer`, `Decimal`, `Fraction` | a number, in full; one that does not end, such as `1/3`, as `0.333333333333333333333333333333` |
 | `Percent` | the number it stands for: `20%` is `0.2` |
 | `Float` | a number; `Inf`, `-Inf` and `NaN` as strings |
 | `String`, `Boolean` | a string; `true` or `false` |
@@ -203,7 +203,7 @@ type its own name stands for rather than converted into something near it.
 
 | | Parquet |
 |---|---|
-| `Int` | `int64` |
+| `Integer` | `int64` |
 | `Decimal`, `Percent` | `decimal(38, s)`, at the widest scale the column needs |
 | `Float` | `double` |
 | `Boolean` | `boolean` |

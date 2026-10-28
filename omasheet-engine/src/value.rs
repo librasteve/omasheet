@@ -144,7 +144,7 @@ impl Value {
         match self {
             Value::Null => "null",
             Value::Error => "an error",
-            Value::Int(_) => "Int",
+            Value::Int(_) => "Integer",
             Value::Decimal(_) => "Decimal",
             Value::Fraction(_) => "Fraction",
             Value::Percent(_) => "Percent",

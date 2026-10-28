@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Stephen Roe
 
 //! Colours from the current Omarchy theme; elsewhere, a dark or a light set
-//! to go with the system's colour scheme.
+//! to go with the system's colour scheme. The text size the desktop is set
+//! to comes from the same place.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -108,6 +109,55 @@ pub fn load(system_dark: bool) -> Theme {
         )
 }
 
+/// The text size the desktop is set to, in pixels: Omarchy's
+/// `[font] base-size`, which `omarchy display text size` writes and which
+/// is the root its own shell sizes everything from. `None` where there is
+/// no Omarchy to ask.
+///
+/// Two files hold it, in the order Omarchy itself layers them: the theme
+/// sets one, and the machine's own `shell.toml` is laid over the top.
+pub fn base_font_size() -> Option<u32> {
+    let home = PathBuf::from(std::env::var_os("HOME")?);
+    let layers = [
+        home.join(".local/state/omarchy/current/theme/shell.toml"),
+        home.join(".config/omarchy/shell.toml"),
+    ];
+    let mut found = None;
+    for path in layers {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            found = font_base_size(&text).or(found);
+        }
+    }
+    found
+}
+
+/// `base-size` under `[font]` in a `shell.toml`, past every other table.
+fn font_base_size(text: &str) -> Option<u32> {
+    let mut in_font = false;
+    let mut found = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(table) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            in_font = table.trim() == "font";
+            continue;
+        }
+        if !in_font || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() == "base-size" {
+            // A value may carry a trailing comment.
+            let value = value.split('#').next().unwrap_or(value).trim();
+            if let Ok(size) = value.parse::<u32>() {
+                found = Some(size);
+            }
+        }
+    }
+    found
+}
+
 /// Call `changed` each time the Omarchy theme changes, until it gives false.
 pub fn watch(changed: impl Fn() -> bool + Send + 'static) {
     use notify::Watcher;
@@ -161,5 +211,20 @@ mod tests {
     fn guesses_mode_from_background() {
         assert!(!parse("background = \"#fafafa\"").dark);
         assert!(parse("background = \"#1e1e2e\"").dark);
+    }
+
+    #[test]
+    fn reads_the_text_size_the_desktop_is_set_to() {
+        let shell = "[bar]\nsize-horizontal = 26\n\n\
+                     [font]\n# base-size is the rem root.\n\
+                     base-size = 9  # as the CLI writes it\n\
+                     family = \"monospace\"\n\n\
+                     [popups]\nbase-size = 99\n";
+        assert_eq!(font_base_size(shell), Some(9));
+        // Only under `[font]`: another table's own `base-size` is not it.
+        assert_eq!(font_base_size("[popups]\nbase-size = 99\n"), None);
+        // And nothing where the file says nothing.
+        assert_eq!(font_base_size("[font]\nfamily = \"monospace\"\n"), None);
+        assert_eq!(font_base_size(""), None);
     }
 }

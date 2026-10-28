@@ -146,7 +146,7 @@ fn letters(col: usize) -> String {
 fn kind_of(s: S) -> Kind {
     match s {
         S::Int | S::Decimal | S::Fraction | S::Percent | S::Float => Kind::Number,
-        S::String => Kind::Text,
+        S::String | S::Url | S::Email | S::Uuid => Kind::Text,
         S::Boolean => Kind::Bool,
         S::Date => Kind::Date,
         S::Time => Kind::Time,
