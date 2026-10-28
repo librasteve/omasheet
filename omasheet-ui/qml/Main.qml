@@ -33,12 +33,12 @@ ApplicationWindow {
     // omasheet reads as the rest of the desktop does. 14 where there is no
     // desktop to ask, which is the size it was before it asked.
     //
-    // One pixel more than the desktop: a grid of monospace reads smaller
+    // Two pixels more than the desktop: a grid of monospace reads smaller
     // than the desktop's own face at the same size, and a sheet is read a
     // cell at a time rather than a line at a time.
     readonly property int baseFontSize: {
         var desktop = file.desktopFontSize();
-        return desktop > 0 ? Math.max(8, Math.min(40, desktop + 1)) : 14;
+        return desktop > 0 ? Math.max(8, Math.min(40, desktop + 2)) : 14;
     }
     // Ctrl+plus and Ctrl+minus change the size; everything scales from it.
     property int fontSize: baseFontSize
@@ -2662,28 +2662,6 @@ ApplicationWindow {
 
                 Item { Layout.fillWidth: true }
 
-                Text {
-                    visible: file.status.length > 0
-                    text: file.status
-                    color: win.mutedColor
-                    font.family: win.font.family
-                    font.features: win.font.features
-                    font.pixelSize: win.captionSize
-                    elide: Text.ElideMiddle
-                    Layout.maximumWidth: 320
-                }
-                FooterButton {
-                    readonly property int count: file.notes.length > 0 ? file.notes.split("\n").length : 0
-                    visible: count > 0
-                    label: count + (count === 1 ? " note" : " notes")
-                    onClicked: notesDialog.open()
-                }
-                FooterButton {
-                    visible: win.snap.problems.length > 0
-                    label: win.snap.problems.length + (win.snap.problems.length === 1 ? " problem" : " problems")
-                    textColor: win.errorColor
-                    onClicked: problemsDialog.open()
-                }
                 FooterButton { label: "+ Row"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.insertRow(true) }
                 FooterButton { label: "+ Column"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
                 FooterButton { label: "+ Formula"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("computed") }
@@ -2694,11 +2672,13 @@ ApplicationWindow {
             }
         }
 
-        // Below it, a bar of its own for what the app has to say, which has
-        // the width for a long message: why a move was refused, what a
-        // selection of several cells adds up to, how to put down what is
-        // being moved, or that a formula column is being changed. Most of
-        // the time there is nothing to say and it is empty.
+        // Below it, a bar of its own for everything the app has to say.
+        // The bar above is for what the user presses; this one is for what
+        // it answers. In the middle, the message: why a move was refused,
+        // how to put down what is being moved, that a formula column is
+        // being changed, or what the app has just done or could not do. On
+        // the right, what is counted rather than said, and the notes to
+        // read. Most of the time there is nothing to say and it is empty.
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: win.fontSize + 10
@@ -2706,26 +2686,72 @@ ApplicationWindow {
 
             Rectangle { width: parent.width; height: 1; color: win.lineColor }
 
+            // What the app has to say, centred in the bar whatever else
+            // sits beside it, so it reads as the answer to what was done.
             Text {
-                anchors.fill: parent
-                anchors.leftMargin: 12
-                anchors.rightMargin: 12
+                id: barMessage
+                anchors.centerIn: parent
+                width: Math.max(0, Math.min(implicitWidth,
+                    parent.width - 2 * barRight.width - 48))
+                horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
-                readonly property bool several: !win.sheet.isConsts && win.tabs.length > 0
-                    && (win.selTop !== win.selBottom || win.selLeft !== win.selRight)
                 readonly property bool moving: win.grabbedHere
-                // `win.snap` is read so that an edit recalculates it.
                 text: win.notice.length > 0 ? win.notice
                     : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
-                    : several && win.snap
-                    ? file.selectionSummary(win.tab, win.selTop, win.selLeft, win.selBottom, win.selRight)
                     : win.formulaCell ? "This is a formula column, this change will apply to the entire column"
-                    : ""
+                    : file.status
                 color: win.notice.length > 0 ? win.errorColor : win.mutedColor
                 elide: Text.ElideRight
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.captionSize
+            }
+
+            // On the right, what is counted rather than said: what a
+            // selection of several cells adds up to, and the notes to read.
+            RowLayout {
+                id: barRight
+                anchors.right: parent.right
+                anchors.rightMargin: 12
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                spacing: 12
+
+                Text {
+                    readonly property bool several: !win.sheet.isConsts && win.tabs.length > 0
+                        && (win.selTop !== win.selBottom || win.selLeft !== win.selRight)
+                    visible: several && !!win.snap
+                    Layout.fillHeight: true
+                    verticalAlignment: Text.AlignVCenter
+                    horizontalAlignment: Text.AlignRight
+                    // `win.snap` is read so that an edit recalculates it.
+                    text: several && win.snap
+                        ? file.selectionSummary(win.tab, win.selTop, win.selLeft, win.selBottom, win.selRight)
+                        : ""
+                    color: win.mutedColor
+                    elide: Text.ElideRight
+                    font.family: win.font.family
+                    font.features: win.font.features
+                    font.pixelSize: win.captionSize
+                }
+
+                FooterButton {
+                    readonly property int count: file.notes.length > 0 ? file.notes.split("\n").length : 0
+                    visible: count > 0
+                    // The bar is one line tall, where the bar above is two.
+                    implicitHeight: win.fontSize + 6
+                    label: count + (count === 1 ? " note" : " notes")
+                    onClicked: notesDialog.open()
+                }
+
+                FooterButton {
+                    readonly property int count: win.snap.problems.length
+                    visible: count > 0
+                    implicitHeight: win.fontSize + 6
+                    label: count + (count === 1 ? " problem" : " problems")
+                    textColor: win.errorColor
+                    onClicked: problemsDialog.open()
+                }
             }
         }
     }
