@@ -330,14 +330,33 @@ impl<'p> Engine<'p> {
             self.attempts.borrow_mut().push((t, c, Attempt::Refused));
             return false;
         };
+        // A null Polars cannot account for is not an answer. A decimal
+        // product wider than the 38 digits it is held in comes back as
+        // nothing at all rather than as an error, and so does a cast that
+        // did not take; the engine answers both, one by giving up its guard
+        // digits and the other by saying what went wrong in the row it went
+        // wrong in. So the plan carries a flag beside the answer: a row
+        // whose every column was there and whose answer is nothing. Where
+        // one is found the column is given up whole, the same as a plan
+        // that will not collect. A constant that is itself nothing trips it
+        // too, and the engine gives the same answer for that a little
+        // slower.
+        let unaccounted = frame
+            .get_column_names()
+            .into_iter()
+            .fold(expr.clone().is_null(), |flag, name| {
+                flag.and(polars::prelude::col(name.clone()).is_not_null())
+            })
+            .alias(UNACCOUNTED);
         // Nothing of the frame is borrowed from here on: the plan is built
         // and the columns owned before the collect, which Polars runs on a
         // pool of its own threads (D67's `RefCell` discipline).
         let collected = frame
             .lazy()
-            .select([expr])
+            .select([expr, unaccounted])
             .collect()
             .ok()
+            .filter(|out| accounted_for(out))
             .and_then(|df| df.get_columns().first().cloned());
         let Some(column) = collected.filter(|column| column.len() == nrows) else {
             // Whole or nothing: the result is discarded, no diagnostic is
@@ -853,6 +872,11 @@ impl<'p> Engine<'p> {
     }
 
     /// A formula's result must be one value of the column's declared type.
+    /// A value in the dress of a column's type: an exact number in a
+    /// `Percent` column is a percentage, in a `Fraction` column a fraction,
+    /// and a percentage or a fraction in a plain number's column is the
+    /// number it stands for. Anything else is left as it is, for `fit` to
+    /// pass or refuse.
     fn fit(&self, v: Value, col: &Column, span: Span) -> R {
         if matches!(
             v,
@@ -863,6 +887,13 @@ impl<'p> Engine<'p> {
                 format!("a cell holds one value, but this is {}", v.kind()),
             );
         }
+        // A cell wears its column's dress, inferred as much as declared.
+        // `20% // 1` answers with whichever side it took, so the engine
+        // used to give a column of percentages and plain numbers together,
+        // where a lowered one — whose cells are read back at the column's
+        // own type — gave one or the other throughout. A column has one
+        // type, so it has one dress, and both paths put it on.
+        let v = dressed(v, col);
         let ok = !col.declared
             || matches!(
                 (&v, col.ty),
@@ -881,15 +912,6 @@ impl<'p> Engine<'p> {
             );
         if ok {
             Ok(v)
-        } else if col.ty == S::Percent && matches!(v, Value::Int(_) | Value::Decimal(_)) {
-            // Any exact number in a `Percent` column is a percentage.
-            Ok(v.percent())
-        } else if col.ty == S::Fraction && matches!(v, Value::Int(_) | Value::Decimal(_)) {
-            // And in a `Fraction` column a fraction, which may be whole.
-            Ok(v.fraction())
-        } else if let (S::Decimal, Value::Percent(r) | Value::Fraction(r)) = (col.ty, &v) {
-            // And in a `Decimal` column a decimal, though it need not end.
-            Ok(Value::exact(*r))
         } else {
             fail(
                 span,
@@ -2018,6 +2040,41 @@ impl<'p> Engine<'p> {
 fn ordinal_day(days: i32) -> i64 {
     let (y, _, _) = date::civil_from_days(days as i64);
     days as i64 - date::days_from_civil(y, 1, 1) + 1
+}
+
+/// The flag a lowered column carries beside its answer: a row whose every
+/// column was there and whose answer is nothing. The leading space is what
+/// keeps it from any name a column of a sheet could have.
+const UNACCOUNTED: &str = " unaccounted for";
+
+/// Whether every null in a lowered column is one the columns it read
+/// account for. A flag that cannot be read at all counts as not.
+fn accounted_for(out: &DataFrame) -> bool {
+    out.column(UNACCOUNTED)
+        .ok()
+        .and_then(|flag| flag.as_materialized_series().bool().ok().map(|b| !b.any()))
+        .unwrap_or(false)
+}
+
+/// A value in the dress its column's type wears. See [`Engine::fit`].
+fn dressed(v: Value, col: &Column) -> Value {
+    match col.ty {
+        S::Percent if matches!(v, Value::Int(_) | Value::Decimal(_)) => v.percent(),
+        S::Fraction if matches!(v, Value::Int(_) | Value::Decimal(_)) => v.fraction(),
+        S::Int | S::Decimal => match v {
+            Value::Percent(r) | Value::Fraction(r) => Value::exact(r),
+            v => v,
+        },
+        // A type inferred from the formula cannot be violated by it, only
+        // worn: a `Float` inferred from a float and a percentage holds the
+        // plain number. A declared `Float` refuses a percentage as it
+        // always has, which is the column saying what it is for.
+        S::Float if !col.declared => match v {
+            Value::Percent(r) | Value::Fraction(r) => Value::Float(r.to_f64()),
+            v => v,
+        },
+        _ => v,
+    }
 }
 
 fn scalar_op(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {

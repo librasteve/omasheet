@@ -388,6 +388,15 @@ fn arith(op: BinOp, l: Out, r: Out) -> Option<Out> {
             // else, so the column is left on the engine.
             let scale = match op {
                 BinOp::Add | BinOp::Sub => x.max(y),
+                // A product needs as many digits as its two sides have
+                // between them, and a `Decimal` column holds all 38 of them
+                // whatever its scale, so the dtype cannot say that a
+                // product of two of them fits. Polars answers one that does
+                // not with nothing at all rather than an error, and that is
+                // caught where the column comes back: a null none of the
+                // columns it read accounts for is not believed, and the
+                // engine calculates the column instead, giving up its guard
+                // digits to keep the answer.
                 BinOp::Mul => x + y,
                 // A quotient cannot be had at the scale the engine gives
                 // it: Polars offers at most 21 digits after the point and

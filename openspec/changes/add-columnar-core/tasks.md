@@ -694,10 +694,41 @@ what stops a table's rows being exploded into cells.
 
 ## 8. The tests
 
-- [ ] 8.1 `omasheet-engine/tests/kernel.rs`: for every `(S, S, BinOp)`, over
+- [x] 8.1 `omasheet-engine/tests/kernel.rs`: for every `(S, S, BinOp)`, over
       a fixed edge table, `scalar_op` against the same operation on a one-row
       frame. Table-driven plus a seeded LCG, the seed printed on failure.
       No new dev-dependency: the workspace has none
+
+      Written as a column each way rather than against `scalar_op` directly:
+      a one-column sheet of the pair's edge values, calculated with
+      `Lowering::Never` and with `Lowering::Always`, which asks the question
+      through the same public surface the app uses and needs nothing made
+      public for it. Ten types and fifteen operators, the four range
+      operators and `in` left out as not being operators between two
+      columns. The whole grid is checked before anything is reported, so one
+      disagreement does not hide the rest. 75 of the 1,500 cells lower.
+
+      It found two, and both are fixed here:
+
+      - **A lowered product could come back as nothing.** `-1/3 * 252984774208107`
+        needs 49 digits; Polars' `Decimal(38, 34)` has 38 and answers with a
+        null rather than an error, where the engine gives up its guard
+        digits and keeps the answer. The dtype cannot say in advance that a
+        product fits, since a `Decimal` column holds all 38 whatever its
+        scale, so the check is where the column comes back: a null that none
+        of the columns the expression read accounts for is not believed, and
+        the column is given up whole to the engine. General rather than
+        particular to multiplication — a cast that did not take is caught by
+        the same flag.
+      - **A cell did not wear its column's dress unless the type was declared.**
+        `20% // 1` answers with whichever side it took, so the engine gave a
+        column of percentages and plain numbers together, where a lowered
+        one — whose cells are read back at the column's own type — gave one
+        or the other throughout. A column has one type, so `fit` now dresses
+        every cell, and the three cases it used to apply only on a declared
+        mismatch are one `dressed` of its own. An inferred `Float` wears the
+        plain number; a declared `Float` refuses a percentage as it always
+        has.
 - [ ] 8.2 The corpus differential: for each `examples/*.omx`, `Never` and
       `Always` byte-identical to each other and to the committed `.expected`.
       Half of it is in `omasheet-engine/tests/spec.rs` as
