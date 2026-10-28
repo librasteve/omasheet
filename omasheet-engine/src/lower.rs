@@ -206,7 +206,9 @@ fn literal(l: &Lit) -> Option<Out> {
             // Polars names a scale of `0..=38`: a number held past that, as
             // `1e80` is, has no decimal to be and keeps its calculation on
             // the engine.
-            let scale = u32::try_from(d.scale()).ok().filter(|s| *s <= MAX_PRECISION)?;
+            let scale = u32::try_from(d.scale())
+                .ok()
+                .filter(|s| *s <= MAX_PRECISION)?;
             let dtype = decimal(scale);
             let value = AnyValue::Decimal(d.unscaled(), scale as usize);
             Out::new(lit(Scalar::new(dtype.clone(), value)), dtype)

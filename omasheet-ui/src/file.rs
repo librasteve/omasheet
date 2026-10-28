@@ -376,8 +376,7 @@ fn index(n: i32) -> usize {
 
 /// What the app asks before an export writes a null in place of a number
 /// held at a scale no Parquet decimal names.
-const WIDE_WARNING: &str =
-    "values too large/small for Polars Decimal128, click to export anyway";
+const WIDE_WARNING: &str = "values too large/small for Polars Decimal128, click to export anyway";
 
 impl qobject::File {
     /// Publish the document's state after it changed.
@@ -602,7 +601,8 @@ impl qobject::File {
             });
         match written {
             Ok(None) => {
-                self.as_mut().set_export_warning(QString::from(WIDE_WARNING));
+                self.as_mut()
+                    .set_export_warning(QString::from(WIDE_WARNING));
                 false
             }
             Ok(Some(notices)) => {

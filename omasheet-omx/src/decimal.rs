@@ -387,7 +387,12 @@ impl Dec {
         let (x, y, scale) = Dec::align(self, other)?;
         match x.checked_add(y) {
             // Too wide at this scale: give up digits after the point.
-            Some(sum) => Dec::new(sum, scale).or_else(|| narrow(Dec { unscaled: sum, scale })),
+            Some(sum) => Dec::new(sum, scale).or_else(|| {
+                narrow(Dec {
+                    unscaled: sum,
+                    scale,
+                })
+            }),
             // The digits themselves do not add up: an `i128` holds a little
             // over `1.7e38`, where two 38-digit numbers reach `2e38`. Each
             // side gives up its last digit first, so the sum has the room
@@ -395,7 +400,12 @@ impl Dec {
             None => {
                 let back = |n: i128| {
                     let (whole, rest) = (n / 10, n % 10);
-                    whole + if rest.unsigned_abs() * 2 >= 10 { n.signum() } else { 0 }
+                    whole
+                        + if rest.unsigned_abs() * 2 >= 10 {
+                            n.signum()
+                        } else {
+                            0
+                        }
                 };
                 Dec::new(back(x).checked_add(back(y))?, scale.checked_sub(1)?)
             }
@@ -518,7 +528,11 @@ impl Dec {
             // need to.
             None => a.signum().cmp(&b.signum()).then_with(|| {
                 let order = a.magnitude().cmp(&b.magnitude());
-                if a.is_negative() { order.reverse() } else { order }
+                if a.is_negative() {
+                    order.reverse()
+                } else {
+                    order
+                }
             }),
         }
     }
@@ -955,7 +969,10 @@ mod tests {
         let sum = wide.checked_add(wide).unwrap();
         assert_eq!(sum.magnitude(), 38);
         assert_eq!(sum.scale(), -1);
-        assert_eq!(sum.to_plain_string(), "200000000000000000000000000000000000000");
+        assert_eq!(
+            sum.to_plain_string(),
+            "200000000000000000000000000000000000000"
+        );
     }
 
     #[test]

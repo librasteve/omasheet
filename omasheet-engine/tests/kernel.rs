@@ -22,7 +22,14 @@ use omasheet_engine::{Engine, Lowering, Options, table, view_with};
 const TYPES: [(&str, &[&str]); 10] = [
     (
         "Int",
-        &["0", "1", "-1", "9223372036854775807", "-9223372036854775808", ""],
+        &[
+            "0",
+            "1",
+            "-1",
+            "9223372036854775807",
+            "-9223372036854775808",
+            "",
+        ],
     ),
     (
         "Decimal",
@@ -42,10 +49,7 @@ const TYPES: [(&str, &[&str]); 10] = [
     ("Boolean", &["true", "false", ""]),
     ("Date", &["1970-01-01", "2025-01-31", "9999-12-31", ""]),
     ("Time", &["00:00", "09:30", "23:59:59", ""]),
-    (
-        "Datetime",
-        &["1970-01-01T00:00", "2025-01-31T09:30", ""],
-    ),
+    ("Datetime", &["1970-01-01T00:00", "2025-01-31T09:30", ""]),
 ];
 
 /// Every operator that stands between two cells. `in` takes a list on its
@@ -128,7 +132,13 @@ fn difference(text: &str, rows: &[(String, String)]) -> Option<String> {
         .find(|(_, (a, b))| a != b)
         .map(|(i, (a, b))| (i, a.clone(), b.clone()))?;
     let (a, b) = rows.get(i).cloned().unwrap_or_default();
-    let blank = |s: String| if s.is_empty() { "<empty>".to_string() } else { s };
+    let blank = |s: String| {
+        if s.is_empty() {
+            "<empty>".to_string()
+        } else {
+            s
+        }
+    };
     Some(format!(
         "of {} and {} the engine says `{}` and Polars `{}`",
         blank(a),
