@@ -1827,8 +1827,8 @@ fn a_file_calculates_the_same_either_way() {
     assert_eq!(rows, columns);
 }
 
-#[test]
-fn every_example_calculates_the_same_either_way() {
+/// Every `examples/*.omx`, in the order their names sort in.
+fn corpus() -> Vec<std::path::PathBuf> {
     let dir = std::path::Path::new("../examples");
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
         .expect("the example corpus is beside the crates")
@@ -1839,18 +1839,52 @@ fn every_example_calculates_the_same_either_way() {
         .collect();
     files.sort();
     assert!(!files.is_empty(), "no examples found");
-    for path in &files {
-        let text = std::fs::read_to_string(path).expect("a readable example");
+    files
+}
+
+/// How a file in the corpus is viewed: beside itself, so a `table` finds
+/// its source, and otherwise as the `print` command views it.
+fn as_printed(lowering: Lowering) -> Options {
+    Options {
+        base: Some(std::path::PathBuf::from("../examples")),
+        lowering,
+        ..Options::default()
+    }
+}
+
+#[test]
+fn every_example_calculates_the_same_either_way() {
+    for path in corpus() {
+        let text = std::fs::read_to_string(&path).expect("a readable example");
         let name = path.file_name().expect("a file name").to_string_lossy();
-        let options = |lowering| Options {
-            base: Some(dir.to_path_buf()),
-            lowering,
-            ..Options::default()
-        };
-        let never = view_with(&name, &text, options(Lowering::Never));
-        let always = view_with(&name, &text, options(Lowering::Always));
+        let never = view_with(&name, &text, as_printed(Lowering::Never));
+        let always = view_with(&name, &text, as_printed(Lowering::Always));
         assert_eq!(never.output, always.output, "{name}");
         assert_eq!(never.errors, always.errors, "{name}");
+    }
+}
+
+/// The committed `.expected` is the third party to that agreement. The
+/// CLI's own golden test reads it under `Auto`, which for a sheet of ten
+/// rows is the row path, so without this the lowered answer is only ever
+/// compared with the other calculation and never with what is written
+/// down.
+#[test]
+fn every_example_matches_its_expected_output_either_way() {
+    for path in corpus() {
+        let text = std::fs::read_to_string(&path).expect("a readable example");
+        let name = path.file_name().expect("a file name").to_string_lossy();
+        let expected = std::fs::read_to_string(path.with_extension("expected"))
+            .expect("an example has its expected output beside it");
+        for lowering in [Lowering::Never, Lowering::Auto, Lowering::Always] {
+            let out = view_with(&name, &text, as_printed(lowering));
+            assert!(
+                out.errors.is_empty(),
+                "{name} under {lowering:?}: {:?}",
+                out.errors
+            );
+            assert_eq!(out.output, expected, "{name} under {lowering:?}");
+        }
     }
 }
 

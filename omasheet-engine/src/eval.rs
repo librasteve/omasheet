@@ -356,7 +356,7 @@ impl<'p> Engine<'p> {
             .select([expr, unaccounted])
             .collect()
             .ok()
-            .filter(|out| accounted_for(out))
+            .filter(accounted_for)
             .and_then(|df| df.get_columns().first().cloned());
         let Some(column) = collected.filter(|column| column.len() == nrows) else {
             // Whole or nothing: the result is discarded, no diagnostic is

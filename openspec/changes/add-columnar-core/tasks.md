@@ -729,13 +729,26 @@ what stops a table's rows being exploded into cells.
         mismatch are one `dressed` of its own. An inferred `Float` wears the
         plain number; a declared `Float` refuses a percentage as it always
         has.
-- [ ] 8.2 The corpus differential: for each `examples/*.omx`, `Never` and
+- [x] 8.2 The corpus differential: for each `examples/*.omx`, `Never` and
       `Always` byte-identical to each other and to the committed `.expected`.
-      Half of it is in `omasheet-engine/tests/spec.rs` as
+      Half of it was in `omasheet-engine/tests/spec.rs` as
       `every_example_calculates_the_same_either_way`: all twelve examples
-      give the same output and the same diagnostics either way. What is left
-      is the `.expected` side, which only the CLI's own golden test reads,
-      and which it reads under `Auto` alone
+      give the same output and the same diagnostics either way. What was
+      left is the `.expected` side, which only the CLI's own golden test
+      read, and which it reads under `Auto` alone — and `Auto` over a sheet
+      of ten rows is the row path, so the lowered answer was compared with
+      the other calculation and never with what is written down.
+
+      `every_example_matches_its_expected_output_either_way` is that third
+      party: the same twelve files viewed under all three lowerings and
+      each one's output read against the committed `.expected`, with no
+      diagnostic allowed. It lives beside the other half rather than in the
+      CLI's test because the engine is where the lever is: the `print`
+      command has no flag for lowering and wants none, a file in the field
+      being `Auto` by definition. The two tests share `corpus()` and
+      `as_printed()`, which is the `print` command's own view of a file —
+      read beside itself, defaults otherwise. It passed as written: nothing
+      in the corpus needed changing for it
 - [ ] 8.3 The coverage number that falls out of 8.2 — how much of the corpus
       actually lowers. Measured by hand twice now, which is the argument for
       the harness: at the end of section 5, of 100 computed columns in the
