@@ -34,6 +34,16 @@ fn options() -> Options {
     }
 }
 
+/// The options for a file read from `dir`, where a `table` finds the
+/// Parquet it reads beside it. Exporting one without this cannot find its
+/// rows, and says so rather than writing a sheet with none.
+fn options_beside(dir: &str) -> Options {
+    Options {
+        base: Some(std::path::PathBuf::from(dir)),
+        ..options()
+    }
+}
+
 fn csv_of(text: &str, sheet: Option<&str>) -> Exported {
     csv::export("file.omx", text, sheet, options()).expect("the file exports")
 }
@@ -247,7 +257,8 @@ fn csv_round_trips_the_examples() {
             continue;
         }
         let text = std::fs::read_to_string(&path).unwrap();
-        let first = csv_of(&text, None);
+        let first = csv::export("file.omx", &text, None, options_beside(dir))
+            .expect("the file exports");
         for file in 0..first.files.len() {
             let name = first.files[file].sheet.as_deref().unwrap_or("T");
             let imported = csv::import(name, &first.files[file].bytes).unwrap();
@@ -523,7 +534,7 @@ fn workbook() -> Vec<u8> {
 
 #[test]
 fn xlsx_imports_a_sheet_for_each_worksheet() {
-    let out = xlsx::import(&workbook()).unwrap();
+    let out = xlsx::import(&workbook(), options()).unwrap();
     assert_eq!(
         out.source,
         "\
@@ -662,13 +673,13 @@ Hundreds := round(X / 100) * 100
     // The nearest hundred is arithmetic in OMX, and goes out as arithmetic.
     assert!(at("D2").starts_with("ROUND(A2/100,0)*"), "{}", at("D2"));
     // And back again.
-    let back = xlsx::import(bytes).unwrap().source;
+    let back = xlsx::import(bytes, options()).unwrap().source;
     assert!(back.contains("round(X, 2)"), "{back}");
 }
 
 #[test]
 fn xlsx_imports_formulas() {
-    let out = xlsx::import(&ledger()).unwrap();
+    let out = xlsx::import(&ledger(), options()).unwrap();
     assert_eq!(
         out.source,
         "\
@@ -726,7 +737,7 @@ sheet YearEnd
 #[test]
 fn xlsx_round_trips_values() {
     let out = xlsx::export("budget.omx", BUDGET, None, options()).unwrap();
-    let back = xlsx::import(&out.files[0].bytes).unwrap();
+    let back = xlsx::import(&out.files[0].bytes, options()).unwrap();
     lints(&back.source);
     assert_eq!(eval(&back.source, "Sales.Profit.sum()"), "9000");
     assert_eq!(eval(&back.source, "Summary[Value; 0]"), "22000");
@@ -735,7 +746,7 @@ fn xlsx_round_trips_values() {
 #[test]
 fn not_a_workbook() {
     assert!(
-        xlsx::import(b"hello")
+        xlsx::import(b"hello", options())
             .unwrap_err()
             .starts_with("it is not a workbook")
     );
@@ -989,7 +1000,7 @@ fn a_kind_of_text_goes_out_as_the_text_it_holds() {
     );
 
     let book = xlsx::export("t.omx", &file, None, options()).unwrap();
-    let back = xlsx::import(&book.files[0].bytes).unwrap();
+    let back = xlsx::import(&book.files[0].bytes, options()).unwrap();
     lints(&back.source);
     assert_eq!(eval(&back.source, "T[Contact; 0]"), "name@example.com");
 
@@ -1020,7 +1031,8 @@ fn parquet_round_trips_the_examples() {
             continue;
         }
         let text = std::fs::read_to_string(&path).unwrap();
-        let first = parquet_of(&text, None);
+        let first = parquet::export("file.omx", &text, None, options_beside(dir))
+            .expect("the file exports");
         for file in 0..first.files.len() {
             let name = first.files[file].sheet.as_deref().unwrap_or("T");
             let imported = parquet::import(name, &first.files[file].bytes)
@@ -1099,6 +1111,25 @@ fn a_table_is_declared_and_read() {
     assert!(out.output.contains("Jan"), "{}", out.output);
     assert!(out.output.contains("4000"), "{}", out.output);
     assert!(out.output.contains("5000"), "{}", out.output);
+}
+
+/// D62: every path that builds an engine reads a table's rows, not just
+/// `view_with`. The export path built one without them, so a table went
+/// out as a sheet with no rows at all.
+#[test]
+fn a_table_is_exported_with_the_rows_it_reads() {
+    let dir = scratch("table_export");
+    parquet_file(&dir, "sales.parquet");
+    let options = Options {
+        base: Some(dir.to_path_buf()),
+        ..options()
+    };
+    let out = csv::export("file.omx", TABLE, None, options).expect("the table exports");
+    let text = text_of(&out, 0);
+    // The rows the table reads, and the formula over them.
+    assert!(text.contains("Month,Revenue,Cost,Profit"), "{text}");
+    assert!(text.contains("Jan,10000,6000,4000"), "{text}");
+    assert!(text.contains("Feb,12000,7000,5000"), "{text}");
 }
 
 #[test]

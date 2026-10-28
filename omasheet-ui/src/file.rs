@@ -454,7 +454,10 @@ impl qobject::File {
             .and_then(|bytes| {
                 let stem = path.file_stem().unwrap_or_default().to_string_lossy();
                 match kind {
-                    "xlsx" => omasheet_interop::xlsx::import(&bytes),
+                    // The app overrides neither the clock nor the zone, so the
+                    // machine's own are what a formula is checked under, as
+                    // they are for its exports.
+                    "xlsx" => omasheet_interop::xlsx::import(&bytes, Options::default()),
                     "json" => omasheet_interop::json::import(&stem, &bytes),
                     "parquet" => omasheet_interop::parquet::import(&stem, &bytes),
                     _ => omasheet_interop::csv::import(&stem, &bytes),

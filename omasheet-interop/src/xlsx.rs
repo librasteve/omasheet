@@ -122,6 +122,7 @@ fn settle(
     grids: &mut [Grid],
     names: &[Names],
     formulas: &[Formula],
+    options: &Options,
     dropped: &mut Vec<(usize, &'static str)>,
 ) {
     let mut live: Vec<usize> = (0..formulas.len()).collect();
@@ -168,7 +169,10 @@ fn settle(
             drop(grids, &mut live, bad, REFUSED);
             continue;
         }
-        let engine = Engine::with_options(&program, Options::default());
+        // The caller's own options: a formula is checked against what the
+        // workbook holds, and the clock and the zone it is checked under
+        // have to be the ones it will be read under (D62).
+        let engine = Engine::with_options(&program, options.clone());
         engine.take_diags();
         engine.run();
         let mut bad = Vec::new();
@@ -191,7 +195,7 @@ fn settle(
 }
 
 /// `.omx` source for a workbook: a sheet for each worksheet.
-pub fn import(bytes: &[u8]) -> Result<Imported, String> {
+pub fn import(bytes: &[u8], options: Options) -> Result<Imported, String> {
     let mut book = open_workbook_auto_from_rs(Cursor::new(bytes))
         .map_err(|e| format!("it is not a workbook: {e}"))?;
     let mut imported = Imported::default();
@@ -343,7 +347,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
         }
     }
     let mut dropped = Vec::new();
-    settle(&mut grids, &names, &formulas, &mut dropped);
+    settle(&mut grids, &names, &formulas, &options, &mut dropped);
     for (f, why) in dropped {
         untranslated.push((formulas[f].grid, why.to_string(), formulas[f].cell.clone()));
     }

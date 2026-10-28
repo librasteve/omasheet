@@ -14,7 +14,7 @@ pub mod xlsx;
 
 use omasheet_engine::omx::types::S;
 use omasheet_engine::omx::{Program, Sources, compile};
-use omasheet_engine::{Engine, Options, Value};
+use omasheet_engine::{Engine, Options, Value, base_of, table};
 
 /// A file as `.omx` source, and what was changed or left behind on the way.
 #[derive(Debug, Default)]
@@ -487,11 +487,18 @@ pub(crate) fn with_file<T>(
 ) -> Result<T, Vec<String>> {
     let mut sources = Sources::new();
     let src = sources.add(name, text);
-    let (program, diags) = compile(text, src);
+    let (mut program, mut diags) = compile(text, src);
+    // A `table` holds its rows in a file of its own, which has to be read
+    // before anything can be written out of it (D62).
+    let mut tables = table::Tables::default();
+    if diags.is_empty() {
+        tables = table::read(&mut program, base_of(&options), &mut diags);
+    }
     if !diags.is_empty() {
         return Err(diags.iter().map(|d| sources.render(d)).collect());
     }
-    let engine = Engine::with_options(&program, options);
+    let program = program;
+    let engine = Engine::with_tables(&program, options, tables);
     let zone = engine.take_diags();
     if !zone.is_empty() {
         return Err(zone.iter().map(|d| sources.render(d)).collect());

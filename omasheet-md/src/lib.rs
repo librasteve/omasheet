@@ -14,7 +14,7 @@
 use omasheet_engine::omx::file::{is_zone_name, parse_file};
 use omasheet_engine::omx::{Diagnostic, Sources, Span, compile, compile_expr};
 use omasheet_engine::value::View;
-use omasheet_engine::{Engine, Options, Outcome, Value};
+use omasheet_engine::{Engine, Options, Outcome, Value, base_of, table};
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 use std::ops::Range;
 use std::rc::Rc;
@@ -546,12 +546,19 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
         };
         sources.render(&d)
     };
-    let (program, diags) = compile(&joined.text, 0);
+    let (mut program, mut diags) = compile(&joined.text, 0);
+    // A `table` holds its rows in a file of its own, which has to be read
+    // before the document can show them (D62).
+    let mut tables = table::Tables::default();
+    if diags.is_empty() {
+        tables = table::read(&mut program, base_of(&options), &mut diags);
+    }
     if !diags.is_empty() {
         out.errors.extend(diags.iter().map(|d| locate(d, 0)));
         return out;
     }
-    let engine = Engine::with_options(&program, options);
+    let program = program;
+    let engine = Engine::with_tables(&program, options, tables);
     engine.run();
     let diags = engine.take_diags();
     if !diags.is_empty() {

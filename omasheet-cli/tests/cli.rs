@@ -390,6 +390,80 @@ fn render_writes_html() {
     );
 }
 
+/// The same gap on the way out to a file: `export` did not set the base
+/// either, so a table's rows were looked for in the working directory.
+#[test]
+fn export_writes_the_rows_a_table_reads() {
+    let dir = scratch("export_table");
+    std::fs::write(
+        path(&dir, "rows.omx"),
+        "sheet Sales\n\nMonth | Revenue | Cost\nJan | 10000 | 6000\nFeb | 12000 | 7000\n",
+    )
+    .unwrap();
+    let out = omasheet(&[
+        "export",
+        "--parquet",
+        &path(&dir, "rows.omx"),
+        "-o",
+        &path(&dir, "sales.parquet"),
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    std::fs::write(
+        path(&dir, "table.omx"),
+        "table Sales := dataframe[\"sales.parquet\"]\n\n\
+         Month   : String\nRevenue : Integer\nCost    : Integer\n\n\
+         Profit := Revenue - Cost\n",
+    )
+    .unwrap();
+    let csv = path(&dir, "out.csv");
+    let out = omasheet(&["export", "--csv", &path(&dir, "table.omx"), "-o", &csv]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = std::fs::read_to_string(&csv).unwrap();
+    assert!(text.contains("Jan,10000,6000,4000"), "{text}");
+    assert!(text.contains("Feb,12000,7000,5000"), "{text}");
+}
+
+/// D62: the render path builds an engine of its own, and built one that
+/// had not read a table's rows, so a document showed a table as empty.
+#[test]
+fn render_shows_the_rows_a_table_reads() {
+    let dir = scratch("render_table");
+    // A sheet of rows, written out as the Parquet a table reads.
+    std::fs::write(
+        path(&dir, "rows.omx"),
+        "sheet Sales\n\nMonth | Revenue | Cost\nJan | 10000 | 6000\nFeb | 12000 | 7000\n",
+    )
+    .unwrap();
+    let out = omasheet(&[
+        "export",
+        "--parquet",
+        &path(&dir, "rows.omx"),
+        "-o",
+        &path(&dir, "sales.parquet"),
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+
+    // A table over it, with a formula, and a document that asks for both.
+    std::fs::write(
+        path(&dir, "table.omx"),
+        "table Sales := dataframe[\"sales.parquet\"]\n\n\
+         Month   : String\nRevenue : Integer\nCost    : Integer\n\n\
+         Profit := Revenue - Cost\n",
+    )
+    .unwrap();
+    std::fs::write(
+        path(&dir, "doc.md"),
+        "---\nfiles: [table.omx]\n---\n\n\
+         Profit was {{ Sales.Profit.sum() }} over {{ Sales.Month.count() }} months.\n",
+    )
+    .unwrap();
+
+    let out = omasheet(&["render", &path(&dir, "doc.md")]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("Profit was 9000 over 2 months."), "{text}");
+}
+
 #[test]
 fn render_reports_where_in_the_document() {
     let dir = scratch("render-bad");

@@ -50,11 +50,14 @@ what stops a table's rows being exploded into cells.
       `polars-stream`. For the record the earlier figures stand: 1.7 MB
       before Polars at all, and 20 MB from the 44 MB with the PKGBUILD
       levers, which this change has not re-measured.
-- [ ] 1.3 Whether 13% is worth enumerating features to avoid. It is the
-      owner's call and the figure is now known; nothing here depends on it
-- [ ] 1.4 The PKGBUILD levers re-measured once the lowering lands, since fat
-      LTO folding the Polars generics is where the 44 MB became 20 MB and the
-      lazy stack is more of the same generics
+- [x] 1.3 ~~Whether 13% is worth enumerating features to avoid~~: dropped
+      (owner, 2026-10-28). It was the owner's call, the figure is known, and
+      nothing here depended on it
+- [ ] 1.4 The PKGBUILD levers re-measured, **after all the Polars work**
+      rather than as soon as the lowering landed (owner, 2026-10-28). Fat
+      LTO folding the Polars generics is where the 44 MB became 20 MB, and
+      the lazy stack is more of the same generics, so a measurement taken
+      while Polars changes are still outstanding would only be taken again
 
 ## 2. The layering (D61, D62)
 
@@ -82,12 +85,51 @@ what stops a table's rows being exploded into cells.
       did: the inversion reached only `view_sourced` and `Document`, so the
       eval path saw a table with no rows. Putting the read inside the engine
       made it fall out
-- [ ] 2.8 The three other places that compile a program and build an engine
+- [x] 2.8 The three other places that compile a program and build an engine
       without reading sources, so a `table` can be neither exported nor
       rendered into a document: `omasheet-interop/src/lib.rs` (the shared
       export path), `omasheet-interop/src/xlsx.rs` (which does not even take
       the caller's options) and `omasheet-md/src/lib.rs`. The gap predates
-      this change; closing it is a line each plus the options to carry
+      this change; closing it is a line each plus the options to carry.
+
+      **Two of the three were that gap, and there were two more sites.**
+
+      `with_file` and the render path each built their engine with
+      `Engine::with_options` straight after `compile`, with no
+      `table::read` between, so a table went out and was rendered as a
+      sheet of no rows at all. Both now read first and build with
+      `Engine::with_tables`, as `view_with` always has. `base_of` is
+      `pub` for it: where a sheet's source is read from is one rule, and
+      three of the paths that need it are in other crates.
+
+      `xlsx.rs` was a different thing wearing the same description. A
+      workbook import generates its own source and can never hold a
+      `dataframe[...]` — there are none in that file — so no table reaches
+      it and the reading half did not apply. Only the options half did:
+      `settle` checks each translated formula against the value the
+      workbook holds, and was doing it under a default clock and zone
+      rather than the caller's, so a workbook carrying a time-dependent
+      formula was judged against the wrong `now()`. `xlsx::import` now
+      takes `Options`; `omasheet import` gains the usual `env` flags to
+      have some to pass, which is additive, and the app passes defaults,
+      overriding neither clock nor zone.
+
+      **The two the task did not know about.** Reading the rows is no use
+      without being told which directory to read them from, and neither
+      `omasheet export` nor `omasheet render` set `options.base`, where
+      `eval` and `print` both do with the comment that a table reads from
+      beside the file. That was invisible until now: with no `table::read`
+      on those paths the base was used for nothing, so nothing complained.
+      Both set it now. Either fix alone still leaves a table unexportable.
+
+      Four tests, two of them through the binary:
+      `a_table_is_exported_with_the_rows_it_reads` (and confirmed to fail
+      against the old `Engine::with_options`, so it pins the bug rather
+      than agreeing with the fix), `export_writes_the_rows_a_table_reads`
+      and `render_shows_the_rows_a_table_reads`. The library test passed
+      the whole time the CLI was broken, because it builds its own
+      `Options { base: Some(dir), .. }` — the one thing the commands did
+      not do
 
 ## 3. The frame store (D63, D64, D65)
 
@@ -907,20 +949,29 @@ what stops a table's rows being exploded into cells.
 
 ## 10. Verification
 
-- [ ] 10.1 `cargo fmt --all --check`, `cargo clippy --workspace
+- [x] 10.1 `cargo fmt --all --check`, `cargo clippy --workspace
       --all-targets -- -D warnings`, `cargo test --workspace`.
 
-      **Two of the three.** `cargo fmt --all --check` passes, after the ten
-      places on this branch it had never been run over; so does
+      **All three.** `cargo fmt --all --check` passes, after the ten places
+      on this branch it had never been run over; so does
       `cargo clippy --workspace --all-targets -- -D warnings`, over every
       crate including the app.
 
-      `cargo test --workspace` has not run whole. Every library crate
-      passes — `omasheet-omx`, `omasheet-engine`, `omasheet-interop` and
-      `omasheet-md`, 311 tests — but `omasheet-cli`'s suite builds the app
-      binary to run it, and the app would not build while `Main.qml` was
-      being edited elsewhere. Nothing of this change is implicated; the
-      run is owed, not the fix
+      `cargo test --workspace` now runs whole and passes: 356 tests, of
+      which 311 are the library crates this task counted before, 19 are
+      `omasheet-cli`'s own suite and 26 the app's. The run was owed rather
+      than the fix, as recorded: the CLI suite builds the app binary to
+      drive it, and the app would not build while `Main.qml` was being
+      edited elsewhere. That work is in, and the binary builds.
+
+      The owed run was not a formality, which is the thing worth keeping.
+      It found a failure no library-only run could reach:
+      `lint_reports_a_located_type_error` asserts the text of a diagnostic,
+      and `Int` had meanwhile become `Integer`. That rename left six
+      assertions checking a *message* rather than a type name, across
+      `convert.rs`, `spec.rs`, `interop.rs` and `cli.rs`, and the last of
+      them sat in the one suite outside the four libraries. A rename hides
+      in exactly that class, so the whole-workspace run is what catches it
 - [x] 10.2 Every `examples/*.expected` byte-identical, under both `Never`
       and `Always`.
 

@@ -122,6 +122,9 @@ enum Command {
         /// Write the file to this file rather than printing it
         #[arg(short, long, value_name = "FILE")]
         output: Option<PathBuf>,
+
+        #[command(flatten)]
+        env: Env,
     },
     /// Write the calculated sheets of a file as an XLSX Workbook, CSV, JSON
     /// or Parquet
@@ -215,7 +218,7 @@ fn extension(path: &Path) -> String {
     ext.to_string_lossy().to_ascii_lowercase()
 }
 
-fn import(file: &Path, output: Option<&Path>) -> Result<ExitCode, ExitCode> {
+fn import(file: &Path, output: Option<&Path>, options: Options) -> Result<ExitCode, ExitCode> {
     let kind = extension(file);
     if !matches!(kind.as_str(), "xlsx" | "csv" | "json" | "parquet") {
         return usage(&format!(
@@ -229,7 +232,7 @@ fn import(file: &Path, output: Option<&Path>) -> Result<ExitCode, ExitCode> {
     })?;
     let stem = file.file_stem().unwrap_or_default().to_string_lossy();
     let imported = match kind.as_str() {
-        "xlsx" => omasheet_interop::xlsx::import(&bytes),
+        "xlsx" => omasheet_interop::xlsx::import(&bytes, options),
         "json" => omasheet_interop::json::import(&stem, &bytes),
         "parquet" => omasheet_interop::parquet::import(&stem, &bytes),
         _ => omasheet_interop::csv::import(&stem, &bytes),
@@ -379,7 +382,9 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
                 file_ref, expr_name, &expr, options,
             )))
         }
-        Some(Command::Import { file, output }) => import(&file, output.as_deref()),
+        Some(Command::Import { file, output, env }) => {
+            import(&file, output.as_deref(), env.options()?)
+        }
         Some(Command::Export {
             file,
             xlsx,
@@ -399,7 +404,10 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
                     return usage("say what to export as: --xlsx, --csv, --json or --parquet");
                 }
             };
-            let options = env.options()?;
+            let mut options = env.options()?;
+            // As for `print` and `render`: a `table` reads its rows from
+            // beside the file, so the file's own directory is the base.
+            options.base = Some(beside(&file));
             export(&file, ext, sheet.as_deref(), output.as_deref(), options)
         }
         Some(Command::Render {
@@ -407,7 +415,14 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
             html,
             output,
             env,
-        }) => render(&file, html, output.as_deref(), env.options()?),
+        }) => {
+            let mut options = env.options()?;
+            // A `table` reads its rows from beside the document, as it does
+            // from beside a file: before the render path read a table at all
+            // this went unnoticed, the base being used for nothing here.
+            options.base = Some(beside(&file));
+            render(&file, html, output.as_deref(), options)
+        }
         None => Ok(open(cli.file.as_deref())),
         Some(Command::Print { file, env }) => {
             let mut options = env.options()?;

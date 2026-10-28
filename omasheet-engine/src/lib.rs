@@ -102,8 +102,10 @@ impl Outcome {
 }
 
 /// Where a sheet's source is read from: beside the file, or the working
-/// directory for an expression that has no file.
-fn base_of(options: &Options) -> &std::path::Path {
+/// directory for an expression that has no file. Public because every path
+/// that builds an engine has to read a `table`'s rows the same way, and
+/// three of them are in other crates (D62).
+pub fn base_of(options: &Options) -> &std::path::Path {
     options
         .base
         .as_deref()
