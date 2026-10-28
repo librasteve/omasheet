@@ -5,6 +5,7 @@
 //! checked from the outside.
 
 use omasheet_engine::eval::Attempt;
+use omasheet_engine::omx::check::ColKind;
 use omasheet_engine::omx::date::MICROS;
 use omasheet_engine::omx::date::{Order, Style};
 use omasheet_engine::omx::{compile, compile_expr};
@@ -94,9 +95,7 @@ fn large_integers_keep_thirty_eight_digits_and_move_the_point() {
     assert_eq!(calc("10**1000"), "1e+1000");
     // Past where the scale itself reaches there is nowhere to put it, and
     // that is said rather than wrapped or quietly rounded.
-    assert!(
-        calc_err(None, "10**2000000000 * 10**2000000000").contains("too large")
-    );
+    assert!(calc_err(None, "10**2000000000 * 10**2000000000").contains("too large"));
 }
 
 #[test]
@@ -1886,6 +1885,81 @@ fn every_example_matches_its_expected_output_either_way() {
             assert_eq!(out.output, expected, "{name} under {lowering:?}");
         }
     }
+}
+
+/// How much of the corpus lowers: what became of every column the twelve
+/// examples offer to Polars, with lowering forced.
+///
+/// Measured by hand three times before this, and the third measurement
+/// corrected the second — a `grep` had been taking the first column of a
+/// name from whichever example came first. The figures are pinned here so
+/// that a change in what lowers says so, and printed under `--nocapture`
+/// so the next measurement is read rather than taken.
+#[test]
+fn how_much_of_the_corpus_lowers() {
+    let mut table = String::from("| Example | Offered | Lowered | Refused | Failed |\n");
+    table.push_str("| --- | ---: | ---: | ---: | ---: |\n");
+    let mut left = String::new();
+    let (mut lowered, mut refused, mut failed) = (0, 0, 0);
+    for path in corpus() {
+        let text = std::fs::read_to_string(&path).expect("a readable example");
+        let name = path.file_name().expect("a file name").to_string_lossy();
+        let (program, mut diags) = compile(&text, 0);
+        assert!(diags.is_empty(), "{name}: {diags:?}");
+        let mut program = program;
+        let dir = std::path::Path::new("../examples");
+        let tables = omasheet_engine::table::read(&mut program, dir, &mut diags);
+        assert!(diags.is_empty(), "{name}: {diags:?}");
+        let program = program;
+        let engine = Engine::with_tables(&program, as_printed(Lowering::Always), tables);
+        engine.run();
+        let attempts = engine.attempts();
+        let count = |want| attempts.iter().filter(|(.., a)| *a == want).count();
+        let (l, r, f) = (
+            count(Attempt::Lowered),
+            count(Attempt::Refused),
+            count(Attempt::Failed),
+        );
+        table.push_str(&format!(
+            "| {name} | {} | {l} | {r} | {f} |\n",
+            attempts.len()
+        ));
+        // The name and the formula of each one left, which is what the
+        // reasons in the task are read off: a grep for the name alone is
+        // what got the measurement before this one wrong.
+        for (t, c, a) in &attempts {
+            if *a != Attempt::Lowered {
+                let sheet = &program.sheets[*t];
+                let column = &sheet.cols[*c];
+                let formula = match &column.kind {
+                    ColKind::Computed(node) => {
+                        &text[node.span.start as usize..node.span.end as usize]
+                    }
+                    _ => "",
+                };
+                left.push_str(&format!(
+                    "{a:?} {name} {}.{} := {formula}\n",
+                    sheet.name, column.name
+                ));
+            }
+        }
+        (lowered, refused, failed) = (lowered + l, refused + r, failed + f);
+    }
+    let offered = lowered + refused + failed;
+    table.push_str(&format!(
+        "| **all of them** | **{offered}** | **{lowered}** | **{refused}** | **{failed}** |\n"
+    ));
+    println!("{table}\n{left}");
+    // What task 8.3 records, and what the table there counts the reasons
+    // for. A figure that moves is a change in coverage, which is worth
+    // saying out loud rather than discovering at the next measurement:
+    // read the two lists above against the table and write down what
+    // moved.
+    assert_eq!(
+        (offered, lowered, refused, failed),
+        (59, 18, 40, 1),
+        "the corpus lowers differently than task 8.3 records"
+    );
 }
 
 // ---- a columnar core: aggregates ------------------------------------------

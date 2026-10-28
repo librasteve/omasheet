@@ -749,7 +749,7 @@ what stops a table's rows being exploded into cells.
       `as_printed()`, which is the `print` command's own view of a file —
       read beside itself, defaults otherwise. It passed as written: nothing
       in the corpus needed changing for it
-- [ ] 8.3 The coverage number that falls out of 8.2 — how much of the corpus
+- [x] 8.3 The coverage number that falls out of 8.2 — how much of the corpus
       actually lowers. Measured by hand twice now, which is the argument for
       the harness: at the end of section 5, of 100 computed columns in the
       twelve examples 54 were elementwise, and with lowering forced 10 were
@@ -797,8 +797,24 @@ what stops a table's rows being exploded into cells.
       to free the guard digits changes the arithmetic — and the sequence is
       row-recursive by nature; the conversions and the zones are omasheet's own rules, each a
       change of its own; and the four maths functions are a size question
-      (1.3) and not a semantic one. The harness that prints this rather than
-      a measurement read by hand three times is still what is left
+      (1.3) and not a semantic one.
+
+      The harness is `how_much_of_the_corpus_lowers`, beside the two
+      differentials and over the same twelve files with lowering forced. It
+      counts what became of every column offered, prints the table above
+      per example and in total, and asserts the four figures, so a change
+      in coverage is said at the next `cargo test` rather than found at the
+      next measurement. It reproduces the hand figures exactly: **59
+      offered, 18 lowered, 40 refused, 1 failed.**
+
+      Under `--nocapture` it also prints each column it did not lower, with
+      its formula beside its name — which is the material the reason table
+      is read off, and the answer to the grep that got the measurement
+      before this one wrong. The reasons themselves are still read by hand:
+      a refusal carries no reason, every `None` in `lower.rs` being alike,
+      and which reason a column meets first is a question the harness would
+      have to answer before it could count by reason rather than print the
+      list
 
 ## 9. The documents
 
