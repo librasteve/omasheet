@@ -98,6 +98,11 @@ pub struct Engine<'p> {
     /// and column, in the order they were read. What is not here was never
     /// read.
     reads: RefCell<Vec<(usize, usize)>>,
+    /// How many values those reads brought back. A column comes back whole,
+    /// so today it is the sheet's row count once for each column read; a
+    /// limit pushed down into the scan is what would make it less, and what
+    /// `tests/rowgroups.rs` watches for.
+    rows_read: RefCell<usize>,
     /// A memoisation slot per cell, by sheet, column and row. A column's
     /// slots are made when a cell of it is first asked for: a sheet of a
     /// million rows whose columns all come from a file needs none of them,
@@ -199,6 +204,7 @@ impl<'p> Engine<'p> {
             aggregates: RefCell::new(Vec::new()),
             filters: RefCell::new(Vec::new()),
             reads: RefCell::new(Vec::new()),
+            rows_read: RefCell::new(0),
             cells: RefCell::new(
                 prog.sheets
                     .iter()
@@ -295,6 +301,13 @@ impl<'p> Engine<'p> {
     /// here at all.
     pub fn reads(&self) -> Vec<(usize, usize)> {
         self.reads.borrow().clone()
+    }
+
+    /// How many values have been read from a `table`'s files, over all the
+    /// columns read: the measure of how much of a Parquet an answer cost,
+    /// where [`Engine::reads`] says only which columns it touched.
+    pub fn rows_read(&self) -> usize {
+        *self.rows_read.borrow()
     }
 
     /// Calculate a group of columns in one step, over the whole column, and
@@ -651,6 +664,7 @@ impl<'p> Engine<'p> {
             Some(held @ Held::Column(_)) => {
                 let column = held.read()?;
                 self.reads.borrow_mut().push((t, c));
+                *self.rows_read.borrow_mut() += column.len();
                 self.held.borrow_mut()[t][c] = Some(column.clone());
                 return Some(column);
             }

@@ -365,8 +365,15 @@ what stops a table's rows being exploded into cells.
       time by position — so it means either a sliced materialisation
       (`pl_column` taking the rows wanted, which the snapshot could give it
       once D75's column-wise pass exists) or the selection staying lazy
-      until it is read. 10.3 is what would show it working, and that is
-      where the row groups read are counted
+      until it is read.
+
+      **Measured, under 10.3:** a `table` over a file of five row groups of
+      a thousand rows, asked for the first five rows, reads five thousand
+      values where five would do — every row group of the column shown,
+      where the answer is in the first. The same file opened and calculated
+      with nothing asked of it reads none at all, and a sum of one of its
+      two columns reads that column only, so it is the limit alone that
+      does not reach the scan
 - [x] 6.3 An aggregate over a frame column taken by Polars, with `fit_agg`
       re-applying the `Percent` or `Fraction` wrapper from `Column::ty`
       (D69) — `examples/budget.expected` is what catches a slip.
@@ -898,8 +905,34 @@ what stops a table's rows being exploded into cells.
       --all-targets -- -D warnings`, `cargo test --workspace`
 - [ ] 10.2 Every `examples/*.expected` byte-identical, under both `Never`
       and `Always`
-- [ ] 10.3 A real multi-row-group Parquet opened, and the row groups read
-      counted
+- [x] 10.3 A real multi-row-group Parquet opened, and the row groups read
+      counted.
+
+      `omasheet-engine/tests/rowgroups.rs`. The file is written by the test
+      rather than committed — five row groups of a thousand rows, the size
+      asked for because Polars' own is far larger — and one test of the
+      four checks the fixture itself against the footer, since every figure
+      below means nothing if the writer put the rows in one group.
+
+      Counting them needed one number the engine did not keep:
+      `Engine::reads` said which columns were read and nothing said how
+      much of them, which is the whole question here. `Engine::rows_read`
+      is the values a `table`'s files gave back, counted where a column is
+      collected, and the row groups follow from it — the file being read
+      from its first row group onwards, one column at a time.
+
+      | Asked | Values read | Row groups |
+      |---|---:|---:|
+      | Opened and calculated, nothing asked | 0 | 0 |
+      | `Numbers.Value.sum()` | 5,000 | 5 |
+      | `(Numbers \|> head(5)).Value` | 5,000 | 5 |
+
+      The first two are the projection working: the footer alone to open,
+      and one of the two columns for the sum. The third is 6.2's open half
+      in a number — the answer is the first row group's first five rows,
+      and five row groups are read to give it. The assertion says so, so
+      the day the limit reaches the scan this test fails with what it has
+      become rather than passing quietly
 
 ## 11. If the measurement says so
 
