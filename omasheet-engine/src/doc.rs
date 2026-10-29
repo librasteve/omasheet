@@ -45,6 +45,10 @@ pub struct SheetSnap {
     /// cell and no row of its own to change: it is shown and not edited,
     /// as a table is.
     pub derived: bool,
+    /// The expression a sheet computed from one is written with, `Sales |>
+    /// head(3)`, for the tab to mark it and say what it is. `None` for a
+    /// sheet whose rows are its own or a file's (D90).
+    pub view: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -890,15 +894,27 @@ fn moved_cell(
 /// Make arbitrary input safe to store as one cell: a single line that does
 /// not split into several cells.
 fn clean_cell(input: &str) -> String {
+    // A newline is kept: a cell may hold one, written as the `\n` escape the
+    // lexer already reads. Every other control character becomes a space,
+    // there being nothing in the file to write it as.
     let text: String = input
         .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
+        .map(|c| match c {
+            '\n' => '\n',
+            c if c.is_control() => ' ',
+            c => c,
+        })
         .collect();
     let text = text.trim();
-    if text.is_empty() || split_cells(text, 0, 0).len() == 1 {
+    if text.is_empty() || (!text.contains('\n') && split_cells(text, 0, 0).len() == 1) {
         return text.to_string();
     }
-    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+    format!(
+        "\"{}\"",
+        text.replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+    )
 }
 
 /// A name with any `_001` it was copied with taken off.
@@ -1295,6 +1311,12 @@ impl Document {
     /// sheet is refused, and a front end can say so before one is tried.
     pub fn read_only(&self, sheet: usize) -> Option<String> {
         let snap = self.snapshot.sheets.get(sheet)?;
+        if let Some(expr) = &snap.view {
+            return Some(format!(
+                "sheet `{}` is calculated from `{expr}`: change the sheets it reads, or its own formula",
+                snap.name
+            ));
+        }
         let path = snap.source.as_ref()?;
         Some(format!(
             "table `{}` is a read-only view of `{path}`: import that file to make edits",
@@ -1459,6 +1481,17 @@ impl Document {
     }
 
     pub fn set_cell(&mut self, sheet: usize, row: usize, col: usize, text: &str) -> bool {
+        // A sheet calculated from an expression has one formula, as a
+        // calculated column does, and no cells of its own to take an edit:
+        // whichever cell the cursor was in, the edit is of that formula.
+        if self
+            .snapshot
+            .sheets
+            .get(sheet)
+            .is_some_and(|t| t.view.is_some())
+        {
+            return self.set_sheet_formula(sheet, text);
+        }
         let is_computed = self
             .snapshot
             .sheets
@@ -1979,6 +2012,44 @@ impl Document {
     }
 
     /// Change the expression of a computed column.
+    /// The expression a sheet is calculated from, changed in place. One
+    /// undoable step, as a column's formula is (D90).
+    pub fn set_sheet_formula(&mut self, sheet: usize, expr: &str) -> bool {
+        // A formula may be written over several lines, the file reading a
+        // line that is indented as a continuation of the one above. So a
+        // newline is kept, and what follows it is indented to say so.
+        let expr = expr.trim().trim_start_matches(":=").trim();
+        let expr = expr
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<&str>>()
+            .join("\n    ");
+        if expr.is_empty() {
+            return false;
+        }
+        // Only a sheet that has one: a table's rows come from its file, and
+        // a sheet of its own rows has them in the text.
+        if self
+            .snapshot
+            .sheets
+            .get(sheet)
+            .is_none_or(|t| t.view.is_none())
+        {
+            return false;
+        }
+        let ast = self.ast();
+        let Some(span) = self
+            .sheet_decl(&ast, sheet)
+            .and_then(|decl| decl.formula.as_ref())
+            .map(|f| f.expr_span)
+        else {
+            return false;
+        };
+        let mut text = self.text.clone();
+        text.replace_range(span.start as usize..span.end as usize, &expr);
+        self.commit(text)
+    }
+
     pub fn set_column_formula(&mut self, sheet: usize, col: usize, expr: &str) -> bool {
         if self.read_only(sheet).is_some() {
             return false;
@@ -2069,22 +2140,32 @@ impl Document {
     }
 
     /// Append a new sheet with one empty row.
-    pub fn add_sheet(&mut self, name: &str) -> Result<(), String> {
-        self.insert_sheet(usize::MAX, name)
+    pub fn add_sheet(&mut self, name: &str, formula: Option<&str>) -> Result<(), String> {
+        self.insert_sheet(usize::MAX, name, formula)
     }
 
     /// Put a new sheet in before sheet `at`, or last if there is none
     /// there. It goes above the comment written over that sheet.
-    pub fn insert_sheet(&mut self, at: usize, name: &str) -> Result<(), String> {
+    pub fn insert_sheet(
+        &mut self,
+        at: usize,
+        name: &str,
+        formula: Option<&str>,
+    ) -> Result<(), String> {
         let name = valid_name(name)?.to_string();
         let taken = self.snapshot.consts.iter().any(|c| c.name == name)
             || self.snapshot.sheets.iter().any(|t| t.name == name);
         if taken {
             return Err(format!("the name `{name}` is already used"));
         }
-        let block = format!(
-            "sheet {name}\n\n| A   | B   | C   |\n| --- | --- | --- |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n"
-        );
+        // A sheet calculated from an expression has no grid of its own:
+        // its rows are the view the expression gives (D90).
+        let block = match formula.map(str::trim).filter(|f| !f.is_empty()) {
+            Some(formula) => format!("sheet {name} := {formula}\n"),
+            None => format!(
+                "sheet {name}\n\n| A   | B   | C   |\n| --- | --- | --- |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n"
+            ),
+        };
         let ast = self.ast();
         let text = match self.sheet_decl(&ast, at) {
             Some(decl) => {
@@ -2326,6 +2407,14 @@ impl Document {
             let base = self.base.clone().unwrap_or_else(|| ".".into());
             tables = crate::table::read(&mut program, &base, &mut diags);
         }
+        // A view's row count is settled before the grid is built from it.
+        let view_options = Options {
+            base: self.base.clone(),
+            style: self.style,
+            local: self.local,
+            ..Options::default()
+        };
+        let tables = crate::resolve_views(&mut program, &view_options, tables);
         let engine = Engine::with_tables(
             &program,
             Options {
@@ -2493,6 +2582,11 @@ impl Document {
                 rows,
                 source: sheet.source.as_ref().map(|s| s.path.clone()),
                 derived: sheet.rows_from.is_some(),
+                view: decl.and_then(|d| d.formula.as_ref()).map(|f| {
+                    self.text[f.expr_span.start as usize..f.expr_span.end as usize]
+                        .trim()
+                        .to_string()
+                }),
             });
         }
         for (i, c) in program.consts.iter().enumerate() {
@@ -2910,7 +3004,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 4), ["20", "25"]);
         doc.add_const("Extra", "Sales.Revenue.sum()").unwrap();
         assert_eq!(doc.snapshot().consts[1].display, "220");
-        doc.add_sheet("Notes").unwrap();
+        doc.add_sheet("Notes", None).unwrap();
         assert_eq!(doc.snapshot().sheets[1].rows.len(), 3);
         assert!(
             doc.snapshot().problems.is_empty(),
@@ -3208,6 +3302,27 @@ mod tests {
         // A column with nothing in it says nothing.
         let empty = Document::from_text("sheet T\n\nA | B\n| \n");
         assert_eq!(empty.snapshot().sheets[0].columns[0].ty, "");
+    }
+
+    #[test]
+    fn the_formula_of_a_calculated_sheet_is_edited_as_a_columns_is() {
+        let text = "sheet Sales\n\nMonth | Revenue\nJan | 100\nFeb | 120\nMar | 150\n\n\
+                    sheet Top := Sales |> head(1)\n";
+        let mut doc = Document::from_text(text);
+        assert_eq!(doc.snapshot().sheets[1].rows.len(), 1);
+        // An edit of any of its cells is an edit of the sheet's formula,
+        // as one of a calculated column's cells is of the column's.
+        assert!(doc.set_cell(1, 0, 0, ":= Sales |> head(2)"));
+        assert_eq!(doc.snapshot().sheets[1].rows.len(), 2);
+        assert!(doc.text().contains("sheet Top := Sales |> head(2)"));
+        // The mark is optional, the formula being what it is either way.
+        assert!(doc.set_cell(1, 0, 0, "Sales |> head(3)"));
+        assert_eq!(doc.snapshot().sheets[1].rows.len(), 3);
+        // And one undoable step each time.
+        assert!(doc.undo());
+        assert_eq!(doc.snapshot().sheets[1].rows.len(), 2);
+        // A sheet with no formula has none to set.
+        assert!(!doc.set_sheet_formula(0, "Sales |> head(1)"));
     }
 
     #[test]
@@ -3972,17 +4087,17 @@ mod tests {
         };
 
         // Before a sheet, above its comment; after the last, at the end.
-        doc.insert_sheet(0, "First").unwrap();
-        doc.insert_sheet(2, "Middle").unwrap();
-        doc.insert_sheet(4, "Last").unwrap();
+        doc.insert_sheet(0, "First", None).unwrap();
+        doc.insert_sheet(2, "Middle", None).unwrap();
+        doc.insert_sheet(4, "Last", None).unwrap();
         assert_eq!(names(&doc), ["First", "Sales", "Middle", "Summary", "Last"]);
         assert!(
             doc.text().contains("\n\n# The sales.\nsheet Sales\n"),
             "{}",
             doc.text()
         );
-        assert!(doc.insert_sheet(0, "Sales").is_err());
-        assert!(doc.insert_sheet(0, "K").is_err());
+        assert!(doc.insert_sheet(0, "Sales", None).is_err());
+        assert!(doc.insert_sheet(0, "K", None).is_err());
         assert!(
             doc.snapshot().problems.is_empty(),
             "{:?}",

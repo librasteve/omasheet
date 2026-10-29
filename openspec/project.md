@@ -86,7 +86,15 @@ places a big Parquet is materialised whole where a part of it would do, each
 measured by the change that left it.
 
 Dependencies: every phase needs Phase 1. Phase 3 now needs Phase 2, through
-the columnar core it is built on. Phase 4 adds deltas to Phases 2 and 3 (units
+the columnar core it is built on.
+
+Order, as the owner settled it on 2026-10-28: nothing of `add-units`,
+`add-uncertainty` or `hold-less-of-a-big-file` starts until every pipe stage of
+`add-sheet-operations-polars` is done. Phase 4 is a delta on Phase 3, Phase 5
+builds on Phase 4, and the snagging change cannot measure what a big Parquet
+costs through a group or a join that has not been written. The three are marked
+deferred at the head of their own task lists, and the reason is D89 of
+`add-sheet-operations-polars`. Phase 4 adds deltas to Phases 2 and 3 (units
 on export, units through group/join), and Phase 5 builds on Phase 4.
 
 Not yet in any change: matrices and the matrix product, REPL, LSP server, Neovim plugin, TUI viewer, charts,

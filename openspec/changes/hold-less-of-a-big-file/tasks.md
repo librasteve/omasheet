@@ -1,5 +1,10 @@
 # Tasks: hold less of a big file
 
+> **Deferred** until every pipe stage of `add-sheet-operations-polars` is done
+> (owner, 2026-10-28; D89 there). It is the snagging change that measures what a big
+> Parquet costs where a part of it would do, and it cannot measure the cost
+> through a `group_by` or a join that has not been written.
+
 The snagging change after `add-columnar-core` and `add-sheet-operations-polars`.
 Three items, each one left by a change that was about speed rather than
 size, and each with its *before* already measured and pinned by a test.

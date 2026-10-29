@@ -497,6 +497,7 @@ pub(crate) fn with_file<T>(
     if !diags.is_empty() {
         return Err(diags.iter().map(|d| sources.render(d)).collect());
     }
+    let tables = omasheet_engine::resolve_views(&mut program, &options, tables);
     let program = program;
     let engine = Engine::with_tables(&program, options, tables);
     let zone = engine.take_diags();

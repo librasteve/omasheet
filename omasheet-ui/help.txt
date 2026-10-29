@@ -23,6 +23,7 @@ Ctrl+Enter           Insert row below
 Ctrl+Shift+Enter     Insert row above
 Ctrl+Arrows          Go to end cell
 Ctrl+Alt+L/R         Previous / next sheet
+Alt+Enter            Newline
 Ctrl+click           Open link
 
 F1                   View functions

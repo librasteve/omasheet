@@ -109,6 +109,10 @@ pub struct Engine<'p> {
     /// and merely opening such a file should not pay for them.
     cells: RefCell<Vec<Vec<Option<Vec<Slot>>>>>,
     consts: RefCell<Vec<Slot>>,
+    /// The evaluated view of each sheet computed from an expression, once
+    /// something has asked for one: a `Slot` so that a view reading itself
+    /// is caught as any other cycle is (D90).
+    views: RefCell<Vec<Slot>>,
     /// The arguments of the file's own functions being evaluated, the
     /// innermost call last.
     args: RefCell<Vec<Vec<Value>>>,
@@ -200,6 +204,7 @@ impl<'p> Engine<'p> {
                     .map(|t| vec![None; t.cols.len()])
                     .collect(),
             ),
+            views: RefCell::new(vec![Slot::Pending; prog.sheets.len()]),
             attempts: RefCell::new(Vec::new()),
             aggregates: RefCell::new(Vec::new()),
             filters: RefCell::new(Vec::new()),
@@ -772,6 +777,15 @@ impl<'p> Engine<'p> {
             // asked for, and kept from then on; a file that will not give
             // it any more is in error rather than empty, as a column the
             // file never had is.
+            // A view's cell is the source sheet's own, at the row the view
+            // keeps: nothing of it is stored here (D91).
+            (None, ColKind::View(source)) => match self.view(t) {
+                Ok(view) => match view.rows.get(r) {
+                    Some(&row) => self.cell(view.sheet, *source, row),
+                    None => Ok(Value::Null),
+                },
+                Err(why) => Err(why),
+            },
             (None, ColKind::Frame) => {
                 let held = match self.tables.get(t, c) {
                     Some(Held::Column(_)) => Some(
@@ -936,6 +950,64 @@ impl<'p> Engine<'p> {
                     v.kind()
                 ),
             )
+        }
+    }
+
+    /// The view of a sheet computed from an expression, evaluated once. The
+    /// expression has no row around it, so it is evaluated as a const is.
+    fn view(&self, t: usize) -> Result<crate::value::View, Fail> {
+        let held = match &self.views.borrow()[t] {
+            Slot::Done(Value::Sheet(view)) => Some(view.clone()),
+            Slot::Done(_) => return Err(Fail::Poison),
+            Slot::Busy => {
+                return fail(
+                    self.prog.sheets[t]
+                        .view
+                        .as_ref()
+                        .map_or(Span::default(), |n| n.span),
+                    format!(
+                        "sheet `{}` is computed from itself",
+                        self.prog.sheets[t].name
+                    ),
+                );
+            }
+            Slot::Pending => None,
+        };
+        if let Some(view) = held {
+            return Ok(view);
+        }
+        let Some(node) = self.prog.sheets[t].view.as_ref() else {
+            return Err(Fail::Poison);
+        };
+        self.views.borrow_mut()[t] = Slot::Busy;
+        let value = match self.eval(node, &mut Vec::new()) {
+            Ok(v) => v,
+            Err(Fail::Diag(d)) => {
+                self.diags.borrow_mut().push(d);
+                Value::Error
+            }
+            Err(Fail::Poison) => Value::Error,
+        };
+        self.views.borrow_mut()[t] = Slot::Done(value.clone());
+        match value {
+            Value::Sheet(view) => Ok(view),
+            _ => Err(Fail::Poison),
+        }
+    }
+
+    /// The tables back, so that a probe engine can be made to settle what
+    /// the checker could not and the real one can go on using them.
+    pub fn into_tables(self) -> Tables {
+        self.tables
+    }
+
+    /// How many rows a sheet has: a view's is the rows its expression keeps,
+    /// which is not known until that is evaluated (D92).
+    pub fn nrows(&self, t: usize) -> usize {
+        match self.prog.sheets.get(t) {
+            Some(sheet) if sheet.view.is_some() => self.view(t).map_or(0, |view| view.rows.len()),
+            Some(sheet) => sheet.nrows,
+            None => 0,
         }
     }
 
@@ -2001,7 +2073,22 @@ impl<'p> Engine<'p> {
                 if !matches!(value, Value::Null | Value::Error) && !value.is_numeric() {
                     numeric[k] = false;
                 }
-                line.push(self.show(&value, false));
+                // A row is a line, so a cell holding a newline is written
+                // as the escape the file holds it by: the grid keeps its
+                // shape and what is printed reads back as what it was.
+                let text = self.show(&value, false);
+                line.push(if text.contains(['\n', '\r', '\t']) {
+                    format!(
+                        "\"{}\"",
+                        text.replace('\\', "\\\\")
+                            .replace('"', "\\\"")
+                            .replace('\r', "\n")
+                            .replace('\n', "\\n")
+                            .replace('\t', "\\t")
+                    )
+                } else {
+                    text
+                });
             }
             grid.push(line);
         }

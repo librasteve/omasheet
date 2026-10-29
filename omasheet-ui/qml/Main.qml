@@ -27,6 +27,11 @@ ApplicationWindow {
     readonly property color lineColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.14)
     readonly property color panelColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.05)
     readonly property color computedTint: Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.07)
+    // The backing of what is drawn over the sheet: a cell opened out to the
+    // lines it holds, the formula box open to several of them. Opaque: what
+    // is under it is covered rather than read through, the border being
+    // what says it is lying over the sheet.
+    readonly property color overColor: Qt.rgba(pageColor.r, pageColor.g, pageColor.b, 1.0)
 
     // The size the desktop is set to: on Omarchy `[font] base-size`, which
     // `omarchy display text size` writes and its own shell scales from, so
@@ -39,6 +44,17 @@ ApplicationWindow {
     readonly property int baseFontSize: {
         var desktop = file.desktopFontSize();
         return desktop > 0 ? Math.max(8, Math.min(40, desktop + 2)) : 14;
+    }
+    // Whether the formula box is open to four lines, for a formula written
+    // over several of them.
+    property bool formulaOpen: false
+    // The cell opened out to every line it holds, as {tab, row, col}, or
+    // null. A cell is one line tall, so one holding a newline shows its
+    // first line and a caret; the caret opens it over the rows below.
+    property var openCell: null
+    function openCellAt(row, col) {
+        openCell = openCell && openCell.tab === tab && openCell.row === row && openCell.col === col
+            ? null : { tab: tab, row: row, col: col };
     }
     // Ctrl+plus and Ctrl+minus change the size; everything scales from it.
     property int fontSize: baseFontSize
@@ -94,6 +110,14 @@ ApplicationWindow {
     property var snap: ({ sheets: [], consts: [], problems: [] })
     property var tabs: []
     property int tab: 0
+    // Another sheet is another formula and another cell. A tab is pressed
+    // with the mouse, which leaves the box holding the keyboard and the
+    // sheet it was opened on, so the grid takes it back here.
+    onTabChanged: {
+        formulaOpen = false;
+        grid.forceActiveFocus();
+        resetBox();
+    }
     readonly property var sheet: tab < tabs.length ? tabs[tab] : emptySheet
     readonly property var emptySheet: ({ name: "", columns: [], rows: [], isConsts: false })
     property var colWidths: []
@@ -110,6 +134,22 @@ ApplicationWindow {
 
     property int curRow: 0
     property int curCol: 0
+    // A cell opened out to its lines closes when the cursor leaves it, by
+    // the keyboard or by a click: the lines are drawn over the rows below,
+    // and nothing in them says which cell they belong to.
+    onCurRowChanged: cursorMoved()
+    onCurColChanged: cursorMoved()
+    function cursorMoved() {
+        closeOpenCell();
+        // Not mid-edit: the cell being typed in echoes into the box, and
+        // that is what should be read there.
+        if (!editing)
+            resetBox();
+    }
+    function closeOpenCell() {
+        if (openCell && (openCell.tab !== tab || openCell.row !== curRow || openCell.col !== curCol))
+            openCell = null;
+    }
     property int anchorRow: 0
     property int anchorCol: 0
     readonly property int selTop: Math.min(curRow, anchorRow)
@@ -130,6 +170,10 @@ ApplicationWindow {
     property int pickLen: 0
 
     property bool editing: false
+    // The box at the top opens with an edit, whichever cell it is in: the
+    // cell echoes into it as it is typed, and the keyboard reaches a second
+    // line only while the box is open. `commit` closes it again.
+    onEditingChanged: if (editing) formulaOpen = true;
     // The source takes the place of the grid while it is shown.
     property bool showSource: false
     onShowSourceChanged: Qt.callLater(function() {
@@ -406,6 +450,16 @@ ApplicationWindow {
     // ---- editing -----------------------------------------------------------
 
     function startEditing(seed) {
+        // A calculated sheet has one formula, written in the box at the
+        // top: Enter on any of its cells goes there, as for a column, and
+        // an expression that gives no rows has no cell to ask about.
+        if (sheet.view) {
+            if (seed === null) {
+                formulaField.forceActiveFocus();
+                formulaField.selectAll();
+            }
+            return;
+        }
         if (!cellAt(curRow, curCol))
             return;
         if (sheet.isConsts && curCol !== 1)
@@ -503,13 +557,21 @@ ApplicationWindow {
 
     // The box at the top shows what is typed in a cell as it is typed, and
     // the cell's source again once the edit is done.
+    // The box shows what the cursor is on, and its text is a binding so
+    // that it follows the cursor, the sheet and the cell as they change.
+    // Typing in the box, or in a cell that echoes into it, breaks the
+    // binding; this puts it back. A written-once text would be left behind
+    // by a tab or a cell pressed with the mouse, which takes no focus from
+    // the box and so leaves every `activeFocus` guard to skip.
     function resetBox() {
-        if (!formulaField.activeFocus)
-            formulaField.text = formulaField.source;
+        if (formulaField.activeFocus)
+            return;
+        formulaField.text = Qt.binding(function() { return formulaField.shown; });
     }
 
     function stopEditing() {
         editing = false;
+        formulaOpen = false;
         stopPicking();
         resetBox();
         grid.forceActiveFocus();
@@ -711,6 +773,15 @@ ApplicationWindow {
                 renameColumnAsked(selLeft);
             return;
         }
+        // A calculated sheet has one formula wherever the cursor is, and an
+        // expression that gives no rows leaves no cell to stand on: F2
+        // still reaches the formula, which is the only way to put it right.
+        if (sheet.view) {
+            notice = "";
+            formulaField.forceActiveFocus();
+            formulaField.selectAll();
+            return;
+        }
         // A block of cells has no one cell to edit.
         if (!hasCursor || selTop !== selBottom || selLeft !== selRight || !cellAt(curRow, curCol))
             return;
@@ -726,6 +797,7 @@ ApplicationWindow {
     function commit(text, dRow, dCol) {
         var row = curRow, col = curCol;
         editing = false;
+        formulaOpen = false;
         stopPicking();
         keeping(row + 1, 0, function() {
             if (sheet.isConsts) {
@@ -1646,6 +1718,11 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.preferredHeight: win.fontSize * 3 + 2
             color: win.panelColor
+            // Above the grid, which comes next in the layout and would
+            // otherwise be drawn over it: the formula box opens past this
+            // bar's own height, and what is over the cells takes the
+            // clicks there too.
+            z: 2
 
             RowLayout {
                 anchors.fill: parent
@@ -1681,52 +1758,180 @@ ApplicationWindow {
                         : win.selLeft < win.sheet.columns.length ? win.sheet.columns[win.selLeft].name : ""
                     readonly property string down: win.selBottom > win.selTop
                         ? win.selTop + ".." + win.selBottom : "" + win.selTop
+                    // `:=` marks a formula: the sheet's own where the sheet
+                    // is calculated from one, the column's where the cursor
+                    // is in a calculated column, and neither for a cell
+                    // that holds what is written in it.
+                    readonly property string mark: win.sheet.view || (column && column.computed) ? " :=" : ""
                     text: win.sheet.isConsts
                         ? (column && win.curRow < win.sheet.rows.length ? win.sheet.rows[win.curRow][0].d : "")
+                        : win.sheet.view ? win.sheet.name + mark
                         : across.length === 0 ? ""
                         : win.sheet.name + (win.selKind === "all" ? ""
                             : win.selKind === "row" ? "[; " + down + "]"
                             : win.selKind === "column" ? "[" + across + "]"
-                            : "[" + across + "; " + down + "]")
+                            : "[" + across + "; " + down + "]") + mark
                     color: win.mutedColor
                     font: win.font
                     Layout.minimumWidth: 150
                     elide: Text.ElideRight
                 }
 
-                TextField {
-                    id: formulaField
-                    Layout.fillWidth: true
-                    font: win.font
-                    color: win.textColor
-                    selectByMouse: true
-                    readonly property var cell: win.hasCursor ? win.cellAt(win.curRow, win.curCol) : null
-                    readonly property string source: cell ? cell.s : ""
-                    readonly property bool locked: win.sheet.isConsts && win.curCol !== 1
-                    readOnly: locked || !cell
-                    // Shown too while a cell is edited, where its cursor is there.
-                    cursorVisible: activeFocus || win.editing
-                    placeholderText: cell || win.selKind !== "cells" ? "" : "No cell selected"
-                    background: Item {}
-                    onSourceChanged: if (!activeFocus) text = source
-                    onActiveFocusChanged: {
-                        if (activeFocus) {
-                            win.editor = formulaField;
-                        } else {
-                            if (win.editor === formulaField)
-                                win.editor = null;
-                            text = source;
+                // The formula box. One line until the caret beside it is
+                // pressed, then four with the rest scrolled, for a formula
+                // written over several lines. A `TextArea` rather than a
+                // `TextField` for that: Enter still commits, and Alt+Enter
+                // is the newline, as a spreadsheet has it.
+                // The caret that opens the box, kept to the left of it: the
+                // box grows downwards and would cover one on the right.
+                Text {
+                    text: win.formulaOpen ? "\u2303" : "\u2304"
+                    color: win.mutedColor
+                    font.family: win.font.family
+                    font.pixelSize: win.fontSize
+                    Layout.alignment: Qt.AlignVCenter
+                    Layout.leftMargin: 2
+                    MouseArea {
+                        anchors.fill: parent
+                        anchors.margins: -5
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            // Open, the box takes the keyboard, so its lines
+                            // can be reached; closed, the grid has it back.
+                            if (win.formulaOpen) {
+                                win.formulaOpen = false;
+                                grid.forceActiveFocus();
+                            } else {
+                                win.formulaOpen = true;
+                                formulaField.forceActiveFocus();
+                            }
                         }
                     }
-                    onAccepted: {
-                        if (!readOnly)
-                            win.commit(text, 0, 0);
-                        text = Qt.binding(function() { return source; });
-                        text = source;
+                }
+
+                // The slot the formula box sits in. It keeps the one line's
+                // height whether the box is open or not, so nothing else in
+                // the header moves; the box itself is drawn over the sheet
+                // below, with a background to lift it off the cells and its
+                // own clicks, the grid having none of it.
+                Item {
+                    id: formulaSlot
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.round(win.fontSize * 1.45) + 8
+                    Layout.alignment: Qt.AlignVCenter
+                    z: 60
+
+                    Rectangle {
+                        anchors.fill: formulaScroll
+                        visible: win.formulaOpen
+                        color: win.overColor
+                        border.width: 1
+                        border.color: win.lineColor
+                        radius: 3
                     }
-                    Keys.onEscapePressed: {
-                        text = source;
-                        grid.forceActiveFocus();
+
+                    ScrollView {
+                        id: formulaScroll
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        height: win.formulaOpen
+                            ? Math.round(win.fontSize * 4 * 1.45) + 8
+                            : parent.height
+                        clip: true
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                        ScrollBar.vertical.policy: win.formulaOpen
+                            ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+
+                        TextArea {
+                            id: formulaField
+                            font: win.font
+                            color: win.textColor
+                            selectByMouse: true
+                            topPadding: 2
+                            bottomPadding: 2
+                            readonly property var cell: win.hasCursor ? win.cellAt(win.curRow, win.curCol) : null
+                            // A calculated sheet has one formula, as a calculated
+                            // column does: the box shows it whichever cell the
+                            // cursor is in, and an edit is of the formula.
+                            // A formula over several lines is shown with the
+                            // four spaces the file joins its continuations
+                            // by, whatever it was indented with: the box is
+                            // where it is written, so the indent is kept
+                            // here rather than read.
+                            readonly property string source: win.sheet.view
+                                ? ":= " + win.sheet.view.replace(/\n[ \t]*/g, "\n    ")
+                                : cell ? cell.s : ""
+                            // Closed, the box is one line tall and holds the
+                            // first line: the others would show as the top
+                            // of a second line under it. The glyph on the
+                            // right is what says there is more.
+                            readonly property string shown: win.formulaOpen ? source : source.split("\n")[0]
+                            readonly property bool locked: win.sheet.isConsts && win.curCol !== 1
+                            readOnly: locked || (!cell && !win.sheet.view)
+                            // Shown too while a cell is edited, where its cursor is there.
+                            cursorVisible: activeFocus || win.editing
+                            placeholderText: cell || win.sheet.view || win.selKind !== "cells"
+                                ? "" : "No cell selected"
+                            background: Item {}
+                            // Closed, it is one line: the text runs on rather
+                            // than wrapping, and the caret says there is more.
+                            wrapMode: win.formulaOpen ? TextEdit.Wrap : TextEdit.NoWrap
+                            onSourceChanged: if (!activeFocus) win.resetBox()
+                            // It opens when it takes the keyboard and closes
+                            // when it loses it, so a click anywhere else
+                            // closes it. Open it holds every line, closed
+                            // the first, and what is committed is what the
+                            // box held while it had the keyboard.
+                            onActiveFocusChanged: {
+                                if (activeFocus) {
+                                    win.editor = formulaField;
+                                    win.formulaOpen = true;
+                                    text = source;
+                                } else {
+                                    if (win.editor === formulaField)
+                                        win.editor = null;
+                                    win.formulaOpen = false;
+                                    win.resetBox();
+                                }
+                            }
+                            // Enter commits, whether the box is open or closed.
+                            // Alt+Enter puts a newline in, which the file reads
+                            // as a continuation of the line above.
+                            Keys.onPressed: function(event) {
+                                if (event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter)
+                                    return;
+                                event.accepted = true;
+                                if (event.modifiers & Qt.AltModifier) {
+                                    // The four spaces a continuation line is
+                                    // indented by go in with the newline, so
+                                    // what is typed here is what the file
+                                    // holds.
+                                    formulaField.insert(formulaField.cursorPosition, "\n    ");
+                                    if (!win.formulaOpen)
+                                        win.formulaOpen = true;
+                                    return;
+                                }
+                                if (!formulaField.readOnly)
+                                    win.commit(formulaField.text, 0, 0);
+                                win.resetBox();
+                            }
+                            // The grid taking the keyboard back is what puts
+                            // the box's text and its height back with it.
+                            Keys.onEscapePressed: grid.forceActiveFocus()
+                        }
+                    }
+
+                    // More formula than the one line shows.
+                    Text {
+                        visible: !win.formulaOpen && (formulaField.contentWidth > formulaField.width
+                            || formulaField.source.indexOf("\n") >= 0)
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        z: 2
+                        text: "\u2026"
+                        color: win.mutedColor
+                        font: win.font
                     }
                 }
 
@@ -2071,6 +2276,12 @@ ApplicationWindow {
                             id: rowItem
                             required property int index
                             height: win.rowHeight
+                            // The row holding a cell opened out to its lines
+                            // is drawn above the others: a list paints its
+                            // delegates in the order it made them, which is
+                            // not the order of the rows.
+                            z: win.openCell !== null && win.openCell.tab === win.tab
+                                && win.openCell.row === index ? 2 : 0
 
                             // The row number.
                             Rectangle {
@@ -2146,29 +2357,99 @@ ApplicationWindow {
                                     readonly property bool inPick: win.refBoxes.length > 0 && win.inRefs(row, index)
                                     width: win.colWidths[index] || 0
                                     height: win.rowHeight
+                                    // A cell opened out to its lines is drawn
+                                    // over the cells beside it as well as the
+                                    // rows below: the lines are longer than
+                                    // the cell is wide, and a cell made after
+                                    // it would otherwise be drawn over them.
+                                    z: win.openCell !== null && win.openCell.tab === win.tab
+                                        && win.openCell.row === row && win.openCell.col === index ? 1 : 0
                                     color: (selected && !alone) || marked
                                         ? Qt.rgba(win.selectionFill.r, win.selectionFill.g, win.selectionFill.b, 0.55)
                                         : column && column.computed ? win.computedTint : "transparent"
 
                                     Text {
                                         id: cellText
-                                        anchors.fill: parent
+                                        // Left, right and top, not `fill`:
+                                        // filling drives the height from the
+                                        // cell, and an opened cell sets its
+                                        // own from the lines it holds.
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
                                         anchors.leftMargin: 7
                                         anchors.rightMargin: 7
                                         visible: !(win.editing && cellItem.current)
+                                        // A cell is one line tall, so one
+                                        // holding a newline shows its first
+                                        // line until the caret opens it.
+                                        readonly property bool lines: !!cellItem.cell
+                                            && cellItem.cell.d.indexOf("\n") >= 0
+                                        readonly property bool opened: lines && win.openCell !== null
+                                            && win.openCell.tab === win.tab
+                                            && win.openCell.row === cellItem.row
+                                            && win.openCell.col === cellItem.index
                                         // Text written bare is Markdown; in quotes it is as it is.
                                         readonly property bool marked: !!cellItem.cell && cellItem.cell.h !== undefined
-                                        text: marked ? cellItem.cell.h : cellItem.cell ? cellItem.cell.d : ""
+                                        text: marked ? cellItem.cell.h
+                                            : !cellItem.cell ? ""
+                                            : lines && !opened ? cellItem.cell.d.split("\n")[0]
+                                            : cellItem.cell.d
                                         textFormat: marked ? Text.StyledText : Text.PlainText
+                                        // Opened, it is drawn over the rows
+                                        // below rather than growing the row.
+                                        height: opened ? Math.max(parent.height, contentHeight + 6) : parent.height
+                                        z: opened ? 30 : 0
+                                        verticalAlignment: opened ? Text.AlignTop : Text.AlignVCenter
                                         linkColor: win.accentColor
                                         clip: marked
                                         color: cellItem.cell && cellItem.cell.e ? win.errorColor : win.textColor
                                         font.family: win.font.family
                                         font.features: win.font.features
                                         font.pixelSize: win.fontSize
-                                        verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: cellItem.cell && cellItem.cell.n ? Text.AlignRight : Text.AlignLeft
-                                        elide: Text.ElideRight
+                                        // Opened, every line is shown whole;
+                                        // closed, the one line is cut to fit.
+                                        elide: opened ? Text.ElideNone : Text.ElideRight
+                                    }
+
+                                    // Behind an opened cell, so the rows it
+                                    // is drawn over are set back and its
+                                    // lines can be read.
+                                    Rectangle {
+                                        visible: cellText.opened
+                                        anchors.left: parent.left
+                                        anchors.top: parent.top
+                                        // As wide as the longest line, which
+                                        // runs past the cell's own edge: the
+                                        // backing stops where the lines do,
+                                        // not where the column does.
+                                        width: Math.max(parent.width, cellText.contentWidth + 14)
+                                        height: cellText.height
+                                        z: 29
+                                        color: win.overColor
+                                        border.width: 1
+                                        border.color: win.lineColor
+                                    }
+
+                                    // A cell holding more lines than it shows
+                                    // says so, and the caret opens it.
+                                    Text {
+                                        visible: cellText.lines && !(win.editing && cellItem.current)
+                                        anchors.right: parent.right
+                                        anchors.rightMargin: 2
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        z: 31
+                                        text: cellText.opened ? "\u2303" : "\u2304"
+                                        color: win.mutedColor
+                                        font.family: win.font.family
+                                        font.pixelSize: win.captionSize
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            anchors.margins: -4
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: win.openCellAt(cellItem.row, cellItem.index)
+                                        }
                                     }
 
                                     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: win.lineColor }
@@ -2272,7 +2553,11 @@ ApplicationWindow {
                                     Loader {
                                         anchors.fill: parent
                                         active: win.editing && cellItem.current
-                                        sourceComponent: TextField {
+                                        // A `TextArea`, a cell being able to
+                                        // hold a newline: the box at the top
+                                        // echoes the text, so opening it shows
+                                        // every line while one is typed here.
+                                        sourceComponent: TextArea {
                                             font.family: win.font.family
                                             font.features: win.font.features
                                             font.pixelSize: win.fontSize
@@ -2281,7 +2566,8 @@ ApplicationWindow {
                                             rightPadding: 7
                                             topPadding: 0
                                             bottomPadding: 0
-                                            verticalAlignment: TextInput.AlignVCenter
+                                            verticalAlignment: TextEdit.AlignVCenter
+                                            wrapMode: TextEdit.NoWrap
                                             selectByMouse: true
                                             background: Rectangle {
                                                 color: win.pageColor
@@ -2318,7 +2604,6 @@ ApplicationWindow {
                                                 done = true;
                                                 win.commit(text, dRow, dCol);
                                             }
-                                            onAccepted: finish(1, 0)
                                             Keys.onTabPressed: finish(0, 1)
                                             Keys.onBacktabPressed: finish(0, -1)
                                             // Escape takes back a pick under way, else the edit.
@@ -2349,6 +2634,20 @@ ApplicationWindow {
                                                         && win.pickRow >= 0) {
                                                     event.accepted = true;
                                                     win.stopPicking();
+                                                    return;
+                                                }
+                                                // Alt+Enter writes a newline into the cell, which the
+                                                // file holds as `"A\nB"`; the box opens to show the
+                                                // lines, the cell itself being one line tall. Plain
+                                                // Enter writes the cell, as it always has.
+                                                if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                                    event.accepted = true;
+                                                    if (event.modifiers & Qt.AltModifier) {
+                                                        insert(cursorPosition, "\n");
+                                                        win.formulaOpen = true;
+                                                    } else {
+                                                        finish(1, 0);
+                                                    }
                                                     return;
                                                 }
                                                 var shift = (event.modifiers & Qt.ShiftModifier) !== 0;
@@ -2582,7 +2881,10 @@ ApplicationWindow {
                             FooterButton {
                                 id: tabButton
                                 required property int index
-                                label: win.tabs[index].name
+                                // A sheet calculated from an expression is
+                                // marked `:=`, as a calculated column is in
+                                // its header.
+                                label: (win.tabs[index].view ? ":= " : "") + win.tabs[index].name
                                 active: index === win.tab && !win.showSource
                                 // The whole sheet copied or cut, outlined here too.
                                 readonly property bool marked: win.sheetMark !== null && win.sheetMark.tab === index
@@ -2699,7 +3001,13 @@ ApplicationWindow {
                 text: win.notice.length > 0 ? win.notice
                     : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
                     : win.formulaCell ? "This is a formula column, this change will apply to the entire column"
-                    : file.status
+                    : file.status.length > 0 ? file.status
+                    // With nothing more pressing to say, a calculated sheet
+                    // says what it is calculated from.
+                    // A formula written over several lines is said in one
+                    // here, the bar being one line tall.
+                    : win.sheet.view ? win.sheet.name + " := " + win.sheet.view.replace(/\s+/g, " ")
+                    : ""
                 color: win.notice.length > 0 ? win.errorColor : win.mutedColor
                 elide: Text.ElideRight
                 font.family: win.font.family
@@ -3426,6 +3734,7 @@ ApplicationWindow {
         // Where a new column or sheet goes; -1 for the end.
         property int at: -1
         readonly property bool needsExpr: kind === "computed" || kind === "const"
+            || (kind === "sheet" && formulaBox.checked)
         title: kind === "sheet" ? "New sheet"
              : kind === "rows" ? "Insert rows in " + win.sheet.name
              : kind === "renameSheet" ? "Rename sheet " + win.sheet.name
@@ -3504,7 +3813,9 @@ ApplicationWindow {
                 message = addRows();
             } else if (kind === "sheet") {
                 // A new sheet renumbers the tabs, so nothing stays marked.
-                message = at < 0 ? file.addSheet(nameField.text) : file.insertSheet(at, nameField.text);
+                var formula = formulaBox.checked ? exprField.text : "";
+                message = at < 0 ? file.addSheet(nameField.text, formula)
+                                 : file.insertSheet(at, nameField.text, formula);
             } else {
                 // New rows go at the end, and new columns at `at` or the end.
                 win.keeping(win.sheet.rows.length, at < 0 ? win.sheet.columns.length : at, function() {
@@ -3579,12 +3890,16 @@ ApplicationWindow {
             CheckBox {
                 id: formulaBox
                 visible: promptDialog.kind === "column" || promptDialog.kind === "computed"
+                    || promptDialog.kind === "sheet"
                 text: "Formula"
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.dialogSize
                 onToggled: {
-                    promptDialog.kind = checked ? "computed" : "column";
+                    // A sheet keeps its kind: it is one sheet either way,
+                    // with rows of its own or a view of another's.
+                    if (promptDialog.kind !== "sheet")
+                        promptDialog.kind = checked ? "computed" : "column";
                     if (checked)
                         exprField.forceActiveFocus();
                 }
@@ -3593,7 +3908,9 @@ ApplicationWindow {
                 id: exprField
                 Layout.fillWidth: true
                 visible: promptDialog.needsExpr
-                placeholderText: promptDialog.kind === "computed" ? "Expression, e.g. Revenue - Cost" : "Expression, e.g. 20%"
+                placeholderText: promptDialog.kind === "computed" ? "Expression, e.g. Revenue - Cost"
+                    : promptDialog.kind === "sheet" ? "Expression, e.g. Sales |> head(3)"
+                    : "Expression, e.g. 20%"
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.dialogSize

@@ -46,6 +46,12 @@ pub fn snapshot(snap: &Snapshot) -> String {
     list(&mut out, &snap.sheets, |out, t| {
         out.push('{');
         field(out, "name", &t.name);
+        out.push(',');
+        // What a sheet's rows come from, where they are not its own: the
+        // expression of a sheet calculated from one, or a table's file.
+        field(out, "view", t.view.as_deref().unwrap_or(""));
+        out.push(',');
+        field(out, "from", t.source.as_deref().unwrap_or(""));
         out.push_str(",\"columns\":");
         list(out, &t.columns, |out, c| {
             out.push('{');
@@ -166,11 +172,32 @@ mod tests {
         let doc =
             Document::from_text("sheet T\n\nA | B | C\n\"say \\\"hi\\\"\" | 2 | *\n\nC := B * 2\n");
         let json = super::snapshot(doc.snapshot());
-        assert!(json.starts_with("{\"sheets\":[{\"name\":\"T\",\"columns\":[{\"name\":\"A\""));
+        // A sheet says what its rows come from before its columns: the
+        // expression of one calculated from an expression, or a table's
+        // file. Both empty for a sheet whose rows are its own.
+        assert!(json.starts_with(
+            "{\"sheets\":[{\"name\":\"T\",\"view\":\"\",\"from\":\"\",\"columns\":[{\"name\":\"A\""
+        ));
         assert!(json.contains("\"d\":\"say \\\"hi\\\"\""), "{json}");
         assert!(json.contains("\"formula\":\"B * 2\",\"computed\":true,\"declared\":false"));
         assert!(json.contains("\"d\":\"4\""));
         assert!(json.ends_with("\"consts\":[],\"problems\":[]}"));
+    }
+
+    #[test]
+    fn a_calculated_sheet_says_what_it_is_calculated_from() {
+        let doc =
+            Document::from_text("sheet T\n\nA | B\n1 | 2\n3 | 4\n\nsheet Top := T |> head(1)\n");
+        let json = super::snapshot(doc.snapshot());
+        // The tab marks it and the bar says it, both from this one field.
+        assert!(
+            json.contains("\"name\":\"Top\",\"view\":\"T |> head(1)\""),
+            "{json}"
+        );
+        // And it holds the row the view keeps, no more.
+        let top = json.split("\"name\":\"Top\"").nth(1).unwrap();
+        assert!(top.contains("\"d\":\"1\""), "{top}");
+        assert!(!top.contains("\"d\":\"3\""), "{top}");
     }
 
     #[test]

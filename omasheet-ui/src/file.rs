@@ -222,10 +222,15 @@ pub mod qobject {
             to: i32,
         ) -> QString;
         #[qinvokable]
-        fn add_sheet(self: Pin<&mut File>, name: &QString) -> QString;
+        fn add_sheet(self: Pin<&mut File>, name: &QString, formula: &QString) -> QString;
         /// A new sheet before sheet `at`, or last if there is none there.
         #[qinvokable]
-        fn insert_sheet(self: Pin<&mut File>, at: i32, name: &QString) -> QString;
+        fn insert_sheet(
+            self: Pin<&mut File>,
+            at: i32,
+            name: &QString,
+            formula: &QString,
+        ) -> QString;
         #[qinvokable]
         fn rename_sheet(self: Pin<&mut File>, sheet: i32, name: &QString) -> QString;
         #[qinvokable]
@@ -870,14 +875,16 @@ impl qobject::File {
         self.try_edit(|doc| doc.move_columns(index(sheet), index(first), index(count), index(to)))
     }
 
-    fn add_sheet(self: Pin<&mut Self>, name: &QString) -> QString {
+    fn add_sheet(self: Pin<&mut Self>, name: &QString, formula: &QString) -> QString {
+        let formula = formula.to_string();
         let name = name.to_string();
-        self.try_edit(|doc| doc.add_sheet(&name))
+        self.try_edit(|doc| doc.add_sheet(&name, Some(formula.as_str())))
     }
 
-    fn insert_sheet(self: Pin<&mut Self>, at: i32, name: &QString) -> QString {
+    fn insert_sheet(self: Pin<&mut Self>, at: i32, name: &QString, formula: &QString) -> QString {
+        let formula = formula.to_string();
         let name = name.to_string();
-        self.try_edit(|doc| doc.insert_sheet(index(at), &name))
+        self.try_edit(|doc| doc.insert_sheet(index(at), &name, Some(formula.as_str())))
     }
 
     fn rename_sheet(self: Pin<&mut Self>, sheet: i32, name: &QString) -> QString {

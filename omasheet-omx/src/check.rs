@@ -52,6 +52,12 @@ pub struct Sheet {
     /// own counts are known. `None` for a sheet whose rows are in the text
     /// or in a file.
     pub rows_from: Option<Vec<usize>>,
+    /// The expression of a sheet computed from one, `sheet Top := Sales |>
+    /// head(3)`, and the shape it gives. Its columns are `ColKind::View`,
+    /// and its `nrows` is not known until the expression is evaluated, as a
+    /// table's is not known until its file is read (D92).
+    pub view: Option<Node>,
+    pub view_of: Option<SheetTy>,
 }
 
 /// The file a `table`'s rows live in: a path, which may be a glob.
@@ -91,6 +97,11 @@ pub enum ColKind {
     /// values stay where the source holds them, and whoever reads the
     /// source keeps them.
     Frame,
+    /// A column of a sheet computed from an expression, `sheet Top := Sales
+    /// |> head(3)`: its values are the source sheet's own, at the rows the
+    /// view keeps. The `usize` is the column's place in the source sheet
+    /// (D90, D91).
+    View(usize),
 }
 
 #[derive(Debug)]
@@ -268,6 +279,12 @@ struct Checker<'a> {
     /// Per sheet, the other sheets its formulas pick a row of with the
     /// cursor, each once. A sheet that holds no rows is as long as these.
     row_reads: Vec<Vec<usize>>,
+    /// The lowered expression of each sheet computed from one, its shape,
+    /// and what it read: the same three a const keeps, a view being a
+    /// sheet-valued expression with no row around it (D90).
+    view_state: Vec<St<Ty>>,
+    view_out: Vec<Option<Node>>,
+    view_deps: Vec<Vec<(DepNode, DepKind)>>,
     const_state: Vec<St<Ty>>,
     const_out: Vec<Option<Node>>,
     const_deps: Vec<Vec<Dep>>,
@@ -289,6 +306,11 @@ pub fn compile(text: &str, src: u32) -> (Program, Vec<Diagnostic>) {
     }
     for i in 0..ck.consts.len() {
         ck.ensure_const(i);
+    }
+    // A view before the columns of any sheet: a sheet computed from an
+    // expression has no columns until its expression says what they are.
+    for t in 0..ck.sheets.len() {
+        ck.ensure_view(t);
     }
     for t in 0..ck.sheets.len() {
         for c in 0..ck.sheets[t].cols.len() {
@@ -563,6 +585,9 @@ impl<'a> Checker<'a> {
             col_deps: Vec::new(),
             elementwise: Vec::new(),
             row_reads: Vec::new(),
+            view_state: Vec::new(),
+            view_out: Vec::new(),
+            view_deps: Vec::new(),
             const_state: Vec::new(),
             const_out: Vec::new(),
             const_deps: Vec::new(),
@@ -579,6 +604,9 @@ impl<'a> Checker<'a> {
             ck.col_state
                 .push(t.cols.iter().map(|c| St::Done(c.ty)).collect());
             ck.row_reads.push(Vec::new());
+            ck.view_state.push(St::Done(Ty::Any));
+            ck.view_out.push(None);
+            ck.view_deps.push(Vec::new());
             ck.sheets.push(SheetInfo {
                 name: t.name.clone(),
                 decl: i,
@@ -766,6 +794,14 @@ impl<'a> Checker<'a> {
             ck.col_out.push(cols.iter().map(|_| None).collect());
             ck.col_deps.push(cols.iter().map(|_| Vec::new()).collect());
             ck.row_reads.push(Vec::new());
+            // A sheet computed from an expression has it to lower, and its
+            // columns are not known until that is done (D91).
+            ck.view_state.push(match t.formula {
+                Some(_) => St::Pending,
+                None => St::Done(Ty::Any),
+            });
+            ck.view_out.push(None);
+            ck.view_deps.push(Vec::new());
             ck.sheets.push(SheetInfo {
                 name: t.name.clone(),
                 decl,
@@ -911,6 +947,81 @@ impl<'a> Checker<'a> {
         self.const_out[i] = Some(node);
         self.const_state[i] = St::Done(ty);
         self.const_deps[i] = mem::replace(&mut self.deps, saved.1);
+        let mut found = mem::replace(&mut self.cur, saved.0);
+        self.done.append(&mut found);
+    }
+
+    /// Lower the expression of a sheet computed from one. A view is a
+    /// sheet-valued expression with no row around it, so this is
+    /// [`Checker::ensure_const`] with a shape it insists on.
+    fn ensure_view(&mut self, t: usize) {
+        if !matches!(self.view_state[t], St::Pending) {
+            return;
+        }
+        let Some(ast) = self.ast else { return };
+        self.view_state[t] = St::Busy(Ty::Any);
+        let saved = (mem::take(&mut self.cur), mem::take(&mut self.deps));
+        let decl = &ast.sheets[self.sheets[t].decl];
+        let Some(formula) = decl.formula.as_ref() else {
+            self.view_state[t] = St::Done(Ty::Any);
+            return;
+        };
+        let (node, ty) = match &formula.expr {
+            Some(e) => {
+                let mut scope = Scope {
+                    frames: Vec::new(),
+                    own: false,
+                    col: None,
+                };
+                self.lower(e, &mut scope)
+            }
+            None => (Node::error(formula.expr_span), Ty::Any),
+        };
+        // Only a sheet can be a sheet. A column, a number and a range are
+        // the three that will be tried.
+        let ty = match &ty {
+            Ty::Sheet(_) | Ty::Any => ty,
+            other => {
+                if !matches!(node.kind, Ir::Error) {
+                    self.err_help(
+                        formula.expr_span,
+                        format!(
+                            "sheet `{}` is computed from {}, and a sheet needs a sheet",
+                            decl.name,
+                            other.describe()
+                        ),
+                        "a sheet comes of a sheet and the stages over one, such as `Sales |> head(3)`",
+                    );
+                }
+                Ty::Any
+            }
+        };
+        // Its columns, each the source sheet's at the place the view keeps
+        // it. Made here rather than in `finish` so that a sheet calculated
+        // from this one sees them (D91).
+        if let Ty::Sheet(shape) = &ty {
+            let shape = shape.clone();
+            for &c in shape.cols.iter() {
+                let Some(from) = self.sheets[shape.sheet].cols.get(c) else {
+                    continue;
+                };
+                let (name, span) = (from.name.clone(), from.span);
+                let ty = self.col_type(shape.sheet, c);
+                self.sheets[t].cols.push(ColInfo {
+                    name,
+                    span,
+                    declared: None,
+                    src: ColSrc::Done,
+                    from: None,
+                });
+                self.col_state[t].push(St::Done(ty));
+                self.col_out[t].push(Some(ColKind::View(c)));
+                self.col_deps[t].push(Vec::new());
+            }
+        }
+        self.view_out[t] = Some(node);
+        self.view_state[t] = St::Done(ty);
+        self.view_deps[t] = mem::replace(&mut self.deps, saved.1);
         let mut found = mem::replace(&mut self.cur, saved.0);
         self.done.append(&mut found);
     }
@@ -1928,6 +2039,13 @@ impl<'a> Checker<'a> {
             return (Node::new(Ir::Const(i), span), ty);
         }
         if let Some(t) = self.sheets.iter().position(|t| t.name == name) {
+            // A sheet calculated from an expression has no columns until it
+            // is worked out, and one being worked out is one reading itself.
+            if matches!(self.view_state[t], St::Busy(_)) {
+                self.err(span, format!("sheet `{name}` is calculated from itself"));
+                return (Node::error(span), Ty::Any);
+            }
+            self.ensure_view(t);
             let ty = Ty::Sheet(SheetTy {
                 sheet: t,
                 cols: self.all_cols(t),
@@ -3507,7 +3625,7 @@ impl<'a> Checker<'a> {
     }
 
     fn finish(mut self, order: Vec<Group>) -> Program {
-        let mut sheets = Vec::new();
+        let mut sheets: Vec<Sheet> = Vec::new();
         for (t, info) in mem::take(&mut self.sheets).into_iter().enumerate() {
             let rows_from = info.rowless.then(|| self.row_reads[t].clone());
             let mut cols = Vec::new();
@@ -3532,12 +3650,19 @@ impl<'a> Checker<'a> {
                     kind,
                 });
             }
+            let view = self.view_out[t].take();
+            let view_of = match &self.view_state[t] {
+                St::Done(Ty::Sheet(shape)) | St::Busy(Ty::Sheet(shape)) => Some(shape.clone()),
+                _ => None,
+            };
             sheets.push(Sheet {
                 name: info.name,
                 cols,
                 nrows: info.nrows,
                 source: info.source,
                 rows_from,
+                view,
+                view_of,
             });
         }
         let mut consts = Vec::new();

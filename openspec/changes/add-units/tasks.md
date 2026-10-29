@@ -1,5 +1,10 @@
 # Tasks: Units (Phase 4)
 
+> **Deferred** until every pipe stage of `add-sheet-operations-polars` is done
+> (owner, 2026-10-28; D89 there). Phase 4 is a delta on Phase 3 — units through group and join — so
+> starting it first would mean writing those deltas against stages that do not
+> exist yet.
+
 ## 0. Settle the open questions
 - [ ] 0.1 Decide what `%` is: literal, unit, or both (design Q6)
 

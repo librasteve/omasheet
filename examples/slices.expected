@@ -1,0 +1,40 @@
+const Opening = 370
+const Closing = 390
+const FirstThree = [100, 120, 150]
+const LastThree = [90, 130, 170]
+const BestOpening = 150
+const Months = 6
+
+sheet Sales
+
+Month | Revenue | Share | Growth
+------|---------|-------|-------
+Jan   |     100 |  0.27 |      0
+Feb   |     120 | 0.324 |     20
+Mar   |     150 | 0.405 |     30
+Apr   |      90 | 0.243 |    -60
+May   |     130 | 0.351 |     40
+Jun   |     170 | 0.459 |     40
+
+sheet Best
+
+Month | Revenue | Share | Growth
+------|---------|-------|-------
+Jan   |     100 |  0.27 |      0
+Feb   |     120 | 0.324 |     20
+Mar   |     150 | 0.405 |     30
+
+sheet Over
+
+Month | Revenue
+------|--------
+Feb   |     120
+Mar   |     150
+May   |     130
+Jun   |     170
+
+sheet Opened
+
+Month | Revenue | Share | Growth
+------|---------|-------|-------
+Jan   |     100 |  0.27 |      0

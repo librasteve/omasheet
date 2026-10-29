@@ -22,6 +22,7 @@ pub use value::Value;
 
 use omasheet_omx::date::Style;
 use omasheet_omx::{Diagnostic, Program, Sources, compile, compile_expr};
+use table::Tables;
 use zone::Zone;
 
 /// What evaluation takes from its surroundings. The default is the ISO
@@ -101,6 +102,49 @@ impl Outcome {
     }
 }
 
+/// Settle the row count of every sheet computed from an expression, which
+/// the checker cannot know: `head(3)` says its length and `filter` does not
+/// (D92). A probe engine evaluates each view and gives the tables back, so
+/// the real engine is built against a program whose counts are right and
+/// everything that reads `Sheet::nrows` needs no special case.
+///
+/// The expression is evaluated twice for it, once here and once in earnest.
+/// A view is a row selection, so this is cheap for `head` and the cost of
+/// one pass of the condition for `filter`.
+pub fn resolve_views(program: &mut Program, options: &Options, tables: Tables) -> Tables {
+    let views: Vec<usize> = program
+        .sheets
+        .iter()
+        .enumerate()
+        .filter_map(|(t, sheet)| sheet.view.is_some().then_some(t))
+        .collect();
+    if views.is_empty() {
+        return tables;
+    }
+    // A view of a view settles after it, so this iterates as
+    // [`omasheet_omx::check::resolve_rows`] does: an engine reads the row
+    // counts it was built with, so each pass needs one of its own.
+    let mut tables = tables;
+    for _ in 0..views.len() {
+        let engine = Engine::with_tables(program, options.clone(), tables);
+        let counts: Vec<(usize, usize)> = views.iter().map(|&t| (t, engine.nrows(t))).collect();
+        tables = engine.into_tables();
+        let mut moved = false;
+        for (t, rows) in counts {
+            if program.sheets[t].nrows != rows {
+                program.sheets[t].nrows = rows;
+                moved = true;
+            }
+        }
+        // A sheet with no rows of its own may read one of these.
+        omasheet_omx::check::resolve_rows(program);
+        if !moved {
+            break;
+        }
+    }
+    tables
+}
+
 /// Where a sheet's source is read from: beside the file, or the working
 /// directory for an expression that has no file. Public because every path
 /// that builds an engine has to read a `table`'s rows the same way, and
@@ -141,6 +185,7 @@ pub fn view_with(name: &str, text: &str, options: Options) -> Outcome {
         out.report(&sources, &diags);
         return out;
     }
+    let tables = resolve_views(&mut program, &options, tables);
     let program = program;
     let engine = Engine::with_tables(&program, options, tables);
     let zone_diags = engine.take_diags();
@@ -206,6 +251,7 @@ pub fn eval_with(
                 out.report(&sources, &diags);
                 return out;
             }
+            tables = resolve_views(&mut program, &options, tables);
             program
         }
         None => Program::default(),

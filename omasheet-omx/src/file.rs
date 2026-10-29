@@ -75,6 +75,11 @@ pub struct SheetDecl {
     pub span: Span,
     /// `Some` for a `table`: its rows live outside the file.
     pub source: Option<SourceDecl>,
+    /// `Some` for a sheet computed from an expression that gives a sheet,
+    /// `sheet Top := Sales |> head(3)`: its rows are a view of another
+    /// sheet's. Kept apart from `source` so that a table still means a
+    /// table, whose rows are read from a file (D90).
+    pub formula: Option<SourceDecl>,
     pub schema: Vec<SchemaLine>,
     pub header: Vec<(String, Span)>,
     pub rows: Vec<Vec<CellSrc>>,
@@ -327,6 +332,35 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             continue;
         }
 
+        // sheet <Name> := <expr>: its rows are a view of another sheet's.
+        if let Some(rest) = after_keyword(trimmed, "sheet") {
+            let n = ident_len(rest);
+            let tail = rest[n..].trim_start();
+            if n > 0 && tail.starts_with(":=") {
+                ast.sheets.extend(sheet.take());
+                let name_at = at + (trimmed.len() - rest.len());
+                let expr_at = at + (trimmed.len() - tail.len()) + 2;
+                let (expr, expr_span) = expression(&mut i, expr_at, diags);
+                sheet = Some(SheetDecl {
+                    name: rest[..n].to_string(),
+                    span: Span::new(src, name_at, name_at + n),
+                    source: None,
+                    formula: Some(SourceDecl { expr, expr_span }),
+                    schema: Vec::new(),
+                    header: Vec::new(),
+                    header_line: Span::default(),
+                    separator_line: None,
+                    row_lines: Vec::new(),
+                    rows: Vec::new(),
+                    computed: Vec::new(),
+                });
+                in_body = false;
+                after_header = false;
+                i += 1;
+                continue;
+            }
+        }
+
         // sheet <Name>
         if let Some(rest) = after_keyword(trimmed, "sheet") {
             let n = ident_len(rest);
@@ -337,6 +371,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                     name: rest[..n].to_string(),
                     span: Span::new(src, name_at, name_at + n),
                     source: None,
+                    formula: None,
                     schema: Vec::new(),
                     header: Vec::new(),
                     header_line: Span::default(),
@@ -365,6 +400,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                     name: rest[..n].to_string(),
                     span: Span::new(src, name_at, name_at + n),
                     source: Some(SourceDecl { expr, expr_span }),
+                    formula: None,
                     schema: Vec::new(),
                     header: Vec::new(),
                     header_line: Span::default(),

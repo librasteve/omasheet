@@ -1776,6 +1776,64 @@ fn the_parts_of_a_second() {
     assert_eq!(calc("09:30:15.millisecond()"), "0");
 }
 
+const ROWS: &str = "sheet Sales\n\nMonth | Revenue\nJan | 100\nFeb | 120\nMar | 150\nApr | 90\n";
+
+#[test]
+fn a_sheet_may_be_calculated_from_another() {
+    let file = format!("{ROWS}\nsheet Top := Sales |> head(3)\n");
+    let out = shown(&file);
+    // Its columns are the source's, and its rows are the ones kept.
+    assert!(out.contains("sheet Top"), "{out}");
+    let top = out.split("sheet Top").nth(1).unwrap();
+    assert!(top.contains("Month | Revenue"), "{top}");
+    assert!(top.contains("Jan"), "{top}");
+    assert!(top.contains("Mar"), "{top}");
+    assert!(!top.contains("Apr"), "{top}");
+}
+
+#[test]
+fn a_calculated_sheet_takes_the_columns_its_expression_keeps() {
+    let file = format!("{ROWS}\nsheet Big := Sales |> filter(Revenue > 100) |> select(Month)\n");
+    let out = shown(&file);
+    let big = out.split("sheet Big").nth(1).unwrap();
+    // `select` says which columns, and the filter which rows: neither is
+    // known from the text of this sheet, there being none.
+    assert!(big.contains("Month"), "{big}");
+    assert!(!big.contains("Revenue"), "{big}");
+    assert!(big.contains("Feb") && big.contains("Mar"), "{big}");
+    assert!(!big.contains("Jan"), "{big}");
+}
+
+#[test]
+fn a_calculated_sheet_may_be_calculated_from_one() {
+    let file = format!("{ROWS}\nsheet Top := Sales |> head(3)\n\nsheet One := Top |> head(1)\n");
+    let out = shown(&file);
+    let one = out.split("sheet One").nth(1).unwrap();
+    assert!(one.contains("Jan"), "{one}");
+    assert!(!one.contains("Feb"), "{one}");
+}
+
+#[test]
+fn a_sheet_calculated_from_itself_is_reported() {
+    let file = "sheet A := B |> head(1)\n\nsheet B := A |> head(1)\n";
+    let out = view_with("test.omx", file, exact());
+    assert!(
+        out.errors.iter().any(|e| e.contains("itself")),
+        "{:?}",
+        out.errors
+    );
+}
+
+#[test]
+fn a_sheet_calculated_from_what_is_not_a_sheet_is_reported() {
+    let file = format!("{ROWS}\nsheet Bad := Sales.Revenue\n");
+    let errors = lint_errors(&file);
+    assert!(
+        errors.iter().any(|e| e.contains("a sheet needs a sheet")),
+        "{errors:?}"
+    );
+}
+
 #[test]
 fn the_parts_of_a_year() {
     assert_eq!(calc("month_start(2025-02-10)"), "2025-02-01");
@@ -2077,7 +2135,7 @@ fn how_much_of_the_corpus_lowers() {
     // moved.
     assert_eq!(
         (offered, lowered, refused, failed),
-        (61, 18, 42, 1),
+        (62, 18, 43, 1),
         "the corpus lowers differently than task 8.3 records"
     );
 }

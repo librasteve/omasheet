@@ -557,6 +557,7 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
         out.errors.extend(diags.iter().map(|d| locate(d, 0)));
         return out;
     }
+    let tables = omasheet_engine::resolve_views(&mut program, &options, tables);
     let program = program;
     let engine = Engine::with_tables(&program, options, tables);
     engine.run();

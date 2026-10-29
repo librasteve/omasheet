@@ -885,6 +885,15 @@ what stops a table's rows being exploded into cells.
       next measurement. It reproduces the hand figures exactly: **59
       offered, 18 lowered, 40 refused, 1 failed.**
 
+      Measured again after `slices.omx`, the example of `head` and `tail`
+      and of a sheet calculated from an expression: **62 offered, 18
+      lowered, 43 refused, 1 failed.** One column moved, `Sales.Share :=
+      (Revenue / Opening).round(3)`, refused for the division of exact
+      numbers already at the table's third row. Its `Growth` is a cursor
+      offset and so is not elementwise and never offered, and a calculated
+      sheet offers nothing of its own: its columns are the source's, which
+      were offered where they are written.
+
       Measured again after the kinds of text (`Url`, `Email`, `Uuid`):
       **61 offered, 18 lowered, 42 refused, 1 failed.** `types.omx` gained a
       `Text` sheet, and both of its computed columns are conversions —
