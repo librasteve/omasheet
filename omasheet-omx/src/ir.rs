@@ -111,6 +111,13 @@ pub enum RowSel {
     Pred(Box<Node>),
     /// A boolean vector with one element per row.
     Mask(Box<Node>),
+    /// Every row, in the order the key columns put them: a permutation
+    /// rather than a selection, which is why a sort is a row selector at
+    /// all. `keys` is empty over a column, whose values are their own key.
+    Order {
+        keys: Vec<usize>,
+        desc: bool,
+    },
 }
 
 #[derive(Clone, Debug)]

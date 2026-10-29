@@ -11,6 +11,7 @@ use crate::dtype::{cell_of, column_of};
 use crate::table::{Held, Tables};
 use crate::value::{
     RowRef, Value, View, arith, compare, equal, format_exact, format_styled, math, round_digits,
+    sort_order,
 };
 use crate::zone::{Zone, Zoned, utc_now};
 use crate::{Lowering, Options, ROW_THRESHOLD, lower};
@@ -23,7 +24,7 @@ use omasheet_omx::funcs::MathFn;
 use omasheet_omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_omx::{Cell, ColKind, Column, Diagnostic, Group, Program, S, Span};
 use polars::prelude::Column as PlColumn;
-use polars::prelude::{AnyValue, DataFrame, DataType, Expr, IntoLazy, col};
+use polars::prelude::{AnyValue, DataFrame, DataType, Expr, IntoLazy, SortMultipleOptions, col};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -468,6 +469,69 @@ impl<'p> Engine<'p> {
         let keep: Option<Vec<usize>> = kept.into_iter().map(|p| Some(p? as usize)).collect();
         self.filters.borrow_mut().push((t, Attempt::Lowered));
         keep
+    }
+
+    /// The rows of a whole sheet in the order its key columns put them,
+    /// taken by Polars. `None` leaves it to the engine, which reads the
+    /// keys a cell at a time; the attempt is recorded either way, as a
+    /// condition's is, a sort being the other way a selection answers
+    /// positions.
+    fn run_sort(&self, t: usize, rows: &[usize], keys: &[usize], desc: bool) -> Option<Vec<usize>> {
+        if self.options.lowering == Lowering::Never {
+            return None;
+        }
+        let nrows = self.prog.sheets[t].nrows;
+        if nrows == 0 || (self.options.lowering == Lowering::Auto && nrows < ROW_THRESHOLD) {
+            return None;
+        }
+        // The whole sheet, in its own order, for the reason a condition is
+        // held to the same: a selection already made would have to be
+        // gathered first, which is a copy of it.
+        if rows.len() != nrows || rows.iter().enumerate().any(|(p, &r)| p != r) {
+            return None;
+        }
+        let refused = |engine: &Engine| {
+            engine.filters.borrow_mut().push((t, Attempt::Refused));
+            None
+        };
+        let mut columns: Vec<PlColumn> = Vec::with_capacity(keys.len());
+        let mut by: Vec<Expr> = Vec::with_capacity(keys.len());
+        for &c in keys {
+            let Some(column) = self.pl_column(t, c) else {
+                return refused(self);
+            };
+            let name = column.name().clone();
+            if !columns.iter().any(|held| held.name() == &name) {
+                columns.push(column);
+            }
+            by.push(col(name));
+        }
+        let Ok(frame) = DataFrame::new(columns) else {
+            return refused(self);
+        };
+        // The same order the engine's own sort puts them in:
+        // `maintain_order` for the ties of D56, and nulls where D95 has
+        // them — first ascending, last descending, which is the empty cell
+        // being the smallest thing there is either way.
+        let options = SortMultipleOptions::default()
+            .with_order_descending(desc)
+            .with_nulls_last(desc)
+            .with_maintain_order(true);
+        let order = frame
+            .lazy()
+            .with_row_index(ROW_INDEX, None)
+            .sort_by_exprs(by, options)
+            .select([col(ROW_INDEX)])
+            .collect()
+            .ok()
+            .and_then(|df| df.column(ROW_INDEX).ok()?.u32().ok().cloned());
+        let Some(order) = order else {
+            self.filters.borrow_mut().push((t, Attempt::Failed));
+            return None;
+        };
+        let order: Option<Vec<usize>> = order.into_iter().map(|p| Some(p? as usize)).collect();
+        self.filters.borrow_mut().push((t, Attempt::Lowered));
+        order
     }
 
     /// An aggregate over one whole column of a sheet, taken by Polars.
@@ -1937,6 +2001,23 @@ impl<'p> Engine<'p> {
                 }
                 Rows::Many(keep)
             }
+            RowSel::Order { keys, desc } => {
+                let Some((t, file_rows)) = sheet else {
+                    return fail(span, "`sort` needs a sheet to order");
+                };
+                if let Some(order) = self.run_sort(t, file_rows, keys, *desc) {
+                    return Ok(Rows::Many(order));
+                }
+                let mut cells = Vec::with_capacity(len);
+                for &r in file_rows {
+                    let mut row = Vec::with_capacity(keys.len());
+                    for &c in keys {
+                        row.push(self.cell(t, c, r)?);
+                    }
+                    cells.push(row);
+                }
+                Rows::Many(ordered(&cells, *desc, span)?)
+            }
             RowSel::Mask(node) => {
                 let Value::Vector(mask) = self.eval(node, fr)? else {
                     return fail(node.span, "expected a vector of Boolean");
@@ -1995,6 +2076,19 @@ impl<'p> Engine<'p> {
                         cols: sub_cols(cols),
                     }),
                 })
+            }
+            // A column's values are their own sort key, which the row
+            // selector cannot reach: it is given the length of what it
+            // selects from and not its values.
+            Value::Vector(items) if matches!(rows, RowSel::Order { .. }) => {
+                let RowSel::Order { desc, .. } = rows else {
+                    unreachable!("matched just above")
+                };
+                let keys: Vec<Vec<Value>> = items.iter().map(|v| vec![v.clone()]).collect();
+                let order = ordered(&keys, *desc, span)?;
+                Ok(Value::Vector(Rc::new(
+                    order.iter().map(|&p| items[p].clone()).collect(),
+                )))
             }
             Value::Vector(items) => Ok(match self.rows(rows, items.len(), None, span, fr)? {
                 Rows::One(None) => Value::Null,
@@ -2141,6 +2235,32 @@ impl<'p> Engine<'p> {
             Value::Null => "empty\n".to_string(),
             other => format!("{}\n", self.show(other, false)),
         }
+    }
+}
+
+/// The positions `0..keys.len()` in the order their keys put them, each
+/// key a row's cells in the key columns, compared in turn. The sort is
+/// stable, so rows whose keys are equal keep the order they came in and
+/// two sorts on different keys compose.
+fn ordered(keys: &[Vec<Value>], desc: bool, span: Span) -> R<Vec<usize>> {
+    let mut why = None;
+    let mut order: Vec<usize> = (0..keys.len()).collect();
+    order.sort_by(|&a, &b| {
+        for (x, y) in keys[a].iter().zip(keys[b].iter()) {
+            match sort_order(x, y) {
+                Ok(Ordering::Equal) => {}
+                Ok(o) => return if desc { o.reverse() } else { o },
+                Err(m) => {
+                    why.get_or_insert(m);
+                    return Ordering::Equal;
+                }
+            }
+        }
+        Ordering::Equal
+    });
+    match why {
+        Some(m) => fail(span, m),
+        None => Ok(order),
     }
 }
 

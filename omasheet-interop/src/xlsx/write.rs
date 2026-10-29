@@ -26,6 +26,8 @@ const CONDITION: Why =
     "values were written in place of formulas that pick rows by more than `Column == value`";
 const SELECTION: Why =
     "values were written in place of formulas that pick rows by a range value or a list";
+const SORTED: Why =
+    "values were written in place of formulas that put rows in an order of their own";
 const ROW: Why = "values were written in place of formulas that work out which row to read";
 const NO_ROWS: Why = "values were written in place of formulas that read no rows";
 const COLUMNS: Why =
@@ -330,6 +332,8 @@ impl Writer<'_> {
             }
             Some(RowSel::Pred(node)) => Rows::Where(node),
             Some(RowSel::RangeVal(_) | RowSel::Mask(_)) => return Err(SELECTION),
+            // A sheet's own order is not a thing a cell formula can say.
+            Some(RowSel::Order { .. }) => return Err(SORTED),
         })
     }
 

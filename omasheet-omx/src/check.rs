@@ -2928,6 +2928,105 @@ impl<'a> Checker<'a> {
                     ty,
                 )
             }
+            // `Sales |> sort(Revenue)`, and `sort(Revenue, desc)` for the
+            // other direction. OMX has no keyword arguments, so the
+            // direction is a bare word in the last place, as `cast(x, Int)`
+            // takes a bare type name. A column of that name is a key, so a
+            // column is looked for before the word is read as a direction.
+            "sort" => {
+                let usage = "Sales |> sort(Revenue, desc)";
+                if args.is_empty() {
+                    self.err_help(
+                        span,
+                        "`sort` needs a sheet or a column",
+                        format!("usage: `{usage}`"),
+                    );
+                    return fail;
+                }
+                let (b, bty) = self.lower(&args[0], sc);
+                let mut rest = &args[1..];
+                let mut desc = false;
+                if let Some(last) = rest.last()
+                    && let ExprKind::Name(word) = &last.kind
+                {
+                    let is_column = match &bty {
+                        Ty::Sheet(tt) => self.col_in(tt, word).is_some(),
+                        _ => false,
+                    };
+                    if !is_column && matches!(word.as_str(), "asc" | "desc") {
+                        desc = word == "desc";
+                        rest = &rest[..rest.len() - 1];
+                    }
+                }
+                let failed = matches!(b.kind, Ir::Error);
+                let sorted = |keys, ty| {
+                    (
+                        Node::new(
+                            Ir::Index {
+                                base: Box::new(b),
+                                rows: RowSel::Order { keys, desc },
+                                cols: ColSel::All,
+                            },
+                            span,
+                        ),
+                        ty,
+                    )
+                };
+                match bty {
+                    Ty::Sheet(tt) => {
+                        if rest.is_empty() {
+                            self.err_help(
+                                span,
+                                "`sort` needs a column to order a sheet by",
+                                format!("usage: `{usage}`"),
+                            );
+                            return fail;
+                        }
+                        let mut keys = Vec::new();
+                        for a in rest {
+                            let ExprKind::Name(col) = &a.kind else {
+                                self.err(a.span, "`sort` takes column names");
+                                return fail;
+                            };
+                            match self.col_in(&tt, col) {
+                                Some(c) => {
+                                    self.col_refs.push((a.span, tt.sheet, c));
+                                    keys.push(c);
+                                }
+                                None => {
+                                    self.no_column(&tt, col, a.span);
+                                    return fail;
+                                }
+                            }
+                        }
+                        // The same columns and the same rows, in another
+                        // order, so the type passes through unchanged.
+                        let ty = Ty::Sheet(tt);
+                        sorted(keys, ty)
+                    }
+                    // Over a column the values are their own key, so a
+                    // column name has nothing to name.
+                    Ty::Vector(..) | Ty::Any if rest.is_empty() => sorted(Vec::new(), bty),
+                    other => {
+                        if !rest.is_empty() && matches!(other, Ty::Vector(..) | Ty::Any) {
+                            self.err_help(
+                                rest[0].span,
+                                "`sort` over a column takes no column name",
+                                "usage: `Sales.Revenue |> sort(desc)`",
+                            );
+                        } else if !failed {
+                            self.err(
+                                args[0].span,
+                                format!(
+                                    "`sort` needs a sheet or a column, but this is {}",
+                                    other.describe()
+                                ),
+                            );
+                        }
+                        fail
+                    }
+                }
+            }
             "pi" | "e" => {
                 if !arity(self, 0, &format!("{name}()")) {
                     return fail;

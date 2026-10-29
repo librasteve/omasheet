@@ -550,6 +550,18 @@ pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
     }))
 }
 
+/// Order two single values for a sort, where every pair has an order:
+/// an empty cell is smallest, so it comes first ascending and last
+/// descending, as Polars orders a null. A `NaN` is greatest, by D56.
+pub fn sort_order(a: &Value, b: &Value) -> Result<Ordering, String> {
+    Ok(match (a, b) {
+        (Value::Null, Value::Null) => Ordering::Equal,
+        (Value::Null, _) => Ordering::Less,
+        (_, Value::Null) => Ordering::Greater,
+        _ => compare(a, b)?.unwrap_or(Ordering::Equal),
+    })
+}
+
 /// Equality of two single values. `None` if either is empty.
 pub fn equal(a: &Value, b: &Value) -> Result<Option<bool>, String> {
     Ok(compare(a, b)?.map(|o| o == Ordering::Equal))

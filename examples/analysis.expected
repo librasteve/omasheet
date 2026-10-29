@@ -895,3 +895,13 @@ Survived | Pclass | Name                                                        
        0 |      3 | Miss. Catherine Helen Johnston                                                    | female |    7 |    23.45 |                     1 |                     2 |      3
        1 |      1 | Mr. Karl Howell Behr                                                              | male   |   26 |       30 |                     0 |                     0 |      0
        0 |      3 | Mr. Patrick Dooley                                                                | male   |   32 |     7.75 |                     0 |                     0 |      0
+
+sheet Dearest
+
+Name                              | Fare
+----------------------------------|---------
+Miss. Anna Ward                   | 512.3292
+Mr. Thomas Drake Martinez Cardeza | 512.3292
+Mr. Gustave J Lesurer             | 512.3292
+Mr. Charles Alexander Fortune     |      263
+Miss. Mabel Helen Fortune         |      263

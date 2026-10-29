@@ -23,10 +23,17 @@ Verification on this machine needs `-j 2` on anything workspace-wide, or
 
 ## 0. Settle the open questions
 
-- [ ] 0.1 D84: how `sort` takes its direction. A bare word, `sort(Fare, desc)`;
+- [x] 0.1 D84: how `sort` takes its direction. A bare word, `sort(Fare, desc)`;
       a second name, `sort_desc(Fare)`; or a signed column, `sort(-Fare)`. The
       bare-word convention is the one D85 needs as well, so the two are
       cheaper settled together than apart
+
+      **The bare word** (owner, 2026-10-29), in the last place, with `asc`
+      accepted beside `desc` and more than one key sharing the one
+      direction. `cast(x, Int)` already takes a bare name, so nothing new
+      is asked of the language, and `join(Other, Key, left)` is what D85
+      now has to spell. A column named `asc` or `desc` is read as a key,
+      the column being looked for before the word
 - [ ] 0.2 D85: the join surface, and what a multiple match does — Q9 and Q10
       of the superseded change, inherited unanswered. A left join on a key
       that matches twice either yields two rows, which changes a sheet's
@@ -90,19 +97,52 @@ stage already gives a sheet and a file has nowhere to put one (D90).
 
 ## 2. `sort` (`omx-expressions`, `evaluation`)
 
-- [ ] 2.1 The `sort` stage over a sheet and over a column, with its typing:
+- [x] 2.1 The `sort` stage over a sheet and over a column, with its typing:
       the result is the same columns and the same number of rows, so
       `Ty::Sheet` passes through unchanged
-- [ ] 2.2 Ties keep the order they came in, so a sort is stable and two sorts
+
+      A sort is a **row selector**, `RowSel::Order { keys, desc }`: a
+      permutation of every row rather than a selection of some, which is
+      what `rows` already answers in and what a `View`'s `rows` already
+      holds. Nothing else about a view changes, so `select`, `head` and the
+      aggregates after it needed no new code at all. Over a column the
+      selector cannot reach the values — it is given the length of what it
+      selects from and not its contents — so `index` sorts a `Vector` in
+      its own arm, where the two shapes already part
+- [x] 2.2 Ties keep the order they came in, so a sort is stable and two sorts
       on different keys compose into what the reader expects
-- [ ] 2.3 Where a `NaN` and an empty cell sort. D56 already has a `NaN`
+- [x] 2.3 Where a `NaN` and an empty cell sort. D56 already has a `NaN`
       ordered greatest and equal to itself, as Polars has it; an empty cell
       has no such decision yet and needs one here
-- [ ] 2.4 `sort` in `FUNCTIONS` with its usage (D60)
-- [ ] 2.5 An example and its `.expected`: the titanic passengers by fare, which
+
+      **Smallest** (D95, owner, 2026-10-29), so first ascending and last
+      descending, which is Polars' own order and needs no flag when 2.6
+      pushes the sort down. `value::sort_order` is `compare` with that one
+      rule added, every pair of values having an order where `compare`
+      answers nothing for an empty one
+- [x] 2.4 `sort` in `FUNCTIONS` with its usage (D60)
+- [x] 2.5 An example and its `.expected`: the titanic passengers by fare, which
       is a sort over a dataframe-backed table rather than a sheet of its own
       rows
-- [ ] 2.6 Lowered to Polars' own sort, with the goldens unchanged
+
+      `analysis.omx` gains `sheet Dearest`, the five dearest fares aboard:
+      `Passengers |> sort(Fare, desc) |> select(Name, Fare) |> head(5)`.
+      Three of the five tie at 512.3292 and keep their file order, so the
+      golden pins the stability of 2.2 as well
+- [x] 2.6 Lowered to Polars' own sort, with the goldens unchanged
+
+      `run_sort`, beside `run_filter` and under the same rule — the whole
+      sheet in its own order, since gathering a selection already made is a
+      copy of it — and recorded in the same `filters` list, a sort being
+      the other way a selection answers positions. Two options earn their
+      place: `maintain_order`, which Polars has off by default and which
+      the stability of 2.2 needs, and **`nulls_last` set to the direction**.
+      Polars' `nulls_last` is an independent flag rather than a consequence
+      of `descending`, so a descending sort would otherwise have put the
+      empty cells first on the lowered path and last on the row path —
+      D95 on one path only. `an_empty_cell_sorts_first_on_both_paths` pins
+      it. The sort needs no `lower::expr` at all, the keys being column
+      indices and not expressions
 
 ## 3. `group_by` and `agg` (`omx-expressions`, `evaluation`)
 

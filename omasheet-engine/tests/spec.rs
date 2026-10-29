@@ -1104,6 +1104,89 @@ fn pipe_operator() {
     );
 }
 
+/// A sheet whose keys tie and whose last Revenue is missing, which is
+/// where the two sort questions are asked.
+const TIES: &str = "\
+sheet Sales
+
+Month | Region | Revenue
+Jan   | UK     | 120
+Feb   | US     | 100
+Mar   | UK     | 120
+Apr   | UK     |
+";
+
+#[test]
+fn sort_orders_a_sheet_by_a_column() {
+    // Ascending by default, descending on the bare word, and the sheet
+    // keeps every column and every row either way.
+    assert_eq!(
+        ask(SALES, "(Sales |> sort(Cost)).Month"),
+        "[\"Jan\", \"Feb\", \"Mar\"]"
+    );
+    assert_eq!(
+        ask(SALES, "Sales |> sort(Cost, desc) |> select(Month, Cost)"),
+        "Month | Cost\n------|-----\nMar   |   80\nFeb   |   70\nJan   |   60"
+    );
+    assert_eq!(
+        ask(SALES, "(Sales |> sort(Revenue, asc)).Revenue"),
+        "[100, 120, 150]"
+    );
+    assert_eq!(ask(SALES, "Sales |> sort(Month) |> len()"), "3");
+}
+
+#[test]
+fn sort_orders_a_column_by_its_own_values() {
+    assert_eq!(ask(SALES, "Sales.Cost |> sort()"), "[60, 70, 80]");
+    assert_eq!(ask(SALES, "Sales.Cost |> sort(desc)"), "[80, 70, 60]");
+    assert_eq!(calc("[3, 1, 2] |> sort()"), "[1, 2, 3]");
+    // A NaN is greatest, by D56, so it sorts last and an empty cell first.
+    assert_eq!(calc("[1, NaN, 3] |> sort()"), "[1, 3, NaN]");
+}
+
+#[test]
+fn sort_is_stable_and_takes_more_than_one_key() {
+    // Jan and Mar tie on Revenue and keep the order they came in.
+    assert_eq!(
+        ask(TIES, "(Sales |> sort(Revenue)).Month"),
+        "[\"Apr\", \"Feb\", \"Jan\", \"Mar\"]"
+    );
+    // Two keys, the second breaking the first's ties.
+    assert_eq!(
+        ask(TIES, "(Sales |> sort(Region, Revenue)).Month"),
+        "[\"Apr\", \"Jan\", \"Mar\", \"Feb\"]"
+    );
+    // Two sorts compose into what a reader expects, the first key the
+    // weaker one.
+    assert_eq!(
+        ask(TIES, "(Sales |> sort(Month) |> sort(Region)).Month"),
+        "[\"Apr\", \"Jan\", \"Mar\", \"Feb\"]"
+    );
+}
+
+#[test]
+fn an_empty_cell_sorts_first() {
+    // Smallest, as Polars orders a null: first ascending, last descending.
+    assert_eq!(
+        ask(TIES, "(Sales |> sort(Revenue)).Revenue"),
+        "[empty, 100, 120, 120]"
+    );
+    assert_eq!(
+        ask(TIES, "(Sales |> sort(Revenue, desc)).Month"),
+        "[\"Jan\", \"Mar\", \"Feb\", \"Apr\"]"
+    );
+}
+
+#[test]
+fn sort_says_what_it_needs() {
+    assert!(
+        calc_err(Some(SALES), "Sales |> sort()").contains("needs a column to order a sheet by")
+    );
+    assert!(calc_err(Some(SALES), "Sales |> sort(Profit)").contains("has no column `Profit`"));
+    assert!(calc_err(Some(SALES), "Sales.Cost |> sort(Cost)").contains("takes no column name"));
+    assert!(calc_err(Some(SALES), "3 |> sort()").contains("needs a sheet or a column"));
+}
+
 // ---- file-format ----------------------------------------------------------
 
 #[test]
@@ -2521,6 +2604,44 @@ fn a_condition_picks_rows_in_one_pass() {
         assert_eq!(ran.shown, answer, "{expr}");
         assert_eq!(ran.filters, [Attempt::Lowered], "{expr}");
     }
+}
+
+#[test]
+fn a_sort_is_lowered_and_lands_the_rows_where_the_engine_does() {
+    let dir = Some("../examples");
+    // The dearest fare aboard, reached by a sort rather than by `max`.
+    let ran = both_ways(TABLE, "(Passengers |> sort(Fare, desc)).Fare[0]", dir);
+    assert_eq!(ran.shown, "512.3292");
+    assert_eq!(ran.filters, [Attempt::Lowered]);
+    // Three passengers tie at that fare and both paths keep the order they
+    // came in, which is what `maintain_order` is for.
+    let ties = both_ways(
+        TABLE,
+        "(Passengers |> sort(Fare, desc) |> head(3)).Name",
+        dir,
+    );
+    assert_eq!(
+        ties.shown,
+        "[\"Miss. Anna Ward\", \"Mr. Thomas Drake Martinez Cardeza\", \"Mr. Gustave J Lesurer\"]"
+    );
+    assert_eq!(ties.filters, [Attempt::Lowered]);
+    // More than one key, and the sheet's own order where they both tie.
+    let two = both_ways(TABLE, "(Passengers |> sort(Pclass, Fare)).Name[0]", dir);
+    assert_eq!(two.shown, "\"Mr. William Harrison\"");
+    assert_eq!(two.filters, [Attempt::Lowered]);
+}
+
+/// D95 on both paths: Polars places a null first only while the order is
+/// ascending, so the lowered sort asks for `nulls_last` where the engine's
+/// reversed comparison puts an empty cell last.
+#[test]
+fn an_empty_cell_sorts_first_on_both_paths() {
+    let up = both_ways(TIES, "(Sales |> sort(Revenue)).Month", None);
+    assert_eq!(up.shown, "[\"Apr\", \"Feb\", \"Jan\", \"Mar\"]");
+    assert_eq!(up.filters, [Attempt::Lowered]);
+    let down = both_ways(TIES, "(Sales |> sort(Revenue, desc)).Month", None);
+    assert_eq!(down.shown, "[\"Jan\", \"Mar\", \"Feb\", \"Apr\"]");
+    assert_eq!(down.filters, [Attempt::Lowered]);
 }
 
 #[test]

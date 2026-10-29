@@ -248,6 +248,12 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "The value a number of rows back, empty where there is no such row.",
     ),
     doc(
+        SHEET,
+        "sort",
+        "Sheet |> sort(Column, desc)",
+        "The rows of a sheet in the order of one or more columns, or the cells of a column in their own order. Ascending unless the last word is desc; an empty cell comes first.",
+    ),
+    doc(
         CONVERT,
         "cast",
         "cast(x, Int)",
