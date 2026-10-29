@@ -144,7 +144,25 @@ impl Parser {
             return Ok(args);
         }
         loop {
-            args.push(self.expr()?);
+            // `Name := expr`, an argument given a name: what `agg` names
+            // the column of an aggregate by.
+            if let Tok::Ident(name) = self.peek().clone()
+                && self
+                    .toks
+                    .get(self.pos + 1)
+                    .is_some_and(|t| t.tok == Tok::Define)
+            {
+                let name_span = self.bump().span;
+                self.bump();
+                let value = self.expr()?;
+                let span = name_span.to(value.span);
+                args.push(Expr {
+                    kind: ExprKind::Named(name, name_span, Box::new(value)),
+                    span,
+                });
+            } else {
+                args.push(self.expr()?);
+            }
             if self.eat(&Tok::Comma) {
                 continue;
             }

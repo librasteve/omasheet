@@ -43,6 +43,8 @@ pub enum Tok {
     Le,
     Ge,
     Assign,
+    /// `:=`, which names an aggregate in `agg`.
+    Define,
     SlashSlash,
     /// `...`, the sequence operator.
     DotDotDot,
@@ -101,6 +103,7 @@ impl Tok {
             Tok::Le => "<=",
             Tok::Ge => ">=",
             Tok::Assign => "=",
+            Tok::Define => ":=",
             Tok::SlashSlash => "//",
             Tok::DotDotDot => "...",
             Tok::Dollar => "$",
@@ -260,6 +263,8 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
             (Tok::SlashSlash, 2)
         } else if rest.starts_with("|>") {
             (Tok::Pipe, 2)
+        } else if rest.starts_with(":=") {
+            (Tok::Define, 2)
         } else {
             let tok = match c {
                 b'+' => Tok::Plus,

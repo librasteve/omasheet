@@ -50,6 +50,10 @@ pub struct SheetSnap {
     /// head(3)`, for the tab to mark it and say what it is. `None` for a
     /// sheet whose rows are its own or a file's (D90).
     pub view: Option<String>,
+    /// The sheet is made by `group_by` and `agg`: a row a group, and a
+    /// formula a sort cannot be added to the end of, so it is sorted in
+    /// the grid alone, as a table is.
+    pub grouped: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -418,7 +422,7 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
                 names.push((name, e.span));
             }
         }
-        ExprKind::Unary(_, a) => sites(a, nested, out, names),
+        ExprKind::Unary(_, a) | ExprKind::Named(_, _, a) => sites(a, nested, out, names),
         ExprKind::Binary(_, a, b) => {
             sites(a, nested, out, names);
             sites(b, nested, out, names);
@@ -503,7 +507,7 @@ fn named(e: &Expr, name: &str, out: &mut Vec<Span>) {
                 out.push(e.span);
             }
         }
-        ExprKind::Unary(_, a) => named(a, name, out),
+        ExprKind::Unary(_, a) | ExprKind::Named(_, _, a) => named(a, name, out),
         ExprKind::Binary(_, l, r) => {
             named(l, name, out);
             named(r, name, out);
@@ -1955,6 +1959,7 @@ impl Document {
     /// followed, as it is by [`Document::move_rows`].
     pub fn sort_rows(&mut self, sheet: usize, col: usize, desc: bool) -> Result<(), String> {
         match self.snapshot.sheets.get(sheet) {
+            Some(t) if t.grouped => return self.sort_table(sheet, col, desc),
             Some(t) if t.view.is_some() => return self.sort_view(sheet, col, desc),
             Some(t) if t.source.is_some() => return self.sort_table(sheet, col, desc),
             _ => {}
@@ -2770,7 +2775,10 @@ impl Document {
             // A table sorted in the grid is shown in that order, while its
             // file still has as many rows as the order numbers.
             let rows = match self.orders.get(&sheet.name) {
-                Some(order) if sheet.source.is_some() && order.len() == rows.len() => {
+                Some(order)
+                    if (sheet.source.is_some() || sheet.group.is_some())
+                        && order.len() == rows.len() =>
+                {
                     let mut slots: Vec<Option<Vec<CellSnap>>> =
                         rows.into_iter().map(Some).collect();
                     order
@@ -2791,6 +2799,7 @@ impl Document {
                         .trim()
                         .to_string()
                 }),
+                grouped: sheet.group.is_some(),
             });
         }
         for (i, c) in program.consts.iter().enumerate() {

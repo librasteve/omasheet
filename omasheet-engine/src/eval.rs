@@ -19,7 +19,7 @@ use omasheet_omx::ast::Lit;
 use omasheet_omx::ast::{BinOp, UnOp};
 use omasheet_omx::cycle;
 use omasheet_omx::date;
-use omasheet_omx::decimal::Dec;
+use omasheet_omx::decimal::{Dec, SHOWN_PRECISION};
 use omasheet_omx::funcs::MathFn;
 use omasheet_omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_omx::{Cell, ColKind, Column, Diagnostic, Group, Program, S, Span};
@@ -70,6 +70,13 @@ enum Rows {
     Many(Vec<usize>),
 }
 
+/// A group of rows of a grouped sheet: the sheet grouped and the rows.
+type GroupRows = (usize, Rc<Vec<usize>>);
+/// The rows of each group of a grouped sheet, a row of it each.
+type Groups = Vec<Rc<Vec<usize>>>;
+/// The values of an aggregate of a grouped sheet Polars took, one a group.
+type AggValues = Rc<Vec<Value>>;
+
 pub struct Engine<'p> {
     prog: &'p Program,
     /// The columns of every `table`, as their files hold them. Empty for a
@@ -114,6 +121,16 @@ pub struct Engine<'p> {
     /// something has asked for one: a `Slot` so that a view reading itself
     /// is caught as any other cycle is (D90).
     views: RefCell<Vec<Slot>>,
+    /// The rows of each group of a sheet computed by `group_by`, in the
+    /// sheet its view groups, once the view has been evaluated: one entry a
+    /// row of the grouped sheet.
+    groups: RefCell<Vec<Option<Rc<Groups>>>>,
+    /// The group an aggregate of `agg` is being worked out for, innermost
+    /// last: the sheet grouped and the rows of the group.
+    grouping: RefCell<Vec<GroupRows>>,
+    /// The aggregates of a grouped sheet Polars took, by sheet and column,
+    /// a value a group.
+    agg_held: RefCell<Vec<Vec<Option<AggValues>>>>,
     /// The arguments of the file's own functions being evaluated, the
     /// innermost call last.
     args: RefCell<Vec<Vec<Value>>>,
@@ -206,6 +223,14 @@ impl<'p> Engine<'p> {
                     .collect(),
             ),
             views: RefCell::new(vec![Slot::Pending; prog.sheets.len()]),
+            groups: RefCell::new(vec![None; prog.sheets.len()]),
+            grouping: RefCell::new(Vec::new()),
+            agg_held: RefCell::new(
+                prog.sheets
+                    .iter()
+                    .map(|t| vec![None; t.cols.len()])
+                    .collect(),
+            ),
             attempts: RefCell::new(Vec::new()),
             aggregates: RefCell::new(Vec::new()),
             filters: RefCell::new(Vec::new()),
@@ -534,6 +559,186 @@ impl<'p> Engine<'p> {
         order
     }
 
+    /// The groups of a whole sheet by its key columns, and the aggregates of
+    /// `aggs` over each group, taken by Polars in one `group_by`. `aggs` is
+    /// each lowerable aggregate of the grouped sheet: its column there, its
+    /// function and the column of `t` it is over. `None` leaves the groups
+    /// to the engine, and an aggregate missing from what comes back is one
+    /// left to the engine too.
+    ///
+    /// The groups come back in the order the engine's own put them in: by
+    /// their keys, an empty key first (D95), each group's rows in the order
+    /// they came in. Two keys are one group where the engine's comparison
+    /// ties them, which for a decimal is to `SHOWN_PRECISION` (D86): a key of
+    /// more significant digits than that is refused rather than rounded,
+    /// keys of fewer being one group exactly where they are equal.
+    fn run_group(
+        &self,
+        t: usize,
+        rows: &[usize],
+        keys: &[usize],
+        aggs: &[(usize, Func, usize)],
+    ) -> Option<(Groups, Vec<(usize, AggValues)>)> {
+        if self.options.lowering == Lowering::Never {
+            return None;
+        }
+        let nrows = self.prog.sheets[t].nrows;
+        if nrows == 0 || (self.options.lowering == Lowering::Auto && nrows < ROW_THRESHOLD) {
+            return None;
+        }
+        // The whole sheet, in its own order, for the reason a sort is held
+        // to the same.
+        if rows.len() != nrows || rows.iter().enumerate().any(|(p, &r)| p != r) {
+            return None;
+        }
+        let refused = |engine: &Engine| {
+            engine.filters.borrow_mut().push((t, Attempt::Refused));
+            None
+        };
+        let mut columns: Vec<PlColumn> = Vec::new();
+        let mut take = |c: usize| -> Option<(polars::prelude::PlSmallStr, DataType)> {
+            let column = self.pl_column(t, c)?;
+            let (name, dtype) = (column.name().clone(), column.dtype().clone());
+            if !columns.iter().any(|held| held.name() == &name) {
+                columns.push(column);
+            }
+            Some((name, dtype))
+        };
+        let mut by: Vec<Expr> = Vec::with_capacity(keys.len());
+        let mut key_names = Vec::with_capacity(keys.len());
+        for &c in keys {
+            let Some((name, _)) = take(c) else {
+                return refused(self);
+            };
+            by.push(col(name.clone()));
+            key_names.push(name);
+        }
+        // Each aggregate's parts, named for its place in `aggs`: the answer,
+        // what a mean divides by, the extremes that bound a sum, and whether
+        // a floating-point `min` has a number to be the least of (D71a), as
+        // `run_agg` asks of a whole column.
+        let mut select = vec![col(ROW_INDEX)];
+        let mut plans = Vec::with_capacity(aggs.len());
+        for (k, &(_, func, c)) in aggs.iter().enumerate() {
+            let Some((name, dtype)) = take(c) else {
+                continue;
+            };
+            let mean = func == Func::Mean;
+            let Some(expr) = lower::aggregate(if mean { Func::Sum } else { func }, &name, &dtype)
+            else {
+                continue;
+            };
+            let mut parts = vec![expr.alias(format!("a{k}"))];
+            if mean {
+                let Some(count) = lower::aggregate(Func::Count, &name, &dtype) else {
+                    continue;
+                };
+                parts.push(count.alias(format!("c{k}")));
+            }
+            let total = matches!(func, Func::Sum | Func::Mean)
+                .then(|| lower::exact_scale(&dtype))
+                .flatten();
+            if total.is_some() {
+                let (Some(lo), Some(hi)) = (
+                    lower::aggregate(Func::Min, &name, &dtype),
+                    lower::aggregate(Func::Max, &name, &dtype),
+                ) else {
+                    continue;
+                };
+                parts.push(lo.alias(format!("l{k}")));
+                parts.push(hi.alias(format!("h{k}")));
+            }
+            let guard = func == Func::Min && lower::float(&dtype);
+            if guard {
+                parts.push(lower::has_a_number(&name).alias(format!("n{k}")));
+            }
+            select.extend(parts);
+            plans.push((k, mean, total, guard));
+        }
+        let Ok(frame) = DataFrame::new(columns) else {
+            return refused(self);
+        };
+        let options = SortMultipleOptions::default()
+            .with_nulls_last(false)
+            .with_maintain_order(true);
+        let Ok(out) = frame
+            .lazy()
+            .with_row_index(ROW_INDEX, None)
+            .group_by(by.clone())
+            .agg(select)
+            .sort_by_exprs(by, options)
+            .collect()
+        else {
+            self.filters.borrow_mut().push((t, Attempt::Failed));
+            return None;
+        };
+        // A decimal key of more digits than are compared would be one group
+        // here and might be two there, or the other way about.
+        let limit = 10i128.pow(SHOWN_PRECISION);
+        for name in &key_names {
+            let column = out.column(name).ok()?;
+            if matches!(column.dtype(), DataType::Decimal(..)) {
+                for i in 0..column.len() {
+                    if let Ok(AnyValue::Decimal(n, _)) = column.get(i)
+                        && n.unsigned_abs() >= limit as u128
+                    {
+                        return refused(self);
+                    }
+                }
+            }
+        }
+        let mut groups: Groups = Vec::with_capacity(out.height());
+        let listed = out.column(ROW_INDEX).ok()?.list().ok()?.clone();
+        for list in listed.into_iter() {
+            let list = list?;
+            let mut members: Vec<usize> = list
+                .u32()
+                .ok()?
+                .into_iter()
+                .map(|p| Some(rows[p? as usize]))
+                .collect::<Option<_>>()?;
+            // Polars keeps no promise about the order inside a group, and
+            // the engine's is the order the rows came in.
+            members.sort_unstable();
+            groups.push(Rc::new(members));
+        }
+        self.filters.borrow_mut().push((t, Attempt::Lowered));
+        let ty = |c: usize| self.prog.sheets[t].cols[c].ty;
+        let mut held = Vec::new();
+        'agg: for (k, mean, total, guard) in plans {
+            let (at, func, c) = aggs[k];
+            let get = |part: &str, i: usize| out.column(&format!("{part}{k}")).ok()?.get(i).ok();
+            let mut values = Vec::with_capacity(groups.len());
+            for (i, group) in groups.iter().enumerate() {
+                let answer = (|| {
+                    if guard && !matches!(get("n", i)?, AnyValue::Boolean(true)) {
+                        return None;
+                    }
+                    if let Some(scale) = total
+                        && !has_room(get("l", i)?, get("h", i)?, group.len(), scale)?
+                    {
+                        return None;
+                    }
+                    let count = match mean {
+                        true => Some(get("c", i)?.try_extract::<i64>().ok()?),
+                        false => None,
+                    };
+                    agg_value(func, ty(c), get("a", i)?, count)
+                })();
+                match answer {
+                    Some(v) => values.push(v),
+                    None => {
+                        self.aggregates.borrow_mut().push((t, c, Attempt::Refused));
+                        continue 'agg;
+                    }
+                }
+            }
+            self.aggregates.borrow_mut().push((t, c, Attempt::Lowered));
+            held.push((at, Rc::new(values)));
+        }
+        Some((groups, held))
+    }
+
     /// An aggregate over one whole column of a sheet, taken by Polars.
     /// `None` leaves it to the engine, which reads the column a value at a
     /// time; nothing is reported either way, as nothing can fail.
@@ -627,66 +832,30 @@ impl<'p> Engine<'p> {
         {
             return refused(self);
         }
-        if let Some(scale) = total {
-            // An empty column has no extremes and sums to nothing, which
-            // has room anywhere.
-            let unscaled = |key: &str| match out.column(key).ok()?.get(0).ok()? {
-                AnyValue::Decimal(n, _) => Some(n),
-                AnyValue::Null => Some(0),
-                _ => None,
-            };
-            let widest = unscaled("lo")?
-                .unsigned_abs()
-                .max(unscaled("hi")?.unsigned_abs());
-            let room = i128::try_from(widest)
-                .ok()
-                .and_then(|w| w.checked_mul(nrows as i128))
-                .and_then(|bound| Dec::new(bound, scale as i32));
-            if room.is_none() {
-                return refused(self);
-            }
+        if let Some(scale) = total
+            && !has_room(
+                out.column("lo").ok()?.get(0).ok()?,
+                out.column("hi").ok()?.get(0).ok()?,
+                nrows,
+                scale,
+            )?
+        {
+            return refused(self);
         }
         let any = out.column("agg").ok()?.get(0).ok()?;
-        // The dress a column wears is put back on, a Polars aggregate
-        // answering a bare number (D69): the sum of percentages is a
-        // percentage, as it is on the row path.
-        let ty = self.prog.sheets[t].cols[c].ty;
-        let value = match func {
-            // A count is a count of things, whatever the column holds.
-            Func::Len | Func::Count => Value::from_lit(&Lit::Int(any.try_extract::<i64>().ok()?)),
-            _ => Value::from_lit(match &cell_of(any, ty) {
-                Cell::Lit(l) => l,
-                _ => return refused(self),
-            }),
+        let count = match mean {
+            true => Some(
+                out.column("count")
+                    .ok()?
+                    .get(0)
+                    .ok()?
+                    .try_extract::<i64>()
+                    .ok()?,
+            ),
+            false => None,
         };
-        let value = match (ty, &value) {
-            (S::Fraction, Value::Int(_) | Value::Decimal(_)) => value.fraction(),
-            _ => value,
-        };
-        // The division `mean` is, taken here rather than by Polars so that
-        // it is a `Dec`'s. The row path divides the sum it has already
-        // dressed and puts the percentage back on after, a division being
-        // one of the things that takes it off, so this does the same.
-        // Nothing to divide by is a column of nothing, whose mean is empty.
-        let value = match mean {
-            false => value,
-            true => match out
-                .column("count")
-                .ok()?
-                .get(0)
-                .ok()?
-                .try_extract::<i64>()
-                .ok()?
-            {
-                0 => Value::Null,
-                n => {
-                    let mean = arith(BinOp::Div, &value, &Value::Int(n)).ok()?;
-                    match ty {
-                        S::Percent => mean.percent(),
-                        _ => mean,
-                    }
-                }
-            },
+        let Some(value) = agg_value(func, self.prog.sheets[t].cols[c].ty, any, count) else {
+            return refused(self);
         };
         self.aggregates.borrow_mut().push((t, c, Attempt::Lowered));
         Some(value)
@@ -848,6 +1017,26 @@ impl<'p> Engine<'p> {
                     Some(&row) => self.cell(view.sheet, *source, row),
                     None => Ok(Value::Null),
                 },
+                Err(why) => Err(why),
+            },
+            // An aggregate is worked out over the rows of its group, which
+            // the names of the grouped sheet's columns read.
+            (None, ColKind::Agg(node)) => match self.group(t, r) {
+                // Taken by Polars with the groups.
+                Ok(Some(_)) if self.agg_held.borrow()[t][c].is_some() => {
+                    let held = self.agg_held.borrow()[t][c].clone();
+                    match held.and_then(|values| values.get(r).cloned()) {
+                        Some(v) => self.fit(v, col, node.span),
+                        None => Ok(Value::Null),
+                    }
+                }
+                Ok(Some(rows)) => {
+                    self.grouping.borrow_mut().push(rows);
+                    let v = self.eval(node, &mut Vec::new());
+                    self.grouping.borrow_mut().pop();
+                    v.and_then(|v| self.fit(v, col, node.span))
+                }
+                Ok(None) => Ok(Value::Null),
                 Err(why) => Err(why),
             },
             (None, ColKind::Frame) => {
@@ -1052,11 +1241,115 @@ impl<'p> Engine<'p> {
             }
             Err(Fail::Poison) => Value::Error,
         };
+        // A grouped sheet's view is the first row of each group, which is
+        // where its key columns read, and the groups are kept for its
+        // aggregates.
+        let value = match (value, &self.prog.sheets[t].group) {
+            (Value::Sheet(view), Some(keys)) => match self.grouped(t, &view, keys, node.span) {
+                Ok((firsts, groups)) => {
+                    self.groups.borrow_mut()[t] = Some(Rc::new(groups));
+                    Value::Sheet(firsts)
+                }
+                Err(Fail::Diag(d)) => {
+                    self.diags.borrow_mut().push(d);
+                    Value::Error
+                }
+                Err(Fail::Poison) => Value::Error,
+            },
+            (value, _) => value,
+        };
         self.views.borrow_mut()[t] = Slot::Done(value.clone());
         match value {
             Value::Sheet(view) => Ok(view),
             _ => Err(Fail::Poison),
         }
+    }
+
+    /// The rows of `view` in groups, one for each value of the key columns
+    /// `keys` the rows hold, in the order a sort by the keys puts them (an
+    /// empty key first, as D95 has it) and each group's rows in the order
+    /// they came in. Two keys are one group where a sort would tie them,
+    /// so a decimal is grouped as it is compared, to `SHOWN_PRECISION`
+    /// (D86). Given back with the view of each group's first row.
+    fn grouped(
+        &self,
+        t: usize,
+        view: &crate::value::View,
+        keys: &[usize],
+        span: Span,
+    ) -> Result<(crate::value::View, Groups), Fail> {
+        let firsts = |groups: &Groups| crate::value::View {
+            sheet: view.sheet,
+            rows: Rc::new(groups.iter().map(|g| g[0]).collect()),
+            cols: Rc::new(keys.to_vec()),
+        };
+        // Each aggregate that is a function of one column, which is what
+        // Polars may take for every group at once.
+        let aggs: Vec<(usize, Func, usize)> = self.prog.sheets[t]
+            .cols
+            .iter()
+            .enumerate()
+            .filter_map(|(at, col)| match &col.kind {
+                ColKind::Agg(Node {
+                    kind: Ir::Call(func, args),
+                    ..
+                }) => match args.as_slice() {
+                    [
+                        Node {
+                            kind: Ir::GroupCol(c),
+                            ..
+                        },
+                    ] => Some((at, *func, *c)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        if let Some((groups, held)) = self.run_group(view.sheet, &view.rows, keys, &aggs) {
+            let mut slots = self.agg_held.borrow_mut();
+            for (at, values) in held {
+                slots[t][at] = Some(values);
+            }
+            return Ok((firsts(&groups), groups));
+        }
+        let mut cells = Vec::with_capacity(view.rows.len());
+        for &r in view.rows.iter() {
+            let mut row = Vec::with_capacity(keys.len());
+            for &c in keys {
+                row.push(self.cell(view.sheet, c, r)?);
+            }
+            cells.push(row);
+        }
+        let order = ordered(&cells, false, span)?;
+        let same = |a: usize, b: usize| {
+            cells[a]
+                .iter()
+                .zip(cells[b].iter())
+                .all(|(x, y)| matches!(sort_order(x, y), Ok(Ordering::Equal)))
+        };
+        let mut groups: Groups = Vec::new();
+        let mut current: Vec<usize> = Vec::new();
+        for (i, &p) in order.iter().enumerate() {
+            if i > 0 && !same(order[i - 1], p) {
+                groups.push(Rc::new(std::mem::take(&mut current)));
+            }
+            current.push(view.rows[p]);
+        }
+        if !current.is_empty() {
+            groups.push(Rc::new(current));
+        }
+        Ok((firsts(&groups), groups))
+    }
+
+    /// The sheet grouped and the rows of group `r` of grouped sheet `t`, or
+    /// `None` past the last group.
+    fn group(&self, t: usize, r: usize) -> Result<Option<GroupRows>, Fail> {
+        let view = self.view(t)?;
+        let groups = self.groups.borrow();
+        Ok(groups[t]
+            .as_ref()
+            .and_then(|g| g.get(r).cloned())
+            .map(|rows| (view.sheet, rows)))
     }
 
     /// The tables back, so that a probe engine can be made to settle what
@@ -1125,6 +1418,12 @@ impl<'p> Engine<'p> {
             Ir::RowCol { depth, col } => {
                 let (t, r) = fr[fr.len() - 1 - depth];
                 self.cell(t, *col, r)
+            }
+            Ir::GroupCol(col) => {
+                let Some((t, rows)) = self.grouping.borrow().last().cloned() else {
+                    return fail(span, "a column of a group outside `agg`");
+                };
+                self.column(t, *col, &rows)
             }
             Ir::RowIndex { depth } => {
                 let (_, r) = fr[fr.len() - 1 - depth];
@@ -2242,6 +2541,67 @@ impl<'p> Engine<'p> {
 /// key a row's cells in the key columns, compared in turn. The sort is
 /// stable, so rows whose keys are equal keep the order they came in and
 /// two sorts on different keys compose.
+/// Whether a sum of `n` values between `lo` and `hi` has room in a `Dec`
+/// at `scale`, which is what is asked before a Polars sum is believed:
+/// Polars adds decimals in an `i128` and wraps on overflow rather than
+/// saying so (D72d). `None` where the extremes are not decimals at all.
+fn has_room(lo: AnyValue, hi: AnyValue, n: usize, scale: u32) -> Option<bool> {
+    // An empty column has no extremes and sums to nothing, which has room
+    // anywhere.
+    let unscaled = |any: AnyValue| match any {
+        AnyValue::Decimal(n, _) => Some(n),
+        AnyValue::Null => Some(0),
+        _ => None,
+    };
+    let widest = unscaled(lo)?
+        .unsigned_abs()
+        .max(unscaled(hi)?.unsigned_abs());
+    Some(
+        i128::try_from(widest)
+            .ok()
+            .and_then(|w| w.checked_mul(n as i128))
+            .and_then(|bound| Dec::new(bound, scale as i32))
+            .is_some(),
+    )
+}
+
+/// What a Polars aggregate answered, as the value the row path gives:
+/// `count` is how many values a `mean` divides by, its `any` being their
+/// sum. `None` where it is not one the engine can take as it stands.
+fn agg_value(func: Func, ty: S, any: AnyValue, count: Option<i64>) -> Option<Value> {
+    // The dress a column wears is put back on, a Polars aggregate
+    // answering a bare number (D69): the sum of percentages is a
+    // percentage, as it is on the row path.
+    let value = match func {
+        // A count is a count of things, whatever the column holds.
+        Func::Len | Func::Count => Value::from_lit(&Lit::Int(any.try_extract::<i64>().ok()?)),
+        _ => Value::from_lit(match &cell_of(any, ty) {
+            Cell::Lit(l) => l,
+            _ => return None,
+        }),
+    };
+    let value = match (ty, &value) {
+        (S::Fraction, Value::Int(_) | Value::Decimal(_)) => value.fraction(),
+        _ => value,
+    };
+    // The division `mean` is, taken here rather than by Polars so that it
+    // is a `Dec`'s. The row path divides the sum it has already dressed and
+    // puts the percentage back on after, a division being one of the
+    // things that takes it off, so this does the same. Nothing to divide
+    // by is a column of nothing, whose mean is empty.
+    Some(match count {
+        None => value,
+        Some(0) => Value::Null,
+        Some(n) => {
+            let mean = arith(BinOp::Div, &value, &Value::Int(n)).ok()?;
+            match ty {
+                S::Percent => mean.percent(),
+                _ => mean,
+            }
+        }
+    })
+}
+
 fn ordered(keys: &[Vec<Value>], desc: bool, span: Span) -> R<Vec<usize>> {
     let mut why = None;
     let mut order: Vec<usize> = (0..keys.len()).collect();

@@ -38,9 +38,14 @@ Verification on this machine needs `-j 2` on anything workspace-wide, or
       of the superseded change, inherited unanswered. A left join on a key
       that matches twice either yields two rows, which changes a sheet's
       length under the reader, or is a diagnostic
-- [ ] 0.3 D83: how an aggregate's column is named. Derived from the
+- [x] 0.3 D83: how an aggregate's column is named. Derived from the
       expression, `Revenue.sum()` → `Revenue_sum`, or a name required per
       aggregate
+
+      **Derived, with `Name := …` to name one** (owner, 2026-10-29). Only a
+      function of one column has a name to derive; any other aggregate,
+      `(Price * Qty).sum()`, must be named, and two that come to the same
+      name are a diagnostic saying to name one
 
 ## 1. A sheet from a formula (`omx-expressions`, `evaluation`, `interactive-app`)
 
@@ -146,27 +151,89 @@ stage already gives a sheet and a file has nowhere to put one (D90).
 
 ## 3. `group_by` and `agg` (`omx-expressions`, `evaluation`)
 
-- [ ] 3.1 The `group_by` stage, taking one or more key columns, and the `agg`
+- [x] 3.1 The `group_by` stage, taking one or more key columns, and the `agg`
       stage after it taking one or more aggregate expressions (D81)
-- [ ] 3.2 The result holds the key columns first, then one column per
+
+      The two are **the whole of a sheet's formula** (D96): `sheet ByRegion
+      := Sales |> group_by(Region) |> agg(Revenue.sum())`. A grouped sheet
+      is new rows rather than a selection of a sheet's, and a `View` is
+      only ever a selection, so the rows need a sheet to belong to; the
+      formula sheet is that sheet. Its key columns are `ColKind::View`
+      over the first row of each group, so they needed nothing new, and
+      each aggregate is `ColKind::Agg`, evaluated once a group with the
+      grouped sheet's column names reading that group's rows
+      (`Ir::GroupCol`). Either stage anywhere else is a diagnostic that
+      says to write the sheet. The groups are in the order of their keys,
+      an empty key first (owner, 2026-10-29), each group's rows in the
+      order they came in
+- [x] 3.2 The result holds the key columns first, then one column per
       aggregate, and is a sheet like any other (D82), so `filter`, `select`,
       `head` and the aggregates all work after it with no new rules
-- [ ] 3.3 The aggregate's column name, once 0.3 is settled
-- [ ] 3.4 Which aggregates `agg` takes. Every one that works on a column
+
+      By its name, `ByRegion |> sort(Revenue_sum, desc)`, rather than by
+      more stages after `agg` in the same formula (D96). The app sorts a
+      grouped sheet in the grid, as it does a table, there being no end
+      of its formula to add a `sort` to
+- [x] 3.3 The aggregate's column name, once 0.3 is settled
+- [x] 3.4 Which aggregates `agg` takes. Every one that works on a column
       today — `count len sum mean min max std var quantile` — or a stated
       subset, and a diagnostic for an expression that is not an aggregate at
       all, which is the mistake a reader will make first
-- [ ] 3.5 A key that is a computed column, and a key of each type: text, a
+
+      Any expression giving one value a group, so every aggregate there is
+      and arithmetic over them. A bare column is the diagnostic "in `agg` a
+      column is the rows of one group, so it needs an aggregate", checked
+      before the name so that it is the one a reader sees
+- [x] 3.5 A key that is a computed column, and a key of each type: text, a
       whole number, a date. A `Float` key is the one to think about, D56
       having made a `NaN` equal to itself
-- [ ] 3.6 `group_by` and `agg` in `FUNCTIONS` (D60)
-- [ ] 3.7 An example and its `.expected`: the titanic fares by class, which is
+
+      Two keys are one group where `value::sort_order` ties them, so a
+      `NaN` is one group and a decimal is grouped as it is compared, to
+      `SHOWN_PRECISION` (D86). The spec tests group by text, a date, two
+      keys and the computed `Net`; the example by the computed `Family`
+- [x] 3.6 `group_by` and `agg` in `FUNCTIONS` (D60)
+- [x] 3.7 An example and its `.expected`: the titanic fares by class, which is
       the roadmap's own question and the one this change exists for
-- [ ] 3.8 Lowered to Polars' `group_by`, rounding to `SHOWN_PRECISION` first
+
+      `analysis.omx` gains `FaresByClass`, `ClassAndSex`, `ByFamily` and
+      `Luckiest`, the last a sort of a grouped sheet by name
+- [x] 3.8 Lowered to Polars' `group_by`, rounding to `SHOWN_PRECISION` first
       (D86, from `add-polars-dtypes` 9.12), with the goldens unchanged
-- [ ] 3.9 A differential test over a grouped column: the row path and the
+
+      `run_group`, beside `run_sort` and under the same rule — the whole
+      sheet in its own order — and recorded in the same `filters` list. One
+      plan, `with_row_index |> group_by(keys) |> agg([#row, …]) |>
+      sort_by_exprs(keys)`, gives the groups and every aggregate of one
+      column that `lower::aggregate` takes, each with the guards `run_agg`
+      asks of a whole column asked of each group instead: a mean as a sum
+      and a count divided by the engine (D72), the extremes that bound a
+      sum (D72d), and whether a floating-point `min` has a number (D71a).
+      `has_room` and `agg_value` are `run_agg`'s own, taken out so that
+      the two cannot come to disagree. An aggregate one group refuses is
+      left to the engine for every group, and any other aggregate — a
+      median, a conversion, arithmetic — is the engine's over the groups
+      Polars made. The groups are sorted with nulls first and
+      `maintain_order`, which is D95's order, and each group's rows are put
+      back in the order they came in, Polars promising none.
+
+      **D86 refuses where it was to round**: a decimal key of more
+      significant digits than `SHOWN_PRECISION` sends the grouping back to
+      the engine. Keys of fewer digits are one group exactly where they are
+      equal, on both paths, so rounding them would change nothing; and
+      rounding a decimal to a number of significant digits is not a Polars
+      expression this build has
+- [x] 3.9 A differential test over a grouped column: the row path and the
       lowered path must give the same groups, which is what the rounding is
       for
+
+      `the_titanic_groups_alike_on_both_paths`, every column of a grouping
+      by class and sex, and a computed key with a sheet sorted from it by
+      name; `every_kind_of_key_groups_alike_on_both_paths`, keys of text,
+      whole numbers, a float column with a `NaN` and a zero of each sign,
+      decimals written to different scales, dates, an empty key in each,
+      and two keys together. `asked` now settles the calculated sheets'
+      row counts first, as a file opened anywhere else does
 
 ## 4. `join` (`omx-expressions`, `evaluation`)
 

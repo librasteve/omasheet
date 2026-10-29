@@ -905,6 +905,13 @@ what stops a table's rows being exploded into cells.
       Polars expression, so it is refused for the reason conversions already
       are rather than for one of its own.
 
+      Measured again after `analysis2.omx` was deleted (owner, 2026-10-29),
+      `analysis.omx` holding everything it showed: **60 offered, 17
+      lowered, 42 refused, 1 failed.** It offered two, its own `Family`,
+      which lowered, and `FarePerHead`, which was refused. The grouped
+      sheets `group_by` and `agg` added offer nothing: their aggregates are
+      evaluated once a group, and their keys are a view.
+
       Under `--nocapture` it also prints each column it did not lower, with
       its formula beside its name — which is the material the reason table
       is read off, and the answer to the grep that got the measurement

@@ -33,3 +33,86 @@ const Eldest   = Passengers.Age.max()
 # anywhere. An empty cell sorts first, being the smallest thing there is.
 
 sheet Dearest := Passengers |> sort(Fare, desc) |> select(Name, Fare) |> head(5)
+
+# Who lived, as a share of those aboard, and the same question asked of a
+# slice: a selection's rows `[; …]` are the passengers it is true of, and
+# the mean of a column of 0s and 1s is the share of 1s.
+
+const SurvivalRate  = (Lived / Aboard).Percent
+const WomenLived    = Passengers[; Sex == "female"].Survived.mean().Percent
+const MenLived      = Passengers[; Sex == "male"].Survived.mean().Percent
+const ChildrenLived = Passengers[; Age < 16].Survived.mean().Percent
+
+# The three classes down, and the two sexes across: a cross tabulation
+# written by hand, one formula a column, each picking the passengers of its
+# row's class.
+
+sheet ByClass
+
+Women : Percent
+Men   : Percent
+All   : Percent
+
+| Class | Aboard | Women | Men | All | MeanFare | MedianAge |
+| ----- | ------ | ----- | --- | --- | -------- | --------- |
+| 1     | *      | *     | *   | *   | *        | *         |
+| 2     | *      | *     | *   | *   | *        | *         |
+| 3     | *      | *     | *   | *   | *        | *         |
+
+Aboard    := Passengers[; Pclass == Class].Survived.count()
+Women     := Passengers[; Pclass == Class and Sex == "female"].Survived.mean()
+Men       := Passengers[; Pclass == Class and Sex == "male"].Survived.mean()
+All       := Passengers[; Pclass == Class].Survived.mean()
+MeanFare  := Passengers[; Pclass == Class].Fare.mean().round(2)
+MedianAge := Passengers[; Pclass == Class].Age.median()
+
+# The same, in bands of age: a band takes in its lower bound and stops
+# short of its upper.
+
+sheet ByAge
+
+Lived : Percent
+
+| Band     | From | To  | Aboard | Lived |
+| -------- | ---- | --- | ------ | ----- |
+| Infants  | 0    | 5   | *      | *     |
+| Children | 5    | 16  | *      | *     |
+| Young    | 16   | 30  | *      | *     |
+| Middle   | 30   | 50  | *      | *     |
+| Older    | 50   | 200 | *      | *     |
+
+Aboard := Passengers[; Age >= From and Age < To].Survived.count()
+Lived  := Passengers[; Age >= From and Age < To].Survived.mean()
+
+# Slices of the passengers themselves, each a pipeline of stages: `filter`
+# keeps the rows a condition is true of, `sort` orders them, `select` keeps
+# the columns named and `head` the first rows.
+
+# The youngest to survive, and the eldest lost.
+sheet Youngest := Passengers |> filter(Survived == 1) |> sort(Age) |> select(Name, Age, Pclass) |> head(5)
+sheet EldestLost := Passengers |> filter(Survived == 0) |> sort(Age, desc) |> select(Name, Age, Pclass) |> head(5)
+
+# The largest families aboard, by the column computed over the table.
+sheet Families := Passengers |> sort(Family, desc) |> select(Name, Family, Pclass, Survived) |> head(10)
+
+# The first-class women who were lost, the rarest of the class-and-sex slices.
+sheet FirstClassWomenLost := Passengers |> filter(Pclass == 1 and Sex == "female" and Survived == 0) |> select(Name, Age, Fare)
+
+# Those who paid nothing at all.
+sheet Free := Passengers |> filter(Fare == 0) |> select(Name, Pclass, Survived)
+
+# The same questions with the work done by `group_by` and `agg`: the rows
+# are put in groups, one for each value of the key columns, and `agg`
+# makes a row of each group, the keys first and then an aggregate of the
+# group's rows. `Fare.mean()` makes a column named `Fare_mean`, and
+# `Name := …` names one. The groups come in the order of their keys.
+
+sheet FaresByClass := Passengers |> group_by(Pclass) |> agg(MeanFare := Fare.mean().round(2), MedianFare := Fare.median().round(2), Fare.max())
+
+sheet ClassAndSex := Passengers |> group_by(Pclass, Sex) |> agg(Aboard := Name.len(), Lived := Survived.mean().Percent, MeanAge := Age.mean().round(1))
+
+# A key may be a computed column, here the size of the family aboard.
+sheet ByFamily := Passengers |> group_by(Family) |> agg(Aboard := Name.len(), Lived := Survived.mean().Percent)
+
+# A grouped sheet is a sheet, so the stages carry on from it by name.
+sheet Luckiest := ClassAndSex |> sort(Lived, desc) |> head(3)

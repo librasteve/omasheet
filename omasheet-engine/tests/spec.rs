@@ -1187,6 +1187,99 @@ fn sort_says_what_it_needs() {
     assert!(calc_err(Some(SALES), "3 |> sort()").contains("needs a sheet or a column"));
 }
 
+/// Orders whose regions repeat, whose last region is missing and whose
+/// dates fall in two months, to group by each.
+const ORDERS: &str = "\
+sheet Orders
+
+Placed : Date
+
+Region | Placed     | Qty | Price | Net
+UK     | 2025-01-31 | 3   | 4.50  | *
+US     | 2025-02-01 | 2   | 7.25  | *
+UK     | 2025-02-03 | 6   | 9     | *
+       | 2025-02-03 | 1   | 2     | *
+
+Net := Qty * Price
+";
+
+/// The cells of sheet `name` as shown, from its header down.
+fn sheet_of(file: &str, name: &str) -> String {
+    let out = shown(file);
+    let start = out.find(&format!("sheet {name}\n")).expect("no such sheet");
+    let rest = &out[start..];
+    let end = rest[1..].find("\nsheet ").map_or(rest.len(), |e| e + 1);
+    rest[..end].trim_end().to_string()
+}
+
+#[test]
+fn group_by_makes_a_row_a_group() {
+    let file = format!(
+        "{ORDERS}\nsheet ByRegion := Orders |> group_by(Region) |> agg(Qty.sum(), Net.mean(), Orders := Qty.len())\n"
+    );
+    // The keys first, then an aggregate a column named for its expression
+    // or by `:=`. The groups are in the order of their keys, the empty one
+    // first, and the computed `Net` is aggregated as any column is.
+    assert_eq!(
+        sheet_of(&file, "ByRegion"),
+        "sheet ByRegion\n\n\
+Region | Qty_sum | Net_mean | Orders
+-------|---------|----------|-------
+       |       1 |        2 |      1
+UK     |       9 |    33.75 |      2
+US     |       2 |     14.5 |      1"
+    );
+}
+
+#[test]
+fn group_by_takes_more_than_one_key_and_a_computed_one() {
+    let file = format!(
+        "{ORDERS}\nsheet ByDay := Orders |> filter(not is_null(Region)) |> group_by(Placed, Region) |> agg(Net.sum())\n\nsheet ByNet := Orders |> group_by(Net) |> agg(Qty.max())\n"
+    );
+    assert_eq!(
+        sheet_of(&file, "ByDay"),
+        "sheet ByDay\n\n\
+Placed     | Region | Net_sum
+-----------|--------|--------
+2025-01-31 | UK     |    13.5
+2025-02-01 | US     |    14.5
+2025-02-03 | UK     |      54"
+    );
+    assert!(sheet_of(&file, "ByNet").contains("13.5 |       3"));
+}
+
+#[test]
+fn a_grouped_sheet_is_a_sheet_like_any_other() {
+    let file = format!(
+        "{ORDERS}\nsheet ByRegion := Orders |> group_by(Region) |> agg(Net.sum())\n\nsheet Best := ByRegion |> sort(Net_sum, desc) |> head(1)\n"
+    );
+    assert!(sheet_of(&file, "Best").contains("UK     |    67.5"));
+    assert_eq!(ask(&file, "ByRegion.Net_sum.sum()"), "84");
+    assert_eq!(ask(&file, "ByRegion |> len()"), "3");
+}
+
+#[test]
+fn agg_says_what_it_needs() {
+    let with =
+        |stage: &str| lint_errors(&format!("{ORDERS}\nsheet G := Orders |> {stage}\n")).join("\n");
+    assert!(with("group_by(Region) |> agg(Qty)").contains("so it needs an aggregate"));
+    assert!(
+        with("group_by(Region) |> agg((Qty * 2).sum())").contains("needs a name for its column")
+    );
+    assert!(
+        with("group_by(Region) |> agg(Qty.sum(), Qty.sum())")
+            .contains("two columns named `Qty_sum`")
+    );
+    assert!(with("group_by(Country) |> agg(Qty.sum())").contains("has no column `Country`"));
+    assert!(
+        with("group_by(Region) |> agg(Qty.sum()) |> head(1)").contains("ends a sheet's formula")
+    );
+    assert!(
+        calc_err(Some(ORDERS), "Orders |> group_by(Region)").contains("ends a sheet's formula")
+    );
+    assert!(calc_err(Some(ORDERS), "sum(X := 1)").contains("only inside `agg`"));
+}
+
 // ---- file-format ----------------------------------------------------------
 
 #[test]
@@ -2218,7 +2311,7 @@ fn how_much_of_the_corpus_lowers() {
     // moved.
     assert_eq!(
         (offered, lowered, refused, failed),
-        (62, 18, 43, 1),
+        (60, 17, 42, 1),
         "the corpus lowers differently than task 8.3 records"
     );
 }
@@ -2244,17 +2337,17 @@ fn asked(file: &str, expr: &str, lowering: Lowering, dir: Option<&str>) -> Ran {
         None => Default::default(),
     };
     assert!(diags.is_empty(), "{diags:?}");
+    let options = Options {
+        base,
+        lowering,
+        exact: true,
+        ..Options::default()
+    };
+    // A sheet calculated from an expression has its rows counted first,
+    // as a file opened anywhere else does.
+    let tables = omasheet_engine::resolve_views(&mut program, &options, tables);
     let program = program;
-    let engine = Engine::with_tables(
-        &program,
-        Options {
-            base,
-            lowering,
-            exact: true,
-            ..Options::default()
-        },
-        tables,
-    );
+    let engine = Engine::with_tables(&program, options, tables);
     engine.run();
     let (node, _) = compile_expr(&program, expr, 1).expect("the expression checks");
     let shown = match engine.eval_top(&node) {
@@ -2280,7 +2373,8 @@ fn both_ways(file: &str, expr: &str, dir: Option<&str>) -> Ran {
     columns
 }
 
-/// `examples/analysis2.omx`'s table, whose 887 rows are in a Parquet file.
+/// The titanic table of `examples/analysis.omx`, whose 887 rows are in a
+/// Parquet file.
 const TABLE: &str = "\
 table Passengers := dataframe[\"titanic.parquet\"]
 
@@ -2661,6 +2755,121 @@ fn the_rows_a_condition_keeps_stay_in_their_order() {
         first.shown,
         "\"Mrs. John Bradley (Florence Briggs Thayer) Cumings\""
     );
+}
+
+/// Every column of grouped sheet `sheet` both ways, as `both_ways` asks
+/// of one expression, its cells joined a column a line; and what became
+/// of the grouping and its aggregates when lowering was forced.
+fn grouped_both_ways(file: &str, sheet: &str, cols: &[&str], dir: Option<&str>) -> Ran {
+    let mut shown = Vec::new();
+    let mut first = None;
+    for c in cols {
+        let ran = both_ways(file, &format!("{sheet}.{c}"), dir);
+        shown.push(format!("{c}: {}", ran.shown));
+        first.get_or_insert(ran);
+    }
+    let first = first.expect("a column");
+    Ran {
+        shown: shown.join("\n"),
+        ..first
+    }
+}
+
+#[test]
+fn the_titanic_groups_alike_on_both_paths() {
+    // The groups and every aggregate of them, the same to the digit, and
+    // which of them Polars took: the grouping, and each aggregate but the
+    // mean of a floating-point column, whose sum D72 keeps on the engine.
+    let file = format!(
+        "{TABLE}\nsheet G := Passengers |> group_by(Pclass, Sex) |> agg(Survived.sum(), Survived.mean(), Age.max(), Age.min(), Name.len(), Age.count(), Fare.mean(), Age.median())\n"
+    );
+    let cols = [
+        "Pclass",
+        "Sex",
+        "Survived_sum",
+        "Survived_mean",
+        "Age_max",
+        "Age_min",
+        "Name_len",
+        "Age_count",
+        "Fare_mean",
+        "Age_median",
+    ];
+    let ran = grouped_both_ways(&file, "G", &cols, Some("../examples"));
+    assert!(
+        ran.shown.contains("Survived_sum: [91, 45, 70, 17, 72, 47]"),
+        "{}",
+        ran.shown
+    );
+    assert_eq!(ran.filters, [Attempt::Lowered]);
+    assert_eq!(
+        ran.aggregates,
+        [
+            Attempt::Lowered,
+            Attempt::Lowered,
+            Attempt::Lowered,
+            Attempt::Lowered,
+            Attempt::Lowered,
+            Attempt::Lowered,
+        ]
+    );
+    // A computed key, the stages over the grouped sheet by name, and an
+    // aggregate of an aggregate.
+    let file = format!(
+        "{TABLE}\nFamily := Siblings + Parents\n\nsheet F := Passengers |> group_by(Family) |> agg(Survived.sum())\n\nsheet Top := F |> sort(Survived_sum, desc) |> head(3)\n"
+    );
+    let ran = grouped_both_ways(
+        &file,
+        "Top",
+        &["Family", "Survived_sum"],
+        Some("../examples"),
+    );
+    assert!(ran.shown.starts_with("Family: [0, 1, 2]"), "{}", ran.shown);
+    both_ways(&file, "F.Survived_sum.sum()", Some("../examples"));
+}
+
+/// Keys of every kind that a group could be made or broken by: an empty
+/// one, a `NaN`, a zero of either sign, decimals and dates.
+const KEYS: &str = "\
+sheet K
+
+Day  : Date
+Real : Float
+
+| Name | Text | Whole | Real | Exact | Day        | N |
+| ---- | ---- | ----- | ---- | ----- | ---------- | - |
+| a    | x    | 2     | 1.5  | 0.10  | 2025-01-02 | 1 |
+| b    |      | 1     | NaN  | 0.1   | 2025-01-01 | 2 |
+| c    | y    |       | 0.0  | 2.25  |            | 3 |
+| d    | x    | 2     | -0.0 |       | 2025-01-02 | 4 |
+| e    |      | 1     | NaN  | 2.250 | 2025-01-01 | 5 |
+| f    | y    |       |      | 0.1   |            | 6 |
+";
+
+#[test]
+fn every_kind_of_key_groups_alike_on_both_paths() {
+    for key in [
+        "Text",
+        "Whole",
+        "Real",
+        "Exact",
+        "Day",
+        "Text, Whole",
+        "Day, Real",
+    ] {
+        let file = format!(
+            "{KEYS}\nsheet G := K |> group_by({key}) |> agg(N.sum(), N.len(), N.min(), N.max(), N.mean())\n"
+        );
+        let mut cols: Vec<&str> = key.split(", ").collect();
+        cols.extend(["N_sum", "N_len", "N_min", "N_max", "N_mean"]);
+        let ran = grouped_both_ways(&file, "G", &cols, None);
+        assert_eq!(ran.filters, [Attempt::Lowered], "{key}");
+        assert!(
+            ran.aggregates.iter().all(|a| *a == Attempt::Lowered),
+            "{key}: {:?}",
+            ran.aggregates
+        );
+    }
 }
 
 /// A sheet of every pairing of `true`, `false` and an empty cell.
@@ -3055,13 +3264,12 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
             }
         }
     }
-    // Lest the whole thing pass by checking nothing. Sixteen of the
-    // corpus's columns come from a file — eight of `analysis.omx` and
-    // eight of `analysis2.omx` — and those are taken at once whichever way
-    // the rest is calculated, which is 32 of the 50. The other eighteen are
-    // the columns lowering forced calculates in one step, and 8.3 is where
-    // that number is read.
-    assert_eq!(taken, 50, "the columns taken at once");
+    // Lest the whole thing pass by checking nothing. Eight of the
+    // corpus's columns come from a file, all of `analysis.omx`, and those
+    // are taken at once whichever way the rest is calculated, which is 16
+    // of the 33. The other seventeen are the columns lowering forced
+    // calculates in one step, and 8.3 is where that number is read.
+    assert_eq!(taken, 33, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read

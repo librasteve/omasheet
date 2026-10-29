@@ -601,8 +601,9 @@ pub fn export(
                         },
                         // A frame column holds values, never formulas, and
                         // so does a view's: its formula is the sheet's own,
-                        // which a worksheet has nowhere to put.
-                        ColKind::Frame | ColKind::View(_) => None,
+                        // which a worksheet has nowhere to put. An aggregate
+                        // of a group is the same, its rows being the group's.
+                        ColKind::Frame | ColKind::View(_) | ColKind::Agg(_) => None,
                     };
                     // A value with no type in a workbook has no formula there.
                     let node = node.filter(|_| !matches!(shown, Shown::Written(_)));

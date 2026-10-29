@@ -45,6 +45,9 @@ pub enum Ir {
         depth: usize,
         col: usize,
     },
+    /// A column of the sheet being grouped, over the rows of the group an
+    /// aggregate of `agg` is being worked out for.
+    GroupCol(usize),
     /// The position of the row `depth` frames out, counting from zero.
     RowIndex {
         depth: usize,

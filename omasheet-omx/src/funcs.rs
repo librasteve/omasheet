@@ -254,6 +254,18 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "The rows of a sheet in the order of one or more columns, or the cells of a column in their own order. Ascending unless the last word is desc; an empty cell comes first.",
     ),
     doc(
+        SHEET,
+        "group_by",
+        "sheet ByRegion := Sales |> group_by(Region) |> agg(Revenue.sum())",
+        "The rows of a sheet in groups, one for each value of the key columns, for agg to work out. It ends a sheet's formula, with agg after it.",
+    ),
+    doc(
+        SHEET,
+        "agg",
+        "Sales |> group_by(Region) |> agg(Revenue.sum(), Orders := Item.len())",
+        "A row for each group: the key columns, then an aggregate of each group's rows. Revenue.sum() makes the column Revenue_sum, and Name := names it. The groups are in the order of their keys.",
+    ),
+    doc(
         CONVERT,
         "cast",
         "cast(x, Int)",
