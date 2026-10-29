@@ -149,9 +149,62 @@ multiply back: `round(x / 100) * 100`.
 | `Sales[; Revenue > 11000]` | the rows where it is true |
 | `Sales[Revenue; *-1]` | the row before this one; `*` is this row |
 | `Sales[Revenue; 0..*]` | from the top down to this row |
+| `Sales[Revenue; *-1 by Region]` | the row before this one among the rows of this row's region |
 
 Inside its own sheet the name can be dropped: `[Revenue; *-1]`. A row
 outside the sheet is empty, so `[Revenue; *-1] // 0` starts a running value.
+
+`by` counts a cursor offset within a partition: the rows whose key columns
+hold what this row's do, in the sheet's order. A running total per region
+is
+
+```omx
+Running := Revenue + ([Running; *-1 by Region] // 0)
+```
+
+and `by Region, Month` partitions by both. The rows with an empty key are a
+partition of their own. Only an offset of the cursor, `*-1` or `*+2`, takes
+`by`; a range does not.
+
+## Sheets from sheets
+
+A sheet goes through stages with `|>`, each giving a sheet:
+
+```omx
+Passengers |> filter(Survived == 1) |> sort(Age) |> select(Name, Age) |> head(5)
+```
+
+- `filter(condition)`: the rows the condition is true of
+- `select(columns)`: those columns, in that order
+- `head(n)` and `tail(n)`: the first or last `n` rows
+- `sort(columns)`: the rows in the order of the columns, ascending, or
+  descending with `desc` as the last word: `sort(Fare, desc)`. Ties keep the
+  order they came in, and an empty cell sorts first ascending and last
+  descending
+
+`sheet Name := …` makes a sheet of one (see [the format](format.md)). Two
+more stages make rows of their own rather than keeping some of a sheet's,
+so each is the whole of a sheet's formula, and what comes after it is
+written over that sheet by name:
+
+```omx
+sheet ByRegion := Sales |> group_by(Region) |> agg(Revenue.sum(), Orders := Item.len())
+sheet Best     := ByRegion |> sort(Revenue_sum, desc) |> head(1)
+```
+
+- `group_by(keys) |> agg(aggregates)`: a row for each value of the key
+  columns, in the order of the keys, an empty key first. Its columns are
+  the keys, then one for each aggregate, worked out over the rows of the
+  group: in `agg` a column's name is that column over the group, so it
+  needs an aggregate, `Revenue.sum()` and not `Revenue`. An aggregate of
+  one column is named for it, `Revenue_sum`; `Name := …` names one, and
+  an aggregate of anything else must be named
+- `join(Other, keys)`: a row for every pair of rows of the two sheets whose
+  key columns are equal, the left sheet's columns and then the other's.
+  `join(Other, keys, left)` keeps a left row that matches nothing, its other
+  columns empty. A key that matches twice gives two rows, an empty key
+  matches nothing, and a name both sheets have takes `_right` on the other
+  sheet's column. The rows come in the left sheet's order, then the other's
 
 ## Sequences with `...`
 
@@ -226,7 +279,9 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
   a whole population; `quantile(x, 0.9)`, the value that far through the
   values in order
 - Sheets: `filter(condition)`, `select(columns)`, `head(n)`, `tail(n)`,
-  `shift(n)` — the value `n` rows back
+  `sort(columns)`, `group_by(keys) |> agg(aggregates)` and `join(Other,
+  keys)`, as [above](#sheets-from-sheets); `shift(n)` — the value `n` rows
+  back
 - Empty or not: `is_null(x)` and `is_not_null(x)`, of a value or of every
   cell of a column; `fill_null(x, 0)`, which is `x // 0`, and
   `is_in(x, [1, 2])`, which is `x in [1, 2]` — these two take one value, as

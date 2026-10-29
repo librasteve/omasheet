@@ -61,7 +61,7 @@ than built.
 |-------|--------|----------|-----------|
 | 1 | `add-omasheet-core` | Numerics, OMX, the `.omx` format, compile / check / evaluate, `omasheet eval`, `lint` and the read-only view | An `.omx` with computed columns, cursor references, filters and lookups evaluates exactly from the CLI, with no dataframe dependency |
 | 2 | `add-interop` | XLSX and CSV import and export; Markdown `{{ }}` and `omx` blocks; `import`, `export`, `render` | A workbook or CSV file imports to `.omx` and exports back; `omasheet render report.md` produces HTML |
-| 3 | `add-sheet-operations-polars` | Group, join, sort, the `group_by` pipe stage, partitioned cursor offsets — Polars' own, over the columnar core | `Sales \|> group_by(Region) \|> agg(Revenue.sum())` and a left join give exact results |
+| 3 | `add-sheet-operations-polars` | Group, join, sort, the `group_by` pipe stage, partitioned cursor offsets — Polars' own, over the columnar core. **Built** on `polars-core`, 2026-10-29; archived once its hand check (7.4) is done | `Sales \|> group_by(Region) \|> agg(Revenue.sum())` and a left join give exact results |
 | 4 | `add-units` | Unit literals, dimension checking, currencies, column units, user-defined units, display units | `Revenue + Weight` is rejected by `lint`; unit columns export to XLSX |
 | 5 | `add-uncertainty` | `±` values, propagation, `Uncertain<…>` columns, display | `10 ± 0.1 m` propagates through arithmetic and aggregation |
 
@@ -86,7 +86,11 @@ places a big Parquet is materialised whole where a part of it would do, each
 measured by the change that left it.
 
 Dependencies: every phase needs Phase 1. Phase 3 now needs Phase 2, through
-the columnar core it is built on.
+the columnar core it is built on. What Phase 4 builds on from Phase 3: a
+grouped or joined sheet is a sheet calculated from an expression, its key
+and joined columns borrowing their source's type and each aggregate a
+column of its own, so a unit reaches one by the column it came from, and an
+aggregate's unit is worked out as any column's is.
 
 Order, as the owner settled it on 2026-10-28: nothing of `add-units`,
 `add-uncertainty` or `hold-less-of-a-big-file` starts until every pipe stage of

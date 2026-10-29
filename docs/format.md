@@ -115,6 +115,35 @@ itself.
 
 `examples/analysis.omx` is a working one, over `examples/titanic.parquet`.
 
+## Sheets calculated from an expression
+
+`sheet Name := expression` makes a sheet of another sheet and the stages
+over it ([Sheets from sheets](expressions.md#sheets-from-sheets)):
+
+```omx
+sheet Dearest  := Passengers |> sort(Fare, desc) |> select(Name, Fare) |> head(5)
+sheet ByClass  := Passengers |> group_by(Pclass) |> agg(Fare.mean(), Aboard := Name.len())
+sheet Against  := Sales |> join(Goals, Month, left)
+```
+
+It has no rows in the text and no header row: its columns and its rows are
+what the expression gives, worked out whenever the file is. A filtered,
+sorted or selected sheet is a view of its source, each column the source's
+own, with its name and its type. A grouped sheet has a row for each group,
+its key columns first and an aggregate after them, and a joined sheet a row
+for each pair of rows matched, the left sheet's columns and then the other's.
+
+All of them are read-only, as a table is: nothing is ever written back to
+the sheet they come from, and a cell of one cannot be edited. Its formula
+is its text, so that is what is changed — in the app, by the box at the top.
+A sort in the app's grid of a sheet made by a filter, a sort or a
+selection is written into its formula, as a `|> sort(…)` at the end; a
+grouped or joined sheet is sorted in the grid alone, as a table is, its
+formula ending in a stage nothing can come after.
+
+Exporting one writes its rows as values; importing them back gives a sheet
+of those values, since nothing in a worksheet says how they were made.
+
 ## Sheets of formulas alone
 
 A sheet written as `:=` lines with no table of its own has no cells to

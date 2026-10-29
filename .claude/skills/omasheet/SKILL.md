@@ -191,10 +191,24 @@ that do not fit are cut and marked `…`. Only the display is cut, and
 | `Sales[Revenue; *-1]` | the row before this one; `*` is this row |
 | `[Revenue; 0..*]` | from the top to this row; the sheet's name can be dropped inside it |
 | `a // b` | `b` when `a` is empty: `[Revenue; *-1] // 0` |
+| `[Revenue; *-1 by Region]` | the row before among this row's region: `Running := Revenue + ([Running; *-1 by Region] // 0)` |
 
 - Selection is `[columns; rows]`, with `;` between them. One column only: for
   several, pipe through `select`:
   `Sales |> filter(Profit > 0) |> select(Month, Profit)`.
+- Sheet stages: `filter`, `select`, `head(n)`, `tail(n)`, `sort(Col)` and
+  `sort(Col, desc)`. `sheet Name := …` makes a read-only sheet of one:
+  `sheet Top := Sales |> sort(Revenue, desc) |> head(3)`.
+- `group_by` and `agg`, and `join`, make rows of their own, so each is the
+  whole of a `sheet Name :=` formula; stages after it go over that sheet by
+  name. `sheet ByRegion := Sales |> group_by(Region) |> agg(Revenue.sum(),
+  Orders := Item.len())` has the columns `Region`, `Revenue_sum` and
+  `Orders`; inside `agg` a column is the group's rows, so it needs an
+  aggregate (`Revenue.sum()`, not `Revenue`), and anything but an aggregate
+  of one column needs a name with `:=`. `sheet Both := Sales |>
+  join(Targets, Month, left)` pairs rows whose keys are equal, a row for
+  every match; `left` keeps a row with no match, an empty key matches
+  nothing, and a name in both sheets takes `_right` on the second.
 - Ranges: `0..2` includes both ends, `0..^2` leaves out the last, `^2` is
   the first two.
 - Equality is `==`. A single `=` only starts a formula cell or binds a

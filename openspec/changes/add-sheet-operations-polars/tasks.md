@@ -294,34 +294,65 @@ stage already gives a sheet and a file has nowhere to put one (D90).
 
 ## 5. Partitioned cursor offsets (`omx-expressions`)
 
-- [ ] 5.1 `[*±n by Column]`: the cursor offset within a partition rather than
+- [x] 5.1 `[*±n by Column]`: the cursor offset within a partition rather than
       the whole sheet, so a running total per region is sayable. Its
       dependency kind is the existing `DepKind::Back` or `Fwd` within the
       partition, which the cycle check already understands
-- [ ] 5.2 An example and its `.expected`
-- [ ] 5.3 Left on the row path if `lower::expr` has no expression for it,
+
+      `[Revenue; *-1 by Region]`, and `by Region, Month` for several keys,
+      in any row slot, a sheet named before the index or not. The parser
+      reads `by` after a slot's expression, where nothing else can follow
+      one, and the checker takes only a cursor offset before it, as
+      `RowSel::CursorBy { off, keys }`, with the cursor's own kind and a
+      whole-column dependency on each key. The engine keeps a sheet's
+      partitions once worked out — rows a sort would tie the keys of, an
+      empty key one partition of its own, as an empty key is one group —
+      so a column of offsets is a lookup a row rather than a pass. An XLSX
+      export writes values for it, a partition's row before being a
+      different number of rows back on each row
+- [x] 5.2 An example and its `.expected`
+
+      `orders.omx` gains `ToDate := Total + ([ToDate; *-1 by CustomerID]
+      // 0)`, what each customer has spent so far: Grace Inc's two orders
+      run on to 74.47
+- [x] 5.3 Left on the row path if `lower::expr` has no expression for it,
       which costs speed and not correctness
+
+      It reads another row, so the first gate never offers it: the corpus
+      figures are unchanged by `ToDate`
 
 ## 6. Documents
 
-- [ ] 6.1 `docs/expressions.md`: the three stages and the partitioned offset,
+- [x] 6.1 `docs/expressions.md`: the three stages and the partitioned offset,
       in the Sheets section beside `filter` and `select`
-- [ ] 6.2 `docs/format.md`: that a grouped or joined sheet is a view and is
+- [x] 6.2 `docs/format.md`: that a grouped or joined sheet is a view and is
       not written back, beside what it says of a filtered one
-- [ ] 6.3 `.claude/skills/omasheet/SKILL.md`: the stages, so a sheet written
+- [x] 6.3 `.claude/skills/omasheet/SKILL.md`: the stages, so a sheet written
       by the skill can use them
-- [ ] 6.4 `openspec/project.md`: the Phase 3 row marked done, and the
+- [x] 6.4 `openspec/project.md`: the Phase 3 row marked done, and the
       Dependencies paragraph for what Phase 4 then builds on
+
+      `format.md` had no section for a sheet calculated from an expression
+      at all, so it gains one covering all of them, the filtered and the
+      sorted as well as the grouped and the joined. The Phase 3 row says
+      built, and archived once 7.4 is done
 
 ## 7. Verify
 
-- [ ] 7.1 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
+- [x] 7.1 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
       -- -D warnings`, `cargo test --workspace -j 2`
-- [ ] 7.2 Every `examples/*.expected` byte-identical under `Never`, `Auto` and
+- [x] 7.2 Every `examples/*.expected` byte-identical under `Never`, `Auto` and
       `Always`, the new ones included
-- [ ] 7.3 `how_much_of_the_corpus_lowers` re-measured and its figures updated,
+- [x] 7.3 `how_much_of_the_corpus_lowers` re-measured and its figures updated,
       with what moved written down — the new examples add offered columns, and
       each stage's lowering moves some from refused to lowered
+
+      Nothing moved: 60 offered, 17 lowered, 42 refused, 1 failed, as after
+      `analysis2.omx` went. The harness counts computed columns, and none of
+      the three stages makes one — an aggregate, a key and a joined column
+      each being a kind of their own, taken by `run_group` and `run_join`
+      and counted in `filters` and `aggregates` instead — and the one new
+      computed column, `ToDate`, reads another row and is never offered
 - [ ] 7.4 The titanic questions answered by hand, from the CLI and in the app:
       fares by class, passengers by fare, and a join, each checked against
       what a dataframe tool gives for the same file
