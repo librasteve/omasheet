@@ -213,6 +213,19 @@ pub mod qobject {
         #[qinvokable]
         fn move_rows(self: Pin<&mut File>, sheet: i32, first: i32, count: i32, to: i32) -> QString;
         /// Move `count` columns from `first` so the first becomes column `to`.
+        /// The rows of sheet `sheet` a filter shows, as a JSON list of row
+        /// numbers. `hide` is each filtered column's name followed by the
+        /// texts it hides, separated by U+001F, the columns by U+001E.
+        #[qinvokable]
+        fn shown_rows(self: &File, sheet: i32, hide: &QString) -> QString;
+        /// The texts column `col` shows, each once and in order, as a JSON
+        /// list: what its filter chooses among.
+        #[qinvokable]
+        fn distinct_shown(self: &File, sheet: i32, col: i32) -> QString;
+        /// The rows of sheet `sheet` rearranged in the order of column
+        /// `col`, descending or not.
+        #[qinvokable]
+        fn sort_rows(self: Pin<&mut File>, sheet: i32, col: i32, descending: bool) -> QString;
         #[qinvokable]
         fn move_columns(
             self: Pin<&mut File>,
@@ -252,6 +265,9 @@ pub mod qobject {
         /// made one.
         #[qinvokable]
         fn undo_mark(&self) -> i32;
+        /// How many edits have been made, undo and redo not being edits.
+        #[qinvokable]
+        fn edit_count(&self) -> i32;
         #[qinvokable]
         fn join_since(self: Pin<&mut File>, mark: i32);
         #[qinvokable]
@@ -871,6 +887,32 @@ impl qobject::File {
         self.try_edit(|doc| doc.move_rows(index(sheet), index(first), index(count), index(to)))
     }
 
+    fn shown_rows(&self, sheet: i32, hide: &QString) -> QString {
+        let hide: Vec<(String, Vec<String>)> = hide
+            .to_string()
+            .split('\u{1e}')
+            .filter(|column| !column.is_empty())
+            .filter_map(|column| {
+                let mut parts = column.split('\u{1f}');
+                let name = parts.next()?.to_string();
+                Some((name, parts.map(str::to_string).collect()))
+            })
+            .collect();
+        QString::from(&json::numbers(
+            &self.rust().doc.shown_rows(index(sheet), &hide),
+        ))
+    }
+
+    fn distinct_shown(&self, sheet: i32, col: i32) -> QString {
+        QString::from(&json::texts(
+            &self.rust().doc.distinct_shown(index(sheet), index(col)),
+        ))
+    }
+
+    fn sort_rows(self: Pin<&mut Self>, sheet: i32, col: i32, descending: bool) -> QString {
+        self.try_edit(|doc| doc.sort_rows(index(sheet), index(col), descending))
+    }
+
     fn move_columns(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, to: i32) -> QString {
         self.try_edit(|doc| doc.move_columns(index(sheet), index(first), index(count), index(to)))
     }
@@ -924,6 +966,10 @@ impl qobject::File {
 
     fn undo_mark(&self) -> i32 {
         self.rust().doc.undo_mark() as i32
+    }
+
+    fn edit_count(&self) -> i32 {
+        self.rust().doc.edit_count() as i32
     }
 
     fn join_since(mut self: Pin<&mut Self>, mark: i32) {

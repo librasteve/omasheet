@@ -18,6 +18,7 @@ use omasheet_omx::date::{self, Style};
 use omasheet_omx::file::{FileAst, SchemaLine, SheetDecl, ident_len, parse_file, split_cells};
 use omasheet_omx::parser::parse_expr;
 use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile, text};
+use std::cmp::Ordering;
 
 const UNDO_LIMIT: usize = 200;
 
@@ -138,11 +139,44 @@ pub struct Document {
     /// of the file, not the one the program was started in. `None` is the
     /// working directory. See [`Document::set_base`].
     base: Option<std::path::PathBuf>,
+    /// The order a table's rows are shown in, by sheet name, where one has
+    /// been sorted: the rows of its file, by number. A table's rows are not
+    /// the text's, so this is a view of them and nothing more -- it is not
+    /// written, saved or undone -- and the grid, a copy and the summary of
+    /// a selection all read the snapshot it orders.
+    orders: std::collections::HashMap<String, Vec<usize>>,
+    /// How many edits have been committed. See [`Document::edit_count`].
+    edits: usize,
 }
 
 impl Default for Document {
     fn default() -> Self {
         Document::from_text(BLANK)
+    }
+}
+
+/// A sheet's expression without the `|> sort(…)` it ends in, if it ends in
+/// one: a sort's arguments are names and a bare word, so its parentheses
+/// hold no others.
+fn without_last_sort(expr: &str) -> &str {
+    let trimmed = expr.trim_end();
+    let Some(body) = trimmed.strip_suffix(')') else {
+        return trimmed;
+    };
+    let Some(open) = body.rfind('(') else {
+        return trimmed;
+    };
+    let head = body[..open].trim_end();
+    let Some(head) = head.strip_suffix("sort") else {
+        return trimmed;
+    };
+    // `sort` itself, and not the end of a longer name such as `resort`.
+    if head.ends_with(|c: char| c.is_alphanumeric() || c == '_') {
+        return trimmed;
+    }
+    match head.trim_end().strip_suffix("|>") {
+        Some(rest) => rest.trim_end(),
+        None => trimmed,
     }
 }
 
@@ -1185,6 +1219,8 @@ impl Document {
             style,
             local,
             base: None,
+            orders: Default::default(),
+            edits: 0,
         };
         doc.rebuild();
         doc
@@ -1248,6 +1284,12 @@ impl Document {
         self.undo.len()
     }
 
+    /// How many edits have been made, undo and redo not being edits. What
+    /// tells an edit from a redo, which both leave one more step to undo.
+    pub fn edit_count(&self) -> usize {
+        self.edits
+    }
+
     /// Make every step taken since `mark` one step, undone at once.
     pub fn join_since(&mut self, mark: usize) {
         if self.undo.len() > mark + 1 {
@@ -1265,6 +1307,7 @@ impl Document {
             self.undo.remove(0);
         }
         self.redo.clear();
+        self.edits += 1;
         self.rebuild();
         true
     }
@@ -1903,6 +1946,155 @@ impl Document {
         Ok(())
     }
 
+    /// Put the rows of a sheet in the order of column `col`, in one
+    /// undoable step: the rows are rearranged in the text, as a sort in
+    /// Excel rearranges them in the worksheet, and stay so once the sort is
+    /// done with. The order is the `sort` stage's: ties keep the order they
+    /// came in, and an empty cell is smallest, so first ascending and last
+    /// descending (D95). A formula that picks a row by counting is
+    /// followed, as it is by [`Document::move_rows`].
+    pub fn sort_rows(&mut self, sheet: usize, col: usize, desc: bool) -> Result<(), String> {
+        match self.snapshot.sheets.get(sheet) {
+            Some(t) if t.view.is_some() => return self.sort_view(sheet, col, desc),
+            Some(t) if t.source.is_some() => return self.sort_table(sheet, col, desc),
+            _ => {}
+        }
+        if let Some(why) = self.no_cells(sheet) {
+            return Err(why);
+        }
+        let Some(snap) = self.snapshot.sheets.get(sheet) else {
+            return Err("there is no such sheet".into());
+        };
+        if col >= snap.columns.len() {
+            return Err("there is no such column".into());
+        }
+        let mut order: Vec<usize> = (0..snap.rows.len()).collect();
+        order.sort_by(|&a, &b| {
+            let o = crate::value::sort_order(&snap.rows[a][col].value, &snap.rows[b][col].value)
+                .unwrap_or(Ordering::Equal);
+            if desc { o.reverse() } else { o }
+        });
+        if order.iter().enumerate().all(|(k, &from)| k == from) {
+            return Ok(());
+        }
+        let followed = self.followed(sheet, true, &order);
+        let text = self.grid_edited(&followed, sheet, |grid| {
+            let cells: Vec<Vec<String>> = grid.rows.iter().map(|(_, row)| row.clone()).collect();
+            for (slot, &from) in grid.rows.iter_mut().zip(&order) {
+                if let Some(row) = cells.get(from) {
+                    slot.1 = row.clone();
+                }
+            }
+        });
+        if let Some(text) = text {
+            self.commit(text);
+        }
+        Ok(())
+    }
+
+    /// The rows of sheet `sheet` a filter shows, in order: those whose cell
+    /// in each filtered column is not one of the texts that column hides.
+    /// A filter is the grid's view of a sheet, so it is matched against the
+    /// cells as they are shown, and changes nothing.
+    pub fn shown_rows(&self, sheet: usize, hide: &[(String, Vec<String>)]) -> Vec<usize> {
+        let Some(t) = self.snapshot.sheets.get(sheet) else {
+            return Vec::new();
+        };
+        let tests: Vec<(usize, std::collections::HashSet<&str>)> = hide
+            .iter()
+            .filter(|(_, texts)| !texts.is_empty())
+            .filter_map(|(name, texts)| {
+                let c = t.columns.iter().position(|c| &c.name == name)?;
+                Some((c, texts.iter().map(String::as_str).collect()))
+            })
+            .collect();
+        (0..t.rows.len())
+            .filter(|&r| {
+                tests
+                    .iter()
+                    .all(|(c, set)| !set.contains(t.rows[r][*c].display.as_str()))
+            })
+            .collect()
+    }
+
+    /// The texts column `col` of sheet `sheet` shows, each once, in the
+    /// order a sort puts their values in: what a filter chooses among.
+    pub fn distinct_shown(&self, sheet: usize, col: usize) -> Vec<String> {
+        let Some(t) = self.snapshot.sheets.get(sheet) else {
+            return Vec::new();
+        };
+        if col >= t.columns.len() {
+            return Vec::new();
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut cells: Vec<&CellSnap> = t
+            .rows
+            .iter()
+            .map(|row| &row[col])
+            .filter(|cell| seen.insert(cell.display.as_str()))
+            .collect();
+        cells.sort_by(|a, b| {
+            crate::value::sort_order(&a.value, &b.value)
+                .unwrap_or_else(|_| a.display.cmp(&b.display))
+        });
+        cells.into_iter().map(|cell| cell.display.clone()).collect()
+    }
+
+    /// A sheet calculated from an expression is sorted by its expression:
+    /// it comes to end in `|> sort(Column)`, or `|> sort(Column, desc)`, in
+    /// place of a sort it ended in already. So the sort is written and
+    /// saved, as a sheet of its own rows is by rearranging them.
+    fn sort_view(&mut self, sheet: usize, col: usize, desc: bool) -> Result<(), String> {
+        let Some(t) = self.snapshot.sheets.get(sheet) else {
+            return Err("there is no such sheet".into());
+        };
+        let (Some(view), Some(column)) = (t.view.clone(), t.columns.get(col)) else {
+            return Err("there is no such column".into());
+        };
+        let name = column.name.clone();
+        let base = without_last_sort(&view);
+        let dir = if desc { ", desc" } else { "" };
+        let expr = format!("{base} |> sort({name}{dir})");
+        if expr == view {
+            return Ok(());
+        }
+        if self.set_sheet_formula(sheet, &expr) {
+            Ok(())
+        } else {
+            Err("the sheet cannot be sorted".into())
+        }
+    }
+
+    /// A table is sorted in the grid alone: its rows are its file's, which
+    /// is never written. The rows are put in order from the order they are
+    /// shown in, so ties keep that order and two sorts compose.
+    fn sort_table(&mut self, sheet: usize, col: usize, desc: bool) -> Result<(), String> {
+        let Some(t) = self.snapshot.sheets.get(sheet) else {
+            return Err("there is no such sheet".into());
+        };
+        if col >= t.columns.len() {
+            return Err("there is no such column".into());
+        }
+        let n = t.rows.len();
+        let mut shown: Vec<usize> = (0..n).collect();
+        shown.sort_by(|&a, &b| {
+            let o = crate::value::sort_order(&t.rows[a][col].value, &t.rows[b][col].value)
+                .unwrap_or(Ordering::Equal);
+            if desc { o.reverse() } else { o }
+        });
+        let before = match self.orders.get(&t.name) {
+            Some(order) if order.len() == n => order.clone(),
+            _ => (0..n).collect(),
+        };
+        let order: Vec<usize> = shown.iter().map(|&p| before[p]).collect();
+        let name = t.name.clone();
+        let rows = std::mem::take(&mut self.snapshot.sheets[sheet].rows);
+        let mut rows: Vec<Option<Vec<CellSnap>>> = rows.into_iter().map(Some).collect();
+        self.snapshot.sheets[sheet].rows = shown.iter().filter_map(|&p| rows[p].take()).collect();
+        self.orders.insert(name, order);
+        Ok(())
+    }
+
     /// Move `count` columns starting at `first` so that the first of them
     /// becomes column `to`, in one undoable step. Data columns and formula
     /// columns go anywhere among each other. A column that a formula picks
@@ -2402,11 +2594,10 @@ impl Document {
         let mut sources = Sources::new();
         let src = sources.add("file", self.text.as_str());
         let (mut program, mut diags) = compile(&self.text, src);
-        let mut tables = crate::table::Tables::default();
-        if diags.is_empty() {
-            let base = self.base.clone().unwrap_or_else(|| ".".into());
-            tables = crate::table::read(&mut program, &base, &mut diags);
-        }
+        // Read whatever else is wrong: a mistake in one sheet is no reason
+        // for a table beside it to lose its rows.
+        let base = self.base.clone().unwrap_or_else(|| ".".into());
+        let tables = crate::table::read(&mut program, &base, &mut diags);
         // A view's row count is settled before the grid is built from it.
         let view_options = Options {
             base: self.base.clone(),
@@ -2576,6 +2767,19 @@ impl Document {
                     column.ty = found.to_string();
                 }
             }
+            // A table sorted in the grid is shown in that order, while its
+            // file still has as many rows as the order numbers.
+            let rows = match self.orders.get(&sheet.name) {
+                Some(order) if sheet.source.is_some() && order.len() == rows.len() => {
+                    let mut slots: Vec<Option<Vec<CellSnap>>> =
+                        rows.into_iter().map(Some).collect();
+                    order
+                        .iter()
+                        .filter_map(|&r| slots.get_mut(r)?.take())
+                        .collect()
+                }
+                _ => rows,
+            };
             snapshot.sheets.push(SheetSnap {
                 name: sheet.name.clone(),
                 columns,
@@ -2851,6 +3055,133 @@ mod tests {
         assert!(t.rows[0][1].numeric && !t.rows[0][0].numeric);
         assert_eq!(doc.snapshot().consts[0].display, "20%");
         assert!(doc.snapshot().problems.is_empty());
+    }
+
+    #[test]
+    fn sorting_rearranges_the_rows_in_one_undoable_step() {
+        let file = "sheet T\n\nName | N\nb | 2\na | 3\nc |\nd | 2\n";
+        let mut doc = Document::from_text(file);
+        // Ascending: the empty cell first, the tie in the order it came.
+        doc.sort_rows(0, 1, false).expect("sorts");
+        assert_eq!(col(&doc, 0, 0), ["c", "b", "d", "a"]);
+        // The text itself is rearranged, so it stays so once saved.
+        assert!(
+            doc.text()
+                .contains("| c    |     |\n| b    | 2   |\n| d    | 2   |\n| a    | 3   |")
+        );
+        doc.sort_rows(0, 1, true).expect("sorts");
+        assert_eq!(col(&doc, 0, 0), ["a", "b", "d", "c"]);
+        // Two steps, each undone on its own; an edit is counted, and an
+        // undo or a redo is not.
+        assert_eq!(doc.edit_count(), 2);
+        assert!(doc.undo() && doc.undo());
+        assert_eq!(doc.text(), file);
+        assert!(doc.redo() && doc.undo());
+        assert_eq!(doc.edit_count(), 2);
+        // Sorting what is sorted adds no step.
+        doc.sort_rows(0, 0, false).expect("sorts");
+        let steps = doc.can_undo();
+        doc.sort_rows(0, 0, false).expect("sorts");
+        assert!(steps);
+        assert!(doc.undo());
+        assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn a_calculated_sheet_is_sorted_by_its_expression() {
+        let file = "sheet T\n\nName | N\nb | 2\na | 3\nc | 1\n\nsheet V := T |> head(3)\n";
+        let mut doc = Document::from_text(file);
+        doc.sort_rows(1, 1, true).expect("sorts");
+        assert!(
+            doc.text()
+                .contains("sheet V := T |> head(3) |> sort(N, desc)"),
+            "{}",
+            doc.text()
+        );
+        assert_eq!(col(&doc, 1, 0), ["a", "b", "c"]);
+        // A second sort takes the place of the first rather than following it.
+        doc.sort_rows(1, 0, false).expect("sorts");
+        assert!(
+            doc.text()
+                .contains("sheet V := T |> head(3) |> sort(Name)\n"),
+            "{}",
+            doc.text()
+        );
+        assert_eq!(col(&doc, 1, 0), ["a", "b", "c"]);
+        // One step each, and the rows of `T` itself untouched.
+        assert_eq!(col(&doc, 0, 0), ["b", "a", "c"]);
+        assert!(doc.undo() && doc.undo());
+        assert_eq!(doc.text(), file);
+        assert_eq!(without_last_sort("T |> resort(N)"), "T |> resort(N)");
+    }
+
+    #[test]
+    fn a_table_is_sorted_in_the_grid_alone() {
+        let table = "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n";
+        let mut doc = Document::from_text(table);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        doc.sort_rows(0, 5, true).expect("sorts");
+        let rows = &doc.snapshot().sheets[0].rows;
+        assert_eq!(rows.len(), 887);
+        assert_eq!(rows[0][5].display, "512.3292");
+        assert_eq!(rows[0][2].display, "Miss. Anna Ward");
+        // Nothing is written, so there is nothing to save or undo.
+        assert_eq!(doc.text(), table);
+        assert!(!doc.can_undo());
+        // The order holds through a rebuild, and a second sort starts from
+        // it: the ties at 512.3292 stay in the order the first one gave.
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        assert_eq!(
+            doc.snapshot().sheets[0].rows[0][2].display,
+            "Miss. Anna Ward"
+        );
+        doc.sort_rows(0, 1, false).expect("sorts");
+        let rows = &doc.snapshot().sheets[0].rows;
+        assert_eq!(rows[0][1].display, "1");
+        assert_eq!(rows[0][2].display, "Miss. Anna Ward");
+    }
+
+    #[test]
+    fn a_filter_shows_the_rows_whose_cells_it_does_not_hide() {
+        let file = "sheet T\n\nName | N\nb | 2\na | 10\nc |\nd | 2\n";
+        let doc = Document::from_text(file);
+        assert_eq!(doc.shown_rows(0, &[]), [0, 1, 2, 3]);
+        let hide = |name: &str, texts: &[&str]| {
+            (
+                name.to_string(),
+                texts.iter().map(|t| t.to_string()).collect(),
+            )
+        };
+        assert_eq!(doc.shown_rows(0, &[hide("N", &["2"])]), [1, 2]);
+        assert_eq!(
+            doc.shown_rows(0, &[hide("N", &["2"]), hide("Name", &["c"])]),
+            [1]
+        );
+        // A column the sheet has not got hides nothing.
+        assert_eq!(doc.shown_rows(0, &[hide("Gone", &["b"])]), [0, 1, 2, 3]);
+        // Each text once, in the order of the values: empty first, and 10
+        // after 2 because it is a number.
+        assert_eq!(doc.distinct_shown(0, 1), ["", "2", "10"]);
+    }
+
+    #[test]
+    fn a_mistake_in_one_sheet_leaves_a_table_its_rows() {
+        let table = "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n";
+        let mut doc = Document::from_text(table);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        let rows = doc.snapshot().sheets[0].rows.len();
+        assert_eq!(rows, 887);
+        // A sheet beside it that cannot be calculated.
+        let wrong = format!("{table}\nsheet Dearest := Passengers |> sort(Nothing)\n");
+        assert!(doc.set_text(&wrong));
+        assert!(!doc.snapshot().problems.is_empty());
+        let passengers = doc
+            .snapshot()
+            .sheets
+            .iter()
+            .find(|s| s.name == "Passengers")
+            .expect("the table is still a sheet");
+        assert_eq!(passengers.rows.len(), rows, "the table lost its rows");
     }
 
     #[test]

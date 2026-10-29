@@ -38,6 +38,20 @@ fn list<T>(out: &mut String, items: &[T], mut each: impl FnMut(&mut String, &T))
     out.push(']');
 }
 
+/// Row numbers, as a list.
+pub fn numbers(items: &[usize]) -> String {
+    let mut out = String::new();
+    list(&mut out, items, |out, n| out.push_str(&n.to_string()));
+    out
+}
+
+/// Texts, as a list.
+pub fn texts(items: &[String]) -> String {
+    let mut out = String::new();
+    list(&mut out, items, |out, t| string(out, t));
+    out
+}
+
 /// Cells are `{d: display, s: source, n: numeric, f: formula, e: error,
 /// x: the value in full when the display is shortened, h: text that is
 /// Markdown as HTML}`.

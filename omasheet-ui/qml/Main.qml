@@ -170,10 +170,14 @@ ApplicationWindow {
     property int pickLen: 0
 
     property bool editing: false
-    // The box at the top opens with an edit, whichever cell it is in: the
-    // cell echoes into it as it is typed, and the keyboard reaches a second
-    // line only while the box is open. `commit` closes it again.
-    onEditingChanged: if (editing) formulaOpen = true;
+    // The box at the top opens with an edit only where what is edited is
+    // written over several lines already: one line stays one line until
+    // Alt+Enter or the caret beside the box opens it. `commit` closes it
+    // again.
+    onEditingChanged: if (editing && manyLines()) formulaOpen = true;
+    function manyLines() {
+        return formulaField.source.indexOf("\n") >= 0;
+    }
     // The source takes the place of the grid while it is shown.
     property bool showSource: false
     onShowSourceChanged: Qt.callLater(function() {
@@ -200,6 +204,7 @@ ApplicationWindow {
     }
 
     function reload() {
+        followHistory();
         var y = rowsView.contentY;
         // Any edit may renumber the columns that were cut.
         grabbed = null;
@@ -263,6 +268,18 @@ ApplicationWindow {
         Qt.openUrlExternally(link);
     }
 
+    // The width a cell asks for: a cell holding newlines shows one line at a
+    // time, so it is the longest of them, not the lines run together.
+    function lineWidth(text) {
+        if (text.indexOf("\n") < 0)
+            return text.length;
+        var lines = text.split("\n");
+        var longest = 0;
+        for (var i = 0; i < lines.length; i++)
+            longest = Math.max(longest, lines[i].length);
+        return longest;
+    }
+
     function measure() {
         var widths = [];
         var total = 0;
@@ -271,7 +288,7 @@ ApplicationWindow {
             // A formula column shows `:= ` before its type.
             var chars = Math.max(cols[c].name.length, cols[c].type.length + (cols[c].computed ? 5 : 2));
             for (var r = 0; r < sheet.rows.length; r++)
-                chars = Math.max(chars, sheet.rows[r][c].d.length);
+                chars = Math.max(chars, lineWidth(sheet.rows[r][c].d));
             var w = Math.round(Math.min(46, Math.max(7, chars + 2)) * metrics.averageCharacterWidth) + 14;
             widths.push(w);
             total += w;
@@ -289,6 +306,172 @@ ApplicationWindow {
         anchorCol = Math.min(anchorCol, maxCol);
     }
 
+    // The filters in force, by sheet and then column name: the display
+    // texts each column does not show. A filter is a view of the sheet and
+    // nothing more -- it hides rows in the grid, and the file, a save and
+    // an export all still hold every row -- where a sort rearranges the
+    // rows in the file.
+    property var filters: ({})
+    property int filterRev: 0
+    // The rows the grid lists, by number, while a filter is in force, and
+    // `null` while every row shows. The document works them out, once for
+    // each change of the sheet or the filter; the grid then lists these and
+    // no others, so a row a filter hides costs nothing at all.
+    readonly property var shownRows: {
+        filterRev;
+        var f = filters[sheet.name];
+        if (!f || sheet.isConsts)
+            return null;
+        var parts = [];
+        for (var name in f)
+            if (f[name] && f[name].length > 0)
+                parts.push([name].concat(f[name]).join("\u001f"));
+        if (parts.length === 0)
+            return null;
+        return JSON.parse(file.shownRows(tab, parts.join("\u001e")));
+    }
+    // Where each row is in the list, or -1 where it is hidden.
+    readonly property var rowPos: {
+        if (shownRows === null)
+            return null;
+        var pos = [];
+        for (var r = 0; r < sheet.rows.length; r++)
+            pos.push(-1);
+        for (var k = 0; k < shownRows.length; k++)
+            pos[shownRows[k]] = k;
+        return pos;
+    }
+    readonly property int shownCount: shownRows === null ? sheet.rows.length : shownRows.length
+    function isHidden(row) {
+        return rowPos !== null && rowPos[row] < 0;
+    }
+    // The place of a row in the list, and the row at a place in it.
+    function posOf(row) {
+        return rowPos === null ? row : Math.max(0, rowPos[row]);
+    }
+    function rowAt(pos) {
+        if (shownRows === null)
+            return pos;
+        return pos >= 0 && pos < shownRows.length ? shownRows[pos] : -1;
+    }
+    // The row drawn at `y` down the list, the nearest one past either end.
+    function rowAtY(y) {
+        if (shownCount === 0)
+            return 0;
+        return rowAt(Math.max(0, Math.min(shownCount - 1, Math.floor(y / rowHeight))));
+    }
+    function filtered(col) {
+        filterRev;
+        var f = filters[sheet.name];
+        var out = f && sheet.columns[col] ? f[sheet.columns[col].name] : null;
+        return !!out && out.length > 0;
+    }
+    function setFilter(col, excluded) {
+        var all = filters;
+        var f = all[sheet.name] || {};
+        f[sheet.columns[col].name] = excluded;
+        all[sheet.name] = f;
+        filters = all;
+        filterRev++;
+    }
+    // What each sheet has been sorted by: every column, whose telltale
+    // stays solid, and the last one and which way, which is the order the
+    // rows are in and so the one that shows a caret. A sort of a sheet of
+    // its own rows, or of a calculated one, is a step to undo, so each is
+    // kept with the number of steps to undo it left: it is in force while
+    // there are at least that many, and goes and comes back with the step.
+    // An edit made after an undo drops the steps it was undone past, and
+    // the sorts with them. A table's sort is the grid's order alone, which
+    // nothing undoes, and is kept apart. All of it is forgotten with the
+    // file, as a filter is.
+    property var sortLog: []
+    property var viewSorts: ({})
+    property int undoDepth: 0
+    property int editCount: 0
+    property int sortRev: 0
+    function sortState(name) {
+        sortRev;
+        if (viewSorts[name])
+            return viewSorts[name];
+        var state = null;
+        for (var i = 0; i < sortLog.length; i++) {
+            var e = sortLog[i];
+            if (e.sheet !== name || e.mark > undoDepth)
+                continue;
+            if (state === null)
+                state = { done: {} };
+            state.col = e.col;
+            state.desc = e.desc;
+            state.done[e.col] = true;
+        }
+        return state;
+    }
+    function sortedAs(col) {
+        var st = sortState(sheet.name);
+        if (!st || !sheet.columns[col] || st.col !== sheet.columns[col].name)
+            return "";
+        return st.desc ? "desc" : "asc";
+    }
+    function wasSorted(col) {
+        var st = sortState(sheet.name);
+        return !!st && !!sheet.columns[col] && st.done[sheet.columns[col].name] === true;
+    }
+    function noteSort(col, desc) {
+        var name = sheet.columns[col].name;
+        if (sheet.from) {
+            var all = viewSorts;
+            var done = all[sheet.name] ? all[sheet.name].done : {};
+            done[name] = true;
+            all[sheet.name] = { col: name, desc: desc, done: done };
+            viewSorts = all;
+        } else {
+            sortLog = sortLog.concat([{ mark: file.undoMark(), sheet: sheet.name, col: name, desc: desc }]);
+        }
+        sortRev++;
+    }
+    // Keep up with the history after each change of the file: an undo or a
+    // redo moves the depth, and an edit also drops what was undone past.
+    function followHistory() {
+        var depth = file.undoMark(), edits = file.editCount();
+        if (edits !== editCount) {
+            var kept = [];
+            for (var i = 0; i < sortLog.length; i++)
+                if (sortLog[i].mark < depth)
+                    kept.push(sortLog[i]);
+            sortLog = kept;
+        }
+        undoDepth = depth;
+        editCount = edits;
+        sortRev++;
+    }
+
+    // The nearest row that is shown, going `dir` from `row` and then the
+    // other way if there is none.
+    function shownFrom(row, dir) {
+        var last = sheet.rows.length - 1;
+        for (var r = row; r >= 0 && r <= last; r += dir)
+            if (!isHidden(r))
+                return r;
+        for (r = row; r >= 0 && r <= last; r -= dir)
+            if (!isHidden(r))
+                return r;
+        return row;
+    }
+    // Whether more than one row is selected and a hidden one is among them:
+    // what is done to the selection would be done to rows nobody can see.
+    function selectionHidesRows() {
+        if (rowPos === null || selTop === selBottom)
+            return false;
+        for (var r = selTop; r <= selBottom; r++)
+            if (isHidden(r))
+                return true;
+        return false;
+    }
+    // The texts a column shows, each once, in the order of their values.
+    function valuesOf(col) {
+        return JSON.parse(file.distinctShown(tab, col));
+    }
+
     function selectCell(row, col, extend) {
         if (sheet.rows.length === 0 || sheet.columns.length === 0)
             return;
@@ -296,7 +479,8 @@ ApplicationWindow {
             byRow = false;
             byCol = false;
         }
-        curRow = Math.max(0, Math.min(sheet.rows.length - 1, row));
+        row = Math.max(0, Math.min(sheet.rows.length - 1, row));
+        curRow = isHidden(row) ? shownFrom(row, row >= curRow ? 1 : -1) : row;
         curCol = Math.max(0, Math.min(sheet.columns.length - 1, col));
         if (!extend) {
             anchorRow = curRow;
@@ -398,7 +582,7 @@ ApplicationWindow {
     }
 
     function revealAt(row, col) {
-        rowsView.positionViewAtIndex(row, ListView.Contain);
+        rowsView.positionViewAtIndex(posOf(row), ListView.Contain);
         var x = gutterWidth;
         for (var c = 0; c < col; c++)
             x += colWidths[c];
@@ -927,6 +1111,8 @@ ApplicationWindow {
     // Make an edit that adds or takes away rows at `row` or columns at
     // `col`, or neither, and keep the mark on the cells it was on.
     function keeping(row, col, edit) {
+        if (selectionHidesRows())
+            return;
         var m = marked;
         var rows = sheet.rows.length, cols = sheet.columns.length;
         keepMark = true;
@@ -1068,7 +1254,7 @@ ApplicationWindow {
     // Scroll to `row` once the list has been put back where it was after an
     // edit that added rows.
     function showRow(row) {
-        Qt.callLater(function() { rowsView.positionViewAtIndex(row, ListView.Contain); });
+        Qt.callLater(function() { rowsView.positionViewAtIndex(posOf(row), ListView.Contain); });
     }
 
 
@@ -1396,7 +1582,7 @@ ApplicationWindow {
         var x = gutterWidth - hflick.contentX;
         for (var c = 0; c < curCol; c++)
             x += colWidths[c];
-        var y = headerHeight + (curRow + 1) * rowHeight - rowsView.contentY;
+        var y = headerHeight + (posOf(curRow) + 1) * rowHeight - rowsView.contentY;
         cellMenu.popup(grid, Math.max(0, Math.min(grid.width - cellMenu.width, x)),
                        Math.max(headerHeight, Math.min(grid.height - rowHeight, y)));
     }
@@ -1833,7 +2019,11 @@ ApplicationWindow {
                     ScrollView {
                         id: formulaScroll
                         anchors.left: parent.left
-                        anchors.right: parent.right
+                        // To the right edge in a narrow window; in a wide one
+                        // a third of the window is left clear to its right,
+                        // though never so much that it is under forty
+                        // characters wide.
+                        width: Math.min(parent.width, Math.max(win.fontSize * 40, parent.width - win.width / 3))
                         anchors.top: parent.top
                         height: win.formulaOpen
                             ? Math.round(win.fontSize * 4 * 1.45) + 8
@@ -1860,7 +2050,7 @@ ApplicationWindow {
                             // where it is written, so the indent is kept
                             // here rather than read.
                             readonly property string source: win.sheet.view
-                                ? ":= " + win.sheet.view.replace(/\n[ \t]*/g, "\n    ")
+                                ? win.sheet.view.replace(/\n[ \t]*/g, "\n    ")
                                 : cell ? cell.s : ""
                             // Closed, the box is one line tall and holds the
                             // first line: the others would show as the top
@@ -1878,15 +2068,18 @@ ApplicationWindow {
                             // than wrapping, and the caret says there is more.
                             wrapMode: win.formulaOpen ? TextEdit.Wrap : TextEdit.NoWrap
                             onSourceChanged: if (!activeFocus) win.resetBox()
-                            // It opens when it takes the keyboard and closes
-                            // when it loses it, so a click anywhere else
-                            // closes it. Open it holds every line, closed
+                            // It opens when it takes the keyboard holding
+                            // more than one line, and closes when it loses
+                            // it, so a click anywhere else closes it. A
+                            // formula of one line is edited in the closed
+                            // box. Open it holds every line, closed
                             // the first, and what is committed is what the
                             // box held while it had the keyboard.
                             onActiveFocusChanged: {
                                 if (activeFocus) {
                                     win.editor = formulaField;
-                                    win.formulaOpen = true;
+                                    if (win.manyLines())
+                                        win.formulaOpen = true;
                                     text = source;
                                 } else {
                                     if (win.editor === formulaField)
@@ -1978,12 +2171,17 @@ ApplicationWindow {
                 case Qt.Key_Down: win.arrow(1, 0, ctrl, shift); break;
                 case Qt.Key_Left: win.arrow(0, -1, ctrl, shift); break;
                 case Qt.Key_Right: win.arrow(0, 1, ctrl, shift); break;
-                case Qt.Key_PageUp: win.selectCell(win.curRow - page, win.curCol, shift); break;
-                case Qt.Key_PageDown: win.selectCell(win.curRow + page, win.curCol, shift); break;
+                case Qt.Key_PageUp: win.selectCell(win.rowAt(Math.max(0, win.posOf(win.curRow) - page)), win.curCol, shift); break;
+                case Qt.Key_PageDown: win.selectCell(win.rowAt(Math.min(win.shownCount - 1, win.posOf(win.curRow) + page)), win.curCol, shift); break;
                 case Qt.Key_Home: win.selectCell(ctrl ? 0 : win.curRow, 0, shift); break;
                 case Qt.Key_End: win.selectCell(ctrl ? win.sheet.rows.length - 1 : win.curRow, win.sheet.columns.length - 1, shift); break;
                 case Qt.Key_Tab: win.selectCell(win.curRow, win.curCol + 1, false); break;
                 case Qt.Key_Backtab: win.selectCell(win.curRow, win.curCol - 1, false); break;
+                // F2 edits the cell in place, as Enter does a single cell.
+                case Qt.Key_F2:
+                    if (win.selKind === "cells" && win.selTop === win.selBottom && win.selLeft === win.selRight)
+                        win.startEditing(null);
+                    break;
                 case Qt.Key_Return:
                 case Qt.Key_Enter:
                     // A row goes in beside whole rows, or one cell, and nothing else.
@@ -2128,11 +2326,14 @@ ApplicationWindow {
                                     ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.16)
                                     : win.panelColor
                                 Column {
+                                    id: headLabels
                                     anchors.verticalCenter: parent.verticalCenter
                                     x: 7
                                     width: parent.width - 14
                                     Text {
-                                        width: parent.width
+                                        // Clear of the telltale's caret, which
+                                        // stands above it when sorted up.
+                                        width: parent.width - (filterButton.sorted === "asc" ? filterButton.width : 0)
                                         text: headCell.column ? headCell.column.name : ""
                                         color: win.textColor
                                         font.family: win.font.family
@@ -2144,10 +2345,11 @@ ApplicationWindow {
                                     // The type: marked `:=` in a formula column, and
                                     // plain rather than muted where it is declared.
                                     Text {
+                                        id: typeLine
                                         readonly property bool computed: !!headCell.column && headCell.column.computed && !win.sheet.isConsts
                                         readonly property bool declared: !!headCell.column && headCell.column.declared
                                         readonly property color typeColor: declared ? win.textColor : win.mutedColor
-                                        width: parent.width
+                                        width: parent.width - filterButton.width
                                         textFormat: Text.StyledText
                                         text: !headCell.column ? ""
                                             : (computed ? "<font color=\"" + win.accentColor + "\">:=</font> " : "")
@@ -2157,6 +2359,54 @@ ApplicationWindow {
                                         font.features: win.font.features
                                         font.pixelSize: win.noteSize
                                         elide: Text.ElideRight
+                                    }
+                                }
+                                // The telltale on the type's line, which opens the
+                                // column's sort and filter: an empty circle when
+                                // neither has touched it, a solid one while the
+                                // column is filtered or once it has been sorted this
+                                // session, with an up caret above it once sorted
+                                // ascending and a down caret below it once sorted
+                                // descending.
+                                Item {
+                                    id: filterButton
+                                    // Above the header's own mouse area, which
+                                    // comes after it and covers the whole cell.
+                                    z: 2
+                                    visible: !win.sheet.isConsts
+                                    readonly property bool active: win.filtered(headCell.index)
+                                    readonly property string sorted: win.sortedAs(headCell.index)
+                                    readonly property bool solid: active || win.wasSorted(headCell.index)
+                                    width: visible ? Math.round(win.noteSize * 1.3) : 0
+                                    height: typeLine.height
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 4
+                                    y: headLabels.y + typeLine.y
+                                    Text {
+                                        id: dot
+                                        anchors.centerIn: parent
+                                        text: filterButton.solid ? "\u25CF" : "\u25CB"
+                                        color: filterButton.solid ? win.accentColor : win.mutedColor
+                                        font.pixelSize: win.noteSize
+                                    }
+                                    Text {
+                                        visible: filterButton.sorted.length > 0
+                                        anchors.horizontalCenter: dot.horizontalCenter
+                                        anchors.bottom: filterButton.sorted === "asc" ? dot.top : undefined
+                                        anchors.top: filterButton.sorted === "desc" ? dot.bottom : undefined
+                                        anchors.bottomMargin: -3
+                                        anchors.topMargin: -3
+                                        // The carets the box at the top opens and closes with.
+                                        text: filterButton.sorted === "asc" ? "\u2303" : "\u2304"
+                                        color: win.accentColor
+                                        font.pixelSize: Math.round(win.noteSize * 0.8)
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        anchors.margins: -4
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: columnPopup.openFor(headCell.index, headCell)
                                     }
                                 }
                                 Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: win.lineColor }
@@ -2264,7 +2514,7 @@ ApplicationWindow {
                         height: hflick.height - win.headerHeight
                         clip: true
                         boundsBehavior: Flickable.StopAtBounds
-                        model: win.sheet.rows.length
+                        model: win.shownCount
                         reuseItems: true
                         // The grid moves the selection. After an edit the
                         // focus is left inside a row, and the list would
@@ -2275,24 +2525,27 @@ ApplicationWindow {
                         delegate: Row {
                             id: rowItem
                             required property int index
+                            // The row of the sheet at this place in the list,
+                            // which a filter makes other than the place.
+                            readonly property int row: win.rowAt(index)
                             height: win.rowHeight
                             // The row holding a cell opened out to its lines
                             // is drawn above the others: a list paints its
                             // delegates in the order it made them, which is
                             // not the order of the rows.
                             z: win.openCell !== null && win.openCell.tab === win.tab
-                                && win.openCell.row === index ? 2 : 0
+                                && win.openCell.row === rowItem.row ? 2 : 0
 
                             // The row number.
                             Rectangle {
                                 width: win.gutterWidth
                                 height: win.rowHeight
-                                color: rowItem.index >= win.selTop && rowItem.index <= win.selBottom
+                                color: rowItem.row >= win.selTop && rowItem.row <= win.selBottom
                                     ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.16)
                                     : win.panelColor
                                 Text {
                                     anchors.centerIn: parent
-                                    text: rowItem.index
+                                    text: rowItem.row
                                     color: win.mutedColor
                                     font.family: win.font.family
                                     font.features: win.font.features
@@ -2301,16 +2554,16 @@ ApplicationWindow {
                                 Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: win.lineColor }
                                 // Rows copied or cut are marked from their numbers across.
                                 readonly property bool marked: win.outline !== null && win.outline.rows
-                                    && rowItem.index >= win.outline.top && rowItem.index <= win.outline.bottom
+                                    && rowItem.row >= win.outline.top && rowItem.row <= win.outline.bottom
                                 MarkEdge { visible: parent.marked; width: 1; height: parent.height }
-                                MarkEdge { visible: parent.marked && rowItem.index === win.outline.top && !win.outline.columns; width: parent.width; height: 1 }
-                                MarkEdge { visible: parent.marked && rowItem.index === win.outline.bottom; anchors.bottom: parent.bottom; width: parent.width; height: 1 }
+                                MarkEdge { visible: parent.marked && rowItem.row === win.outline.top && !win.outline.columns; width: parent.width; height: 1 }
+                                MarkEdge { visible: parent.marked && rowItem.row === win.outline.bottom; anchors.bottom: parent.bottom; width: parent.width; height: 1 }
                                 MouseArea {
                                     anchors.fill: parent
                                     acceptedButtons: Qt.LeftButton | Qt.RightButton
                                     onPressed: function(mouse) {
                                         if (mouse.button === Qt.RightButton) {
-                                            win.openMenu(rowItem.index, -1);
+                                            win.openMenu(rowItem.row, -1);
                                             return;
                                         }
                                         // Select the whole row.
@@ -2319,9 +2572,9 @@ ApplicationWindow {
                                         win.byCol = false;
                                         // The cursor waits in the first cell.
                                         win.anchorCol = Math.max(0, win.sheet.columns.length - 1);
-                                        win.anchorRow = (mouse.modifiers & Qt.ShiftModifier) ? win.anchorRow : rowItem.index;
+                                        win.anchorRow = (mouse.modifiers & Qt.ShiftModifier) ? win.anchorRow : rowItem.row;
                                         win.curCol = 0;
-                                        win.curRow = rowItem.index;
+                                        win.curRow = rowItem.row;
                                     }
                                     preventStealing: true
                                     // Drag down the numbers for several rows.
@@ -2329,7 +2582,7 @@ ApplicationWindow {
                                         if (!(pressedButtons & Qt.LeftButton))
                                             return;
                                         var p = mapToItem(rowsView.contentItem, mouse.x, mouse.y);
-                                        win.selectLine(true, Math.floor(p.y / win.rowHeight), true);
+                                        win.selectLine(true, win.rowAtY(p.y), true);
                                     }
                                 }
                             }
@@ -2339,7 +2592,7 @@ ApplicationWindow {
                                 Rectangle {
                                     id: cellItem
                                     required property int index
-                                    readonly property int row: rowItem.index
+                                    readonly property int row: rowItem.row
                                     readonly property var cell: win.cellAt(row, index)
                                     readonly property var column: win.sheet.columns[index]
                                     readonly property bool current: win.hasCursor && row === win.curRow && index === win.curCol
@@ -2532,7 +2785,7 @@ ApplicationWindow {
                                                 return;
                                             // Drag to extend the selection, or the pick.
                                             var p = mapToItem(rowsView.contentItem, mouse.x, mouse.y);
-                                            var r = Math.floor(p.y / win.rowHeight);
+                                            var r = win.rowAtY(p.y);
                                             var x = p.x - win.gutterWidth;
                                             var c = 0;
                                             while (c < win.colWidths.length - 1 && x > win.colWidths[c]) {
@@ -2715,7 +2968,7 @@ ApplicationWindow {
             }
             MouseArea {
                 visible: hflick.visible
-                y: Math.min(hflick.height, win.headerHeight + win.sheet.rows.length * win.rowHeight - rowsView.contentY)
+                y: Math.min(hflick.height, win.headerHeight + rowsView.contentHeight - rowsView.contentY)
                 width: beside.x
                 height: hflick.height - y
                 onPressed: {
@@ -2881,10 +3134,7 @@ ApplicationWindow {
                             FooterButton {
                                 id: tabButton
                                 required property int index
-                                // A sheet calculated from an expression is
-                                // marked `:=`, as a calculated column is in
-                                // its header.
-                                label: (win.tabs[index].view ? ":= " : "") + win.tabs[index].name
+                                label: win.tabs[index].name
                                 active: index === win.tab && !win.showSource
                                 // The whole sheet copied or cut, outlined here too.
                                 readonly property bool marked: win.sheetMark !== null && win.sheetMark.tab === index
@@ -3088,6 +3338,39 @@ ApplicationWindow {
         }
     }
 
+    // A small button of the column popup, which looks like one whether the
+    // mouse is over it or not: filled with the accent when it is the one
+    // Enter would mean, outlined otherwise.
+    component PopupButton: Rectangle {
+        id: popupButton
+        property string text: ""
+        property bool primary: false
+        signal clicked()
+        implicitWidth: Math.max(label.implicitWidth + 16, Math.round(win.captionSize * 4.2))
+        implicitHeight: Math.round(win.captionSize * 2)
+        radius: 3
+        color: primary
+            ? (press.containsMouse ? Qt.lighter(win.accentColor, 1.15) : win.accentColor)
+            : (press.containsMouse ? win.lineColor : "transparent")
+        border.width: primary ? 0 : 1
+        border.color: win.lineColor
+        Text {
+            id: label
+            anchors.centerIn: parent
+            text: popupButton.text
+            color: popupButton.primary ? win.pageColor : win.textColor
+            font.family: win.font.family
+            font.pixelSize: win.captionSize
+            font.bold: popupButton.primary
+        }
+        MouseArea {
+            id: press
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: popupButton.clicked()
+        }
+    }
     component MenuEntry: MenuItem {
         // An entry that does not apply takes no room, and the arrow keys
         // pass it by: so each is also disabled while it is hidden.
@@ -3162,6 +3445,238 @@ ApplicationWindow {
     }
 
     // ---- context menu ------------------------------------------------------
+
+
+    // A column's sort and filter. Sorting a sheet of its own rows rearranges
+    // them in the file at once, as one step to undo; a calculated sheet is
+    // sorted by its expression, which comes to end in `|> sort(...)`; and a
+    // table, whose rows are its file's, is sorted in the grid alone. The
+    // filter is chosen here and takes effect with OK: Esc, or a click
+    // elsewhere, leaves it as it was.
+    Popup {
+        id: columnPopup
+        property int col: 0
+        property var values: []
+        property var excluded: ({})
+        property string search: ""
+        readonly property bool sortable: !win.sheet.isConsts
+        readonly property var listed: {
+            var out = [];
+            var q = search.toLowerCase();
+            for (var i = 0; i < values.length; i++)
+                if (q.length === 0 || values[i].toLowerCase().indexOf(q) >= 0)
+                    out.push(values[i]);
+            return out;
+        }
+        readonly property int shownCount: {
+            var n = 0;
+            for (var i = 0; i < listed.length; i++)
+                if (excluded[listed[i]] !== true)
+                    n++;
+            return n;
+        }
+        padding: 4
+        width: Math.round(win.fontSize * 11)
+        // Smaller than the grid: the controls of Material are made for touch.
+        readonly property int textSize: win.captionSize
+        readonly property int lineHeight: Math.round(textSize * 1.9)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onClosed: grid.forceActiveFocus()
+
+        function openFor(c, item) {
+            col = c;
+            parent = item;
+            x = 0;
+            y = item.height;
+            values = win.valuesOf(c);
+            var f = win.filters[win.sheet.name];
+            var out = f && f[win.sheet.columns[c].name] ? f[win.sheet.columns[c].name] : [];
+            var map = {};
+            for (var i = 0; i < out.length; i++)
+                map[out[i]] = true;
+            excluded = map;
+            search = "";
+            valueSearch.text = "";
+            open();
+        }
+        function sortBy(desc) {
+            var problem = file.sortRows(win.tab, col, desc);
+            close();
+            if (problem.length > 0)
+                win.notice = problem;
+            else
+                win.noteSort(col, desc);
+        }
+        function setAll(on) {
+            var map = {};
+            for (var k in excluded)
+                map[k] = true;
+            for (var i = 0; i < listed.length; i++) {
+                if (on)
+                    delete map[listed[i]];
+                else
+                    map[listed[i]] = true;
+            }
+            excluded = map;
+        }
+        function toggle(value, on) {
+            var map = {};
+            for (var k in excluded)
+                map[k] = true;
+            if (on)
+                delete map[value];
+            else
+                map[value] = true;
+            excluded = map;
+        }
+        function apply() {
+            var out = [];
+            for (var k in excluded)
+                out.push(k);
+            win.setFilter(col, out);
+            close();
+        }
+
+        background: Rectangle {
+            color: win.overColor
+            border.color: win.lineColor
+            radius: 3
+        }
+        contentItem: ColumnLayout {
+            spacing: 1
+            MenuEntry {
+                visible: columnPopup.sortable
+                Layout.fillWidth: true
+                text: "Sort Ascending"
+                implicitHeight: columnPopup.lineHeight
+                font.pixelSize: columnPopup.textSize
+                onClicked: columnPopup.sortBy(false)
+            }
+            MenuEntry {
+                visible: columnPopup.sortable
+                Layout.fillWidth: true
+                text: "Sort Descending"
+                implicitHeight: columnPopup.lineHeight
+                font.pixelSize: columnPopup.textSize
+                onClicked: columnPopup.sortBy(true)
+            }
+            Rectangle {
+                visible: columnPopup.sortable
+                Layout.fillWidth: true
+                height: 1
+                color: win.lineColor
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.maximumWidth: columnPopup.availableWidth
+                implicitHeight: columnPopup.lineHeight + 2
+                color: "transparent"
+                radius: 2
+                border.color: valueSearch.activeFocus ? win.accentColor : win.lineColor
+                TextInput {
+                    id: valueSearch
+                    anchors.fill: parent
+                    anchors.leftMargin: 6
+                    anchors.rightMargin: 6
+                    verticalAlignment: TextInput.AlignVCenter
+                    clip: true
+                    color: win.textColor
+                    selectionColor: win.selectionFill
+                    font.family: win.font.family
+                    font.pixelSize: columnPopup.textSize
+                    onTextChanged: columnPopup.search = text
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: valueSearch.text.length === 0
+                        text: "Search"
+                        color: win.mutedColor
+                        font: valueSearch.font
+                    }
+                }
+            }
+            CheckBox {
+                Layout.fillWidth: true
+                Layout.maximumWidth: columnPopup.availableWidth
+                text: "Show all"
+                font.family: win.font.family
+                font.pixelSize: columnPopup.textSize
+                implicitHeight: columnPopup.lineHeight
+                padding: 0
+                spacing: 2
+                tristate: true
+                checkState: columnPopup.shownCount === 0 ? Qt.Unchecked
+                    : columnPopup.shownCount === columnPopup.listed.length ? Qt.Checked : Qt.PartiallyChecked
+                nextCheckState: function() { return Qt.Checked; }
+                onClicked: columnPopup.setAll(columnPopup.shownCount !== columnPopup.listed.length)
+            }
+            ListView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(contentHeight, columnPopup.lineHeight * 8)
+                clip: true
+                model: columnPopup.listed
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar {}
+                delegate: CheckBox {
+                    required property string modelData
+                    width: ListView.view.width
+                    height: columnPopup.lineHeight
+                    text: modelData.length > 0 ? modelData : "(empty)"
+                    font.family: win.font.family
+                    font.pixelSize: columnPopup.textSize
+                    padding: 0
+                    spacing: 2
+                    checked: columnPopup.excluded[modelData] !== true
+                    onClicked: columnPopup.toggle(modelData, checked)
+                }
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                height: 1
+                color: win.lineColor
+            }
+            MenuEntry {
+                Layout.fillWidth: true
+                text: "Clear filter"
+                implicitHeight: columnPopup.lineHeight
+                font.pixelSize: columnPopup.textSize
+                enabled: win.filtered(columnPopup.col)
+                onClicked: {
+                    win.setFilter(columnPopup.col, []);
+                    columnPopup.close();
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.maximumWidth: columnPopup.availableWidth
+                Layout.topMargin: 3
+                spacing: 4
+                Item { Layout.fillWidth: true }
+                PopupButton {
+                    text: "OK"
+                    primary: true
+                    onClicked: columnPopup.apply()
+                }
+                PopupButton {
+                    text: "Cancel"
+                    onClicked: columnPopup.close()
+                }
+            }
+        }
+    }
+
+    // What was filtered belongs to the file it was filtered in.
+    Connections {
+        target: file
+        function onFilePathChanged() {
+            win.filters = ({});
+            win.filterRev++;
+            win.sortLog = [];
+            win.viewSorts = ({});
+            win.undoDepth = file.undoMark();
+            win.editCount = file.editCount();
+            win.sortRev++;
+        }
+    }
 
     Menu {
         id: cellMenu

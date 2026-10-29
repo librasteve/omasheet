@@ -31,4 +31,5 @@ const Eldest   = Passengers.Age.max()
 # the order of a column — ascending, or descending on the bare word `desc`
 # — and changes nothing else, so the stages after it read as they would
 # anywhere. An empty cell sorts first, being the smallest thing there is.
+
 sheet Dearest := Passengers |> sort(Fare, desc) |> select(Name, Fare) |> head(5)
