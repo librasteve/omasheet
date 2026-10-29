@@ -1031,3 +1031,33 @@ Pclass | Sex    | Aboard | Lived  | MeanAge
      1 | female |     94 | 96.81% |    35.3
      2 | female |     76 | 92.11% |      29
      3 | female |    144 |    50% |    22.1
+
+sheet Classes
+
+Pclass | Class
+-------|-------
+     1 | First
+     2 | Second
+     3 | Third
+
+sheet Named
+
+Pclass | Sex    | Aboard | Lived  | MeanAge | Class
+-------|--------|--------|--------|---------|-------
+     1 | female |     94 | 96.81% |    35.3 | First
+     1 | male   |    122 | 36.89% |    41.5 | First
+     2 | female |     76 | 92.11% |      29 | Second
+     2 | male   |    108 | 15.74% |    30.5 | Second
+     3 | female |    144 |    50% |    22.1 | Third
+     3 | male   |    343 |  13.7% |    26.5 | Third
+
+sheet ClassNames
+
+Class  | Sex    | Aboard | Lived
+-------|--------|--------|-------
+First  | female |     94 | 96.81%
+First  | male   |    122 | 36.89%
+Second | female |     76 | 92.11%
+Second | male   |    108 | 15.74%
+Third  | female |    144 |    50%
+Third  | male   |    343 |  13.7%

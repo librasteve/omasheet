@@ -116,3 +116,21 @@ sheet ByFamily := Passengers |> group_by(Family) |> agg(Aboard := Name.len(), Li
 
 # A grouped sheet is a sheet, so the stages carry on from it by name.
 sheet Luckiest := ClassAndSex |> sort(Lived, desc) |> head(3)
+
+# A join: each row of `ClassAndSex` beside the name of its class, from a
+# sheet of three rows written here. The rows are paired where `Pclass` is
+# equal, so every class has its name.
+
+sheet Classes
+
+| Pclass | Class  |
+| ------ | ------ |
+| 1      | First  |
+| 2      | Second |
+| 3      | Third  |
+
+sheet Named := ClassAndSex |> join(Classes, Pclass)
+
+# A join ends a sheet's formula, as a group does, so the columns to keep
+# are chosen over it by name.
+sheet ClassNames := Named |> select(Class, Sex, Aboard, Lived)
