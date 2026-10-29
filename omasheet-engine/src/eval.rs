@@ -80,6 +80,17 @@ type GroupRows = (usize, Rc<Vec<usize>>);
 type Groups = Vec<Rc<Vec<usize>>>;
 /// The values of an aggregate of a grouped sheet Polars took, one a group.
 type AggValues = Rc<Vec<Value>>;
+/// The rows of a sheet in partitions, one for each value of key columns:
+/// `of[p]` is the partition of position `p` and its place in it, and each
+/// partition lists its positions in the sheet's order.
+struct Partition {
+    of: Vec<(usize, usize)>,
+    parts: Vec<Vec<usize>>,
+}
+
+/// The partitions worked out, by sheet and key columns.
+type Partitions = HashMap<(usize, Vec<usize>), Rc<Partition>>;
+
 /// The right sheet of a join and the row of it each row of the join reads.
 type Paired = (usize, Rc<Vec<Option<usize>>>);
 
@@ -141,6 +152,10 @@ pub struct Engine<'p> {
     /// each row of the join pairs with: none, for a left row a left join
     /// kept with nothing to pair it with.
     joined: RefCell<Vec<Option<Paired>>>,
+    /// The partitions of a whole sheet by its key columns, for `*-1 by
+    /// Region`: worked out once, so a column of such offsets is not a pass
+    /// over the sheet for every cell.
+    partitions: RefCell<Partitions>,
     /// The arguments of the file's own functions being evaluated, the
     /// innermost call last.
     args: RefCell<Vec<Vec<Value>>>,
@@ -239,6 +254,7 @@ impl<'p> Engine<'p> {
             groups: RefCell::new(vec![None; prog.sheets.len()]),
             grouping: RefCell::new(Vec::new()),
             joined: RefCell::new(vec![None; prog.sheets.len()]),
+            partitions: RefCell::new(HashMap::new()),
             agg_held: RefCell::new(
                 prog.sheets
                     .iter()
@@ -1581,6 +1597,56 @@ impl<'p> Engine<'p> {
         ))
     }
 
+    /// The rows `file_rows` of sheet `t` in partitions by the key columns
+    /// `keys`: two rows are in one where a sort would tie their keys, an
+    /// empty key being one partition of its own, as a group's is. Kept for
+    /// a whole sheet in its own order, which is what a column of offsets
+    /// over its own sheet asks for row after row.
+    fn partition(
+        &self,
+        t: usize,
+        file_rows: &[usize],
+        keys: &[usize],
+        span: Span,
+    ) -> R<Rc<Partition>> {
+        let whole = file_rows.len() == self.prog.sheets[t].nrows
+            && file_rows.iter().enumerate().all(|(p, &r)| p == r);
+        let key = (t, keys.to_vec());
+        if whole && let Some(part) = self.partitions.borrow().get(&key) {
+            return Ok(part.clone());
+        }
+        let mut cells = Vec::with_capacity(file_rows.len());
+        for &r in file_rows {
+            let mut row = Vec::with_capacity(keys.len());
+            for &c in keys {
+                row.push(self.cell(t, c, r)?);
+            }
+            cells.push(row);
+        }
+        let order = ordered(&cells, false, span)?;
+        let same = |a: usize, b: usize| {
+            cells[a]
+                .iter()
+                .zip(cells[b].iter())
+                .all(|(x, y)| matches!(sort_order(x, y), Ok(Ordering::Equal)))
+        };
+        let mut of = vec![(0, 0); file_rows.len()];
+        let mut parts: Vec<Vec<usize>> = Vec::new();
+        for (i, &p) in order.iter().enumerate() {
+            if i == 0 || !same(order[i - 1], p) {
+                parts.push(Vec::new());
+            }
+            let g = parts.len() - 1;
+            of[p] = (g, parts[g].len());
+            parts[g].push(p);
+        }
+        let part = Rc::new(Partition { of, parts });
+        if whole {
+            self.partitions.borrow_mut().insert(key, part.clone());
+        }
+        Ok(part)
+    }
+
     /// The sheet grouped and the rows of group `r` of grouped sheet `t`, or
     /// `None` past the last group.
     fn group(&self, t: usize, r: usize) -> Result<Option<GroupRows>, Fail> {
@@ -2475,6 +2541,27 @@ impl<'p> Engine<'p> {
             RowSel::Cursor(off) => {
                 let at = cursor(fr)? + self.offset(off, fr)?;
                 Rows::One((at >= 0 && at < n).then_some(at as usize))
+            }
+            // The same move, counted among the rows of the cursor's own
+            // partition: a row outside it, before its first or past its
+            // last, is empty.
+            RowSel::CursorBy { off, keys } => {
+                let Some((t, file_rows)) = sheet else {
+                    return fail(span, "`by` needs a sheet whose columns to partition by");
+                };
+                let p = cursor(fr)?;
+                if p < 0 || p >= n {
+                    return Ok(Rows::One(None));
+                }
+                let by = self.offset(off, fr)?;
+                let part = self.partition(t, file_rows, keys, span)?;
+                let (g, i) = part.of[p as usize];
+                let at = i as i64 + by;
+                Rows::One(
+                    usize::try_from(at)
+                        .ok()
+                        .and_then(|at| part.parts[g].get(at).copied()),
+                )
             }
             RowSel::Range {
                 lo,

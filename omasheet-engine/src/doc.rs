@@ -422,7 +422,9 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
                 names.push((name, e.span));
             }
         }
-        ExprKind::Unary(_, a) | ExprKind::Named(_, _, a) => sites(a, nested, out, names),
+        ExprKind::Unary(_, a) | ExprKind::Named(_, _, a) | ExprKind::By(a, _) => {
+            sites(a, nested, out, names)
+        }
         ExprKind::Binary(_, a, b) => {
             sites(a, nested, out, names);
             sites(b, nested, out, names);
@@ -507,7 +509,9 @@ fn named(e: &Expr, name: &str, out: &mut Vec<Span>) {
                 out.push(e.span);
             }
         }
-        ExprKind::Unary(_, a) | ExprKind::Named(_, _, a) => named(a, name, out),
+        ExprKind::Unary(_, a) | ExprKind::Named(_, _, a) | ExprKind::By(a, _) => {
+            named(a, name, out)
+        }
         ExprKind::Binary(_, l, r) => {
             named(l, name, out);
             named(r, name, out);

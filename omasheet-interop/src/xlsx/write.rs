@@ -44,6 +44,8 @@ const OTHER_SHEET: Why =
     "values were written in place of formulas that read a sheet that is not exported";
 const TOO_LONG: Why = "values were written in place of formulas too long for a workbook";
 const SEQUENCE: Why = "values were written in place of sequences made with `...`";
+const PARTITION: Why =
+    "values were written in place of formulas that count rows within a partition with `by`";
 
 /// The most characters a workbook's formula may have.
 const LONGEST: usize = 8000;
@@ -332,6 +334,9 @@ impl Writer<'_> {
             }
             Some(RowSel::Pred(node)) => Rows::Where(node),
             Some(RowSel::RangeVal(_) | RowSel::Mask(_)) => return Err(SELECTION),
+            // The row before within a partition is a different number of
+            // rows back on each row, which a reference copied down is not.
+            Some(RowSel::CursorBy { .. }) => return Err(PARTITION),
             // A sheet's own order is not a thing a cell formula can say.
             Some(RowSel::Order { .. }) => return Err(SORTED),
         })

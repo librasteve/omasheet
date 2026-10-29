@@ -171,6 +171,25 @@ impl Parser {
         }
     }
 
+    /// A row slot's expression, with the `by Region, Year` after it if one
+    /// follows: nothing else can follow an expression in a slot, so the
+    /// word is not taken from a name anyone could have meant.
+    fn by(&mut self, e: Expr) -> R<Expr> {
+        if !matches!(self.peek(), Tok::Ident(w) if w == "by") {
+            return Ok(e);
+        }
+        self.bump();
+        let mut keys = vec![self.ident("a column name after `by`")?];
+        while self.eat(&Tok::Comma) {
+            keys.push(self.ident("a column name after `,`")?);
+        }
+        let span = e.span.to(self.prev_span());
+        Ok(Expr {
+            kind: ExprKind::By(Box::new(e), keys),
+            span,
+        })
+    }
+
     fn binary(lhs: Expr, op: BinOp, rhs: Expr) -> Expr {
         let span = lhs.span.to(rhs.span);
         Expr {
@@ -320,7 +339,8 @@ impl Parser {
                     let slot = if matches!(self.peek(), Tok::Semi | Tok::RBracket) {
                         None
                     } else {
-                        Some(self.expr()?)
+                        let e = self.expr()?;
+                        Some(self.by(e)?)
                     };
                     slots.push(slot);
                     if self.eat(&Tok::Semi) {
@@ -445,12 +465,18 @@ impl Parser {
                 if matches!(self.peek(), Tok::Semi)
                     || (cursor && !matches!(self.peek(), Tok::Comma))
                 {
+                    // `[*-1 by Region]`, a cursor and its partition alone.
+                    let first = match first {
+                        Some(e) if cursor => Some(self.by(e)?),
+                        other => other,
+                    };
                     let mut slots = vec![first];
                     while self.eat(&Tok::Semi) {
                         slots.push(if matches!(self.peek(), Tok::Semi | Tok::RBracket) {
                             None
                         } else {
-                            Some(self.expr()?)
+                            let e = self.expr()?;
+                            Some(self.by(e)?)
                         });
                     }
                     self.expect(Tok::RBracket, "`;` or `]`")?;

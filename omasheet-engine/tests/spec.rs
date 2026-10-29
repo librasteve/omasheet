@@ -1352,6 +1352,69 @@ fn join_says_what_it_needs() {
     assert!(with("join(Targets, Month) |> head(1)").contains("ends a sheet's formula"));
 }
 
+/// Sales of two regions taking turns, and two with no region at all.
+const REGIONS: &str = "\
+sheet Sales
+
+| Month | Region | Revenue | Before | After | Running |
+| ----- | ------ | ------- | ------ | ----- | ------- |
+| Jan   | UK     | 100     | *      | *     | *       |
+| Jan   | US     | 80      | *      | *     | *       |
+| Feb   | UK     | 120     | *      | *     | *       |
+| Feb   |        | 5       | *      | *     | *       |
+| Mar   | US     | 90      | *      | *     | *       |
+| Mar   | UK     | 150     | *      | *     | *       |
+| Apr   |        | 7       | *      | *     | *       |
+
+Before  := [Revenue; *-1 by Region]
+After   := [Revenue; *+1 by Region]
+Running := Revenue + ([Running; *-1 by Region] // 0)
+";
+
+#[test]
+fn a_cursor_offset_counts_within_its_partition() {
+    // The row before and after among the rows of the same region, empty
+    // past either end of it, and a running total per region made of the
+    // one before. Rows with no region are a partition of their own, as an
+    // empty key is a group of its own.
+    assert_eq!(
+        ask(REGIONS, "Sales.Before"),
+        "[empty, empty, 100, empty, 80, 120, 5]"
+    );
+    assert_eq!(
+        ask(REGIONS, "Sales.After"),
+        "[120, 90, 150, 7, empty, empty, empty]"
+    );
+    assert_eq!(
+        ask(REGIONS, "Sales.Running"),
+        "[100, 80, 220, 5, 170, 370, 12]"
+    );
+    // Two keys at once: no region has two rows in a month, so nothing is
+    // before anything. And the sheet named before the index.
+    let two = REGIONS.replace(
+        "[Revenue; *-1 by Region]",
+        "[Revenue; *-1 by Region, Month]",
+    );
+    assert_eq!(ask(&two, "Sales.Before.count()"), "0");
+    let named = REGIONS.replace("[Revenue; *-1 by Region]", "Sales[Revenue; *-1 by Region]");
+    assert_eq!(
+        ask(&named, "Sales.Before"),
+        "[empty, empty, 100, empty, 80, 120, 5]"
+    );
+}
+
+#[test]
+fn by_says_what_it_needs() {
+    let with = |formula: &str| {
+        lint_errors(&REGIONS.replace("Before  := [Revenue; *-1 by Region]", formula)).join("\n")
+    };
+    assert!(with("Before := [Revenue; 0..* by Region].sum()").contains("counts a cursor offset"));
+    assert!(with("Before := [Revenue; *-1 by Country]").contains("has no column `Country`"));
+    assert!(
+        calc_err(Some(REGIONS), "Sales[Revenue; *-1 by Region]").contains("needs a current row")
+    );
+}
+
 // ---- file-format ----------------------------------------------------------
 
 #[test]

@@ -592,7 +592,10 @@ fn has_cursor(e: &Expr) -> bool {
         ExprKind::Lit(_) | ExprKind::Name(_) | ExprKind::Own | ExprKind::Back(_) => false,
         // A sequence makes its own cursor reads when it is lowered.
         ExprKind::Seq { .. } => false,
-        ExprKind::Unary(_, a) | ExprKind::Field(a, ..) | ExprKind::Named(_, _, a) => has_cursor(a),
+        ExprKind::Unary(_, a)
+        | ExprKind::Field(a, ..)
+        | ExprKind::Named(_, _, a)
+        | ExprKind::By(a, _) => has_cursor(a),
         ExprKind::Binary(_, a, b) => has_cursor(a) || has_cursor(b),
         ExprKind::If(a, b, c) => has_cursor(a) || has_cursor(b) || has_cursor(c),
         ExprKind::VecLit(items) | ExprKind::Call(_, _, items) => items.iter().any(has_cursor),
@@ -2140,6 +2143,15 @@ impl<'a> Checker<'a> {
         match &e.kind {
             ExprKind::Lit(l) => (Node::new(Ir::Lit(l.clone()), span), Ty::Scalar(lit_type(l))),
             ExprKind::Name(name) => self.lower_name(name, span, sc),
+            // A row slot reads `by` itself, and nowhere else has one.
+            ExprKind::By(..) => {
+                self.err_help(
+                    span,
+                    "`by` counts rows within a partition, and only in a row slot",
+                    "for example `Sales[Revenue; *-1 by Region]`",
+                );
+                fail
+            }
             // Only `agg` takes a named argument, and reads it itself.
             ExprKind::Named(..) => {
                 self.err_help(
@@ -3722,6 +3734,58 @@ impl<'a> Checker<'a> {
                 true
             }
         };
+
+        // `*-1 by Region`: the cursor's offset, counted among the rows of
+        // the cursor's partition. Moving within it is moving the same way
+        // in the sheet, so its kind is the cursor's; the keys are read at
+        // every row, to find the partition.
+        if let ExprKind::By(inner, keys) = &e.kind {
+            let Some(form) = cursor_form(inner) else {
+                self.err_help(
+                    inner.span,
+                    "`by` counts a cursor offset within a partition",
+                    "for example `[Revenue; *-1 by Region]`",
+                );
+                return RowPick::unknown(e.span);
+            };
+            let Some(t) = sheet else {
+                self.err(e.span, "`by` needs a sheet whose columns to partition by");
+                return RowPick::unknown(e.span);
+            };
+            if !need_row(self, e) {
+                return RowPick::all(nrows);
+            }
+            self.aligns_with(sheet, sc);
+            let mut cols = Vec::new();
+            for (name, at) in keys {
+                let Some(c) = self.find_col(t, name) else {
+                    let tt = SheetTy {
+                        sheet: t,
+                        cols: self.all_cols(t),
+                        rows: nrows,
+                        kind: DepKind::Whole,
+                    };
+                    self.no_column(&tt, name, *at);
+                    return RowPick::unknown(e.span);
+                };
+                self.col_refs.push((*at, t, c));
+                self.deps.push((DepNode::Col(t, c), DepKind::Whole));
+                cols.push(c);
+            }
+            let (off, known) = self.offset(form, sc);
+            let kind = match known {
+                Some(0) if own => DepKind::Same,
+                Some(n) if own && n < 0 => DepKind::Back,
+                Some(n) if own && n > 0 => DepKind::Fwd,
+                _ => DepKind::Whole,
+            };
+            return RowPick {
+                sel: RowSel::CursorBy { off, keys: cols },
+                one: true,
+                len: None,
+                kind,
+            };
+        }
 
         if let Some(form) = cursor_form(e) {
             if !need_row(self, e) {

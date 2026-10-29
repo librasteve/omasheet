@@ -101,6 +101,13 @@ pub enum RowSel {
     Pos(Box<Node>),
     /// One row relative to the current row; outside the sheet gives empty.
     Cursor(Offset),
+    /// One row relative to the current row among the rows whose `keys`
+    /// hold what the current row's do, in the sheet's order: `*-1 by
+    /// Region`. Outside that partition gives empty.
+    CursorBy {
+        off: Offset,
+        keys: Vec<usize>,
+    },
     Range {
         lo: Bound,
         hi: Bound,

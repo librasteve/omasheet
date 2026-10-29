@@ -62,6 +62,9 @@ pub enum ExprKind {
     Call(String, Span, Vec<Expr>),
     /// `Name := expr`, an argument given a name, as `agg` takes one.
     Named(String, Span, Box<Expr>),
+    /// `*-1 by Region`, a row slot counted within the rows whose key
+    /// columns hold what this row's do.
+    By(Box<Expr>, Vec<(String, Span)>),
 }
 
 /// Whether an expression reads a back-reference, which is what marks the
@@ -78,7 +81,7 @@ pub fn reads_back(e: &Expr) -> bool {
         ExprKind::Index(base, slots) => reads_back(base) || slots.iter().flatten().any(reads_back),
         ExprKind::Field(base, _, _) => reads_back(base),
         ExprKind::Call(_, _, args) => any(args),
-        ExprKind::Named(_, _, value) => reads_back(value),
+        ExprKind::Named(_, _, value) | ExprKind::By(value, _) => reads_back(value),
         ExprKind::Seq { seeds, rule, limit } => {
             any(seeds) || rule.as_deref().is_some_and(reads_back) || reads_back(limit)
         }
