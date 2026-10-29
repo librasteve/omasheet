@@ -11,7 +11,7 @@ size, and each with its *before* already measured and pinned by a test.
 
 ## 0. The measurement that decides one of them
 
-- [ ] 0.1 What a whole-column read costs as `Value::Vector` against the
+- [x] 0.1 What a whole-column read costs as `Value::Vector` against the
       Polars column it was built from: a `len()` and a `sum()` over a
       column at 10⁵ and 10⁶ rows, timed and with peak memory taken.
       `omasheet-engine/tests/timings.rs` is the harness and is already
@@ -21,6 +21,26 @@ size, and each with its *before* already measured and pinned by a test.
       conditional on and that its task 7.3 never took — 7.3 timed the
       phases of a rebuild, not the width of a value. D79 is open until
       this says something
+
+      Measured 2026-10-29, release, `a_column_as_values_against_the_column`
+      in `timings.rs`, which gains a counting allocator for the peak. At a
+      million rows, a value a cell against Polars on the column:
+
+      | | values | Polars |
+      |---|---:|---:|
+      | `Whole.len()` | 50 ms, 145 MiB | 1.4 ms, 10 MiB |
+      | `Whole.sum()` | 173 ms, 145 MiB | 7.4 ms, 23 MiB |
+      | `Real.len()` | 57 ms, 145 MiB | 1.2 ms, 10 MiB |
+      | `Real.sum()` | 56 ms, 145 MiB | 56 ms, 145 MiB — refused, D72 |
+
+      About 150 bytes a cell as values, against 8 a row in the column, and
+      linear: a tenth of each at 10⁵ rows. Over the NYC taxi year — one
+      Parquet of 41,169,720 rows, 869 MiB — the release CLI opens the file
+      in 18 ms (6 MiB), and a lowered `len`, `sum` or `max` comes back in
+      0.4 to 1.0 s at 0.7 to 1.3 GiB; a float `mean`, a column of values,
+      passed an 8 GiB cap in 3.7 s and was killed, and so was `print`,
+      every cell formatted as the snapshot formats it. **D79 has its
+      answer: a column as values is what a big file cannot afford**
 
 ## 1. The limit reaches the scan
 

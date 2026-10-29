@@ -19,9 +19,47 @@
 //! costs, which is what the table is printed to show.
 
 use omasheet_engine::eval::Attempt;
-use omasheet_engine::omx::compile;
-use omasheet_engine::{Engine, Lowering, Options};
+use omasheet_engine::omx::{compile, compile_expr};
+use omasheet_engine::{Engine, Lowering, Options, table};
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
+
+/// The allocator, counting: what is held now and the most held since the
+/// count was last reset, so that a calculation's peak memory is a figure
+/// beside its time (`hold-less-of-a-big-file` 0.1). Two atomic additions an
+/// allocation is all it costs the figures beside it.
+struct Counting;
+
+static HELD: AtomicUsize = AtomicUsize::new(0);
+static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let p = unsafe { System.alloc(layout) };
+        if !p.is_null() {
+            let now = HELD.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
+            PEAK.fetch_max(now, Ordering::Relaxed);
+        }
+        p
+    }
+
+    unsafe fn dealloc(&self, p: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(p, layout) };
+        HELD.fetch_sub(layout.size(), Ordering::Relaxed);
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: Counting = Counting;
+
+/// The most held above what was held when it was called, while `f` runs.
+fn peak_of<T>(f: impl FnOnce() -> T) -> (T, usize) {
+    let base = HELD.load(Ordering::Relaxed);
+    PEAK.store(base, Ordering::Relaxed);
+    let out = f();
+    (out, PEAK.load(Ordering::Relaxed).saturating_sub(base))
+}
 
 /// The row counts the threshold is looked for between.
 const ROWS: [usize; 4] = [10, 1_000, 100_000, 1_000_000];
@@ -425,5 +463,95 @@ fn where_the_time_goes() {
     println!(
         "\nmilliseconds; `budget.omx`'s Sales and its Summary, four aggregates \
          over a whole column and two over a selection\n"
+    );
+}
+
+/// The row counts a whole-column read is measured at (0.1).
+const COLUMN_ROWS: [usize; 2] = [100_000, 1_000_000];
+
+/// A table of `rows` rows in a Parquet written in `dir`: a whole number and
+/// a float column, neither the same value twice running.
+fn column_table(dir: &std::path::Path, rows: usize) {
+    use polars::prelude::*;
+    let whole: Vec<i64> = (0..rows).map(|r| (r % 9973) as i64).collect();
+    let real: Vec<f64> = (0..rows).map(|r| (r % 9973) as f64 / 7.0).collect();
+    let mut frame = df!["Whole" => whole, "Real" => real].expect("a frame");
+    let mut file = std::fs::File::create(dir.join("column.parquet")).expect("a writable file");
+    ParquetWriter::new(&mut file)
+        .finish(&mut frame)
+        .expect("a written Parquet");
+}
+
+/// One expression over the table, timed and with its peak memory, from a
+/// fresh engine: the file's column is read inside it either way, so what
+/// the two lowerings differ by is what the answer was made from.
+fn column_cost(dir: &std::path::Path, expr: &str, lowering: Lowering) -> (Duration, usize, String) {
+    let text = "table T := dataframe[\"column.parquet\"]\n\nWhole : Integer\nReal  : Float\n";
+    let (mut program, mut diags) = compile(text, 0);
+    assert!(diags.is_empty(), "{diags:?}");
+    let tables = table::read(&mut program, dir, &mut diags);
+    assert!(diags.is_empty(), "{diags:?}");
+    let program = program;
+    let engine = Engine::with_tables(
+        &program,
+        Options {
+            base: Some(dir.to_path_buf()),
+            lowering,
+            ..Options::default()
+        },
+        tables,
+    );
+    engine.run();
+    let (node, _) = compile_expr(&program, expr, 1).expect("the expression checks");
+    let start = Instant::now();
+    let (answer, peak) = peak_of(|| engine.eval_top(&node));
+    let time = start.elapsed();
+    let answer = answer.map_or("<error>".into(), |v| engine.show(&v, true));
+    (time, peak, answer)
+}
+
+/// What a whole-column read costs as a `Value` a cell against the Polars
+/// column it was built from (`hold-less-of-a-big-file` 0.1, which D79 waits
+/// on): a `len()` and a `sum()` of a whole number and of a float column,
+/// with the engine reading a value a cell and with Polars taking the
+/// column. Time is the quickest of [`RUNS`]; memory is the peak above what
+/// the engine held before the expression.
+#[test]
+#[ignore = "a measurement: run in release with --ignored --nocapture"]
+fn a_column_as_values_against_the_column() {
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("column-width");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a writable scratch directory");
+    println!(
+        "\n{:>9}  {:<16}  {:<7}  {:>9}  {:>10}  answer",
+        "rows", "expression", "mode", "time", "peak MiB"
+    );
+    for rows in COLUMN_ROWS {
+        column_table(&dir, rows);
+        for expr in [
+            "T.Whole.len()",
+            "T.Whole.sum()",
+            "T.Real.len()",
+            "T.Real.sum()",
+        ] {
+            for lowering in [Lowering::Never, Lowering::Always] {
+                let runs: Vec<_> = (0..RUNS)
+                    .map(|_| column_cost(&dir, expr, lowering))
+                    .collect();
+                let time = runs.iter().map(|r| r.0).min().unwrap_or_default();
+                let peak = runs.iter().map(|r| r.1).min().unwrap_or_default();
+                println!(
+                    "{rows:>9}  {expr:<16}  {:<7}  {:>9}  {:>10.1}  {}",
+                    format!("{lowering:?}"),
+                    ms(time),
+                    peak as f64 / (1024.0 * 1024.0),
+                    runs[0].2,
+                );
+            }
+        }
+    }
+    println!(
+        "\nmilliseconds; a fresh engine each run, the file's column read inside \
+         the expression either way\n"
     );
 }
