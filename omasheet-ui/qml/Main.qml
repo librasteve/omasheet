@@ -1027,6 +1027,10 @@ ApplicationWindow {
     // Whole rows or columns are selected as a whole, with no cell of their
     // own to show at the top or to outline.
     readonly property bool hasCursor: selKind === "cells"
+    // One whole column selected that is calculated: it has one formula, as
+    // a cell of it has, and the box keeps showing it.
+    readonly property bool oneFormula: selKind === "column" && selLeft === selRight
+        && selLeft < sheet.columns.length && sheet.columns[selLeft].computed
     // Several cells that are not whole rows, columns or the sheet.
     readonly property bool isBlock: selKind === "cells" && !sheet.isConsts
         && (selTop !== selBottom || selLeft !== selRight)
@@ -1935,7 +1939,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    readonly property var column: win.hasCursor ? win.sheet.columns[win.curCol] : undefined
+                    readonly property var column: win.hasCursor || win.oneFormula ? win.sheet.columns[win.curCol] : undefined
                     // The selection, as a formula would write it. Several
                     // columns go by position: a range is not written with
                     // names.
@@ -2040,7 +2044,7 @@ ApplicationWindow {
                             selectByMouse: true
                             topPadding: 2
                             bottomPadding: 2
-                            readonly property var cell: win.hasCursor ? win.cellAt(win.curRow, win.curCol) : null
+                            readonly property var cell: win.hasCursor || win.oneFormula ? win.cellAt(win.curRow, win.curCol) : null
                             // A calculated sheet has one formula, as a calculated
                             // column does: the box shows it whichever cell the
                             // cursor is in, and an edit is of the formula.
