@@ -17,3 +17,21 @@ Profit         | 14700
 Best month     | Mar
 Average margin | 41.62%
 Books closed   | 2025-04-02T09:45
+
+sheet Goals
+
+Month | Target | Owner
+------|--------|------
+Jan   |   9500 | Ann
+Feb   |  11000 | Bob
+Feb   |  12500 | Cy
+Apr   |  14000 | Ann
+
+sheet Against
+
+Month | Revenue | Profit | Target | Owner
+------|---------|--------|--------|------
+Jan   |   10000 |   4000 |   9500 | Ann
+Feb   |   12000 |   5000 |  11000 | Bob
+Feb   |   12000 |   5000 |  12500 | Cy
+Mar   |   13200 |   5700 |        |

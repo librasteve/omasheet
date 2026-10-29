@@ -261,6 +261,12 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     ),
     doc(
         SHEET,
+        "join",
+        "sheet Both := Sales |> join(Targets, Month, left)",
+        "The rows of two sheets paired where their key columns are equal, a row for every pair. Inner unless the last word is left, which keeps a row that matches none. An empty key matches nothing; a name both sheets have takes _right on the right one. It ends a sheet's formula.",
+    ),
+    doc(
+        SHEET,
         "agg",
         "Sales |> group_by(Region) |> agg(Revenue.sum(), Orders := Item.len())",
         "A row for each group: the key columns, then an aggregate of each group's rows. Revenue.sum() makes the column Revenue_sum, and Name := names it. The groups are in the order of their keys.",

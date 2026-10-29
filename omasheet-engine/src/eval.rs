@@ -17,6 +17,7 @@ use crate::zone::{Zone, Zoned, utc_now};
 use crate::{Lowering, Options, ROW_THRESHOLD, lower};
 use omasheet_omx::ast::Lit;
 use omasheet_omx::ast::{BinOp, UnOp};
+use omasheet_omx::check::Join;
 use omasheet_omx::cycle;
 use omasheet_omx::date;
 use omasheet_omx::decimal::{Dec, SHOWN_PRECISION};
@@ -24,7 +25,10 @@ use omasheet_omx::funcs::MathFn;
 use omasheet_omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_omx::{Cell, ColKind, Column, Diagnostic, Group, Program, S, Span};
 use polars::prelude::Column as PlColumn;
-use polars::prelude::{AnyValue, DataFrame, DataType, Expr, IntoLazy, SortMultipleOptions, col};
+use polars::prelude::{
+    AnyValue, DataFrame, DataType, Expr, IntoLazy, JoinArgs, JoinType, MaintainOrderJoin,
+    SortMultipleOptions, col,
+};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -76,6 +80,8 @@ type GroupRows = (usize, Rc<Vec<usize>>);
 type Groups = Vec<Rc<Vec<usize>>>;
 /// The values of an aggregate of a grouped sheet Polars took, one a group.
 type AggValues = Rc<Vec<Value>>;
+/// The right sheet of a join and the row of it each row of the join reads.
+type Paired = (usize, Rc<Vec<Option<usize>>>);
 
 pub struct Engine<'p> {
     prog: &'p Program,
@@ -131,6 +137,10 @@ pub struct Engine<'p> {
     /// The aggregates of a grouped sheet Polars took, by sheet and column,
     /// a value a group.
     agg_held: RefCell<Vec<Vec<Option<AggValues>>>>,
+    /// The right sheet of each sheet computed by `join`, and the row of it
+    /// each row of the join pairs with: none, for a left row a left join
+    /// kept with nothing to pair it with.
+    joined: RefCell<Vec<Option<Paired>>>,
     /// The arguments of the file's own functions being evaluated, the
     /// innermost call last.
     args: RefCell<Vec<Vec<Value>>>,
@@ -161,6 +171,9 @@ fn no_zone(name: &str, span: Span) -> Diagnostic {
 /// The column a lowered selection counts rows in. No omasheet column can
 /// be called this, so it cannot be one of the sheet's own.
 const ROW_INDEX: &str = "#row";
+/// The rows of the two sheets of a join, in the frame Polars joins.
+const LEFT_ROW: &str = "#left";
+const RIGHT_ROW: &str = "#right";
 
 fn fail<T>(span: Span, message: impl Into<String>) -> R<T> {
     Err(Fail::Diag(Diagnostic::new(span, message)))
@@ -225,6 +238,7 @@ impl<'p> Engine<'p> {
             views: RefCell::new(vec![Slot::Pending; prog.sheets.len()]),
             groups: RefCell::new(vec![None; prog.sheets.len()]),
             grouping: RefCell::new(Vec::new()),
+            joined: RefCell::new(vec![None; prog.sheets.len()]),
             agg_held: RefCell::new(
                 prog.sheets
                     .iter()
@@ -739,6 +753,124 @@ impl<'p> Engine<'p> {
         Some((groups, held))
     }
 
+    /// The pairs of rows of a join, taken by Polars: the left sheet and the
+    /// right each whole and in its own order, and the pairs in the order the
+    /// engine's own join gives them, the left rows' and then the right's
+    /// (`maintain_order`, D85). An empty key matches nothing, which is
+    /// Polars' own default. `None` leaves the join to the engine.
+    fn run_join(
+        &self,
+        left: &crate::value::View,
+        right: &crate::value::View,
+        join: &Join,
+    ) -> Option<Vec<(usize, Option<usize>)>> {
+        if self.options.lowering == Lowering::Never {
+            return None;
+        }
+        let whole = |view: &crate::value::View| {
+            let n = self.prog.sheets[view.sheet].nrows;
+            view.rows.len() == n && view.rows.iter().enumerate().all(|(p, &r)| p == r)
+        };
+        let (ln, rn) = (left.rows.len(), right.rows.len());
+        if ln == 0
+            || rn == 0
+            || (self.options.lowering == Lowering::Auto && ln.max(rn) < ROW_THRESHOLD)
+            || !whole(left)
+            || !whole(right)
+        {
+            return None;
+        }
+        let refused = |engine: &Engine| {
+            engine
+                .filters
+                .borrow_mut()
+                .push((left.sheet, Attempt::Refused));
+            None
+        };
+        // Each side's keys, under the names its frame holds them by; a
+        // pair of keys of two dtypes is a comparison Polars does not make
+        // as the engine does.
+        let side = |sheet: usize, keys: &[usize]| -> Option<(Vec<PlColumn>, Vec<Expr>)> {
+            let mut columns: Vec<PlColumn> = Vec::new();
+            let mut on = Vec::new();
+            for &c in keys {
+                let column = self.pl_column(sheet, c)?;
+                on.push(col(column.name().clone()));
+                if !columns.iter().any(|held| held.name() == column.name()) {
+                    columns.push(column);
+                }
+            }
+            Some((columns, on))
+        };
+        let (Some((lcols, lon)), Some((rcols, ron))) = (
+            side(left.sheet, &join.left_keys),
+            side(right.sheet, &join.right_keys),
+        ) else {
+            return refused(self);
+        };
+        let dtype =
+            |sheet: usize, c: usize| self.pl_column(sheet, c).map(|col| col.dtype().clone());
+        for (&l, &r) in join.left_keys.iter().zip(join.right_keys.iter()) {
+            if dtype(left.sheet, l)? != dtype(right.sheet, r)? {
+                return refused(self);
+            }
+        }
+        // A decimal key of more digits than are compared is equal here and
+        // perhaps not there (D86), as `run_group` refuses one.
+        let limit = 10i128.pow(SHOWN_PRECISION) as u128;
+        for column in lcols.iter().chain(rcols.iter()) {
+            if matches!(column.dtype(), DataType::Decimal(..)) {
+                for i in 0..column.len() {
+                    if let Ok(AnyValue::Decimal(n, _)) = column.get(i)
+                        && n.unsigned_abs() >= limit
+                    {
+                        return refused(self);
+                    }
+                }
+            }
+        }
+        let (Ok(lframe), Ok(rframe)) = (DataFrame::new(lcols), DataFrame::new(rcols)) else {
+            return refused(self);
+        };
+        let how = if join.left {
+            JoinType::Left
+        } else {
+            JoinType::Inner
+        };
+        let args = JoinArgs {
+            maintain_order: MaintainOrderJoin::LeftRight,
+            ..JoinArgs::new(how)
+        };
+        let Ok(out) = lframe
+            .lazy()
+            .with_row_index(LEFT_ROW, None)
+            .join(
+                rframe.lazy().with_row_index(RIGHT_ROW, None),
+                lon,
+                ron,
+                args,
+            )
+            .select([col(LEFT_ROW), col(RIGHT_ROW)])
+            .collect()
+        else {
+            self.filters
+                .borrow_mut()
+                .push((left.sheet, Attempt::Failed));
+            return None;
+        };
+        let ls = out.column(LEFT_ROW).ok()?.u32().ok()?.clone();
+        let rs = out.column(RIGHT_ROW).ok()?.u32().ok()?.clone();
+        let pairs = ls
+            .into_iter()
+            .zip(&rs)
+            .map(|(l, r)| Some((left.rows[l? as usize], r.map(|r| right.rows[r as usize]))))
+            .collect::<Option<Vec<_>>>()?;
+        self.filters
+            .borrow_mut()
+            .push((left.sheet, Attempt::Lowered));
+        Some(pairs)
+    }
+
     /// An aggregate over one whole column of a sheet, taken by Polars.
     /// `None` leaves it to the engine, which reads the column a value at a
     /// time; nothing is reported either way, as nothing can fail.
@@ -1039,6 +1171,18 @@ impl<'p> Engine<'p> {
                 Ok(None) => Ok(Value::Null),
                 Err(why) => Err(why),
             },
+            // A column of the right sheet of a join, at the row of it this
+            // row pairs with, and empty where it pairs with none.
+            (None, ColKind::Joined(source)) => match self.view(t) {
+                Ok(_) => {
+                    let paired = self.joined.borrow()[t].clone();
+                    match paired.and_then(|(sheet, rows)| Some((sheet, (*rows.get(r)?)?))) {
+                        Some((sheet, row)) => self.cell(sheet, *source, row),
+                        None => Ok(Value::Null),
+                    }
+                }
+                Err(why) => Err(why),
+            },
             (None, ColKind::Frame) => {
                 let held = match self.tables.get(t, c) {
                     Some(Held::Column(_)) => Some(
@@ -1258,6 +1402,23 @@ impl<'p> Engine<'p> {
             },
             (value, _) => value,
         };
+        // A joined sheet's view is the left row of each pair, which is
+        // where its left columns read, and the right rows are kept for its
+        // right ones.
+        let value = match (value, &self.prog.sheets[t].join) {
+            (Value::Sheet(view), Some(join)) => match self.joined(&view, join) {
+                Ok((left, paired)) => {
+                    self.joined.borrow_mut()[t] = Some(paired);
+                    Value::Sheet(left)
+                }
+                Err(Fail::Diag(d)) => {
+                    self.diags.borrow_mut().push(d);
+                    Value::Error
+                }
+                Err(Fail::Poison) => Value::Error,
+            },
+            (value, _) => value,
+        };
         self.views.borrow_mut()[t] = Slot::Done(value.clone());
         match value {
             Value::Sheet(view) => Ok(view),
@@ -1339,6 +1500,85 @@ impl<'p> Engine<'p> {
             groups.push(Rc::new(current));
         }
         Ok((firsts(&groups), groups))
+    }
+
+    /// The pairs of rows of `left` and of the sheet `join` joins it to whose
+    /// keys are equal: each left row in its order, with each right row it
+    /// matches in theirs, and a left join keeping a left row that matches
+    /// none (D85). An empty key matches nothing, not even another empty
+    /// key. Given back as the view of the left rows and the right row of
+    /// each.
+    fn joined(
+        &self,
+        left: &crate::value::View,
+        join: &Join,
+    ) -> Result<(crate::value::View, Paired), Fail> {
+        let span = join.right.span;
+        let right = match self.eval(&join.right, &mut Vec::new())? {
+            Value::Sheet(view) => view,
+            _ => return Err(Fail::Poison),
+        };
+        let pairs = match self.run_join(left, &right, join) {
+            Some(pairs) => pairs,
+            None => {
+                let keys_of = |sheet: usize, keys: &[usize], r: usize| -> R<Vec<Value>> {
+                    keys.iter().map(|&c| self.cell(sheet, c, r)).collect()
+                };
+                let mut rkeys = Vec::with_capacity(right.rows.len());
+                for &r in right.rows.iter() {
+                    rkeys.push(keys_of(right.sheet, &join.right_keys, r)?);
+                }
+                let order = ordered(&rkeys, false, span)?;
+                let mut why = None;
+                let mut against = |a: &[Value], b: &[Value]| {
+                    for (x, y) in a.iter().zip(b.iter()) {
+                        match sort_order(x, y) {
+                            Ok(Ordering::Equal) => {}
+                            Ok(o) => return o,
+                            Err(m) => {
+                                why.get_or_insert(m);
+                                return Ordering::Equal;
+                            }
+                        }
+                    }
+                    Ordering::Equal
+                };
+                let mut pairs = Vec::new();
+                for &l in left.rows.iter() {
+                    let key = keys_of(left.sheet, &join.left_keys, l)?;
+                    let before = pairs.len();
+                    if !key.iter().any(|v| matches!(v, Value::Null)) {
+                        // The right rows with this key are together in the
+                        // sorted order, and in their own order among
+                        // themselves, the sort being stable.
+                        let first =
+                            order.partition_point(|&p| against(&rkeys[p], &key) == Ordering::Less);
+                        for &p in &order[first..] {
+                            if against(&rkeys[p], &key) != Ordering::Equal {
+                                break;
+                            }
+                            pairs.push((l, Some(right.rows[p])));
+                        }
+                    }
+                    if join.left && pairs.len() == before {
+                        pairs.push((l, None));
+                    }
+                }
+                if let Some(m) = why {
+                    return fail(span, m);
+                }
+                pairs
+            }
+        };
+        let (rows, paired): (Vec<usize>, Vec<Option<usize>>) = pairs.into_iter().unzip();
+        Ok((
+            crate::value::View {
+                sheet: left.sheet,
+                rows: Rc::new(rows),
+                cols: left.cols.clone(),
+            },
+            (right.sheet, Rc::new(paired)),
+        ))
     }
 
     /// The sheet grouped and the rows of group `r` of grouped sheet `t`, or

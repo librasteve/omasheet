@@ -34,10 +34,17 @@ Verification on this machine needs `-j 2` on anything workspace-wide, or
       is asked of the language, and `join(Other, Key, left)` is what D85
       now has to spell. A column named `asc` or `desc` is read as a key,
       the column being looked for before the word
-- [ ] 0.2 D85: the join surface, and what a multiple match does — Q9 and Q10
+- [x] 0.2 D85: the join surface, and what a multiple match does — Q9 and Q10
       of the superseded change, inherited unanswered. A left join on a key
       that matches twice either yields two rows, which changes a sheet's
       length under the reader, or is a diagnostic
+
+      **Polars' defaults** (owner, 2026-10-29): a row for every match, an
+      empty key matching nothing, and no promise about the order of the
+      rows. Both paths give one order nonetheless, the left sheet's and
+      then the right's within a key, Polars asked for it with
+      `maintain_order` `left_right`, so the goldens and the differentials
+      stay byte for byte
 - [x] 0.3 D83: how an aggregate's column is named. Derived from the
       expression, `Revenue.sum()` → `Revenue_sum`, or a name required per
       aggregate
@@ -237,18 +244,53 @@ stage already gives a sheet and a file has nowhere to put one (D90).
 
 ## 4. `join` (`omx-expressions`, `evaluation`)
 
-- [ ] 4.1 Inner and left join on a key column, once 0.2 is settled
-- [ ] 4.2 What a multiple match does, as 0.2 decided, and a test that pins it
+- [x] 4.1 Inner and left join on a key column, once 0.2 is settled
+
+      `sheet Both := Sales |> join(Targets, Month, left)`: D84's bare word
+      in the last place, inner when it is left out, and one key or more,
+      each a name both sheets have. Like a group it is the whole of a
+      sheet's formula (D96), its rows being pairs rather than a selection.
+      The left sheet's columns are `ColKind::View` over the left row of
+      each pair, and the right's are `ColKind::Joined`, read at the right
+      row, empty where a left join kept a row with none. The engine sorts
+      the right keys once and finds each left key's run in them, so the
+      pairs come in the left sheet's order and then the right's
+- [x] 4.2 What a multiple match does, as 0.2 decided, and a test that pins it
       either way
-- [ ] 4.3 A column name present in both sheets: renamed, qualified or a
+
+      A row for every match: `join_pairs_the_rows_whose_keys_are_equal`
+      pins Feb's two, and an empty key on each side matching neither
+- [x] 4.3 A column name present in both sheets: renamed, qualified or a
       diagnostic. Whatever is chosen, `select` after a join has to be able to
       name every column the join produced
-- [ ] 4.4 A key that is missing on one side, which is what a left join is for
-- [ ] 4.5 `join` in `FUNCTIONS` (D60)
-- [ ] 4.6 An example and its `.expected`: two sheets of the budget corpus
+
+      Renamed as Polars renames it: the right one takes `_right`, a key
+      appearing once, as the left's. A `_right` name the left has already
+      is a diagnostic saying to select before the join
+- [x] 4.4 A key that is missing on one side, which is what a left join is for
+
+      `a_left_join_keeps_a_row_that_matches_nothing`: Mar has no target and
+      the empty key matches nothing, and both are kept with the right's
+      columns empty
+- [x] 4.5 `join` in `FUNCTIONS` (D60)
+- [x] 4.6 An example and its `.expected`: two sheets of the budget corpus
       joined on month, a join between sheets of a file rather than between
       tables
-- [ ] 4.7 Lowered to Polars' join, rounding the key first (D86)
+
+      `budget.omx` gains `Goals` and `Against`, its sales joined to its
+      goals on month, left: Feb twice, Mar with no goal, Apr dropped.
+      Not `Targets`, which `report.md` defines beside it
+- [x] 4.7 Lowered to Polars' join, rounding the key first (D86)
+
+      `run_join`: both sheets whole and in their own order, the keys of the
+      same dtype on each side, `JoinArgs` with `maintain_order`
+      `LeftRight` for D85's one order and `nulls_equal` left off, and the
+      two row indices read back as the pairs. A decimal key of more
+      digits than are compared is refused, as `run_group` refuses one.
+      `a_join_pairs_alike_on_both_paths` compares every column both ways,
+      inner and left, over keys of every kind joined to themselves —
+      a `NaN`, both zeros, decimals of different scales — and over the
+      titanic joined to the names of its classes
 
 ## 5. Partitioned cursor offsets (`omx-expressions`)
 

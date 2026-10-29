@@ -62,6 +62,23 @@ pub struct Sheet {
     /// sheet [`Sheet::view`] gives: that sheet's rows are then grouped, one
     /// row a group, and the view keeps the first row of each (D81, D82).
     pub group: Option<Vec<usize>>,
+    /// What a sheet computed by `join` joins the sheet [`Sheet::view`]
+    /// gives to (D85).
+    pub join: Option<Join>,
+}
+
+/// A join of the sheet a view gives to another: its rows are the pairs of
+/// rows whose keys are equal, the left sheet's columns read at the left row
+/// and the right's at the right row.
+#[derive(Debug)]
+pub struct Join {
+    /// The sheet joined to, as an expression giving one.
+    pub right: Node,
+    /// The key columns, in the left sheet and in the right, in pairs.
+    pub left_keys: Vec<usize>,
+    pub right_keys: Vec<usize>,
+    /// A left join, which keeps a left row that matches nothing.
+    pub left: bool,
 }
 
 /// The file a `table`'s rows live in: a path, which may be a glob.
@@ -109,6 +126,9 @@ pub enum ColKind {
     /// An aggregate of a sheet computed by `group_by` and `agg`, evaluated
     /// once a group, its column names reading the rows of that group.
     Agg(Node),
+    /// A column of the right sheet of a sheet computed by `join`, read at
+    /// the right row each row of the join pairs: its place there.
+    Joined(usize),
 }
 
 #[derive(Debug)]
@@ -295,6 +315,7 @@ struct Checker<'a> {
     view_state: Vec<St<Ty>>,
     view_out: Vec<Option<Node>>,
     group_out: Vec<Option<Vec<usize>>>,
+    join_out: Vec<Option<Join>>,
     view_deps: Vec<Vec<(DepNode, DepKind)>>,
     const_state: Vec<St<Ty>>,
     const_out: Vec<Option<Node>>,
@@ -640,6 +661,7 @@ impl<'a> Checker<'a> {
             view_state: Vec::new(),
             view_out: Vec::new(),
             group_out: Vec::new(),
+            join_out: Vec::new(),
             view_deps: Vec::new(),
             const_state: Vec::new(),
             const_out: Vec::new(),
@@ -660,6 +682,7 @@ impl<'a> Checker<'a> {
             ck.view_state.push(St::Done(Ty::Any));
             ck.view_out.push(None);
             ck.group_out.push(None);
+            ck.join_out.push(None);
             ck.view_deps.push(Vec::new());
             ck.sheets.push(SheetInfo {
                 name: t.name.clone(),
@@ -856,6 +879,7 @@ impl<'a> Checker<'a> {
             });
             ck.view_out.push(None);
             ck.group_out.push(None);
+            ck.join_out.push(None);
             ck.view_deps.push(Vec::new());
             ck.sheets.push(SheetInfo {
                 name: t.name.clone(),
@@ -1022,10 +1046,18 @@ impl<'a> Checker<'a> {
             self.view_state[t] = St::Done(Ty::Any);
             return;
         };
-        if let Some(e) = &formula.expr
-            && let Some((base, keys, aggs)) = grouped(e)
-        {
-            let (node, ty) = self.lower_group(t, base, keys, aggs, e.span);
+        let made = formula.expr.as_ref().and_then(|e| {
+            if let Some((base, keys, aggs)) = grouped(e) {
+                Some(self.lower_group(t, base, keys, aggs, e.span))
+            } else if let ExprKind::Call(name, _, args) = &e.kind
+                && name == "join"
+            {
+                Some(self.lower_join(t, args, e.span))
+            } else {
+                None
+            }
+        });
+        if let Some((node, ty)) = made {
             self.view_out[t] = Some(node);
             self.view_state[t] = St::Done(ty);
             self.view_deps[t] = mem::replace(&mut self.deps, saved.1);
@@ -1245,6 +1277,145 @@ impl<'a> Checker<'a> {
         }
         self.group_out[t] = Some(key_cols);
         (node, Ty::Sheet(shape))
+    }
+
+    /// Lower a sheet computed by `Left |> join(Right, Keys, left)`: the left
+    /// sheet's columns, borrowed as a view's are, then the right sheet's
+    /// other than its keys, a name the left already has taking `_right`
+    /// after it as Polars' does. The node given back is the left sheet's,
+    /// and what it is joined to is kept for the engine (D85).
+    fn lower_join(&mut self, t: usize, args: &[Expr], span: Span) -> (Node, Ty) {
+        let usage = "sheet Both := Sales |> join(Targets, Month, left)";
+        let fail = |ck: &mut Checker, at: Span, why: &str| {
+            ck.err_help(at, why.to_string(), format!("usage: `{usage}`"));
+            (Node::error(span), Ty::Any)
+        };
+        if args.len() < 3 {
+            return fail(
+                self,
+                span,
+                "`join` needs a sheet, a sheet to join it to and a key column",
+            );
+        }
+        let mut scope = Scope {
+            frames: Vec::new(),
+            own: false,
+            col: None,
+            group: None,
+        };
+        let (node, lty) = self.lower(&args[0], &mut scope);
+        let (right, rty) = self.lower(&args[1], &mut scope);
+        let (lshape, rshape) = match (lty, rty) {
+            (Ty::Sheet(l), Ty::Sheet(r)) => (l, r),
+            (Ty::Any, _) | (_, Ty::Any) => return (Node::error(span), Ty::Any),
+            (Ty::Sheet(_), other) => {
+                if !matches!(right.kind, Ir::Error) {
+                    self.err(
+                        args[1].span,
+                        format!(
+                            "`join` joins a sheet to a sheet, but this is {}",
+                            other.describe()
+                        ),
+                    );
+                }
+                return (Node::error(span), Ty::Any);
+            }
+            (other, _) => {
+                if !matches!(node.kind, Ir::Error) {
+                    self.err(
+                        args[0].span,
+                        format!("`join` needs a sheet, but this is {}", other.describe()),
+                    );
+                }
+                return (Node::error(span), Ty::Any);
+            }
+        };
+        // The kind of join, a bare word in the last place (D84): a key
+        // column of that name is looked for first.
+        let mut keys = &args[2..];
+        let mut left = false;
+        if let Some(last) = keys.last()
+            && let ExprKind::Name(word) = &last.kind
+            && matches!(word.as_str(), "inner" | "left")
+            && (self.col_in(&lshape, word).is_none() || self.col_in(&rshape, word).is_none())
+        {
+            left = word == "left";
+            keys = &keys[..keys.len() - 1];
+        }
+        if keys.is_empty() {
+            return fail(self, span, "`join` needs a key column to join the rows on");
+        }
+        let (mut left_keys, mut right_keys) = (Vec::new(), Vec::new());
+        for k in keys {
+            let ExprKind::Name(name) = &k.kind else {
+                self.err(k.span, "`join` takes the names of key columns");
+                return (Node::error(span), Ty::Any);
+            };
+            let Some(lc) = self.col_in(&lshape, name) else {
+                self.no_column(&lshape, name, k.span);
+                return (Node::error(span), Ty::Any);
+            };
+            let Some(rc) = self.col_in(&rshape, name) else {
+                self.no_column(&rshape, name, k.span);
+                return (Node::error(span), Ty::Any);
+            };
+            self.col_refs.push((k.span, lshape.sheet, lc));
+            self.col_refs.push((k.span, rshape.sheet, rc));
+            self.deps
+                .push((DepNode::Col(lshape.sheet, lc), DepKind::Whole));
+            self.deps
+                .push((DepNode::Col(rshape.sheet, rc), DepKind::Whole));
+            left_keys.push(lc);
+            right_keys.push(rc);
+        }
+        let mut columns: Vec<(String, Span, S, ColKind)> = Vec::new();
+        for &c in lshape.cols.iter() {
+            let from = &self.sheets[lshape.sheet].cols[c];
+            let (name, from_span) = (from.name.clone(), from.span);
+            let ty = self.col_type(lshape.sheet, c);
+            columns.push((name, from_span, ty, ColKind::View(c)));
+        }
+        for &c in rshape.cols.iter() {
+            if right_keys.contains(&c) {
+                continue;
+            }
+            let from = &self.sheets[rshape.sheet].cols[c];
+            let (mut name, from_span) = (from.name.clone(), from.span);
+            if columns.iter().any(|col| col.0 == name) {
+                name = format!("{name}_right");
+                if columns.iter().any(|col| col.0 == name) {
+                    self.err_help(
+                        args[1].span,
+                        format!("`join` makes two columns named `{name}`"),
+                        "select the columns to keep before the join, so that no two are named alike",
+                    );
+                    return (Node::error(span), Ty::Any);
+                }
+            }
+            self.deps
+                .push((DepNode::Col(rshape.sheet, c), DepKind::Whole));
+            let ty = self.col_type(rshape.sheet, c);
+            columns.push((name, from_span, ty, ColKind::Joined(c)));
+        }
+        for (name, span, ty, kind) in columns {
+            self.sheets[t].cols.push(ColInfo {
+                name,
+                span,
+                declared: None,
+                src: ColSrc::Done,
+                from: None,
+            });
+            self.col_state[t].push(St::Done(ty));
+            self.col_out[t].push(Some(kind));
+            self.col_deps[t].push(Vec::new());
+        }
+        self.join_out[t] = Some(Join {
+            right,
+            left_keys,
+            right_keys,
+            left,
+        });
+        (node, Ty::Sheet(lshape))
     }
 
     fn ensure_col(&mut self, t: usize, c: usize) {
@@ -3269,13 +3440,17 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            // `group_by` and `agg` make a sheet of new rows, so they are
-            // the whole of a sheet's formula and are read there.
-            "group_by" | "agg" => {
+            // `group_by`, `agg` and `join` make a sheet of new rows, so
+            // they are the whole of a sheet's formula and are read there.
+            "group_by" | "agg" | "join" => {
+                let example = match name {
+                    "join" => "sheet Both := Sales |> join(Targets, Month)",
+                    _ => "sheet ByRegion := Sales |> group_by(Region) |> agg(Revenue.sum())",
+                };
                 self.err_help(
                     span,
                     format!("`{name}` makes a sheet of its own, so it ends a sheet's formula"),
-                    "write it as `sheet ByRegion := Sales |> group_by(Region) |> agg(Revenue.sum())`, and use `ByRegion` from there",
+                    format!("write it as `{example}`, and use the sheet by its name from there"),
                 );
                 fail
             }
@@ -4003,6 +4178,7 @@ impl<'a> Checker<'a> {
             }
             let view = self.view_out[t].take();
             let group = self.group_out[t].take();
+            let join = self.join_out[t].take();
             let view_of = match &self.view_state[t] {
                 St::Done(Ty::Sheet(shape)) | St::Busy(Ty::Sheet(shape)) => Some(shape.clone()),
                 _ => None,
@@ -4016,6 +4192,7 @@ impl<'a> Checker<'a> {
                 view,
                 view_of,
                 group,
+                join,
             });
         }
         let mut consts = Vec::new();

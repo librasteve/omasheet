@@ -50,9 +50,9 @@ pub struct SheetSnap {
     /// head(3)`, for the tab to mark it and say what it is. `None` for a
     /// sheet whose rows are its own or a file's (D90).
     pub view: Option<String>,
-    /// The sheet is made by `group_by` and `agg`: a row a group, and a
-    /// formula a sort cannot be added to the end of, so it is sorted in
-    /// the grid alone, as a table is.
+    /// The sheet is made by `group_by` and `agg`, or by `join`: rows of
+    /// its own, and a formula a sort cannot be added to the end of, so it
+    /// is sorted in the grid alone, as a table is.
     pub grouped: bool,
 }
 
@@ -2776,7 +2776,9 @@ impl Document {
             // file still has as many rows as the order numbers.
             let rows = match self.orders.get(&sheet.name) {
                 Some(order)
-                    if (sheet.source.is_some() || sheet.group.is_some())
+                    if (sheet.source.is_some()
+                        || sheet.group.is_some()
+                        || sheet.join.is_some())
                         && order.len() == rows.len() =>
                 {
                     let mut slots: Vec<Option<Vec<CellSnap>>> =
@@ -2799,7 +2801,7 @@ impl Document {
                         .trim()
                         .to_string()
                 }),
-                grouped: sheet.group.is_some(),
+                grouped: sheet.group.is_some() || sheet.join.is_some(),
             });
         }
         for (i, c) in program.consts.iter().enumerate() {

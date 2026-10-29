@@ -1280,6 +1280,78 @@ fn agg_says_what_it_needs() {
     assert!(calc_err(Some(ORDERS), "sum(X := 1)").contains("only inside `agg`"));
 }
 
+/// Targets for some of the months of `ORDERS`-like sales: one month twice,
+/// one month there are no sales for, and one with no month at all.
+const TARGETS: &str = "\
+sheet Sales
+
+| Month | Revenue |
+| ----- | ------- |
+| Jan   | 100     |
+| Feb   | 120     |
+| Mar   | 150     |
+|       | 90      |
+
+sheet Targets
+
+| Month | Revenue | Owner |
+| ----- | ------- | ----- |
+| Feb   | 110     | Bob   |
+| Jan   | 95      | Ann   |
+| Feb   | 130     | Cy    |
+| Apr   | 140     | Ann   |
+|       | 1       | Nil   |
+";
+
+#[test]
+fn join_pairs_the_rows_whose_keys_are_equal() {
+    let file = format!("{TARGETS}\nsheet Both := Sales |> join(Targets, Month)\n");
+    // A row for every match, Feb's two among them, in the left sheet's
+    // order and then the right's; a name both have takes `_right`; and an
+    // empty key matches nothing, not even another empty key.
+    assert_eq!(
+        sheet_of(&file, "Both"),
+        "sheet Both\n\n\
+Month | Revenue | Revenue_right | Owner
+------|---------|---------------|------
+Jan   |     100 |            95 | Ann
+Feb   |     120 |           110 | Bob
+Feb   |     120 |           130 | Cy"
+    );
+}
+
+#[test]
+fn a_left_join_keeps_a_row_that_matches_nothing() {
+    let file = format!("{TARGETS}\nsheet Both := Sales |> join(Targets, Month, left)\n");
+    assert_eq!(
+        sheet_of(&file, "Both"),
+        "sheet Both\n\n\
+Month | Revenue | Revenue_right | Owner
+------|---------|---------------|------
+Jan   |     100 |            95 | Ann
+Feb   |     120 |           110 | Bob
+Feb   |     120 |           130 | Cy
+Mar   |     150 |               |
+      |      90 |               |"
+    );
+    // A joined sheet is a sheet like any other, by its name.
+    assert_eq!(ask(&file, "Both.Revenue_right.sum()"), "335");
+    assert_eq!(ask(&file, "Both |> len()"), "5");
+}
+
+#[test]
+fn join_says_what_it_needs() {
+    let with =
+        |stage: &str| lint_errors(&format!("{TARGETS}\nsheet J := Sales |> {stage}\n")).join("\n");
+    assert!(
+        with("join(Targets)").contains("needs a sheet, a sheet to join it to and a key column")
+    );
+    assert!(with("join(Targets, left)").contains("needs a key column"));
+    assert!(with("join(Targets, Owner)").contains("sheet `Sales` has no column `Owner`"));
+    assert!(with("join(Targets.Owner, Month)").contains("joins a sheet to a sheet"));
+    assert!(with("join(Targets, Month) |> head(1)").contains("ends a sheet's formula"));
+}
+
 // ---- file-format ----------------------------------------------------------
 
 #[test]
@@ -2870,6 +2942,34 @@ fn every_kind_of_key_groups_alike_on_both_paths() {
             ran.aggregates
         );
     }
+}
+
+#[test]
+fn a_join_pairs_alike_on_both_paths() {
+    for kind in ["", ", left"] {
+        let file = format!("{TARGETS}\nsheet Both := Sales |> join(Targets, Month{kind})\n");
+        let cols = ["Month", "Revenue", "Revenue_right", "Owner"];
+        let ran = grouped_both_ways(&file, "Both", &cols, None);
+        assert_eq!(ran.filters, [Attempt::Lowered], "{kind}");
+    }
+    // Keys of every kind, each joined to itself, which is where a `NaN`, a
+    // zero of either sign and decimals of different scales meet their
+    // like; and two keys at once.
+    for key in ["Text", "Whole", "Real", "Exact", "Day", "Text, Whole"] {
+        let file = format!(
+            "{KEYS}\nsheet J := K |> select({key}, N) |> join(K |> select({key}, Name), {key}, left)\n"
+        );
+        let mut cols: Vec<&str> = key.split(", ").collect();
+        cols.extend(["N", "Name"]);
+        let ran = grouped_both_ways(&file, "J", &cols, None);
+        assert_eq!(ran.filters, [Attempt::Lowered], "{key}");
+    }
+    // The titanic, each passenger with the name of their class.
+    let file = format!(
+        "{TABLE}\nsheet Classes\n\n| Pclass | Class  |\n| ------ | ------ |\n| 1      | First  |\n| 2      | Second |\n| 3      | Third  |\n\nsheet Named := Passengers |> select(Name, Pclass) |> join(Classes, Pclass)\n"
+    );
+    let ran = grouped_both_ways(&file, "Named", &["Name", "Class"], Some("../examples"));
+    assert_eq!(ran.filters, [Attempt::Lowered]);
 }
 
 /// A sheet of every pairing of `true`, `false` and an empty cell.
