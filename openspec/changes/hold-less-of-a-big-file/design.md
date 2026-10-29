@@ -39,7 +39,7 @@ a variant.
 | | | |
 |---|---|---|
 | D78 | Open | Whether a row range reaches the scan by a sliced materialisation — `pl_column` taking the rows wanted — or by a selection that stays lazy until it is read. The first is the smaller change and keeps the column cache; the second is what a filter would want later |
-| D79 | Open | Whether `Value::Series` is worth its variant, which D78's sibling measurement decides. If it is not, a column read keeps building a vector and this change is two items rather than three |
+| D79 | Decided | `Value::Series` is worth its variant: a column read stays a Polars column until something needs it as values | Measured by 0.1, 2026-10-29: a column as values is about 150 bytes a cell against 8 a row in Polars — at a million rows 145 MiB and 50 to 173 ms against 10 to 23 MiB and 1 to 7 ms — and over the NYC taxi year's 41 million rows a float `mean` read as values passed an 8 GiB cap. Owner decision on that measurement. So the change is all three items |
 | D80 | Open | What the snapshot asks for: a row range given by the grid, or a snapshot that holds the frame and formats a cell as it is shown. The second is nearer D75's column-wise pass and further from what the app does today |
 
 ## Risks
