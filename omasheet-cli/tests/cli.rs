@@ -70,7 +70,14 @@ fn examples_match_their_expected_output() {
             continue;
         }
         let before = std::fs::read(&path).unwrap();
-        let out = omasheet(&["print", path.to_str().unwrap()]);
+        // A column's format shows its numbers as the locale writes them:
+        // the `C` locale writes them as the expected output does.
+        let out = Command::new(program())
+            .args(["print", path.to_str().unwrap()])
+            .current_dir(root())
+            .env("LC_ALL", "C")
+            .output()
+            .unwrap();
         assert!(out.status.success(), "{}: {}", path.display(), stderr(&out));
         let expected = std::fs::read_to_string(path.with_extension("expected")).unwrap();
         assert_eq!(stdout(&out), expected, "{}", path.display());

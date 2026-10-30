@@ -11,9 +11,11 @@
 //! that could not be calculated show as errors.
 
 use crate::Options;
+use crate::datefmt::Names;
 use crate::eval::Engine;
 use crate::value::{Value, arith, delocalised, format_exact, format_styled};
 use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
+use omasheet_omx::colfmt::{Format, closing};
 use omasheet_omx::date::{self, Style};
 use omasheet_omx::file::{FileAst, SchemaLine, SheetDecl, ident_len, parse_file, split_cells};
 use omasheet_omx::parser::parse_expr;
@@ -66,6 +68,9 @@ pub struct ColumnSnap {
     pub declared: bool,
     /// The `:=` expression of a computed column; `None` for a data column.
     pub formula: Option<String>,
+    /// How its values are shown, as its type line writes it: `'.2f`,
+    /// `%d %b %Y`.
+    pub format: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -137,6 +142,8 @@ pub struct Document {
     undo: Vec<String>,
     redo: Vec<String>,
     style: Style,
+    /// What the locale calls the days and months, for a column's format.
+    names: Names,
     /// Show date-times on the clocks of this machine.
     local: bool,
     /// The directory a `table`'s source is read relative to: the directory
@@ -1125,6 +1132,23 @@ fn aligned(text: &str) -> String {
     out
 }
 
+/// `text` with the format of type line `l` set to `format`, or taken off.
+fn reformatted(text: &str, l: &SchemaLine, format: Option<&Format>) -> String {
+    let end = l.span.end as usize;
+    let colon = end + text[end..].find(':').unwrap_or(0);
+    let rest = &text[colon + 1..];
+    let ty_at = colon + 1 + (rest.len() - rest.trim_start_matches([' ', '\t']).len());
+    let ty_end = ty_at + ident_len(&text[ty_at..]);
+    let old_end = match text[ty_end..].starts_with('[') {
+        true => closing(&text[ty_end + 1..]).map_or(ty_end, |k| ty_end + k + 2),
+        false => ty_end,
+    };
+    let mut out = text.to_string();
+    let new = format.map(|f| format!("[{f}]")).unwrap_or_default();
+    out.replace_range(ty_end..old_end, &new);
+    out
+}
+
 /// `text` with the type line of column `name` of a sheet set to `ty`, or
 /// taken out. Type lines whose colons are in line stay so.
 fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
@@ -1155,7 +1179,14 @@ fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
         return out;
     };
     if let Some(l) = existing {
-        let (_, ty_at, ty_end) = parts(l);
+        let (_, ty_at, mut ty_end) = parts(l);
+        // A format the new type does not take goes with the old type.
+        if l.format.as_ref().is_some_and(|f| !f.takes(ty))
+            && text[ty_end..].starts_with('[')
+            && let Some(close) = closing(&text[ty_end + 1..])
+        {
+            ty_end += close + 2;
+        }
         out.replace_range(ty_at..ty_end, &ty.to_string());
         return out;
     }
@@ -1208,23 +1239,30 @@ fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
 impl Document {
     /// A document that shows dates and times as the file writes them.
     pub fn from_text(text: &str) -> Document {
-        Document::new(text, Style::ISO, false)
+        Document::new(text, Style::ISO, Names::default(), false)
     }
 
     /// A document for a person to look at: dates and times are shown in
     /// `style`, and date-times on the clocks of this machine even when the
     /// file is in another time zone. See [`Document::set_style`].
     pub fn with_style(text: &str, style: Style) -> Document {
-        Document::new(text, style, true)
+        Document::with_locale(text, style, Names::default())
     }
 
-    fn new(text: &str, style: Style, local: bool) -> Document {
+    /// As [`Document::with_style`], with dates shown by a column's format
+    /// in the language of `names`.
+    pub fn with_locale(text: &str, style: Style, names: Names) -> Document {
+        Document::new(text, style, names, true)
+    }
+
+    fn new(text: &str, style: Style, names: Names, local: bool) -> Document {
         let mut doc = Document {
             text: text.to_string(),
             snapshot: Snapshot::default(),
             undo: Vec::new(),
             redo: Vec::new(),
             style,
+            names,
             local,
             base: None,
             orders: Default::default(),
@@ -1584,6 +1622,57 @@ impl Document {
             text = retyped(&text, decl, name, ty);
         }
         self.commit(text)
+    }
+
+    /// Show the values of columns `cols` of a sheet by `format`, `'.2f` or
+    /// `%d %b %Y`, or with no `format` as before. A column whose type is
+    /// taken from its cells is declared as it. Refused, changing nothing,
+    /// where a format does not read or a column's type does not take it,
+    /// with what to write instead.
+    pub fn set_column_format(
+        &mut self,
+        sheet: usize,
+        cols: &[usize],
+        format: Option<&str>,
+    ) -> Result<(), String> {
+        if let Some(why) = self.no_cells(sheet) {
+            return Err(why);
+        }
+        let snap = self.snapshot.sheets.get(sheet).ok_or_else(String::new)?;
+        let mut columns = Vec::new();
+        for column in cols.iter().filter_map(|&c| snap.columns.get(c)) {
+            let ty = S::from_name(&column.ty).unwrap_or(S::Any);
+            let Some(takes) = Format::conversions_of(ty) else {
+                return Err(format!("{} takes no format", column.name));
+            };
+            let found = match format {
+                Some(text) => match Format::parse(text, ty).ok().filter(|f| f.takes(ty)) {
+                    Some(f) => Some(f),
+                    None => {
+                        let takes = takes.replace('`', "");
+                        return Err(format!("Not a format: {text}\n{ty} takes {takes}"));
+                    }
+                },
+                None => None,
+            };
+            columns.push((column.name.clone(), ty, found));
+        }
+        let mut text = self.text.clone();
+        for (name, ty, format) in &columns {
+            let ast = parse_file(&text, 0, &mut Vec::new());
+            let decl = self.sheet_decl(&ast, sheet).ok_or_else(String::new)?;
+            // Declared already, it is as it was; otherwise it is now.
+            if !decl.schema.iter().any(|l| &l.name == name) {
+                text = retyped(&text, decl, name, Some(*ty));
+            }
+            let ast = parse_file(&text, 0, &mut Vec::new());
+            let decl = self.sheet_decl(&ast, sheet).ok_or_else(String::new)?;
+            let line = decl.schema.iter().find(|l| &l.name == name);
+            let line = line.ok_or_else(String::new)?;
+            text = reformatted(&text, line, format.as_ref());
+        }
+        self.commit(text);
+        Ok(())
     }
 
     /// Insert `count` empty rows before row `at`.
@@ -2619,6 +2708,7 @@ impl Document {
             &program,
             Options {
                 style: self.style,
+                names: self.names.clone(),
                 local: self.local,
                 ..Options::default()
             },
@@ -2696,6 +2786,7 @@ impl Document {
                     formula: computed.map(|c| {
                         self.text[c.expr_span.start as usize..c.expr_span.end as usize].to_string()
                     }),
+                    format: col.format.as_ref().map(|f| f.to_string()),
                 });
                 column_spans.push(computed.map(|ce| ce.expr_span));
                 column_errors.push(computed.and_then(|ce| within(ce.expr_span)));
@@ -2746,12 +2837,19 @@ impl Document {
                         }
                         (None, None) => (String::new(), None),
                     };
-                    let display = show(&value);
+                    // A column's format shows its numbers as it says, so
+                    // one it rounds is not one shown short.
+                    let format = sheet.cols[c].format.as_ref();
+                    let display = match format {
+                        Some(_) => engine.show_in(&value, false, format),
+                        None => show(&value),
+                    };
                     let full = exact(&value, false, &display);
                     row.push(CellSnap {
-                        shortened: full
-                            .as_ref()
-                            .is_some_and(|f| *f != delocalised(&display, &self.style)),
+                        shortened: format.is_none()
+                            && full
+                                .as_ref()
+                                .is_some_and(|f| *f != delocalised(&display, &self.style)),
                         exact: full,
                         display,
                         numeric: value.is_numeric(),
@@ -3251,6 +3349,124 @@ mod tests {
         assert!(!doc.set_column_types(0, &[2], None));
         assert!(doc.undo() && doc.undo());
         assert!(doc.text().contains("Profit : Decimal\n"));
+    }
+
+    #[test]
+    fn a_format_stays_with_a_type_that_takes_it() {
+        let src = SALES.replace("sheet Sales\n\n", "sheet Sales\n\nCost : Decimal['.2f]\n\n");
+        let mut doc = Document::from_text(&src);
+        assert!(doc.snapshot().problems.is_empty());
+        assert!(doc.set_column_types(0, &[2], Some("Float")));
+        assert!(doc.text().contains("Cost : Float['.2f]\n"));
+        // An `Integer` takes no `f`, so the format goes with the old type.
+        assert!(doc.set_column_types(0, &[2], Some("Integer")));
+        assert!(doc.text().contains("Cost : Integer\n"));
+        assert!(doc.snapshot().problems.is_empty());
+    }
+
+    #[test]
+    fn a_formatted_column_shows_its_format() {
+        let src = "sheet T\n\nA : Decimal['.2f]\nB : Integer[#x]\n\nA         | B   | C\n12345.678 | 255 | 12345.678\n";
+        let doc = Document::with_style(src, Style::ISO.numbers(',', '.'));
+        let snap = doc.snapshot();
+        assert!(snap.problems.is_empty());
+        let row = &snap.sheets[0].rows[0];
+        assert_eq!(row[0].display, "12.345,68");
+        assert!(!row[0].shortened);
+        // The editor starts from the cell as written, in full.
+        assert_eq!(row[0].source, "12345.678");
+        assert_eq!(row[1].display, "0xff");
+        // A column with no format is shown as before.
+        assert_eq!(row[2].display, "12.345,678");
+    }
+
+    #[test]
+    fn a_date_column_shows_its_format() {
+        let src = "sheet T\n\nDue : Date[%a %d %b %Y]\nAt : Time[%I:%M %p]\nWhen : Datetime[%d/%m %H:%M %%]\n\nDue        | At    | When\n2025-01-31 | 17:05 | 2025-01-31T09:30:15\n";
+        let doc = Document::from_text(src);
+        let snap = doc.snapshot();
+        assert!(snap.problems.is_empty(), "{:?}", snap.problems);
+        let row = &snap.sheets[0].rows[0];
+        let shown: Vec<_> = row.iter().map(|c| c.display.as_str()).collect();
+        assert_eq!(shown, ["Fri 31 Jan 2025", "05:05 PM", "31/01 09:30 %"]);
+        assert_eq!(row[0].source, "2025-01-31");
+        assert_eq!(
+            snap.sheets[0].columns[2].format.as_deref(),
+            Some("%d/%m %H:%M %%")
+        );
+    }
+
+    #[test]
+    fn a_date_format_shows_the_files_zone() {
+        let src = "zone Europe/London\n\nsheet T\n\nAt : Datetime[%H:%M %Z %z %s]\n\nAt\n2025-07-01T12:00\n2025-01-01T12:00\n";
+        let doc = Document::from_text(src);
+        assert!(doc.snapshot().problems.is_empty());
+        assert_eq!(
+            col(&doc, 0, 0),
+            ["12:00 BST +0100 1751367600", "12:00 GMT +0000 1735732800"]
+        );
+    }
+
+    #[test]
+    fn a_date_format_is_set_and_kept() {
+        let src = "sheet T\n\nDue\n2025-01-31\n";
+        let mut doc = Document::from_text(src);
+        assert_eq!(
+            doc.set_column_format(0, &[0], Some("%d %H")),
+            Err(
+                "Not a format: %d %H\nDate takes the conversions of a date, as %d %b %Y"
+                    .to_string()
+            )
+        );
+        assert!(doc.set_column_format(0, &[0], Some("%d %b %Y %]")).is_ok());
+        assert!(
+            doc.text().contains("Due : Date[%d %b %Y %]]\n"),
+            "{}",
+            doc.text()
+        );
+        assert_eq!(col(&doc, 0, 0), ["31 Jan 2025 ]"]);
+        // A `Datetime` takes what a `Date` does; a `Time` does not.
+        assert!(doc.set_column_types(0, &[0], Some("Datetime")));
+        assert!(
+            doc.text().contains("Due : Datetime[%d %b %Y %]]\n"),
+            "{}",
+            doc.text()
+        );
+        assert!(doc.set_column_types(0, &[0], Some("Time")));
+        assert!(doc.text().contains("Due : Time\n"), "{}", doc.text());
+    }
+
+    #[test]
+    fn a_column_format_is_set_and_cleared() {
+        let mut doc = Document::from_text(SALES);
+        // `f` is not a conversion of a whole number, and nothing is set.
+        assert_eq!(
+            doc.set_column_format(0, &[1], Some("'.2f")),
+            Err("Not a format: '.2f\nInteger takes d, i, x, X, o, b or B".to_string())
+        );
+        assert!(doc.set_column_format(0, &[1], Some("q")).is_err());
+        assert_eq!(
+            doc.set_column_format(0, &[0], Some("d")),
+            Err("Month takes no format".to_string())
+        );
+        assert_eq!(doc.text(), SALES);
+        // An undeclared column is declared as the type its cells give it.
+        assert!(doc.set_column_format(0, &[1, 2], Some("05d")).is_ok());
+        assert!(
+            doc.text()
+                .contains("sheet Sales\n\nRevenue : Integer[05d]\nCost    : Integer[05d]\n\n"),
+            "{}",
+            doc.text()
+        );
+        assert_eq!(col(&doc, 0, 1), ["00100", "00120"]);
+        let column = &doc.snapshot().sheets[0].columns[1];
+        assert_eq!(column.format.as_deref(), Some("05d"));
+        assert!(column.declared);
+        assert!(doc.set_column_format(0, &[1], Some("#x")).is_ok());
+        assert!(doc.text().contains("Revenue : Integer[#x]\n"));
+        assert!(doc.set_column_format(0, &[1], None).is_ok());
+        assert!(doc.text().contains("Revenue : Integer\n"));
+        assert_eq!(col(&doc, 0, 1), ["100", "120"]);
     }
 
     #[test]

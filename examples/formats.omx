@@ -1,0 +1,20 @@
+# Number formats: a column of numbers shown by a C `printf` conversion,
+# without its `%`, after its type in brackets. The value is unchanged; only
+# how it is shown. `'` would group the digits by the locale's separator,
+# which this example leaves out so that it prints the same everywhere.
+
+sheet Prices
+
+Price  : Decimal[.2f]
+Signed : Decimal[+.1f]
+Sci    : Float[.3e]
+Short  : Float[g]
+Count  : Integer[05d]
+Hex    : Integer[#x]
+Bits   : Integer[08b]
+
+| Item   | Price     | Signed | Sci        | Short    | Count | Hex | Bits |
+| ------ | --------- | ------ | ---------- | -------- | ----- | --- | ---- |
+| Tea    | 12345.678 | 2.25   | 123456.789 | 0.000012 | 42    | 255 | 5    |
+| Coffee | 3.5       | -0.04  | 0.5        | 1e21     | -7    | -1  | 255  |
+| Cake   | 19.995    | 0      | 1e-10      | 100      | 0     | 0   | 0    |

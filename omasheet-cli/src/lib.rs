@@ -55,6 +55,11 @@ impl Env {
     fn options(&self) -> Result<Options, ExitCode> {
         let mut options = Options {
             exact: self.exact,
+            // A column's format shows its numbers as the locale writes
+            // them, with or without `--locale`.
+            numbers: Some(locale::os_numbers()),
+            // And its dates with the names of days and months it has.
+            names: locale::os_names(),
             ..Options::default()
         };
         if self.locale {

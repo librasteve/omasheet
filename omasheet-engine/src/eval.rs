@@ -7,7 +7,9 @@
 //! calculation order so that long chains (a running balance) are filled in
 //! row by row rather than by deep recursion.
 
+use crate::datefmt::{Instant, Moment, format_date};
 use crate::dtype::{cell_of, column_of};
+use crate::numfmt::format_number;
 use crate::table::{Held, Tables};
 use crate::value::{
     RowRef, Value, View, arith, compare, equal, format_exact, format_styled, math, round_digits,
@@ -18,6 +20,7 @@ use crate::{Lowering, Options, ROW_THRESHOLD, lower};
 use omasheet_omx::ast::Lit;
 use omasheet_omx::ast::{BinOp, UnOp};
 use omasheet_omx::check::Join;
+use omasheet_omx::colfmt::Format;
 use omasheet_omx::cycle;
 use omasheet_omx::date;
 use omasheet_omx::decimal::{Dec, SHOWN_PRECISION};
@@ -2775,6 +2778,49 @@ impl<'p> Engine<'p> {
         }
     }
 
+    /// A cell's value as text, by its column's format where it has one and
+    /// it shows the value. Shown in full, as `exact` asks, it has none.
+    pub fn show_in(&self, v: &Value, quoted: bool, format: Option<&Format>) -> String {
+        let style = match self.options.numbers {
+            Some((point, sep)) => self.options.style.numbers(point, sep),
+            None => self.options.style,
+        };
+        let shown = match format.filter(|_| !self.options.exact) {
+            Some(Format::Number(f)) => format_number(v, f, &style),
+            Some(Format::Date(f)) => self
+                .moment(v)
+                .and_then(|m| format_date(&m, f, &self.options.names)),
+            None => None,
+        };
+        shown.unwrap_or_else(|| self.show(v, quoted))
+    }
+
+    /// A date or time as a date format shows it: a date-time on the clocks
+    /// it is shown on, with where that is. `None` for any other value.
+    fn moment(&self, v: &Value) -> Option<Moment> {
+        let instant = |wall: i64, utc: i64, zone: &Zone| {
+            Some(Instant {
+                utc: utc.div_euclid(date::MICROS),
+                offset: (wall - utc).div_euclid(date::MICROS),
+                abbreviation: zone.abbreviation(utc)?,
+            })
+        };
+        Some(match v {
+            Value::Date(d) => Moment::date(*d),
+            Value::Time(t) => Moment::time(*t),
+            Value::DateTime(t) => {
+                let (wall, zone) = match self.localised(v) {
+                    Some(Value::DateTime(local)) => (local, &self.local),
+                    _ => (*t, &self.home),
+                };
+                let at = zone.to_utc(wall).and_then(|utc| instant(wall, utc, zone));
+                Moment::datetime(wall, at)
+            }
+            Value::Zoned(z) => Moment::datetime(z.wall, instant(z.wall, z.utc, &z.zone)),
+            _ => return None,
+        })
+    }
+
     /// The name of the time zone the file's date-times are in.
     pub fn zone_name(&self) -> &str {
         self.home.name()
@@ -2796,7 +2842,7 @@ impl<'p> Engine<'p> {
                 // A row is a line, so a cell holding a newline is written
                 // as the escape the file holds it by: the grid keeps its
                 // shape and what is printed reads back as what it was.
-                let text = self.show(&value, false);
+                let text = self.show_in(&value, false, sheet.cols[c].format.as_ref());
                 line.push(if text.contains(['\n', '\r', '\t']) {
                     format!(
                         "\"{}\"",

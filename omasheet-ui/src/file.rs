@@ -7,6 +7,7 @@ use crate::{json, theme};
 use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QUrl};
+use omasheet_engine::datefmt::Names;
 use omasheet_engine::doc::{BLANK, entry_hint};
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::{Document, Options, locale};
@@ -209,6 +210,17 @@ pub mod qobject {
         /// no `ty` leave them to take their type from their cells.
         #[qinvokable]
         fn set_column_types(self: Pin<&mut File>, sheet: i32, first: i32, count: i32, ty: &QString);
+        /// Show the values of `count` columns from `first` by `format`,
+        /// `'.2f` or `%d %b %Y`, or with an empty one as before. Empty, or
+        /// why not.
+        #[qinvokable]
+        fn set_column_format(
+            self: Pin<&mut File>,
+            sheet: i32,
+            first: i32,
+            count: i32,
+            format: &QString,
+        ) -> QString;
         /// Move `count` rows from `first` so the first becomes row `to`.
         #[qinvokable]
         fn move_rows(self: Pin<&mut File>, sheet: i32, first: i32, count: i32, to: i32) -> QString;
@@ -392,7 +404,9 @@ fn style() -> Style {
 
 /// A document that shows dates and times the way the user's locale does.
 fn document(text: &str) -> Document {
-    Document::with_style(text, style())
+    static NAMES: OnceLock<Names> = OnceLock::new();
+    let names = NAMES.get_or_init(locale::os_names);
+    Document::with_locale(text, style(), names.clone())
 }
 
 fn index(n: i32) -> usize {
@@ -881,6 +895,21 @@ impl qobject::File {
                 Some(ty.as_str()).filter(|t| !t.is_empty()),
             )
         });
+    }
+
+    fn set_column_format(
+        self: Pin<&mut Self>,
+        sheet: i32,
+        first: i32,
+        count: i32,
+        format: &QString,
+    ) -> QString {
+        let format = format.to_string();
+        let format = format.trim();
+        let cols: Vec<usize> = (index(first)..index(first) + index(count)).collect();
+        self.try_edit(|doc| {
+            doc.set_column_format(index(sheet), &cols, Some(format).filter(|f| !f.is_empty()))
+        })
     }
 
     fn move_rows(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, to: i32) -> QString {

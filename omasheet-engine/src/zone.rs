@@ -72,6 +72,15 @@ impl Zone {
     }
 }
 
+impl Zone {
+    /// What the zone is called at the instant `utc`, in microseconds:
+    /// `BST` in summer in London, `GMT` in winter.
+    pub fn abbreviation(&self, utc: i64) -> Option<String> {
+        let at = Timestamp::from_second(utc.div_euclid(MICROS)).ok()?;
+        Some(self.tz.to_offset_info(at).abbreviation().to_string())
+    }
+}
+
 /// The instant now, as microseconds since the start of 1970-01-01 in UTC.
 pub fn utc_now() -> i64 {
     Timestamp::now().as_microsecond()

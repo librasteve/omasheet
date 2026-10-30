@@ -279,7 +279,80 @@ A fraction of two whole numbers is an exact `Decimal`: `1/7` and `22/7` are
 both read that way, and one may be written with a space, `2 3/4` for `11/4`.
 Writing `1/7` in a cell does not make the column a `Fraction`; declare it.
 
-See `examples/types.omx` for every type at work.
+An `Integer`, `Decimal` or `Float` column may say how its numbers are shown,
+after its type in brackets, as a C `printf` conversion without its `%`:
+
+```omx
+Price : Decimal['.2f]
+Id    : Integer[#x]
+```
+
+A column with a format shows each number by it rather than by the usual
+rules: `'.2f` shows `12345.678` as `12,345.68`, with as many digits as it
+takes and none cut. The value is unchanged, and the file and the cell
+editor still hold it in full. The point is your locale's, and `'` groups
+the whole part by your locale's separator. The app, `omasheet print` and a
+rendered document all show it so: in a document, `{{ Sales.Price[0] }}`
+and `{{ Sales.Price }}` are shown by the column's format, and
+`{{ Sales.Price.sum() }}`, being worked out from it, is not. See
+`examples/formats.omx`.
+
+| Part | Means |
+|---|---|
+| `-` | on the left of the width |
+| `+` | a sign on every number |
+| space | a space where there is no sign |
+| `0` | the width made up with zeros |
+| `'` | the whole part grouped in threes |
+| `#` | the point kept, and `0x`, `0` or `0b` before hex, octal or binary |
+| a number | the width, at least |
+| `.` and a number | places after the point; for `d`, `x`, `o`, `b` the fewest digits |
+
+An `Integer` takes `d` or `i` (decimal), `x` or `X` (hex), `o` (octal) and
+`b` or `B` (binary); a negative one in hex, octal or binary is shown as its
+64-bit two's complement, as C shows it. A `Decimal` or `Float` takes `f`
+(fixed places), `e` (e notation) and `g` (whichever is shorter), or the
+same in capitals. A format that does not read, or that the column's type
+does not take, is an error where it is written.
+
+A `Date`, `Time` or `Datetime` column may say how it is shown too, after
+its type in brackets, as a C `strftime` format, `%` and all:
+
+```omx
+Due   : Date[%a %-d %b %Y]
+Start : Time[%-I:%M %p]
+At    : Datetime[%d/%m/%Y %H:%M %Z]
+```
+
+`%a %-d %b %Y` shows `2025-01-31` as `Fri 31 Jan 2025`. As with numbers,
+the value is unchanged: the file holds it in ISO form and the cell editor
+in your locale's. Names of days and months, `%p`, and `%c`, `%x` and `%X`
+are your locale's.
+
+| Part | Means |
+|---|---|
+| `%Y` `%y` `%C` | the year, its last two digits, its century |
+| `%m` `%b` `%B` | the month: `01`, `Jan`, `January` |
+| `%d` `%e` `%j` | the day of the month, space-padded, of the year |
+| `%a` `%A` `%u` `%w` | the day of the week: `Fri`, `Friday`, `5` from Monday, `5` from Sunday |
+| `%G` `%g` `%V` `%U` `%W` | the ISO year and week, the week from Sunday, from Monday |
+| `%H` `%I` `%k` `%l` `%p` `%P` | the hour of 24 and of 12, space-padded, `AM`, `am` |
+| `%M` `%S` | the minute and second |
+| `%f` `%3f` `%6f` `%9f` | the fraction of a second: every digit held, or that many |
+| `%F` `%T` `%D` `%R` `%r` | `%Y-%m-%d`, `%H:%M:%S`, `%m/%d/%y`, `%H:%M`, `%I:%M:%S %p` |
+| `%c` `%x` `%X` | the date and time, the date, the time, as your locale writes them |
+| `%z` `%Z` `%s` | the offset, `+0100`, the zone, `BST`, and seconds since 1970 UTC |
+| `%n` `%t` `%%` `%]` | a newline, a tab, `%` and `]` |
+
+Between the `%` and its letter, `-` leaves a number unpadded (`%-d` is
+`5`), `_` pads it with spaces, `0` with zeros, `^` puts a name in capitals,
+and a number is the width, at least. A `Date` takes no time of day and a
+`Time` no day; `%c`, `%z`, `%Z` and `%s` are a `Datetime`'s alone, in the
+file's zone. A format that does not read, or that the column's type does
+not take, is an error where it is written.
+
+See `examples/types.omx` for every type at work, and `examples/formats.omx`
+and `examples/dateformats.omx` for formats.
 
 Dates and times are always written this way in the file. The app shows and
 accepts them in your locale's form.

@@ -285,8 +285,10 @@ ApplicationWindow {
         var total = 0;
         var cols = sheet.columns;
         for (var c = 0; c < cols.length; c++) {
-            // A formula column shows `:= ` before its type.
-            var chars = Math.max(cols[c].name.length, cols[c].type.length + (cols[c].computed ? 5 : 2));
+            // A formula column shows `:= ` before its type, and a column
+            // with a format at least `[]` after it.
+            var typeChars = cols[c].type.length + (cols[c].computed ? 5 : 2) + (cols[c].format ? 2 : 0);
+            var chars = Math.max(cols[c].name.length, typeChars);
             for (var r = 0; r < sheet.rows.length; r++)
                 chars = Math.max(chars, lineWidth(sheet.rows[r][c].d));
             var w = Math.round(Math.min(46, Math.max(7, chars + 2)) * metrics.averageCharacterWidth) + 14;
@@ -1518,6 +1520,25 @@ ApplicationWindow {
         return found;
     }
 
+    // A format a column of its type takes, to show what one looks like.
+    function formatExample(c) {
+        var type = sheet.columns[c] ? sheet.columns[c].type : "";
+        return type === "Date" ? "%d %b %Y"
+             : type === "Time" ? "%H:%M"
+             : type === "Datetime" ? "%d %b %Y %H:%M"
+             : "'.2f";
+    }
+
+    // Whether every selected column is of a type that takes a format.
+    function allFormattable() {
+        for (var c = selLeft; c <= selRight; c++) {
+            var column = sheet.columns[c];
+            if (!column || ["Integer", "Decimal", "Float", "Date", "Time", "Datetime"].indexOf(column.type) < 0)
+                return false;
+        }
+        return true;
+    }
+
     function anyDeclared() {
         for (var c = selLeft; c <= selRight; c++) {
             if (sheet.columns[c] && sheet.columns[c].declared)
@@ -2347,17 +2368,26 @@ ApplicationWindow {
                                         elide: Text.ElideRight
                                     }
                                     // The type: marked `:=` in a formula column, and
-                                    // plain rather than muted where it is declared.
+                                    // plain rather than muted where it is declared,
+                                    // with its format after it in brackets, or `[]`
+                                    // where the column is too narrow for it.
                                     Text {
                                         id: typeLine
                                         readonly property bool computed: !!headCell.column && headCell.column.computed && !win.sheet.isConsts
                                         readonly property bool declared: !!headCell.column && headCell.column.declared
                                         readonly property color typeColor: declared ? win.textColor : win.mutedColor
+                                        readonly property string format: !!headCell.column && headCell.column.format ? headCell.column.format : ""
+                                        TextMetrics {
+                                            id: fullType
+                                            font: typeLine.font
+                                            text: (typeLine.computed ? ":= " : "") + (headCell.column ? headCell.column.type : "") + "[" + typeLine.format + "]"
+                                        }
                                         width: parent.width - filterButton.width
                                         textFormat: Text.StyledText
                                         text: !headCell.column ? ""
                                             : (computed ? "<font color=\"" + win.accentColor + "\">:=</font> " : "")
-                                              + "<font color=\"" + typeColor + "\">" + headCell.column.type + "</font>"
+                                              + "<font color=\"" + typeColor + "\">" + headCell.column.type
+                                              + (!format ? "" : fullType.advanceWidth <= width ? "[" + format + "]" : "[]") + "</font>"
                                         color: win.mutedColor
                                         font.family: win.font.family
                                         font.features: win.font.features
@@ -3826,6 +3856,12 @@ ApplicationWindow {
             }
         }
         MenuEntry {
+            text: "Set format\u2026"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.sheet.columns.length > 0 && win.allFormattable()
+            onTriggered: promptDialog.ask("format")
+        }
+        MenuEntry {
             text: "Clear type"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.anyDeclared()
@@ -4258,6 +4294,7 @@ ApplicationWindow {
              : kind === "rows" ? "Insert rows in " + win.sheet.name
              : kind === "renameSheet" ? "Rename sheet " + win.sheet.name
              : kind === "rename" ? "Rename column " + (win.sheet.columns[column] ? win.sheet.columns[column].name : "")
+             : kind === "format" ? "Format of column " + (win.sheet.columns[column] ? win.sheet.columns[column].name : "")
              : kind === "column" ? "New column in " + win.sheet.name
              : kind === "computed" ? "New formula column in " + win.sheet.name
              : "New constant"
@@ -4292,7 +4329,8 @@ ApplicationWindow {
             column = win.curCol;
             nameField.text = what === "rename" && win.sheet.columns[column] ? win.sheet.columns[column].name
                 : what === "sheet" ? freeSheetName()
-                : what === "renameSheet" ? win.sheet.name : "";
+                : what === "renameSheet" ? win.sheet.name
+                : what === "format" && win.sheet.columns[column] ? win.sheet.columns[column].format : "";
             exprField.text = "";
             formulaBox.checked = what === "computed";
             countBox.text = "5";
@@ -4339,6 +4377,7 @@ ApplicationWindow {
                 // New rows go at the end, and new columns at `at` or the end.
                 win.keeping(win.sheet.rows.length, at < 0 ? win.sheet.columns.length : at, function() {
                     message = kind === "rename" ? file.renameColumn(win.tab, column, nameField.text)
+                        : kind === "format" ? file.setColumnFormat(win.tab, win.selLeft, win.selRight - win.selLeft + 1, nameField.text)
                         : kind === "renameSheet" ? file.renameSheet(win.tab, nameField.text)
                         : kind === "column" ? (at < 0 ? file.addColumn(win.tab, nameField.text)
                                                       : file.insertColumn(win.tab, at, nameField.text))
@@ -4398,7 +4437,7 @@ ApplicationWindow {
                 visible: promptDialog.kind !== "rows"
                 focus: true
                 Layout.fillWidth: true
-                placeholderText: "Name"
+                placeholderText: promptDialog.kind === "format" ? win.formatExample(promptDialog.column) : "Name"
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.dialogSize

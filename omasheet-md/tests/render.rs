@@ -291,3 +291,53 @@ fn text_with_no_markup_is_plain() {
     assert!(!is_plain("see https://example.com/[x](y)"));
     assert!(!is_plain("a \\* b"));
 }
+
+#[test]
+fn a_cell_of_a_formatted_column_is_shown_by_its_format() {
+    let text = "```omx\nsheet T\n\nTotal : Decimal['.2f]\nId    : Integer[#x]\n\nTotal     | Id\n12345.678 | 255\n3.5       | 16\n```\n\n\
+                {{ T.Total[0] }}; {{ T.Id }}; {{ T.Total.sum() }}\n";
+    let out = render(
+        "report.md",
+        text,
+        &load,
+        Format::Markdown,
+        Options {
+            numbers: Some(('.', ',')),
+            ..Options::default()
+        },
+    );
+    assert!(out.ok(), "{}", out.errors.join("\n"));
+    // A cell, and a whole column, by the format; a sum is not a cell.
+    assert!(
+        out.output.contains("12,345.68; 0xff, 0x10; 12349.178"),
+        "{}",
+        out.output
+    );
+    // A sheet placed in the document shows its columns by their formats.
+    assert!(out.output.contains("| 12,345.68 |"), "{}", out.output);
+}
+
+#[test]
+fn a_cell_of_a_date_column_is_shown_by_its_format() {
+    let text = "```omx\nsheet Invoices\n\nDue : Date[%e %B %Y]\n\nDue\n2025-01-05\n2025-02-14\n```\n\n\
+                {{ Invoices.Due[0] }}; {{ Invoices.Due }}\n";
+    let out = render(
+        "report.md",
+        text,
+        &load,
+        Format::Markdown,
+        Options::default(),
+    );
+    assert!(out.ok(), "{}", out.errors.join("\n"));
+    assert!(
+        out.output
+            .contains(" 5 January 2025;  5 January 2025, 14 February 2025"),
+        "{}",
+        out.output
+    );
+    assert!(
+        out.output.contains("| 14 February 2025 |"),
+        "{}",
+        out.output
+    );
+}

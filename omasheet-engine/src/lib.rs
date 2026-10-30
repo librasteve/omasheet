@@ -5,9 +5,11 @@
 //! [`view`], [`lint`] and [`eval`] are the three things the command line
 //! does; each returns what to print and the diagnostics, already rendered.
 
+pub mod datefmt;
 pub mod doc;
 pub mod eval;
 pub mod locale;
+pub mod numfmt;
 pub mod value;
 pub mod zone;
 
@@ -35,6 +37,13 @@ pub struct Options {
     pub base: Option<std::path::PathBuf>,
     /// How dates and times are shown. A file's text is always ISO.
     pub style: Style,
+    /// The point and the separator of digit groups of the locale, `('.',
+    /// ',')`, for a number shown by its column's format; `None` for those
+    /// of `style`.
+    pub numbers: Option<(char, char)>,
+    /// What the locale calls the days and months, for a date shown by its
+    /// column's format; the default is the `C` locale's.
+    pub names: datefmt::Names,
     /// What `now()` gives in place of the clock, as microseconds since the
     /// start of 1970-01-01 on the clocks of the file's time zone — the unit
     /// a date-time is held in.

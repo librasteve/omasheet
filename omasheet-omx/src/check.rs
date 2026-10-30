@@ -7,6 +7,7 @@
 //! orders the calculation. Nothing is evaluated here.
 
 use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
+use crate::colfmt::Format;
 use crate::convert::{lit_type, parse_literal};
 use crate::cycle::{self, Cyc};
 use crate::date;
@@ -100,6 +101,9 @@ pub struct Column {
     /// The name the file holds this column under, when a `from` clause
     /// says it is not [`Column::name`]. Only a table's column has one.
     pub from: Option<String>,
+    /// How the column's values are shown, where its type line says:
+    /// `Price : Decimal['.2f]`.
+    pub format: Option<Format>,
     /// Every reference the formula makes reaches the row it is evaluated
     /// for, so the whole column is one expression over the columns it
     /// reads rather than a calculation per row. The dependency analysis
@@ -4227,12 +4231,18 @@ impl<'a> Checker<'a> {
                 let kind = self.col_out[t][c]
                     .take()
                     .unwrap_or(ColKind::Computed(Node::error(col.span)));
+                let format = self
+                    .ast
+                    .and_then(|ast| ast.sheets.get(info.decl))
+                    .and_then(|decl| decl.schema.iter().find(|l| l.name == col.name))
+                    .and_then(|l| l.format.clone());
                 cols.push(Column {
                     name: col.name,
                     span: col.span,
                     ty,
                     declared: col.declared.is_some(),
                     from: col.from,
+                    format,
                     // A column of cells or of a file's own rows is not a
                     // formula, so there is nothing of it to lower, whatever
                     // the cells' own formulas read.

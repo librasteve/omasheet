@@ -74,6 +74,8 @@ pub fn snapshot(snap: &Snapshot) -> String {
             field(out, "type", &c.ty);
             out.push(',');
             field(out, "formula", c.formula.as_deref().unwrap_or(""));
+            out.push(',');
+            field(out, "format", c.format.as_deref().unwrap_or(""));
             out.push_str(&format!(
                 ",\"computed\":{},\"declared\":{}}}",
                 c.formula.is_some(),
@@ -193,7 +195,9 @@ mod tests {
             "{\"sheets\":[{\"name\":\"T\",\"view\":\"\",\"from\":\"\",\"columns\":[{\"name\":\"A\""
         ));
         assert!(json.contains("\"d\":\"say \\\"hi\\\"\""), "{json}");
-        assert!(json.contains("\"formula\":\"B * 2\",\"computed\":true,\"declared\":false"));
+        assert!(json.contains(
+            "\"formula\":\"B * 2\",\"format\":\"\",\"computed\":true,\"declared\":false"
+        ));
         assert!(json.contains("\"d\":\"4\""));
         assert!(json.ends_with("\"consts\":[],\"problems\":[]}"));
     }

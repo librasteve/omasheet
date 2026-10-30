@@ -23,6 +23,7 @@
 //! column of the header row is a formula column, with `*` for its cells.
 
 use crate::ast::Expr;
+use crate::colfmt::{Format, closing};
 use crate::diag::{Diagnostic, Span};
 use crate::parser::parse_expr;
 use crate::types::S;
@@ -102,6 +103,9 @@ pub struct SchemaLine {
     pub from: Option<String>,
     /// The quoted name, for a diagnostic about it; default without one.
     pub from_span: Span,
+    /// How the column's values are shown: `Price : Decimal['.2f]`,
+    /// `Due : Date[%d %b %Y]`.
+    pub format: Option<Format>,
 }
 
 #[derive(Debug)]
@@ -264,6 +268,50 @@ pub fn is_zone_name(s: &str) -> bool {
     s.starts_with(|c: char| c.is_ascii_alphabetic())
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || "/_-+".contains(c))
+}
+
+/// The format `text` of a column of type `ty`, at `span`, or `None` with a
+/// diagnostic where it does not read or the type does not take it.
+fn read_format(text: &str, ty: S, span: Span, diags: &mut Vec<Diagnostic>) -> Option<Format> {
+    let Some(takes) = Format::conversions_of(ty) else {
+        diags.push(
+            Diagnostic::new(span, format!("{ty} does not take a format"))
+                .with_help("only Integer, Decimal, Float, Date, Time and Datetime take a format"),
+        );
+        return None;
+    };
+    let f = match Format::parse(text, ty) {
+        Ok(f) => f,
+        Err(e) => {
+            let start = span.start as usize + e.at;
+            diags.push(
+                // One with nothing to point at points at the `]`.
+                Diagnostic::new(Span::new(span.src, start, start + e.len.max(1)), e.message)
+                    .with_help(Format::help(ty)),
+            );
+            return None;
+        }
+    };
+    if f.takes(ty) {
+        return Some(f);
+    }
+    // A date format points at the conversion its type does not take.
+    let span = match &f {
+        Format::Date(d) => match d.refused(ty) {
+            Some(c) => {
+                let (at, len) = d.span_of(c);
+                let start = span.start as usize + at;
+                Span::new(span.src, start, start + len)
+            }
+            None => span,
+        },
+        Format::Number(_) => span,
+    };
+    diags.push(
+        Diagnostic::new(span, format!("{ty} does not take the format `{f}`"))
+            .with_help(format!("{ty} takes {takes}")),
+    );
+    None
 }
 
 pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst {
@@ -546,8 +594,38 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             // the file holds the column under. A name Polars allows and
             // omasheet does not is reached this way and no other.
             let k = ident_len(body);
-            let (ty_text, after) = match after_keyword(body[k..].trim_start(), "from") {
+            // `Decimal['.2f]`: the type, and how its values are shown. The
+            // format is read once the type says which kind it is.
+            let mut format_text = None;
+            let mut after_ty = &body[k..];
+            if k > 0 && after_ty.starts_with('[') {
+                let open = ty_at + k + 1;
+                match closing(&after_ty[1..]) {
+                    Some(close) => {
+                        format_text = Some((&after_ty[1..close + 1], open));
+                        after_ty = &after_ty[close + 2..];
+                    }
+                    None => {
+                        diags.push(Diagnostic::new(
+                            Span::new(src, open - 1, ty_at + body.len()),
+                            "a format is closed with `]`".to_string(),
+                        ));
+                        after_ty = "";
+                    }
+                }
+            }
+            let (ty_text, after) = match after_keyword(after_ty.trim_start(), "from") {
                 Some(rest) if k > 0 => (&body[..k], Some(rest)),
+                _ if body.len() - after_ty.len() > k => {
+                    if !after_ty.trim().is_empty() {
+                        let at = ty_at + body.len() - after_ty.len();
+                        diags.push(Diagnostic::new(
+                            Span::new(src, at, at + after_ty.trim_end().len()),
+                            "a format is the last thing on its line, or before `from`".to_string(),
+                        ));
+                    }
+                    (&body[..k], None)
+                }
                 _ => (body, None),
             };
             let mut from = None;
@@ -569,13 +647,19 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                 }
             }
             match S::from_name(ty_text) {
-                Some(ty) => t.schema.push(SchemaLine {
-                    name: trimmed[..n].to_string(),
-                    span: Span::new(src, at, at + n),
-                    ty,
-                    from,
-                    from_span,
-                }),
+                Some(ty) => {
+                    let format = format_text.and_then(|(text, open)| {
+                        read_format(text, ty, Span::new(src, open, open + text.len()), diags)
+                    });
+                    t.schema.push(SchemaLine {
+                        name: trimmed[..n].to_string(),
+                        span: Span::new(src, at, at + n),
+                        ty,
+                        from,
+                        from_span,
+                        format,
+                    })
+                }
                 None => diags.push(
                     Diagnostic::new(
                         Span::new(src, ty_at, ty_at + ty_text.len()),
@@ -705,6 +789,83 @@ mod tests {
         let ast = parse_file("sheet T\n\nA | B\n| 2\n", 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         assert_eq!(texts(&ast.sheets[0]), [["", "2"]]);
+    }
+
+    #[test]
+    fn parses_a_number_format() {
+        let mut diags = Vec::new();
+        let src = "table T := dataframe[\"x.parquet\"]\n\nPrice : Decimal['.2f]\nCount : Integer[#x] from \"Count of\"\nAge : Float\n";
+        let ast = parse_file(src, 0, &mut diags);
+        assert!(diags.is_empty(), "{diags:?}");
+        let schema = &ast.sheets[0].schema;
+        assert_eq!(schema[0].ty, S::Decimal);
+        assert_eq!(
+            schema[0].format.as_ref().map(|f| f.to_string()).as_deref(),
+            Some("'.2f")
+        );
+        assert_eq!(
+            schema[1].format.as_ref().map(|f| f.to_string()).as_deref(),
+            Some("#x")
+        );
+        assert_eq!(schema[1].from.as_deref(), Some("Count of"));
+        assert!(schema[2].format.is_none());
+    }
+
+    #[test]
+    fn reports_a_format_that_does_not_read() {
+        let errors = |line: &str| {
+            let mut diags = Vec::new();
+            let src = format!("sheet T\n\n{line}\n\nA\n1\n");
+            parse_file(&src, 0, &mut diags);
+            diags
+                .iter()
+                .map(|d| {
+                    (
+                        src[d.span.start as usize..d.span.end as usize].to_string(),
+                        d.message.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let one = |line: &str| {
+            let e = errors(line);
+            assert_eq!(e.len(), 1, "{line}: {e:?}");
+            e[0].clone()
+        };
+        let (at, message) = one("A : Decimal[012.2q]");
+        assert_eq!(at, "q");
+        assert!(message.contains("`q`"), "{message}");
+        let (at, message) = one("A : Integer[.2f]");
+        assert_eq!(at, ".2f");
+        assert!(message.contains("Integer"), "{message}");
+        let (at, message) = one("A : String[5d]");
+        assert_eq!(at, "5d");
+        assert!(message.contains("String"), "{message}");
+        assert!(one("A : Integer[d").1.contains("`]`"));
+        assert!(one("A : Integer[d] x").1.contains("last thing"));
+        assert!(one("A : Integer[]").1.contains("empty"));
+        let (at, message) = one("A : Date[%d %q %Y]");
+        assert_eq!(at, "q");
+        assert!(message.contains("`q`"), "{message}");
+        let (at, message) = one("A : Date[%d %-H:%M]");
+        assert_eq!(at, "%-H");
+        assert!(message.contains("Date"), "{message}");
+        assert!(one("A : Time[%d]").1.contains("Time"));
+    }
+
+    #[test]
+    fn parses_a_date_format() {
+        let mut diags = Vec::new();
+        let src = "sheet T\n\nDue : Date[%d %b %Y]\nAt : Datetime[%]%H%] %z]\nT : Time[%I:%M %p]\n\nDue\n2025-01-31\n";
+        let ast = parse_file(src, 0, &mut diags);
+        assert!(diags.is_empty(), "{diags:?}");
+        let schema = &ast.sheets[0].schema;
+        let shown: Vec<_> = schema
+            .iter()
+            .map(|l| l.format.as_ref().unwrap().to_string())
+            .collect();
+        assert_eq!(shown, ["%d %b %Y", "%]%H%] %z", "%I:%M %p"]);
+        assert_eq!(schema[1].ty, S::DateTime);
     }
 
     #[test]

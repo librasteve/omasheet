@@ -101,8 +101,13 @@ deferred at the head of their own task lists, and the reason is D89 of
 `add-sheet-operations-polars`. Phase 4 adds deltas to Phases 2 and 3 (units
 on export, units through group/join), and Phase 5 builds on Phase 4.
 
+Next, as the owner settled it on 2026-10-30: `add-number-formats`, a C
+`printf` format on an `Integer`, `Decimal` or `Float` column,
+`Price : Decimal['.2f]`, shown in place of the adaptive display. It needs
+only Phase 1 and the app.
+
 Not yet in any change: matrices and the matrix product, REPL, LSP server, Neovim plugin, TUI viewer, charts,
-pivots, formatting syntax.
+pivots, formatting syntax beyond number formats.
 
 ## Tech Stack
 
