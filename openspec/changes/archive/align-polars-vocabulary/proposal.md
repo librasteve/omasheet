@@ -1,5 +1,7 @@
 # Proposal: Polars names for OMX
 
+> **Archived**: built, verified and shipped; every task is done.
+
 ## Why
 
 Polars is an unconditional dependency (D26) and `add-dataframe-interop` is

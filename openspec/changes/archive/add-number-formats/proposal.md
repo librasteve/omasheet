@@ -1,5 +1,7 @@
 # Proposal: Number formats
 
+> **Archived**: built, verified and shipped; every task is done.
+
 ## Why
 
 A number column is shown by the adaptive rules of the numerics spec: plain

@@ -1,5 +1,7 @@
 # Proposal: Date and time formats
 
+> **Archived**: built, verified and shipped; every task is done.
+
 ## Why
 
 A `Date`, `Time` or `Datetime` is shown in the locale's form: its order of
