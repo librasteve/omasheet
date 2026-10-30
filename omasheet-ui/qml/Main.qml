@@ -286,7 +286,7 @@ ApplicationWindow {
         var cols = sheet.columns;
         for (var c = 0; c < cols.length; c++) {
             // A formula column shows `:= ` before its type, and a column
-            // with a format at least `[]` after it.
+            // with a format `[]` after it.
             var typeChars = cols[c].type.length + (cols[c].computed ? 5 : 2) + (cols[c].format ? 2 : 0);
             var chars = Math.max(cols[c].name.length, typeChars);
             for (var r = 0; r < sheet.rows.length; r++)
@@ -2369,25 +2369,20 @@ ApplicationWindow {
                                     }
                                     // The type: marked `:=` in a formula column, and
                                     // plain rather than muted where it is declared,
-                                    // with its format after it in brackets, or `[]`
-                                    // where the column is too narrow for it.
+                                    // with `[]` after it where it has a format, which
+                                    // the context menu shows and changes.
                                     Text {
                                         id: typeLine
                                         readonly property bool computed: !!headCell.column && headCell.column.computed && !win.sheet.isConsts
                                         readonly property bool declared: !!headCell.column && headCell.column.declared
                                         readonly property color typeColor: declared ? win.textColor : win.mutedColor
-                                        readonly property string format: !!headCell.column && headCell.column.format ? headCell.column.format : ""
-                                        TextMetrics {
-                                            id: fullType
-                                            font: typeLine.font
-                                            text: (typeLine.computed ? ":= " : "") + (headCell.column ? headCell.column.type : "") + "[" + typeLine.format + "]"
-                                        }
+                                        readonly property bool formatted: !!headCell.column && !!headCell.column.format
                                         width: parent.width - filterButton.width
                                         textFormat: Text.StyledText
                                         text: !headCell.column ? ""
                                             : (computed ? "<font color=\"" + win.accentColor + "\">:=</font> " : "")
                                               + "<font color=\"" + typeColor + "\">" + headCell.column.type
-                                              + (!format ? "" : fullType.advanceWidth <= width ? "[" + format + "]" : "[]") + "</font>"
+                                              + (formatted ? "[]" : "") + "</font>"
                                         color: win.mutedColor
                                         font.family: win.font.family
                                         font.features: win.font.features
@@ -2884,6 +2879,8 @@ ApplicationWindow {
                                                 forceActiveFocus();
                                                 if (!(win.editSeed && win.editSeed.length > 0))
                                                     selectAll();
+                                                else
+                                                    cursorPosition = text.length;
                                             }
                                             function finish(dRow, dCol) {
                                                 if (done)
