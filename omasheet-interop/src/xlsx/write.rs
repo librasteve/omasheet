@@ -152,7 +152,14 @@ fn letters(col: usize) -> String {
 
 fn kind_of(s: S) -> Kind {
     match s {
-        S::Int | S::Hex | S::Octal | S::Binary | S::Decimal | S::Fraction | S::Percent | S::Float => Kind::Number,
+        S::Int
+        | S::Hex
+        | S::Octal
+        | S::Binary
+        | S::Decimal
+        | S::Fraction
+        | S::Percent
+        | S::Float => Kind::Number,
         S::String | S::Url | S::Email | S::Uuid => Kind::Text,
         S::Boolean => Kind::Bool,
         S::Date => Kind::Date,
@@ -640,9 +647,7 @@ impl Writer<'_> {
                 kind: Kind::DateTime,
                 ..x.clone()
             },
-            Func::To(S::Int | S::Hex | S::Octal | S::Binary) if number => {
-                of("TRUNC", Kind::Number)
-            }
+            Func::To(S::Int | S::Hex | S::Octal | S::Binary) if number => of("TRUNC", Kind::Number),
             Func::To(S::Decimal | S::Percent | S::Float) if number => x.clone(),
             Func::To(S::Int | S::Decimal | S::Float) if x.kind == Kind::Bool => {
                 Expr::atom(format!("IF({},1,0)", x.text), Kind::Number)

@@ -362,12 +362,15 @@ what stops a table's rows being exploded into cells.
       `is_not_nan().any()` in the same plan as the `min`, so the one case
       that must go back to the engine costs one more expression rather than
       a pass of its own
-- [ ] 5.8 D70: a zoned column lowered, one zone per column, and a column of
-      mixed zones left on the row path. Declined for now, and `zones.omx` is
-      ten elementwise columns refused: a `Zoned` is a value with its own
-      zone here, where Polars carries one zone on the column's dtype, so
-      lowering one is a column type this store has no entry for rather than
-      an expression `lower::expr` is missing
+- [x] 5.8 ~~D70: a zoned column lowered, one zone per column, and a column of
+      mixed zones left on the row path~~: declined (owner, 2026-10-30).
+      `zones.omx` stays ten elementwise columns refused: a `Zoned` is a
+      value with its own zone here, where Polars carries one zone on the
+      column's dtype, so lowering one is a column type this store has no
+      entry for rather than an expression `lower::expr` is missing. And it
+      would take Polars' `timezones` feature, whose `chrono-tz` bundles its
+      own zone database beside the system one `jiff` reads, so the two
+      paths could disagree on a zone's rules
 
 ## 6. Selections and aggregates (the old 4.1, 5.2)
 

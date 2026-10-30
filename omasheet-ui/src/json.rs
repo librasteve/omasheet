@@ -158,7 +158,10 @@ pub fn functions(custom: &[FuncSnap], docs: &[FuncDoc], about: &[(&str, &str)]) 
         ]);
     }
     for f in docs {
-        let note = about.iter().find(|(c, _)| *c == f.category).map_or("", |(_, a)| a);
+        let note = about
+            .iter()
+            .find(|(c, _)| *c == f.category)
+            .map_or("", |(_, a)| a);
         entries.push([f.name, f.category, note, f.usage, f.summary, ""].map(String::from));
     }
     let mut out = String::new();

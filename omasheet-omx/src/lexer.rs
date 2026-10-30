@@ -166,8 +166,7 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
         }
         let start = i;
         if let Some(found) = based(text, i) {
-            let (tok, end) =
-                found.map_err(|(msg, s, e)| Diagnostic::new(span(s, e), msg))?;
+            let (tok, end) = found.map_err(|(msg, s, e)| Diagnostic::new(span(s, e), msg))?;
             out.push(Token {
                 tok,
                 span: span(start, end),
@@ -370,7 +369,10 @@ fn based(text: &str, i: usize) -> Option<Result<(Tok, usize), NumErr>> {
                 return Some(Err((format!("`{ch}` is not a {name} digit"), j, j + 1)));
             };
             digits += 1;
-            match n.checked_mul(base.radix() as i64).and_then(|m| m.checked_add(d as i64)) {
+            match n
+                .checked_mul(base.radix() as i64)
+                .and_then(|m| m.checked_add(d as i64))
+            {
                 Some(m) => n = m,
                 None => too_large = true,
             }

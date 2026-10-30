@@ -1541,7 +1541,11 @@ impl Document {
         cells: &[(usize, usize, String)],
     ) -> Option<String> {
         let style = self.style;
-        let columns = self.snapshot.sheets.get(sheet).map(|t| t.columns.as_slice());
+        let columns = self
+            .snapshot
+            .sheets
+            .get(sheet)
+            .map(|t| t.columns.as_slice());
         let types: Vec<String> = columns
             .map(|c| c.iter().map(|c| c.ty.clone()).collect())
             .unwrap_or_default();
@@ -3444,7 +3448,8 @@ mod tests {
 
     #[test]
     fn a_column_of_prefixed_values_is_declared_as_its_base() {
-        let text = "sheet Regs\n\n| Name | Addr |\n| ---- | ---- |\n| a    |      |\n| b    |      |\n";
+        let text =
+            "sheet Regs\n\n| Name | Addr |\n| ---- | ---- |\n| a    |      |\n| b    |      |\n";
         let mut doc = Document::from_text(text);
         // Typed in either case, it is shown and kept in lower case, and the
         // file says what the column is (D125, D127).
@@ -3468,7 +3473,10 @@ mod tests {
         // A plain number in a declared `Hex` column is edited in hex.
         let doc = Document::from_text("sheet T\n\nA : Hex\n\n| A   |\n| --- |\n| 255 |\n| -1  |\n");
         let rows = &doc.snapshot().sheets[0].rows;
-        assert_eq!((rows[0][0].source.as_str(), rows[1][0].source.as_str()), ("0xff", "-0x1"));
+        assert_eq!(
+            (rows[0][0].source.as_str(), rows[1][0].source.as_str()),
+            ("0xff", "-0x1")
+        );
         assert_eq!(rows[1][0].exact, None);
         let mut doc = Document::from_text(SALES);
         assert!(doc.set_cell(0, 0, 1, "0x10"));

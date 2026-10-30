@@ -356,3 +356,13 @@ stage already gives a sheet and a file has nowhere to put one (D90).
 - [ ] 7.4 The titanic questions answered by hand, from the CLI and in the app:
       fares by class, passengers by fare, and a join, each checked against
       what a dataframe tool gives for the same file
+
+      From the CLI, 2026-10-30, against Python Polars 2.1.0 reading
+      `titanic.parquet` itself: all three agree. `FaresByClass` gives the
+      means 84.15, 20.66 and 13.71 for Polars' 84.154687, 20.662183 and
+      13.707707, the medians 60.29, 14.25 and 8.05 for 60.2875, 14.25 and
+      8.05, and the same maxima. `Dearest` gives the same five in the same
+      order, the three at 512.3292 in the file's order as a stable sort
+      keeps them. `ClassNames`, over the join `Named`, gives the six rows
+      Polars' own `join` does, their counts, shares and mean ages the same
+      once rounded. The app is still to be looked at.

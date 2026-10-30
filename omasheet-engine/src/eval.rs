@@ -12,8 +12,8 @@ use crate::dtype::{cell_of, column_of};
 use crate::numfmt::format_number;
 use crate::table::{Held, Tables};
 use crate::value::{
-    RowRef, Value, View, arith, bitwise, compare, complement, equal, format_exact, format_styled, math, round_digits,
-    sort_order,
+    RowRef, Value, View, arith, bitwise, compare, complement, equal, format_exact, format_styled,
+    math, round_digits, sort_order,
 };
 use crate::zone::{Zone, Zoned, utc_now};
 use crate::{Lowering, Options, ROW_THRESHOLD, lower};
@@ -26,8 +26,8 @@ use omasheet_omx::date;
 use omasheet_omx::decimal::{Dec, SHOWN_PRECISION};
 use omasheet_omx::funcs::MathFn;
 use omasheet_omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
-use omasheet_omx::{Cell, ColKind, Column, Diagnostic, Group, Program, S, Span};
 use omasheet_omx::types::Base;
+use omasheet_omx::{Cell, ColKind, Column, Diagnostic, Group, Program, S, Span};
 use polars::prelude::Column as PlColumn;
 use polars::prelude::{
     AnyValue, DataFrame, DataType, Expr, IntoLazy, JoinArgs, JoinType, MaintainOrderJoin,

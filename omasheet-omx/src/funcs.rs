@@ -139,8 +139,7 @@ const TIME: &str = "Time & Date";
 const BITWISE: &str = "Bitwise";
 
 /// What the function directory says first: how a function is written.
-pub const INTRO: &str =
-    "Functions are written =sum(x), many can also be used a method applied to an object e.g. \
+pub const INTRO: &str = "Functions are written =sum(x), many can also be used a method applied to an object e.g. \
      =x.sum().";
 
 /// What the functions of each category are applied to, said under its heading.
@@ -150,7 +149,10 @@ pub const ABOUT: &[(&str, &str)] = &[
         "Object: any collection - Sheet, Column, vector or cell block. For several: sum(A, B). \
          Empty(null) cells usually skipped.",
     ),
-    (PIPE, "Left-hand side of pipe operator(|>): a Sheet or Column."),
+    (
+        PIPE,
+        "Left-hand side of pipe operator(|>): a Sheet or Column.",
+    ),
     (
         MATH,
         "Object: any - a single cell, Sheet, Column, vector or a cell block. Usually must contain \
@@ -169,18 +171,8 @@ pub const ABOUT: &[(&str, &str)] = &[
 
 /// Every function, grouped by category in the order the directory shows them.
 pub const FUNCTIONS: &[FuncDoc] = &[
-    doc(
-        AGG,
-        "sum",
-        ".sum()",
-        "The total.",
-    ),
-    doc(
-        AGG,
-        "mean",
-        ".mean()",
-        "The average.",
-    ),
+    doc(AGG, "sum", ".sum()", "The total."),
+    doc(AGG, "mean", ".mean()", "The average."),
     doc(
         AGG,
         "min",
@@ -193,12 +185,7 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         ".max()",
         "The largest. Works on numbers, text order, dates and times.",
     ),
-    doc(
-        AGG,
-        "count",
-        ".count()",
-        "Cells in a column or cell block.",
-    ),
+    doc(AGG, "count", ".count()", "Cells in a column or cell block."),
     doc(
         AGG,
         "len",
@@ -217,18 +204,8 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         ".product()",
         "Every value multiplied together.",
     ),
-    doc(
-        AGG,
-        "first",
-        ".first()",
-        "The first value, empty or not.",
-    ),
-    doc(
-        AGG,
-        "last",
-        ".last()",
-        "The last value, empty or not.",
-    ),
+    doc(AGG, "first", ".first()", "The first value, empty or not."),
+    doc(AGG, "last", ".last()", "The last value, empty or not."),
     doc(
         AGG,
         "std",
@@ -308,12 +285,7 @@ pub const FUNCTIONS: &[FuncDoc] = &[
          Revenue.sum() makes the column Revenue_sum, and Name := names it. The groups are in the \
          order of their keys.",
     ),
-    doc(
-        MATH,
-        "is_null",
-        ".is_null()",
-        "Whether a cell is empty.",
-    ),
+    doc(MATH, "is_null", ".is_null()", "Whether a cell is empty."),
     doc(
         MATH,
         "is_not_null",
@@ -393,12 +365,7 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "The square root, as a Float. A negative x needs a complex number: sqrt(-4+0i).",
         MathFn::Sqrt,
     ),
-    doc(
-        CONVERT,
-        "Integer",
-        ".Integer",
-        "A whole number: truncates.",
-    ),
+    doc(CONVERT, "Integer", ".Integer", "A whole number: truncates."),
     doc(
         CONVERT,
         "Hex",
@@ -438,18 +405,8 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         ".Percent",
         "A Decimal shown as a percentage (%).",
     ),
-    doc(
-        CONVERT,
-        "Float",
-        ".Float",
-        "A floating-point number.",
-    ),
-    doc(
-        CONVERT,
-        "String",
-        ".String",
-        "Any value as text.",
-    ),
+    doc(CONVERT, "Float", ".Float", "A floating-point number."),
+    doc(CONVERT, "String", ".String", "Any value as text."),
     doc(
         CONVERT,
         "Boolean",
@@ -514,13 +471,7 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "The logarithm to base 2. x must be positive.",
         MathFn::Log2,
     ),
-    math_doc(
-        TRIG,
-        "sin",
-        "sin(x)",
-        "The sine.",
-        MathFn::Sin,
-    ),
+    math_doc(TRIG, "sin", "sin(x)", "The sine.", MathFn::Sin),
     math_doc(
         TRIG,
         "cos",
@@ -609,24 +560,9 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "now()",
         "The date and time now, in the file's time zone.",
     ),
-    doc(
-        TIME,
-        "year",
-        ".year()",
-        "The year of a Date or Datetime.",
-    ),
-    doc(
-        TIME,
-        "month",
-        ".month()",
-        "The month, 1 to 12.",
-    ),
-    doc(
-        TIME,
-        "day",
-        ".day()",
-        "The day.",
-    ),
+    doc(TIME, "year", ".year()", "The year of a Date or Datetime."),
+    doc(TIME, "month", ".month()", "The month, 1 to 12."),
+    doc(TIME, "day", ".day()", "The day."),
     doc(
         TIME,
         "add_months",
@@ -670,24 +606,9 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         ".weekday()",
         "The day of the week, 1 for Monday to 7 for Sunday.",
     ),
-    doc(
-        TIME,
-        "hour",
-        ".hour()",
-        "The hour, 0 to 23.",
-    ),
-    doc(
-        TIME,
-        "minute",
-        ".minute()",
-        "The minute.",
-    ),
-    doc(
-        TIME,
-        "second",
-        ".second()",
-        "The second.",
-    ),
+    doc(TIME, "hour", ".hour()", "The hour, 0 to 23."),
+    doc(TIME, "minute", ".minute()", "The minute."),
+    doc(TIME, "second", ".second()", "The second."),
     doc(
         TIME,
         "millisecond",
@@ -707,18 +628,8 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "The nanoseconds left over after the second of a Time: 500000000 of 09:30:00.5. A Datetime \
          is held to the microsecond, ends in 000.",
     ),
-    doc(
-        TIME,
-        "date",
-        ".date()",
-        "The Date part of a Datetime.",
-    ),
-    doc(
-        TIME,
-        "time",
-        ".time()",
-        "The Time partf of a Datetime.",
-    ),
+    doc(TIME, "date", ".date()", "The Date part of a Datetime."),
+    doc(TIME, "time", ".time()", "The Time partf of a Datetime."),
     doc(
         TIME,
         "convert_time_zone",
@@ -750,8 +661,18 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "The name of a Datetime's time zone.",
     ),
     // Operators, listed by their symbols, which no function can be named.
-    doc(BITWISE, "+&", "a +& b", "Bitwise and: the bits set in both."),
-    doc(BITWISE, "+|", "a +| b", "Bitwise or: the bits set in either."),
+    doc(
+        BITWISE,
+        "+&",
+        "a +& b",
+        "Bitwise and: the bits set in both.",
+    ),
+    doc(
+        BITWISE,
+        "+|",
+        "a +| b",
+        "Bitwise or: the bits set in either.",
+    ),
     doc(
         BITWISE,
         "+^",

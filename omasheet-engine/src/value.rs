@@ -1045,22 +1045,40 @@ mod tests {
         let bits = Value::Int(5, Base::Bin);
         let mixed = arith(BinOp::Mul, &hex(2), &bits).unwrap();
         assert!(matches!(mixed, Value::Int(10, Base::Dec)));
-        assert!(matches!(hex(9).converted(S::Int), Ok(Value::Int(9, Base::Dec))));
-        assert!(matches!(Value::int(9).converted(S::Octal), Ok(Value::Int(9, Base::Oct))));
+        assert!(matches!(
+            hex(9).converted(S::Int),
+            Ok(Value::Int(9, Base::Dec))
+        ));
+        assert!(matches!(
+            Value::int(9).converted(S::Octal),
+            Ok(Value::Int(9, Base::Oct))
+        ));
     }
 
     #[test]
     fn bitwise_on_whole_numbers() {
         let hex = |n: i64| Value::Int(n, Base::Hex);
         let shown = |v: Result<Value, String>| format_styled(&v.unwrap(), false, &Style::ISO);
-        assert_eq!(shown(bitwise(BinOp::BitAnd, &hex(0xF0), &hex(0x3C))), "0x30");
+        assert_eq!(
+            shown(bitwise(BinOp::BitAnd, &hex(0xF0), &hex(0x3C))),
+            "0x30"
+        );
         assert_eq!(shown(bitwise(BinOp::BitOr, &hex(0xF0), &hex(0x0F))), "0xff");
         // A mix is an `Integer` (D134); a shift keeps the base on its left.
-        assert_eq!(shown(bitwise(BinOp::BitAnd, &hex(0xF0), &Value::int(60))), "48");
-        assert_eq!(shown(bitwise(BinOp::Shr, &hex(0xff), &Value::int(4))), "0xf");
+        assert_eq!(
+            shown(bitwise(BinOp::BitAnd, &hex(0xF0), &Value::int(60))),
+            "48"
+        );
+        assert_eq!(
+            shown(bitwise(BinOp::Shr, &hex(0xff), &Value::int(4))),
+            "0xf"
+        );
         // `+>` fills with the sign (D137), and the complement is `-n - 1`
         // (D135).
-        assert_eq!(shown(bitwise(BinOp::Shr, &Value::int(-16), &Value::int(2))), "-4");
+        assert_eq!(
+            shown(bitwise(BinOp::Shr, &Value::int(-16), &Value::int(2))),
+            "-4"
+        );
         assert_eq!(shown(complement(&hex(0xff))), "0xffffffffffffff00");
         assert_eq!(shown(complement(&Value::int(5))), "-6");
         // Too far, too large, or not whole numbers (D138).
