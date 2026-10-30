@@ -1,5 +1,7 @@
 # Proposal: Hex, Octal and Binary
 
+> **Archived**: built, verified and shipped; every task is done.
+
 ## Why
 
 A column of register values, flags or permissions is written in hex, octal or

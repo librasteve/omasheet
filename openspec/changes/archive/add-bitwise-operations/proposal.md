@@ -1,5 +1,7 @@
 # Proposal: Bitwise Operations
 
+> **Archived**: built, verified and shipped; every task is done.
+
 ## Why
 
 `Hex`, `Octal` and `Binary` (`add-radix-integers`) let a column of register
