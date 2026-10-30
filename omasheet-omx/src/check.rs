@@ -18,7 +18,7 @@ use crate::file::{FileAst, SourceDecl, parse_file};
 use crate::funcs::{FUNCTIONS, MathFn};
 use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use crate::parser::parse_expr;
-use crate::types::{DepKind, S, SheetTy, Ty};
+use crate::types::{Base, DepKind, S, SheetTy, Ty};
 use std::mem;
 use std::rc::Rc;
 
@@ -417,7 +417,7 @@ pub fn compile_expr(prog: &Program, text: &str, src: u32) -> Result<(Node, Ty), 
 fn static_of(e: &Expr) -> Option<Static> {
     fn int(e: &Expr) -> Option<i64> {
         match &e.kind {
-            ExprKind::Lit(Lit::Int(n)) => Some(*n),
+            ExprKind::Lit(Lit::Int(n, _)) => Some(*n),
             ExprKind::Unary(UnOp::Neg, inner) => int(inner).map(|n| -n),
             _ => None,
         }
@@ -435,7 +435,7 @@ fn static_of(e: &Expr) -> Option<Static> {
 /// A seed written as a plain number, for working out the step.
 fn seed_num(e: &Expr) -> Option<Dec> {
     match &e.kind {
-        ExprKind::Lit(Lit::Int(i)) => Some(Dec::from_i64(*i)),
+        ExprKind::Lit(Lit::Int(i, _)) => Some(Dec::from_i64(*i)),
         ExprKind::Lit(Lit::Decimal(r) | Lit::Percent(r)) => Some(*r),
         ExprKind::Unary(UnOp::Neg, inner) => seed_num(inner).and_then(|r| r.checked_neg()),
         // `1/3` written out, where the lexer did not take it for one.
@@ -487,7 +487,7 @@ fn duration_of(e: &Expr) -> Option<(i64, &'static str)> {
     let unit = ["day", "week", "month", "year"]
         .into_iter()
         .find(|u| *u == name)?;
-    let ExprKind::Lit(Lit::Int(n)) = &base.kind else {
+    let ExprKind::Lit(Lit::Int(n, _)) = &base.kind else {
         return None;
     };
     Some((*n, unit))
@@ -513,7 +513,7 @@ fn seed_text(e: &Expr) -> Option<&str> {
 /// A worked-out step as a literal: a whole number where it is one.
 fn num_lit(r: Dec) -> Lit {
     match r.to_i64() {
-        Some(n) => Lit::Int(n),
+        Some(n) => Lit::Int(n, Base::Dec),
         None => Lit::Decimal(r),
     }
 }
@@ -1693,7 +1693,7 @@ impl<'a> Checker<'a> {
                 return (Node::error(span), Ty::Any);
             }
         };
-        let int = |n: i64| Node::new(Ir::Lit(Lit::Int(n)), span);
+        let int = |n: i64| Node::new(Ir::Lit(Lit::Int(n, Base::Dec)), span);
         let node = match unit {
             "month" => Node::new(Ir::Call(Func::AddMonths, vec![node, int(n)]), span),
             "year" => Node::new(Ir::Call(Func::AddMonths, vec![node, int(n * 12)]), span),
@@ -1729,7 +1729,7 @@ impl<'a> Checker<'a> {
                 Some(at(ExprKind::Binary(
                     BinOp::Sub,
                     Box::new(at(ExprKind::Cursor)),
-                    Box::new(at(ExprKind::Lit(Lit::Int(n as i64)))),
+                    Box::new(at(ExprKind::Lit(Lit::Int(n as i64, Base::Dec)))),
                 ))),
             ],
         )))
@@ -1772,11 +1772,11 @@ impl<'a> Checker<'a> {
                         Ir::Binary(
                             BinOp::Mul,
                             Box::new(Node::new(Ir::RowIndex { depth: 0 }, span)),
-                            Box::new(Node::new(Ir::Lit(Lit::Int(step)), span)),
+                            Box::new(Node::new(Ir::Lit(Lit::Int(step, Base::Dec)), span)),
                         ),
                         span,
                     );
-                    let day = Node::new(Ir::Lit(Lit::Int(on)), span);
+                    let day = Node::new(Ir::Lit(Lit::Int(on, Base::Dec)), span);
                     (
                         Node::new(Ir::Call(Func::AddMonths, vec![from, on_months, day]), span),
                         Ty::Scalar(S::Date),
@@ -1787,7 +1787,7 @@ impl<'a> Checker<'a> {
                         return fail;
                     };
                     let (prev, _) = self.lower(&prev, sc);
-                    let step = Node::new(Ir::Lit(Lit::Int(step)), span);
+                    let step = Node::new(Ir::Lit(Lit::Int(step, Base::Dec)), span);
                     (
                         Node::new(Ir::Call(Func::Cycle(kind), vec![prev, step]), span),
                         Ty::Scalar(S::String),
@@ -1828,7 +1828,7 @@ impl<'a> Checker<'a> {
         };
 
         // `if ROW == 0 then s0 else if ROW == 1 then s1 else … else body`.
-        let int = |n: usize| Node::new(Ir::Lit(Lit::Int(n as i64)), span);
+        let int = |n: usize| Node::new(Ir::Lit(Lit::Int(n as i64, Base::Dec)), span);
         let out = nodes
             .into_iter()
             .enumerate()
@@ -1870,7 +1870,7 @@ impl<'a> Checker<'a> {
                 Some(Rule::By(at(ExprKind::Binary(
                     BinOp::Add,
                     Box::new(back()),
-                    Box::new(at(ExprKind::Lit(Lit::Int(n)))),
+                    Box::new(at(ExprKind::Lit(Lit::Int(n, Base::Dec)))),
                 ))))
             };
             if times.len() == 1 {
@@ -2077,17 +2077,21 @@ impl<'a> Checker<'a> {
             });
         }
         let fitted = match (parsed, want) {
-            (Some(l @ Lit::Int(_)), S::Int | S::Decimal | S::Fraction) => Some(l),
+            // A whole number takes the base of its column, whichever it
+            // was written in.
+            (Some(Lit::Int(n, _)), want) if want.is_exact() && want != S::Percent => {
+                Some(Lit::Int(n, Base::of(want)))
+            }
             (Some(l @ Lit::Decimal(_)), S::Decimal | S::Fraction) => Some(l),
             // Any exact number in a `Percent` column is a percentage: `0.4`
             // is `40%`. A `20%` elsewhere is the number it stands for.
             (Some(l @ Lit::Percent(_)), S::Percent) => Some(l),
-            (Some(Lit::Int(n)), S::Percent) => Some(Lit::Percent(Dec::from_i64(n))),
+            (Some(Lit::Int(n, _)), S::Percent) => Some(Lit::Percent(Dec::from_i64(n))),
             (Some(Lit::Decimal(r)), S::Percent) => Some(Lit::Percent(r)),
             (Some(l @ Lit::Percent(_)), S::Decimal | S::Fraction) => {
                 crate::convert::convert(&l, S::Decimal).ok()
             }
-            (Some(Lit::Int(n)), S::Float) => Some(Lit::Float(n as f64)),
+            (Some(Lit::Int(n, _)), S::Float) => Some(Lit::Float(n as f64)),
             (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Float) => Some(Lit::Float(r.to_f64())),
             (Some(l @ Lit::Float(_)), S::Float) => Some(l),
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
@@ -2111,7 +2115,7 @@ impl<'a> Checker<'a> {
             _ => None,
         };
         if fitted.is_none() {
-            let article = if matches!(want, S::Int | S::Email) {
+            let article = if matches!(want, S::Int | S::Octal | S::Email) {
                 "an"
             } else {
                 "a"
@@ -2121,6 +2125,9 @@ impl<'a> Checker<'a> {
                 format!("`{text}` is not {article} `{want}` literal"),
                 match want {
                     S::Int => "enter a whole number such as `42`, or start the cell with `=` for a formula",
+                    S::Hex => "enter a whole number such as `0xff`, or start the cell with `=` for a formula",
+                    S::Octal => "enter a whole number such as `0o17`, or start the cell with `=` for a formula",
+                    S::Binary => "enter a whole number such as `0b101`, or start the cell with `=` for a formula",
                     S::Decimal => "enter a number such as `19.99`, `1/7` or `20%`, or start the cell with `=` for a formula",
                     S::Fraction => "enter a number such as `1/7`, `2 3/4` or `19.99`, or start the cell with `=` for a formula",
                     S::Percent => "enter a percentage such as `20%`, or start the cell with `=` for a formula",
@@ -2198,7 +2205,7 @@ impl<'a> Checker<'a> {
             }
             ExprKind::Unary(UnOp::UpTo, operand) => {
                 let (node, ty) = self.lower(operand, sc);
-                if !matches!(ty, Ty::Any | Ty::Scalar(S::Int | S::Any)) {
+                if !ty.is_whole() {
                     self.err(
                         operand.span,
                         format!("the end of a range must be Int, found {}", ty.describe()),
@@ -2227,6 +2234,7 @@ impl<'a> Checker<'a> {
                 let ok = match op {
                     UnOp::Neg => s.is_numeric(),
                     UnOp::Not => matches!(s, S::Boolean | S::Any),
+                    UnOp::BitNot => s.is_int() || s == S::Any,
                     UnOp::UpTo => false,
                 };
                 if !ok {
@@ -2531,7 +2539,7 @@ impl<'a> Checker<'a> {
         match op {
             BinOp::Range | BinOp::RangeEx | BinOp::RangeFrom | BinOp::RangeBoth => {
                 for (ty, e) in [(&lty, l), (&rty, r)] {
-                    if !matches!(ty, Ty::Any | Ty::Scalar(S::Int | S::Any)) {
+                    if !ty.is_whole() {
                         self.err(
                             e.span,
                             format!("the ends of a range must be Int, found {}", ty.describe()),
@@ -2671,18 +2679,36 @@ impl<'a> Checker<'a> {
             } else {
                 // A whole exponent written as it is, `2 ** 64`, cannot be
                 // negative, so the power keeps the type of its base.
-                let whole = matches!(r.kind, ExprKind::Lit(Lit::Int(_)));
+                let whole = matches!(r.kind, ExprKind::Lit(Lit::Int(_, _)));
                 match (op, a.wider(b)) {
-                    (BinOp::Pow, w @ (S::Int | S::Decimal)) if whole => w,
+                    (BinOp::Pow, w) if whole && (w.is_int() || w == S::Decimal) => w,
                     // A quotient or a power of decimals is a decimal, though
                     // it need not end.
-                    (BinOp::Div | BinOp::Pow, S::Int | S::Decimal) => S::Decimal,
+                    (BinOp::Div | BinOp::Pow, w) if w.is_int() || w == S::Decimal => S::Decimal,
                     // Percentages add up to a percentage; anything else
                     // done with one gives the plain number.
                     (BinOp::Add | BinOp::Sub, S::Percent) => S::Percent,
                     (_, S::Percent) => S::Decimal,
                     (_, w) => w,
                 }
+            }
+        } else if op.is_bitwise() {
+            let whole = |s: S| s.is_int() || s == S::Any;
+            if !whole(a) || !whole(b) {
+                self.err(
+                    span,
+                    format!("`{sym}` needs whole numbers on both sides, found {a} and {b}"),
+                );
+                return fail;
+            }
+            match op {
+                // A shift is of the number on its left, by a count.
+                BinOp::Shl | BinOp::Shr => a,
+                // Of two in one base, that base; of any mix, an `Integer`
+                // (D134).
+                _ if unknown => S::Any,
+                _ if a == b => a,
+                _ => S::Int,
             }
         } else if op.is_comparison() {
             let equality = matches!(op, BinOp::Eq | BinOp::Ne);
@@ -2898,7 +2924,7 @@ impl<'a> Checker<'a> {
                         self.err(span, format!("cannot take the `{name}` of {s} values"));
                         return fail;
                     }
-                    Func::Mean | Func::Median if matches!(s, S::Int | S::Decimal) => S::Decimal,
+                    Func::Mean | Func::Median if s.is_int() || s == S::Decimal => S::Decimal,
                     Func::Min | Func::Max if matches!(s, S::Boolean) => {
                         self.err(span, format!("{s} values have no order for `{name}`"));
                         return fail;
@@ -3012,7 +3038,7 @@ impl<'a> Checker<'a> {
                     "tail" => at(ExprKind::Binary(
                         BinOp::Range,
                         Box::new(at(ExprKind::Unary(UnOp::Neg, n))),
-                        Box::new(at(ExprKind::Lit(Lit::Int(-1)))),
+                        Box::new(at(ExprKind::Lit(Lit::Int(-1, Base::Dec)))),
                     )),
                     // The row `n` back of this one.
                     _ => at(ExprKind::Binary(
@@ -3108,7 +3134,7 @@ impl<'a> Checker<'a> {
                 let ty = match func {
                     _ if s == S::Any => Ty::Any,
                     Func::Std => Ty::Scalar(S::Float),
-                    Func::Var if matches!(s, S::Int | S::Decimal) => Ty::Scalar(S::Decimal),
+                    Func::Var if s.is_int() || s == S::Decimal => Ty::Scalar(S::Decimal),
                     _ => Ty::Scalar(s),
                 };
                 (Node::new(Ir::Call(func, nodes), span), ty)
@@ -3140,7 +3166,7 @@ impl<'a> Checker<'a> {
                 let mut nodes = vec![date];
                 if months {
                     let (n, nty) = self.lower(&args[1], sc);
-                    if !matches!(nty, Ty::Any | Ty::Scalar(S::Int | S::Any)) {
+                    if !nty.is_whole() {
                         self.err(
                             args[1].span,
                             format!("a number of months must be Int, found {}", nty.describe()),
@@ -3513,7 +3539,7 @@ impl<'a> Checker<'a> {
                 if matches!(places.kind, Ir::Error) {
                     return fail;
                 }
-                if !matches!(pty, Ty::Any | Ty::Scalar(S::Any | S::Int)) {
+                if !pty.is_whole() {
                     self.err_help(
                         args[1].span,
                         format!(
@@ -3699,7 +3725,7 @@ impl<'a> Checker<'a> {
             return (Offset(None), Some(0));
         };
         let (node, ty) = self.lower(e, sc);
-        if !matches!(ty, Ty::Any | Ty::Scalar(S::Int | S::Any)) {
+        if !ty.is_whole() {
             self.err(
                 e.span,
                 format!("a row offset must be Int, found {}", ty.describe()),
@@ -3827,7 +3853,7 @@ impl<'a> Checker<'a> {
                     }
                     None => {
                         let (node, ty) = ck.lower(e, sc);
-                        if !matches!(ty, Ty::Any | Ty::Scalar(S::Int | S::Any)) {
+                        if !ty.is_whole() {
                             ck.err(
                                 e.span,
                                 format!("the ends of a range must be Int, found {}", ty.describe()),
@@ -3901,7 +3927,7 @@ impl<'a> Checker<'a> {
             return RowPick::all(nrows);
         }
         match ty {
-            Ty::Scalar(S::Int) => {
+            Ty::Scalar(s) if s.is_int() => {
                 if let (Some(Static::Int(k)), Some(n)) = (static_of(e), nrows) {
                     let at = if k < 0 { k + n as i64 } else { k };
                     if at < 0 || at >= n as i64 {
@@ -4297,6 +4323,7 @@ fn unop_text(op: UnOp) -> &'static str {
     match op {
         UnOp::Neg => "-",
         UnOp::Not => "not",
+        UnOp::BitNot => "+^",
         UnOp::UpTo => "^",
     }
 }

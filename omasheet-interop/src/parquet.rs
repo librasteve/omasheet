@@ -41,7 +41,7 @@ const NANOS: i64 = 1_000_000_000;
 /// The exact number a value holds, if it is one.
 fn exact(v: &Value) -> Option<Dec> {
     match v {
-        Value::Int(n) => Some(Dec::from_i64(*n)),
+        Value::Int(n, _) => Some(Dec::from_i64(*n)),
         Value::Decimal(d) | Value::Percent(d) => Some(*d),
         _ => None,
     }
@@ -70,11 +70,11 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
 
         // A whole column of nulls has no type of its own to write.
         let series = match col.ty {
-            S::Int => {
+            S::Int | S::Hex | S::Octal | S::Binary => {
                 let v: Vec<Option<i64>> = cells
                     .iter()
                     .map(|v| match v {
-                        Value::Int(n) => Some(*n),
+                        Value::Int(n, _) => Some(*n),
                         Value::Null => None,
                         // A whole number past an `i64`, which an `Int64`
                         // column has no room for: a null, and said so.

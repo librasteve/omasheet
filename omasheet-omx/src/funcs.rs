@@ -136,6 +136,7 @@ const MATH: &str = "Math";
 const LOG: &str = "Log & Exp";
 const TRIG: &str = "Trigonometry";
 const TIME: &str = "Time & Date";
+const BITWISE: &str = "Bitwise";
 
 /// What the function directory says first: how a function is written.
 pub const INTRO: &str =
@@ -159,6 +160,11 @@ pub const ABOUT: &[(&str, &str)] = &[
     (LOG, "Takes: a number."),
     (TRIG, "Takes: a number as an angle in radians."),
     (TIME, "Object: Date, Time or Datetime."),
+    (
+        BITWISE,
+        "Operators, not functions: written between two whole numbers, or before one. and, or \
+         and not stay Boolean.",
+    ),
 ];
 
 /// Every function, grouped by category in the order the directory shows them.
@@ -269,7 +275,7 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     doc(
         PIPE,
         "shift",
-        "Sheet.Column.shift(1)",
+        ".shift(1)",
         "The value a number of rows back, empty where there is no such row.",
     ),
     doc(
@@ -392,6 +398,27 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "Integer",
         ".Integer",
         "A whole number: truncates.",
+    ),
+    doc(
+        CONVERT,
+        "Hex",
+        ".Hex",
+        "A whole number shown in hex, as Integer(x) gives it: 255 gives 0xff. Also written \
+         Hex(x).",
+    ),
+    doc(
+        CONVERT,
+        "Octal",
+        ".Octal",
+        "A whole number shown in octal, as Integer(x) gives it: 15 gives 0o17. Also written \
+         Octal(x).",
+    ),
+    doc(
+        CONVERT,
+        "Binary",
+        ".Binary",
+        "A whole number shown in binary, as Integer(x) gives it: 5 gives 0b101. Also written \
+         Binary(x).",
     ),
     doc(
         CONVERT,
@@ -721,6 +748,28 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "time_zone",
         ".time_zone()",
         "The name of a Datetime's time zone.",
+    ),
+    // Operators, listed by their symbols, which no function can be named.
+    doc(BITWISE, "+&", "a +& b", "Bitwise and: the bits set in both."),
+    doc(BITWISE, "+|", "a +| b", "Bitwise or: the bits set in either."),
+    doc(
+        BITWISE,
+        "+^",
+        "a +^ b",
+        "Bitwise xor: the bits set in one but not both.",
+    ),
+    doc(
+        BITWISE,
+        "+^a",
+        "+^a",
+        "The complement: every bit flipped, so +^0xff gives 0xffffffffffffff00.",
+    ),
+    doc(BITWISE, "+<", "a +< n", "Shift left by n bits, 0 to 63."),
+    doc(
+        BITWISE,
+        "+>",
+        "a +> n",
+        "Shift right by n bits, keeping the sign: -16 +> 2 gives -4.",
     ),
 ];
 

@@ -12,7 +12,7 @@ use crate::dtype::{cell_of, column_of};
 use crate::numfmt::format_number;
 use crate::table::{Held, Tables};
 use crate::value::{
-    RowRef, Value, View, arith, compare, equal, format_exact, format_styled, math, round_digits,
+    RowRef, Value, View, arith, bitwise, compare, complement, equal, format_exact, format_styled, math, round_digits,
     sort_order,
 };
 use crate::zone::{Zone, Zoned, utc_now};
@@ -27,6 +27,7 @@ use omasheet_omx::decimal::{Dec, SHOWN_PRECISION};
 use omasheet_omx::funcs::MathFn;
 use omasheet_omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_omx::{Cell, ColKind, Column, Diagnostic, Group, Program, S, Span};
+use omasheet_omx::types::Base;
 use polars::prelude::Column as PlColumn;
 use polars::prelude::{
     AnyValue, DataFrame, DataType, Expr, IntoLazy, JoinArgs, JoinType, MaintainOrderJoin,
@@ -1343,7 +1344,10 @@ impl<'p> Engine<'p> {
                 (&v, col.ty),
                 (Value::Null, _)
                     | (_, S::Any)
-                    | (Value::Int(_), S::Int | S::Decimal)
+                    | (
+                        Value::Int(..),
+                        S::Int | S::Hex | S::Octal | S::Binary | S::Decimal
+                    )
                     | (Value::Decimal(_), S::Decimal)
                     | (Value::Fraction(_), S::Fraction)
                     | (Value::Percent(_), S::Percent)
@@ -1736,7 +1740,7 @@ impl<'p> Engine<'p> {
             }
             Ir::RowIndex { depth } => {
                 let (_, r) = fr[fr.len() - 1 - depth];
-                Ok(Value::Int(r as i64))
+                Ok(Value::int(r as i64))
             }
             Ir::Empty => Ok(Value::Null),
             Ir::Unary(UnOp::UpTo, operand) => Ok(Value::Range {
@@ -1756,8 +1760,13 @@ impl<'p> Engine<'p> {
                             .map(Value::Percent)
                             .map_or_else(|| fail(span, "the number is too large".to_string()), Ok),
                         (UnOp::Neg, v) if v.is_numeric() => {
-                            arith(BinOp::Sub, &Value::Int(0), v).or_else(|m| fail(span, m))
+                            let zero = match v {
+                                Value::Int(_, b) => Value::Int(0, *b),
+                                _ => Value::int(0),
+                            };
+                            arith(BinOp::Sub, &zero, v).or_else(|m| fail(span, m))
                         }
+                        (UnOp::BitNot, v) => complement(v).or_else(|m| fail(span, m)),
                         (UnOp::Not, v) => fail(span, format!("cannot apply `not` to {}", v.kind())),
                         (UnOp::Neg, v) => fail(span, format!("cannot negate {}", v.kind())),
                         (UnOp::UpTo, v) => fail(span, format!("cannot count up to {}", v.kind())),
@@ -1999,7 +2008,11 @@ impl<'p> Engine<'p> {
                         Value::Time(t) => Ok(Value::Time(t + date::NANOS)),
                         Value::DateTime(t) => Ok(Value::DateTime(t + date::MICROS)),
                         v if v.is_numeric() => {
-                            arith(BinOp::Add, v, &Value::Int(1)).or_else(|m| fail(span, m))
+                            let one = match v {
+                                Value::Int(_, b) => Value::Int(1, *b),
+                                _ => Value::int(1),
+                            };
+                            arith(BinOp::Add, v, &one).or_else(|m| fail(span, m))
                         }
                         other => fail(
                             span,
@@ -2016,7 +2029,7 @@ impl<'p> Engine<'p> {
             }
             Func::Cycle(kind) => {
                 let step = match self.eval(&args[1], fr)? {
-                    Value::Int(n) => n,
+                    Value::Int(n, _) => n,
                     _ => 0,
                 };
                 match self.eval(&args[0], fr)? {
@@ -2038,7 +2051,7 @@ impl<'p> Engine<'p> {
                 let months = match func {
                     Func::AddMonths => match self.eval(&args[1], fr)? {
                         Value::Null => return Ok(Value::Null),
-                        Value::Int(n) => n,
+                        Value::Int(n, _) => n,
                         other => {
                             return fail(
                                 span,
@@ -2051,7 +2064,7 @@ impl<'p> Engine<'p> {
                 // A sequence passes the day of the month to land on.
                 let on = match args.get(2) {
                     Some(node) => match self.eval(node, fr)? {
-                        Value::Int(n) => Some(n),
+                        Value::Int(n, _) => Some(n),
                         _ => None,
                     },
                     None => None,
@@ -2124,7 +2137,7 @@ impl<'p> Engine<'p> {
                 let x = self.eval(&args[0], fr)?;
                 let places = match self.eval(&args[1], fr)? {
                     Value::Null => return Ok(Value::Null),
-                    Value::Int(n) => n,
+                    Value::Int(n, _) => n,
                     other => {
                         return fail(
                             args[1].span,
@@ -2189,7 +2202,7 @@ impl<'p> Engine<'p> {
                             .map(|z| Value::Zoned(Rc::new(z)))
                             .map_or_else(out_of_range, Ok),
                         (None, Func::Offset) => {
-                            Ok(Value::Int((wall - utc).div_euclid(date::MICROS)))
+                            Ok(Value::int((wall - utc).div_euclid(date::MICROS)))
                         }
                         (None, _) => Ok(Value::text(zone.name())),
                     }
@@ -2271,7 +2284,7 @@ impl<'p> Engine<'p> {
                         }
                     };
                     match found {
-                        Some(n) => Ok(Value::Int(n)),
+                        Some(n) => Ok(Value::int(n)),
                         None => fail(args[0].span, format!("{} has no such part", v.kind())),
                     }
                 };
@@ -2299,7 +2312,7 @@ impl<'p> Engine<'p> {
                     .collect();
                 let real = |v: &Value| -> Option<f64> {
                     match v {
-                        Value::Int(i) => Some(*i as f64),
+                        Value::Int(i, _) => Some(*i as f64),
                         Value::Decimal(d) | Value::Fraction(d) | Value::Percent(d) => {
                             Some(d.to_f64())
                         }
@@ -2356,13 +2369,13 @@ impl<'p> Engine<'p> {
                     }
                     Ok(total)
                 };
-                let total = fold(BinOp::Add, Value::Int(0), &|v| Ok(v.clone()))?;
-                let mean = arith(BinOp::Div, &total, &Value::Int(n)).or_else(|m| fail(span, m))?;
-                let squares = fold(BinOp::Add, Value::Int(0), &|v| {
+                let total = fold(BinOp::Add, Value::int(0), &|v| Ok(v.clone()))?;
+                let mean = arith(BinOp::Div, &total, &Value::int(n)).or_else(|m| fail(span, m))?;
+                let squares = fold(BinOp::Add, Value::int(0), &|v| {
                     let d = arith(BinOp::Sub, v, &mean).or_else(|m| fail(span, m))?;
                     arith(BinOp::Mul, &d, &d).or_else(|m| fail(span, m))
                 })?;
-                let var = arith(BinOp::Div, &squares, &Value::Int(n - ddof))
+                let var = arith(BinOp::Div, &squares, &Value::int(n - ddof))
                     .or_else(|m| fail(span, m))?;
                 if func == Func::Var {
                     Ok(var)
@@ -2386,7 +2399,7 @@ impl<'p> Engine<'p> {
                     match self.eval(arg, fr)? {
                         Value::Vector(v) => items.extend(v.iter().cloned()),
                         Value::Sheet(v) if func == Func::Len && args.len() == 1 => {
-                            return Ok(Value::Int(v.rows.len() as i64));
+                            return Ok(Value::int(v.rows.len() as i64));
                         }
                         // A block: its cells, row by row.
                         Value::Sheet(v) => {
@@ -2404,7 +2417,7 @@ impl<'p> Engine<'p> {
                         } => {
                             let lo = if after { lo + 1 } else { lo };
                             let hi = if exclusive { hi - 1 } else { hi };
-                            items.extend((lo..=hi).map(Value::Int));
+                            items.extend((lo..=hi).map(Value::int));
                         }
                         Value::Row(row) => {
                             for &c in row.cols.iter() {
@@ -2426,7 +2439,7 @@ impl<'p> Engine<'p> {
                 let present: Vec<&Value> =
                     items.iter().filter(|v| !matches!(v, Value::Null)).collect();
                 let sum = || -> R {
-                    let mut total = Value::Int(0);
+                    let mut total = Value::int(0);
                     for v in &present {
                         total = arith(BinOp::Add, &total, v).or_else(|m| fail(span, m))?;
                     }
@@ -2437,13 +2450,13 @@ impl<'p> Engine<'p> {
                     !present.is_empty() && present.iter().all(|v| matches!(v, Value::Percent(_)));
                 let kept = |v: Value| if percent { v.percent() } else { v };
                 match func {
-                    Func::Count => Ok(Value::Int(present.len() as i64)),
+                    Func::Count => Ok(Value::int(present.len() as i64)),
                     // What is empty counts here, which is the whole
                     // difference between `len` and `count`.
-                    Func::Len => Ok(Value::Int(items.len() as i64)),
+                    Func::Len => Ok(Value::int(items.len() as i64)),
                     Func::Sum => sum().map(kept),
                     Func::Mean if present.is_empty() => Ok(Value::Null),
-                    Func::Mean => arith(BinOp::Div, &sum()?, &Value::Int(present.len() as i64))
+                    Func::Mean => arith(BinOp::Div, &sum()?, &Value::int(present.len() as i64))
                         .map(kept)
                         .or_else(|m| fail(span, m)),
                     Func::Median if present.is_empty() => Ok(Value::Null),
@@ -2458,13 +2471,13 @@ impl<'p> Engine<'p> {
                         } else {
                             let pair = arith(BinOp::Add, sorted[n / 2 - 1], sorted[n / 2])
                                 .or_else(|m| fail(span, m))?;
-                            arith(BinOp::Div, &pair, &Value::Int(2))
+                            arith(BinOp::Div, &pair, &Value::int(2))
                                 .map(kept)
                                 .or_else(|m| fail(span, m))
                         }
                     }
                     Func::Product => {
-                        let mut total = Value::Int(1);
+                        let mut total = Value::int(1);
                         for v in &present {
                             total = arith(BinOp::Mul, &total, v).or_else(|m| fail(span, m))?;
                         }
@@ -2947,14 +2960,14 @@ fn agg_value(func: Func, ty: S, any: AnyValue, count: Option<i64>) -> Option<Val
     // percentage, as it is on the row path.
     let value = match func {
         // A count is a count of things, whatever the column holds.
-        Func::Len | Func::Count => Value::from_lit(&Lit::Int(any.try_extract::<i64>().ok()?)),
+        Func::Len | Func::Count => Value::int(any.try_extract::<i64>().ok()?),
         _ => Value::from_lit(match &cell_of(any, ty) {
             Cell::Lit(l) => l,
             _ => return None,
         }),
     };
     let value = match (ty, &value) {
-        (S::Fraction, Value::Int(_) | Value::Decimal(_)) => value.fraction(),
+        (S::Fraction, Value::Int(_, _) | Value::Decimal(_)) => value.fraction(),
         _ => value,
     };
     // The division `mean` is, taken here rather than by Polars so that it
@@ -2966,7 +2979,7 @@ fn agg_value(func: Func, ty: S, any: AnyValue, count: Option<i64>) -> Option<Val
         None => value,
         Some(0) => Value::Null,
         Some(n) => {
-            let mean = arith(BinOp::Div, &value, &Value::Int(n)).ok()?;
+            let mean = arith(BinOp::Div, &value, &Value::int(n)).ok()?;
             match ty {
                 S::Percent => mean.percent(),
                 _ => mean,
@@ -3020,12 +3033,15 @@ fn accounted_for(out: &DataFrame) -> bool {
 /// A value in the dress its column's type wears. See [`Engine::fit`].
 fn dressed(v: Value, col: &Column) -> Value {
     match col.ty {
-        S::Percent if matches!(v, Value::Int(_) | Value::Decimal(_)) => v.percent(),
-        S::Fraction if matches!(v, Value::Int(_) | Value::Decimal(_)) => v.fraction(),
-        S::Int | S::Decimal => match v {
+        S::Percent if matches!(v, Value::Int(_, _) | Value::Decimal(_)) => v.percent(),
+        S::Fraction if matches!(v, Value::Int(_, _) | Value::Decimal(_)) => v.fraction(),
+        // A whole number wears its column's base, whichever it was
+        // written or worked out in.
+        t if t.is_int() || t == S::Decimal => match v {
             Value::Percent(r) | Value::Fraction(r) => Value::exact(r),
             v => v,
-        },
+        }
+        .rebased(Base::of(t)),
         // A type inferred from the formula cannot be violated by it, only
         // worn: a `Float` inferred from a float and a percentage holds the
         // plain number. A declared `Float` refuses a percentage as it
@@ -3042,6 +3058,7 @@ fn scalar_op(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     let empty = matches!(a, Value::Null) || matches!(b, Value::Null);
     Ok(match op {
         _ if op.is_arithmetic() => arith(op, a, b)?,
+        _ if op.is_bitwise() => bitwise(op, a, b)?,
         BinOp::Eq => equal(a, b)?.map_or(Value::Null, Value::Boolean),
         BinOp::Ne => equal(a, b)?.map_or(Value::Null, |e| Value::Boolean(!e)),
         BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => match compare(a, b)? {

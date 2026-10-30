@@ -286,6 +286,9 @@ impl Parser {
             let op = match self.peek() {
                 Tok::Plus => BinOp::Add,
                 Tok::Minus => BinOp::Sub,
+                // Bitwise or and xor bind as a sum does, as in Raku (D139).
+                Tok::PlusPipe => BinOp::BitOr,
+                Tok::PlusCaret => BinOp::BitXor,
                 _ => return Ok(lhs),
             };
             self.bump();
@@ -300,6 +303,10 @@ impl Parser {
             let op = match self.peek() {
                 Tok::Star => BinOp::Mul,
                 Tok::Slash => BinOp::Div,
+                // And the bitwise and and the shifts as a product does.
+                Tok::PlusAmp => BinOp::BitAnd,
+                Tok::PlusLt => BinOp::Shl,
+                Tok::PlusGt => BinOp::Shr,
                 _ => return Ok(lhs),
             };
             self.bump();
@@ -309,16 +316,18 @@ impl Parser {
     }
 
     fn unary(&mut self) -> R<Expr> {
-        if self.peek() == &Tok::Minus {
-            let start = self.bump().span;
-            let operand = self.unary()?;
-            let span = start.to(operand.span);
-            return Ok(Expr {
-                kind: ExprKind::Unary(UnOp::Neg, Box::new(operand)),
-                span,
-            });
-        }
-        self.power()
+        let op = match self.peek() {
+            Tok::Minus => UnOp::Neg,
+            Tok::PlusCaret => UnOp::BitNot,
+            _ => return self.power(),
+        };
+        let start = self.bump().span;
+        let operand = self.unary()?;
+        let span = start.to(operand.span);
+        Ok(Expr {
+            kind: ExprKind::Unary(op, Box::new(operand)),
+            span,
+        })
     }
 
     fn power(&mut self) -> R<Expr> {
@@ -381,7 +390,7 @@ impl Parser {
         let span = self.span();
         let lit = |kind: Lit| ExprKind::Lit(kind);
         let kind = match self.peek().clone() {
-            Tok::Int(n) => lit(Lit::Int(n)),
+            Tok::Int(n, b) => lit(Lit::Int(n, b)),
             Tok::Decimal(r) => lit(Lit::Decimal(r)),
             Tok::Percent(r) => lit(Lit::Percent(r)),
             Tok::Float(f) => lit(Lit::Float(f)),
@@ -401,7 +410,7 @@ impl Parser {
                     )
                     .with_help("write `$-1` for the term before this one"));
                 }
-                let Tok::Int(n) = self.peek().clone() else {
+                let Tok::Int(n, _) = self.peek().clone() else {
                     return Err(self.unexpected("a whole number of terms to go back"));
                 };
                 self.bump();
@@ -554,6 +563,20 @@ mod tests {
         assert!(matches!(
             parse("3 in ^5").unwrap().kind,
             ExprKind::Binary(BinOp::In, _, r) if matches!(r.kind, ExprKind::Unary(UnOp::UpTo, _))
+        ));
+        // The bitwise operators bind as Raku binds them (D139): a flag test
+        // needs no brackets, and a shift goes before a mask.
+        assert!(matches!(
+            parse("F +& 4 == 4").unwrap().kind,
+            ExprKind::Binary(BinOp::Eq, l, _) if matches!(l.kind, ExprKind::Binary(BinOp::BitAnd, ..))
+        ));
+        assert!(matches!(
+            parse("a +| b +& c").unwrap().kind,
+            ExprKind::Binary(BinOp::BitOr, _, r) if matches!(r.kind, ExprKind::Binary(BinOp::BitAnd, ..))
+        ));
+        assert!(matches!(
+            parse("+^a +^ b").unwrap().kind,
+            ExprKind::Binary(BinOp::BitXor, l, _) if matches!(l.kind, ExprKind::Unary(UnOp::BitNot, _))
         ));
     }
 

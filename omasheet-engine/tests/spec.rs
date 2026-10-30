@@ -2446,7 +2446,7 @@ fn how_much_of_the_corpus_lowers() {
     // moved.
     assert_eq!(
         (offered, lowered, refused, failed),
-        (60, 17, 42, 1),
+        (76, 26, 49, 1),
         "the corpus lowers differently than task 8.3 records"
     );
 }
@@ -3430,9 +3430,9 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // Lest the whole thing pass by checking nothing. Eight of the
     // corpus's columns come from a file, all of `analysis.omx`, and those
     // are taken at once whichever way the rest is calculated, which is 16
-    // of the 33. The other seventeen are the columns lowering forced
+    // of the 42. The other twenty-six are the columns lowering forced
     // calculates in one step, and 8.3 is where that number is read.
-    assert_eq!(taken, 33, "the columns taken at once");
+    assert_eq!(taken, 42, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read

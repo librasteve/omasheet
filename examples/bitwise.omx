@@ -1,0 +1,45 @@
+# Bitwise operations on whole numbers, written as Raku writes them: `+&`,
+# `+|` and `+^` for and, or and xor, `+^` before a number for its
+# complement, and `+<` and `+>` for the shifts. `and`, `or` and `not` stay
+# the Boolean words they are.
+#
+# `+&`, `+<` and `+>` bind as `*` does and `+|` and `+^` as `+` does, so a
+# flag test needs no brackets. Two numbers of one base give that base and a
+# mix an Integer; a shift keeps the base of the number it shifts. `+>` fills
+# with the sign, and the complement is the 64-bit one.
+
+sheet Permissions
+
+Mode : Octal
+
+| File    | Mode  | Owner | Group | Other | Exec  |
+| ------- | ----- | ----- | ----- | ----- | ----- |
+| run.sh  | 0o755 | *     | *     | *     | *     |
+| notes   | 0o640 | *     | *     | *     | *     |
+| secret  | 0o600 | *     | *     | *     | *     |
+
+Owner := Mode +> 6 +& 0o7
+Group := Mode +> 3 +& 0o7
+Other := Mode +& 0o7
+Exec  := Mode +& 0o100 == 0o100
+
+sheet Words
+
+| Word   | High | Low  | Swapped | Flipped | Masked | Signed |
+| ------ | ---- | ---- | ------- | ------- | ------ | ------ |
+| 0x1234 | *    | *    | *       | *       | *      | *      |
+| 0xBEEF | *    | *    | *       | *       | *      | *      |
+
+High    := Word +> 8 +& 0xff
+Low     := Word +& 0xff
+Swapped := Low +< 8 +| High
+Flipped := +^Word
+Masked  := Word +^ 0xffff
+Signed  := -16 +> 2
+
+# In a table, a `+|` in a cell's formula stays in the cell.
+sheet Cells
+
+| Public            | Cleared             |
+| ----------------- | ------------------- |
+| = 0o640 +| 0o004  | = 0o777 +& +^0o022  |

@@ -19,6 +19,7 @@ use omasheet_omx::colfmt::{Format, closing};
 use omasheet_omx::date::{self, Style};
 use omasheet_omx::file::{FileAst, SchemaLine, SheetDecl, ident_len, parse_file, split_cells};
 use omasheet_omx::parser::parse_expr;
+use omasheet_omx::types::Base;
 use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile, text};
 use std::cmp::Ordering;
 
@@ -274,6 +275,75 @@ fn fraction_entry(ty: &str, input: &str) -> Option<String> {
     (plain.len() <= input.len()).then_some(plain)
 }
 
+/// Whether `input` is a number written as a fraction, `1/3` or `2 3/4`.
+/// In a file it is a `Decimal`; typed into a column left to its cells, it
+/// makes the column a `Fraction` one.
+fn typed_fraction(input: &str) -> bool {
+    let input = input.trim();
+    input.contains('/')
+        && (omasheet_omx::convert::parse_mixed(input).is_some()
+            || matches!(
+                omasheet_omx::convert::parse_literal(input),
+                Some(Lit::Decimal(_))
+            ))
+}
+
+/// A whole number typed into a cell, as the file keeps it: in the base of
+/// a `Hex`, `Octal` or `Binary` column, and otherwise in the base it was
+/// typed in, with its prefix in lower case (D127): `0XFF` is `0xff`, and
+/// `255` in a `Hex` column is `0xff` too. `None` if it is not one.
+fn based_entry(ty: &str, input: &str) -> Option<String> {
+    let Some(Lit::Int(n, typed)) = omasheet_omx::convert::parse_literal(input.trim()) else {
+        return None;
+    };
+    let base = match Base::of(S::from_name(ty).unwrap_or(S::Any)) {
+        Base::Dec if ty.is_empty() || ty == "Integer" => typed,
+        Base::Dec => return None,
+        column => column,
+    };
+    (base != Base::Dec).then(|| base.write(n))
+}
+
+/// `text` with each column of sheet `decl` that the file leaves to its
+/// cells declared `Hex`, `Octal` or `Binary`, where every cell of it is a
+/// whole number written in that one base (D125). The prefix says what the
+/// column is, so the file says it too.
+fn based_declared(mut text: String, decl: &SheetDecl) -> String {
+    let undeclared = |name: &str| !decl.schema.iter().any(|l| l.name == name);
+    let mut found = Vec::new();
+    for (h, (name, _)) in decl.header.iter().enumerate() {
+        if !undeclared(name) {
+            continue;
+        }
+        let mut base = None;
+        for row in &decl.rows {
+            let Some(cell) = row.get(h).filter(|c| !c.text.is_empty()) else {
+                continue;
+            };
+            match omasheet_omx::convert::parse_literal(&cell.text) {
+                Some(Lit::Int(_, b)) if b != Base::Dec && base.is_none_or(|was| was == b) => {
+                    base = Some(b);
+                }
+                _ => {
+                    base = None;
+                    break;
+                }
+            }
+        }
+        if let Some(b) = base {
+            found.push((name.clone(), b.ty()));
+        }
+    }
+    for (name, ty) in found {
+        let ast = parse_file(&text, 0, &mut Vec::new());
+        let Some(decl) = ast.sheets.iter().find(|t| t.name == decl.name) else {
+            break;
+        };
+        text = retyped(&text, decl, &name, Some(ty));
+    }
+    text
+}
+
 /// What can be typed into a cell of a column of type `ty`, with an example
 /// written the way `style` reads it. Empty when the type is not known.
 pub fn entry_hint(style: &Style, ty: &str) -> String {
@@ -319,7 +389,7 @@ enum Pick {
 impl Pick {
     fn of(e: &Expr) -> Option<Pick> {
         let int = |e: &Expr| match &e.kind {
-            ExprKind::Lit(Lit::Int(k)) => Some(*k),
+            ExprKind::Lit(Lit::Int(k, _)) => Some(*k),
             _ => None,
         };
         match &e.kind {
@@ -1471,12 +1541,19 @@ impl Document {
         cells: &[(usize, usize, String)],
     ) -> Option<String> {
         let style = self.style;
-        let types: Vec<String> = self
-            .snapshot
-            .sheets
-            .get(sheet)
-            .map(|t| t.columns.iter().map(|c| c.ty.clone()).collect())
+        let columns = self.snapshot.sheets.get(sheet).map(|t| t.columns.as_slice());
+        let types: Vec<String> = columns
+            .map(|c| c.iter().map(|c| c.ty.clone()).collect())
             .unwrap_or_default();
+        // The columns left to their cells that a fraction is typed into,
+        // which the file then declares `Fraction`.
+        let fractions: Vec<String> = cells
+            .iter()
+            .filter(|(_, _, text)| typed_fraction(text))
+            .filter_map(|(_, col, _)| columns?.get(*col))
+            .filter(|c| !c.declared && matches!(c.ty.as_str(), "" | "Integer" | "Decimal"))
+            .map(|c| c.name.clone())
+            .collect();
         self.grid_edited(text, sheet, |grid| {
             for (row, col, text) in cells {
                 if *col >= grid.header.len() || grid.formula[*col] {
@@ -1489,8 +1566,25 @@ impl Document {
                 let ty = types.get(*col).map_or("", String::as_str);
                 grid.rows[*row].1[*col] = iso_entry(&style, ty, text)
                     .or_else(|| fraction_entry(ty, text))
+                    .or_else(|| based_entry(ty, text))
                     .unwrap_or_else(|| clean_cell(text));
             }
+        })
+        .map(|text| {
+            let ast = parse_file(&text, 0, &mut Vec::new());
+            match self.sheet_decl(&ast, sheet) {
+                Some(decl) => based_declared(text.clone(), decl),
+                None => text,
+            }
+        })
+        .map(|mut text| {
+            for name in &fractions {
+                let ast = parse_file(&text, 0, &mut Vec::new());
+                if let Some(decl) = self.sheet_decl(&ast, sheet) {
+                    text = retyped(&text, decl, name, Some(S::Fraction));
+                }
+            }
+            text
         })
     }
 
@@ -1549,7 +1643,7 @@ impl Document {
             .flat_map(|row| row.iter().take(right + 1).skip(left))
             .map(|cell| &cell.value);
         let (mut count, mut numbers) = (0, 0);
-        let mut sum = Value::Int(0.into());
+        let mut sum = Value::int(0.into());
         for value in values {
             if !matches!(value, Value::Null | Value::Error) {
                 count += 1;
@@ -1562,7 +1656,7 @@ impl Document {
         let numbers = if numbers == 0 {
             None
         } else {
-            let mean = arith(BinOp::Div, &sum, &Value::Int(numbers.into())).ok()?;
+            let mean = arith(BinOp::Div, &sum, &Value::int(numbers.into())).ok()?;
             let show = |v: &Value| format_styled(v, false, &self.style);
             Some((show(&sum), show(&mean)))
         };
@@ -2752,7 +2846,9 @@ impl Document {
         // What a number shown with fewer digits than it has is in full.
         let exact = |v: &Value, quoted: bool, shown: &str| {
             let full = match v {
-                Value::Int(_)
+                // Two's complement is the whole number, not one cut short.
+                Value::Int(_, b) if *b != Base::Dec => return None,
+                Value::Int(_, _)
                 | Value::Decimal(_)
                 | Value::Percent(_)
                 | Value::Float(_)
@@ -2833,7 +2929,20 @@ impl Document {
                             if error.is_some() {
                                 located.push((cell.span, t, r, c));
                             }
-                            (cell.text.clone(), error)
+                            // A whole number in a column of a base is
+                            // edited in that base, however it was written,
+                            // `-0xff` for a negative one (D132).
+                            let based = match &value {
+                                Value::Int(n, b)
+                                    if *b != Base::Dec
+                                        && omasheet_omx::convert::parse_literal(&cell.text)
+                                            .is_some() =>
+                                {
+                                    Some(b.write(*n))
+                                }
+                                _ => None,
+                            };
+                            (based.unwrap_or_else(|| cell.text.clone()), error)
                         }
                         (None, None) => (String::new(), None),
                     };
@@ -2976,6 +3085,26 @@ mod tests {
             .iter()
             .map(|r| r[col].display.clone())
             .collect()
+    }
+
+    #[test]
+    fn a_value_written_as_a_fraction_makes_a_fraction_column() {
+        let mut doc = Document::from_text("sheet T\n\nA | B\n1 | \n");
+        assert!(doc.set_cell(0, 0, 1, "1/3"));
+        assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Fraction");
+        assert_eq!(col(&doc, 0, 1), ["1/3"]);
+        assert!(doc.text().contains("B : Fraction\n"), "{}", doc.text());
+        // A decimal typed beside it stays a fraction, as any exact number
+        // does.
+        assert!(doc.set_cell(0, 0, 1, "0.5"));
+        assert_eq!(col(&doc, 0, 1), ["1/2"]);
+        // In the file, `1/3` is a `Decimal`, and the column is left as it is.
+        let doc = Document::from_text("sheet T\n\nA\n0.5\n1/3\n");
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
+        // A fraction among text is text.
+        let mut doc = Document::from_text("sheet T\n\nA\nabc\n\n");
+        assert!(doc.set_cell(0, 1, 0, "1/3"));
+        assert!(!doc.text().contains("Fraction"), "{}", doc.text());
     }
 
     /// A sheet of `rows` empty computed cells in one column, filled by
@@ -3311,6 +3440,39 @@ mod tests {
         assert!(!doc.snapshot().problems.is_empty());
         assert!(doc.undo() && doc.undo());
         assert_eq!(doc.text(), SALES);
+    }
+
+    #[test]
+    fn a_column_of_prefixed_values_is_declared_as_its_base() {
+        let text = "sheet Regs\n\n| Name | Addr |\n| ---- | ---- |\n| a    |      |\n| b    |      |\n";
+        let mut doc = Document::from_text(text);
+        // Typed in either case, it is shown and kept in lower case, and the
+        // file says what the column is (D125, D127).
+        assert!(doc.set_cell(0, 0, 1, "0xFF"));
+        assert!(doc.text().contains("Addr : Hex\n"), "{}", doc.text());
+        assert!(doc.text().contains("| 0xff "), "{}", doc.text());
+        let column = &doc.snapshot().sheets[0].columns[1];
+        assert!(column.declared && column.ty == "Hex");
+        assert_eq!(col(&doc, 0, 1), ["0xff", ""]);
+        // A plain number in a `Hex` column is kept in its base, and a
+        // negative one is written so that it reads back (D132).
+        assert!(doc.set_cell(0, 1, 1, "-255"));
+        assert!(doc.text().contains("| -0xff "), "{}", doc.text());
+        assert_eq!(col(&doc, 0, 1), ["0xff", "0xffffffffffffff01"]);
+        assert_eq!(doc.snapshot().sheets[0].rows[1][1].source, "-0xff");
+        // A column of decimal numbers is left to its cells.
+        let mut doc = Document::from_text(text);
+        assert!(doc.set_cell(0, 0, 1, "0b11"));
+        assert!(doc.set_cell(0, 1, 1, "3"));
+        assert!(doc.text().contains("Addr : Binary\n"), "{}", doc.text());
+        // A plain number in a declared `Hex` column is edited in hex.
+        let doc = Document::from_text("sheet T\n\nA : Hex\n\n| A   |\n| --- |\n| 255 |\n| -1  |\n");
+        let rows = &doc.snapshot().sheets[0].rows;
+        assert_eq!((rows[0][0].source.as_str(), rows[1][0].source.as_str()), ("0xff", "-0x1"));
+        assert_eq!(rows[1][0].exact, None);
+        let mut doc = Document::from_text(SALES);
+        assert!(doc.set_cell(0, 0, 1, "0x10"));
+        assert!(!doc.text().contains(": Hex"), "{}", doc.text());
     }
 
     #[test]
@@ -3977,13 +4139,14 @@ mod tests {
             ],
         );
         // `2 3/4` is kept as the shorter `2.75`; `-1 1/3` would run to
-        // thirty-eight digits, so it stays as it was written.
+        // thirty-eight digits, so it stays as it was written, and makes the
+        // column a `Fraction` one, which shows `2.75` as `2 3/4`.
         assert!(mixed.text().contains("2.75   | 2 3/4"), "{}", mixed.text());
         assert!(mixed.text().contains("-1 1/3"));
         let cell = &mixed.snapshot().sheets[0].rows[0][0];
         assert_eq!(
             (cell.display.as_str(), cell.source.as_str()),
-            ("2.75", "2.75")
+            ("2 3/4", "2.75")
         );
         assert_eq!(cell.exact, None);
         assert!(loose.text().contains("= 1/2"));

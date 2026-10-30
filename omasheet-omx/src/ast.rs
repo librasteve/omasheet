@@ -4,10 +4,12 @@
 
 use crate::decimal::Dec;
 use crate::diag::Span;
+use crate::types::Base;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Lit {
-    Int(i64),
+    /// A whole number, and the base it is shown in: `0xff` is 255 in hex.
+    Int(i64, Base),
     /// Written with a decimal point: `19.99`.
     Decimal(Dec),
     /// Written with a `%`: `20%`, held as `0.2`.
@@ -94,6 +96,8 @@ pub enum UnOp {
     Not,
     /// `^n`: the range of the first `n`, from 0 to `n - 1`.
     UpTo,
+    /// `+^n`: the bitwise complement of a whole number.
+    BitNot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,6 +107,12 @@ pub enum BinOp {
     Mul,
     Div,
     Pow,
+    /// `+&`, `+|`, `+^`, `+<` and `+>`, on whole numbers.
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
     Eq,
     Ne,
     Lt,
@@ -127,6 +137,11 @@ impl BinOp {
             BinOp::Mul => "*",
             BinOp::Div => "/",
             BinOp::Pow => "**",
+            BinOp::BitAnd => "+&",
+            BinOp::BitOr => "+|",
+            BinOp::BitXor => "+^",
+            BinOp::Shl => "+<",
+            BinOp::Shr => "+>",
             BinOp::Eq => "==",
             BinOp::Ne => "!=",
             BinOp::Lt => "<",
@@ -159,6 +174,13 @@ impl BinOp {
         matches!(
             self,
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow
+        )
+    }
+
+    pub fn is_bitwise(self) -> bool {
+        matches!(
+            self,
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr
         )
     }
 

@@ -1547,7 +1547,7 @@ ApplicationWindow {
     function allFormattable() {
         for (var c = selLeft; c <= selRight; c++) {
             var column = sheet.columns[c];
-            if (!column || ["Integer", "Decimal", "Float", "Date", "Time", "Datetime"].indexOf(column.type) < 0)
+            if (!column || ["Integer", "Hex", "Octal", "Binary", "Decimal", "Float", "Date", "Time", "Datetime"].indexOf(column.type) < 0)
                 return false;
         }
         return true;
@@ -1908,6 +1908,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+N"; enabled: !win.typing; onActivated: win.newSheet(true) }
     Shortcut { sequence: "Ctrl+K"; enabled: !win.typing; onActivated: promptDialog.ask("const") }
     Shortcut { sequence: "Ctrl+Shift+N"; onActivated: win.newWindow(win.tab) }
+    Shortcut { sequence: "Ctrl+Alt+N"; onActivated: win.guard("new") }
     Shortcut { sequence: "Ctrl+Z"; enabled: !win.typing; onActivated: file.undo() }
     Shortcut { sequences: ["Ctrl+Shift+Z", "Ctrl+Y"]; enabled: !win.typing; onActivated: file.redo() }
     Shortcut { sequences: ["Ctrl++", "Ctrl+="]; onActivated: win.zoom(1) }
@@ -3900,6 +3901,9 @@ ApplicationWindow {
         width: Math.round(win.fontSize * 11)
 
         TypeEntry { typeName: "Integer" }
+        TypeEntry { typeName: "Hex"; narrower: true }
+        TypeEntry { typeName: "Octal"; narrower: true }
+        TypeEntry { typeName: "Binary"; narrower: true }
         TypeEntry { typeName: "Decimal" }
         TypeEntry { typeName: "Fraction"; narrower: true }
         TypeEntry { typeName: "Percent"; narrower: true }
@@ -3909,9 +3913,9 @@ ApplicationWindow {
         TypeEntry { typeName: "Email"; narrower: true }
         TypeEntry { typeName: "Uuid"; narrower: true }
         TypeEntry { typeName: "Boolean" }
-        TypeEntry { typeName: "Date" }
-        TypeEntry { typeName: "Time" }
         TypeEntry { typeName: "Datetime" }
+        TypeEntry { typeName: "Date"; narrower: true }
+        TypeEntry { typeName: "Time"; narrower: true }
     }
 
     // Right-click on a sheet's tab.
@@ -4567,6 +4571,27 @@ ApplicationWindow {
             refresh();
         }
 
+        // Whether every category is closed with its caret.
+        readonly property bool allClosed: {
+            for (var i = 0; i < all.length; i++) {
+                if (!closed[all[i].category])
+                    return false;
+            }
+            return all.length > 0;
+        }
+
+        // Close every category, or open them all where all are closed.
+        function toggleAll() {
+            var c = {};
+            if (!allClosed) {
+                for (var i = 0; i < all.length; i++)
+                    c[all[i].category] = true;
+            }
+            closed = c;
+            refresh();
+            functionsView.positionViewAtBeginning();
+        }
+
         function refresh() {
             var words = searchField.text.toLowerCase().split(" ").filter(function(w) { return w.length > 0; });
             var out = [];
@@ -4609,15 +4634,40 @@ ApplicationWindow {
                 font.features: win.font.features
                 font.pixelSize: win.fineSize
             }
-            TextField {
-                id: searchField
+            RowLayout {
                 Layout.fillWidth: true
-                placeholderText: "Search, e.g. sqrt, date, zone, custom"
-                font.family: win.font.family
-                font.features: win.font.features
-                font.pixelSize: win.dialogSize
-                onTextChanged: functionsDialog.refresh()
-                Keys.onEscapePressed: functionsDialog.close()
+                spacing: 8
+                TextField {
+                    id: searchField
+                    Layout.fillWidth: true
+                    placeholderText: "Search, e.g. sqrt, date, zone"
+                    font.family: win.font.family
+                    font.features: win.font.features
+                    font.pixelSize: win.dialogSize
+                    onTextChanged: functionsDialog.refresh()
+                    Keys.onEscapePressed: functionsDialog.close()
+                }
+                // One caret for every category, as each heading has its own.
+                // A search shows every category, so it does nothing while
+                // one is typed.
+                Text {
+                    readonly property bool active: searchField.text.trim() === ""
+                    text: functionsDialog.allClosed && active ? "\u25B8" : "\u25BE"
+                    Layout.alignment: Qt.AlignVCenter
+                    color: active ? win.accentColor : win.mutedColor
+                    font.family: win.font.family
+                    font.features: win.font.features
+                    // As tall as the search box beside it.
+                    font.pixelSize: Math.round(searchField.height * 0.8)
+                    font.bold: true
+                    MouseArea {
+                        anchors.fill: parent
+                        anchors.margins: -6
+                        enabled: parent.active
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: functionsDialog.toggleAll()
+                    }
+                }
             }
             ListView {
                 id: functionsView
@@ -4627,6 +4677,17 @@ ApplicationWindow {
                 boundsBehavior: Flickable.StopAtBounds
                 model: functionsDialog.shown.length
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                // The wheel scrolls the list, three lines a notch.
+                WheelHandler {
+                    onWheel: (event) => {
+                        var step = event.pixelDelta.y !== 0 ? event.pixelDelta.y
+                            : event.angleDelta.y / 120 * 3 * win.dialogSize * 1.5;
+                        var bottom = functionsView.originY + functionsView.contentHeight - functionsView.height;
+                        functionsView.contentY = Math.max(functionsView.originY,
+                            Math.min(bottom, functionsView.contentY - step));
+                        event.accepted = true;
+                    }
+                }
                 delegate: Item {
                     id: entry
                     required property int index

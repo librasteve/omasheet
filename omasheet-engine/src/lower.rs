@@ -201,7 +201,7 @@ pub fn float(dtype: &DataType) -> bool {
 /// is what a `Dec` was built to be.
 fn literal(l: &Lit) -> Option<Out> {
     match l {
-        Lit::Int(n) => Out::new(lit(*n), DataType::Int64),
+        Lit::Int(n, _) => Out::new(lit(*n), DataType::Int64),
         Lit::Decimal(d) => {
             // Polars names a scale of `0..=38`: a number held past that, as
             // `1e80` is, has no decimal to be and keeps its calculation on
@@ -241,7 +241,7 @@ fn literal(l: &Lit) -> Option<Out> {
 /// nothing, which has no type to be a literal of.
 fn lit_of(v: Value) -> Option<Lit> {
     Some(match v {
-        Value::Int(n) => Lit::Int(n),
+        Value::Int(n, b) => Lit::Int(n, b),
         Value::Decimal(d) => Lit::Decimal(d),
         Value::Float(f) => Lit::Float(f),
         Value::String(s, _) => Lit::String(s.to_string()),
@@ -264,6 +264,10 @@ fn unary(op: UnOp, operand: Out) -> Option<Out> {
         (UnOp::Neg, None) if is_float(&operand.dtype) => Out::new(-operand.expr, DataType::Float64),
         (UnOp::Not, _) if operand.dtype == DataType::Boolean => {
             Out::new(operand.expr.not(), DataType::Boolean)
+        }
+        // Polars' `not` of an integer is its bitwise complement.
+        (UnOp::BitNot, _) if operand.dtype == DataType::Int64 => {
+            Out::new(operand.expr.not(), DataType::Int64)
         }
         // `^n` is a range, which no column holds.
         _ => None,
@@ -367,6 +371,19 @@ fn binary(op: BinOp, l: Out, r: Out) -> Option<Out> {
                 _ => l.expr.or(r.expr),
             };
             Out::new(expr, DataType::Boolean)
+        }
+        // Polars' `and`, `or` and `xor` of two integers are bitwise. The
+        // shifts are left to the engine, which says where one goes too far.
+        BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
+            if l.dtype != DataType::Int64 || r.dtype != DataType::Int64 {
+                return None;
+            }
+            let expr = match op {
+                BinOp::BitAnd => l.expr.and(r.expr),
+                BinOp::BitOr => l.expr.or(r.expr),
+                _ => l.expr.xor(r.expr),
+            };
+            Out::new(expr, DataType::Int64)
         }
         _ => None,
     }

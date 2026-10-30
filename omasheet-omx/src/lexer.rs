@@ -5,10 +5,12 @@
 use crate::date;
 use crate::decimal::Dec;
 use crate::diag::{Diagnostic, Span};
+use crate::types::Base;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
-    Int(i64),
+    /// A whole number, and the base it was written in.
+    Int(i64, Base),
     Decimal(Dec),
     /// A number with a `%`, already divided by a hundred.
     Percent(Dec),
@@ -33,6 +35,14 @@ pub enum Tok {
     False,
     Plus,
     Minus,
+    /// `+&`, `+|` and `+^`: bitwise and, or and xor, as Raku writes them;
+    /// `+^` before a number is its complement.
+    PlusAmp,
+    PlusPipe,
+    PlusCaret,
+    /// `+<` and `+>`: the shifts.
+    PlusLt,
+    PlusGt,
     Star,
     Slash,
     Pow,
@@ -69,7 +79,7 @@ pub enum Tok {
 impl Tok {
     pub fn describe(&self) -> String {
         match self {
-            Tok::Int(_) | Tok::Decimal(_) | Tok::Percent(_) | Tok::Float(_) => "a number".into(),
+            Tok::Int(..) | Tok::Decimal(_) | Tok::Percent(_) | Tok::Float(_) => "a number".into(),
             Tok::Str(_) => "a string".into(),
             Tok::Date(_) => "a date".into(),
             Tok::Time(_) => "a time".into(),
@@ -93,6 +103,11 @@ impl Tok {
             Tok::False => "false",
             Tok::Plus => "+",
             Tok::Minus => "-",
+            Tok::PlusAmp => "+&",
+            Tok::PlusPipe => "+|",
+            Tok::PlusCaret => "+^",
+            Tok::PlusLt => "+<",
+            Tok::PlusGt => "+>",
             Tok::Star => "*",
             Tok::Slash => "/",
             Tok::Pow => "**",
@@ -150,6 +165,16 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
             continue;
         }
         let start = i;
+        if let Some(found) = based(text, i) {
+            let (tok, end) =
+                found.map_err(|(msg, s, e)| Diagnostic::new(span(s, e), msg))?;
+            out.push(Token {
+                tok,
+                span: span(start, end),
+            });
+            i = end;
+            continue;
+        }
         if c.is_ascii_digit() {
             let (tok, end) = number(text, i).map_err(|(msg, s, e)| {
                 let d = Diagnostic::new(span(s, e), msg);
@@ -239,7 +264,19 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
             continue;
         }
         let rest = &text[i..];
-        let (tok, len) = if rest.starts_with("^..^") {
+        // A bitwise operator is `+` and its symbol with nothing between:
+        // `a + ^5` is a sum and a range.
+        let bitwise = match rest.as_bytes().get(1).filter(|_| c == b'+') {
+            Some(b'&') => Some(Tok::PlusAmp),
+            Some(b'|') => Some(Tok::PlusPipe),
+            Some(b'^') => Some(Tok::PlusCaret),
+            Some(b'<') => Some(Tok::PlusLt),
+            Some(b'>') => Some(Tok::PlusGt),
+            _ => None,
+        };
+        let (tok, len) = if let Some(tok) = bitwise {
+            (tok, 2)
+        } else if rest.starts_with("^..^") {
             (Tok::CaretDotDotCaret, 4)
         } else if rest.starts_with("^..") {
             (Tok::CaretDotDot, 3)
@@ -307,6 +344,48 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
 }
 
 type NumErr = (String, usize, usize);
+
+/// Lex a whole number written in hex, octal or binary, `0xff`, `0o17` or
+/// `0b101`, if one starts at `i`. The prefix and the digits may be in either
+/// case, and a `_` may stand among the digits (D131).
+fn based(text: &str, i: usize) -> Option<Result<(Tok, usize), NumErr>> {
+    let b = text.as_bytes();
+    if b[i] != b'0' || i + 1 >= b.len() {
+        return None;
+    }
+    let (base, name) = match b[i + 1].to_ascii_lowercase() {
+        b'x' => (Base::Hex, "hex"),
+        b'o' => (Base::Oct, "octal"),
+        b'b' => (Base::Bin, "binary"),
+        _ => return None,
+    };
+    let mut j = i + 2;
+    let mut n: i64 = 0;
+    let mut digits = 0;
+    let mut too_large = false;
+    while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+        if b[j] != b'_' {
+            let Some(d) = (b[j] as char).to_digit(base.radix()) else {
+                let ch = b[j] as char;
+                return Some(Err((format!("`{ch}` is not a {name} digit"), j, j + 1)));
+            };
+            digits += 1;
+            match n.checked_mul(base.radix() as i64).and_then(|m| m.checked_add(d as i64)) {
+                Some(m) => n = m,
+                None => too_large = true,
+            }
+        }
+        j += 1;
+    }
+    let written = &text[i..j];
+    Some(if digits == 0 {
+        Err((format!("`{written}` has no {name} digits"), i, j))
+    } else if too_large {
+        Err((format!("`{written}` is too large a number"), i, j))
+    } else {
+        Ok((Tok::Int(n, base), j))
+    })
+}
 
 /// Lex a number, date, time or date-time starting at `i`. Returns the token and its
 /// end.
@@ -473,7 +552,7 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
     } else {
         // A whole number past `i64` is still exact as a decimal.
         match raw.parse::<i64>() {
-            Ok(n) => Tok::Int(n),
+            Ok(n) => Tok::Int(n, Base::Dec),
             Err(_) => {
                 let unscaled: i128 = raw
                     .parse()
@@ -526,7 +605,7 @@ mod tests {
 
     #[test]
     fn numbers() {
-        assert_eq!(toks("42")[0], Tok::Int(42));
+        assert_eq!(toks("42")[0], Tok::Int(42, Base::Dec));
         assert_eq!(
             toks("1_000_000.50")[0],
             Tok::Decimal(Dec::parse("1000000.50").unwrap())
@@ -536,13 +615,68 @@ mod tests {
         assert_eq!(
             toks("0..2"),
             vec![
-                Tok::Int(0.into()),
+                Tok::Int(0, Base::Dec),
                 Tok::DotDot,
-                Tok::Int(2.into()),
+                Tok::Int(2, Base::Dec),
                 Tok::Eof
             ]
         );
         assert!(lex("10m", 0, 0).is_err());
+    }
+
+    #[test]
+    fn digit_separators() {
+        // A `_` may stand anywhere in a number's digits, but not its exponent.
+        assert_eq!(toks("10_00_000")[0], Tok::Int(1_000_000, Base::Dec));
+        assert_eq!(toks("1_0")[0], Tok::Int(10, Base::Dec));
+        assert_eq!(toks("0xFF_FF")[0], Tok::Int(65535, Base::Hex));
+        assert_eq!(
+            toks("0.000_1")[0],
+            Tok::Decimal(Dec::parse("0.0001").unwrap())
+        );
+        assert!(lex("1e1_0", 0, 0).is_err());
+    }
+
+    #[test]
+    fn bitwise_operators() {
+        assert_eq!(
+            toks("a +& b +| c +^ d +< 1 +> 2"),
+            vec![
+                Tok::Ident("a".into()),
+                Tok::PlusAmp,
+                Tok::Ident("b".into()),
+                Tok::PlusPipe,
+                Tok::Ident("c".into()),
+                Tok::PlusCaret,
+                Tok::Ident("d".into()),
+                Tok::PlusLt,
+                Tok::Int(1, Base::Dec),
+                Tok::PlusGt,
+                Tok::Int(2, Base::Dec),
+                Tok::Eof
+            ]
+        );
+        // With a space it is a sum and a range, as before.
+        assert_eq!(toks("a + ^5")[1..3], [Tok::Plus, Tok::Caret]);
+    }
+
+    #[test]
+    fn based_integers() {
+        assert_eq!(toks("0xFF")[0], Tok::Int(255, Base::Hex));
+        assert_eq!(toks("0Xff")[0], Tok::Int(255, Base::Hex));
+        assert_eq!(toks("0o17")[0], Tok::Int(15, Base::Oct));
+        assert_eq!(toks("0b101")[0], Tok::Int(5, Base::Bin));
+        // A leading `0` alone is still decimal (D130).
+        assert_eq!(toks("017")[0], Tok::Int(17, Base::Dec));
+        assert_eq!(toks("0")[0], Tok::Int(0, Base::Dec));
+        // The error is at the digit outside the base.
+        let bad = lex("0b102", 0, 0).unwrap_err();
+        assert_eq!((bad.span.start, bad.span.end), (4, 5));
+        assert!(bad.message.contains("`2` is not a binary digit"));
+        assert!(lex("0x", 0, 0).is_err());
+        assert!(lex("0x_", 0, 0).is_err());
+        assert!(lex("0x8000000000000000", 0, 0).is_err());
+        assert_eq!(toks("0x7fffffffffffffff")[0], Tok::Int(i64::MAX, Base::Hex));
     }
 
     #[test]

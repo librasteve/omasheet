@@ -30,7 +30,7 @@ enum Size {
 pub fn format_number(v: &Value, f: &NumFormat, style: &Style) -> Option<String> {
     if f.conv.is_integer() {
         let n = match v {
-            Value::Int(n) => *n,
+            Value::Int(n, _) => *n,
             Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) if r.is_integer() => {
                 r.to_i64()?
             }
@@ -39,7 +39,7 @@ pub fn format_number(v: &Value, f: &NumFormat, style: &Style) -> Option<String> 
         return Some(whole(n, f, style));
     }
     let (negative, size) = match v {
-        Value::Int(n) => (*n < 0, Size::Exact(Dec::from_i64(*n).checked_abs()?)),
+        Value::Int(n, _) => (*n < 0, Size::Exact(Dec::from_i64(*n).checked_abs()?)),
         Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => {
             let r = r.guarded();
             (r.is_negative(), Size::Exact(r.checked_abs()?))
@@ -484,7 +484,7 @@ mod tests {
                         continue;
                     };
                     for &n in &values {
-                        let ours = format_number(&Value::Int(n), &f, &Style::ISO).expect("shown");
+                        let ours = format_number(&Value::int(n), &f, &Style::ISO).expect("shown");
                         assert_eq!(ours, c_long(&format, n), "%{format} of {n}");
                     }
                 }
@@ -523,17 +523,17 @@ mod tests {
             shown("+'015.2f", Value::Float(12345.6), &uk),
             "+0000012,345.60"
         );
-        assert_eq!(shown("'d", Value::Int(-1234567), &uk), "-1,234,567");
+        assert_eq!(shown("'d", Value::int(-1234567), &uk), "-1,234,567");
         assert_eq!(shown("'g", Value::Float(1234.5), &uk), "1,234.5");
         assert_eq!(shown(".2f", Value::Float(0.5), &de), "0,50");
         // Without the locale's separator, `'` groups nothing, as in C.
-        assert_eq!(shown("'d", Value::Int(1234567), &Style::ISO), "1234567");
+        assert_eq!(shown("'d", Value::int(1234567), &Style::ISO), "1234567");
     }
 
     #[test]
     fn hex_and_binary_of_a_negative_are_its_twos_complement() {
         let shown =
-            |f: &str, n: i64| format_number(&Value::Int(n), &fmt(f), &Style::ISO).expect("shown");
+            |f: &str, n: i64| format_number(&Value::int(n), &fmt(f), &Style::ISO).expect("shown");
         assert_eq!(shown("#x", 255), "0xff");
         assert_eq!(shown("#x", -255), "0xffffffffffffff01");
         assert_eq!(shown("#b", 5), "0b101");

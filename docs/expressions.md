@@ -105,6 +105,25 @@ is the rule a dataframe and SQL both use, and it is kept for the reason the
 whichever works it out. Where the answer should be false rather than empty,
 `a // false` says so.
 
+### Bitwise
+
+On whole numbers, written as Raku writes them: `a +& b`, `a +| b` and
+`a +^ b` are and, or and xor of their bits, `+^a` is the complement, and
+`a +< n` and `a +> n` shift `a` left and right by `n` bits. `and`, `or` and
+`not` stay Boolean. `+&`, `+<` and `+>` bind as `*` does and `+|` and `+^`
+as `+` does, so a flag test needs no brackets: `Mode +& 0o100 == 0o100`. A
+`+` and its symbol are one operator only with nothing between them: `a + ^5`
+is still a sum and a range.
+
+The numbers are 64-bit two's complement. `+^0xff` is `0xffffffffffffff00`,
+and `+>` fills with the sign, so `-16 +> 2` is `-4`. A shift of less than 0
+or more than 63 bits is an error, and so is a `+<` that leaves 64 bits.
+Two numbers of one base give that base and a mix an `Integer`:
+`0xF0 +& 0x3C` is `0x30` and `0xF0 +& 60` is `48`; a shift keeps the base
+of the number it shifts. Anything but a whole number is an error, `true +& 6`
+included. In a table, a `+|` in a cell that starts with `=` stays in the
+cell. An XLSX Workbook export writes the values of these formulas.
+
 ## Converting
 
 The name of a type converts to it, written `x.Integer`, `x.Integer()` or `Integer(x)`. A

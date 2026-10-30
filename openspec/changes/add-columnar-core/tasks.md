@@ -912,6 +912,20 @@ what stops a table's rows being exploded into cells.
       sheets `group_by` and `agg` added offer nothing: their aggregates are
       evaluated once a group, and their keys are a view.
 
+      Measured again after `radix.omx` was added (`add-radix-integers`):
+      **66 offered, 21 lowered, 44 refused, 1 failed.** It offers six: the
+      four that are arithmetic on whole numbers lower, since a based one is
+      an `Int64` like any other, and `Count := Addr.Integer` and
+      `Others := Mode.Hex` are refused for the reason conversions already
+      are.
+
+      Measured again after `bitwise.omx` was added
+      (`add-bitwise-operations`): **76 offered, 26 lowered, 49 refused, 1
+      failed.** It offers ten: the five that use only `+&`, `+|`, `+^` and
+      the complement lower, as Polars' `and`, `or`, `xor` and `not` of an
+      `Int64`, and the five with a shift are refused, the shifts being left
+      to the engine.
+
       Under `--nocapture` it also prints each column it did not lower, with
       its formula beside its name — which is the material the reason table
       is read off, and the answer to the grep that got the measurement

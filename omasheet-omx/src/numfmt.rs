@@ -222,7 +222,7 @@ impl NumFormat {
     /// number with places.
     pub fn takes(&self, ty: S) -> bool {
         match ty {
-            S::Int => self.conv.is_integer(),
+            s if s.is_int() => self.conv.is_integer(),
             S::Decimal | S::Float => !self.conv.is_integer(),
             _ => false,
         }
@@ -232,7 +232,7 @@ impl NumFormat {
     /// `None` for a type that takes no format.
     pub fn conversions_of(ty: S) -> Option<&'static str> {
         match ty {
-            S::Int => Some("`d`, `i`, `x`, `X`, `o`, `b` or `B`"),
+            s if s.is_int() => Some("`d`, `i`, `x`, `X`, `o`, `b` or `B`"),
             S::Decimal | S::Float => Some("`f`, `F`, `e`, `E`, `g` or `G`"),
             _ => None,
         }
@@ -296,6 +296,9 @@ mod tests {
     #[test]
     fn says_which_types_take_it() {
         assert!(read("x").takes(S::Int));
+        // A subtype of `Integer` takes the `Integer` formats (D129).
+        assert!(read("08X").takes(S::Hex));
+        assert!(!read(".2f").takes(S::Binary));
         assert!(!read("x").takes(S::Float));
         assert!(read(".2f").takes(S::Decimal));
         assert!(read("g").takes(S::Float));

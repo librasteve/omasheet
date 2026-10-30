@@ -14,7 +14,7 @@ use omasheet_omx::date;
 use omasheet_omx::date::Style;
 use omasheet_omx::decimal::{Dec, MAX_DENOMINATOR, SHOWN_PRECISION};
 use omasheet_omx::funcs::MathFn;
-use omasheet_omx::types::S;
+use omasheet_omx::types::{Base, S};
 use std::cmp::Ordering;
 use std::rc::Rc;
 
@@ -26,7 +26,8 @@ pub enum Value {
     Null,
     /// A cell whose calculation failed; the diagnostic was already reported.
     Error,
-    Int(i64),
+    /// A whole number, and the base it is shown in.
+    Int(i64, Base),
     /// An exact number that is not whole, shown as a decimal: `2.75`.
     Decimal(Dec),
     /// An exact number that is not whole, shown as a fraction: `1/3`, and
@@ -84,6 +85,19 @@ impl Value {
         matches!(self, Value::String(_, true))
     }
 
+    /// A whole number shown in decimal.
+    pub fn int(n: i64) -> Value {
+        Value::Int(n, Base::Dec)
+    }
+
+    /// A whole number shown in `base`; anything else as it is.
+    pub fn rebased(self, base: Base) -> Value {
+        match self {
+            Value::Int(n, _) => Value::Int(n, base),
+            other => other,
+        }
+    }
+
     pub fn text(s: &str) -> Value {
         Value::String(Rc::from(s), false)
     }
@@ -92,7 +106,7 @@ impl Value {
     /// otherwise a `Decimal`.
     pub fn exact(r: Dec) -> Value {
         match r.to_i64() {
-            Some(n) => Value::Int(n),
+            Some(n) => Value::int(n),
             None => Value::Decimal(r),
         }
     }
@@ -101,7 +115,7 @@ impl Value {
     /// is. It may be whole, and is shown plainly when it is: `3`, not `3/1`.
     pub fn fraction(self) -> Value {
         match self {
-            Value::Int(n) => Value::Fraction(Dec::from_i64(n)),
+            Value::Int(n, _) => Value::Fraction(Dec::from_i64(n)),
             Value::Decimal(r) => Value::Fraction(r),
             other => other,
         }
@@ -110,7 +124,7 @@ impl Value {
     /// An exact number as a percentage; anything else as it is.
     pub fn percent(self) -> Value {
         match self {
-            Value::Int(n) => Value::Percent(Dec::from_i64(n)),
+            Value::Int(n, _) => Value::Percent(Dec::from_i64(n)),
             Value::Decimal(r) | Value::Fraction(r) => Value::Percent(r),
             other => other,
         }
@@ -127,7 +141,7 @@ impl Value {
 
     pub fn from_lit(l: &Lit) -> Value {
         match l {
-            Lit::Int(n) => Value::Int(*n),
+            Lit::Int(n, b) => Value::Int(*n, *b),
             Lit::Decimal(r) => Value::exact(*r),
             Lit::Percent(r) => Value::Percent(*r),
             Lit::Float(f) => Value::Float(*f),
@@ -144,7 +158,12 @@ impl Value {
         match self {
             Value::Null => "null",
             Value::Error => "an error",
-            Value::Int(_) => "Integer",
+            Value::Int(_, b) => match b {
+                Base::Dec => "Integer",
+                Base::Hex => "Hex",
+                Base::Oct => "Octal",
+                Base::Bin => "Binary",
+            },
             Value::Decimal(_) => "Decimal",
             Value::Fraction(_) => "Fraction",
             Value::Percent(_) => "Percent",
@@ -164,7 +183,7 @@ impl Value {
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
-            Value::Int(_)
+            Value::Int(_, _)
                 | Value::Decimal(_)
                 | Value::Fraction(_)
                 | Value::Percent(_)
@@ -176,7 +195,7 @@ impl Value {
     /// clocks show. `None` for empty, an error, or more than one value.
     fn to_lit(&self) -> Option<Lit> {
         Some(match self {
-            Value::Int(n) => Lit::Int(*n),
+            Value::Int(n, b) => Lit::Int(*n, *b),
             // A `Fraction` is a `Decimal` shown another way; there is no
             // fraction literal to be had.
             Value::Decimal(r) | Value::Fraction(r) => Lit::Decimal(*r),
@@ -199,7 +218,8 @@ impl Value {
             (Value::Null, _) | (_, S::Any) => true,
             (Value::Zoned(_), S::DateTime) | (Value::String(..), S::String) => true,
             // A whole `Decimal` is held as an `Int`.
-            (Value::Int(_), S::Int | S::Decimal) => true,
+            (Value::Int(_, b), to) if to.is_int() => *b == Base::of(to),
+            (Value::Int(_, Base::Dec), S::Decimal) => true,
             (Value::Decimal(_), S::Decimal) => true,
             (Value::Fraction(_), S::Fraction) => true,
             (Value::Percent(_), S::Percent) => true,
@@ -224,7 +244,7 @@ impl Value {
 
     pub fn as_i64(&self) -> Option<i64> {
         match self {
-            Value::Int(n) => Some(*n),
+            Value::Int(n, _) => Some(*n),
             _ => None,
         }
     }
@@ -237,7 +257,7 @@ enum N {
 
 fn number(v: &Value) -> Option<N> {
     Some(match v {
-        Value::Int(n) => N::Exact(Dec::from_i64(*n)),
+        Value::Int(n, _) => N::Exact(Dec::from_i64(*n)),
         Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => N::Exact(*r),
         Value::Float(f) => N::Float(*f),
         _ => return None,
@@ -256,6 +276,56 @@ fn real(n: &N) -> f64 {
 }
 
 /// `+ - * / **` on two single values. Empty in, empty out.
+/// `+&`, `+|`, `+^`, `+<` or `+>` of two whole numbers, on their 64-bit two's
+/// complement bits. Of two in one base the result is in that base, and of a
+/// mix an `Integer` (D134); a shift is of the number on its left, and keeps
+/// its base. `>>` fills with the sign (D137).
+pub fn bitwise(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
+    let (&Value::Int(x, p), &Value::Int(y, q)) = (a, b) else {
+        if matches!(a, Value::Null) || matches!(b, Value::Null) {
+            return Ok(Value::Null);
+        }
+        return Err(format!(
+            "`{}` needs whole numbers on both sides, found {} and {}",
+            op.symbol(),
+            a.kind(),
+            b.kind()
+        ));
+    };
+    let shift = || match u32::try_from(y) {
+        Ok(n) if n < 64 => Ok(n),
+        _ => Err(format!("cannot shift by {y} bits: a shift is of 0 to 63")),
+    };
+    let base = if p == q { p } else { Base::Dec };
+    Ok(match op {
+        BinOp::BitAnd => Value::Int(x & y, base),
+        BinOp::BitOr => Value::Int(x | y, base),
+        BinOp::BitXor => Value::Int(x ^ y, base),
+        // Too large, as a product would be, where a bit is lost or the sign
+        // turns.
+        BinOp::Shl => {
+            let n = shift()?;
+            let out = x << n;
+            if out >> n != x {
+                return Err(TOO_LARGE.to_string());
+            }
+            Value::Int(out, p)
+        }
+        BinOp::Shr => Value::Int(x >> shift()?, p),
+        _ => return Err(format!("`{}` is not a bitwise operator", op.symbol())),
+    })
+}
+
+/// `+^n`: the bitwise complement of a whole number, `-n - 1`, in its base
+/// (D135).
+pub fn complement(v: &Value) -> Result<Value, String> {
+    match v {
+        Value::Null => Ok(Value::Null),
+        Value::Int(n, b) => Ok(Value::Int(!n, *b)),
+        other => Err(format!("cannot take the complement of {}", other.kind())),
+    }
+}
+
 pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     if matches!(a, Value::Null) || matches!(b, Value::Null) {
         return Ok(Value::Null);
@@ -284,11 +354,19 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
             b.kind()
         ));
     };
+    // Whole numbers of one base give that base, but for a quotient, which
+    // need not be whole; any other mix gives a decimal `Int`.
+    let base = match (a, b) {
+        (Value::Int(_, p), Value::Int(_, q)) if p == q && op != BinOp::Div => *p,
+        _ => Base::Dec,
+    };
     match (&x, &y) {
         // Anything done with a fraction gives a fraction.
         (N::Exact(x), N::Exact(y)) => exact_arith(op, x, y).map(|v| {
             if matches!(a, Value::Fraction(_)) || matches!(b, Value::Fraction(_)) {
                 v.fraction()
+            } else if let Value::Int(n, _) = v {
+                Value::Int(n, base)
             } else {
                 v
             }
@@ -348,16 +426,16 @@ fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
         let n = if minus { -n } else { n };
         Ok(Value::Time((t + n).rem_euclid(date::DAY_NANOS)))
     };
-    let int = |n: i64| Ok(Value::Int(n));
+    let int = |n: i64| Ok(Value::int(n));
     Some(match (a, b) {
-        (Value::Date(d), Value::Int(n)) => date(*d, n),
-        (Value::DateTime(t), Value::Int(n)) => datetime(*t, n),
-        (Value::Zoned(z), Value::Int(n)) => zoned(z, n),
-        (Value::Time(t), Value::Int(n)) => time(*t, n),
-        (Value::Int(n), Value::Date(d)) if !minus => date(*d, n),
-        (Value::Int(n), Value::DateTime(t)) if !minus => datetime(*t, n),
-        (Value::Int(n), Value::Zoned(z)) if !minus => zoned(z, n),
-        (Value::Int(n), Value::Time(t)) if !minus => time(*t, n),
+        (Value::Date(d), Value::Int(n, _)) => date(*d, n),
+        (Value::DateTime(t), Value::Int(n, _)) => datetime(*t, n),
+        (Value::Zoned(z), Value::Int(n, _)) => zoned(z, n),
+        (Value::Time(t), Value::Int(n, _)) => time(*t, n),
+        (Value::Int(n, _), Value::Date(d)) if !minus => date(*d, n),
+        (Value::Int(n, _), Value::DateTime(t)) if !minus => datetime(*t, n),
+        (Value::Int(n, _), Value::Zoned(z)) if !minus => zoned(z, n),
+        (Value::Int(n, _), Value::Time(t)) if !minus => time(*t, n),
         (Value::Date(d), Value::Time(t)) | (Value::Time(t), Value::Date(d)) if !minus => Ok(
             Value::DateTime(*d as i64 * date::DAY_MICROS + t / date::NANOS_PER_MICRO),
         ),
@@ -443,14 +521,14 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
                 .ok_or_else(|| TOO_LARGE.to_string());
         }
         (Value::Percent(_), _) => return math(m, &v.clone().plain()),
-        (Value::Int(n), MathFn::Abs) => {
+        (Value::Int(n, b), MathFn::Abs) => {
             return n
                 .checked_abs()
-                .map(Value::Int)
+                .map(|n| Value::Int(n, *b))
                 .ok_or_else(|| TOO_LARGE.to_string());
         }
-        (Value::Int(n), MathFn::Sign) => return Ok(Value::Int(n.signum())),
-        (Value::Int(_), _) if m.is_exact() => return Ok(v.clone()),
+        (Value::Int(n, _), MathFn::Sign) => return Ok(Value::int(n.signum())),
+        (Value::Int(_, _), _) if m.is_exact() => return Ok(v.clone()),
         (Value::Decimal(r), MathFn::Abs) => {
             return r
                 .checked_abs()
@@ -464,12 +542,12 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
                 .ok_or_else(|| TOO_LARGE.to_string());
         }
         (Value::Decimal(r) | Value::Fraction(r), MathFn::Sign) => {
-            return Ok(Value::Int(r.signum()));
+            return Ok(Value::int(r.signum()));
         }
         (Value::Decimal(r) | Value::Fraction(r), MathFn::Round) => return Ok(whole(r.round())),
         (Value::Decimal(r) | Value::Fraction(r), MathFn::Floor) => return Ok(whole(r.floor())),
         (Value::Decimal(r) | Value::Fraction(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
-        (Value::Int(n), _) => *n as f64,
+        (Value::Int(n, _), _) => *n as f64,
         (Value::Decimal(r) | Value::Fraction(r), _) => r.to_f64(),
         (Value::Float(f), _) => *f,
         (other, _) => {
@@ -497,7 +575,7 @@ pub fn round_digits(x: &Value, places: i64) -> Result<Value, String> {
     let narrowed = |d: &Dec| d.rescale(places.min(d.scale())).unwrap_or(*d);
     Ok(match x {
         Value::Null => Value::Null,
-        Value::Int(_) => x.clone(),
+        Value::Int(_, _) => x.clone(),
         Value::Decimal(d) => Value::Decimal(narrowed(d)),
         Value::Fraction(d) => Value::Fraction(narrowed(d)),
         Value::Percent(d) => Value::Percent(narrowed(d)),
@@ -854,7 +932,8 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         Value::Error => "#ERROR".into(),
         // In full when `exact`, as a file writes it: `19.99`, and one that
         // does not end as `11/4`.
-        Value::Int(n) if exact => n.to_string(),
+        Value::Int(n, b) if exact => b.write(*n),
+        Value::Int(n, b) if *b != Base::Dec => b.show(*n),
         Value::Decimal(r) if exact => format_rat(r),
         // A `Fraction` in full is the fraction itself, which is the only way
         // to write one that does not end and read it back.
@@ -863,7 +942,7 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         // `1e-15` to `1e15`, and otherwise in e notation, `1e+60`.
         // Shown in the app, a plain number of five digits or more is grouped
         // in threes, `12,345`, and its point is the locale's.
-        Value::Int(n) => localised(
+        Value::Int(n, _) => localised(
             signed(
                 n.is_negative(),
                 shown_decimal(&Dec::from_i64(n.abs()), group(style)),
@@ -948,6 +1027,54 @@ mod tests {
     }
 
     #[test]
+    fn whole_numbers_in_a_base() {
+        let hex = |n: i64| Value::Int(n, Base::Hex);
+        let shown = |v: &Value| format_styled(v, false, &Style::ISO);
+        assert_eq!(shown(&hex(255)), "0xff");
+        // A negative one is its two's complement (D126), and written so
+        // that it reads back as itself (D132).
+        assert_eq!(shown(&hex(-255)), "0xffffffffffffff01");
+        assert_eq!(format_exact(&hex(-255), false, &Style::ISO), "-0xff");
+        assert_eq!(shown(&Value::Int(15, Base::Oct)), "0o17");
+        assert_eq!(shown(&Value::Int(5, Base::Bin)), "0b101");
+        // One base gives that base; a mix gives an `Integer`.
+        let sum = arith(BinOp::Add, &hex(0xF0), &hex(0x0F)).unwrap();
+        assert!(matches!(sum, Value::Int(255, Base::Hex)));
+        let sum = arith(BinOp::Add, &hex(0xF0), &Value::int(1)).unwrap();
+        assert!(matches!(sum, Value::Int(241, Base::Dec)));
+        let bits = Value::Int(5, Base::Bin);
+        let mixed = arith(BinOp::Mul, &hex(2), &bits).unwrap();
+        assert!(matches!(mixed, Value::Int(10, Base::Dec)));
+        assert!(matches!(hex(9).converted(S::Int), Ok(Value::Int(9, Base::Dec))));
+        assert!(matches!(Value::int(9).converted(S::Octal), Ok(Value::Int(9, Base::Oct))));
+    }
+
+    #[test]
+    fn bitwise_on_whole_numbers() {
+        let hex = |n: i64| Value::Int(n, Base::Hex);
+        let shown = |v: Result<Value, String>| format_styled(&v.unwrap(), false, &Style::ISO);
+        assert_eq!(shown(bitwise(BinOp::BitAnd, &hex(0xF0), &hex(0x3C))), "0x30");
+        assert_eq!(shown(bitwise(BinOp::BitOr, &hex(0xF0), &hex(0x0F))), "0xff");
+        // A mix is an `Integer` (D134); a shift keeps the base on its left.
+        assert_eq!(shown(bitwise(BinOp::BitAnd, &hex(0xF0), &Value::int(60))), "48");
+        assert_eq!(shown(bitwise(BinOp::Shr, &hex(0xff), &Value::int(4))), "0xf");
+        // `+>` fills with the sign (D137), and the complement is `-n - 1`
+        // (D135).
+        assert_eq!(shown(bitwise(BinOp::Shr, &Value::int(-16), &Value::int(2))), "-4");
+        assert_eq!(shown(complement(&hex(0xff))), "0xffffffffffffff00");
+        assert_eq!(shown(complement(&Value::int(5))), "-6");
+        // Too far, too large, or not whole numbers (D138).
+        assert!(bitwise(BinOp::Shl, &Value::int(1), &Value::int(64)).is_err());
+        assert!(bitwise(BinOp::Shr, &Value::int(1), &Value::int(-1)).is_err());
+        assert!(bitwise(BinOp::Shl, &Value::int(1), &Value::int(63)).is_err());
+        assert!(bitwise(BinOp::BitAnd, &Value::Boolean(true), &Value::int(6)).is_err());
+        assert!(matches!(
+            bitwise(BinOp::BitAnd, &Value::Null, &Value::int(6)),
+            Ok(Value::Null)
+        ));
+    }
+
+    #[test]
     fn formats_rationals() {
         assert_eq!(format_rat(&rat(175, 4)), "43.75");
         assert_eq!(format_rat(&rat(1, 3)), "0.333333333333333333333333333333");
@@ -993,7 +1120,7 @@ mod tests {
     #[test]
     fn shows_exact_numbers_in_23_characters() {
         let shown = |v: Value| format_scalar(&v, false);
-        let int = |n: i64| Value::Int(n);
+        let int = |n: i64| Value::int(n);
         let dec = |s: &str| Value::Decimal(Dec::parse(s).expect("parses"));
         assert_eq!(shown(int(999_999_999_999_999)), "999999999999999");
         assert_eq!(shown(int(1_000_000_000_000_000)), "1e+15");
@@ -1025,7 +1152,7 @@ mod tests {
     fn groups_digits_in_the_app() {
         let app = Style::ISO.numbers('.', ',');
         let shown = |v: Value| format_styled(&v, false, &app);
-        let int = |n: i64| Value::Int(n);
+        let int = |n: i64| Value::int(n);
         assert_eq!(shown(int(2025)), "2025");
         assert_eq!(shown(int(12345)), "12,345");
         assert_eq!(shown(int(-1234567)), "-1,234,567");
@@ -1068,7 +1195,7 @@ mod tests {
         );
         let fr = Style::ISO.numbers(',', '\u{202F}');
         assert_eq!(
-            format_styled(&Value::Int(1_234_567.into()), false, &fr),
+            format_styled(&Value::int(1_234_567.into()), false, &fr),
             "1\u{202F}234\u{202F}567"
         );
     }
@@ -1175,23 +1302,23 @@ mod tests {
 
     #[test]
     fn division_is_exact_where_it_can_be() {
-        let third = arith(BinOp::Div, &Value::Int(1), &Value::Int(3)).unwrap();
+        let third = arith(BinOp::Div, &Value::int(1), &Value::int(3)).unwrap();
         assert!(matches!(third, Value::Decimal(_)));
         // A third is rounded at the widest scale there is, so taking it
         // back out again does not give one. This is the cost of a
         // fixed-point decimal in place of a rational, and is deliberate.
-        let back = arith(BinOp::Mul, &third, &Value::Int(3)).unwrap();
+        let back = arith(BinOp::Mul, &third, &Value::int(3)).unwrap();
         assert_eq!(format_exact(&back, false, &Style::ISO), "1");
         // One that ends comes back exactly.
-        let eighth = arith(BinOp::Div, &Value::Int(1), &Value::Int(8)).unwrap();
-        let one = arith(BinOp::Mul, &eighth, &Value::Int(8)).unwrap();
-        assert!(matches!(one, Value::Int(n) if n == 1));
+        let eighth = arith(BinOp::Div, &Value::int(1), &Value::int(8)).unwrap();
+        let one = arith(BinOp::Mul, &eighth, &Value::int(8)).unwrap();
+        assert!(matches!(one, Value::Int(n, _) if n == 1));
     }
 
     #[test]
     fn division_by_zero_is_a_num() {
         let over_zero = |n: i64| {
-            let v = arith(BinOp::Div, &Value::Int(n), &Value::Int(0)).unwrap();
+            let v = arith(BinOp::Div, &Value::int(n), &Value::int(0)).unwrap();
             assert!(matches!(v, Value::Float(_)));
             format_scalar(&v, false)
         };
@@ -1202,7 +1329,7 @@ mod tests {
 
     #[test]
     fn dates_and_times_shift() {
-        let int = |n: i64| Value::Int(n);
+        let int = |n: i64| Value::int(n);
         let day = date::from_ymd(2025, 1, 31).unwrap();
         let shown = |op, a: &Value, b: &Value| format_scalar(&arith(op, a, b).unwrap(), false);
         assert_eq!(shown(BinOp::Add, &Value::Date(day), &int(1)), "2025-02-01");
@@ -1242,7 +1369,7 @@ mod tests {
 
     #[test]
     fn num_is_contagious() {
-        let v = arith(BinOp::Div, &Value::Float(1.0), &Value::Int(3.into())).unwrap();
+        let v = arith(BinOp::Div, &Value::Float(1.0), &Value::int(3.into())).unwrap();
         assert!(matches!(v, Value::Float(_)));
     }
 }

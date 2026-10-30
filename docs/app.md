@@ -72,6 +72,7 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+K | New constant |
 | Ctrl+N | New sheet after this one |
 | Ctrl+Shift+N | New window on this file |
+| Ctrl+Alt+N | New file |
 | F1 | View functions |
 | F2 | Edit |
 | F3 | View source |

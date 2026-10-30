@@ -6,7 +6,7 @@
 use crate::ast::Lit;
 use crate::decimal::Dec;
 use crate::lexer::{Tok, lex};
-use crate::types::S;
+use crate::types::{Base, S};
 
 /// A whole number and a part written on their own, `2 3/4` or `-2 3/4`, as
 /// the exact number they come to, `2.75`. The part is less than one. `None`
@@ -19,10 +19,10 @@ pub fn parse_mixed(text: &str) -> Option<Dec> {
         rest => (false, rest),
     };
     let [
-        Tok::Int(whole),
-        Tok::Int(n),
+        Tok::Int(whole, Base::Dec),
+        Tok::Int(n, Base::Dec),
         Tok::Slash,
-        Tok::Int(d),
+        Tok::Int(d, Base::Dec),
         Tok::Eof,
     ] = rest
     else {
@@ -50,13 +50,24 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
             .map(Lit::Decimal)
     };
     Some(match toks.as_slice() {
-        [Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(*n, *d)?,
-        [Tok::Minus, Tok::Int(n), Tok::Slash, Tok::Int(d), Tok::Eof] => fraction(-*n, *d)?,
-        [Tok::Int(n), Tok::Eof] => Lit::Int(*n),
+        [
+            Tok::Int(n, Base::Dec),
+            Tok::Slash,
+            Tok::Int(d, Base::Dec),
+            Tok::Eof,
+        ] => fraction(*n, *d)?,
+        [
+            Tok::Minus,
+            Tok::Int(n, Base::Dec),
+            Tok::Slash,
+            Tok::Int(d, Base::Dec),
+            Tok::Eof,
+        ] => fraction(-*n, *d)?,
+        [Tok::Int(n, b), Tok::Eof] => Lit::Int(*n, *b),
         [Tok::Decimal(r), Tok::Eof] => Lit::Decimal(*r),
         [Tok::Percent(r), Tok::Eof] => Lit::Percent(*r),
         [Tok::Float(f), Tok::Eof] => Lit::Float(*f),
-        [Tok::Minus, Tok::Int(n), Tok::Eof] => Lit::Int(-*n),
+        [Tok::Minus, Tok::Int(n, b), Tok::Eof] => Lit::Int(-*n, *b),
         [Tok::Minus, Tok::Decimal(r), Tok::Eof] => Lit::Decimal(r.checked_neg()?),
         [Tok::Minus, Tok::Percent(r), Tok::Eof] => Lit::Percent(r.checked_neg()?),
         [Tok::Minus, Tok::Float(f), Tok::Eof] => Lit::Float(-*f),
@@ -72,7 +83,7 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
 
 pub fn lit_type(l: &Lit) -> S {
     match l {
-        Lit::Int(_) => S::Int,
+        Lit::Int(_, b) => b.ty(),
         Lit::Decimal(_) => S::Decimal,
         Lit::Percent(_) => S::Percent,
         Lit::Float(_) => S::Float,
@@ -86,7 +97,7 @@ pub fn lit_type(l: &Lit) -> S {
 
 /// The name of a type with `a` or `an` before it.
 fn a(to: S) -> String {
-    let article = if matches!(to, S::Int | S::Email) {
+    let article = if matches!(to, S::Int | S::Octal | S::Email) {
         "an"
     } else {
         "a"
@@ -102,7 +113,7 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     let from = lit_type(lit);
     let no = || Err(format!("{from} cannot be made {}", a(to)));
     let real = |l: &Lit| match l {
-        Lit::Int(n) => Some(*n as f64),
+        Lit::Int(n, _) => Some(*n as f64),
         Lit::Decimal(r) | Lit::Percent(r) => Some(r.to_f64()),
         Lit::Float(f) => Some(*f),
         Lit::Boolean(b) => Some(*b as u8 as f64),
@@ -110,6 +121,20 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     };
     if from == to || to == S::Any {
         return Ok(lit.clone());
+    }
+    // The bases hold the same whole numbers, so a number goes through
+    // decimal to be shown in another one.
+    if let Lit::Int(n, b) = lit
+        && *b != Base::Dec
+    {
+        return convert(&Lit::Int(*n, Base::Dec), to);
+    }
+    let base = Base::of(to);
+    if base != Base::Dec {
+        return match convert(lit, S::Int)? {
+            Lit::Int(n, _) => Ok(Lit::Int(n, base)),
+            _ => no(),
+        };
     }
     Ok(match (lit, to) {
         // A narrower kind of text is the text itself, once it reads as one.
@@ -135,26 +160,26 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
         // A `Percent` is the number it stands for: `20%` is `0.2`.
         (Lit::Percent(r), S::Int | S::Decimal | S::Boolean) => {
             let plain = match r.to_i64() {
-                Some(n) => Lit::Int(n),
+                Some(n) => Lit::Int(n, Base::Dec),
                 None => Lit::Decimal(*r),
             };
             return convert(&plain, to);
         }
-        (Lit::Int(n), S::Percent) => Lit::Percent(Dec::from_i64(*n)),
+        (Lit::Int(n, _), S::Percent) => Lit::Percent(Dec::from_i64(*n)),
         (Lit::Decimal(r), S::Percent) => Lit::Percent(*r),
-        (Lit::Int(n), S::Decimal) => Lit::Int(*n),
+        (Lit::Int(n, _), S::Decimal) => Lit::Int(*n, Base::Dec),
         (Lit::Decimal(r), S::Int) => match r.trunc().to_i64() {
-            Some(n) => Lit::Int(n),
+            Some(n) => Lit::Int(n, Base::Dec),
             None => return Err("the number is too large for an Integer".to_string()),
         },
         (Lit::Float(f), S::Int | S::Decimal | S::Percent) => match Dec::from_f64(*f) {
             Some(r) if to == S::Percent => Lit::Percent(r),
             Some(r) if to == S::Int => match r.trunc().to_i64() {
-                Some(n) => Lit::Int(n),
+                Some(n) => Lit::Int(n, Base::Dec),
                 None => return Err("the number is too large for an Integer".to_string()),
             },
             Some(r) => match r.to_i64() {
-                Some(n) => Lit::Int(n),
+                Some(n) => Lit::Int(n, Base::Dec),
                 None => Lit::Decimal(r),
             },
             None => {
@@ -166,14 +191,14 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
                 return Err(format!("{name} has no exact value"));
             }
         },
-        (Lit::Boolean(b), S::Int | S::Decimal) => Lit::Int(*b as i64),
-        (Lit::Int(_) | Lit::Decimal(_) | Lit::Percent(_) | Lit::Boolean(_), S::Float) => {
+        (Lit::Boolean(b), S::Int | S::Decimal) => Lit::Int(*b as i64, Base::Dec),
+        (Lit::Int(..) | Lit::Decimal(_) | Lit::Percent(_) | Lit::Boolean(_), S::Float) => {
             match real(lit) {
                 Some(f) => Lit::Float(f),
                 None => return no(),
             }
         }
-        (Lit::Int(n), S::Boolean) => Lit::Boolean(*n != 0),
+        (Lit::Int(n, _), S::Boolean) => Lit::Boolean(*n != 0),
         (Lit::Decimal(r), S::Boolean) => Lit::Boolean(!r.is_zero()),
         (Lit::Float(f), S::Boolean) => Lit::Boolean(*f != 0.0),
         (Lit::DateTime(t), S::Date) => Lit::Date(crate::date::split_datetime(*t).0),
@@ -187,8 +212,11 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
 mod tests {
     use super::*;
 
-    const TYPES: [S; 12] = [
+    const TYPES: [S; 15] = [
         S::Int,
+        S::Hex,
+        S::Octal,
+        S::Binary,
         S::Decimal,
         S::Percent,
         S::Float,
@@ -233,6 +261,13 @@ mod tests {
         assert_eq!(convert(&lit("true"), S::Int), Ok(lit("1")));
         assert_eq!(convert(&lit("0.5"), S::Boolean), Ok(lit("true")));
         assert!(convert(&Lit::Float(f64::NAN), S::Int).is_err());
+        // The bases hold the same whole numbers.
+        assert_eq!(convert(&lit("255"), S::Hex), Ok(Lit::Int(255, Base::Hex)));
+        assert_eq!(convert(&lit("0xff"), S::Int), Ok(lit("255")));
+        assert_eq!(convert(&lit("0xff"), S::Binary), Ok(lit("0b11111111")));
+        assert_eq!(convert(&lit("19.99"), S::Octal), Ok(lit("0o23")));
+        assert_eq!(lit("-0xff"), Lit::Int(-255, Base::Hex));
+        assert_eq!(lit_type(&lit("0b101")), S::Binary);
     }
 
     #[test]
@@ -300,6 +335,7 @@ mod tests {
     fn agrees_with_the_types() {
         let samples = [
             lit("7"),
+            lit("0xff"),
             lit("0.5"),
             // A fraction that ends: whether a `Fraction` is a `Decimal` depends
             // on the number, as whether text is a number depends on the text.

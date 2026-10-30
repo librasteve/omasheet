@@ -217,7 +217,11 @@ pub fn split_cells(line: &str, start: usize, src: u32) -> Vec<CellSrc> {
         match b[i] {
             b'\\' if in_string => i += 1,
             b'"' => in_string = !in_string,
-            b'|' if !in_string && b.get(i + 1) != Some(&b'>') => {
+            // `|>` is the pipe, and `+|` in a formula a bitwise or (D140).
+            b'|' if !in_string
+                && b.get(i + 1) != Some(&b'>')
+                && !(i > 0 && b[i - 1] == b'+' && line[from..i].trim_start().starts_with('=')) =>
+            {
                 push(from, i);
                 from = i + 1;
             }
@@ -751,6 +755,10 @@ mod tests {
         let texts: Vec<_> = cells.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(texts, ["a", "\"x | y\"", "= T |> sum()"]);
         assert_eq!(cells[1].span.start, 4);
+        // A bitwise or stays in a formula, and divides any other cell.
+        let cells = split_cells("a | = 0x10 +| 0x01 | A+|B", 0, 0);
+        let texts: Vec<_> = cells.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(texts, ["a", "= 0x10 +| 0x01", "A+", "B"]);
     }
 
     #[test]

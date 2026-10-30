@@ -9,7 +9,7 @@ use omasheet_omx::ast::Lit;
 use omasheet_omx::check::Cell;
 use omasheet_omx::date::{DAY, MICROS, NANOS};
 use omasheet_omx::decimal::{Dec, MAX_PRECISION};
-use omasheet_omx::types::S;
+use omasheet_omx::types::{Base, S};
 use polars::prelude::Column as PlColumn;
 use polars::prelude::*;
 
@@ -41,13 +41,16 @@ pub fn type_of(dtype: &DataType) -> Option<S> {
 /// exact number is held, so that a `Percent` column holds percentages and a
 /// `Fraction` column fractions, as a sheet of text does.
 pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
-    let exact = |d: Dec| match ty {
-        S::Percent => Cell::Lit(Lit::Percent(d)),
+    // Polars works out whole numbers as decimals where they might not fit,
+    // so a whole one in a column of a base comes back in that base.
+    let exact = |d: Dec| match (ty, d.to_i64()) {
+        (S::Percent, _) => Cell::Lit(Lit::Percent(d)),
+        (t, Some(n)) if t.is_int() => Cell::Lit(Lit::Int(n, Base::of(t))),
         _ => Cell::Lit(Lit::Decimal(d)),
     };
     let whole = |n: i64| match ty {
         S::Decimal | S::Fraction | S::Percent => exact(Dec::from_i64(n)),
-        _ => Cell::Lit(Lit::Int(n)),
+        _ => Cell::Lit(Lit::Int(n, Base::of(ty))),
     };
     match value {
         AnyValue::Null => Cell::Empty,
@@ -103,7 +106,9 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
 /// column of anything, which no one dtype holds.
 pub fn dtype(ty: S, scale: u32) -> Option<DataType> {
     Some(match ty {
-        S::Int => DataType::Int64,
+        // A whole number in any base is the same `Int64`; the base is the
+        // column's, from its type.
+        S::Int | S::Hex | S::Octal | S::Binary => DataType::Int64,
         S::Decimal | S::Fraction | S::Percent => decimal(scale),
         S::Float => DataType::Float64,
         S::String | S::Url | S::Email | S::Uuid => DataType::String,
@@ -133,7 +138,7 @@ pub fn decimal(scale: u32) -> DataType {
 pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
     let name: PlSmallStr = name.into();
     let exact = |v: &Value| match v {
-        Value::Int(n) => Some(Dec::from_i64(*n)),
+        Value::Int(n, _) => Some(Dec::from_i64(*n)),
         Value::Decimal(d) => Some(*d),
         _ => None,
     };
@@ -185,10 +190,10 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
         )
     };
     let series = match ty {
-        S::Int => Series::new(
+        S::Int | S::Hex | S::Octal | S::Binary => Series::new(
             name,
             all(&|v| match v {
-                Value::Int(n) => Some(Some(*n)),
+                Value::Int(n, _) => Some(Some(*n)),
                 v if null(v) => Some(None),
                 _ => None,
             })?,

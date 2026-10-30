@@ -141,7 +141,7 @@ fn field(v: &Value) -> (String, bool) {
     };
     match v {
         Value::Null => ("null".to_string(), false),
-        Value::Int(n) => (n.to_string(), false),
+        Value::Int(n, _) => (n.to_string(), false),
         // An exact number is written in full: every digit it holds.
         Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => (format_rat(r), false),
         Value::Float(f) => (num(*f), false),

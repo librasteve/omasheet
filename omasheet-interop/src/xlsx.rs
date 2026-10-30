@@ -83,7 +83,7 @@ struct Formula {
 /// A value as a number, if it is one.
 fn real(v: &Value) -> Option<f64> {
     match v {
-        Value::Int(n) => n.to_string().parse().ok(),
+        Value::Int(n, _) => n.to_string().parse().ok(),
         Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => Some(to_f64(r)),
         Value::Float(f) => Some(*f),
         Value::Boolean(b) => Some(*b as u8 as f64),
@@ -437,7 +437,7 @@ fn shown<'f>(
     let day = DAY as f64;
     Some(match value {
         Value::Null => return None,
-        Value::Int(n) => {
+        Value::Int(n, _) => {
             let (f, same) = double(&Dec::from_i64(*n));
             if !f.is_finite() {
                 lose(AS_TEXT);

@@ -36,6 +36,9 @@ const FALLBACK: Why = "values were written in place of formulas that use `//` on
 const TYPE: Why =
     "values were written in place of formulas on values whose type a workbook cannot tell";
 const OPERATOR: Why = "values were written in place of formulas that use `in` or a range";
+// A workbook's `BITAND` and the rest take only 0 to 2^48 - 1, and a formula
+// cannot say beforehand that every row's numbers are among them.
+const BITWISE: Why = "values were written in place of formulas that use a bitwise operator";
 const FUNCTION: Why =
     "values were written in place of formulas that use a function a workbook has not got";
 const LITERAL: Why =
@@ -149,7 +152,7 @@ fn letters(col: usize) -> String {
 
 fn kind_of(s: S) -> Kind {
     match s {
-        S::Int | S::Decimal | S::Fraction | S::Percent | S::Float => Kind::Number,
+        S::Int | S::Hex | S::Octal | S::Binary | S::Decimal | S::Fraction | S::Percent | S::Float => Kind::Number,
         S::String | S::Url | S::Email | S::Uuid => Kind::Text,
         S::Boolean => Kind::Bool,
         S::Date => Kind::Date,
@@ -162,7 +165,7 @@ fn kind_of(s: S) -> Kind {
 /// A whole number written in the formula, such as the `1` of `*-1`.
 fn whole(program: &Program, node: &Node) -> Option<i64> {
     match &node.kind {
-        Ir::Lit(Lit::Int(n)) => Some(*n),
+        Ir::Lit(Lit::Int(n, _)) => Some(*n),
         Ir::Unary(UnOp::Neg, inner) => whole(program, inner).map(|n| -n),
         Ir::Const(i) => whole(program, &program.consts[*i].node),
         Ir::Single(inner) => whole(program, inner),
@@ -235,7 +238,7 @@ impl Writer<'_> {
         let worksheet = self.worksheet(t, cx)?;
         let d = if fixed { "$" } else { "" };
         let kind = match self.engine.cell_shown(t, c, r as usize) {
-            Value::Int(_)
+            Value::Int(_, _)
             | Value::Decimal(_)
             | Value::Fraction(_)
             | Value::Percent(_)
@@ -506,10 +509,10 @@ impl Writer<'_> {
         };
         Ok(match lit {
             // A workbook holds fifteen digits.
-            Lit::Int(n) if n.to_string().trim_start_matches('-').len() <= 15 => {
+            Lit::Int(n, _) if n.to_string().trim_start_matches('-').len() <= 15 => {
                 number(n.to_string())
             }
-            Lit::Int(_) => return Err(LITERAL),
+            Lit::Int(_, _) => return Err(LITERAL),
             Lit::Decimal(r) | Lit::Percent(r) if !r.is_long() => number(format_rat(r)),
             Lit::Decimal(r) | Lit::Percent(r) => number(r.to_plain_string()),
             Lit::Float(f) if f.is_finite() => {
@@ -637,7 +640,9 @@ impl Writer<'_> {
                 kind: Kind::DateTime,
                 ..x.clone()
             },
-            Func::To(S::Int) if number => of("TRUNC", Kind::Number),
+            Func::To(S::Int | S::Hex | S::Octal | S::Binary) if number => {
+                of("TRUNC", Kind::Number)
+            }
             Func::To(S::Decimal | S::Percent | S::Float) if number => x.clone(),
             Func::To(S::Int | S::Decimal | S::Float) if x.kind == Kind::Bool => {
                 Expr::atom(format!("IF({},1,0)", x.text), Kind::Number)
@@ -749,6 +754,8 @@ impl Writer<'_> {
                 .scalar(inner, cx)?
                 .map(|x| Expr::atom(format!("NOT({})", x.text), Kind::Bool))),
             Ir::Unary(UnOp::UpTo, _) => Err(OPERATOR),
+            Ir::Unary(UnOp::BitNot, _) => Err(BITWISE),
+            Ir::Binary(op, ..) if op.is_bitwise() => Err(BITWISE),
             Ir::Binary(BinOp::Fallback, a, b) => {
                 let (a, b) = (self.scalar(a, cx)?, self.scalar(b, cx)?);
                 let Some(a) = a else { return Ok(b) };

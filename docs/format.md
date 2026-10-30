@@ -190,8 +190,9 @@ sheet's rows were derived.
 
 ## Types
 
-`Integer`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,
-`Date`, `Time`, `Datetime`, `Url`, `Email`, `Uuid`.
+`Integer`, `Hex`, `Octal`, `Binary`, `Decimal`, `Fraction`, `Percent`,
+`Float`, `String`, `Boolean`, `Date`, `Time`, `Datetime`, `Url`, `Email`,
+`Uuid`.
 A column with no `Name : Type` line takes its type from its cells.
 `Integer` was called `Int` before, and a column declared that way is still
 read as one; `Integer` is what is written.
@@ -199,6 +200,9 @@ read as one; `Integer` is what is written.
 | Type | Written |
 |---|---|
 | `Integer` | `42`, `1_000_000` |
+| `Hex` | `0xff`, `0xFF_FF` — an `Integer` shown in base 16 |
+| `Octal` | `0o17` — an `Integer` shown in base 8 |
+| `Binary` | `0b101` — an `Integer` shown in base 2 |
 | `Decimal` | `19.99`, `1/7`, `2 3/4` — exact |
 | `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction |
 | `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
@@ -211,6 +215,24 @@ read as one; `Integer` is what is written.
 | `Url` | `https://example.com`, `mailto:name@example.com` |
 | `Email` | `name@example.com` |
 | `Uuid` | `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f` |
+
+A `_` may stand anywhere among a number's digits, before or after the
+point, to group them: `1_000_000`, `10_00_000`, `0.000_1`, `0xFF_FF`. It
+may not stand in an exponent.
+
+`Hex`, `Octal` and `Binary` hold what an `Integer` holds and show it in
+their own base, after a lower-case `0x`, `0o` or `0b`; the prefix and the
+hex digits are read in either case. A leading `0` alone is decimal: `017` is
+17. A negative one is shown as its 64-bit two's complement, so `-255` in a
+`Hex` column is shown `0xffffffffffffff01`, and is written in the file as
+`-0xff`, which reads back as the same number. Each goes where an `Integer`
+does and takes an `Integer` where it is declared. Arithmetic on two of one
+base gives that base, but for `/`, and on any other mix gives an `Integer`:
+`0xF0 + 0x0F` is `0xff` and `0xF0 + 1` is `241`. A format on the column
+shows the number by its conversion instead: `Hex[08X]` shows 255 as
+`000000FF`. `Hex(x)`, `Octal(x)` and `Binary(x)` convert as `Integer(x)`
+does. A column of cells all written in one base is a column of that type,
+and the app writes the type into the file.
 
 A `Time` and a `Datetime` may carry a fraction of a second after the
 seconds: `09:30:15.5`, `2025-01-31T09:30:15.123456`. The fraction always
