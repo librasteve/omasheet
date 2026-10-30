@@ -130,176 +130,201 @@ const fn math_doc(
 }
 
 const AGG: &str = "Aggregate";
-const SHEET: &str = "Sheet";
+const PIPE: &str = "Pipe";
 const CONVERT: &str = "Convert";
 const MATH: &str = "Math";
 const LOG: &str = "Log & Exp";
 const TRIG: &str = "Trigonometry";
 const TIME: &str = "Time & Date";
 
+/// What the function directory says first: how a function is written.
+pub const INTRO: &str =
+    "Functions are written =sum(x), many can also be used a method applied to an object e.g. \
+     =x.sum().";
+
+/// What the functions of each category are applied to, said under its heading.
+pub const ABOUT: &[(&str, &str)] = &[
+    (
+        AGG,
+        "Object: any collection - Sheet, Column, vector or cell block. For several: sum(A, B). \
+         Empty(null) cells usually skipped.",
+    ),
+    (PIPE, "Left-hand side of pipe operator(|>): a Sheet or Column."),
+    (
+        MATH,
+        "Object: any - a single cell, Sheet, Column, vector or a cell block. Usually must contain \
+         a number.",
+    ),
+    (CONVERT, "Object: a Value."),
+    (LOG, "Takes: a number."),
+    (TRIG, "Takes: a number as an angle in radians."),
+    (TIME, "Object: Date, Time or Datetime."),
+];
+
 /// Every function, grouped by category in the order the directory shows them.
 pub const FUNCTIONS: &[FuncDoc] = &[
     doc(
         AGG,
         "sum",
-        "Sheet.Column.sum()",
-        "The total of a column or vector, a block of cells, or several taken together: sum(A, B). Empty cells are skipped.",
+        ".sum()",
+        "The total.",
     ),
     doc(
         AGG,
         "mean",
-        "Sheet.Column.mean()",
-        "The mean of a column or vector, a block of cells, or several taken together, as an exact fraction where it can be.",
+        ".mean()",
+        "The average.",
     ),
     doc(
         AGG,
         "min",
-        "Sheet.Column.min()",
-        "The smallest value, of one vector or several. Works on numbers, text, dates and times.",
+        ".min()",
+        "The smallest. Works on numbers, text order, dates and times.",
     ),
     doc(
         AGG,
         "max",
-        "Sheet.Column.max()",
-        "The largest value, of one vector or several. Works on numbers, text, dates and times.",
+        ".max()",
+        "The largest. Works on numbers, text order, dates and times.",
     ),
     doc(
         AGG,
         "count",
-        "Sheet.Column.count()",
-        "How many cells are not empty, of one vector or several. For how many rows a sheet has, see len.",
+        ".count()",
+        "Cells in a column or cell block.",
     ),
     doc(
         AGG,
         "len",
-        "Sheet.len()",
-        "How many rows a sheet has, or how many cells a column or vector has, empty ones included.",
+        ".len()",
+        "Rows in a sheet, or cells in a column: empty ones included.",
     ),
     doc(
         AGG,
         "median",
-        "Sheet.Column.median()",
-        "The middle value of a column or vector, or the mean of the two middle ones. Empty cells are skipped.",
+        ".median()",
+        "The middle value, or the mean of the two middle ones.",
     ),
     doc(
         AGG,
         "product",
-        "Sheet.Column.product()",
-        "Every value multiplied together. Empty cells are skipped.",
+        ".product()",
+        "Every value multiplied together.",
     ),
     doc(
         AGG,
         "first",
-        "Sheet.Column.first()",
+        ".first()",
         "The first value, empty or not.",
     ),
     doc(
         AGG,
         "last",
-        "Sheet.Column.last()",
+        ".last()",
         "The last value, empty or not.",
     ),
     doc(
         AGG,
         "std",
-        "Sheet.Column.std()",
+        ".std()",
         "The standard deviation, of a sample. std(x, 0) is of a whole population.",
     ),
     doc(
         AGG,
         "var",
-        "Sheet.Column.var()",
+        ".var()",
         "The variance, of a sample. var(x, 0) is of a whole population.",
     ),
     doc(
         AGG,
         "quantile",
-        "Sheet.Column.quantile(0.9)",
-        "The value a fraction of the way through the values in order: quantile(x, 0.5) is the median.",
+        ".quantile(0.9)",
+        "The value a fraction of the way through the values in order: quantile(x, 0.5) is the \
+         median.",
     ),
     doc(
-        SHEET,
+        PIPE,
         "filter",
-        "Sheet |> filter(Column == value)",
-        "The rows of a sheet for which a condition holds.",
+        "|> filter(Column == value)",
+        "The rows for which a condition holds.",
     ),
     doc(
-        SHEET,
+        PIPE,
         "select",
-        "Sheet |> select(Column1, Column2)",
+        "|> select(Column1, Column2)",
         "A sheet with only the named columns.",
     ),
     doc(
-        SHEET,
+        PIPE,
         "head",
-        "Sheet |> head(5)",
+        "|> head(5)",
         "The first rows of a sheet, or cells of a column.",
     ),
     doc(
-        SHEET,
+        PIPE,
         "tail",
-        "Sheet |> tail(5)",
+        "|> tail(5)",
         "The last rows of a sheet, or cells of a column.",
     ),
     doc(
-        SHEET,
+        PIPE,
         "shift",
         "Sheet.Column.shift(1)",
         "The value a number of rows back, empty where there is no such row.",
     ),
     doc(
-        SHEET,
+        PIPE,
         "sort",
-        "Sheet |> sort(Column, desc)",
-        "The rows of a sheet in the order of one or more columns, or the cells of a column in their own order. Ascending unless the last word is desc; an empty cell comes first.",
+        "|> sort(Column, desc)",
+        "The rows of a sheet in the order of one or more columns, or the cells of a column in \
+         their own order. Ascending unless the last word is desc; an empty cell comes first.",
     ),
     doc(
-        SHEET,
+        PIPE,
         "group_by",
         "sheet ByRegion := Sales |> group_by(Region) |> agg(Revenue.sum())",
-        "The rows of a sheet in groups, one for each value of the key columns, for agg to work out. It ends a sheet's formula, with agg after it.",
+        "The rows of a sheet in groups, one for each value of the key columns, for agg to work \
+         out. It ends a sheet's formula, with agg after it.",
     ),
     doc(
-        SHEET,
+        PIPE,
         "join",
         "sheet Both := Sales |> join(Targets, Month, left)",
-        "The rows of two sheets paired where their key columns are equal, a row for every pair. Inner unless the last word is left, which keeps a row that matches none. An empty key matches nothing; a name both sheets have takes _right on the right one. It ends a sheet's formula.",
+        "The rows of two sheets paired where their key columns are equal, a row for every pair. \
+         Inner unless the last word is left, which keeps a row that matches none. An empty key \
+         matches nothing.",
     ),
     doc(
-        SHEET,
+        PIPE,
         "agg",
         "Sales |> group_by(Region) |> agg(Revenue.sum(), Orders := Item.len())",
-        "A row for each group: the key columns, then an aggregate of each group's rows. Revenue.sum() makes the column Revenue_sum, and Name := names it. The groups are in the order of their keys.",
-    ),
-    doc(
-        CONVERT,
-        "cast",
-        "cast(x, Int)",
-        "A value as another type, named by the type: the same as Int(x) and x.Int.",
+        "A row for each group: the key columns, then an aggregate of each group's rows. \
+         Revenue.sum() makes the column Revenue_sum, and Name := names it. The groups are in the \
+         order of their keys.",
     ),
     doc(
         MATH,
         "is_null",
-        "Sheet.Column.is_null()",
+        ".is_null()",
         "Whether a cell is empty.",
     ),
     doc(
         MATH,
         "is_not_null",
-        "Sheet.Column.is_not_null()",
+        ".is_not_null()",
         "Whether a cell holds a value.",
     ),
     doc(
         MATH,
         "is_nan",
-        "Sheet.Column.is_nan()",
-        "Whether a cell holds a NaN, the Float a division of zero by zero gives. Empty of an empty cell, which is not a NaN but a missing value.",
+        ".is_nan()",
+        "Whether a cell holds NaN (Not a Number).",
     ),
     doc(
         MATH,
         "is_not_nan",
-        "Sheet.Column.is_not_nan()",
-        "Whether a cell holds a number that is not a NaN.",
+        ".is_not_nan()",
+        "Whether a cell is not a NaN.",
     ),
     doc(
         MATH,
@@ -317,7 +342,7 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         MATH,
         "succ",
         "succ(x)",
-        "The next value: a number plus one, or the next text in the way letters and digits count up, AZ to BA. The step a sequence takes when its terms give no other.",
+        "The next value: a number plus one, or the text in alphabetical order, AZ to BA.",
     ),
     math_doc(
         MATH,
@@ -337,7 +362,8 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         MATH,
         "round",
         "round(x, 2)",
-        "The nearest whole number, or with a count of places the nearest at that many decimal places. A half rounds away from zero. For the nearest multiple of something, round(x / 100) * 100.",
+        "The nearest whole number, or the nearest at count decimal places. A half rounds away from \
+         zero.",
         MathFn::Round,
     ),
     math_doc(
@@ -364,68 +390,68 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     doc(
         CONVERT,
         "Integer",
-        "x.Integer",
-        "A whole number: a fraction loses its fractional part, so 19.99 gives 19 and -19.99 \
-         gives -19. Also written Integer(x).",
+        ".Integer",
+        "A whole number: truncates.",
     ),
     doc(
         CONVERT,
         "Decimal",
-        "x.Decimal",
-        "The same exact number shown as a decimal: a Num as the decimal it is shown as, and \
-         1/8 as 0.125. One that does not end, such as 1/3, is shown cut and marked, 0.333…, \
-         and held in full. Also written Decimal(x).",
+        ".Decimal",
+        "An exact number shown as a decimal.",
     ),
     doc(
         CONVERT,
         "Fraction",
-        "x.Fraction",
-        "The same exact number shown as a fraction of whole numbers: 0.125 gives 1/8, 1/7 stays \
-         1/7, and 2.75 gives 2 3/4. One with no fraction of a small enough denominator is shown \
-         as a decimal. Also written Fraction(x).",
+        ".Fraction",
+        "A Decimal shown as a fraction.",
     ),
     doc(
         CONVERT,
         "Percent",
-        "x.Percent",
-        "The same number as a percentage: 0.4 gives 40% and 5/12 gives 41.67…%. Also written \
-         Percent(x).",
+        ".Percent",
+        "A Decimal shown as a percentage (%).",
     ),
     doc(
         CONVERT,
         "Float",
-        "x.Float",
-        "A floating-point Float from an exact number. Also written Float(x).",
+        ".Float",
+        "A floating-point number.",
     ),
     doc(
         CONVERT,
         "String",
-        "x.String",
-        "Any value as text, written the way a file writes it. Also written String(x).",
+        ".String",
+        "Any value as text.",
     ),
     doc(
         CONVERT,
         "Boolean",
-        "x.Boolean",
-        "true for a number that is not zero, false for zero. Also written Boolean(x).",
+        ".Boolean",
+        "true for a number that is not zero, false for zero.",
     ),
     doc(
         CONVERT,
         "Date",
-        "x.Date",
-        "The Date of a Datetime, or of text such as \"2025-01-31\". Also written Date(x).",
+        ".Date",
+        "The Date of a Datetime, or of text such as \"2025-01-31\".",
     ),
     doc(
         CONVERT,
         "Time",
-        "x.Time",
-        "The Time of a Datetime, or of text such as \"09:30\". Also written Time(x).",
+        ".Time",
+        "The Time of a Datetime, or of text such as \"09:30\".",
     ),
     doc(
         CONVERT,
         "Datetime",
-        "x.Datetime",
-        "A Date at midnight, or text such as \"2025-01-31T09:30\". Also written Datetime(x).",
+        ".Datetime",
+        "A Date at midnight, or text such as \"2025-01-31T09:30\".",
+    ),
+    doc(
+        CONVERT,
+        "cast",
+        "cast(x, Int)",
+        "A value as another type: the same as Int(x) and x.Int.",
     ),
     math_doc(
         LOG,
@@ -465,7 +491,7 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         TRIG,
         "sin",
         "sin(x)",
-        "The sine of an angle in radians.",
+        "The sine.",
         MathFn::Sin,
     ),
     math_doc(
@@ -559,26 +585,27 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     doc(
         TIME,
         "year",
-        "Sheet.Column.year()",
+        ".year()",
         "The year of a Date or Datetime.",
     ),
     doc(
         TIME,
         "month",
-        "Sheet.Column.month()",
-        "The month, 1 to 12, of a Date or Datetime.",
+        ".month()",
+        "The month, 1 to 12.",
     ),
     doc(
         TIME,
         "day",
-        "Sheet.Column.day()",
-        "The day of the month of a Date or Datetime.",
+        ".day()",
+        "The day.",
     ),
     doc(
         TIME,
         "add_months",
         "add_months(x, n)",
-        "A date n months on, keeping the day of the month, or the last day of a month too short for it: a month after 2025-01-31 is 2025-02-28. Write it as x + n.month, and x + n.year for years.",
+        "A date n months on, keeping the day of the month, or the last day of a month too short. \
+         Write it as x + n.month, and x + n.year for years.",
     ),
     doc(
         TIME,
@@ -595,103 +622,104 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     doc(
         TIME,
         "quarter",
-        "Sheet.Column.quarter()",
+        ".quarter()",
         "The quarter of the year, 1 to 4.",
     ),
     doc(
         TIME,
         "week",
-        "Sheet.Column.week()",
+        ".week()",
         "The ISO week of the year, 1 to 53. A week belongs to the year its Thursday is in.",
     ),
     doc(
         TIME,
         "ordinal_day",
-        "Sheet.Column.ordinal_day()",
+        ".ordinal_day()",
         "The day of the year, 1 to 366.",
     ),
     doc(
         TIME,
         "weekday",
-        "Sheet.Column.weekday()",
+        ".weekday()",
         "The day of the week, 1 for Monday to 7 for Sunday.",
     ),
     doc(
         TIME,
         "hour",
-        "Sheet.Column.hour()",
-        "The hour, 0 to 23, of a Time or Datetime.",
+        ".hour()",
+        "The hour, 0 to 23.",
     ),
     doc(
         TIME,
         "minute",
-        "Sheet.Column.minute()",
-        "The minute of a Time or Datetime.",
+        ".minute()",
+        "The minute.",
     ),
     doc(
         TIME,
         "second",
-        "Sheet.Column.second()",
-        "The second of a Time or Datetime.",
+        ".second()",
+        "The second.",
     ),
     doc(
         TIME,
         "millisecond",
-        "Sheet.Column.millisecond()",
-        "The milliseconds left over after the second of a Time or Datetime: 500 of 09:30:00.5.",
+        ".millisecond()",
+        "The milliseconds left over after the second: 500 of 09:30:00.5.",
     ),
     doc(
         TIME,
         "microsecond",
-        "Sheet.Column.microsecond()",
-        "The microseconds left over after the second of a Time or Datetime: 500000 of 09:30:00.5.",
+        ".microsecond()",
+        "The microseconds left over after the second: 500000 of 09:30:00.5.",
     ),
     doc(
         TIME,
         "nanosecond",
-        "Sheet.Column.nanosecond()",
-        "The nanoseconds left over after the second of a Time: 500000000 of 09:30:00.5. A Datetime is held to the microsecond, so its nanoseconds end in three zeros.",
+        ".nanosecond()",
+        "The nanoseconds left over after the second of a Time: 500000000 of 09:30:00.5. A Datetime \
+         is held to the microsecond, ends in 000.",
     ),
     doc(
         TIME,
         "date",
-        "Sheet.Column.date()",
-        "The Date half of a Datetime.",
+        ".date()",
+        "The Date part of a Datetime.",
     ),
     doc(
         TIME,
         "time",
-        "Sheet.Column.time()",
-        "The Time half of a Datetime.",
+        ".time()",
+        "The Time partf of a Datetime.",
     ),
     doc(
         TIME,
         "convert_time_zone",
-        "Column.convert_time_zone(\"Australia/Adelaide\")",
+        ".convert_time_zone(\"Australia/Adelaide\")",
         "The same instant on the clocks of a named time zone.",
     ),
     doc(
         TIME,
         "utc",
-        "Column.utc()",
+        ".utc()",
         "The same instant on the clocks of UTC.",
     ),
     doc(
         TIME,
         "local",
-        "Column.local()",
+        ".local()",
         "The same instant on the clocks of this machine.",
     ),
     doc(
         TIME,
         "base_utc_offset",
-        "Column.base_utc_offset()",
+        ".base_utc_offset()",
         "The seconds a Datetime is ahead of UTC.",
     ),
     doc(
         TIME,
         "time_zone",
-        "Column.time_zone()",
+        ".time_zone()",
         "The name of a Datetime's time zone.",
     ),
 ];

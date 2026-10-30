@@ -140,33 +140,38 @@ pub fn snapshot(snap: &Snapshot) -> String {
     out
 }
 
-/// The function directory: `[{name, category, usage, summary, code}]`. The
-/// functions the file defines come first, under `Custom`, each with the
-/// expression it stands for as its `code`.
-pub fn functions(custom: &[FuncSnap], docs: &[FuncDoc]) -> String {
-    let mut entries: Vec<[String; 5]> = Vec::new();
+/// The function directory: `[{name, category, about, usage, summary, code}]`.
+/// The functions the file defines come first, under `Custom`, each with the
+/// expression it stands for as its `code`. `about` is what the functions of
+/// the category are applied to, from `about`.
+pub fn functions(custom: &[FuncSnap], docs: &[FuncDoc], about: &[(&str, &str)]) -> String {
+    let mut entries: Vec<[String; 6]> = Vec::new();
     for f in custom {
         let code = format!("= {}", f.source);
         entries.push([
             f.name.clone(),
             "Custom".into(),
+            String::new(),
             f.usage.clone(),
             f.doc.clone(),
             code,
         ]);
     }
     for f in docs {
-        entries.push([f.name, f.category, f.usage, f.summary, ""].map(String::from));
+        let note = about.iter().find(|(c, _)| *c == f.category).map_or("", |(_, a)| a);
+        entries.push([f.name, f.category, note, f.usage, f.summary, ""].map(String::from));
     }
     let mut out = String::new();
     list(
         &mut out,
         &entries,
-        |out, [name, category, usage, summary, code]| {
+        |out, [name, category, about, usage, summary, code]| {
             out.push('{');
             field(out, "name", name);
             out.push(',');
             field(out, "category", category);
+            out.push(',');
+            field(out, "about", about);
             out.push(',');
             field(out, "usage", usage);
             out.push(',');
@@ -224,15 +229,16 @@ mod tests {
         let json = super::functions(
             &doc.snapshot().funcs,
             omasheet_engine::omx::funcs::FUNCTIONS,
+            omasheet_engine::omx::funcs::ABOUT,
         );
         assert!(json.starts_with(
-            "[{\"name\":\"Twice\",\"category\":\"Custom\",\"usage\":\"Twice(x)\",\"summary\":\"Twice over.\",\"code\":\"= x * 2\"},"
+            "[{\"name\":\"Twice\",\"category\":\"Custom\",\"about\":\"\",\"usage\":\"Twice(x)\",\"summary\":\"Twice over.\",\"code\":\"= x * 2\"},"
         ));
         // The code is there with or without a comment, and only for these.
         assert!(json.contains(
             "\"usage\":\"Half(x)\",\"summary\":\"\",\"code\":\"= x / 2\"},{\"name\":\"sum\""
         ));
-        assert!(json.contains("\"name\":\"sum\",\"category\":"));
+        assert!(json.contains("\"name\":\"sum\",\"category\":\"Aggregate\",\"about\":\"Object:"));
         assert!(json.ends_with("\"code\":\"\"}]"));
     }
 }

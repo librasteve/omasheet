@@ -301,6 +301,9 @@ pub mod qobject {
         /// The function directory as JSON.
         #[qinvokable]
         fn functions_json(self: &File) -> QString;
+        /// What the function directory says first.
+        #[qinvokable]
+        fn functions_intro(self: &File) -> QString;
         /// What can be typed into a column of the named type.
         #[qinvokable]
         fn entry_hint(self: &File, ty: &QString) -> QString;
@@ -1029,7 +1032,12 @@ impl qobject::File {
         QString::from(&json::functions(
             &self.rust().doc.snapshot().funcs,
             omasheet_engine::omx::funcs::FUNCTIONS,
+            omasheet_engine::omx::funcs::ABOUT,
         ))
+    }
+
+    fn functions_intro(&self) -> QString {
+        QString::from(omasheet_engine::omx::funcs::INTRO)
     }
 
     fn desktop_font_size(&self) -> i32 {

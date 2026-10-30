@@ -4557,6 +4557,15 @@ ApplicationWindow {
         // Headings and functions in one list: a heading has no `name`.
         property var shown: []
         property string copied: ""
+        // The categories closed with their caret; a search shows them all.
+        property var closed: ({})
+
+        function toggle(category) {
+            var c = Object.assign({}, closed);
+            c[category] = !c[category];
+            closed = c;
+            refresh();
+        }
 
         function refresh() {
             var words = searchField.text.toLowerCase().split(" ").filter(function(w) { return w.length > 0; });
@@ -4569,8 +4578,10 @@ ApplicationWindow {
                     continue;
                 if (f.category !== category) {
                     category = f.category;
-                    out.push({ category: category });
+                    out.push({ category: category, about: f.about });
                 }
+                if (words.length === 0 && closed[category])
+                    continue;
                 out.push(f);
             }
             shown = out;
@@ -4580,6 +4591,7 @@ ApplicationWindow {
             // Read afresh each time: the file's own functions come and go.
             all = JSON.parse(file.functionsJson());
             copied = "";
+            closed = {};
             searchField.text = "";
             refresh();
             searchField.forceActiveFocus();
@@ -4588,6 +4600,15 @@ ApplicationWindow {
 
         contentItem: ColumnLayout {
             spacing: 8
+            Label {
+                Layout.fillWidth: true
+                text: file.functionsIntro()
+                wrapMode: Text.Wrap
+                color: win.mutedColor
+                font.family: win.font.family
+                font.features: win.font.features
+                font.pixelSize: win.fineSize
+            }
             TextField {
                 id: searchField
                 Layout.fillWidth: true
@@ -4612,19 +4633,35 @@ ApplicationWindow {
                     readonly property var item: functionsDialog.shown[index] || ({})
                     readonly property bool heading: !item.name
                     width: ListView.view.width - 12
-                    height: heading ? headingText.implicitHeight + 16 : body.implicitHeight + 12
+                    height: heading ? headingBody.implicitHeight + 16 : body.implicitHeight + 12
 
-                    Text {
-                        id: headingText
+                    Column {
+                        id: headingBody
                         visible: entry.heading
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 4
-                        text: entry.item.category || ""
-                        color: win.accentColor
-                        font.family: win.font.family
-                        font.features: win.font.features
-                        font.pixelSize: win.dialogSize
-                        font.bold: true
+                        width: parent.width
+                        spacing: 2
+                        Text {
+                            // The caret says whether the category is open.
+                            text: (functionsDialog.closed[entry.item.category] && searchField.text.trim() === ""
+                                ? "\u25B8 " : "\u25BE ") + (entry.item.category || "")
+                            color: win.accentColor
+                            font.family: win.font.family
+                            font.features: win.font.features
+                            font.pixelSize: win.dialogSize
+                            font.bold: true
+                        }
+                        Text {
+                            width: parent.width
+                            visible: text.length > 0
+                            text: entry.item.about || ""
+                            color: win.mutedColor
+                            wrapMode: Text.Wrap
+                            font.family: win.font.family
+                            font.features: win.font.features
+                            font.pixelSize: win.fineSize
+                        }
                     }
                     Rectangle {
                         visible: !entry.heading
@@ -4675,10 +4712,15 @@ ApplicationWindow {
                     MouseArea {
                         id: entryArea
                         anchors.fill: parent
-                        enabled: !entry.heading
                         hoverEnabled: true
-                        // Click to copy the usage, ready to paste into a formula.
+                        cursorShape: entry.heading ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        // Click a heading to open or close it, a function to
+                        // copy the usage, ready to paste into a formula.
                         onClicked: {
+                            if (entry.heading) {
+                                functionsDialog.toggle(entry.item.category);
+                                return;
+                            }
                             clipboard.put(entry.item.usage);
                             functionsDialog.copied = entry.item.name;
                         }
