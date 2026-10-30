@@ -93,6 +93,13 @@ ApplicationWindow {
         font.pixelSize: win.fontSize
         font.features: win.font.features
     }
+    // The header's type line, which is set smaller.
+    FontMetrics {
+        id: noteMetrics
+        font.family: "monospace"
+        font.pixelSize: win.noteSize
+        font.features: win.font.features
+    }
 
     // ---- document state ----------------------------------------------------
 
@@ -285,13 +292,20 @@ ApplicationWindow {
         var total = 0;
         var cols = sheet.columns;
         for (var c = 0; c < cols.length; c++) {
-            // A formula column shows `:= ` before its type, and a column
-            // with a format `[]` after it.
-            var typeChars = cols[c].type.length + (cols[c].computed ? 5 : 2) + (cols[c].format ? 2 : 0);
-            var chars = Math.max(cols[c].name.length, typeChars);
+            var chars = cols[c].name.length;
             for (var r = 0; r < sheet.rows.length; r++)
                 chars = Math.max(chars, lineWidth(sheet.rows[r][c].d));
             var w = Math.round(Math.min(46, Math.max(7, chars + 2)) * metrics.averageCharacterWidth) + 14;
+            // Never narrower than the type line beside the telltale: the
+            // type, `:= ` before it in a formula column and `[]` after it
+            // where it has a format. It is set smaller, so a short type
+            // such as `Integer` fits the width an empty column has already.
+            if (cols[c].type.length > 0) {
+                var typeChars = cols[c].type.length
+                    + (cols[c].computed && !sheet.isConsts ? 3 : 0) + (cols[c].format ? 2 : 0);
+                var telltale = sheet.isConsts ? 0 : win.noteSize;
+                w = Math.max(w, Math.ceil(typeChars * noteMetrics.averageCharacterWidth) + telltale + 14);
+            }
             widths.push(w);
             total += w;
         }
@@ -2406,7 +2420,7 @@ ApplicationWindow {
                                     readonly property bool active: win.filtered(headCell.index)
                                     readonly property string sorted: win.sortedAs(headCell.index)
                                     readonly property bool solid: active || win.wasSorted(headCell.index)
-                                    width: visible ? Math.round(win.noteSize * 1.3) : 0
+                                    width: visible ? win.noteSize : 0
                                     height: typeLine.height
                                     anchors.right: parent.right
                                     anchors.rightMargin: 4
