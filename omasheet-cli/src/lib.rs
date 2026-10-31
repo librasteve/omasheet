@@ -160,6 +160,12 @@ enum Command {
         #[arg(long)]
         parquet: bool,
 
+        /// With --parquet: keep the file's zone, constants and functions,
+        /// and each column's type and formula, in the Parquet's metadata,
+        /// so that importing it gives back the formulas
+        #[arg(long, requires = "parquet")]
+        meta: bool,
+
         /// Export this sheet alone
         #[arg(long, value_name = "NAME")]
         sheet: Option<String>,
@@ -260,6 +266,7 @@ fn import(file: &Path, output: Option<&Path>, options: Options) -> Result<ExitCo
 fn export(
     file: &Path,
     ext: &str,
+    meta: bool,
     sheet: Option<&str>,
     output: Option<&Path>,
     options: Options,
@@ -269,6 +276,7 @@ fn export(
     let exported = match ext {
         "xlsx" => omasheet_interop::xlsx::export(&name, &text, sheet, options),
         "json" => omasheet_interop::json::export(&name, &text, sheet, options),
+        "parquet" if meta => omasheet_interop::parquet::export_meta(&name, &text, sheet, options),
         "parquet" => omasheet_interop::parquet::export(&name, &text, sheet, options),
         _ => omasheet_interop::csv::export(&name, &text, sheet, options),
     };
@@ -396,6 +404,7 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
             csv,
             json,
             parquet,
+            meta,
             sheet,
             output,
             env,
@@ -413,7 +422,14 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
             // As for `print` and `render`: a `table` reads its rows from
             // beside the file, so the file's own directory is the base.
             options.base = Some(beside(&file));
-            export(&file, ext, sheet.as_deref(), output.as_deref(), options)
+            export(
+                &file,
+                ext,
+                meta,
+                sheet.as_deref(),
+                output.as_deref(),
+                options,
+            )
         }
         Some(Command::Render {
             file,

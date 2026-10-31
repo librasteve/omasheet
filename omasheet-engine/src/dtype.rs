@@ -14,7 +14,7 @@ use polars::prelude::Column as PlColumn;
 use polars::prelude::*;
 
 /// The omasheet type a Polars dtype is named by, or `None` for a shape a
-/// sheet has no room for: a list, a struct, a map.
+/// sheet cannot render: a list, a struct, a map.
 pub fn type_of(dtype: &DataType) -> Option<S> {
     Some(match dtype {
         DataType::Boolean => S::Boolean,

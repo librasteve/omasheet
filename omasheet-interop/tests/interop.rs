@@ -926,6 +926,49 @@ fn parquet_takes_each_column_type_from_the_schema() {
 }
 
 #[test]
+fn parquet_meta_brings_the_formulas_back() {
+    let file = "zone Europe/London\n\n\
+                const Rate = 20%\n\
+                fn Twice(x) = x * 2\n\n\
+                sheet Sales\n\n\
+                Revenue : Decimal['.2f]\n\
+                Code    : Hex\n\n\
+                | Month | Revenue | Code | Tax | Double |\n\
+                | ----- | ------- | ---- | --- | ------ |\n\
+                | Jan   | 100     | 0xff | *   | *      |\n\
+                | Feb   | 120.5   | 0x10 | *   | *      |\n\n\
+                Tax    := Revenue * Rate\n\
+                Double := Twice(Revenue)\n";
+    let out = parquet::export_meta("file.omx", file, None, options()).expect("the file exports");
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    // The computed columns are formulas again, with the constant, the
+    // function, the zone and the column types they were written with.
+    for line in [
+        "zone Europe/London",
+        "const Rate = 20%",
+        "fn Twice(x) = x * 2",
+        "sheet Sales",
+        "Revenue : Decimal['.2f]",
+        "Code    : Hex",
+        "Tax    := Revenue * Rate",
+        "Double := Twice(Revenue)",
+        "| Feb   | 120.5   | 0x10 | *   | *      |",
+    ] {
+        assert!(
+            back.source.contains(line),
+            "{line} missing:\n{}",
+            back.source
+        );
+    }
+    assert_eq!(eval(&back.source, "Sales[Tax; 1]"), "24.1");
+    assert_eq!(eval(&back.source, "Sales[Code; 0]"), "0xff");
+    // Without `--meta` it is the values, as before.
+    let plain = parquet::import("t", &parquet_of(file, None).files[0].bytes).expect("imports");
+    assert!(!plain.source.contains(":="), "{}", plain.source);
+}
+
+#[test]
 fn parquet_keeps_a_decimal_exact() {
     // A decimal column is written as a Parquet decimal, so every digit of it
     // survives the trip: this is what CSV cannot do.

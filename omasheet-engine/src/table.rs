@@ -251,7 +251,7 @@ fn fill(
             None => diags.push(Diagnostic::new(
                 col.span,
                 format!(
-                    "Parquet holds `{}` in a shape a sheet has no room for",
+                    "Parquet holds `{}` in a shape a sheet cannot render",
                     col.name
                 ),
             )),

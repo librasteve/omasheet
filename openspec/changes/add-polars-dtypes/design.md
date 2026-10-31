@@ -27,6 +27,8 @@ and D13 are taken by `add-interop` and `add-packaging`.
 | D36 | Decided | A number of ordinary size too wide to print is cut and marked; e notation is only for the genuinely small or large | Keeps `0.33333333333333333333…`, which the documents and examples already showed |
 | D37 | Decided | The last 8 of the 38 digits are guard digits: held, but neither compared nor shown. 30 significant digits are | Owner decision, 2026-10-21. No fixed-point decimal is closed under division, so the last digits of a long one carry the rounding of every operation before it: held in full, `1/7 + 1/7` and `2/7` differ in the 38th digit and `1/7` and `2/7` do not even land on the same scale. Guarding at the boundary rather than in storage is what works — rounding each result to a fixed scale instead leaves the error at the last digit, unguarded, and `2/7 + 3/7 == 5/7` fails. Guarding on significant digits rather than decimal places is what keeps `1e-38`, whose every digit is significant |
 | D38 | Decided | `Fraction` returns, as a display of a `Decimal` recovered by continued fractions with a denominator of at most 10000 | Owner decision, 2026-10-21, reversing D17. It costs no dtype: the column is a `Decimal(38, s)` and lowers to Polars like any other, so none of `add-dataframe-interop`'s pushdown is excluded. Recovery beats remembering the literal, since it finds a fraction nobody wrote: `(2/7 + 3/7).Fraction` is `5/7`. It is school-exact, not algebraically exact — the held value behind a displayed `1` may be 38 nines |
+| D141 | Decided | The byte-string type is `Bytes` on a schema line, and Polars' `Binary` dtype underneath | Owner, 2026-10-30. `Binary` is the base-2 `Integer` of `add-radix-integers` (D123), which a schema line already names |
+| D142 | Decided | A `Bytes` value is written and shown `x"48656c6c6f"`: two hex digits a byte, read in either case and shown in lower case; `x""` is no bytes | Owner, 2026-10-30. SQL's `X'…'` in OMX's quotes. It reads back exactly, and cannot be taken for a `0x` integer |
 
 ## The type table
 
@@ -40,7 +42,7 @@ and D13 are taken by `add-interop` and `add-packaging`.
 | `Percent` | `Decimal(38, s)` | `Decimal(p, s)` + display flag |
 | `Boolean` | `Boolean` | `Boolean` |
 | `String` | `String` | `String` |
-| `Binary` | `Binary` | `Binary` |
+| `Bytes` | `Binary` | `Binary` |
 | `Date` | `Date` | `Date` |
 | `Time` | `Time` | `Time` (ns) |
 | `DateTime` | `Datetime("us", None)` | `Datetime("ms"/"us"/"ns", None \| tz)` |

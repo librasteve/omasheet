@@ -3180,7 +3180,12 @@ ApplicationWindow {
                             FooterButton {
                                 id: tabButton
                                 required property int index
-                                label: win.tabs[index].name
+                                // A table's rows are in a Parquet file, not in this
+                                // one: its tab is marked, and says which file.
+                                readonly property string from: win.tabs[index].from || ""
+                                label: (from ? "\u25A4 " : "") + win.tabs[index].name
+                                tip: from ? from + ", " + win.tabs[index].rows.length
+                                    + (win.tabs[index].rows.length === 1 ? " row" : " rows") + ", read-only" : ""
                                 active: index === win.tab && !win.showSource
                                 // The whole sheet copied or cut, outlined here too.
                                 readonly property bool marked: win.sheetMark !== null && win.sheetMark.tab === index
@@ -3452,8 +3457,13 @@ ApplicationWindow {
         property bool active: false
         property bool quiet: false
         property color textColor: win.textColor
+        // Said when the pointer rests on it, where there is anything to say.
+        property string tip: ""
         signal clicked()
         signal rightClicked()
+        ToolTip.visible: tip.length > 0 && area.containsMouse
+        ToolTip.delay: 400
+        ToolTip.text: tip
         implicitWidth: buttonText.implicitWidth + 22
         implicitHeight: win.fontSize * 2
         // In the footer's row these keep their width: the tabs, which can
@@ -3901,16 +3911,16 @@ ApplicationWindow {
         width: Math.round(win.fontSize * 11)
 
         TypeEntry { typeName: "Integer" }
-        TypeEntry { typeName: "Hex"; narrower: true }
-        TypeEntry { typeName: "Octal"; narrower: true }
         TypeEntry { typeName: "Binary"; narrower: true }
+        TypeEntry { typeName: "Octal"; narrower: true }
+        TypeEntry { typeName: "Hex"; narrower: true }
         TypeEntry { typeName: "Decimal" }
         TypeEntry { typeName: "Fraction"; narrower: true }
         TypeEntry { typeName: "Percent"; narrower: true }
         TypeEntry { typeName: "Float" }
         TypeEntry { typeName: "String" }
-        TypeEntry { typeName: "Url"; narrower: true }
         TypeEntry { typeName: "Email"; narrower: true }
+        TypeEntry { typeName: "Url"; narrower: true }
         TypeEntry { typeName: "Uuid"; narrower: true }
         TypeEntry { typeName: "Boolean" }
         TypeEntry { typeName: "Datetime" }

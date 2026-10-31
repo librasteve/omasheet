@@ -92,3 +92,17 @@ size, and each with its *before* already measured and pinned by a test.
 - [ ] 4.3 The corpus coverage figure unchanged — 61 offered, 18 lowered, 42
       refused, 1 failed as this change begins — since none of this is about
       what lowers
+
+## 5. Moved here
+
+- [ ] 5.1 The release binary size and the `cargo build` time, before and
+      after Polars, per the risk in `add-dataframe-interop`'s `design.md`.
+      Moved from `add-dataframe-interop` task 1.2 (owner, 2026-10-30)
+- [ ] 5.2 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
+      -- -D warnings`, `cargo test --workspace --no-fail-fast` over what
+      `add-dataframe-interop` built. Moved from its task 8.1 (owner,
+      2026-10-30)
+- [ ] 5.3 Open a real Parquet file, and an unknown one, and confirm the
+      schema drives the displayed types. A source names one file (3.6
+      there), so not several. Moved from `add-dataframe-interop` task 8.2
+      (owner, 2026-10-30)

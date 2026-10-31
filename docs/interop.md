@@ -196,6 +196,7 @@ format that needs no guessing in either direction.
 omasheet import sales.parquet            # one sheet, named after the file
 omasheet export file.omx --parquet       # a file for each sheet
 omasheet export file.omx --parquet --sheet Sales -o sales.parquet
+omasheet export file.omx --parquet --meta  # with the formulas kept as well
 ```
 
 An omasheet type *is* a Polars dtype, so a column is written as the Parquet
@@ -221,11 +222,43 @@ would not read back as it: a `double` column becomes `Age : Float`, while an
 `int64` or a text column needs no line and shows muted in the app — muted
 there is still the schema's type, not a guess. A column that is all nulls,
 or whose values do not go together, has no line to hold it and reads as its
-cells do. A column Parquet holds in a shape a sheet has no room for — a list,
+cells do. A column Parquet holds in a shape a sheet cannot render — a list,
 a struct, a map — is left out and named in a notice.
 
 A `Percent` is written as the decimal it holds: `20%` is `0.2`. Its display
 is no part of its value, so it comes back as a `Decimal`.
+
+### Keeping the formulas: `--meta`
+
+A Parquet file holds values. With `--meta`, an export also keeps what no
+format carries, in the Parquet file's key-value metadata under the key
+`omasheet`: the file's `zone`, its constants and functions, and the
+sheet's type lines and formulas. It is kept as `.omx` source, the sheet
+with no rows:
+
+```omx
+const TaxRate = 20%
+
+sheet Sales
+
+Margin : Percent
+
+| Month | Revenue | Cost | Profit | Tax | Margin |
+| ----- | ------- | ---- | ------ | --- | ------ |
+
+Profit := Revenue - Cost
+Tax    := Profit * TaxRate
+Margin := Profit / Revenue
+```
+
+Importing a file written this way gives that source back with the file's
+rows put under its header: a computed column is a formula again, its cells
+`*`, and the values the file holds for it are passed over. Its types are
+the ones the sheet declared, a `Percent` included. A tool that knows
+nothing of the metadata sees an ordinary Parquet file. A formula that
+reads another sheet, which the Parquet file does not hold, is kept as it
+is, and reports that sheet missing until it is there again. A table's or a
+computed sheet's columns are kept as a sheet of their own rows.
 
 ### What a table reads
 

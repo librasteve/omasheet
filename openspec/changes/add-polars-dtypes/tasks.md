@@ -66,7 +66,7 @@ that change goes on beside it.
 
 ## 5. The new types (`numerics`, `file-format`)
 
-- [ ] 5.1 `Binary`, over `Rc<[u8]>`
+- [ ] 5.1 `Bytes` (D141), over `Rc<[u8]>`, written `x"48656c6c6f"` (D142)
 - [ ] 5.2 `Duration`, and `S::shift` giving it for the difference of two
       dates or times, with `Date ± Duration → Date`
 - [ ] 5.2a The ISO 8601 literal (D22, amended): `PT30M`, `PT1H30M`, `P1DT6H`,
