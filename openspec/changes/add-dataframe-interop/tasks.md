@@ -4,7 +4,7 @@ The second of two stages, built on `add-polars-dtypes`; both are on the
 `polars` branch. The type mapping below is a naming, not a conversion, only
 once an omasheet type *is* a Polars dtype: sections 1 to 4 of that change made
 it so for the types there are now, and section 2 here uses them. The types
-still to come there — `Binary`, `Duration`, a `DateTime` with a zone, and
+still to come there — `Duration`, a `DateTime` with a zone, and
 unsigned widths — reach Parquet as 2.9 once they land.
 
 ## 0. Settle the open questions
@@ -52,7 +52,7 @@ unsigned widths — reach Parquet as 2.9 once they land.
       `import` restoring the source it keeps with the file's rows under its
       header. Checked from the CLI over `budget.omx`, and read by Python
       Polars 2.1.0 as an ordinary file
-- [ ] 2.9 Once `add-polars-dtypes` section 5 lands: `Binary` and `Duration`
+- [ ] 2.9 Once `add-polars-dtypes` section 5 lands: `Duration`
       columns read and written rather than left out, a `DateTime`'s zone kept,
       and an integer column written back at the width and signedness its
       schema had rather than as `int64`

@@ -129,7 +129,7 @@ sheet Summary
 ## Types
 
 `Integer`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,
-`Date`, `Time`, `Datetime`, `Url`, `Email`, `Uuid`.
+`Date`, `Time`, `Datetime`, `Duration`, `Url`, `Email`, `Uuid`.
 A column with no type line takes its type from its cells, which is usually
 what you want; declare one when the cells could be read another way.
 
@@ -142,6 +142,7 @@ what you want; declare one when the cells could be read another way.
 | `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `"Inf"`), which is what a division by zero gives |
 | `Boolean` | `true`, `false` |
 | `Date`, `Time`, `Datetime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO. A fraction of a second goes after the seconds, `09:30:15.5`: nine digits for a `Time`, six for a `Datetime` |
+| `Duration` | `PT1H30M`, `P2D`, `-PT30M` — ISO 8601, weeks to seconds only (no `Y`, no calendar `M`). Two dates or times subtract to one; get a number with `.total_hours()` and the like |
 | `Url`, `Email`, `Uuid` | `https://example.com`, `name@example.com`, `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f` — text read as something narrower |
 
 `Url`, `Email` and `Uuid` are never taken from the cells: declare one, or

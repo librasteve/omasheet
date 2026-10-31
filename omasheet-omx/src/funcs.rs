@@ -161,7 +161,7 @@ pub const ABOUT: &[(&str, &str)] = &[
     (CONVERT, "Object: a Value."),
     (LOG, "Takes: a number."),
     (TRIG, "Takes: a number as an angle in radians."),
-    (TIME, "Object: Date, Time or Datetime."),
+    (TIME, "Object: Date, Time, Datetime or Duration."),
     (
         BITWISE,
         "Operators, not functions: written between two whole numbers, or before one. and, or \
@@ -627,6 +627,30 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         ".nanosecond()",
         "The nanoseconds left over after the second of a Time: 500000000 of 09:30:00.5. A Datetime \
          is held to the microsecond, ends in 000.",
+    ),
+    doc(
+        TIME,
+        "total_days",
+        ".total_days()",
+        "A Duration in days, exactly: 0.5 of PT12H.",
+    ),
+    doc(
+        TIME,
+        "total_hours",
+        ".total_hours()",
+        "A Duration in hours, exactly: 1.5 of PT1H30M.",
+    ),
+    doc(
+        TIME,
+        "total_minutes",
+        ".total_minutes()",
+        "A Duration in minutes, exactly: 90 of PT1H30M.",
+    ),
+    doc(
+        TIME,
+        "total_seconds",
+        ".total_seconds()",
+        "A Duration in seconds, exactly: 0.5 of PT0.5S.",
     ),
     doc(TIME, "date", ".date()", "The Date part of a Datetime."),
     doc(TIME, "time", ".time()", "The Time partf of a Datetime."),

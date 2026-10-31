@@ -117,9 +117,13 @@ impl Zoned {
     /// The clocks of the same zone, `secs` later. A whole number beside a
     /// date-time is seconds, whatever it is held in.
     pub fn shifted(&self, secs: i64) -> Option<Zoned> {
-        let wall = secs
-            .checked_mul(MICROS)
-            .and_then(|d| self.wall.checked_add(d))?;
+        self.moved(secs.checked_mul(MICROS)?)
+    }
+
+    /// The clocks of the same zone, `micros` later: a `Duration` beside a
+    /// date-time.
+    pub fn moved(&self, micros: i64) -> Option<Zoned> {
+        let wall = self.wall.checked_add(micros)?;
         Some(Zoned {
             wall,
             utc: self.zone.to_utc(wall)?,

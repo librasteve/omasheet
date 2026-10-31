@@ -3925,6 +3925,7 @@ ApplicationWindow {
         TypeEntry { typeName: "Boolean" }
         TypeEntry { typeName: "Datetime" }
         TypeEntry { typeName: "Date"; narrower: true }
+        TypeEntry { typeName: "Duration"; narrower: true }
         TypeEntry { typeName: "Time"; narrower: true }
     }
 

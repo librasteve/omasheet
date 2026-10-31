@@ -65,6 +65,8 @@ enum Kind {
     Date,
     Time,
     DateTime,
+    /// A length of time, which a workbook counts in days as it does a date.
+    Duration,
     Unknown,
 }
 
@@ -165,6 +167,7 @@ fn kind_of(s: S) -> Kind {
         S::Date => Kind::Date,
         S::Time => Kind::Time,
         S::DateTime => Kind::DateTime,
+        S::Duration => Kind::Duration,
         S::Any => Kind::Unknown,
     }
 }
@@ -255,6 +258,7 @@ impl Writer<'_> {
             Value::Date(_) => Kind::Date,
             Value::Time(_) => Kind::Time,
             Value::DateTime(_) | Value::Zoned(_) => Kind::DateTime,
+            Value::Duration(_) => Kind::Duration,
             Value::Null => kind_of(sheet.cols[c].ty),
             _ => Kind::Unknown,
         };
@@ -538,6 +542,11 @@ impl Writer<'_> {
             Lit::Boolean(b) => Expr::atom(if *b { "TRUE" } else { "FALSE" }.into(), Kind::Bool),
             Lit::Date(d) => Expr::atom(ymd(*d), Kind::Date),
             Lit::Time(t) => Expr::atom(hms(*t), Kind::Time),
+            Lit::Duration(t) => {
+                let days = *t as f64 / date::DAY_MICROS as f64;
+                let prec = if days < 0.0 { NEG } else { ATOM };
+                Expr::new(format!("{days}"), prec, Kind::Duration)
+            }
             Lit::DateTime(t) => {
                 let (days, time) = date::split_datetime(*t);
                 if time == 0 {
@@ -552,7 +561,7 @@ impl Writer<'_> {
     /// `+ - * / **`. A workbook counts a time in days where a file counts
     /// it in seconds.
     fn arithmetic(&self, op: BinOp, a: Expr, b: Expr) -> Result<Expr, Why> {
-        use Kind::{Date, DateTime, Number, Time};
+        use Kind::{Date, DateTime, Duration, Number, Time};
         let clock = |k: Kind| matches!(k, Time | DateTime);
         let seconds = |e: &Expr| format!("{}/86400", e.within(POW));
         let (sym, prec) = match op {
@@ -576,17 +585,25 @@ impl Writer<'_> {
             (BinOp::Add, Date, Number) | (BinOp::Sub, Date, Number) => plain(Date),
             (BinOp::Add, Number, Date) => plain(Date),
             (BinOp::Add, Date, Time) | (BinOp::Add, Time, Date) => plain(DateTime),
-            (BinOp::Sub, Date, Date) => plain(Number),
+            // A duration is days, as a date is; beside a date only its
+            // whole days count, and beside a time it wraps round midnight.
+            (BinOp::Sub, Date, Date) => plain(Duration),
+            (BinOp::Add | BinOp::Sub, Duration, Duration) => plain(Duration),
+            (BinOp::Add | BinOp::Sub, Date, Duration) | (BinOp::Add, Duration, Date) => {
+                Expr::atom(format!("INT({})", plain(Date).text), Date)
+            }
+            (BinOp::Add | BinOp::Sub, Time, Duration) | (BinOp::Add, Duration, Time) => {
+                Expr::atom(format!("MOD({},1)", plain(Time).text), Time)
+            }
+            (BinOp::Add | BinOp::Sub, DateTime, Duration) => plain(DateTime),
+            (BinOp::Add, Duration, DateTime) => plain(DateTime),
             (BinOp::Add | BinOp::Sub, k, Number) if clock(k) => {
                 Expr::new(format!("{}{sym}{}", a.within(ADD), seconds(&b)), ADD, k)
             }
             (BinOp::Add, Number, k) if clock(k) => {
                 Expr::new(format!("{}+{}", seconds(&a), b.within(ADD + 1)), ADD, k)
             }
-            (BinOp::Sub, k, j) if clock(k) && k == j => Expr::atom(
-                format!("ROUND(({}-{})*86400,0)", a.within(ADD), b.within(ADD + 1)),
-                Number,
-            ),
+            (BinOp::Sub, k, j) if clock(k) && k == j => plain(Duration),
             _ => return Err(TYPE),
         })
     }
@@ -746,14 +763,10 @@ impl Writer<'_> {
                 let Some(x) = self.scalar(inner, cx)? else {
                     return Ok(None);
                 };
-                if x.kind != Kind::Number {
+                if !matches!(x.kind, Kind::Number | Kind::Duration) {
                     return Err(TYPE);
                 }
-                Ok(Some(Expr::new(
-                    format!("-{}", x.within(ATOM)),
-                    NEG,
-                    Kind::Number,
-                )))
+                Ok(Some(Expr::new(format!("-{}", x.within(ATOM)), NEG, x.kind)))
             }
             Ir::Unary(UnOp::Not, inner) => Ok(self
                 .scalar(inner, cx)?

@@ -191,8 +191,8 @@ sheet's rows were derived.
 ## Types
 
 `Integer`, `Hex`, `Octal`, `Binary`, `Decimal`, `Fraction`, `Percent`,
-`Float`, `String`, `Boolean`, `Date`, `Time`, `Datetime`, `Url`, `Email`,
-`Uuid`.
+`Float`, `String`, `Boolean`, `Date`, `Time`, `Datetime`, `Duration`, `Url`,
+`Email`, `Uuid`.
 A column with no `Name : Type` line takes its type from its cells.
 `Integer` was called `Int` before, and a column declared that way is still
 read as one; `Integer` is what is written.
@@ -212,6 +212,7 @@ read as one; `Integer` is what is written.
 | `Date` | `2025-01-31` |
 | `Time` | `09:30`, `09:30:15`, `09:30:15.5` |
 | `Datetime` | `2025-01-31T09:30`, `2025-01-31T09:30:15.123456` |
+| `Duration` | `PT30M`, `PT1H30M`, `P1DT6H`, `PT0.5S`, `P2W`, `-PT30M` — ISO 8601 |
 | `Url` | `https://example.com`, `mailto:name@example.com` |
 | `Email` | `name@example.com` |
 | `Uuid` | `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f` |
@@ -243,6 +244,14 @@ seventh is reported rather than quietly dropped. What is shown is the digits
 held and no more, so `09:30:15.5` comes back as it was written.
 `millisecond`, `microsecond` and `nanosecond` give what is left after the
 second.
+
+A `Duration` is a length of time, written in ISO 8601: `P`, then weeks and
+days, then `T` and hours, minutes and seconds, each number before its
+letter. Only those units are taken; `P1Y` and `P1M` are refused, since a year
+and a month are not a fixed length. Only the seconds take a fraction, to six
+digits. It is held in microseconds and shown in days and the time after
+them, `P1DT10H5M30S`, which reads back as the same duration; none is `PT0S`.
+A name shaped as one, such as `P1D`, is read as a duration.
 
 A cell's written form carries its type where that form is distinctive:
 `true`, `2025-01-31`, `09:30`, `20%` and `1.5e3` read as a `Boolean`, a

@@ -12,6 +12,7 @@ use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use omasheet_engine::omx::check::{Cell, ColKind};
 use omasheet_engine::omx::date;
 use omasheet_engine::omx::decimal::Dec;
+use omasheet_engine::omx::duration;
 use omasheet_engine::omx::types::S;
 use omasheet_engine::omx::{Sources, compile};
 use omasheet_engine::value::{format_exact, format_rat, to_f64};
@@ -231,7 +232,10 @@ pub fn import(bytes: &[u8], options: Options) -> Result<Imported, String> {
                     Data::Int(n) => Datum::Lit(n.to_string(), S::Int),
                     Data::Float(f) => number(*f),
                     Data::Bool(b) => Datum::Lit(b.to_string(), S::Boolean),
-                    Data::DateTime(t) if t.is_duration() => number(t.as_f64() * DAY as f64),
+                    Data::DateTime(t) if t.is_duration() => {
+                        let micros = (t.as_f64() * date::DAY_MICROS as f64).round() as i64;
+                        Datum::Lit(duration::format(micros), S::Duration)
+                    }
                     Data::DateTime(t) => moment(t.as_f64()),
                     Data::DateTimeIso(s) | Data::DurationIso(s) => Datum::read(s),
                     Data::Error(_) => {
@@ -405,6 +409,7 @@ struct Formats {
     date: Format,
     time: Format,
     datetime: Format,
+    duration: Format,
     percent: Format,
 }
 
@@ -484,6 +489,10 @@ fn shown<'f>(
             let days = *t as f64 / (day * date::MICROS as f64);
             Shown::Number(days + EPOCH as f64, Some(&formats.datetime))
         }
+        Value::Duration(t) => Shown::Number(
+            *t as f64 / (day * date::MICROS as f64),
+            Some(&formats.duration),
+        ),
         Value::Zoned(z) => {
             lose(ZONES);
             let serial = z.home_wall() as f64 / (day * date::MICROS as f64) + EPOCH as f64;
@@ -542,6 +551,7 @@ pub fn export(
             date: Format::new().set_num_format("yyyy-mm-dd"),
             time: Format::new().set_num_format("hh:mm:ss"),
             datetime: Format::new().set_num_format("yyyy-mm-dd hh:mm:ss"),
+            duration: Format::new().set_num_format("[h]:mm:ss"),
             percent: Format::new().set_num_format("0.00%"),
         };
         let mut book = Workbook::new();

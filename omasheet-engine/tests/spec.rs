@@ -649,15 +649,63 @@ fn time_columns() {
 }
 
 #[test]
+fn durations() {
+    // Written as ISO 8601, and shown the same way.
+    assert_eq!(calc("09:00 + PT1H30M"), "10:30");
+    assert_eq!(calc("09:00 - 10:30"), "-PT1H30M");
+    assert_eq!(calc("-PT30M"), "-PT30M");
+    assert_eq!(calc("P2W"), "P14D");
+    assert_eq!(calc("PT0.5S + PT0.25S"), "PT0.75S");
+    assert_eq!(calc("2025-01-31T09:30 + P1DT6H"), "2025-02-01T15:30");
+    // Beside a date only the whole days count.
+    assert_eq!(calc("2025-01-31 + PT36H"), "2025-02-01");
+    assert_eq!(calc("2025-01-31 - P1D"), "2025-01-30");
+    // Scaled by a number, and added up.
+    assert_eq!(calc("PT1H * 3"), "PT3H");
+    assert_eq!(calc("2 * PT45M"), "PT1H30M");
+    assert_eq!(calc("P1D / 4"), "PT6H");
+    assert_eq!(calc("PT1H / 0.5"), "PT2H");
+    assert_eq!(calc("sum([PT1H, PT30M, PT15M])"), "PT1H45M");
+    assert_eq!(calc("mean([PT1H, PT2H])"), "PT1H30M");
+    // A number out of one, exactly.
+    assert_eq!(calc("PT1H30M.total_hours()"), "1.5");
+    assert_eq!(calc("PT1H30M.total_minutes()"), "90");
+    assert_eq!(calc("PT12H.total_days()"), "0.5");
+    assert_eq!(calc("PT0.5S.total_seconds()"), "0.5");
+    assert_eq!(calc("PT1H < PT90M"), "true");
+    assert_eq!(calc("Duration(\"PT1H\")"), "PT1H");
+    // A year and a month are not a fixed length.
+    for text in ["P1Y", "P1M", "P1Y2D"] {
+        let err = calc_err(None, text);
+        assert!(err.contains("a duration holds no calendar units"), "{err}");
+    }
+    assert!(calc_err(None, "PT1H + 1").contains("cannot apply `+` to Duration and Integer"));
+    assert!(calc_err(None, "PT1H - 09:00").contains("cannot apply `-` to Duration and Time"));
+    assert!(calc_err(None, "09:00.total_hours()").contains("`total_hours` needs a Duration"));
+    // A name shaped otherwise is still a name.
+    assert!(calc_err(None, "P1").contains("P1"));
+    // Read from a column declared one, and from one that is not.
+    let file = "sheet Log\n\nTook : Duration\n\nTook\nPT1H\nPT30M\n";
+    assert_eq!(ask(file, "Log.Took.sum()"), "PT1H30M");
+    assert_eq!(
+        ask(&file.replace("Took : Duration\n\n", ""), "Log.Took.max()"),
+        "PT1H"
+    );
+    let errs = lint_errors("sheet Log\n\nTook : Duration\n\nTook\n90\n");
+    assert!(errs[0].contains("is not a `Duration` literal"), "{errs:?}");
+}
+
+#[test]
 fn date_and_time_arithmetic() {
-    // A whole number is days next to a Date, seconds next to the others.
+    // A whole number is days next to a Date, seconds next to the others,
+    // and two of a kind differ by a Duration.
     assert_eq!(calc("2025-01-31 + 1"), "2025-02-01");
     assert_eq!(calc("7 + 2024-02-23"), "2024-03-01");
     assert_eq!(calc("2025-03-01 - 1"), "2025-02-28");
-    assert_eq!(calc("2025-03-01 - 2024-03-01"), "365");
+    assert_eq!(calc("2025-03-01 - 2024-03-01"), "P365D");
     assert_eq!(calc("2025-01-31T23:59 + 60"), "2025-02-01T00:00");
-    assert_eq!(calc("2025-01-31T09:30 - 2025-01-30T09:00"), "88200");
-    assert_eq!(calc("17:05 - 09:00"), "29100");
+    assert_eq!(calc("2025-01-31T09:30 - 2025-01-30T09:00"), "P1DT30M");
+    assert_eq!(calc("17:05 - 09:00"), "PT8H5M");
     // A time of day goes round midnight.
     assert_eq!(calc("23:30 + 3600"), "00:30");
     assert_eq!(calc("00:15 - 1800"), "23:45");
@@ -730,8 +778,8 @@ fn today_and_now_come_from_the_options() {
     };
     assert_eq!(at("today()", &options), "2026-10-08");
     assert_eq!(at("now()", &options), "2026-10-08T17:47");
-    assert_eq!(at("today() - 2026-01-01", &options), "280");
-    assert_eq!(at("now() - (today() + 00:00)", &options), "64020");
+    assert_eq!(at("today() - 2026-01-01", &options), "P280D");
+    assert_eq!(at("now() - (today() + 00:00)", &options), "PT17H47M");
     assert!(calc_err(None, "today(1)").contains("`today` takes 0 arguments"));
     // The clock of this machine otherwise.
     assert_eq!(calc("now().date() == today()"), "true");
@@ -916,15 +964,15 @@ fn time_zones() {
     );
     assert_eq!(
         at("2025-07-15T13:00.convert_time_zone(\"Asia/Tokyo\") - 2025-07-15T12:00.utc()"),
-        "3600"
+        "PT1H"
     );
-    assert_eq!(at("2025-07-15T13:00 - 2025-07-15T12:00.utc()"), "3600");
+    assert_eq!(at("2025-07-15T13:00 - 2025-07-15T12:00.utc()"), "PT1H");
     // In one zone the clocks are taken at their word: the night the clocks go
     // forward has 24 hours on the wall and 23 in fact.
-    assert_eq!(at("2025-03-30T12:00 - 2025-03-29T12:00"), "86400");
+    assert_eq!(at("2025-03-30T12:00 - 2025-03-29T12:00"), "P1D");
     assert_eq!(
         at("2025-03-30T12:00.utc() - 2025-03-29T12:00.utc()"),
-        "82800"
+        "PT23H"
     );
     assert_eq!(
         at("[2025-01-15T12:00, 2025-07-15T12:00].utc()"),

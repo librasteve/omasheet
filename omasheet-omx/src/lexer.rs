@@ -5,6 +5,7 @@
 use crate::date;
 use crate::decimal::Dec;
 use crate::diag::{Diagnostic, Span};
+use crate::duration::{self, NotDuration};
 use crate::types::Base;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -23,6 +24,8 @@ pub enum Tok {
     /// Microseconds since the start of 1970-01-01, on the clocks of the
     /// file's own zone, as Polars holds a `Datetime`.
     DateTime(i64),
+    /// Microseconds: `PT1H30M`.
+    Duration(i64),
     Ident(String),
     If,
     Then,
@@ -84,6 +87,7 @@ impl Tok {
             Tok::Date(_) => "a date".into(),
             Tok::Time(_) => "a time".into(),
             Tok::DateTime(_) => "a date-time".into(),
+            Tok::Duration(_) => "a duration".into(),
             Tok::Ident(name) => format!("`{name}`"),
             Tok::Eof => "the end of the expression".into(),
             other => format!("`{}`", other.text()),
@@ -183,6 +187,15 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                     d
                 }
             })?;
+            out.push(Token {
+                tok,
+                span: span(start, end),
+            });
+            i = end;
+            continue;
+        }
+        if let Some(found) = iso_duration(text, i) {
+            let (tok, end) = found.map_err(|(msg, s, e)| Diagnostic::new(span(s, e), msg))?;
             out.push(Token {
                 tok,
                 span: span(start, end),
@@ -387,6 +400,28 @@ fn based(text: &str, i: usize) -> Option<Result<(Tok, usize), NumErr>> {
     } else {
         Ok((Tok::Int(n, base), j))
     })
+}
+
+/// Lex an ISO 8601 duration, `PT1H30M`, if one starts at `i`. A word that
+/// starts with `P` but is not shaped as one, such as `Price` or `P1`, is
+/// left to be a name.
+fn iso_duration(text: &str, i: usize) -> Option<Result<(Tok, usize), NumErr>> {
+    let b = text.as_bytes();
+    let digit = |k: usize| b.get(k).is_some_and(u8::is_ascii_digit);
+    if b[i] != b'P' || !(digit(i + 1) || (b.get(i + 1) == Some(&b'T') && digit(i + 2))) {
+        return None;
+    }
+    let mut end = i;
+    while end < b.len()
+        && (b[end].is_ascii_alphanumeric() || b[end] == b'_' || (b[end] == b'.' && digit(end + 1)))
+    {
+        end += 1;
+    }
+    match duration::parse(&text[i..end]) {
+        Ok(micros) => Some(Ok((Tok::Duration(micros), end))),
+        Err(NotDuration::Says(msg)) => Some(Err((msg, i, end))),
+        Err(NotDuration::Shape) => None,
+    }
 }
 
 /// Lex a number, date, time or date-time starting at `i`. Returns the token and its

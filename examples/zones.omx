@@ -54,9 +54,9 @@ sheet Clocks
 | Back    | 2025-11-01T12:00 | 2025-11-02T12:00 | *    | *       |
 
 # On the wall every one of them is 24 hours...
-Wall    := (To - From) / 3600
+Wall    := (To - From).total_hours()
 # ...but the elapsed time is not. Convert both ends to compare instants.
-Elapsed := (To.utc() - From.utc()) / 3600
+Elapsed := (To.utc() - From.utc()).total_hours()
 
 # 02:30 on 9 March 2025 does not exist in New York. It is read as if the
 # clocks had not gone forward, so through UTC and back it comes out as 03:30.

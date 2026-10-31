@@ -7,7 +7,7 @@ The `.omx` file: its declarations, its sheets and its column schemas.
 ### Requirement: The declarable type names
 
 A `Name : Type` line SHALL name one of `Int`, `Decimal`, `Fraction`,
-`Percent`, `Float`, `String`, `Binary`, `Boolean`, `Date`, `Time`, `Datetime`
+`Percent`, `Float`, `String`, `Boolean`, `Date`, `Time`, `Datetime`
 or `Duration`.
 
 `Datetime` MAY name a time zone, as `Datetime("Europe/London")`, which is the

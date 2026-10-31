@@ -21,17 +21,19 @@ omasheet type that names the Parquet type it finds.
 | `Float` | `double`, or `float` where the schema had it |
 | `Boolean` | `boolean` |
 | `String` | `byte_array`, UTF-8 |
-| `Binary` | `byte_array` |
 | `Date` | `date32` |
 | `Time` | `time64`, nanoseconds |
 | `DateTime` | `timestamp`, microseconds, with the file's zone where it has one |
 | `Duration` | `duration`, microseconds |
 | `Null` | a null in the column's own type |
 
-The `Binary`, `Duration` and zoned `DateTime` rows, and keeping a column's
-width and signedness, come with those types in `add-polars-dtypes`. Until
-then a `Binary` or `Duration` column is left out on import with a notice, a
-zone is not kept, and an integer column is written as `int64`.
+The `Duration` and zoned `DateTime` rows, and keeping a column's width and
+signedness, come with those types in `add-polars-dtypes`. Until then a
+`Duration` column is left out on import with a notice, a zone is not kept,
+and an integer column is written as `int64`.
+
+A `byte_array` column that is not UTF-8 SHALL be left out on import with a
+notice, since no omasheet type holds bytes.
 
 An unsigned column SHALL be read as `Int` and written back unsigned. A
 `Percent` SHALL be written as the `decimal` it holds, its display being no part

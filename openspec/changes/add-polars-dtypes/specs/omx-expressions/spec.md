@@ -7,7 +7,7 @@ The expression language: its literals, its operators and its functions.
 ### Requirement: The conversion functions
 
 The conversions SHALL be `Int`, `Decimal`, `Fraction`, `Percent`, `Float`,
-`String`, `Binary`, `Boolean`, `Date`, `Time` and `DateTime`, each written
+`String`, `Boolean`, `Date`, `Time` and `DateTime`, each written
 `x.Name`, `x.Name()` or `Name(x)`.
 
 #### Scenario: Converting to a floating-point number

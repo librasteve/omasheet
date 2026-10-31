@@ -66,16 +66,19 @@ that change goes on beside it.
 
 ## 5. The new types (`numerics`, `file-format`)
 
-- [ ] 5.1 `Bytes` (D141), over `Rc<[u8]>`, written `x"48656c6c6f"` (D142)
-- [ ] 5.2 `Duration`, and `S::shift` giving it for the difference of two
-      dates or times, with `Date ± Duration → Date`
-- [ ] 5.2a The ISO 8601 literal (D22, amended): `PT30M`, `PT1H30M`, `P1DT6H`,
+- [x] 5.2 `Duration`, and `S::shift` giving it for the difference of two
+      dates or times, with `Date ± Duration → Date`. Built 2026-10-31, held
+      in microseconds; beside a `Date` only its whole days count, and
+      beside a `Time` it wraps round midnight. With it `total_*` (D144) and
+      scaling by a number (D145), and an XLSX duration both ways, as days
+      shown `[h]:mm:ss`
+- [x] 5.2a The ISO 8601 literal (D22, amended): `PT30M`, `PT1H30M`, `P1DT6H`,
       `PT0.5S`, `P2W`, and `-PT30M` for a negative one. Fixed-length units
       only -- `W`, `D`, `H`, `M`, `S` -- with `Y` and a calendar `M` a
       diagnostic, since a `Duration` holds a count of time units and nothing
       else. The lexer must not take `P1DT6H` for a name, and the `-` must not
       be read as subtraction
-- [ ] 5.2b The shown form, the same ISO 8601 the literal is written in, so a
+- [x] 5.2b The shown form, the same ISO 8601 the literal is written in, so a
       computed duration round-trips through the file. A selectable display
       format is later work and out of this change
 - [ ] 5.3 `DateTime` subsumes `Zoned`: one type carrying an optional zone,
@@ -123,10 +126,14 @@ Each of these is then carried through Parquet, as task 2.9 of
       result is correct and should not be "fixed" no longer holds
 - [x] 7.3 `README.md`: "exact arithmetic as a semantic guarantee" and "their
       exact decimal or rational meaning" both need rewording
-- [ ] 7.4 `openspec/project.md`: Design Principle 3, the Tech Stack numerics
-      and Polars lines, and the Roadmap
-- [ ] 7.5 Mark D11 superseded in
-      `archive/add-sheet-operations/design.md`
+- [x] 7.4 `openspec/project.md`: Design Principle 3, the Tech Stack numerics
+      and Polars lines, and the Roadmap. Found done, 2026-10-31: the
+      principle names a type as a Polars dtype, cites D14-D16 and calls the
+      rationals the earlier reading, and the Tech Stack and the Roadmap both
+      name this change
+- [x] 7.5 Mark D11 superseded in
+      `archive/add-sheet-operations/design.md`. Found done, 2026-10-31:
+      it reads Superseded, by D14 here
 - [ ] 7.6 Version bump, and a note that the change is breaking
 
 ## 8. Verification
@@ -170,6 +177,8 @@ nothing here touches what `add-dataframe-interop` lowers to Polars.
       including the denominator limit, and the type end to end
 - [x] 9.11 The documents: `format.md`, `expressions.md`, `interop.md`,
       `SKILL.md`, `README.md`, and the `Fractions` and `Mixes` example sheets
-- [ ] 9.12 Once `add-dataframe-interop` section 4 lands: a `group_by`, join
+- [x] 9.12 Once `add-dataframe-interop` section 4 lands: a `group_by`, join
       or `unique` pushed to Polars must round to `SHOWN_PRECISION` first, or
-      two cells that compare equal here land in different groups there
+      two cells that compare equal here land in different groups there.
+      Done in `add-sheet-operations-polars` as its D86 and task 3.8, the
+      change that pushes them

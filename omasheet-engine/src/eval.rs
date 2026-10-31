@@ -1759,6 +1759,12 @@ impl<'p> Engine<'p> {
                             .checked_neg()
                             .map(Value::Percent)
                             .map_or_else(|| fail(span, "the number is too large".to_string()), Ok),
+                        (UnOp::Neg, Value::Duration(t)) => {
+                            t.checked_neg().map(Value::Duration).map_or_else(
+                                || fail(span, "the duration is out of range".to_string()),
+                                Ok,
+                            )
+                        }
                         (UnOp::Neg, v) if v.is_numeric() => {
                             let zero = match v {
                                 Value::Int(_, b) => Value::Int(0, *b),
@@ -2214,6 +2220,26 @@ impl<'p> Engine<'p> {
                     single => one(&single),
                 }
             }
+            Func::Total(unit) => {
+                let total = |v: &Value| -> R {
+                    match v {
+                        Value::Null => Ok(Value::Null),
+                        Value::Duration(n) => Ok(Value::exact(
+                            Dec::from_i64(*n).checked_div(Dec::from_i64(unit)).unwrap(),
+                        )),
+                        other => fail(
+                            args[0].span,
+                            format!("expected a Duration, found {}", other.kind()),
+                        ),
+                    }
+                };
+                match self.eval(&args[0], fr)? {
+                    Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                        items.iter().map(total).collect::<R<Vec<_>>>()?,
+                    ))),
+                    single => total(&single),
+                }
+            }
             Func::Year
             | Func::Month
             | Func::Day
@@ -2439,7 +2465,14 @@ impl<'p> Engine<'p> {
                 let present: Vec<&Value> =
                     items.iter().filter(|v| !matches!(v, Value::Null)).collect();
                 let sum = || -> R {
-                    let mut total = Value::int(0);
+                    // Lengths of time add up to one, from none.
+                    let timed = !present.is_empty()
+                        && present.iter().all(|v| matches!(v, Value::Duration(_)));
+                    let mut total = if timed {
+                        Value::Duration(0)
+                    } else {
+                        Value::int(0)
+                    };
                     for v in &present {
                         total = arith(BinOp::Add, &total, v).or_else(|m| fail(span, m))?;
                     }

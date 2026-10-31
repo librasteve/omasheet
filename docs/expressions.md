@@ -311,10 +311,13 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
   cell is empty
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
 - Counting up: `succ` — a number plus one, or the next text, `AZ` to `BA`
-- Converting: `Integer Decimal Percent Float String Boolean Date Time Datetime`,
+- Converting: `Integer Decimal Percent Float String Boolean Date Time Datetime
+  Duration`,
   each also written `cast(x, Integer)`
 - Dates: `today() now() year month day weekday quarter week ordinal_day
   hour minute second millisecond microsecond nanosecond date time`
+- Durations: `total_days total_hours total_minutes total_seconds`, each an
+  exact number: `PT1H30M.total_hours()` is `1.5`
 - Months: `add_months(x, n)` — what `x + n.month` is — `month_end(x)` and
   `month_start(x)`
 - Time zones: `convert_time_zone("Asia/Tokyo") utc() local()
@@ -327,7 +330,12 @@ The app lists them all under `fn()` (F1).
 
 - A whole number is days next to a `Date`, seconds next to a `Time` or
   `Datetime`: `2025-01-31 + 1` is `2025-02-01`.
-- Two of a kind subtract to a number: `2025-03-01 - 2024-03-01` is `365`.
+- Two of a kind subtract to a `Duration`: `2025-03-01 - 2024-03-01` is
+  `P365D`, and `09:00 - 10:30` is `-PT1H30M`.
+- A `Duration` adds to and subtracts from a date or a time, `09:00 + PT1H30M`
+  is `10:30`; beside a `Date` only its whole days count. Two add up, and one
+  is multiplied or divided by a number, `PT1H * 3` is `PT3H`. `sum`, `mean`
+  and `median` of them are durations.
 - `Date + Time` is a `Datetime`.
 - Across time zones, comparison and subtraction use the instant.
 

@@ -143,8 +143,10 @@ row become a cell. Each formula is written for the row it is on:
   reported with the columns it happened in.
 - A cell that comes to nothing, or that failed, is left empty, with no
   formula.
-- An XLSX Workbook counts a time in days and a file in seconds, so
-  `At - 09:00` is written `=ROUND((C3-TIME(9,0,0))*86400,0)`.
+- An XLSX Workbook counts a time and a duration in days, and a whole number
+  beside a time in a file is seconds, so `At + 60` is written
+  `=C3+60/86400`. A `Duration` is written as the days it is, shown
+  `[h]:mm:ss`, and a duration read from one comes back a `Duration`.
 - A sheet exported alone with `--sheet` cannot read another: those formulas
   are written as values.
 - A formula is not checked in an XLSX Workbook, as nothing here works one

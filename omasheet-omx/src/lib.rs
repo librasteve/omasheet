@@ -16,6 +16,7 @@ pub mod datefmt;
 pub mod decimal;
 pub mod deps;
 pub mod diag;
+pub mod duration;
 pub mod file;
 pub mod funcs;
 pub mod ir;

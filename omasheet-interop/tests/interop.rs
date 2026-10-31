@@ -208,7 +208,7 @@ fn csv_types_its_columns() {
     // Each cell of a mixed column is what it reads as.
     assert_eq!(eval(&out.source, "log[Mixed; 0] + 1"), "13");
     assert_eq!(eval(&out.source, "log[Mixed; 1]"), "n/a");
-    assert_eq!(eval(&out.source, "log.When.max() - log.When.min()"), "1");
+    assert_eq!(eval(&out.source, "log.When.max() - log.When.min()"), "P1D");
 }
 
 #[test]
@@ -417,11 +417,15 @@ Odd   := [N; *] in [10, 30]
     assert_eq!(at("H2"), "D2*(1-0.2)+G2");
     // Rows by number, from the start and from the end.
     assert_eq!(at("I3"), "$D$2+$D$4");
-    // A workbook counts dates in days, as a file does, and times in days
-    // where a file counts seconds.
+    // A workbook counts dates in days, as a file does, and times and the
+    // durations between them in days too.
     assert_eq!(at("J2"), "B2+7");
-    assert_eq!(at("K3"), "ROUND((C3-TIME(9,0,0))*86400,0)");
-    assert_eq!(cells(bytes, "T")[2][10], Data::Float(30_600.0));
+    assert_eq!(at("K3"), "C3-TIME(9,0,0)");
+    let took = &cells(bytes, "T")[2][10];
+    assert!(
+        matches!(took, Data::DateTime(t) if t.is_duration() && t.as_f64() == 30_600.0 / 86_400.0),
+        "{took:?}"
+    );
     assert_eq!(at("L2"), "COUNTIFS('Rates'!$A$2:$A$3,A2)");
     assert_eq!(at("M2"), "SUMIFS('Rates'!$B$2:$B$3,'Rates'!$A$2:$A$3,A2)");
     // What a workbook cannot say is written as its value, and reported.
@@ -815,7 +819,7 @@ fn json_comes_back_as_the_values_it_was_written_from() {
     assert_eq!(eval(&back.source, "T.Price.sum()"), "20.115");
     assert_eq!(eval(&back.source, "T.N"), "[1e+20, Inf]");
     assert_eq!(eval(&back.source, "T.On"), "[true, false]");
-    assert_eq!(eval(&back.source, "T[Day; 1] - T[Day; 0]"), "1");
+    assert_eq!(eval(&back.source, "T[Day; 1] - T[Day; 0]"), "P1D");
     assert_eq!(eval(&back.source, "T.At"), "[09:30, 17:05]");
     // A number in quotes is text, and null is empty.
     assert_eq!(eval(&back.source, "T.Name"), "[\"a\", \"42\"]");

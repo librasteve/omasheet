@@ -34,6 +34,8 @@ pub enum S {
     Date,
     Time,
     DateTime,
+    /// A length of time, in microseconds: `PT1H30M`.
+    Duration,
     /// Text that reads as a web address: a scheme, then the rest of the
     /// address. It holds whatever a `String` does.
     Url,
@@ -64,6 +66,7 @@ impl S {
             "Date" => S::Date,
             "Time" => S::Time,
             "Datetime" => S::DateTime,
+            "Duration" => S::Duration,
             "Boolean" => S::Boolean,
             "Url" => S::Url,
             "Email" => S::Email,
@@ -108,16 +111,20 @@ impl S {
     }
 
     /// The type of `self + other`, or of `self - other` when `minus`, where
-    /// at least one side is a date or time. A whole number counts days next
-    /// to a `Date` and seconds next to a `Time` or `Datetime`. `None` if the
-    /// two cannot be combined.
+    /// at least one side is a date, a time or a duration. A whole number
+    /// counts days next to a `Date` and seconds next to a `Time` or
+    /// `Datetime`; two of a kind differ by a `Duration`. `None` if the two
+    /// cannot be combined.
     pub fn shift(self, minus: bool, other: S) -> Option<S> {
+        let timed = |t: S| t.is_temporal() || t == S::Duration;
         Some(match (self, other) {
-            (S::Any, t) | (t, S::Any) if t.is_temporal() => S::Any,
+            (S::Any, t) | (t, S::Any) if timed(t) => S::Any,
             (t, i) if t.is_temporal() && i.is_int() => t,
             (i, t) if t.is_temporal() && i.is_int() && !minus => t,
             (S::Date, S::Time) | (S::Time, S::Date) if !minus => S::DateTime,
-            (a, b) if a == b && a.is_temporal() && minus => S::Int,
+            (a, b) if a == b && a.is_temporal() && minus => S::Duration,
+            (t, S::Duration) if timed(t) => t,
+            (S::Duration, t) if t.is_temporal() && !minus => t,
             _ => return None,
         })
     }
@@ -185,6 +192,7 @@ impl S {
                 S::Percent | S::Boolean => number,
                 S::Date | S::Time => self == S::DateTime,
                 S::DateTime => self == S::Date,
+                S::Duration => false,
             }
     }
 
@@ -220,6 +228,7 @@ impl fmt::Display for S {
             S::Date => "Date",
             S::Time => "Time",
             S::DateTime => "Datetime",
+            S::Duration => "Duration",
             S::Url => "Url",
             S::Email => "Email",
             S::Uuid => "Uuid",

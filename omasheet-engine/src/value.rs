@@ -13,6 +13,7 @@ use omasheet_omx::convert;
 use omasheet_omx::date;
 use omasheet_omx::date::Style;
 use omasheet_omx::decimal::{Dec, MAX_DENOMINATOR, SHOWN_PRECISION};
+use omasheet_omx::duration;
 use omasheet_omx::funcs::MathFn;
 use omasheet_omx::types::{Base, S};
 use std::cmp::Ordering;
@@ -51,6 +52,8 @@ pub enum Value {
     DateTime(i64),
     /// A date-time moved to another time zone.
     Zoned(Rc<Zoned>),
+    /// Microseconds, as Polars holds a `Duration`: `PT1H30M`.
+    Duration(i64),
     Range {
         lo: i64,
         hi: i64,
@@ -150,6 +153,7 @@ impl Value {
             Lit::Date(d) => Value::Date(*d),
             Lit::Time(t) => Value::Time(*t),
             Lit::DateTime(t) => Value::DateTime(*t),
+            Lit::Duration(t) => Value::Duration(*t),
         }
     }
 
@@ -173,6 +177,7 @@ impl Value {
             Value::Date(_) => "Date",
             Value::Time(_) => "Time",
             Value::DateTime(_) | Value::Zoned(_) => "Datetime",
+            Value::Duration(_) => "Duration",
             Value::Range { .. } => "a range",
             Value::Vector(_) => "a vector",
             Value::Sheet(_) => "a sheet",
@@ -207,6 +212,7 @@ impl Value {
             Value::Time(t) => Lit::Time(*t),
             Value::DateTime(t) => Lit::DateTime(*t),
             Value::Zoned(z) => Lit::DateTime(z.wall),
+            Value::Duration(t) => Lit::Duration(*t),
             _ => return None,
         })
     }
@@ -333,6 +339,9 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     if let Some(shifted) = shift(op, a, b) {
         return shifted;
     }
+    if let Some(scaled) = scale(op, a, b) {
+        return scaled;
+    }
     // Percentages add up to a percentage; anything else done with one gives
     // the plain number.
     if let (Value::Percent(x), Value::Percent(y), BinOp::Add | BinOp::Sub) = (a, b, op) {
@@ -384,9 +393,10 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     }
 }
 
-/// `+` and `-` where a side is a date or time: a whole number counts days
-/// next to a `Date` and seconds next to a `Time` or `Datetime`. `None` if
-/// neither side is one, or the two do not combine.
+/// `+` and `-` where a side is a date, a time or a duration: a whole number
+/// counts days next to a `Date` and seconds next to a `Time` or `Datetime`,
+/// and two of a kind differ by a `Duration`. `None` if neither side is one,
+/// or the two do not combine.
 fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
     let minus = match op {
         BinOp::Add => false,
@@ -426,7 +436,32 @@ fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
         let n = if minus { -n } else { n };
         Ok(Value::Time((t + n).rem_euclid(date::DAY_NANOS)))
     };
-    let int = |n: i64| Ok(Value::int(n));
+    // A `Duration` beside a date is whole days of it, and beside a time of
+    // day wraps round midnight as a whole number does.
+    let by = |n: &i64| signed(*n).ok_or_else(|| "the duration is out of range".to_string());
+    let on_date = |d: i32, n: &i64| {
+        let days = by(n)?.div_euclid(date::DAY_MICROS);
+        match i32::try_from(d as i64 + days) {
+            Ok(d) => Ok(Value::Date(d)),
+            Err(_) => Err("the date is out of range".to_string()),
+        }
+    };
+    let on_datetime = |t: i64, n: &i64| match t.checked_add(by(n)?) {
+        Some(t) if i32::try_from(t.div_euclid(date::DAY_MICROS)).is_ok() => Ok(Value::DateTime(t)),
+        _ => Err("the date-time is out of range".to_string()),
+    };
+    let on_zoned = |z: &Zoned, n: &i64| match z.moved(by(n)?) {
+        Some(z) => Ok(Value::Zoned(Rc::new(z))),
+        None => Err("the date-time is out of range".to_string()),
+    };
+    let on_time = |t: i64, n: &i64| {
+        let n = by(n)?.rem_euclid(date::DAY_MICROS) * date::NANOS_PER_MICRO;
+        Ok(Value::Time((t + n).rem_euclid(date::DAY_NANOS)))
+    };
+    let span = |n: Option<i64>| match n {
+        Some(n) => Ok(Value::Duration(n)),
+        None => Err("the duration is out of range".to_string()),
+    };
     Some(match (a, b) {
         (Value::Date(d), Value::Int(n, _)) => date(*d, n),
         (Value::DateTime(t), Value::Int(n, _)) => datetime(*t, n),
@@ -439,21 +474,63 @@ fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
         (Value::Date(d), Value::Time(t)) | (Value::Time(t), Value::Date(d)) if !minus => Ok(
             Value::DateTime(*d as i64 * date::DAY_MICROS + t / date::NANOS_PER_MICRO),
         ),
-        // A difference is in seconds, whatever the two are held in.
-        (Value::Date(x), Value::Date(y)) if minus => int(*x as i64 - *y as i64),
-        (Value::Time(x), Value::Time(y)) if minus => int((x - y).div_euclid(date::NANOS)),
-        (Value::DateTime(x), Value::DateTime(y)) if minus => int((x - y).div_euclid(date::MICROS)),
-        (Value::Zoned(x), Value::Zoned(y)) if minus => {
-            int((x.utc - y.utc).div_euclid(date::MICROS))
+        (Value::Date(d), Value::Duration(n)) => on_date(*d, n),
+        (Value::DateTime(t), Value::Duration(n)) => on_datetime(*t, n),
+        (Value::Zoned(z), Value::Duration(n)) => on_zoned(z, n),
+        (Value::Time(t), Value::Duration(n)) => on_time(*t, n),
+        (Value::Duration(n), Value::Date(d)) if !minus => on_date(*d, n),
+        (Value::Duration(n), Value::DateTime(t)) if !minus => on_datetime(*t, n),
+        (Value::Duration(n), Value::Zoned(z)) if !minus => on_zoned(z, n),
+        (Value::Duration(n), Value::Time(t)) if !minus => on_time(*t, n),
+        (Value::Duration(x), Value::Duration(y)) => span(signed(*y).and_then(|y| x.checked_add(y))),
+        // A difference is a `Duration`, in microseconds whatever the two are
+        // held in.
+        (Value::Date(x), Value::Date(y)) if minus => {
+            span((*x as i64 - *y as i64).checked_mul(date::DAY_MICROS))
         }
-        (Value::DateTime(x), Value::Zoned(y)) if minus => {
-            int((x - y.home_wall()).div_euclid(date::MICROS))
-        }
-        (Value::Zoned(x), Value::DateTime(y)) if minus => {
-            int((x.home_wall() - y).div_euclid(date::MICROS))
-        }
+        (Value::Time(x), Value::Time(y)) if minus => span(Some((x - y) / date::NANOS_PER_MICRO)),
+        (Value::DateTime(x), Value::DateTime(y)) if minus => span(x.checked_sub(*y)),
+        (Value::Zoned(x), Value::Zoned(y)) if minus => span(x.utc.checked_sub(y.utc)),
+        (Value::DateTime(x), Value::Zoned(y)) if minus => span(x.checked_sub(y.home_wall())),
+        (Value::Zoned(x), Value::DateTime(y)) if minus => span(x.home_wall().checked_sub(*y)),
         _ => return None,
     })
+}
+
+/// `*` and `/` of a `Duration` by a number, to the nearest microsecond.
+/// `None` if neither side is a duration, or the other is not a number.
+fn scale(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
+    let (us, n) = match (op, a, b) {
+        (BinOp::Mul | BinOp::Div, Value::Duration(us), n) => (*us, number(n)?),
+        (BinOp::Mul, n, Value::Duration(us)) => (*us, number(n)?),
+        _ => return None,
+    };
+    let out = match n {
+        N::Exact(r) => {
+            let us = Dec::from_i64(us);
+            match op {
+                BinOp::Div if r.is_zero() => {
+                    return Some(Err("cannot divide a duration by zero".to_string()));
+                }
+                BinOp::Div => us.checked_div(r),
+                _ => us.checked_mul(r),
+            }
+            .and_then(|d| d.round().to_i64())
+        }
+        N::Float(f) => {
+            let out = if op == BinOp::Div {
+                us as f64 / f
+            } else {
+                us as f64 * f
+            };
+            let fits = out.is_finite() && out.abs() < i64::MAX as f64;
+            fits.then(|| out.round() as i64)
+        }
+    };
+    Some(
+        out.map(Value::Duration)
+            .ok_or_else(|| "the duration is out of range".to_string()),
+    )
 }
 
 /// What a number too wide to hold is reported as.
@@ -602,6 +679,7 @@ pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
         (Value::Date(x), Value::Date(y)) => x.cmp(y),
         (Value::Time(x), Value::Time(y)) => x.cmp(y),
         (Value::DateTime(x), Value::DateTime(y)) => x.cmp(y),
+        (Value::Duration(x), Value::Duration(y)) => x.cmp(y),
         // Across time zones it is the instant that counts.
         (Value::Zoned(x), Value::Zoned(y)) => x.utc.cmp(&y.utc),
         (Value::DateTime(x), Value::Zoned(y)) => x.cmp(&y.home_wall()),
@@ -979,6 +1057,7 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         Value::Date(d) => style.date(*d),
         Value::Time(t) => style.time(*t),
         Value::DateTime(t) => style.datetime(*t),
+        Value::Duration(t) => duration::format(*t),
         // `2025-01-31T09:30+09:00`, to tell it from the file's own zone.
         Value::Zoned(z) => format!(
             "{}{}{}",
@@ -1346,6 +1425,30 @@ mod tests {
     }
 
     #[test]
+    fn two_of_a_kind_differ_by_a_duration() {
+        let at = |h: i64, m: i64| Value::Time(date::time_from(h, m, 0).unwrap());
+        let ymd = |y, m, d| Value::Date(date::from_ymd(y, m, d).unwrap());
+        let shown = |op, a: &Value, b: &Value| format_scalar(&arith(op, a, b).unwrap(), false);
+        let year = arith(BinOp::Sub, &ymd(2025, 3, 1), &ymd(2024, 3, 1)).unwrap();
+        assert!(matches!(year, Value::Duration(n) if n == 365 * date::DAY_MICROS));
+        assert_eq!(format_scalar(&year, false), "P365D");
+        assert_eq!(shown(BinOp::Sub, &at(9, 0), &at(10, 30)), "-PT1H30M");
+        let half = Value::Duration(90 * 60 * date::MICROS);
+        assert_eq!(shown(BinOp::Add, &at(9, 0), &half), "10:30");
+        assert_eq!(shown(BinOp::Add, &half, &at(23, 0)), "00:30");
+        // Beside a date only the whole days count.
+        let longer = Value::Duration(36 * 3_600 * date::MICROS);
+        assert_eq!(shown(BinOp::Add, &ymd(2025, 1, 31), &longer), "2025-02-01");
+        assert_eq!(shown(BinOp::Sub, &ymd(2025, 1, 31), &longer), "2025-01-29");
+        let noon = Value::DateTime(date::datetime_from(0, 12, 0, 0).unwrap());
+        assert_eq!(shown(BinOp::Add, &noon, &longer), "1970-01-03T00:00");
+        assert_eq!(shown(BinOp::Sub, &longer, &half), "P1DT10H30M");
+        assert_eq!(compare(&half, &longer).unwrap(), Some(Ordering::Less));
+        assert!(arith(BinOp::Add, &half, &Value::int(1)).is_err());
+        assert!(arith(BinOp::Sub, &half, &at(9, 0)).is_err());
+    }
+
+    #[test]
     fn dates_and_times_shift() {
         let int = |n: i64| Value::int(n);
         let day = date::from_ymd(2025, 1, 31).unwrap();
@@ -1357,7 +1460,7 @@ mod tests {
         );
         assert_eq!(
             shown(BinOp::Sub, &Value::Date(day), &Value::Date(0)),
-            "20119"
+            "P20119D"
         );
         assert_eq!(
             shown(BinOp::Sub, &Value::Time(60 * date::NANOS), &int(120)),
@@ -1378,7 +1481,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(shown(BinOp::Add, &noon, &int(86_400)), "2025-02-01T12:00");
-        assert_eq!(shown(BinOp::Sub, &noon, &noon), "0");
+        assert_eq!(shown(BinOp::Sub, &noon, &noon), "PT0S");
         assert!(arith(BinOp::Sub, &int(1), &Value::Date(day)).is_err());
         assert!(arith(BinOp::Mul, &Value::Date(day), &int(2)).is_err());
         assert!(arith(BinOp::Sub, &noon, &Value::Date(day)).is_err());

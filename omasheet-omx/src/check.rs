@@ -2097,6 +2097,7 @@ impl<'a> Checker<'a> {
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
             (Some(l @ Lit::DateTime(_)), S::DateTime) => Some(l),
+            (Some(l @ Lit::Duration(_)), S::Duration) => Some(l),
             (Some(l @ Lit::Boolean(_)), S::Boolean) => Some(l),
             // A narrower kind of text is the text itself, once it reads as
             // one. Quoted text is read as what it holds.
@@ -2136,6 +2137,7 @@ impl<'a> Checker<'a> {
                     S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
                     S::Time => "enter a time such as `09:30` or `09:30:15`, or start the cell with `=` for a formula",
                     S::DateTime => "enter a date-time such as `2025-01-31T09:30`, or start the cell with `=` for a formula",
+                    S::Duration => "enter a duration such as `PT1H30M` or `P2D`, or start the cell with `=` for a formula",
                     S::Url => "enter a web address such as `https://example.com`, or start the cell with `=` for a formula",
                     S::Email => "enter an email address such as `name@example.com`, or start the cell with `=` for a formula",
                     S::Uuid => "enter a UUID such as `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f`, or start the cell with `=` for a formula",
@@ -2232,7 +2234,7 @@ impl<'a> Checker<'a> {
                     }
                 };
                 let ok = match op {
-                    UnOp::Neg => s.is_numeric(),
+                    UnOp::Neg => s.is_numeric() || s == S::Duration,
                     UnOp::Not => matches!(s, S::Boolean | S::Any),
                     UnOp::BitNot => s.is_int() || s == S::Any,
                     UnOp::UpTo => false,
@@ -2653,18 +2655,24 @@ impl<'a> Checker<'a> {
         }
         let ((a, av), (b, bv)) = (parts[0], parts[1]);
         let unknown = a == S::Any || b == S::Any;
-        let elem = if op.is_arithmetic() && (a.is_temporal() || b.is_temporal()) {
+        let timed = |s: S| s.is_temporal() || s == S::Duration;
+        let elem = if op.is_arithmetic() && (timed(a) || timed(b)) {
+            // A duration is scaled by a number: `PT1H * 3`, `P1D / 2`.
+            let scaled = |d: S, n: S| d == S::Duration && n.is_numeric();
             let shifted = match op {
                 BinOp::Add => a.shift(false, b),
                 BinOp::Sub => a.shift(true, b),
+                BinOp::Mul if scaled(a, b) || scaled(b, a) => Some(S::Duration),
+                BinOp::Div if scaled(a, b) => Some(S::Duration),
                 _ => None,
             };
             let Some(s) = shifted else {
                 self.err_help(
                     span,
                     format!("cannot apply `{sym}` to {a} and {b}"),
-                    "add or subtract whole days with a Date, whole seconds with a Time or \
-                     Datetime; subtract two of the same kind; add a Date and a Time",
+                    "add or subtract a Duration, whole days with a Date, or whole seconds with a \
+                     Time or Datetime; subtract two of the same kind; add a Date and a Time; \
+                     multiply or divide a Duration by a number",
                 );
                 return fail;
             };
@@ -2920,6 +2928,8 @@ impl<'a> Checker<'a> {
                 let s = joined.unwrap_or(S::Any);
                 let out = match func {
                     Func::Count | Func::Len => S::Int,
+                    // A length of time adds up, and has an average.
+                    Func::Sum | Func::Mean | Func::Median if s == S::Duration => s,
                     Func::Sum | Func::Mean | Func::Median | Func::Product if !s.is_numeric() => {
                         self.err(span, format!("cannot take the `{name}` of {s} values"));
                         return fail;
@@ -3260,6 +3270,35 @@ impl<'a> Checker<'a> {
                     }
                 };
                 (Node::new(Ir::Call(func, vec![arg]), span), ty)
+            }
+            "total_days" | "total_hours" | "total_minutes" | "total_seconds" => {
+                if !arity(self, 1, &format!("Shifts.Length.{name}()")) {
+                    return fail;
+                }
+                let unit = match name {
+                    "total_days" => date::DAY_MICROS,
+                    "total_hours" => 3_600 * date::MICROS,
+                    "total_minutes" => 60 * date::MICROS,
+                    _ => date::MICROS,
+                };
+                let (arg, aty) = self.lower(&args[0], sc);
+                let ty = match aty {
+                    Ty::Any | Ty::Scalar(S::Any | S::Duration) => Ty::Scalar(S::Decimal),
+                    Ty::Vector(S::Any | S::Duration, n) => Ty::Vector(S::Decimal, n),
+                    other => {
+                        if !matches!(arg.kind, Ir::Error) {
+                            self.err(
+                                args[0].span,
+                                format!(
+                                    "`{name}` needs a Duration, but this is {}",
+                                    other.describe()
+                                ),
+                            );
+                        }
+                        return fail;
+                    }
+                };
+                (Node::new(Ir::Call(Func::Total(unit), vec![arg]), span), ty)
             }
             "convert_time_zone" | "utc" | "local" | "base_utc_offset" | "time_zone" => {
                 let takes_zone = name == "convert_time_zone";

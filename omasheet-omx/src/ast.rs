@@ -24,6 +24,8 @@ pub enum Lit {
     /// Microseconds since the start of 1970-01-01, on the clocks of the
     /// file's own zone, as Polars holds a `Datetime`.
     DateTime(i64),
+    /// Microseconds, as Polars holds a `Duration`: `PT1H30M`.
+    Duration(i64),
 }
 
 #[derive(Clone, Debug)]

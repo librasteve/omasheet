@@ -202,6 +202,9 @@ pub enum Func {
     DateOf,
     /// The time of day of a date-time.
     TimeOf,
+    /// A `Duration` as an exact number of days, hours, minutes or seconds:
+    /// `total_hours` of `PT1H30M` is 1.5. The unit, in microseconds.
+    Total(i64),
     /// The same instant on the clocks of a named time zone.
     ToZone,
     Utc,

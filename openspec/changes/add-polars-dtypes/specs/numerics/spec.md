@@ -9,7 +9,7 @@ What a number is, and what arithmetic on one gives.
 Each type SHALL be a name for one Polars dtype, and SHALL hold exactly what
 that dtype holds. `Int` SHALL be `Int64`, `Decimal` and `Percent` SHALL be
 `Decimal(38, s)`, `Float` SHALL be `Float64`, `Boolean` SHALL be `Boolean`,
-`String` SHALL be `String`, `Binary` SHALL be `Binary`, `Date` SHALL be `Date`,
+`String` SHALL be `String`, `Date` SHALL be `Date`,
 `Time` SHALL be `Time`, `DateTime` SHALL be `Datetime` with an optional zone,
 `Duration` SHALL be `Duration`, and `Null` SHALL be `Null`.
 
@@ -197,6 +197,23 @@ is later work.
 
 A whole number next to a date SHALL continue to count days, and next to a time
 or a date-time, seconds.
+
+A `Duration` SHALL be multiplied and divided by a number, giving a `Duration`
+to the nearest microsecond, and `sum`, `mean` and `median` of durations SHALL
+be durations. `total_days`, `total_hours`, `total_minutes` and
+`total_seconds` SHALL give a `Duration` as an exact number of that unit.
+
+#### Scenario: A number out of a duration
+
+- **GIVEN** the expression `PT1H30M.total_hours()`
+- **WHEN** it is evaluated
+- **THEN** the result is `1.5`
+
+#### Scenario: A duration scaled by a number
+
+- **GIVEN** the expression `PT1H * 3`
+- **WHEN** it is evaluated
+- **THEN** the result is a `Duration` shown as `PT3H`
 
 #### Scenario: Two dates subtract to a duration
 

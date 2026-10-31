@@ -75,6 +75,8 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
         [Tok::Date(d), Tok::Eof] => Lit::Date(*d),
         [Tok::Time(t), Tok::Eof] => Lit::Time(*t),
         [Tok::DateTime(t), Tok::Eof] => Lit::DateTime(*t),
+        [Tok::Duration(t), Tok::Eof] => Lit::Duration(*t),
+        [Tok::Minus, Tok::Duration(t), Tok::Eof] => Lit::Duration(t.checked_neg()?),
         [Tok::True, Tok::Eof] => Lit::Boolean(true),
         [Tok::False, Tok::Eof] => Lit::Boolean(false),
         _ => return None,
@@ -92,6 +94,7 @@ pub fn lit_type(l: &Lit) -> S {
         Lit::Date(_) => S::Date,
         Lit::Time(_) => S::Time,
         Lit::DateTime(_) => S::DateTime,
+        Lit::Duration(_) => S::Duration,
     }
 }
 

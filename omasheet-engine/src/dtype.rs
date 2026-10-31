@@ -93,6 +93,15 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
         }
         // A time of day is nanoseconds, which is what Polars holds too.
         AnyValue::Time(ns) => Cell::Lit(Lit::Time(ns)),
+        // A duration is held to the microsecond, as a date-time is.
+        AnyValue::Duration(n, unit) => {
+            let micros = match unit {
+                TimeUnit::Nanoseconds => Some(n / (NANOS / MICROS)),
+                TimeUnit::Microseconds => Some(n),
+                TimeUnit::Milliseconds => n.checked_mul(MICROS / 1_000),
+            };
+            micros.map_or(Cell::Invalid, |m| Cell::Lit(Lit::Duration(m)))
+        }
         // Anything else is held as Polars shows it.
         other => Cell::Lit(Lit::String(other.to_string())),
     }
@@ -116,6 +125,7 @@ pub fn dtype(ty: S, scale: u32) -> Option<DataType> {
         S::Date => DataType::Date,
         S::Time => DataType::Time,
         S::DateTime => DataType::Datetime(TimeUnit::Microseconds, None),
+        S::Duration => DataType::Duration(TimeUnit::Microseconds),
         S::Any => return None,
     })
 }
@@ -279,6 +289,16 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
             })?,
         )
         .cast(&DataType::Datetime(TimeUnit::Microseconds, None))
+        .ok()?,
+        S::Duration => Series::new(
+            name,
+            all(&|v| match v {
+                Value::Duration(us) => Some(Some(*us)),
+                v if null(v) => Some(None),
+                _ => None,
+            })?,
+        )
+        .cast(&DataType::Duration(TimeUnit::Microseconds))
         .ok()?,
         // A column of anything: there is no one dtype to hold it as.
         S::Any => return None,

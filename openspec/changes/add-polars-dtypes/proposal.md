@@ -31,7 +31,7 @@ bump and a note in the README.
 - **omx-expressions** — REMOVED: imaginary literals (`4i`, `Inf\i`) and the
   `re`, `im`, `conj` and `arg` functions; `x.Complex`;
   MODIFIED: `x.Bool` is `x.Boolean`, `x.Text` is `x.String`, `x.Num` is
-  `x.Float`; ADDED: `Binary` and `Duration` types, with `Duration` written as an
+  `x.Float`; ADDED: a `Duration` type, written as an
   ISO 8601 literal and inferred from the difference of two dates or times
 - **file-format** — MODIFIED: the declarable type names are the Polars ones,
   and a blank cell is `Null` rather than a value called empty; a fraction of

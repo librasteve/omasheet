@@ -229,6 +229,11 @@ fn literal(l: &Lit) -> Option<Out> {
             let value = AnyValue::DatetimeOwned(*us, TimeUnit::Microseconds, None);
             Out::new(lit(Scalar::new(dtype.clone(), value)), dtype)
         }
+        Lit::Duration(us) => {
+            let dtype = DataType::Duration(TimeUnit::Microseconds);
+            let value = AnyValue::Duration(*us, TimeUnit::Microseconds);
+            Out::new(lit(Scalar::new(dtype.clone(), value)), dtype)
+        }
         // A percentage is display, not a dtype (D69).
         Lit::Percent(_) => None,
     }
@@ -249,6 +254,7 @@ fn lit_of(v: Value) -> Option<Lit> {
         Value::Date(d) => Lit::Date(d),
         Value::Time(t) => Lit::Time(t),
         Value::DateTime(t) => Lit::DateTime(t),
+        Value::Duration(t) => Lit::Duration(t),
         _ => return None,
     })
 }
@@ -511,7 +517,8 @@ fn is_float(dtype: &DataType) -> bool {
     matches!(dtype, DataType::Float32 | DataType::Float64)
 }
 
-/// Whether a column holds a date, a time or a timestamp. An extreme of one
+/// Whether a column holds a date, a time, a timestamp or a duration. An
+/// extreme of one
 /// is the extreme of the whole number it is held as, which is the order
 /// `value::compare` puts two of them in, so `min` and `max` of such a
 /// column are Polars' to take. A `Datetime` of another unit or in a zone is
@@ -520,6 +527,7 @@ fn temporal(dtype: &DataType) -> bool {
     match dtype {
         DataType::Datetime(unit, zone) => *unit == TimeUnit::Microseconds && zone.is_none(),
         DataType::Date | DataType::Time => true,
+        DataType::Duration(unit) => *unit == TimeUnit::Microseconds,
         _ => false,
     }
 }
@@ -530,6 +538,7 @@ fn holdable(dtype: &DataType) -> bool {
     match dtype {
         DataType::Datetime(unit, zone) => *unit == TimeUnit::Microseconds && zone.is_none(),
         DataType::String | DataType::Boolean | DataType::Date | DataType::Time => true,
+        DataType::Duration(unit) => *unit == TimeUnit::Microseconds,
         _ => false,
     }
 }
