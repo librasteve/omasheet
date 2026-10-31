@@ -1863,7 +1863,7 @@ dependencies = [
 
 [[package]]
 name = "omasheet-cli"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "clap",
  "omasheet-engine",
@@ -1873,7 +1873,7 @@ dependencies = [
 
 [[package]]
 name = "omasheet-engine"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "jiff",
  "libc",
@@ -1883,7 +1883,7 @@ dependencies = [
 
 [[package]]
 name = "omasheet-interop"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "calamine",
  "csv",
@@ -1896,7 +1896,7 @@ dependencies = [
 
 [[package]]
 name = "omasheet-md"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "omasheet-engine",
  "pulldown-cmark",
@@ -1904,11 +1904,11 @@ dependencies = [
 
 [[package]]
 name = "omasheet-omx"
-version = "0.1.5"
+version = "0.1.6"
 
 [[package]]
 name = "omasheet-ui"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "cxx",
  "cxx-qt",
