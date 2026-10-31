@@ -10,7 +10,7 @@
 //!
 //! sheet Sales
 //!
-//! Revenue : Fraction
+//! Revenue : Decimal
 //!
 //! Month | Revenue | Cost | Profit
 //! Jan   | 10000   | 6000 | *
@@ -23,6 +23,7 @@
 //! column of the header row is a formula column, with `*` for its cells.
 
 use crate::ast::Expr;
+use crate::colfmt::{Format, closing};
 use crate::diag::{Diagnostic, Span};
 use crate::parser::parse_expr;
 use crate::types::S;
@@ -59,10 +60,27 @@ pub struct FuncDecl {
     pub doc: String,
 }
 
+/// `table <Name> := dataframe["<path>"]`: where a sheet's rows come from,
+/// when they are not in the file.
+#[derive(Debug)]
+pub struct SourceDecl {
+    /// `None` if the expression did not parse.
+    pub expr: Option<Expr>,
+    /// The source text of the expression, parsed or not.
+    pub expr_span: Span,
+}
+
 #[derive(Debug)]
 pub struct SheetDecl {
     pub name: String,
     pub span: Span,
+    /// `Some` for a `table`: its rows live outside the file.
+    pub source: Option<SourceDecl>,
+    /// `Some` for a sheet computed from an expression that gives a sheet,
+    /// `sheet Top := Sales |> head(3)`: its rows are a view of another
+    /// sheet's. Kept apart from `source` so that a table still means a
+    /// table, whose rows are read from a file (D90).
+    pub formula: Option<SourceDecl>,
     pub schema: Vec<SchemaLine>,
     pub header: Vec<(String, Span)>,
     pub rows: Vec<Vec<CellSrc>>,
@@ -79,6 +97,15 @@ pub struct SchemaLine {
     pub name: String,
     pub span: Span,
     pub ty: S,
+    /// The name the file holds this column under, when it is not the name
+    /// used here: `Siblings : Int from "Siblings/Spouses Aboard"`. Only a
+    /// table's column is read from a file, so only a table's line has one.
+    pub from: Option<String>,
+    /// The quoted name, for a diagnostic about it; default without one.
+    pub from_span: Span,
+    /// How the column's values are shown: `Price : Decimal['.2f]`,
+    /// `Due : Date[%d %b %Y]`.
+    pub format: Option<Format>,
 }
 
 #[derive(Debug)]
@@ -109,6 +136,33 @@ pub fn ident_len(s: &str) -> usize {
     b.iter()
         .take_while(|c| c.is_ascii_alphanumeric() || **c == b'_')
         .count()
+}
+
+/// The text of a double-quoted string at the start of `s`, and the length
+/// of the string as written. `\\"` and `\\\\` stand for what they quote, as in
+/// an expression. `None` if `s` does not open with a quote or does not close.
+fn quoted(s: &str) -> Option<(String, usize)> {
+    let b = s.as_bytes();
+    if b.first() != Some(&b'"') {
+        return None;
+    }
+    let mut out = String::new();
+    let mut i = 1;
+    while i < b.len() {
+        match b[i] {
+            b'"' => return Some((out, i + 1)),
+            b'\\' if i + 1 < b.len() => {
+                out.push(b[i + 1] as char);
+                i += 2;
+            }
+            _ => {
+                let c = s[i..].chars().next()?;
+                out.push(c);
+                i += c.len_utf8();
+            }
+        }
+    }
+    None
 }
 
 /// `keyword` followed by whitespace: the rest of the line, trimmed at the left.
@@ -163,7 +217,11 @@ pub fn split_cells(line: &str, start: usize, src: u32) -> Vec<CellSrc> {
         match b[i] {
             b'\\' if in_string => i += 1,
             b'"' => in_string = !in_string,
-            b'|' if !in_string && b.get(i + 1) != Some(&b'>') => {
+            // `|>` is the pipe, and `+|` in a formula a bitwise or (D140).
+            b'|' if !in_string
+                && b.get(i + 1) != Some(&b'>')
+                && !(i > 0 && b[i - 1] == b'+' && line[from..i].trim_start().starts_with('=')) =>
+            {
                 push(from, i);
                 from = i + 1;
             }
@@ -214,6 +272,50 @@ pub fn is_zone_name(s: &str) -> bool {
     s.starts_with(|c: char| c.is_ascii_alphabetic())
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || "/_-+".contains(c))
+}
+
+/// The format `text` of a column of type `ty`, at `span`, or `None` with a
+/// diagnostic where it does not read or the type does not take it.
+fn read_format(text: &str, ty: S, span: Span, diags: &mut Vec<Diagnostic>) -> Option<Format> {
+    let Some(takes) = Format::conversions_of(ty) else {
+        diags.push(
+            Diagnostic::new(span, format!("{ty} does not take a format"))
+                .with_help("only Integer, Decimal, Float, Date, Time and Datetime take a format"),
+        );
+        return None;
+    };
+    let f = match Format::parse(text, ty) {
+        Ok(f) => f,
+        Err(e) => {
+            let start = span.start as usize + e.at;
+            diags.push(
+                // One with nothing to point at points at the `]`.
+                Diagnostic::new(Span::new(span.src, start, start + e.len.max(1)), e.message)
+                    .with_help(Format::help(ty)),
+            );
+            return None;
+        }
+    };
+    if f.takes(ty) {
+        return Some(f);
+    }
+    // A date format points at the conversion its type does not take.
+    let span = match &f {
+        Format::Date(d) => match d.refused(ty) {
+            Some(c) => {
+                let (at, len) = d.span_of(c);
+                let start = span.start as usize + at;
+                Span::new(span.src, start, start + len)
+            }
+            None => span,
+        },
+        Format::Number(_) => span,
+    };
+    diags.push(
+        Diagnostic::new(span, format!("{ty} does not take the format `{f}`"))
+            .with_help(format!("{ty} takes {takes}")),
+    );
+    None
 }
 
 pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst {
@@ -282,6 +384,35 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             continue;
         }
 
+        // sheet <Name> := <expr>: its rows are a view of another sheet's.
+        if let Some(rest) = after_keyword(trimmed, "sheet") {
+            let n = ident_len(rest);
+            let tail = rest[n..].trim_start();
+            if n > 0 && tail.starts_with(":=") {
+                ast.sheets.extend(sheet.take());
+                let name_at = at + (trimmed.len() - rest.len());
+                let expr_at = at + (trimmed.len() - tail.len()) + 2;
+                let (expr, expr_span) = expression(&mut i, expr_at, diags);
+                sheet = Some(SheetDecl {
+                    name: rest[..n].to_string(),
+                    span: Span::new(src, name_at, name_at + n),
+                    source: None,
+                    formula: Some(SourceDecl { expr, expr_span }),
+                    schema: Vec::new(),
+                    header: Vec::new(),
+                    header_line: Span::default(),
+                    separator_line: None,
+                    row_lines: Vec::new(),
+                    rows: Vec::new(),
+                    computed: Vec::new(),
+                });
+                in_body = false;
+                after_header = false;
+                i += 1;
+                continue;
+            }
+        }
+
         // sheet <Name>
         if let Some(rest) = after_keyword(trimmed, "sheet") {
             let n = ident_len(rest);
@@ -291,6 +422,37 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                 sheet = Some(SheetDecl {
                     name: rest[..n].to_string(),
                     span: Span::new(src, name_at, name_at + n),
+                    source: None,
+                    formula: None,
+                    schema: Vec::new(),
+                    header: Vec::new(),
+                    header_line: Span::default(),
+                    separator_line: None,
+                    row_lines: Vec::new(),
+                    rows: Vec::new(),
+                    computed: Vec::new(),
+                });
+                in_body = false;
+                after_header = false;
+                i += 1;
+                continue;
+            }
+        }
+
+        // table <Name> := <expr>
+        if let Some(rest) = after_keyword(trimmed, "table") {
+            let n = ident_len(rest);
+            let tail = rest[n..].trim_start();
+            if n > 0 && tail.starts_with(":=") {
+                ast.sheets.extend(sheet.take());
+                let name_at = at + (trimmed.len() - rest.len());
+                let expr_at = at + (trimmed.len() - tail.len()) + 2;
+                let (expr, expr_span) = expression(&mut i, expr_at, diags);
+                sheet = Some(SheetDecl {
+                    name: rest[..n].to_string(),
+                    span: Span::new(src, name_at, name_at + n),
+                    source: Some(SourceDecl { expr, expr_span }),
+                    formula: None,
                     schema: Vec::new(),
                     header: Vec::new(),
                     header_line: Span::default(),
@@ -397,7 +559,8 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             diags.push(
                 Diagnostic::new(
                     Span::new(src, at, at + trimmed.len()),
-                    "expected `sheet <Name>`, `const <Name> = <expression>`, \
+                    "expected `sheet <Name>`, `table <Name> := dataframe[\"<path>\"]`, \
+                     `const <Name> = <expression>`, \
                      `fn <Name>(<parameters>) = <expression>` or `zone <Area/City>`",
                 )
                 .with_help("rows of data belong under a `sheet` line"),
@@ -426,24 +589,88 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
 
         // <Column> : <Type>, before the header row only
         if !in_body && n > 0 && tail.starts_with(':') && !trimmed.contains('|') {
-            let ty_text = tail[1..].trim();
+            let body = tail[1..].trim();
             let ty_at = at
                 + (trimmed.len() - tail.len())
                 + 1
                 + (tail[1..].len() - tail[1..].trim_start().len());
+            // `Int from "Siblings/Spouses Aboard"`: the type, and the name
+            // the file holds the column under. A name Polars allows and
+            // omasheet does not is reached this way and no other.
+            let k = ident_len(body);
+            // `Decimal['.2f]`: the type, and how its values are shown. The
+            // format is read once the type says which kind it is.
+            let mut format_text = None;
+            let mut after_ty = &body[k..];
+            if k > 0 && after_ty.starts_with('[') {
+                let open = ty_at + k + 1;
+                match closing(&after_ty[1..]) {
+                    Some(close) => {
+                        format_text = Some((&after_ty[1..close + 1], open));
+                        after_ty = &after_ty[close + 2..];
+                    }
+                    None => {
+                        diags.push(Diagnostic::new(
+                            Span::new(src, open - 1, ty_at + body.len()),
+                            "a format is closed with `]`".to_string(),
+                        ));
+                        after_ty = "";
+                    }
+                }
+            }
+            let (ty_text, after) = match after_keyword(after_ty.trim_start(), "from") {
+                Some(rest) if k > 0 => (&body[..k], Some(rest)),
+                _ if body.len() - after_ty.len() > k => {
+                    if !after_ty.trim().is_empty() {
+                        let at = ty_at + body.len() - after_ty.len();
+                        diags.push(Diagnostic::new(
+                            Span::new(src, at, at + after_ty.trim_end().len()),
+                            "a format is the last thing on its line, or before `from`".to_string(),
+                        ));
+                    }
+                    (&body[..k], None)
+                }
+                _ => (body, None),
+            };
+            let mut from = None;
+            let mut from_span = Span::default();
+            if let Some(rest) = after {
+                let rest_at = ty_at + (body.len() - rest.len());
+                match quoted(rest) {
+                    Some((name, used)) if rest[used..].trim().is_empty() => {
+                        from_span = Span::new(src, rest_at, rest_at + used);
+                        from = Some(name);
+                    }
+                    _ => diags.push(
+                        Diagnostic::new(
+                            Span::new(src, rest_at, rest_at + rest.trim_end().len()),
+                            "a `from` names the column in the file".to_string(),
+                        )
+                        .with_help("the name is in quotes, as `from \"Siblings/Spouses Aboard\"`"),
+                    ),
+                }
+            }
             match S::from_name(ty_text) {
-                Some(ty) => t.schema.push(SchemaLine {
-                    name: trimmed[..n].to_string(),
-                    span: Span::new(src, at, at + n),
-                    ty,
-                }),
+                Some(ty) => {
+                    let format = format_text.and_then(|(text, open)| {
+                        read_format(text, ty, Span::new(src, open, open + text.len()), diags)
+                    });
+                    t.schema.push(SchemaLine {
+                        name: trimmed[..n].to_string(),
+                        span: Span::new(src, at, at + n),
+                        ty,
+                        from,
+                        from_span,
+                        format,
+                    })
+                }
                 None => diags.push(
                     Diagnostic::new(
                         Span::new(src, ty_at, ty_at + ty_text.len()),
                         format!("unknown type `{ty_text}`"),
                     )
                     .with_help(
-                        "the types are Int, Decimal, Fraction, Percent, Num, Complex, Text, Date, Time, DateTime and Bool",
+                        "the types are Int, Decimal, Fraction, Percent, Float, String, Date, Time, Datetime, Duration and Boolean",
                     ),
                 ),
             }
@@ -528,18 +755,22 @@ mod tests {
         let texts: Vec<_> = cells.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(texts, ["a", "\"x | y\"", "= T |> sum()"]);
         assert_eq!(cells[1].span.start, 4);
+        // A bitwise or stays in a formula, and divides any other cell.
+        let cells = split_cells("a | = 0x10 +| 0x01 | A+|B", 0, 0);
+        let texts: Vec<_> = cells.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(texts, ["a", "= 0x10 +| 0x01", "A+", "B"]);
     }
 
     #[test]
     fn parses_a_sheet() {
         let mut diags = Vec::new();
-        let src = "const Rate = 20%\n\nsheet Sales\n\nRevenue : Fraction\n\nMonth | Revenue | Tax\n------|---------|----\nJan | 100 | *\nFeb | 120 | *\n\nTax := Revenue * Rate\n";
+        let src = "const Rate = 20%\n\nsheet Sales\n\nRevenue : Decimal\n\nMonth | Revenue | Tax\n------|---------|----\nJan | 100 | *\nFeb | 120 | *\n\nTax := Revenue * Rate\n";
         let ast = parse_file(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         assert_eq!(ast.consts.len(), 1);
         let t = &ast.sheets[0];
         assert_eq!((t.header.len(), t.rows.len(), t.computed.len()), (3, 2, 1));
-        assert_eq!(t.schema[0].ty, S::Fraction);
+        assert_eq!(t.schema[0].ty, S::Decimal);
     }
 
     #[test]
@@ -566,6 +797,115 @@ mod tests {
         let ast = parse_file("sheet T\n\nA | B\n| 2\n", 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         assert_eq!(texts(&ast.sheets[0]), [["", "2"]]);
+    }
+
+    #[test]
+    fn parses_a_number_format() {
+        let mut diags = Vec::new();
+        let src = "table T := dataframe[\"x.parquet\"]\n\nPrice : Decimal['.2f]\nCount : Integer[#x] from \"Count of\"\nAge : Float\n";
+        let ast = parse_file(src, 0, &mut diags);
+        assert!(diags.is_empty(), "{diags:?}");
+        let schema = &ast.sheets[0].schema;
+        assert_eq!(schema[0].ty, S::Decimal);
+        assert_eq!(
+            schema[0].format.as_ref().map(|f| f.to_string()).as_deref(),
+            Some("'.2f")
+        );
+        assert_eq!(
+            schema[1].format.as_ref().map(|f| f.to_string()).as_deref(),
+            Some("#x")
+        );
+        assert_eq!(schema[1].from.as_deref(), Some("Count of"));
+        assert!(schema[2].format.is_none());
+    }
+
+    #[test]
+    fn reports_a_format_that_does_not_read() {
+        let errors = |line: &str| {
+            let mut diags = Vec::new();
+            let src = format!("sheet T\n\n{line}\n\nA\n1\n");
+            parse_file(&src, 0, &mut diags);
+            diags
+                .iter()
+                .map(|d| {
+                    (
+                        src[d.span.start as usize..d.span.end as usize].to_string(),
+                        d.message.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let one = |line: &str| {
+            let e = errors(line);
+            assert_eq!(e.len(), 1, "{line}: {e:?}");
+            e[0].clone()
+        };
+        let (at, message) = one("A : Decimal[012.2q]");
+        assert_eq!(at, "q");
+        assert!(message.contains("`q`"), "{message}");
+        let (at, message) = one("A : Integer[.2f]");
+        assert_eq!(at, ".2f");
+        assert!(message.contains("Integer"), "{message}");
+        let (at, message) = one("A : String[5d]");
+        assert_eq!(at, "5d");
+        assert!(message.contains("String"), "{message}");
+        assert!(one("A : Integer[d").1.contains("`]`"));
+        assert!(one("A : Integer[d] x").1.contains("last thing"));
+        assert!(one("A : Integer[]").1.contains("empty"));
+        let (at, message) = one("A : Date[%d %q %Y]");
+        assert_eq!(at, "q");
+        assert!(message.contains("`q`"), "{message}");
+        let (at, message) = one("A : Date[%d %-H:%M]");
+        assert_eq!(at, "%-H");
+        assert!(message.contains("Date"), "{message}");
+        assert!(one("A : Time[%d]").1.contains("Time"));
+    }
+
+    #[test]
+    fn parses_a_date_format() {
+        let mut diags = Vec::new();
+        let src = "sheet T\n\nDue : Date[%d %b %Y]\nAt : Datetime[%]%H%] %z]\nT : Time[%I:%M %p]\n\nDue\n2025-01-31\n";
+        let ast = parse_file(src, 0, &mut diags);
+        assert!(diags.is_empty(), "{diags:?}");
+        let schema = &ast.sheets[0].schema;
+        let shown: Vec<_> = schema
+            .iter()
+            .map(|l| l.format.as_ref().unwrap().to_string())
+            .collect();
+        assert_eq!(shown, ["%d %b %Y", "%]%H%] %z", "%I:%M %p"]);
+        assert_eq!(schema[1].ty, S::DateTime);
+    }
+
+    #[test]
+    fn parses_a_from_clause() {
+        let mut diags = Vec::new();
+        let src = "table T := dataframe[\"x.parquet\"]\n\nSiblings : Int from \"Siblings/Spouses Aboard\"\nAge : Float\n";
+        let ast = parse_file(src, 0, &mut diags);
+        assert!(diags.is_empty(), "{diags:?}");
+        let schema = &ast.sheets[0].schema;
+        assert_eq!(schema[0].ty, S::Int);
+        assert_eq!(schema[0].from.as_deref(), Some("Siblings/Spouses Aboard"));
+        // The span covers the quoted name, for a diagnostic about it.
+        let span = schema[0].from_span;
+        assert_eq!(
+            &src[span.start as usize..span.end as usize],
+            "\"Siblings/Spouses Aboard\""
+        );
+        // A column of its own name has none.
+        assert_eq!(schema[1].from, None);
+
+        // A `from` with no name in quotes says so, and the type still reads.
+        let mut diags = Vec::new();
+        let ast = parse_file(
+            "table T := dataframe[\"x\"]\n\nA : Int from B\n",
+            0,
+            &mut diags,
+        );
+        assert_eq!(ast.sheets[0].schema[0].ty, S::Int);
+        assert!(
+            diags.iter().any(|d| d.message.contains("names the column")),
+            "{diags:?}"
+        );
     }
 
     #[test]

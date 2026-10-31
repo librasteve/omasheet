@@ -4,7 +4,7 @@ const TaxRate = 20%
 
 sheet Sales
 
-Closed : DateTime
+Closed : Datetime
 Margin : Percent
 Growth : Percent
 
@@ -26,5 +26,24 @@ sheet Summary
 | Revenue        | = Sales.Revenue.sum()                                   |
 | Profit         | = Sales.Profit.sum()                                    |
 | Best month     | = Sales[; Profit == Sales.Profit.max()].Month // "none" |
-| Average margin | = Sales.Margin.avg()                                    |
+| Average margin | = Sales.Margin.mean()                                    |
 | Books closed   | = Sales.Closed.max()                                    |
+
+# What each month was meant to bring in. Feb was set twice, Apr has no
+# sales yet, and Mar has no goal.
+
+sheet Goals
+
+| Month | Target | Owner |
+| ----- | ------ | ----- |
+| Jan   | 9500   | Ann   |
+| Feb   | 11000  | Bob   |
+| Feb   | 12500  | Cy    |
+| Apr   | 14000  | Ann   |
+
+# Each month's sales beside its goals: `join` pairs the rows of two
+# sheets whose key columns are equal, a row for every pair, so Feb is there
+# twice. `left` keeps a month that matches nothing, Mar with no goal, and
+# a month with no sales does not appear.
+
+sheet Against := Sales |> select(Month, Revenue, Profit) |> join(Goals, Month, left)

@@ -70,7 +70,14 @@ fn examples_match_their_expected_output() {
             continue;
         }
         let before = std::fs::read(&path).unwrap();
-        let out = omasheet(&["print", path.to_str().unwrap()]);
+        // A column's format shows its numbers as the locale writes them:
+        // the `C` locale writes them as the expected output does.
+        let out = Command::new(program())
+            .args(["print", path.to_str().unwrap()])
+            .current_dir(root())
+            .env("LC_ALL", "C")
+            .output()
+            .unwrap();
         assert!(out.status.success(), "{}: {}", path.display(), stderr(&out));
         let expected = std::fs::read_to_string(path.with_extension("expected")).unwrap();
         assert_eq!(stdout(&out), expected, "{}", path.display());
@@ -88,7 +95,7 @@ fn eval_pure_arithmetic() {
     assert_eq!(stdout(&out), "0.66666666666666666666…\n");
     let out = omasheet(&["eval", "0.1 + 0.2"]);
     assert_eq!(stdout(&out), "0.3\n");
-    // A Num is never rounded to show it; a large Int is shown in e
+    // A Num is never rounded to show it; a large Integer is shown in e
     // notation, unless it is asked for in full.
     let out = omasheet(&["eval", "sqrt(2)"]);
     assert_eq!(stdout(&out), "1.4142135623730951\n");
@@ -120,7 +127,7 @@ fn eval_from_standard_input() {
         .stdin
         .take()
         .unwrap()
-        .write_all(b"Sales.Revenue.avg()\n")
+        .write_all(b"Sales.Revenue.mean()\n")
         .unwrap();
     let out = child.wait_with_output().unwrap();
     assert_eq!(stdout(&out), "11733.3333333333333333…\n");
@@ -146,7 +153,7 @@ fn lint_reports_a_located_type_error() {
     assert_eq!(out.status.code(), Some(1));
     let err = stderr(&out);
     assert!(
-        err.contains(".omx:6:8: error: cannot apply `+` to Int and Text"),
+        err.contains(".omx:6:8: error: cannot apply `+` to Integer and String"),
         "{err}"
     );
     assert!(err.contains("6 | Bad := Revenue + Month"), "{err}");
@@ -207,7 +214,7 @@ fn dates_are_iso_unless_the_locale_is_asked_for() {
 
 #[test]
 fn time_zones_can_be_given() {
-    let expr = "2025-07-15T12:00.to_zone(\"Asia/Tokyo\")";
+    let expr = "2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\")";
     let out = omasheet(&["eval", "--zone", "Europe/London", expr]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stdout(&out), "2025-07-15T20:00+09:00\n");
@@ -274,7 +281,7 @@ fn export_writes_beside_the_file_and_leaves_it_alone() {
     let out = omasheet(&["import", &path(&dir, "budget.json")]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(
-        stdout(&out).starts_with("sheet Sales\n\nClosed : DateTime\n"),
+        stdout(&out).starts_with("sheet Sales\n\nClosed : Datetime\n"),
         "{}",
         stdout(&out)
     );
@@ -291,7 +298,7 @@ fn export_needs_a_format_and_a_file_that_compiles() {
     let out = omasheet(&["export", "examples/budget.omx"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(
-        stderr(&out).contains("--xlsx, --csv or --json"),
+        stderr(&out).contains("--xlsx, --csv, --json or --parquet"),
         "{}",
         stderr(&out)
     );
@@ -348,7 +355,7 @@ fn import_says_what_it_can_read() {
     let out = omasheet(&["import", "README.md"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(
-        stderr(&out).contains("(.xlsx), a CSV file (.csv) or JSON (.json)"),
+        stderr(&out).contains("(.xlsx), a CSV file (.csv), JSON (.json) or Parquet (.parquet)"),
         "{}",
         stderr(&out)
     );
@@ -388,6 +395,80 @@ fn render_writes_html() {
         html.contains("<td style=\"text-align: right\">5700</td>"),
         "{html}"
     );
+}
+
+/// The same gap on the way out to a file: `export` did not set the base
+/// either, so a table's rows were looked for in the working directory.
+#[test]
+fn export_writes_the_rows_a_table_reads() {
+    let dir = scratch("export_table");
+    std::fs::write(
+        path(&dir, "rows.omx"),
+        "sheet Sales\n\nMonth | Revenue | Cost\nJan | 10000 | 6000\nFeb | 12000 | 7000\n",
+    )
+    .unwrap();
+    let out = omasheet(&[
+        "export",
+        "--parquet",
+        &path(&dir, "rows.omx"),
+        "-o",
+        &path(&dir, "sales.parquet"),
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    std::fs::write(
+        path(&dir, "table.omx"),
+        "table Sales := dataframe[\"sales.parquet\"]\n\n\
+         Month   : String\nRevenue : Integer\nCost    : Integer\n\n\
+         Profit := Revenue - Cost\n",
+    )
+    .unwrap();
+    let csv = path(&dir, "out.csv");
+    let out = omasheet(&["export", "--csv", &path(&dir, "table.omx"), "-o", &csv]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = std::fs::read_to_string(&csv).unwrap();
+    assert!(text.contains("Jan,10000,6000,4000"), "{text}");
+    assert!(text.contains("Feb,12000,7000,5000"), "{text}");
+}
+
+/// D62: the render path builds an engine of its own, and built one that
+/// had not read a table's rows, so a document showed a table as empty.
+#[test]
+fn render_shows_the_rows_a_table_reads() {
+    let dir = scratch("render_table");
+    // A sheet of rows, written out as the Parquet a table reads.
+    std::fs::write(
+        path(&dir, "rows.omx"),
+        "sheet Sales\n\nMonth | Revenue | Cost\nJan | 10000 | 6000\nFeb | 12000 | 7000\n",
+    )
+    .unwrap();
+    let out = omasheet(&[
+        "export",
+        "--parquet",
+        &path(&dir, "rows.omx"),
+        "-o",
+        &path(&dir, "sales.parquet"),
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+
+    // A table over it, with a formula, and a document that asks for both.
+    std::fs::write(
+        path(&dir, "table.omx"),
+        "table Sales := dataframe[\"sales.parquet\"]\n\n\
+         Month   : String\nRevenue : Integer\nCost    : Integer\n\n\
+         Profit := Revenue - Cost\n",
+    )
+    .unwrap();
+    std::fs::write(
+        path(&dir, "doc.md"),
+        "---\nfiles: [table.omx]\n---\n\n\
+         Profit was {{ Sales.Profit.sum() }} over {{ Sales.Month.count() }} months.\n",
+    )
+    .unwrap();
+
+    let out = omasheet(&["render", &path(&dir, "doc.md")]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("Profit was 9000 over 2 months."), "{text}");
 }
 
 #[test]

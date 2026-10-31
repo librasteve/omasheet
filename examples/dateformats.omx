@@ -1,0 +1,22 @@
+# Date and time formats: a column of dates or times shown by a C `strftime`
+# format after its type in brackets, with `%f` for a fraction of a second,
+# glibc's flags, `%-d`, and `%]` for a `]`. The value is unchanged; only how
+# it is shown. Names of days and months are the locale's, which this example
+# prints in the `C` locale, so in English.
+
+zone Europe/London
+
+sheet Diary
+
+Day    : Date[%a %-d %b %Y]
+Week   : Date[%G-W%V-%u]
+Starts : Time[%-I:%M %p]
+Lap    : Time[%M:%S.%3f]
+At     : Datetime[%d/%m/%Y %H:%M %Z]
+Stamp  : Datetime[[%F %T %z%]]
+
+| Event   | Day        | Week       | Starts | Lap          | At               | Stamp               |
+| ------- | ---------- | ---------- | ------ | ------------ | ---------------- | ------------------- |
+| Launch  | 2025-01-31 | 2025-01-31 | 09:30  | 00:01:02.5   | 2025-01-31T09:30 | 2025-01-31T09:30:15 |
+| Review  | 2024-12-30 | 2024-12-30 | 17:05  | 00:59:59.999 | 2025-07-01T12:00 | 2025-07-01T12:00    |
+| Wrap-up | 2027-01-03 | 2027-01-03 | 00:15  | 00:00:00     | 2026-10-25T01:30 | 2026-10-25T01:30    |

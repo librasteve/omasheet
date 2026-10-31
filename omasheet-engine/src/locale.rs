@@ -3,6 +3,7 @@
 //! How the user's locale writes dates and times, as the operating system
 //! has it.
 
+use crate::datefmt::Names;
 use omasheet_omx::date::Style;
 
 /// The date and time style of the user's locale (`LC_TIME`), or the ISO style
@@ -33,6 +34,50 @@ pub fn os_style() -> Style {
 #[cfg(not(unix))]
 pub fn os_style() -> Style {
     Style::ISO
+}
+
+/// What the user's locale (`LC_TIME`) calls the days, the months and the
+/// halves of the day, and how it writes `%c`, `%x`, `%X` and `%r`; the `C`
+/// locale's where it has none.
+#[cfg(unix)]
+pub fn os_names() -> Names {
+    use std::ffi::CStr;
+    let item = |item: libc::nl_item| {
+        // SAFETY: `nl_langinfo` returns a valid string for a valid item; it
+        // is copied before the next call can overwrite it.
+        let text = unsafe { CStr::from_ptr(libc::nl_langinfo(item)) };
+        text.to_string_lossy().into_owned()
+    };
+    // SAFETY: an empty locale name selects the one named by the environment.
+    let found = unsafe { !libc::setlocale(libc::LC_TIME, c"".as_ptr()).is_null() };
+    let c = Names::default();
+    if !found {
+        return c;
+    }
+    fn all<const N: usize>(
+        first: libc::nl_item,
+        item: impl Fn(libc::nl_item) -> String,
+    ) -> [String; N] {
+        std::array::from_fn(|k| item(first + k as libc::nl_item))
+    }
+    // A locale with no form of its own, as many have no `%r`, takes C's.
+    let or = |found: String, c: String| if found.is_empty() { c } else { found };
+    Names {
+        days: all(libc::DAY_1, item),
+        short_days: all(libc::ABDAY_1, item),
+        months: all(libc::MON_1, item),
+        short_months: all(libc::ABMON_1, item),
+        halves: [item(libc::AM_STR), item(libc::PM_STR)],
+        date_time: or(item(libc::D_T_FMT), c.date_time),
+        date: or(item(libc::D_FMT), c.date),
+        time: or(item(libc::T_FMT), c.time),
+        time12: or(item(libc::T_FMT_AMPM), c.time12),
+    }
+}
+
+#[cfg(not(unix))]
+pub fn os_names() -> Names {
+    Names::default()
 }
 
 /// The decimal point and the separator of digit groups of the user's locale

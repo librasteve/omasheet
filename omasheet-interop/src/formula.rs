@@ -37,7 +37,7 @@ pub struct Translated {
 
 #[derive(Clone, Debug, PartialEq)]
 enum Tok {
-    Num(String),
+    Float(String),
     Str(String),
     /// A word: a function, a name, `TRUE`, or the letters of a column.
     Word(String),
@@ -187,7 +187,7 @@ fn lex(text: &str) -> R<Vec<Tok>> {
                     j = k;
                 }
             }
-            toks.push(Tok::Num(text[i..j].to_string()));
+            toks.push(Tok::Float(text[i..j].to_string()));
             i = j;
         } else if let Some((cell, len)) = cell(rest) {
             toks.push(Tok::Cell(cell));
@@ -316,7 +316,7 @@ impl Parser {
             return Err(UNREADABLE.into());
         }
         match tok {
-            Tok::Num(n) => Ok(Expr::Num(n)),
+            Tok::Float(n) => Ok(Expr::Num(n)),
             Tok::Str(s) => Ok(Expr::Str(s)),
             Tok::Open => {
                 let e = self.binary(0)?;
@@ -701,7 +701,7 @@ impl Scope<'_> {
                 let method = match upper {
                     "MIN" => "min",
                     "MAX" => "max",
-                    _ => "avg",
+                    _ => "mean",
                 };
                 let mut columns = 0;
                 let mut parts = Vec::new();
@@ -718,14 +718,19 @@ impl Scope<'_> {
                     (0, _) => return Err(wrong()),
                     (1, 1) => Omx::whole(parts.remove(0)),
                     // An average of averages is not the average of them all.
-                    (_, c) if c > 0 && method == "avg" => return Err(wrong()),
+                    (_, c) if c > 0 && method == "mean" => return Err(wrong()),
                     _ => Omx::whole(format!("[{}].{method}()", parts.join(", "))),
                 }
             }
+            // Excel drops the `arc` that Polars, and so OMX, keeps.
+            ("ASIN" | "ACOS" | "ATAN", 1) => Omx::whole(format!(
+                "arc{}({})",
+                upper.to_ascii_lowercase(),
+                self.one(&args[0])?.at(Tight::Or)
+            )),
             (
-                "ABS" | "SQRT" | "SIGN" | "LN" | "EXP" | "LOG10" | "SIN" | "COS" | "TAN" | "ASIN"
-                | "ACOS" | "ATAN" | "RADIANS" | "DEGREES" | "YEAR" | "MONTH" | "DAY" | "HOUR"
-                | "MINUTE" | "SECOND",
+                "ABS" | "SQRT" | "SIGN" | "LN" | "EXP" | "LOG10" | "SIN" | "COS" | "TAN"
+                | "RADIANS" | "DEGREES" | "YEAR" | "MONTH" | "DAY" | "HOUR" | "MINUTE" | "SECOND",
                 1,
             ) => Omx::whole(format!(
                 "{}({})",
@@ -754,10 +759,16 @@ impl Scope<'_> {
                 let x = x.at(Tight::Or);
                 match digits {
                     0 => Omx::whole(format!("round({x})")),
-                    d if d > 0 => {
-                        Omx::whole(format!("round({x}, 0.{}1)", "0".repeat(d as usize - 1)))
+                    d if d > 0 => Omx::whole(format!("round({x}, {d})")),
+                    // A negative count of places is Excel's way of rounding
+                    // to the hundred. OMX says that as the multiple it is.
+                    d => {
+                        let m = format!("1{}", "0".repeat(-d as usize));
+                        Omx {
+                            text: format!("round({x} / {m}) * {m}"),
+                            tight: Tight::Multiply,
+                        }
                     }
-                    d => Omx::whole(format!("round({x}, 1{})", "0".repeat(-d as usize))),
                 }
             }
             ("POWER", 2) => Omx {
@@ -1030,7 +1041,7 @@ mod tests {
             omx("SUM(B2:C4, 5)"),
             "Sales.Revenue.sum() + Sales.Cost.sum() + 5"
         );
-        assert_eq!(omx("AVERAGE('My Rates'!B2:B3)"), "MyRates.Rate.avg()");
+        assert_eq!(omx("AVERAGE('My Rates'!B2:B3)"), "MyRates.Rate.mean()");
         assert_eq!(
             omx("MAX(B2:B4, C2:C4, 0)"),
             "[Sales.Revenue.max(), Sales.Cost.max(), 0].max()"
@@ -1072,10 +1083,13 @@ mod tests {
             "(if Revenue > 0 and (Cost > 0 or true) then 1 else 2) + 1"
         );
         assert_eq!(omx("NOT(B3>0)"), "not Revenue > 0");
-        assert_eq!(omx("ROUND(B3/3,2)"), "round(Revenue / 3, 0.01)");
+        // A count of places is a count of places in both languages now.
+        assert_eq!(omx("ROUND(B3/3,2)"), "round(Revenue / 3, 2)");
         assert_eq!(omx("ROUND(B3,0)"), "round(Revenue)");
-        assert_eq!(omx("ROUND(B3,1)"), "round(Revenue, 0.1)");
-        assert_eq!(omx("ROUND(B3,-2)"), "round(Revenue, 100)");
+        assert_eq!(omx("ROUND(B3,1)"), "round(Revenue, 1)");
+        // Excel rounds to the hundred with a negative count; OMX says it as
+        // the multiple it is.
+        assert_eq!(omx("ROUND(B3,-2)"), "round(Revenue / 100) * 100");
         assert_eq!(omx("INT(B3)+ABS(C3)"), "floor(Revenue) + abs(Cost)");
         assert_eq!(omx("POWER(B3,2)"), "Revenue ** 2");
         assert_eq!(omx("YEAR(TODAY())"), "year(today())");

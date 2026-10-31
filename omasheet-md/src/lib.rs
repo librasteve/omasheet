@@ -11,10 +11,12 @@
 //! Everything the document names is one file. [`render`] calculates it and
 //! gives the document back as Markdown with the values in place, or as HTML.
 
+use omasheet_engine::omx::colfmt::Format as ColFormat;
 use omasheet_engine::omx::file::{is_zone_name, parse_file};
+use omasheet_engine::omx::ir::{Ir, Node};
 use omasheet_engine::omx::{Diagnostic, Sources, Span, compile, compile_expr};
 use omasheet_engine::value::View;
-use omasheet_engine::{Engine, Options, Outcome, Value};
+use omasheet_engine::{Engine, Options, Outcome, Value, base_of, table};
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 use std::ops::Range;
 use std::rc::Rc;
@@ -253,10 +255,10 @@ fn take_zone(text: &mut String) -> Option<(String, usize)> {
 /// is escaped, outside a code span, where it is text already. Text written
 /// in quotes or made by a formula is shown as it is, with what Markdown
 /// reads as markup escaped, and so is any other value on a page.
-fn place(engine: &Engine, value: &Value, format: Format) -> String {
-    let text = engine.show(value, false);
+fn place(engine: &Engine, value: &Value, format: Format, shown: Option<&ColFormat>) -> String {
+    let text = engine.show_in(value, false, shown);
     if !value.is_markdown() {
-        if format == Format::Markdown && !matches!(value, Value::Text(..)) {
+        if format == Format::Markdown && !matches!(value, Value::String(..)) {
             return text;
         }
         let marks = ['\\', '`', '*', '_', '[', ']', '<', '>', '&', '#', '~'];
@@ -352,6 +354,25 @@ pub fn is_plain(text: &str) -> bool {
     read == text
 }
 
+/// The column `node` reads, where it reads one and nothing more: a whole
+/// column, `Sales.Price`, some of its cells, `Sales.Price[0]`, or one cell
+/// of a row, `Sales[0].Price`.
+fn column_read(node: &Node) -> Option<(usize, usize)> {
+    fn sheet_of(node: &Node) -> Option<usize> {
+        match &node.kind {
+            Ir::Sheet(t) => Some(*t),
+            Ir::Index { base, .. } => sheet_of(base),
+            _ => None,
+        }
+    }
+    match &node.kind {
+        Ir::Column { sheet, col } => Some((*sheet, *col)),
+        Ir::Index { base, .. } => column_read(base),
+        Ir::Field { base, col } => Some((sheet_of(base)?, *col)),
+        _ => None,
+    }
+}
+
 /// Rows and columns of a sheet as a Markdown table, numbers to the right.
 fn sheet(
     engine: &Engine,
@@ -367,10 +388,10 @@ fn sheet(
         let mut line = Vec::with_capacity(view.cols.len());
         for (k, &c) in view.cols.iter().enumerate() {
             let value = engine.cell_shown(view.sheet, c, r);
-            if !matches!(value, Value::Empty | Value::Error) && !value.is_numeric() {
+            if !matches!(value, Value::Null | Value::Error) && !value.is_numeric() {
                 numeric[k] = false;
             }
-            let shown = place(engine, &value, format);
+            let shown = place(engine, &value, format, cols[c].format.as_ref());
             line.push(shown.replace('|', "\\|").replace('\n', " "));
         }
         grid.push(line);
@@ -546,12 +567,20 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
         };
         sources.render(&d)
     };
-    let (program, diags) = compile(&joined.text, 0);
+    let (mut program, mut diags) = compile(&joined.text, 0);
+    // A `table` holds its rows in a file of its own, which has to be read
+    // before the document can show them (D62).
+    let mut tables = table::Tables::default();
+    if diags.is_empty() {
+        tables = table::read(&mut program, base_of(&options), &mut diags);
+    }
     if !diags.is_empty() {
         out.errors.extend(diags.iter().map(|d| locate(d, 0)));
         return out;
     }
-    let engine = Engine::with_options(&program, options);
+    let tables = omasheet_engine::resolve_views(&mut program, &options, tables);
+    let program = program;
+    let engine = Engine::with_tables(&program, options, tables);
     engine.run();
     let diags = engine.take_diags();
     if !diags.is_empty() {
@@ -607,6 +636,9 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
                 continue;
             }
         };
+        // What reads one column, or a cell of it, shows by its format.
+        let shown_by = column_read(&node)
+            .and_then(|(t, c)| program.sheets.get(t)?.cols.get(c)?.format.as_ref());
         // A sheet stands apart from the text around it.
         let apart = |view: &View| {
             let shown = sheet(&engine, &program, view, format);
@@ -633,10 +665,13 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
             }),
             // Several values read as a list: `Jan, Feb`.
             Some(Value::Vector(items)) => {
-                let shown: Vec<String> = items.iter().map(|v| place(&engine, v, format)).collect();
+                let shown: Vec<String> = items
+                    .iter()
+                    .map(|v| place(&engine, v, format, shown_by))
+                    .collect();
                 shown.join(", ")
             }
-            Some(value) => place(&engine, &value, format),
+            Some(value) => place(&engine, &value, format, shown_by),
             None => {
                 let diags = engine.take_diags();
                 out.errors

@@ -1,0 +1,13 @@
+sheet Registers
+
+Name    | Addr   | Flags  | Mode  | Wide             | Next   | Mask   | Plain | Count | Others | Double
+--------|--------|--------|-------|------------------|--------|--------|-------|-------|--------|-------------------
+control | 0x4000 |    0b1 | 0o644 |         000000FF | 0x4004 |   0b10 | 16385 | 16384 |  0x1a4 |              0x1fe
+status  | 0x4004 | 0b1010 | 0o755 |         000000FF | 0x4008 | 0b1011 | 16389 | 16388 |  0x1ed |              0x1fe
+data    | 0x4008 |  0b100 | 0o600 | FFFFFFFFFFFFFFFF | 0x400c |  0b101 | 16393 | 16392 |  0x180 | 0xfffffffffffffffe
+
+sheet Totals
+
+All    | Top    | Neg                | Bin
+-------|--------|--------------------|------
+0b1111 | 0x4008 | 0xffffffffffffff01 | 0b101

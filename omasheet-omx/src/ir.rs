@@ -45,6 +45,9 @@ pub enum Ir {
         depth: usize,
         col: usize,
     },
+    /// A column of the sheet being grouped, over the rows of the group an
+    /// aggregate of `agg` is being worked out for.
+    GroupCol(usize),
     /// The position of the row `depth` frames out, counting from zero.
     RowIndex {
         depth: usize,
@@ -98,6 +101,13 @@ pub enum RowSel {
     Pos(Box<Node>),
     /// One row relative to the current row; outside the sheet gives empty.
     Cursor(Offset),
+    /// One row relative to the current row among the rows whose `keys`
+    /// hold what the current row's do, in the sheet's order: `*-1 by
+    /// Region`. Outside that partition gives empty.
+    CursorBy {
+        off: Offset,
+        keys: Vec<usize>,
+    },
     Range {
         lo: Bound,
         hi: Bound,
@@ -111,6 +121,13 @@ pub enum RowSel {
     Pred(Box<Node>),
     /// A boolean vector with one element per row.
     Mask(Box<Node>),
+    /// Every row, in the order the key columns put them: a permutation
+    /// rather than a selection, which is why a sort is a row selector at
+    /// all. `keys` is empty over a column, whose values are their own key.
+    Order {
+        keys: Vec<usize>,
+        desc: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -123,13 +140,28 @@ pub enum ColSel {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Func {
     Sum,
-    Avg,
+    Mean,
     Min,
     Max,
+    /// How many values are not empty.
     Count,
+    /// How many rows a sheet has, or elements a vector has, empty or not.
+    Len,
+    /// The middle value, or the mean of the two middle ones.
+    Median,
+    /// The product of every value.
+    Product,
+    /// The first and last values, empty ones included.
+    First,
+    Last,
+    /// The standard deviation and the variance, each taking the degrees of
+    /// freedom to subtract: one by default, as Polars has it.
+    Std,
+    Var,
+    /// The value a fraction of the way through the sorted values.
+    Quantile,
     /// A value as another type: `Int(x)`, `Num(x)` and the rest.
     To(S),
-    Complex,
     /// The next value after this one: a number plus one, or the next text
     /// in the way letters and digits count up, `AZ` to `BA`.
     Succ,
@@ -141,19 +173,38 @@ pub enum Func {
     AddMonths,
     /// The last day of the month a date is in.
     EndOfMonth,
+    /// The first day of the month a date is in.
+    StartOfMonth,
+    /// Whether a value is empty.
+    IsNull,
+    /// Whether a value is a `NaN`. Empty of an empty cell, which is a
+    /// different kind of absence and has no answer to this.
+    IsNan,
     Today,
     Now,
     Year,
     Month,
     Day,
     Weekday,
+    /// 1 to 4 by the quarter of the year.
+    Quarter,
+    /// The ISO week of the year, 1 to 53.
+    Week,
+    /// The day of the year, 1 to 366.
+    OrdinalDay,
     Hour,
     Minute,
     Second,
+    Millisecond,
+    Microsecond,
+    Nanosecond,
     /// The day of a date-time.
     DateOf,
     /// The time of day of a date-time.
     TimeOf,
+    /// A `Duration` as an exact number of days, hours, minutes or seconds:
+    /// `total_hours` of `PT1H30M` is 1.5. The unit, in microseconds.
+    Total(i64),
     /// The same instant on the clocks of a named time zone.
     ToZone,
     Utc,
@@ -164,6 +215,10 @@ pub enum Func {
     ZoneName,
     /// A function of one real number, such as `sqrt`.
     Math(MathFn),
+    /// To a number of decimal places: `round(x, 2)`, as Polars rounds.
+    /// A half goes away from zero, and a number with fewer places than
+    /// that is itself.
+    RoundDigits,
     Pi,
     /// The base of the natural logarithm.
     E,

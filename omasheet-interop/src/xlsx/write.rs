@@ -9,10 +9,8 @@
 //! that a workbook has no way to say is not written, and the reason is
 //! given: the cell holds its value instead.
 
-use num_rational::BigRational;
 use omasheet_engine::omx::ast::{BinOp, Lit, UnOp};
 use omasheet_engine::omx::check::Program;
-use omasheet_engine::omx::convert::is_decimal;
 use omasheet_engine::omx::date;
 use omasheet_engine::omx::funcs::MathFn;
 use omasheet_engine::omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
@@ -28,6 +26,8 @@ const CONDITION: Why =
     "values were written in place of formulas that pick rows by more than `Column == value`";
 const SELECTION: Why =
     "values were written in place of formulas that pick rows by a range value or a list";
+const SORTED: Why =
+    "values were written in place of formulas that put rows in an order of their own";
 const ROW: Why = "values were written in place of formulas that work out which row to read";
 const NO_ROWS: Why = "values were written in place of formulas that read no rows";
 const COLUMNS: Why =
@@ -36,15 +36,19 @@ const FALLBACK: Why = "values were written in place of formulas that use `//` on
 const TYPE: Why =
     "values were written in place of formulas on values whose type a workbook cannot tell";
 const OPERATOR: Why = "values were written in place of formulas that use `in` or a range";
+// A workbook's `BITAND` and the rest take only 0 to 2^48 - 1, and a formula
+// cannot say beforehand that every row's numbers are among them.
+const BITWISE: Why = "values were written in place of formulas that use a bitwise operator";
 const FUNCTION: Why =
     "values were written in place of formulas that use a function a workbook has not got";
-const COMPLEX: Why = "values were written in place of formulas with complex numbers";
 const LITERAL: Why =
     "values were written in place of formulas with a number or text a workbook cannot hold";
 const OTHER_SHEET: Why =
     "values were written in place of formulas that read a sheet that is not exported";
 const TOO_LONG: Why = "values were written in place of formulas too long for a workbook";
 const SEQUENCE: Why = "values were written in place of sequences made with `...`";
+const PARTITION: Why =
+    "values were written in place of formulas that count rows within a partition with `by`";
 
 /// The most characters a workbook's formula may have.
 const LONGEST: usize = 8000;
@@ -61,6 +65,8 @@ enum Kind {
     Date,
     Time,
     DateTime,
+    /// A length of time, which a workbook counts in days as it does a date.
+    Duration,
     Unknown,
 }
 
@@ -148,64 +154,32 @@ fn letters(col: usize) -> String {
 
 fn kind_of(s: S) -> Kind {
     match s {
-        S::Int | S::Decimal | S::Fraction | S::Percent | S::Num => Kind::Number,
-        S::Text => Kind::Text,
-        S::Bool => Kind::Bool,
+        S::Int
+        | S::Hex
+        | S::Octal
+        | S::Binary
+        | S::Decimal
+        | S::Fraction
+        | S::Percent
+        | S::Float => Kind::Number,
+        S::String | S::Url | S::Email | S::Uuid => Kind::Text,
+        S::Boolean => Kind::Bool,
         S::Date => Kind::Date,
         S::Time => Kind::Time,
         S::DateTime => Kind::DateTime,
-        S::Complex | S::Any => Kind::Unknown,
+        S::Duration => Kind::Duration,
+        S::Any => Kind::Unknown,
     }
 }
 
 /// A whole number written in the formula, such as the `1` of `*-1`.
 fn whole(program: &Program, node: &Node) -> Option<i64> {
     match &node.kind {
-        Ir::Lit(Lit::Int(n)) => i64::try_from(n).ok(),
+        Ir::Lit(Lit::Int(n, _)) => Some(*n),
         Ir::Unary(UnOp::Neg, inner) => whole(program, inner).map(|n| -n),
         Ir::Const(i) => whole(program, &program.consts[*i].node),
         Ir::Single(inner) => whole(program, inner),
         _ => None,
-    }
-}
-
-/// An exact number written in the formula, or a constant that is one.
-fn exact(program: &Program, node: &Node) -> Option<BigRational> {
-    match &node.kind {
-        Ir::Lit(Lit::Int(n)) => Some(BigRational::from_integer(n.clone())),
-        Ir::Lit(Lit::Decimal(r) | Lit::Fraction(r)) => Some(r.clone()),
-        Ir::Const(i) => exact(program, &program.consts[*i].node),
-        Ir::Single(inner) => exact(program, inner),
-        _ => None,
-    }
-}
-
-/// `round(x, scale)`, which a file means as `round(x / scale) * scale`, to
-/// a scale that is a power of ten: `x`, and the digits a workbook's `ROUND`
-/// takes for it.
-fn round_digits<'n>(program: &Program, a: &'n Node, b: &Node) -> Option<(&'n Node, i64)> {
-    let Ir::Call(Func::Math(MathFn::Round), args) = &a.kind else {
-        return None;
-    };
-    let Ir::Binary(BinOp::Div, x, scale) = &args.first()?.kind else {
-        return None;
-    };
-    // The one scale, written once: not another that happens to be equal.
-    if scale.span != b.span {
-        return None;
-    }
-    let r = exact(program, scale)?;
-    // How many noughts follow the 1, if it is a 1 and noughts.
-    let noughts = |n: String| {
-        let rest = n.strip_prefix('1')?;
-        rest.bytes().all(|c| c == b'0').then_some(rest.len() as i64)
-    };
-    if r.is_integer() {
-        noughts(r.numer().to_string()).map(|k| (&**x, -k))
-    } else if r.numer().to_string() == "1" {
-        noughts(r.denom().to_string()).map(|k| (&**x, k))
-    } else {
-        None
     }
 }
 
@@ -274,17 +248,18 @@ impl Writer<'_> {
         let worksheet = self.worksheet(t, cx)?;
         let d = if fixed { "$" } else { "" };
         let kind = match self.engine.cell_shown(t, c, r as usize) {
-            Value::Int(_)
+            Value::Int(_, _)
             | Value::Decimal(_)
             | Value::Fraction(_)
             | Value::Percent(_)
-            | Value::Num(_) => Kind::Number,
-            Value::Text(..) => Kind::Text,
-            Value::Bool(_) => Kind::Bool,
+            | Value::Float(_) => Kind::Number,
+            Value::String(..) => Kind::Text,
+            Value::Boolean(_) => Kind::Bool,
             Value::Date(_) => Kind::Date,
             Value::Time(_) => Kind::Time,
             Value::DateTime(_) | Value::Zoned(_) => Kind::DateTime,
-            Value::Empty => kind_of(sheet.cols[c].ty),
+            Value::Duration(_) => Kind::Duration,
+            Value::Null => kind_of(sheet.cols[c].ty),
             _ => Kind::Unknown,
         };
         Ok(Some(Expr {
@@ -373,6 +348,11 @@ impl Writer<'_> {
             }
             Some(RowSel::Pred(node)) => Rows::Where(node),
             Some(RowSel::RangeVal(_) | RowSel::Mask(_)) => return Err(SELECTION),
+            // The row before within a partition is a different number of
+            // rows back on each row, which a reference copied down is not.
+            Some(RowSel::CursorBy { .. }) => return Err(PARTITION),
+            // A sheet's own order is not a thing a cell formula can say.
+            Some(RowSel::Order { .. }) => return Err(SORTED),
         })
     }
 
@@ -421,9 +401,12 @@ impl Writer<'_> {
         let [arg] = args else { return Err(VECTOR) };
         let name = match func {
             Func::Sum => "SUM",
-            Func::Avg => "AVERAGE",
+            Func::Mean => "AVERAGE",
             Func::Min => "MIN",
             Func::Max => "MAX",
+            // `count` skips what is empty and `len` does not, which is
+            // COUNTA and ROWS.
+            Func::Len => "ROWS",
             _ => "COUNTA",
         };
         if let Ir::VecLit(items) = &arg.kind {
@@ -437,7 +420,7 @@ impl Writer<'_> {
                     parts.push(e.text);
                 }
             }
-            if parts.is_empty() || func == Func::Count {
+            if parts.is_empty() || matches!(func, Func::Count | Func::Len) {
                 return Err(VECTOR);
             }
             let kind = kind.unwrap_or(Kind::Unknown);
@@ -449,7 +432,7 @@ impl Writer<'_> {
         let (t, sel, cols) = target(arg).ok_or(VECTOR)?;
         let sheet = &self.program.sheets[t];
         let kind = match (func, cols.as_slice()) {
-            (Func::Count, _) => Kind::Number,
+            (Func::Count | Func::Len, _) => Kind::Number,
             (_, [c, ..]) => kind_of(sheet.cols[*c].ty),
             _ => return Err(VECTOR),
         };
@@ -473,12 +456,12 @@ impl Writer<'_> {
                     parts.push(value.text.clone());
                 }
                 match (func, cols.as_slice()) {
-                    (Func::Count, []) => format!("COUNTIFS({})", parts.join(",")),
+                    (Func::Len, []) => format!("COUNTIFS({})", parts.join(",")),
                     (Func::Count, [c]) => {
                         let read = self.column(cx, t, *c)?;
                         format!("COUNTIFS({},{read},\"<>\")", parts.join(","))
                     }
-                    (Func::Sum | Func::Avg, [c]) => {
+                    (Func::Sum | Func::Mean, [c]) => {
                         let read = self.column(cx, t, *c)?;
                         let name = if func == Func::Sum {
                             "SUMIFS"
@@ -529,20 +512,21 @@ impl Writer<'_> {
             let (y, m, d) = date::civil_from_days(days as i64);
             format!("DATE({y},{m},{d})")
         };
-        let hms = |secs: i32| format!("TIME({},{},{})", secs / 3600, secs / 60 % 60, secs % 60);
+        // A time is held in nanoseconds, and a workbook's `TIME` takes the
+        // three parts of the clock.
+        let hms = |nanos: i64| {
+            let (h, m, s, _) = date::hms(nanos);
+            format!("TIME({h},{m},{s})")
+        };
         Ok(match lit {
             // A workbook holds fifteen digits.
-            Lit::Int(n) if n.to_string().trim_start_matches('-').len() <= 15 => {
+            Lit::Int(n, _) if n.to_string().trim_start_matches('-').len() <= 15 => {
                 number(n.to_string())
             }
-            Lit::Int(_) => return Err(LITERAL),
-            Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) if is_decimal(r) => {
-                number(format_rat(r))
-            }
-            Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) => {
-                Expr::new(format!("{}/{}", r.numer(), r.denom()), MUL, Kind::Number)
-            }
-            Lit::Num(f) if f.is_finite() => {
+            Lit::Int(_, _) => return Err(LITERAL),
+            Lit::Decimal(r) | Lit::Percent(r) if !r.is_long() => number(format_rat(r)),
+            Lit::Decimal(r) | Lit::Percent(r) => number(r.to_plain_string()),
+            Lit::Float(f) if f.is_finite() => {
                 let size = f.abs();
                 number(if size == 0.0 || (1e-5..1e15).contains(&size) {
                     format!("{f}")
@@ -550,21 +534,25 @@ impl Writer<'_> {
                     format!("{f:E}")
                 })
             }
-            Lit::Num(_) => return Err(LITERAL),
-            Lit::Complex(..) => return Err(COMPLEX),
-            Lit::Text(s) if s.chars().count() <= LONGEST_TEXT => {
+            Lit::Float(_) => return Err(LITERAL),
+            Lit::String(s) if s.chars().count() <= LONGEST_TEXT => {
                 Expr::atom(format!("\"{}\"", s.replace('"', "\"\"")), Kind::Text)
             }
-            Lit::Text(_) => return Err(LITERAL),
-            Lit::Bool(b) => Expr::atom(if *b { "TRUE" } else { "FALSE" }.into(), Kind::Bool),
+            Lit::String(_) => return Err(LITERAL),
+            Lit::Boolean(b) => Expr::atom(if *b { "TRUE" } else { "FALSE" }.into(), Kind::Bool),
             Lit::Date(d) => Expr::atom(ymd(*d), Kind::Date),
             Lit::Time(t) => Expr::atom(hms(*t), Kind::Time),
+            Lit::Duration(t) => {
+                let days = *t as f64 / date::DAY_MICROS as f64;
+                let prec = if days < 0.0 { NEG } else { ATOM };
+                Expr::new(format!("{days}"), prec, Kind::Duration)
+            }
             Lit::DateTime(t) => {
-                let (days, secs) = date::split_datetime(*t);
-                if secs == 0 {
+                let (days, time) = date::split_datetime(*t);
+                if time == 0 {
                     Expr::atom(ymd(days), Kind::DateTime)
                 } else {
-                    Expr::new(format!("{}+{}", ymd(days), hms(secs)), ADD, Kind::DateTime)
+                    Expr::new(format!("{}+{}", ymd(days), hms(time)), ADD, Kind::DateTime)
                 }
             }
         })
@@ -573,7 +561,7 @@ impl Writer<'_> {
     /// `+ - * / **`. A workbook counts a time in days where a file counts
     /// it in seconds.
     fn arithmetic(&self, op: BinOp, a: Expr, b: Expr) -> Result<Expr, Why> {
-        use Kind::{Date, DateTime, Number, Time};
+        use Kind::{Date, DateTime, Duration, Number, Time};
         let clock = |k: Kind| matches!(k, Time | DateTime);
         let seconds = |e: &Expr| format!("{}/86400", e.within(POW));
         let (sym, prec) = match op {
@@ -597,17 +585,25 @@ impl Writer<'_> {
             (BinOp::Add, Date, Number) | (BinOp::Sub, Date, Number) => plain(Date),
             (BinOp::Add, Number, Date) => plain(Date),
             (BinOp::Add, Date, Time) | (BinOp::Add, Time, Date) => plain(DateTime),
-            (BinOp::Sub, Date, Date) => plain(Number),
+            // A duration is days, as a date is; beside a date only its
+            // whole days count, and beside a time it wraps round midnight.
+            (BinOp::Sub, Date, Date) => plain(Duration),
+            (BinOp::Add | BinOp::Sub, Duration, Duration) => plain(Duration),
+            (BinOp::Add | BinOp::Sub, Date, Duration) | (BinOp::Add, Duration, Date) => {
+                Expr::atom(format!("INT({})", plain(Date).text), Date)
+            }
+            (BinOp::Add | BinOp::Sub, Time, Duration) | (BinOp::Add, Duration, Time) => {
+                Expr::atom(format!("MOD({},1)", plain(Time).text), Time)
+            }
+            (BinOp::Add | BinOp::Sub, DateTime, Duration) => plain(DateTime),
+            (BinOp::Add, Duration, DateTime) => plain(DateTime),
             (BinOp::Add | BinOp::Sub, k, Number) if clock(k) => {
                 Expr::new(format!("{}{sym}{}", a.within(ADD), seconds(&b)), ADD, k)
             }
             (BinOp::Add, Number, k) if clock(k) => {
                 Expr::new(format!("{}+{}", seconds(&a), b.within(ADD + 1)), ADD, k)
             }
-            (BinOp::Sub, k, j) if clock(k) && k == j => Expr::atom(
-                format!("ROUND(({}-{})*86400,0)", a.within(ADD), b.within(ADD + 1)),
-                Number,
-            ),
+            (BinOp::Sub, k, j) if clock(k) && k == j => plain(Duration),
             _ => return Err(TYPE),
         })
     }
@@ -615,7 +611,7 @@ impl Writer<'_> {
     fn call(&self, func: Func, args: &[Node], cx: &Cx) -> Scalar {
         if matches!(
             func,
-            Func::Sum | Func::Avg | Func::Min | Func::Max | Func::Count
+            Func::Sum | Func::Mean | Func::Min | Func::Max | Func::Count | Func::Len
         ) {
             return self.aggregate(func, args, cx);
         }
@@ -626,6 +622,22 @@ impl Writer<'_> {
             Func::Pi => return named("PI", Kind::Number),
             Func::E => return Ok(Some(Expr::atom("EXP(1)".into(), Kind::Number))),
             _ => {}
+        }
+        // `round(x, n)` is Excel's own `ROUND(x,n)`.
+        if matches!(func, Func::RoundDigits) {
+            let [x, places] = args else {
+                return Err(FUNCTION);
+            };
+            let (Some(x), Some(n)) = (self.scalar(x, cx)?, self.scalar(places, cx)?) else {
+                return Ok(None);
+            };
+            if x.kind != Kind::Number || n.kind != Kind::Number {
+                return Err(TYPE);
+            }
+            return Ok(Some(Expr::atom(
+                format!("ROUND({},{})", x.text, n.text),
+                Kind::Number,
+            )));
         }
         let [arg] = args else { return Err(FUNCTION) };
         let Some(x) = self.scalar(arg, cx)? else {
@@ -652,12 +664,12 @@ impl Writer<'_> {
                 kind: Kind::DateTime,
                 ..x.clone()
             },
-            Func::To(S::Int) if number => of("TRUNC", Kind::Number),
-            Func::To(S::Decimal | S::Fraction | S::Percent | S::Num) if number => x.clone(),
-            Func::To(S::Int | S::Decimal | S::Fraction | S::Num) if x.kind == Kind::Bool => {
+            Func::To(S::Int | S::Hex | S::Octal | S::Binary) if number => of("TRUNC", Kind::Number),
+            Func::To(S::Decimal | S::Percent | S::Float) if number => x.clone(),
+            Func::To(S::Int | S::Decimal | S::Float) if x.kind == Kind::Bool => {
                 Expr::atom(format!("IF({},1,0)", x.text), Kind::Number)
             }
-            Func::To(S::Bool) if number => {
+            Func::To(S::Boolean) if number => {
                 Expr::new(format!("{}<>0", x.within(COMPARE + 1)), COMPARE, Kind::Bool)
             }
             Func::Math(m) if number => {
@@ -671,9 +683,9 @@ impl Writer<'_> {
                     MathFn::Sin => "SIN",
                     MathFn::Cos => "COS",
                     MathFn::Tan => "TAN",
-                    MathFn::Asin => "ASIN",
-                    MathFn::Acos => "ACOS",
-                    MathFn::Atan => "ATAN",
+                    MathFn::Arcsin => "ASIN",
+                    MathFn::Arccos => "ACOS",
+                    MathFn::Arctan => "ATAN",
                     MathFn::Sinh => "SINH",
                     MathFn::Cosh => "COSH",
                     MathFn::Tanh => "TANH",
@@ -698,11 +710,9 @@ impl Writer<'_> {
                     MathFn::Log2 => {
                         return Ok(Some(Expr::atom(format!("LOG({},2)", x.text), Kind::Number)));
                     }
-                    MathFn::Re | MathFn::Im | MathFn::Conj | MathFn::Arg => return Err(COMPLEX),
                 };
                 of(name, Kind::Number)
             }
-            Func::Complex => return Err(COMPLEX),
             Func::Year
             | Func::Month
             | Func::Day
@@ -729,6 +739,9 @@ impl Writer<'_> {
             // A sequence knows its own row, which a workbook formula
             // copied down cannot say.
             Ir::RowIndex { .. } | Ir::Empty => Err(SEQUENCE),
+            // Only an aggregate of `agg` reads a group, and one is never
+            // written as a formula.
+            Ir::GroupCol(_) => Err(OTHER_SHEET),
             Ir::Const(i) => {
                 let apart = Cx {
                     depth: 0,
@@ -750,19 +763,17 @@ impl Writer<'_> {
                 let Some(x) = self.scalar(inner, cx)? else {
                     return Ok(None);
                 };
-                if x.kind != Kind::Number {
+                if !matches!(x.kind, Kind::Number | Kind::Duration) {
                     return Err(TYPE);
                 }
-                Ok(Some(Expr::new(
-                    format!("-{}", x.within(ATOM)),
-                    NEG,
-                    Kind::Number,
-                )))
+                Ok(Some(Expr::new(format!("-{}", x.within(ATOM)), NEG, x.kind)))
             }
             Ir::Unary(UnOp::Not, inner) => Ok(self
                 .scalar(inner, cx)?
                 .map(|x| Expr::atom(format!("NOT({})", x.text), Kind::Bool))),
             Ir::Unary(UnOp::UpTo, _) => Err(OPERATOR),
+            Ir::Unary(UnOp::BitNot, _) => Err(BITWISE),
+            Ir::Binary(op, ..) if op.is_bitwise() => Err(BITWISE),
             Ir::Binary(BinOp::Fallback, a, b) => {
                 let (a, b) = (self.scalar(a, cx)?, self.scalar(b, cx)?);
                 let Some(a) = a else { return Ok(b) };
@@ -777,20 +788,6 @@ impl Writer<'_> {
                     Form::Calc => return Err(FALLBACK),
                 };
                 Ok(Some(Expr::atom(text, kind)))
-            }
-            // To a power of ten, as `ROUND` has it: `round(x, 0.01)` is
-            // `ROUND(x,2)`. Any other scale is written as it is meant.
-            Ir::Binary(BinOp::Mul, a, b) if round_digits(self.program, a, b).is_some() => {
-                let Some((x, digits)) = round_digits(self.program, a, b) else {
-                    return Ok(None);
-                };
-                let Some(x) = self.scalar(x, cx)? else {
-                    return Ok(None);
-                };
-                Ok(Some(Expr::atom(
-                    format!("ROUND({},{digits})", x.text),
-                    Kind::Number,
-                )))
             }
             Ir::Binary(op, ..) if *op == BinOp::In || op.range_ends().is_some() => Err(OPERATOR),
             Ir::Binary(op, a, b) => {

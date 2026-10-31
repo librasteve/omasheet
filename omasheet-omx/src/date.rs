@@ -1,12 +1,37 @@
 // Copyright (c) 2026 Stephen Roe
 
 //! Calendar dates as a count of days since 1970-01-01 (proleptic Gregorian),
-//! times of day as a count of seconds since midnight, and date-times as a
-//! count of seconds since the start of 1970-01-01. None has a time zone.
+//! times of day as a count of **nanoseconds** since midnight, and date-times
+//! as a count of **microseconds** since the start of 1970-01-01. None has a
+//! time zone.
+//!
+//! Those are the units Polars holds a `Time` and a `Datetime` in, so that a
+//! value carried in a Parquet file needs no scaling to arrive, and loses
+//! nothing on the way. A whole number beside either still means one
+//! *second*, which is what the file's own arithmetic promises; this module
+//! is the one place that knows the factors between the two.
 //!
 //! A file always writes them the ISO way (`2025-01-31`, `09:30`,
 //! `2025-01-31T09:30`). A [`Style`] is how they are shown to, and typed by, a
 //! person: `31/01/2025` in Britain, `01/31/2025` in the United States.
+
+/// Seconds in a day.
+pub const DAY: i64 = 86_400;
+
+/// Nanoseconds in a second: the unit of a time of day.
+pub const NANOS: i64 = 1_000_000_000;
+
+/// Microseconds in a second: the unit of a date-time.
+pub const MICROS: i64 = 1_000_000;
+
+/// Nanoseconds in a microsecond, between the two.
+pub const NANOS_PER_MICRO: i64 = NANOS / MICROS;
+
+/// Nanoseconds in a day.
+pub const DAY_NANOS: i64 = DAY * NANOS;
+
+/// Microseconds in a day.
+pub const DAY_MICROS: i64 = DAY * MICROS;
 
 pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
@@ -75,38 +100,64 @@ pub fn format(days: i32) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-/// The second number of a time on a day, or `None` if it is not a real time.
+/// The microsecond number of a time on a day, or `None` if it is not a real
+/// time.
 pub fn datetime_from(days: i32, h: i64, m: i64, s: i64) -> Option<i64> {
     ((0..24).contains(&h) && (0..60).contains(&m) && (0..60).contains(&s))
-        .then(|| days as i64 * 86_400 + h * 3600 + m * 60 + s)
+        .then(|| (days as i64 * DAY + h * 3600 + m * 60 + s) * MICROS)
 }
 
-/// The second number of a time of day, or `None` if it is not a real time.
-pub fn time_from(h: i64, m: i64, s: i64) -> Option<i32> {
-    datetime_from(0, h, m, s).map(|t| t as i32)
+/// The nanosecond number of a time of day, or `None` if it is not a real
+/// time.
+pub fn time_from(h: i64, m: i64, s: i64) -> Option<i64> {
+    datetime_from(0, h, m, s).map(|t| t * NANOS_PER_MICRO)
 }
 
-/// `09:30`, with the seconds only when they are not zero.
-pub fn format_time(secs: i32) -> String {
-    let (h, m, s) = (secs / 3600, secs / 60 % 60, secs % 60);
-    if s == 0 {
+/// The hour, minute and second of a time of day, and the nanoseconds left
+/// over.
+pub fn hms(nanos: i64) -> (i64, i64, i64, i64) {
+    let secs = nanos.div_euclid(NANOS);
+    (
+        secs / 3600,
+        secs / 60 % 60,
+        secs % 60,
+        nanos.rem_euclid(NANOS),
+    )
+}
+
+/// `09:30`, with the seconds only when they are not zero, and a fraction
+/// of a second after them only when that is not zero either.
+///
+/// The fraction is written to the digits it holds and no further, so
+/// `09:30:00.5` rather than `09:30:00.500000000`, and it always carries its
+/// seconds: `09:30.5` would say which of minutes or seconds the fraction
+/// belonged to only by convention. A date-time's nanoseconds are always a
+/// whole number of microseconds, so this writes at most six digits for one
+/// and nine for a time.
+pub fn format_time(nanos: i64) -> String {
+    let (h, m, s, frac) = hms(nanos);
+    if frac != 0 {
+        let digits = format!("{frac:09}");
+        let digits = digits.trim_end_matches('0');
+        format!("{h:02}:{m:02}:{s:02}.{digits}")
+    } else if s == 0 {
         format!("{h:02}:{m:02}")
     } else {
         format!("{h:02}:{m:02}:{s:02}")
     }
 }
 
-/// The day and the time of day of a date-time.
-pub fn split_datetime(secs: i64) -> (i32, i32) {
+/// The day of a date-time, and its time of day in nanoseconds.
+pub fn split_datetime(micros: i64) -> (i32, i64) {
     (
-        secs.div_euclid(86_400) as i32,
-        secs.rem_euclid(86_400) as i32,
+        micros.div_euclid(DAY_MICROS) as i32,
+        micros.rem_euclid(DAY_MICROS) * NANOS_PER_MICRO,
     )
 }
 
 /// `2025-01-03T09:30`, with the seconds only when they are not zero.
-pub fn format_datetime(secs: i64) -> String {
-    let (days, time) = split_datetime(secs);
+pub fn format_datetime(micros: i64) -> String {
+    let (days, time) = split_datetime(micros);
     format!("{}T{}", format(days), format_time(time))
 }
 
@@ -255,11 +306,11 @@ impl Style {
         }
     }
 
-    pub fn time(&self, secs: i32) -> String {
+    pub fn time(&self, nanos: i64) -> String {
         if !self.hour12 {
-            return format_time(secs);
+            return format_time(nanos);
         }
-        let (h, m, s) = (secs / 3600, secs / 60 % 60, secs % 60);
+        let (h, m, s, _) = hms(nanos);
         let (hour, half) = ((h + 11) % 12 + 1, if h < 12 { "AM" } else { "PM" });
         if s == 0 {
             format!("{hour}:{m:02} {half}")
@@ -268,11 +319,11 @@ impl Style {
         }
     }
 
-    pub fn datetime(&self, secs: i64) -> String {
+    pub fn datetime(&self, micros: i64) -> String {
         if self.iso {
-            return format_datetime(secs);
+            return format_datetime(micros);
         }
-        let (days, time) = split_datetime(secs);
+        let (days, time) = split_datetime(micros);
         format!("{} {}", self.date(days), self.time(time))
     }
 
@@ -308,7 +359,7 @@ impl Style {
     }
 
     /// Read a time: `9:30`, `09:30:15`, `9:30 pm`.
-    pub fn parse_time(&self, text: &str) -> Option<i32> {
+    pub fn parse_time(&self, text: &str) -> Option<i64> {
         let lower = text.trim().to_ascii_lowercase();
         let (clock, half) = match lower.strip_suffix("am") {
             Some(rest) => (rest, Some(false)),
@@ -342,7 +393,7 @@ impl Style {
         let cut = text.find([' ', 'T', 't'])?;
         let days = self.parse_date(&text[..cut])?;
         let time = self.parse_time(&text[cut + 1..])?;
-        Some(days as i64 * 86_400 + time as i64)
+        Some(days as i64 * DAY_MICROS + time / NANOS_PER_MICRO)
     }
 }
 
@@ -417,7 +468,7 @@ mod tests {
         assert_eq!(us.datetime(evening), "10/08/2026 5:47 PM");
         assert_eq!(Style::ISO.datetime(evening), "2026-10-08T17:47");
         assert_eq!(us.time(0), "12:00 AM");
-        assert_eq!(us.time(12 * 3600 + 5), "12:00:05 PM");
+        assert_eq!(us.time((12 * 3600 + 5) * NANOS), "12:00:05 PM");
 
         assert_eq!(gb.parse_date("8/10/2026"), Some(day));
         assert_eq!(us.parse_date("10/8/2026"), Some(day));

@@ -18,11 +18,13 @@ Ctrl+E               Export as a workbook, CSV or JSON
 Ctrl+K               New constant
 Ctrl+N               New sheet after this one
 Ctrl+Shift+N         New window on this file
+Ctrl+Alt+N           New file
 
 Ctrl+Enter           Insert row below
 Ctrl+Shift+Enter     Insert row above
 Ctrl+Arrows          Go to end cell
 Ctrl+Alt+L/R         Previous / next sheet
+Alt+Enter            Newline
 Ctrl+click           Open link
 
 F1                   View functions

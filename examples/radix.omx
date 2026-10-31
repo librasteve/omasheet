@@ -1,0 +1,34 @@
+# Hex, Octal and Binary: whole numbers shown in base 16, 8 and 2. Each holds
+# what an Integer holds; only how it is shown differs. `0xff`, `0o17` and
+# `0b101` are literals of these types, in a cell and in a formula, with the
+# prefix and the hex digits in either case and `_` among the digits.
+#
+# A negative one is shown as its 64-bit two's complement, as a format's `x`,
+# `o` and `b` show it, and written in the file as `-0xff`, which reads back
+# as the same number. Arithmetic on two of one base gives that base, and on
+# any other mix an Integer. A format on the column replaces the prefix.
+
+sheet Registers
+
+Flags : Binary
+Mode  : Octal
+Wide  : Hex[08X]
+
+| Name    | Addr    | Flags  | Mode  | Wide | Next | Mask | Plain | Count | Others | Double |
+| ------- | ------- | ------ | ----- | ---- | ---- | ---- | ----- | ----- | ------ | ------ |
+| control | 0x4000  | 0b0001 | 0o644 | 0xFF | *    | *    | *     | *     | *      | *      |
+| status  | 0x4004  | 0b1010 | 0o755 | 255  | *    | *    | *     | *     | *      | *      |
+| data    | 0x40_08 | 0b0100 | 0o600 | -0x1 | *    | *    | *     | *     | *      | *      |
+
+Next   := Addr + 0x4
+Mask   := Flags + 0b1
+Plain  := Addr + 1
+Count  := Addr.Integer
+Others := Mode.Hex
+Double := Wide * 0x2
+
+sheet Totals
+
+| All                   | Top                  | Neg    | Bin        |
+| --------------------- | -------------------- | ------ | ---------- |
+| =sum(Registers.Flags) | =max(Registers.Addr) | =-0xff | =Binary(5) |

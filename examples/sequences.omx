@@ -26,9 +26,10 @@ Double    := 1, 2, 4 ... Inf
 # A rule of its own, reading the two terms before it.
 Fib       := 0, 1, $-1 + $-2 ... Inf
 
-# Two terms are read as a difference, so a ratio needs three. Arithmetic
-# is exact, and a third stays a third rather than 0.333…
-Thirds    := 1, 1/3, 1/9 ... Inf
+# Two terms are read as a difference, so a ratio needs three. A ratio is
+# only found where the terms divide exactly: thirds are rounded at the
+# thirty-eight digits a decimal holds, so this one is given its rule.
+Thirds    := 1, $-1 / 3 ... Inf
 
 # A limit the sequence runs down to.
 Countdown := 20, 15 ... 0
@@ -43,7 +44,7 @@ sheet Labels
 | *   | *    | *    |
 | *   | *    | *    |
 
-# Text counts up the way letters and digits do, carrying at `Z`.
+# String counts up the way letters and digits do, carrying at `Z`.
 Col  := "A", "B" ... Inf
 
 # Which is how a workbook's columns are named after the twenty-sixth.
@@ -103,5 +104,5 @@ MonthEnd := 2025-01-31, 2025-02-28 ... Inf
 Quarter  := 2025-01-15, 2025-04-15 ... Inf
 
 # Or say it outright: `n.month`, `n.year` and `n.week` next to a date, and
-# `eom` for the last day of a month, from wherever the sequence starts.
-Due      := eom(2025-01-10), eom($-1 + 1.month) ... Inf
+# `month_end` for the last day of a month, from wherever the sequence starts.
+Due      := month_end(2025-01-10), month_end($-1 + 1.month) ... Inf

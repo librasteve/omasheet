@@ -20,6 +20,13 @@
 
 ## 3. Not yet done
 - [ ] 3.1 Try every keyboard shortcut and mouse gesture by hand (only the functions behind them were exercised headlessly)
-- [ ] 3.2 Build the window in CI (needs Qt 6 on the runner)
-- [ ] 3.3 Desktop entry, icon and package
+- [x] 3.2 Build the window in CI (needs Qt 6 on the runner): `ci.yml`
+      runs on `archlinux:base-devel` with `qt6-base` and
+      `qt6-declarative`, and builds and tests the whole workspace, the
+      window included. It passed at 0.1.4; from 0.1.5 it failed at
+      `cargo fmt --check`, before building, which `cargo fmt --all` on
+      `radix-integers` puts right
+- [x] 3.3 Desktop entry, icon and package: `pkgbuild/omasheet.desktop`,
+      `omasheet.svg` and the MIME type `omasheet.xml`, installed by
+      `pkgbuild/PKGBUILD` (`add-packaging`)
 - [ ] 3.4 A sheet model that does not send the whole file to the window on every edit

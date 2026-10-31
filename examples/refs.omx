@@ -93,5 +93,5 @@ sheet Verdict
 | range | *     | *      |
 | order | *     | *      |
 
-Count  := Checks[; Kind == Verdict[Kind; *]].count()
-Failed := Checks[; Kind == Verdict[Kind; *] and not OK].count()
+Count  := Checks[; Kind == Verdict[Kind; *]].len()
+Failed := Checks[; Kind == Verdict[Kind; *] and not OK].len()

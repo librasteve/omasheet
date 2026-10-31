@@ -9,11 +9,12 @@
 pub mod csv;
 pub mod formula;
 pub mod json;
+pub mod parquet;
 pub mod xlsx;
 
 use omasheet_engine::omx::types::S;
 use omasheet_engine::omx::{Program, Sources, compile};
-use omasheet_engine::{Engine, Options, Value};
+use omasheet_engine::{Engine, Options, Value, base_of, table};
 
 /// A file as `.omx` source, and what was changed or left behind on the way.
 #[derive(Debug, Default)]
@@ -60,7 +61,7 @@ impl Datum {
             return Datum::Empty;
         }
         match parse_literal(trimmed) {
-            Some(Lit::Text(_)) | None => Datum::Text(text.to_string()),
+            Some(Lit::String(_)) | None => Datum::Text(text.to_string()),
             Some(lit) => Datum::Lit(trimmed.to_string(), lit_type(&lit)),
         }
     }
@@ -210,7 +211,7 @@ fn column_type(cells: &[&Datum]) -> (Option<S>, bool) {
             // What a formula gives is for the file to say.
             Datum::Formula(_) => return (None, false),
             Datum::Lit(_, ty) => *ty,
-            Datum::Text(_) => S::Text,
+            Datum::Text(_) => S::String,
         };
         if !seen.contains(&ty) {
             seen.push(ty);
@@ -218,10 +219,10 @@ fn column_type(cells: &[&Datum]) -> (Option<S>, bool) {
     }
     let exact = |s: &S| s.is_exact();
     match seen.as_slice() {
-        [] | [S::Text] => (None, false),
+        [] | [S::String] => (None, false),
         all if all.iter().all(exact) => (None, false),
         [one] => (Some(*one), false),
-        all if all.iter().all(|s| exact(s) || *s == S::Num) => (Some(S::Num), false),
+        all if all.iter().all(|s| exact(s) || *s == S::Float) => (Some(S::Float), false),
         _ => (None, true),
     }
 }
@@ -486,11 +487,19 @@ pub(crate) fn with_file<T>(
 ) -> Result<T, Vec<String>> {
     let mut sources = Sources::new();
     let src = sources.add(name, text);
-    let (program, diags) = compile(text, src);
+    let (mut program, mut diags) = compile(text, src);
+    // A `table` holds its rows in a file of its own, which has to be read
+    // before anything can be written out of it (D62).
+    let mut tables = table::Tables::default();
+    if diags.is_empty() {
+        tables = table::read(&mut program, base_of(&options), &mut diags);
+    }
     if !diags.is_empty() {
         return Err(diags.iter().map(|d| sources.render(d)).collect());
     }
-    let engine = Engine::with_options(&program, options);
+    let tables = omasheet_engine::resolve_views(&mut program, &options, tables);
+    let program = program;
+    let engine = Engine::with_tables(&program, options, tables);
     let zone = engine.take_diags();
     if !zone.is_empty() {
         return Err(zone.iter().map(|d| sources.render(d)).collect());

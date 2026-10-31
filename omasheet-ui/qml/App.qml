@@ -23,9 +23,16 @@ QtObject {
         }
     }
 
+    // `fontSize` is the size the window that asked for this one is at, so a
+    // second window opens at the zoom of the first. Zero leaves it unset, and
+    // the window takes the size the desktop is at, which is what the first
+    // window opens at.
     function open(tab, fontSize) {
         count++;
-        view.createObject(app, { tab: tab, fontSize: fontSize });
+        var props = { tab: tab };
+        if (fontSize > 0)
+            props.fontSize = fontSize;
+        view.createObject(app, props);
     }
 
     // The theme is Omarchy's; elsewhere it goes with the system, light or dark.
@@ -43,6 +50,6 @@ QtObject {
         var args = Qt.application.arguments;
         if (args.length > 1)
             file.openPath(args[1]);
-        open(0, 14);
+        open(0, 0);
     }
 }

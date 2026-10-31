@@ -1,5 +1,5 @@
-# Two sheets: a lookup from one into the other, conditional sums, and a
-# date-time cutoff.
+# Two sheets: a lookup from one into the other, conditional sums, a
+# date-time cutoff, and a running total per customer.
 
 sheet Customers
 
@@ -11,20 +11,25 @@ sheet Customers
 
 sheet Orders
 
-Placed : DateTime
+Placed : Datetime
 
-| Placed           | CustomerID | Qty | Price | Customer | Region | Total | Discount | Rush |
-| ---------------- | ---------- | --- | ----- | -------- | ------ | ----- | -------- | ---- |
-| 2025-03-03T09:12 | 2          | 3   | 19.99 | *        | *      | *     | *        | *    |
-| 2025-03-03T16:40 | 1          | 10  | 4.50  | *        | *      | *     | *        | *    |
-| 2025-03-04T11:05 | 9          | 1   | 100   | *        | *      | *     | *        | *    |
-| 2025-03-05T08:30 | 2          | 2   | 7.25  | *        | *      | *     | *        | *    |
+| Placed           | CustomerID | Qty | Price | Customer | Region | Total | Discount | Rush | ToDate |
+| ---------------- | ---------- | --- | ----- | -------- | ------ | ----- | -------- | ---- | ------ |
+| 2025-03-03T09:12 | 2          | 3   | 19.99 | *        | *      | *     | *        | *    | *      |
+| 2025-03-03T16:40 | 1          | 10  | 4.50  | *        | *      | *     | *        | *    | *      |
+| 2025-03-04T11:05 | 9          | 1   | 100   | *        | *      | *     | *        | *    | *      |
+| 2025-03-05T08:30 | 2          | 2   | 7.25  | *        | *      | *     | *        | *    | *      |
 
 Customer := Customers[; ID == CustomerID].Name // "Unknown"
 Region   := Customers[; ID == CustomerID].Region // "?"
 Total    := Qty * Price
 Discount := if Total > 50 and Region in ["UK", "US"] then Total * 10% else 0
 Rush     := Placed < 2025-03-04T00:00
+
+# What each customer has spent so far: `*-1 by CustomerID` is the row
+# before among that customer's own orders, so the total runs on per
+# customer, and a customer's first order has none before it.
+ToDate   := Total + ([ToDate; *-1 by CustomerID] // 0)
 
 sheet ByRegion
 
@@ -34,5 +39,5 @@ sheet ByRegion
 | US     | *     | *     |
 | FI     | *     | *     |
 
-Count := Orders[; Region == ByRegion[Region; *]].count()
+Count := Orders[; Region == ByRegion[Region; *]].len()
 Sales := Orders[; Region == ByRegion[Region; *]].Total.sum()

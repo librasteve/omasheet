@@ -6,7 +6,7 @@ use crate::{
     Datum, Exported, FAILED, Grid, Imported, Losses, Output, is_failure, with_file, write_omx,
 };
 use omasheet_engine::omx::date::Style;
-use omasheet_engine::value::{format_exact, format_rat, to_f64};
+use omasheet_engine::value::{format_exact, format_rat};
 use omasheet_engine::{Options, Value};
 
 const ROUNDED: &str = "exact rationals that do not end were written as decimals";
@@ -38,26 +38,15 @@ pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
     Ok(imported)
 }
 
-/// A value as a CSV field, and whether it was rounded to write it.
+/// A value as a CSV field, and whether it was rounded to write it. An
+/// exact number is written in full: every digit it holds, which is every
+/// digit there is of it.
 fn field(v: &Value) -> (String, bool) {
     match v {
-        Value::Decimal(r) | Value::Fraction(r) => {
-            let exact = format_rat(r);
-            if exact.contains('/') {
-                (to_f64(r).to_string(), true)
-            } else {
-                (exact, false)
-            }
-        }
-        // A percentage that does not end is written as near as a double is.
-        Value::Percent(r) => {
-            let exact = format_exact(v, false, &Style::ISO);
-            if exact.contains('/') {
-                (format!("{}%", to_f64(r) * 100.0), true)
-            } else {
-                (exact, false)
-            }
-        }
+        // A `Fraction` goes out as the decimal it holds: a CSV is read by
+        // anything, and `1/7` in one is not a number anywhere else.
+        Value::Decimal(r) | Value::Fraction(r) => (format_rat(r), false),
+        Value::Percent(_) => (format_exact(v, false, &Style::ISO), false),
         v => (format_exact(v, false, &Style::ISO), false),
     }
 }

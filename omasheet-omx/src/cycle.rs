@@ -189,7 +189,11 @@ pub fn advance(c: Cyc, value: &str, step: i64) -> Option<String> {
         _ => {
             let n = names(c).len() as i64;
             let at = position(c, value)? as i64;
-            Some(written(c, at.checked_add(step)?.rem_euclid(n) as usize, case))
+            Some(written(
+                c,
+                at.checked_add(step)?.rem_euclid(n) as usize,
+                case,
+            ))
         }
     }
 }
@@ -212,7 +216,10 @@ mod tests {
 
     #[test]
     fn a_run_that_wraps_is_still_evenly_spaced() {
-        assert_eq!(detect(&["Saturday", "Sunday", "Monday"]), Some((Cyc::Day, 1)));
+        assert_eq!(
+            detect(&["Saturday", "Sunday", "Monday"]),
+            Some((Cyc::Day, 1))
+        );
         assert_eq!(detect(&["Nov", "Jan", "Mar"]), Some((Cyc::MonthShort, 2)));
     }
 

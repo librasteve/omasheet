@@ -7,9 +7,11 @@ use crate::{json, theme};
 use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QUrl};
+use omasheet_engine::datefmt::Names;
 use omasheet_engine::doc::{BLANK, entry_hint};
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::{Document, Options, locale};
+use omasheet_interop::parquet;
 use omasheet_interop::{Exported, Imported};
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -42,6 +44,7 @@ pub mod qobject {
         #[qproperty(QString, theme_selection)]
         #[qproperty(QString, theme_muted)]
         #[qproperty(QString, theme_error)]
+        #[qproperty(QString, export_warning)]
         #[qproperty(QString, snapshot_path)]
         type File = super::FileRust;
 
@@ -68,11 +71,22 @@ pub mod qobject {
         #[qinvokable]
         fn save_url(self: Pin<&mut File>, url: &QUrl) -> bool;
         /// Write the calculated file as `kind`: a workbook, `xlsx`, or
-        /// `json`, or the sheet named as `csv`. A file named `.xlsx`, `.csv`
-        /// or `.json` is written as that. What could not be written exactly
-        /// is left in `notes`.
+        /// `json`, or the sheet named as `csv` or `parquet`. A file named
+        /// `.xlsx`, `.csv`, `.json` or `.parquet` is written as that. What
+        /// could not be written exactly is left in `notes`.
+        ///
+        /// An export that would write a number as a null because no Parquet
+        /// decimal holds it writes nothing: the warning is left in
+        /// `export_warning` for the app to put to the user, who answers it
+        /// by asking again with `force`.
         #[qinvokable]
-        fn export_url(self: Pin<&mut File>, url: &QUrl, kind: &QString, sheet: &QString) -> bool;
+        fn export_url(
+            self: Pin<&mut File>,
+            url: &QUrl,
+            kind: &QString,
+            sheet: &QString,
+            force: bool,
+        ) -> bool;
         /// Where an export would go unless told otherwise: beside the file
         /// and under its name, or in `folder` if the file is not saved yet.
         #[qinvokable]
@@ -196,10 +210,34 @@ pub mod qobject {
         /// no `ty` leave them to take their type from their cells.
         #[qinvokable]
         fn set_column_types(self: Pin<&mut File>, sheet: i32, first: i32, count: i32, ty: &QString);
+        /// Show the values of `count` columns from `first` by `format`,
+        /// `'.2f` or `%d %b %Y`, or with an empty one as before. Empty, or
+        /// why not.
+        #[qinvokable]
+        fn set_column_format(
+            self: Pin<&mut File>,
+            sheet: i32,
+            first: i32,
+            count: i32,
+            format: &QString,
+        ) -> QString;
         /// Move `count` rows from `first` so the first becomes row `to`.
         #[qinvokable]
         fn move_rows(self: Pin<&mut File>, sheet: i32, first: i32, count: i32, to: i32) -> QString;
         /// Move `count` columns from `first` so the first becomes column `to`.
+        /// The rows of sheet `sheet` a filter shows, as a JSON list of row
+        /// numbers. `hide` is each filtered column's name followed by the
+        /// texts it hides, separated by U+001F, the columns by U+001E.
+        #[qinvokable]
+        fn shown_rows(self: &File, sheet: i32, hide: &QString) -> QString;
+        /// The texts column `col` shows, each once and in order, as a JSON
+        /// list: what its filter chooses among.
+        #[qinvokable]
+        fn distinct_shown(self: &File, sheet: i32, col: i32) -> QString;
+        /// The rows of sheet `sheet` rearranged in the order of column
+        /// `col`, descending or not.
+        #[qinvokable]
+        fn sort_rows(self: Pin<&mut File>, sheet: i32, col: i32, descending: bool) -> QString;
         #[qinvokable]
         fn move_columns(
             self: Pin<&mut File>,
@@ -209,10 +247,15 @@ pub mod qobject {
             to: i32,
         ) -> QString;
         #[qinvokable]
-        fn add_sheet(self: Pin<&mut File>, name: &QString) -> QString;
+        fn add_sheet(self: Pin<&mut File>, name: &QString, formula: &QString) -> QString;
         /// A new sheet before sheet `at`, or last if there is none there.
         #[qinvokable]
-        fn insert_sheet(self: Pin<&mut File>, at: i32, name: &QString) -> QString;
+        fn insert_sheet(
+            self: Pin<&mut File>,
+            at: i32,
+            name: &QString,
+            formula: &QString,
+        ) -> QString;
         #[qinvokable]
         fn rename_sheet(self: Pin<&mut File>, sheet: i32, name: &QString) -> QString;
         #[qinvokable]
@@ -234,6 +277,9 @@ pub mod qobject {
         /// made one.
         #[qinvokable]
         fn undo_mark(&self) -> i32;
+        /// How many edits have been made, undo and redo not being edits.
+        #[qinvokable]
+        fn edit_count(&self) -> i32;
         #[qinvokable]
         fn join_since(self: Pin<&mut File>, mark: i32);
         #[qinvokable]
@@ -255,9 +301,16 @@ pub mod qobject {
         /// The function directory as JSON.
         #[qinvokable]
         fn functions_json(self: &File) -> QString;
+        /// What the function directory says first.
+        #[qinvokable]
+        fn functions_intro(self: &File) -> QString;
         /// What can be typed into a column of the named type.
         #[qinvokable]
         fn entry_hint(self: &File, ty: &QString) -> QString;
+        /// The text size the desktop is set to, in pixels; 0 where the
+        /// desktop does not say.
+        #[qinvokable]
+        fn desktop_font_size(self: &File) -> i32;
         /// The count, sum and average of a block of cells, for the footer.
         #[qinvokable]
         fn selection_summary(
@@ -295,6 +348,8 @@ pub struct FileRust {
     system_dark: bool,
     /// Whether the Omarchy theme is being watched.
     watching: bool,
+    /// What an export would lose, asked before it is written.
+    export_warning: QString,
     /// Development aid: where to save a picture of the window, then quit.
     snapshot_path: QString,
 
@@ -318,6 +373,7 @@ impl Default for FileRust {
             revision: 0,
             status: QString::default(),
             notes: QString::default(),
+            export_warning: QString::default(),
             can_undo: false,
             can_redo: false,
             dark_mode: theme.dark,
@@ -351,12 +407,18 @@ fn style() -> Style {
 
 /// A document that shows dates and times the way the user's locale does.
 fn document(text: &str) -> Document {
-    Document::with_style(text, style())
+    static NAMES: OnceLock<Names> = OnceLock::new();
+    let names = NAMES.get_or_init(locale::os_names);
+    Document::with_locale(text, style(), names.clone())
 }
 
 fn index(n: i32) -> usize {
     n.max(0) as usize
 }
+
+/// What the app asks before an export writes a null in place of a number
+/// held at a scale no Parquet decimal names.
+const WIDE_WARNING: &str = "values too large/small for Polars Decimal128, click to export anyway";
 
 impl qobject::File {
     /// Publish the document's state after it changed.
@@ -389,6 +451,13 @@ impl qobject::File {
         self.as_mut().set_file_path(QString::from(&full));
         self.as_mut().rust_mut().path = path;
         self.as_mut().rust_mut().origin = None;
+        // A `table` names its Parquet beside the file, so where the rows
+        // are read from changes with the file's own place.
+        let dir = match self.rust().path.as_ref().and_then(|p| p.parent()) {
+            Some(dir) => dir.to_path_buf(),
+            None => PathBuf::new(),
+        };
+        self.as_mut().rust_mut().doc.set_base(dir);
     }
 
     fn snapshot_json(&self) -> QString {
@@ -423,8 +492,12 @@ impl qobject::File {
             .and_then(|bytes| {
                 let stem = path.file_stem().unwrap_or_default().to_string_lossy();
                 match kind {
-                    "xlsx" => omasheet_interop::xlsx::import(&bytes),
+                    // The app overrides neither the clock nor the zone, so the
+                    // machine's own are what a formula is checked under, as
+                    // they are for its exports.
+                    "xlsx" => omasheet_interop::xlsx::import(&bytes, Options::default()),
                     "json" => omasheet_interop::json::import(&stem, &bytes),
+                    "parquet" => omasheet_interop::parquet::import(&stem, &bytes),
                     _ => omasheet_interop::csv::import(&stem, &bytes),
                 }
             });
@@ -453,7 +526,7 @@ impl qobject::File {
     fn open_file(mut self: Pin<&mut Self>, path: PathBuf) -> bool {
         let kind = path.extension().unwrap_or_default().to_string_lossy();
         let kind = kind.to_ascii_lowercase();
-        if matches!(kind.as_str(), "xlsx" | "csv" | "json") {
+        if matches!(kind.as_str(), "xlsx" | "csv" | "json" | "parquet") {
             return self.import_file(path, &kind);
         }
         match std::fs::read_to_string(&path) {
@@ -520,7 +593,14 @@ impl qobject::File {
         self.save_file(path)
     }
 
-    fn export_url(mut self: Pin<&mut Self>, url: &QUrl, kind: &QString, sheet: &QString) -> bool {
+    fn export_url(
+        mut self: Pin<&mut Self>,
+        url: &QUrl,
+        kind: &QString,
+        sheet: &QString,
+        force: bool,
+    ) -> bool {
+        self.as_mut().set_export_warning(QString::default());
         let mut path = PathBuf::from(url.to_local_file_or_default().to_string());
         if path.as_os_str().is_empty() {
             return false;
@@ -529,7 +609,7 @@ impl qobject::File {
             .extension()
             .map(|e| e.to_string_lossy().to_ascii_lowercase());
         let kind = match named {
-            Some(named) if matches!(named.as_str(), "xlsx" | "csv" | "json") => named,
+            Some(named) if matches!(named.as_str(), "xlsx" | "csv" | "json" | "parquet") => named,
             _ => {
                 let kind = kind.to_string();
                 path.as_mut_os_string().push(format!(".{kind}"));
@@ -537,8 +617,8 @@ impl qobject::File {
             }
         };
         let sheet = sheet.to_string();
-        if kind == "csv" && sheet.is_empty() {
-            let message = "CSV holds one sheet: show the sheet to export first";
+        if matches!(kind.as_str(), "csv" | "parquet") && sheet.is_empty() {
+            let message = "one sheet to a file: show the sheet to export first";
             self.as_mut().set_status(QString::from(message));
             return false;
         }
@@ -547,17 +627,30 @@ impl qobject::File {
         let exported = match kind.as_str() {
             "csv" => omasheet_interop::csv::export(&name, &text, Some(&sheet), Options::default()),
             "json" => omasheet_interop::json::export(&name, &text, None, Options::default()),
+            "parquet" => {
+                omasheet_interop::parquet::export(&name, &text, Some(&sheet), Options::default())
+            }
             _ => omasheet_interop::xlsx::export(&name, &text, None, Options::default()),
         };
         let written = exported
             .map_err(|_| "the file has problems to put right first".to_string())
             .and_then(|Exported { files, notices }| {
+                // Nothing is written until the loss is answered for: the
+                // export was run to find it, and is run again to keep it.
+                if !force && notices.iter().any(|n| n.starts_with(parquet::WIDE)) {
+                    return Ok(None);
+                }
                 let bytes = files.first().map_or(&[][..], |f| &f.bytes);
                 std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
-                Ok(notices)
+                Ok(Some(notices))
             });
         match written {
-            Ok(notices) => {
+            Ok(None) => {
+                self.as_mut()
+                    .set_export_warning(QString::from(WIDE_WARNING));
+                false
+            }
+            Ok(Some(notices)) => {
                 self.as_mut().set_notes(QString::from(&notices.join("\n")));
                 let message = format!("Exported {}", path.display());
                 self.as_mut().set_status(QString::from(&message));
@@ -580,7 +673,7 @@ impl qobject::File {
         let kind = kind.to_string();
         // As the command line names them: budget.Sales.csv, unless the
         // file has the one sheet.
-        if kind == "csv" && rust.doc.snapshot().sheets.len() > 1 {
+        if matches!(kind.as_str(), "csv" | "parquet") && rust.doc.snapshot().sheets.len() > 1 {
             name.push('.');
             name.push_str(&sheet.to_string());
         }
@@ -606,6 +699,23 @@ impl qobject::File {
         }
     }
 
+    /// Edit sheet `sheet`, and say why in the status bar when it takes no
+    /// edit at all: a `table` is a read-only view of its Parquet file.
+    fn edit_sheet(
+        mut self: Pin<&mut Self>,
+        sheet: i32,
+        change: impl FnOnce(&mut Document) -> bool,
+    ) {
+        let changed = change(&mut self.as_mut().rust_mut().doc);
+        if changed {
+            self.refresh("");
+            return;
+        }
+        if let Some(why) = self.rust().doc.read_only(index(sheet)) {
+            self.as_mut().set_status(QString::from(&why));
+        }
+    }
+
     /// Run an edit that can be refused, returning the reason.
     fn try_edit(
         mut self: Pin<&mut Self>,
@@ -623,7 +733,9 @@ impl qobject::File {
 
     fn set_cell(self: Pin<&mut Self>, sheet: i32, row: i32, col: i32, text: &QString) {
         let text = text.to_string();
-        self.edit(|doc| doc.set_cell(index(sheet), index(row), index(col), &text));
+        self.edit_sheet(sheet, |doc| {
+            doc.set_cell(index(sheet), index(row), index(col), &text)
+        });
     }
 
     /// Cut, copy or paste: with what was last cut or copied, and the document.
@@ -726,15 +838,19 @@ impl qobject::File {
 
     fn clear_cells(self: Pin<&mut Self>, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) {
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
-        self.edit(|doc| Clip::clear(doc, index(sheet), from, to));
+        self.edit_sheet(sheet, |doc| Clip::clear(doc, index(sheet), from, to));
     }
 
     fn insert_rows(self: Pin<&mut Self>, sheet: i32, at: i32, count: i32) {
-        self.edit(|doc| doc.insert_rows(index(sheet), index(at), index(count)));
+        self.edit_sheet(sheet, |doc| {
+            doc.insert_rows(index(sheet), index(at), index(count))
+        });
     }
 
     fn delete_rows(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32) {
-        self.edit(|doc| doc.delete_rows(index(sheet), index(first), index(count)));
+        self.edit_sheet(sheet, |doc| {
+            doc.delete_rows(index(sheet), index(first), index(count))
+        });
     }
 
     fn add_column(self: Pin<&mut Self>, sheet: i32, name: &QString) -> QString {
@@ -775,7 +891,7 @@ impl qobject::File {
     fn set_column_types(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, ty: &QString) {
         let ty = ty.to_string();
         let cols: Vec<usize> = (index(first)..index(first) + index(count)).collect();
-        self.edit(|doc| {
+        self.edit_sheet(sheet, |doc| {
             doc.set_column_types(
                 index(sheet),
                 &cols,
@@ -784,22 +900,65 @@ impl qobject::File {
         });
     }
 
+    fn set_column_format(
+        self: Pin<&mut Self>,
+        sheet: i32,
+        first: i32,
+        count: i32,
+        format: &QString,
+    ) -> QString {
+        let format = format.to_string();
+        let format = format.trim();
+        let cols: Vec<usize> = (index(first)..index(first) + index(count)).collect();
+        self.try_edit(|doc| {
+            doc.set_column_format(index(sheet), &cols, Some(format).filter(|f| !f.is_empty()))
+        })
+    }
+
     fn move_rows(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, to: i32) -> QString {
         self.try_edit(|doc| doc.move_rows(index(sheet), index(first), index(count), index(to)))
+    }
+
+    fn shown_rows(&self, sheet: i32, hide: &QString) -> QString {
+        let hide: Vec<(String, Vec<String>)> = hide
+            .to_string()
+            .split('\u{1e}')
+            .filter(|column| !column.is_empty())
+            .filter_map(|column| {
+                let mut parts = column.split('\u{1f}');
+                let name = parts.next()?.to_string();
+                Some((name, parts.map(str::to_string).collect()))
+            })
+            .collect();
+        QString::from(&json::numbers(
+            &self.rust().doc.shown_rows(index(sheet), &hide),
+        ))
+    }
+
+    fn distinct_shown(&self, sheet: i32, col: i32) -> QString {
+        QString::from(&json::texts(
+            &self.rust().doc.distinct_shown(index(sheet), index(col)),
+        ))
+    }
+
+    fn sort_rows(self: Pin<&mut Self>, sheet: i32, col: i32, descending: bool) -> QString {
+        self.try_edit(|doc| doc.sort_rows(index(sheet), index(col), descending))
     }
 
     fn move_columns(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, to: i32) -> QString {
         self.try_edit(|doc| doc.move_columns(index(sheet), index(first), index(count), index(to)))
     }
 
-    fn add_sheet(self: Pin<&mut Self>, name: &QString) -> QString {
+    fn add_sheet(self: Pin<&mut Self>, name: &QString, formula: &QString) -> QString {
+        let formula = formula.to_string();
         let name = name.to_string();
-        self.try_edit(|doc| doc.add_sheet(&name))
+        self.try_edit(|doc| doc.add_sheet(&name, Some(formula.as_str())))
     }
 
-    fn insert_sheet(self: Pin<&mut Self>, at: i32, name: &QString) -> QString {
+    fn insert_sheet(self: Pin<&mut Self>, at: i32, name: &QString, formula: &QString) -> QString {
+        let formula = formula.to_string();
         let name = name.to_string();
-        self.try_edit(|doc| doc.insert_sheet(index(at), &name))
+        self.try_edit(|doc| doc.insert_sheet(index(at), &name, Some(formula.as_str())))
     }
 
     fn rename_sheet(self: Pin<&mut Self>, sheet: i32, name: &QString) -> QString {
@@ -841,6 +1000,10 @@ impl qobject::File {
         self.rust().doc.undo_mark() as i32
     }
 
+    fn edit_count(&self) -> i32 {
+        self.rust().doc.edit_count() as i32
+    }
+
     fn join_since(mut self: Pin<&mut Self>, mark: i32) {
         // Nothing to show: the text is as it was.
         self.as_mut().rust_mut().doc.join_since(index(mark));
@@ -869,13 +1032,25 @@ impl qobject::File {
         QString::from(&json::functions(
             &self.rust().doc.snapshot().funcs,
             omasheet_engine::omx::funcs::FUNCTIONS,
+            omasheet_engine::omx::funcs::ABOUT,
         ))
+    }
+
+    fn functions_intro(&self) -> QString {
+        QString::from(omasheet_engine::omx::funcs::INTRO)
+    }
+
+    fn desktop_font_size(&self) -> i32 {
+        crate::theme::base_font_size().map_or(0, |size| size as i32)
     }
 
     fn entry_hint(&self, ty: &QString) -> QString {
         // Only where the way to write a value is not plain from its type.
         let ty = ty.to_string();
-        if !matches!(ty.as_str(), "Date" | "Time" | "DateTime" | "Bool") {
+        if !matches!(
+            ty.as_str(),
+            "Date" | "Time" | "Datetime" | "Duration" | "Boolean" | "Url" | "Email" | "Uuid"
+        ) {
             return QString::default();
         }
         // The header shows the type already.
@@ -891,8 +1066,8 @@ impl qobject::File {
             return QString::default();
         };
         let mut text = format!("Count {}", summary.count);
-        if let Some((sum, average)) = summary.numbers {
-            text.push_str(&format!("   Sum {sum}   Average {average}"));
+        if let Some((sum, mean)) = summary.numbers {
+            text.push_str(&format!("   Sum {sum}   Mean {mean}"));
         }
         QString::from(&text)
     }

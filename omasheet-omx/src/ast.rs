@@ -2,30 +2,30 @@
 
 //! Syntax trees for OMX expressions.
 
+use crate::decimal::Dec;
 use crate::diag::Span;
-use num_bigint::BigInt;
-use num_rational::BigRational;
+use crate::types::Base;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Lit {
-    Int(BigInt),
+    /// A whole number, and the base it is shown in: `0xff` is 255 in hex.
+    Int(i64, Base),
     /// Written with a decimal point: `19.99`.
-    Decimal(BigRational),
-    /// Written as a fraction: `1/7`.
-    Fraction(BigRational),
-    /// Written with a `%`: `20%`, held as `1/5`.
-    Percent(BigRational),
-    Num(f64),
-    /// Real and imaginary parts.
-    Complex(f64, f64),
-    Text(String),
-    Bool(bool),
+    Decimal(Dec),
+    /// Written with a `%`: `20%`, held as `0.2`.
+    Percent(Dec),
+    Float(f64),
+    String(String),
+    Boolean(bool),
     /// Days since 1970-01-01.
     Date(i32),
-    /// Seconds since midnight.
-    Time(i32),
-    /// Seconds since the start of 1970-01-01.
+    /// Nanoseconds since midnight, as Polars holds a `Time`.
+    Time(i64),
+    /// Microseconds since the start of 1970-01-01, on the clocks of the
+    /// file's own zone, as Polars holds a `Datetime`.
     DateTime(i64),
+    /// Microseconds, as Polars holds a `Duration`: `PT1H30M`.
+    Duration(i64),
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +64,11 @@ pub enum ExprKind {
     /// `name(args)`, `recv.name(args)` and `recv |> name(args)` all become a
     /// call with the receiver as the first argument.
     Call(String, Span, Vec<Expr>),
+    /// `Name := expr`, an argument given a name, as `agg` takes one.
+    Named(String, Span, Box<Expr>),
+    /// `*-1 by Region`, a row slot counted within the rows whose key
+    /// columns hold what this row's do.
+    By(Box<Expr>, Vec<(String, Span)>),
 }
 
 /// Whether an expression reads a back-reference, which is what marks the
@@ -77,15 +82,12 @@ pub fn reads_back(e: &Expr) -> bool {
         ExprKind::Binary(_, a, b) => reads_back(a) || reads_back(b),
         ExprKind::If(c, a, b) => reads_back(c) || reads_back(a) || reads_back(b),
         ExprKind::VecLit(items) => any(items),
-        ExprKind::Index(base, slots) => {
-            reads_back(base) || slots.iter().flatten().any(reads_back)
-        }
+        ExprKind::Index(base, slots) => reads_back(base) || slots.iter().flatten().any(reads_back),
         ExprKind::Field(base, _, _) => reads_back(base),
         ExprKind::Call(_, _, args) => any(args),
+        ExprKind::Named(_, _, value) | ExprKind::By(value, _) => reads_back(value),
         ExprKind::Seq { seeds, rule, limit } => {
-            any(seeds)
-                || rule.as_deref().is_some_and(reads_back)
-                || reads_back(limit)
+            any(seeds) || rule.as_deref().is_some_and(reads_back) || reads_back(limit)
         }
     }
 }
@@ -96,6 +98,8 @@ pub enum UnOp {
     Not,
     /// `^n`: the range of the first `n`, from 0 to `n - 1`.
     UpTo,
+    /// `+^n`: the bitwise complement of a whole number.
+    BitNot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +109,12 @@ pub enum BinOp {
     Mul,
     Div,
     Pow,
+    /// `+&`, `+|`, `+^`, `+<` and `+>`, on whole numbers.
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
     Eq,
     Ne,
     Lt,
@@ -129,6 +139,11 @@ impl BinOp {
             BinOp::Mul => "*",
             BinOp::Div => "/",
             BinOp::Pow => "**",
+            BinOp::BitAnd => "+&",
+            BinOp::BitOr => "+|",
+            BinOp::BitXor => "+^",
+            BinOp::Shl => "+<",
+            BinOp::Shr => "+>",
             BinOp::Eq => "==",
             BinOp::Ne => "!=",
             BinOp::Lt => "<",
@@ -161,6 +176,13 @@ impl BinOp {
         matches!(
             self,
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow
+        )
+    }
+
+    pub fn is_bitwise(self) -> bool {
+        matches!(
+            self,
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr
         )
     }
 

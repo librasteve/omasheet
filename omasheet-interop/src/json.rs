@@ -7,7 +7,7 @@ use crate::{
 };
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::omx::types::S;
-use omasheet_engine::value::{format_exact, format_num, format_rat, to_f64};
+use omasheet_engine::value::{format_exact, format_float, format_rat};
 use omasheet_engine::{Options, Value};
 use serde_json::Value as Json;
 
@@ -22,24 +22,22 @@ const SHAPE: &str = "it is not a list of rows, or an object holding one for each
 fn datum(value: &Json, nested: &mut bool) -> Datum {
     match value {
         Json::Null => Datum::Empty,
-        Json::Bool(b) => Datum::Lit(b.to_string(), S::Bool),
+        Json::Bool(b) => Datum::Lit(b.to_string(), S::Boolean),
         Json::Number(n) => {
             let raw = n.to_string();
             match Datum::read(&raw) {
                 read @ Datum::Lit(..) => read,
                 // Written some way a cell does not read, such as `1E5`.
                 _ => match raw.parse::<f64>() {
-                    Ok(f) => Datum::Lit(format_num(f, true), S::Num),
+                    Ok(f) => Datum::Lit(format_float(f, true), S::Float),
                     Err(_) => Datum::Text(raw),
                 },
             }
         }
         Json::String(s) => match Datum::read(s) {
-            Datum::Lit(text, ty @ (S::Date | S::Time | S::DateTime | S::Complex)) => {
-                Datum::Lit(text, ty)
-            }
-            Datum::Lit(text, S::Num) if text.ends_with("Inf") || text == "NaN" => {
-                Datum::Lit(text, S::Num)
+            Datum::Lit(text, ty @ (S::Date | S::Time | S::DateTime)) => Datum::Lit(text, ty),
+            Datum::Lit(text, S::Float) if text.ends_with("Inf") || text == "NaN" => {
+                Datum::Lit(text, S::Float)
             }
             _ => Datum::Text(s.clone()),
         },
@@ -138,22 +136,16 @@ fn quoted(text: &str) -> String {
 /// `NaN`.
 fn field(v: &Value) -> (String, bool) {
     let num = |f: f64| {
-        let text = format_num(f, true);
+        let text = format_float(f, true);
         if f.is_finite() { text } else { quoted(&text) }
     };
     match v {
-        Value::Empty => ("null".to_string(), false),
-        Value::Int(n) => (n.to_string(), false),
-        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => {
-            let exact = format_rat(r);
-            if exact.contains('/') {
-                (num(to_f64(r)), true)
-            } else {
-                (exact, false)
-            }
-        }
-        Value::Num(f) => (num(*f), false),
-        Value::Bool(b) => (b.to_string(), false),
+        Value::Null => ("null".to_string(), false),
+        Value::Int(n, _) => (n.to_string(), false),
+        // An exact number is written in full: every digit it holds.
+        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => (format_rat(r), false),
+        Value::Float(f) => (num(*f), false),
+        Value::Boolean(b) => (b.to_string(), false),
         v => (quoted(&format_exact(v, false, &Style::ISO)), false),
     }
 }

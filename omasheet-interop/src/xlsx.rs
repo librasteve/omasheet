@@ -9,10 +9,10 @@ use crate::{
     names, with_file, write_named,
 };
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
-use num_rational::BigRational;
 use omasheet_engine::omx::check::{Cell, ColKind};
-use omasheet_engine::omx::convert::fraction_of;
 use omasheet_engine::omx::date;
+use omasheet_engine::omx::decimal::Dec;
+use omasheet_engine::omx::duration;
 use omasheet_engine::omx::types::S;
 use omasheet_engine::omx::{Sources, compile};
 use omasheet_engine::value::{format_exact, format_rat, to_f64};
@@ -39,9 +39,11 @@ fn a1(row: u32, col: u32) -> String {
 
 /// A number of a workbook as the exact number its shortest decimal is.
 fn number(f: f64) -> Datum {
-    match fraction_of(f) {
-        Some(r) if r.is_integer() => Datum::Lit(r.to_integer().to_string(), S::Int),
-        Some(r) => Datum::Lit(format_rat(&r), S::Decimal),
+    match Dec::from_f64(f) {
+        Some(r) => match r.to_i64() {
+            Some(n) => Datum::Lit(n.to_string(), S::Int),
+            None => Datum::Lit(format_rat(&r), S::Decimal),
+        },
         None => Datum::Empty,
     }
 }
@@ -52,11 +54,14 @@ fn moment(serial: f64) -> Datum {
     let secs = (serial * DAY as f64).round() as i64;
     let (days, time) = (secs.div_euclid(DAY), secs.rem_euclid(DAY));
     if days == 0 {
-        Datum::Lit(date::format_time(time as i32), S::Time)
+        Datum::Lit(date::format_time(time * date::NANOS), S::Time)
     } else if time == 0 {
         Datum::Lit(date::format((days - EPOCH) as i32), S::Date)
     } else {
-        Datum::Lit(date::format_datetime(secs - EPOCH * DAY), S::DateTime)
+        Datum::Lit(
+            date::format_datetime((secs - EPOCH * DAY) * date::MICROS),
+            S::DateTime,
+        )
     }
 }
 
@@ -79,10 +84,10 @@ struct Formula {
 /// A value as a number, if it is one.
 fn real(v: &Value) -> Option<f64> {
     match v {
-        Value::Int(n) => n.to_string().parse().ok(),
+        Value::Int(n, _) => n.to_string().parse().ok(),
         Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => Some(to_f64(r)),
-        Value::Num(f) => Some(*f),
-        Value::Bool(b) => Some(*b as u8 as f64),
+        Value::Float(f) => Some(*f),
+        Value::Boolean(b) => Some(*b as u8 as f64),
         _ => None,
     }
 }
@@ -91,7 +96,7 @@ fn real(v: &Value) -> Option<f64> {
 /// are the same when they agree as far as a workbook holds them.
 fn agrees(cached: &Datum, v: &Value) -> bool {
     let text = match v {
-        Value::Empty => String::new(),
+        Value::Null => String::new(),
         v => format_exact(v, false, &date::Style::ISO),
     };
     match cached {
@@ -118,6 +123,7 @@ fn settle(
     grids: &mut [Grid],
     names: &[Names],
     formulas: &[Formula],
+    options: &Options,
     dropped: &mut Vec<(usize, &'static str)>,
 ) {
     let mut live: Vec<usize> = (0..formulas.len()).collect();
@@ -164,7 +170,10 @@ fn settle(
             drop(grids, &mut live, bad, REFUSED);
             continue;
         }
-        let engine = Engine::with_options(&program, Options::default());
+        // The caller's own options: a formula is checked against what the
+        // workbook holds, and the clock and the zone it is checked under
+        // have to be the ones it will be read under (D62).
+        let engine = Engine::with_options(&program, options.clone());
         engine.take_diags();
         engine.run();
         let mut bad = Vec::new();
@@ -187,7 +196,7 @@ fn settle(
 }
 
 /// `.omx` source for a workbook: a sheet for each worksheet.
-pub fn import(bytes: &[u8]) -> Result<Imported, String> {
+pub fn import(bytes: &[u8], options: Options) -> Result<Imported, String> {
     let mut book = open_workbook_auto_from_rs(Cursor::new(bytes))
         .map_err(|e| format!("it is not a workbook: {e}"))?;
     let mut imported = Imported::default();
@@ -222,8 +231,11 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
                     Data::String(s) => Datum::Text(s.clone()),
                     Data::Int(n) => Datum::Lit(n.to_string(), S::Int),
                     Data::Float(f) => number(*f),
-                    Data::Bool(b) => Datum::Lit(b.to_string(), S::Bool),
-                    Data::DateTime(t) if t.is_duration() => number(t.as_f64() * DAY as f64),
+                    Data::Bool(b) => Datum::Lit(b.to_string(), S::Boolean),
+                    Data::DateTime(t) if t.is_duration() => {
+                        let micros = (t.as_f64() * date::DAY_MICROS as f64).round() as i64;
+                        Datum::Lit(duration::format(micros), S::Duration)
+                    }
                     Data::DateTime(t) => moment(t.as_f64()),
                     Data::DateTimeIso(s) | Data::DurationIso(s) => Datum::read(s),
                     Data::Error(_) => {
@@ -339,7 +351,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, String> {
         }
     }
     let mut dropped = Vec::new();
-    settle(&mut grids, &names, &formulas, &mut dropped);
+    settle(&mut grids, &names, &formulas, &options, &mut dropped);
     for (f, why) in dropped {
         untranslated.push((formulas[f].grid, why.to_string(), formulas[f].cell.clone()));
     }
@@ -388,16 +400,28 @@ const AS_TEXT: &str = "values a workbook has no type for were written as text";
 const ZONES: &str = "date-times in another time zone were written on the clocks of the file's";
 
 /// The nearest double to an exact number, and whether it is that number.
-fn double(r: &BigRational) -> (f64, bool) {
-    let f = to_f64(r);
-    (f, BigRational::from_float(f).as_ref() == Some(r))
+fn double(r: &Dec) -> (f64, bool) {
+    let f = r.to_f64();
+    (f, Dec::from_f64(f).as_ref() == Some(r))
 }
 
 struct Formats {
     date: Format,
     time: Format,
     datetime: Format,
+    duration: Format,
     percent: Format,
+}
+
+/// Whether a double stands for the number at all. An infinity, or a zero
+/// where the number is not one, is not a near miss but a different number.
+fn stands_for(f: f64, r: &Dec) -> bool {
+    f.is_finite() && (f != 0.0 || r.is_zero())
+}
+
+/// A value as text, for a cell that cannot hold it as itself.
+fn written(value: &Value) -> String {
+    format_exact(value, false, &date::Style::ISO)
 }
 
 /// What a cell of a workbook holds for a value.
@@ -417,9 +441,9 @@ fn shown<'f>(
 ) -> Option<Shown<'f>> {
     let day = DAY as f64;
     Some(match value {
-        Value::Empty => return None,
-        Value::Int(n) => {
-            let (f, same) = double(&BigRational::from_integer(n.clone()));
+        Value::Null => return None,
+        Value::Int(n, _) => {
+            let (f, same) = double(&Dec::from_i64(*n));
             if !f.is_finite() {
                 lose(AS_TEXT);
                 return Some(Shown::Written(n.to_string()));
@@ -431,6 +455,13 @@ fn shown<'f>(
         }
         Value::Decimal(r) | Value::Fraction(r) => {
             let (f, same) = double(r);
+            // A number whose point sits past either end of what a double
+            // reaches has no number cell to go in, so it is written out the
+            // way a whole number too large for one is.
+            if !stands_for(f, r) {
+                lose(AS_TEXT);
+                return Some(Shown::Written(written(value)));
+            }
             if !same {
                 lose(ROUNDED);
             }
@@ -438,27 +469,38 @@ fn shown<'f>(
         }
         Value::Percent(r) => {
             let (f, same) = double(r);
+            if !stands_for(f, r) {
+                lose(AS_TEXT);
+                return Some(Shown::Written(written(value)));
+            }
             if !same {
                 lose(ROUNDED);
             }
             Shown::Number(f, Some(&formats.percent))
         }
-        Value::Num(f) if f.is_finite() => Shown::Number(*f, None),
-        Value::Text(s, _) => Shown::Text(s.to_string()),
-        Value::Bool(b) => Shown::Bool(*b),
+        Value::Float(f) if f.is_finite() => Shown::Number(*f, None),
+        Value::String(s, _) => Shown::Text(s.to_string()),
+        Value::Boolean(b) => Shown::Bool(*b),
         Value::Date(d) => Shown::Number((*d as i64 + EPOCH) as f64, Some(&formats.date)),
-        Value::Time(t) => Shown::Number(*t as f64 / day, Some(&formats.time)),
-        Value::DateTime(t) => {
-            Shown::Number(*t as f64 / day + EPOCH as f64, Some(&formats.datetime))
+        Value::Time(t) => {
+            Shown::Number(*t as f64 / (day * date::NANOS as f64), Some(&formats.time))
         }
+        Value::DateTime(t) => {
+            let days = *t as f64 / (day * date::MICROS as f64);
+            Shown::Number(days + EPOCH as f64, Some(&formats.datetime))
+        }
+        Value::Duration(t) => Shown::Number(
+            *t as f64 / (day * date::MICROS as f64),
+            Some(&formats.duration),
+        ),
         Value::Zoned(z) => {
             lose(ZONES);
-            let serial = z.home_wall() as f64 / day + EPOCH as f64;
+            let serial = z.home_wall() as f64 / (day * date::MICROS as f64) + EPOCH as f64;
             Shown::Number(serial, Some(&formats.datetime))
         }
         other => {
             lose(AS_TEXT);
-            Shown::Written(format_exact(other, false, &date::Style::ISO))
+            Shown::Written(written(other))
         }
     })
 }
@@ -509,6 +551,7 @@ pub fn export(
             date: Format::new().set_num_format("yyyy-mm-dd"),
             time: Format::new().set_num_format("hh:mm:ss"),
             datetime: Format::new().set_num_format("yyyy-mm-dd hh:mm:ss"),
+            duration: Format::new().set_num_format("[h]:mm:ss"),
             percent: Format::new().set_num_format("0.00%"),
         };
         let mut book = Workbook::new();
@@ -566,6 +609,15 @@ pub fn export(
                             Some(Cell::Formula(node)) => Some(node),
                             _ => None,
                         },
+                        // A frame column holds values, never formulas, and
+                        // so does a view's: its formula is the sheet's own,
+                        // which a worksheet has nowhere to put. An aggregate
+                        // of a group is the same, its rows being the group's,
+                        // and so is a column a join reads from its right.
+                        ColKind::Frame
+                        | ColKind::View(_)
+                        | ColKind::Agg(_)
+                        | ColKind::Joined(_) => None,
                     };
                     // A value with no type in a workbook has no formula there.
                     let node = node.filter(|_| !matches!(shown, Shown::Written(_)));

@@ -1,0 +1,20 @@
+sheet Permissions
+
+File   | Mode  | Owner | Group | Other | Exec
+-------|-------|-------|-------|-------|------
+run.sh | 0o755 |   0o7 |   0o5 |   0o5 | true
+notes  | 0o640 |   0o6 |   0o4 |   0o0 | false
+secret | 0o600 |   0o6 |   0o0 |   0o0 | false
+
+sheet Words
+
+Word   | High | Low  | Swapped | Flipped            | Masked | Signed
+-------|------|------|---------|--------------------|--------|-------
+0x1234 | 0x12 | 0x34 |  0x3412 | 0xffffffffffffedcb | 0xedcb |     -4
+0xbeef | 0xbe | 0xef |  0xefbe | 0xffffffffffff4110 | 0x4110 |     -4
+
+sheet Cells
+
+Public | Cleared
+-------|--------
+ 0o644 |   0o755

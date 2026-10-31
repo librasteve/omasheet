@@ -4,7 +4,7 @@
 //! the app when there is none.
 
 use clap::{Args, Parser, Subcommand};
-use omasheet_engine::omx::date::Style;
+use omasheet_engine::omx::date::{self, Style};
 use omasheet_engine::zone::Zone;
 use omasheet_engine::{Options, Outcome, locale};
 use std::io::Read;
@@ -22,8 +22,8 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// An .omx file, workbook or CSV file to open in the app; a new file if
-    /// none is given
+    /// An .omx file, XLSX Workbook, CSV file or Parquet file to open in the
+    /// app; a new file if none is given
     file: Option<PathBuf>,
 }
 
@@ -55,6 +55,11 @@ impl Env {
     fn options(&self) -> Result<Options, ExitCode> {
         let mut options = Options {
             exact: self.exact,
+            // A column's format shows its numbers as the locale writes
+            // them, with or without `--locale`.
+            numbers: Some(locale::os_numbers()),
+            // And its dates with the names of days and months it has.
+            names: locale::os_names(),
             ..Options::default()
         };
         if self.locale {
@@ -71,7 +76,7 @@ impl Env {
         }
         if let Some(text) = &self.now {
             let iso = Style::ISO;
-            let day = || Some(iso.parse_date(text)? as i64 * 86_400);
+            let day = || Some(iso.parse_date(text)? as i64 * date::DAY_MICROS);
             options.now = Some(iso.parse_datetime(text).or_else(day).ok_or_else(|| {
                 eprintln!("omasheet: `{text}` is not a date-time; write it like 2025-01-31T17:05");
                 ExitCode::from(2)
@@ -111,39 +116,55 @@ enum Command {
         /// The file to check
         file: PathBuf,
     },
-    /// Write a workbook (.xlsx), a CSV file (.csv) or JSON (.json) as an .omx file
+    /// Write an XLSX Workbook, a CSV file, JSON or Parquet as an .omx file
     ///
     /// The file is printed, and anything that was changed or left behind
     /// is reported.
     Import {
-        /// The workbook, CSV or JSON file to read
+        /// The XLSX Workbook, CSV, JSON or Parquet file to read
         file: PathBuf,
 
         /// Write the file to this file rather than printing it
         #[arg(short, long, value_name = "FILE")]
         output: Option<PathBuf>,
+
+        #[command(flatten)]
+        env: Env,
     },
-    /// Write the calculated sheets of a file as a workbook, CSV or JSON
+    /// Write the calculated sheets of a file as an XLSX Workbook, CSV, JSON
+    /// or Parquet
     ///
     /// The file is written beside the file: budget.omx as budget.xlsx,
-    /// budget.csv or budget.json. CSV holds one sheet, so a file with
-    /// several is written as budget.Sales.csv, budget.Summary.csv.
+    /// budget.csv, budget.json or budget.parquet. CSV and Parquet hold one
+    /// sheet, so a file with several is written as budget.Sales.csv,
+    /// budget.Summary.csv.
     Export {
         /// The file to export
         file: PathBuf,
 
-        /// Write a workbook, with a worksheet for each sheet
-        #[arg(long, conflicts_with_all = ["csv", "json"])]
+        /// Write an XLSX Workbook, with a worksheet for each sheet
+        #[arg(long, conflicts_with_all = ["csv", "json", "parquet"])]
         xlsx: bool,
 
         /// Write CSV, a file for each sheet
-        #[arg(long, conflicts_with = "json")]
+        #[arg(long, conflicts_with_all = ["json", "parquet"])]
         csv: bool,
 
         /// Write JSON: the values of each sheet as a list of rows by
         /// column name, and of a sheet given with --sheet as that list alone
-        #[arg(long)]
+        #[arg(long, conflicts_with = "parquet")]
         json: bool,
+
+        /// Write Parquet, a file for each sheet, with each column as the
+        /// Parquet type its own type names
+        #[arg(long)]
+        parquet: bool,
+
+        /// With --parquet: keep the file's zone, constants and functions,
+        /// and each column's type and formula, in the Parquet's metadata,
+        /// so that importing it gives back the formulas
+        #[arg(long, requires = "parquet")]
+        meta: bool,
 
         /// Export this sheet alone
         #[arg(long, value_name = "NAME")]
@@ -208,11 +229,11 @@ fn extension(path: &Path) -> String {
     ext.to_string_lossy().to_ascii_lowercase()
 }
 
-fn import(file: &Path, output: Option<&Path>) -> Result<ExitCode, ExitCode> {
+fn import(file: &Path, output: Option<&Path>, options: Options) -> Result<ExitCode, ExitCode> {
     let kind = extension(file);
-    if !matches!(kind.as_str(), "xlsx" | "csv" | "json") {
+    if !matches!(kind.as_str(), "xlsx" | "csv" | "json" | "parquet") {
         return usage(&format!(
-            "cannot import {}: give a workbook (.xlsx), a CSV file (.csv) or JSON (.json)",
+            "cannot import {}: give an XLSX Workbook (.xlsx), a CSV file (.csv), JSON (.json) or Parquet (.parquet)",
             file.display()
         ));
     }
@@ -222,8 +243,9 @@ fn import(file: &Path, output: Option<&Path>) -> Result<ExitCode, ExitCode> {
     })?;
     let stem = file.file_stem().unwrap_or_default().to_string_lossy();
     let imported = match kind.as_str() {
-        "xlsx" => omasheet_interop::xlsx::import(&bytes),
+        "xlsx" => omasheet_interop::xlsx::import(&bytes, options),
         "json" => omasheet_interop::json::import(&stem, &bytes),
+        "parquet" => omasheet_interop::parquet::import(&stem, &bytes),
         _ => omasheet_interop::csv::import(&stem, &bytes),
     };
     let imported = match imported {
@@ -244,6 +266,7 @@ fn import(file: &Path, output: Option<&Path>) -> Result<ExitCode, ExitCode> {
 fn export(
     file: &Path,
     ext: &str,
+    meta: bool,
     sheet: Option<&str>,
     output: Option<&Path>,
     options: Options,
@@ -253,6 +276,8 @@ fn export(
     let exported = match ext {
         "xlsx" => omasheet_interop::xlsx::export(&name, &text, sheet, options),
         "json" => omasheet_interop::json::export(&name, &text, sheet, options),
+        "parquet" if meta => omasheet_interop::parquet::export_meta(&name, &text, sheet, options),
+        "parquet" => omasheet_interop::parquet::export(&name, &text, sheet, options),
         _ => omasheet_interop::csv::export(&name, &text, sheet, options),
     };
     let exported = match exported {
@@ -335,7 +360,7 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
             mut args,
             env,
         }) => {
-            let options = env.options()?;
+            let mut options = env.options()?;
             // `eval FILE EXPR` is the same as `eval --file FILE EXPR`.
             let file = match (file, args.len()) {
                 (None, 2) => Some(PathBuf::from(args.remove(0))),
@@ -359,7 +384,10 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
                 }
             };
             let loaded = match &file {
-                Some(path) => Some((path.to_string_lossy().into_owned(), read(path)?)),
+                Some(path) => {
+                    options.base = Some(beside(path));
+                    Some((path.to_string_lossy().into_owned(), read(path)?))
+                }
                 None => None,
             };
             let file_ref = loaded.as_ref().map(|(n, t)| (n.as_str(), t.as_str()));
@@ -367,35 +395,62 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
                 file_ref, expr_name, &expr, options,
             )))
         }
-        Some(Command::Import { file, output }) => import(&file, output.as_deref()),
+        Some(Command::Import { file, output, env }) => {
+            import(&file, output.as_deref(), env.options()?)
+        }
         Some(Command::Export {
             file,
             xlsx,
             csv,
             json,
+            parquet,
+            meta,
             sheet,
             output,
             env,
         }) => {
-            let ext = match (xlsx, csv, json) {
+            let ext = match (xlsx, csv, json, parquet) {
                 (true, ..) => "xlsx",
-                (_, true, _) => "csv",
-                (.., true) => "json",
-                _ => return usage("say what to export as: --xlsx, --csv or --json"),
+                (_, true, ..) => "csv",
+                (_, _, true, _) => "json",
+                (.., true) => "parquet",
+                _ => {
+                    return usage("say what to export as: --xlsx, --csv, --json or --parquet");
+                }
             };
-            let options = env.options()?;
-            export(&file, ext, sheet.as_deref(), output.as_deref(), options)
+            let mut options = env.options()?;
+            // As for `print` and `render`: a `table` reads its rows from
+            // beside the file, so the file's own directory is the base.
+            options.base = Some(beside(&file));
+            export(
+                &file,
+                ext,
+                meta,
+                sheet.as_deref(),
+                output.as_deref(),
+                options,
+            )
         }
         Some(Command::Render {
             file,
             html,
             output,
             env,
-        }) => render(&file, html, output.as_deref(), env.options()?),
+        }) => {
+            let mut options = env.options()?;
+            // A `table` reads its rows from beside the document, as it does
+            // from beside a file: before the render path read a table at all
+            // this went unnoticed, the base being used for nothing here.
+            options.base = Some(beside(&file));
+            render(&file, html, output.as_deref(), options)
+        }
         None => Ok(open(cli.file.as_deref())),
         Some(Command::Print { file, env }) => {
-            let options = env.options()?;
+            let mut options = env.options()?;
             let text = read(&file)?;
+            // A `table` reads its rows from beside the file, so the file's
+            // own directory is what its source is relative to.
+            options.base = Some(beside(&file));
             Ok(finish(omasheet_engine::view_with(
                 &file.to_string_lossy(),
                 &text,
@@ -403,6 +458,11 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
             )))
         }
     }
+}
+
+/// The directory a file's own sources are read relative to.
+fn beside(file: &Path) -> PathBuf {
+    file.parent().unwrap_or(Path::new(".")).to_path_buf()
 }
 
 /// Run the command line this program was started with. With no command,

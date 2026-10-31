@@ -144,13 +144,50 @@ impl Parser {
             return Ok(args);
         }
         loop {
-            args.push(self.expr()?);
+            // `Name := expr`, an argument given a name: what `agg` names
+            // the column of an aggregate by.
+            if let Tok::Ident(name) = self.peek().clone()
+                && self
+                    .toks
+                    .get(self.pos + 1)
+                    .is_some_and(|t| t.tok == Tok::Define)
+            {
+                let name_span = self.bump().span;
+                self.bump();
+                let value = self.expr()?;
+                let span = name_span.to(value.span);
+                args.push(Expr {
+                    kind: ExprKind::Named(name, name_span, Box::new(value)),
+                    span,
+                });
+            } else {
+                args.push(self.expr()?);
+            }
             if self.eat(&Tok::Comma) {
                 continue;
             }
             self.expect(Tok::RParen, "`,` or `)`")?;
             return Ok(args);
         }
+    }
+
+    /// A row slot's expression, with the `by Region, Year` after it if one
+    /// follows: nothing else can follow an expression in a slot, so the
+    /// word is not taken from a name anyone could have meant.
+    fn by(&mut self, e: Expr) -> R<Expr> {
+        if !matches!(self.peek(), Tok::Ident(w) if w == "by") {
+            return Ok(e);
+        }
+        self.bump();
+        let mut keys = vec![self.ident("a column name after `by`")?];
+        while self.eat(&Tok::Comma) {
+            keys.push(self.ident("a column name after `,`")?);
+        }
+        let span = e.span.to(self.prev_span());
+        Ok(Expr {
+            kind: ExprKind::By(Box::new(e), keys),
+            span,
+        })
     }
 
     fn binary(lhs: Expr, op: BinOp, rhs: Expr) -> Expr {
@@ -249,6 +286,9 @@ impl Parser {
             let op = match self.peek() {
                 Tok::Plus => BinOp::Add,
                 Tok::Minus => BinOp::Sub,
+                // Bitwise or and xor bind as a sum does, as in Raku (D139).
+                Tok::PlusPipe => BinOp::BitOr,
+                Tok::PlusCaret => BinOp::BitXor,
                 _ => return Ok(lhs),
             };
             self.bump();
@@ -263,6 +303,10 @@ impl Parser {
             let op = match self.peek() {
                 Tok::Star => BinOp::Mul,
                 Tok::Slash => BinOp::Div,
+                // And the bitwise and and the shifts as a product does.
+                Tok::PlusAmp => BinOp::BitAnd,
+                Tok::PlusLt => BinOp::Shl,
+                Tok::PlusGt => BinOp::Shr,
                 _ => return Ok(lhs),
             };
             self.bump();
@@ -272,16 +316,18 @@ impl Parser {
     }
 
     fn unary(&mut self) -> R<Expr> {
-        if self.peek() == &Tok::Minus {
-            let start = self.bump().span;
-            let operand = self.unary()?;
-            let span = start.to(operand.span);
-            return Ok(Expr {
-                kind: ExprKind::Unary(UnOp::Neg, Box::new(operand)),
-                span,
-            });
-        }
-        self.power()
+        let op = match self.peek() {
+            Tok::Minus => UnOp::Neg,
+            Tok::PlusCaret => UnOp::BitNot,
+            _ => return self.power(),
+        };
+        let start = self.bump().span;
+        let operand = self.unary()?;
+        let span = start.to(operand.span);
+        Ok(Expr {
+            kind: ExprKind::Unary(op, Box::new(operand)),
+            span,
+        })
     }
 
     fn power(&mut self) -> R<Expr> {
@@ -302,7 +348,8 @@ impl Parser {
                     let slot = if matches!(self.peek(), Tok::Semi | Tok::RBracket) {
                         None
                     } else {
-                        Some(self.expr()?)
+                        let e = self.expr()?;
+                        Some(self.by(e)?)
                     };
                     slots.push(slot);
                     if self.eat(&Tok::Semi) {
@@ -343,17 +390,17 @@ impl Parser {
         let span = self.span();
         let lit = |kind: Lit| ExprKind::Lit(kind);
         let kind = match self.peek().clone() {
-            Tok::Int(n) => lit(Lit::Int(n)),
+            Tok::Int(n, b) => lit(Lit::Int(n, b)),
             Tok::Decimal(r) => lit(Lit::Decimal(r)),
             Tok::Percent(r) => lit(Lit::Percent(r)),
-            Tok::Num(f) => lit(Lit::Num(f)),
-            Tok::Imag(f) => lit(Lit::Complex(0.0, f)),
-            Tok::Str(s) => lit(Lit::Text(s)),
+            Tok::Float(f) => lit(Lit::Float(f)),
+            Tok::Str(s) => lit(Lit::String(s)),
             Tok::Date(d) => lit(Lit::Date(d)),
             Tok::Time(t) => lit(Lit::Time(t)),
             Tok::DateTime(t) => lit(Lit::DateTime(t)),
-            Tok::True => lit(Lit::Bool(true)),
-            Tok::False => lit(Lit::Bool(false)),
+            Tok::Duration(t) => lit(Lit::Duration(t)),
+            Tok::True => lit(Lit::Boolean(true)),
+            Tok::False => lit(Lit::Boolean(false)),
             Tok::Star => ExprKind::Cursor,
             Tok::Dollar => {
                 self.bump();
@@ -364,11 +411,11 @@ impl Parser {
                     )
                     .with_help("write `$-1` for the term before this one"));
                 }
-                let Tok::Int(n) = self.peek().clone() else {
+                let Tok::Int(n, _) = self.peek().clone() else {
                     return Err(self.unexpected("a whole number of terms to go back"));
                 };
                 self.bump();
-                let Ok(n) = u32::try_from(&n) else {
+                let Ok(n) = u32::try_from(n) else {
                     return Err(Diagnostic::new(
                         span.to(self.prev_span()),
                         "a back-reference goes back too far",
@@ -428,12 +475,18 @@ impl Parser {
                 if matches!(self.peek(), Tok::Semi)
                     || (cursor && !matches!(self.peek(), Tok::Comma))
                 {
+                    // `[*-1 by Region]`, a cursor and its partition alone.
+                    let first = match first {
+                        Some(e) if cursor => Some(self.by(e)?),
+                        other => other,
+                    };
                     let mut slots = vec![first];
                     while self.eat(&Tok::Semi) {
                         slots.push(if matches!(self.peek(), Tok::Semi | Tok::RBracket) {
                             None
                         } else {
-                            Some(self.expr()?)
+                            let e = self.expr()?;
+                            Some(self.by(e)?)
                         });
                     }
                     self.expect(Tok::RBracket, "`;` or `]`")?;
@@ -511,6 +564,20 @@ mod tests {
         assert!(matches!(
             parse("3 in ^5").unwrap().kind,
             ExprKind::Binary(BinOp::In, _, r) if matches!(r.kind, ExprKind::Unary(UnOp::UpTo, _))
+        ));
+        // The bitwise operators bind as Raku binds them (D139): a flag test
+        // needs no brackets, and a shift goes before a mask.
+        assert!(matches!(
+            parse("F +& 4 == 4").unwrap().kind,
+            ExprKind::Binary(BinOp::Eq, l, _) if matches!(l.kind, ExprKind::Binary(BinOp::BitAnd, ..))
+        ));
+        assert!(matches!(
+            parse("a +| b +& c").unwrap().kind,
+            ExprKind::Binary(BinOp::BitOr, _, r) if matches!(r.kind, ExprKind::Binary(BinOp::BitAnd, ..))
+        ));
+        assert!(matches!(
+            parse("+^a +^ b").unwrap().kind,
+            ExprKind::Binary(BinOp::BitXor, l, _) if matches!(l.kind, ExprKind::Unary(UnOp::BitNot, _))
         ));
     }
 

@@ -95,12 +95,28 @@ sheet Summary
   spaces between pipes, `|     |`, a sheet of one column too.
 - Older files leave out the outer pipes and the `---` line, `Jan | 100`; they
   still read. There a `|` at the start or end of a row is an empty cell.
+- `table Name := dataframe["data/sales.parquet"]` in place of `sheet Name`: a
+  sheet whose rows are in one Parquet file beside the `.omx`.
+  Write the `Column : Type` lines it expects and no rows; its columns are
+  selected and computed over as any sheet's, but no cell of it can be
+  edited and nothing is written back to the files.
 - Names are identifiers: letters, digits and `_`, no spaces. `UnitPrice`, not
-  `Unit Price`.
+  `Unit Price`. A table's column that the file names otherwise is given one
+  with `from`: `SiblingsSpousesAboard : Integer from "Siblings/Spouses Aboard"`.
+  Form the name on the left from the file's own, dropping whatever a name
+  has no room for; do not shorten it, or it says something the column does
+  not.
 - **A computed column** has one formula for every row. Name it in the header
   row where it should appear, put `*` in each of its cells, and write
   `Name := expression` after the rows. Leaving it out of the header, or
   putting anything but `*` in its cells, is an error.
+- A sheet of `:=` lines alone, with no table under `sheet Name`, holds no
+  rows: its columns are those lines and there is no header row or `*` to
+  write. It is as long as the sheets its formulas pick a row of with `*`,
+  `Fare := Passengers[Fare; *]`, so write one for a derived sheet over a
+  table rather than hundreds of rows of `*`; a sheet of aggregates alone,
+  `Total := Sales.Revenue.sum()`, is one row. It has no cell to write and no
+  row to add; its `:=` lines are edited as any sheet's.
 - **A formula cell** starts with `=`. Everything else is a literal, so
   `Revenue - Cost` in a cell is text. A `:=` line and a `const` take no `=`.
 - An empty cell is empty. There is no `null` or `NA`; leave it blank.
@@ -112,31 +128,35 @@ sheet Summary
 
 ## Types
 
-`Int`, `Decimal`, `Fraction`, `Percent`, `Num`, `Complex`, `Text`, `Bool`,
-`Date`, `Time`, `DateTime`.
+`Integer`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,
+`Date`, `Time`, `Datetime`, `Duration`, `Url`, `Email`, `Uuid`.
 A column with no type line takes its type from its cells, which is usually
 what you want; declare one when the cells could be read another way.
 
 | Type | Written |
 |---|---|
-| `Int` | `42`, `1_000_000` |
-| `Decimal` | `19.99` — exact |
-| `Fraction` | `1/7`, `22/7`, `2 3/4` — exact, shown as a fraction |
+| `Integer` | `42`, `1_000_000` |
+| `Decimal` | `19.99`, `1/7`, `2 3/4` — exact |
+| `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction, `1/7` and `2 3/4` |
 | `Percent` | `20%` — exact, shown as a percentage |
-| `Num` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `"Inf"`), which is what a division by zero gives |
-| `Bool` | `true`, `false` |
-| `Date`, `Time`, `DateTime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO |
+| `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `"Inf"`), which is what a division by zero gives |
+| `Boolean` | `true`, `false` |
+| `Date`, `Time`, `Datetime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO. A fraction of a second goes after the seconds, `09:30:15.5`: nine digits for a `Time`, six for a `Datetime` |
+| `Duration` | `PT1H30M`, `P2D`, `-PT30M` — ISO 8601, weeks to seconds only (no `Y`, no calendar `M`). Two dates or times subtract to one; get a number with `.total_hours()` and the like |
+| `Url`, `Email`, `Uuid` | `https://example.com`, `name@example.com`, `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f` — text read as something narrower |
 
-An `Int` is a `Decimal` and a `Decimal` is a `Fraction`. Sums and products of
-decimals are `Decimal`; a division or an average is a `Fraction`, since it may
-not end. So a column declared `Decimal` rejects `= Total / 3`: leave the
-column undeclared, or write `(Total / 3).Decimal` if it is known to end.
+`Url`, `Email` and `Uuid` are never taken from the cells: declare one, or
+read text as one by name — `Checked := Written.Email`, which marks the cells
+that do not read as one and leaves the rest of the file calculating. A
+declared one stops the file until every cell reads, so for data that came in
+from elsewhere, read it by name first and declare it once it is clean.
 
-A `Fraction` is shown as a fraction, never a decimal, and one of more than
-one as a whole number and a part: `11/4` shows as `2 3/4`, and may be
-written `2 3/4` in a cell. A `Fraction` column shows `2.75` that way too, so
-declare money and measurements `Decimal`, not `Fraction`. Anything worked
-out from a fraction is a fraction; `x.Decimal` gives the decimal.
+An `Integer` is a `Decimal`. Sums, products, divisions and averages of decimals
+are all `Decimal`. An `Integer` holds 64 bits and a `Decimal` 38 significant digits; a
+whole number past an `Integer` becomes a `Decimal`, and one past 38 digits
+keeps its 38 and moves the point, so `10**1000` is exact in one digit.
+Only past `1e2147483685`, where the point stops, is a number reported as
+too large rather than rounded away.
 
 A `Percent` is the number it stands for, so `Net * (1 + VatRate)` works as
 written and gives a plain number. Only percentages added to percentages stay
@@ -144,11 +164,19 @@ a `Percent`. To show a share as a percentage, declare the column, as in
 `Margin : Percent` over `Margin := Profit / Revenue`, or write `x.Percent`;
 do not multiply by 100. It is shown rounded to two digits, `41.67%`.
 
-Arithmetic is exact: `0.1 + 0.2 == 0.3` is true, `1/3 * 3` is `1`, and
-integers do not overflow. An exact number is shown in full: a division
-shows `0.125` if it ends as a decimal, `7 5/7` if it does not. A fraction in a result is correct,
-not a fault: do not "fix" it with `.Num`, and use `round(x)` only when the
-user wants a rounded number. A number is shown in at most 23 characters:
+A `Fraction` is the same number shown as a fraction of whole numbers: to
+show a column that way, declare it, as in `Share : Fraction`, or write
+`x.Fraction`. The fraction is worked out from the number, so
+`(2/7 + 3/7).Fraction` is `5/7`; a denominator past 10000 is shown as a
+decimal instead. Anything worked out from a fraction is a fraction.
+
+Arithmetic is exact decimal arithmetic: `0.1 + 0.2 == 0.3` is true, and
+nothing wraps. A division that does not end within 38 digits is rounded
+there, but the last 8 of those digits are working room and are neither
+compared nor shown, so `1/3 * 3` is `1`, `2/7 + 3/7 == 5/7` is true and 30
+digits are shown. A long decimal shown cut and marked is correct, not a
+fault: do not "fix" it with `.Float`, and use `round(x)` only when the user
+wants a rounded number. A number is shown in at most 23 characters:
 from `1e15` up, or below `1e-15`, it is in e notation, `1e+60`, and digits
 that do not fit are cut and marked `…`. Only the display is cut, and
 `--exact` shows it in full.
@@ -164,10 +192,24 @@ that do not fit are cut and marked `…`. Only the display is cut, and
 | `Sales[Revenue; *-1]` | the row before this one; `*` is this row |
 | `[Revenue; 0..*]` | from the top to this row; the sheet's name can be dropped inside it |
 | `a // b` | `b` when `a` is empty: `[Revenue; *-1] // 0` |
+| `[Revenue; *-1 by Region]` | the row before among this row's region: `Running := Revenue + ([Running; *-1 by Region] // 0)` |
 
 - Selection is `[columns; rows]`, with `;` between them. One column only: for
   several, pipe through `select`:
   `Sales |> filter(Profit > 0) |> select(Month, Profit)`.
+- Sheet stages: `filter`, `select`, `head(n)`, `tail(n)`, `sort(Col)` and
+  `sort(Col, desc)`. `sheet Name := …` makes a read-only sheet of one:
+  `sheet Top := Sales |> sort(Revenue, desc) |> head(3)`.
+- `group_by` and `agg`, and `join`, make rows of their own, so each is the
+  whole of a `sheet Name :=` formula; stages after it go over that sheet by
+  name. `sheet ByRegion := Sales |> group_by(Region) |> agg(Revenue.sum(),
+  Orders := Item.len())` has the columns `Region`, `Revenue_sum` and
+  `Orders`; inside `agg` a column is the group's rows, so it needs an
+  aggregate (`Revenue.sum()`, not `Revenue`), and anything but an aggregate
+  of one column needs a name with `:=`. `sheet Both := Sales |>
+  join(Targets, Month, left)` pairs rows whose keys are equal, a row for
+  every match; `left` keeps a row with no match, an empty key matches
+  nothing, and a name in both sheets takes `_right` on the second.
 - Ranges: `0..2` includes both ends, `0..^2` leaves out the last, `^2` is
   the first two.
 - Equality is `==`. A single `=` only starts a formula cell or binds a
@@ -187,14 +229,24 @@ that do not fit are cut and marked `…`. Only the display is cut, and
   each month steps by months: `2025-01-01, 2025-02-01 ... Inf`, and
   `2025-01-31, 2025-02-28 ... Inf` for the end of each month.
 - Functions are called `sum(x)`, `x.sum()` or `x |> sum()`:
-  `sum avg min max count`, `abs round floor ceil sqrt` and the usual maths,
-  `today() now() year month day weekday`, `succ` for the next value, and
-  the type names as conversions,
-  `x.Int`, `x.Num`, `x.Percent`, `x.Text`.
+  `sum mean min max count len median`, `abs round floor ceil sqrt` and the
+  usual maths, `today() now() year month day weekday`, `succ` for the next
+  value, and the type names as conversions,
+  `x.Integer`, `x.Float`, `x.Fraction`, `x.Percent`, `x.String`.
 - A date plus a whole number is days later; two dates subtract to days.
   `n.day`, `n.week`, `n.month` and `n.year` next to a date say which unit:
   `Placed + 1.month`, which keeps the day of the month or clamps it to the
-  last day of a short one. `eom(x)` is the last day of a date's month.
+  last day of a short one. `month_end(x)` is the last day of a date's month.
+- The names are Polars': `mean` not `avg`, `len` for a sheet's rows where
+  `count` counts what is not empty, `month_end` not `eom`, `arcsin` not
+  `asin`, and `round(x, 2)` is two decimal places, not the nearest 0.01.
+- An empty cell and a `NaN` are different absences. `is_null(x)` asks whether
+  a cell is empty and `is_nan(x)` whether it holds a `NaN`, which is what a
+  division of zero by zero gives; `is_nan` of an empty cell is empty.
+- Anything done with an empty cell is empty, except `and` and `or`, which
+  read one as an unknown: `false and` is false and `true or` is true
+  whatever is beside them, while `true and` and `false or` an empty cell are
+  empty. Write `a // false` where the answer should be false.
 - A lookup that finds one row fills a cell with its value; none gives empty,
   so add `// "none"`; several is an error.
 
@@ -207,6 +259,8 @@ omasheet export file.omx --xlsx          # file.xlsx
 omasheet export file.omx --csv --sheet Orders -o orders.csv
 omasheet import orders.json              # a list of row objects, or {"Sheet": [rows]}
 omasheet export file.omx --json          # file.json: {"Sheet": [{"Col": value}]}
+omasheet import sales.parquet            # types come from the file's schema
+omasheet export file.omx --parquet       # a file for each sheet, typed
 omasheet render report.md --html -o report.html
 ```
 

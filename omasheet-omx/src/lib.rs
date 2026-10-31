@@ -8,20 +8,27 @@
 
 pub mod ast;
 pub mod check;
+pub mod colfmt;
 pub mod convert;
 pub mod cycle;
 pub mod date;
+pub mod datefmt;
+pub mod decimal;
 pub mod deps;
 pub mod diag;
+pub mod duration;
 pub mod file;
 pub mod funcs;
 pub mod ir;
 pub mod lexer;
+pub mod numfmt;
 pub mod parser;
+pub mod text;
 pub mod types;
 
 pub use check::{
     Cell, ColKind, Column, Const, Group, Program, Sheet, UserFn, compile, compile_expr,
 };
+pub use decimal::Dec;
 pub use diag::{Diagnostic, Sources, Span};
 pub use types::{S, Ty};

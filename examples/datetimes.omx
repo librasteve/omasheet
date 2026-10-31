@@ -1,36 +1,37 @@
-# Every column type, with dates and times: a Date counts in days, a Time and
-# a DateTime in seconds. A file always writes them the ISO way, and may say
-# which time zone its date-times are in.
+# Every column type, with dates and times: a whole number beside a Date
+# counts days, and beside a Time or a Datetime seconds, and two of a kind
+# differ by a Duration, written `PT8H30M`. A file always writes them the ISO
+# way, and may say which time zone its date-times are in.
 
 zone Europe/London
-const Day = 86400
+const Day = P1D
 
 sheet Shifts
 
-Who    : Text
+Who    : String
 On     : Date
 Start  : Time
 End    : Time
 Rate   : Decimal
-Paid   : Bool
-Logged : DateTime
+Paid   : Boolean
+Logged : Datetime
 
-| Who   | On         | Start | End   | Rate  | Paid  | Logged              | Begins | Seconds | Hours | Pay | Due | Weekday | Month | Delay | Late | Sydney |
-| ----- | ---------- | ----- | ----- | ----- | ----- | ------------------- | ------ | ------- | ----- | --- | --- | ------- | ----- | ----- | ---- | ------ |
-| Ada   | 2025-01-31 | 09:00 | 17:30 | 21.50 | true  | 2025-01-31T17:42    | *      | *       | *     | *   | *   | *       | *     | *     | *    | *      |
-| Grace | 2025-02-01 | 22:00 | 06:00 | 24    | false | 2025-02-03T08:05:30 | *      | *       | *     | *   | *   | *       | *     | *     | *    | *      |
-| Linus | 2025-02-28 | 13:15 | 18:00 | 19.75 | true  | 2025-02-28T18:00    | *      | *       | *     | *   | *   | *       | *     | *     | *    | *      |
+| Who   | On         | Start | End   | Rate  | Paid  | Logged              | Begins | Shift | Hours | Pay | Due | Weekday | Month | Delay | Late | Sydney |
+| ----- | ---------- | ----- | ----- | ----- | ----- | ------------------- | ------ | ----- | ----- | --- | --- | ------- | ----- | ----- | ---- | ------ |
+| Ada   | 2025-01-31 | 09:00 | 17:30 | 21.50 | true  | 2025-01-31T17:42    | *      | *     | *     | *   | *   | *       | *     | *     | *    | *      |
+| Grace | 2025-02-01 | 22:00 | 06:00 | 24    | false | 2025-02-03T08:05:30 | *      | *     | *     | *   | *   | *       | *     | *     | *    | *      |
+| Linus | 2025-02-28 | 13:15 | 18:00 | 19.75 | true  | 2025-02-28T18:00    | *      | *     | *     | *   | *   | *       | *     | *     | *    | *      |
 
 Begins  := On + Start
-Seconds := if End > Start then End - Start else End - Start + Day
-Hours   := Seconds / 3600
+Shift   := if End > Start then End - Start else End - Start + Day
+Hours   := Shift.total_hours()
 Pay     := Hours * Rate
 Due     := On + 30
 Weekday := On.weekday()
 Month   := On.month()
-Delay   := (Logged - Begins) / 3600
+Delay   := Logged - Begins
 Late    := Logged.date() > On
-Sydney  := Logged.to_zone("Australia/Sydney")
+Sydney  := Logged.convert_time_zone("Australia/Sydney")
 
 sheet Totals
 

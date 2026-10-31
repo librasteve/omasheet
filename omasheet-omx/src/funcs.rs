@@ -3,8 +3,6 @@
 //! The functions of OMX: what each is called, and what a person browsing
 //! them is told. The checker and the function directory both read this.
 
-use crate::types::S;
-
 /// A function of one number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MathFn {
@@ -21,95 +19,41 @@ pub enum MathFn {
     Sin,
     Cos,
     Tan,
-    Asin,
-    Acos,
-    Atan,
+    Arcsin,
+    Arccos,
+    Arctan,
     Sinh,
     Cosh,
     Tanh,
     Radians,
     Degrees,
-    /// The real part of a complex number.
-    Re,
-    /// The imaginary part.
-    Im,
-    /// The complex conjugate.
-    Conj,
-    /// The angle of a complex number, in radians.
-    Arg,
 }
 
 impl MathFn {
-    const ALL: [(&'static str, MathFn); 25] = [
-        ("abs", MathFn::Abs),
-        ("sign", MathFn::Sign),
-        ("round", MathFn::Round),
-        ("floor", MathFn::Floor),
-        ("ceil", MathFn::Ceil),
-        ("sqrt", MathFn::Sqrt),
-        ("exp", MathFn::Exp),
-        ("ln", MathFn::Ln),
-        ("log10", MathFn::Log10),
-        ("log2", MathFn::Log2),
-        ("sin", MathFn::Sin),
-        ("cos", MathFn::Cos),
-        ("tan", MathFn::Tan),
-        ("asin", MathFn::Asin),
-        ("acos", MathFn::Acos),
-        ("atan", MathFn::Atan),
-        ("sinh", MathFn::Sinh),
-        ("cosh", MathFn::Cosh),
-        ("tanh", MathFn::Tanh),
-        ("radians", MathFn::Radians),
-        ("degrees", MathFn::Degrees),
-        ("re", MathFn::Re),
-        ("im", MathFn::Im),
-        ("conj", MathFn::Conj),
-        ("arg", MathFn::Arg),
-    ];
-
+    /// The function directory is the one name table: an entry made with
+    /// [`math_doc`] carries the `MathFn` it names.
     pub fn from_name(name: &str) -> Option<MathFn> {
-        MathFn::ALL
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, m)| *m)
+        FUNCTIONS.iter().find(|f| f.name == name)?.math
     }
 
     pub fn name(self) -> &'static str {
-        MathFn::ALL
+        FUNCTIONS
             .iter()
-            .find(|(_, m)| *m == self)
-            .map_or("", |(n, _)| n)
+            .find(|f| f.math == Some(self))
+            .map_or("", |f| f.name)
     }
 
     /// Whether an exact number gives an exact result.
     pub fn is_exact(self) -> bool {
         matches!(
             self,
-            MathFn::Abs
-                | MathFn::Sign
-                | MathFn::Round
-                | MathFn::Floor
-                | MathFn::Ceil
-                | MathFn::Re
-                | MathFn::Im
-                | MathFn::Conj
+            MathFn::Abs | MathFn::Sign | MathFn::Round | MathFn::Floor | MathFn::Ceil
         )
     }
 
     /// Whether the result is always a whole number, given an exact one.
     pub fn is_whole(self) -> bool {
-        self.is_exact() && !matches!(self, MathFn::Abs | MathFn::Re | MathFn::Conj)
-    }
-
-    /// The type of the result for a complex number, or `None` if the
-    /// function does not take one.
-    pub fn of_complex(self) -> Option<S> {
-        match self {
-            MathFn::Abs | MathFn::Re | MathFn::Im | MathFn::Arg => Some(S::Num),
-            MathFn::Conj | MathFn::Sqrt | MathFn::Exp | MathFn::Ln => Some(S::Complex),
-            _ => None,
-        }
+        self.is_exact() && !matches!(self, MathFn::Abs)
     }
 
     pub fn apply(self, x: f64) -> f64 {
@@ -128,18 +72,14 @@ impl MathFn {
             MathFn::Sin => x.sin(),
             MathFn::Cos => x.cos(),
             MathFn::Tan => x.tan(),
-            MathFn::Asin => x.asin(),
-            MathFn::Acos => x.acos(),
-            MathFn::Atan => x.atan(),
+            MathFn::Arcsin => x.asin(),
+            MathFn::Arccos => x.acos(),
+            MathFn::Arctan => x.atan(),
             MathFn::Sinh => x.sinh(),
             MathFn::Cosh => x.cosh(),
             MathFn::Tanh => x.tanh(),
             MathFn::Radians => x.to_radians(),
             MathFn::Degrees => x.to_degrees(),
-            MathFn::Re | MathFn::Conj => x,
-            MathFn::Im => 0.0,
-            MathFn::Arg if x < 0.0 => std::f64::consts::PI,
-            MathFn::Arg => 0.0,
         }
     }
 }
@@ -152,6 +92,8 @@ pub struct FuncDoc {
     /// How it is written, such as `Sheet.Column.sum()`.
     pub usage: &'static str,
     pub summary: &'static str,
+    /// The function of one real number this is the name of, where it is one.
+    pub math: Option<MathFn>,
 }
 
 const fn doc(
@@ -165,261 +107,446 @@ const fn doc(
         category,
         usage,
         summary,
+        math: None,
+    }
+}
+
+/// One entry for a function of one real number, which is also how
+/// [`MathFn::from_name`] finds it.
+const fn math_doc(
+    category: &'static str,
+    name: &'static str,
+    usage: &'static str,
+    summary: &'static str,
+    math: MathFn,
+) -> FuncDoc {
+    FuncDoc {
+        name,
+        category,
+        usage,
+        summary,
+        math: Some(math),
     }
 }
 
 const AGG: &str = "Aggregate";
-const SHEET: &str = "Sheet";
+const PIPE: &str = "Pipe";
 const CONVERT: &str = "Convert";
 const MATH: &str = "Math";
 const LOG: &str = "Log & Exp";
 const TRIG: &str = "Trigonometry";
-const COMPLEX: &str = "Complex";
 const TIME: &str = "Time & Date";
+const BITWISE: &str = "Bitwise";
+
+/// What the function directory says first: how a function is written.
+pub const INTRO: &str = "Functions are written =sum(x), many can also be used a method applied to an object e.g. \
+     =x.sum().";
+
+/// What the functions of each category are applied to, said under its heading.
+pub const ABOUT: &[(&str, &str)] = &[
+    (
+        AGG,
+        "Object: any collection - Sheet, Column, vector or cell block. For several: sum(A, B). \
+         Empty(null) cells usually skipped.",
+    ),
+    (
+        PIPE,
+        "Left-hand side of pipe operator(|>): a Sheet or Column.",
+    ),
+    (
+        MATH,
+        "Object: any - a single cell, Sheet, Column, vector or a cell block. Usually must contain \
+         a number.",
+    ),
+    (CONVERT, "Object: a Value."),
+    (LOG, "Takes: a number."),
+    (TRIG, "Takes: a number as an angle in radians."),
+    (TIME, "Object: Date, Time, Datetime or Duration."),
+    (
+        BITWISE,
+        "Operators, not functions: written between two whole numbers, or before one. and, or \
+         and not stay Boolean.",
+    ),
+];
 
 /// Every function, grouped by category in the order the directory shows them.
 pub const FUNCTIONS: &[FuncDoc] = &[
-    doc(
-        AGG,
-        "sum",
-        "Sheet.Column.sum()",
-        "The total of a column or vector, a block of cells, or several taken together: sum(A, B). Empty cells are skipped.",
-    ),
-    doc(
-        AGG,
-        "avg",
-        "Sheet.Column.avg()",
-        "The mean of a column or vector, a block of cells, or several taken together, as an exact fraction where it can be.",
-    ),
+    doc(AGG, "sum", ".sum()", "The total."),
+    doc(AGG, "mean", ".mean()", "The average."),
     doc(
         AGG,
         "min",
-        "Sheet.Column.min()",
-        "The smallest value, of one vector or several. Works on numbers, text, dates and times.",
+        ".min()",
+        "The smallest. Works on numbers, text order, dates and times.",
     ),
     doc(
         AGG,
         "max",
-        "Sheet.Column.max()",
-        "The largest value, of one vector or several. Works on numbers, text, dates and times.",
+        ".max()",
+        "The largest. Works on numbers, text order, dates and times.",
+    ),
+    doc(AGG, "count", ".count()", "Cells in a column or cell block."),
+    doc(
+        AGG,
+        "len",
+        ".len()",
+        "Rows in a sheet, or cells in a column: empty ones included.",
     ),
     doc(
         AGG,
-        "count",
-        "Sheet.Column.count()",
-        "How many cells are not empty, of one vector or several; for a sheet, how many rows.",
+        "median",
+        ".median()",
+        "The middle value, or the mean of the two middle ones.",
     ),
     doc(
-        SHEET,
+        AGG,
+        "product",
+        ".product()",
+        "Every value multiplied together.",
+    ),
+    doc(AGG, "first", ".first()", "The first value, empty or not."),
+    doc(AGG, "last", ".last()", "The last value, empty or not."),
+    doc(
+        AGG,
+        "std",
+        ".std()",
+        "The standard deviation, of a sample. std(x, 0) is of a whole population.",
+    ),
+    doc(
+        AGG,
+        "var",
+        ".var()",
+        "The variance, of a sample. var(x, 0) is of a whole population.",
+    ),
+    doc(
+        AGG,
+        "quantile",
+        ".quantile(0.9)",
+        "The value a fraction of the way through the values in order: quantile(x, 0.5) is the \
+         median.",
+    ),
+    doc(
+        PIPE,
         "filter",
-        "Sheet |> filter(Column == value)",
-        "The rows of a sheet for which a condition holds.",
+        "|> filter(Column == value)",
+        "The rows for which a condition holds.",
     ),
     doc(
-        SHEET,
+        PIPE,
         "select",
-        "Sheet |> select(Column1, Column2)",
+        "|> select(Column1, Column2)",
         "A sheet with only the named columns.",
+    ),
+    doc(
+        PIPE,
+        "head",
+        "|> head(5)",
+        "The first rows of a sheet, or cells of a column.",
+    ),
+    doc(
+        PIPE,
+        "tail",
+        "|> tail(5)",
+        "The last rows of a sheet, or cells of a column.",
+    ),
+    doc(
+        PIPE,
+        "shift",
+        ".shift(1)",
+        "The value a number of rows back, empty where there is no such row.",
+    ),
+    doc(
+        PIPE,
+        "sort",
+        "|> sort(Column, desc)",
+        "The rows of a sheet in the order of one or more columns, or the cells of a column in \
+         their own order. Ascending unless the last word is desc; an empty cell comes first.",
+    ),
+    doc(
+        PIPE,
+        "group_by",
+        "sheet ByRegion := Sales |> group_by(Region) |> agg(Revenue.sum())",
+        "The rows of a sheet in groups, one for each value of the key columns, for agg to work \
+         out. It ends a sheet's formula, with agg after it.",
+    ),
+    doc(
+        PIPE,
+        "join",
+        "sheet Both := Sales |> join(Targets, Month, left)",
+        "The rows of two sheets paired where their key columns are equal, a row for every pair. \
+         Inner unless the last word is left, which keeps a row that matches none. An empty key \
+         matches nothing.",
+    ),
+    doc(
+        PIPE,
+        "agg",
+        "Sales |> group_by(Region) |> agg(Revenue.sum(), Orders := Item.len())",
+        "A row for each group: the key columns, then an aggregate of each group's rows. \
+         Revenue.sum() makes the column Revenue_sum, and Name := names it. The groups are in the \
+         order of their keys.",
+    ),
+    doc(MATH, "is_null", ".is_null()", "Whether a cell is empty."),
+    doc(
+        MATH,
+        "is_not_null",
+        ".is_not_null()",
+        "Whether a cell holds a value.",
+    ),
+    doc(
+        MATH,
+        "is_nan",
+        ".is_nan()",
+        "Whether a cell holds NaN (Not a Number).",
+    ),
+    doc(
+        MATH,
+        "is_not_nan",
+        ".is_not_nan()",
+        "Whether a cell is not a NaN.",
+    ),
+    doc(
+        MATH,
+        "fill_null",
+        "fill_null(x, 0)",
+        "The value, or something else where it is empty. The same as x // 0.",
+    ),
+    doc(
+        MATH,
+        "is_in",
+        "is_in(x, [1, 2, 3])",
+        "Whether a value is one of several. The same as x in [1, 2, 3].",
     ),
     doc(
         MATH,
         "succ",
         "succ(x)",
-        "The next value: a number plus one, or the next text in the way letters and digits count up, AZ to BA. The step a sequence takes when its terms give no other.",
+        "The next value: a number plus one, or the text in alphabetical order, AZ to BA.",
     ),
-    doc(
+    math_doc(
         MATH,
         "abs",
         "abs(x)",
         "The size of a number without its sign, or the modulus of a complex number.",
+        MathFn::Abs,
     ),
-    doc(
+    math_doc(
         MATH,
         "sign",
         "sign(x)",
         "-1, 0 or 1 according to the sign of a number.",
+        MathFn::Sign,
     ),
-    doc(
+    math_doc(
         MATH,
         "round",
-        "round(x, scale)",
-        "The nearest whole number, or with a scale the nearest multiple of it: round(x, 0.01) is to the hundredth, round(x, 100) to the hundred. A half rounds away from zero.",
+        "round(x, 2)",
+        "The nearest whole number, or the nearest at count decimal places. A half rounds away from \
+         zero.",
+        MathFn::Round,
     ),
-    doc(
+    math_doc(
         MATH,
         "floor",
         "floor(x)",
         "The largest whole number not above x.",
+        MathFn::Floor,
     ),
-    doc(
+    math_doc(
         MATH,
         "ceil",
         "ceil(x)",
         "The smallest whole number not below x.",
+        MathFn::Ceil,
     ),
-    doc(
+    math_doc(
         MATH,
         "sqrt",
         "sqrt(x)",
-        "The square root, as a Num. A negative x needs a complex number: sqrt(-4+0i).",
+        "The square root, as a Float. A negative x needs a complex number: sqrt(-4+0i).",
+        MathFn::Sqrt,
+    ),
+    doc(CONVERT, "Integer", ".Integer", "A whole number: truncates."),
+    doc(
+        CONVERT,
+        "Hex",
+        ".Hex",
+        "A whole number shown in hex, as Integer(x) gives it: 255 gives 0xff. Also written \
+         Hex(x).",
     ),
     doc(
         CONVERT,
-        "Int",
-        "x.Int",
-        "A whole number: a fraction loses its fractional part, so 19.99 gives 19 and -19.99 \
-         gives -19. Also written Int(x).",
+        "Octal",
+        ".Octal",
+        "A whole number shown in octal, as Integer(x) gives it: 15 gives 0o17. Also written \
+         Octal(x).",
+    ),
+    doc(
+        CONVERT,
+        "Binary",
+        ".Binary",
+        "A whole number shown in binary, as Integer(x) gives it: 5 gives 0b101. Also written \
+         Binary(x).",
     ),
     doc(
         CONVERT,
         "Decimal",
-        "x.Decimal",
-        "The same exact number shown as a decimal: a Num as the decimal it is shown as, and a \
-         Fraction such as 1/8 as 0.125. One that does not end, such as 1/3, is shown cut and \
-         marked, 0.333…, and held in full. Also written Decimal(x).",
+        ".Decimal",
+        "An exact number shown as a decimal.",
     ),
     doc(
         CONVERT,
         "Fraction",
-        "x.Fraction",
-        "The same number as a fraction: 2.75 gives 2 3/4. A Num as the decimal it is shown as. \
-         Also written Fraction(x).",
+        ".Fraction",
+        "A Decimal shown as a fraction.",
     ),
     doc(
         CONVERT,
         "Percent",
-        "x.Percent",
-        "The same number as a percentage: 0.4 gives 40% and 5/12 gives 41.67…%. Also written \
-         Percent(x).",
+        ".Percent",
+        "A Decimal shown as a percentage (%).",
     ),
+    doc(CONVERT, "Float", ".Float", "A floating-point number."),
+    doc(CONVERT, "String", ".String", "Any value as text."),
     doc(
         CONVERT,
-        "Num",
-        "x.Num",
-        "A floating-point Num from an exact number. Also written Num(x).",
-    ),
-    doc(
-        CONVERT,
-        "Text",
-        "x.Text",
-        "Any value as text, written the way a file writes it. Also written Text(x).",
-    ),
-    doc(
-        CONVERT,
-        "Bool",
-        "x.Bool",
-        "true for a number that is not zero, false for zero. Also written Bool(x).",
+        "Boolean",
+        ".Boolean",
+        "true for a number that is not zero, false for zero.",
     ),
     doc(
         CONVERT,
         "Date",
-        "x.Date",
-        "The Date of a DateTime, or of text such as \"2025-01-31\". Also written Date(x).",
+        ".Date",
+        "The Date of a Datetime, or of text such as \"2025-01-31\".",
     ),
     doc(
         CONVERT,
         "Time",
-        "x.Time",
-        "The Time of a DateTime, or of text such as \"09:30\". Also written Time(x).",
+        ".Time",
+        "The Time of a Datetime, or of text such as \"09:30\".",
     ),
     doc(
         CONVERT,
-        "DateTime",
-        "x.DateTime",
-        "A Date at midnight, or text such as \"2025-01-31T09:30\". Also written DateTime(x).",
+        "Datetime",
+        ".Datetime",
+        "A Date at midnight, or text such as \"2025-01-31T09:30\".",
     ),
-    doc(LOG, "exp", "exp(x)", "e raised to the power x."),
+    doc(
+        CONVERT,
+        "cast",
+        "cast(x, Int)",
+        "A value as another type: the same as Int(x) and x.Int.",
+    ),
+    math_doc(
+        LOG,
+        "exp",
+        "exp(x)",
+        "e raised to the power x.",
+        MathFn::Exp,
+    ),
     doc(
         LOG,
         "e",
         "e()",
         "The base of the natural logarithm, 2.71828...",
     ),
-    doc(
+    math_doc(
         LOG,
         "ln",
         "ln(x)",
         "The natural logarithm. x must be positive.",
+        MathFn::Ln,
     ),
-    doc(
+    math_doc(
         LOG,
         "log10",
         "log10(x)",
         "The logarithm to base 10. x must be positive.",
+        MathFn::Log10,
     ),
-    doc(
+    math_doc(
         LOG,
         "log2",
         "log2(x)",
         "The logarithm to base 2. x must be positive.",
+        MathFn::Log2,
     ),
-    doc(TRIG, "sin", "sin(x)", "The sine of an angle in radians."),
-    doc(TRIG, "cos", "cos(x)", "The cosine of an angle in radians."),
-    doc(TRIG, "tan", "tan(x)", "The tangent of an angle in radians."),
-    doc(
+    math_doc(TRIG, "sin", "sin(x)", "The sine.", MathFn::Sin),
+    math_doc(
         TRIG,
-        "asin",
-        "asin(x)",
+        "cos",
+        "cos(x)",
+        "The cosine of an angle in radians.",
+        MathFn::Cos,
+    ),
+    math_doc(
+        TRIG,
+        "tan",
+        "tan(x)",
+        "The tangent of an angle in radians.",
+        MathFn::Tan,
+    ),
+    math_doc(
+        TRIG,
+        "arcsin",
+        "arcsin(x)",
         "The angle in radians whose sine is x, for x from -1 to 1.",
+        MathFn::Arcsin,
     ),
-    doc(
+    math_doc(
         TRIG,
-        "acos",
-        "acos(x)",
+        "arccos",
+        "arccos(x)",
         "The angle in radians whose cosine is x, for x from -1 to 1.",
+        MathFn::Arccos,
     ),
-    doc(
+    math_doc(
         TRIG,
-        "atan",
-        "atan(x)",
+        "arctan",
+        "arctan(x)",
         "The angle in radians whose tangent is x.",
+        MathFn::Arctan,
     ),
-    doc(TRIG, "sinh", "sinh(x)", "The hyperbolic sine."),
-    doc(TRIG, "cosh", "cosh(x)", "The hyperbolic cosine."),
-    doc(TRIG, "tanh", "tanh(x)", "The hyperbolic tangent."),
-    doc(
+    math_doc(
+        TRIG,
+        "sinh",
+        "sinh(x)",
+        "The hyperbolic sine.",
+        MathFn::Sinh,
+    ),
+    math_doc(
+        TRIG,
+        "cosh",
+        "cosh(x)",
+        "The hyperbolic cosine.",
+        MathFn::Cosh,
+    ),
+    math_doc(
+        TRIG,
+        "tanh",
+        "tanh(x)",
+        "The hyperbolic tangent.",
+        MathFn::Tanh,
+    ),
+    math_doc(
         TRIG,
         "radians",
         "radians(180)",
         "An angle in degrees, in radians.",
+        MathFn::Radians,
     ),
-    doc(
+    math_doc(
         TRIG,
         "degrees",
         "degrees(pi())",
         "An angle in radians, in degrees.",
+        MathFn::Degrees,
     ),
     doc(
         TRIG,
         "pi",
         "pi()",
         "The ratio of a circle's circumference to its diameter, 3.14159...",
-    ),
-    doc(
-        COMPLEX,
-        "Complex",
-        "Complex(re, im)",
-        "A complex number from its real and imaginary parts, or from a real number: x.Complex. \
-         Also written 3+4i.",
-    ),
-    doc(COMPLEX, "re", "re(z)", "The real part of a complex number."),
-    doc(
-        COMPLEX,
-        "im",
-        "im(z)",
-        "The imaginary part of a complex number.",
-    ),
-    doc(
-        COMPLEX,
-        "conj",
-        "conj(z)",
-        "The complex conjugate: the imaginary part with its sign changed.",
-    ),
-    doc(
-        COMPLEX,
-        "arg",
-        "arg(z)",
-        "The angle of a complex number, in radians from -pi to pi.",
     ),
     doc(
         TIME,
@@ -433,101 +560,161 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "now()",
         "The date and time now, in the file's time zone.",
     ),
-    doc(
-        TIME,
-        "year",
-        "Sheet.Column.year()",
-        "The year of a Date or DateTime.",
-    ),
-    doc(
-        TIME,
-        "month",
-        "Sheet.Column.month()",
-        "The month, 1 to 12, of a Date or DateTime.",
-    ),
-    doc(
-        TIME,
-        "day",
-        "Sheet.Column.day()",
-        "The day of the month of a Date or DateTime.",
-    ),
+    doc(TIME, "year", ".year()", "The year of a Date or Datetime."),
+    doc(TIME, "month", ".month()", "The month, 1 to 12."),
+    doc(TIME, "day", ".day()", "The day."),
     doc(
         TIME,
         "add_months",
         "add_months(x, n)",
-        "A date n months on, keeping the day of the month, or the last day of a month too short for it: a month after 2025-01-31 is 2025-02-28. Write it as x + n.month, and x + n.year for years.",
+        "A date n months on, keeping the day of the month, or the last day of a month too short. \
+         Write it as x + n.month, and x + n.year for years.",
     ),
     doc(
         TIME,
-        "eom",
-        "eom(x)",
+        "month_end",
+        "month_end(x)",
         "The last day of the month a date is in.",
     ),
     doc(
         TIME,
+        "month_start",
+        "month_start(x)",
+        "The first day of the month a date is in.",
+    ),
+    doc(
+        TIME,
+        "quarter",
+        ".quarter()",
+        "The quarter of the year, 1 to 4.",
+    ),
+    doc(
+        TIME,
+        "week",
+        ".week()",
+        "The ISO week of the year, 1 to 53. A week belongs to the year its Thursday is in.",
+    ),
+    doc(
+        TIME,
+        "ordinal_day",
+        ".ordinal_day()",
+        "The day of the year, 1 to 366.",
+    ),
+    doc(
+        TIME,
         "weekday",
-        "Sheet.Column.weekday()",
+        ".weekday()",
         "The day of the week, 1 for Monday to 7 for Sunday.",
     ),
+    doc(TIME, "hour", ".hour()", "The hour, 0 to 23."),
+    doc(TIME, "minute", ".minute()", "The minute."),
+    doc(TIME, "second", ".second()", "The second."),
     doc(
         TIME,
-        "hour",
-        "Sheet.Column.hour()",
-        "The hour, 0 to 23, of a Time or DateTime.",
+        "millisecond",
+        ".millisecond()",
+        "The milliseconds left over after the second: 500 of 09:30:00.5.",
     ),
     doc(
         TIME,
-        "minute",
-        "Sheet.Column.minute()",
-        "The minute of a Time or DateTime.",
+        "microsecond",
+        ".microsecond()",
+        "The microseconds left over after the second: 500000 of 09:30:00.5.",
     ),
     doc(
         TIME,
-        "second",
-        "Sheet.Column.second()",
-        "The second of a Time or DateTime.",
+        "nanosecond",
+        ".nanosecond()",
+        "The nanoseconds left over after the second of a Time: 500000000 of 09:30:00.5. A Datetime \
+         is held to the microsecond, ends in 000.",
     ),
     doc(
         TIME,
-        "date",
-        "Sheet.Column.date()",
-        "The Date half of a DateTime.",
+        "total_days",
+        ".total_days()",
+        "A Duration in days, exactly: 0.5 of PT12H.",
     ),
     doc(
         TIME,
-        "time",
-        "Sheet.Column.time()",
-        "The Time half of a DateTime.",
+        "total_hours",
+        ".total_hours()",
+        "A Duration in hours, exactly: 1.5 of PT1H30M.",
     ),
     doc(
         TIME,
-        "to_zone",
-        "Column.to_zone(\"Australia/Adelaide\")",
+        "total_minutes",
+        ".total_minutes()",
+        "A Duration in minutes, exactly: 90 of PT1H30M.",
+    ),
+    doc(
+        TIME,
+        "total_seconds",
+        ".total_seconds()",
+        "A Duration in seconds, exactly: 0.5 of PT0.5S.",
+    ),
+    doc(TIME, "date", ".date()", "The Date part of a Datetime."),
+    doc(TIME, "time", ".time()", "The Time partf of a Datetime."),
+    doc(
+        TIME,
+        "convert_time_zone",
+        ".convert_time_zone(\"Australia/Adelaide\")",
         "The same instant on the clocks of a named time zone.",
     ),
     doc(
         TIME,
         "utc",
-        "Column.utc()",
+        ".utc()",
         "The same instant on the clocks of UTC.",
     ),
     doc(
         TIME,
         "local",
-        "Column.local()",
+        ".local()",
         "The same instant on the clocks of this machine.",
     ),
     doc(
         TIME,
-        "offset",
-        "Column.offset()",
-        "The seconds a DateTime is ahead of UTC.",
+        "base_utc_offset",
+        ".base_utc_offset()",
+        "The seconds a Datetime is ahead of UTC.",
     ),
     doc(
         TIME,
-        "zone",
-        "Column.zone()",
-        "The name of a DateTime's time zone.",
+        "time_zone",
+        ".time_zone()",
+        "The name of a Datetime's time zone.",
+    ),
+    // Operators, listed by their symbols, which no function can be named.
+    doc(
+        BITWISE,
+        "+&",
+        "a +& b",
+        "Bitwise and: the bits set in both.",
+    ),
+    doc(
+        BITWISE,
+        "+|",
+        "a +| b",
+        "Bitwise or: the bits set in either.",
+    ),
+    doc(
+        BITWISE,
+        "+^",
+        "a +^ b",
+        "Bitwise xor: the bits set in one but not both.",
+    ),
+    doc(
+        BITWISE,
+        "+^a",
+        "+^a",
+        "The complement: every bit flipped, so +^0xff gives 0xffffffffffffff00.",
+    ),
+    doc(BITWISE, "+<", "a +< n", "Shift left by n bits, 0 to 63."),
+    doc(
+        BITWISE,
+        "+>",
+        "a +> n",
+        "Shift right by n bits, keeping the sign: -16 +> 2 gives -4.",
     ),
 ];
 
@@ -545,9 +732,16 @@ mod tests {
             );
             assert!(f.usage.contains(f.name), "{}", f.name);
         }
-        for (name, m) in MathFn::ALL {
-            assert_eq!(MathFn::from_name(name), Some(m));
-            assert!(FUNCTIONS.iter().any(|f| f.name == name), "{name}");
+        // One table: a `MathFn` is found by the name it is listed under,
+        // and is listed exactly once.
+        for f in FUNCTIONS {
+            if let Some(m) = f.math {
+                assert_eq!(MathFn::from_name(f.name), Some(m), "{}", f.name);
+                assert_eq!(m.name(), f.name);
+            }
+        }
+        for m in [MathFn::Abs, MathFn::Round, MathFn::Arcsin, MathFn::Degrees] {
+            assert!(!m.name().is_empty());
         }
     }
 }

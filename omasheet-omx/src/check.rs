@@ -7,19 +7,18 @@
 //! orders the calculation. Nothing is evaluated here.
 
 use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
+use crate::colfmt::Format;
 use crate::convert::{lit_type, parse_literal};
 use crate::cycle::{self, Cyc};
 use crate::date;
+use crate::decimal::Dec;
 use crate::deps;
 use crate::diag::{Diagnostic, Span};
-use crate::file::{FileAst, parse_file};
+use crate::file::{FileAst, SourceDecl, parse_file};
 use crate::funcs::{FUNCTIONS, MathFn};
 use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use crate::parser::parse_expr;
-use crate::types::{DepKind, S, SheetTy, Ty};
-use num_bigint::BigInt;
-use num_rational::BigRational;
-use num_traits::ToPrimitive;
+use crate::types::{Base, DepKind, S, SheetTy, Ty};
 use std::mem;
 use std::rc::Rc;
 
@@ -44,6 +43,51 @@ pub struct Sheet {
     pub name: String,
     pub cols: Vec<Column>,
     pub nrows: usize,
+    /// Where the rows come from, for a sheet declared with `table`. Its
+    /// columns are `ColKind::Frame`, and both the rows and `nrows` are filled
+    /// in after checking by whoever can read the file.
+    pub source: Option<Source>,
+    /// The sheets this one's formulas read row for row, for a sheet written
+    /// with no rows of its own: its `nrows` is the longest of theirs, or one
+    /// row when it reads none, which [`resolve_rows`] works out once their
+    /// own counts are known. `None` for a sheet whose rows are in the text
+    /// or in a file.
+    pub rows_from: Option<Vec<usize>>,
+    /// The expression of a sheet computed from one, `sheet Top := Sales |>
+    /// head(3)`, and the shape it gives. Its columns are `ColKind::View`,
+    /// and its `nrows` is not known until the expression is evaluated, as a
+    /// table's is not known until its file is read (D92).
+    pub view: Option<Node>,
+    pub view_of: Option<SheetTy>,
+    /// The key columns of a sheet computed by `group_by` and `agg`, in the
+    /// sheet [`Sheet::view`] gives: that sheet's rows are then grouped, one
+    /// row a group, and the view keeps the first row of each (D81, D82).
+    pub group: Option<Vec<usize>>,
+    /// What a sheet computed by `join` joins the sheet [`Sheet::view`]
+    /// gives to (D85).
+    pub join: Option<Join>,
+}
+
+/// A join of the sheet a view gives to another: its rows are the pairs of
+/// rows whose keys are equal, the left sheet's columns read at the left row
+/// and the right's at the right row.
+#[derive(Debug)]
+pub struct Join {
+    /// The sheet joined to, as an expression giving one.
+    pub right: Node,
+    /// The key columns, in the left sheet and in the right, in pairs.
+    pub left_keys: Vec<usize>,
+    pub right_keys: Vec<usize>,
+    /// A left join, which keeps a left row that matches nothing.
+    pub left: bool,
+}
+
+/// The file a `table`'s rows live in: a path, which may be a glob.
+#[derive(Clone, Debug)]
+pub struct Source {
+    pub path: String,
+    /// The string in the `table` line, for a diagnostic to point at.
+    pub span: Span,
 }
 
 #[derive(Debug)]
@@ -54,12 +98,41 @@ pub struct Column {
     /// The type was written in the schema rather than inferred.
     pub declared: bool,
     pub kind: ColKind,
+    /// The name the file holds this column under, when a `from` clause
+    /// says it is not [`Column::name`]. Only a table's column has one.
+    pub from: Option<String>,
+    /// How the column's values are shown, where its type line says:
+    /// `Price : Decimal['.2f]`.
+    pub format: Option<Format>,
+    /// Every reference the formula makes reaches the row it is evaluated
+    /// for, so the whole column is one expression over the columns it
+    /// reads rather than a calculation per row. The dependency analysis
+    /// already decides this, in [`DepKind::Same`]; it is kept here for
+    /// whoever evaluates the column. False for a column whose values are
+    /// not a formula at all, which has nothing to be lowered.
+    pub elementwise: bool,
 }
 
 #[derive(Debug)]
 pub enum ColKind {
     Data(Vec<Cell>),
     Computed(Node),
+    /// A column whose rows come from the sheet's [`Source`] rather than
+    /// from the text, so it has no cells here and none with spans. Its
+    /// values stay where the source holds them, and whoever reads the
+    /// source keeps them.
+    Frame,
+    /// A column of a sheet computed from an expression, `sheet Top := Sales
+    /// |> head(3)`: its values are the source sheet's own, at the rows the
+    /// view keeps. The `usize` is the column's place in the source sheet
+    /// (D90, D91).
+    View(usize),
+    /// An aggregate of a sheet computed by `group_by` and `agg`, evaluated
+    /// once a group, its column names reading the rows of that group.
+    Agg(Node),
+    /// A column of the right sheet of a sheet computed by `join`, read at
+    /// the right row each row of the join pairs: its place there.
+    Joined(usize),
 }
 
 #[derive(Debug)]
@@ -133,6 +206,8 @@ type Dep = (DepNode, DepKind);
 enum ColSrc {
     /// Index into the header row.
     Data(usize),
+    /// A column of a `table`: its rows are read from the sheet's source.
+    Frame,
     /// Index into the sheet's computed declarations.
     Computed(usize),
     /// Already checked (when compiling an expression against a program).
@@ -144,6 +219,7 @@ struct ColInfo {
     span: Span,
     declared: Option<S>,
     src: ColSrc,
+    from: Option<String>,
 }
 
 struct SheetInfo {
@@ -151,6 +227,9 @@ struct SheetInfo {
     decl: usize,
     cols: Vec<ColInfo>,
     nrows: usize,
+    source: Option<Source>,
+    /// Written with no table of its own: every column is a `:=` line.
+    rowless: bool,
 }
 
 struct ConstInfo {
@@ -174,6 +253,9 @@ struct Scope {
     own: bool,
     /// The column that owns the expression, in the sheet of `frames[0]`.
     col: Option<usize>,
+    /// The sheet being grouped, inside an aggregate of `agg`: a name of one
+    /// of its columns is that column over the rows of one group.
+    group: Option<SheetTy>,
 }
 
 struct RowPick {
@@ -224,6 +306,21 @@ struct Checker<'a> {
     col_state: Vec<Vec<St<S>>>,
     col_out: Vec<Vec<Option<ColKind>>>,
     col_deps: Vec<Vec<Vec<Dep>>>,
+    /// Per sheet and column, whether every column it reads it reads in the
+    /// same row: [`Column::elementwise`]. Worked out in [`Checker::order`],
+    /// which is where the dependencies are still to hand.
+    elementwise: Vec<Vec<bool>>,
+    /// Per sheet, the other sheets its formulas pick a row of with the
+    /// cursor, each once. A sheet that holds no rows is as long as these.
+    row_reads: Vec<Vec<usize>>,
+    /// The lowered expression of each sheet computed from one, its shape,
+    /// and what it read: the same three a const keeps, a view being a
+    /// sheet-valued expression with no row around it (D90).
+    view_state: Vec<St<Ty>>,
+    view_out: Vec<Option<Node>>,
+    group_out: Vec<Option<Vec<usize>>>,
+    join_out: Vec<Option<Join>>,
+    view_deps: Vec<Vec<(DepNode, DepKind)>>,
     const_state: Vec<St<Ty>>,
     const_out: Vec<Option<Node>>,
     const_deps: Vec<Vec<Dep>>,
@@ -246,6 +343,11 @@ pub fn compile(text: &str, src: u32) -> (Program, Vec<Diagnostic>) {
     for i in 0..ck.consts.len() {
         ck.ensure_const(i);
     }
+    // A view before the columns of any sheet: a sheet computed from an
+    // expression has no columns until its expression says what they are.
+    for t in 0..ck.sheets.len() {
+        ck.ensure_view(t);
+    }
     for t in 0..ck.sheets.len() {
         for c in 0..ck.sheets[t].cols.len() {
             ck.ensure_col(t, c);
@@ -254,7 +356,43 @@ pub fn compile(text: &str, src: u32) -> (Program, Vec<Diagnostic>) {
     let order = ck.order();
     diags.append(&mut ck.done);
     diags.sort_by_key(|d| (d.span.start, d.span.end));
-    (ck.finish(order), diags)
+    let mut program = ck.finish(order);
+    resolve_rows(&mut program);
+    (program, diags)
+}
+
+/// Fix the row count of every sheet written with no rows of its own: the
+/// longest of the sheets its formulas read row for row, or one row when
+/// they read none. A `table`'s own count is not known until its file is
+/// read, so this is called again once it is, and a sheet that reads another
+/// rowless sheet settles after it rather than in the same pass.
+pub fn resolve_rows(program: &mut Program) {
+    let plan: Vec<(usize, Vec<usize>)> = program
+        .sheets
+        .iter()
+        .enumerate()
+        .filter_map(|(t, sheet)| sheet.rows_from.clone().map(|from| (t, from)))
+        .collect();
+    for _ in 0..plan.len() {
+        let mut moved = false;
+        for (t, from) in &plan {
+            let rows = match from.as_slice() {
+                [] => 1,
+                read => read
+                    .iter()
+                    .map(|&s| program.sheets[s].nrows)
+                    .max()
+                    .unwrap_or(0),
+            };
+            if program.sheets[*t].nrows != rows {
+                program.sheets[*t].nrows = rows;
+                moved = true;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
 }
 
 /// Compile one expression that may refer to the sheets and constants of
@@ -266,6 +404,7 @@ pub fn compile_expr(prog: &Program, text: &str, src: u32) -> Result<(Node, Ty), 
         frames: Vec::new(),
         own: false,
         col: None,
+        group: None,
     };
     let out = ck.lower(&expr, &mut scope);
     if ck.cur.is_empty() {
@@ -278,7 +417,7 @@ pub fn compile_expr(prog: &Program, text: &str, src: u32) -> Result<(Node, Ty), 
 fn static_of(e: &Expr) -> Option<Static> {
     fn int(e: &Expr) -> Option<i64> {
         match &e.kind {
-            ExprKind::Lit(Lit::Int(n)) => n.to_i64(),
+            ExprKind::Lit(Lit::Int(n, _)) => Some(*n),
             ExprKind::Unary(UnOp::Neg, inner) => int(inner).map(|n| -n),
             _ => None,
         }
@@ -294,15 +433,15 @@ fn static_of(e: &Expr) -> Option<Static> {
 }
 
 /// A seed written as a plain number, for working out the step.
-fn seed_num(e: &Expr) -> Option<BigRational> {
+fn seed_num(e: &Expr) -> Option<Dec> {
     match &e.kind {
-        ExprKind::Lit(Lit::Int(i)) => Some(BigRational::from(i.clone())),
-        ExprKind::Lit(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)) => Some(r.clone()),
-        ExprKind::Unary(UnOp::Neg, inner) => seed_num(inner).map(|r| -r),
+        ExprKind::Lit(Lit::Int(i, _)) => Some(Dec::from_i64(*i)),
+        ExprKind::Lit(Lit::Decimal(r) | Lit::Percent(r)) => Some(*r),
+        ExprKind::Unary(UnOp::Neg, inner) => seed_num(inner).and_then(|r| r.checked_neg()),
         // `1/3` written out, where the lexer did not take it for one.
         ExprKind::Binary(BinOp::Div, a, b) => {
             let (a, b) = (seed_num(a)?, seed_num(b)?);
-            (!b.is_integer() || b.to_integer() != BigInt::from(0)).then(|| a / b)
+            a.checked_div(b)
         }
         _ => None,
     }
@@ -315,16 +454,24 @@ enum Rule {
     Named(Cyc, i64),
     /// Dates a whole number of months apart, counted from the first so
     /// that a month end stays a month end rather than drifting back.
-    Monthly { first: i32, step: i64, on: i64 },
+    Monthly {
+        first: i32,
+        step: i64,
+        on: i64,
+    },
 }
 
 /// A seed written as a date, time or date-time, as its own count of days
 /// or seconds. Such a sequence only ever steps by a constant.
+/// A seed of a sequence of dates or times, in the unit a whole number
+/// beside it means: days for a `Date`, seconds for a `Time` or a
+/// `Datetime`. That is the unit the step is then written in, so it is the
+/// unit the terms must be compared in — not the finer one they are held in.
 fn seed_time(e: &Expr) -> Option<i64> {
     match &e.kind {
         ExprKind::Lit(Lit::Date(d)) => Some(*d as i64),
-        ExprKind::Lit(Lit::Time(t)) => Some(*t as i64),
-        ExprKind::Lit(Lit::DateTime(t)) => Some(*t),
+        ExprKind::Lit(Lit::Time(t)) => Some(t.div_euclid(date::NANOS)),
+        ExprKind::Lit(Lit::DateTime(t)) => Some(t.div_euclid(date::MICROS)),
         _ => None,
     }
 }
@@ -340,10 +487,10 @@ fn duration_of(e: &Expr) -> Option<(i64, &'static str)> {
     let unit = ["day", "week", "month", "year"]
         .into_iter()
         .find(|u| *u == name)?;
-    let ExprKind::Lit(Lit::Int(n)) = &base.kind else {
+    let ExprKind::Lit(Lit::Int(n, _)) = &base.kind else {
         return None;
     };
-    Some((n.to_i64()?, unit))
+    Some((*n, unit))
 }
 
 /// A seed written as a plain date, which is the only kind that can step
@@ -358,17 +505,16 @@ fn seed_date(e: &Expr) -> Option<i32> {
 /// A seed written as plain text.
 fn seed_text(e: &Expr) -> Option<&str> {
     match &e.kind {
-        ExprKind::Lit(Lit::Text(s)) => Some(s),
+        ExprKind::Lit(Lit::String(s)) => Some(s),
         _ => None,
     }
 }
 
 /// A worked-out step as a literal: a whole number where it is one.
-fn num_lit(r: BigRational) -> Lit {
-    if r.is_integer() {
-        Lit::Int(r.to_integer())
-    } else {
-        Lit::Decimal(r)
+fn num_lit(r: Dec) -> Lit {
+    match r.to_i64() {
+        Some(n) => Lit::Int(n, Base::Dec),
+        None => Lit::Decimal(r),
     }
 }
 
@@ -404,13 +550,56 @@ fn monthly_step(seeds: &[Expr]) -> Option<Rule> {
     })
 }
 
+/// The base, keys and aggregates of `Base |> group_by(Keys) |> agg(Aggs)`.
+fn grouped(e: &Expr) -> Option<(&Expr, &[Expr], &[Expr])> {
+    let ExprKind::Call(name, _, args) = &e.kind else {
+        return None;
+    };
+    if name != "agg" {
+        return None;
+    }
+    let (inner, aggs) = args.split_first()?;
+    let ExprKind::Call(name, _, args) = &inner.kind else {
+        return None;
+    };
+    if name != "group_by" {
+        return None;
+    }
+    let (base, keys) = args.split_first()?;
+    Some((base, keys, aggs))
+}
+
+/// The name an aggregate's column takes from the expression, when it is a
+/// function of one column: `Revenue.sum()` is `Revenue_sum` (D83).
+fn derived_name(e: &Expr) -> Option<String> {
+    let ExprKind::Call(func, _, args) = &e.kind else {
+        return None;
+    };
+    match args.first().map(|a| &a.kind) {
+        Some(ExprKind::Name(col)) => Some(format!("{col}_{func}")),
+        _ => None,
+    }
+}
+
+/// An expression as it would be written, for a `help:` line: a column's
+/// name, which is the one the mistake it is for will have.
+fn source_text(e: &Expr) -> String {
+    match &e.kind {
+        ExprKind::Name(n) => n.clone(),
+        _ => "Column".into(),
+    }
+}
+
 fn has_cursor(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Cursor => true,
         ExprKind::Lit(_) | ExprKind::Name(_) | ExprKind::Own | ExprKind::Back(_) => false,
         // A sequence makes its own cursor reads when it is lowered.
         ExprKind::Seq { .. } => false,
-        ExprKind::Unary(_, a) | ExprKind::Field(a, ..) => has_cursor(a),
+        ExprKind::Unary(_, a)
+        | ExprKind::Field(a, ..)
+        | ExprKind::Named(_, _, a)
+        | ExprKind::By(a, _) => has_cursor(a),
         ExprKind::Binary(_, a, b) => has_cursor(a) || has_cursor(b),
         ExprKind::If(a, b, c) => has_cursor(a) || has_cursor(b) || has_cursor(c),
         ExprKind::VecLit(items) | ExprKind::Call(_, _, items) => items.iter().any(has_cursor),
@@ -474,6 +663,13 @@ impl<'a> Checker<'a> {
             col_state: Vec::new(),
             col_out: Vec::new(),
             col_deps: Vec::new(),
+            elementwise: Vec::new(),
+            row_reads: Vec::new(),
+            view_state: Vec::new(),
+            view_out: Vec::new(),
+            group_out: Vec::new(),
+            join_out: Vec::new(),
+            view_deps: Vec::new(),
             const_state: Vec::new(),
             const_out: Vec::new(),
             const_deps: Vec::new(),
@@ -489,10 +685,18 @@ impl<'a> Checker<'a> {
         for (i, t) in prog.sheets.iter().enumerate() {
             ck.col_state
                 .push(t.cols.iter().map(|c| St::Done(c.ty)).collect());
+            ck.row_reads.push(Vec::new());
+            ck.view_state.push(St::Done(Ty::Any));
+            ck.view_out.push(None);
+            ck.group_out.push(None);
+            ck.join_out.push(None);
+            ck.view_deps.push(Vec::new());
             ck.sheets.push(SheetInfo {
                 name: t.name.clone(),
                 decl: i,
                 nrows: t.nrows,
+                source: t.source.clone(),
+                rowless: t.rows_from.is_some(),
                 cols: t
                     .cols
                     .iter()
@@ -501,6 +705,7 @@ impl<'a> Checker<'a> {
                         span: c.span,
                         declared: None,
                         src: ColSrc::Done,
+                        from: c.from.clone(),
                     })
                     .collect(),
             });
@@ -532,6 +737,40 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let mut cols: Vec<ColInfo> = Vec::new();
+            // A sheet written as `:=` lines alone holds no rows: its columns
+            // are those lines, in the order they are written, and its row
+            // count is the one of the sheets they read.
+            let rowless = t.source.is_none()
+                && t.header.is_empty()
+                && t.rows.is_empty()
+                && !t.computed.is_empty();
+            // A `table` has no rows in the text: its columns are the schema
+            // lines, in the order they are written, and what they are read
+            // from is the source.
+            let source = t.source.as_ref().and_then(|s| ck.source_path(s, &t.name));
+            if t.source.is_some() {
+                if !t.rows.is_empty() || !t.header.is_empty() {
+                    ck.done.push(
+                        Diagnostic::new(
+                            t.header_line,
+                            format!("table `{}` has rows of its own", t.name),
+                        )
+                        .with_help("a table's rows come from its source: remove them"),
+                    );
+                }
+                for line in &t.schema {
+                    if cols.iter().any(|c| c.name == line.name) {
+                        continue;
+                    }
+                    cols.push(ColInfo {
+                        name: line.name.clone(),
+                        span: line.span,
+                        declared: None,
+                        src: ColSrc::Frame,
+                        from: line.from.clone(),
+                    });
+                }
+            }
             for (h, (name, span)) in t.header.iter().enumerate() {
                 if cols.iter().any(|c| &c.name == name) {
                     ck.done.push(Diagnostic::new(
@@ -565,6 +804,7 @@ impl<'a> Checker<'a> {
                     span: *span,
                     declared: None,
                     src,
+                    from: None,
                 });
             }
             for (k, cd) in t.computed.iter().enumerate() {
@@ -578,19 +818,21 @@ impl<'a> Checker<'a> {
                     }
                     continue;
                 }
-                ck.done.push(
-                    Diagnostic::new(
-                        cd.span,
-                        format!(
-                            "formula column `{}` is not in the header row of sheet `{}`",
-                            cd.name, t.name
-                        ),
-                    )
-                    .with_help(format!(
-                        "name `{}` in the header row where it goes, and write `*` in its cells",
-                        cd.name
-                    )),
-                );
+                if t.source.is_none() && !rowless {
+                    ck.done.push(
+                        Diagnostic::new(
+                            cd.span,
+                            format!(
+                                "formula column `{}` is not in the header row of sheet `{}`",
+                                cd.name, t.name
+                            ),
+                        )
+                        .with_help(format!(
+                            "name `{}` in the header row where it goes, and write `*` in its cells",
+                            cd.name
+                        )),
+                    );
+                }
                 // It is still a column, so that what reads it is not also
                 // reported.
                 cols.push(ColInfo {
@@ -598,9 +840,21 @@ impl<'a> Checker<'a> {
                     span: cd.span,
                     declared: None,
                     src: ColSrc::Computed(k),
+                    from: None,
                 });
             }
             for line in &t.schema {
+                if line.from.is_some() && t.source.is_none() {
+                    ck.done.push(
+                        Diagnostic::new(
+                            line.from_span,
+                            format!("sheet `{}` reads no file", t.name),
+                        )
+                        .with_help(
+                            "`from` names a column of a table's Parquet; this sheet holds its own rows",
+                        ),
+                    );
+                }
                 match cols.iter_mut().find(|c| c.name == line.name) {
                     Some(c) if c.declared.is_some() => ck.done.push(Diagnostic::new(
                         line.span,
@@ -623,11 +877,27 @@ impl<'a> Checker<'a> {
                 .push(cols.iter().map(|_| St::Pending).collect());
             ck.col_out.push(cols.iter().map(|_| None).collect());
             ck.col_deps.push(cols.iter().map(|_| Vec::new()).collect());
+            ck.row_reads.push(Vec::new());
+            // A sheet computed from an expression has it to lower, and its
+            // columns are not known until that is done (D91).
+            ck.view_state.push(match t.formula {
+                Some(_) => St::Pending,
+                None => St::Done(Ty::Any),
+            });
+            ck.view_out.push(None);
+            ck.group_out.push(None);
+            ck.join_out.push(None);
+            ck.view_deps.push(Vec::new());
             ck.sheets.push(SheetInfo {
                 name: t.name.clone(),
                 decl,
                 cols,
+                // A table's rows are not here to count: the row count comes
+                // from the file when the source is read, and a rowless
+                // sheet's from the sheets its formulas read.
                 nrows: t.rows.len(),
+                source,
+                rowless,
             });
         }
 
@@ -755,6 +1025,7 @@ impl<'a> Checker<'a> {
                     frames: Vec::new(),
                     own: false,
                     col: None,
+                    group: None,
                 };
                 self.lower(e, &mut scope)
             }
@@ -765,6 +1036,393 @@ impl<'a> Checker<'a> {
         self.const_deps[i] = mem::replace(&mut self.deps, saved.1);
         let mut found = mem::replace(&mut self.cur, saved.0);
         self.done.append(&mut found);
+    }
+
+    /// Lower the expression of a sheet computed from one. A view is a
+    /// sheet-valued expression with no row around it, so this is
+    /// [`Checker::ensure_const`] with a shape it insists on.
+    fn ensure_view(&mut self, t: usize) {
+        if !matches!(self.view_state[t], St::Pending) {
+            return;
+        }
+        let Some(ast) = self.ast else { return };
+        self.view_state[t] = St::Busy(Ty::Any);
+        let saved = (mem::take(&mut self.cur), mem::take(&mut self.deps));
+        let decl = &ast.sheets[self.sheets[t].decl];
+        let Some(formula) = decl.formula.as_ref() else {
+            self.view_state[t] = St::Done(Ty::Any);
+            return;
+        };
+        let made = formula.expr.as_ref().and_then(|e| {
+            if let Some((base, keys, aggs)) = grouped(e) {
+                Some(self.lower_group(t, base, keys, aggs, e.span))
+            } else if let ExprKind::Call(name, _, args) = &e.kind
+                && name == "join"
+            {
+                Some(self.lower_join(t, args, e.span))
+            } else {
+                None
+            }
+        });
+        if let Some((node, ty)) = made {
+            self.view_out[t] = Some(node);
+            self.view_state[t] = St::Done(ty);
+            self.view_deps[t] = mem::replace(&mut self.deps, saved.1);
+            let mut found = mem::replace(&mut self.cur, saved.0);
+            self.done.append(&mut found);
+            return;
+        }
+        let (node, ty) = match &formula.expr {
+            Some(e) => {
+                let mut scope = Scope {
+                    frames: Vec::new(),
+                    own: false,
+                    col: None,
+                    group: None,
+                };
+                self.lower(e, &mut scope)
+            }
+            None => (Node::error(formula.expr_span), Ty::Any),
+        };
+        // Only a sheet can be a sheet. A column, a number and a range are
+        // the three that will be tried.
+        let ty = match &ty {
+            Ty::Sheet(_) | Ty::Any => ty,
+            other => {
+                if !matches!(node.kind, Ir::Error) {
+                    self.err_help(
+                        formula.expr_span,
+                        format!(
+                            "sheet `{}` is computed from {}, and a sheet needs a sheet",
+                            decl.name,
+                            other.describe()
+                        ),
+                        "a sheet comes of a sheet and the stages over one, such as `Sales |> head(3)`",
+                    );
+                }
+                Ty::Any
+            }
+        };
+        // Its columns, each the source sheet's at the place the view keeps
+        // it. Made here rather than in `finish` so that a sheet calculated
+        // from this one sees them (D91).
+        if let Ty::Sheet(shape) = &ty {
+            let shape = shape.clone();
+            for &c in shape.cols.iter() {
+                let Some(from) = self.sheets[shape.sheet].cols.get(c) else {
+                    continue;
+                };
+                let (name, span) = (from.name.clone(), from.span);
+                let ty = self.col_type(shape.sheet, c);
+                self.sheets[t].cols.push(ColInfo {
+                    name,
+                    span,
+                    declared: None,
+                    src: ColSrc::Done,
+                    from: None,
+                });
+                self.col_state[t].push(St::Done(ty));
+                self.col_out[t].push(Some(ColKind::View(c)));
+                self.col_deps[t].push(Vec::new());
+            }
+        }
+        self.view_out[t] = Some(node);
+        self.view_state[t] = St::Done(ty);
+        self.view_deps[t] = mem::replace(&mut self.deps, saved.1);
+        let mut found = mem::replace(&mut self.cur, saved.0);
+        self.done.append(&mut found);
+    }
+
+    /// Lower a sheet computed by `Base |> group_by(Keys) |> agg(Aggregates)`:
+    /// the key columns, borrowed from the base as a view's are, then one
+    /// column for each aggregate. The node given back is the base's, which
+    /// the engine groups (D81, D82).
+    fn lower_group(
+        &mut self,
+        t: usize,
+        base: &Expr,
+        keys: &[Expr],
+        aggs: &[Expr],
+        span: Span,
+    ) -> (Node, Ty) {
+        let usage = "Sales |> group_by(Region) |> agg(Revenue.sum())";
+        let mut scope = Scope {
+            frames: Vec::new(),
+            own: false,
+            col: None,
+            group: None,
+        };
+        let (node, ty) = self.lower(base, &mut scope);
+        let shape = match ty {
+            Ty::Sheet(shape) => shape,
+            Ty::Any => return (node, Ty::Any),
+            other => {
+                if !matches!(node.kind, Ir::Error) {
+                    self.err(
+                        base.span,
+                        format!("`group_by` needs a sheet, but this is {}", other.describe()),
+                    );
+                }
+                return (Node::error(span), Ty::Any);
+            }
+        };
+        if keys.is_empty() {
+            self.err_help(
+                span,
+                "`group_by` needs a column to group the rows by",
+                format!("usage: `{usage}`"),
+            );
+            return (Node::error(span), Ty::Any);
+        }
+        if aggs.is_empty() {
+            self.err_help(
+                span,
+                "`agg` needs an aggregate to work out for each group",
+                format!("usage: `{usage}`"),
+            );
+            return (Node::error(span), Ty::Any);
+        }
+        let mut names: Vec<(String, Span)> = Vec::new();
+        let mut key_cols = Vec::new();
+        for k in keys {
+            let ExprKind::Name(name) = &k.kind else {
+                self.err(k.span, "`group_by` takes column names");
+                return (Node::error(span), Ty::Any);
+            };
+            let Some(c) = self.col_in(&shape, name) else {
+                self.no_column(&shape, name, k.span);
+                return (Node::error(span), Ty::Any);
+            };
+            self.col_refs.push((k.span, shape.sheet, c));
+            self.deps
+                .push((DepNode::Col(shape.sheet, c), DepKind::Whole));
+            key_cols.push(c);
+            names.push((name.clone(), k.span));
+        }
+        let mut columns = Vec::new();
+        for &c in &key_cols {
+            let from_span = self.sheets[shape.sheet].cols[c].span;
+            let ty = self.col_type(shape.sheet, c);
+            columns.push((
+                self.sheets[shape.sheet].cols[c].name.clone(),
+                from_span,
+                ty,
+                ColKind::View(c),
+            ));
+        }
+        for a in aggs {
+            let (given, e) = match &a.kind {
+                ExprKind::Named(name, name_span, e) => (Some((name.clone(), *name_span)), &**e),
+                _ => (None, a),
+            };
+            let mut scope = Scope {
+                frames: Vec::new(),
+                own: false,
+                col: None,
+                group: Some(shape.clone()),
+            };
+            let (node, ty) = self.lower(e, &mut scope);
+            let s = match ty {
+                Ty::Scalar(s) => s,
+                Ty::Any => S::Any,
+                // The mistake a reader makes first: a column where its
+                // aggregate was meant.
+                Ty::Vector(..) => {
+                    self.err_help(
+                        e.span,
+                        "in `agg` a column is the rows of one group, so it needs an aggregate",
+                        format!(
+                            "for example `{}.sum()` or `{}.mean()`",
+                            source_text(e),
+                            source_text(e)
+                        ),
+                    );
+                    return (Node::error(span), Ty::Any);
+                }
+                other => {
+                    self.err(
+                        e.span,
+                        format!(
+                            "an aggregate gives one value a group, but this is {}",
+                            other.describe()
+                        ),
+                    );
+                    return (Node::error(span), Ty::Any);
+                }
+            };
+            let Some((name, name_span)) = given.or_else(|| derived_name(e).map(|n| (n, e.span)))
+            else {
+                self.err_help(
+                    a.span,
+                    "this aggregate needs a name for its column",
+                    "name it with `:=`, for example `agg(Total := (Price * Qty).sum())`",
+                );
+                return (Node::error(span), Ty::Any);
+            };
+            if names.iter().any(|(n, _)| *n == name) {
+                self.err_help(
+                    a.span,
+                    format!("`agg` makes two columns named `{name}`"),
+                    "name one of them with `:=`, for example `agg(Other := …)`",
+                );
+                return (Node::error(span), Ty::Any);
+            }
+            names.push((name.clone(), name_span));
+            columns.push((name, name_span, s, ColKind::Agg(node)));
+        }
+        for (name, span, ty, kind) in columns {
+            self.sheets[t].cols.push(ColInfo {
+                name,
+                span,
+                declared: None,
+                src: ColSrc::Done,
+                from: None,
+            });
+            self.col_state[t].push(St::Done(ty));
+            self.col_out[t].push(Some(kind));
+            self.col_deps[t].push(Vec::new());
+        }
+        self.group_out[t] = Some(key_cols);
+        (node, Ty::Sheet(shape))
+    }
+
+    /// Lower a sheet computed by `Left |> join(Right, Keys, left)`: the left
+    /// sheet's columns, borrowed as a view's are, then the right sheet's
+    /// other than its keys, a name the left already has taking `_right`
+    /// after it as Polars' does. The node given back is the left sheet's,
+    /// and what it is joined to is kept for the engine (D85).
+    fn lower_join(&mut self, t: usize, args: &[Expr], span: Span) -> (Node, Ty) {
+        let usage = "sheet Both := Sales |> join(Targets, Month, left)";
+        let fail = |ck: &mut Checker, at: Span, why: &str| {
+            ck.err_help(at, why.to_string(), format!("usage: `{usage}`"));
+            (Node::error(span), Ty::Any)
+        };
+        if args.len() < 3 {
+            return fail(
+                self,
+                span,
+                "`join` needs a sheet, a sheet to join it to and a key column",
+            );
+        }
+        let mut scope = Scope {
+            frames: Vec::new(),
+            own: false,
+            col: None,
+            group: None,
+        };
+        let (node, lty) = self.lower(&args[0], &mut scope);
+        let (right, rty) = self.lower(&args[1], &mut scope);
+        let (lshape, rshape) = match (lty, rty) {
+            (Ty::Sheet(l), Ty::Sheet(r)) => (l, r),
+            (Ty::Any, _) | (_, Ty::Any) => return (Node::error(span), Ty::Any),
+            (Ty::Sheet(_), other) => {
+                if !matches!(right.kind, Ir::Error) {
+                    self.err(
+                        args[1].span,
+                        format!(
+                            "`join` joins a sheet to a sheet, but this is {}",
+                            other.describe()
+                        ),
+                    );
+                }
+                return (Node::error(span), Ty::Any);
+            }
+            (other, _) => {
+                if !matches!(node.kind, Ir::Error) {
+                    self.err(
+                        args[0].span,
+                        format!("`join` needs a sheet, but this is {}", other.describe()),
+                    );
+                }
+                return (Node::error(span), Ty::Any);
+            }
+        };
+        // The kind of join, a bare word in the last place (D84): a key
+        // column of that name is looked for first.
+        let mut keys = &args[2..];
+        let mut left = false;
+        if let Some(last) = keys.last()
+            && let ExprKind::Name(word) = &last.kind
+            && matches!(word.as_str(), "inner" | "left")
+            && (self.col_in(&lshape, word).is_none() || self.col_in(&rshape, word).is_none())
+        {
+            left = word == "left";
+            keys = &keys[..keys.len() - 1];
+        }
+        if keys.is_empty() {
+            return fail(self, span, "`join` needs a key column to join the rows on");
+        }
+        let (mut left_keys, mut right_keys) = (Vec::new(), Vec::new());
+        for k in keys {
+            let ExprKind::Name(name) = &k.kind else {
+                self.err(k.span, "`join` takes the names of key columns");
+                return (Node::error(span), Ty::Any);
+            };
+            let Some(lc) = self.col_in(&lshape, name) else {
+                self.no_column(&lshape, name, k.span);
+                return (Node::error(span), Ty::Any);
+            };
+            let Some(rc) = self.col_in(&rshape, name) else {
+                self.no_column(&rshape, name, k.span);
+                return (Node::error(span), Ty::Any);
+            };
+            self.col_refs.push((k.span, lshape.sheet, lc));
+            self.col_refs.push((k.span, rshape.sheet, rc));
+            self.deps
+                .push((DepNode::Col(lshape.sheet, lc), DepKind::Whole));
+            self.deps
+                .push((DepNode::Col(rshape.sheet, rc), DepKind::Whole));
+            left_keys.push(lc);
+            right_keys.push(rc);
+        }
+        let mut columns: Vec<(String, Span, S, ColKind)> = Vec::new();
+        for &c in lshape.cols.iter() {
+            let from = &self.sheets[lshape.sheet].cols[c];
+            let (name, from_span) = (from.name.clone(), from.span);
+            let ty = self.col_type(lshape.sheet, c);
+            columns.push((name, from_span, ty, ColKind::View(c)));
+        }
+        for &c in rshape.cols.iter() {
+            if right_keys.contains(&c) {
+                continue;
+            }
+            let from = &self.sheets[rshape.sheet].cols[c];
+            let (mut name, from_span) = (from.name.clone(), from.span);
+            if columns.iter().any(|col| col.0 == name) {
+                name = format!("{name}_right");
+                if columns.iter().any(|col| col.0 == name) {
+                    self.err_help(
+                        args[1].span,
+                        format!("`join` makes two columns named `{name}`"),
+                        "select the columns to keep before the join, so that no two are named alike",
+                    );
+                    return (Node::error(span), Ty::Any);
+                }
+            }
+            self.deps
+                .push((DepNode::Col(rshape.sheet, c), DepKind::Whole));
+            let ty = self.col_type(rshape.sheet, c);
+            columns.push((name, from_span, ty, ColKind::Joined(c)));
+        }
+        for (name, span, ty, kind) in columns {
+            self.sheets[t].cols.push(ColInfo {
+                name,
+                span,
+                declared: None,
+                src: ColSrc::Done,
+                from: None,
+            });
+            self.col_state[t].push(St::Done(ty));
+            self.col_out[t].push(Some(kind));
+            self.col_deps[t].push(Vec::new());
+        }
+        self.join_out[t] = Some(Join {
+            right,
+            left_keys,
+            right_keys,
+            left,
+        });
+        (node, Ty::Sheet(lshape))
     }
 
     fn ensure_col(&mut self, t: usize, c: usize) {
@@ -793,6 +1451,11 @@ impl<'a> Checker<'a> {
                     ),
                 }
             }
+            ColSrc::Frame => {
+                // The rows are not in the text. The type is the declared one,
+                // and the cells arrive when the source is read.
+                (ColKind::Frame, declared.unwrap_or(S::Any))
+            }
             ColSrc::Data(h) => {
                 // Literal cells first, so that formulas in the column that
                 // read the column see its literal type.
@@ -818,7 +1481,7 @@ impl<'a> Checker<'a> {
                                 widen(lit_type(&lit));
                                 cells.push(match lit {
                                     // In quotes it is text as it is.
-                                    Lit::Text(s) if !quoted(&cell.text) => Cell::Markdown(s),
+                                    Lit::String(s) if !quoted(&cell.text) => Cell::Markdown(s),
                                     lit => Cell::Lit(lit),
                                 });
                             }
@@ -879,6 +1542,7 @@ impl<'a> Checker<'a> {
             frames: Vec::new(),
             own: false,
             col: None,
+            group: None,
         };
         self.lower(&body, &mut scope);
         self.calling.pop();
@@ -941,6 +1605,7 @@ impl<'a> Checker<'a> {
             frames: Vec::new(),
             own: false,
             col: None,
+            group: None,
         };
         let (body, ty) = self.lower(&body, &mut scope);
         self.calling.pop();
@@ -979,6 +1644,7 @@ impl<'a> Checker<'a> {
             frames: vec![t],
             own: true,
             col: Some(c),
+            group: None,
         };
         let (node, ty) = self.lower(e, &mut scope);
         match ty {
@@ -1018,13 +1684,16 @@ impl<'a> Checker<'a> {
             other => {
                 self.err_help(
                     span,
-                    format!("`{n}.{unit}` belongs next to a date, found {}", other.describe()),
+                    format!(
+                        "`{n}.{unit}` belongs next to a date, found {}",
+                        other.describe()
+                    ),
                     "a date plus a plain number is that many days later",
                 );
                 return (Node::error(span), Ty::Any);
             }
         };
-        let int = |n: i64| Node::new(Ir::Lit(Lit::Int(BigInt::from(n))), span);
+        let int = |n: i64| Node::new(Ir::Lit(Lit::Int(n, Base::Dec)), span);
         let node = match unit {
             "month" => Node::new(Ir::Call(Func::AddMonths, vec![node, int(n)]), span),
             "year" => Node::new(Ir::Call(Func::AddMonths, vec![node, int(n * 12)]), span),
@@ -1060,7 +1729,7 @@ impl<'a> Checker<'a> {
                 Some(at(ExprKind::Binary(
                     BinOp::Sub,
                     Box::new(at(ExprKind::Cursor)),
-                    Box::new(at(ExprKind::Lit(Lit::Int(BigInt::from(n))))),
+                    Box::new(at(ExprKind::Lit(Lit::Int(n as i64, Base::Dec)))),
                 ))),
             ],
         )))
@@ -1103,11 +1772,11 @@ impl<'a> Checker<'a> {
                         Ir::Binary(
                             BinOp::Mul,
                             Box::new(Node::new(Ir::RowIndex { depth: 0 }, span)),
-                            Box::new(Node::new(Ir::Lit(Lit::Int(BigInt::from(step))), span)),
+                            Box::new(Node::new(Ir::Lit(Lit::Int(step, Base::Dec)), span)),
                         ),
                         span,
                     );
-                    let day = Node::new(Ir::Lit(Lit::Int(BigInt::from(on))), span);
+                    let day = Node::new(Ir::Lit(Lit::Int(on, Base::Dec)), span);
                     (
                         Node::new(Ir::Call(Func::AddMonths, vec![from, on_months, day]), span),
                         Ty::Scalar(S::Date),
@@ -1118,10 +1787,10 @@ impl<'a> Checker<'a> {
                         return fail;
                     };
                     let (prev, _) = self.lower(&prev, sc);
-                    let step = Node::new(Ir::Lit(Lit::Int(BigInt::from(step))), span);
+                    let step = Node::new(Ir::Lit(Lit::Int(step, Base::Dec)), span);
                     (
                         Node::new(Ir::Call(Func::Cycle(kind), vec![prev, step]), span),
-                        Ty::Scalar(S::Text),
+                        Ty::Scalar(S::String),
                     )
                 }
                 None => return fail,
@@ -1149,7 +1818,7 @@ impl<'a> Checker<'a> {
         }
 
         // Which way the sequence runs, for a numeric limit.
-        let nums: Vec<BigRational> = seeds.iter().filter_map(seed_num).collect();
+        let nums: Vec<Dec> = seeds.iter().filter_map(seed_num).collect();
         let times: Vec<i64> = seeds.iter().filter_map(seed_time).collect();
         let descends =
             (nums.len() > 1 && nums[1] < nums[0]) || (times.len() > 1 && times[1] < times[0]);
@@ -1159,18 +1828,22 @@ impl<'a> Checker<'a> {
         };
 
         // `if ROW == 0 then s0 else if ROW == 1 then s1 else … else body`.
-        let int = |n: usize| Node::new(Ir::Lit(Lit::Int(BigInt::from(n))), span);
-        let out = nodes.into_iter().enumerate().rev().fold(body, |rest, (i, seed)| {
-            let at = Node::new(
-                Ir::Binary(
-                    BinOp::Eq,
-                    Box::new(Node::new(Ir::RowIndex { depth: 0 }, span)),
-                    Box::new(int(i)),
-                ),
-                span,
-            );
-            Node::new(Ir::If(Box::new(at), Box::new(seed), Box::new(rest)), span)
-        });
+        let int = |n: usize| Node::new(Ir::Lit(Lit::Int(n as i64, Base::Dec)), span);
+        let out = nodes
+            .into_iter()
+            .enumerate()
+            .rev()
+            .fold(body, |rest, (i, seed)| {
+                let at = Node::new(
+                    Ir::Binary(
+                        BinOp::Eq,
+                        Box::new(Node::new(Ir::RowIndex { depth: 0 }, span)),
+                        Box::new(int(i)),
+                    ),
+                    span,
+                );
+                Node::new(Ir::If(Box::new(at), Box::new(seed), Box::new(rest)), span)
+            });
         (out, ty)
     }
 
@@ -1197,7 +1870,7 @@ impl<'a> Checker<'a> {
                 Some(Rule::By(at(ExprKind::Binary(
                     BinOp::Add,
                     Box::new(back()),
-                    Box::new(at(ExprKind::Lit(Lit::Int(BigInt::from(n))))),
+                    Box::new(at(ExprKind::Lit(Lit::Int(n, Base::Dec)))),
                 ))))
             };
             if times.len() == 1 {
@@ -1219,7 +1892,7 @@ impl<'a> Checker<'a> {
             );
             return None;
         }
-        let nums: Option<Vec<BigRational>> = seeds.iter().map(seed_num).collect();
+        let nums: Option<Vec<Dec>> = seeds.iter().map(seed_num).collect();
         let Some(nums) = nums else {
             self.err_help(
                 span,
@@ -1228,7 +1901,7 @@ impl<'a> Checker<'a> {
             );
             return None;
         };
-        let step = |op, r: BigRational| {
+        let step = |op, r: Dec| {
             Some(Rule::By(at(ExprKind::Binary(
                 op,
                 Box::new(back()),
@@ -1236,16 +1909,27 @@ impl<'a> Checker<'a> {
             ))))
         };
         if nums.len() == 1 {
-            return step(BinOp::Add, BigRational::from(BigInt::from(1)));
+            return step(BinOp::Add, Dec::ONE);
         }
-        let diff = &nums[1] - &nums[0];
-        if nums.windows(2).all(|w| &w[1] - &w[0] == diff) {
+        let diff = nums[1].checked_sub(nums[0]);
+        if let Some(diff) = diff
+            && nums
+                .windows(2)
+                .all(|w| w[1].checked_sub(w[0]) == Some(diff))
+        {
             return step(BinOp::Add, diff);
         }
-        let zero = BigRational::from(BigInt::from(0));
+        let zero = Dec::ZERO;
         if nums[0] != zero {
-            let ratio = &nums[1] / &nums[0];
-            if nums.windows(2).all(|w| w[0] != zero && &w[1] / &w[0] == ratio) {
+            let ratio = nums[1].checked_div(nums[0]);
+            // Checked by multiplying out rather than dividing each pair: a
+            // ratio of rounded decimals does not come back the same when it
+            // is taken again, where multiplying by it does.
+            if let Some(ratio) = ratio
+                && nums
+                    .windows(2)
+                    .all(|w| w[0] != zero && w[0].checked_mul(ratio) == Some(w[1]))
+            {
                 return step(BinOp::Mul, ratio);
             }
         }
@@ -1267,21 +1951,18 @@ impl<'a> Checker<'a> {
         span: Span,
         sc: &mut Scope,
     ) -> Option<Node> {
-        if matches!(&limit.kind, ExprKind::Lit(Lit::Num(f)) if f.is_infinite() && *f > 0.0) {
+        if matches!(&limit.kind, ExprKind::Lit(Lit::Float(f)) if f.is_infinite() && *f > 0.0) {
             return Some(rule);
         }
         let (stop, stop_ty) = self.lower(limit, sc);
         let empty = Node::new(Ir::Empty, span);
-        let text = matches!(stop_ty, Ty::Scalar(S::Text));
+        let text = matches!(stop_ty, Ty::Scalar(S::String));
         if text {
             // Letters have no useful order across lengths, so a text
             // sequence ends on the term that is the limit.
             let prev = self.back_ref(1, span, sc)?;
             let (prev, _) = self.lower(&prev, sc);
-            let done = Node::new(
-                Ir::Binary(BinOp::Eq, Box::new(prev), Box::new(stop)),
-                span,
-            );
+            let done = Node::new(Ir::Binary(BinOp::Eq, Box::new(prev), Box::new(stop)), span);
             return Some(Node::new(
                 Ir::If(Box::new(done), Box::new(empty), Box::new(rule)),
                 span,
@@ -1320,22 +2001,58 @@ impl<'a> Checker<'a> {
         ))
     }
 
+    /// Note that the sheet being checked picks a row of `sheet` with the
+    /// cursor, as `Sales[Revenue; *]` does: a sheet that holds no rows of
+    /// its own is as long as the sheets it reads this way. A cursor on the
+    /// sheet's own rows says nothing about its length, and nor does an
+    /// aggregate, which reads a whole column rather than a row.
+    fn aligns_with(&mut self, sheet: Option<usize>, sc: &Scope) {
+        if let Some(s) = sheet
+            && sc.own
+            && let Some(&own) = sc.frames.first()
+            && s != own
+            && !self.row_reads[own].contains(&s)
+        {
+            self.row_reads[own].push(s);
+        }
+    }
+
+    /// The path in `dataframe["<path>"]`, the one source a `table` may have.
+    /// `None`, with a diagnostic, for anything else written there.
+    fn source_path(&mut self, decl: &SourceDecl, sheet: &str) -> Option<Source> {
+        let expr = decl.expr.as_ref()?;
+        if let ExprKind::Index(base, slots) = &expr.kind
+            && let ExprKind::Name(name) = &base.kind
+            && name == "dataframe"
+            && let [Some(arg)] = slots.as_slice()
+            && let ExprKind::Lit(Lit::String(path)) = &arg.kind
+        {
+            return Some(Source {
+                path: path.clone(),
+                span: arg.span,
+            });
+        }
+        self.done.push(
+            Diagnostic::new(
+                decl.expr_span,
+                format!("table `{sheet}` does not say what to read"),
+            )
+            .with_help("a table is written `table <Name> := dataframe[\"<path>\"]`"),
+        );
+        None
+    }
+
     fn fit_declared(&mut self, found: S, declared: Option<S>, span: Span, column: &str) -> S {
         let Some(want) = declared else { return found };
         if !found.assignable_to(want) {
             let help = match (found, want) {
-                (S::Int | S::Decimal | S::Fraction | S::Percent, S::Num) => {
-                    "use `.Num` to convert to Num"
+                (S::Int | S::Decimal | S::Fraction | S::Percent, S::Float) => {
+                    "use `.Float` to convert to Float"
                 }
-                (S::Percent, S::Int) => "declare the column as `Percent`, or use `.Int`",
-                (S::Percent, S::Decimal) => {
-                    "declare the column as `Percent` or `Fraction`, or use `.Decimal` if the number ends as a decimal"
-                }
-                (S::Decimal, S::Int) => "declare the column as `Decimal`, or use `.Int`",
-                (S::Fraction, S::Int) => "declare the column as `Fraction`, or use `.Int`",
-                (S::Fraction, S::Decimal) => {
-                    "declare the column as `Fraction`, or use `.Decimal` if the number ends as a decimal"
-                }
+                (S::Percent, S::Int) => "declare the column as `Percent`, or use `.Integer`",
+                (S::Percent, S::Decimal) => "declare the column as `Percent`, or use `.Decimal`",
+                (S::Decimal, S::Int) => "declare the column as `Decimal`, or use `.Integer`",
+                (S::Fraction, S::Int) => "declare the column as `Fraction`, or use `.Integer`",
                 _ => "change the declared type or the formula",
             };
             self.err_help(
@@ -1351,68 +2068,79 @@ impl<'a> Checker<'a> {
     fn literal_cell(&mut self, text: &str, span: Span, declared: Option<S>) -> Option<Lit> {
         let parsed = parse_literal(text);
         let Some(want) = declared else {
-            return Some(parsed.unwrap_or_else(|| Lit::Text(text.to_string())));
+            return Some(parsed.unwrap_or_else(|| Lit::String(text.to_string())));
         };
-        if want == S::Text {
+        if want == S::String {
             return Some(match parsed {
-                Some(Lit::Text(s)) => Lit::Text(s),
-                _ => Lit::Text(text.to_string()),
+                Some(Lit::String(s)) => Lit::String(s),
+                _ => Lit::String(text.to_string()),
             });
         }
         let fitted = match (parsed, want) {
-            (Some(l @ Lit::Int(_)), S::Int | S::Decimal | S::Fraction) => Some(l),
-            (Some(l @ Lit::Decimal(_)), S::Decimal) => Some(l),
-            // And any in a `Decimal` column a decimal: `1/3` is `0.333…`.
-            (Some(Lit::Fraction(r)), S::Decimal) => Some(Lit::Decimal(r)),
-            // Any exact number in a `Fraction` column is a fraction: `2.75`
-            // is `2 3/4`.
-            (Some(Lit::Decimal(r)), S::Fraction) => Some(Lit::Fraction(r)),
-            (Some(l @ Lit::Fraction(_)), S::Fraction) => Some(l),
+            // A whole number takes the base of its column, whichever it
+            // was written in.
+            (Some(Lit::Int(n, _)), want) if want.is_exact() && want != S::Percent => {
+                Some(Lit::Int(n, Base::of(want)))
+            }
+            (Some(l @ Lit::Decimal(_)), S::Decimal | S::Fraction) => Some(l),
             // Any exact number in a `Percent` column is a percentage: `0.4`
             // is `40%`. A `20%` elsewhere is the number it stands for.
             (Some(l @ Lit::Percent(_)), S::Percent) => Some(l),
-            (Some(Lit::Int(n)), S::Percent) => {
-                Some(Lit::Percent(num_rational::BigRational::from_integer(n)))
-            }
-            (Some(Lit::Decimal(r) | Lit::Fraction(r)), S::Percent) => Some(Lit::Percent(r)),
+            (Some(Lit::Int(n, _)), S::Percent) => Some(Lit::Percent(Dec::from_i64(n))),
+            (Some(Lit::Decimal(r)), S::Percent) => Some(Lit::Percent(r)),
             (Some(l @ Lit::Percent(_)), S::Decimal | S::Fraction) => {
-                crate::convert::convert(&l, want).ok()
+                crate::convert::convert(&l, S::Decimal).ok()
             }
-            (Some(Lit::Int(n)), S::Num) => n.to_f64().map(Lit::Num),
-            (Some(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)), S::Num) => {
-                r.to_f64().map(Lit::Num)
-            }
-            (Some(l @ Lit::Num(_)), S::Num) => Some(l),
-            (Some(l @ Lit::Complex(..)), S::Complex) => Some(l),
-            (Some(Lit::Int(n)), S::Complex) => n.to_f64().map(|x| Lit::Complex(x, 0.0)),
-            (Some(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)), S::Complex) => {
-                r.to_f64().map(|x| Lit::Complex(x, 0.0))
-            }
-            (Some(Lit::Num(x)), S::Complex) => Some(Lit::Complex(x, 0.0)),
+            (Some(Lit::Int(n, _)), S::Float) => Some(Lit::Float(n as f64)),
+            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Float) => Some(Lit::Float(r.to_f64())),
+            (Some(l @ Lit::Float(_)), S::Float) => Some(l),
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
             (Some(l @ Lit::DateTime(_)), S::DateTime) => Some(l),
-            (Some(l @ Lit::Bool(_)), S::Bool) => Some(l),
+            (Some(l @ Lit::Duration(_)), S::Duration) => Some(l),
+            (Some(l @ Lit::Boolean(_)), S::Boolean) => Some(l),
+            // A narrower kind of text is the text itself, once it reads as
+            // one. Quoted text is read as what it holds.
+            (parsed, S::Url | S::Email | S::Uuid) => {
+                let held = match parsed {
+                    Some(Lit::String(s)) => s,
+                    _ => text.to_string(),
+                };
+                let reads = match want {
+                    S::Url => crate::text::is_url(&held),
+                    S::Email => crate::text::is_email(&held),
+                    _ => crate::text::is_uuid(&held),
+                };
+                reads.then_some(Lit::String(held))
+            }
             _ => None,
         };
         if fitted.is_none() {
-            let article = if want == S::Int { "an" } else { "a" };
+            let article = if matches!(want, S::Int | S::Octal | S::Email) {
+                "an"
+            } else {
+                "a"
+            };
             self.err_help(
                 span,
                 format!("`{text}` is not {article} `{want}` literal"),
                 match want {
                     S::Int => "enter a whole number such as `42`, or start the cell with `=` for a formula",
-                    S::Decimal => "enter a number such as `19.99` or `20%`, or start the cell with `=` for a formula; a fraction such as `1/7` needs a `Fraction` column",
+                    S::Hex => "enter a whole number such as `0xff`, or start the cell with `=` for a formula",
+                    S::Octal => "enter a whole number such as `0o17`, or start the cell with `=` for a formula",
+                    S::Binary => "enter a whole number such as `0b101`, or start the cell with `=` for a formula",
+                    S::Decimal => "enter a number such as `19.99`, `1/7` or `20%`, or start the cell with `=` for a formula",
                     S::Fraction => "enter a number such as `1/7`, `2 3/4` or `19.99`, or start the cell with `=` for a formula",
                     S::Percent => "enter a percentage such as `20%`, or start the cell with `=` for a formula",
-                    S::Num => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
-                    S::Complex => {
-                        "enter a complex number such as `3+4i`, or start the cell with `=` for a formula"
-                    }
-                    S::Bool => "enter `true` or `false`, or start the cell with `=` for a formula",
+                    S::Float => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
+                    S::Boolean => "enter `true` or `false`, or start the cell with `=` for a formula",
                     S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
                     S::Time => "enter a time such as `09:30` or `09:30:15`, or start the cell with `=` for a formula",
                     S::DateTime => "enter a date-time such as `2025-01-31T09:30`, or start the cell with `=` for a formula",
+                    S::Duration => "enter a duration such as `PT1H30M` or `P2D`, or start the cell with `=` for a formula",
+                    S::Url => "enter a web address such as `https://example.com`, or start the cell with `=` for a formula",
+                    S::Email => "enter an email address such as `name@example.com`, or start the cell with `=` for a formula",
+                    S::Uuid => "enter a UUID such as `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f`, or start the cell with `=` for a formula",
                     _ => "a formula cell starts with `=`",
                 },
             );
@@ -1428,6 +2156,24 @@ impl<'a> Checker<'a> {
         match &e.kind {
             ExprKind::Lit(l) => (Node::new(Ir::Lit(l.clone()), span), Ty::Scalar(lit_type(l))),
             ExprKind::Name(name) => self.lower_name(name, span, sc),
+            // A row slot reads `by` itself, and nowhere else has one.
+            ExprKind::By(..) => {
+                self.err_help(
+                    span,
+                    "`by` counts rows within a partition, and only in a row slot",
+                    "for example `Sales[Revenue; *-1 by Region]`",
+                );
+                fail
+            }
+            // Only `agg` takes a named argument, and reads it itself.
+            ExprKind::Named(..) => {
+                self.err_help(
+                    span,
+                    "`:=` names an aggregate, and only inside `agg`",
+                    "usage: `Sales |> group_by(Region) |> agg(Total := Revenue.sum())`",
+                );
+                fail
+            }
             ExprKind::Back(n) => match self.back_ref(*n, span, sc) {
                 Some(e) => self.lower(&e, sc),
                 None => fail,
@@ -1461,7 +2207,7 @@ impl<'a> Checker<'a> {
             }
             ExprKind::Unary(UnOp::UpTo, operand) => {
                 let (node, ty) = self.lower(operand, sc);
-                if !matches!(ty, Ty::Any | Ty::Scalar(S::Int | S::Any)) {
+                if !ty.is_whole() {
                     self.err(
                         operand.span,
                         format!("the end of a range must be Int, found {}", ty.describe()),
@@ -1488,8 +2234,9 @@ impl<'a> Checker<'a> {
                     }
                 };
                 let ok = match op {
-                    UnOp::Neg => s.is_numeric(),
-                    UnOp::Not => matches!(s, S::Bool | S::Any),
+                    UnOp::Neg => s.is_numeric() || s == S::Duration,
+                    UnOp::Not => matches!(s, S::Boolean | S::Any),
+                    UnOp::BitNot => s.is_int() || s == S::Any,
                     UnOp::UpTo => false,
                 };
                 if !ok {
@@ -1502,9 +2249,7 @@ impl<'a> Checker<'a> {
                 };
                 (Node::new(Ir::Unary(*op, Box::new(node)), span), out)
             }
-            ExprKind::Binary(op @ (BinOp::Add | BinOp::Sub), l, r)
-                if duration_of(r).is_some() =>
-            {
+            ExprKind::Binary(op @ (BinOp::Add | BinOp::Sub), l, r) if duration_of(r).is_some() => {
                 let (n, unit) = duration_of(r).unwrap();
                 let n = if *op == BinOp::Sub { -n } else { n };
                 self.lower_duration(l, n, unit, span, sc)
@@ -1512,11 +2257,11 @@ impl<'a> Checker<'a> {
             ExprKind::Binary(op, l, r) => self.lower_binary(*op, l, r, span, sc),
             ExprKind::If(c, a, b) => {
                 let (cn, cty) = self.lower(c, sc);
-                if !matches!(cty, Ty::Any | Ty::Scalar(S::Bool | S::Any)) {
+                if !matches!(cty, Ty::Any | Ty::Scalar(S::Boolean | S::Any)) {
                     self.err(
                         c.span,
                         format!(
-                            "the condition of `if` must be Bool, found {}",
+                            "the condition of `if` must be Boolean, found {}",
                             cty.describe()
                         ),
                     );
@@ -1718,12 +2463,28 @@ impl<'a> Checker<'a> {
                 return (Node::new(Ir::RowCol { depth, col: c }, span), Ty::Scalar(s));
             }
         }
+        if let Some(shape) = sc.group.clone()
+            && let Some(c) = self.col_in(&shape, name)
+        {
+            self.col_refs.push((span, shape.sheet, c));
+            self.deps
+                .push((DepNode::Col(shape.sheet, c), DepKind::Whole));
+            let s = self.col_type(shape.sheet, c);
+            return (Node::new(Ir::GroupCol(c), span), Ty::Vector(s, None));
+        }
         if let Some(i) = self.consts.iter().position(|c| c.name == name) {
             self.deps.push((DepNode::Const(i), DepKind::Whole));
             let ty = self.const_type(i);
             return (Node::new(Ir::Const(i), span), ty);
         }
         if let Some(t) = self.sheets.iter().position(|t| t.name == name) {
+            // A sheet calculated from an expression has no columns until it
+            // is worked out, and one being worked out is one reading itself.
+            if matches!(self.view_state[t], St::Busy(_)) {
+                self.err(span, format!("sheet `{name}` is calculated from itself"));
+                return (Node::error(span), Ty::Any);
+            }
+            self.ensure_view(t);
             let ty = Ty::Sheet(SheetTy {
                 sheet: t,
                 cols: self.all_cols(t),
@@ -1780,7 +2541,7 @@ impl<'a> Checker<'a> {
         match op {
             BinOp::Range | BinOp::RangeEx | BinOp::RangeFrom | BinOp::RangeBoth => {
                 for (ty, e) in [(&lty, l), (&rty, r)] {
-                    if !matches!(ty, Ty::Any | Ty::Scalar(S::Int | S::Any)) {
+                    if !ty.is_whole() {
                         self.err(
                             e.span,
                             format!("the ends of a range must be Int, found {}", ty.describe()),
@@ -1870,7 +2631,7 @@ impl<'a> Checker<'a> {
                     );
                     return fail;
                 }
-                return (node, Ty::Scalar(S::Bool));
+                return (node, Ty::Scalar(S::Boolean));
             }
             _ => {}
         }
@@ -1894,18 +2655,24 @@ impl<'a> Checker<'a> {
         }
         let ((a, av), (b, bv)) = (parts[0], parts[1]);
         let unknown = a == S::Any || b == S::Any;
-        let elem = if op.is_arithmetic() && (a.is_temporal() || b.is_temporal()) {
+        let timed = |s: S| s.is_temporal() || s == S::Duration;
+        let elem = if op.is_arithmetic() && (timed(a) || timed(b)) {
+            // A duration is scaled by a number: `PT1H * 3`, `P1D / 2`.
+            let scaled = |d: S, n: S| d == S::Duration && n.is_numeric();
             let shifted = match op {
                 BinOp::Add => a.shift(false, b),
                 BinOp::Sub => a.shift(true, b),
+                BinOp::Mul if scaled(a, b) || scaled(b, a) => Some(S::Duration),
+                BinOp::Div if scaled(a, b) => Some(S::Duration),
                 _ => None,
             };
             let Some(s) = shifted else {
                 self.err_help(
                     span,
                     format!("cannot apply `{sym}` to {a} and {b}"),
-                    "add or subtract whole days with a Date, whole seconds with a Time or \
-                     DateTime; subtract two of the same kind; add a Date and a Time",
+                    "add or subtract a Duration, whole days with a Date, or whole seconds with a \
+                     Time or Datetime; subtract two of the same kind; add a Date and a Time; \
+                     multiply or divide a Duration by a number",
                 );
                 return fail;
             };
@@ -1920,12 +2687,12 @@ impl<'a> Checker<'a> {
             } else {
                 // A whole exponent written as it is, `2 ** 64`, cannot be
                 // negative, so the power keeps the type of its base.
-                let whole = matches!(r.kind, ExprKind::Lit(Lit::Int(_)));
+                let whole = matches!(r.kind, ExprKind::Lit(Lit::Int(_, _)));
                 match (op, a.wider(b)) {
-                    (BinOp::Pow, w @ (S::Int | S::Decimal)) if whole => w,
+                    (BinOp::Pow, w) if whole && (w.is_int() || w == S::Decimal) => w,
                     // A quotient or a power of decimals is a decimal, though
                     // it need not end.
-                    (BinOp::Div | BinOp::Pow, S::Int | S::Decimal) => S::Decimal,
+                    (BinOp::Div | BinOp::Pow, w) if w.is_int() || w == S::Decimal => S::Decimal,
                     // Percentages add up to a percentage; anything else
                     // done with one gives the plain number.
                     (BinOp::Add | BinOp::Sub, S::Percent) => S::Percent,
@@ -1933,11 +2700,29 @@ impl<'a> Checker<'a> {
                     (_, w) => w,
                 }
             }
+        } else if op.is_bitwise() {
+            let whole = |s: S| s.is_int() || s == S::Any;
+            if !whole(a) || !whole(b) {
+                self.err(
+                    span,
+                    format!("`{sym}` needs whole numbers on both sides, found {a} and {b}"),
+                );
+                return fail;
+            }
+            match op {
+                // A shift is of the number on its left, by a count.
+                BinOp::Shl | BinOp::Shr => a,
+                // Of two in one base, that base; of any mix, an `Integer`
+                // (D134).
+                _ if unknown => S::Any,
+                _ if a == b => a,
+                _ => S::Int,
+            }
         } else if op.is_comparison() {
             let equality = matches!(op, BinOp::Eq | BinOp::Ne);
             let ok = unknown
                 || match a.join(b) {
-                    Some(S::Complex | S::Bool) => equality,
+                    Some(S::Boolean) => equality,
                     Some(_) => true,
                     None => false,
                 };
@@ -1945,16 +2730,16 @@ impl<'a> Checker<'a> {
                 self.err(span, format!("cannot compare {a} and {b} with `{sym}`"));
                 return fail;
             }
-            S::Bool
+            S::Boolean
         } else {
-            if !matches!(a, S::Bool | S::Any) || !matches!(b, S::Bool | S::Any) {
+            if !matches!(a, S::Boolean | S::Any) || !matches!(b, S::Boolean | S::Any) {
                 self.err(
                     span,
-                    format!("`{sym}` needs Bool on both sides, found {a} and {b}"),
+                    format!("`{sym}` needs Boolean on both sides, found {a} and {b}"),
                 );
                 return fail;
             }
-            S::Bool
+            S::Boolean
         };
         let ty = match (av, bv) {
             (None, None) => Ty::Scalar(elem),
@@ -1997,7 +2782,8 @@ impl<'a> Checker<'a> {
             }
         };
         match name {
-            "sum" | "avg" | "min" | "max" | "count" => {
+            "sum" | "mean" | "min" | "max" | "count" | "len" | "median" | "product" | "first"
+            | "last" => {
                 // Any number of vectors, or single values among them, taken
                 // together: `sum([A; 0..2], [A; 5])`.
                 if args.is_empty() {
@@ -2007,174 +2793,369 @@ impl<'a> Checker<'a> {
                 let many = args.len() > 1;
                 let func = match name {
                     "sum" => Func::Sum,
-                    "avg" => Func::Avg,
+                    "mean" => Func::Mean,
                     "min" => Func::Min,
                     "max" => Func::Max,
-                    _ => Func::Count,
+                    "count" => Func::Count,
+                    "median" => Func::Median,
+                    "product" => Func::Product,
+                    "first" => Func::First,
+                    "last" => Func::Last,
+                    _ => Func::Len,
                 };
                 let mut nodes = Vec::new();
                 let mut joined: Option<S> = None;
                 let mut any = false;
                 for a in args {
-                let (arg, aty) = self.lower(a, sc);
-                let (arg, s) = match aty {
-                    Ty::Any => {
-                        any = true;
-                        (arg, S::Any)
-                    }
-                    Ty::Scalar(s) if many => (arg, s),
-                    Ty::Vector(s, _) => (arg, s),
-                    Ty::Range => (arg, S::Int),
-                    Ty::Sheet(_) if func == Func::Count && !many => {
-                        return (
-                            Node::new(Ir::Call(func, vec![arg]), span),
-                            Ty::Scalar(S::Int),
-                        );
-                    }
-                    // The cells of one row, such as `[*-4..*-1; *]`.
-                    Ty::Row(tt) => {
-                        let mut s: Option<Option<S>> = None;
-                        for &c in tt.cols.iter() {
-                            self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
-                            let ty = self.col_type(tt.sheet, c);
-                            s = Some(match s {
-                                None => Some(ty),
-                                Some(so_far) => so_far.and_then(|x| x.join(ty)),
-                            });
+                    let (arg, aty) = self.lower(a, sc);
+                    let (arg, s) = match aty {
+                        Ty::Any => {
+                            any = true;
+                            (arg, S::Any)
                         }
-                        match s {
-                            Some(Some(s)) => (arg, s),
-                            None => (arg, S::Any),
-                            Some(None) => {
-                                self.err_help(
+                        Ty::Scalar(s) if many => (arg, s),
+                        Ty::Vector(s, _) => (arg, s),
+                        Ty::Range => (arg, S::Int),
+                        Ty::Sheet(_) if func == Func::Len && !many => {
+                            return (
+                                Node::new(Ir::Call(func, vec![arg]), span),
+                                Ty::Scalar(S::Int),
+                            );
+                        }
+                        Ty::Sheet(_) if func == Func::Count && !many => {
+                            self.err_help(
+                                a.span,
+                                "`count` counts the values of a column, not the rows of a sheet",
+                                "for the rows of a sheet, write `len`",
+                            );
+                            return fail;
+                        }
+                        // The cells of one row, such as `[*-4..*-1; *]`.
+                        Ty::Row(tt) => {
+                            let mut s: Option<Option<S>> = None;
+                            for &c in tt.cols.iter() {
+                                self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
+                                let ty = self.col_type(tt.sheet, c);
+                                s = Some(match s {
+                                    None => Some(ty),
+                                    Some(so_far) => so_far.and_then(|x| x.join(ty)),
+                                });
+                            }
+                            match s {
+                                Some(Some(s)) => (arg, s),
+                                None => (arg, S::Any),
+                                Some(None) => {
+                                    self.err_help(
                                     a.span,
                                     format!("`{name}` needs values of one type, but the columns of this row differ"),
                                     "select columns of the same type, for example `[1..3; *]`",
                                 );
-                                return fail;
+                                    return fail;
+                                }
                             }
                         }
-                    }
-                    // A block of cells, such as `[0..1; 2..5]`: every cell
-                    // of it, when its columns are of one type.
-                    Ty::Sheet(tt) if tt.cols.len() > 1 => {
-                        let mut s: Option<S> = None;
-                        for &c in tt.cols.iter() {
-                            self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
-                            let ty = self.col_type(tt.sheet, c);
-                            s = match s {
-                                None => Some(ty),
-                                Some(so_far) => match so_far.join(ty) {
-                                    Some(j) => Some(j),
-                                    None => {
-                                        self.err_help(
+                        // A block of cells, such as `[0..1; 2..5]`: every cell
+                        // of it, when its columns are of one type.
+                        Ty::Sheet(tt) if tt.cols.len() > 1 => {
+                            let mut s: Option<S> = None;
+                            for &c in tt.cols.iter() {
+                                self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
+                                let ty = self.col_type(tt.sheet, c);
+                                s = match s {
+                                    None => Some(ty),
+                                    Some(so_far) => match so_far.join(ty) {
+                                        Some(j) => Some(j),
+                                        None => {
+                                            self.err_help(
                                             a.span,
                                             format!("`{name}` needs values of one type, but the columns of this block differ"),
                                             "select columns of the same type, for example `[1..3; 0..5]`",
                                         );
-                                        return fail;
-                                    }
-                                },
-                            };
+                                            return fail;
+                                        }
+                                    },
+                                };
+                            }
+                            (arg, s.unwrap_or(S::Any))
                         }
-                        (arg, s.unwrap_or(S::Any))
-                    }
-                    Ty::Sheet(tt) if tt.cols.len() == 1 => {
-                        let c = tt.cols[0];
-                        self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
-                        let s = self.col_type(tt.sheet, c);
-                        let arg_span = arg.span;
-                        (
-                            Node::new(
-                                Ir::Field {
-                                    base: Box::new(arg),
-                                    col: c,
-                                },
-                                arg_span,
-                            ),
-                            s,
-                        )
-                    }
-                    other => {
-                        self.err_help(
-                            a.span,
-                            format!("`{name}` needs a vector, but this is {}", other.describe()),
-                            "select one column, for example `Sales.Revenue`",
-                        );
-                        return fail;
-                    }
-                };
-                joined = match joined {
-                    None => Some(s),
-                    Some(so_far) => match so_far.join(s) {
-                        Some(j) => Some(j),
-                        None => {
+                        Ty::Sheet(tt) if tt.cols.len() == 1 => {
+                            let c = tt.cols[0];
+                            self.deps.push((DepNode::Col(tt.sheet, c), tt.kind));
+                            let s = self.col_type(tt.sheet, c);
+                            let arg_span = arg.span;
+                            (
+                                Node::new(
+                                    Ir::Field {
+                                        base: Box::new(arg),
+                                        col: c,
+                                    },
+                                    arg_span,
+                                ),
+                                s,
+                            )
+                        }
+                        other => {
                             self.err_help(
+                                a.span,
+                                format!(
+                                    "`{name}` needs a vector, but this is {}",
+                                    other.describe()
+                                ),
+                                "select one column, for example `Sales.Revenue`",
+                            );
+                            return fail;
+                        }
+                    };
+                    joined = match joined {
+                        None => Some(s),
+                        Some(so_far) => match so_far.join(s) {
+                            Some(j) => Some(j),
+                            None => {
+                                self.err_help(
                                 a.span,
                                 format!("`{name}` needs values of one type, but this is {s} and the rest {so_far}"),
                                 "take values of the same type together",
                             );
-                            return fail;
-                        }
-                    },
-                };
-                nodes.push(arg);
+                                return fail;
+                            }
+                        },
+                    };
+                    nodes.push(arg);
                 }
                 if any {
                     return (Node::new(Ir::Call(func, nodes), span), Ty::Any);
                 }
                 let s = joined.unwrap_or(S::Any);
                 let out = match func {
-                    Func::Count => S::Int,
-                    Func::Sum | Func::Avg if !s.is_numeric() => {
-                        self.err(
-                            span,
-                            format!("cannot take the `{name}` of {s} values"),
-                        );
+                    Func::Count | Func::Len => S::Int,
+                    // A length of time adds up, and has an average.
+                    Func::Sum | Func::Mean | Func::Median if s == S::Duration => s,
+                    Func::Sum | Func::Mean | Func::Median | Func::Product if !s.is_numeric() => {
+                        self.err(span, format!("cannot take the `{name}` of {s} values"));
                         return fail;
                     }
-                    Func::Avg if matches!(s, S::Int | S::Decimal) => S::Decimal,
-                    Func::Min | Func::Max if matches!(s, S::Bool | S::Complex) => {
-                        self.err(
-                            span,
-                            format!("{s} values have no order for `{name}`"),
-                        );
+                    Func::Mean | Func::Median if s.is_int() || s == S::Decimal => S::Decimal,
+                    Func::Min | Func::Max if matches!(s, S::Boolean) => {
+                        self.err(span, format!("{s} values have no order for `{name}`"));
                         return fail;
                     }
                     _ => s,
                 };
                 (Node::new(Ir::Call(func, nodes), span), Ty::Scalar(out))
             }
-            "Complex" if args.len() == 2 => {
-                let mut nodes = Vec::new();
-                for a in args {
-                    let (node, ty) = self.lower(a, sc);
-                    if !matches!(
-                        ty,
-                        Ty::Any
-                            | Ty::Scalar(
-                                S::Any | S::Int | S::Decimal | S::Fraction | S::Percent | S::Num
-                            )
-                    ) {
-                        self.err(
-                            a.span,
-                            format!(
-                                "`Complex` needs real numbers, but this is {}",
-                                ty.describe()
-                            ),
-                        );
+            // One vector and a number: the degrees of freedom to subtract,
+            // or the fraction of the way through.
+            // Selections written as functions, each the selection it is
+            // equivalent to: no new IR and nothing new to evaluate.
+            // The function spellings of `//` and `in`, which already mean
+            // exactly this.
+            "fill_null" | "is_in" => {
+                let op = if name == "fill_null" {
+                    BinOp::Fallback
+                } else {
+                    BinOp::In
+                };
+                if !arity(self, 2, &format!("{name}(x, y)")) {
+                    return fail;
+                }
+                let form = Expr {
+                    kind: ExprKind::Binary(
+                        op,
+                        Box::new(args[0].clone()),
+                        Box::new(args[1].clone()),
+                    ),
+                    span,
+                };
+                self.lower(&form, sc)
+            }
+            "is_null" | "is_not_null" | "is_nan" | "is_not_nan" => {
+                if !arity(self, 1, &format!("Sheet.Column.{name}()")) {
+                    return fail;
+                }
+                // The negative one is the positive one, negated.
+                if let Some(positive) = name.strip_prefix("is_not_") {
+                    let inner = Expr {
+                        kind: ExprKind::Call(
+                            format!("is_{positive}"),
+                            name_span,
+                            vec![args[0].clone()],
+                        ),
+                        span,
+                    };
+                    let form = Expr {
+                        kind: ExprKind::Unary(UnOp::Not, Box::new(inner)),
+                        span,
+                    };
+                    return self.lower(&form, sc);
+                }
+                let (arg, aty) = self.lower(&args[0], sc);
+                let ty = match aty {
+                    Ty::Vector(_, n) => Ty::Vector(S::Boolean, n),
+                    Ty::Any | Ty::Scalar(_) => Ty::Scalar(S::Boolean),
+                    other => {
+                        if !matches!(arg.kind, Ir::Error) {
+                            self.err(
+                                args[0].span,
+                                format!("`{name}` needs a value, but this is {}", other.describe()),
+                            );
+                        }
                         return fail;
                     }
-                    nodes.push(node);
-                }
-                (
-                    Node::new(Ir::Call(Func::Complex, nodes), span),
-                    Ty::Scalar(S::Complex),
-                )
+                };
+                let func = if name == "is_nan" {
+                    Func::IsNan
+                } else {
+                    Func::IsNull
+                };
+                (Node::new(Ir::Call(func, vec![arg]), span), ty)
             }
-            "add_months" | "eom" => {
+            // `cast(x, Int)`, the Polars spelling of `Int(x)`.
+            "cast" => {
+                if !arity(self, 2, "cast(x, Int)") {
+                    return fail;
+                }
+                let ExprKind::Name(to_name) = &args[1].kind else {
+                    self.err_help(
+                        args[1].span,
+                        "`cast` takes the name of a type",
+                        "usage: `cast(x, Int)`",
+                    );
+                    return fail;
+                };
+                let Some(to) = S::from_name(to_name) else {
+                    self.err(args[1].span, format!("unknown type `{to_name}`"));
+                    return fail;
+                };
+                let to_name = to_name.clone();
+                let (arg, aty) = self.lower(&args[0], sc);
+                self.convert(&to_name, to, arg, aty, args[0].span, span)
+            }
+            "head" | "tail" | "shift" => {
+                let usage = match name {
+                    "head" => "Sales |> head(5)",
+                    "tail" => "Sales |> tail(5)",
+                    _ => "Sales.Revenue.shift(1)",
+                };
+                if !arity(self, 2, usage) {
+                    return fail;
+                }
+                let at = |kind| Expr { kind, span };
+                let n = Box::new(args[1].clone());
+                let slot = match name {
+                    // The first `n` rows.
+                    "head" => at(ExprKind::Unary(UnOp::UpTo, n)),
+                    // From `n` back of the end to the end.
+                    "tail" => at(ExprKind::Binary(
+                        BinOp::Range,
+                        Box::new(at(ExprKind::Unary(UnOp::Neg, n))),
+                        Box::new(at(ExprKind::Lit(Lit::Int(-1, Base::Dec)))),
+                    )),
+                    // The row `n` back of this one.
+                    _ => at(ExprKind::Binary(
+                        BinOp::Sub,
+                        Box::new(at(ExprKind::Cursor)),
+                        n,
+                    )),
+                };
+                let (b, bty) = self.lower(&args[0], sc);
+                // A sheet takes `[columns; rows]` and a column takes the
+                // rows alone.
+                let slots: Vec<Option<&Expr>> = if matches!(bty, Ty::Sheet(_)) {
+                    vec![None, Some(&slot)]
+                } else {
+                    vec![Some(&slot)]
+                };
+                self.index(b, bty, &slots, span, sc)
+            }
+            "std" | "var" | "quantile" => {
+                let takes_q = name == "quantile";
+                let usage = if takes_q {
+                    "Sheet.Column.quantile(0.9)".to_string()
+                } else {
+                    format!("Sheet.Column.{name}()")
+                };
+                let wrong = if takes_q {
+                    args.len() != 2
+                } else {
+                    args.is_empty() || args.len() > 2
+                };
+                if wrong {
+                    self.err_help(
+                        span,
+                        format!(
+                            "`{name}` takes {} arguments, found {}",
+                            if takes_q { "2" } else { "1 or 2" },
+                            args.len()
+                        ),
+                        format!("usage: `{usage}`"),
+                    );
+                    return fail;
+                }
+                let (v, vty) = self.lower(&args[0], sc);
+                let numeric = match vty {
+                    Ty::Any => true,
+                    Ty::Vector(s, _) => s.is_numeric() || s == S::Any,
+                    _ => false,
+                };
+                if !numeric {
+                    if !matches!(v.kind, Ir::Error) {
+                        self.err_help(
+                            args[0].span,
+                            format!(
+                                "`{name}` needs a vector of numbers, but this is {}",
+                                vty.describe()
+                            ),
+                            "select one column, for example `Sales.Revenue`",
+                        );
+                    }
+                    return fail;
+                }
+                let mut nodes = vec![v];
+                if let Some(a) = args.get(1) {
+                    let (n, nty) = self.lower(a, sc);
+                    let ok = matches!(nty, Ty::Any | Ty::Scalar(S::Any))
+                        || matches!(nty, Ty::Scalar(s) if s.is_numeric());
+                    if !ok {
+                        if !matches!(n.kind, Ir::Error) {
+                            self.err(
+                                a.span,
+                                format!(
+                                    "`{name}` needs a single number, but this is {}",
+                                    nty.describe()
+                                ),
+                            );
+                        }
+                        return fail;
+                    }
+                    nodes.push(n);
+                }
+                let func = match name {
+                    "std" => Func::Std,
+                    "var" => Func::Var,
+                    _ => Func::Quantile,
+                };
+                // A variance is exact where its values are, a standard
+                // deviation needs a root, and a quantile taken at the
+                // nearest value is one of the values.
+                let s = match vty {
+                    Ty::Vector(s, _) => s,
+                    _ => S::Any,
+                };
+                let ty = match func {
+                    _ if s == S::Any => Ty::Any,
+                    Func::Std => Ty::Scalar(S::Float),
+                    Func::Var if s.is_int() || s == S::Decimal => Ty::Scalar(S::Decimal),
+                    _ => Ty::Scalar(s),
+                };
+                (Node::new(Ir::Call(func, nodes), span), ty)
+            }
+            "add_months" | "month_end" | "month_start" => {
                 let months = name == "add_months";
-                let shape = if months { "add_months(x, n)" } else { "eom(x)" };
+                let shape = if months {
+                    "add_months(x, n)"
+                } else {
+                    "month_end(x)"
+                };
                 if !arity(self, if months { 2 } else { 1 }, shape) {
                     return fail;
                 }
@@ -2195,18 +3176,19 @@ impl<'a> Checker<'a> {
                 let mut nodes = vec![date];
                 if months {
                     let (n, nty) = self.lower(&args[1], sc);
-                    if !matches!(nty, Ty::Any | Ty::Scalar(S::Int | S::Any)) {
+                    if !nty.is_whole() {
                         self.err(
                             args[1].span,
-                            format!(
-                                "a number of months must be Int, found {}",
-                                nty.describe()
-                            ),
+                            format!("a number of months must be Int, found {}", nty.describe()),
                         );
                     }
                     nodes.push(n);
                 }
-                let func = if months { Func::AddMonths } else { Func::EndOfMonth };
+                let func = match name {
+                    "add_months" => Func::AddMonths,
+                    "month_end" => Func::EndOfMonth,
+                    _ => Func::StartOfMonth,
+                };
                 (Node::new(Ir::Call(func, nodes), span), ty)
             }
             "succ" => {
@@ -2216,10 +3198,10 @@ impl<'a> Checker<'a> {
                 let (arg, aty) = self.lower(&args[0], sc);
                 let ty = match aty {
                     Ty::Any => Ty::Any,
-                    Ty::Scalar(s) if s.is_numeric() || matches!(s, S::Text | S::Any) => {
+                    Ty::Scalar(s) if s.is_numeric() || matches!(s, S::String | S::Any) => {
                         Ty::Scalar(s)
                     }
-                    Ty::Vector(s, n) if s.is_numeric() || matches!(s, S::Text | S::Any) => {
+                    Ty::Vector(s, n) if s.is_numeric() || matches!(s, S::String | S::Any) => {
                         Ty::Vector(s, n)
                     }
                     other => {
@@ -2243,8 +3225,9 @@ impl<'a> Checker<'a> {
                 };
                 (Node::new(Ir::Call(func, Vec::new()), span), Ty::Scalar(s))
             }
-            "year" | "month" | "day" | "weekday" | "hour" | "minute" | "second" | "date"
-            | "time" => {
+            "year" | "month" | "day" | "weekday" | "hour" | "minute" | "second" | "millisecond"
+            | "microsecond" | "nanosecond" | "date" | "time" | "quarter" | "week"
+            | "ordinal_day" => {
                 if !arity(self, 1, &format!("Orders.Placed.{name}()")) {
                     return fail;
                 }
@@ -2253,9 +3236,17 @@ impl<'a> Checker<'a> {
                     "month" => (Func::Month, S::Date, S::Int),
                     "day" => (Func::Day, S::Date, S::Int),
                     "weekday" => (Func::Weekday, S::Date, S::Int),
+                    "quarter" => (Func::Quarter, S::Date, S::Int),
+                    "week" => (Func::Week, S::Date, S::Int),
+                    "ordinal_day" => (Func::OrdinalDay, S::Date, S::Int),
                     "hour" => (Func::Hour, S::Time, S::Int),
                     "minute" => (Func::Minute, S::Time, S::Int),
                     "second" => (Func::Second, S::Time, S::Int),
+                    // The fraction of a second, each as a whole number of
+                    // its own unit: `09:30:00.5` is 500 milliseconds.
+                    "millisecond" => (Func::Millisecond, S::Time, S::Int),
+                    "microsecond" => (Func::Microsecond, S::Time, S::Int),
+                    "nanosecond" => (Func::Nanosecond, S::Time, S::Int),
                     "date" => (Func::DateOf, S::Date, S::Date),
                     _ => (Func::TimeOf, S::Time, S::Time),
                 };
@@ -2270,7 +3261,7 @@ impl<'a> Checker<'a> {
                             self.err(
                                 args[0].span,
                                 format!(
-                                    "`{name}` needs a {from} or a DateTime, but this is {}",
+                                    "`{name}` needs a {from} or a Datetime, but this is {}",
                                     other.describe()
                                 ),
                             );
@@ -2280,10 +3271,39 @@ impl<'a> Checker<'a> {
                 };
                 (Node::new(Ir::Call(func, vec![arg]), span), ty)
             }
-            "to_zone" | "utc" | "local" | "offset" | "zone" => {
-                let takes_zone = name == "to_zone";
+            "total_days" | "total_hours" | "total_minutes" | "total_seconds" => {
+                if !arity(self, 1, &format!("Shifts.Length.{name}()")) {
+                    return fail;
+                }
+                let unit = match name {
+                    "total_days" => date::DAY_MICROS,
+                    "total_hours" => 3_600 * date::MICROS,
+                    "total_minutes" => 60 * date::MICROS,
+                    _ => date::MICROS,
+                };
+                let (arg, aty) = self.lower(&args[0], sc);
+                let ty = match aty {
+                    Ty::Any | Ty::Scalar(S::Any | S::Duration) => Ty::Scalar(S::Decimal),
+                    Ty::Vector(S::Any | S::Duration, n) => Ty::Vector(S::Decimal, n),
+                    other => {
+                        if !matches!(arg.kind, Ir::Error) {
+                            self.err(
+                                args[0].span,
+                                format!(
+                                    "`{name}` needs a Duration, but this is {}",
+                                    other.describe()
+                                ),
+                            );
+                        }
+                        return fail;
+                    }
+                };
+                (Node::new(Ir::Call(Func::Total(unit), vec![arg]), span), ty)
+            }
+            "convert_time_zone" | "utc" | "local" | "base_utc_offset" | "time_zone" => {
+                let takes_zone = name == "convert_time_zone";
                 let usage = if takes_zone {
-                    "Orders.Placed.to_zone(\"Asia/Tokyo\")".to_string()
+                    "Orders.Placed.convert_time_zone(\"Asia/Tokyo\")".to_string()
                 } else {
                     format!("Orders.Placed.{name}()")
                 };
@@ -2291,11 +3311,11 @@ impl<'a> Checker<'a> {
                     return fail;
                 }
                 let (func, out) = match name {
-                    "to_zone" => (Func::ToZone, S::DateTime),
+                    "convert_time_zone" => (Func::ToZone, S::DateTime),
                     "utc" => (Func::Utc, S::DateTime),
                     "local" => (Func::Local, S::DateTime),
-                    "offset" => (Func::Offset, S::Int),
-                    _ => (Func::ZoneName, S::Text),
+                    "base_utc_offset" => (Func::Offset, S::Int),
+                    _ => (Func::ZoneName, S::String),
                 };
                 let (arg, aty) = self.lower(&args[0], sc);
                 let ty = match aty {
@@ -2306,11 +3326,11 @@ impl<'a> Checker<'a> {
                             self.err_help(
                                 args[0].span,
                                 format!(
-                                    "`{name}` needs a DateTime, but this is {}",
+                                    "`{name}` needs a Datetime, but this is {}",
                                     other.describe()
                                 ),
                                 "a Date or a Time alone is in no time zone; add them to make a \
-                                 DateTime",
+                                 Datetime",
                             );
                         }
                         return fail;
@@ -2319,11 +3339,11 @@ impl<'a> Checker<'a> {
                 let mut nodes = vec![arg];
                 if takes_zone {
                     let (zone, zty) = self.lower(&args[1], sc);
-                    if !matches!(zty, Ty::Any | Ty::Scalar(S::Any | S::Text)) {
+                    if !matches!(zty, Ty::Any | Ty::Scalar(S::Any | S::String)) {
                         self.err_help(
                             args[1].span,
                             format!(
-                                "`to_zone` needs the name of a time zone, but this is {}",
+                                "`convert_time_zone` needs the name of a time zone, but this is {}",
                                 zty.describe()
                             ),
                             "for example `\"Europe/London\"`",
@@ -2402,6 +3422,119 @@ impl<'a> Checker<'a> {
                     ty,
                 )
             }
+            // `Sales |> sort(Revenue)`, and `sort(Revenue, desc)` for the
+            // other direction. OMX has no keyword arguments, so the
+            // direction is a bare word in the last place, as `cast(x, Int)`
+            // takes a bare type name. A column of that name is a key, so a
+            // column is looked for before the word is read as a direction.
+            "sort" => {
+                let usage = "Sales |> sort(Revenue, desc)";
+                if args.is_empty() {
+                    self.err_help(
+                        span,
+                        "`sort` needs a sheet or a column",
+                        format!("usage: `{usage}`"),
+                    );
+                    return fail;
+                }
+                let (b, bty) = self.lower(&args[0], sc);
+                let mut rest = &args[1..];
+                let mut desc = false;
+                if let Some(last) = rest.last()
+                    && let ExprKind::Name(word) = &last.kind
+                {
+                    let is_column = match &bty {
+                        Ty::Sheet(tt) => self.col_in(tt, word).is_some(),
+                        _ => false,
+                    };
+                    if !is_column && matches!(word.as_str(), "asc" | "desc") {
+                        desc = word == "desc";
+                        rest = &rest[..rest.len() - 1];
+                    }
+                }
+                let failed = matches!(b.kind, Ir::Error);
+                let sorted = |keys, ty| {
+                    (
+                        Node::new(
+                            Ir::Index {
+                                base: Box::new(b),
+                                rows: RowSel::Order { keys, desc },
+                                cols: ColSel::All,
+                            },
+                            span,
+                        ),
+                        ty,
+                    )
+                };
+                match bty {
+                    Ty::Sheet(tt) => {
+                        if rest.is_empty() {
+                            self.err_help(
+                                span,
+                                "`sort` needs a column to order a sheet by",
+                                format!("usage: `{usage}`"),
+                            );
+                            return fail;
+                        }
+                        let mut keys = Vec::new();
+                        for a in rest {
+                            let ExprKind::Name(col) = &a.kind else {
+                                self.err(a.span, "`sort` takes column names");
+                                return fail;
+                            };
+                            match self.col_in(&tt, col) {
+                                Some(c) => {
+                                    self.col_refs.push((a.span, tt.sheet, c));
+                                    keys.push(c);
+                                }
+                                None => {
+                                    self.no_column(&tt, col, a.span);
+                                    return fail;
+                                }
+                            }
+                        }
+                        // The same columns and the same rows, in another
+                        // order, so the type passes through unchanged.
+                        let ty = Ty::Sheet(tt);
+                        sorted(keys, ty)
+                    }
+                    // Over a column the values are their own key, so a
+                    // column name has nothing to name.
+                    Ty::Vector(..) | Ty::Any if rest.is_empty() => sorted(Vec::new(), bty),
+                    other => {
+                        if !rest.is_empty() && matches!(other, Ty::Vector(..) | Ty::Any) {
+                            self.err_help(
+                                rest[0].span,
+                                "`sort` over a column takes no column name",
+                                "usage: `Sales.Revenue |> sort(desc)`",
+                            );
+                        } else if !failed {
+                            self.err(
+                                args[0].span,
+                                format!(
+                                    "`sort` needs a sheet or a column, but this is {}",
+                                    other.describe()
+                                ),
+                            );
+                        }
+                        fail
+                    }
+                }
+            }
+            // `group_by`, `agg` and `join` make a sheet of new rows, so
+            // they are the whole of a sheet's formula and are read there.
+            "group_by" | "agg" | "join" => {
+                let example = match name {
+                    "join" => "sheet Both := Sales |> join(Targets, Month)",
+                    _ => "sheet ByRegion := Sales |> group_by(Region) |> agg(Revenue.sum())",
+                };
+                self.err_help(
+                    span,
+                    format!("`{name}` makes a sheet of its own, so it ends a sheet's formula"),
+                    format!("write it as `{example}`, and use the sheet by its name from there"),
+                );
+                fail
+            }
             "pi" | "e" => {
                 if !arity(self, 0, &format!("{name}()")) {
                     return fail;
@@ -2409,7 +3542,7 @@ impl<'a> Checker<'a> {
                 let func = if name == "pi" { Func::Pi } else { Func::E };
                 (
                     Node::new(Ir::Call(func, Vec::new()), span),
-                    Ty::Scalar(S::Num),
+                    Ty::Scalar(S::Float),
                 )
             }
             _ if S::from_name(name).is_some() => {
@@ -2421,50 +3554,60 @@ impl<'a> Checker<'a> {
                 self.convert(name, to, arg, aty, args[0].span, span)
             }
             // `round(x, scale)`: to the nearest multiple of `scale`, as in
-            // Raku. It is `round(x / scale) * scale`, so its type is that of
-            // the arithmetic: `round(19.99, 0.1)` is a Decimal.
+            // Raku. It means `round(x / scale) * scale`, so its type is that
+            // of the arithmetic: `round(19.99, 0.1)` is a Decimal. That form
+            // is lowered to find the type and to say what is wrong with it,
+            // and the multiple is then taken as one step: scaling a rounded
+            // Float back up lands it a hair off the number the scale names,
+            // `2.78` as `2.7800000000000002`.
+            // `round(x, n)` is to `n` decimal places, as Polars has it. The
+            // nearest multiple of something is `round(x / m) * m`, which says
+            // so and needs no function of its own.
             "round" if args.len() != 1 => {
                 if args.len() != 2 {
                     self.err_help(
                         span,
                         format!("`round` takes 1 or 2 arguments, found {}", args.len()),
-                        "usage: `round(x)`, or `round(x, 0.01)` to the nearest 0.01",
+                        "usage: `round(x)`, or `round(x, 2)` to two decimal places",
                     );
                     return fail;
                 }
-                // The scale on its own first, so that what is wrong with it
-                // is said once.
-                let (scale, sty) = self.lower(&args[1], sc);
-                if matches!(scale.kind, Ir::Error) {
+                // The places first, so that what is wrong with them is said
+                // once and the number itself is not blamed for it.
+                let (places, pty) = self.lower(&args[1], sc);
+                if matches!(places.kind, Ir::Error) {
                     return fail;
                 }
-                if !matches!(sty, Ty::Any | Ty::Scalar(S::Any)) {
-                    let numeric = matches!(sty, Ty::Scalar(s) if s.is_numeric() && s != S::Complex);
-                    if !numeric {
-                        self.err_help(
-                            args[1].span,
-                            format!(
-                                "the scale of `round` must be a single real number, found {}",
-                                sty.describe()
-                            ),
-                            "usage: `round(x, 0.01)` to the nearest 0.01",
-                        );
+                if !pty.is_whole() {
+                    self.err_help(
+                        args[1].span,
+                        format!(
+                            "the second argument of `round` is a number of decimal places, \
+                             found {}",
+                            pty.describe()
+                        ),
+                        "usage: `round(x, 2)` to two places. For the nearest multiple \
+                         of something, divide, round and multiply back: \
+                         `round(x / 100) * 100`",
+                    );
+                    return fail;
+                }
+                let (x, xty) = self.lower(&args[0], sc);
+                let ty = match xty {
+                    Ty::Any => Ty::Any,
+                    Ty::Scalar(s) if s.is_numeric() || s == S::Any => Ty::Scalar(s),
+                    Ty::Vector(s, n) if s.is_numeric() || s == S::Any => Ty::Vector(s, n),
+                    other => {
+                        if !matches!(x.kind, Ir::Error) {
+                            self.err(args[0].span, format!("cannot round {}", other.describe()));
+                        }
                         return fail;
                     }
-                }
-                let at = |kind| Expr { kind, span };
-                let quotient = at(ExprKind::Binary(
-                    BinOp::Div,
-                    Box::new(args[0].clone()),
-                    Box::new(args[1].clone()),
-                ));
-                let whole = at(ExprKind::Call(name.to_string(), name_span, vec![quotient]));
-                let rounded = at(ExprKind::Binary(
-                    BinOp::Mul,
-                    Box::new(whole),
-                    Box::new(args[1].clone()),
-                ));
-                self.lower(&rounded, sc)
+                };
+                (
+                    Node::new(Ir::Call(Func::RoundDigits, vec![x, places]), span),
+                    ty,
+                )
             }
             _ if MathFn::from_name(name).is_some() => {
                 if !arity(self, 1, &format!("{name}(x)")) {
@@ -2476,10 +3619,9 @@ impl<'a> Checker<'a> {
                 // An exact number stays exact where the function allows it.
                 let out = |s: S| match s {
                     S::Any => Some(S::Any),
-                    S::Complex => m.of_complex(),
                     s if s.is_exact() && m.is_whole() => Some(S::Int),
                     s if s.is_exact() && m.is_exact() => Some(s),
-                    s if s.is_exact() || s == S::Num => Some(S::Num),
+                    s if s.is_exact() || s == S::Float => Some(S::Float),
                     _ => None,
                 };
                 let (arg, aty) = self.lower(&args[0], sc);
@@ -2622,7 +3764,7 @@ impl<'a> Checker<'a> {
             return (Offset(None), Some(0));
         };
         let (node, ty) = self.lower(e, sc);
-        if !matches!(ty, Ty::Any | Ty::Scalar(S::Int | S::Any)) {
+        if !ty.is_whole() {
             self.err(
                 e.span,
                 format!("a row offset must be Int, found {}", ty.describe()),
@@ -2662,10 +3804,63 @@ impl<'a> Checker<'a> {
             }
         };
 
+        // `*-1 by Region`: the cursor's offset, counted among the rows of
+        // the cursor's partition. Moving within it is moving the same way
+        // in the sheet, so its kind is the cursor's; the keys are read at
+        // every row, to find the partition.
+        if let ExprKind::By(inner, keys) = &e.kind {
+            let Some(form) = cursor_form(inner) else {
+                self.err_help(
+                    inner.span,
+                    "`by` counts a cursor offset within a partition",
+                    "for example `[Revenue; *-1 by Region]`",
+                );
+                return RowPick::unknown(e.span);
+            };
+            let Some(t) = sheet else {
+                self.err(e.span, "`by` needs a sheet whose columns to partition by");
+                return RowPick::unknown(e.span);
+            };
+            if !need_row(self, e) {
+                return RowPick::all(nrows);
+            }
+            self.aligns_with(sheet, sc);
+            let mut cols = Vec::new();
+            for (name, at) in keys {
+                let Some(c) = self.find_col(t, name) else {
+                    let tt = SheetTy {
+                        sheet: t,
+                        cols: self.all_cols(t),
+                        rows: nrows,
+                        kind: DepKind::Whole,
+                    };
+                    self.no_column(&tt, name, *at);
+                    return RowPick::unknown(e.span);
+                };
+                self.col_refs.push((*at, t, c));
+                self.deps.push((DepNode::Col(t, c), DepKind::Whole));
+                cols.push(c);
+            }
+            let (off, known) = self.offset(form, sc);
+            let kind = match known {
+                Some(0) if own => DepKind::Same,
+                Some(n) if own && n < 0 => DepKind::Back,
+                Some(n) if own && n > 0 => DepKind::Fwd,
+                _ => DepKind::Whole,
+            };
+            return RowPick {
+                sel: RowSel::CursorBy { off, keys: cols },
+                one: true,
+                len: None,
+                kind,
+            };
+        }
+
         if let Some(form) = cursor_form(e) {
             if !need_row(self, e) {
                 return RowPick::all(nrows);
             }
+            self.aligns_with(sheet, sc);
             let (off, known) = self.offset(form, sc);
             let kind = match known {
                 Some(0) if own => DepKind::Same,
@@ -2689,6 +3884,7 @@ impl<'a> Checker<'a> {
                 if !need_row(self, e) {
                     return RowPick::all(nrows);
                 }
+                self.aligns_with(sheet, sc);
                 let mut bound = |ck: &mut Checker, e: &Expr| match cursor_form(e) {
                     Some(form) => {
                         let (off, known) = ck.offset(form, sc);
@@ -2696,7 +3892,7 @@ impl<'a> Checker<'a> {
                     }
                     None => {
                         let (node, ty) = ck.lower(e, sc);
-                        if !matches!(ty, Ty::Any | Ty::Scalar(S::Int | S::Any)) {
+                        if !ty.is_whole() {
                             ck.err(
                                 e.span,
                                 format!("the ends of a range must be Int, found {}", ty.describe()),
@@ -2744,7 +3940,7 @@ impl<'a> Checker<'a> {
             sc.frames.push(t);
             let (node, ty) = self.lower(e, sc);
             sc.frames.pop();
-            if ty == Ty::Scalar(S::Bool) {
+            if ty == Ty::Scalar(S::Boolean) {
                 return RowPick {
                     sel: RowSel::Pred(Box::new(node)),
                     one: false,
@@ -2770,7 +3966,7 @@ impl<'a> Checker<'a> {
             return RowPick::all(nrows);
         }
         match ty {
-            Ty::Scalar(S::Int) => {
+            Ty::Scalar(s) if s.is_int() => {
                 if let (Some(Static::Int(k)), Some(n)) = (static_of(e), nrows) {
                     let at = if k < 0 { k + n as i64 } else { k };
                     if at < 0 || at >= n as i64 {
@@ -2797,7 +3993,7 @@ impl<'a> Checker<'a> {
                 len: None,
                 kind: DepKind::Whole,
             },
-            Ty::Vector(S::Bool, len) => {
+            Ty::Vector(S::Boolean, len) => {
                 if let (Some(a), Some(b)) = (len, nrows)
                     && a != b
                 {
@@ -3002,6 +4198,24 @@ impl<'a> Checker<'a> {
 
     /// Order the calculation and report circular references.
     fn order(&mut self) -> Vec<Group> {
+        // Which columns are elementwise, while the dependencies are still
+        // here to say so. A constant is one value for every row, so reading
+        // one says nothing about which row a formula reaches; only a read of
+        // another column does, and `Same` is the kind that reaches its own.
+        self.elementwise = self
+            .col_deps
+            .iter()
+            .map(|cols| {
+                cols.iter()
+                    .map(|deps| {
+                        deps.iter().all(|&(to, kind)| match to {
+                            DepNode::Col(..) => kind == DepKind::Same,
+                            DepNode::Const(_) => true,
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
         let nconsts = self.consts.len();
         let mut nodes: Vec<DepNode> = (0..nconsts).map(DepNode::Const).collect();
         for (t, sheet) in self.sheets.iter().enumerate() {
@@ -3070,28 +4284,54 @@ impl<'a> Checker<'a> {
     }
 
     fn finish(mut self, order: Vec<Group>) -> Program {
-        let mut sheets = Vec::new();
+        let mut sheets: Vec<Sheet> = Vec::new();
         for (t, info) in mem::take(&mut self.sheets).into_iter().enumerate() {
+            let rows_from = info.rowless.then(|| self.row_reads[t].clone());
             let mut cols = Vec::new();
             for (c, col) in info.cols.into_iter().enumerate() {
                 let ty = match &self.col_state[t][c] {
                     St::Done(s) | St::Busy(s) => *s,
                     St::Pending => S::Any,
                 };
+                let kind = self.col_out[t][c]
+                    .take()
+                    .unwrap_or(ColKind::Computed(Node::error(col.span)));
+                let format = self
+                    .ast
+                    .and_then(|ast| ast.sheets.get(info.decl))
+                    .and_then(|decl| decl.schema.iter().find(|l| l.name == col.name))
+                    .and_then(|l| l.format.clone());
                 cols.push(Column {
                     name: col.name,
                     span: col.span,
                     ty,
                     declared: col.declared.is_some(),
-                    kind: self.col_out[t][c]
-                        .take()
-                        .unwrap_or(ColKind::Computed(Node::error(col.span))),
+                    from: col.from,
+                    format,
+                    // A column of cells or of a file's own rows is not a
+                    // formula, so there is nothing of it to lower, whatever
+                    // the cells' own formulas read.
+                    elementwise: matches!(kind, ColKind::Computed(_)) && self.elementwise[t][c],
+                    kind,
                 });
             }
+            let view = self.view_out[t].take();
+            let group = self.group_out[t].take();
+            let join = self.join_out[t].take();
+            let view_of = match &self.view_state[t] {
+                St::Done(Ty::Sheet(shape)) | St::Busy(Ty::Sheet(shape)) => Some(shape.clone()),
+                _ => None,
+            };
             sheets.push(Sheet {
                 name: info.name,
                 cols,
                 nrows: info.nrows,
+                source: info.source,
+                rows_from,
+                view,
+                view_of,
+                group,
+                join,
             });
         }
         let mut consts = Vec::new();
@@ -3122,11 +4362,80 @@ fn unop_text(op: UnOp) -> &'static str {
     match op {
         UnOp::Neg => "-",
         UnOp::Not => "not",
+        UnOp::BitNot => "+^",
         UnOp::UpTo => "^",
     }
 }
 
 /// Whether the text of a cell is text written in quotes.
 fn quoted(cell: &str) -> bool {
-    matches!(parse_literal(cell), Some(Lit::Text(_)))
+    matches!(parse_literal(cell), Some(Lit::String(_)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A sheet of the four columns `Month`, `Revenue`, `Cost` and `Balance`,
+    /// with `formulas` added as computed columns.
+    fn sheet(formulas: &str) -> Program {
+        let names: Vec<&str> = formulas
+            .lines()
+            .filter_map(|l| l.split_once(":=").map(|(name, _)| name.trim()))
+            .collect();
+        let header = names.iter().map(|n| format!(" {n} |")).collect::<String>();
+        let cells = names.iter().map(|_| " * |").collect::<String>();
+        let text = format!(
+            "sheet Sales\n\n\
+             | Month | Revenue | Cost |{header}\n\
+             | Jan   | 100     | 60   |{cells}\n\
+             | Feb   | 120     | 70   |{cells}\n\n\
+             {formulas}\n"
+        );
+        let (program, diags) = compile(&text, 0);
+        assert!(diags.is_empty(), "{text}\n{diags:?}");
+        program
+    }
+
+    /// Whether the column named `name` of the first sheet is elementwise.
+    fn is_elementwise(program: &Program, name: &str) -> bool {
+        let col = program.sheets[0]
+            .cols
+            .iter()
+            .find(|c| c.name == name)
+            .expect("the column is there");
+        col.elementwise
+    }
+
+    #[test]
+    fn a_same_row_formula_is_elementwise() {
+        let p = sheet("Profit := Revenue - Cost");
+        assert!(is_elementwise(&p, "Profit"));
+    }
+
+    #[test]
+    fn a_formula_of_literals_is_elementwise() {
+        let p = sheet("One := 1 + 1");
+        assert!(is_elementwise(&p, "One"));
+    }
+
+    #[test]
+    fn reading_an_earlier_row_is_not_elementwise() {
+        let p = sheet("Running := Revenue + [Running; *-1] // 0");
+        assert!(!is_elementwise(&p, "Running"));
+    }
+
+    #[test]
+    fn reading_a_whole_column_is_not_elementwise() {
+        let p = sheet("Share := Revenue / Sales.Revenue.sum()");
+        assert!(!is_elementwise(&p, "Share"));
+    }
+
+    #[test]
+    fn a_column_of_cells_is_not_elementwise() {
+        let p = sheet("Profit := Revenue - Cost");
+        // `Revenue` holds cells of its own, so there is no formula of it to
+        // be lowered, elementwise or not.
+        assert!(!is_elementwise(&p, "Revenue"));
+    }
 }

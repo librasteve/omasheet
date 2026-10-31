@@ -1,0 +1,59 @@
+# The first rows and the last. `head(n)` and `tail(n)` are a row range
+# written another way — `head(3)` is the first three rows and `tail(3)` the
+# last three — so they go wherever a range goes.
+#
+# Over a column they give its cells, as a list: `Revenue |> head(3)` is the
+# first three numbers. An aggregate over that is one number, so
+# `Revenue |> head(3) |> sum()` is the opening quarter without naming the
+# months in it, and the same formula holds when a row is added.
+#
+# Over a sheet they give rows, and a sheet of rows is a sheet: name one
+# with `sheet <Name> := <expression>` and it is shown like any other,
+# calculated from the sheets it reads and holding no rows of its own. Its
+# tab is marked `:=`, as a calculated column's header is. It reaches a
+# dataframe-backed table the same way — see `analysis.omx` for one of those.
+#
+# A cursor is the other way of reaching another row: `Sales[Revenue; *-1]`
+# is the row before this one, where a slice is a run of rows taken from one
+# end. `shift(n)` says the same over a whole column.
+
+const Opening = Sales.Revenue |> head(3) |> sum()
+const Closing = Sales.Revenue |> tail(3) |> sum()
+
+# A slice on its own is the list of what it holds.
+const FirstThree = Sales.Revenue |> head(3)
+const LastThree  = Sales.Revenue |> tail(3)
+
+# The best of the opening quarter, and how many months there are in all:
+# `len` counts rows where `count` counts the values that are not empty.
+const BestOpening = Sales.Revenue |> head(3) |> max()
+const Months      = Sales.Revenue.len()
+
+sheet Sales
+
+Month | Revenue | Share | Growth
+Jan   | 100     | *     | *
+Feb   | 120     | *     | *
+Mar   | 150     | *     | *
+Apr   | 90      | *     | *
+May   | 130     | *     | *
+Jun   | 170     | *     | *
+
+# Each month against the opening quarter it is measured from.
+Share  := (Revenue / Opening).round(3)
+
+# The month before, which a cursor offset gives: `*-1` is one row back,
+# empty in the first row where there is no such row, and `//` reads that
+# as the month itself so the first growth is zero rather than an error.
+Growth := Revenue - (Sales[Revenue; *-1] // Revenue)
+
+# Two sheets calculated from Sales: the first three months, and the months
+# that beat a hundred with only their names kept. Neither holds a row of
+# its own — the rows are the view the expression gives — so neither takes
+# an edit, as a table does not.
+sheet Best := Sales |> head(3)
+
+sheet Over := Sales |> filter(Revenue > 100) |> select(Month, Revenue)
+
+# And one calculated from a calculated sheet, which settles after it.
+sheet Opened := Best |> head(1)
