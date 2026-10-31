@@ -371,6 +371,7 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
             "Datetime: e.g. {}{also_iso}",
             style.datetime(day as i64 * date::DAY_MICROS + time / date::NANOS_PER_MICRO)
         ),
+        "Duration" => "Duration: PnDTnHnMnS, e.g. PT1H30M".into(),
         _ => String::new(),
     }
 }
@@ -4204,6 +4205,10 @@ mod tests {
         assert_eq!(
             entry_hint(&Style::ISO, "Datetime"),
             "Datetime: e.g. 2025-01-31T17:05"
+        );
+        assert_eq!(
+            entry_hint(&us, "Duration"),
+            "Duration: PnDTnHnMnS, e.g. PT1H30M"
         );
         assert_eq!(entry_hint(&us, ""), "");
         // A cell that does not fit says what would.

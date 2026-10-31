@@ -887,8 +887,10 @@ fn math_functions() {
     assert_eq!(calc("[sqrt(-1), ln(0), arcsin(2)]"), "[NaN, -Inf, NaN]");
     assert!(calc_err(None, "sin(\"x\")").contains("`sin` cannot be applied to String"));
     assert!(calc_err(None, "sqr(4)").contains("did you mean `sqrt`?"));
-    // Every function in the directory is one the checker knows.
-    for f in omasheet_engine::omx::funcs::FUNCTIONS {
+    // Every function in the directory is one the checker knows. The
+    // operators are listed there too, by their symbols, and are not called.
+    let named = |f: &&omasheet_engine::omx::funcs::FuncDoc| f.name.starts_with(char::is_alphabetic);
+    for f in omasheet_engine::omx::funcs::FUNCTIONS.iter().filter(named) {
         let out = eval(None, "<expression>", &format!("{}()", f.name));
         assert!(
             !out.errors.join("\n").contains("unknown function"),

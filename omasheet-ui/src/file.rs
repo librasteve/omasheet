@@ -1049,7 +1049,7 @@ impl qobject::File {
         let ty = ty.to_string();
         if !matches!(
             ty.as_str(),
-            "Date" | "Time" | "Datetime" | "Boolean" | "Url" | "Email" | "Uuid"
+            "Date" | "Time" | "Datetime" | "Duration" | "Boolean" | "Url" | "Email" | "Uuid"
         ) {
             return QString::default();
         }
