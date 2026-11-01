@@ -24,7 +24,14 @@ pub enum Held {
     /// is read until a cell of it is asked for, and then this column alone
     /// is read, so a column nothing asks for is never read from the file at
     /// all.
-    Column { path: PathBuf, name: String },
+    ///
+    /// `whole` is the column already in memory, where the document holds
+    /// its file whole (D157): then nothing is read from the file at all.
+    Column {
+        path: PathBuf,
+        name: String,
+        whole: Option<Box<PlColumn>>,
+    },
     /// The source has no such column. The mismatch is said once, as a
     /// diagnostic; every cell of it is then in error rather than empty,
     /// which is what a column of errors standing in for it gave.
@@ -48,7 +55,15 @@ impl Held {
 
     fn read_rows(&self, slice: Option<(usize, usize)>) -> Option<PlColumn> {
         match self {
-            Held::Column { path, name } => ParquetReader::new(open(path).ok()?)
+            // A slice of a column held is a view of its buffers, not a copy.
+            Held::Column {
+                whole: Some(column),
+                ..
+            } => Some(match slice {
+                None => (**column).clone(),
+                Some((start, len)) => column.slice(start as i64, len),
+            }),
+            Held::Column { path, name, .. } => ParquetReader::new(open(path).ok()?)
                 .with_columns(Some(vec![name.clone()]))
                 .with_slice(slice)
                 .finish()
@@ -112,6 +127,18 @@ impl Tables {
 /// million rows and twenty columns reads neither the rows nor the columns —
 /// and a column no formula mentions is never read at all.
 pub fn read(program: &mut Program, dir: &Path, diags: &mut Vec<Diagnostic>) -> Tables {
+    read_holding(program, dir, diags, &Store::new())
+}
+
+/// [`read`], where some files are held whole in `store` (D157): a column of
+/// one of them, while the file is still as it was when it was read, is
+/// given from memory rather than read again.
+pub fn read_holding(
+    program: &mut Program,
+    dir: &Path,
+    diags: &mut Vec<Diagnostic>,
+    store: &Store,
+) -> Tables {
     let mut frames = Tables::for_program(program);
     for (t, sheet) in program.sheets.iter_mut().enumerate() {
         let Some(source) = sheet.source.clone() else {
@@ -122,15 +149,21 @@ pub fn read(program: &mut Program, dir: &Path, diags: &mut Vec<Diagnostic>) -> T
             let height = rows(dir, &source)?;
             Ok((frame, height))
         }) {
-            Ok((frame, height)) => fill(
-                t,
-                sheet,
-                (frame, &path),
-                height,
-                &source,
-                diags,
-                &mut frames,
-            ),
+            Ok((frame, height)) => {
+                let whole = store
+                    .get(&path)
+                    .filter(|w| identity(&path).as_ref() == Some(&w.identity))
+                    .map(|w| &w.frame);
+                fill(
+                    t,
+                    sheet,
+                    (frame, &path, whole),
+                    height,
+                    &source,
+                    diags,
+                    &mut frames,
+                )
+            }
             Err(why) => diags.push(Diagnostic::new(
                 source.span,
                 format!("cannot read `{}`: {why}", source.path),
@@ -180,7 +213,7 @@ fn scan(path: &Path) -> Result<LazyFrame, String> {
 fn fill(
     t: usize,
     sheet: &mut omasheet_omx::check::Sheet,
-    (mut frame, path): (LazyFrame, &Path),
+    (mut frame, path, whole): (LazyFrame, &Path, Option<&DataFrame>),
     height: usize,
     source: &Source,
     diags: &mut Vec<Diagnostic>,
@@ -291,10 +324,107 @@ fn fill(
             Held::Column {
                 path: path.to_path_buf(),
                 name: names[c].clone(),
+                whole: whole.and_then(|f| f.column(names[c].as_str()).ok().cloned().map(Box::new)),
             },
         );
     }
     sheet.nrows = height;
+}
+
+/// What tells a file from the same file changed: its length and when it
+/// was last written. A file held whole is given from memory only while
+/// these are as they were when it was read.
+pub type Identity = (u64, Option<std::time::SystemTime>);
+
+/// The identity of the file at `path` now, or `None` where there is none.
+pub fn identity(path: &Path) -> Option<Identity> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()))
+}
+
+/// A table's file read whole, with the identity it had when it was read.
+#[derive(Clone)]
+pub struct Whole {
+    pub identity: Identity,
+    pub frame: DataFrame,
+}
+
+/// The files a document holds whole, by the path its sources name them by
+/// (D157).
+pub type Store = std::collections::HashMap<PathBuf, Whole>;
+
+/// What it would take to hold columns `names` of the Parquet file at
+/// `path` in memory, in bytes, from its footer alone: no row group is read.
+///
+/// A column of fixed width takes its width a row, and a bit a row to say
+/// which are null, as Arrow holds it, and that is exact. Any other — text,
+/// mostly — takes what the footer says it is uncompressed, and 16 bytes a
+/// row more, which is what a Polars string view costs. That errs high:
+/// a file of short strings is said to need more than it does, and so is
+/// left on disk where it might have fitted, which is the mistake to make.
+pub fn estimate(path: &Path, names: &[String]) -> Result<usize, String> {
+    let mut reader = ParquetReader::new(open(path)?);
+    let schema = reader.schema().map_err(|e| e.to_string())?;
+    let meta = reader.get_metadata().map_err(|e| e.to_string())?.clone();
+    let rows = meta.num_rows;
+    let mut bytes = 0usize;
+    for name in names {
+        let Some(field) = schema.get(name.as_str()) else {
+            continue;
+        };
+        let dtype = DataType::from_arrow_field(field);
+        let validity = rows.div_ceil(8);
+        bytes += match fixed_width(&dtype) {
+            Some(0) => 0,
+            Some(width) => rows * width + validity,
+            None => {
+                let raw: i64 = meta
+                    .row_groups
+                    .iter()
+                    .filter_map(|g| g.columns_under_root_iter(name))
+                    .flatten()
+                    .map(|c| c.uncompressed_size())
+                    .sum();
+                usize::try_from(raw).unwrap_or(0) + rows * 16 + validity
+            }
+        };
+    }
+    Ok(bytes)
+}
+
+/// The bytes a row of a column of `dtype` takes, where every row takes the
+/// same; `None` where they do not.
+fn fixed_width(dtype: &DataType) -> Option<usize> {
+    Some(match dtype {
+        DataType::Null => 0,
+        // A bit a row, which the validity's share already counts.
+        DataType::Boolean => 0,
+        DataType::Int8 | DataType::UInt8 => 1,
+        DataType::Int16 | DataType::UInt16 => 2,
+        DataType::Int32 | DataType::UInt32 | DataType::Float32 | DataType::Date => 4,
+        DataType::Int64
+        | DataType::UInt64
+        | DataType::Float64
+        | DataType::Datetime(..)
+        | DataType::Duration(_)
+        | DataType::Time => 8,
+        DataType::Int128 | DataType::Decimal(..) => 16,
+        _ => return None,
+    })
+}
+
+/// Columns `names` of the Parquet file at `path`, read whole, with the
+/// identity the file had when reading began: what a document holds of a
+/// table that fits (D157). A file changed while it was read has a new
+/// identity by the time it is held, so what was read is never given out.
+/// For a worker: nothing here touches a document.
+pub fn read_whole(path: &Path, names: &[String]) -> Result<Whole, String> {
+    let identity = identity(path).ok_or_else(|| "there is no such file".to_string())?;
+    let frame = ParquetReader::new(open(path)?)
+        .with_columns(Some(names.to_vec()))
+        .finish()
+        .map_err(|e| e.to_string())?;
+    Ok(Whole { identity, frame })
 }
 
 /// A name for a column the file holds under one omasheet cannot write: what

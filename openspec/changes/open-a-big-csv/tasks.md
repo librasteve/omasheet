@@ -58,10 +58,10 @@ Parquet alone.
 - [x] 2b.2 A table sort is a step to undo and redo (`2c1a795`)
 - [x] 2b.3 D159: a column's filter lists at most 1,000 values and searches
       the rest in Rust (`2e65c8e`); the crash on a date-time column is gone
-- [ ] 2b.4 D157: the size a table takes held whole, estimated from its
+- [x] 2b.4 D157: the size a table takes held whole, estimated from its
       footer; held whole by a worker when under half of `MemAvailable`;
       otherwise a status-bar notice with the estimate. Measured: the
-      estimate against the held size for both demo files
+      estimate against the held size for both demo files (within 3%)
 - [ ] 2b.5 D158: sort, filter, the selection summary and Ctrl+Down as Polars
       operations over the column, with a differential test against today's
       answers (ties, nulls, NaN, decimals). Measured on short2: each ≤ 50 ms

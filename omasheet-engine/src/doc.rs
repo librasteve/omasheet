@@ -168,6 +168,16 @@ struct Step {
     orders: Orders,
 }
 
+/// A table's file the document could hold whole, and what that would take
+/// (D157): the columns its sheet reads, and their size in memory as the
+/// file's footer gives it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToHold {
+    pub path: std::path::PathBuf,
+    pub columns: Vec<String>,
+    pub bytes: usize,
+}
+
 /// The first `limit` of `values` whose text holds `query`, case aside, and
 /// how many hold it in all: what a column's filter lists of the values it
 /// shows. A column of a big table can show millions of values, more than a
@@ -209,6 +219,10 @@ pub struct Document {
     /// and the grid, a copy and the summary of a selection all read the
     /// snapshot it orders. A sort is a step to undo, as an edit is.
     orders: Orders,
+    /// The tables' files held whole in memory, by path (D157). Kept across
+    /// rebuilds, and dropped when the text no longer names the file or the
+    /// file has changed. See [`Document::to_hold`] and [`Document::hold`].
+    whole: crate::table::Store,
     /// How many edits have been committed. See [`Document::edit_count`].
     edits: usize,
     /// The engine of the last rebuild, kept so that a paged sheet's cells
@@ -1454,6 +1468,7 @@ impl Document {
             local,
             base: None,
             orders: Default::default(),
+            whole: Default::default(),
             edits: 0,
             engine: None,
             column_errors: Vec::new(),
@@ -1496,6 +1511,65 @@ impl Document {
 
     pub fn snapshot(&self) -> &Snapshot {
         &self.snapshot
+    }
+
+    /// Every table's file that is paged and not yet held whole, with what
+    /// holding it would take (D157). Whether to hold it is the caller's to
+    /// decide, against the memory there is, and the reading is the caller's
+    /// to do, off the thread that draws: [`crate::table::read_whole`] then
+    /// [`Document::hold`].
+    pub fn to_hold(&self) -> Vec<ToHold> {
+        let Some(engine) = &self.engine else {
+            return Vec::new();
+        };
+        let base = self.base.clone().unwrap_or_else(|| ".".into());
+        let mut out: Vec<ToHold> = Vec::new();
+        for (sheet, snap) in engine.program().sheets.iter().zip(&self.snapshot.sheets) {
+            let Some(source) = &sheet.source else {
+                continue;
+            };
+            let path = base.join(&source.path);
+            if !snap.paged || self.whole.contains_key(&path) || out.iter().any(|h| h.path == path) {
+                continue;
+            }
+            // The columns the file is read for: the sheet's own, by the name
+            // the file gives them.
+            let columns: Vec<String> = sheet
+                .cols
+                .iter()
+                .filter(|c| matches!(c.kind, ColKind::Frame))
+                .map(|c| c.from.clone().unwrap_or_else(|| c.name.clone()))
+                .collect();
+            if let Ok(bytes) = crate::table::estimate(&path, &columns) {
+                out.push(ToHold {
+                    path,
+                    columns,
+                    bytes,
+                });
+            }
+        }
+        out
+    }
+
+    /// Hold the file at `path` whole, as a worker read it, and rebuild over
+    /// it, so that its columns are given from memory. `false`, and nothing
+    /// held, where the text no longer names the file, it has changed since
+    /// it was read, or it is held already.
+    pub fn hold(&mut self, path: std::path::PathBuf, whole: crate::table::Whole) -> bool {
+        if self.whole.contains_key(&path)
+            || crate::table::identity(&path).as_ref() != Some(&whole.identity)
+            || !self.to_hold().iter().any(|h| h.path == path)
+        {
+            return false;
+        }
+        self.whole.insert(path, whole);
+        self.rebuild();
+        true
+    }
+
+    /// Whether the file at `path` is held whole.
+    pub fn holds(&self, path: &std::path::Path) -> bool {
+        self.whole.contains_key(path)
     }
 
     pub fn can_undo(&self) -> bool {
@@ -3127,7 +3201,18 @@ impl Document {
         // Read whatever else is wrong: a mistake in one sheet is no reason
         // for a table beside it to lose its rows.
         let base = self.base.clone().unwrap_or_else(|| ".".into());
-        let tables = crate::table::read(&mut program, &base, &mut diags);
+        let tables = crate::table::read_holding(&mut program, &base, &mut diags, &self.whole);
+        // A file the text no longer names, or one changed since it was read,
+        // is not held any longer.
+        let named: std::collections::HashSet<std::path::PathBuf> = program
+            .sheets
+            .iter()
+            .filter_map(|s| s.source.as_ref())
+            .map(|source| base.join(&source.path))
+            .collect();
+        self.whole.retain(|path, w| {
+            named.contains(path) && crate::table::identity(path).as_ref() == Some(&w.identity)
+        });
         // A view's row count is settled before the grid is built from it.
         let view_options = Options {
             base: self.base.clone(),
@@ -3932,6 +4017,84 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_table_held_whole_answers_as_one_read_from_its_file() {
+        // A copy of its own, since the file is changed below.
+        let dir = std::env::temp_dir().join(format!("omasheet-hold-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("titanic.parquet");
+        std::fs::copy(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/titanic.parquet"),
+            &file,
+        )
+        .unwrap();
+        let text = "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n\nTwice := Fare * 2\n";
+        let open = || {
+            let mut doc = Document::from_text(text);
+            doc.set_base(&dir);
+            doc.set_paged_rows(100);
+            doc
+        };
+        let (on_disk, mut held) = (open(), open());
+
+        // What there is to hold: the file's eight columns, by the names the
+        // file gives them, and not the formula.
+        let wanted = held.to_hold();
+        assert_eq!(wanted.len(), 1);
+        let want = &wanted[0];
+        assert_eq!(want.path, file);
+        assert_eq!(want.columns.len(), 8);
+        assert!(
+            want.columns
+                .contains(&"Siblings/Spouses Aboard".to_string())
+        );
+        let whole = crate::table::read_whole(&want.path, &want.columns).unwrap();
+        // The estimate errs high, and not by much more than the text costs.
+        let size = whole.frame.estimated_size();
+        assert!(want.bytes >= size, "estimate {} < {size}", want.bytes);
+        assert!(want.bytes < size * 3, "estimate {} vs {size}", want.bytes);
+
+        assert!(held.hold(want.path.clone(), whole.clone()));
+        assert!(held.holds(&file));
+        assert!(held.to_hold().is_empty(), "nothing more to hold");
+        assert!(!held.hold(want.path.clone(), whole.clone()), "held once");
+        let n = on_disk.snapshot().sheets[0].nrows;
+        let shown = |doc: &Document, from, count| -> Vec<Vec<String>> {
+            doc.rows(0, from, count)
+                .into_iter()
+                .map(|row| row.into_iter().map(|c| c.display).collect())
+                .collect()
+        };
+        for (from, count) in [(0, 30), (n / 2, 30), (n - 5, 30)] {
+            assert_eq!(shown(&held, from, count), shown(&on_disk, from, count));
+        }
+        assert_eq!(
+            held.summary(0, (0, 0), (n - 1, 8)),
+            on_disk.summary(0, (0, 0), (n - 1, 8))
+        );
+        assert_eq!(held.distinct_shown(0, 5), on_disk.distinct_shown(0, 5));
+        // Rows not asked for yet come from memory: with the file taken away
+        // they are still there, until a rebuild lets the file go.
+        let expected = shown(&on_disk, n / 4, 30);
+        let away = dir.join("away.parquet");
+        let not_held = open();
+        std::fs::rename(&file, &away).unwrap();
+        assert_eq!(shown(&held, n / 4, 30), expected);
+        assert_ne!(shown(&not_held, n / 4, 30), expected, "the file is gone");
+        std::fs::rename(&away, &file).unwrap();
+
+        // The file changed on disk: what was held is not given out again,
+        // and a frame read before the change is not taken.
+        let mut bytes = std::fs::read(&file).unwrap();
+        bytes.extend_from_slice(b"\0");
+        std::fs::write(dir.join("other.parquet"), &bytes).unwrap();
+        std::fs::rename(dir.join("other.parquet"), &file).unwrap();
+        held.set_paged_rows(100);
+        assert!(!held.holds(&file), "a changed file is let go");
+        assert!(!held.hold(want.path.clone(), whole));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

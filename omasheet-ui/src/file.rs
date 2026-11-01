@@ -14,6 +14,7 @@ use omasheet_engine::{Document, Options, locale};
 use omasheet_interop::parquet;
 use omasheet_interop::{Exported, Imported};
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -382,6 +383,11 @@ pub struct FileRust {
     /// column and revision: a column of a big table takes seconds to list,
     /// and a search asks again with each key.
     distinct: RefCell<Option<(Listed, Rc<Vec<String>>)>>,
+    /// The tables' files being read whole on a worker (D157).
+    reading: HashSet<PathBuf>,
+    /// The files already said to be too big to hold, so that it is said
+    /// once rather than with every edit.
+    told: HashSet<PathBuf>,
 }
 
 impl Default for FileRust {
@@ -413,6 +419,8 @@ impl Default for FileRust {
             saved: BLANK.to_string(),
             clip: Clip::default(),
             distinct: RefCell::new(None),
+            reading: HashSet::new(),
+            told: HashSet::new(),
         }
     }
 }
@@ -456,6 +464,12 @@ impl qobject::File {
         self.as_mut().set_modified(modified);
         self.as_mut().set_can_undo(can_undo);
         self.as_mut().set_can_redo(can_redo);
+        let note = self.as_mut().hold_tables();
+        let status = if status.is_empty() {
+            note.as_str()
+        } else {
+            status
+        };
         self.as_mut().set_status(QString::from(status));
         let next = self.rust().revision.wrapping_add(1);
         self.as_mut().set_revision(next);
@@ -1160,6 +1174,73 @@ impl qobject::File {
         QString::from(&text)
     }
 
+    /// Read whole, on a worker, each paged table that fits in half the memory
+    /// there is free, so that it is given from memory once it arrives
+    /// (D157); and say of one that does not fit that it is kept on disk,
+    /// and why. Returns what to say, if anything.
+    fn hold_tables(mut self: Pin<&mut Self>) -> String {
+        let wanted = self.rust().doc.to_hold();
+        if wanted.is_empty() {
+            return String::new();
+        }
+        let Some(free) = mem_available() else {
+            return String::new();
+        };
+        let mut note = String::new();
+        for want in wanted {
+            let name = file_name(&want.path);
+            if self.rust().reading.contains(&want.path) {
+                continue;
+            }
+            if want.bytes >= free / 2 {
+                if self.as_mut().rust_mut().told.insert(want.path.clone()) {
+                    note = format!(
+                        "{name} kept on disk: {} to hold, {} free",
+                        bytes_text(want.bytes),
+                        bytes_text(free)
+                    );
+                }
+                continue;
+            }
+            self.as_mut().rust_mut().reading.insert(want.path.clone());
+            note = format!(
+                "Reading {name} into memory ({})\u{2026}",
+                bytes_text(want.bytes)
+            );
+            let thread = self.qt_thread();
+            std::thread::spawn(move || {
+                let got = omasheet_engine::table::read_whole(&want.path, &want.columns);
+                let _ = thread.queue(move |file| file.whole_read(want.path, want.bytes, got));
+            });
+        }
+        note
+    }
+
+    /// A table's file has been read whole, or could not be. `bytes` is what
+    /// it was estimated to take, which is what it takes (measured within 3%
+    /// of the memory it adds), where Polars' own `estimated_size` counts
+    /// little of a column of text.
+    fn whole_read(
+        mut self: Pin<&mut Self>,
+        path: PathBuf,
+        bytes: usize,
+        got: Result<omasheet_engine::table::Whole, String>,
+    ) {
+        self.as_mut().rust_mut().reading.remove(&path);
+        let name = file_name(&path);
+        match got {
+            Ok(whole) => {
+                let size = bytes_text(bytes);
+                if self.as_mut().rust_mut().doc.hold(path, whole) {
+                    self.refresh(&format!("{name} held in memory ({size})"));
+                }
+            }
+            Err(why) => self.as_mut().set_status(QString::from(&format!(
+                "Cannot read {name} into memory: {why}"
+            ))),
+        }
+    }
+
     fn follow_theme(mut self: Pin<&mut Self>, system_dark: bool) {
         self.as_mut().rust_mut().system_dark = system_dark;
         self.as_mut().reload_theme();
@@ -1183,4 +1264,31 @@ impl qobject::File {
         self.as_mut().set_theme_muted(QString::from(&theme.muted));
         self.as_mut().set_theme_error(QString::from(&theme.error));
     }
+}
+
+/// The memory the system says can be had without swapping, in bytes:
+/// `MemAvailable` in `/proc/meminfo`. `None` where there is no such file,
+/// and then no table is held whole.
+fn mem_available() -> Option<usize> {
+    let info = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let line = info.lines().find(|l| l.starts_with("MemAvailable:"))?;
+    let kb: usize = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kb * 1024)
+}
+
+/// A size as the status bar says it: `501 MB`, `3.2 GB`.
+fn bytes_text(bytes: usize) -> String {
+    let mb = bytes as f64 / 1e6;
+    if mb < 1000.0 {
+        format!("{mb:.0} MB")
+    } else {
+        format!("{:.1} GB", mb / 1000.0)
+    }
+}
+
+/// The last part of a path, for the status bar.
+fn file_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
