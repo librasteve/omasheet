@@ -226,6 +226,77 @@ fn held_cell(column: &PlColumn, r: usize, ty: S) -> Cell {
 /// Some rows of a column read from its file, and the row they start at.
 type Window = (usize, PlColumn);
 
+/// A value from a column the dataframe holds, read the way
+/// [`Engine::column_shown`] reads one: the same [`cell_of`] and the same
+/// reading of the literal it gives, so that the two cannot disagree.
+fn frame_value(value: polars::prelude::AnyValue, ty: S) -> Value {
+    match cell_of(value, ty) {
+        Cell::Empty => Value::Null,
+        Cell::Lit(l) => lit_value(&l, ty),
+        Cell::Markdown(s) => Value::String(Rc::from(s.as_str()), true),
+        // `cell_of` gives one of the three.
+        _ => Value::Error,
+    }
+}
+
+/// One argument of an aggregate, as the aggregate walks it (D79, item 2 of
+/// `hold-less-of-a-big-file`). A whole column the dataframe holds is kept
+/// as that column and walked in place, so that summing twenty million
+/// rows of it does not first build twenty million boxed values; anything
+/// else is the values it evaluated to, shared rather than copied.
+enum Items {
+    One(Value),
+    Many(Rc<Vec<Value>>),
+    /// A column the dataframe is the authority for, in one chunk, and the
+    /// sheet and column it is, whose memoised cells are consulted as it is
+    /// walked: a cell already read is the value it was read as, as it is
+    /// in `column_shown`.
+    Column {
+        series: polars::prelude::Series,
+        ty: S,
+        len: usize,
+        at: (usize, usize),
+    },
+}
+
+impl Items {
+    fn len(&self) -> usize {
+        match self {
+            Items::One(_) => 1,
+            Items::Many(v) => v.len(),
+            Items::Column { len, .. } => *len,
+        }
+    }
+
+    /// Every value, in order, handed to `f`. Nothing here evaluates, so
+    /// nothing here can fail: whatever could was settled when the items
+    /// were taken.
+    ///
+    /// `f` must not reach back into the engine: the column's slots are
+    /// borrowed while it is walked.
+    fn each(&self, engine: &Engine, f: &mut impl FnMut(Value)) {
+        match self {
+            Items::One(v) => f(v.clone()),
+            Items::Many(vs) => vs.iter().cloned().for_each(f),
+            Items::Column {
+                series,
+                ty,
+                len,
+                at: (t, c),
+            } => {
+                let cells = engine.cells.borrow();
+                let slots = cells[*t][*c].as_deref();
+                for (r, any) in series.iter().take(*len).enumerate() {
+                    match slots.map(|s| &s[r]) {
+                        Some(Slot::Done(v)) => f(v.clone()),
+                        _ => f(frame_value(any, *ty)),
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl<'p> Engine<'p> {
     pub fn new(prog: &'p Program) -> Engine<'p> {
         Engine::with_options(prog, Options::default())
@@ -1773,6 +1844,47 @@ impl<'p> Engine<'p> {
         }
     }
 
+    /// A whole column as an aggregate walks it, where the dataframe holds it
+    /// and walking it gives what [`Engine::column`] would: `None` sends the
+    /// aggregate down the path of values, which is every other case.
+    ///
+    /// Only a column the dataframe is the authority for, which is one
+    /// calculated in one step or a `table`'s own; and only where reading it
+    /// cell by cell could not fail, since a failure has to surface where
+    /// and as it did. So a column the file holds fewer rows of than the
+    /// sheet, or one with a cell in error or being calculated, is left to
+    /// the values.
+    fn whole_column(&self, t: usize, c: usize) -> Option<Items> {
+        let sheet = &self.prog.sheets[t];
+        let (nrows, ty) = (sheet.nrows, sheet.cols[c].ty);
+        let got = self.held.borrow()[t][c].clone();
+        let column = match got {
+            Some(column) => column,
+            None if matches!(sheet.cols[c].kind, ColKind::Frame)
+                && matches!(self.tables.get(t, c), Some(Held::Column { .. })) =>
+            {
+                self.pl_column(t, c)?
+            }
+            None => return None,
+        };
+        if column.len() < nrows {
+            return None;
+        }
+        if let Some(slots) = self.cells.borrow()[t][c].as_deref()
+            && slots
+                .iter()
+                .any(|s| matches!(s, Slot::Busy | Slot::Done(Value::Error)))
+        {
+            return None;
+        }
+        Some(Items::Column {
+            series: column.as_materialized_series().rechunk(),
+            ty,
+            len: nrows,
+            at: (t, c),
+        })
+    }
+
     fn column(&self, t: usize, c: usize, rows: &[usize]) -> R {
         self.read_range(t, c, rows);
         let mut out = Vec::with_capacity(rows.len());
@@ -2483,21 +2595,32 @@ impl<'p> Engine<'p> {
             | Func::Product
             | Func::First
             | Func::Last => {
-                // Every argument's values, taken together.
-                let mut items: Vec<Value> = Vec::new();
+                // Every argument's values, taken together. A whole column
+                // the dataframe holds is walked where it is rather than
+                // copied out into values first, and a vector is shared
+                // rather than copied (D79).
+                let mut items: Vec<Items> = Vec::new();
                 for arg in args {
+                    if let Ir::Column { sheet: t, col: c } = arg.kind
+                        && let Some(column) = self.whole_column(t, c)
+                    {
+                        items.push(column);
+                        continue;
+                    }
                     match self.eval(arg, fr)? {
-                        Value::Vector(v) => items.extend(v.iter().cloned()),
+                        Value::Vector(v) => items.push(Items::Many(v)),
                         Value::Sheet(v) if func == Func::Len && args.len() == 1 => {
                             return Ok(Value::int(v.rows.len() as i64));
                         }
                         // A block: its cells, row by row.
                         Value::Sheet(v) => {
+                            let mut cells = Vec::with_capacity(v.rows.len() * v.cols.len());
                             for &r in v.rows.iter() {
                                 for &c in v.cols.iter() {
-                                    items.push(self.cell(v.sheet, c, r)?);
+                                    cells.push(self.cell(v.sheet, c, r)?);
                                 }
                             }
+                            items.push(Items::Many(Rc::new(cells)));
                         }
                         Value::Range {
                             lo,
@@ -2507,16 +2630,18 @@ impl<'p> Engine<'p> {
                         } => {
                             let lo = if after { lo + 1 } else { lo };
                             let hi = if exclusive { hi - 1 } else { hi };
-                            items.extend((lo..=hi).map(Value::int));
+                            items.push(Items::Many(Rc::new((lo..=hi).map(Value::int).collect())));
                         }
                         Value::Row(row) => {
+                            let mut cells = Vec::with_capacity(row.cols.len());
                             for &c in row.cols.iter() {
-                                items.push(self.cell(row.sheet, c, row.row)?);
+                                cells.push(self.cell(row.sheet, c, row.row)?);
                             }
+                            items.push(Items::Many(Rc::new(cells)));
                         }
                         Value::Null => {}
                         other if args.len() > 1 && !matches!(other, Value::Sheet(_)) => {
-                            items.push(other)
+                            items.push(Items::One(other))
                         }
                         other => {
                             return fail(
@@ -2526,81 +2651,136 @@ impl<'p> Engine<'p> {
                         }
                     }
                 }
-                let present: Vec<&Value> =
-                    items.iter().filter(|v| !matches!(v, Value::Null)).collect();
-                let sum = || -> R {
-                    // Lengths of time add up to one, from none.
-                    let timed = !present.is_empty()
-                        && present.iter().all(|v| matches!(v, Value::Duration(_)));
-                    let mut total = if timed {
-                        Value::Duration(0)
-                    } else {
-                        Value::int(0)
-                    };
-                    for v in &present {
-                        total = arith(BinOp::Add, &total, v).or_else(|m| fail(span, m))?;
+                // One walk over every value, nulls and all, in order: what
+                // is not empty, what it is all of, and whatever `see`
+                // gathers for the aggregate asked for. A column walked in
+                // place converts each cell as it goes, so a second walk
+                // would be a second conversion of every row.
+                let (mut present, mut timed, mut percent) = (0usize, true, true);
+                let mut walk = |see: &mut dyn FnMut(Value)| -> Result<(), Fail> {
+                    for item in &items {
+                        // A cell in error poisons the column it is read
+                        // from, as `cell` has it for a column of values.
+                        let walked = matches!(item, Items::Column { .. });
+                        let mut poisoned = false;
+                        item.each(self, &mut |v| {
+                            poisoned |= walked && matches!(v, Value::Error);
+                            if !matches!(v, Value::Null) {
+                                present += 1;
+                                timed &= matches!(v, Value::Duration(_));
+                                percent &= matches!(v, Value::Percent(_));
+                            }
+                            see(v);
+                        });
+                        if poisoned {
+                            return Err(Fail::Poison);
+                        }
                     }
-                    Ok(total)
+                    Ok(())
                 };
+                // `op` over the values that are not empty, from `start`: the
+                // first failure is the answer, and nothing after it counts.
+                let fold = |total: &mut Result<Value, String>, op: BinOp, v: &Value| {
+                    if let (Ok(t), false) = (&*total, matches!(v, Value::Null)) {
+                        *total = arith(op, t, v);
+                    }
+                };
+                // A sum from nothing: lengths of time add up to one, from
+                // none, and anything else from `0`. Which it is is known only
+                // once every value is seen, so both are kept while they can
+                // be, and the one of time is dropped at the first value that
+                // is not one.
+                let mut by_int: Result<Value, String> = Ok(Value::int(0));
+                let mut by_time: Option<Result<Value, String>> = Some(Ok(Value::Duration(0)));
+                let mut summing = |v: Value| {
+                    if matches!(v, Value::Null) {
+                        return;
+                    }
+                    if !matches!(v, Value::Duration(_)) {
+                        by_time = None;
+                    }
+                    if let Some(total) = &mut by_time {
+                        fold(total, BinOp::Add, &v);
+                    }
+                    fold(&mut by_int, BinOp::Add, &v);
+                };
+                let mut sorted: Vec<Value> = Vec::new();
+                let mut product: Result<Value, String> = Ok(Value::int(1));
+                let mut first: Option<Value> = None;
+                let mut last = Value::Null;
+                let want = if func == Func::Min {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                };
+                let mut best: Result<Option<Value>, String> = Ok(None);
+                walk(&mut |v: Value| match func {
+                    Func::Sum | Func::Mean => summing(v),
+                    Func::Median if !matches!(v, Value::Null) => sorted.push(v),
+                    Func::Product => fold(&mut product, BinOp::Mul, &v),
+                    Func::First => {
+                        first.get_or_insert(v);
+                    }
+                    Func::Last => last = v,
+                    Func::Min | Func::Max if !matches!(v, Value::Null) => {
+                        if let Ok(b) = &mut best {
+                            match b {
+                                None => *b = Some(v),
+                                Some(held) => match compare(&v, held) {
+                                    Ok(o) if o == Some(want) => *held = v,
+                                    Ok(_) => {}
+                                    Err(m) => best = Err(m),
+                                },
+                            }
+                        }
+                    }
+                    _ => {}
+                })?;
+                // Lengths of time add up to one, from none.
+                let timed = present > 0 && timed;
                 // The sum and the average of percentages are percentages.
-                let percent =
-                    !present.is_empty() && present.iter().all(|v| matches!(v, Value::Percent(_)));
+                let percent = present > 0 && percent;
                 let kept = |v: Value| if percent { v.percent() } else { v };
+                let sum = || -> R {
+                    match (timed, by_time) {
+                        (true, Some(total)) => total,
+                        _ => by_int,
+                    }
+                    .or_else(|m| fail(span, m))
+                };
                 match func {
-                    Func::Count => Ok(Value::int(present.len() as i64)),
+                    Func::Count => Ok(Value::int(present as i64)),
                     // What is empty counts here, which is the whole
                     // difference between `len` and `count`.
-                    Func::Len => Ok(Value::int(items.len() as i64)),
+                    Func::Len => Ok(Value::int(
+                        items.iter().map(Items::len).sum::<usize>() as i64
+                    )),
                     Func::Sum => sum().map(kept),
-                    Func::Mean if present.is_empty() => Ok(Value::Null),
-                    Func::Mean => arith(BinOp::Div, &sum()?, &Value::int(present.len() as i64))
+                    Func::Mean if present == 0 => Ok(Value::Null),
+                    Func::Mean => arith(BinOp::Div, &sum()?, &Value::int(present as i64))
                         .map(kept)
                         .or_else(|m| fail(span, m)),
-                    Func::Median if present.is_empty() => Ok(Value::Null),
+                    Func::Median if present == 0 => Ok(Value::Null),
                     Func::Median => {
-                        let mut sorted = present.clone();
                         sorted.sort_by(|a, b| {
                             compare(a, b).ok().flatten().unwrap_or(Ordering::Equal)
                         });
                         let n = sorted.len();
                         if n % 2 == 1 {
-                            Ok((*sorted[n / 2]).clone())
+                            Ok(sorted.swap_remove(n / 2))
                         } else {
-                            let pair = arith(BinOp::Add, sorted[n / 2 - 1], sorted[n / 2])
+                            let pair = arith(BinOp::Add, &sorted[n / 2 - 1], &sorted[n / 2])
                                 .or_else(|m| fail(span, m))?;
                             arith(BinOp::Div, &pair, &Value::int(2))
                                 .map(kept)
                                 .or_else(|m| fail(span, m))
                         }
                     }
-                    Func::Product => {
-                        let mut total = Value::int(1);
-                        for v in &present {
-                            total = arith(BinOp::Mul, &total, v).or_else(|m| fail(span, m))?;
-                        }
-                        Ok(total)
-                    }
+                    Func::Product => product.or_else(|m| fail(span, m)),
                     // Empty or not: the first value is the first value.
-                    Func::First => Ok(items.first().cloned().unwrap_or(Value::Null)),
-                    Func::Last => Ok(items.last().cloned().unwrap_or(Value::Null)),
-                    _ => {
-                        let want = if func == Func::Min {
-                            Ordering::Less
-                        } else {
-                            Ordering::Greater
-                        };
-                        let mut best: Option<&Value> = None;
-                        for &v in &present {
-                            best = match best {
-                                None => Some(v),
-                                Some(b) => {
-                                    let o = compare(v, b).or_else(|m| fail(span, m))?;
-                                    if o == Some(want) { Some(v) } else { Some(b) }
-                                }
-                            };
-                        }
-                        Ok(best.cloned().unwrap_or(Value::Null))
-                    }
+                    Func::First => Ok(first.unwrap_or(Value::Null)),
+                    Func::Last => Ok(last),
+                    _ => Ok(best.or_else(|m| fail(span, m))?.unwrap_or(Value::Null)),
                 }
             }
         }

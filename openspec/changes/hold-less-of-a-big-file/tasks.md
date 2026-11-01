@@ -1,5 +1,8 @@
 # Tasks: hold less of a big file
 
+> **Under way again** (owner, 2026-11-01): items 2 and 3 come before
+> `open-a-big-csv`, which depends on them. This replaces the deferral below.
+>
 > **Deferred** until every pipe stage of `add-sheet-operations-polars` is done
 > (owner, 2026-10-28; D89 there). It is the snagging change that measures what a big
 > Parquet costs where a part of it would do, and it cannot measure the cost
@@ -76,10 +79,32 @@ size, and each with its *before* already measured and pinned by a test.
 
 ## 2. A column need not become a value per row
 
-- [ ] 2.1 Only if 0.1 says so. `Value::Series(Rc<PlColumn>)`, with a
+- [x] 2.1 Only if 0.1 says so. `Value::Series(Rc<PlColumn>)`, with a
       `materialised()` that turns it into a `Vector` at the top of each
       generic path, so that a column read hands back what the frame store
       already holds
+
+      Built 2026-11-01 as a type private to the aggregate path rather than a
+      variant of `Value`: `Items` in `eval.rs`, with `Engine::whole_column`.
+      An aggregate's argument that is a whole column the dataframe holds (a
+      `table`'s own, or one lowered) is walked in place, in one pass, with
+      the memoised cells honoured; anything else is its values, shared
+      rather than copied. A series therefore never reaches a generic path,
+      so no `materialised()` is needed and no `match` on `Value` changed. It
+      becomes a variant when 2.3 needs a series to flow further. Where a
+      walk could fail where values would not (a row short, a cell in error
+      or busy), the column is left to the values.
+
+      Held to the values by
+      `an_aggregate_walks_a_whole_column_as_it_would_its_values` in
+      `spec.rs`: ten aggregates, and `max` of two, over seven columns of
+      `titanic.parquet`, under each lowering, against the same rows taken by
+      a selection, failures and diagnostics included. Measured A/B, release,
+      at a million rows under `Never` (0.1's harness): `len` 92 → 29 ms,
+      `Whole.sum()` 235 → 205 ms, `Real.sum()` (D72's refusal) 100 → 44 ms,
+      145 → 15 MiB each. Over a month of NYC taxi (4.09M rows), release CLI:
+      a float `mean` 1.48 s, 634 MB → 0.22 s, 102 MB; `median` 2.33 s,
+      634 MB → 1.60 s, 319 MB (it sorts the values, so it keeps them)
 - [ ] 2.2 `Passengers[; Pclass == 1].Name.len()` counts without reading
       `Name`'s values, which `spec.rs`'s `unselected_columns_are_not_read`
       records as reading them today

@@ -3401,6 +3401,70 @@ fn unselected_columns_are_not_read() {
     );
 }
 
+#[test]
+fn an_aggregate_walks_a_whole_column_as_it_would_its_values() {
+    // A whole column the dataframe holds is walked where it is (D79); the
+    // same rows taken by a selection are a vector of values. Every
+    // aggregate over every type of column answers the same both ways, and
+    // fails the same way where it fails, under each lowering.
+    let dir = std::path::Path::new("../examples");
+    let (mut program, mut diags) = compile(TABLE, 0);
+    let tables = omasheet_engine::table::read(&mut program, dir, &mut diags);
+    assert!(diags.is_empty(), "{diags:?}");
+    let program = program;
+    let mut answered = 0;
+    for lowering in [Lowering::Never, Lowering::Auto, Lowering::Always] {
+        let answer = |expr: &str| {
+            // A fresh engine each time, so that one answer's reads and
+            // memoised cells cannot stand in for another's.
+            let tables =
+                omasheet_engine::table::read(&mut compile(TABLE, 0).0, dir, &mut Vec::new());
+            let engine = Engine::with_tables(
+                &program,
+                Options {
+                    base: Some(dir.to_path_buf()),
+                    lowering,
+                    ..Options::default()
+                },
+                tables,
+            );
+            engine.run();
+            // Refused by the checker: the same refusal either way.
+            let node = match compile_expr(&program, expr, 1) {
+                Ok((node, _)) => node,
+                Err(diags) => {
+                    return (None, diags.into_iter().map(|d| d.message).collect());
+                }
+            };
+            let value = engine.eval_top(&node);
+            let diags: Vec<String> = engine.take_diags().into_iter().map(|d| d.message).collect();
+            (value.map(|v| engine.render_value(&v)), diags)
+        };
+        for col in [
+            "Survived", "Pclass", "Name", "Sex", "Age", "Fare", "Siblings",
+        ] {
+            for func in [
+                "sum", "mean", "min", "max", "count", "len", "median", "product", "first", "last",
+            ] {
+                let whole = answer(&format!("Passengers.{col}.{func}()"));
+                let values = answer(&format!("Passengers[; Pclass > 0].{col}.{func}()"));
+                assert_eq!(whole, values, "{col}.{func}() under {lowering:?}");
+                answered += usize::from(whole.0.is_some());
+            }
+            // Two arguments: the column and a vector beside it.
+            let whole = answer(&format!("max(Passengers.{col}, Passengers.{col})"));
+            let values = answer(&format!(
+                "max(Passengers[; Pclass > 0].{col}, Passengers[; Pclass > 0].{col})"
+            ));
+            assert_eq!(whole, values, "max of two {col} under {lowering:?}");
+        }
+    }
+    drop(tables);
+    // Most of them are answers rather than refusals: a `sum` of names is
+    // refused both ways, a `mean` of ages is not.
+    assert!(answered > 150, "{answered} of 210 answered");
+}
+
 // ---- the snapshot (D75) ---------------------------------------------------
 
 /// Values as their `Debug`, which is the strictest comparison there is of
