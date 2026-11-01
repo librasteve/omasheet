@@ -233,11 +233,25 @@ pub mod qobject {
         #[qinvokable]
         fn move_rows(self: Pin<&mut File>, sheet: i32, first: i32, count: i32, to: i32) -> QString;
         /// Move `count` columns from `first` so the first becomes column `to`.
-        /// The rows of sheet `sheet` a filter shows, as a JSON list of row
-        /// numbers. `hide` is each filtered column's name followed by the
-        /// texts it hides, separated by U+001F, the columns by U+001E.
+        /// Filter sheet `sheet`, and say how many rows it shows, or -1 where
+        /// nothing is filtered and every row shows. `hide` is each filtered
+        /// column's name followed by the texts it hides, separated by U+001F,
+        /// the columns by U+001E. The rows are kept here, for
+        /// [`row_at`](Self::row_at) and [`pos_of`](Self::pos_of) to answer
+        /// from: a big table's would be millions, too many to hand to QML.
         #[qinvokable]
-        fn shown_rows(self: &File, sheet: i32, hide: &QString) -> QString;
+        fn filter_rows(self: &File, sheet: i32, hide: &QString) -> i32;
+        /// The row shown at place `pos` of the filtered list, or -1 past its
+        /// ends; `pos` itself where nothing is filtered.
+        #[qinvokable]
+        fn row_at(self: &File, pos: i32) -> i32;
+        /// The place in the filtered list of row `row`, or -1 where it is
+        /// hidden; `row` itself where nothing is filtered.
+        #[qinvokable]
+        fn pos_of(self: &File, row: i32) -> i32;
+        /// Whether any row from `top` to `bottom` is hidden by the filter.
+        #[qinvokable]
+        fn hides_between(self: &File, top: i32, bottom: i32) -> bool;
         /// The first `limit` texts column `col` shows that hold `query`,
         /// each once and in order, and how many hold it in all, as JSON
         /// `{"values": [...], "total": n}`: what its filter chooses among.
@@ -345,6 +359,13 @@ pub mod qobject {
 /// Which column of which sheet, at which revision, a filter's list is of.
 type Listed = (i32, i32, i32);
 
+/// The rows a filter shows, by number, and the place each row has among
+/// them, -1 for one it hides.
+struct Shown {
+    rows: Vec<usize>,
+    pos: Vec<i32>,
+}
+
 pub struct FileRust {
     file_name: QString,
     file_path: QString,
@@ -383,6 +404,9 @@ pub struct FileRust {
     /// column and revision: a column of a big table takes seconds to list,
     /// and a search asks again with each key.
     distinct: RefCell<Option<(Listed, Rc<Vec<String>>)>>,
+    /// The rows the filter in force shows, and each row's place among them;
+    /// `None` while every row shows. See [`qobject::File::filter_rows`].
+    shown: RefCell<Option<Shown>>,
     /// The tables' files being read whole on a worker (D157).
     reading: HashSet<PathBuf>,
     /// The files already said to be too big to hold, so that it is said
@@ -419,6 +443,7 @@ impl Default for FileRust {
             saved: BLANK.to_string(),
             clip: Clip::default(),
             distinct: RefCell::new(None),
+            shown: RefCell::new(None),
             reading: HashSet::new(),
             told: HashSet::new(),
         }
@@ -1009,7 +1034,7 @@ impl qobject::File {
         self.try_edit(|doc| doc.move_rows(index(sheet), index(first), index(count), index(to)))
     }
 
-    fn shown_rows(&self, sheet: i32, hide: &QString) -> QString {
+    fn filter_rows(&self, sheet: i32, hide: &QString) -> i32 {
         let hide: Vec<(String, Vec<String>)> = hide
             .to_string()
             .split('\u{1e}')
@@ -1020,9 +1045,56 @@ impl qobject::File {
                 Some((name, parts.map(str::to_string).collect()))
             })
             .collect();
-        QString::from(&json::numbers(
-            &self.rust().doc.shown_rows(index(sheet), &hide),
-        ))
+        let rust = self.rust();
+        if hide.iter().all(|(_, texts)| texts.is_empty()) {
+            *rust.shown.borrow_mut() = None;
+            return -1;
+        }
+        let rows = rust.doc.shown_rows(index(sheet), &hide);
+        let n = rust.doc.row_count(index(sheet));
+        let mut pos = vec![-1; n];
+        for (k, &r) in rows.iter().enumerate() {
+            if let Some(p) = pos.get_mut(r) {
+                *p = k as i32;
+            }
+        }
+        let count = rows.len() as i32;
+        *rust.shown.borrow_mut() = Some(Shown { rows, pos });
+        count
+    }
+
+    fn row_at(&self, pos: i32) -> i32 {
+        match &*self.rust().shown.borrow() {
+            None => pos,
+            Some(shown) => usize::try_from(pos)
+                .ok()
+                .and_then(|p| shown.rows.get(p))
+                .map_or(-1, |&r| r as i32),
+        }
+    }
+
+    fn pos_of(&self, row: i32) -> i32 {
+        match &*self.rust().shown.borrow() {
+            None => row,
+            Some(shown) => usize::try_from(row)
+                .ok()
+                .and_then(|r| shown.pos.get(r))
+                .copied()
+                .unwrap_or(-1),
+        }
+    }
+
+    fn hides_between(&self, top: i32, bottom: i32) -> bool {
+        match &*self.rust().shown.borrow() {
+            None => false,
+            Some(shown) => {
+                let (top, bottom) = (index(top.min(bottom)), index(top.max(bottom)));
+                shown
+                    .pos
+                    .get(top..=bottom.min(shown.pos.len().saturating_sub(1)))
+                    .is_some_and(|block| block.iter().any(|&p| p < 0))
+            }
+        }
     }
 
     fn values_matching(&self, sheet: i32, col: i32, query: &QString, limit: i32) -> QString {

@@ -365,46 +365,32 @@ ApplicationWindow {
     // rows in the file.
     property var filters: ({})
     property int filterRev: 0
-    // The rows the grid lists, by number, while a filter is in force, and
-    // `null` while every row shows. The document works them out, once for
-    // each change of the sheet or the filter; the grid then lists these and
-    // no others, so a row a filter hides costs nothing at all.
-    readonly property var shownRows: {
+    // How many rows the grid lists while a filter is in force, and -1 while
+    // every row shows. The document works out which, once for each change
+    // of the sheet or the filter, and keeps them: a big table's are
+    // millions, too many to bring here, so the grid asks it for the row at
+    // a place and the place of a row. A new object each time, so that what
+    // reads it follows every change of the filter, not only of the count.
+    readonly property var filterShown: {
         filterRev;
         var f = filters[sheet.name];
-        if (!f || sheet.isConsts)
-            return null;
         var parts = [];
-        for (var name in f)
-            if (f[name] && f[name].length > 0)
-                parts.push([name].concat(f[name]).join("\u001f"));
-        if (parts.length === 0)
-            return null;
-        return JSON.parse(file.shownRows(tab, parts.join("\u001e")));
+        if (f && !sheet.isConsts)
+            for (var name in f)
+                if (f[name] && f[name].length > 0)
+                    parts.push([name].concat(f[name]).join("\u001f"));
+        return { count: file.filterRows(tab, parts.join("\u001e")) };
     }
-    // Where each row is in the list, or -1 where it is hidden.
-    readonly property var rowPos: {
-        if (shownRows === null)
-            return null;
-        var pos = [];
-        for (var r = 0; r < sheet.nrows; r++)
-            pos.push(-1);
-        for (var k = 0; k < shownRows.length; k++)
-            pos[shownRows[k]] = k;
-        return pos;
-    }
-    readonly property int shownCount: shownRows === null ? sheet.nrows : shownRows.length
+    readonly property int shownCount: filterShown.count < 0 ? sheet.nrows : filterShown.count
     function isHidden(row) {
-        return rowPos !== null && rowPos[row] < 0;
+        return filterShown.count >= 0 && file.posOf(row) < 0;
     }
     // The place of a row in the list, and the row at a place in it.
     function posOf(row) {
-        return rowPos === null ? row : Math.max(0, rowPos[row]);
+        return filterShown.count < 0 ? row : Math.max(0, file.posOf(row));
     }
     function rowAt(pos) {
-        if (shownRows === null)
-            return pos;
-        return pos >= 0 && pos < shownRows.length ? shownRows[pos] : -1;
+        return filterShown.count < 0 ? pos : file.rowAt(pos);
     }
     // The row drawn at `y` down the list, the nearest one past either end.
     function rowAtY(y) {
@@ -500,12 +486,9 @@ ApplicationWindow {
     // Whether more than one row is selected and a hidden one is among them:
     // what is done to the selection would be done to rows nobody can see.
     function selectionHidesRows() {
-        if (rowPos === null || selTop === selBottom)
+        if (filterShown.count < 0 || selTop === selBottom)
             return false;
-        for (var r = selTop; r <= selBottom; r++)
-            if (isHidden(r))
-                return true;
-        return false;
+        return file.hidesBetween(selTop, selBottom);
     }
     // The first `limit` texts a column shows that hold `query`, each once,
     // in the order of their values, and how many hold it in all:

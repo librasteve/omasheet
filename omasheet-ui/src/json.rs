@@ -38,13 +38,6 @@ fn list<T>(out: &mut String, items: &[T], mut each: impl FnMut(&mut String, &T))
     out.push(']');
 }
 
-/// Row numbers, as a list.
-pub fn numbers(items: &[usize]) -> String {
-    let mut out = String::new();
-    list(&mut out, items, |out, n| out.push_str(&n.to_string()));
-    out
-}
-
 /// The values a column's filter lists, and how many there are in all:
 /// `{"values": [...], "total": n}`.
 pub fn matching(values: &[&str], total: usize) -> String {
