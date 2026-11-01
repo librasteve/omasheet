@@ -168,6 +168,27 @@ struct Step {
     orders: Orders,
 }
 
+/// The first `limit` of `values` whose text holds `query`, case aside, and
+/// how many hold it in all: what a column's filter lists of the values it
+/// shows. A column of a big table can show millions of values, more than a
+/// list can be scrolled through or the grid's JavaScript can parse, so the
+/// list is cut short and the count says by how much; a search reaches the
+/// rest. An empty query is held by every text.
+pub fn matching<'a>(values: &'a [String], query: &str, limit: usize) -> (Vec<&'a str>, usize) {
+    let query = query.to_lowercase();
+    let mut first = Vec::new();
+    let mut total = 0;
+    for value in values {
+        if query.is_empty() || value.to_lowercase().contains(&query) {
+            if first.len() < limit {
+                first.push(value.as_str());
+            }
+            total += 1;
+        }
+    }
+    (first, total)
+}
+
 pub struct Document {
     text: String,
     snapshot: Snapshot,
@@ -3741,6 +3762,28 @@ mod tests {
             assert_eq!(names(&doc), by_name);
             assert_eq!(doc.text(), edited);
         }
+    }
+
+    #[test]
+    fn a_filter_lists_the_first_values_that_match_and_counts_them_all() {
+        let values: Vec<String> = ["", "Anna", "anne", "Bob", "Joanna"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        // Everything, cut short at the limit and counted in full.
+        assert_eq!(
+            matching(&values, "", 10),
+            (vec!["", "Anna", "anne", "Bob", "Joanna"], 5)
+        );
+        assert_eq!(matching(&values, "", 2), (vec!["", "Anna"], 5));
+        // Case aside, anywhere in the text, in the order given.
+        assert_eq!(
+            matching(&values, "ANN", 10),
+            (vec!["Anna", "anne", "Joanna"], 3)
+        );
+        assert_eq!(matching(&values, "ann", 1), (vec!["Anna"], 3));
+        assert_eq!(matching(&values, "zzz", 10), (vec![], 0));
+        assert_eq!(matching(&values, "", 0), (vec![], 5));
     }
 
     #[test]

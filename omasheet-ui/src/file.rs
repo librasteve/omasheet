@@ -8,12 +8,14 @@ use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QUrl};
 use omasheet_engine::datefmt::Names;
-use omasheet_engine::doc::{BLANK, PAGED_ROWS, entry_hint};
+use omasheet_engine::doc::{BLANK, PAGED_ROWS, entry_hint, matching};
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::{Document, Options, locale};
 use omasheet_interop::parquet;
 use omasheet_interop::{Exported, Imported};
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 #[cxx_qt::bridge]
@@ -235,10 +237,17 @@ pub mod qobject {
         /// texts it hides, separated by U+001F, the columns by U+001E.
         #[qinvokable]
         fn shown_rows(self: &File, sheet: i32, hide: &QString) -> QString;
-        /// The texts column `col` shows, each once and in order, as a JSON
-        /// list: what its filter chooses among.
+        /// The first `limit` texts column `col` shows that hold `query`,
+        /// each once and in order, and how many hold it in all, as JSON
+        /// `{"values": [...], "total": n}`: what its filter chooses among.
         #[qinvokable]
-        fn distinct_shown(self: &File, sheet: i32, col: i32) -> QString;
+        fn values_matching(
+            self: &File,
+            sheet: i32,
+            col: i32,
+            query: &QString,
+            limit: i32,
+        ) -> QString;
         /// The rows of sheet `sheet` rearranged in the order of column
         /// `col`, descending or not.
         #[qinvokable]
@@ -332,6 +341,9 @@ pub mod qobject {
     impl cxx_qt::Threading for File {}
 }
 
+/// Which column of which sheet, at which revision, a filter's list is of.
+type Listed = (i32, i32, i32);
+
 pub struct FileRust {
     file_name: QString,
     file_path: QString,
@@ -366,6 +378,10 @@ pub struct FileRust {
     saved: String,
     /// What was last cut or copied here.
     clip: Clip,
+    /// The texts a column last listed for its filter shows, by sheet,
+    /// column and revision: a column of a big table takes seconds to list,
+    /// and a search asks again with each key.
+    distinct: RefCell<Option<(Listed, Rc<Vec<String>>)>>,
 }
 
 impl Default for FileRust {
@@ -396,6 +412,7 @@ impl Default for FileRust {
             origin: None,
             saved: BLANK.to_string(),
             clip: Clip::default(),
+            distinct: RefCell::new(None),
         }
     }
 }
@@ -994,10 +1011,22 @@ impl qobject::File {
         ))
     }
 
-    fn distinct_shown(&self, sheet: i32, col: i32) -> QString {
-        QString::from(&json::texts(
-            &self.rust().doc.distinct_shown(index(sheet), index(col)),
-        ))
+    fn values_matching(&self, sheet: i32, col: i32, query: &QString, limit: i32) -> QString {
+        let rust = self.rust();
+        let key = (sheet, col, rust.revision);
+        let held = rust
+            .distinct
+            .borrow()
+            .as_ref()
+            .filter(|(k, _)| *k == key)
+            .map(|(_, v)| v.clone());
+        let values = held.unwrap_or_else(|| {
+            let values = Rc::new(rust.doc.distinct_shown(index(sheet), index(col)));
+            *rust.distinct.borrow_mut() = Some((key, values.clone()));
+            values
+        });
+        let (first, total) = matching(&values, &query.to_string(), index(limit));
+        QString::from(&json::matching(&first, total))
     }
 
     fn sort_rows(self: Pin<&mut Self>, sheet: i32, col: i32, descending: bool) -> QString {

@@ -45,10 +45,12 @@ pub fn numbers(items: &[usize]) -> String {
     out
 }
 
-/// Texts, as a list.
-pub fn texts(items: &[String]) -> String {
-    let mut out = String::new();
-    list(&mut out, items, |out, t| string(out, t));
+/// The values a column's filter lists, and how many there are in all:
+/// `{"values": [...], "total": n}`.
+pub fn matching(values: &[&str], total: usize) -> String {
+    let mut out = String::from("{\"values\":");
+    list(&mut out, values, |out, t| string(out, t));
+    out.push_str(&format!(",\"total\":{total}}}"));
     out
 }
 

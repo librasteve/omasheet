@@ -507,9 +507,11 @@ ApplicationWindow {
                 return true;
         return false;
     }
-    // The texts a column shows, each once, in the order of their values.
-    function valuesOf(col) {
-        return JSON.parse(file.distinctShown(tab, col));
+    // The first `limit` texts a column shows that hold `query`, each once,
+    // in the order of their values, and how many hold it in all:
+    // { values: [...], total: n }.
+    function valuesOf(col, query, limit) {
+        return JSON.parse(file.valuesMatching(tab, col, query, limit));
     }
 
     function selectCell(row, col, extend) {
@@ -3536,18 +3538,23 @@ ApplicationWindow {
     Popup {
         id: columnPopup
         property int col: 0
+        // The values listed: those the search holds, at most `limit` of
+        // them, out of `total`. A column of a big table can show millions,
+        // more than a list can be scrolled through, so the search is made
+        // over all of them and the list shows the first.
         property var values: []
+        property int total: 0
+        readonly property int limit: 1000
         property var excluded: ({})
         property string search: ""
         readonly property bool sortable: !win.sheet.isConsts
-        readonly property var listed: {
-            var out = [];
-            var q = search.toLowerCase();
-            for (var i = 0; i < values.length; i++)
-                if (q.length === 0 || values[i].toLowerCase().indexOf(q) >= 0)
-                    out.push(values[i]);
-            return out;
+        readonly property var listed: values
+        function fetch() {
+            var got = win.valuesOf(col, search, limit);
+            values = got.values;
+            total = got.total;
         }
+        onSearchChanged: if (visible) fetch()
         readonly property int shownCount: {
             var n = 0;
             for (var i = 0; i < listed.length; i++)
@@ -3568,15 +3575,15 @@ ApplicationWindow {
             parent = item;
             x = 0;
             y = item.height;
-            values = win.valuesOf(c);
+            search = "";
+            valueSearch.text = "";
+            fetch();
             var f = win.filters[win.sheet.name];
             var out = f && f[win.sheet.columns[c].name] ? f[win.sheet.columns[c].name] : [];
             var map = {};
             for (var i = 0; i < out.length; i++)
                 map[out[i]] = true;
             excluded = map;
-            search = "";
-            valueSearch.text = "";
             open();
         }
         function sortBy(desc) {
@@ -3677,7 +3684,8 @@ ApplicationWindow {
             CheckBox {
                 Layout.fillWidth: true
                 Layout.maximumWidth: columnPopup.availableWidth
-                text: "Show all"
+                // When the list is cut short, it is what is listed it shows.
+                text: columnPopup.total > columnPopup.values.length ? "Show all listed" : "Show all"
                 font.family: win.font.family
                 font.pixelSize: columnPopup.textSize
                 implicitHeight: columnPopup.lineHeight
@@ -3708,6 +3716,18 @@ ApplicationWindow {
                     checked: columnPopup.excluded[modelData] !== true
                     onClicked: columnPopup.toggle(modelData, checked)
                 }
+            }
+            Text {
+                visible: columnPopup.total > columnPopup.values.length
+                Layout.fillWidth: true
+                Layout.maximumWidth: columnPopup.availableWidth
+                wrapMode: Text.Wrap
+                text: "First " + columnPopup.values.length.toLocaleString(Qt.locale(), "f", 0)
+                    + " of " + columnPopup.total.toLocaleString(Qt.locale(), "f", 0)
+                    + " \u2014 search to narrow"
+                color: win.mutedColor
+                font.family: win.font.family
+                font.pixelSize: columnPopup.textSize
             }
             Rectangle {
                 Layout.fillWidth: true
