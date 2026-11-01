@@ -182,8 +182,13 @@ columns it happened in.
 
 ## In the app
 
-- Ctrl+O opens an XLSX Workbook, a CSV file or JSON as well as an `.omx`
-  file. It is imported as a new file, not yet saved.
+- Ctrl+O opens an XLSX Workbook, a CSV file, JSON or Parquet as well as an
+  `.omx` file. It is imported as a new file, not yet saved.
+- A Parquet file of more than 10,000 rows is not imported: it opens as a
+  new file of one `table` that reads it where it is, named by its whole
+  path, so a month of NYC taxi trips opens at once. It is read-only, and
+  saving it writes a one-line `.omx`. The grid formats the rows it shows
+  as it scrolls; a sort or a filter in the grid reads the whole column.
 - Ctrl+E exports, and asks what as: every sheet as an XLSX Workbook (X) or
   as JSON (J), or the sheet shown as CSV (C). It then asks where.
 - What was changed, rounded or left behind is listed, and stays under

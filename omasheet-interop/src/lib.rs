@@ -112,7 +112,7 @@ const RESERVED: &[&str] = &[
 
 /// `raw` as an OMX identifier: the letters, digits and `_` of it, with a
 /// capital after each gap. Empty if it has none of them.
-fn identifier(raw: &str) -> String {
+pub fn identifier(raw: &str) -> String {
     let mut out = String::new();
     let mut gap = false;
     for c in raw.chars() {

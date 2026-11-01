@@ -8,7 +8,7 @@ use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QUrl};
 use omasheet_engine::datefmt::Names;
-use omasheet_engine::doc::{BLANK, entry_hint};
+use omasheet_engine::doc::{BLANK, PAGED_ROWS, entry_hint};
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::{Document, Options, locale};
 use omasheet_interop::parquet;
@@ -497,6 +497,49 @@ impl qobject::File {
         self.refresh("");
     }
 
+    /// Open a big Parquet file as a new file, not yet saved, of one `table`
+    /// that reads it where it is: copied into the text, as an import does,
+    /// a file of millions of rows would never be shown. `false` for a file
+    /// of no more rows than a sheet is formatted whole at, which is
+    /// imported to be edited, and for one that cannot be read, which the
+    /// import then says why of.
+    ///
+    /// The file is named by its whole path, so that the `.omx` saved from
+    /// this reads it wherever it is saved.
+    fn open_table(mut self: Pin<&mut Self>, path: &std::path::Path) -> bool {
+        let Ok(full) = std::fs::canonicalize(path) else {
+            return false;
+        };
+        let Some(full) = full.to_str().filter(|f| !f.contains(['"', '\\'])) else {
+            return false;
+        };
+        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+        let name = match omasheet_interop::identifier(&stem) {
+            empty if empty.is_empty() => "Table".to_string(),
+            name => name,
+        };
+        let doc = document(&format!("table {name} := dataframe[\"{full}\"]\n"));
+        let rows = doc.row_count(0);
+        if rows <= PAGED_ROWS || !doc.snapshot().sheets[0].paged {
+            return false;
+        }
+        {
+            let mut rust = self.as_mut().rust_mut();
+            rust.doc = doc;
+            rust.saved = String::new();
+        }
+        let file = path.file_name().unwrap_or_default().to_string_lossy();
+        let note = format!(
+            "{file} has {rows} rows, so it is opened as a table that reads it where it is \
+             rather than imported: read-only, and saved as a short .omx that names it"
+        );
+        self.as_mut().set_notes(QString::from(&note));
+        self.as_mut().set_path(None);
+        self.as_mut().rust_mut().origin = Some(path.to_path_buf());
+        self.refresh(&format!("Opened {file} as a table"));
+        true
+    }
+
     /// Open a workbook, a CSV file or JSON as a new file, not yet saved.
     fn import_file(mut self: Pin<&mut Self>, path: PathBuf, kind: &str) -> bool {
         let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -539,6 +582,9 @@ impl qobject::File {
     fn open_file(mut self: Pin<&mut Self>, path: PathBuf) -> bool {
         let kind = path.extension().unwrap_or_default().to_string_lossy();
         let kind = kind.to_ascii_lowercase();
+        if kind == "parquet" && self.as_mut().open_table(&path) {
+            return true;
+        }
         if matches!(kind.as_str(), "xlsx" | "csv" | "json" | "parquet") {
             return self.import_file(path, &kind);
         }
