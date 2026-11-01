@@ -18,7 +18,10 @@ Parquet alone.
 - [ ] 0.3 `scan_csv → sink_parquet` on the 1.1 GB file, cold and warm: time,
       peak memory, size of the copy; and the effect of the `csv` feature (and
       the streaming engine, if it is a feature of its own) on build time and
-      binary size. This is what decides whether D153's risk fallback is needed
+      binary size. This is what decides whether D153's risk fallback is needed.
+      Partly measured (design, *Measured*): on the 921 MB CSV, warm, 2.65 s
+      and ~0.5 GB allocated, a 126 MB copy. Still to take: the 1.1 GB file,
+      cold, and the build-time and binary-size cost
 
 ## 1. Prerequisites from `hold-less-of-a-big-file`
 
@@ -41,6 +44,11 @@ Parquet alone.
 - [ ] 2.3 Pending and loading states in the grid and in the constants panel
 - [ ] 2.4 The column cache (D150): owned by the `Document`, survives
       rebuilds, evicts LRU within a budget
+- [ ] 2.5 D155: an aggregate over a column that is not held runs its plan on
+      `scan(path)` with `Engine::Streaming`, keeping D71a, D72 and the
+      decimal guard; its answer is cached by file identity, column and
+      function. Measured on the 611 MB Parquet file against today's path:
+      time, and peak memory without the mapped file pages
 
 ## 3. One funnel, first stage: big files (D147, D152, D153)
 
@@ -89,6 +97,8 @@ Parquet alone.
 - [ ] 6.2 The differential: for a corpus of CSV, XLSX and JSON files (quoted
       newlines, CRLF, a BOM, no final newline, empty cells, OMX-only
       literals), the inline sheet and the table over the converted copy
-      answer the same for every column and every aggregate
+      answer the same for every column and every aggregate; and every
+      aggregate gives the same answer on the streaming engine as on the
+      in-memory one (D155), including NaN, null, empty and decimal columns
 - [ ] 6.3 Every `examples/*.expected` byte-identical: a small file still
       opens inline as before

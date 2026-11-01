@@ -41,6 +41,31 @@ range read by row group (D78).
 | D152 | Recommended | **One funnel: every reader produces a frame, and two writers take it from there.** `csv`, `xlsx`, `json` and `parquet` each turn their input into named `DataFrame`s, plus, for XLSX only, the formulas found. Two writers share everything after that: `frame → inline .omx` and `frame → Parquet → table`. Column naming (`names`, `name_for`), the notices and the threshold live in one place, not four. Done in two stages: first, big files go through the frame alone; then the inline writer moves to the frame and `Grid`/`Datum` are deleted, but only once `examples/*.expected` is byte-identical (task 4.4), because the frame drops what `Datum` keeps (the text a literal was written as, and a column whose cells have several types) |
 | D153 | Recommended | **A converted copy lives in `$XDG_CACHE_HOME/omasheet/`.** Named by a hash of the canonical path, size and mtime. It is written by Polars' streaming `sink_parquet`, so memory stays bounded whatever the file's size, and atomically (a temporary file, then renamed into place), so a half-written copy is never read. While it is being written, the grid shows the sniffed sample rows and marks the rest as loading. A reopened file whose copy is still current opens as fast as a Parquet table (18 ms measured). Copies are evicted least recently used beyond a disk budget (recommended: 10 GB or 10% of free space, whichever is smaller). A `.parquet` file is never copied |
 | D154 | Recommended | **XLSX formulas over a big sheet.** A formula that is the same down a whole column (`column_formula` already finds these) becomes a `:=` line on the table, as `Family` is in `analysis.omx`, and its values are left out of the copy. A sheet with formulas that differ from cell to cell stays inline at any size, since a table cannot hold them. XLSX's 1,048,576-row limit keeps such a sheet within reach of the inline path |
+| D155 | Recommended | **An aggregate over a table column the document does not hold runs in the scan, on Polars' streaming engine.** Today `pl_column` reads the whole column and the aggregate's plan (`lower::aggregate`, the D71a guard, the decimal bounds, `mean` as a sum over a count) runs over that frame with `collect()`. Instead the same `select` is put on `scan(path)`, projected to the one column, and run with `collect_with_engine(Engine::Streaming)`, so the file is decoded row group by row group and never held as a column. Only the source of the plan changes, not what it asks, so D71a, D72 and the decimal overflow guard are kept as they are. A column already held (in the document or in D150's cache) is aggregated where it is, as now. The answer, a scalar, is cached keyed by (file identity as in D150, column, function), so a repeated aggregate is ≤ 50 ms without holding the column; D150's column cache is then only for what needs a column's values (elementwise columns, sorting, filtering). An operation the streaming engine does not support falls back to Polars' in-memory engine inside the same call, and a differential test holds the two engines to the same answers. Needs Polars' `new_streaming` feature, which `sink_parquet` (D153) needs anyway |
+
+## Measured: Polars' engines, and DuckDB
+
+2026-11-01, on `demo_data/` (see its README), page cache warm, each a
+separate process, so ~0.1 s of start-up is included. Memory is what the
+process allocated; Polars also maps the file, which adds up to 880 MiB of
+file pages the kernel can reclaim. Polars 0.51 with the workspace's features
+plus `csv` and `new_streaming`; DuckDB 1.5.6 CLI.
+
+| | DuckDB | Polars in memory | Polars streaming |
+|---|---:|---:|---:|
+| CSV, 921 MB, 15.0M rows: count + mean | 1.58 s | 0.89 s, 118 MiB | 0.87 s, 30 MiB |
+| CSV: group-by count, top 3 | 1.95 s | 1.50 s, 295 MiB | 0.88 s, 49 MiB |
+| CSV → Parquet copy | 5.86 s, ~1.2 GB; 164 MB | — | 2.65 s, ~0.5 GB; 126 MB |
+| Parquet, 611 MB, 23.9M rows: count + mean | 0.28 s, ~33 MiB | 0.46 s, 186 MiB | 0.20 s, 182 MiB |
+| Parquet: group-by sum, top 3 | 0.51 s, ~14–41 MiB | 1.12 s, 728 MiB | 0.22 s, 373 MiB |
+
+The streaming engine is 2–5× faster than the in-memory one here and holds
+less, which is D155. DuckDB was considered as the engine and is not taken:
+it is no faster, its one advantage is near-constant memory for an aggregate
+over Parquet (Polars' streaming mean still held about one column, 182 MiB),
+and it would mean lowering OMX to SQL rather than to Polars expressions, a
+C++ build, and a second Arrow implementation. A single column bigger than
+RAM remains out of reach, which is far beyond the files this change targets.
 
 ## Why not make the inline path leaner
 

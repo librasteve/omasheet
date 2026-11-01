@@ -44,6 +44,9 @@ file of this size would freeze the window even if it fitted in memory.
   thread. A cell whose value needs the whole file shows as pending and is
   filled in when the answer arrives (D149). A column read whole is cached
   across rebuilds (D150)
+- **engine** — MODIFIED: an aggregate over a table column that is not held
+  runs in the Parquet scan on Polars' streaming engine, and its answer is
+  cached, rather than reading the whole column first (D155)
 - **app** — MODIFIED: the grid formats only the rows it shows. This is
   `hold-less-of-a-big-file` item 3 (D80), which this change depends on
 
@@ -79,7 +82,9 @@ this change guarantees is that the window never waits for that parse.
   and a snapshot that formats on demand). No CSV code in the engine
 - `omasheet-ui`: `import_file` chooses between a table and an inline sheet;
   the grid gets pending and loading states
-- `Cargo.toml`: Polars' `csv` feature and its streaming sink. Their effect on
+- `omasheet-engine`: `eval.rs`'s aggregate builds its plan on the scan when
+  the column is not held, and an answer cache beside the column cache (D155)
+- `Cargo.toml`: Polars' `csv` and `new_streaming` features. Their effect on
   build time and binary size is measured (task 0.3)
 - No change to what a file means or to any number it answers. The inline
   sheet and the table over the copy give the same answers, and a
