@@ -1945,6 +1945,74 @@ impl Document {
             .collect()
     }
 
+    /// The text a value of column `col` is shown as, as
+    /// [`Document::paged_column`] shows it.
+    fn text_shown(&self, sheet: usize, col: usize, v: &Value) -> String {
+        let Some(engine) = &self.engine else {
+            return String::new();
+        };
+        match engine.program().sheets[sheet].cols[col].format.as_ref() {
+            Some(format) => engine.show_in(v, false, Some(format)),
+            None => shown_text(engine, v),
+        }
+    }
+
+    /// The rows of a table's column as shown, in groups of one value each,
+    /// in the order a sort puts the values: each group's value and the
+    /// places it is shown at (D158). The column is sorted by Polars and
+    /// walked once, and a value is read once a group rather than once a
+    /// row, which is what a filter and its list need: a text per value.
+    /// Two floats are the same value only if their bits are, so `-0.0` and
+    /// `0.0`, which a sort counts equal, are shown each as it is. `None`
+    /// where Polars does not hold the column as the grid shows it.
+    fn groups_by_value(&self, sheet: usize, col: usize) -> Option<Vec<(Value, Vec<usize>)>> {
+        use polars::prelude::{AnyValue, IdxSize, SortOptions};
+        let t = self.snapshot.sheets.get(sheet)?;
+        let engine = self.engine.as_ref()?;
+        let column = engine.frame_values(sheet, col)?;
+        let n = t.nrows;
+        if column.len() != n {
+            return None;
+        }
+        let series = column.as_materialized_series();
+        let shown = match self.orders.get(&t.name).filter(|o| o.len() == n) {
+            Some(order) => {
+                let idx: Vec<IdxSize> = order.iter().map(|&r| r as IdxSize).collect();
+                series.take_slice(&idx).ok()?
+            }
+            None => series.clone(),
+        };
+        let places: Vec<usize> = shown
+            .arg_sort(SortOptions {
+                maintain_order: true,
+                multithreaded: true,
+                ..Default::default()
+            })
+            .into_no_null_iter()
+            .map(|i| i as usize)
+            .collect();
+        let idx: Vec<IdxSize> = places.iter().map(|&p| p as IdxSize).collect();
+        let sorted = shown.take_slice(&idx).ok()?.rechunk();
+        let same = |a: &AnyValue, b: &AnyValue| match (a, b) {
+            (AnyValue::Float64(x), AnyValue::Float64(y)) => x.to_bits() == y.to_bits(),
+            (AnyValue::Float32(x), AnyValue::Float32(y)) => x.to_bits() == y.to_bits(),
+            _ => a == b,
+        };
+        let mut groups: Vec<(Value, Vec<usize>)> = Vec::new();
+        let mut last: Option<AnyValue> = None;
+        for (value, &place) in sorted.iter().zip(&places) {
+            match &last {
+                Some(prev) if same(prev, &value) => {}
+                _ => groups.push((engine.value_of(sheet, col, value.clone()), Vec::new())),
+            }
+            if let Some(group) = groups.last_mut() {
+                group.1.push(place);
+            }
+            last = Some(value);
+        }
+        Some(groups)
+    }
+
     /// The count, sum and average of the block of cells from `(top, left)`
     /// to `(bottom, right)`. Numbers add up exactly, as they do in a formula.
     pub fn summary(
@@ -2555,26 +2623,31 @@ impl Document {
             })
             .collect();
         if t.paged {
-            let columns: Vec<(usize, Vec<String>)> = tests
-                .iter()
-                .map(|(c, _)| {
-                    (
-                        *c,
-                        self.paged_column(sheet, *c)
-                            .into_iter()
-                            .map(|(_, d)| d)
-                            .collect(),
-                    )
-                })
-                .collect();
-            return (0..t.nrows)
-                .filter(|&r| {
-                    tests
-                        .iter()
-                        .zip(&columns)
-                        .all(|((_, set), (_, shown))| !set.contains(shown[r].as_str()))
-                })
-                .collect();
+            // A text is shown for each value, so a value is formatted once and
+            // its rows are hidden together (D158); a column Polars does not
+            // hold is formatted a row at a time.
+            let mut hidden = vec![false; t.nrows];
+            for (c, set) in &tests {
+                match self.groups_by_value(sheet, *c) {
+                    Some(groups) => {
+                        for (value, rows) in groups {
+                            if set.contains(self.text_shown(sheet, *c, &value).as_str()) {
+                                for r in rows {
+                                    hidden[r] = true;
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        for (r, (_, text)) in self.paged_column(sheet, *c).into_iter().enumerate() {
+                            if set.contains(text.as_str()) {
+                                hidden[r] = true;
+                            }
+                        }
+                    }
+                }
+            }
+            return (0..t.nrows).filter(|&r| !hidden[r]).collect();
         }
         (0..t.rows.len())
             .filter(|&r| {
@@ -2593,6 +2666,35 @@ impl Document {
         };
         if col >= t.columns.len() {
             return Vec::new();
+        }
+        if t.paged
+            && let Some(groups) = self.groups_by_value(sheet, col)
+        {
+            // Each text once, with the value of the row it is first shown at,
+            // then in the order of those values: as below, a value at a time
+            // rather than a row.
+            let mut first: std::collections::HashMap<String, (usize, Value)> =
+                std::collections::HashMap::new();
+            for (value, rows) in groups {
+                let at = rows.iter().copied().min().unwrap_or(usize::MAX);
+                let text = self.text_shown(sheet, col, &value);
+                match first.get_mut(&text) {
+                    Some(held) if held.0 <= at => {}
+                    Some(held) => *held = (at, value),
+                    None => {
+                        first.insert(text, (at, value));
+                    }
+                }
+            }
+            let mut cells: Vec<(usize, Value, String)> = first
+                .into_iter()
+                .map(|(text, (at, v))| (at, v, text))
+                .collect();
+            cells.sort_by_key(|c| c.0);
+            cells.sort_by(|a, b| {
+                crate::value::sort_order(&a.1, &b.1).unwrap_or_else(|_| a.2.cmp(&b.2))
+            });
+            return cells.into_iter().map(|(_, _, d)| d).collect();
         }
         if t.paged {
             let mut seen = std::collections::HashSet::new();
@@ -4143,12 +4245,15 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    #[test]
-    fn a_table_sorts_by_polars_in_the_order_it_sorts_by_values() {
+    /// A directory holding `edge.parquet`: 300 rows of the values that
+    /// order and show awkwardly, NaN, both infinities, -0.0 beside 0.0,
+    /// nulls, empty and accented text, dates, date-times, booleans and
+    /// decimals, with ties of each.
+    fn edge_file(name: &str) -> std::path::PathBuf {
         use polars::prelude::*;
         // A file of the values that order awkwardly: NaN, both infinities,
         // -0.0 beside 0.0, nulls, empty and accented text, and ties of each.
-        let dir = std::env::temp_dir().join(format!("omasheet-sort-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("omasheet-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let n = 300;
         let floats = [
@@ -4198,6 +4303,12 @@ mod tests {
         ParquetWriter::new(std::fs::File::create(dir.join("edge.parquet")).unwrap())
             .finish(&mut frame)
             .unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_table_sorts_by_polars_in_the_order_it_sorts_by_values() {
+        let dir = edge_file("sort");
         let titanic = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
         let cases = [
             (
@@ -4238,6 +4349,80 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_paged_filter_and_its_list_are_a_held_ones_a_value_at_a_time() {
+        let dir = edge_file("filter");
+        let titanic = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
+        let cases = [
+            (
+                "table T := dataframe[\"edge.parquet\"]\n",
+                dir.to_str().unwrap(),
+            ),
+            (
+                "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n\nTwice := Fare * 2\n",
+                titanic,
+            ),
+        ];
+        for (text, base) in cases {
+            let mut held = Document::from_text(text);
+            held.set_base(base);
+            let mut paged = Document::from_text(text);
+            paged.set_base(base);
+            paged.set_paged_rows(100);
+            assert!(paged.snapshot().sheets[0].paged && !held.snapshot().sheets[0].paged);
+            for sorted in [false, true] {
+                if sorted {
+                    held.sort_rows(0, 1, true).unwrap();
+                    paged.sort_rows(0, 1, true).unwrap();
+                }
+                let cols = held.snapshot().sheets[0].columns.len();
+                for col in 0..cols {
+                    let name = held.snapshot().sheets[0].columns[col].name.clone();
+                    // The file's own columns go by Polars; a formula's may not,
+                    // and is held to the same answers either way.
+                    let own = held.snapshot().sheets[0].columns[col].formula.is_none();
+                    assert!(
+                        !own || paged.groups_by_value(0, col).is_some(),
+                        "{name} by Polars"
+                    );
+                    let listed = paged.distinct_shown(0, col);
+                    assert_eq!(
+                        listed,
+                        held.distinct_shown(0, col),
+                        "{name} sorted {sorted}"
+                    );
+                    let mut hide: Vec<String> = [0, listed.len() / 2, listed.len() - 1]
+                        .iter()
+                        .map(|&i| listed[i].clone())
+                        .collect();
+                    hide.push(String::new());
+                    for k in 1..=hide.len() {
+                        let filter = vec![(name.clone(), hide[..k].to_vec())];
+                        assert_eq!(
+                            paged.shown_rows(0, &filter),
+                            held.shown_rows(0, &filter),
+                            "{name} hiding {:?} sorted {sorted}",
+                            &hide[..k]
+                        );
+                    }
+                }
+                // Two columns filtered at once.
+                let two = vec![
+                    (
+                        held.snapshot().sheets[0].columns[0].name.clone(),
+                        vec![held.distinct_shown(0, 0)[0].clone()],
+                    ),
+                    (
+                        held.snapshot().sheets[0].columns[2].name.clone(),
+                        vec![held.distinct_shown(0, 2)[1].clone()],
+                    ),
+                ];
+                assert_eq!(paged.shown_rows(0, &two), held.shown_rows(0, &two));
             }
         }
         std::fs::remove_dir_all(&dir).unwrap();

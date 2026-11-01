@@ -1169,6 +1169,30 @@ impl<'p> Engine<'p> {
         self.pl_column(t, c)
     }
 
+    /// [`Engine::frame_column`], where it is the column the grid shows: a
+    /// `table`'s own column, whose cells are only ever read out of it, or
+    /// one no cell of which has been evaluated on its own, which would then
+    /// be what the grid shows of that cell. A grid's operation that reads
+    /// values out of it with [`Engine::value_of`] gives what
+    /// [`Engine::column_shown`] would.
+    pub fn frame_values(&self, t: usize, c: usize) -> Option<PlColumn> {
+        let column = self.pl_column(t, c)?;
+        let own = matches!(self.prog.sheets[t].cols[c].kind, ColKind::Frame)
+            && matches!(self.tables.get(t, c), Some(Held::Column { .. }));
+        (own || self.cells.borrow()[t][c].is_none()).then_some(column)
+    }
+
+    /// A value of column `c` of sheet `t`, as it is held by Polars, read as
+    /// [`Engine::column_shown`] reads it.
+    pub fn value_of(&self, t: usize, c: usize, value: AnyValue) -> Value {
+        let ty = self.prog.sheets[t].cols[c].ty;
+        match cell_of(value, ty) {
+            Cell::Empty => Value::Null,
+            Cell::Lit(l) => lit_value(&l, ty),
+            _ => Value::Error,
+        }
+    }
+
     /// One column of a sheet as the dataframe holds it: a `table`'s own
     /// column, a column already calculated in one step, or one built here
     /// out of calculated values. `None` for a column that has no one dtype
