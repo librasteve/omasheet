@@ -2656,23 +2656,10 @@ impl Document {
             return Err("there is no such column".into());
         }
         let n = t.nrows;
-        let paged: Vec<Value> = match t.paged {
-            true => self
-                .paged_column(sheet, col)
-                .into_iter()
-                .map(|(v, _)| v)
-                .collect(),
-            false => Vec::new(),
-        };
-        let value = |r: usize| match t.paged {
-            true => &paged[r],
-            false => &t.rows[r][col].value,
-        };
-        let mut shown: Vec<usize> = (0..n).collect();
-        shown.sort_by(|&a, &b| {
-            let o = crate::value::sort_order(value(a), value(b)).unwrap_or(Ordering::Equal);
-            if desc { o.reverse() } else { o }
-        });
+        let shown = self
+            .order_by_polars(sheet, col, desc)
+            .unwrap_or_else(|| self.order_by_values(sheet, col, desc));
+        let t = &self.snapshot.sheets[sheet];
         let before = self.orders.get(&t.name).filter(|o| o.len() == n);
         let order: Vec<usize> = match before {
             Some(before) => shown.iter().map(|&p| before[p]).collect(),
@@ -2683,7 +2670,6 @@ impl Document {
             return Ok(());
         }
         let name = t.name.clone();
-        drop(paged);
         let previous = Step {
             text: self.text.clone(),
             orders: self.orders.clone(),
@@ -2697,6 +2683,66 @@ impl Document {
         }
         self.orders.insert(name, Rc::new(order));
         Ok(())
+    }
+
+    /// The rows of a table's sheet as shown, in the order column `col` puts
+    /// them, by their place in what is shown now: a stable sort, so ties
+    /// keep the order a sort before gave them. A Polars `arg_sort` of the
+    /// column (D158), which orders as [`crate::value::sort_order`] does: an
+    /// empty cell first ascending and last descending, a `NaN` greatest,
+    /// text by its bytes. `None` where the column is not one Polars holds,
+    /// for [`Document::order_by_values`] to sort.
+    fn order_by_polars(&self, sheet: usize, col: usize, desc: bool) -> Option<Vec<usize>> {
+        let t = self.snapshot.sheets.get(sheet)?;
+        let column = self.engine.as_ref()?.frame_column(sheet, col)?;
+        let n = t.nrows;
+        if column.len() != n {
+            return None;
+        }
+        let series = column.as_materialized_series();
+        // In the order shown, which a sort before this one may have changed.
+        let shown = match self.orders.get(&t.name).filter(|o| o.len() == n) {
+            Some(order) => {
+                let idx: Vec<polars::prelude::IdxSize> = order
+                    .iter()
+                    .map(|&r| r as polars::prelude::IdxSize)
+                    .collect();
+                series.take_slice(&idx).ok()?
+            }
+            None => series.clone(),
+        };
+        let sorted = shown.arg_sort(polars::prelude::SortOptions {
+            descending: desc,
+            nulls_last: desc,
+            maintain_order: true,
+            multithreaded: true,
+            limit: None,
+        });
+        Some(sorted.into_no_null_iter().map(|i| i as usize).collect())
+    }
+
+    /// [`Document::order_by_polars`], a value at a time: for a column
+    /// Polars does not hold, and the measure the other is held to.
+    fn order_by_values(&self, sheet: usize, col: usize, desc: bool) -> Vec<usize> {
+        let t = &self.snapshot.sheets[sheet];
+        let paged: Vec<Value> = match t.paged {
+            true => self
+                .paged_column(sheet, col)
+                .into_iter()
+                .map(|(v, _)| v)
+                .collect(),
+            false => Vec::new(),
+        };
+        let value = |r: usize| match t.paged {
+            true => &paged[r],
+            false => &t.rows[r][col].value,
+        };
+        let mut shown: Vec<usize> = (0..t.nrows).collect();
+        shown.sort_by(|&a, &b| {
+            let o = crate::value::sort_order(value(a), value(b)).unwrap_or(Ordering::Equal);
+            if desc { o.reverse() } else { o }
+        });
+        shown
     }
 
     /// Move `count` columns starting at `first` so that the first of them
@@ -4094,6 +4140,106 @@ mod tests {
         held.set_paged_rows(100);
         assert!(!held.holds(&file), "a changed file is let go");
         assert!(!held.hold(want.path.clone(), whole));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_table_sorts_by_polars_in_the_order_it_sorts_by_values() {
+        use polars::prelude::*;
+        // A file of the values that order awkwardly: NaN, both infinities,
+        // -0.0 beside 0.0, nulls, empty and accented text, and ties of each.
+        let dir = std::env::temp_dir().join(format!("omasheet-sort-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let n = 300;
+        let floats = [
+            1.5,
+            f64::NAN,
+            -0.0,
+            0.0,
+            2.0,
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+            -3.25,
+        ];
+        let texts = ["b", "", "B", "é", "a", "ab", "a", "Z"];
+        let f: Vec<Option<f64>> = (0..n)
+            .map(|i| (i % 9 != 4).then(|| floats[i % floats.len()]))
+            .collect();
+        let int: Vec<Option<i64>> = (0..n)
+            .map(|i| (i % 11 != 0).then_some(((i * 7) % 13) as i64 - 6))
+            .collect();
+        let text: Vec<Option<&str>> = (0..n)
+            .map(|i| (i % 10 != 3).then(|| texts[i % texts.len()]))
+            .collect();
+        let day: Vec<Option<i32>> = (0..n)
+            .map(|i| (i % 12 != 5).then_some(((i * 37) % 50) as i32 + 19_000))
+            .collect();
+        let at: Vec<Option<i64>> = (0..n)
+            .map(|i| (i % 13 != 6).then_some(((i * 53) % 40) as i64 * 3_600_000_000))
+            .collect();
+        let yes: Vec<Option<bool>> = (0..n).map(|i| (i % 7 != 2).then_some(i % 3 == 0)).collect();
+        let mut frame = DataFrame::new(vec![
+            Column::new("F".into(), f),
+            Column::new("I".into(), int),
+            Column::new("S".into(), text),
+            Column::new("D".into(), day).cast(&DataType::Date).unwrap(),
+            Column::new("T".into(), at)
+                .cast(&DataType::Datetime(TimeUnit::Microseconds, None))
+                .unwrap(),
+            Column::new("B".into(), yes),
+            Column::new(
+                "M".into(),
+                (0..n).map(|i| (i % 17) as f64 / 4.0).collect::<Vec<_>>(),
+            )
+            .cast(&DataType::Decimal(Some(10), Some(2)))
+            .unwrap(),
+        ])
+        .unwrap();
+        ParquetWriter::new(std::fs::File::create(dir.join("edge.parquet")).unwrap())
+            .finish(&mut frame)
+            .unwrap();
+        let titanic = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
+        let cases = [
+            (
+                "table T := dataframe[\"edge.parquet\"]\n",
+                dir.to_str().unwrap(),
+            ),
+            (
+                "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n\nTwice := Fare * 2\n",
+                titanic,
+            ),
+        ];
+        for (text, base) in cases {
+            for paged in [false, true] {
+                let mut doc = Document::from_text(text);
+                doc.set_base(base);
+                if paged {
+                    doc.set_paged_rows(100);
+                }
+                assert_eq!(doc.snapshot().sheets[0].paged, paged);
+                let cols = doc.snapshot().sheets[0].columns.len();
+                assert!(cols >= 7, "{text}");
+                // From the file's order, and again after a sort by the second
+                // column, which a later sort's ties keep.
+                for first in [None, Some(1)] {
+                    if let Some(c) = first {
+                        doc.sort_rows(0, c, true).unwrap();
+                    }
+                    for col in 0..cols {
+                        for desc in [false, true] {
+                            let polars = doc.order_by_polars(0, col, desc);
+                            let name = &doc.snapshot().sheets[0].columns[col].name;
+                            assert!(polars.is_some(), "{name} is held by Polars");
+                            assert_eq!(
+                                polars.unwrap(),
+                                doc.order_by_values(0, col, desc),
+                                "{name} desc {desc} paged {paged} after {first:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

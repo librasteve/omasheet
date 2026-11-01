@@ -1161,6 +1161,14 @@ impl<'p> Engine<'p> {
         Some((frame, out.expr.alias(col.name.as_str())))
     }
 
+    /// Column `c` of sheet `t` as a Polars column, in the order of its rows:
+    /// what [`Engine::pl_column`] gives, for the grid's operations over a
+    /// whole column (D158). `None` where the column cannot be held as one,
+    /// and then the caller works a value at a time, as before.
+    pub fn frame_column(&self, t: usize, c: usize) -> Option<PlColumn> {
+        self.pl_column(t, c)
+    }
+
     /// One column of a sheet as the dataframe holds it: a `table`'s own
     /// column, a column already calculated in one step, or one built here
     /// out of calculated values. `None` for a column that has no one dtype
