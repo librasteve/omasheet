@@ -16,15 +16,15 @@ use omasheet_omx::types::S;
 use polars::prelude::Column as PlColumn;
 use polars::prelude::*;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// What a column of a `table` holds.
 pub enum Held {
-    /// A plan that reads this one column of the source, and nothing else of
-    /// it. Nothing is read until it is collected, and the projection is why
-    /// a column nothing asks for is never read from the file at all. Boxed
-    /// because a plan is 288 bytes beside a column that has none.
-    Column(Box<LazyFrame>),
+    /// The file this column is in and the name the file gives it. Nothing
+    /// is read until a cell of it is asked for, and then this column alone
+    /// is read, so a column nothing asks for is never read from the file at
+    /// all.
+    Column { path: PathBuf, name: String },
     /// The source has no such column. The mismatch is said once, as a
     /// diagnostic; every cell of it is then in error rather than empty,
     /// which is what a column of errors standing in for it gave.
@@ -35,8 +35,27 @@ impl Held {
     /// The column itself, read now. `None` where the file will not give it,
     /// which is a file changed or taken away since its schema was read.
     pub fn read(&self) -> Option<PlColumn> {
+        self.read_rows(None)
+    }
+
+    /// `len` rows of the column from row `start`, read now. Polars' reader
+    /// takes the slice to the file, so a row group that holds none of these
+    /// rows is not read (D78): the first five rows of a file of many row
+    /// groups are read out of the first.
+    pub fn read_range(&self, start: usize, len: usize) -> Option<PlColumn> {
+        self.read_rows(Some((start, len)))
+    }
+
+    fn read_rows(&self, slice: Option<(usize, usize)>) -> Option<PlColumn> {
         match self {
-            Held::Column(frame) => frame.clone().collect().ok()?.get_columns().first().cloned(),
+            Held::Column { path, name } => ParquetReader::new(open(path).ok()?)
+                .with_columns(Some(vec![name.clone()]))
+                .with_slice(slice)
+                .finish()
+                .ok()?
+                .get_columns()
+                .first()
+                .cloned(),
             Held::Absent => None,
         }
     }
@@ -103,7 +122,15 @@ pub fn read(program: &mut Program, dir: &Path, diags: &mut Vec<Diagnostic>) -> T
             let height = rows(dir, &source)?;
             Ok((frame, height))
         }) {
-            Ok((frame, height)) => fill(t, sheet, frame, height, &source, diags, &mut frames),
+            Ok((frame, height)) => fill(
+                t,
+                sheet,
+                (frame, &path),
+                height,
+                &source,
+                diags,
+                &mut frames,
+            ),
             Err(why) => diags.push(Diagnostic::new(
                 source.span,
                 format!("cannot read `{}`: {why}", source.path),
@@ -153,7 +180,7 @@ fn scan(path: &Path) -> Result<LazyFrame, String> {
 fn fill(
     t: usize,
     sheet: &mut omasheet_omx::check::Sheet,
-    mut frame: LazyFrame,
+    (mut frame, path): (LazyFrame, &Path),
     height: usize,
     source: &Source,
     diags: &mut Vec<Diagnostic>,
@@ -256,13 +283,16 @@ fn fill(
                 ),
             )),
         }
-        // A plan that reads this column and nothing else of the file.
-        // Nothing is read until a cell is asked for, and a column nothing
-        // asks for is never read at all.
-        let one = frame
-            .clone()
-            .select([polars::prelude::col(names[c].as_str())]);
-        frames.set(t, c, Held::Column(Box::new(one)));
+        // Where this column is, and nothing read of it: a cell asked for
+        // reads it, and a column nothing asks for is never read at all.
+        frames.set(
+            t,
+            c,
+            Held::Column {
+                path: path.to_path_buf(),
+                name: names[c].clone(),
+            },
+        );
     }
     sheet.nrows = height;
 }

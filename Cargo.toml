@@ -44,3 +44,9 @@ polars = { version = "0.51", default-features = false, features = [
 ] }
 serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+
+# Dependencies (Polars above all) are built without debug info: with it, a
+# debug build and its test binaries outgrow a small disk. The workspace's own
+# crates keep theirs, so a backtrace through omasheet still has line numbers.
+[profile.dev.package."*"]
+debug = false

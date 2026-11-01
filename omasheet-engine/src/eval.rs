@@ -115,6 +115,13 @@ pub struct Engine<'p> {
     /// value does — text written bare in a cell is Markdown where a file is
     /// shown as a document, and no Polars string holds that.
     copies: RefCell<Vec<Vec<Option<PlColumn>>>>,
+    /// Some rows of a `table`'s column, read from the file for a row range
+    /// asked for before the whole column was, and the row they start at.
+    /// Kept apart from `held`, which is only ever the whole column: a range
+    /// wanted whole afterwards is read again, so nothing that holds some
+    /// rows can be asked for one it has not got (D78). The latest range
+    /// read is the one kept.
+    windows: RefCell<Vec<Vec<Option<Window>>>>,
     /// What became of each column that could have been calculated in one
     /// step, in the order they were tried.
     attempts: RefCell<Vec<(usize, usize, Attempt)>>,
@@ -127,10 +134,9 @@ pub struct Engine<'p> {
     /// and column, in the order they were read. What is not here was never
     /// read.
     reads: RefCell<Vec<(usize, usize)>>,
-    /// How many values those reads brought back. A column comes back whole,
-    /// so today it is the sheet's row count once for each column read; a
-    /// limit pushed down into the scan is what would make it less, and what
-    /// `tests/rowgroups.rs` watches for.
+    /// How many values those reads brought back: the sheet's row count for
+    /// a column read whole, and the rows of the range for one read for a
+    /// row range (D78). `tests/rowgroups.rs` watches it.
     rows_read: RefCell<usize>,
     /// A memoisation slot per cell, by sheet, column and row. A column's
     /// slots are made when a cell of it is first asked for: a sheet of a
@@ -217,6 +223,9 @@ fn held_cell(column: &PlColumn, r: usize, ty: S) -> Cell {
     }
 }
 
+/// Some rows of a column read from its file, and the row they start at.
+type Window = (usize, PlColumn);
+
 impl<'p> Engine<'p> {
     pub fn new(prog: &'p Program) -> Engine<'p> {
         Engine::with_options(prog, Options::default())
@@ -243,6 +252,12 @@ impl<'p> Engine<'p> {
             prog,
             tables,
             held: RefCell::new(
+                prog.sheets
+                    .iter()
+                    .map(|t| vec![None; t.cols.len()])
+                    .collect(),
+            ),
+            windows: RefCell::new(
                 prog.sheets
                     .iter()
                     .map(|t| vec![None; t.cols.len()])
@@ -1051,11 +1066,13 @@ impl<'p> Engine<'p> {
         match self.tables.get(t, c) {
             // The file's own column, read now and kept: the dataframe is
             // the authority for it, as it is for a lowered one.
-            Some(held @ Held::Column(_)) => {
+            Some(held @ Held::Column { .. }) => {
                 let column = held.read()?;
                 self.reads.borrow_mut().push((t, c));
                 *self.rows_read.borrow_mut() += column.len();
                 self.held.borrow_mut()[t][c] = Some(column.clone());
+                // The whole column answers every row a range did.
+                self.windows.borrow_mut()[t][c] = None;
                 return Some(column);
             }
             // The file has no such column, so every cell of it is in error.
@@ -1205,10 +1222,13 @@ impl<'p> Engine<'p> {
             },
             (None, ColKind::Frame) => {
                 let held = match self.tables.get(t, c) {
-                    Some(Held::Column(_)) => Some(
-                        self.pl_column(t, c)
+                    Some(Held::Column { .. }) => Some(match self.windowed(t, c, r) {
+                        // Read for a row range that holds this row.
+                        Some(cell) => cell,
+                        None => self
+                            .pl_column(t, c)
                             .map_or(Cell::Invalid, |column| held_cell(&column, r, col.ty)),
-                    ),
+                    }),
                     // The file has no such column: said once as a
                     // diagnostic, and in error here.
                     Some(Held::Absent) => Some(Cell::Invalid),
@@ -1232,6 +1252,47 @@ impl<'p> Engine<'p> {
             Value::Error => Err(Fail::Poison),
             v => Ok(v),
         }
+    }
+
+    /// Read `rows` of a `table`'s column out of its file, where they are
+    /// fewer than the whole of it and the column has not been read yet: the
+    /// span from the first of them to the last is read, and only the row
+    /// groups that hold it (D78). A column already read whole, or a range
+    /// already read that holds these rows, is left as it is.
+    fn read_range(&self, t: usize, c: usize, rows: &[usize]) {
+        let (Some(&lo), Some(&hi)) = (rows.iter().min(), rows.iter().max()) else {
+            return;
+        };
+        let len = hi + 1 - lo;
+        if len >= self.prog.sheets[t].nrows || self.held.borrow()[t][c].is_some() {
+            return;
+        }
+        let Some(held @ Held::Column { .. }) = self.tables.get(t, c) else {
+            return;
+        };
+        if let Some((start, window)) = &self.windows.borrow()[t][c]
+            && *start <= lo
+            && hi < start + window.len()
+        {
+            return;
+        }
+        // A file that will not give the range leaves the cells to the
+        // whole read, which says so as it would have.
+        let Some(window) = held.read_range(lo, len) else {
+            return;
+        };
+        self.reads.borrow_mut().push((t, c));
+        *self.rows_read.borrow_mut() += window.len();
+        self.windows.borrow_mut()[t][c] = Some((lo, window));
+    }
+
+    /// Row `r` of a `table`'s column, out of the range last read of it,
+    /// and `None` where that range does not hold the row.
+    fn windowed(&self, t: usize, c: usize, r: usize) -> Option<Cell> {
+        let windows = self.windows.borrow();
+        let (start, window) = windows[t][c].as_ref()?;
+        let i = r.checked_sub(*start).filter(|&i| i < window.len())?;
+        Some(held_cell(window, i, self.prog.sheets[t].cols[c].ty))
     }
 
     /// A cell for display: failures show as an error value.
@@ -1281,7 +1342,9 @@ impl<'p> Engine<'p> {
             Some(column) => Some(column),
             // A `table`'s column is read from its file now, as one cell of
             // it being asked for would have read it.
-            None if matches!(self.tables.get(t, c), Some(Held::Column(_))) => self.pl_column(t, c),
+            None if matches!(self.tables.get(t, c), Some(Held::Column { .. })) => {
+                self.pl_column(t, c)
+            }
             None => None,
         };
         let column = held?;
@@ -1711,6 +1774,7 @@ impl<'p> Engine<'p> {
     }
 
     fn column(&self, t: usize, c: usize, rows: &[usize]) -> R {
+        self.read_range(t, c, rows);
         let mut out = Vec::with_capacity(rows.len());
         for &r in rows {
             out.push(self.cell(t, c, r)?);

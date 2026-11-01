@@ -44,18 +44,35 @@ size, and each with its *before* already measured and pinned by a test.
 
 ## 1. The limit reaches the scan
 
-- [ ] 1.1 D78: a sliced materialisation, or a selection that stays lazy
+- [x] 1.1 D78: a sliced materialisation, or a selection that stays lazy
       until it is read. The first is the smaller change and keeps the
       column cache; the second is what a row-group filter would want later
-- [ ] 1.2 The row range reaches `scan_parquet`, so `head(5)` over a file of
+
+      Sliced, by Polars' eager `ParquetReader` with `with_slice` (owner,
+      2026-11-01). `Held::Column` is the file's path and the column's name
+      in it rather than a plan, and is read whole or for a range
+- [x] 1.2 The row range reaches `scan_parquet`, so `head(5)` over a file of
       many row groups reads one
-- [ ] 1.3 `omasheet-engine/tests/rowgroups.rs` is the before and the after:
+
+      It reaches the reader instead, which skips a row group none of the
+      slice is in. `Engine::column` reads the span of the rows it is given
+      where that is less than the sheet and the column is not held whole,
+      and `cell` answers a `table`'s row out of that range before reading
+      the column
+- [x] 1.3 `omasheet-engine/tests/rowgroups.rs` is the before and the after:
       it asserts 5,000 values and 5 row groups today, and says in its
       message that the day the limit lands it fails with the new figure.
       The new figure is 5 values and 1 row group
-- [ ] 1.4 A column read for a range and then wanted whole: read again,
+
+      And it is: `the_first_five_rows_are_read_out_of_the_first_row_group`,
+      with `tail(5)` out of the last as a second
+- [x] 1.4 A column read for a range and then wanted whole: read again,
       filled in, or kept as two reads. Whatever it is, the corpus
       differential and the kernel differential say the answers did not move
+
+      Read again: the range is dropped once the column is held whole.
+      `a_range_then_the_whole_column_reads_the_column_again` reads 5 and
+      then 5,000. The differentials are in `cargo test --workspace`
 
 ## 2. A column need not become a value per row
 

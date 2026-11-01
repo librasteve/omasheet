@@ -3,9 +3,10 @@
 //! How much of a Parquet an answer costs: a `table` over a file of several
 //! row groups, and a count of what comes back from it.
 //!
-//! A row group is the unit a Parquet is read in, so the count here is the
-//! measurement task 6.2 is missing — the projection reaches the scan and
-//! the limit does not, and nothing until now said so in a number.
+//! A row group is the unit a Parquet is read in, so the count here is what
+//! an answer read out of the file: the projection keeps a column nothing
+//! asks for out of it, and since `hold-less-of-a-big-file` 1.2 a row range
+//! keeps out the row groups that hold none of its rows (D78).
 
 use omasheet_engine::omx::{compile, compile_expr};
 use omasheet_engine::{Engine, Lowering, Options, table};
@@ -127,16 +128,32 @@ fn a_sum_reads_every_row_group_of_the_one_column() {
 }
 
 #[test]
-fn the_first_five_rows_are_read_out_of_every_row_group() {
-    // Task 6.2's open half, in a number. The answer needs the first five
-    // rows, which are the first row group's; the whole column is read to
-    // give them, so five row groups are read where one would do.
+fn the_first_five_rows_are_read_out_of_the_first_row_group() {
+    // `add-columnar-core` task 6.2's open half, which read the whole column
+    // — 5,000 values out of five row groups — to give five rows. The range
+    // reaches the reader now, and the rows it gives are the first group's.
     let (rows_read, answer) = cost(Some("(Numbers |> head(5)).Value"));
     assert_eq!(answer, "[0, 1, 2, 3, 4]");
-    assert_eq!(rows_read, ROWS);
-    assert_eq!(
-        groups(rows_read),
-        GROUPS,
-        "the limit reached the scan: 6.2 is done, and this is its new figure"
-    );
+    assert_eq!(rows_read, 5);
+    assert_eq!(groups(rows_read), 1);
+}
+
+#[test]
+fn the_last_five_rows_are_read_out_of_the_last_row_group() {
+    // A range at the end of the file, which is the last group's alone.
+    let (rows_read, answer) = cost(Some("(Numbers |> tail(5)).Value"));
+    assert_eq!(answer, "[4995, 4996, 4997, 4998, 4999]");
+    assert_eq!(rows_read, 5);
+}
+
+#[test]
+fn a_range_then_the_whole_column_reads_the_column_again() {
+    // Task 1.4: a range is not the column, so a sum after it reads the
+    // column whole rather than answering from the rows it has. Two reads,
+    // and the sum is the sum of every row.
+    let (rows_read, answer) = cost(Some(
+        "(Numbers |> head(5)).Value.sum() + Numbers.Value.sum()",
+    ));
+    assert_eq!(answer, "12497510");
+    assert_eq!(rows_read, 5 + ROWS);
 }
