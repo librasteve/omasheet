@@ -98,8 +98,26 @@ type Partitions = HashMap<(usize, Vec<usize>), Rc<Partition>>;
 /// The right sheet of a join and the row of it each row of the join reads.
 type Paired = (usize, Rc<Vec<Option<usize>>>);
 
+/// The program an engine runs: lent to it for one run, as the command line
+/// does, or held by it, so that an engine can be kept after the run and a
+/// cell asked for when it is shown (D80).
+enum Prog<'p> {
+    Lent(&'p Program),
+    Held(Box<Program>),
+}
+
+impl std::ops::Deref for Prog<'_> {
+    type Target = Program;
+    fn deref(&self) -> &Program {
+        match self {
+            Prog::Lent(p) => p,
+            Prog::Held(p) => p,
+        }
+    }
+}
+
 pub struct Engine<'p> {
-    prog: &'p Program,
+    prog: Prog<'p>,
     /// The columns of every `table`, as their files hold them. Empty for a
     /// program with no table, and for one whose sources were not read.
     tables: Tables,
@@ -297,6 +315,20 @@ impl Items {
     }
 }
 
+impl Engine<'static> {
+    /// [`Engine::with_tables`], holding the program rather than borrowing
+    /// it, for an engine kept beside what it calculated: the app keeps one
+    /// to format the rows of a big table as the grid shows them (D80).
+    pub fn owning(prog: Program, options: Options, tables: Tables) -> Engine<'static> {
+        Engine::over(Prog::Held(Box::new(prog)), options, tables)
+    }
+
+    /// The program it runs.
+    pub fn program(&self) -> &Program {
+        &self.prog
+    }
+}
+
 impl<'p> Engine<'p> {
     pub fn new(prog: &'p Program) -> Engine<'p> {
         Engine::with_options(prog, Options::default())
@@ -312,6 +344,10 @@ impl<'p> Engine<'p> {
     /// has already read. A program with a `table` and no tables here shows
     /// that sheet with no rows.
     pub fn with_tables(prog: &'p Program, options: Options, tables: Tables) -> Engine<'p> {
+        Engine::over(Prog::Lent(prog), options, tables)
+    }
+
+    fn over(prog: Prog<'p>, options: Options, tables: Tables) -> Engine<'p> {
         let local = Rc::new(options.zone.clone().unwrap_or_else(Zone::system));
         let named = prog.zone.as_ref().and_then(|(name, _)| Zone::named(name));
         let home = named.map_or_else(|| local.clone(), Rc::new);
@@ -319,8 +355,8 @@ impl<'p> Engine<'p> {
             .now
             .or_else(|| home.from_utc(utc_now()))
             .unwrap_or(0);
+        // Moved in last: every other field is made from it.
         Engine {
-            prog,
             tables,
             held: RefCell::new(
                 prog.sheets
@@ -374,12 +410,13 @@ impl<'p> Engine<'p> {
                 .iter()
                 .map(|t| Rc::new((0..t.cols.len()).collect()))
                 .collect(),
-            diags: RefCell::new(unknown_zone(prog).into_iter().collect()),
+            diags: RefCell::new(unknown_zone(&prog).into_iter().collect()),
             options,
             home,
             local,
             zones: RefCell::new(HashMap::new()),
             now,
+            prog,
         }
     }
 
@@ -1372,6 +1409,48 @@ impl<'p> Engine<'p> {
             Ok(v) => v,
             Err(_) => Value::Error,
         }
+    }
+
+    /// Some rows of a column for display, as [`Engine::cell_shown`] gives
+    /// each of them, for a grid that shows a big sheet a page at a time
+    /// (D80).
+    ///
+    /// A `table`'s own column not yet read is read for these rows alone,
+    /// out of the row groups that hold them, and its cells are made from
+    /// that range without the memoisation slots a cell asked for one at a
+    /// time would make — a slot for every row of the file, per column, is
+    /// what a page of it is meant not to cost. Any other column, or a row
+    /// the range read does not hold, is the cell as `cell_shown` has it.
+    pub fn rows_shown(&self, t: usize, c: usize, rows: &[usize]) -> Vec<Value> {
+        let col = &self.prog.sheets[t].cols[c];
+        let own = matches!(col.kind, ColKind::Frame)
+            && matches!(self.tables.get(t, c), Some(Held::Column { .. }))
+            && self.cells.borrow()[t][c].is_none();
+        if !own {
+            return rows.iter().map(|&r| self.cell_shown(t, c, r)).collect();
+        }
+        self.read_range(t, c, rows);
+        let value = |cell: Cell| match cell {
+            Cell::Empty => Value::Null,
+            Cell::Lit(l) => lit_value(&l, col.ty),
+            Cell::Markdown(s) => Value::String(Rc::from(s.as_str()), true),
+            Cell::Invalid | Cell::Formula(_) => Value::Error,
+        };
+        rows.iter()
+            .map(|&r| {
+                let whole = self.held.borrow()[t][c].clone();
+                match (whole, self.windowed(t, c, r)) {
+                    (Some(column), _) => value(held_cell(&column, r, col.ty)),
+                    (None, Some(cell)) => value(cell),
+                    // Rows from one end of the file to the other are read
+                    // as the whole column, which is then kept.
+                    (None, None) => match self.pl_column(t, c) {
+                        Some(column) => value(held_cell(&column, r, col.ty)),
+                        None => Value::Error,
+                    },
+                }
+            })
+            .collect()
     }
 
     /// Every row of a column at once, where taking it at once is quicker

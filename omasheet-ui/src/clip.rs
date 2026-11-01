@@ -71,7 +71,9 @@ fn block_text(doc: &Document, sheet: usize, from: Cell, to: Cell, values: bool) 
         return String::new();
     };
     let mut lines = Vec::new();
-    for row in t.rows.iter().take(to.0 + 1).skip(from.0) {
+    // Out of the document rather than the snapshot: a paged sheet's rows
+    // are formatted as they are asked for.
+    for row in &doc.rows(sheet, from.0, (to.0 + 1).saturating_sub(from.0)) {
         let cells: Vec<String> = row
             .iter()
             .enumerate()

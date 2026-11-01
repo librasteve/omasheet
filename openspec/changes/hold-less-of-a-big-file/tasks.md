@@ -114,10 +114,12 @@ size, and each with its *before* already measured and pinned by a test.
 
 ## 3. The snapshot shows what is on screen
 
-- [ ] 3.1 D80: a row range the grid gives, or a snapshot that holds the
-      frame and formats a cell as it is shown
-- [ ] 3.2 The snapshot formats the rows the grid shows, and the grid asks
-      again as it scrolls
+- [x] 3.1 D80: a row range the grid gives, or a snapshot that holds the
+      frame and formats a cell as it is shown. Both: a paged sheet, by size
+- [x] 3.2 The snapshot formats the rows the grid shows, and the grid asks
+      again as it scrolls. `doc.rs`'s `a_paged_table_shows_what_a_held_one_does`
+      holds a paged table and a view of it to the held ones: blocks, the
+      summary, a filter and a sort
 - [ ] 3.3 The timing harness again: the snapshot was 1,604.8 ms of a
       4,138.6 ms rebuild at a million rows, and 819.5 of 1,836.0 where
       every column lowers. Both figures are `add-columnar-core` task 7.3's,

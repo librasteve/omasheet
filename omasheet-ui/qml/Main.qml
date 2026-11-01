@@ -126,7 +126,7 @@ ApplicationWindow {
         resetBox();
     }
     readonly property var sheet: tab < tabs.length ? tabs[tab] : emptySheet
-    readonly property var emptySheet: ({ name: "", columns: [], rows: [], isConsts: false })
+    readonly property var emptySheet: ({ name: "", columns: [], rows: [], nrows: 0, paged: false, isConsts: false })
     property var colWidths: []
     property real totalWidth: 0
 
@@ -206,8 +206,33 @@ ApplicationWindow {
     property url pendingUrl
 
     function cellAt(row, col) {
-        var r = sheet.rows[row];
+        var r = sheet.paged ? pagedRow(row) : sheet.rows[row];
         return r && r[col] ? r[col] : null;
+    }
+
+    // A paged sheet -- a big table, or a sheet calculated from one -- is
+    // not in the snapshot row by row: its rows are asked for a block at a
+    // time as the grid reaches them, and the blocks last asked for kept.
+    // The blocks are a plain object, not a property, so filling one in the
+    // middle of drawing a row changes no binding; a reload empties them.
+    readonly property int pageSize: 200
+    readonly property int pagesKept: 50
+    property var pages: ({})
+    property var pageOrder: []
+    function pagedRow(row) {
+        if (row < 0 || row >= sheet.nrows)
+            return null;
+        var block = Math.floor(row / pageSize);
+        var key = tab + ":" + block;
+        var page = pages[key];
+        if (page === undefined) {
+            page = JSON.parse(file.rowsJson(tab, block * pageSize, pageSize));
+            pages[key] = page;
+            pageOrder.push(key);
+            if (pageOrder.length > pagesKept)
+                delete pages[pageOrder.shift()];
+        }
+        return page[row - block * pageSize];
     }
 
     function reload() {
@@ -222,6 +247,10 @@ ApplicationWindow {
         // Stay on the same sheet when another window adds or removes one.
         var name = sheet.name, consts = sheet.isConsts;
         var parsed = JSON.parse(file.snapshotJson());
+        // Rows of a paged sheet asked for before this are of the file as
+        // it was.
+        pages = {};
+        pageOrder = [];
         var list = [];
         for (var i = 0; i < parsed.sheets.length; i++) {
             parsed.sheets[i].isConsts = false;
@@ -245,7 +274,9 @@ ApplicationWindow {
                     { name: "Expression", type: "", formula: "", computed: false, declared: false },
                     { name: "Value", type: "", formula: "", computed: true, declared: false }
                 ],
-                rows: rows
+                rows: rows,
+                nrows: rows.length,
+                paged: false
             });
         }
         snap = parsed;
@@ -293,8 +324,13 @@ ApplicationWindow {
         var cols = sheet.columns;
         for (var c = 0; c < cols.length; c++) {
             var chars = cols[c].name.length;
-            for (var r = 0; r < sheet.rows.length; r++)
-                chars = Math.max(chars, lineWidth(sheet.rows[r][c].d));
+            // A paged sheet is measured by its first block of rows.
+            var measured = sheet.paged ? Math.min(sheet.nrows, pageSize) : sheet.nrows;
+            for (var r = 0; r < measured; r++) {
+                var cell = cellAt(r, c);
+                if (cell)
+                    chars = Math.max(chars, lineWidth(cell.d));
+            }
             var w = Math.round(Math.min(46, Math.max(7, chars + 2)) * metrics.averageCharacterWidth) + 14;
             // Never narrower than the type line beside the telltale: the
             // type, `:= ` before it in a formula column and `[]` after it
@@ -314,7 +350,7 @@ ApplicationWindow {
     }
 
     function clampCursor() {
-        var maxRow = Math.max(0, sheet.rows.length - 1);
+        var maxRow = Math.max(0, sheet.nrows - 1);
         var maxCol = Math.max(0, sheet.columns.length - 1);
         curRow = Math.min(curRow, maxRow);
         anchorRow = Math.min(anchorRow, maxRow);
@@ -351,13 +387,13 @@ ApplicationWindow {
         if (shownRows === null)
             return null;
         var pos = [];
-        for (var r = 0; r < sheet.rows.length; r++)
+        for (var r = 0; r < sheet.nrows; r++)
             pos.push(-1);
         for (var k = 0; k < shownRows.length; k++)
             pos[shownRows[k]] = k;
         return pos;
     }
-    readonly property int shownCount: shownRows === null ? sheet.rows.length : shownRows.length
+    readonly property int shownCount: shownRows === null ? sheet.nrows : shownRows.length
     function isHidden(row) {
         return rowPos !== null && rowPos[row] < 0;
     }
@@ -464,7 +500,7 @@ ApplicationWindow {
     // The nearest row that is shown, going `dir` from `row` and then the
     // other way if there is none.
     function shownFrom(row, dir) {
-        var last = sheet.rows.length - 1;
+        var last = sheet.nrows - 1;
         for (var r = row; r >= 0 && r <= last; r += dir)
             if (!isHidden(r))
                 return r;
@@ -489,13 +525,13 @@ ApplicationWindow {
     }
 
     function selectCell(row, col, extend) {
-        if (sheet.rows.length === 0 || sheet.columns.length === 0)
+        if (sheet.nrows === 0 || sheet.columns.length === 0)
             return;
         if (!extend) {
             byRow = false;
             byCol = false;
         }
-        row = Math.max(0, Math.min(sheet.rows.length - 1, row));
+        row = Math.max(0, Math.min(sheet.nrows - 1, row));
         curRow = isHidden(row) ? shownFrom(row, row >= curRow ? 1 : -1) : row;
         curCol = Math.max(0, Math.min(sheet.columns.length - 1, col));
         if (!extend) {
@@ -509,7 +545,7 @@ ApplicationWindow {
     // `index`, from where the selection was if it is to `extend`. The cursor
     // waits in the first cell.
     function selectLine(rows, index, extend) {
-        var maxRow = Math.max(0, sheet.rows.length - 1);
+        var maxRow = Math.max(0, sheet.nrows - 1);
         var maxCol = Math.max(0, sheet.columns.length - 1);
         byRow = rows;
         byCol = !rows;
@@ -539,7 +575,7 @@ ApplicationWindow {
     function arrow(dRow, dCol, ctrl, extend) {
         var vertical = dRow !== 0;
         var d = vertical ? dRow : dCol;
-        var max = Math.max(0, (vertical ? sheet.rows.length : sheet.columns.length) - 1);
+        var max = Math.max(0, (vertical ? sheet.nrows : sheet.columns.length) - 1);
         var cur = vertical ? curRow : curCol;
         var to = ctrl ? (d < 0 ? 0 : max) : cur + d;
         if (vertical ? selKind === "row" : selKind === "column") {
@@ -568,7 +604,7 @@ ApplicationWindow {
     function selectAll() {
         byRow = false;
         byCol = false;
-        anchorRow = Math.max(0, sheet.rows.length - 1);
+        anchorRow = Math.max(0, sheet.nrows - 1);
         anchorCol = Math.max(0, sheet.columns.length - 1);
         curRow = 0;
         curCol = 0;
@@ -695,7 +731,7 @@ ApplicationWindow {
         var boxes = [];
         if (text.trim().charAt(0) !== "=")
             return boxes;
-        var nRows = sheet.rows.length, nCols = sheet.columns.length;
+        var nRows = sheet.nrows, nCols = sheet.columns.length;
         // One end of a span: `*`, `*+n`, `*-n`, a position, `-n` from the
         // end, or for columns a name.
         var end = function(t, here, n, names) {
@@ -882,7 +918,7 @@ ApplicationWindow {
     function pickDrag(row, col) {
         if (pickAt < 0 || !editor)
             return;
-        row = Math.max(0, Math.min(sheet.rows.length - 1, row));
+        row = Math.max(0, Math.min(sheet.nrows - 1, row));
         col = Math.max(0, Math.min(sheet.columns.length - 1, col));
         editor.remove(pickAt, pickAt + pickLen);
         var ref = refForRange(pickFromRow, pickFromCol, row, col, pickAbsolute);
@@ -898,7 +934,7 @@ ApplicationWindow {
     // lands on, exactly as a click on that cell would. Returns whether
     // there was a formula to pick a cell for.
     function pickArrow(dRow, dCol, absolute, extend, toEnd) {
-        if (!canPick() || sheet.rows.length === 0 || sheet.columns.length === 0)
+        if (!canPick() || sheet.nrows === 0 || sheet.columns.length === 0)
             return false;
         if (pickRow < 0) {
             pickRow = curRow;
@@ -909,7 +945,7 @@ ApplicationWindow {
         } else {
             editor.remove(pickAt, pickAt + pickLen);
         }
-        var clampRow = function(r) { return Math.max(0, Math.min(sheet.rows.length - 1, r)); };
+        var clampRow = function(r) { return Math.max(0, Math.min(sheet.nrows - 1, r)); };
         var clampCol = function(c) { return Math.max(0, Math.min(sheet.columns.length - 1, c)); };
         // Shift grows a range from where it started: the next cell, if no
         // pick was under way. Without it the pick is one cell again.
@@ -918,7 +954,7 @@ ApplicationWindow {
             pickFromCol = clampCol(pickCol + dCol);
         }
         // Ctrl goes all the way to the first or last cell.
-        var far = toEnd ? Math.max(sheet.rows.length, sheet.columns.length) : 1;
+        var far = toEnd ? Math.max(sheet.nrows, sheet.columns.length) : 1;
         pickRow = clampRow(pickRow + dRow * far);
         pickCol = clampCol(pickCol + dCol * far);
         if (!extend) {
@@ -1023,18 +1059,18 @@ ApplicationWindow {
     property bool byRow: false
     property bool byCol: false
     readonly property bool wholeColumns: !sheet.isConsts && sheet.columns.length > 0
-        && selTop === 0 && selBottom >= sheet.rows.length - 1
-    readonly property bool wholeRows: !sheet.isConsts && sheet.rows.length > 0
+        && selTop === 0 && selBottom >= sheet.nrows - 1
+    readonly property bool wholeRows: !sheet.isConsts && sheet.nrows > 0
         && selLeft === 0 && selRight >= sheet.columns.length - 1
     // What is selected: whole "row"s, whole "column"s, "all" of the sheet,
     // or a block of "cells". The menu and the keys act on rows only for rows
     // and cells, and on columns only for columns and cells.
     readonly property string selKind: {
-        if (sheet.isConsts || sheet.rows.length === 0)
+        if (sheet.isConsts || sheet.nrows === 0)
             return "cells";
         // One cell of a sheet with one row is a cell, unless its header or
         // row number was what was clicked.
-        var cols = wholeColumns && (byCol || sheet.rows.length > 1);
+        var cols = wholeColumns && (byCol || sheet.nrows > 1);
         var rows = wholeRows && (byRow || sheet.columns.length > 1);
         if (cols && rows)
             return byRow ? "row" : byCol ? "column" : "all";
@@ -1073,13 +1109,13 @@ ApplicationWindow {
     // or columns cut to be moved; null if nothing.
     readonly property var outline: sheetMark !== null
         ? (sheetMark.tab !== tab ? null
-            : { top: 0, bottom: sheet.rows.length - 1, left: 0, right: sheet.columns.length - 1,
+            : { top: 0, bottom: sheet.nrows - 1, left: 0, right: sheet.columns.length - 1,
                 cut: sheetMark.cut, columns: true, rows: true })
         : grabbedHere
         ? (grabbed.rows
             ? { top: grabbed.first, bottom: grabbed.first + grabbed.count - 1,
                 left: 0, right: sheet.columns.length - 1, cut: true, columns: false, rows: true }
-            : { top: 0, bottom: sheet.rows.length - 1,
+            : { top: 0, bottom: sheet.nrows - 1,
                 left: grabbed.first, right: grabbed.first + grabbed.count - 1, cut: true, columns: true, rows: false })
         : marked !== null && marked.tab === tab ? marked : null
 
@@ -1134,13 +1170,13 @@ ApplicationWindow {
         if (selectionHidesRows())
             return;
         var m = marked;
-        var rows = sheet.rows.length, cols = sheet.columns.length;
+        var rows = sheet.nrows, cols = sheet.columns.length;
         keepMark = true;
         edit();
         keepMark = false;
         if (m === null || m.tab !== tab)
             return;
-        var v = shifted(m.top, m.bottom, row, sheet.rows.length - rows);
+        var v = shifted(m.top, m.bottom, row, sheet.nrows - rows);
         var h = shifted(m.left, m.right, col, sheet.columns.length - cols);
         marked = v === null || h === null ? null
             : { tab: m.tab, top: v[0], left: h[0], bottom: v[1], right: h[1], text: m.text, cut: m.cut, columns: m.columns, rows: m.rows, sheet: m.sheet };
@@ -1154,7 +1190,7 @@ ApplicationWindow {
             marked = null;
         var cut = marked !== null && marked.cut;
         var problem = "";
-        keeping(row === undefined ? sheet.rows.length : row, col === undefined ? sheet.columns.length : col,
+        keeping(row === undefined ? sheet.nrows : row, col === undefined ? sheet.columns.length : col,
                 function() { problem = put() || ""; });
         // A paste that was refused says why, and what was cut is still cut.
         if (problem.length > 0) {
@@ -1241,7 +1277,7 @@ ApplicationWindow {
         for (var j = 0; j < names.length; j++)
             if (sheet.columns[at + j].name !== names[j])
                 steps.push([at + j, copyName("Pasting", spare), names[j]]);
-        keeping(sheet.rows.length, sheet.columns.length, function() {
+        keeping(sheet.nrows, sheet.columns.length, function() {
             for (var pass = 1; pass <= 2; pass++) {
                 for (var i = 0; i < steps.length; i++) {
                     var problem = file.renameColumn(tab, steps[i][0], steps[i][pass]);
@@ -1267,7 +1303,7 @@ ApplicationWindow {
             return;
         var top = selTop;
         curRow = top;
-        anchorRow = Math.min(sheet.rows.length - 1, top + text.split("\n").length - 1);
+        anchorRow = Math.min(sheet.nrows - 1, top + text.split("\n").length - 1);
         showRow(anchorRow);
     }
 
@@ -1340,7 +1376,7 @@ ApplicationWindow {
             byRow = true;
             byCol = false;
         } else {
-            anchorRow = Math.max(0, sheet.rows.length - 1);
+            anchorRow = Math.max(0, sheet.nrows - 1);
             anchorCol = to + g.count - 1;
             curRow = 0;
             curCol = to;
@@ -1633,7 +1669,7 @@ ApplicationWindow {
     function insertRows(below, count) {
         if (sheet.isConsts || count < 1)
             return;
-        var at = sheet.rows.length === 0 ? 0 : (below ? selBottom + 1 : selTop);
+        var at = sheet.nrows === 0 ? 0 : (below ? selBottom + 1 : selTop);
         // The left of the selection: a whole-row selection ends at the last
         // column, and following it would pan the view to the right.
         var col = selLeft;
@@ -1668,7 +1704,7 @@ ApplicationWindow {
         if (hand === null || sheet.isConsts)
             return;
         notice = "";
-        var at = sheet.rows.length === 0 ? 0 : (below ? selBottom + 1 : selTop);
+        var at = sheet.nrows === 0 ? 0 : (below ? selBottom + 1 : selTop);
         var count = hand.count;
         var whole = selKind === "row";
         var col = selLeft;
@@ -1765,7 +1801,7 @@ ApplicationWindow {
     }
 
     function deleteRows() {
-        if (sheet.isConsts || sheet.rows.length === 0)
+        if (sheet.isConsts || sheet.nrows === 0)
             return;
         var top = selTop, gone = selBottom - selTop + 1;
         var whole = selKind === "row";
@@ -1785,7 +1821,7 @@ ApplicationWindow {
     function openMenu(row, col) {
         stopEditing();
         grid.forceActiveFocus();
-        var maxRow = Math.max(0, sheet.rows.length - 1);
+        var maxRow = Math.max(0, sheet.nrows - 1);
         var maxCol = Math.max(0, sheet.columns.length - 1);
         var inRows = row < 0 || (row >= selTop && row <= selBottom);
         var inCols = col < 0 || (col >= selLeft && col <= selRight);
@@ -1990,7 +2026,7 @@ ApplicationWindow {
                     // that holds what is written in it.
                     readonly property string mark: win.sheet.view || (column && column.computed) ? " :=" : ""
                     text: win.sheet.isConsts
-                        ? (column && win.curRow < win.sheet.rows.length ? win.sheet.rows[win.curRow][0].d : "")
+                        ? (column && win.curRow < win.sheet.nrows ? win.sheet.rows[win.curRow][0].d : "")
                         : win.sheet.view ? win.sheet.name + mark
                         : across.length === 0 ? ""
                         : win.sheet.name + (win.selKind === "all" ? ""
@@ -2214,7 +2250,7 @@ ApplicationWindow {
                 case Qt.Key_PageUp: win.selectCell(win.rowAt(Math.max(0, win.posOf(win.curRow) - page)), win.curCol, shift); break;
                 case Qt.Key_PageDown: win.selectCell(win.rowAt(Math.min(win.shownCount - 1, win.posOf(win.curRow) + page)), win.curCol, shift); break;
                 case Qt.Key_Home: win.selectCell(ctrl ? 0 : win.curRow, 0, shift); break;
-                case Qt.Key_End: win.selectCell(ctrl ? win.sheet.rows.length - 1 : win.curRow, win.sheet.columns.length - 1, shift); break;
+                case Qt.Key_End: win.selectCell(ctrl ? win.sheet.nrows - 1 : win.curRow, win.sheet.columns.length - 1, shift); break;
                 case Qt.Key_Tab: win.selectCell(win.curRow, win.curCol + 1, false); break;
                 case Qt.Key_Backtab: win.selectCell(win.curRow, win.curCol - 1, false); break;
                 // F2 edits the cell in place, as Enter does a single cell.
@@ -2480,7 +2516,7 @@ ApplicationWindow {
                                         win.byRow = false;
                                         win.byCol = true;
                                         // The cursor waits in the first cell.
-                                        win.anchorRow = Math.max(0, win.sheet.rows.length - 1);
+                                        win.anchorRow = Math.max(0, win.sheet.nrows - 1);
                                         win.anchorCol = (mouse.modifiers & Qt.ShiftModifier) ? win.anchorCol : headCell.index;
                                         win.curRow = 0;
                                         win.curCol = headCell.index;
@@ -3184,8 +3220,8 @@ ApplicationWindow {
                                 // one: its tab is marked, and says which file.
                                 readonly property string from: win.tabs[index].from || ""
                                 label: (from ? "\u25A4 " : "") + win.tabs[index].name
-                                tip: from ? from + ", " + win.tabs[index].rows.length
-                                    + (win.tabs[index].rows.length === 1 ? " row" : " rows") + ", read-only" : ""
+                                tip: from ? from + ", " + win.tabs[index].nrows
+                                    + (win.tabs[index].nrows === 1 ? " row" : " rows") + ", read-only" : ""
                                 active: index === win.tab && !win.showSource
                                 // The whole sheet copied or cut, outlined here too.
                                 readonly property bool marked: win.sheetMark !== null && win.sheetMark.tab === index
@@ -3737,7 +3773,7 @@ ApplicationWindow {
     Menu {
         id: cellMenu
         readonly property bool editable: !win.sheet.isConsts
-        readonly property bool hasRows: editable && win.sheet.rows.length > 0
+        readonly property bool hasRows: editable && win.sheet.nrows > 0
         readonly property int rowCount: win.selBottom - win.selTop + 1
         readonly property int columnCount: win.selRight - win.selLeft + 1
         // Which of its sections fit what is selected: whole rows or whole
@@ -3762,11 +3798,11 @@ ApplicationWindow {
             enabled: (cellMenu.hasRows || win.grabKind.length > 0) && !win.formulaCell
             onTriggered: win.cutSelection()
         }
-        MenuEntry { text: "Copy"; enabled: win.sheet.rows.length > 0; onTriggered: win.copySelection() }
+        MenuEntry { text: "Copy"; enabled: win.sheet.nrows > 0; onTriggered: win.copySelection() }
         MenuEntry {
             text: "Paste"
             // Only while something copied or cut is waiting to go down.
-            enabled: (win.sheet.rows.length > 0 && win.canPaste) || win.grabbedHere
+            enabled: (win.sheet.nrows > 0 && win.canPaste) || win.grabbedHere
             onTriggered: win.pasteSelection()
         }
         MenuEntry {
@@ -4401,7 +4437,7 @@ ApplicationWindow {
                                  : file.insertSheet(at, nameField.text, formula);
             } else {
                 // New rows go at the end, and new columns at `at` or the end.
-                win.keeping(win.sheet.rows.length, at < 0 ? win.sheet.columns.length : at, function() {
+                win.keeping(win.sheet.nrows, at < 0 ? win.sheet.columns.length : at, function() {
                     message = kind === "rename" ? file.renameColumn(win.tab, column, nameField.text)
                         : kind === "format" ? file.setColumnFormat(win.tab, win.selLeft, win.selRight - win.selLeft + 1, nameField.text)
                         : kind === "renameSheet" ? file.renameSheet(win.tab, nameField.text)

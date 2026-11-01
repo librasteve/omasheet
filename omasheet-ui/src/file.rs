@@ -51,6 +51,11 @@ pub mod qobject {
         /// The whole file as JSON: sheets, constants and problems.
         #[qinvokable]
         fn snapshot_json(self: &File) -> QString;
+        /// `count` rows of sheet `sheet` from row `from`, as JSON in the
+        /// shape of a sheet's `rows`: how the grid reads a paged sheet,
+        /// whose rows the snapshot does not hold.
+        #[qinvokable]
+        fn rows_json(self: &File, sheet: i32, from: i32, count: i32) -> QString;
         /// The file as it is written, for the source view: every sheet's
         /// lines aligned, as editing it there will leave them.
         #[qinvokable]
@@ -462,6 +467,14 @@ impl qobject::File {
 
     fn snapshot_json(&self) -> QString {
         QString::from(&json::snapshot(self.rust().doc.snapshot()))
+    }
+
+    fn rows_json(&self, sheet: i32, from: i32, count: i32) -> QString {
+        let rows = self
+            .rust()
+            .doc
+            .rows(index(sheet), index(from), index(count));
+        QString::from(&json::rows(&rows))
     }
 
     fn source_text(&self) -> QString {

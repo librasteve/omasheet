@@ -25,6 +25,12 @@ use std::cmp::Ordering;
 
 const UNDO_LIMIT: usize = 200;
 
+/// A sheet whose rows are not its own text and are more than this many is
+/// paged: its cells are formatted as the grid shows them rather than all at
+/// once (D80). One the text holds is formatted whole, since the text it is
+/// edited through is that size already.
+pub const PAGED_ROWS: usize = 10_000;
+
 /// A fresh file: one small empty sheet to type into.
 pub const BLANK: &str = "sheet Sheet1\n\n| A   | B   | C   |\n| --- | --- | --- |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n";
 
@@ -40,7 +46,14 @@ pub struct Snapshot {
 pub struct SheetSnap {
     pub name: String,
     pub columns: Vec<ColumnSnap>,
+    /// Every row, formatted; empty for a paged sheet, whose rows are asked
+    /// for with [`Document::rows`].
     pub rows: Vec<Vec<CellSnap>>,
+    /// How many rows the sheet has, paged or not.
+    pub nrows: usize,
+    /// Its rows are formatted as they are asked for, not held here: a big
+    /// sheet whose rows are a file's or another sheet's (D80).
+    pub paged: bool,
     /// The Parquet file the rows are read from, for a `table`; `None` for a
     /// sheet that holds its own rows. A table is a read-only view: the file
     /// is never written back, so no edit of it is taken (D49).
@@ -159,6 +172,15 @@ pub struct Document {
     orders: std::collections::HashMap<String, Vec<usize>>,
     /// How many edits have been committed. See [`Document::edit_count`].
     edits: usize,
+    /// The engine of the last rebuild, kept so that a paged sheet's cells
+    /// can be calculated and formatted when they are shown (D80).
+    engine: Option<Engine<'static>>,
+    /// Why each computed column of each sheet failed, for a paged sheet's
+    /// cells, which are made after the rebuild that knew.
+    column_errors: Vec<Vec<Option<String>>>,
+    /// More rows than this and a sheet the text does not hold is paged.
+    /// [`PAGED_ROWS`], but for a test.
+    paged_rows: usize,
 }
 
 impl Default for Document {
@@ -230,6 +252,62 @@ fn narrower_text_type(rows: &[Vec<CellSnap>], col: usize) -> Option<&'static str
         (_, true, _) => Some("Email"),
         (.., true) => Some("Uuid"),
         _ => None,
+    }
+}
+
+/// A value as a cell shows it where its column has no format.
+fn shown_text(engine: &Engine, v: &Value) -> String {
+    match v {
+        Value::Sheet(_) => "<sheet>".to_string(),
+        Value::Row(_) => "<row>".to_string(),
+        other => engine.show(other, false),
+    }
+}
+
+/// What a number shown with fewer digits than it has is in full.
+fn exact_text(v: &Value, quoted: bool, shown: &str, style: &Style) -> Option<String> {
+    let full = match v {
+        // Two's complement is the whole number, not one cut short.
+        Value::Int(_, b) if *b != Base::Dec => return None,
+        Value::Int(_, _)
+        | Value::Decimal(_)
+        | Value::Percent(_)
+        | Value::Float(_)
+        | Value::Vector(_) => format_exact(v, quoted, style),
+        _ => return None,
+    };
+    (full != shown).then_some(full)
+}
+
+/// A cell as the grid shows it: its value formatted as its column says.
+fn cell_snap(
+    engine: &Engine,
+    style: &Style,
+    format: Option<&Format>,
+    value: Value,
+    source: String,
+    error: Option<String>,
+) -> CellSnap {
+    let failed = matches!(value, Value::Error);
+    // A column's format shows its numbers as it says, so one it rounds is
+    // not one shown short.
+    let display = match format {
+        Some(_) => engine.show_in(&value, false, format),
+        None => shown_text(engine, &value),
+    };
+    let full = exact_text(&value, false, &display, style);
+    CellSnap {
+        shortened: format.is_none()
+            && full
+                .as_ref()
+                .is_some_and(|f| *f != delocalised(&display, style)),
+        exact: full,
+        display,
+        numeric: value.is_numeric(),
+        value,
+        formula: source.starts_with('='),
+        error: error.or_else(|| failed.then(|| "this cell could not be calculated".to_string())),
+        source,
     }
 }
 
@@ -1338,6 +1416,9 @@ impl Document {
             base: None,
             orders: Default::default(),
             edits: 0,
+            engine: None,
+            column_errors: Vec::new(),
+            paged_rows: PAGED_ROWS,
         };
         doc.rebuild();
         doc
@@ -1348,6 +1429,14 @@ impl Document {
     /// its own text, and what a `table` names is beside the file.
     pub fn set_base(&mut self, dir: impl Into<std::path::PathBuf>) {
         self.base = Some(dir.into());
+        self.rebuild();
+    }
+
+    /// Page a sheet of more than `rows` rows the text does not hold, in
+    /// place of [`PAGED_ROWS`]: for a test to page a small file.
+    #[doc(hidden)]
+    pub fn set_paged_rows(&mut self, rows: usize) {
+        self.paged_rows = rows;
         self.rebuild();
     }
 
@@ -1632,6 +1721,98 @@ impl Document {
         }
     }
 
+    /// How many rows sheet `sheet` has, paged or not.
+    pub fn row_count(&self, sheet: usize) -> usize {
+        self.snapshot.sheets.get(sheet).map_or(0, |t| t.nrows)
+    }
+
+    /// `count` rows of sheet `sheet` from row `from`, as the grid shows
+    /// them: out of the snapshot for a sheet it holds, and calculated and
+    /// formatted now for a paged one (D80). Rows past the end are not there.
+    pub fn rows(&self, sheet: usize, from: usize, count: usize) -> Vec<Vec<CellSnap>> {
+        let Some(t) = self.snapshot.sheets.get(sheet) else {
+            return Vec::new();
+        };
+        let end = from.saturating_add(count).min(t.nrows);
+        if from >= end {
+            return Vec::new();
+        }
+        if !t.paged {
+            return t.rows[from..end].to_vec();
+        }
+        let Some(engine) = &self.engine else {
+            return Vec::new();
+        };
+        let file_rows: Vec<usize> = (from..end).map(|r| self.file_row(sheet, r)).collect();
+        let program = engine.program();
+        let mut columns: Vec<std::vec::IntoIter<Value>> = (0..t.columns.len())
+            .map(|c| engine.rows_shown(sheet, c, &file_rows).into_iter())
+            .collect();
+        (from..end)
+            .map(|_| {
+                t.columns
+                    .iter()
+                    .zip(&mut columns)
+                    .enumerate()
+                    .map(|(c, (column, values))| {
+                        let value = values.next().unwrap_or(Value::Error);
+                        let failed = matches!(value, Value::Error);
+                        let source = column
+                            .formula
+                            .as_ref()
+                            .map_or(String::new(), |f| format!("= {f}"));
+                        let error = self
+                            .column_errors
+                            .get(sheet)
+                            .and_then(|errors| errors.get(c).cloned().flatten())
+                            .filter(|_| failed);
+                        let format = program.sheets[sheet].cols[c].format.as_ref();
+                        cell_snap(engine, &self.style, format, value, source, error)
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The row of the file shown at row `r` of a paged sheet: where it has
+    /// been sorted in the grid, the order says, and otherwise it is `r`.
+    fn file_row(&self, sheet: usize, r: usize) -> usize {
+        let t = &self.snapshot.sheets[sheet];
+        match self.orders.get(&t.name) {
+            Some(order) if order.len() == t.nrows => order.get(r).copied().unwrap_or(r),
+            _ => r,
+        }
+    }
+
+    /// Every value of column `col` of a paged sheet, in the order shown,
+    /// with the text each is shown as: what a sort and a filter read where
+    /// the snapshot holds no rows.
+    fn paged_column(&self, sheet: usize, col: usize) -> Vec<(Value, String)> {
+        let Some(engine) = &self.engine else {
+            return Vec::new();
+        };
+        let n = self.row_count(sheet);
+        let values = engine.column_shown(sheet, col).unwrap_or_else(|| {
+            let all: Vec<usize> = (0..n).collect();
+            engine.rows_shown(sheet, col, &all)
+        });
+        let format = engine.program().sheets[sheet].cols[col].format.as_ref();
+        let shown = |v: &Value| match format {
+            Some(_) => engine.show_in(v, false, format),
+            None => shown_text(engine, v),
+        };
+        (0..n)
+            .map(|r| {
+                let v = values
+                    .get(self.file_row(sheet, r))
+                    .cloned()
+                    .unwrap_or(Value::Error);
+                let text = shown(&v);
+                (v, text)
+            })
+            .collect()
+    }
+
     /// The count, sum and average of the block of cells from `(top, left)`
     /// to `(bottom, right)`. Numbers add up exactly, as they do in a formula.
     pub fn summary(
@@ -1640,11 +1821,12 @@ impl Document {
         (top, left): (usize, usize),
         (bottom, right): (usize, usize),
     ) -> Option<Summary> {
-        let rows = &self.snapshot.sheets.get(sheet)?.rows;
+        self.snapshot.sheets.get(sheet)?;
+        // A block of a paged sheet is formatted to be read; a whole column
+        // of one is a page of the file at a time, as the grid reads it.
+        let rows = self.rows(sheet, top, (bottom + 1).saturating_sub(top));
         let values = rows
             .iter()
-            .take(bottom + 1)
-            .skip(top)
             .flat_map(|row| row.iter().take(right + 1).skip(left))
             .map(|cell| &cell.value);
         let (mut count, mut numbers) = (0, 0);
@@ -2205,6 +2387,28 @@ impl Document {
                 Some((c, texts.iter().map(String::as_str).collect()))
             })
             .collect();
+        if t.paged {
+            let columns: Vec<(usize, Vec<String>)> = tests
+                .iter()
+                .map(|(c, _)| {
+                    (
+                        *c,
+                        self.paged_column(sheet, *c)
+                            .into_iter()
+                            .map(|(_, d)| d)
+                            .collect(),
+                    )
+                })
+                .collect();
+            return (0..t.nrows)
+                .filter(|&r| {
+                    tests
+                        .iter()
+                        .zip(&columns)
+                        .all(|((_, set), (_, shown))| !set.contains(shown[r].as_str()))
+                })
+                .collect();
+        }
         (0..t.rows.len())
             .filter(|&r| {
                 tests
@@ -2222,6 +2426,18 @@ impl Document {
         };
         if col >= t.columns.len() {
             return Vec::new();
+        }
+        if t.paged {
+            let mut seen = std::collections::HashSet::new();
+            let mut cells: Vec<(Value, String)> = self
+                .paged_column(sheet, col)
+                .into_iter()
+                .filter(|(_, d)| seen.insert(d.clone()))
+                .collect();
+            cells.sort_by(|a, b| {
+                crate::value::sort_order(&a.0, &b.0).unwrap_or_else(|_| a.1.cmp(&b.1))
+            });
+            return cells.into_iter().map(|(_, d)| d).collect();
         }
         let mut seen = std::collections::HashSet::new();
         let mut cells: Vec<&CellSnap> = t
@@ -2272,11 +2488,22 @@ impl Document {
         if col >= t.columns.len() {
             return Err("there is no such column".into());
         }
-        let n = t.rows.len();
+        let n = t.nrows;
+        let paged: Vec<Value> = match t.paged {
+            true => self
+                .paged_column(sheet, col)
+                .into_iter()
+                .map(|(v, _)| v)
+                .collect(),
+            false => Vec::new(),
+        };
+        let value = |r: usize| match t.paged {
+            true => &paged[r],
+            false => &t.rows[r][col].value,
+        };
         let mut shown: Vec<usize> = (0..n).collect();
         shown.sort_by(|&a, &b| {
-            let o = crate::value::sort_order(&t.rows[a][col].value, &t.rows[b][col].value)
-                .unwrap_or(Ordering::Equal);
+            let o = crate::value::sort_order(value(a), value(b)).unwrap_or(Ordering::Equal);
             if desc { o.reverse() } else { o }
         });
         let before = match self.orders.get(&t.name) {
@@ -2285,9 +2512,13 @@ impl Document {
         };
         let order: Vec<usize> = shown.iter().map(|&p| before[p]).collect();
         let name = t.name.clone();
+        drop(paged);
         let rows = std::mem::take(&mut self.snapshot.sheets[sheet].rows);
-        let mut rows: Vec<Option<Vec<CellSnap>>> = rows.into_iter().map(Some).collect();
-        self.snapshot.sheets[sheet].rows = shown.iter().filter_map(|&p| rows[p].take()).collect();
+        if !rows.is_empty() {
+            let mut rows: Vec<Option<Vec<CellSnap>>> = rows.into_iter().map(Some).collect();
+            self.snapshot.sheets[sheet].rows =
+                shown.iter().filter_map(|&p| rows[p].take()).collect();
+        }
         self.orders.insert(name, order);
         Ok(())
     }
@@ -2803,8 +3034,9 @@ impl Document {
             ..Options::default()
         };
         let tables = crate::resolve_views(&mut program, &view_options, tables);
-        let engine = Engine::with_tables(
-            &program,
+        // Kept after the rebuild, for a paged sheet's rows (D80).
+        let engine = Engine::owning(
+            program,
             Options {
                 style: self.style,
                 names: self.names.clone(),
@@ -2815,6 +3047,7 @@ impl Document {
         );
         engine.run();
         diags.extend(engine.take_diags());
+        let program = engine.program();
         let ast = self.ast();
 
         // A cell that does not fit its column says so, and what the column
@@ -2843,25 +3076,10 @@ impl Document {
             None => d.message.clone(),
         };
         let within = |span: Span| diags.iter().find(|d| contains(span, d.span)).map(message);
-        let show = |v: &Value| match v {
-            Value::Sheet(_) => "<sheet>".to_string(),
-            Value::Row(_) => "<row>".to_string(),
-            other => engine.show(other, false),
-        };
-        // What a number shown with fewer digits than it has is in full.
-        let exact = |v: &Value, quoted: bool, shown: &str| {
-            let full = match v {
-                // Two's complement is the whole number, not one cut short.
-                Value::Int(_, b) if *b != Base::Dec => return None,
-                Value::Int(_, _)
-                | Value::Decimal(_)
-                | Value::Percent(_)
-                | Value::Float(_)
-                | Value::Vector(_) => format_exact(v, quoted, &self.style),
-                _ => return None,
-            };
-            (full != shown).then_some(full)
-        };
+        let show = |v: &Value| shown_text(&engine, v);
+        let exact =
+            |v: &Value, quoted: bool, shown: &str| exact_text(v, quoted, shown, &self.style);
+        let mut column_errors = Vec::new();
 
         let mut snapshot = Snapshot::default();
         // Where each problem is, for the problems list to go there. Only a
@@ -2870,7 +3088,7 @@ impl Document {
         for (t, sheet) in program.sheets.iter().enumerate() {
             let decl = ast.sheets.iter().find(|d| d.name == sheet.name);
             let mut columns = Vec::new();
-            let mut column_errors = Vec::new();
+            let mut column_errors_here = Vec::new();
             let mut column_spans = Vec::new();
             for col in sheet.cols.iter() {
                 let computed = decl
@@ -2890,18 +3108,22 @@ impl Document {
                     format: col.format.as_ref().map(|f| f.to_string()),
                 });
                 column_spans.push(computed.map(|ce| ce.expr_span));
-                column_errors.push(computed.and_then(|ce| within(ce.expr_span)));
+                column_errors_here.push(computed.and_then(|ce| within(ce.expr_span)));
             }
+            // A big sheet the text does not hold is formatted a page at a
+            // time, as the grid asks for it, and none of it here (D80).
+            let paged = sheet.nrows > self.paged_rows && decl.is_none_or(|d| d.rows.is_empty());
             // Column-wise before row-wise (D75): a column the dataframe
             // holds is walked once here, where asking for it a cell at a
             // time would find its chunk once per row. A column it does not
             // hold is `None` and is read a cell at a time below, which for
             // one already calculated is quicker than collecting it first.
             let mut shown: Vec<Option<Vec<Value>>> = (0..sheet.cols.len())
-                .map(|c| engine.column_shown(t, c))
+                .map(|c| (!paged).then(|| engine.column_shown(t, c)).flatten())
                 .collect();
-            let mut rows = Vec::with_capacity(sheet.nrows);
-            for r in 0..sheet.nrows {
+            let nrows = if paged { 0 } else { sheet.nrows };
+            let mut rows = Vec::with_capacity(nrows);
+            for r in 0..nrows {
                 let mut row = Vec::with_capacity(sheet.cols.len());
                 for (c, column) in columns.iter().enumerate() {
                     // Taken rather than copied: the snapshot below keeps
@@ -2926,7 +3148,7 @@ impl Document {
                             }
                             (
                                 format!("= {formula}"),
-                                failed.then(|| column_errors[c].clone()).flatten(),
+                                failed.then(|| column_errors_here[c].clone()).flatten(),
                             )
                         }
                         (None, Some(cell)) => {
@@ -2951,29 +3173,15 @@ impl Document {
                         }
                         (None, None) => (String::new(), None),
                     };
-                    // A column's format shows its numbers as it says, so
-                    // one it rounds is not one shown short.
                     let format = sheet.cols[c].format.as_ref();
-                    let display = match format {
-                        Some(_) => engine.show_in(&value, false, format),
-                        None => show(&value),
-                    };
-                    let full = exact(&value, false, &display);
-                    row.push(CellSnap {
-                        shortened: format.is_none()
-                            && full
-                                .as_ref()
-                                .is_some_and(|f| *f != delocalised(&display, &self.style)),
-                        exact: full,
-                        display,
-                        numeric: value.is_numeric(),
-                        value: value.clone(),
-                        formula: source.starts_with('='),
-                        error: error.or_else(|| {
-                            failed.then(|| "this cell could not be calculated".to_string())
-                        }),
+                    row.push(cell_snap(
+                        &engine,
+                        &self.style,
+                        format,
+                        value,
                         source,
-                    });
+                        error,
+                    ));
                 }
                 rows.push(row);
             }
@@ -2989,7 +3197,8 @@ impl Document {
                 }
             }
             // A table sorted in the grid is shown in that order, while its
-            // file still has as many rows as the order numbers.
+            // file still has as many rows as the order numbers. A paged
+            // sheet takes the order as its rows are asked for.
             let rows = match self.orders.get(&sheet.name) {
                 Some(order)
                     if (sheet.source.is_some()
@@ -3006,9 +3215,12 @@ impl Document {
                 }
                 _ => rows,
             };
+            column_errors.push(column_errors_here);
             snapshot.sheets.push(SheetSnap {
                 name: sheet.name.clone(),
                 columns,
+                nrows: sheet.nrows,
+                paged,
                 rows,
                 source: sheet.source.as_ref().map(|s| s.path.clone()),
                 derived: sheet.rows_from.is_some(),
@@ -3075,6 +3287,8 @@ impl Document {
             })
             .collect();
         self.snapshot = snapshot;
+        self.column_errors = column_errors;
+        self.engine = Some(engine);
     }
 }
 
@@ -3409,6 +3623,76 @@ mod tests {
         // Each text once, in the order of the values: empty first, and 10
         // after 2 because it is a number.
         assert_eq!(doc.distinct_shown(0, 1), ["", "2", "10"]);
+    }
+
+    #[test]
+    fn a_paged_table_shows_what_a_held_one_does() {
+        let text = "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n\nTwice := Fare * 2\n\nsheet Firsts := Passengers |> filter(Pclass == 1)\n";
+        let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
+        let mut held = Document::from_text(text);
+        held.set_base(base);
+        let mut paged = Document::from_text(text);
+        paged.set_base(base);
+        paged.set_paged_rows(100);
+        let shown = |doc: &Document,
+                     sheet: usize,
+                     from: usize,
+                     count: usize|
+         -> Vec<Vec<(String, String, Option<String>)>> {
+            doc.rows(sheet, from, count)
+                .into_iter()
+                .map(|row| {
+                    row.into_iter()
+                        .map(|c| (c.display, c.source, c.error))
+                        .collect()
+                })
+                .collect()
+        };
+        for sheet in 0..2 {
+            let (h, p) = (
+                &held.snapshot().sheets[sheet],
+                &paged.snapshot().sheets[sheet],
+            );
+            assert!(!h.paged && p.paged, "sheet {sheet}");
+            assert!(p.rows.is_empty(), "a paged sheet holds no rows");
+            assert_eq!(h.nrows, p.nrows);
+            assert_eq!(paged.row_count(sheet), h.rows.len());
+            let n = h.nrows;
+            // The start, a block across the middle, and past the end.
+            for (from, count) in [(0, 30), (n / 2 - 7, 30), (n - 5, 30), (n, 5)] {
+                assert_eq!(
+                    shown(&paged, sheet, from, count),
+                    shown(&held, sheet, from, count),
+                    "{sheet} {from}"
+                );
+            }
+            assert_eq!(
+                paged.summary(sheet, (3, 0), (90, 8)),
+                held.summary(sheet, (3, 0), (90, 8))
+            );
+            assert_eq!(
+                paged.distinct_shown(sheet, 1),
+                held.distinct_shown(sheet, 1)
+            );
+        }
+        let hide = vec![("Sex".to_string(), vec!["male".to_string()])];
+        assert_eq!(paged.shown_rows(0, &hide), held.shown_rows(0, &hide));
+        // Sorted in the grid, by a column of the file and by a formula.
+        for col in [5, 8] {
+            held.sort_rows(0, col, true).unwrap();
+            paged.sort_rows(0, col, true).unwrap();
+            assert_eq!(
+                shown(&paged, 0, 0, 40),
+                shown(&held, 0, 0, 40),
+                "sorted by {col}"
+            );
+            assert_eq!(
+                shown(&paged, 0, 850, 40),
+                shown(&held, 0, 850, 40),
+                "sorted by {col}"
+            );
+            assert_eq!(paged.shown_rows(0, &hide), held.shown_rows(0, &hide));
+        }
     }
 
     #[test]

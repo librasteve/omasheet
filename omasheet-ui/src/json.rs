@@ -2,7 +2,7 @@
 
 //! The document snapshot as JSON, for the QML side to parse.
 
-use omasheet_engine::doc::{FuncSnap, Snapshot};
+use omasheet_engine::doc::{CellSnap, FuncSnap, Snapshot};
 use omasheet_engine::omx::funcs::FuncDoc;
 
 fn string(out: &mut String, s: &str) {
@@ -52,6 +52,42 @@ pub fn texts(items: &[String]) -> String {
     out
 }
 
+/// Some rows of a paged sheet, as [`snapshot`] writes a sheet's rows.
+pub fn rows(rows: &[Vec<CellSnap>]) -> String {
+    let mut out = String::new();
+    cell_rows(&mut out, rows);
+    out
+}
+
+fn cell_rows(out: &mut String, rows: &[Vec<CellSnap>]) {
+    list(out, rows, |out, row| {
+        list(out, row, |out, cell| {
+            out.push('{');
+            field(out, "d", &cell.display);
+            out.push(',');
+            field(out, "s", &cell.source);
+            out.push(',');
+            field(out, "e", cell.error.as_deref().unwrap_or(""));
+            out.push(',');
+            // A decimal that does not end is given to more places.
+            let long = omasheet_engine::value::long_decimal(&cell.value);
+            let full = long
+                .as_deref()
+                .or(cell.exact.as_deref().filter(|_| cell.shortened));
+            field(out, "x", full.unwrap_or(""));
+            if cell.value.is_markdown() {
+                out.push(',');
+                // The grid draws `<i>`, and has no `<em>`.
+                let html = omasheet_md::inline_html(&cell.display)
+                    .replace("<em>", "<i>")
+                    .replace("</em>", "</i>");
+                field(out, "h", &html);
+            }
+            out.push_str(&format!(",\"n\":{},\"f\":{}}}", cell.numeric, cell.formula));
+        });
+    });
+}
+
 /// Cells are `{d: display, s: source, n: numeric, f: formula, e: error,
 /// x: the value in full when the display is shortened, h: text that is
 /// Markdown as HTML}`.
@@ -82,33 +118,9 @@ pub fn snapshot(snap: &Snapshot) -> String {
                 c.declared
             ));
         });
+        out.push_str(&format!(",\"nrows\":{},\"paged\":{}", t.nrows, t.paged));
         out.push_str(",\"rows\":");
-        list(out, &t.rows, |out, row| {
-            list(out, row, |out, cell| {
-                out.push('{');
-                field(out, "d", &cell.display);
-                out.push(',');
-                field(out, "s", &cell.source);
-                out.push(',');
-                field(out, "e", cell.error.as_deref().unwrap_or(""));
-                out.push(',');
-                // A decimal that does not end is given to more places.
-                let long = omasheet_engine::value::long_decimal(&cell.value);
-                let full = long
-                    .as_deref()
-                    .or(cell.exact.as_deref().filter(|_| cell.shortened));
-                field(out, "x", full.unwrap_or(""));
-                if cell.value.is_markdown() {
-                    out.push(',');
-                    // The grid draws `<i>`, and has no `<em>`.
-                    let html = omasheet_md::inline_html(&cell.display)
-                        .replace("<em>", "<i>")
-                        .replace("</em>", "</i>");
-                    field(out, "h", &html);
-                }
-                out.push_str(&format!(",\"n\":{},\"f\":{}}}", cell.numeric, cell.formula));
-            });
-        });
+        cell_rows(out, &t.rows);
         out.push('}');
     });
     out.push_str(",\"consts\":");
