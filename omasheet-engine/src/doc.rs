@@ -31,6 +31,11 @@ const UNDO_LIMIT: usize = 200;
 /// edited through is that size already.
 pub const PAGED_ROWS: usize = 10_000;
 
+/// How many rows of a paged sheet's selection [`Document::summary`] reads
+/// at a time. Small in tests, so that a selection of the Titanic file
+/// crosses blocks.
+const SUMMARY_ROWS: usize = if cfg!(test) { 100 } else { 16_384 };
+
 /// A fresh file: one small empty sheet to type into.
 pub const BLANK: &str = "sheet Sheet1\n\n| A   | B   | C   |\n| --- | --- | --- |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n";
 
@@ -1821,23 +1826,58 @@ impl Document {
         (top, left): (usize, usize),
         (bottom, right): (usize, usize),
     ) -> Option<Summary> {
-        self.snapshot.sheets.get(sheet)?;
-        // A block of a paged sheet is formatted to be read; a whole column
-        // of one is a page of the file at a time, as the grid reads it.
-        let rows = self.rows(sheet, top, (bottom + 1).saturating_sub(top));
-        let values = rows
-            .iter()
-            .flat_map(|row| row.iter().take(right + 1).skip(left))
-            .map(|cell| &cell.value);
+        let t = self.snapshot.sheets.get(sheet)?;
         let (mut count, mut numbers) = (0, 0);
         let mut sum = Value::int(0.into());
-        for value in values {
+        let mut add = |value: &Value| {
             if !matches!(value, Value::Null | Value::Error) {
                 count += 1;
             }
             if value.is_numeric() {
                 numbers += 1;
                 sum = arith(BinOp::Add, &sum, value).ok()?;
+            }
+            Some(())
+        };
+        let end = (bottom + 1).min(t.nrows);
+        let cols = left..(right + 1).min(t.columns.len());
+        if !t.paged {
+            for row in t.rows.get(top..end).unwrap_or_default() {
+                for cell in row.get(cols.clone()).unwrap_or_default() {
+                    add(&cell.value)?;
+                }
+            }
+        } else if let Some(engine) = &self.engine {
+            // A paged sheet's selection can be the whole of a big file, so
+            // only the selected columns are read, as values and not as the
+            // cells the grid draws, and a block of rows at a time, so that
+            // what is held is one block however much is selected. Within a
+            // block the values are added row by row, as a held sheet's are,
+            // so the two add floats in the same order and agree exactly.
+            if self.orders.contains_key(&t.name) && end > top {
+                // Sorted, a block's rows are anywhere in the file, and each
+                // block would read the span between them again. Asking for
+                // the first row and the last reads each column whole, once,
+                // and keeps it, so every block is answered from that.
+                let ends = [0, t.nrows - 1];
+                for c in cols.clone() {
+                    engine.rows_shown(sheet, c, &ends);
+                }
+            }
+            let mut from = top;
+            while from < end {
+                let to = (from + SUMMARY_ROWS).min(end);
+                let file_rows: Vec<usize> = (from..to).map(|r| self.file_row(sheet, r)).collect();
+                let columns: Vec<Vec<Value>> = cols
+                    .clone()
+                    .map(|c| engine.rows_shown(sheet, c, &file_rows))
+                    .collect();
+                for i in 0..file_rows.len() {
+                    for column in &columns {
+                        add(column.get(i).unwrap_or(&Value::Error))?;
+                    }
+                }
+                from = to;
             }
         }
         let numbers = if numbers == 0 {
@@ -3692,6 +3732,61 @@ mod tests {
                 "sorted by {col}"
             );
             assert_eq!(paged.shown_rows(0, &hide), held.shown_rows(0, &hide));
+        }
+    }
+
+    #[test]
+    fn a_paged_summary_answers_as_a_held_one_reading_only_what_is_selected() {
+        let text = "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n\nTwice := Fare * 2\n\nsheet Firsts := Passengers |> filter(Pclass == 1)\n";
+        let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
+        let mut held = Document::from_text(text);
+        held.set_base(base);
+        let mut paged = Document::from_text(text);
+        paged.set_base(base);
+        paged.set_paged_rows(100);
+
+        // One column of a fresh document is the only column read for it.
+        let before = paged.engine.as_ref().unwrap().reads();
+        let n = held.snapshot().sheets[0].nrows;
+        assert_eq!(
+            paged.summary(0, (0, 5), (n - 1, 5)),
+            held.summary(0, (0, 5), (n - 1, 5))
+        );
+        let read: Vec<_> = paged.engine.as_ref().unwrap().reads()[before.len()..].to_vec();
+        assert!(
+            read.iter().all(|&rc| rc == (0, 5)),
+            "a summary of Fare read {read:?}"
+        );
+
+        let blocks = |doc: &Document, sheet: usize| {
+            let n = doc.snapshot().sheets[sheet].nrows;
+            [
+                ((0, 0), (n - 1, 8)),       // everything, across many blocks
+                ((150, 4), (640, 6)),       // starts and ends inside a block
+                ((99, 5), (100, 5)),        // either side of a block's edge
+                ((n - 3, 0), (n + 50, 20)), // past the last row and column
+                ((n, 0), (n + 5, 8)),       // no rows at all
+            ]
+        };
+        for sheet in 0..2 {
+            for (from, to) in blocks(&held, sheet) {
+                let got = paged.summary(sheet, from, to);
+                assert_eq!(got, held.summary(sheet, from, to), "{sheet} {from:?}");
+                assert!(got.is_some());
+            }
+        }
+        // Sorted in the grid, by a column of the file and by a formula: the
+        // same rows in a new order, so the same count and the same sum.
+        for col in [5, 8] {
+            held.sort_rows(0, col, false).unwrap();
+            paged.sort_rows(0, col, false).unwrap();
+            for (from, to) in blocks(&held, 0) {
+                assert_eq!(
+                    paged.summary(0, from, to),
+                    held.summary(0, from, to),
+                    "sorted by {col}, {from:?}"
+                );
+            }
         }
     }
 
