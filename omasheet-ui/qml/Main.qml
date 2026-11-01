@@ -428,23 +428,19 @@ ApplicationWindow {
     }
     // What each sheet has been sorted by: every column, whose telltale
     // stays solid, and the last one and which way, which is the order the
-    // rows are in and so the one that shows a caret. A sort of a sheet of
-    // its own rows, or of a calculated one, is a step to undo, so each is
-    // kept with the number of steps to undo it left: it is in force while
-    // there are at least that many, and goes and comes back with the step.
-    // An edit made after an undo drops the steps it was undone past, and
-    // the sorts with them. A table's sort is the grid's order alone, which
-    // nothing undoes, and is kept apart. All of it is forgotten with the
-    // file, as a filter is.
+    // rows are in and so the one that shows a caret. Every sort is a step
+    // to undo -- of a sheet's own rows, of a calculated one, or of a table,
+    // whose order is the grid's alone -- so each is kept with the number of
+    // steps to undo it left: it is in force while there are at least that
+    // many, and goes and comes back with the step. An edit made after an
+    // undo drops the steps it was undone past, and the sorts with them. All
+    // of it is forgotten with the file, as a filter is.
     property var sortLog: []
-    property var viewSorts: ({})
     property int undoDepth: 0
     property int editCount: 0
     property int sortRev: 0
     function sortState(name) {
         sortRev;
-        if (viewSorts[name])
-            return viewSorts[name];
         var state = null;
         for (var i = 0; i < sortLog.length; i++) {
             var e = sortLog[i];
@@ -470,15 +466,7 @@ ApplicationWindow {
     }
     function noteSort(col, desc) {
         var name = sheet.columns[col].name;
-        if (sheet.from) {
-            var all = viewSorts;
-            var done = all[sheet.name] ? all[sheet.name].done : {};
-            done[name] = true;
-            all[sheet.name] = { col: name, desc: desc, done: done };
-            viewSorts = all;
-        } else {
-            sortLog = sortLog.concat([{ mark: file.undoMark(), sheet: sheet.name, col: name, desc: desc }]);
-        }
+        sortLog = sortLog.concat([{ mark: file.undoMark(), sheet: sheet.name, col: name, desc: desc }]);
         sortRev++;
     }
     // Keep up with the history after each change of the file: an undo or a
@@ -3763,7 +3751,6 @@ ApplicationWindow {
             win.filters = ({});
             win.filterRev++;
             win.sortLog = [];
-            win.viewSorts = ({});
             win.undoDepth = file.undoMark();
             win.editCount = file.editCount();
             win.sortRev++;

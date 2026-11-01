@@ -22,6 +22,7 @@ use omasheet_omx::parser::parse_expr;
 use omasheet_omx::types::Base;
 use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile, text};
 use std::cmp::Ordering;
+use std::rc::Rc;
 
 const UNDO_LIMIT: usize = 200;
 
@@ -155,11 +156,23 @@ pub struct Problem {
     pub cell: Option<(usize, usize, usize)>,
 }
 
+/// The grid's order of each sorted table, shared between the document and
+/// the steps of its history, so that a step keeps an order without copying
+/// it.
+type Orders = std::collections::HashMap<String, Rc<Vec<usize>>>;
+
+/// A state of the document to undo or redo to: its text, and the order the
+/// grid shows each table's rows in, which a sort changes without the text.
+struct Step {
+    text: String,
+    orders: Orders,
+}
+
 pub struct Document {
     text: String,
     snapshot: Snapshot,
-    undo: Vec<String>,
-    redo: Vec<String>,
+    undo: Vec<Step>,
+    redo: Vec<Step>,
     style: Style,
     /// What the locale calls the days and months, for a column's format.
     names: Names,
@@ -171,10 +184,10 @@ pub struct Document {
     base: Option<std::path::PathBuf>,
     /// The order a table's rows are shown in, by sheet name, where one has
     /// been sorted: the rows of its file, by number. A table's rows are not
-    /// the text's, so this is a view of them and nothing more -- it is not
-    /// written, saved or undone -- and the grid, a copy and the summary of
-    /// a selection all read the snapshot it orders.
-    orders: std::collections::HashMap<String, Vec<usize>>,
+    /// the text's, so this is a view of them -- it is not written or saved --
+    /// and the grid, a copy and the summary of a selection all read the
+    /// snapshot it orders. A sort is a step to undo, as an edit is.
+    orders: Orders,
     /// How many edits have been committed. See [`Document::edit_count`].
     edits: usize,
     /// The engine of the last rebuild, kept so that a paged sheet's cells
@@ -1476,7 +1489,8 @@ impl Document {
         let Some(previous) = self.undo.pop() else {
             return false;
         };
-        self.redo.push(std::mem::replace(&mut self.text, previous));
+        let now = self.restore(previous);
+        self.redo.push(now);
         self.rebuild();
         true
     }
@@ -1485,9 +1499,28 @@ impl Document {
         let Some(next) = self.redo.pop() else {
             return false;
         };
-        self.undo.push(std::mem::replace(&mut self.text, next));
+        let now = self.restore(next);
+        self.undo.push(now);
         self.rebuild();
         true
+    }
+
+    /// Put the document back to `step`, giving the state it was in.
+    fn restore(&mut self, step: Step) -> Step {
+        Step {
+            text: std::mem::replace(&mut self.text, step.text),
+            orders: std::mem::replace(&mut self.orders, step.orders),
+        }
+    }
+
+    /// Keep the state the document was in as the step an edit undoes to.
+    fn push_step(&mut self, previous: Step) {
+        self.undo.push(previous);
+        if self.undo.len() > UNDO_LIMIT {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+        self.edits += 1;
     }
 
     /// How many steps there are to undo: a mark for [`Document::join_since`].
@@ -1513,12 +1546,11 @@ impl Document {
         if text == self.text {
             return false;
         }
-        self.undo.push(std::mem::replace(&mut self.text, text));
-        if self.undo.len() > UNDO_LIMIT {
-            self.undo.remove(0);
-        }
-        self.redo.clear();
-        self.edits += 1;
+        let previous = Step {
+            text: std::mem::replace(&mut self.text, text),
+            orders: self.orders.clone(),
+        };
+        self.push_step(previous);
         self.rebuild();
         true
     }
@@ -1543,7 +1575,7 @@ impl Document {
         edits(self);
         let changed = self.text != before;
         // The first of the edits left the text as it was to be undone to.
-        if self.undo.get(steps) == Some(&before) {
+        if self.undo.get(steps).map(|s| &s.text) == Some(&before) {
             self.undo.truncate(steps + usize::from(changed));
         }
         changed
@@ -2546,20 +2578,29 @@ impl Document {
             let o = crate::value::sort_order(value(a), value(b)).unwrap_or(Ordering::Equal);
             if desc { o.reverse() } else { o }
         });
-        let before = match self.orders.get(&t.name) {
-            Some(order) if order.len() == n => order.clone(),
-            _ => (0..n).collect(),
+        let before = self.orders.get(&t.name).filter(|o| o.len() == n);
+        let order: Vec<usize> = match before {
+            Some(before) => shown.iter().map(|&p| before[p]).collect(),
+            None => shown.clone(),
         };
-        let order: Vec<usize> = shown.iter().map(|&p| before[p]).collect();
+        // Already in this order: nothing to do, and no step to undo.
+        if shown.iter().enumerate().all(|(k, &p)| k == p) {
+            return Ok(());
+        }
         let name = t.name.clone();
         drop(paged);
+        let previous = Step {
+            text: self.text.clone(),
+            orders: self.orders.clone(),
+        };
+        self.push_step(previous);
         let rows = std::mem::take(&mut self.snapshot.sheets[sheet].rows);
         if !rows.is_empty() {
             let mut rows: Vec<Option<Vec<CellSnap>>> = rows.into_iter().map(Some).collect();
             self.snapshot.sheets[sheet].rows =
                 shown.iter().filter_map(|&p| rows[p].take()).collect();
         }
-        self.orders.insert(name, order);
+        self.orders.insert(name, Rc::new(order));
         Ok(())
     }
 
@@ -3626,9 +3667,10 @@ mod tests {
         assert_eq!(rows.len(), 887);
         assert_eq!(rows[0][5].display, "512.3292");
         assert_eq!(rows[0][2].display, "Miss. Anna Ward");
-        // Nothing is written, so there is nothing to save or undo.
+        // Nothing is written, so there is nothing to save; but the sort is
+        // a step, so there is something to undo.
         assert_eq!(doc.text(), table);
-        assert!(!doc.can_undo());
+        assert!(doc.can_undo());
         // The order holds through a rebuild, and a second sort starts from
         // it: the ties at 512.3292 stay in the order the first one gave.
         doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
@@ -3640,6 +3682,65 @@ mod tests {
         let rows = &doc.snapshot().sheets[0].rows;
         assert_eq!(rows[0][1].display, "1");
         assert_eq!(rows[0][2].display, "Miss. Anna Ward");
+    }
+
+    #[test]
+    fn a_table_sort_is_a_step_to_undo_and_redo() {
+        let text = "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n\nsheet Notes\n\nA\n1\n";
+        let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
+        // Held whole, and paged as a big table is.
+        for paged in [false, true] {
+            let mut doc = Document::from_text(text);
+            doc.set_base(base);
+            if paged {
+                doc.set_paged_rows(100);
+            }
+            assert_eq!(doc.snapshot().sheets[0].paged, paged);
+            let names = |doc: &Document| -> Vec<String> {
+                doc.rows(0, 0, 3)
+                    .into_iter()
+                    .map(|r| r[2].display.clone())
+                    .collect()
+            };
+            let unsorted = names(&doc);
+            let edits = doc.edit_count();
+
+            doc.sort_rows(0, 5, true).expect("sorts");
+            let by_fare = names(&doc);
+            assert_ne!(by_fare, unsorted, "paged {paged}");
+            assert_eq!(doc.edit_count(), edits + 1);
+            // The same sort again changes nothing and is no step.
+            doc.sort_rows(0, 5, true).expect("sorts");
+            assert_eq!(doc.undo_mark(), 1);
+
+            assert!(doc.undo());
+            assert_eq!(names(&doc), unsorted, "undone, paged {paged}");
+            assert!(!doc.can_undo());
+            assert!(doc.redo());
+            assert_eq!(names(&doc), by_fare, "redone, paged {paged}");
+
+            // A sort, an edit of the text, and a second sort, undone one at
+            // a time: each takes back its own step and only that.
+            assert!(doc.set_cell(1, 0, 0, "2"));
+            let edited = doc.text().to_string();
+            assert_ne!(edited, text);
+            doc.sort_rows(0, 2, false).expect("sorts");
+            let by_name = names(&doc);
+            assert_ne!(by_name, by_fare);
+            assert_eq!(doc.text(), edited, "a sort writes nothing");
+            assert!(doc.undo());
+            assert_eq!(names(&doc), by_fare);
+            assert_eq!(doc.text(), edited);
+            assert!(doc.undo());
+            assert_eq!(names(&doc), by_fare, "the edit's undo keeps the order");
+            assert_eq!(doc.text(), text);
+            assert!(doc.undo());
+            assert_eq!(names(&doc), unsorted);
+            // And forward again, through all three.
+            assert!(doc.redo() && doc.redo() && doc.redo());
+            assert_eq!(names(&doc), by_name);
+            assert_eq!(doc.text(), edited);
+        }
     }
 
     #[test]
