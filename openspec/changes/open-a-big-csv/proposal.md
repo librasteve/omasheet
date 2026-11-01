@@ -49,6 +49,12 @@ file of this size would freeze the window even if it fitted in memory.
   cached, rather than reading the whole column first (D155)
 - **app** — MODIFIED: the grid formats only the rows it shows. This is
   `hold-less-of-a-big-file` item 3 (D80), which this change depends on
+- **app** — MODIFIED: a table that fits in memory is held whole, read in
+  the background once it has opened, and one that does not says so (D157).
+  Sort, filter, the selection summary and Ctrl+Down run as Polars
+  operations over a column (D158). The grid lays out only the rows on
+  screen, so a table of millions of rows draws straight to its last row
+  (D156). A column's filter lists at most 1,000 values (D159, done)
 
 ## Targets
 

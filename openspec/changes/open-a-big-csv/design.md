@@ -42,6 +42,10 @@ range read by row group (D78).
 | D153 | Recommended | **A converted copy lives in `$XDG_CACHE_HOME/omasheet/`.** Named by a hash of the canonical path, size and mtime. It is written by Polars' streaming `sink_parquet`, so memory stays bounded whatever the file's size, and atomically (a temporary file, then renamed into place), so a half-written copy is never read. While it is being written, the grid shows the sniffed sample rows and marks the rest as loading. A reopened file whose copy is still current opens as fast as a Parquet table (18 ms measured). Copies are evicted least recently used beyond a disk budget (recommended: 10 GB or 10% of free space, whichever is smaller). A `.parquet` file is never copied |
 | D154 | Recommended | **XLSX formulas over a big sheet.** A formula that is the same down a whole column (`column_formula` already finds these) becomes a `:=` line on the table, as `Family` is in `analysis.omx`, and its values are left out of the copy. A sheet with formulas that differ from cell to cell stays inline at any size, since a table cannot hold them. XLSX's 1,048,576-row limit keeps such a sheet within reach of the inline path |
 | D155 | Recommended | **An aggregate over a table column the document does not hold runs in the scan, on Polars' streaming engine.** Today `pl_column` reads the whole column and the aggregate's plan (`lower::aggregate`, the D71a guard, the decimal bounds, `mean` as a sum over a count) runs over that frame with `collect()`. Instead the same `select` is put on `scan(path)`, projected to the one column, and run with `collect_with_engine(Engine::Streaming)`, so the file is decoded row group by row group and never held as a column. Only the source of the plan changes, not what it asks, so D71a, D72 and the decimal overflow guard are kept as they are. A column already held (in the document or in D150's cache) is aggregated where it is, as now. The answer, a scalar, is cached keyed by (file identity as in D150, column, function), so a repeated aggregate is ≤ 50 ms without holding the column; D150's column cache is then only for what needs a column's values (elementwise columns, sorting, filtering). An operation the streaming engine does not support falls back to Polars' in-memory engine inside the same call, and a differential test holds the two engines to the same answers. Needs Polars' `new_streaming` feature, which `sink_parquet` (D153) needs anyway |
+| D156 | Recommended | **The grid lays out the rows on screen, not one list as tall as the table.** Today `rowsView` is a `ListView` of `shownCount` rows of `rowHeight` (~28 px), so short2's 3.7M rows make it over 100M px tall, and the 23.9M-row taxi file 670M px. Qt Quick holds positions as 32-bit floats, exact to whole pixels only up to 2²⁴ (~16.7M px, about row 600,000 here); beyond that rows and gridlines land on 2, 4, then 8 px steps, which is the *wonky gridlines at the bottom* seen in the app. Instead the view holds one screen of row items, positioned from a top row index (an integer), with a scrollbar of its own that maps its position to that index. Scrolling, `positionViewAtIndex` and jumping to a row become arithmetic on the index, and nothing is ever placed beyond a screen's height. Not yet verified that floats are the whole cause: confirmed when the new view draws the last rows of the taxi file straight |
+| D157 | Recommended | **A table that fits is held whole, read in the background after it first opens.** The size it will take is known from the footer before anything is read: rows × each column's width (8 bytes for a number or a date-time; text from the footer's uncompressed sizes). Measured: 5.6–8.2× the file on disk, so ~0.5 GB for a 61 MB month of yellow taxi and 3.2 GB for the 583 MB ride-hail month; a 1 GB Parquet would need 5.5–8 GB. Reading peaks at ~1.3× the result. The table opens paged as now; then, if the estimate is under half of `MemAvailable`, a worker reads it whole and the grid moves over to it when it arrives. If it is not, it stays paged and the status bar says so, with the estimate (*"table kept on disk: 3.2 GB to hold, 2.1 GB free"*). A held table is D150's cache filled at once, and counts against its budget |
+| D158 | Recommended | **The grid's operations on a table run in Polars over its columns, not a cell value at a time.** Sort is a Polars `arg_sort` that gives the row order (the order `sort_table` builds today by comparing `Value`s); a filter is a mask; the selection summary is a sum and a count over a slice; Ctrl+Down is the last non-null row. Measured on short2 today, each walks every row as a `Value` on the UI thread: a sort from the popup 6–8 s, a whole-column selection ~8 s with *not responding*, Ctrl+Down ~5 s. Over a held column (D157) or a scan (D155), and off the UI thread (D149). Every one is held to the same answer as today's by a differential test, as D155's aggregates are, including the order of ties and of nulls |
+| D159 | Decided | **A column's filter lists at most 1,000 values, and searches all of them.** Done, 2026-11-01 (`2e65c8e`): the popup asked for every distinct value as one JSON list, and 1.76M pickup times (38.5 MB) crashed the app in Qt's `JSON.parse`. Rust now returns the first 1,000 that hold the search and the count of all that do; the popup says how many it leaves out. Listing a column's distinct values is still a walk over every row (~3 s for 3.7M), which D158 moves to Polars |
 
 ## Measured: Polars' engines, and DuckDB
 
@@ -66,6 +70,23 @@ over Parquet (Polars' streaming mean still held about one column, 182 MiB),
 and it would mean lowering OMX to SQL rather than to Polars expressions, a
 C++ build, and a second Arrow implementation. A single column bigger than
 RAM remains out of reach, which is far beyond the files this change targets.
+
+## Measured in the app
+
+2026-11-01, release build, by a probe in `Main.qml` and by hand, under a
+3 GB memory cap (`systemd-run --user --scope -p MemoryMax=3G`).
+
+| | short2: yellow taxi, 61 MB, 3.7M × 20 | taxi: ride-hail, 611 MB, 23.9M × 24 |
+|---|---:|---:|
+| Open to first screen | fast | fast, ~400 MB |
+| Select 450,000 rows, before `08613f8` | — | 9–10 s, then 3 GB and killed |
+| Select 450,000 rows, after | 202 ms | 284 ms |
+| Jump to the last row (`cellAt(last)`) | 67 ms | 191–1,045 ms |
+| Jump to row 1,000 | 398 ms | 400–600 ms |
+| Sort from the popup (one column) | 6–8 s | — |
+| Undo or redo a sort | 380 / 606 ms | — |
+| Open the column popup | 1.5–3 s (crashed on a date-time column before `2e65c8e`) | — |
+| Whole-column selection, Ctrl+Down | ~8 s, ~5 s (by hand) | — |
 
 ## Why not make the inline path leaner
 

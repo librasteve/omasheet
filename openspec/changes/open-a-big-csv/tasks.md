@@ -50,6 +50,29 @@ Parquet alone.
       function. Measured on the 611 MB Parquet file against today's path:
       time, and peak memory without the mapped file pages
 
+## 2b. Found in the app, 2026-11-01 (D156, D157, D158, D159)
+
+- [x] 2b.1 A selection's summary on a paged table reads the selected
+      columns a block at a time, not every column as formatted cells
+      (`08613f8`): 450,000 rows of the taxi file, 3 GB and killed → 284 ms
+- [x] 2b.2 A table sort is a step to undo and redo (`2c1a795`)
+- [x] 2b.3 D159: a column's filter lists at most 1,000 values and searches
+      the rest in Rust (`2e65c8e`); the crash on a date-time column is gone
+- [ ] 2b.4 D157: the size a table takes held whole, estimated from its
+      footer; held whole by a worker when under half of `MemAvailable`;
+      otherwise a status-bar notice with the estimate. Measured: the
+      estimate against the held size for both demo files
+- [ ] 2b.5 D158: sort, filter, the selection summary and Ctrl+Down as Polars
+      operations over the column, with a differential test against today's
+      answers (ties, nulls, NaN, decimals). Measured on short2: each ≤ 50 ms
+      held, or off-thread with a pending state
+- [ ] 2b.6 D156: the grid lays out one screen of rows from an integer top
+      row, with its own scrollbar. Checked by eye at the last rows of the
+      taxi file: gridlines straight, rows evenly spaced
+- [ ] 2b.7 Listing a column's distinct values in Polars (`unique`, then the
+      first 1,000 in sort order), not a walk over every row
+- [ ] 2b.8 The probe in `Main.qml` taken out before this change is merged
+
 ## 3. One funnel, first stage: big files (D147, D152, D153)
 
 - [ ] 3.1 The reader interface: named `DataFrame`s, plus XLSX formulas.
