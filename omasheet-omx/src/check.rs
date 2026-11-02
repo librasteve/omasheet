@@ -1642,7 +1642,13 @@ impl<'a> Checker<'a> {
                     } else {
                         match self.literal_cell(&cell.text, cell.span, declared) {
                             Some(lit) => {
-                                widen(lit_type(&lit));
+                                // A fraction is a `Decimal` to the parser, but
+                                // its column is a `Fraction` one.
+                                widen(if crate::convert::is_fraction(&cell.text) {
+                                    S::Fraction
+                                } else {
+                                    lit_type(&lit)
+                                });
                                 cells.push(match lit {
                                     // In quotes it is text as it is.
                                     Lit::String(s) if !quoted(&cell.text) => Cell::Markdown(s),

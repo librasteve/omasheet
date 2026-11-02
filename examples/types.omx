@@ -94,6 +94,8 @@ Same := Limit == Limit
 # The name of a type converts to it: `x.Integer`, `x.Integer()` or `Integer(x)`.
 sheet Converted
 
+Value : Decimal
+
 | Value  | AsInt | Rounded | AsDecimal | AsPercent | AsNum | AsBool | AsText |
 | ------ | ----- | ------- | --------- | --------- | ----- | ------ | ------ |
 | 19.99  | *     | *       | *         | *         | *     | *      | *      |

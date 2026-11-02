@@ -9,8 +9,8 @@ use crate::lexer::{Tok, lex};
 use crate::types::{Base, S};
 
 /// A whole number and a part written on their own, `2 3/4` or `-2 3/4`, as
-/// the exact number they come to, `2.75`. The part is less than one. `None`
-/// if the text is anything else.
+/// the exact number they come to, `2.75`. The part may be more than one:
+/// `5 7/3` is `7 1/3`. `None` if the text is anything else.
 pub fn parse_mixed(text: &str) -> Option<Dec> {
     let toks = lex(text, 0, 0).ok()?;
     let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
@@ -28,11 +28,15 @@ pub fn parse_mixed(text: &str) -> Option<Dec> {
     else {
         return None;
     };
-    let part = (n < d)
-        .then(|| Dec::from_i64(*n).checked_div(Dec::from_i64(*d)))
-        .flatten()?;
+    let part = Dec::from_i64(*n).checked_div(Dec::from_i64(*d))?;
     let r = Dec::from_i64(*whole).checked_add(part)?;
     if negative { r.checked_neg() } else { Some(r) }
+}
+
+/// Whether `text` is a number written as a fraction, `1/7` or `2 3/4`, which
+/// is an exact `Decimal` to the parser but a `Fraction` to the column it is in.
+pub fn is_fraction(text: &str) -> bool {
+    text.contains('/') && matches!(parse_literal(text.trim()), Some(Lit::Decimal(_)))
 }
 
 /// A value written on its own, such as `42`, `-1/7`, `2 3/4`, `3+4i` or
@@ -267,7 +271,9 @@ mod tests {
         assert_eq!(lit("-2 3/4"), lit("-11/4"));
         assert_eq!(lit("0 1/3"), lit("1/3"));
         assert_eq!(lit("1_000 1/3"), lit("3001/3"));
-        assert_eq!(parse_literal("2 7/4"), None);
+        assert_eq!(lit("2 7/4"), lit("15/4"));
+        assert_eq!(lit("5 7/3"), lit("22/3"));
+        assert_eq!(lit("-5 7/3"), lit("-22/3"));
         assert_eq!(parse_literal("2 3/0"), None);
         assert_eq!(parse_literal("2 3"), None);
         assert_eq!(parse_literal("1 2 3/4"), None);

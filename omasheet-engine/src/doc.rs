@@ -375,33 +375,6 @@ fn iso_entry(style: &Style, ty: &str, input: &str) -> Option<String> {
     }
 }
 
-/// A whole number and a part typed into a cell, `2 3/4`, as the decimal a
-/// file keeps, `2.75`. `None` if it is not one, or the column holds text.
-fn fraction_entry(ty: &str, input: &str) -> Option<String> {
-    let input = input.trim();
-    let text = matches!(ty, "String" | "Url" | "Email" | "Uuid");
-    let r = omasheet_omx::convert::parse_mixed(input).filter(|_| !text)?;
-    // Only where the decimal is no longer than what was typed. `2 3/4` is
-    // better kept as `2.75`, but `1 1/3` would become thirty-eight digits,
-    // and a file is for reading: leave that as it was written, which reads
-    // back as the same number.
-    let plain = r.to_plain_string();
-    (plain.len() <= input.len()).then_some(plain)
-}
-
-/// Whether `input` is a number written as a fraction, `1/3` or `2 3/4`.
-/// In a file it is a `Decimal`; typed into a column left to its cells, it
-/// makes the column a `Fraction` one.
-fn typed_fraction(input: &str) -> bool {
-    let input = input.trim();
-    input.contains('/')
-        && (omasheet_omx::convert::parse_mixed(input).is_some()
-            || matches!(
-                omasheet_omx::convert::parse_literal(input),
-                Some(Lit::Decimal(_))
-            ))
-}
-
 /// A whole number typed into a cell, as the file keeps it: in the base of
 /// a `Hex`, `Octal` or `Binary` column, and otherwise in the base it was
 /// typed in, with its prefix in lower case (D127): `0XFF` is `0xff`, and
@@ -2040,15 +2013,6 @@ impl Document {
         let types: Vec<String> = columns
             .map(|c| c.iter().map(|c| c.ty.clone()).collect())
             .unwrap_or_default();
-        // The columns left to their cells that a fraction is typed into,
-        // which the file then declares `Fraction`.
-        let fractions: Vec<String> = cells
-            .iter()
-            .filter(|(_, _, text)| typed_fraction(text))
-            .filter_map(|(_, col, _)| columns?.get(*col))
-            .filter(|c| !c.declared && matches!(c.ty.as_str(), "" | "Integer" | "Decimal"))
-            .map(|c| c.name.clone())
-            .collect();
         self.grid_edited(text, sheet, |grid| {
             for (row, col, text) in cells {
                 if *col >= grid.header.len() || grid.formula[*col] {
@@ -2060,7 +2024,6 @@ impl Document {
                 }
                 let ty = types.get(*col).map_or("", String::as_str);
                 grid.rows[*row].1[*col] = iso_entry(&style, ty, text)
-                    .or_else(|| fraction_entry(ty, text))
                     .or_else(|| based_entry(ty, text))
                     .unwrap_or_else(|| clean_cell(text));
             }
@@ -2071,15 +2034,6 @@ impl Document {
                 Some(decl) => based_declared(text.clone(), decl),
                 None => text,
             }
-        })
-        .map(|mut text| {
-            for name in &fractions {
-                let ast = parse_file(&text, 0, &mut Vec::new());
-                if let Some(decl) = self.sheet_decl(&ast, sheet) {
-                    text = retyped(&text, decl, name, Some(S::Fraction));
-                }
-            }
-            text
         })
     }
 
@@ -3973,17 +3927,26 @@ mod tests {
 
     #[test]
     fn a_value_written_as_a_fraction_makes_a_fraction_column() {
-        let mut doc = Document::from_text("sheet T\n\nA | B\n1 | \n");
+        let mut doc = Document::from_text("sheet T\n\nA | B\n1 | \n2 | 0.5\n");
         assert!(doc.set_cell(0, 0, 1, "1/3"));
         assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Fraction");
-        assert_eq!(col(&doc, 0, 1), ["1/3"]);
-        assert!(doc.text().contains("B : Fraction\n"), "{}", doc.text());
+        assert_eq!(col(&doc, 0, 1), ["1/3", "1/2"]);
+        // The column is inferred from its cell, not declared, and the cell
+        // is kept as it was typed.
+        assert!(!doc.text().contains("Fraction"), "{}", doc.text());
+        assert!(doc.text().contains("1/3"), "{}", doc.text());
         // A decimal typed beside it stays a fraction, as any exact number
         // does.
-        assert!(doc.set_cell(0, 0, 1, "0.5"));
-        assert_eq!(col(&doc, 0, 1), ["1/2"]);
-        // In the file, `1/3` is a `Decimal`, and the column is left as it is.
-        let doc = Document::from_text("sheet T\n\nA\n0.5\n1/3\n");
+        assert!(doc.set_cell(0, 1, 1, "0.25"));
+        assert_eq!(col(&doc, 0, 1), ["1/3", "1/4"]);
+        // So does a whole number and a part, proper or not.
+        let doc = Document::from_text("sheet T\n\nA\n1 1/2\n5 7/3\n11/3\n");
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Fraction");
+        assert_eq!(col(&doc, 0, 0), ["1 1/2", "7 1/3", "3 2/3"]);
+        // A decimal alone is a `Decimal`, as is a fraction in a declared one.
+        let doc = Document::from_text("sheet T\n\nA\n0.5\n0.25\n");
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
+        let doc = Document::from_text("sheet T\n\nA : Decimal\n\nA\n1/3\n");
         assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
         // A fraction among text is text.
         let mut doc = Document::from_text("sheet T\n\nA\nabc\n\n");
@@ -5635,7 +5598,8 @@ mod tests {
         );
         assert!(loose.text().contains("2026-10-08 | 09:30"));
 
-        // A whole number and a part is kept as the fraction it comes to.
+        // A whole number and a part is kept as it was written, and makes the
+        // column a `Fraction` one, which shows it the same way.
         let mut mixed = Document::from_text("sheet T\n\nN : String\n\nA | N\n  |\n  |\n");
         mixed.set_cells(
             0,
@@ -5645,15 +5609,13 @@ mod tests {
                 (0, 1, "2 3/4".to_string()),
             ],
         );
-        // `2 3/4` is kept as the shorter `2.75`; `-1 1/3` would run to
-        // thirty-eight digits, so it stays as it was written, and makes the
-        // column a `Fraction` one, which shows `2.75` as `2 3/4`.
-        assert!(mixed.text().contains("2.75   | 2 3/4"), "{}", mixed.text());
+        assert!(mixed.text().contains("2 3/4"), "{}", mixed.text());
         assert!(mixed.text().contains("-1 1/3"));
+        assert!(!mixed.text().contains("2.75"), "{}", mixed.text());
         let cell = &mixed.snapshot().sheets[0].rows[0][0];
         assert_eq!(
             (cell.display.as_str(), cell.source.as_str()),
-            ("2 3/4", "2.75")
+            ("2 3/4", "2 3/4")
         );
         assert_eq!(cell.exact, None);
         assert!(loose.text().contains("= 1/2"));

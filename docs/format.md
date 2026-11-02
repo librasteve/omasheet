@@ -308,7 +308,11 @@ shows fractions without being declared.
 
 A fraction of two whole numbers is an exact `Decimal`: `1/7` and `22/7` are
 both read that way, and one may be written with a space, `2 3/4` for `11/4`.
-Writing `1/7` in a cell does not make the column a `Fraction`; declare it.
+Neither part need be the smaller: `11/3` and `5 7/3` are fine, and a
+`Fraction` column shows them as `3 2/3` and `7 1/3`. A column with no type
+whose cells include one written with a `/` is a `Fraction` column, and the
+cell is kept as it was written. A column declared `Decimal` takes the same
+cells and shows them as decimals.
 
 An `Integer`, `Decimal` or `Float` column may say how its numbers are shown,
 after its type in brackets, as a C `printf` conversion without its `%`:
