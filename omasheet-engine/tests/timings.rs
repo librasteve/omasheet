@@ -568,7 +568,7 @@ fn a_filter_on_a_big_table() {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
     let mut files = vec![
         format!("{root}/demo_data/fhvhv_tripdata_2019-03.parquet"),
-        std::env::var("HOME").unwrap_or_default() + "/Downloads/yellow_tripdata_2026-01.parquet",
+        format!("{root}/demo_data/yellow_tripdata_2026-01.parquet"),
     ];
     if let Ok(more) = std::env::var("OMASHEET_BIG") {
         files.insert(0, more);
