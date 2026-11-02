@@ -85,21 +85,24 @@ ApplicationWindow {
     Material.background: pageColor
     Material.foreground: textColor
     color: pageColor
-    font.family: "monospace"
+    // Qt has no "monospace" alias on macOS, where the name falls through to
+    // a proportional face; Menlo ships with every Mac.
+    readonly property string monoFamily: Qt.platform.os === "osx" ? "Menlo" : "monospace"
+    font.family: monoFamily
     font.pixelSize: fontSize
     // No ligatures: `|>`, `==` and `:=` are shown as they are typed.
     font.features: { "calt": 0, "liga": 0 }
 
     FontMetrics {
         id: metrics
-        font.family: "monospace"
+        font.family: win.monoFamily
         font.pixelSize: win.fontSize
         font.features: win.font.features
     }
     // The header's type line, which is set smaller.
     FontMetrics {
         id: noteMetrics
-        font.family: "monospace"
+        font.family: win.monoFamily
         font.pixelSize: win.noteSize
         font.features: win.font.features
     }
