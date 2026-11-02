@@ -1582,6 +1582,19 @@ impl Document {
         crate::table::copy_of(path).unwrap_or_else(|| path.to_path_buf())
     }
 
+    /// The file a table names, for a file it is read from: a CSV, for its
+    /// copy in the cache; any other file is itself. For what to call it.
+    pub fn source_file(&self, read: &std::path::Path) -> std::path::PathBuf {
+        let base = self.base.clone().unwrap_or_else(|| ".".into());
+        self.engine
+            .iter()
+            .flat_map(|e| e.program().sheets.iter())
+            .filter_map(|s| s.source.as_ref())
+            .map(|source| base.join(&source.path))
+            .find(|named| crate::table::is_csv(named) && crate::table::copy_of(named).as_deref() == Some(read))
+            .unwrap_or_else(|| read.to_path_buf())
+    }
+
     /// The CSV files this document's tables read that have no copy yet, and
     /// are shown from their samples meanwhile: each for a worker to
     /// [`crate::table::convert`], and then [`Document::converted`].
@@ -4473,6 +4486,74 @@ mod tests {
                 assert_eq!(shown("*.is_null()"), Ok(vec![2]), "{c}");
             }
         }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_csv_table_shows_its_sample_and_then_its_copy_alike() {
+        let dir = std::env::temp_dir().join(format!("omasheet-csvt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // SAFETY: the one test that sets it; no other reads a CSV.
+        unsafe { std::env::set_var("OMASHEET_CACHE", dir.join("cache")) };
+        let mut csv = String::from("Name,N,X,Day,At\n");
+        for i in 0..1500 {
+            let name = if i % 7 == 0 { "\"Smith, J\"".to_string() } else { format!("n{i}") };
+            let n = if i % 11 == 0 { String::new() } else { (i % 13).to_string() };
+            csv.push_str(&format!(
+                "{name},{n},{}.5,2021-06-{:02},2021-06-01 00:{:02}:{:02}\n",
+                i % 5,
+                i % 28 + 1,
+                i % 60,
+                i % 59
+            ));
+        }
+        std::fs::write(dir.join("x.csv"), &csv).unwrap();
+        let text = "table T := dataframe['x.csv']\n";
+        let open = |screen: bool| {
+            let mut doc = if screen {
+                Document::on_screen(text, Style::ISO, Names::default())
+            } else {
+                Document::from_text(text)
+            };
+            doc.set_base(&dir);
+            doc
+        };
+        let types = |doc: &Document| -> Vec<String> {
+            doc.snapshot().sheets[0].columns.iter().map(|c| c.ty.clone()).collect()
+        };
+        let shown = |doc: &Document| -> Vec<Vec<String>> {
+            doc.rows(0, 0, 1500)
+                .into_iter()
+                .map(|row| row.into_iter().map(|c| c.display).collect())
+                .collect()
+        };
+
+        // On a screen, the sample at once, and the copy wanted.
+        let mut screen = open(true);
+        assert!(screen.snapshot().problems.is_empty(), "{:?}", screen.snapshot().problems);
+        assert_eq!(screen.snapshot().sheets[0].nrows, crate::table::SAMPLE_ROWS);
+        assert_eq!(types(&screen), ["String", "Integer", "Float", "Date", "Datetime"]);
+        let csv_path = dir.join("x.csv");
+        assert_eq!(screen.to_convert(), vec![csv_path.clone()]);
+        let sample = shown(&screen);
+        assert_eq!(sample[0], ["Smith, J", "", "0.5", "2021-06-01", "2021-06-01T00:00"]);
+
+        // Copied, it is the whole file, and its first rows are the sample's.
+        crate::table::convert(&csv_path).unwrap();
+        assert!(screen.converted(&csv_path));
+        assert!(screen.to_convert().is_empty());
+        assert_eq!(screen.snapshot().sheets[0].nrows, 1500);
+        assert_eq!(types(&screen), ["String", "Integer", "Float", "Date", "Datetime"]);
+        assert_eq!(shown(&screen)[..sample.len()], sample[..]);
+
+        // Read where it waits for the copy, the same rows.
+        let waited = open(false);
+        assert_eq!(shown(&waited), shown(&screen));
+        // And the copy filters and sums as a Parquet table does.
+        assert_eq!(
+            screen.shown_rows(0, &[("At".into(), "*.minute == 0".into())]).unwrap().len(),
+            25
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

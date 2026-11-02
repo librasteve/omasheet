@@ -70,7 +70,10 @@ ApplicationWindow {
     readonly property int dialogSize: captionSize
     readonly property int rowHeight: fontSize * 2
     readonly property int headerHeight: Math.round(fontSize * 3.3)
-    readonly property int gutterWidth: Math.round(fontSize * 3.4)
+    // Wide enough for the last row's number: a digit of the caption font is
+    // about 0.62 of its size, with a font-size of room beside it.
+    readonly property int gutterWidth: Math.round(Math.max(fontSize * 3.4,
+        captionSize * 0.62 * String(Math.max(0, (sheet ? sheet.nrows : 0) - 1)).length + fontSize * 1.2))
     onFontSizeChanged: Qt.callLater(function() { win.measure(); win.reveal(); })
 
     function zoom(step) {
@@ -2608,7 +2611,7 @@ ApplicationWindow {
                                     onPositionChanged: function(mouse) {
                                         if (!(pressedButtons & Qt.LeftButton))
                                             return;
-                                        var x = mapToItem(rowsView.contentItem, mouse.x, mouse.y).x - win.gutterWidth;
+                                        var x = mapToItem(rowsView, mouse.x, mouse.y).x - win.gutterWidth;
                                         var c = 0;
                                         while (c < win.colWidths.length - 1 && x > win.colWidths[c]) {
                                             x -= win.colWidths[c];
@@ -2670,26 +2673,72 @@ ApplicationWindow {
                         }
                     }
 
-                    ListView {
+                    // The rows: one screen of them, not a list as tall as
+                    // the sheet (open-a-big-csv D156). A list of millions
+                    // of rows is hundreds of millions of pixels tall, and
+                    // the scene graph places items in 32-bit floats, which
+                    // past 2^24 px land rows and gridlines on steps of 2,
+                    // 4, 8 px and more. Here the scroll is a number,
+                    // `contentY`, and each row drawn sits within a screen
+                    // of the top: the first is at place `first`, `offset`
+                    // px up.
+                    Item {
                         id: rowsView
                         width: hflick.contentWidth
                         height: hflick.height - win.headerHeight
                         clip: true
-                        boundsBehavior: Flickable.StopAtBounds
-                        model: win.shownCount
-                        reuseItems: true
-                        // The grid moves the selection. After an edit the
-                        // focus is left inside a row, and the list would
-                        // take Up and Down for itself.
-                        keyNavigationEnabled: false
-                        ScrollBar.vertical: vbar
+                        property real contentY: 0
+                        readonly property real originY: 0
+                        readonly property real contentHeight: win.shownCount * win.rowHeight
+                        readonly property int first: Math.floor(contentY / win.rowHeight)
+                        readonly property real offset: contentY - first * win.rowHeight
+                        readonly property int slots: Math.ceil(height / win.rowHeight) + 1
+                        // Always a number: NaN, before the sizes are known,
+                        // would never equal itself, and set it again forever.
+                        function clamp(y) {
+                            var most = contentHeight - height;
+                            if (!(most > 0))
+                                most = 0;
+                            if (!(y > 0))
+                                return 0;
+                            return Math.min(y, most);
+                        }
+                        function positionViewAtBeginning() {
+                            contentY = 0;
+                        }
+                        // Never past either end, however the scroll was set.
+                        onContentYChanged: if (contentY !== clamp(contentY)) contentY = clamp(contentY)
+                        onContentHeightChanged: contentY = clamp(contentY)
+                        onHeightChanged: contentY = clamp(contentY)
 
+                        // The wheel scrolls; a wheel the cells do not take
+                        // comes here. Sideways is the sheet's, left to it.
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.NoButton
+                            onWheel: function(wheel) {
+                                var dx = wheel.pixelDelta.x !== 0 ? wheel.pixelDelta.x : wheel.angleDelta.x;
+                                var dy = wheel.pixelDelta.y !== 0 ? wheel.pixelDelta.y
+                                    : wheel.angleDelta.y / 120 * 3 * win.rowHeight;
+                                if (Math.abs(dx) > Math.abs(dy)) {
+                                    wheel.accepted = false;
+                                    return;
+                                }
+                                rowsView.contentY = rowsView.clamp(rowsView.contentY - dy);
+                            }
+
+                        Repeater {
+                        model: Math.max(0, Math.min(rowsView.slots, win.shownCount - rowsView.first))
                         delegate: Row {
                             id: rowItem
+                            // Which of the rows drawn this is, from the top.
                             required property int index
-                            // The row of the sheet at this place in the list,
-                            // which a filter makes other than the place.
-                            readonly property int row: win.rowAt(index)
+                            // The place in the list it shows, and the row of
+                            // the sheet at that place, which a filter makes
+                            // other than the place.
+                            readonly property int place: rowsView.first + index
+                            readonly property int row: win.rowAt(place)
+                            y: index * win.rowHeight - rowsView.offset
                             height: win.rowHeight
                             // The row holding a cell opened out to its lines
                             // is drawn above the others: a list paints its
@@ -2743,8 +2792,8 @@ ApplicationWindow {
                                     onPositionChanged: function(mouse) {
                                         if (!(pressedButtons & Qt.LeftButton))
                                             return;
-                                        var p = mapToItem(rowsView.contentItem, mouse.x, mouse.y);
-                                        win.selectLine(true, win.rowAtY(p.y), true);
+                                        var p = mapToItem(rowsView, mouse.x, mouse.y);
+                                        win.selectLine(true, win.rowAtY(p.y + rowsView.contentY), true);
                                     }
                                 }
                             }
@@ -2946,8 +2995,8 @@ ApplicationWindow {
                                             if (!(pressedButtons & Qt.LeftButton))
                                                 return;
                                             // Drag to extend the selection, or the pick.
-                                            var p = mapToItem(rowsView.contentItem, mouse.x, mouse.y);
-                                            var r = win.rowAtY(p.y);
+                                            var p = mapToItem(rowsView, mouse.x, mouse.y);
+                                            var r = win.rowAtY(p.y + rowsView.contentY);
                                             var x = p.x - win.gutterWidth;
                                             var c = 0;
                                             while (c < win.colWidths.length - 1 && x > win.colWidths[c]) {
@@ -3114,6 +3163,8 @@ ApplicationWindow {
                                 }
                             }
                         }
+                        }
+                        }
                     }
                 }
             }
@@ -3149,6 +3200,16 @@ ApplicationWindow {
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: hbar.needed ? hbar.height : 0
                 policy: ScrollBar.AsNeeded
+                // The rows' own scroll, which no Flickable keeps (D156). The
+                // handle stays big enough to take hold of on millions of rows.
+                minimumSize: 0.04
+                size: rowsView.contentHeight > 0 ? Math.min(1, rowsView.height / rowsView.contentHeight) : 1
+                Binding on position {
+                    when: !vbar.pressed
+                    value: rowsView.contentHeight > 0 ? rowsView.contentY / rowsView.contentHeight : 0
+                    restoreMode: Binding.RestoreNone
+                }
+                onPositionChanged: if (pressed) rowsView.contentY = rowsView.clamp(position * rowsView.contentHeight)
             }
 
             ScrollBar {

@@ -548,16 +548,67 @@ pub fn located(path: &Path, copying: Copying) -> Result<PathBuf, String> {
     }
 }
 
-/// A reader of the CSV at `path`, with the types worked out as the sample
-/// and the copy both work them out.
-fn csv_scan(path: &Path) -> Result<LazyFrame, String> {
-    open(path)?;
-    LazyCsvReader::new(PlPath::from_str(&path.to_string_lossy()))
+/// The head of the CSV at `path`: its header and the rows its types are
+/// worked out from, as bytes.
+fn csv_head(path: &Path) -> Result<Vec<u8>, String> {
+    use std::io::BufRead;
+    let mut head = Vec::new();
+    let mut reader = std::io::BufReader::new(open(path)?);
+    for _ in 0..=INFER_ROWS {
+        if reader.read_until(b'\n', &mut head).map_err(|e| e.to_string())? == 0 {
+            break;
+        }
+    }
+    Ok(head)
+}
+
+/// The types of the CSV whose head is `head`, as the sample and the copy
+/// both read it. Polars works out the numbers and the text; a text column
+/// every value of which in the head is an ISO date, or an ISO date and
+/// time, is read as one. Polars' own `try_parse_dates` would do that too,
+/// but takes half a second over the head of a file of seven columns.
+fn csv_schema(head: &[u8]) -> Result<SchemaRef, String> {
+    let frame = CsvReadOptions::default()
         .with_has_header(true)
         .with_infer_schema_length(Some(INFER_ROWS))
-        .with_try_parse_dates(true)
+        .into_reader_with_file_handle(std::io::Cursor::new(head))
         .finish()
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let date = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap();
+    let datetime =
+        regex::Regex::new(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?$").unwrap();
+    let mut schema = (**frame.schema()).clone();
+    for column in frame.get_columns() {
+        let Ok(texts) = column.str() else {
+            continue;
+        };
+        let every = |re: &regex::Regex| {
+            texts.null_count() < texts.len() && texts.into_iter().flatten().all(|t| re.is_match(t))
+        };
+        let dtype = if every(&date) {
+            DataType::Date
+        } else if every(&datetime) {
+            DataType::Datetime(TimeUnit::Microseconds, None)
+        } else {
+            continue;
+        };
+        schema.with_column(column.name().clone(), dtype);
+    }
+    Ok(std::sync::Arc::new(schema))
+}
+
+/// A reader of the CSV at `path`, with the types `schema` gives it, or
+/// worked out from every row where there is none.
+fn csv_scan(path: &Path, schema: Option<SchemaRef>) -> Result<LazyFrame, String> {
+    open(path)?;
+    let reader =
+        LazyCsvReader::new(PlPath::from_str(&path.to_string_lossy())).with_has_header(true);
+    match schema {
+        Some(schema) => reader.with_schema(Some(schema)),
+        None => reader.with_infer_schema_length(None).with_try_parse_dates(true),
+    }
+    .finish()
+    .map_err(|e| e.to_string())
 }
 
 /// Write `frame` to `target` through a file beside it, renamed into place
@@ -588,7 +639,21 @@ pub fn sample(path: &Path) -> Result<PathBuf, String> {
     let name = copy_name(path).ok_or_else(|| "there is no such file".to_string())?;
     let target = cache_dir().join(format!("{name}.sample.parquet"));
     if !target.is_file() {
-        sink_to(csv_scan(path)?.slice(0, SAMPLE_ROWS as IdxSize), &target)?;
+        // Only the head of the file is given to Polars: given the file, its
+        // reader sets about the whole of it however few rows are asked for.
+        let head = csv_head(path)?;
+        let mut frame = CsvReadOptions::default()
+            .with_has_header(true)
+            .with_schema(Some(csv_schema(&head)?))
+            .with_n_rows(Some(SAMPLE_ROWS))
+            .into_reader_with_file_handle(std::io::Cursor::new(head))
+            .finish()
+            .map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(cache_dir()).map_err(|e| e.to_string())?;
+        let partial = target.with_extension(format!("partial-{}", std::process::id()));
+        let file = File::create(&partial).map_err(|e| e.to_string())?;
+        ParquetWriter::new(file).finish(&mut frame).map_err(|e| e.to_string())?;
+        std::fs::rename(&partial, &target).map_err(|e| e.to_string())?;
     }
     Ok(target)
 }
@@ -601,17 +666,23 @@ pub fn sample(path: &Path) -> Result<PathBuf, String> {
 pub fn convert(path: &Path) -> Result<PathBuf, String> {
     let name = copy_name(path).ok_or_else(|| "there is no such file".to_string())?;
     let target = cache_dir().join(format!("{name}.parquet"));
-    if sink_to(csv_scan(path)?, &target).is_err() {
-        let every_row = LazyCsvReader::new(PlPath::from_str(&path.to_string_lossy()))
-            .with_has_header(true)
-            .with_infer_schema_length(None)
-            .with_try_parse_dates(true)
-            .finish()
-            .map_err(|e| e.to_string())?;
-        sink_to(every_row, &target)?;
+    // What a copy cut short left behind: the app closed while writing it.
+    let stem = family(path);
+    if let Ok(entries) = std::fs::read_dir(cache_dir()) {
+        for entry in entries.flatten() {
+            let file = entry.file_name().to_string_lossy().to_string();
+            if file.starts_with(&stem) && file.contains(".partial-") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    // Where a value further down does not have the type the head gave its
+    // column, the types are worked out again from every row.
+    let schema = csv_schema(&csv_head(path)?)?;
+    if sink_to(csv_scan(path, Some(schema))?, &target).is_err() {
+        sink_to(csv_scan(path, None)?, &target)?;
     }
     // Earlier copies of this CSV, and its sample, are of no more use.
-    let stem = family(path);
     if let Ok(entries) = std::fs::read_dir(cache_dir()) {
         for entry in entries.flatten() {
             let file = entry.file_name().to_string_lossy().to_string();

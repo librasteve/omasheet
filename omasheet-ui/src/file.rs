@@ -406,6 +406,9 @@ pub struct FileRust {
     shown: RefCell<Option<Shown>>,
     /// The tables' files being read whole on a worker (D157).
     reading: HashSet<PathBuf>,
+    /// The CSV files being copied to Parquet on a worker (open-a-big-csv
+    /// D153), shown from their samples meanwhile.
+    converting: HashSet<PathBuf>,
     /// The files already said to be too big to hold, so that it is said
     /// once rather than with every edit.
     told: HashSet<PathBuf>,
@@ -443,6 +446,7 @@ impl Default for FileRust {
             filter_problem: RefCell::new(String::new()),
             shown: RefCell::new(None),
             reading: HashSet::new(),
+            converting: HashSet::new(),
             told: HashSet::new(),
         }
     }
@@ -459,10 +463,14 @@ fn style() -> Style {
 }
 
 /// A document that shows dates and times the way the user's locale does.
+/// The size above which a CSV is opened as a table rather than imported as
+/// text (open-a-big-csv D146).
+const BIG_CSV: u64 = 4 * 1024 * 1024;
+
 fn document(text: &str) -> Document {
     static NAMES: OnceLock<Names> = OnceLock::new();
     let names = NAMES.get_or_init(locale::os_names);
-    Document::with_locale(text, style(), names.clone())
+    Document::on_screen(text, style(), names.clone())
 }
 
 fn index(n: i32) -> usize {
@@ -487,7 +495,9 @@ impl qobject::File {
         self.as_mut().set_modified(modified);
         self.as_mut().set_can_undo(can_undo);
         self.as_mut().set_can_redo(can_redo);
+        let copying = self.as_mut().convert_tables();
         let note = self.as_mut().hold_tables();
+        let note = if note.is_empty() { copying } else { note };
         let status = if status.is_empty() {
             note.as_str()
         } else {
@@ -576,8 +586,13 @@ impl qobject::File {
             "table {name} := dataframe[{}]\n",
             omasheet_engine::omx::lexer::quoted(full)
         ));
+        let csv = omasheet_engine::table::is_csv(path);
         let rows = doc.row_count(0);
-        if rows <= PAGED_ROWS || !doc.snapshot().sheets[0].paged {
+        if !csv && (rows <= PAGED_ROWS || !doc.snapshot().sheets[0].paged) {
+            return false;
+        }
+        // A CSV that cannot be read as one is imported, which says why.
+        if csv && !doc.snapshot().problems.is_empty() {
             return false;
         }
         {
@@ -586,10 +601,19 @@ impl qobject::File {
             rust.saved = String::new();
         }
         let file = path.file_name().unwrap_or_default().to_string_lossy();
-        let note = format!(
-            "{file} has {rows} rows, so it is opened as a table that reads it where it is \
-             rather than imported: read-only, and saved as a short .omx that names it"
-        );
+        let note = if csv {
+            format!(
+                "{file} is too big to import, so it is opened as a table that reads it where \
+                 it is: read-only, and saved as a short .omx that names it. It is read \
+                 through a Parquet copy kept in {}",
+                omasheet_engine::table::cache_dir().display()
+            )
+        } else {
+            format!(
+                "{file} has {rows} rows, so it is opened as a table that reads it where it is \
+                 rather than imported: read-only, and saved as a short .omx that names it"
+            )
+        };
         self.as_mut().set_notes(QString::from(&note));
         self.as_mut().set_path(None);
         self.as_mut().rust_mut().origin = Some(path.to_path_buf());
@@ -640,6 +664,13 @@ impl qobject::File {
         let kind = path.extension().unwrap_or_default().to_string_lossy();
         let kind = kind.to_ascii_lowercase();
         if kind == "parquet" && self.as_mut().open_table(&path) {
+            return true;
+        }
+        // A CSV too big to import as text (open-a-big-csv D146).
+        if kind == "csv"
+            && std::fs::metadata(&path).is_ok_and(|m| m.len() > BIG_CSV)
+            && self.as_mut().open_table(&path)
+        {
             return true;
         }
         if matches!(kind.as_str(), "xlsx" | "csv" | "json" | "parquet") {
@@ -1258,7 +1289,7 @@ impl qobject::File {
         };
         let mut note = String::new();
         for want in wanted {
-            let name = file_name(&want.path);
+            let name = file_name(&self.rust().doc.source_file(&want.path));
             if self.rust().reading.contains(&want.path) {
                 continue;
             }
@@ -1287,6 +1318,49 @@ impl qobject::File {
         note
     }
 
+    /// Copy to Parquet, on a worker each, the CSV files the document's
+    /// tables read that have no copy yet (open-a-big-csv D153). Returns
+    /// what to say, if anything.
+    fn convert_tables(mut self: Pin<&mut Self>) -> String {
+        let mut note = String::new();
+        for csv in self.rust().doc.to_convert() {
+            if !self.as_mut().rust_mut().converting.insert(csv.clone()) {
+                continue;
+            }
+            self.as_mut().set_working(true);
+            note = format!(
+                "Showing the first {} rows of {} while the rest is read\u{2026}",
+                omasheet_engine::table::SAMPLE_ROWS,
+                file_name(&csv)
+            );
+            let thread = self.qt_thread();
+            std::thread::spawn(move || {
+                let got = omasheet_engine::table::convert(&csv).map(|_| ());
+                let _ = thread.queue(move |file| file.csv_converted(csv, got));
+            });
+        }
+        note
+    }
+
+    /// A CSV's copy has been written, or could not be.
+    fn csv_converted(mut self: Pin<&mut Self>, csv: PathBuf, got: Result<(), String>) {
+        self.as_mut().rust_mut().converting.remove(&csv);
+        let still = !self.rust().reading.is_empty() || !self.rust().converting.is_empty();
+        self.as_mut().set_working(still);
+        let name = file_name(&csv);
+        match got {
+            Ok(()) => {
+                if self.as_mut().rust_mut().doc.converted(&csv) {
+                    let rows = self.rust().doc.snapshot().sheets.first().map_or(0, |t| t.nrows);
+                    self.refresh(&format!("{name} read: {rows} rows"));
+                }
+            }
+            Err(why) => self
+                .as_mut()
+                .set_status(QString::from(&format!("Cannot read all of {name}: {why}"))),
+        }
+    }
+
     /// A table's file has been read whole, or could not be. `bytes` is what
     /// it was estimated to take, which is what it takes (measured within 3%
     /// of the memory it adds), where Polars' own `estimated_size` counts
@@ -1298,9 +1372,9 @@ impl qobject::File {
         got: Result<omasheet_engine::table::Whole, String>,
     ) {
         self.as_mut().rust_mut().reading.remove(&path);
-        let still = !self.rust().reading.is_empty();
+        let still = !self.rust().reading.is_empty() || !self.rust().converting.is_empty();
         self.as_mut().set_working(still);
-        let name = file_name(&path);
+        let name = file_name(&self.rust().doc.source_file(&path));
         match got {
             Ok(whole) => {
                 let size = bytes_text(bytes);

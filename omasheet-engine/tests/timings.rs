@@ -634,3 +634,51 @@ fn a_filter_on_a_big_table() {
         }
     }
 }
+
+/// open-a-big-csv 0.3 and 5.1: a big CSV opened for the app, shown from
+/// its sample, then copied to Parquet and opened from the copy, and opened
+/// again with the copy current. The copies go to a cache of their own.
+#[test]
+#[ignore = "a measurement, not an assertion: run it in release with --ignored --nocapture"]
+fn a_big_csv_through_its_copy() {
+    use omasheet_engine::Document;
+    use omasheet_engine::table;
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+    let csv = std::env::var("OMASHEET_BIG_CSV")
+        .unwrap_or_else(|_| format!("{root}/demo_data/fhvhv_tripdata_2021-06.csv"));
+    let csv = std::path::PathBuf::from(csv);
+    if !csv.exists() {
+        return;
+    }
+    let cache = std::env::temp_dir().join(format!("omasheet-csv-{}", std::process::id()));
+    // SAFETY: the one test of this binary that sets it, before any reads.
+    unsafe { std::env::set_var("OMASHEET_CACHE", &cache) };
+    let text = format!("table T := dataframe[{}]\n", omasheet_engine::omx::lexer::quoted(&csv.to_string_lossy()));
+    let names = omasheet_engine::datefmt::Names::default();
+    let style = omasheet_engine::omx::date::Style::ISO;
+
+    let started = Instant::now();
+    table::sample(&csv).unwrap();
+    println!("sample written in {}", ms(started.elapsed()));
+    let started = Instant::now();
+    let doc = Document::on_screen(&text, style, names.clone());
+    let sample = doc.snapshot().sheets[0].nrows;
+    println!("\n{}: opened from its sample ({sample} rows) in {}", csv.display(), ms(started.elapsed()));
+    assert_eq!(doc.to_convert(), vec![csv.clone()]);
+
+    let started = Instant::now();
+    let copy = table::convert(&csv).unwrap();
+    let size = std::fs::metadata(&copy).unwrap().len();
+    println!("copied in {}, {} MB", ms(started.elapsed()), size / 1_000_000);
+
+    let mut doc = doc;
+    let started = Instant::now();
+    assert!(doc.converted(&csv));
+    println!("read from the copy, {} rows, in {}", doc.snapshot().sheets[0].nrows, ms(started.elapsed()));
+
+    let started = Instant::now();
+    let again = Document::on_screen(&text, style, names);
+    println!("opened again, copy current: {} rows in {}", again.snapshot().sheets[0].nrows, ms(started.elapsed()));
+    assert!(again.to_convert().is_empty());
+    std::fs::remove_dir_all(&cache).unwrap();
+}

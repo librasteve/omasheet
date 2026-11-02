@@ -66,9 +66,14 @@ Parquet alone.
       operations over the column, with a differential test against today's
       answers (ties, nulls, NaN, decimals). Measured on short2: each ≤ 50 ms
       held, or off-thread with a pending state
-- [ ] 2b.6 D156: the grid lays out one screen of rows from an integer top
+- [x] 2b.6 D156: the grid lays out one screen of rows from an integer top
       row, with its own scrollbar. Checked by eye at the last rows of the
-      taxi file: gridlines straight, rows evenly spaced
+      taxi file: gridlines straight, rows evenly spaced. Done 2026-11-02:
+      `rowsView` is an `Item` with `contentY` as a number and a `Repeater`
+      of one screen of rows placed within it; the wheel scrolls it and the
+      scrollbar is bound to it both ways. At row 14,961,889 of the 15M-row
+      CSV, rows and gridlines are even, which confirms the floats as the
+      cause. The row-number gutter now widens with the last row's digits
 - [ ] 2b.7 Listing a column's distinct values in Polars (`unique`, then the
       first 1,000 in sort order), not a walk over every row
 - [ ] 2b.8 The probe in `Main.qml` taken out before this change is merged
@@ -78,20 +83,45 @@ Parquet alone.
 - [ ] 3.1 The reader interface: named `DataFrame`s, plus XLSX formulas.
       `parquet` is already one
 - [ ] 3.2 `csv`: `sniff`, then `scan_csv` with that schema; OMX-only literal
-      types converted per batch
+      types converted per batch. First stage done (2026-11-02,
+      `table::csv_schema`): Polars works the types out from the first
+      10,000 rows, and a text column whose values there are all ISO dates
+      or date-times is read as `Date` or `Datetime`; the sample and the copy
+      share that schema. Polars' `try_parse_dates` was the first try and
+      took 520 ms over the head alone. Still to do: `Datum::read`'s types
+      (`20%`, `0x1F`, durations), and a cell that does not parse reported
 - [ ] 3.3 `xlsx` and `json` building a `Series` per column directly, with no
       `Datum`; D154 for column-wide formulas
 - [ ] 3.4 The conversion cache: hashed name, atomic write, `sink_parquet`,
-      LRU within a disk budget
+      LRU within a disk budget. Done but the budget (2026-11-02): in
+      `$OMASHEET_CACHE`, else `$XDG_CACHE_HOME/omasheet`, else
+      `~/.cache/omasheet`; named by a hash of the canonical path, then the
+      length and mtime; written to `.partial-<pid>` and renamed; a new copy
+      takes away the CSV's earlier copies, its sample and any partial file
 - [ ] 3.5 `dataframe["x.csv"]` (and `.xlsx`, `.json`) resolved by
-      `table::read` to the cached copy; the engine reads Parquet alone
+      `table::read` to the cached copy; the engine reads Parquet alone.
+      Done for CSV (2026-11-02): `table::located`, with `Copying::Wait`
+      (the command line and tests convert first) or `Copying::Sample`
+      (`Document::on_screen`, the app). Tested: sample, copy and a waited
+      read give the same rows and types
 - [ ] 3.6 The sniffed sample shown while the copy is written; loading rows
-      beyond it
+      beyond it. The sample done (2026-11-02): its first 1,000 rows, read
+      from the file's head bytes and written as a small Parquet file, shown
+      at once; `Document::to_convert` and `converted`; the app copies on a
+      worker under the status-bar spinner and moves over when it is
+      written. Not done: rows past the sample marked as loading (the table
+      shows 1,000 rows until the copy arrives)
 
 ## 4. Opening (D146), and the funnel's second stage
 
 - [ ] 4.1 The threshold, and the app opening any of the four formats above
-      it as a table; the status bar says it is read-only and why
+      it as a table; the status bar says it is read-only and why. Done for
+      CSV (2026-11-02): over 4 MB it opens as a table, with a note that
+      says so and where the copy is kept. Measured, release, the 921 MB
+      ride-hail CSV, cache empty: first screen 25 ms (sample 20 ms, open
+      5 ms; was the inline import, which never finished), the copy 1.8 s
+      (125 MB), reopening with the copy current 35 ms; in the app, the
+      15M rows shown and held in memory (1.2 GB) within 4 s
 - [ ] 4.2 "Copy into the document" for a table under the threshold
 - [ ] 4.3 `omasheet import` above the threshold refuses and prints the
       `table` lines, ready to paste
