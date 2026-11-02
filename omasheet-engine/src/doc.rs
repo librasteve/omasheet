@@ -1500,6 +1500,109 @@ impl SortJob {
     }
 }
 
+/// How a column of a [`SummaryJob`] is added up.
+enum Kind {
+    Whole,
+    Float,
+    /// Counted, with no numbers.
+    Counted,
+}
+
+/// A selection's summary worked out as far as the document has to: its
+/// columns as Polars holds them, for a worker to add up. See
+/// [`Document::summary_job`].
+pub struct SummaryJob {
+    rows: std::ops::Range<usize>,
+    order: Option<Arc<Vec<usize>>>,
+    columns: Vec<(polars::prelude::Column, Kind)>,
+}
+
+/// What a [`SummaryJob`] added up: how many values, how many of them
+/// numbers, and their sum.
+pub struct Added {
+    count: usize,
+    numbers: usize,
+    sum: Sum,
+}
+
+enum Sum {
+    Whole(i128),
+    Float(f64),
+}
+
+impl Added {
+    /// The sum as a value, or `None` past what a whole number holds.
+    fn sum(&self) -> Option<Value> {
+        Some(match self.sum {
+            Sum::Whole(w) => Value::int(i64::try_from(w).ok()?),
+            Sum::Float(f) => Value::Float(f),
+        })
+    }
+}
+
+impl SummaryJob {
+    /// How many rows it covers: what the work is over.
+    pub fn rows(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Add it up. `None` where Polars will not give a column as expected.
+    pub fn run(self) -> Option<Added> {
+        use polars::prelude::{DataType, IdxCa, StaticArray};
+        let rows = self.rows;
+        let (mut count, mut numbers) = (0usize, 0usize);
+        let mut ints = Vec::new();
+        let mut floats = Vec::new();
+        let mut kinds = Vec::new();
+        for (column, kind) in self.columns {
+            let column = match &self.order {
+                Some(order) => {
+                    let idx: Vec<_> = order[rows.clone()].iter().map(|&r| r as _).collect();
+                    column.take(&IdxCa::from_vec("".into(), idx)).ok()?
+                }
+                None => column.slice(rows.start as i64, rows.len()),
+            };
+            let held = column.len() - column.null_count();
+            match kind {
+                Kind::Whole => {
+                    ints.push(column.cast(&DataType::Int64).ok()?.i64().ok()?.rechunk().into_owned());
+                    kinds.push(false);
+                    numbers += held;
+                }
+                Kind::Float => {
+                    floats.push(column.cast(&DataType::Float64).ok()?.f64().ok()?.rechunk().into_owned());
+                    kinds.push(true);
+                    numbers += held;
+                }
+                Kind::Counted => {}
+            }
+            count += held;
+        }
+        let ints: Vec<_> = ints.iter().map(|ca| ca.downcast_iter().next()).collect::<Option<_>>()?;
+        let floats: Vec<_> = floats.iter().map(|ca| ca.downcast_iter().next()).collect::<Option<_>>()?;
+        let mut sum = Sum::Whole(0);
+        for r in 0..rows.len() {
+            let (mut i, mut f) = (ints.iter(), floats.iter());
+            for &float in &kinds {
+                sum = if float {
+                    match (f.next()?.get(r), &sum) {
+                        (None, _) => continue,
+                        (Some(v), Sum::Whole(w)) => Sum::Float(*w as f64 + v),
+                        (Some(v), Sum::Float(s)) => Sum::Float(s + v),
+                    }
+                } else {
+                    match (i.next()?.get(r), &sum) {
+                        (None, _) => continue,
+                        (Some(v), Sum::Whole(w)) => Sum::Whole(w + v as i128),
+                        (Some(v), Sum::Float(s)) => Sum::Float(s + v as f64),
+                    }
+                };
+            }
+        }
+        Some(Added { count, numbers, sum })
+    }
+}
+
 impl Document {
     /// A document that shows dates and times as the file writes them.
     pub fn from_text(text: &str) -> Document {
@@ -2154,97 +2257,73 @@ impl Document {
     }
 
     /// [`Document::summary`] of a big selection of a paged sheet, added up
-    /// over the Polars arrays rather than a value at a time: the count, how
-    /// many numbers, and their sum. The numbers are added in the order the
-    /// one-by-one path adds them, row by row and across, and as `arith`
-    /// adds them: whole numbers exactly until the first float, and from
-    /// then on as floats. So the answer is the same. `None`, and the values
-    /// are added one by one, for a small selection, which reads only what
-    /// it covers; for a sum past what a whole number holds; and for
-    /// columns this does not read alike: exact numbers other than whole
-    /// ones, and a column whose values are converted to the sheet's type.
+    /// over the Polars arrays: the count, how many numbers, and their sum.
+    /// See [`SummaryJob`].
     fn summary_native(
         &self,
         sheet: usize,
         rows: std::ops::Range<usize>,
         cols: std::ops::Range<usize>,
     ) -> Option<(usize, usize, Value)> {
-        use polars::prelude::{DataType, IdxCa, StaticArray};
-        if rows.len() <= SUMMARY_ROWS {
+        let added = self.summary_job(sheet, rows, cols)?.run()?;
+        Some((added.count, added.numbers, added.sum()?))
+    }
+
+    /// [`Document::summary`] of a big selection of a paged sheet, as a job
+    /// for a worker to [`SummaryJob::run`] and [`Document::summary_from`] to
+    /// say. The numbers are added in the order the one-by-one path adds
+    /// them, row by row and across, and as `arith` adds them: whole numbers
+    /// exactly until the first float, and from then on as floats, so the
+    /// answer is the same. `None`, and the values are added one by one, for
+    /// a small selection, which reads only what it covers, and for columns
+    /// this does not read alike: exact numbers other than whole ones, and a
+    /// column whose values are converted to the sheet's type.
+    pub fn summary_job(
+        &self,
+        sheet: usize,
+        rows: std::ops::Range<usize>,
+        cols: std::ops::Range<usize>,
+    ) -> Option<SummaryJob> {
+        use polars::prelude::DataType;
+        let t = self.snapshot.sheets.get(sheet)?;
+        let rows = rows.start..rows.end.min(t.nrows);
+        if !t.paged || rows.len() <= SUMMARY_ROWS {
             return None;
         }
         let engine = self.engine.as_ref()?;
-        let t = &self.snapshot.sheets[sheet];
-        let order = self.orders.get(&t.name).filter(|o| o.len() == t.nrows);
-        let (mut count, mut numbers) = (0usize, 0usize);
-        // The columns of numbers, in order, each as whole numbers or floats.
-        let mut ints = Vec::new();
-        let mut floats = Vec::new();
-        let mut kinds = Vec::new();
-        for c in cols {
+        let order = self.orders.get(&t.name).filter(|o| o.len() == t.nrows).cloned();
+        let mut columns = Vec::new();
+        for c in cols.start..cols.end.min(t.columns.len()) {
             let column = engine.frame_values(sheet, c)?;
-            let column = match order {
-                Some(order) => {
-                    let idx: Vec<_> = order[rows.clone()].iter().map(|&r| r as _).collect();
-                    column.take(&IdxCa::from_vec("".into(), idx)).ok()?
-                }
-                None => column.slice(rows.start as i64, rows.len()),
-            };
             let ty = engine.program().sheets[sheet].cols[c].ty;
-            let held = column.len() - column.null_count();
-            let dtype = column.dtype().clone();
-            match (ty, &dtype) {
-                (S::Int, d) if d.is_integer() && !matches!(d, DataType::UInt64) => {
-                    ints.push(column.cast(&DataType::Int64).ok()?.i64().ok()?.rechunk().into_owned());
-                    kinds.push(false);
-                    numbers += held;
-                }
-                (S::Float, DataType::Float32 | DataType::Float64) => {
-                    floats.push(column.cast(&DataType::Float64).ok()?.f64().ok()?.rechunk().into_owned());
-                    kinds.push(true);
-                    numbers += held;
-                }
+            let kind = match (ty, column.dtype()) {
+                (S::Int, d) if d.is_integer() && !matches!(d, DataType::UInt64) => Kind::Whole,
+                (S::Float, DataType::Float32 | DataType::Float64) => Kind::Float,
                 // Counted, with no numbers. A date-time is out of a sheet's
                 // reach only millions of years away, so each held is a value.
                 (S::String, DataType::String)
                 | (S::Boolean, DataType::Boolean)
                 | (S::Date, DataType::Date)
                 | (S::Time, DataType::Time)
-                | (S::DateTime, DataType::Datetime(_, None)) => {}
+                | (S::DateTime, DataType::Datetime(_, None)) => Kind::Counted,
                 _ => return None,
-            }
-            count += held;
+            };
+            columns.push((column, kind));
         }
-        let ints: Vec<_> = ints.iter().map(|ca| ca.downcast_iter().next()).collect::<Option<_>>()?;
-        let floats: Vec<_> = floats.iter().map(|ca| ca.downcast_iter().next()).collect::<Option<_>>()?;
-        enum Sum {
-            Whole(i128),
-            Float(f64),
-        }
-        let mut sum = Sum::Whole(0);
-        for r in 0..rows.len() {
-            let (mut i, mut f) = (ints.iter(), floats.iter());
-            for &float in &kinds {
-                sum = if float {
-                    match (f.next()?.get(r), &sum) {
-                        (None, _) => continue,
-                        (Some(v), Sum::Whole(w)) => Sum::Float(*w as f64 + v),
-                        (Some(v), Sum::Float(s)) => Sum::Float(s + v),
-                    }
-                } else {
-                    match (i.next()?.get(r), &sum) {
-                        (None, _) => continue,
-                        (Some(v), Sum::Whole(w)) => Sum::Whole(w + v as i128),
-                        (Some(v), Sum::Float(s)) => Sum::Float(s + v as f64),
-                    }
-                };
-            }
-        }
-        let sum = match sum {
-            Sum::Whole(w) => Value::int(i64::try_from(w).ok()?),
-            Sum::Float(f) => Value::Float(f),
+        Some(SummaryJob { rows, order, columns })
+    }
+
+    /// What a [`SummaryJob`] added up, as [`Document::summary`] says it.
+    pub fn summary_from(&self, added: Added) -> Option<Summary> {
+        let (count, numbers, sum) = (added.count, added.numbers, added.sum()?);
+        let numbers = if numbers == 0 {
+            None
+        } else {
+            let mean = arith(BinOp::Div, &sum, &Value::int(numbers as i64)).ok()?;
+            let show = |v: &Value| format_styled(v, false, &self.style);
+            Some((show(&sum), show(&mean)))
         };
-        Some((count, numbers, sum))
+        Some(Summary { count, numbers })
     }
 
     pub fn set_cell(&mut self, sheet: usize, row: usize, col: usize, text: &str) -> bool {

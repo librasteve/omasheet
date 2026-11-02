@@ -213,10 +213,12 @@ ApplicationWindow {
     // moving the cursor sets one end and then the other, and in between
     // the selection can be the whole of a table of millions of rows.
     property string selSummary: ""
+    property int summaryAsked: 0
     readonly property string selKey: [tab, selTop, selLeft, selBottom, selRight].join(",")
     onSelKeyChanged: summarize()
     onSnapChanged: summarize()
     function summarize() {
+        summaryAsked++;
         selSummary = "";
         summaryTimer.restart();
     }
@@ -230,16 +232,11 @@ ApplicationWindow {
                 win.selSummary = "";
                 return;
             }
-            var key = win.selKey;
-            var add = function() {
-                if (win.selKey === key)
-                    win.selSummary = file.selectionSummary(win.tab, win.selTop, win.selLeft, win.selBottom, win.selRight);
-            };
-            var cells = (win.selBottom - win.selTop + 1) * (win.selRight - win.selLeft + 1);
-            if (cells > 1000000)
-                win.busy("Adding up\u2026", add);
-            else
-                add();
+            // A big one is added up on a worker, and `summarized` brings it,
+            // unless the selection has moved on by then.
+            win.summaryAsked++;
+            var text = file.askSummary(win.summaryAsked, win.tab, win.selTop, win.selLeft, win.selBottom, win.selRight);
+            win.selSummary = text === "\u2026" ? "Adding up\u2026" : text;
         }
     }
 
@@ -481,6 +478,10 @@ ApplicationWindow {
     }
     Connections {
         target: file
+        function onSummarized(asked, text) {
+            if (asked === win.summaryAsked)
+                win.selSummary = text;
+        }
         function onFiltered(count) {
             win.filterPending = false;
             win.filterShown = { count: count };

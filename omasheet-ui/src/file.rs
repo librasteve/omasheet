@@ -272,6 +272,22 @@ pub mod qobject {
         /// or -2 where it failed (see `filter_problem`).
         #[qsignal]
         fn filtered(self: Pin<&mut File>, count: i32);
+        /// The summary asked for as number `asked` by `ask_summary`, worked
+        /// out on a worker.
+        #[qsignal]
+        fn summarized(self: Pin<&mut File>, asked: i32, text: QString);
+        /// `selection_summary`, or for a big selection "…" now and the
+        /// text by `summarized` once a worker has added it up.
+        #[qinvokable]
+        fn ask_summary(
+            self: Pin<&mut File>,
+            asked: i32,
+            sheet: i32,
+            row0: i32,
+            col0: i32,
+            row1: i32,
+            col1: i32,
+        ) -> QString;
         /// A sort done on a worker has been, with what went wrong if
         /// anything.
         #[qsignal]
@@ -481,6 +497,18 @@ fn style() -> Style {
 /// The size above which a CSV is opened as a table rather than imported as
 /// text (open-a-big-csv D146).
 const BIG_CSV: u64 = 4 * 1024 * 1024;
+
+/// What the status bar says of a selection.
+fn summary_text(summary: Option<omasheet_engine::doc::Summary>) -> String {
+    let Some(summary) = summary else {
+        return String::new();
+    };
+    let mut text = format!("Count {}", summary.count);
+    if let Some((sum, mean)) = summary.numbers {
+        text.push_str(&format!("   Sum {sum}   Mean {mean}"));
+    }
+    text
+}
 
 /// The rows above which a filter or a sort is worked out on a worker, so
 /// that the window goes on answering the desktop, which takes a window
@@ -1373,14 +1401,41 @@ impl qobject::File {
     fn selection_summary(&self, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {
         let doc = &self.rust().doc;
         let from = (index(row0), index(col0));
-        let Some(summary) = doc.summary(index(sheet), from, (index(row1), index(col1))) else {
-            return QString::default();
+        QString::from(&summary_text(doc.summary(index(sheet), from, (index(row1), index(col1)))))
+    }
+
+    fn ask_summary(
+        mut self: Pin<&mut Self>,
+        asked: i32,
+        sheet: i32,
+        row0: i32,
+        col0: i32,
+        row1: i32,
+        col1: i32,
+    ) -> QString {
+        let rows = index(row0)..index(row1) + 1;
+        let cols = index(col0)..index(col1) + 1;
+        let job = self.rust().doc.summary_job(index(sheet), rows, cols);
+        let Some(job) = job.filter(|j| j.rows() > WORKER_ROWS) else {
+            return self.selection_summary(sheet, row0, col0, row1, col1);
         };
-        let mut text = format!("Count {}", summary.count);
-        if let Some((sum, mean)) = summary.numbers {
-            text.push_str(&format!("   Sum {sum}   Mean {mean}"));
-        }
-        QString::from(&text)
+        self.rust().busy_jobs.set(self.rust().busy_jobs.get() + 1);
+        self.as_mut().update_working();
+        let thread = self.qt_thread();
+        std::thread::spawn(move || {
+            let added = job.run();
+            let _ = thread.queue(move |mut file| {
+                file.rust().busy_jobs.set(file.rust().busy_jobs.get().saturating_sub(1));
+                file.as_mut().update_working();
+                let text = match added {
+                    Some(added) => summary_text(file.rust().doc.summary_from(added)),
+                    // What Polars would not add up is added a value at a time.
+                    None => file.selection_summary(sheet, row0, col0, row1, col1).to_string(),
+                };
+                file.as_mut().summarized(asked, QString::from(&text));
+            });
+        });
+        QString::from("\u{2026}")
     }
 
     /// Read whole, on a worker, each paged table that fits in half the memory
