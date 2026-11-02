@@ -1,5 +1,7 @@
 # Proposal: filter by expression
 
+> **Archived**: built, verified and shipped; every task is done.
+
 ## Why
 
 A column's filter is a checklist of the texts the column shows, and making

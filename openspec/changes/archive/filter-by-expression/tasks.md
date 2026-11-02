@@ -83,5 +83,9 @@ In order: the language first, because the filter is written in it.
       non-empty one; a `-2` is shown in `win.notice`
 - [x] 4.4 `docs/app.md`: a Filtering section with the syntax table and
       D164/D165. `help.txt`: one line
-- [ ] 4.5 Run the app on the taxi Parquet: the popup opens at once, and
-      `* > 10`, `0 < * <= 5` and `*.starts_with('B')` filter
+- [x] 4.5 Run the app on the taxi Parquet: the popup opens at once, and
+      `* > 10`, `0 < * <= 5` and `*.starts_with('B')` filter. Done by the
+      owner in the app, 2026-11-02, on short2 and the ride-hail files; what
+      it turned up is in the popup now (the hint alone, Apply that lights
+      when an expression passes, Clear filter that stays open) and in
+      open-a-big-csv 2b.6a (filters over 200,000 rows on a worker)
