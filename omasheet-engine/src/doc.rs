@@ -23,7 +23,7 @@ use omasheet_omx::parser::parse_expr;
 use omasheet_omx::types::Base;
 use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile, text};
 use std::cmp::Ordering;
-use std::rc::Rc;
+use std::sync::Arc;
 
 const UNDO_LIMIT: usize = 200;
 
@@ -160,7 +160,7 @@ pub struct Problem {
 /// The grid's order of each sorted table, shared between the document and
 /// the steps of its history, so that a step keeps an order without copying
 /// it.
-type Orders = std::collections::HashMap<String, Rc<Vec<usize>>>;
+type Orders = std::collections::HashMap<String, Arc<Vec<usize>>>;
 
 /// A state of the document to undo or redo to: its text, and the order the
 /// grid shows each table's rows in, which a sort changes without the text.
@@ -1427,6 +1427,77 @@ fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
         out.insert_str(at, &insert);
     }
     out
+}
+
+/// A filter worked out as far as the document has to: what is left is
+/// Polars' to run, which a worker can, as none of it is the document's.
+/// See [`Document::filter_job`].
+pub struct FilterJob {
+    rows: usize,
+    /// The columns' masks answered here, a row at a time.
+    masks: Vec<Vec<bool>>,
+    /// The columns' filters lowered to Polars, each with its frame.
+    plans: Vec<(polars::prelude::DataFrame, polars::prelude::Expr)>,
+    /// The grid's order of the rows, where it has been sorted.
+    order: Option<Arc<Vec<usize>>>,
+}
+
+impl FilterJob {
+    /// How many rows the sheet has: what the work is over.
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// The rows shown, in the grid's order, or `None` where Polars fails on
+    /// a filter, which [`Document::shown_rows`] then answers on its own.
+    pub fn run(self) -> Option<Vec<usize>> {
+        let n = self.rows;
+        let mut keep = vec![true; n];
+        let mut and = |mask: Vec<bool>| {
+            for (k, m) in keep.iter_mut().zip(mask) {
+                *k &= m;
+            }
+        };
+        for mask in self.masks {
+            and(mask);
+        }
+        for (frame, expr) in self.plans {
+            and(crate::eval::run_filter_plan(frame, expr)?);
+        }
+        let order = self.order.as_deref();
+        Some((0..n).filter(|&p| keep[order.map_or(p, |o| o[p])]).collect())
+    }
+}
+
+/// A table's sort worked out as far as the document has to: the column in
+/// the order shown, for a worker to put in order. See
+/// [`Document::sort_job`] and [`Document::finish_sort`].
+pub struct SortJob {
+    sheet: usize,
+    col: usize,
+    desc: bool,
+    shown: polars::prelude::Series,
+    /// The grid's order when the job was made: the sort is of that, and is
+    /// not applied over another.
+    before: Option<Arc<Vec<usize>>>,
+}
+
+impl SortJob {
+    /// The places of the rows as shown, in the order of the column: a
+    /// stable `arg_sort`, as [`Document::sort_rows`] takes it.
+    pub fn run(&self) -> Vec<usize> {
+        self.shown
+            .arg_sort(polars::prelude::SortOptions {
+                descending: self.desc,
+                nulls_last: self.desc,
+                maintain_order: true,
+                multithreaded: true,
+                limit: None,
+            })
+            .into_no_null_iter()
+            .map(|i| i as usize)
+            .collect()
+    }
 }
 
 impl Document {
@@ -2705,6 +2776,55 @@ impl Document {
     /// first expression that fails is the answer instead, as
     /// `Column: why`.
     pub fn shown_rows(&self, sheet: usize, filters: &[(String, String)]) -> Result<Vec<usize>, String> {
+        let job = self.filter_job(sheet, filters)?;
+        match job.run() {
+            Some(rows) => Ok(rows),
+            None => self.shown_rows_here(sheet, filters),
+        }
+    }
+
+    /// [`Document::shown_rows`] as a job, for a worker to
+    /// [`FilterJob::run`]: each column's filter checked and lowered here,
+    /// and answered here where it does not lower. The first that fails is
+    /// the answer instead, as `Column: why`.
+    pub fn filter_job(&self, sheet: usize, filters: &[(String, String)]) -> Result<FilterJob, String> {
+        let mut job = FilterJob {
+            rows: 0,
+            masks: Vec::new(),
+            plans: Vec::new(),
+            order: None,
+        };
+        let Some(t) = self.snapshot.sheets.get(sheet) else {
+            return Ok(job);
+        };
+        job.rows = t.nrows;
+        job.order = self.orders.get(&t.name).filter(|o| o.len() == t.nrows).cloned();
+        let Some(engine) = self.engine.as_ref() else {
+            return Ok(job);
+        };
+        for (name, text) in filters.iter().filter(|(_, text)| !text.trim().is_empty()) {
+            let Some(c) = t.columns.iter().position(|c| &c.name == name) else {
+                continue;
+            };
+            let node = omasheet_omx::check::compile_filter(engine.program(), sheet, c, text)
+                .map_err(|d| format!("{name}: {}", said(&d[0])))?;
+            match engine.filter_plan(sheet, &node) {
+                Some(plan) => job.plans.push(plan),
+                None => {
+                    let mask = engine.filter_mask(sheet, &node).map_err(|why| format!("{name}: {why}"))?;
+                    if mask.len() != t.nrows {
+                        return Err(format!("{name}: the filter did not cover the sheet's rows"));
+                    }
+                    job.masks.push(mask);
+                }
+            }
+        }
+        Ok(job)
+    }
+
+    /// [`Document::shown_rows`] answered here alone, each filter lowered
+    /// where it can be and otherwise a row at a time.
+    fn shown_rows_here(&self, sheet: usize, filters: &[(String, String)]) -> Result<Vec<usize>, String> {
         let Some(t) = self.snapshot.sheets.get(sheet) else {
             return Ok(Vec::new());
         };
@@ -2783,11 +2903,74 @@ impl Document {
         if col >= t.columns.len() {
             return Err("there is no such column".into());
         }
-        let n = t.nrows;
         let shown = self
             .order_by_polars(sheet, col, desc)
             .unwrap_or_else(|| self.order_by_values(sheet, col, desc));
+        self.put_in_order(sheet, shown)
+    }
+
+    /// [`Document::sort_rows`] of a table, as a job for a worker to
+    /// [`SortJob::run`] and then [`Document::finish_sort`]: the column, in
+    /// the order shown. `None` where the sheet is not a table or Polars
+    /// does not hold the column, and `sort_rows` sorts it here.
+    pub fn sort_job(&self, sheet: usize, col: usize, desc: bool) -> Option<SortJob> {
+        let t = self.snapshot.sheets.get(sheet)?;
+        t.source.as_ref()?;
+        let column = self.engine.as_ref()?.frame_column(sheet, col)?;
+        let n = t.nrows;
+        if column.len() != n {
+            return None;
+        }
+        let series = column.as_materialized_series();
+        let before = self.orders.get(&t.name).filter(|o| o.len() == n).cloned();
+        let shown = match &before {
+            Some(order) => {
+                let idx: Vec<polars::prelude::IdxSize> =
+                    order.iter().map(|&r| r as polars::prelude::IdxSize).collect();
+                series.take_slice(&idx).ok()?
+            }
+            None => series.clone(),
+        };
+        Some(SortJob {
+            sheet,
+            col,
+            desc,
+            shown,
+            before,
+        })
+    }
+
+    /// Put a table in the order a [`SortJob`] found, `shown`: unless the
+    /// table has changed since the job was made, and then it is sorted
+    /// here, as [`Document::sort_rows`] would.
+    pub fn finish_sort(&mut self, job: SortJob, shown: Vec<usize>) -> Result<(), String> {
+        let current = self
+            .snapshot
+            .sheets
+            .get(job.sheet)
+            .map(|t| (t.nrows, self.orders.get(&t.name).filter(|o| o.len() == t.nrows).cloned()));
+        let unchanged = match current {
+            Some((n, order)) => {
+                n == shown.len()
+                    && match (&order, &job.before) {
+                        (None, None) => true,
+                        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                        _ => false,
+                    }
+            }
+            None => false,
+        };
+        if !unchanged {
+            return self.sort_rows(job.sheet, job.col, job.desc);
+        }
+        self.put_in_order(job.sheet, shown)
+    }
+
+    /// Show a table's rows in the order `shown`, the places of the rows as
+    /// they are shown now: one step to undo.
+    fn put_in_order(&mut self, sheet: usize, shown: Vec<usize>) -> Result<(), String> {
         let t = &self.snapshot.sheets[sheet];
+        let n = t.nrows;
         let before = self.orders.get(&t.name).filter(|o| o.len() == n);
         let order: Vec<usize> = match before {
             Some(before) => shown.iter().map(|&p| before[p]).collect(),
@@ -2809,7 +2992,7 @@ impl Document {
             self.snapshot.sheets[sheet].rows =
                 shown.iter().filter_map(|&p| rows[p].take()).collect();
         }
-        self.orders.insert(name, Rc::new(order));
+        self.orders.insert(name, Arc::new(order));
         Ok(())
     }
 
@@ -2821,32 +3004,7 @@ impl Document {
     /// text by its bytes. `None` where the column is not one Polars holds,
     /// for [`Document::order_by_values`] to sort.
     fn order_by_polars(&self, sheet: usize, col: usize, desc: bool) -> Option<Vec<usize>> {
-        let t = self.snapshot.sheets.get(sheet)?;
-        let column = self.engine.as_ref()?.frame_column(sheet, col)?;
-        let n = t.nrows;
-        if column.len() != n {
-            return None;
-        }
-        let series = column.as_materialized_series();
-        // In the order shown, which a sort before this one may have changed.
-        let shown = match self.orders.get(&t.name).filter(|o| o.len() == n) {
-            Some(order) => {
-                let idx: Vec<polars::prelude::IdxSize> = order
-                    .iter()
-                    .map(|&r| r as polars::prelude::IdxSize)
-                    .collect();
-                series.take_slice(&idx).ok()?
-            }
-            None => series.clone(),
-        };
-        let sorted = shown.arg_sort(polars::prelude::SortOptions {
-            descending: desc,
-            nulls_last: desc,
-            maintain_order: true,
-            multithreaded: true,
-            limit: None,
-        });
-        Some(sorted.into_no_null_iter().map(|i| i as usize).collect())
+        Some(self.sort_job(sheet, col, desc)?.run())
     }
 
     /// [`Document::order_by_polars`], a value at a time: for a column

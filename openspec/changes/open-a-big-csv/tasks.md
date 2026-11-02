@@ -74,6 +74,19 @@ Parquet alone.
       scrollbar is bound to it both ways. At row 14,961,889 of the 15M-row
       CSV, rows and gridlines are even, which confirms the floats as the
       cause. The row-number gutter now widens with the last row's digits
+- [x] 2b.6a Found 2026-11-02: Omarchy reported the app as not responding
+      while the spinner turned, the main thread being held by a filter or
+      a sort. Over 200,000 rows each now runs on a worker: the document
+      makes a `FilterJob` (the frames and lowered expressions) or a
+      `SortJob` (the column in the order shown), the worker runs it, and
+      the result comes back by `filtered` / `sorted`; a filter overtaken
+      by another is dropped, and a sort over a table changed meanwhile is
+      done again. `Orders` holds `Arc`s so a job shares the order rather
+      than copying it. Measured on short2, release: filter 95 ms, sort
+      ~0.2 s, the main thread never more than 134 ms between ticks. Still
+      on the main thread: the rebuild when a table arrives in memory or a
+      copy is written (~40 ms on 15M rows), and a select-all summary
+      (0.6 s on short2)
 - [ ] 2b.7 Listing a column's distinct values in Polars (`unique`, then the
       first 1,000 in sort order), not a walk over every row
 - [ ] 2b.8 The probe in `Main.qml` taken out before this change is merged

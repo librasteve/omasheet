@@ -268,6 +268,14 @@ pub mod qobject {
         /// `col`, descending or not.
         #[qinvokable]
         fn sort_rows(self: Pin<&mut File>, sheet: i32, col: i32, descending: bool) -> QString;
+        /// A filter worked out on a worker has been: `count` rows shown,
+        /// or -2 where it failed (see `filter_problem`).
+        #[qsignal]
+        fn filtered(self: Pin<&mut File>, count: i32);
+        /// A sort done on a worker has been, with what went wrong if
+        /// anything.
+        #[qsignal]
+        fn sorted(self: Pin<&mut File>, col: i32, descending: bool, problem: QString);
         #[qinvokable]
         fn move_columns(
             self: Pin<&mut File>,
@@ -409,6 +417,11 @@ pub struct FileRust {
     /// The CSV files being copied to Parquet on a worker (open-a-big-csv
     /// D153), shown from their samples meanwhile.
     converting: HashSet<PathBuf>,
+    /// The number of the last filter asked for: one worked out on a worker
+    /// and overtaken by another is dropped.
+    filter_asked: std::cell::Cell<u64>,
+    /// Whether a filter or a sort is being worked out on a worker.
+    busy_jobs: std::cell::Cell<usize>,
     /// The files already said to be too big to hold, so that it is said
     /// once rather than with every edit.
     told: HashSet<PathBuf>,
@@ -447,6 +460,8 @@ impl Default for FileRust {
             shown: RefCell::new(None),
             reading: HashSet::new(),
             converting: HashSet::new(),
+            filter_asked: std::cell::Cell::new(0),
+            busy_jobs: std::cell::Cell::new(0),
             told: HashSet::new(),
         }
     }
@@ -466,6 +481,11 @@ fn style() -> Style {
 /// The size above which a CSV is opened as a table rather than imported as
 /// text (open-a-big-csv D146).
 const BIG_CSV: u64 = 4 * 1024 * 1024;
+
+/// The rows above which a filter or a sort is worked out on a worker, so
+/// that the window goes on answering the desktop, which takes a window
+/// that stops answering for a few seconds to be hung.
+const WORKER_ROWS: usize = 200_000;
 
 fn document(text: &str) -> Document {
     static NAMES: OnceLock<Names> = OnceLock::new();
@@ -601,23 +621,18 @@ impl qobject::File {
             rust.saved = String::new();
         }
         let file = path.file_name().unwrap_or_default().to_string_lossy();
-        let note = if csv {
-            format!(
-                "{file} is too big to import, so it is opened as a table that reads it where \
-                 it is: read-only, and saved as a short .omx that names it. It is read \
-                 through a Parquet copy kept in {}",
-                omasheet_engine::table::cache_dir().display()
-            )
-        } else {
-            format!(
-                "{file} has {rows} rows, so it is opened as a table that reads it where it is \
-                 rather than imported: read-only, and saved as a short .omx that names it"
-            )
-        };
-        self.as_mut().set_notes(QString::from(&note));
+        // No notes, and so no dialog: the table is there to be seen. The
+        // status bar says what it is; for a CSV, that its first rows are
+        // shown while the rest is read, which `convert_tables` says.
+        self.as_mut().set_notes(QString::default());
         self.as_mut().set_path(None);
         self.as_mut().rust_mut().origin = Some(path.to_path_buf());
-        self.refresh(&format!("Opened {file} as a table"));
+        let status = if csv {
+            String::new()
+        } else {
+            format!("Opened {file} as a read-only table ({rows} rows)")
+        };
+        self.refresh(&status);
         true
     }
 
@@ -1076,17 +1091,47 @@ impl qobject::File {
             })
             .collect();
         let rust = self.rust();
+        let asked = rust.filter_asked.get() + 1;
+        rust.filter_asked.set(asked);
         if filters.is_empty() {
             *rust.shown.borrow_mut() = None;
             return -1;
         }
-        let rows = match rust.doc.shown_rows(index(sheet), &filters) {
-            Ok(rows) => rows,
+        let job = match rust.doc.filter_job(index(sheet), &filters) {
+            Ok(job) => job,
             Err(why) => {
                 *rust.filter_problem.borrow_mut() = why;
                 return -2;
             }
         };
+        // A big one is run on a worker, so that the window goes on
+        // answering the desktop; the rows shown stay as they were until it
+        // comes back, and -3 says so.
+        if job.rows() > WORKER_ROWS {
+            rust.busy_jobs.set(rust.busy_jobs.get() + 1);
+            let thread = self.qt_thread();
+            std::thread::spawn(move || {
+                let rows = job.run();
+                let _ = thread.queue(move |file| file.filter_ran(asked, sheet, filters, rows));
+            });
+            return -3;
+        }
+        let rows = match job.run() {
+            Some(rows) => Ok(rows),
+            None => rust.doc.shown_rows(index(sheet), &filters),
+        };
+        match rows {
+            Ok(rows) => self.show_rows(sheet, rows),
+            Err(why) => {
+                *rust.filter_problem.borrow_mut() = why;
+                -2
+            }
+        }
+    }
+
+    /// Keep `rows` as the rows the filter shows, and give their count.
+    fn show_rows(&self, sheet: i32, rows: Vec<usize>) -> i32 {
+        let rust = self.rust();
         let n = rust.doc.row_count(index(sheet));
         let mut pos = vec![-1; n];
         for (k, &r) in rows.iter().enumerate() {
@@ -1144,8 +1189,71 @@ impl qobject::File {
         }
     }
 
-    fn sort_rows(self: Pin<&mut Self>, sheet: i32, col: i32, descending: bool) -> QString {
+    fn sort_rows(mut self: Pin<&mut Self>, sheet: i32, col: i32, descending: bool) -> QString {
+        // A big table is put in order on a worker; `sorted` says when, and
+        // the "…" returned now says it is coming.
+        let job = self.rust().doc.sort_job(index(sheet), index(col), descending);
+        if let Some(job) = job.filter(|_| self.rust().doc.row_count(index(sheet)) > WORKER_ROWS) {
+            self.rust().busy_jobs.set(self.rust().busy_jobs.get() + 1);
+            self.as_mut().set_working(true);
+            let thread = self.qt_thread();
+            std::thread::spawn(move || {
+                let shown = job.run();
+                let _ = thread.queue(move |file| file.sort_ran(job, shown, col, descending));
+            });
+            return QString::from("\u{2026}");
+        }
         self.try_edit(|doc| doc.sort_rows(index(sheet), index(col), descending))
+    }
+
+    /// A sort run on a worker has come back: the table is put in that
+    /// order, unless it has changed meanwhile and is sorted again here.
+    fn sort_ran(
+        mut self: Pin<&mut Self>,
+        job: omasheet_engine::doc::SortJob,
+        shown: Vec<usize>,
+        col: i32,
+        descending: bool,
+    ) {
+        self.rust().busy_jobs.set(self.rust().busy_jobs.get().saturating_sub(1));
+        let problem = self.as_mut().try_edit(move |doc| doc.finish_sort(job, shown));
+        self.as_mut().update_working();
+        self.as_mut().sorted(col, descending, problem);
+    }
+
+    /// A filter run on a worker has come back: kept, unless another has
+    /// been asked for since.
+    fn filter_ran(
+        mut self: Pin<&mut Self>,
+        asked: u64,
+        sheet: i32,
+        filters: Vec<(String, String)>,
+        rows: Option<Vec<usize>>,
+    ) {
+        self.rust().busy_jobs.set(self.rust().busy_jobs.get().saturating_sub(1));
+        self.as_mut().update_working();
+        if asked != self.rust().filter_asked.get() {
+            return;
+        }
+        let rows = match rows {
+            Some(rows) => Ok(rows),
+            None => self.rust().doc.shown_rows(index(sheet), &filters),
+        };
+        let count = match rows {
+            Ok(rows) => self.show_rows(sheet, rows),
+            Err(why) => {
+                *self.rust().filter_problem.borrow_mut() = why;
+                -2
+            }
+        };
+        self.as_mut().filtered(count);
+    }
+
+    /// Whether anything is being done on a worker, for the spinner.
+    fn update_working(mut self: Pin<&mut Self>) {
+        let rust = self.rust();
+        let busy = !rust.reading.is_empty() || !rust.converting.is_empty() || rust.busy_jobs.get() > 0;
+        self.as_mut().set_working(busy);
     }
 
     fn move_columns(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, to: i32) -> QString {
@@ -1329,7 +1437,7 @@ impl qobject::File {
             }
             self.as_mut().set_working(true);
             note = format!(
-                "Showing the first {} rows of {} while the rest is read\u{2026}",
+                "Showing the first {} rows of {}, read-only, while the rest is read\u{2026}",
                 omasheet_engine::table::SAMPLE_ROWS,
                 file_name(&csv)
             );
@@ -1345,8 +1453,7 @@ impl qobject::File {
     /// A CSV's copy has been written, or could not be.
     fn csv_converted(mut self: Pin<&mut Self>, csv: PathBuf, got: Result<(), String>) {
         self.as_mut().rust_mut().converting.remove(&csv);
-        let still = !self.rust().reading.is_empty() || !self.rust().converting.is_empty();
-        self.as_mut().set_working(still);
+        self.as_mut().update_working();
         let name = file_name(&csv);
         match got {
             Ok(()) => {
@@ -1372,8 +1479,7 @@ impl qobject::File {
         got: Result<omasheet_engine::table::Whole, String>,
     ) {
         self.as_mut().rust_mut().reading.remove(&path);
-        let still = !self.rust().reading.is_empty() || !self.rust().converting.is_empty();
-        self.as_mut().set_working(still);
+        self.as_mut().update_working();
         let name = file_name(&self.rust().doc.source_file(&path));
         match got {
             Ok(whole) => {

@@ -683,6 +683,14 @@ impl<'p> Engine<'p> {
     }
 
     fn lowered_mask(&self, t: usize, node: &Node) -> Option<Vec<bool>> {
+        let (frame, expr) = self.filter_plan(t, node)?;
+        run_filter_plan(frame, expr)
+    }
+
+    /// A filter lowered to Polars, and the frame of the columns it reads:
+    /// what [`run_filter_plan`] runs, which a worker can, since neither
+    /// holds anything of the engine. `None` where the filter does not lower.
+    pub fn filter_plan(&self, t: usize, node: &Node) -> Option<(DataFrame, Expr)> {
         let nrows = self.prog.sheets[t].nrows;
         let column = |c| self.pl_column(t, c);
         let constant = |i| self.const_value(i).ok();
@@ -695,20 +703,7 @@ impl<'p> Engine<'p> {
         if columns.is_empty() || columns.iter().any(|c| c.len() != nrows) {
             return None;
         }
-        let kept = DataFrame::new(columns)
-            .ok()?
-            .lazy()
-            .with_row_index(ROW_INDEX, None)
-            .filter(out.expr)
-            .select([col(ROW_INDEX)])
-            .collect()
-            .ok()?;
-        let kept = kept.column(ROW_INDEX).ok()?.u32().ok()?.clone();
-        let mut mask = vec![false; nrows];
-        for r in kept.into_no_null_iter() {
-            mask[r as usize] = true;
-        }
-        Some(mask)
+        Some((DataFrame::new(columns).ok()?, out.expr))
     }
 
     /// The rows of a whole sheet in the order its key columns put them,
@@ -3760,4 +3755,24 @@ fn marks(func: Func, items: &[Value]) -> Vec<bool> {
         start = end;
     }
     out
+}
+
+/// Which rows of `frame` the lowered filter `expr` is true of, as a mask:
+/// a plan of [`Engine::filter_plan`], run anywhere. `None` where Polars
+/// fails on it, and the engine answers it a row at a time instead.
+pub fn run_filter_plan(frame: DataFrame, expr: Expr) -> Option<Vec<bool>> {
+    let nrows = frame.height();
+    let kept = frame
+        .lazy()
+        .with_row_index(ROW_INDEX, None)
+        .filter(expr)
+        .select([col(ROW_INDEX)])
+        .collect()
+        .ok()?;
+    let kept = kept.column(ROW_INDEX).ok()?.u32().ok()?.clone();
+    let mut mask = vec![false; nrows];
+    for r in kept.into_no_null_iter() {
+        mask[r as usize] = true;
+    }
+    Some(mask)
 }

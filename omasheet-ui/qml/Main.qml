@@ -453,7 +453,15 @@ ApplicationWindow {
     // millions, too many to bring here, so the grid asks it for the row at
     // a place and the place of a row. A new object each time, so that what
     // reads it follows every change of the filter, not only of the count.
-    readonly property var filterShown: {
+    //
+    // A big table's filter is worked out on a worker, so that the window
+    // goes on answering the desktop: `filterRows` then says -3, the rows
+    // shown stay as they were, and `filtered` brings the count.
+    property var filterShown: ({ count: -1 })
+    property bool filterPending: false
+    // The filter as Rust is given it, and everything that changes what it
+    // shows: the sheet, its filters, and the file's every revision.
+    readonly property string filterSpec: {
         filterRev;
         var f = filters[sheet.name];
         var parts = [];
@@ -461,7 +469,28 @@ ApplicationWindow {
             for (var name in f)
                 if (f[name] && f[name].length > 0)
                     parts.push(name + "\u001f" + f[name]);
-        return { count: file.filterRows(tab, parts.join("\u001e")) };
+        return parts.join("\u001e");
+    }
+    readonly property string filterKey: tab + "\u001d" + filterSpec + "\u001d" + file.revision
+    onFilterKeyChanged: runFilter()
+    function runFilter() {
+        var count = file.filterRows(tab, filterSpec);
+        filterPending = count === -3;
+        if (!filterPending)
+            filterShown = { count: count };
+    }
+    Connections {
+        target: file
+        function onFiltered(count) {
+            win.filterPending = false;
+            win.filterShown = { count: count };
+        }
+        function onSorted(col, descending, problem) {
+            if (problem.length > 0)
+                win.notice = problem;
+            else
+                win.noteSort(col, descending);
+        }
     }
     onFilterShownChanged: {
         if (filterShown.count === -2) {
@@ -3479,6 +3508,7 @@ ApplicationWindow {
                 verticalAlignment: Text.AlignVCenter
                 readonly property bool moving: win.grabbedHere
                 text: win.busyText.length > 0 ? win.busyText
+                    : win.filterPending ? "Filtering\u2026"
                     : win.notice.length > 0 ? win.notice
                     : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
                     : win.formulaCell ? "This is a formula column, this change will apply to the entire column"
@@ -3505,7 +3535,7 @@ ApplicationWindow {
                 height: parent.height - 6
                 width: height
                 padding: 0
-                running: win.busyText.length > 0 || file.working
+                running: win.busyText.length > 0 || file.working || win.filterPending
                 visible: running
                 Material.accent: win.accentColor
             }
@@ -3736,6 +3766,9 @@ ApplicationWindow {
             close();
             win.busy("Sorting\u2026", function() {
                 var problem = file.sortRows(win.tab, c, desc);
+                // "…": a big table, sorted on a worker; `sorted` says when.
+                if (problem === "\u2026")
+                    return;
                 if (problem.length > 0)
                     win.notice = problem;
                 else
