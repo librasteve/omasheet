@@ -62,10 +62,20 @@ Parquet alone.
       footer; held whole by a worker when under half of `MemAvailable`;
       otherwise a status-bar notice with the estimate. Measured: the
       estimate against the held size for both demo files (within 3%)
-- [ ] 2b.5 D158: sort, filter, the selection summary and Ctrl+Down as Polars
+- [x] 2b.5 D158: sort, filter, the selection summary and Ctrl+Down as Polars
       operations over the column, with a differential test against today's
       answers (ties, nulls, NaN, decimals). Measured on short2: each ≤ 50 ms
-      held, or off-thread with a pending state
+      held, or off-thread with a pending state. Done 2026-11-02: sort is an
+      `arg_sort` (`157eae5`), a filter a lowered mask
+      (filter-by-expression), the summary added over the Polars arrays in
+      the one-by-one order; each over 200,000 rows on a worker with the
+      spinner (2b.6a). Ctrl+Down needed no Polars: its seconds were the
+      summary of the selection it passed through, which now waits for the
+      selection to settle (short2, release: 70–85 ms). Differential tests:
+      `a_table_sorts_by_polars_in_the_order_it_sorts_by_values` (the edge
+      file of NaN, ±0, nulls, ties, decimals),
+      `a_paged_filter_shows_what_a_held_one_does`,
+      `a_paged_summary_answers_as_a_held_one_reading_only_what_is_selected`
 - [x] 2b.6 D156: the grid lays out one screen of rows from an integer top
       row, with its own scrollbar. Checked by eye at the last rows of the
       taxi file: gridlines straight, rows evenly spaced. Done 2026-11-02:
@@ -89,7 +99,9 @@ Parquet alone.
       (0.6 s on short2)
 - [ ] 2b.7 Listing a column's distinct values in Polars (`unique`, then the
       first 1,000 in sort order), not a walk over every row
-- [ ] 2b.8 The probe in `Main.qml` taken out before this change is merged
+- [x] 2b.8 The probe in `Main.qml` taken out before this change is merged.
+      Done 2026-11-02, in filter-by-expression; later probes were
+      temporary and none is left
 
 ## 3. One funnel, first stage: big files (D147, D152, D153)
 
