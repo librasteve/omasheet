@@ -1177,7 +1177,11 @@ impl qobject::File {
     }
 
     fn check_filter(&self, sheet: i32, col: i32, expr: &QString) -> QString {
-        match self.rust().doc.check_filter(index(sheet), index(col), &expr.to_string()) {
+        match self
+            .rust()
+            .doc
+            .check_filter(index(sheet), index(col), &expr.to_string())
+        {
             Ok(()) => QString::default(),
             Err(why) => QString::from(&why),
         }
@@ -1220,7 +1224,10 @@ impl qobject::File {
     fn sort_rows(mut self: Pin<&mut Self>, sheet: i32, col: i32, descending: bool) -> QString {
         // A big table is put in order on a worker; `sorted` says when, and
         // the "…" returned now says it is coming.
-        let job = self.rust().doc.sort_job(index(sheet), index(col), descending);
+        let job = self
+            .rust()
+            .doc
+            .sort_job(index(sheet), index(col), descending);
         if let Some(job) = job.filter(|_| self.rust().doc.row_count(index(sheet)) > WORKER_ROWS) {
             self.rust().busy_jobs.set(self.rust().busy_jobs.get() + 1);
             self.as_mut().set_working(true);
@@ -1243,8 +1250,12 @@ impl qobject::File {
         col: i32,
         descending: bool,
     ) {
-        self.rust().busy_jobs.set(self.rust().busy_jobs.get().saturating_sub(1));
-        let problem = self.as_mut().try_edit(move |doc| doc.finish_sort(job, shown));
+        self.rust()
+            .busy_jobs
+            .set(self.rust().busy_jobs.get().saturating_sub(1));
+        let problem = self
+            .as_mut()
+            .try_edit(move |doc| doc.finish_sort(job, shown));
         self.as_mut().update_working();
         self.as_mut().sorted(col, descending, problem);
     }
@@ -1258,7 +1269,9 @@ impl qobject::File {
         filters: Vec<(String, String)>,
         rows: Option<Vec<usize>>,
     ) {
-        self.rust().busy_jobs.set(self.rust().busy_jobs.get().saturating_sub(1));
+        self.rust()
+            .busy_jobs
+            .set(self.rust().busy_jobs.get().saturating_sub(1));
         self.as_mut().update_working();
         if asked != self.rust().filter_asked.get() {
             return;
@@ -1280,7 +1293,8 @@ impl qobject::File {
     /// Whether anything is being done on a worker, for the spinner.
     fn update_working(mut self: Pin<&mut Self>) {
         let rust = self.rust();
-        let busy = !rust.reading.is_empty() || !rust.converting.is_empty() || rust.busy_jobs.get() > 0;
+        let busy =
+            !rust.reading.is_empty() || !rust.converting.is_empty() || rust.busy_jobs.get() > 0;
         self.as_mut().set_working(busy);
     }
 
@@ -1401,7 +1415,11 @@ impl qobject::File {
     fn selection_summary(&self, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {
         let doc = &self.rust().doc;
         let from = (index(row0), index(col0));
-        QString::from(&summary_text(doc.summary(index(sheet), from, (index(row1), index(col1)))))
+        QString::from(&summary_text(doc.summary(
+            index(sheet),
+            from,
+            (index(row1), index(col1)),
+        )))
     }
 
     fn ask_summary(
@@ -1425,12 +1443,16 @@ impl qobject::File {
         std::thread::spawn(move || {
             let added = job.run();
             let _ = thread.queue(move |mut file| {
-                file.rust().busy_jobs.set(file.rust().busy_jobs.get().saturating_sub(1));
+                file.rust()
+                    .busy_jobs
+                    .set(file.rust().busy_jobs.get().saturating_sub(1));
                 file.as_mut().update_working();
                 let text = match added {
                     Some(added) => summary_text(file.rust().doc.summary_from(added)),
                     // What Polars would not add up is added a value at a time.
-                    None => file.selection_summary(sheet, row0, col0, row1, col1).to_string(),
+                    None => file
+                        .selection_summary(sheet, row0, col0, row1, col1)
+                        .to_string(),
                 };
                 file.as_mut().summarized(asked, QString::from(&text));
             });
@@ -1513,7 +1535,13 @@ impl qobject::File {
         match got {
             Ok(()) => {
                 if self.as_mut().rust_mut().doc.converted(&csv) {
-                    let rows = self.rust().doc.snapshot().sheets.first().map_or(0, |t| t.nrows);
+                    let rows = self
+                        .rust()
+                        .doc
+                        .snapshot()
+                        .sheets
+                        .first()
+                        .map_or(0, |t| t.nrows);
                     self.refresh(&format!("{name} read: {rows} rows"));
                 }
             }

@@ -98,6 +98,10 @@ type Partitions = HashMap<(usize, Vec<usize>), Rc<Partition>>;
 /// The right sheet of a join and the row of it each row of the join reads.
 type Paired = (usize, Rc<Vec<Option<usize>>>);
 
+/// What a column function (`is_unique` and its kin) answers for each row of
+/// a column, by the function, the sheet and the column.
+type Marks = ((Func, usize, usize), Rc<Vec<bool>>);
+
 /// The program an engine runs: lent to it for one run, as the command line
 /// does, or held by it, so that an engine can be kept after the run and a
 /// cell asked for when it is shown (D80).
@@ -151,7 +155,7 @@ pub struct Engine<'p> {
     /// What `is_unique` and its kin answer over a column of a sheet, by
     /// the function, the sheet and the column: worked out once for the
     /// column and looked up a row at a time.
-    marks: RefCell<Vec<((Func, usize, usize), Rc<Vec<bool>>)>>,
+    marks: RefCell<Vec<Marks>>,
     /// Which of a `table`'s columns have been read from its file, by sheet
     /// and column, in the order they were read. What is not here was never
     /// read.
@@ -2443,14 +2447,20 @@ impl<'p> Engine<'p> {
                     found
                 }
             };
-            let at = self.eval(place, fr)?.as_i64().and_then(|r| usize::try_from(r).ok());
+            let at = self
+                .eval(place, fr)?
+                .as_i64()
+                .and_then(|r| usize::try_from(r).ok());
             return Ok(at
                 .and_then(|r| found.get(r))
                 .map_or(Value::Null, |&b| Value::Boolean(b)));
         }
         match self.eval(&args[0], fr)? {
             Value::Vector(items) => Ok(Value::Vector(Rc::new(
-                marks(func, &items).into_iter().map(Value::Boolean).collect(),
+                marks(func, &items)
+                    .into_iter()
+                    .map(Value::Boolean)
+                    .collect(),
             ))),
             // A value alone is the only one of its kind, and the first and
             // the last of it.

@@ -419,13 +419,11 @@ impl Parser {
             Tok::Float(f) => lit(Lit::Float(f)),
             Tok::Str(s) => lit(Lit::String(s)),
             Tok::Text(s) => {
-                return Err(
-                    Diagnostic::new(span, "strings in OMX are in single quotes")
-                        .with_help(format!(
-                            "write {}; double quotes are for text in a table cell",
-                            crate::lexer::quoted(&s)
-                        )),
-                );
+                return Err(Diagnostic::new(span, "strings in OMX are in single quotes")
+                    .with_help(format!(
+                        "write {}; double quotes are for text in a table cell",
+                        crate::lexer::quoted(&s)
+                    )));
             }
             Tok::Date(d) => lit(Lit::Date(d)),
             Tok::Time(t) => lit(Lit::Time(t)),

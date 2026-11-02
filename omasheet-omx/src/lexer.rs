@@ -287,9 +287,7 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                                     span(i - other.len_utf8() - 1, i),
                                     format!("unknown escape `\\{other}`"),
                                 )
-                                .with_help(format!(
-                                    "the escapes are \\{quote} \\\\ \\n and \\t"
-                                )));
+                                .with_help(format!("the escapes are \\{quote} \\\\ \\n and \\t")));
                             }
                         });
                     }
@@ -297,7 +295,11 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                 }
             }
             out.push(Token {
-                tok: if quote == '"' { Tok::Text(s) } else { Tok::Str(s) },
+                tok: if quote == '"' {
+                    Tok::Text(s)
+                } else {
+                    Tok::Str(s)
+                },
                 span: span(start, i),
             });
             continue;

@@ -491,7 +491,10 @@ pub fn compile_filter(
         other => Err(vec![
             Diagnostic::new(
                 expr.span,
-                format!("a filter is true or false for each row, but this is {}", other.describe()),
+                format!(
+                    "a filter is true or false for each row, but this is {}",
+                    other.describe()
+                ),
             )
             .with_help("compare `*`, the cell, with something: `* > 10`"),
         ]),
@@ -520,11 +523,17 @@ fn as_filter(e: &mut Expr, name: &str) -> Result<(), Diagnostic> {
         // `* == ''` asks for an empty cell, whatever the column holds
         // (D165), and `* != ''` for one that is not.
         ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), a, b)
-            if [&**a, &**b].iter().any(|e| matches!(&e.kind, ExprKind::Lit(Lit::String(t)) if t.is_empty())) =>
+            if [&**a, &**b]
+                .iter()
+                .any(|e| matches!(&e.kind, ExprKind::Lit(Lit::String(t)) if t.is_empty())) =>
         {
             let negate = *op == BinOp::Ne;
             let empty = |e: &Expr| matches!(&e.kind, ExprKind::Lit(Lit::String(t)) if t.is_empty());
-            let mut value = if empty(a) { (**b).clone() } else { (**a).clone() };
+            let mut value = if empty(a) {
+                (**b).clone()
+            } else {
+                (**a).clone()
+            };
             as_filter(&mut value, name)?;
             let test = Expr {
                 kind: ExprKind::Call("is_null".into(), span, vec![value]),
@@ -545,24 +554,27 @@ fn as_filter(e: &mut Expr, name: &str) -> Result<(), Diagnostic> {
         ExprKind::Call(f, _, args) if FILTER_CALLS.contains(&f.as_str()) => {
             args.iter_mut().try_for_each(|a| as_filter(a, name))
         }
-        ExprKind::Call(f, at, _) => Err(Diagnostic::new(
-            *at,
-            format!("a filter cannot call `{f}`"),
-        )
-        .with_help(calls)),
+        ExprKind::Call(f, at, _) => {
+            Err(Diagnostic::new(*at, format!("a filter cannot call `{f}`")).with_help(calls))
+        }
         // `*.year`, a part written without its brackets, is a call.
         ExprKind::Field(base, f, at) if FILTER_CALLS.contains(&f.as_str()) => {
             as_filter(base, name)?;
             let (f, at) = (f.clone(), *at);
-            let base = std::mem::replace(base.as_mut(), Expr { kind: ExprKind::Cursor, span });
+            let base = std::mem::replace(
+                base.as_mut(),
+                Expr {
+                    kind: ExprKind::Cursor,
+                    span,
+                },
+            );
             e.kind = ExprKind::Call(f, at, vec![base]);
             Ok(())
         }
-        _ => Err(Diagnostic::new(
-            span,
-            "a filter compares `*`, the cell, with values",
-        )
-        .with_help("as `* > 10`, `0 < * <= 5` or `*.starts_with('A')`")),
+        _ => Err(
+            Diagnostic::new(span, "a filter compares `*`, the cell, with values")
+                .with_help("as `* > 10`, `0 < * <= 5` or `*.starts_with('A')`"),
+        ),
     }
 }
 
@@ -2947,8 +2959,11 @@ impl<'a> Checker<'a> {
         // `starts_with('A'..'C')`: the first letter in a range, which is a
         // pair of comparisons and no slicing (D167).
         if name == "starts_with"
-            && let ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeEx | BinOp::RangeFrom | BinOp::RangeBoth), lo, hi) =
-                &args[1].kind
+            && let ExprKind::Binary(
+                op @ (BinOp::Range | BinOp::RangeEx | BinOp::RangeFrom | BinOp::RangeBoth),
+                lo,
+                hi,
+            ) = &args[1].kind
         {
             let letter = |e: &Expr| match &e.kind {
                 ExprKind::Lit(Lit::String(s)) if s.chars().count() == 1 => s.chars().next(),
@@ -2994,7 +3009,11 @@ impl<'a> Checker<'a> {
         );
         let (takes, gives, what): (fn(S) -> bool, S, &str) = match name {
             "is_finite" | "is_infinite" => (S::is_numeric, S::Boolean, "a number"),
-            "is_leap_year" => (|s| matches!(s, S::Date | S::DateTime), S::Boolean, "a Date or a Datetime"),
+            "is_leap_year" => (
+                |s| matches!(s, S::Date | S::DateTime),
+                S::Boolean,
+                "a Date or a Datetime",
+            ),
             "len_chars" => (S::is_text, S::Int, "text"),
             "to_lowercase" | "to_uppercase" => (S::is_text, S::String, "text"),
             _ if column => (|_| true, S::Boolean, "a value"),
@@ -3044,10 +3063,17 @@ impl<'a> Checker<'a> {
             };
             if !fits {
                 if !matches!(pat.kind, Ir::Error) {
-                    let looked = if name == "contains_any" { "a vector of texts" } else { "text" };
+                    let looked = if name == "contains_any" {
+                        "a vector of texts"
+                    } else {
+                        "text"
+                    };
                     self.err_help(
                         args[1].span,
-                        format!("`{name}` looks for {looked}, but this is {}", pty.describe()),
+                        format!(
+                            "`{name}` looks for {looked}, but this is {}",
+                            pty.describe()
+                        ),
                         format!("usage: `{usage}`"),
                     );
                 }
@@ -3072,8 +3098,12 @@ impl<'a> Checker<'a> {
                 if !matches!(call[0].kind, Ir::Error) {
                     self.err_help(
                         args[0].span,
-                        format!("`{name}` asks about a value among its column's, so it takes a column"),
-                        format!("as `Name.{name}()` in a column's formula, or `Sales.Name.{name}()`"),
+                        format!(
+                            "`{name}` asks about a value among its column's, so it takes a column"
+                        ),
+                        format!(
+                            "as `Name.{name}()` in a column's formula, or `Sales.Name.{name}()`"
+                        ),
                     );
                 }
                 return fail;
@@ -3298,12 +3328,10 @@ impl<'a> Checker<'a> {
                 };
                 self.lower(&form, sc)
             }
-            "is_finite" | "is_infinite" | "is_leap_year" | "len_chars"
-            | "to_lowercase" | "to_uppercase" | "starts_with" | "ends_with" | "contains"
-            | "matches" | "contains_any" | "is_unique" | "is_duplicated"
-            | "is_first_distinct" | "is_last_distinct" => {
-                self.lower_test(name, args, span, sc)
-            }
+            "is_finite" | "is_infinite" | "is_leap_year" | "len_chars" | "to_lowercase"
+            | "to_uppercase" | "starts_with" | "ends_with" | "contains" | "matches"
+            | "contains_any" | "is_unique" | "is_duplicated" | "is_first_distinct"
+            | "is_last_distinct" => self.lower_test(name, args, span, sc),
             "is_null" | "is_not_null" | "is_nan" | "is_not_nan" => {
                 if !arity(self, 1, &format!("Sheet.Column.{name}()")) {
                     return fail;

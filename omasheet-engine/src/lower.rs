@@ -351,12 +351,16 @@ fn call(func: Func, args: &[Node], cx: &Cx) -> Option<Out> {
             return None;
         }
         let parts = lit(Series::new(PlSmallStr::EMPTY, parts)).implode();
-        return Out::new(text.expr.str().contains_any(parts, false), DataType::Boolean);
+        return Out::new(
+            text.expr.str().contains_any(parts, false),
+            DataType::Boolean,
+        );
     }
     // A value among its column's. Over this row's cell the checker gives
     // the column and the row's place as well, which Polars needs neither
     // of: its answer is a column's already.
-    if let Func::IsUnique | Func::IsDuplicated | Func::IsFirstDistinct | Func::IsLastDistinct = func {
+    if let Func::IsUnique | Func::IsDuplicated | Func::IsFirstDistinct | Func::IsLastDistinct = func
+    {
         let column = expr(args.first()?, cx)?;
         let kept = exact_scale(&column.dtype) == Some(0)
             || is_float(&column.dtype)
@@ -479,7 +483,10 @@ fn within(needle: Out, hay: &Node, cx: &Cx) -> Option<Out> {
             let list =
                 Series::from_any_values_and_dtype(PlSmallStr::EMPTY, &values, &needle.dtype, true)
                     .ok()?;
-            Out::new(needle.expr.is_in(lit(list).implode(), false), DataType::Boolean)
+            Out::new(
+                needle.expr.is_in(lit(list).implode(), false),
+                DataType::Boolean,
+            )
         }
         Ir::Binary(op, lo, hi) if exact_scale(&needle.dtype) == Some(0) => {
             let (after, exclusive) = op.range_ends()?;
@@ -488,7 +495,13 @@ fn within(needle: Out, hay: &Node, cx: &Cx) -> Option<Out> {
         }
         Ir::Unary(UnOp::UpTo, hi) if exact_scale(&needle.dtype) == Some(0) => {
             let hi = expr(hi, cx)?;
-            between(needle, Out::new(lit(0i64), DataType::Int64)?, hi, false, true)
+            between(
+                needle,
+                Out::new(lit(0i64), DataType::Int64)?,
+                hi,
+                false,
+                true,
+            )
         }
         _ => None,
     }

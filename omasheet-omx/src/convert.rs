@@ -219,7 +219,10 @@ mod tests {
 
     #[test]
     fn a_cell_quotes_its_text_with_double_quotes() {
-        assert_eq!(parse_literal("\"2 * 3\""), Some(Lit::String("2 * 3".into())));
+        assert_eq!(
+            parse_literal("\"2 * 3\""),
+            Some(Lit::String("2 * 3".into()))
+        );
         // A cell in single quotes is that text, apostrophes and all (D168).
         assert_eq!(parse_literal("'x'"), None);
     }

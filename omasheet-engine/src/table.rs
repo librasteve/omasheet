@@ -555,7 +555,11 @@ fn csv_head(path: &Path) -> Result<Vec<u8>, String> {
     let mut head = Vec::new();
     let mut reader = std::io::BufReader::new(open(path)?);
     for _ in 0..=INFER_ROWS {
-        if reader.read_until(b'\n', &mut head).map_err(|e| e.to_string())? == 0 {
+        if reader
+            .read_until(b'\n', &mut head)
+            .map_err(|e| e.to_string())?
+            == 0
+        {
             break;
         }
     }
@@ -605,7 +609,9 @@ fn csv_scan(path: &Path, schema: Option<SchemaRef>) -> Result<LazyFrame, String>
         LazyCsvReader::new(PlPath::from_str(&path.to_string_lossy())).with_has_header(true);
     match schema {
         Some(schema) => reader.with_schema(Some(schema)),
-        None => reader.with_infer_schema_length(None).with_try_parse_dates(true),
+        None => reader
+            .with_infer_schema_length(None)
+            .with_try_parse_dates(true),
     }
     .finish()
     .map_err(|e| e.to_string())
@@ -652,7 +658,9 @@ pub fn sample(path: &Path) -> Result<PathBuf, String> {
         std::fs::create_dir_all(cache_dir()).map_err(|e| e.to_string())?;
         let partial = target.with_extension(format!("partial-{}", std::process::id()));
         let file = File::create(&partial).map_err(|e| e.to_string())?;
-        ParquetWriter::new(file).finish(&mut frame).map_err(|e| e.to_string())?;
+        ParquetWriter::new(file)
+            .finish(&mut frame)
+            .map_err(|e| e.to_string())?;
         std::fs::rename(&partial, &target).map_err(|e| e.to_string())?;
     }
     Ok(target)

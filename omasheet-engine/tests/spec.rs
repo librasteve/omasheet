@@ -934,9 +934,7 @@ fn time_zones() {
     assert_eq!(at("2025-07-15T12:00.utc().base_utc_offset()"), "0");
     // Back to the file's own zone it is an ordinary date-time again.
     assert_eq!(
-        at(
-            "2025-07-15T12:00.convert_time_zone('Asia/Tokyo').convert_time_zone('Europe/London')"
-        ),
+        at("2025-07-15T12:00.convert_time_zone('Asia/Tokyo').convert_time_zone('Europe/London')"),
         "2025-07-15T12:00"
     );
     assert_eq!(at("2025-07-15T12:00.utc().local()"), "2025-07-15T12:00");
@@ -1090,10 +1088,7 @@ CustomerID | Amount | Customer
 
 Customer := Customers[; ID == CustomerID].Name // 'Unknown'
 ";
-    assert_eq!(
-        ask(file, "Sales.Customer"),
-        "['Grace', 'Unknown', 'Ada']"
-    );
+    assert_eq!(ask(file, "Sales.Customer"), "['Grace', 'Unknown', 'Ada']");
 }
 
 #[test]
@@ -1114,10 +1109,7 @@ fn conditional_expression() {
 #[test]
 fn value_shapes() {
     assert!(ask(SALES, "Sales[; Region == 'UK']").starts_with("Month | Region"));
-    assert_eq!(
-        ask(SALES, "Sales[; Region == 'UK'].Revenue"),
-        "[100, 150]"
-    );
+    assert_eq!(ask(SALES, "Sales[; Region == 'UK'].Revenue"), "[100, 150]");
     assert_eq!(ask(SALES, "Sales[; Region == 'UK'].Revenue.sum()"), "250");
 }
 
@@ -1634,10 +1626,7 @@ fn cell_content() {
     );
     // An unmarked expression in a text column is text.
     let file = "sheet T\n\nNote : String\n\nRevenue | Note\n100 | Revenue - Cost\n200 | \"= see appendix\"\n";
-    assert_eq!(
-        ask(file, "T.Note"),
-        "['Revenue - Cost', '= see appendix']"
-    );
+    assert_eq!(ask(file, "T.Note"), "['Revenue - Cost', '= see appendix']");
     // An empty cell.
     assert_eq!(ask("sheet T\n\nA | B\n1 |\n", "T[B; 0]"), "empty");
 }
@@ -3615,8 +3604,8 @@ Range  := Name.starts_with('A'..'C')
 Member := N.is_in([1, 3])
 ";
     for name in [
-        "Starts", "Ends", "Has", "Re", "AnyOf", "Len", "Low", "Up", "Fin", "Infin", "Leap", "Range",
-        "Member",
+        "Starts", "Ends", "Has", "Re", "AnyOf", "Len", "Low", "Up", "Fin", "Infin", "Leap",
+        "Range", "Member",
     ] {
         assert_eq!(attempt(file, name), Some(Attempt::Lowered), "{name}");
     }
@@ -3656,7 +3645,10 @@ fn a_condition_written_with_a_polars_test_is_lowered() {
         ("Passengers[; Pclass in 2^..3].Age.len()", "487"),
         ("Passengers[; 1 <= Pclass < 3].Age.len()", "400"),
         ("Passengers[; Name.starts_with('Mr. ')].Age.len()", "513"),
-        ("Passengers[; Name.contains('Mrs.') and Sex == 'female'].Age.len()", "125"),
+        (
+            "Passengers[; Name.contains('Mrs.') and Sex == 'female'].Age.len()",
+            "125",
+        ),
         ("Passengers[; Name.matches('^Miss')].Age.len()", "182"),
         ("Passengers[; Name.starts_with('A'..'C')].Age.len()", "3"),
     ] {

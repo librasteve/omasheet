@@ -849,10 +849,7 @@ fn json_reads_a_list_of_rows_as_one_sheet() {
         eval(&back.source, "orders[Qty; 1] + 1"),
         "10000000000000000000001"
     );
-    assert_eq!(
-        eval(&back.source, "orders.Tags"),
-        "[empty, '[\"a\",1]']"
-    );
+    assert_eq!(eval(&back.source, "orders.Tags"), "[empty, '[\"a\",1]']");
     assert_eq!(
         back.notices,
         [

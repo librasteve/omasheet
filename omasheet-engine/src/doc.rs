@@ -1465,7 +1465,11 @@ impl FilterJob {
             and(crate::eval::run_filter_plan(frame, expr)?);
         }
         let order = self.order.as_deref();
-        Some((0..n).filter(|&p| keep[order.map_or(p, |o| o[p])]).collect())
+        Some(
+            (0..n)
+                .filter(|&p| keep[order.map_or(p, |o| o[p])])
+                .collect(),
+        )
     }
 }
 
@@ -1565,12 +1569,28 @@ impl SummaryJob {
             let held = column.len() - column.null_count();
             match kind {
                 Kind::Whole => {
-                    ints.push(column.cast(&DataType::Int64).ok()?.i64().ok()?.rechunk().into_owned());
+                    ints.push(
+                        column
+                            .cast(&DataType::Int64)
+                            .ok()?
+                            .i64()
+                            .ok()?
+                            .rechunk()
+                            .into_owned(),
+                    );
                     kinds.push(false);
                     numbers += held;
                 }
                 Kind::Float => {
-                    floats.push(column.cast(&DataType::Float64).ok()?.f64().ok()?.rechunk().into_owned());
+                    floats.push(
+                        column
+                            .cast(&DataType::Float64)
+                            .ok()?
+                            .f64()
+                            .ok()?
+                            .rechunk()
+                            .into_owned(),
+                    );
                     kinds.push(true);
                     numbers += held;
                 }
@@ -1578,8 +1598,14 @@ impl SummaryJob {
             }
             count += held;
         }
-        let ints: Vec<_> = ints.iter().map(|ca| ca.downcast_iter().next()).collect::<Option<_>>()?;
-        let floats: Vec<_> = floats.iter().map(|ca| ca.downcast_iter().next()).collect::<Option<_>>()?;
+        let ints: Vec<_> = ints
+            .iter()
+            .map(|ca| ca.downcast_iter().next())
+            .collect::<Option<_>>()?;
+        let floats: Vec<_> = floats
+            .iter()
+            .map(|ca| ca.downcast_iter().next())
+            .collect::<Option<_>>()?;
         let mut sum = Sum::Whole(0);
         for r in 0..rows.len() {
             let (mut i, mut f) = (ints.iter(), floats.iter());
@@ -1599,7 +1625,11 @@ impl SummaryJob {
                 };
             }
         }
-        Some(Added { count, numbers, sum })
+        Some(Added {
+            count,
+            numbers,
+            sum,
+        })
     }
 }
 
@@ -1765,7 +1795,9 @@ impl Document {
             .flat_map(|e| e.program().sheets.iter())
             .filter_map(|s| s.source.as_ref())
             .map(|source| base.join(&source.path))
-            .find(|named| crate::table::is_csv(named) && crate::table::copy_of(named).as_deref() == Some(read))
+            .find(|named| {
+                crate::table::is_csv(named) && crate::table::copy_of(named).as_deref() == Some(read)
+            })
             .unwrap_or_else(|| read.to_path_buf())
     }
 
@@ -2291,7 +2323,11 @@ impl Document {
             return None;
         }
         let engine = self.engine.as_ref()?;
-        let order = self.orders.get(&t.name).filter(|o| o.len() == t.nrows).cloned();
+        let order = self
+            .orders
+            .get(&t.name)
+            .filter(|o| o.len() == t.nrows)
+            .cloned();
         let mut columns = Vec::new();
         for c in cols.start..cols.end.min(t.columns.len()) {
             let column = engine.frame_values(sheet, c)?;
@@ -2310,7 +2346,11 @@ impl Document {
             };
             columns.push((column, kind));
         }
-        Some(SummaryJob { rows, order, columns })
+        Some(SummaryJob {
+            rows,
+            order,
+            columns,
+        })
     }
 
     /// What a [`SummaryJob`] added up, as [`Document::summary`] says it.
@@ -2854,7 +2894,11 @@ impl Document {
     /// answered by Polars over the column where it lowers (D162). The
     /// first expression that fails is the answer instead, as
     /// `Column: why`.
-    pub fn shown_rows(&self, sheet: usize, filters: &[(String, String)]) -> Result<Vec<usize>, String> {
+    pub fn shown_rows(
+        &self,
+        sheet: usize,
+        filters: &[(String, String)],
+    ) -> Result<Vec<usize>, String> {
         let job = self.filter_job(sheet, filters)?;
         match job.run() {
             Some(rows) => Ok(rows),
@@ -2866,7 +2910,11 @@ impl Document {
     /// [`FilterJob::run`]: each column's filter checked and lowered here,
     /// and answered here where it does not lower. The first that fails is
     /// the answer instead, as `Column: why`.
-    pub fn filter_job(&self, sheet: usize, filters: &[(String, String)]) -> Result<FilterJob, String> {
+    pub fn filter_job(
+        &self,
+        sheet: usize,
+        filters: &[(String, String)],
+    ) -> Result<FilterJob, String> {
         let mut job = FilterJob {
             rows: 0,
             masks: Vec::new(),
@@ -2877,7 +2925,11 @@ impl Document {
             return Ok(job);
         };
         job.rows = t.nrows;
-        job.order = self.orders.get(&t.name).filter(|o| o.len() == t.nrows).cloned();
+        job.order = self
+            .orders
+            .get(&t.name)
+            .filter(|o| o.len() == t.nrows)
+            .cloned();
         let Some(engine) = self.engine.as_ref() else {
             return Ok(job);
         };
@@ -2890,7 +2942,9 @@ impl Document {
             match engine.filter_plan(sheet, &node) {
                 Some(plan) => job.plans.push(plan),
                 None => {
-                    let mask = engine.filter_mask(sheet, &node).map_err(|why| format!("{name}: {why}"))?;
+                    let mask = engine
+                        .filter_mask(sheet, &node)
+                        .map_err(|why| format!("{name}: {why}"))?;
                     if mask.len() != t.nrows {
                         return Err(format!("{name}: the filter did not cover the sheet's rows"));
                     }
@@ -2903,7 +2957,11 @@ impl Document {
 
     /// [`Document::shown_rows`] answered here alone, each filter lowered
     /// where it can be and otherwise a row at a time.
-    fn shown_rows_here(&self, sheet: usize, filters: &[(String, String)]) -> Result<Vec<usize>, String> {
+    fn shown_rows_here(
+        &self,
+        sheet: usize,
+        filters: &[(String, String)],
+    ) -> Result<Vec<usize>, String> {
         let Some(t) = self.snapshot.sheets.get(sheet) else {
             return Ok(Vec::new());
         };
@@ -2918,7 +2976,9 @@ impl Document {
             };
             let node = omasheet_omx::check::compile_filter(engine.program(), sheet, c, text)
                 .map_err(|d| format!("{name}: {}", said(&d[0])))?;
-            let mask = engine.filter_mask(sheet, &node).map_err(|why| format!("{name}: {why}"))?;
+            let mask = engine
+                .filter_mask(sheet, &node)
+                .map_err(|why| format!("{name}: {why}"))?;
             if mask.len() != n {
                 return Err(format!("{name}: the filter did not cover the sheet's rows"));
             }
@@ -3004,8 +3064,10 @@ impl Document {
         let before = self.orders.get(&t.name).filter(|o| o.len() == n).cloned();
         let shown = match &before {
             Some(order) => {
-                let idx: Vec<polars::prelude::IdxSize> =
-                    order.iter().map(|&r| r as polars::prelude::IdxSize).collect();
+                let idx: Vec<polars::prelude::IdxSize> = order
+                    .iter()
+                    .map(|&r| r as polars::prelude::IdxSize)
+                    .collect();
                 series.take_slice(&idx).ok()?
             }
             None => series.clone(),
@@ -3023,11 +3085,15 @@ impl Document {
     /// table has changed since the job was made, and then it is sorted
     /// here, as [`Document::sort_rows`] would.
     pub fn finish_sort(&mut self, job: SortJob, shown: Vec<usize>) -> Result<(), String> {
-        let current = self
-            .snapshot
-            .sheets
-            .get(job.sheet)
-            .map(|t| (t.nrows, self.orders.get(&t.name).filter(|o| o.len() == t.nrows).cloned()));
+        let current = self.snapshot.sheets.get(job.sheet).map(|t| {
+            (
+                t.nrows,
+                self.orders
+                    .get(&t.name)
+                    .filter(|o| o.len() == t.nrows)
+                    .cloned(),
+            )
+        });
         let unchanged = match current {
             Some((n, order)) => {
                 n == shown.len()
@@ -4280,7 +4346,10 @@ mod tests {
         assert_eq!(shown(&[("N", "* != 2 or *.is_null()")]), Ok(vec![1, 2]));
         assert_eq!(shown(&[("N", "0 < * <= 5")]), Ok(vec![0, 3]));
         assert_eq!(shown(&[("N", "N > 5")]), Ok(vec![1]));
-        assert_eq!(shown(&[("Name", "*.starts_with('a'..'b')")]), Ok(vec![0, 1]));
+        assert_eq!(
+            shown(&[("Name", "*.starts_with('a'..'b')")]),
+            Ok(vec![0, 1])
+        );
         assert_eq!(shown(&[("N", "*.is_first_distinct()")]), Ok(vec![0, 1, 2]));
         // Each column's filter, all at once.
         assert_eq!(
@@ -4288,19 +4357,37 @@ mod tests {
             Ok(vec![1, 3])
         );
         // A column the sheet has not got, and an empty expression, hide nothing.
-        assert_eq!(shown(&[("Gone", "* == 1"), ("N", "  ")]), Ok(vec![0, 1, 2, 3]));
+        assert_eq!(
+            shown(&[("Gone", "* == 1"), ("N", "  ")]),
+            Ok(vec![0, 1, 2, 3])
+        );
         // What is wrong is said, by column, before a row is read.
         let wrong = shown(&[("N", "* == 'x'")]).unwrap_err();
         assert!(wrong.starts_with("N: "), "{wrong}");
         assert!(shown(&[("N", "* >")]).unwrap_err().starts_with("N: "));
         let other = shown(&[("N", "Name == 'b'")]).unwrap_err();
         assert!(other.contains("its own column"), "{other}");
-        assert!(shown(&[("N", "* + 1")]).unwrap_err().contains("true or false"));
-        assert!(shown(&[("N", "sum(*) > 1")]).unwrap_err().contains("cannot call `sum`"));
+        assert!(
+            shown(&[("N", "* + 1")])
+                .unwrap_err()
+                .contains("true or false")
+        );
+        assert!(
+            shown(&[("N", "sum(*) > 1")])
+                .unwrap_err()
+                .contains("cannot call `sum`")
+        );
         // And checked alone, as the popup does with each key.
         assert_eq!(doc.check_filter(0, 1, "0 < * <= 5"), Ok(()));
-        assert_eq!(doc.check_filter(0, 1, "*.year == 2025").map_err(|_| ()), Err(()));
-        assert!(doc.check_filter(0, 0, "*.matches('(')").unwrap_err().contains("regex"));
+        assert_eq!(
+            doc.check_filter(0, 1, "*.year == 2025").map_err(|_| ()),
+            Err(())
+        );
+        assert!(
+            doc.check_filter(0, 0, "*.matches('(')")
+                .unwrap_err()
+                .contains("regex")
+        );
     }
 
     #[test]
@@ -4734,8 +4821,16 @@ mod tests {
         unsafe { std::env::set_var("OMASHEET_CACHE", dir.join("cache")) };
         let mut csv = String::from("Name,N,X,Day,At\n");
         for i in 0..1500 {
-            let name = if i % 7 == 0 { "\"Smith, J\"".to_string() } else { format!("n{i}") };
-            let n = if i % 11 == 0 { String::new() } else { (i % 13).to_string() };
+            let name = if i % 7 == 0 {
+                "\"Smith, J\"".to_string()
+            } else {
+                format!("n{i}")
+            };
+            let n = if i % 11 == 0 {
+                String::new()
+            } else {
+                (i % 13).to_string()
+            };
             csv.push_str(&format!(
                 "{name},{n},{}.5,2021-06-{:02},2021-06-01 00:{:02}:{:02}\n",
                 i % 5,
@@ -4756,7 +4851,11 @@ mod tests {
             doc
         };
         let types = |doc: &Document| -> Vec<String> {
-            doc.snapshot().sheets[0].columns.iter().map(|c| c.ty.clone()).collect()
+            doc.snapshot().sheets[0]
+                .columns
+                .iter()
+                .map(|c| c.ty.clone())
+                .collect()
         };
         let shown = |doc: &Document| -> Vec<Vec<String>> {
             doc.rows(0, 0, 1500)
@@ -4767,20 +4866,33 @@ mod tests {
 
         // On a screen, the sample at once, and the copy wanted.
         let mut screen = open(true);
-        assert!(screen.snapshot().problems.is_empty(), "{:?}", screen.snapshot().problems);
+        assert!(
+            screen.snapshot().problems.is_empty(),
+            "{:?}",
+            screen.snapshot().problems
+        );
         assert_eq!(screen.snapshot().sheets[0].nrows, crate::table::SAMPLE_ROWS);
-        assert_eq!(types(&screen), ["String", "Integer", "Float", "Date", "Datetime"]);
+        assert_eq!(
+            types(&screen),
+            ["String", "Integer", "Float", "Date", "Datetime"]
+        );
         let csv_path = dir.join("x.csv");
         assert_eq!(screen.to_convert(), vec![csv_path.clone()]);
         let sample = shown(&screen);
-        assert_eq!(sample[0], ["Smith, J", "", "0.5", "2021-06-01", "2021-06-01T00:00"]);
+        assert_eq!(
+            sample[0],
+            ["Smith, J", "", "0.5", "2021-06-01", "2021-06-01T00:00"]
+        );
 
         // Copied, it is the whole file, and its first rows are the sample's.
         crate::table::convert(&csv_path).unwrap();
         assert!(screen.converted(&csv_path));
         assert!(screen.to_convert().is_empty());
         assert_eq!(screen.snapshot().sheets[0].nrows, 1500);
-        assert_eq!(types(&screen), ["String", "Integer", "Float", "Date", "Datetime"]);
+        assert_eq!(
+            types(&screen),
+            ["String", "Integer", "Float", "Date", "Datetime"]
+        );
         assert_eq!(shown(&screen)[..sample.len()], sample[..]);
 
         // Read where it waits for the copy, the same rows.
@@ -4788,7 +4900,10 @@ mod tests {
         assert_eq!(shown(&waited), shown(&screen));
         // And the copy filters and sums as a Parquet table does.
         assert_eq!(
-            screen.shown_rows(0, &[("At".into(), "*.minute == 0".into())]).unwrap().len(),
+            screen
+                .shown_rows(0, &[("At".into(), "*.minute == 0".into())])
+                .unwrap()
+                .len(),
             25
         );
         std::fs::remove_dir_all(&dir).unwrap();

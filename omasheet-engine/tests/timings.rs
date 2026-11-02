@@ -653,7 +653,10 @@ fn a_big_csv_through_its_copy() {
     let cache = std::env::temp_dir().join(format!("omasheet-csv-{}", std::process::id()));
     // SAFETY: the one test of this binary that sets it, before any reads.
     unsafe { std::env::set_var("OMASHEET_CACHE", &cache) };
-    let text = format!("table T := dataframe[{}]\n", omasheet_engine::omx::lexer::quoted(&csv.to_string_lossy()));
+    let text = format!(
+        "table T := dataframe[{}]\n",
+        omasheet_engine::omx::lexer::quoted(&csv.to_string_lossy())
+    );
     let names = omasheet_engine::datefmt::Names::default();
     let style = omasheet_engine::omx::date::Style::ISO;
 
@@ -663,22 +666,38 @@ fn a_big_csv_through_its_copy() {
     let started = Instant::now();
     let doc = Document::on_screen(&text, style, names.clone());
     let sample = doc.snapshot().sheets[0].nrows;
-    println!("\n{}: opened from its sample ({sample} rows) in {}", csv.display(), ms(started.elapsed()));
+    println!(
+        "\n{}: opened from its sample ({sample} rows) in {}",
+        csv.display(),
+        ms(started.elapsed())
+    );
     assert_eq!(doc.to_convert(), vec![csv.clone()]);
 
     let started = Instant::now();
     let copy = table::convert(&csv).unwrap();
     let size = std::fs::metadata(&copy).unwrap().len();
-    println!("copied in {}, {} MB", ms(started.elapsed()), size / 1_000_000);
+    println!(
+        "copied in {}, {} MB",
+        ms(started.elapsed()),
+        size / 1_000_000
+    );
 
     let mut doc = doc;
     let started = Instant::now();
     assert!(doc.converted(&csv));
-    println!("read from the copy, {} rows, in {}", doc.snapshot().sheets[0].nrows, ms(started.elapsed()));
+    println!(
+        "read from the copy, {} rows, in {}",
+        doc.snapshot().sheets[0].nrows,
+        ms(started.elapsed())
+    );
 
     let started = Instant::now();
     let again = Document::on_screen(&text, style, names);
-    println!("opened again, copy current: {} rows in {}", again.snapshot().sheets[0].nrows, ms(started.elapsed()));
+    println!(
+        "opened again, copy current: {} rows in {}",
+        again.snapshot().sheets[0].nrows,
+        ms(started.elapsed())
+    );
     assert!(again.to_convert().is_empty());
     std::fs::remove_dir_all(&cache).unwrap();
 }
