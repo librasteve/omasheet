@@ -25,9 +25,9 @@ Parquet alone.
 
 ## 1. Prerequisites from `hold-less-of-a-big-file`
 
-- [ ] 1.1 Its item 2: `Value::Series` (D79), so that a column read stays a
+- [x] 1.1 Its item 2: `Value::Series` (D79), so that a column read stays a
       Polars column
-- [ ] 1.2 Its item 3: the snapshot formats only what the grid shows (D80).
+- [x] 1.2 Its item 3: the snapshot formats only what the grid shows (D80).
       Recommended: the snapshot holds the frame and formats a cell when it
       is drawn, because the Qt model already asks only for visible cells
 - [ ] 1.3 Measured on the NYC taxi Parquet file (41M rows): a `table` over it
@@ -44,7 +44,7 @@ Parquet alone.
 - [ ] 2.3 Pending and loading states in the grid and in the constants panel
 - [ ] 2.4 The column cache (D150): owned by the `Document`, survives
       rebuilds, evicts LRU within a budget
-- [ ] 2.5 D155: an aggregate over a column that is not held runs its plan on
+- [x] 2.5 D155: an aggregate over a column that is not held runs its plan on
       `scan(path)` with `Engine::Streaming`, keeping D71a, D72 and the
       decimal guard; its answer is cached by file identity, column and
       function. Measured on the 611 MB Parquet file against today's path:
