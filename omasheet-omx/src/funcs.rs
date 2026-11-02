@@ -137,6 +137,7 @@ const LOG: &str = "Log & Exp";
 const TRIG: &str = "Trigonometry";
 const TIME: &str = "Time & Date";
 const BITWISE: &str = "Bitwise";
+const TEXT: &str = "Text";
 
 /// What the function directory says first: how a function is written.
 pub const INTRO: &str = "Functions are written =sum(x), many can also be used a method applied to an object e.g. \
@@ -159,6 +160,10 @@ pub const ABOUT: &[(&str, &str)] = &[
          a number.",
     ),
     (CONVERT, "Object: a Value."),
+    (
+        TEXT,
+        "Object: text, a single cell or a Column. Strings in a formula are in 'single quotes'.",
+    ),
     (LOG, "Takes: a number."),
     (TRIG, "Takes: a number as an angle in radians."),
     (TIME, "Object: Date, Time, Datetime or Duration."),
@@ -318,6 +323,42 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     ),
     doc(
         MATH,
+        "is_finite",
+        ".is_finite()",
+        "Whether a number is neither infinite nor NaN. An exact number always is.",
+    ),
+    doc(
+        MATH,
+        "is_infinite",
+        ".is_infinite()",
+        "Whether a number is Inf or -Inf.",
+    ),
+    doc(
+        MATH,
+        "is_unique",
+        "Name.is_unique()",
+        "Whether a value is the only one of its kind in its column.",
+    ),
+    doc(
+        MATH,
+        "is_duplicated",
+        "Name.is_duplicated()",
+        "Whether a value is in its column more than once.",
+    ),
+    doc(
+        MATH,
+        "is_first_distinct",
+        "Name.is_first_distinct()",
+        "Whether a value is the first of its kind in its column, going down.",
+    ),
+    doc(
+        MATH,
+        "is_last_distinct",
+        "Name.is_last_distinct()",
+        "Whether a value is the last of its kind in its column, going down.",
+    ),
+    doc(
+        MATH,
         "succ",
         "succ(x)",
         "The next value: a number plus one, or the text in alphabetical order, AZ to BA.",
@@ -417,19 +458,19 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         CONVERT,
         "Date",
         ".Date",
-        "The Date of a Datetime, or of text such as \"2025-01-31\".",
+        "The Date of a Datetime, or of text such as '2025-01-31'.",
     ),
     doc(
         CONVERT,
         "Time",
         ".Time",
-        "The Time of a Datetime, or of text such as \"09:30\".",
+        "The Time of a Datetime, or of text such as '09:30'.",
     ),
     doc(
         CONVERT,
         "Datetime",
         ".Datetime",
-        "A Date at midnight, or text such as \"2025-01-31T09:30\".",
+        "A Date at midnight, or text such as '2025-01-31T09:30'.",
     ),
     doc(
         CONVERT,
@@ -549,6 +590,55 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "The ratio of a circle's circumference to its diameter, 3.14159...",
     ),
     doc(
+        TEXT,
+        "starts_with",
+        "Name.starts_with('A')",
+        "Whether text starts with another. Name.starts_with('A'..'C') takes a range of first \
+         letters.",
+    ),
+    doc(
+        TEXT,
+        "ends_with",
+        "Name.ends_with('son')",
+        "Whether text ends with another.",
+    ),
+    doc(
+        TEXT,
+        "contains",
+        "Name.contains('an')",
+        "Whether text holds another anywhere in it, exactly as written.",
+    ),
+    doc(
+        TEXT,
+        "matches",
+        "Name.matches('^A.*n$')",
+        "Whether text matches a regular expression anywhere in it.",
+    ),
+    doc(
+        TEXT,
+        "contains_any",
+        "Name.contains_any(['an', 'en'])",
+        "Whether text holds any of several others.",
+    ),
+    doc(
+        TEXT,
+        "len_chars",
+        "Name.len_chars()",
+        "The number of characters in text.",
+    ),
+    doc(
+        TEXT,
+        "to_lowercase",
+        "Name.to_lowercase()",
+        "Text in lower case: Name.to_lowercase().starts_with('a') ignores case.",
+    ),
+    doc(
+        TEXT,
+        "to_uppercase",
+        "Name.to_uppercase()",
+        "Text in upper case.",
+    ),
+    doc(
         TIME,
         "today",
         "today()",
@@ -561,6 +651,12 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "The date and time now, in the file's time zone.",
     ),
     doc(TIME, "year", ".year()", "The year of a Date or Datetime."),
+    doc(
+        TIME,
+        "is_leap_year",
+        ".is_leap_year()",
+        "Whether a Date or Datetime falls in a leap year.",
+    ),
     doc(TIME, "month", ".month()", "The month, 1 to 12."),
     doc(TIME, "day", ".day()", "The day."),
     doc(
@@ -657,7 +753,7 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     doc(
         TIME,
         "convert_time_zone",
-        ".convert_time_zone(\"Australia/Adelaide\")",
+        ".convert_time_zone('Australia/Adelaide')",
         "The same instant on the clocks of a named time zone.",
     ),
     doc(

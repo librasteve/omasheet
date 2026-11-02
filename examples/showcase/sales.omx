@@ -46,4 +46,4 @@ sheet Facts
 | Average order | = Orders.Net.mean()                               |
 | Best region   | = Regions[; Sales == Regions.Sales.max()].Region |
 | Big orders    | = Orders[; Net > 200].len()                    |
-| Kettles sold  | = Orders[; Product == "Kettle"].Qty.sum()        |
+| Kettles sold  | = Orders[; Product == 'Kettle'].Qty.sum()        |

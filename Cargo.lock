@@ -1879,6 +1879,7 @@ dependencies = [
  "libc",
  "omasheet-omx",
  "polars",
+ "regex",
 ]
 
 [[package]]
@@ -1905,6 +1906,9 @@ dependencies = [
 [[package]]
 name = "omasheet-omx"
 version = "0.1.6"
+dependencies = [
+ "regex",
+]
 
 [[package]]
 name = "omasheet-ui"
@@ -2029,6 +2033,7 @@ dependencies = [
  "polars-lazy",
  "polars-ops",
  "polars-parquet",
+ "polars-plan",
  "polars-sql",
  "polars-time",
  "polars-utils",
@@ -2307,6 +2312,7 @@ version = "0.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "acf6062173fdc9ba05775548beb66e76643a148d9aeadc9984ed712bc4babd76"
 dependencies = [
+ "aho-corasick",
  "argminmax",
  "base64 0.22.1",
  "bytemuck",

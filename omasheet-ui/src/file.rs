@@ -8,7 +8,7 @@ use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QUrl};
 use omasheet_engine::datefmt::Names;
-use omasheet_engine::doc::{BLANK, PAGED_ROWS, entry_hint, matching};
+use omasheet_engine::doc::{BLANK, PAGED_ROWS, entry_hint};
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::{Document, Options, locale};
 use omasheet_interop::parquet;
@@ -16,7 +16,6 @@ use omasheet_interop::{Exported, Imported};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::OnceLock;
 
 #[cxx_qt::bridge]
@@ -49,6 +48,9 @@ pub mod qobject {
         #[qproperty(QString, theme_error)]
         #[qproperty(QString, export_warning)]
         #[qproperty(QString, snapshot_path)]
+        /// Whether something is being read in the background, for the
+        /// spinner in the status bar.
+        #[qproperty(bool, working)]
         type File = super::FileRust;
 
         /// The whole file as JSON: sheets, constants and problems.
@@ -233,14 +235,24 @@ pub mod qobject {
         #[qinvokable]
         fn move_rows(self: Pin<&mut File>, sheet: i32, first: i32, count: i32, to: i32) -> QString;
         /// Move `count` columns from `first` so the first becomes column `to`.
-        /// Filter sheet `sheet`, and say how many rows it shows, or -1 where
-        /// nothing is filtered and every row shows. `hide` is each filtered
-        /// column's name followed by the texts it hides, separated by U+001F,
-        /// the columns by U+001E. The rows are kept here, for
-        /// [`row_at`](Self::row_at) and [`pos_of`](Self::pos_of) to answer
-        /// from: a big table's would be millions, too many to hand to QML.
+        /// Filter sheet `sheet`, and say how many rows it shows: -1 where
+        /// nothing is filtered and every row shows, and -2 where a filter
+        /// fails, which [`filter_problem`](Self::filter_problem) then says,
+        /// and the filter before stays in force. `filters` is each filtered
+        /// column's name and its expression, separated by U+001F, the
+        /// columns by U+001E (filter-by-expression D172). The rows are kept
+        /// here, for [`row_at`](Self::row_at) and [`pos_of`](Self::pos_of)
+        /// to answer from: a big table's would be millions, too many to
+        /// hand to QML.
         #[qinvokable]
-        fn filter_rows(self: &File, sheet: i32, hide: &QString) -> i32;
+        fn filter_rows(self: &File, sheet: i32, filters: &QString) -> i32;
+        /// Why the last filter failed, as `Column: why`.
+        #[qinvokable]
+        fn filter_problem(self: &File) -> QString;
+        /// What is wrong with `expr` as a filter of column `col` of sheet
+        /// `sheet`, or nothing: checked as it is typed, and no row read.
+        #[qinvokable]
+        fn check_filter(self: &File, sheet: i32, col: i32, expr: &QString) -> QString;
         /// The row shown at place `pos` of the filtered list, or -1 past its
         /// ends; `pos` itself where nothing is filtered.
         #[qinvokable]
@@ -252,17 +264,6 @@ pub mod qobject {
         /// Whether any row from `top` to `bottom` is hidden by the filter.
         #[qinvokable]
         fn hides_between(self: &File, top: i32, bottom: i32) -> bool;
-        /// The first `limit` texts column `col` shows that hold `query`,
-        /// each once and in order, and how many hold it in all, as JSON
-        /// `{"values": [...], "total": n}`: what its filter chooses among.
-        #[qinvokable]
-        fn values_matching(
-            self: &File,
-            sheet: i32,
-            col: i32,
-            query: &QString,
-            limit: i32,
-        ) -> QString;
         /// The rows of sheet `sheet` rearranged in the order of column
         /// `col`, descending or not.
         #[qinvokable]
@@ -356,9 +357,6 @@ pub mod qobject {
     impl cxx_qt::Threading for File {}
 }
 
-/// Which column of which sheet, at which revision, a filter's list is of.
-type Listed = (i32, i32, i32);
-
 /// The rows a filter shows, by number, and the place each row has among
 /// them, -1 for one it hides.
 struct Shown {
@@ -391,6 +389,7 @@ pub struct FileRust {
     export_warning: QString,
     /// Development aid: where to save a picture of the window, then quit.
     snapshot_path: QString,
+    working: bool,
 
     doc: Document,
     path: Option<PathBuf>,
@@ -400,10 +399,8 @@ pub struct FileRust {
     saved: String,
     /// What was last cut or copied here.
     clip: Clip,
-    /// The texts a column last listed for its filter shows, by sheet,
-    /// column and revision: a column of a big table takes seconds to list,
-    /// and a search asks again with each key.
-    distinct: RefCell<Option<(Listed, Rc<Vec<String>>)>>,
+    /// Why the last filter failed. See [`qobject::File::filter_problem`].
+    filter_problem: RefCell<String>,
     /// The rows the filter in force shows, and each row's place among them;
     /// `None` while every row shows. See [`qobject::File::filter_rows`].
     shown: RefCell<Option<Shown>>,
@@ -437,12 +434,13 @@ impl Default for FileRust {
             system_dark: true,
             watching: false,
             snapshot_path: QString::from(std::env::var("OMASHEET_UI_SNAPSHOT").unwrap_or_default()),
+            working: false,
             doc: document(BLANK),
             path: None,
             origin: None,
             saved: BLANK.to_string(),
             clip: Clip::default(),
-            distinct: RefCell::new(None),
+            filter_problem: RefCell::new(String::new()),
             shown: RefCell::new(None),
             reading: HashSet::new(),
             told: HashSet::new(),
@@ -566,7 +564,7 @@ impl qobject::File {
         let Ok(full) = std::fs::canonicalize(path) else {
             return false;
         };
-        let Some(full) = full.to_str().filter(|f| !f.contains(['"', '\\'])) else {
+        let Some(full) = full.to_str() else {
             return false;
         };
         let stem = path.file_stem().unwrap_or_default().to_string_lossy();
@@ -574,7 +572,10 @@ impl qobject::File {
             empty if empty.is_empty() => "Table".to_string(),
             name => name,
         };
-        let doc = document(&format!("table {name} := dataframe[\"{full}\"]\n"));
+        let doc = document(&format!(
+            "table {name} := dataframe[{}]\n",
+            omasheet_engine::omx::lexer::quoted(full)
+        ));
         let rows = doc.row_count(0);
         if rows <= PAGED_ROWS || !doc.snapshot().sheets[0].paged {
             return false;
@@ -1034,23 +1035,27 @@ impl qobject::File {
         self.try_edit(|doc| doc.move_rows(index(sheet), index(first), index(count), index(to)))
     }
 
-    fn filter_rows(&self, sheet: i32, hide: &QString) -> i32 {
-        let hide: Vec<(String, Vec<String>)> = hide
+    fn filter_rows(&self, sheet: i32, filters: &QString) -> i32 {
+        let filters: Vec<(String, String)> = filters
             .to_string()
             .split('\u{1e}')
-            .filter(|column| !column.is_empty())
             .filter_map(|column| {
-                let mut parts = column.split('\u{1f}');
-                let name = parts.next()?.to_string();
-                Some((name, parts.map(str::to_string).collect()))
+                let (name, expr) = column.split_once('\u{1f}')?;
+                Some((name.to_string(), expr.to_string())).filter(|(_, e)| !e.trim().is_empty())
             })
             .collect();
         let rust = self.rust();
-        if hide.iter().all(|(_, texts)| texts.is_empty()) {
+        if filters.is_empty() {
             *rust.shown.borrow_mut() = None;
             return -1;
         }
-        let rows = rust.doc.shown_rows(index(sheet), &hide);
+        let rows = match rust.doc.shown_rows(index(sheet), &filters) {
+            Ok(rows) => rows,
+            Err(why) => {
+                *rust.filter_problem.borrow_mut() = why;
+                return -2;
+            }
+        };
         let n = rust.doc.row_count(index(sheet));
         let mut pos = vec![-1; n];
         for (k, &r) in rows.iter().enumerate() {
@@ -1061,6 +1066,17 @@ impl qobject::File {
         let count = rows.len() as i32;
         *rust.shown.borrow_mut() = Some(Shown { rows, pos });
         count
+    }
+
+    fn filter_problem(&self) -> QString {
+        QString::from(&*self.rust().filter_problem.borrow())
+    }
+
+    fn check_filter(&self, sheet: i32, col: i32, expr: &QString) -> QString {
+        match self.rust().doc.check_filter(index(sheet), index(col), &expr.to_string()) {
+            Ok(()) => QString::default(),
+            Err(why) => QString::from(&why),
+        }
     }
 
     fn row_at(&self, pos: i32) -> i32 {
@@ -1095,24 +1111,6 @@ impl qobject::File {
                     .is_some_and(|block| block.iter().any(|&p| p < 0))
             }
         }
-    }
-
-    fn values_matching(&self, sheet: i32, col: i32, query: &QString, limit: i32) -> QString {
-        let rust = self.rust();
-        let key = (sheet, col, rust.revision);
-        let held = rust
-            .distinct
-            .borrow()
-            .as_ref()
-            .filter(|(k, _)| *k == key)
-            .map(|(_, v)| v.clone());
-        let values = held.unwrap_or_else(|| {
-            let values = Rc::new(rust.doc.distinct_shown(index(sheet), index(col)));
-            *rust.distinct.borrow_mut() = Some((key, values.clone()));
-            values
-        });
-        let (first, total) = matching(&values, &query.to_string(), index(limit));
-        QString::from(&json::matching(&first, total))
     }
 
     fn sort_rows(self: Pin<&mut Self>, sheet: i32, col: i32, descending: bool) -> QString {
@@ -1275,6 +1273,7 @@ impl qobject::File {
                 continue;
             }
             self.as_mut().rust_mut().reading.insert(want.path.clone());
+            self.as_mut().set_working(true);
             note = format!(
                 "Reading {name} into memory ({})\u{2026}",
                 bytes_text(want.bytes)
@@ -1299,6 +1298,8 @@ impl qobject::File {
         got: Result<omasheet_engine::table::Whole, String>,
     ) {
         self.as_mut().rust_mut().reading.remove(&path);
+        let still = !self.rust().reading.is_empty();
+        self.as_mut().set_working(still);
         let name = file_name(&path);
         match got {
             Ok(whole) => {

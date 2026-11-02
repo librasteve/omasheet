@@ -414,6 +414,158 @@ pub fn compile_expr(prog: &Program, text: &str, src: u32) -> Result<(Node, Ty), 
     }
 }
 
+/// What a filter may call (filter-by-expression D162): the tests Polars
+/// has and the parts of a date or time, each of which lowers.
+const FILTER_CALLS: &[&str] = &[
+    "is_null",
+    "is_not_null",
+    "is_nan",
+    "is_not_nan",
+    "is_finite",
+    "is_infinite",
+    "is_in",
+    "starts_with",
+    "ends_with",
+    "contains",
+    "matches",
+    "contains_any",
+    "len_chars",
+    "to_lowercase",
+    "to_uppercase",
+    "is_leap_year",
+    "is_unique",
+    "is_duplicated",
+    "is_first_distinct",
+    "is_last_distinct",
+    "year",
+    "month",
+    "day",
+    "weekday",
+    "quarter",
+    "week",
+    "ordinal_day",
+    "hour",
+    "minute",
+    "second",
+    "millisecond",
+    "microsecond",
+    "nanosecond",
+    "date",
+    "time",
+];
+
+/// A filter on column `col` of sheet `sheet`: an expression in which `*`
+/// is this row's cell in that column (filter-by-expression D160, D161).
+/// It is checked as a formula of the sheet's own rows is, so the engine
+/// answers it a row at a time and Polars a column at a time, and it must
+/// be true or false.
+pub fn compile_filter(
+    prog: &Program,
+    sheet: usize,
+    col: usize,
+    text: &str,
+) -> Result<Node, Vec<Diagnostic>> {
+    let mut expr = parse_expr(text, 0, 0).map_err(|d| vec![d])?;
+    let Some(name) = prog
+        .sheets
+        .get(sheet)
+        .and_then(|t| t.cols.get(col))
+        .map(|c| c.name.clone())
+    else {
+        return Err(vec![Diagnostic::new(expr.span, "there is no such column")]);
+    };
+    as_filter(&mut expr, &name).map_err(|d| vec![d])?;
+    let mut ck = Checker::for_program(prog, text, 0);
+    let mut scope = Scope {
+        frames: vec![sheet],
+        own: true,
+        col: Some(col),
+        group: None,
+    };
+    let (node, ty) = ck.lower(&expr, &mut scope);
+    if !ck.cur.is_empty() {
+        return Err(ck.cur);
+    }
+    match ty {
+        Ty::Any | Ty::Scalar(S::Any | S::Boolean) => Ok(node),
+        other => Err(vec![
+            Diagnostic::new(
+                expr.span,
+                format!("a filter is true or false for each row, but this is {}", other.describe()),
+            )
+            .with_help("compare `*`, the cell, with something: `* > 10`"),
+        ]),
+    }
+}
+
+/// `*` made the cell of column `name`, and anything a filter does not take
+/// refused where it is written: another column, a sheet, an index, an `if`.
+fn as_filter(e: &mut Expr, name: &str) -> Result<(), Diagnostic> {
+    let span = e.span;
+    let calls = "a filter takes the tests Polars has: `starts_with`, `contains`, `is_in`, \
+                 `is_null` and the rest";
+    match &mut e.kind {
+        ExprKind::Cursor => {
+            e.kind = ExprKind::Name(name.to_string());
+            Ok(())
+        }
+        ExprKind::Lit(_) => Ok(()),
+        // The column by its own name is the same cell.
+        ExprKind::Name(n) if n == name => Ok(()),
+        ExprKind::Name(n) => Err(Diagnostic::new(
+            span,
+            format!("a filter is about its own column: write `*` for its value, not `{n}`"),
+        )),
+        ExprKind::Unary(_, a) => as_filter(a, name),
+        // `* == ''` asks for an empty cell, whatever the column holds
+        // (D165), and `* != ''` for one that is not.
+        ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), a, b)
+            if [&**a, &**b].iter().any(|e| matches!(&e.kind, ExprKind::Lit(Lit::String(t)) if t.is_empty())) =>
+        {
+            let negate = *op == BinOp::Ne;
+            let empty = |e: &Expr| matches!(&e.kind, ExprKind::Lit(Lit::String(t)) if t.is_empty());
+            let mut value = if empty(a) { (**b).clone() } else { (**a).clone() };
+            as_filter(&mut value, name)?;
+            let test = Expr {
+                kind: ExprKind::Call("is_null".into(), span, vec![value]),
+                span,
+            };
+            e.kind = if negate {
+                ExprKind::Unary(UnOp::Not, Box::new(test))
+            } else {
+                test.kind
+            };
+            Ok(())
+        }
+        ExprKind::Binary(_, a, b) => {
+            as_filter(a, name)?;
+            as_filter(b, name)
+        }
+        ExprKind::VecLit(items) => items.iter_mut().try_for_each(|i| as_filter(i, name)),
+        ExprKind::Call(f, _, args) if FILTER_CALLS.contains(&f.as_str()) => {
+            args.iter_mut().try_for_each(|a| as_filter(a, name))
+        }
+        ExprKind::Call(f, at, _) => Err(Diagnostic::new(
+            *at,
+            format!("a filter cannot call `{f}`"),
+        )
+        .with_help(calls)),
+        // `*.year`, a part written without its brackets, is a call.
+        ExprKind::Field(base, f, at) if FILTER_CALLS.contains(&f.as_str()) => {
+            as_filter(base, name)?;
+            let (f, at) = (f.clone(), *at);
+            let base = std::mem::replace(base.as_mut(), Expr { kind: ExprKind::Cursor, span });
+            e.kind = ExprKind::Call(f, at, vec![base]);
+            Ok(())
+        }
+        _ => Err(Diagnostic::new(
+            span,
+            "a filter compares `*`, the cell, with values",
+        )
+        .with_help("as `* > 10`, `0 < * <= 5` or `*.starts_with('A')`")),
+    }
+}
+
 fn static_of(e: &Expr) -> Option<Static> {
     fn int(e: &Expr) -> Option<i64> {
         match &e.kind {
@@ -2037,7 +2189,7 @@ impl<'a> Checker<'a> {
                 decl.expr_span,
                 format!("table `{sheet}` does not say what to read"),
             )
-            .with_help("a table is written `table <Name> := dataframe[\"<path>\"]`"),
+            .with_help("a table is written `table <Name> := dataframe['<path>']`"),
         );
         None
     }
@@ -2756,6 +2908,184 @@ impl<'a> Checker<'a> {
         (node, ty)
     }
 
+    /// The tests Polars has that give a boolean, and the text functions
+    /// they are written with, under Polars' names (filter-by-expression
+    /// D174). Each is a function of one value, so a column formula or a
+    /// filter answers it a row at a time and Polars a column at a time,
+    /// except the four that ask about a value among its column's.
+    fn lower_test(&mut self, name: &str, args: &[Expr], span: Span, sc: &mut Scope) -> (Node, Ty) {
+        let fail = (Node::error(span), Ty::Any);
+        let two = matches!(
+            name,
+            "starts_with" | "ends_with" | "contains" | "matches" | "contains_any"
+        );
+        let usage = match name {
+            "starts_with" => "Name.starts_with('A')".to_string(),
+            "ends_with" => "Name.ends_with('son')".to_string(),
+            "contains" => "Name.contains('an')".to_string(),
+            "matches" => "Name.matches('^A.*n$')".to_string(),
+            "contains_any" => "Name.contains_any(['an', 'en'])".to_string(),
+            "is_leap_year" => "Placed.is_leap_year()".to_string(),
+            "len_chars" | "to_lowercase" | "to_uppercase" => format!("Name.{name}()"),
+            "is_finite" | "is_infinite" => format!("Price.{name}()"),
+            _ => format!("Sales.Name.{name}()"),
+        };
+        let want = if two { 2 } else { 1 };
+        if args.len() != want {
+            self.err_help(
+                span,
+                format!(
+                    "`{name}` takes {want} argument{}, found {}",
+                    if want == 1 { "" } else { "s" },
+                    args.len()
+                ),
+                format!("usage: `{usage}`"),
+            );
+            return fail;
+        }
+        // `x.is_in(list)` is `x in list` (D173), with `fill_null` below.
+        // `starts_with('A'..'C')`: the first letter in a range, which is a
+        // pair of comparisons and no slicing (D167).
+        if name == "starts_with"
+            && let ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeEx | BinOp::RangeFrom | BinOp::RangeBoth), lo, hi) =
+                &args[1].kind
+        {
+            let letter = |e: &Expr| match &e.kind {
+                ExprKind::Lit(Lit::String(s)) if s.chars().count() == 1 => s.chars().next(),
+                _ => None,
+            };
+            let next = |c: char| char::from_u32(c as u32 + 1);
+            let after = matches!(op, BinOp::RangeFrom | BinOp::RangeBoth);
+            let before = matches!(op, BinOp::RangeEx | BinOp::RangeBoth);
+            let bounds = letter(lo).zip(letter(hi)).and_then(|(lo, hi)| {
+                let from = if after { next(lo)? } else { lo };
+                let to = if before { hi } else { next(hi)? };
+                Some((from, to))
+            });
+            let Some((from, to)) = bounds else {
+                self.err_help(
+                    args[1].span,
+                    "a range in `starts_with` is of single letters",
+                    "as `Name.starts_with('A'..'C')`",
+                );
+                return fail;
+            };
+            let text = |c: char| Expr {
+                kind: ExprKind::Lit(Lit::String(c.to_string())),
+                span: args[1].span,
+            };
+            let compare = |op: BinOp, c: char| Expr {
+                kind: ExprKind::Binary(op, Box::new(args[0].clone()), Box::new(text(c))),
+                span,
+            };
+            let form = Expr {
+                kind: ExprKind::Binary(
+                    BinOp::And,
+                    Box::new(compare(BinOp::Ge, from)),
+                    Box::new(compare(BinOp::Lt, to)),
+                ),
+                span,
+            };
+            return self.lower(&form, sc);
+        }
+        let column = matches!(
+            name,
+            "is_unique" | "is_duplicated" | "is_first_distinct" | "is_last_distinct"
+        );
+        let (takes, gives, what): (fn(S) -> bool, S, &str) = match name {
+            "is_finite" | "is_infinite" => (S::is_numeric, S::Boolean, "a number"),
+            "is_leap_year" => (|s| matches!(s, S::Date | S::DateTime), S::Boolean, "a Date or a Datetime"),
+            "len_chars" => (S::is_text, S::Int, "text"),
+            "to_lowercase" | "to_uppercase" => (S::is_text, S::String, "text"),
+            _ if column => (|_| true, S::Boolean, "a value"),
+            _ => (S::is_text, S::Boolean, "text"),
+        };
+        let (arg, aty) = self.lower(&args[0], sc);
+        let ty = match &aty {
+            Ty::Any | Ty::Scalar(S::Any) => Ty::Scalar(gives),
+            Ty::Scalar(s) if takes(*s) => Ty::Scalar(gives),
+            Ty::Vector(s, n) if *s == S::Any || takes(*s) => Ty::Vector(gives, *n),
+            other => {
+                if !matches!(arg.kind, Ir::Error) {
+                    self.err(
+                        args[0].span,
+                        format!("`{name}` needs {what}, but this is {}", other.describe()),
+                    );
+                }
+                return fail;
+            }
+        };
+        let func = match name {
+            "is_finite" => Func::IsFinite,
+            "is_infinite" => Func::IsInfinite,
+            "is_leap_year" => Func::IsLeapYear,
+            "len_chars" => Func::LenChars,
+            "to_lowercase" => Func::ToLowercase,
+            "to_uppercase" => Func::ToUppercase,
+            "starts_with" => Func::StartsWith,
+            "ends_with" => Func::EndsWith,
+            "contains" => Func::Contains,
+            "matches" => Func::Matches,
+            "contains_any" => Func::ContainsAny,
+            "is_unique" => Func::IsUnique,
+            "is_duplicated" => Func::IsDuplicated,
+            "is_first_distinct" => Func::IsFirstDistinct,
+            _ => Func::IsLastDistinct,
+        };
+        let mut call = vec![arg];
+        if two {
+            let (pat, pty) = self.lower(&args[1], sc);
+            let text = |s: &S| *s == S::Any || s.is_text();
+            let fits = match (&pty, name) {
+                (Ty::Any, _) => true,
+                (Ty::Vector(s, _), "contains_any") => text(s),
+                (Ty::Scalar(s), n) if n != "contains_any" => text(s),
+                _ => false,
+            };
+            if !fits {
+                if !matches!(pat.kind, Ir::Error) {
+                    let looked = if name == "contains_any" { "a vector of texts" } else { "text" };
+                    self.err_help(
+                        args[1].span,
+                        format!("`{name}` looks for {looked}, but this is {}", pty.describe()),
+                        format!("usage: `{usage}`"),
+                    );
+                }
+                return fail;
+            }
+            // A regex written out is checked here, not met a row at a time.
+            if name == "matches"
+                && let ExprKind::Lit(Lit::String(re)) = &args[1].kind
+                && let Err(e) = regex::Regex::new(re)
+            {
+                let why = e.to_string();
+                let last = why.lines().last().unwrap_or("").trim().to_string();
+                self.err(args[1].span, format!("this is not a regex: {last}"));
+                return fail;
+            }
+            call.push(pat);
+        }
+        // A value among its column's: over a vector each element's answer;
+        // over this row's cell, the column is given too, and the row's place.
+        if column && !matches!(ty, Ty::Vector(..)) {
+            let Ir::RowCol { depth, col } = call[0].kind else {
+                if !matches!(call[0].kind, Ir::Error) {
+                    self.err_help(
+                        args[0].span,
+                        format!("`{name}` asks about a value among its column's, so it takes a column"),
+                        format!("as `Name.{name}()` in a column's formula, or `Sales.Name.{name}()`"),
+                    );
+                }
+                return fail;
+            };
+            let t = sc.frames[sc.frames.len() - 1 - depth];
+            self.deps.push((DepNode::Col(t, col), DepKind::Whole));
+            call.push(Node::new(Ir::Column { sheet: t, col }, span));
+            call.push(Node::new(Ir::RowIndex { depth }, span));
+        }
+        (Node::new(Ir::Call(func, call), span), ty)
+    }
+
     fn lower_call(
         &mut self,
         name: &str,
@@ -2967,6 +3297,12 @@ impl<'a> Checker<'a> {
                     span,
                 };
                 self.lower(&form, sc)
+            }
+            "is_finite" | "is_infinite" | "is_leap_year" | "len_chars"
+            | "to_lowercase" | "to_uppercase" | "starts_with" | "ends_with" | "contains"
+            | "matches" | "contains_any" | "is_unique" | "is_duplicated"
+            | "is_first_distinct" | "is_last_distinct" => {
+                self.lower_test(name, args, span, sc)
             }
             "is_null" | "is_not_null" | "is_nan" | "is_not_nan" => {
                 if !arity(self, 1, &format!("Sheet.Column.{name}()")) {
@@ -3303,7 +3639,7 @@ impl<'a> Checker<'a> {
             "convert_time_zone" | "utc" | "local" | "base_utc_offset" | "time_zone" => {
                 let takes_zone = name == "convert_time_zone";
                 let usage = if takes_zone {
-                    "Orders.Placed.convert_time_zone(\"Asia/Tokyo\")".to_string()
+                    "Orders.Placed.convert_time_zone('Asia/Tokyo')".to_string()
                 } else {
                     format!("Orders.Placed.{name}()")
                 };
@@ -3346,7 +3682,7 @@ impl<'a> Checker<'a> {
                                 "`convert_time_zone` needs the name of a time zone, but this is {}",
                                 zty.describe()
                             ),
-                            "for example `\"Europe/London\"`",
+                            "for example `'Europe/London'`",
                         );
                         return fail;
                     }
@@ -3355,7 +3691,7 @@ impl<'a> Checker<'a> {
                 (Node::new(Ir::Call(func, nodes), span), ty)
             }
             "filter" => {
-                if !arity(self, 2, "Sales |> filter(Region == \"UK\")") {
+                if !arity(self, 2, "Sales |> filter(Region == 'UK')") {
                     return fail;
                 }
                 let (b, bty) = self.lower(&args[0], sc);
@@ -4017,7 +4353,7 @@ impl<'a> Checker<'a> {
                         "a row selector must be a position, a range or a condition, found {}",
                         other.describe()
                     ),
-                    "for example `[; 0]`, `[; 0..2]`, `[; *-1]` or `[; Region == \"UK\"]`",
+                    "for example `[; 0]`, `[; 0..2]`, `[; *-1]` or `[; Region == 'UK']`",
                 );
                 RowPick::all(nrows)
             }

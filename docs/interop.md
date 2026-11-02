@@ -75,7 +75,7 @@ formula becomes a column and a row:
 | `=SUM(B2:B10)`, all the rows | `= Sales.Revenue.sum()` |
 | `=SUM(B$2:B3)` | `= [Revenue; 0..*].sum()`, a running total |
 | `=Rates!B2*B3` | `= Rates[Rate; 0] * Revenue` |
-| `=IF(B3>C3,"up","down")` | `= if Revenue > Cost then "up" else "down"` |
+| `=IF(B3>C3,"up","down")` | `= if Revenue > Cost then 'up' else 'down'` |
 
 - A column filled down with one formula becomes a computed column, with `*`
   in its cells and `Profit := Revenue - Cost` after the rows.
@@ -127,7 +127,7 @@ row become a cell. Each formula is written for the row it is on:
 | `[Revenue; *-1] // 0` | `=IF(ISBLANK(B2),0,B2)`, and `0` on the first row |
 | `Rates[Fee; Code == Sales[Code; *]] // 1` | `=IFERROR(INDEX('Rates'!$B$2:$B$9,MATCH(A3,'Rates'!$A$2:$A$9,0)),1)` |
 | `count(Orders[; Region == Name])` | `=COUNTIFS('Orders'!$F$2:$F$40,A3)` |
-| `if Revenue > Cost then "up" else "down"` | `=IF(B3>C3,"up","down")` |
+| `if Revenue > Cost then 'up' else 'down'` | `=IF(B3>C3,"up","down")` |
 
 - These are written: `+ - * / **` and the comparisons; `and`, `or`, `not`,
   `if`; `sum`, `mean`, `min`, `max`, `count` and `len` of a column, a range
@@ -270,7 +270,7 @@ computed sheet's columns are kept as a sheet of their own rows.
 ### What a table reads
 
 An import copies the rows into the `.omx`. A `table` leaves them where they
-are — `table Sales := dataframe["sales.parquet"]`, written up in
+are — `table Sales := dataframe['sales.parquet']`, written up in
 [the format guide](format.md) — and then reads as little of the file as the
 question needs.
 

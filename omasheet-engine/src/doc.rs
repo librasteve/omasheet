@@ -13,6 +13,7 @@
 use crate::Options;
 use crate::datefmt::Names;
 use crate::eval::Engine;
+use crate::table::Copying;
 use crate::value::{Value, arith, delocalised, format_exact, format_styled};
 use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use omasheet_omx::colfmt::{Format, closing};
@@ -178,27 +179,6 @@ pub struct ToHold {
     pub bytes: usize,
 }
 
-/// The first `limit` of `values` whose text holds `query`, case aside, and
-/// how many hold it in all: what a column's filter lists of the values it
-/// shows. A column of a big table can show millions of values, more than a
-/// list can be scrolled through or the grid's JavaScript can parse, so the
-/// list is cut short and the count says by how much; a search reaches the
-/// rest. An empty query is held by every text.
-pub fn matching<'a>(values: &'a [String], query: &str, limit: usize) -> (Vec<&'a str>, usize) {
-    let query = query.to_lowercase();
-    let mut first = Vec::new();
-    let mut total = 0;
-    for value in values {
-        if query.is_empty() || value.to_lowercase().contains(&query) {
-            if first.len() < limit {
-                first.push(value.as_str());
-            }
-            total += 1;
-        }
-    }
-    (first, total)
-}
-
 pub struct Document {
     text: String,
     snapshot: Snapshot,
@@ -223,6 +203,9 @@ pub struct Document {
     /// rebuilds, and dropped when the text no longer names the file or the
     /// file has changed. See [`Document::to_hold`] and [`Document::hold`].
     whole: crate::table::Store,
+    /// Whether a table over a CSV with no copy yet waits for one or shows
+    /// its sample meanwhile.
+    copying: Copying,
     /// How many edits have been committed. See [`Document::edit_count`].
     edits: usize,
     /// The engine of the last rebuild, kept so that a paged sheet's cells
@@ -1168,6 +1151,14 @@ fn clean_cell(input: &str) -> String {
     )
 }
 
+/// A diagnostic as one line, its help after it.
+fn said(d: &omasheet_omx::Diagnostic) -> String {
+    match &d.help {
+        Some(help) => format!("{} \u{2014} {help}", d.message),
+        None => d.message.clone(),
+    }
+}
+
 /// A name with any `_001` it was copied with taken off.
 fn copy_base(name: &str) -> &str {
     match name.rsplit_once('_') {
@@ -1441,7 +1432,7 @@ fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
 impl Document {
     /// A document that shows dates and times as the file writes them.
     pub fn from_text(text: &str) -> Document {
-        Document::new(text, Style::ISO, Names::default(), false)
+        Document::new(text, Style::ISO, Names::default(), false, Copying::Wait)
     }
 
     /// A document for a person to look at: dates and times are shown in
@@ -1454,10 +1445,19 @@ impl Document {
     /// As [`Document::with_style`], with dates shown by a column's format
     /// in the language of `names`.
     pub fn with_locale(text: &str, style: Style, names: Names) -> Document {
-        Document::new(text, style, names, true)
+        Document::new(text, style, names, true, Copying::Wait)
     }
 
-    fn new(text: &str, style: Style, names: Names, local: bool) -> Document {
+    /// As [`Document::with_locale`], for a screen that should never wait
+    /// for a big CSV to be copied: a table over one shows the sample of its
+    /// first rows until the copy is written (open-a-big-csv D153), which
+    /// [`Document::to_convert`] says is wanted and
+    /// [`Document::converted`] takes up once it is.
+    pub fn on_screen(text: &str, style: Style, names: Names) -> Document {
+        Document::new(text, style, names, true, Copying::Sample)
+    }
+
+    fn new(text: &str, style: Style, names: Names, local: bool, copying: Copying) -> Document {
         let mut doc = Document {
             text: text.to_string(),
             snapshot: Snapshot::default(),
@@ -1473,6 +1473,7 @@ impl Document {
             engine: None,
             column_errors: Vec::new(),
             paged_rows: PAGED_ROWS,
+            copying,
         };
         doc.rebuild();
         doc
@@ -1529,6 +1530,11 @@ impl Document {
                 continue;
             };
             let path = base.join(&source.path);
+            // A CSV not yet copied is shown from its sample, which is small.
+            if crate::table::is_csv(&path) && crate::table::copy_of(&path).is_none() {
+                continue;
+            }
+            let path = self.file_of(&path);
             if !snap.paged || self.whole.contains_key(&path) || out.iter().any(|h| h.path == path) {
                 continue;
             }
@@ -1563,6 +1569,50 @@ impl Document {
             return false;
         }
         self.whole.insert(path, whole);
+        self.rebuild();
+        true
+    }
+
+    /// The file a table's source at `path` is read from: itself, or for a
+    /// CSV its copy, or its sample while there is none.
+    fn file_of(&self, path: &std::path::Path) -> std::path::PathBuf {
+        if !crate::table::is_csv(path) {
+            return path.to_path_buf();
+        }
+        crate::table::copy_of(path).unwrap_or_else(|| path.to_path_buf())
+    }
+
+    /// The CSV files this document's tables read that have no copy yet, and
+    /// are shown from their samples meanwhile: each for a worker to
+    /// [`crate::table::convert`], and then [`Document::converted`].
+    pub fn to_convert(&self) -> Vec<std::path::PathBuf> {
+        let Some(engine) = &self.engine else {
+            return Vec::new();
+        };
+        let base = self.base.clone().unwrap_or_else(|| ".".into());
+        let mut out: Vec<std::path::PathBuf> = Vec::new();
+        for sheet in &engine.program().sheets {
+            let Some(source) = &sheet.source else {
+                continue;
+            };
+            let path = base.join(&source.path);
+            if crate::table::is_csv(&path)
+                && crate::table::copy_of(&path).is_none()
+                && !out.contains(&path)
+            {
+                out.push(path);
+            }
+        }
+        out
+    }
+
+    /// A CSV's copy has been written: its tables are read from it now,
+    /// whole, where they were shown from the sample. Whether anything
+    /// changed.
+    pub fn converted(&mut self, csv: &std::path::Path) -> bool {
+        if crate::table::copy_of(csv).is_none() {
+            return false;
+        }
         self.rebuild();
         true
     }
@@ -1945,74 +1995,6 @@ impl Document {
             .collect()
     }
 
-    /// The text a value of column `col` is shown as, as
-    /// [`Document::paged_column`] shows it.
-    fn text_shown(&self, sheet: usize, col: usize, v: &Value) -> String {
-        let Some(engine) = &self.engine else {
-            return String::new();
-        };
-        match engine.program().sheets[sheet].cols[col].format.as_ref() {
-            Some(format) => engine.show_in(v, false, Some(format)),
-            None => shown_text(engine, v),
-        }
-    }
-
-    /// The rows of a table's column as shown, in groups of one value each,
-    /// in the order a sort puts the values: each group's value and the
-    /// places it is shown at (D158). The column is sorted by Polars and
-    /// walked once, and a value is read once a group rather than once a
-    /// row, which is what a filter and its list need: a text per value.
-    /// Two floats are the same value only if their bits are, so `-0.0` and
-    /// `0.0`, which a sort counts equal, are shown each as it is. `None`
-    /// where Polars does not hold the column as the grid shows it.
-    fn groups_by_value(&self, sheet: usize, col: usize) -> Option<Vec<(Value, Vec<usize>)>> {
-        use polars::prelude::{AnyValue, IdxSize, SortOptions};
-        let t = self.snapshot.sheets.get(sheet)?;
-        let engine = self.engine.as_ref()?;
-        let column = engine.frame_values(sheet, col)?;
-        let n = t.nrows;
-        if column.len() != n {
-            return None;
-        }
-        let series = column.as_materialized_series();
-        let shown = match self.orders.get(&t.name).filter(|o| o.len() == n) {
-            Some(order) => {
-                let idx: Vec<IdxSize> = order.iter().map(|&r| r as IdxSize).collect();
-                series.take_slice(&idx).ok()?
-            }
-            None => series.clone(),
-        };
-        let places: Vec<usize> = shown
-            .arg_sort(SortOptions {
-                maintain_order: true,
-                multithreaded: true,
-                ..Default::default()
-            })
-            .into_no_null_iter()
-            .map(|i| i as usize)
-            .collect();
-        let idx: Vec<IdxSize> = places.iter().map(|&p| p as IdxSize).collect();
-        let sorted = shown.take_slice(&idx).ok()?.rechunk();
-        let same = |a: &AnyValue, b: &AnyValue| match (a, b) {
-            (AnyValue::Float64(x), AnyValue::Float64(y)) => x.to_bits() == y.to_bits(),
-            (AnyValue::Float32(x), AnyValue::Float32(y)) => x.to_bits() == y.to_bits(),
-            _ => a == b,
-        };
-        let mut groups: Vec<(Value, Vec<usize>)> = Vec::new();
-        let mut last: Option<AnyValue> = None;
-        for (value, &place) in sorted.iter().zip(&places) {
-            match &last {
-                Some(prev) if same(prev, &value) => {}
-                _ => groups.push((engine.value_of(sheet, col, value.clone()), Vec::new())),
-            }
-            if let Some(group) = groups.last_mut() {
-                group.1.push(place);
-            }
-            last = Some(value);
-        }
-        Some(groups)
-    }
-
     /// The count, sum and average of the block of cells from `(top, left)`
     /// to `(bottom, right)`. Numbers add up exactly, as they do in a formula.
     pub fn summary(
@@ -2042,6 +2024,8 @@ impl Document {
                     add(&cell.value)?;
                 }
             }
+        } else if let Some(fast) = self.summary_native(sheet, top..end, cols.clone()) {
+            (count, numbers, sum) = fast;
         } else if let Some(engine) = &self.engine {
             // A paged sheet's selection can be the whole of a big file, so
             // only the selected columns are read, as values and not as the
@@ -2078,11 +2062,105 @@ impl Document {
         let numbers = if numbers == 0 {
             None
         } else {
-            let mean = arith(BinOp::Div, &sum, &Value::int(numbers.into())).ok()?;
+            let mean = arith(BinOp::Div, &sum, &Value::int(numbers as i64)).ok()?;
             let show = |v: &Value| format_styled(v, false, &self.style);
             Some((show(&sum), show(&mean)))
         };
         Some(Summary { count, numbers })
+    }
+
+    /// [`Document::summary`] of a big selection of a paged sheet, added up
+    /// over the Polars arrays rather than a value at a time: the count, how
+    /// many numbers, and their sum. The numbers are added in the order the
+    /// one-by-one path adds them, row by row and across, and as `arith`
+    /// adds them: whole numbers exactly until the first float, and from
+    /// then on as floats. So the answer is the same. `None`, and the values
+    /// are added one by one, for a small selection, which reads only what
+    /// it covers; for a sum past what a whole number holds; and for
+    /// columns this does not read alike: exact numbers other than whole
+    /// ones, and a column whose values are converted to the sheet's type.
+    fn summary_native(
+        &self,
+        sheet: usize,
+        rows: std::ops::Range<usize>,
+        cols: std::ops::Range<usize>,
+    ) -> Option<(usize, usize, Value)> {
+        use polars::prelude::{DataType, IdxCa, StaticArray};
+        if rows.len() <= SUMMARY_ROWS {
+            return None;
+        }
+        let engine = self.engine.as_ref()?;
+        let t = &self.snapshot.sheets[sheet];
+        let order = self.orders.get(&t.name).filter(|o| o.len() == t.nrows);
+        let (mut count, mut numbers) = (0usize, 0usize);
+        // The columns of numbers, in order, each as whole numbers or floats.
+        let mut ints = Vec::new();
+        let mut floats = Vec::new();
+        let mut kinds = Vec::new();
+        for c in cols {
+            let column = engine.frame_values(sheet, c)?;
+            let column = match order {
+                Some(order) => {
+                    let idx: Vec<_> = order[rows.clone()].iter().map(|&r| r as _).collect();
+                    column.take(&IdxCa::from_vec("".into(), idx)).ok()?
+                }
+                None => column.slice(rows.start as i64, rows.len()),
+            };
+            let ty = engine.program().sheets[sheet].cols[c].ty;
+            let held = column.len() - column.null_count();
+            let dtype = column.dtype().clone();
+            match (ty, &dtype) {
+                (S::Int, d) if d.is_integer() && !matches!(d, DataType::UInt64) => {
+                    ints.push(column.cast(&DataType::Int64).ok()?.i64().ok()?.rechunk().into_owned());
+                    kinds.push(false);
+                    numbers += held;
+                }
+                (S::Float, DataType::Float32 | DataType::Float64) => {
+                    floats.push(column.cast(&DataType::Float64).ok()?.f64().ok()?.rechunk().into_owned());
+                    kinds.push(true);
+                    numbers += held;
+                }
+                // Counted, with no numbers. A date-time is out of a sheet's
+                // reach only millions of years away, so each held is a value.
+                (S::String, DataType::String)
+                | (S::Boolean, DataType::Boolean)
+                | (S::Date, DataType::Date)
+                | (S::Time, DataType::Time)
+                | (S::DateTime, DataType::Datetime(_, None)) => {}
+                _ => return None,
+            }
+            count += held;
+        }
+        let ints: Vec<_> = ints.iter().map(|ca| ca.downcast_iter().next()).collect::<Option<_>>()?;
+        let floats: Vec<_> = floats.iter().map(|ca| ca.downcast_iter().next()).collect::<Option<_>>()?;
+        enum Sum {
+            Whole(i128),
+            Float(f64),
+        }
+        let mut sum = Sum::Whole(0);
+        for r in 0..rows.len() {
+            let (mut i, mut f) = (ints.iter(), floats.iter());
+            for &float in &kinds {
+                sum = if float {
+                    match (f.next()?.get(r), &sum) {
+                        (None, _) => continue,
+                        (Some(v), Sum::Whole(w)) => Sum::Float(*w as f64 + v),
+                        (Some(v), Sum::Float(s)) => Sum::Float(s + v),
+                    }
+                } else {
+                    match (i.next()?.get(r), &sum) {
+                        (None, _) => continue,
+                        (Some(v), Sum::Whole(w)) => Sum::Whole(w + v as i128),
+                        (Some(v), Sum::Float(s)) => Sum::Float(s + v as f64),
+                    }
+                };
+            }
+        }
+        let sum = match sum {
+            Sum::Whole(w) => Value::int(i64::try_from(w).ok()?),
+            Sum::Float(f) => Value::Float(f),
+        };
+        Some((count, numbers, sum))
     }
 
     pub fn set_cell(&mut self, sheet: usize, row: usize, col: usize, text: &str) -> bool {
@@ -2606,120 +2684,55 @@ impl Document {
         Ok(())
     }
 
-    /// The rows of sheet `sheet` a filter shows, in order: those whose cell
-    /// in each filtered column is not one of the texts that column hides.
-    /// A filter is the grid's view of a sheet, so it is matched against the
-    /// cells as they are shown, and changes nothing.
-    pub fn shown_rows(&self, sheet: usize, hide: &[(String, Vec<String>)]) -> Vec<usize> {
+    /// The rows of sheet `sheet` a filter shows, in the grid's order: those
+    /// each filtered column's expression is true of, `*` in it being the
+    /// row's cell in that column (filter-by-expression D160). A filter is
+    /// the grid's view of a sheet, so it changes nothing. A table's is
+    /// answered by Polars over the column where it lowers (D162). The
+    /// first expression that fails is the answer instead, as
+    /// `Column: why`.
+    pub fn shown_rows(&self, sheet: usize, filters: &[(String, String)]) -> Result<Vec<usize>, String> {
         let Some(t) = self.snapshot.sheets.get(sheet) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
-        let tests: Vec<(usize, std::collections::HashSet<&str>)> = hide
-            .iter()
-            .filter(|(_, texts)| !texts.is_empty())
-            .filter_map(|(name, texts)| {
-                let c = t.columns.iter().position(|c| &c.name == name)?;
-                Some((c, texts.iter().map(String::as_str).collect()))
-            })
-            .collect();
-        if t.paged {
-            // A text is shown for each value, so a value is formatted once and
-            // its rows are hidden together (D158); a column Polars does not
-            // hold is formatted a row at a time.
-            let mut hidden = vec![false; t.nrows];
-            for (c, set) in &tests {
-                match self.groups_by_value(sheet, *c) {
-                    Some(groups) => {
-                        for (value, rows) in groups {
-                            if set.contains(self.text_shown(sheet, *c, &value).as_str()) {
-                                for r in rows {
-                                    hidden[r] = true;
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        for (r, (_, text)) in self.paged_column(sheet, *c).into_iter().enumerate() {
-                            if set.contains(text.as_str()) {
-                                hidden[r] = true;
-                            }
-                        }
-                    }
-                }
+        let n = t.nrows;
+        let Some(engine) = self.engine.as_ref() else {
+            return Ok((0..n).collect());
+        };
+        let mut keep = vec![true; n];
+        for (name, text) in filters.iter().filter(|(_, text)| !text.trim().is_empty()) {
+            let Some(c) = t.columns.iter().position(|c| &c.name == name) else {
+                continue;
+            };
+            let node = omasheet_omx::check::compile_filter(engine.program(), sheet, c, text)
+                .map_err(|d| format!("{name}: {}", said(&d[0])))?;
+            let mask = engine.filter_mask(sheet, &node).map_err(|why| format!("{name}: {why}"))?;
+            if mask.len() != n {
+                return Err(format!("{name}: the filter did not cover the sheet's rows"));
             }
-            return (0..t.nrows).filter(|&r| !hidden[r]).collect();
+            for (k, m) in keep.iter_mut().zip(mask) {
+                *k &= m;
+            }
         }
-        (0..t.rows.len())
-            .filter(|&r| {
-                tests
-                    .iter()
-                    .all(|(c, set)| !set.contains(t.rows[r][*c].display.as_str()))
-            })
-            .collect()
+        let order = self.orders.get(&t.name).filter(|o| o.len() == n);
+        Ok((0..n)
+            .filter(|&p| keep[order.map_or(p, |o| o[p])])
+            .collect())
     }
 
-    /// The texts column `col` of sheet `sheet` shows, each once, in the
-    /// order a sort puts their values in: what a filter chooses among.
-    pub fn distinct_shown(&self, sheet: usize, col: usize) -> Vec<String> {
-        let Some(t) = self.snapshot.sheets.get(sheet) else {
-            return Vec::new();
+    /// Whether `text` is a filter column `col` of sheet `sheet` takes:
+    /// checked, and no row read (filter-by-expression D172). `Err` says
+    /// what is wrong with it, as the popup shows it.
+    pub fn check_filter(&self, sheet: usize, col: usize, text: &str) -> Result<(), String> {
+        if text.trim().is_empty() {
+            return Ok(());
+        }
+        let Some(engine) = self.engine.as_ref() else {
+            return Ok(());
         };
-        if col >= t.columns.len() {
-            return Vec::new();
-        }
-        if t.paged
-            && let Some(groups) = self.groups_by_value(sheet, col)
-        {
-            // Each text once, with the value of the row it is first shown at,
-            // then in the order of those values: as below, a value at a time
-            // rather than a row.
-            let mut first: std::collections::HashMap<String, (usize, Value)> =
-                std::collections::HashMap::new();
-            for (value, rows) in groups {
-                let at = rows.iter().copied().min().unwrap_or(usize::MAX);
-                let text = self.text_shown(sheet, col, &value);
-                match first.get_mut(&text) {
-                    Some(held) if held.0 <= at => {}
-                    Some(held) => *held = (at, value),
-                    None => {
-                        first.insert(text, (at, value));
-                    }
-                }
-            }
-            let mut cells: Vec<(usize, Value, String)> = first
-                .into_iter()
-                .map(|(text, (at, v))| (at, v, text))
-                .collect();
-            cells.sort_by_key(|c| c.0);
-            cells.sort_by(|a, b| {
-                crate::value::sort_order(&a.1, &b.1).unwrap_or_else(|_| a.2.cmp(&b.2))
-            });
-            return cells.into_iter().map(|(_, _, d)| d).collect();
-        }
-        if t.paged {
-            let mut seen = std::collections::HashSet::new();
-            let mut cells: Vec<(Value, String)> = self
-                .paged_column(sheet, col)
-                .into_iter()
-                .filter(|(_, d)| seen.insert(d.clone()))
-                .collect();
-            cells.sort_by(|a, b| {
-                crate::value::sort_order(&a.0, &b.0).unwrap_or_else(|_| a.1.cmp(&b.1))
-            });
-            return cells.into_iter().map(|(_, d)| d).collect();
-        }
-        let mut seen = std::collections::HashSet::new();
-        let mut cells: Vec<&CellSnap> = t
-            .rows
-            .iter()
-            .map(|row| &row[col])
-            .filter(|cell| seen.insert(cell.display.as_str()))
-            .collect();
-        cells.sort_by(|a, b| {
-            crate::value::sort_order(&a.value, &b.value)
-                .unwrap_or_else(|_| a.display.cmp(&b.display))
-        });
-        cells.into_iter().map(|cell| cell.display.clone()).collect()
+        omasheet_omx::check::compile_filter(engine.program(), sheet, col, text)
+            .map(|_| ())
+            .map_err(|d| said(&d[0]))
     }
 
     /// A sheet calculated from an expression is sorted by its expression:
@@ -3349,14 +3362,15 @@ impl Document {
         // Read whatever else is wrong: a mistake in one sheet is no reason
         // for a table beside it to lose its rows.
         let base = self.base.clone().unwrap_or_else(|| ".".into());
-        let tables = crate::table::read_holding(&mut program, &base, &mut diags, &self.whole);
+        let tables =
+            crate::table::read_holding(&mut program, &base, &mut diags, &self.whole, self.copying);
         // A file the text no longer names, or one changed since it was read,
         // is not held any longer.
         let named: std::collections::HashSet<std::path::PathBuf> = program
             .sheets
             .iter()
             .filter_map(|s| s.source.as_ref())
-            .map(|source| base.join(&source.path))
+            .map(|source| self.file_of(&base.join(&source.path)))
             .collect();
         self.whole.retain(|path, w| {
             named.contains(path) && crate::table::identity(path).as_ref() == Some(&w.identity)
@@ -3715,39 +3729,39 @@ mod tests {
 
     #[test]
     fn a_sequence_of_text_counts_letters_and_digits_up() {
-        assert_eq!(seq(r#""A", "B" ... Inf"#, 3), ["A", "B", "C"]);
+        assert_eq!(seq(r#"'A', 'B' ... Inf"#, 3), ["A", "B", "C"]);
         // It carries at the end of the alphabet, as a workbook's columns do.
-        assert_eq!(seq(r#""Y" ... Inf"#, 4), ["Y", "Z", "AA", "AB"]);
-        assert_eq!(seq(r#""AY" ... "BA""#, 4), ["AY", "AZ", "BA", ""]);
+        assert_eq!(seq(r#"'Y' ... Inf"#, 4), ["Y", "Z", "AA", "AB"]);
+        assert_eq!(seq(r#"'AY' ... 'BA'"#, 4), ["AY", "AZ", "BA", ""]);
         // Only the last run of letters and digits moves.
-        assert_eq!(seq(r#""job-A9" ... Inf"#, 2), ["job-A9", "job-B0"]);
+        assert_eq!(seq(r#"'job-A9' ... Inf"#, 2), ["job-A9", "job-B0"]);
     }
 
     #[test]
     fn a_sequence_of_named_days_or_months_goes_round() {
         assert_eq!(
-            seq(r#""Monday", "Tuesday" ... Inf"#, 3),
+            seq(r#"'Monday', 'Tuesday' ... Inf"#, 3),
             ["Monday", "Tuesday", "Wednesday"]
         );
         // Sunday is followed by Monday, and December by January.
-        assert_eq!(seq(r#""Sat", "Sun" ... Inf"#, 3), ["Sat", "Sun", "Mon"]);
-        assert_eq!(seq(r#""Nov", "Dec" ... Inf"#, 3), ["Nov", "Dec", "Jan"]);
+        assert_eq!(seq(r#"'Sat', 'Sun' ... Inf"#, 3), ["Sat", "Sun", "Mon"]);
+        assert_eq!(seq(r#"'Nov', 'Dec' ... Inf"#, 3), ["Nov", "Dec", "Jan"]);
         assert_eq!(
-            seq(r#""January", "March" ... Inf"#, 3),
+            seq(r#"'January', 'March' ... Inf"#, 3),
             ["January", "March", "May"]
         );
         // A month with its year carries, and the way it is written is kept.
         assert_eq!(
-            seq(r#""Nov-2026", "Dec-2026" ... Inf"#, 3),
+            seq(r#"'Nov-2026', 'Dec-2026' ... Inf"#, 3),
             ["Nov-2026", "Dec-2026", "Jan-2027"]
         );
-        assert_eq!(seq(r#""mon", "tue" ... Inf"#, 2), ["mon", "tue"]);
+        assert_eq!(seq(r#"'mon', 'tue' ... Inf"#, 2), ["mon", "tue"]);
         assert_eq!(
-            seq(r#""Monday" ... "Wednesday""#, 4),
+            seq(r#"'Monday' ... 'Wednesday'"#, 4),
             ["Monday", "Tuesday", "Wednesday", ""]
         );
         // Text that is no such name still counts up letter by letter.
-        assert_eq!(seq(r#""AY" ... Inf"#, 3), ["AY", "AZ", "BA"]);
+        assert_eq!(seq(r#"'AY' ... Inf"#, 3), ["AY", "AZ", "BA"]);
     }
 
     #[test]
@@ -3913,7 +3927,7 @@ mod tests {
 
     #[test]
     fn a_table_is_sorted_in_the_grid_alone() {
-        let table = "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n";
+        let table = "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n";
         let mut doc = Document::from_text(table);
         doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
         doc.sort_rows(0, 5, true).expect("sorts");
@@ -3940,7 +3954,7 @@ mod tests {
 
     #[test]
     fn a_table_sort_is_a_step_to_undo_and_redo() {
-        let text = "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n\nsheet Notes\n\nA\n1\n";
+        let text = "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nsheet Notes\n\nA\n1\n";
         let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
         // Held whole, and paged as a big table is.
         for paged in [false, true] {
@@ -3998,53 +4012,50 @@ mod tests {
     }
 
     #[test]
-    fn a_filter_lists_the_first_values_that_match_and_counts_them_all() {
-        let values: Vec<String> = ["", "Anna", "anne", "Bob", "Joanna"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        // Everything, cut short at the limit and counted in full.
-        assert_eq!(
-            matching(&values, "", 10),
-            (vec!["", "Anna", "anne", "Bob", "Joanna"], 5)
-        );
-        assert_eq!(matching(&values, "", 2), (vec!["", "Anna"], 5));
-        // Case aside, anywhere in the text, in the order given.
-        assert_eq!(
-            matching(&values, "ANN", 10),
-            (vec!["Anna", "anne", "Joanna"], 3)
-        );
-        assert_eq!(matching(&values, "ann", 1), (vec!["Anna"], 3));
-        assert_eq!(matching(&values, "zzz", 10), (vec![], 0));
-        assert_eq!(matching(&values, "", 0), (vec![], 5));
-    }
-
-    #[test]
-    fn a_filter_shows_the_rows_whose_cells_it_does_not_hide() {
+    fn a_filter_shows_the_rows_its_expressions_are_true_of() {
         let file = "sheet T\n\nName | N\nb | 2\na | 10\nc |\nd | 2\n";
         let doc = Document::from_text(file);
-        assert_eq!(doc.shown_rows(0, &[]), [0, 1, 2, 3]);
-        let hide = |name: &str, texts: &[&str]| {
-            (
-                name.to_string(),
-                texts.iter().map(|t| t.to_string()).collect(),
-            )
+        let shown = |filters: &[(&str, &str)]| {
+            let filters: Vec<(String, String)> = filters
+                .iter()
+                .map(|(n, e)| (n.to_string(), e.to_string()))
+                .collect();
+            doc.shown_rows(0, &filters)
         };
-        assert_eq!(doc.shown_rows(0, &[hide("N", &["2"])]), [1, 2]);
+        assert_eq!(shown(&[]), Ok(vec![0, 1, 2, 3]));
+        assert_eq!(shown(&[("N", "* == 2")]), Ok(vec![0, 3]));
+        // An empty cell fails every comparison (D165), and is asked for.
+        assert_eq!(shown(&[("N", "* != 2")]), Ok(vec![1]));
+        assert_eq!(shown(&[("N", "* != 2 or * == ''")]), Ok(vec![1, 2]));
+        assert_eq!(shown(&[("N", "* != 2 or *.is_null()")]), Ok(vec![1, 2]));
+        assert_eq!(shown(&[("N", "0 < * <= 5")]), Ok(vec![0, 3]));
+        assert_eq!(shown(&[("N", "N > 5")]), Ok(vec![1]));
+        assert_eq!(shown(&[("Name", "*.starts_with('a'..'b')")]), Ok(vec![0, 1]));
+        assert_eq!(shown(&[("N", "*.is_first_distinct()")]), Ok(vec![0, 1, 2]));
+        // Each column's filter, all at once.
         assert_eq!(
-            doc.shown_rows(0, &[hide("N", &["2"]), hide("Name", &["c"])]),
-            [1]
+            shown(&[("N", "* == 2 or * > 5"), ("Name", "* != 'b'")]),
+            Ok(vec![1, 3])
         );
-        // A column the sheet has not got hides nothing.
-        assert_eq!(doc.shown_rows(0, &[hide("Gone", &["b"])]), [0, 1, 2, 3]);
-        // Each text once, in the order of the values: empty first, and 10
-        // after 2 because it is a number.
-        assert_eq!(doc.distinct_shown(0, 1), ["", "2", "10"]);
+        // A column the sheet has not got, and an empty expression, hide nothing.
+        assert_eq!(shown(&[("Gone", "* == 1"), ("N", "  ")]), Ok(vec![0, 1, 2, 3]));
+        // What is wrong is said, by column, before a row is read.
+        let wrong = shown(&[("N", "* == 'x'")]).unwrap_err();
+        assert!(wrong.starts_with("N: "), "{wrong}");
+        assert!(shown(&[("N", "* >")]).unwrap_err().starts_with("N: "));
+        let other = shown(&[("N", "Name == 'b'")]).unwrap_err();
+        assert!(other.contains("its own column"), "{other}");
+        assert!(shown(&[("N", "* + 1")]).unwrap_err().contains("true or false"));
+        assert!(shown(&[("N", "sum(*) > 1")]).unwrap_err().contains("cannot call `sum`"));
+        // And checked alone, as the popup does with each key.
+        assert_eq!(doc.check_filter(0, 1, "0 < * <= 5"), Ok(()));
+        assert_eq!(doc.check_filter(0, 1, "*.year == 2025").map_err(|_| ()), Err(()));
+        assert!(doc.check_filter(0, 0, "*.matches('(')").unwrap_err().contains("regex"));
     }
 
     #[test]
     fn a_paged_table_shows_what_a_held_one_does() {
-        let text = "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n\nTwice := Fare * 2\n\nsheet Firsts := Passengers |> filter(Pclass == 1)\n";
+        let text = "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n\nsheet Firsts := Passengers |> filter(Pclass == 1)\n";
         let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
         let mut held = Document::from_text(text);
         held.set_base(base);
@@ -4087,12 +4098,8 @@ mod tests {
                 paged.summary(sheet, (3, 0), (90, 8)),
                 held.summary(sheet, (3, 0), (90, 8))
             );
-            assert_eq!(
-                paged.distinct_shown(sheet, 1),
-                held.distinct_shown(sheet, 1)
-            );
         }
-        let hide = vec![("Sex".to_string(), vec!["male".to_string()])];
+        let hide = vec![("Sex".to_string(), "* != 'male'".to_string())];
         assert_eq!(paged.shown_rows(0, &hide), held.shown_rows(0, &hide));
         // Sorted in the grid, by a column of the file and by a formula.
         for col in [5, 8] {
@@ -4114,7 +4121,7 @@ mod tests {
 
     #[test]
     fn a_paged_summary_answers_as_a_held_one_reading_only_what_is_selected() {
-        let text = "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n\nTwice := Fare * 2\n\nsheet Firsts := Passengers |> filter(Pclass == 1)\n";
+        let text = "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n\nsheet Firsts := Passengers |> filter(Pclass == 1)\n";
         let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
         let mut held = Document::from_text(text);
         held.set_base(base);
@@ -4178,7 +4185,7 @@ mod tests {
             &file,
         )
         .unwrap();
-        let text = "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n\nTwice := Fare * 2\n";
+        let text = "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n";
         let open = || {
             let mut doc = Document::from_text(text);
             doc.set_base(&dir);
@@ -4222,7 +4229,11 @@ mod tests {
             held.summary(0, (0, 0), (n - 1, 8)),
             on_disk.summary(0, (0, 0), (n - 1, 8))
         );
-        assert_eq!(held.distinct_shown(0, 5), on_disk.distinct_shown(0, 5));
+        let filter = vec![(
+            on_disk.snapshot().sheets[0].columns[5].name.clone(),
+            "*.is_first_distinct()".to_string(),
+        )];
+        assert_eq!(held.shown_rows(0, &filter), on_disk.shown_rows(0, &filter));
         // Rows not asked for yet come from memory: with the file taken away
         // they are still there, until a rebuild lets the file go.
         let expected = shown(&on_disk, n / 4, 30);
@@ -4312,11 +4323,11 @@ mod tests {
         let titanic = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
         let cases = [
             (
-                "table T := dataframe[\"edge.parquet\"]\n",
+                "table T := dataframe['edge.parquet']\n",
                 dir.to_str().unwrap(),
             ),
             (
-                "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n\nTwice := Fare * 2\n",
+                "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n",
                 titanic,
             ),
         ];
@@ -4355,16 +4366,16 @@ mod tests {
     }
 
     #[test]
-    fn a_paged_filter_and_its_list_are_a_held_ones_a_value_at_a_time() {
+    fn a_paged_filter_shows_what_a_held_one_does() {
         let dir = edge_file("filter");
         let titanic = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
         let cases = [
             (
-                "table T := dataframe[\"edge.parquet\"]\n",
+                "table T := dataframe['edge.parquet']\n",
                 dir.to_str().unwrap(),
             ),
             (
-                "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n\nTwice := Fare * 2\n",
+                "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n",
                 titanic,
             ),
         ];
@@ -4380,47 +4391,45 @@ mod tests {
                     held.sort_rows(0, 1, true).unwrap();
                     paged.sort_rows(0, 1, true).unwrap();
                 }
-                let cols = held.snapshot().sheets[0].columns.len();
-                for col in 0..cols {
-                    let name = held.snapshot().sheets[0].columns[col].name.clone();
-                    // The file's own columns go by Polars; a formula's may not,
-                    // and is held to the same answers either way.
-                    let own = held.snapshot().sheets[0].columns[col].formula.is_none();
-                    assert!(
-                        !own || paged.groups_by_value(0, col).is_some(),
-                        "{name} by Polars"
-                    );
-                    let listed = paged.distinct_shown(0, col);
-                    assert_eq!(
-                        listed,
-                        held.distinct_shown(0, col),
-                        "{name} sorted {sorted}"
-                    );
-                    let mut hide: Vec<String> = [0, listed.len() / 2, listed.len() - 1]
-                        .iter()
-                        .map(|&i| listed[i].clone())
-                        .collect();
-                    hide.push(String::new());
-                    for k in 1..=hide.len() {
-                        let filter = vec![(name.clone(), hide[..k].to_vec())];
+                let columns = held.snapshot().sheets[0].columns.clone();
+                for column in &columns {
+                    let mut tests = vec![
+                        "*.is_null()",
+                        "not *.is_null()",
+                        "*.is_duplicated()",
+                        "*.is_first_distinct()",
+                    ];
+                    match column.ty.as_str() {
+                        "Integer" | "Int" | "Decimal" => {
+                            tests.extend(["* > 1", "0 < * <= 2", "* in [0, 1]", "* != 1"])
+                        }
+                        "Float" => tests.extend(["* > 1.5", "0.5 < * <= 30.5", "*.is_finite()"]),
+                        "String" => tests.extend([
+                            "*.starts_with('A')",
+                            "*.starts_with('A'..'M')",
+                            "*.contains('a')",
+                            "*.to_lowercase().ends_with('e')",
+                            "*.len_chars() > 3",
+                            "* in ['male', 'b']",
+                        ]),
+                        _ => {}
+                    }
+                    for test in tests {
+                        let filter = vec![(column.name.clone(), test.to_string())];
+                        let want = held.shown_rows(0, &filter);
+                        assert!(want.is_ok(), "{} {test}: {want:?}", column.name);
                         assert_eq!(
                             paged.shown_rows(0, &filter),
-                            held.shown_rows(0, &filter),
-                            "{name} hiding {:?} sorted {sorted}",
-                            &hide[..k]
+                            want,
+                            "{} {test} sorted {sorted}",
+                            column.name
                         );
                     }
                 }
                 // Two columns filtered at once.
                 let two = vec![
-                    (
-                        held.snapshot().sheets[0].columns[0].name.clone(),
-                        vec![held.distinct_shown(0, 0)[0].clone()],
-                    ),
-                    (
-                        held.snapshot().sheets[0].columns[2].name.clone(),
-                        vec![held.distinct_shown(0, 2)[1].clone()],
-                    ),
+                    (columns[0].name.clone(), "not *.is_null()".to_string()),
+                    (columns[2].name.clone(), "*.is_first_distinct()".to_string()),
                 ];
                 assert_eq!(paged.shown_rows(0, &two), held.shown_rows(0, &two));
             }
@@ -4429,8 +4438,47 @@ mod tests {
     }
 
     #[test]
+    fn a_filter_reads_nanoseconds_and_milliseconds_as_a_sheet_does() {
+        use polars::prelude::*;
+        let dir = std::env::temp_dir().join(format!("omasheet-units-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // One nanosecond before 1970 is 1969-12-31 floored, not 1970-01-01
+        // truncated; then a day in March 2019, and an empty cell.
+        let ns = [Some(-1i64), Some(1_552_608_000_000_000_123), None];
+        let ms = [Some(-1i64), Some(1_552_608_000_000), None];
+        let mut frame = DataFrame::new(vec![
+            Column::new("N".into(), ns)
+                .cast(&DataType::Datetime(TimeUnit::Nanoseconds, None))
+                .unwrap(),
+            Column::new("M".into(), ms)
+                .cast(&DataType::Datetime(TimeUnit::Milliseconds, None))
+                .unwrap(),
+        ])
+        .unwrap();
+        ParquetWriter::new(std::fs::File::create(dir.join("units.parquet")).unwrap())
+            .finish(&mut frame)
+            .unwrap();
+        for paged in [false, true] {
+            let mut doc = Document::from_text("table T := dataframe['units.parquet']\n");
+            doc.set_base(dir.to_str().unwrap());
+            if paged {
+                doc.set_paged_rows(1);
+            }
+            for c in ["N", "M"] {
+                let shown = |e: &str| doc.shown_rows(0, &[(c.to_string(), e.to_string())]);
+                assert_eq!(shown("*.day == 31"), Ok(vec![0]), "{c} paged {paged}");
+                assert_eq!(shown("*.year == 2019"), Ok(vec![1]), "{c} paged {paged}");
+                assert_eq!(shown("* >= 2019-03-15T00:00"), Ok(vec![1]), "{c}");
+                assert_eq!(shown("* < 1970-01-01T00:00"), Ok(vec![0]), "{c}");
+                assert_eq!(shown("*.is_null()"), Ok(vec![2]), "{c}");
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_mistake_in_one_sheet_leaves_a_table_its_rows() {
-        let table = "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n";
+        let table = "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n";
         let mut doc = Document::from_text(table);
         doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
         let rows = doc.snapshot().sheets[0].rows.len();

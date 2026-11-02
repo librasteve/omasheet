@@ -69,7 +69,7 @@ cell of a computed column.
 A sheet may read its rows from a Parquet file instead of holding them:
 
 ```omx
-table Sales := dataframe["data/sales.parquet"]
+table Sales := dataframe['data/sales.parquet']
 
 Month   : String
 Revenue : Integer
@@ -87,7 +87,7 @@ with a space or a slash in it, which Parquet allows and omasheet does not —
 is given a name here with a `from` clause:
 
 ```omx
-SiblingsSpousesAboard : Integer from "Siblings/Spouses Aboard"
+SiblingsSpousesAboard : Integer from 'Siblings/Spouses Aboard'
 ```
 
 The quoted name is the file's, used to find the column and to check it; the
@@ -267,8 +267,8 @@ declared.
 Text written bare may hold Markdown: `a **slow** start`,
 `see the [lease](lease.pdf)`. The app shows it as that, and so does a
 [rendered document](interop.md#markdown). Text in quotes is as it is:
-`"2 * 3 * 4"`. So is the text a formula makes, as it is written in quotes
-there; a value read from a cell is Markdown or not as that cell is.
+`"2 * 3 * 4"`. So is the text a formula makes, as it is written in single
+quotes there (a cell's text is in double quotes and code's in single); a value read from a cell is Markdown or not as that cell is.
 `omasheet print` shows every cell as it is written.
 
 A `Url`, an `Email` and a `Uuid` are text read as something narrower. A

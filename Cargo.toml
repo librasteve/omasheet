@@ -36,12 +36,24 @@ polars = { version = "0.51", default-features = false, features = [
     "lazy",
     "propagate_nans",
     "parquet",
+    # A big CSV is read through a Parquet copy (open-a-big-csv D153).
+    "csv",
     "dtype-decimal",
     "dtype-date",
     "dtype-datetime",
     "dtype-time",
     "dtype-duration",
+    # The tests a filter is written with (filter-by-expression D177).
+    "strings",
+    "regex",
+    "find_many",
+    "is_in",
+    "is_between",
+    "is_unique",
+    "is_first_distinct",
+    "is_last_distinct",
 ] }
+regex = "1"
 serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 

@@ -212,7 +212,7 @@ fn decimals() {
     // One that does not end is shown cut and marked.
     assert_eq!(calc("(1/8).Decimal"), "0.125");
     assert_eq!(calc("(1.5e3).Decimal + 0.5"), "1500.5");
-    assert_eq!(calc("\"20%\".Decimal"), "0.2");
+    assert_eq!(calc("'20%'.Decimal"), "0.2");
     let shown = |expr: &str| {
         let out = eval(None, "<expression>", expr);
         assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
@@ -301,7 +301,7 @@ fn percents() {
         "41.6666666666666666666666666667%"
     );
     assert_eq!(calc("(1.5e-1).Percent"), "15%");
-    assert_eq!(calc("\"20%\".Percent"), "20%");
+    assert_eq!(calc("'20%'.Percent"), "20%");
     assert_eq!(calc("20%.Decimal"), "0.2");
     assert_eq!(calc("20%.Decimal"), "0.2");
     assert_eq!(calc("150%.Int"), "1");
@@ -435,7 +435,7 @@ fn rationals_in_full() {
     assert_eq!(calc("10/6"), "1.66666666666666666666666666667");
     assert_eq!(calc("7/3 * 3"), "7");
     assert_eq!(calc("(7/3).Int"), "2");
-    assert_eq!(calc("\"22/7\".Decimal"), "3.14285714285714285714285714286");
+    assert_eq!(calc("'22/7'.Decimal"), "3.14285714285714285714285714286");
     // A whole number and a part may be written with a space, in a cell.
     assert_eq!(
         ask("sheet M\n\nA : Decimal\n\nA\n2 3/4\n", "M[A; 0]"),
@@ -506,11 +506,11 @@ fn conversions() {
     assert_eq!(calc("Boolean(0)"), "false");
     assert_eq!(calc("0.5.Boolean"), "true");
     // Text is read the way a cell is.
-    assert_eq!(calc("Int(\"42\") + 1"), "43");
-    assert_eq!(calc("\"20%\".Decimal"), "0.2");
-    assert_eq!(calc("Date(\"2025-01-31\") + 1"), "2025-02-01");
-    assert_eq!(calc("Boolean(\"true\")"), "true");
-    assert!(calc_err(None, "Int(\"abc\")").contains("`abc` is not an Int"));
+    assert_eq!(calc("Int('42') + 1"), "43");
+    assert_eq!(calc("'20%'.Decimal"), "0.2");
+    assert_eq!(calc("Date('2025-01-31') + 1"), "2025-02-01");
+    assert_eq!(calc("Boolean('true')"), "true");
+    assert!(calc_err(None, "Int('abc')").contains("`abc` is not an Int"));
     // Dates and times.
     assert_eq!(calc("2025-01-31T09:30.Date"), "2025-01-31");
     assert_eq!(calc("2025-01-31T09:30.Time"), "09:30");
@@ -602,9 +602,9 @@ fn cursor_survives_row_insertion() {
 
 #[test]
 fn predicate_selection() {
-    assert_eq!(ask(SALES, "Sales[; Region == \"UK\"].Revenue.sum()"), "250");
+    assert_eq!(ask(SALES, "Sales[; Region == 'UK'].Revenue.sum()"), "250");
     let dated = "sheet Sales\n\nDate | Region | Revenue\n2024-12-31 | UK | 1\n2025-03-01 | UK | 10\n2025-06-01 | US | 100\n2026-01-01 | UK | 1000\n";
-    let expr = "Sales[;\n    Region == \"UK\" and\n    Date >= 2025-01-01 and\n    Date < 2026-01-01\n].Revenue.sum()";
+    let expr = "Sales[;\n    Region == 'UK' and\n    Date >= 2025-01-01 and\n    Date < 2026-01-01\n].Revenue.sum()";
     assert_eq!(ask(dated, expr), "10");
 }
 
@@ -673,7 +673,7 @@ fn durations() {
     assert_eq!(calc("PT12H.total_days()"), "0.5");
     assert_eq!(calc("PT0.5S.total_seconds()"), "0.5");
     assert_eq!(calc("PT1H < PT90M"), "true");
-    assert_eq!(calc("Duration(\"PT1H\")"), "PT1H");
+    assert_eq!(calc("Duration('PT1H')"), "PT1H");
     // A year and a month are not a fixed length.
     for text in ["P1Y", "P1M", "P1Y2D"] {
         let err = calc_err(None, text);
@@ -867,7 +867,7 @@ fn math_functions() {
     assert_eq!(calc("round(1250 / 100) * 100"), "1300");
     assert!(calc_err(None, "round(1, 2, 3)").contains("`round` takes 1 or 2 arguments"));
     assert!(calc_err(None, "round(1, 0.01)").contains("number of decimal places"));
-    assert!(calc_err(None, "round(1, \"a\")").contains("number of decimal places"));
+    assert!(calc_err(None, "round(1, 'a')").contains("number of decimal places"));
     // The rest give a Num.
     assert_eq!(calc("sqrt(16)"), "4");
     assert_eq!(calc("exp(0)"), "1");
@@ -885,7 +885,7 @@ fn math_functions() {
     assert_eq!(ask(SALES, "Sales.Revenue.sqrt().floor()"), "[10, 10, 12]");
     // Outside the domain, and on the wrong kind of value.
     assert_eq!(calc("[sqrt(-1), ln(0), arcsin(2)]"), "[NaN, -Inf, NaN]");
-    assert!(calc_err(None, "sin(\"x\")").contains("`sin` cannot be applied to String"));
+    assert!(calc_err(None, "sin('x')").contains("`sin` cannot be applied to String"));
     assert!(calc_err(None, "sqr(4)").contains("did you mean `sqrt`?"));
     // Every function in the directory is one the checker knows. The
     // operators are listed there too, by their symbols, and are not called.
@@ -918,13 +918,13 @@ fn time_zones() {
 
     // The same instant on other clocks, with daylight saving.
     assert_eq!(
-        at("2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\")"),
+        at("2025-07-15T12:00.convert_time_zone('Asia/Tokyo')"),
         "2025-07-15T20:00+09:00"
     );
     assert_eq!(at("2025-07-15T12:00.utc()"), "2025-07-15T11:00+00:00");
     assert_eq!(at("2025-01-15T12:00.utc()"), "2025-01-15T12:00+00:00");
     assert_eq!(
-        at("2025-07-15T12:00.convert_time_zone(\"America/St_Johns\")"),
+        at("2025-07-15T12:00.convert_time_zone('America/St_Johns')"),
         "2025-07-15T08:30-02:30"
     );
     assert_eq!(at("2025-07-15T12:00.base_utc_offset()"), "3600");
@@ -935,7 +935,7 @@ fn time_zones() {
     // Back to the file's own zone it is an ordinary date-time again.
     assert_eq!(
         at(
-            "2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\").convert_time_zone(\"Europe/London\")"
+            "2025-07-15T12:00.convert_time_zone('Asia/Tokyo').convert_time_zone('Europe/London')"
         ),
         "2025-07-15T12:00"
     );
@@ -943,29 +943,29 @@ fn time_zones() {
 
     // The parts are those of the zone it is in.
     assert_eq!(
-        at("2025-07-15T20:00.convert_time_zone(\"Asia/Tokyo\").hour()"),
+        at("2025-07-15T20:00.convert_time_zone('Asia/Tokyo').hour()"),
         "4"
     );
     assert_eq!(
-        at("2025-07-15T20:00.convert_time_zone(\"Asia/Tokyo\").date()"),
+        at("2025-07-15T20:00.convert_time_zone('Asia/Tokyo').date()"),
         "2025-07-16"
     );
     // Seconds are added on its own clocks.
     assert_eq!(
-        at("2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\") + 3600"),
+        at("2025-07-15T12:00.convert_time_zone('Asia/Tokyo') + 3600"),
         "2025-07-15T21:00+09:00"
     );
     // Across zones it is the instant that is compared and subtracted.
     assert_eq!(
-        at("2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\") == 2025-07-15T12:00"),
+        at("2025-07-15T12:00.convert_time_zone('Asia/Tokyo') == 2025-07-15T12:00"),
         "true"
     );
     assert_eq!(
-        at("2025-07-15T12:00.utc() < 2025-07-15T12:00:01.convert_time_zone(\"Asia/Tokyo\")"),
+        at("2025-07-15T12:00.utc() < 2025-07-15T12:00:01.convert_time_zone('Asia/Tokyo')"),
         "true"
     );
     assert_eq!(
-        at("2025-07-15T13:00.convert_time_zone(\"Asia/Tokyo\") - 2025-07-15T12:00.utc()"),
+        at("2025-07-15T13:00.convert_time_zone('Asia/Tokyo') - 2025-07-15T12:00.utc()"),
         "PT1H"
     );
     assert_eq!(at("2025-07-15T13:00 - 2025-07-15T12:00.utc()"), "PT1H");
@@ -984,7 +984,7 @@ fn time_zones() {
     let out = eval_with(
         None,
         "<expression>",
-        "2025-07-15T12:00.convert_time_zone(\"Mars/Base\")",
+        "2025-07-15T12:00.convert_time_zone('Mars/Base')",
         london.clone(),
     );
     assert!(out.errors[0].contains("there is no time zone `Mars/Base`"));
@@ -993,7 +993,7 @@ fn time_zones() {
 
     // A file names the zone its date-times are in.
     let file = "zone America/New_York\n\nsheet Calls\n\nAt | Tokyo\n2025-03-03T09:12 | *\n\n\
-                 Tokyo := At.convert_time_zone(\"Asia/Tokyo\")\n";
+                 Tokyo := At.convert_time_zone('Asia/Tokyo')\n";
     let ny = |expr: &str| with(&london, Some(file), expr);
     assert_eq!(ny("Calls[At; 0]"), "2025-03-03T09:12");
     assert_eq!(ny("Calls[At; 0].time_zone()"), "America/New_York");
@@ -1061,12 +1061,12 @@ fn one_slot_selects_columns() {
         "Revenue | Cost\n--------|-----\n    100 |   60"
     );
     // Rows alone need the `;`.
-    let err = calc_err(Some(SALES), "Sales[Region == \"UK\"]");
+    let err = calc_err(Some(SALES), "Sales[Region == 'UK']");
     assert!(
         err.contains("a column selector must be a column name"),
         "{err}"
     );
-    assert_eq!(ask(SALES, "Sales[; Region == \"UK\"].Revenue.sum()"), "250");
+    assert_eq!(ask(SALES, "Sales[; Region == 'UK'].Revenue.sum()"), "250");
     // A vector has one dimension, so its one slot is the element.
     assert_eq!(ask(SALES, "Sales.Revenue[1]"), "120");
     assert_eq!(ask(SALES, "Sales[Revenue][1]"), "120");
@@ -1088,37 +1088,37 @@ CustomerID | Amount | Customer
 7          | 20     | *
 1          | 10     | *
 
-Customer := Customers[; ID == CustomerID].Name // \"Unknown\"
+Customer := Customers[; ID == CustomerID].Name // 'Unknown'
 ";
     assert_eq!(
         ask(file, "Sales.Customer"),
-        "[\"Grace\", \"Unknown\", \"Ada\"]"
+        "['Grace', 'Unknown', 'Ada']"
     );
 }
 
 #[test]
 fn operators() {
-    let file = sales_with("Prev := Sales[Revenue; *-1] // 0\nHome := Region in [\"UK\", \"IE\"]\n");
+    let file = sales_with("Prev := Sales[Revenue; *-1] // 0\nHome := Region in ['UK', 'IE']\n");
     assert_eq!(ask(&file, "Sales.Prev"), "[0, 100, 120]");
     assert_eq!(ask(&file, "Sales.Home"), "[true, false, true]");
-    let err = calc_err(Some(SALES), "Sales[; Region = \"UK\"]");
+    let err = calc_err(Some(SALES), "Sales[; Region = 'UK']");
     assert!(err.contains("=="), "{err}");
 }
 
 #[test]
 fn conditional_expression() {
-    let file = "sheet T\n\nRevenue | Region | Net\n2000 | UK | *\n500 | UK | *\n\nNet :=\n  if Revenue > 1000 and Region in [\"UK\", \"US\"]\n  then Revenue * 90%\n  else Revenue\n";
+    let file = "sheet T\n\nRevenue | Region | Net\n2000 | UK | *\n500 | UK | *\n\nNet :=\n  if Revenue > 1000 and Region in ['UK', 'US']\n  then Revenue * 90%\n  else Revenue\n";
     assert_eq!(ask(file, "T.Net"), "[1800, 500]");
 }
 
 #[test]
 fn value_shapes() {
-    assert!(ask(SALES, "Sales[; Region == \"UK\"]").starts_with("Month | Region"));
+    assert!(ask(SALES, "Sales[; Region == 'UK']").starts_with("Month | Region"));
     assert_eq!(
-        ask(SALES, "Sales[; Region == \"UK\"].Revenue"),
+        ask(SALES, "Sales[; Region == 'UK'].Revenue"),
         "[100, 150]"
     );
-    assert_eq!(ask(SALES, "Sales[; Region == \"UK\"].Revenue.sum()"), "250");
+    assert_eq!(ask(SALES, "Sales[; Region == 'UK'].Revenue.sum()"), "250");
 }
 
 #[test]
@@ -1139,7 +1139,7 @@ fn broadcasting() {
     assert_eq!(ask(SALES, "Sales.Revenue - Sales.Cost"), "[40, 50, 70]");
     assert_eq!(
         ask(SALES, "Sales[; Sales.Revenue > 110].Month"),
-        "[\"Feb\", \"Mar\"]"
+        "['Feb', 'Mar']"
     );
     let err = calc_err(None, "[1, 2, 3] + [1, 2, 3, 4]");
     assert!(err.contains("different lengths"), "{err}");
@@ -1147,10 +1147,10 @@ fn broadcasting() {
 
 #[test]
 fn pipe_operator() {
-    let piped = "Sales\n  |> filter(Region == \"UK\")\n  |> select(Revenue)\n  |> sum()";
+    let piped = "Sales\n  |> filter(Region == 'UK')\n  |> select(Revenue)\n  |> sum()";
     assert_eq!(
         ask(SALES, piped),
-        ask(SALES, "Sales[; Region == \"UK\"].Revenue.sum()")
+        ask(SALES, "Sales[; Region == 'UK'].Revenue.sum()")
     );
 }
 
@@ -1172,7 +1172,7 @@ fn sort_orders_a_sheet_by_a_column() {
     // keeps every column and every row either way.
     assert_eq!(
         ask(SALES, "(Sales |> sort(Cost)).Month"),
-        "[\"Jan\", \"Feb\", \"Mar\"]"
+        "['Jan', 'Feb', 'Mar']"
     );
     assert_eq!(
         ask(SALES, "Sales |> sort(Cost, desc) |> select(Month, Cost)"),
@@ -1199,18 +1199,18 @@ fn sort_is_stable_and_takes_more_than_one_key() {
     // Jan and Mar tie on Revenue and keep the order they came in.
     assert_eq!(
         ask(TIES, "(Sales |> sort(Revenue)).Month"),
-        "[\"Apr\", \"Feb\", \"Jan\", \"Mar\"]"
+        "['Apr', 'Feb', 'Jan', 'Mar']"
     );
     // Two keys, the second breaking the first's ties.
     assert_eq!(
         ask(TIES, "(Sales |> sort(Region, Revenue)).Month"),
-        "[\"Apr\", \"Jan\", \"Mar\", \"Feb\"]"
+        "['Apr', 'Jan', 'Mar', 'Feb']"
     );
     // Two sorts compose into what a reader expects, the first key the
     // weaker one.
     assert_eq!(
         ask(TIES, "(Sales |> sort(Month) |> sort(Region)).Month"),
-        "[\"Apr\", \"Jan\", \"Mar\", \"Feb\"]"
+        "['Apr', 'Jan', 'Mar', 'Feb']"
     );
 }
 
@@ -1223,7 +1223,7 @@ fn an_empty_cell_sorts_first() {
     );
     assert_eq!(
         ask(TIES, "(Sales |> sort(Revenue, desc)).Month"),
-        "[\"Jan\", \"Mar\", \"Feb\", \"Apr\"]"
+        "['Jan', 'Mar', 'Feb', 'Apr']"
     );
 }
 
@@ -1602,7 +1602,7 @@ fn cell_content() {
     );
     // They are written as they are shown, and text of the same is in quotes.
     assert_eq!(calc("[Inf, -Inf, NaN]"), "[Inf, -Inf, NaN]");
-    assert_eq!(calc("[\"Inf\", \"NaN\"]"), "[\"Inf\", \"NaN\"]");
+    assert_eq!(calc("['Inf', 'NaN']"), "['Inf', 'NaN']");
     assert_eq!(calc("[Inf - Inf, 1 / Inf, Inf + 1]"), "[NaN, 0, Inf]");
     assert_eq!(
         calc("[Inf == Inf, 1 < Inf, -Inf < 1]"),
@@ -1623,8 +1623,8 @@ fn cell_content() {
         ask(cells, "[T[Any; 0] < 0, T[Any; 1] != T[Any; 1]]"),
         "[true, false]"
     );
-    assert_eq!(ask(cells, "T.T"), "[\"Inf\", \"NaN\"]");
-    assert_eq!(ask(cells, "T.Quoted"), "[\"NaN\", \"Inf\"]");
+    assert_eq!(ask(cells, "T.T"), "['Inf', 'NaN']");
+    assert_eq!(ask(cells, "T.Quoted"), "['NaN', 'Inf']");
     // An unmarked expression in a typed column is an error.
     let errors = lint_errors("sheet T\n\nTax : Decimal\n\nRevenue | Tax\n100 | Revenue * 2\n");
     assert!(
@@ -1636,7 +1636,7 @@ fn cell_content() {
     let file = "sheet T\n\nNote : String\n\nRevenue | Note\n100 | Revenue - Cost\n200 | \"= see appendix\"\n";
     assert_eq!(
         ask(file, "T.Note"),
-        "[\"Revenue - Cost\", \"= see appendix\"]"
+        "['Revenue - Cost', '= see appendix']"
     );
     // An empty cell.
     assert_eq!(ask("sheet T\n\nA | B\n1 |\n", "T[B; 0]"), "empty");
@@ -1761,7 +1761,7 @@ fn Margin(revenue, cost) = (revenue - cost) / revenue
 fn WithTax(x) = x * (1 + Rate)
 fn Twice(x) = WithTax(WithTax(x))
 fn Total(t) = t.Revenue.sum()
-fn NameOf(id) = Customers[; ID == id].Name // \"Unknown\"
+fn NameOf(id) = Customers[; ID == id].Name // 'Unknown'
 
 sheet Customers
 
@@ -1784,7 +1784,7 @@ Buyer   := NameOf(Who)
 #[test]
 fn custom_function_in_a_computed_column() {
     assert_eq!(ask(FUNCS, "Sales.Margin"), "[0.4, 0.25]");
-    assert_eq!(ask(FUNCS, "Sales.Buyer"), "[\"Ada\", \"Unknown\"]");
+    assert_eq!(ask(FUNCS, "Sales.Buyer"), "['Ada', 'Unknown']");
 }
 
 #[test]
@@ -1811,7 +1811,7 @@ fn custom_function_does_not_see_the_callers_row() {
 
 #[test]
 fn custom_function_is_checked_for_each_call() {
-    let err = calc_err(Some(FUNCS), "WithTax(\"ten\")");
+    let err = calc_err(Some(FUNCS), "WithTax('ten')");
     assert!(
         err.contains("in `WithTax`: cannot apply `*` to String"),
         "{err}"
@@ -1819,7 +1819,7 @@ fn custom_function_is_checked_for_each_call() {
     let err = calc_err(Some(FUNCS), "Margin(1)");
     assert!(err.contains("`Margin` takes 2 arguments, found 1"), "{err}");
     assert!(err.contains("Margin(revenue, cost)"), "{err}");
-    let err = calc_err(Some(FUNCS), "Margin(\"ten\", 1)");
+    let err = calc_err(Some(FUNCS), "Margin('ten', 1)");
     assert!(
         err.contains("in `Margin`: cannot apply `-` to String"),
         "{err}"
@@ -1945,8 +1945,8 @@ fn the_spread_and_the_middle() {
 #[test]
 fn the_first_rows_the_last_and_the_one_before() {
     // Each is the selection it is equivalent to, for a sheet and a column.
-    assert_eq!(ask(SALES, "(Sales |> head(2)).Month"), "[\"Jan\", \"Feb\"]");
-    assert_eq!(ask(SALES, "(Sales |> tail(2)).Month"), "[\"Feb\", \"Mar\"]");
+    assert_eq!(ask(SALES, "(Sales |> head(2)).Month"), "['Jan', 'Feb']");
+    assert_eq!(ask(SALES, "(Sales |> tail(2)).Month"), "['Feb', 'Mar']");
     assert_eq!(
         ask(SALES, "Sales |> head(2) |> select(Revenue) |> sum()"),
         "220"
@@ -1979,10 +1979,10 @@ fn empty_or_not() {
     );
     // The function and the operator it stands for are the same thing, and
     // each takes one value.
-    assert_eq!(ask(NOTES, "fill_null(T[Note; 1], \"none\")"), "none");
+    assert_eq!(ask(NOTES, "fill_null(T[Note; 1], 'none')"), "none");
     assert_eq!(
-        ask(NOTES, "T[Note; 1] // \"none\""),
-        ask(NOTES, "fill_null(T[Note; 1], \"none\")")
+        ask(NOTES, "T[Note; 1] // 'none'"),
+        ask(NOTES, "fill_null(T[Note; 1], 'none')")
     );
     assert_eq!(
         ask(NOTES, "is_in(T[N; 0], [1, 2])"),
@@ -2027,25 +2027,25 @@ fn casting_is_converting() {
 fn text_is_read_as_a_narrower_kind_of_text() {
     // The same four spellings a number's conversion has.
     let address = "name@example.com";
-    assert_eq!(calc(&format!("cast(\"{address}\", Email)")), address);
-    assert_eq!(calc(&format!("Email(\"{address}\")")), address);
-    assert_eq!(calc(&format!("\"{address}\".Email()")), address);
-    assert_eq!(calc(&format!("\"{address}\".Email")), address);
-    assert_eq!(calc("\"https://example.com\".Url"), "https://example.com");
+    assert_eq!(calc(&format!("cast('{address}', Email)")), address);
+    assert_eq!(calc(&format!("Email('{address}')")), address);
+    assert_eq!(calc(&format!("'{address}'.Email()")), address);
+    assert_eq!(calc(&format!("'{address}'.Email")), address);
+    assert_eq!(calc("'https://example.com'.Url"), "https://example.com");
     let uuid = "7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f";
-    assert_eq!(calc(&format!("\"{uuid}\".Uuid")), uuid);
+    assert_eq!(calc(&format!("'{uuid}'.Uuid")), uuid);
     // Any of them is text, and goes where text is asked for.
-    assert_eq!(calc(&format!("\"{address}\".Email.String")), address);
+    assert_eq!(calc(&format!("'{address}'.Email.String")), address);
 }
 
 #[test]
 fn text_that_does_not_read_as_one_says_so() {
-    let errors = calc_err(None, "Email(\"nope\")");
+    let errors = calc_err(None, "Email('nope')");
     assert!(errors.contains("`nope` is not an Email"), "{errors}");
-    let errors = calc_err(None, "Url(\"example.com\")");
+    let errors = calc_err(None, "Url('example.com')");
     assert!(errors.contains("`example.com` is not a Url"), "{errors}");
     // One kind of text is not another, and a number is none of them.
-    assert!(calc_err(None, "Uuid(\"https://example.com\")").contains("not a Uuid"));
+    assert!(calc_err(None, "Uuid('https://example.com')").contains("not a Uuid"));
     let errors = calc_err(None, "Email(42)");
     assert!(errors.contains("cannot be applied"), "{errors}");
 }
@@ -2561,7 +2561,7 @@ fn both_ways(file: &str, expr: &str, dir: Option<&str>) -> Ran {
 /// The titanic table of `examples/analysis.omx`, whose 887 rows are in a
 /// Parquet file.
 const TABLE: &str = "\
-table Passengers := dataframe[\"titanic.parquet\"]
+table Passengers := dataframe['titanic.parquet']
 
 Survived : Int
 Pclass   : Int
@@ -2569,8 +2569,8 @@ Name     : String
 Sex      : String
 Age      : Float
 Fare     : Float
-Siblings : Int from \"Siblings/Spouses Aboard\"
-Parents  : Int from \"Parents/Children Aboard\"
+Siblings : Int from 'Siblings/Spouses Aboard'
+Parents  : Int from 'Parents/Children Aboard'
 ";
 
 #[test]
@@ -2877,7 +2877,7 @@ fn a_condition_picks_rows_in_one_pass() {
         ("Passengers[; Survived == 1].Age.len()", "342"),
         ("Passengers[; Pclass == 1].Name.len()", "216"),
         ("Passengers[; Age > 60].Age.len()", "26"),
-        ("Passengers[; Sex == \"female\"].Age.len()", "314"),
+        ("Passengers[; Sex == 'female'].Age.len()", "314"),
     ] {
         let ran = both_ways(TABLE, expr, dir);
         assert_eq!(ran.shown, answer, "{expr}");
@@ -2901,12 +2901,12 @@ fn a_sort_is_lowered_and_lands_the_rows_where_the_engine_does() {
     );
     assert_eq!(
         ties.shown,
-        "[\"Miss. Anna Ward\", \"Mr. Thomas Drake Martinez Cardeza\", \"Mr. Gustave J Lesurer\"]"
+        "['Miss. Anna Ward', 'Mr. Thomas Drake Martinez Cardeza', 'Mr. Gustave J Lesurer']"
     );
     assert_eq!(ties.filters, [Attempt::Lowered]);
     // More than one key, and the sheet's own order where they both tie.
     let two = both_ways(TABLE, "(Passengers |> sort(Pclass, Fare)).Name[0]", dir);
-    assert_eq!(two.shown, "\"Mr. William Harrison\"");
+    assert_eq!(two.shown, "'Mr. William Harrison'");
     assert_eq!(two.filters, [Attempt::Lowered]);
 }
 
@@ -2916,10 +2916,10 @@ fn a_sort_is_lowered_and_lands_the_rows_where_the_engine_does() {
 #[test]
 fn an_empty_cell_sorts_first_on_both_paths() {
     let up = both_ways(TIES, "(Sales |> sort(Revenue)).Month", None);
-    assert_eq!(up.shown, "[\"Apr\", \"Feb\", \"Jan\", \"Mar\"]");
+    assert_eq!(up.shown, "['Apr', 'Feb', 'Jan', 'Mar']");
     assert_eq!(up.filters, [Attempt::Lowered]);
     let down = both_ways(TIES, "(Sales |> sort(Revenue, desc)).Month", None);
-    assert_eq!(down.shown, "[\"Jan\", \"Mar\", \"Feb\", \"Apr\"]");
+    assert_eq!(down.shown, "['Jan', 'Mar', 'Feb', 'Apr']");
     assert_eq!(down.filters, [Attempt::Lowered]);
 }
 
@@ -2938,7 +2938,7 @@ fn the_rows_a_condition_keeps_stay_in_their_order() {
     let first = both_ways(TABLE, "Passengers[Name; Survived == 1][0]", dir);
     assert_eq!(
         first.shown,
-        "\"Mrs. John Bradley (Florence Briggs Thayer) Cumings\""
+        "'Mrs. John Bradley (Florence Briggs Thayer) Cumings'"
     );
 }
 
@@ -3296,7 +3296,7 @@ fn two_conditions_written_together_are_lowered() {
         ),
         ("Passengers[; Pclass == 1 or Pclass == 2].Age.len()", "400"),
         (
-            "Passengers[; Survived == 1 and Pclass == 1 and Sex == \"female\"].Age.len()",
+            "Passengers[; Survived == 1 and Pclass == 1 and Sex == 'female'].Age.len()",
             "91",
         ),
     ] {
@@ -3336,7 +3336,7 @@ sheet T
 | 1 | **bold**   | *    |
 | 2 | plain text | *    |
 
-Same := Note == \"x\"
+Same := Note == 'x'
 ";
     for lowering in [Lowering::Never, Lowering::Always] {
         let (program, diags) = compile(file, 0);
@@ -3575,4 +3575,115 @@ fn a_column_walked_after_its_cells_gives_back_what_they_gave() {
             sheet.cols[c].name
         );
     }
+}
+
+/// The tests Polars has that give a boolean, and the text functions they
+/// are written with (filter-by-expression D174): each the same on both
+/// paths, and each lowered but the four that ask about a value among its
+/// column's, which read the whole column.
+#[test]
+fn the_polars_tests_answer_alike_on_both_paths() {
+    let file = "\
+sheet T
+
+F : Float
+
+| Name  | N | F    | Day        | Starts | Ends | Has | Re | AnyOf | Len | Low | Up | Fin | Infin | Leap | Uniq | Dup | First | Last | Range | Member |
+| ----- | - | ---- | ---------- | ------ | ---- | --- | -- | --- | --- | --- | -- | --- | ----- | ---- | ---- | --- | ----- | ---- | ----- | ------ |
+| Alice | 1 | 1.5  | 2024-02-29 | *      | *    | *   | *  | *   | *   | *   | *  | *   | *   | *    | *    | *   | *     | *    | *     | *  |
+| bob   | 2 | Inf  | 2023-03-01 | *      | *    | *   | *  | *   | *   | *   | *  | *   | *   | *    | *    | *   | *     | *    | *     | *  |
+| Cara  | 2 | NaN  | 1900-01-01 | *      | *    | *   | *  | *   | *   | *   | *  | *   | *   | *    | *    | *   | *     | *    | *     | *  |
+|       | 3 |      |            | *      | *    | *   | *  | *   | *   | *   | *  | *   | *   | *    | *    | *   | *     | *    | *     | *  |
+| a.b   | 2 | -Inf | 2000-06-01 | *      | *    | *   | *  | *   | *   | *   | *  | *   | *   | *    | *    | *   | *     | *    | *     | *  |
+
+Starts := Name.starts_with('A')
+Ends   := Name.ends_with('a')
+Has    := Name.contains('.')
+Re     := Name.matches('^[A-C]')
+AnyOf  := Name.contains_any(['li', 'ob'])
+Len    := Name.len_chars()
+Low    := Name.to_lowercase()
+Up     := Name.to_uppercase()
+Fin    := F.is_finite()
+Infin  := F.is_infinite()
+Leap   := Day.is_leap_year()
+Uniq   := N.is_unique()
+Dup    := N.is_duplicated()
+First  := N.is_first_distinct()
+Last   := N.is_last_distinct()
+Range  := Name.starts_with('A'..'C')
+Member := N.is_in([1, 3])
+";
+    for name in [
+        "Starts", "Ends", "Has", "Re", "AnyOf", "Len", "Low", "Up", "Fin", "Infin", "Leap", "Range",
+        "Member",
+    ] {
+        assert_eq!(attempt(file, name), Some(Attempt::Lowered), "{name}");
+    }
+    let expect = [
+        ("Starts", "[true, false, false, empty, false]"),
+        ("Ends", "[false, false, true, empty, false]"),
+        ("Has", "[false, false, false, empty, true]"),
+        ("Re", "[true, false, true, empty, false]"),
+        ("AnyOf", "[true, true, false, empty, false]"),
+        ("Len", "[5, 3, 4, empty, 3]"),
+        ("Low", "['alice', 'bob', 'cara', empty, 'a.b']"),
+        ("Up", "['ALICE', 'BOB', 'CARA', empty, 'A.B']"),
+        ("Fin", "[true, false, false, empty, false]"),
+        ("Infin", "[false, true, false, empty, true]"),
+        ("Leap", "[true, false, false, empty, true]"),
+        ("Uniq", "[true, false, false, true, false]"),
+        ("Dup", "[false, true, true, false, true]"),
+        ("First", "[true, true, false, true, false]"),
+        ("Last", "[true, false, false, true, true]"),
+        // `'a.b'` is lower case, after every capital.
+        ("Range", "[true, false, true, empty, false]"),
+        ("Member", "[true, false, false, true, false]"),
+    ];
+    for (name, answer) in expect {
+        let ran = both_ways(file, &format!("T.{name}"), None);
+        assert_eq!(ran.shown, answer, "{name}");
+    }
+}
+
+#[test]
+fn a_condition_written_with_a_polars_test_is_lowered() {
+    let dir = Some("../examples");
+    for (expr, answer) in [
+        ("Passengers[; Pclass in [1, 2]].Age.len()", "400"),
+        ("Passengers[; Pclass.is_in([1, 2])].Age.len()", "400"),
+        ("Passengers[; Pclass in 1..2].Age.len()", "400"),
+        ("Passengers[; Pclass in 2^..3].Age.len()", "487"),
+        ("Passengers[; 1 <= Pclass < 3].Age.len()", "400"),
+        ("Passengers[; Name.starts_with('Mr. ')].Age.len()", "513"),
+        ("Passengers[; Name.contains('Mrs.') and Sex == 'female'].Age.len()", "125"),
+        ("Passengers[; Name.matches('^Miss')].Age.len()", "182"),
+        ("Passengers[; Name.starts_with('A'..'C')].Age.len()", "3"),
+    ] {
+        let ran = both_ways(TABLE, expr, dir);
+        assert_eq!(ran.shown, answer, "{expr}");
+        assert_eq!(ran.filters, [Attempt::Lowered], "{expr}");
+    }
+}
+
+#[test]
+fn the_polars_tests_say_what_is_wrong_before_any_row_is_read() {
+    let said = |expr: &str| calc_err(None, expr);
+    assert!(said("'ab'.matches('(')").contains("this is not a regex"));
+    assert!(said("'ab'.starts_with('Aa'..'C')").contains("single letters"));
+    assert!(said("1.is_unique()").contains("takes a column"));
+    assert!(said("12.starts_with('1')").contains("`starts_with` needs text"));
+    assert!(said("'a'.contains(1)").contains("looks for text"));
+    assert!(said("'a'.contains_any('a')").contains("a vector of texts"));
+    assert!(said("'a'.is_leap_year()").contains("a Date or a Datetime"));
+    // A value alone is answered as one.
+    assert_eq!(calc("[1, 2, 2].is_unique()"), "[true, false, false]");
+    assert_eq!(calc("[1, 2, 2].is_first_distinct()"), "[true, true, false]");
+    assert_eq!(calc("'Bob'.starts_with('A'..'C')"), "true");
+    assert_eq!(calc("'Dan'.starts_with('A'..'C')"), "false");
+    assert_eq!(calc("'a.b'.contains('.')"), "true");
+    assert_eq!(calc("'ab'.contains('.')"), "false");
+    assert_eq!(calc("'ab'.matches('^a.$')"), "true");
+    assert_eq!(calc("0 < 5 <= 10"), "true");
+    assert_eq!(calc("0 < 5 <= 4"), "false");
 }

@@ -107,7 +107,7 @@ fn eval_pure_arithmetic() {
 
 #[test]
 fn eval_against_a_file() {
-    let expr = "Orders[Total; Region == \"US\"].sum()";
+    let expr = "Orders[Total; Region == 'US'].sum()";
     let flag = omasheet(&["eval", "--file", "examples/orders.omx", expr]);
     let positional = omasheet(&["eval", "examples/orders.omx", expr]);
     assert_eq!(stdout(&flag), "74.47\n");
@@ -214,7 +214,7 @@ fn dates_are_iso_unless_the_locale_is_asked_for() {
 
 #[test]
 fn time_zones_can_be_given() {
-    let expr = "2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\")";
+    let expr = "2025-07-15T12:00.convert_time_zone('Asia/Tokyo')";
     let out = omasheet(&["eval", "--zone", "Europe/London", expr]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stdout(&out), "2025-07-15T20:00+09:00\n");
@@ -417,7 +417,7 @@ fn export_writes_the_rows_a_table_reads() {
     assert!(out.status.success(), "{}", stderr(&out));
     std::fs::write(
         path(&dir, "table.omx"),
-        "table Sales := dataframe[\"sales.parquet\"]\n\n\
+        "table Sales := dataframe['sales.parquet']\n\n\
          Month   : String\nRevenue : Integer\nCost    : Integer\n\n\
          Profit := Revenue - Cost\n",
     )
@@ -453,7 +453,7 @@ fn render_shows_the_rows_a_table_reads() {
     // A table over it, with a formula, and a document that asks for both.
     std::fs::write(
         path(&dir, "table.omx"),
-        "table Sales := dataframe[\"sales.parquet\"]\n\n\
+        "table Sales := dataframe['sales.parquet']\n\n\
          Month   : String\nRevenue : Integer\nCost    : Integer\n\n\
          Profit := Revenue - Cost\n",
     )

@@ -14,7 +14,7 @@ fn WithVat(price) = price * (1 + VatRate)
 fn Margin(revenue, cost) = if revenue == 0 then 0 else (revenue - cost) / revenue
 
 # A customer's name from their ID.
-fn CustomerName(id) = Customers[; ID == id].Name // "Unknown"
+fn CustomerName(id) = Customers[; ID == id].Name // 'Unknown'
 
 # What a sheet of orders comes to. A parameter can be a whole sheet.
 fn Worth(orders) = (orders.Qty * orders.Price).sum()

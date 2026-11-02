@@ -78,6 +78,45 @@ rewrites the text, and saving writes exactly that.
 | F3 | View source |
 | F11 | Fullscreen |
 
+### Sorting and filtering
+
+The circle at the right of a column's header opens its popup: **Sort
+Ascending**, **Sort Descending**, and the column's filter. A filter is an
+expression in which `*` is the cell, such as `* >= 3`; the rows it is not
+true of are hidden. **Apply**, lit while the expression is valid and not
+yet applied, applies it and leaves the popup open, to try another; **OK** or
+Enter applies it and closes. **Clear filter** removes it and leaves the popup
+open. It is checked as it is
+typed, before anything is read: the box turns red while it is wrong, and
+holding the pointer over it says why. So the popup opens at once on a table
+of millions of rows. The circle is solid
+while the column is filtered, and filters on several columns all apply.
+
+| Filter | Shows the rows where the cell |
+|---|---|
+| `* == 3`, `* != 'x'`, `* < 2025-01-01` | is, is not, or is before that |
+| `0 < * <= 10` | is in the range: comparisons chain |
+| `* in [1, 2]`, `*.is_in(['UK', 'US'])`, `* in 1..5` | is one of those |
+| `*.starts_with('A')`, `*.starts_with('A'..'C')` | starts so, or with a letter A to C |
+| `*.ends_with('son')`, `*.contains('an')` | ends so, or holds it, exactly as written |
+| `*.matches('^A.*n$')` | matches the regular expression |
+| `*.to_lowercase().contains('an')` | holds it, case aside |
+| `*.len_chars() > 3` | is longer than three characters |
+| `* == ''`, `*.is_null()`, `* != ''` | is empty, or is not |
+| `*.is_nan()`, `*.is_finite()` | holds NaN, or a finite number |
+| `*.year == 2025`, `*.weekday >= 6` | falls in 2025, or on a weekend |
+| `*.is_duplicated()`, `*.is_first_distinct()` | is in the column more than once, or is the first of its value |
+| `* > 10 and * != 15`, `not *.contains('x')` | both, or not |
+
+A filter compares values, not what is shown, so `* == 3` finds a cell shown
+as `3.00`. An empty cell fails every comparison: `* != 3` hides empty cells
+too, and `* != 3 or * == ''` keeps them. On a table every filter is one
+Polars pass over the column. The [expressions](expressions.md#functions)
+lists the functions.
+
+A filter is a view and nothing more: the file, a save and an export still
+hold every row. It is forgotten with the file.
+
 ### Two sheets side by side
 
 1. Open the file and go to the first sheet.

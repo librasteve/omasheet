@@ -148,6 +148,10 @@ pub struct Engine<'p> {
     aggregates: RefCell<Vec<(usize, usize, Attempt)>>,
     /// And of each condition picking rows of a sheet, by that sheet.
     filters: RefCell<Vec<(usize, Attempt)>>,
+    /// What `is_unique` and its kin answer over a column of a sheet, by
+    /// the function, the sheet and the column: worked out once for the
+    /// column and looked up a row at a time.
+    marks: RefCell<Vec<((Func, usize, usize), Rc<Vec<bool>>)>>,
     /// Which of a `table`'s columns have been read from its file, by sheet
     /// and column, in the order they were read. What is not here was never
     /// read.
@@ -390,6 +394,7 @@ impl<'p> Engine<'p> {
             attempts: RefCell::new(Vec::new()),
             aggregates: RefCell::new(Vec::new()),
             filters: RefCell::new(Vec::new()),
+            marks: RefCell::new(Vec::new()),
             reads: RefCell::new(Vec::new()),
             rows_read: RefCell::new(0),
             cells: RefCell::new(
@@ -651,6 +656,59 @@ impl<'p> Engine<'p> {
         let keep: Option<Vec<usize>> = kept.into_iter().map(|p| Some(p? as usize)).collect();
         self.filters.borrow_mut().push((t, Attempt::Lowered));
         keep
+    }
+
+    /// Which rows of sheet `t` a filter keeps, in the sheet's own order:
+    /// `node` is a condition checked as a row formula of the sheet
+    /// (filter-by-expression D162). Polars answers it over the columns in
+    /// one pass wherever it lowers, however few the rows; what does not
+    /// lower, or fails in Polars, is answered a row at a time (D163). A row
+    /// is kept only where the condition is true. The first error a row
+    /// meets is the answer instead.
+    pub fn filter_mask(&self, t: usize, node: &Node) -> Result<Vec<bool>, String> {
+        let nrows = self.prog.sheets[t].nrows;
+        if let Some(mask) = self.lowered_mask(t, node) {
+            return Ok(mask);
+        }
+        let mut mask = vec![false; nrows];
+        for (r, kept) in mask.iter_mut().enumerate() {
+            match self.eval(node, &mut vec![(t, r)]) {
+                Ok(Value::Boolean(b)) => *kept = b,
+                Ok(_) => {}
+                Err(Fail::Diag(d)) => return Err(d.message),
+                Err(Fail::Poison) => {}
+            }
+        }
+        Ok(mask)
+    }
+
+    fn lowered_mask(&self, t: usize, node: &Node) -> Option<Vec<bool>> {
+        let nrows = self.prog.sheets[t].nrows;
+        let column = |c| self.pl_column(t, c);
+        let constant = |i| self.const_value(i).ok();
+        let cx = lower::Cx::new(&column, &constant);
+        let out = lower::expr(node, &cx)?;
+        if out.dtype != DataType::Boolean {
+            return None;
+        }
+        let columns = cx.taken();
+        if columns.is_empty() || columns.iter().any(|c| c.len() != nrows) {
+            return None;
+        }
+        let kept = DataFrame::new(columns)
+            .ok()?
+            .lazy()
+            .with_row_index(ROW_INDEX, None)
+            .filter(out.expr)
+            .select([col(ROW_INDEX)])
+            .collect()
+            .ok()?;
+        let kept = kept.column(ROW_INDEX).ok()?.u32().ok()?.clone();
+        let mut mask = vec![false; nrows];
+        for r in kept.into_no_null_iter() {
+            mask[r as usize] = true;
+        }
+        Some(mask)
     }
 
     /// The rows of a whole sheet in the order its key columns put them,
@@ -2270,6 +2328,141 @@ impl<'p> Engine<'p> {
         }
     }
 
+    /// One of the tests Polars has that look at a value alone, or a text
+    /// function they are written with (filter-by-expression D174). Empty
+    /// of an empty cell, as Polars answers a null.
+    fn test(&self, func: Func, args: &[Node], fr: &mut Frames) -> R {
+        let pattern = match args.get(1) {
+            Some(p) => Some(self.eval(p, fr)?),
+            None => None,
+        };
+        // A regex is made once, not once a row.
+        let regex = match (func, &pattern) {
+            (Func::Matches, Some(Value::String(re, _))) => Some(
+                regex::Regex::new(re)
+                    .or_else(|e| fail(args[1].span, format!("this is not a regex: {e}")))?,
+            ),
+            _ => None,
+        };
+        let needles: Option<Vec<Rc<str>>> = match (func, &pattern) {
+            (Func::ContainsAny, Some(Value::Vector(items))) => Some(
+                items
+                    .iter()
+                    .filter_map(|v| match v {
+                        Value::String(s, _) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        };
+        let leap = |days: i32| {
+            let (y, _, _) = date::civil_from_days(days as i64);
+            Value::Boolean((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)
+        };
+        let one = |v: &Value| -> R {
+            Ok(match (func, v) {
+                (_, Value::Null) => Value::Null,
+                (Func::IsFinite, Value::Float(f)) => Value::Boolean(f.is_finite()),
+                (Func::IsInfinite, Value::Float(f)) => Value::Boolean(f.is_infinite()),
+                // An exact number is never infinite.
+                (Func::IsFinite, v) if v.is_numeric() => Value::Boolean(true),
+                (Func::IsInfinite, v) if v.is_numeric() => Value::Boolean(false),
+                (Func::IsLeapYear, Value::Date(d)) => leap(*d),
+                (Func::IsLeapYear, Value::DateTime(t)) => leap(date::split_datetime(*t).0),
+                (Func::IsLeapYear, Value::Zoned(z)) => leap(date::split_datetime(z.wall).0),
+                (
+                    Func::LenChars
+                    | Func::ToLowercase
+                    | Func::ToUppercase
+                    | Func::StartsWith
+                    | Func::EndsWith
+                    | Func::Contains
+                    | Func::Matches
+                    | Func::ContainsAny,
+                    Value::String(s, _),
+                ) => match func {
+                    Func::LenChars => Value::int(s.chars().count() as i64),
+                    Func::ToLowercase => Value::text(&s.to_lowercase()),
+                    Func::ToUppercase => Value::text(&s.to_uppercase()),
+                    Func::Matches => regex
+                        .as_ref()
+                        .map_or(Value::Null, |re| Value::Boolean(re.is_match(s))),
+                    Func::ContainsAny => needles.as_ref().map_or(Value::Null, |n| {
+                        Value::Boolean(n.iter().any(|x| s.contains(&**x)))
+                    }),
+                    // Looking for nothing has no answer, as in Polars.
+                    _ => match &pattern {
+                        Some(Value::String(p, _)) => Value::Boolean(match func {
+                            Func::StartsWith => s.starts_with(&**p),
+                            Func::EndsWith => s.ends_with(&**p),
+                            _ => s.contains(&**p),
+                        }),
+                        _ => Value::Null,
+                    },
+                },
+                (_, other) => {
+                    let wanted = match func {
+                        Func::IsFinite | Func::IsInfinite => "a number",
+                        Func::IsLeapYear => "a date",
+                        _ => "text",
+                    };
+                    return fail(
+                        args[0].span,
+                        format!("expected {wanted}, found {}", other.kind()),
+                    );
+                }
+            })
+        };
+        match self.eval(&args[0], fr)? {
+            Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                items.iter().map(one).collect::<R<Vec<_>>>()?,
+            ))),
+            single => one(&single),
+        }
+    }
+
+    /// `is_unique` and its kin: over a vector, each element's answer; over
+    /// this row's cell, the row's answer out of its column's, which is
+    /// worked out once.
+    fn among(&self, func: Func, args: &[Node], fr: &mut Frames) -> R {
+        if let [_, column, place] = args
+            && let Ir::Column { sheet, col } = column.kind
+        {
+            let key = (func, sheet, col);
+            let held = self
+                .marks
+                .borrow()
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, m)| m.clone());
+            let found = match held {
+                Some(found) => found,
+                None => {
+                    let items = match self.eval(column, fr)? {
+                        Value::Vector(items) => items,
+                        other => Rc::new(vec![other]),
+                    };
+                    let found = Rc::new(marks(func, &items));
+                    self.marks.borrow_mut().push((key, found.clone()));
+                    found
+                }
+            };
+            let at = self.eval(place, fr)?.as_i64().and_then(|r| usize::try_from(r).ok());
+            return Ok(at
+                .and_then(|r| found.get(r))
+                .map_or(Value::Null, |&b| Value::Boolean(b)));
+        }
+        match self.eval(&args[0], fr)? {
+            Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                marks(func, &items).into_iter().map(Value::Boolean).collect(),
+            ))),
+            // A value alone is the only one of its kind, and the first and
+            // the last of it.
+            _ => Ok(Value::Boolean(func != Func::IsDuplicated)),
+        }
+    }
+
     fn call(&self, func: Func, args: &[Node], span: Span, fr: &mut Frames) -> R {
         // An aggregate over a whole column the dataframe holds is Polars'
         // to take, which is a pass over a column rather than a value read
@@ -2394,6 +2587,22 @@ impl<'p> Engine<'p> {
                     ))),
                     single => moved(&single),
                 }
+            }
+            // The tests Polars has, a value at a time; empty of an empty
+            // cell, as Polars answers a null (filter-by-expression D165).
+            Func::IsFinite
+            | Func::IsInfinite
+            | Func::IsLeapYear
+            | Func::LenChars
+            | Func::ToLowercase
+            | Func::ToUppercase
+            | Func::StartsWith
+            | Func::EndsWith
+            | Func::Contains
+            | Func::Matches
+            | Func::ContainsAny => self.test(func, args, fr),
+            Func::IsUnique | Func::IsDuplicated | Func::IsFirstDistinct | Func::IsLastDistinct => {
+                self.among(func, args, fr)
             }
             Func::IsNull | Func::IsNan => {
                 let absent = |v: &Value| -> R {
@@ -3519,4 +3728,36 @@ pub fn succ_text(s: &str) -> String {
         i -= 1;
     }
     out.into_iter().collect()
+}
+
+/// What `is_unique`, `is_duplicated`, `is_first_distinct` and
+/// `is_last_distinct` answer for each of `items`: the items are sorted, so
+/// that values alike are side by side, and each run of them is one kind.
+/// An empty cell is a kind of its own, as a null is in Polars.
+fn marks(func: Func, items: &[Value]) -> Vec<bool> {
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    let cmp = |a: &usize, b: &usize| {
+        sort_order(&items[*a], &items[*b]).unwrap_or(std::cmp::Ordering::Equal)
+    };
+    order.sort_by(cmp);
+    let mut out = vec![false; items.len()];
+    let mut start = 0;
+    while start < order.len() {
+        let mut end = start + 1;
+        while end < order.len() && cmp(&order[start], &order[end]).is_eq() {
+            end += 1;
+        }
+        // A stable sort keeps each run in the order of the rows.
+        let run = &order[start..end];
+        for (k, &i) in run.iter().enumerate() {
+            out[i] = match func {
+                Func::IsUnique => run.len() == 1,
+                Func::IsDuplicated => run.len() > 1,
+                Func::IsFirstDistinct => k == 0,
+                _ => k == run.len() - 1,
+            };
+        }
+        start = end;
+    }
+    out
 }

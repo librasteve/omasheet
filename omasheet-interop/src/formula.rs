@@ -593,7 +593,7 @@ impl Scope<'_> {
     fn expr(&mut self, e: &Expr) -> R<Out> {
         Ok(Out::One(match e {
             Expr::Num(n) => Omx::whole(number(n)),
-            Expr::Str(s) => Omx::whole(format!("{s:?}")),
+            Expr::Str(s) => Omx::whole(omasheet_engine::omx::lexer::quoted(s)),
             Expr::Bool(b) => Omx::whole(b.to_string()),
             Expr::Cell(worksheet, cell) => self.cell(worksheet, *cell)?,
             Expr::Block(worksheet, a, b) => return Ok(Out::Many(self.block(worksheet, *a, *b)?)),
@@ -1068,7 +1068,7 @@ mod tests {
         assert_eq!(omx("B3*10%"), "Revenue * 10%");
         assert_eq!(omx("B3%"), "Revenue / 100");
         assert_eq!(omx(".5+1E3"), "0.5 + 1000");
-        assert_eq!(omx("\"a\"\"b\"=A3"), "\"a\\\"b\" == Month");
+        assert_eq!(omx("\"a\"\"b\"=A3"), "'a\"b' == Month");
         assert_eq!(omx("A3&\"x\""), "no: it joins text with `&`");
     }
 
@@ -1076,7 +1076,7 @@ mod tests {
     fn functions() {
         assert_eq!(
             omx("IF(B3>C3,\"up\",\"down\")"),
-            "if Revenue > Cost then \"up\" else \"down\""
+            "if Revenue > Cost then 'up' else 'down'"
         );
         assert_eq!(
             omx("IF(AND(B3>0,OR(C3>0,TRUE)),1,2)+1"),
@@ -1103,19 +1103,19 @@ mod tests {
         assert_eq!(omx("WEEKDAY(A3)=1"), "weekday(Month) == 7");
         assert_eq!(
             omx("SWITCH(WEEKDAY(A3),1,\"Sun\",2,\"Mon\",\"other\")"),
-            "if weekday(Month) == 7 then \"Sun\" else if weekday(Month) == 1 then \"Mon\" else \"other\""
+            "if weekday(Month) == 7 then 'Sun' else if weekday(Month) == 1 then 'Mon' else 'other'"
         );
         assert_eq!(
             omx("_xlfn.SWITCH(B3,1,\"a\",2,\"b\",\"c\")"),
-            "if Revenue == 1 then \"a\" else if Revenue == 2 then \"b\" else \"c\""
+            "if Revenue == 1 then 'a' else if Revenue == 2 then 'b' else 'c'"
         );
         assert_eq!(
             omx("switch(B3,1,\"a\",2,\"b\")"),
-            "if Revenue == 1 then \"a\" else \"b\""
+            "if Revenue == 1 then 'a' else 'b'"
         );
         assert_eq!(
             omx("IFS(B3>1,\"a\",TRUE,\"b\")"),
-            "if Revenue > 1 then \"a\" else \"b\""
+            "if Revenue > 1 then 'a' else 'b'"
         );
         assert_eq!(omx("VLOOKUP(A3,B:C,2)"), "no: `VLOOKUP` has no equivalent");
         assert_eq!(omx("DATE(2026,6,30)"), "no: `DATE` has no equivalent");

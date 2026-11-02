@@ -38,15 +38,6 @@ fn list<T>(out: &mut String, items: &[T], mut each: impl FnMut(&mut String, &T))
     out.push(']');
 }
 
-/// The values a column's filter lists, and how many there are in all:
-/// `{"values": [...], "total": n}`.
-pub fn matching(values: &[&str], total: usize) -> String {
-    let mut out = String::from("{\"values\":");
-    list(&mut out, values, |out, t| string(out, t));
-    out.push_str(&format!(",\"total\":{total}}}"));
-    out
-}
-
 /// Some rows of a paged sheet, as [`snapshot`] writes a sheet's rows.
 pub fn rows(rows: &[Vec<CellSnap>]) -> String {
     let mut out = String::new();

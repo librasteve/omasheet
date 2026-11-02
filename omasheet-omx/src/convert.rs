@@ -71,7 +71,9 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
         [Tok::Minus, Tok::Decimal(r), Tok::Eof] => Lit::Decimal(r.checked_neg()?),
         [Tok::Minus, Tok::Percent(r), Tok::Eof] => Lit::Percent(r.checked_neg()?),
         [Tok::Minus, Tok::Float(f), Tok::Eof] => Lit::Float(-*f),
-        [Tok::Str(s), Tok::Eof] => Lit::String(s.clone()),
+        // A cell quotes its text with `"`; `'x'` in a cell is the text
+        // with its apostrophes, as it is written (D168).
+        [Tok::Text(s), Tok::Eof] => Lit::String(s.clone()),
         [Tok::Date(d), Tok::Eof] => Lit::Date(*d),
         [Tok::Time(t), Tok::Eof] => Lit::Time(*t),
         [Tok::DateTime(t), Tok::Eof] => Lit::DateTime(*t),
@@ -214,6 +216,13 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cell_quotes_its_text_with_double_quotes() {
+        assert_eq!(parse_literal("\"2 * 3\""), Some(Lit::String("2 * 3".into())));
+        // A cell in single quotes is that text, apostrophes and all (D168).
+        assert_eq!(parse_literal("'x'"), None);
+    }
 
     const TYPES: [S; 15] = [
         S::Int,

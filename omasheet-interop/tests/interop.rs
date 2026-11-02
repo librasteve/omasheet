@@ -708,7 +708,7 @@ sheet YearEnd
 | Best      | = Sales.Profit.max()                           |
 | First two | = Sales[Profit; 0] + Sales[Profit; 1]          |
 | Share     | = [Value; *-3] / [Value; *-4]                  |
-| Good      | = if [Value; *-4] > 10000 then \"yes\" else \"no\" |
+| Good      | = if [Value; *-4] > 10000 then 'yes' else 'no' |
 | Looked up | 5000                                           |
 | Wrong     | 1                                              |
 "
@@ -822,8 +822,8 @@ fn json_comes_back_as_the_values_it_was_written_from() {
     assert_eq!(eval(&back.source, "T[Day; 1] - T[Day; 0]"), "P1D");
     assert_eq!(eval(&back.source, "T.At"), "[09:30, 17:05]");
     // A number in quotes is text, and null is empty.
-    assert_eq!(eval(&back.source, "T.Name"), "[\"a\", \"42\"]");
-    assert_eq!(eval(&back.source, "T.Gap"), "[empty, \"x\"]");
+    assert_eq!(eval(&back.source, "T.Name"), "['a', '42']");
+    assert_eq!(eval(&back.source, "T.Gap"), "[empty, 'x']");
 }
 
 #[test]
@@ -851,7 +851,7 @@ fn json_reads_a_list_of_rows_as_one_sheet() {
     );
     assert_eq!(
         eval(&back.source, "orders.Tags"),
-        "[empty, \"[\\\"a\\\",1]\"]"
+        "[empty, '[\"a\",1]']"
     );
     assert_eq!(
         back.notices,
@@ -1115,7 +1115,7 @@ Feb   | 12000   | 7000
 
 /// A table over those three columns, with a formula over two of them.
 const TABLE: &str = "\
-table Sales := dataframe[\"sales.parquet\"]
+table Sales := dataframe['sales.parquet']
 
 Month   : String
 Revenue : Int
@@ -1353,10 +1353,10 @@ fn a_column_is_read_under_the_name_the_file_holds_it_by() {
     let dir = scratch("table-from");
     odd_named_file(&dir);
     let text = "\
-table Sales := dataframe[\"odd.parquet\"]
+table Sales := dataframe['odd.parquet']
 
 Month : String
-Units : Int from \"Units/Boxes Sold\"
+Units : Int from 'Units/Boxes Sold'
 
 Double := Units * 2
 
@@ -1378,7 +1378,7 @@ const Total = Sales.Units.sum()
 fn a_column_the_schema_does_not_name_says_how_to_name_it() {
     let dir = scratch("table-from-missing");
     odd_named_file(&dir);
-    let text = "table Sales := dataframe[\"odd.parquet\"]\n\nMonth : String\n";
+    let text = "table Sales := dataframe['odd.parquet']\n\nMonth : String\n";
     let out = with_tables(&dir, text);
     assert!(!out.ok());
     // The help offers the one form that can name it, under a name made
@@ -1386,7 +1386,7 @@ fn a_column_the_schema_does_not_name_says_how_to_name_it() {
     assert!(
         out.errors
             .iter()
-            .any(|e| e.contains("UnitsBoxesSold : Integer from \"Units/Boxes Sold\"")),
+            .any(|e| e.contains("UnitsBoxesSold : Integer from 'Units/Boxes Sold'")),
         "{:?}",
         out.errors
     );
@@ -1395,7 +1395,7 @@ fn a_column_the_schema_does_not_name_says_how_to_name_it() {
 #[test]
 fn a_from_on_a_sheet_of_its_own_rows_is_reported() {
     let dir = scratch("table-from-sheet");
-    let text = "sheet Sales\n\nUnits : Int from \"Units/Boxes Sold\"\n\nUnits\n3\n";
+    let text = "sheet Sales\n\nUnits : Int from 'Units/Boxes Sold'\n\nUnits\n3\n";
     let out = with_tables(&dir, text);
     assert!(!out.ok());
     assert!(
@@ -1444,7 +1444,7 @@ fn a_column_of_nulls_fits_the_declared_type() {
     // The file holds nothing in `Note`, so it contradicts no declaration:
     // the type is the text's to say.
     let text = "\
-table Sales := dataframe[\"null.parquet\"]
+table Sales := dataframe['null.parquet']
 
 Month : String
 Note  : String
@@ -1459,7 +1459,7 @@ Note  : String
 fn a_column_of_nulls_the_schema_does_not_name_is_said_without_a_type() {
     let dir = scratch("table-null-missing");
     null_column_file(&dir);
-    let text = "table Sales := dataframe[\"null.parquet\"]\n\nMonth : String\n";
+    let text = "table Sales := dataframe['null.parquet']\n\nMonth : String\n";
     let out = with_tables(&dir, text);
     assert!(!out.ok());
     // There is no type to offer, and `Any` is not one that can be written.
@@ -1500,7 +1500,7 @@ fn a_declared_type_narrower_than_the_file_is_reported() {
     );
     std::fs::write(dir.join("price.parquet"), &exported.files[0].bytes).unwrap();
     let text = "\
-table Prices := dataframe[\"price.parquet\"]
+table Prices := dataframe['price.parquet']
 
 Month : String
 Price : Int

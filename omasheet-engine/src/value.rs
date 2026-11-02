@@ -1051,7 +1051,7 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         Value::Percent(r) => localised(shown_percent(r, false, group(style)), style),
         Value::Float(f) if exact => format_float(*f, true),
         Value::Float(f) => localised(shown_float(*f, false, group(style)), style),
-        Value::String(s, _) if quoted => format!("{s:?}"),
+        Value::String(s, _) if quoted => omasheet_omx::lexer::quoted(s),
         Value::String(s, _) => s.to_string(),
         Value::Boolean(b) => b.to_string(),
         Value::Date(d) => style.date(*d),
@@ -1380,7 +1380,7 @@ mod tests {
         assert_eq!(shown(third.converted(S::Int)), "-2");
         assert_eq!(
             shown(third.converted(S::String)),
-            "\"-2.33333333333333333333333333333\""
+            "'-2.33333333333333333333333333333'"
         );
         assert_eq!(shown(Value::Float(0.1).converted(S::Decimal)), "0.1");
         assert_eq!(shown(Value::text("1/8").converted(S::Decimal)), "0.125");

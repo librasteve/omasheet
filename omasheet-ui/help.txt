@@ -33,7 +33,9 @@ F3                   View source
 F11                  Fullscreen
 
 A cell starting with = is a formula
-Text is Markdown unless in quotes
+In a formula, text is in 'single quotes'
+A column's filter: * is the cell, as 0 < * <= 10
+Text is Markdown unless in "quotes"
 Dates and times: {locale}
 
 About

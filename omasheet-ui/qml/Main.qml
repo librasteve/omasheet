@@ -134,6 +134,9 @@ ApplicationWindow {
     // up or down a row draws just the one. So each last frame is drawn twice.
     property bool drawnAgain: false
     onFrameSwapped: {
+        // The spinner `busy` shows is on the screen: its work can begin.
+        if (busyWork !== null)
+            busyStart.drawn = true;
         drawnAgain = !drawnAgain;
         if (drawnAgain)
             update();
@@ -163,6 +166,79 @@ ApplicationWindow {
     readonly property int selBottom: Math.max(curRow, anchorRow)
     readonly property int selLeft: Math.min(curCol, anchorCol)
     readonly property int selRight: Math.max(curCol, anchorCol)
+    // What is being done that takes a while, said in the status bar beside
+    // a spinner, or "". `busy` says it, lets that frame be drawn, and then
+    // does the work: the work holds the app's thread, but the spinner is
+    // turned by the render thread, so it goes on turning.
+    property string busyText: ""
+    property var busyWork: null
+    function busy(text, work) {
+        if (busyWork !== null) {
+            work();
+            return;
+        }
+        busyText = text;
+        busyWork = work;
+        busyStart.restart();
+    }
+    function runBusy() {
+        busyStart.stop();
+        var work = busyWork;
+        if (work === null)
+            return;
+        try {
+            work();
+        } finally {
+            busyWork = null;
+            busyText = "";
+        }
+    }
+    Timer {
+        // The frame with the spinner is drawn, or a moment has passed in
+        // which it would have been.
+        id: busyStart
+        property bool drawn: false
+        interval: 16
+        repeat: true
+        onTriggered: if (drawn || ++tries > 6) win.runBusy()
+        property int tries: 0
+        function restart() { drawn = false; tries = 0; start(); }
+    }
+
+    // Count, Sum and Mean of the cells selected, for the status bar, or ""
+    // for one cell. Worked out once the selection has stopped changing:
+    // moving the cursor sets one end and then the other, and in between
+    // the selection can be the whole of a table of millions of rows.
+    property string selSummary: ""
+    readonly property string selKey: [tab, selTop, selLeft, selBottom, selRight].join(",")
+    onSelKeyChanged: summarize()
+    onSnapChanged: summarize()
+    function summarize() {
+        selSummary = "";
+        summaryTimer.restart();
+    }
+    Timer {
+        id: summaryTimer
+        interval: 150
+        onTriggered: {
+            var several = !win.sheet.isConsts && win.tabs.length > 0
+                && (win.selTop !== win.selBottom || win.selLeft !== win.selRight);
+            if (!several || !win.snap) {
+                win.selSummary = "";
+                return;
+            }
+            var key = win.selKey;
+            var add = function() {
+                if (win.selKey === key)
+                    win.selSummary = file.selectionSummary(win.tab, win.selTop, win.selLeft, win.selBottom, win.selRight);
+            };
+            var cells = (win.selBottom - win.selTop + 1) * (win.selRight - win.selLeft + 1);
+            if (cells > 1000000)
+                win.busy("Adding up\u2026", add);
+            else
+                add();
+        }
+    }
 
     // Where the arrow keys are pointing a formula reference, while one is
     // being typed: -1 when no such pick is under way.
@@ -358,13 +434,16 @@ ApplicationWindow {
         anchorCol = Math.min(anchorCol, maxCol);
     }
 
-    // The filters in force, by sheet and then column name: the display
-    // texts each column does not show. A filter is a view of the sheet and
-    // nothing more -- it hides rows in the grid, and the file, a save and
-    // an export all still hold every row -- where a sort rearranges the
-    // rows in the file.
+    // The filters in force, by sheet and then column name: each column's
+    // expression, in which `*` is the cell (filter-by-expression D160). A
+    // filter is a view of the sheet and nothing more -- it hides rows in
+    // the grid, and the file, a save and an export all still hold every
+    // row -- where a sort rearranges the rows in the file.
     property var filters: ({})
     property int filterRev: 0
+    // The filters as they last worked: one that fails when it is applied
+    // gives way to these, and says why.
+    property var goodFilters: ({})
     // How many rows the grid lists while a filter is in force, and -1 while
     // every row shows. The document works out which, once for each change
     // of the sheet or the filter, and keeps them: a big table's are
@@ -378,8 +457,17 @@ ApplicationWindow {
         if (f && !sheet.isConsts)
             for (var name in f)
                 if (f[name] && f[name].length > 0)
-                    parts.push([name].concat(f[name]).join("\u001f"));
+                    parts.push(name + "\u001f" + f[name]);
         return { count: file.filterRows(tab, parts.join("\u001e")) };
+    }
+    onFilterShownChanged: {
+        if (filterShown.count === -2) {
+            notice = file.filterProblem();
+            filters = JSON.parse(JSON.stringify(goodFilters));
+            filterRev++;
+        } else {
+            goodFilters = JSON.parse(JSON.stringify(filters));
+        }
     }
     readonly property int shownCount: filterShown.count < 0 ? sheet.nrows : filterShown.count
     function isHidden(row) {
@@ -399,18 +487,24 @@ ApplicationWindow {
         return rowAt(Math.max(0, Math.min(shownCount - 1, Math.floor(y / rowHeight))));
     }
     function filtered(col) {
+        return filterOf(col).length > 0;
+    }
+    // The expression column `col` is filtered by, or "".
+    function filterOf(col) {
         filterRev;
         var f = filters[sheet.name];
-        var out = f && sheet.columns[col] ? f[sheet.columns[col].name] : null;
-        return !!out && out.length > 0;
+        var expr = f && sheet.columns[col] ? f[sheet.columns[col].name] : "";
+        return typeof expr === "string" ? expr.trim() : "";
     }
-    function setFilter(col, excluded) {
-        var all = filters;
+    function setFilter(col, expr) {
+        var all = JSON.parse(JSON.stringify(filters));
         var f = all[sheet.name] || {};
-        f[sheet.columns[col].name] = excluded;
+        f[sheet.columns[col].name] = expr.trim();
         all[sheet.name] = f;
-        filters = all;
-        filterRev++;
+        busy("Filtering\u2026", function() {
+            filters = all;
+            filterRev++;
+        });
     }
     // What each sheet has been sorted by: every column, whose telltale
     // stays solid, and the last one and which way, which is the order the
@@ -489,12 +583,6 @@ ApplicationWindow {
         if (filterShown.count < 0 || selTop === selBottom)
             return false;
         return file.hidesBetween(selTop, selBottom);
-    }
-    // The first `limit` texts a column shows that hold `query`, each once,
-    // in the order of their values, and how many hold it in all:
-    // { values: [...], total: n }.
-    function valuesOf(col, query, limit) {
-        return JSON.parse(file.valuesMatching(tab, col, query, limit));
     }
 
     function selectCell(row, col, extend) {
@@ -606,8 +694,26 @@ ApplicationWindow {
         revealAt(curRow, curCol);
     }
 
+    // Scroll the rows just far enough to show place `pos` whole. Every row
+    // is `rowHeight` high, so where a place is is a multiplication; a
+    // ListView's own positionViewAtIndex lays rows out on its way there,
+    // which on a table of millions of rows takes seconds.
+    function showPlace(pos) {
+        if (pos < 0)
+            return;
+        var top = rowsView.originY + pos * rowHeight;
+        var bottom = top + rowHeight;
+        var y = rowsView.contentY;
+        if (top < y)
+            y = top;
+        else if (bottom > y + rowsView.height)
+            y = bottom - rowsView.height;
+        if (y !== rowsView.contentY)
+            rowsView.contentY = y;
+    }
+
     function revealAt(row, col) {
-        rowsView.positionViewAtIndex(posOf(row), ListView.Contain);
+        showPlace(posOf(row));
         var x = gutterWidth;
         for (var c = 0; c < col; c++)
             x += colWidths[c];
@@ -813,7 +919,7 @@ ApplicationWindow {
         if (pickRow >= 0)
             return true;
         // Quoted text is no part of the formula's shape.
-        var text = editor.text.replace(/"(\\.|[^"\\])*"?/g, function(q) { return q.replace(/./g, "x"); });
+        var text = editor.text.replace(/'(\\.|[^'\\])*'?|"(\\.|[^"\\])*"?/g, function(q) { return q.replace(/./g, "x"); });
         var before = text.slice(0, editor.cursorPosition);
         var after = text.slice(editor.cursorPosition).replace(/^\s+/, "");
         if ((before.match(/\[/g) || []).length > (before.match(/\]/g) || []).length)
@@ -1283,7 +1389,7 @@ ApplicationWindow {
     // Scroll to `row` once the list has been put back where it was after an
     // edit that added rows.
     function showRow(row) {
-        Qt.callLater(function() { rowsView.positionViewAtIndex(posOf(row), ListView.Contain); });
+        Qt.callLater(function() { win.showPlace(posOf(row)); });
     }
 
 
@@ -1833,14 +1939,17 @@ ApplicationWindow {
         } else if (action === "open") {
             openDialog.open();
         } else if (action === "openUrl") {
-            if (file.openUrl(pendingUrl)) {
-                places = ({});
-                tab = 0;
-                switchTab(0);
-                // What an import changed or left behind.
-                if (file.notes.length > 0)
-                    notesDialog.open();
-            }
+            var url = pendingUrl;
+            busy("Opening\u2026", function() {
+                if (file.openUrl(url)) {
+                    places = ({});
+                    tab = 0;
+                    switchTab(0);
+                    // What an import changed or left behind.
+                    if (file.notes.length > 0)
+                        notesDialog.open();
+                }
+            });
         }
     }
 
@@ -3308,7 +3417,8 @@ ApplicationWindow {
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
                 readonly property bool moving: win.grabbedHere
-                text: win.notice.length > 0 ? win.notice
+                text: win.busyText.length > 0 ? win.busyText
+                    : win.notice.length > 0 ? win.notice
                     : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
                     : win.formulaCell ? "This is a formula column, this change will apply to the entire column"
                     : file.status.length > 0 ? file.status
@@ -3323,6 +3433,20 @@ ApplicationWindow {
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.captionSize
+            }
+
+            // Turning while something takes a while: work in hand, or a
+            // file being read in the background.
+            BusyIndicator {
+                anchors.right: barMessage.left
+                anchors.rightMargin: 6
+                anchors.verticalCenter: parent.verticalCenter
+                height: parent.height - 6
+                width: height
+                padding: 0
+                running: win.busyText.length > 0 || file.working
+                visible: running
+                Material.accent: win.accentColor
             }
 
             // On the right, what is counted rather than said: what a
@@ -3342,10 +3466,7 @@ ApplicationWindow {
                     Layout.fillHeight: true
                     verticalAlignment: Text.AlignVCenter
                     horizontalAlignment: Text.AlignRight
-                    // `win.snap` is read so that an edit recalculates it.
-                    text: several && win.snap
-                        ? file.selectionSummary(win.tab, win.selTop, win.selLeft, win.selBottom, win.selRight)
-                        : ""
+                    text: win.selSummary
                     color: win.mutedColor
                     elide: Text.ElideRight
                     font.family: win.font.family
@@ -3516,37 +3637,18 @@ ApplicationWindow {
     // them in the file at once, as one step to undo; a calculated sheet is
     // sorted by its expression, which comes to end in `|> sort(...)`; and a
     // table, whose rows are its file's, is sorted in the grid alone. The
-    // filter is chosen here and takes effect with OK: Esc, or a click
-    // elsewhere, leaves it as it was.
+    // filter is an expression in which `*` is the cell (filter-by-expression
+    // D160, D171): checked as it is typed, with no row read. Apply applies
+    // it and stays open, to try another; OK or Enter applies it and closes.
+    // Esc, or a click elsewhere, leaves what was last applied.
     Popup {
         id: columnPopup
         property int col: 0
-        // The values listed: those the search holds, at most `limit` of
-        // them, out of `total`. A column of a big table can show millions,
-        // more than a list can be scrolled through, so the search is made
-        // over all of them and the list shows the first.
-        property var values: []
-        property int total: 0
-        readonly property int limit: 1000
-        property var excluded: ({})
-        property string search: ""
+        // What is wrong with the expression typed, or "".
+        property string fault: ""
         readonly property bool sortable: !win.sheet.isConsts
-        readonly property var listed: values
-        function fetch() {
-            var got = win.valuesOf(col, search, limit);
-            values = got.values;
-            total = got.total;
-        }
-        onSearchChanged: if (visible) fetch()
-        readonly property int shownCount: {
-            var n = 0;
-            for (var i = 0; i < listed.length; i++)
-                if (excluded[listed[i]] !== true)
-                    n++;
-            return n;
-        }
-        padding: 4
-        width: Math.round(win.fontSize * 11)
+        padding: 8
+        width: Math.round(win.fontSize * 16.5)
         // Smaller than the grid: the controls of Material are made for touch.
         readonly property int textSize: win.captionSize
         readonly property int lineHeight: Math.round(textSize * 1.9)
@@ -3558,53 +3660,49 @@ ApplicationWindow {
             parent = item;
             x = 0;
             y = item.height;
-            search = "";
-            valueSearch.text = "";
-            fetch();
-            var f = win.filters[win.sheet.name];
-            var out = f && f[win.sheet.columns[c].name] ? f[win.sheet.columns[c].name] : [];
-            var map = {};
-            for (var i = 0; i < out.length; i++)
-                map[out[i]] = true;
-            excluded = map;
+            applied = win.filterOf(c);
+            filterField.text = applied;
+            check();
             open();
+            filterField.forceActiveFocus();
+            filterField.selectAll();
+        }
+        function check() {
+            fault = file.checkFilter(win.tab, col, filterField.text);
         }
         function sortBy(desc) {
-            var problem = file.sortRows(win.tab, col, desc);
+            var c = col;
             close();
-            if (problem.length > 0)
-                win.notice = problem;
-            else
-                win.noteSort(col, desc);
-        }
-        function setAll(on) {
-            var map = {};
-            for (var k in excluded)
-                map[k] = true;
-            for (var i = 0; i < listed.length; i++) {
-                if (on)
-                    delete map[listed[i]];
+            win.busy("Sorting\u2026", function() {
+                var problem = file.sortRows(win.tab, c, desc);
+                if (problem.length > 0)
+                    win.notice = problem;
                 else
-                    map[listed[i]] = true;
-            }
-            excluded = map;
+                    win.noteSort(c, desc);
+            });
         }
-        function toggle(value, on) {
-            var map = {};
-            for (var k in excluded)
-                map[k] = true;
-            if (on)
-                delete map[value];
-            else
-                map[value] = true;
-            excluded = map;
-        }
+        // Whether the expression typed passes and is not the one in force:
+        // what Apply would change.
+        readonly property bool changed: fault.length === 0
+            && filterField.text.trim() !== applied
+        // What this popup last applied: the filter in force, without waiting
+        // for it to be set, which happens a frame later behind the spinner.
+        property string applied: ""
+        // Apply the expression and stay open, to try another.
         function apply() {
-            var out = [];
-            for (var k in excluded)
-                out.push(k);
-            win.setFilter(col, out);
-            close();
+            check();
+            if (fault.length > 0)
+                return false;
+            if (changed) {
+                applied = filterField.text.trim();
+                win.setFilter(col, filterField.text);
+            }
+            return true;
+        }
+        // Apply it and close: OK, and Enter.
+        function accept() {
+            if (apply())
+                close();
         }
 
         background: Rectangle {
@@ -3613,7 +3711,7 @@ ApplicationWindow {
             radius: 3
         }
         contentItem: ColumnLayout {
-            spacing: 1
+            spacing: 4
             MenuEntry {
                 visible: columnPopup.sortable
                 Layout.fillWidth: true
@@ -3636,15 +3734,30 @@ ApplicationWindow {
                 height: 1
                 color: win.lineColor
             }
+            Text {
+                Layout.fillWidth: true
+                Layout.maximumWidth: columnPopup.availableWidth
+                Layout.topMargin: 4
+                text: "Filter"
+                color: win.mutedColor
+                font.family: win.font.family
+                font.pixelSize: columnPopup.textSize
+            }
             Rectangle {
                 Layout.fillWidth: true
                 Layout.maximumWidth: columnPopup.availableWidth
-                implicitHeight: columnPopup.lineHeight + 2
+                implicitHeight: columnPopup.lineHeight + 4
                 color: "transparent"
                 radius: 2
-                border.color: valueSearch.activeFocus ? win.accentColor : win.lineColor
+                border.color: columnPopup.fault.length > 0 ? win.errorColor
+                    : filterField.activeFocus ? win.accentColor : win.lineColor
+                // What is wrong, for a pointer held over the red box.
+                HoverHandler { id: filterHover }
+                ToolTip.visible: filterHover.hovered && columnPopup.fault.length > 0
+                ToolTip.text: columnPopup.fault
+                ToolTip.delay: 300
                 TextInput {
-                    id: valueSearch
+                    id: filterField
                     anchors.fill: parent
                     anchors.leftMargin: 6
                     anchors.rightMargin: 6
@@ -3652,68 +3765,24 @@ ApplicationWindow {
                     clip: true
                     color: win.textColor
                     selectionColor: win.selectionFill
-                    font.family: win.font.family
+                    selectByMouse: true
+                    font.family: "monospace"
                     font.pixelSize: columnPopup.textSize
-                    onTextChanged: columnPopup.search = text
+                    onTextChanged: columnPopup.check()
+                    Keys.onReturnPressed: columnPopup.accept()
+                    Keys.onEnterPressed: columnPopup.accept()
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
-                        visible: valueSearch.text.length === 0
-                        text: "Search"
+                        visible: filterField.text.length === 0
+                        text: "e.g. * >= 3"
                         color: win.mutedColor
-                        font: valueSearch.font
+                        font: filterField.font
                     }
                 }
             }
-            CheckBox {
-                Layout.fillWidth: true
-                Layout.maximumWidth: columnPopup.availableWidth
-                // When the list is cut short, it is what is listed it shows.
-                text: columnPopup.total > columnPopup.values.length ? "Show all listed" : "Show all"
-                font.family: win.font.family
-                font.pixelSize: columnPopup.textSize
-                implicitHeight: columnPopup.lineHeight
-                padding: 0
-                spacing: 2
-                tristate: true
-                checkState: columnPopup.shownCount === 0 ? Qt.Unchecked
-                    : columnPopup.shownCount === columnPopup.listed.length ? Qt.Checked : Qt.PartiallyChecked
-                nextCheckState: function() { return Qt.Checked; }
-                onClicked: columnPopup.setAll(columnPopup.shownCount !== columnPopup.listed.length)
-            }
-            ListView {
-                Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(contentHeight, columnPopup.lineHeight * 8)
-                clip: true
-                model: columnPopup.listed
-                boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar {}
-                delegate: CheckBox {
-                    required property string modelData
-                    width: ListView.view.width
-                    height: columnPopup.lineHeight
-                    text: modelData.length > 0 ? modelData : "(empty)"
-                    font.family: win.font.family
-                    font.pixelSize: columnPopup.textSize
-                    padding: 0
-                    spacing: 2
-                    checked: columnPopup.excluded[modelData] !== true
-                    onClicked: columnPopup.toggle(modelData, checked)
-                }
-            }
-            Text {
-                visible: columnPopup.total > columnPopup.values.length
-                Layout.fillWidth: true
-                Layout.maximumWidth: columnPopup.availableWidth
-                wrapMode: Text.Wrap
-                text: "First " + columnPopup.values.length.toLocaleString(Qt.locale(), "f", 0)
-                    + " of " + columnPopup.total.toLocaleString(Qt.locale(), "f", 0)
-                    + " \u2014 search to narrow"
-                color: win.mutedColor
-                font.family: win.font.family
-                font.pixelSize: columnPopup.textSize
-            }
             Rectangle {
                 Layout.fillWidth: true
+                Layout.topMargin: 4
                 height: 1
                 color: win.lineColor
             }
@@ -3722,22 +3791,36 @@ ApplicationWindow {
                 text: "Clear filter"
                 implicitHeight: columnPopup.lineHeight
                 font.pixelSize: columnPopup.textSize
-                enabled: win.filtered(columnPopup.col)
+                enabled: columnPopup.applied.length > 0
+                // The filter goes, and the popup stays, to write another.
                 onClicked: {
-                    win.setFilter(columnPopup.col, []);
-                    columnPopup.close();
+                    columnPopup.applied = "";
+                    filterField.text = "";
+                    win.setFilter(columnPopup.col, "");
+                    filterField.forceActiveFocus();
                 }
             }
             RowLayout {
                 Layout.fillWidth: true
                 Layout.maximumWidth: columnPopup.availableWidth
-                Layout.topMargin: 3
-                spacing: 4
+                Layout.topMargin: 4
+                spacing: 6
                 Item { Layout.fillWidth: true }
+                // Lit while there is a passing expression to apply; OK is
+                // the filled one otherwise.
+                PopupButton {
+                    text: "Apply"
+                    primary: columnPopup.changed
+                    enabled: columnPopup.changed
+                    opacity: enabled ? 1 : 0.4
+                    onClicked: columnPopup.apply()
+                }
                 PopupButton {
                     text: "OK"
-                    primary: true
-                    onClicked: columnPopup.apply()
+                    primary: !columnPopup.changed
+                    enabled: columnPopup.fault.length === 0
+                    opacity: enabled ? 1 : 0.4
+                    onClicked: columnPopup.accept()
                 }
                 PopupButton {
                     text: "Cancel"
@@ -3752,6 +3835,7 @@ ApplicationWindow {
         target: file
         function onFilePathChanged() {
             win.filters = ({});
+            win.goodFilters = ({});
             win.filterRev++;
             win.sortLog = [];
             win.undoDepth = file.undoMark();

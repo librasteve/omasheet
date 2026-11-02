@@ -11,7 +11,7 @@ No exact number is a division by zero, so that gives a `Float`: `1/0` is `Inf`,
 `-1/0` is `-Inf` and `0/0` is `NaN`. So does a function outside its
 domain: `sqrt(-1)` is `NaN` and `ln(0)` is `-Inf`. They are written as they are shown,
 `Inf`, `-Inf` and `NaN`, in a formula or a cell; the text is in quotes,
-`"Inf"`. A `NaN` is ordered greatest and equal to itself, so `NaN == NaN` is
+`'Inf'` in a formula and `"Inf"` in a cell. A `NaN` is ordered greatest and equal to itself, so `NaN == NaN` is
 true, a `NaN` sorts last, and the largest of a column holding one is the
 `NaN`. That is a dataframe's rule rather than IEEE's, where a `NaN` equals
 nothing at all: it is kept so that a column of floats gives the same answer
@@ -94,6 +94,18 @@ percentage, declare its column `Percent` or write `x.Percent`.
 `+ - * / **`, `== != < > <= >=`, `and or not`, `in`, and `a // b` (b when a
 is empty). `if c then a else b`.
 
+Comparisons chain, as in Raku: `0 < x <= 10` is `0 < x and x <= 10`, and
+`a < b < c < d` tests each pair in turn. `in` takes one side each.
+
+A string in a formula is in single quotes: `Name // 'Unknown'`, with `\'`,
+`\\`, `\n` and `\t` as its escapes. Double quotes are for text in a table
+cell, `"2 * 3 * 4"`, so code and text are told apart at a glance; a formula
+with a double-quoted string is an error that shows the single-quoted one.
+Everything outside a table cell is code: a column's formula, a `const`, a
+cell's `= …`, `dataframe['sales.parquet']`, `from 'Units/Boxes Sold'`, and
+`{{ }}` and `omx` blocks in Markdown. In a number format, the `'` that
+groups digits is escaped: `'%\'.2f'`.
+
 An empty cell in a comparison or a sum gives an empty answer: anything done
 with a missing value is missing. `and` and `or` are the exception, and they
 read an empty cell as an unknown rather than as a gap: an unknown that
@@ -140,8 +152,8 @@ vector is converted value by value.
 | `x.Date`, `x.Time` | that half of a `Datetime` |
 | `x.Datetime` | a `Date` at midnight |
 
-Text is read the way a cell is: `"42".Integer` is `42`, `"20%".Decimal` is `1/5`,
-`"2025-01-31".Date` is that date, and `"abc".Integer` is an error. `true.Integer` is
+Text is read the way a cell is: `'42'.Integer` is `42`, `'20%'.Decimal` is `1/5`,
+`'2025-01-31'.Date` is that date, and `'abc'.Integer` is an error. `true.Integer` is
 `1`. To round rather than drop the fraction, use `round(x)`; `round(x, 2)`
 rounds to two decimal places. For the nearest hundred, divide, round and
 multiply back: `round(x / 100) * 100`.
@@ -237,11 +249,11 @@ given start the column and the rest follow a rule.
 | `5 ... Inf` | 5, 6, 7, … — one term alone steps by one |
 | `0, 1, $-1 + $-2 ... Inf` | 0, 1, 1, 2, 3, 5, … — a rule of its own |
 | `1, 3 ... 9` | 1, 3, 5, 7, 9, then empty |
-| `"A", "B" ... Inf` | A, B, … Z, AA, AB, … |
-| `"Monday", "Tuesday" ... Inf` | the days of the week, round and round |
-| `"Jan", "Feb" ... Inf` | the months of the year |
-| `"Jan-2026", "Apr-2026" ... Inf` | quarters, carrying into the year |
-| `"AY" ... "BA"` | AY, AZ, BA, then empty |
+| `'A', 'B' ... Inf` | A, B, … Z, AA, AB, … |
+| `'Monday', 'Tuesday' ... Inf` | the days of the week, round and round |
+| `'Jan', 'Feb' ... Inf` | the months of the year |
+| `'Jan-2026', 'Apr-2026' ... Inf` | quarters, carrying into the year |
+| `'AY' ... 'BA'` | AY, AZ, BA, then empty |
 | `2025-01-01, 2025-01-08 ... Inf` | every seventh day |
 | `2025-01-01, 2025-02-01 ... Inf` | the first of each month |
 | `2025-01-31, 2025-02-28 ... Inf` | the last day of each month |
@@ -259,7 +271,7 @@ given start the column and the rest follow a rule.
   written in full or in three letters, in any case: they go round, so
   Sunday is followed by Monday and December by January. A month written
   with its year, `Jan-2026` or `January 2026`, carries into the year
-  instead. Every term must be written the same way, so `"Mon", "Tuesday"`
+  instead. Every term must be written the same way, so `'Mon', 'Tuesday'`
   is not one of these.
 - Any other text counts up the way letters and digits do, carrying at `Z`
   and `9`, and only its last run of letters and digits moves: `job-A9` to
@@ -308,21 +320,37 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 - A `NaN` or not: `is_nan(x)` and `is_not_nan(x)`. A `NaN` is a Float and an
   empty cell is a missing value, so they are different absences:
   `is_nan(0/0)` is true, `is_null(0/0)` is false, and `is_nan` of an empty
-  cell is empty
+  cell is empty. `is_finite(x)` and `is_infinite(x)` likewise; an exact
+  number is always finite
+- Text: `starts_with('A')`, `ends_with('son')`, `contains('an')` — exactly
+  as written — `matches('^A.*n$')`, a regular expression anywhere in the
+  text, and `contains_any(['an', 'en'])`. `starts_with('A'..'C')` takes a
+  range of first letters, which is `x >= 'A' and x < 'D'`. `len_chars()`
+  counts characters, and `to_lowercase()` and `to_uppercase()` change case,
+  so `Name.to_lowercase().starts_with('a')` ignores it. Each is empty of an
+  empty cell
+- Among a column's values: `is_unique()`, `is_duplicated()`,
+  `is_first_distinct()` and `is_last_distinct()`, of a column or a vector,
+  or of this row's cell, `Name.is_duplicated()`, which is answered among the
+  column's. An empty cell is a value of its own here
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
 - Counting up: `succ` — a number plus one, or the next text, `AZ` to `BA`
 - Converting: `Integer Decimal Percent Float String Boolean Date Time Datetime
   Duration`,
   each also written `cast(x, Integer)`
 - Dates: `today() now() year month day weekday quarter week ordinal_day
-  hour minute second millisecond microsecond nanosecond date time`
+  hour minute second millisecond microsecond nanosecond date time
+  is_leap_year`
 - Durations: `total_days total_hours total_minutes total_seconds`, each an
   exact number: `PT1H30M.total_hours()` is `1.5`
 - Months: `add_months(x, n)` — what `x + n.month` is — `month_end(x)` and
   `month_start(x)`
-- Time zones: `convert_time_zone("Asia/Tokyo") utc() local()
+- Time zones: `convert_time_zone('Asia/Tokyo') utc() local()
   base_utc_offset() time_zone()`
 - Your own: `fn` in the file
+
+The tests are those Polars has, under Polars' names, so a table's column is
+tested by Polars in one pass rather than a row at a time.
 
 The app lists them all under `fn()` (F1).
 

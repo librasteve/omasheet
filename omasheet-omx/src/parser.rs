@@ -253,7 +253,30 @@ impl Parser {
         };
         self.bump();
         let rhs = self.range()?;
-        Ok(Self::binary(lhs, op, rhs))
+        if op == BinOp::In {
+            return Ok(Self::binary(lhs, op, rhs));
+        }
+        // Comparisons chain, as in Raku (D166): `0 < x <= 10` is
+        // `0 < x and x <= 10`. An expression has no effects, so the middle
+        // one is written twice rather than held.
+        let mut out = Self::binary(lhs, op, rhs.clone());
+        let mut middle = rhs;
+        while let Some(op) = match self.peek() {
+            Tok::EqEq => Some(BinOp::Eq),
+            Tok::NotEq => Some(BinOp::Ne),
+            Tok::Lt => Some(BinOp::Lt),
+            Tok::Gt => Some(BinOp::Gt),
+            Tok::Le => Some(BinOp::Le),
+            Tok::Ge => Some(BinOp::Ge),
+            _ => None,
+        } {
+            self.bump();
+            let next = self.range()?;
+            let link = Self::binary(middle, op, next.clone());
+            out = Self::binary(out, BinOp::And, link);
+            middle = next;
+        }
+        Ok(out)
     }
 
     fn range(&mut self) -> R<Expr> {
@@ -395,6 +418,15 @@ impl Parser {
             Tok::Percent(r) => lit(Lit::Percent(r)),
             Tok::Float(f) => lit(Lit::Float(f)),
             Tok::Str(s) => lit(Lit::String(s)),
+            Tok::Text(s) => {
+                return Err(
+                    Diagnostic::new(span, "strings in OMX are in single quotes")
+                        .with_help(format!(
+                            "write {}; double quotes are for text in a table cell",
+                            crate::lexer::quoted(&s)
+                        )),
+                );
+            }
             Tok::Date(d) => lit(Lit::Date(d)),
             Tok::Time(t) => lit(Lit::Time(t)),
             Tok::DateTime(t) => lit(Lit::DateTime(t)),
@@ -540,6 +572,41 @@ mod tests {
     }
 
     #[test]
+    fn comparisons_chain() {
+        // The shape without the spans, which differ between the two.
+        let shown = |s: &str| {
+            let text = format!("{:?}", parse(s).unwrap().kind);
+            let mut out = String::new();
+            let mut rest = text.as_str();
+            while let Some(at) = rest.find("Span {") {
+                out.push_str(&rest[..at]);
+                rest = &rest[at + rest[at..].find('}').unwrap() + 1..];
+            }
+            out + rest
+        };
+        // `0 < x <= 10` is `0 < x and x <= 10`.
+        let chained = shown("0 < x <= 10");
+        assert_eq!(chained, shown("0 < x and x <= 10"));
+        assert_eq!(shown("a < b < c < d"), shown("a < b and b < c and c < d"));
+        assert_eq!(shown("a == b != c"), shown("a == b and b != c"));
+        // `in` takes one side each.
+        assert!(parse("a in b in c").is_err());
+        assert!(parse("a < b in c").is_err());
+    }
+
+    #[test]
+    fn code_takes_single_quotes() {
+        assert!(matches!(
+            parse("Name // 'Unknown'").unwrap().kind,
+            ExprKind::Binary(BinOp::Fallback, ..)
+        ));
+        let err = parse("Name // \"Unknown\"").unwrap_err();
+        assert_eq!(err.message, "strings in OMX are in single quotes");
+        assert!(err.help.as_deref().unwrap().contains("'Unknown'"));
+        assert_eq!((err.span.start, err.span.end), (8, 17));
+    }
+
+    #[test]
     fn shapes() {
         assert!(matches!(
             parse("Sales[Revenue; *-1] // 0").unwrap().kind,
@@ -550,7 +617,7 @@ mod tests {
             ExprKind::Index(_, slots) if slots.len() == 2 && slots[0].is_none()
         ));
         assert!(matches!(
-            parse("Sales |> filter(Region == \"UK\") |> sum()").unwrap().kind,
+            parse("Sales |> filter(Region == 'UK') |> sum()").unwrap().kind,
             ExprKind::Call(name, _, args) if name == "sum" && args.len() == 1
         ));
         assert!(matches!(
@@ -583,7 +650,7 @@ mod tests {
 
     #[test]
     fn single_equals_suggests_double() {
-        let err = parse("Sales[; Region = \"UK\"]").unwrap_err();
+        let err = parse("Sales[; Region = 'UK']").unwrap_err();
         assert!(err.help.unwrap().contains("=="));
     }
 }

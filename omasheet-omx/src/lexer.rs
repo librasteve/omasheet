@@ -16,7 +16,11 @@ pub enum Tok {
     /// A number with a `%`, already divided by a hundred.
     Percent(Dec),
     Float(f64),
+    /// `'…'`, a string in code (D168).
     Str(String),
+    /// `"…"`, text as a table cell writes it. Code does not take it: the
+    /// parser says to use single quotes, and a cell takes only this.
+    Text(String),
     /// Days since 1970-01-01.
     Date(i32),
     /// Nanoseconds since midnight, as Polars holds a `Time`.
@@ -83,7 +87,7 @@ impl Tok {
     pub fn describe(&self) -> String {
         match self {
             Tok::Int(..) | Tok::Decimal(_) | Tok::Percent(_) | Tok::Float(_) => "a number".into(),
-            Tok::Str(_) => "a string".into(),
+            Tok::Str(_) | Tok::Text(_) => "a string".into(),
             Tok::Date(_) => "a date".into(),
             Tok::Time(_) => "a time".into(),
             Tok::DateTime(_) => "a date-time".into(),
@@ -142,6 +146,24 @@ impl Tok {
             _ => "",
         }
     }
+}
+
+/// `s` as a string in code, in single quotes (D168): what reads back as
+/// `s`. Everything that writes OMX writes a string this way.
+pub fn quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        match c {
+            '\'' => out.push_str("\\'"),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
 }
 
 #[derive(Clone, Debug)]
@@ -234,7 +256,10 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
             });
             continue;
         }
-        if c == b'"' {
+        if c == b'\'' || c == b'"' {
+            // `'…'` in code, `"…"` in a cell (D168); each escapes its own
+            // quote, and either may stand in the other unescaped.
+            let quote = c as char;
             let mut s = String::new();
             i += 1;
             loop {
@@ -246,7 +271,7 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                 };
                 i += ch.len_utf8();
                 match ch {
-                    '"' => break,
+                    ch if ch == quote => break,
                     '\\' => {
                         let Some(esc) = text[i..].chars().next() else {
                             continue;
@@ -255,14 +280,16 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                         s.push(match esc {
                             'n' => '\n',
                             't' => '\t',
-                            '"' => '"',
                             '\\' => '\\',
+                            esc if esc == quote => quote,
                             other => {
                                 return Err(Diagnostic::new(
                                     span(i - other.len_utf8() - 1, i),
                                     format!("unknown escape `\\{other}`"),
                                 )
-                                .with_help("the escapes are \\\" \\\\ \\n and \\t"));
+                                .with_help(format!(
+                                    "the escapes are \\{quote} \\\\ \\n and \\t"
+                                )));
                             }
                         });
                     }
@@ -270,7 +297,7 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                 }
             }
             out.push(Token {
-                tok: Tok::Str(s),
+                tok: if quote == '"' { Tok::Text(s) } else { Tok::Str(s) },
                 span: span(start, i),
             });
             continue;
@@ -609,6 +636,22 @@ mod tests {
 
     fn toks(s: &str) -> Vec<Tok> {
         lex(s, 0, 0).unwrap().into_iter().map(|t| t.tok).collect()
+    }
+
+    #[test]
+    fn strings_in_code_and_text_in_a_cell() {
+        // Code quotes with `'`, a cell with `"` (D168); each escapes its own.
+        assert_eq!(toks("'it\\'s'")[0], Tok::Str("it's".into()));
+        assert_eq!(toks("'say \"hi\"'")[0], Tok::Str("say \"hi\"".into()));
+        assert_eq!(toks("'a\\\\b\\n'")[0], Tok::Str("a\\b\n".into()));
+        assert_eq!(toks("\"it's\"")[0], Tok::Text("it's".into()));
+        let bad = lex("'a\\\"'", 0, 0).unwrap_err();
+        assert!(bad.message.contains("unknown escape"), "{}", bad.message);
+        assert!(lex("'open", 0, 0).is_err());
+        // What writes code writes what reads back.
+        for s in ["plain", "it's", "a\\b", "two\nlines", "say \"hi\""] {
+            assert_eq!(toks(&quoted(s))[0], Tok::Str(s.into()), "{s}");
+        }
     }
 
     #[test]

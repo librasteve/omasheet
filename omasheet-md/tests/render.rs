@@ -188,7 +188,7 @@ fn an_error_in_a_linked_file_points_into_that_file() {
         shown.starts_with("report.md:2:9: error: cannot read `Missing.omx`: No such file"),
         "{shown}"
     );
-    let shown = errors("{{ 1 + \"a\" }}\n");
+    let shown = errors("{{ 1 + 'a' }}\n");
     assert!(shown.starts_with("report.md:1:4: error:"), "{shown}");
 }
 
@@ -240,7 +240,7 @@ fn html() {
 
 #[test]
 fn bare_text_is_markdown() {
-    let text = "```omx\nsheet T\n\nID | Note\n1 | **bold**, [a link](there.md)\n2 | \"**as it is**\"\n3 | <b>a & b</b>\n4 | `x < y`\n\nsheet U\n\nID | Note | Made\n1 | * | *\n2 | * | *\n\nNote := T[; ID == U[ID; *]].Note\nMade := \"_made_\"\n```\n\n{{ T[Note; 0] }} and {{ T[Note; 1] }}\n";
+    let text = "```omx\nsheet T\n\nID | Note\n1 | **bold**, [a link](there.md)\n2 | \"**as it is**\"\n3 | <b>a & b</b>\n4 | `x < y`\n\nsheet U\n\nID | Note | Made\n1 | * | *\n2 | * | *\n\nNote := T[; ID == U[ID; *]].Note\nMade := '_made_'\n```\n\n{{ T[Note; 0] }} and {{ T[Note; 1] }}\n";
     let shown = markdown(text);
     assert!(
         shown.contains("| **bold**, [a link](there.md) |"),

@@ -486,7 +486,7 @@ fn column_table(dir: &std::path::Path, rows: usize) {
 /// fresh engine: the file's column is read inside it either way, so what
 /// the two lowerings differ by is what the answer was made from.
 fn column_cost(dir: &std::path::Path, expr: &str, lowering: Lowering) -> (Duration, usize, String) {
-    let text = "table T := dataframe[\"column.parquet\"]\n\nWhole : Integer\nReal  : Float\n";
+    let text = "table T := dataframe['column.parquet']\n\nWhole : Integer\nReal  : Float\n";
     let (mut program, mut diags) = compile(text, 0);
     assert!(diags.is_empty(), "{diags:?}");
     let tables = table::read(&mut program, dir, &mut diags);
@@ -554,4 +554,83 @@ fn a_column_as_values_against_the_column() {
         "\nmilliseconds; a fresh engine each run, the file's column read inside \
          the expression either way\n"
     );
+}
+
+/// What a filter by expression costs on a big table (filter-by-expression
+/// task 3.6): checking it as it is typed, and applying it, which Polars
+/// does over the column. The files are the big ones of `demo_data`, not in
+/// Git; a file that is not there is passed over. `OMASHEET_BIG` names
+/// another, as a path.
+#[test]
+#[ignore = "a measurement: run in release with --ignored --nocapture"]
+fn a_filter_on_a_big_table() {
+    use omasheet_engine::Document;
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+    let mut files = vec![
+        format!("{root}/demo_data/fhvhv_tripdata_2019-03.parquet"),
+        std::env::var("HOME").unwrap_or_default() + "/Downloads/yellow_tripdata_2026-01.parquet",
+    ];
+    if let Ok(more) = std::env::var("OMASHEET_BIG") {
+        files.insert(0, more);
+    }
+    for file in files.iter().filter(|f| std::path::Path::new(f).exists()) {
+        let started = Instant::now();
+        let doc = Document::from_text(&format!(
+            "table T := dataframe[{}]\n",
+            omasheet_engine::omx::lexer::quoted(file)
+        ));
+        let sheet = &doc.snapshot().sheets[0];
+        println!(
+            "\n{file}: {} rows, {} columns, opened in {}",
+            sheet.nrows,
+            sheet.columns.len(),
+            ms(started.elapsed())
+        );
+        let pick = |types: &[&str]| {
+            sheet
+                .columns
+                .iter()
+                .position(|c| types.contains(&c.ty.as_str()))
+        };
+        let mut cases: Vec<(usize, &str)> = Vec::new();
+        if let Some(c) = pick(&["Float", "Decimal"]) {
+            cases.extend([(c, "* > 20"), (c, "10 < * <= 20"), (c, "*.is_null()")]);
+        }
+        if let Some(c) = pick(&["Integer", "Int"]) {
+            cases.extend([(c, "* in [1, 2]"), (c, "* != 1")]);
+        }
+        if let Some(c) = pick(&["String"]) {
+            cases.extend([
+                (c, "*.starts_with('B'..'C')"),
+                (c, "*.contains('02')"),
+                (c, "*.matches('^HV000[34]$')"),
+            ]);
+        }
+        if let Some(c) = pick(&["Datetime"]) {
+            cases.extend([(c, "*.day == 15"), (c, "* >= 2019-03-15T00:00")]);
+        }
+        for (c, expr) in cases {
+            let name = sheet.columns[c].name.clone();
+            let checked = Instant::now();
+            let check = doc.check_filter(0, c, expr);
+            let check_time = checked.elapsed();
+            let filter = vec![(name.clone(), expr.to_string())];
+            let first = Instant::now();
+            let rows = doc.shown_rows(0, &filter);
+            let first_time = first.elapsed();
+            let again = Instant::now();
+            let _ = doc.shown_rows(0, &filter);
+            let again_time = again.elapsed();
+            println!(
+                "  {name:<24} {expr:<28} check {:>8}  apply {:>9} (again {:>9})  {}",
+                ms(check_time),
+                ms(first_time),
+                ms(again_time),
+                match (&check, &rows) {
+                    (Err(why), _) | (_, Err(why)) => format!("error: {why}"),
+                    (Ok(()), Ok(rows)) => format!("{} rows", rows.len()),
+                }
+            );
+        }
+    }
 }

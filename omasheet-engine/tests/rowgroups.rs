@@ -23,7 +23,7 @@ const ROWS: usize = PER_GROUP * GROUPS;
 /// A table over the fixture. Two columns, so that reading one and reading
 /// both are different numbers as well.
 const TABLE: &str = "\
-table Numbers := dataframe[\"rowgroups.parquet\"]
+table Numbers := dataframe['rowgroups.parquet']
 
 Group : Int
 Value : Int

@@ -105,7 +105,25 @@ impl<'a> Cx<'a> {
         if !taken.iter().any(|held| held.name() == &name) {
             taken.push(column);
         }
-        Out::new(col(name), dtype)
+        // A Parquet date-time in nanoseconds or milliseconds is read as the
+        // microseconds a sheet holds, as `dtype::cell` reads each value:
+        // nanoseconds floored, so a time before 1970 rounds down as there.
+        let us = DataType::Datetime(TimeUnit::Microseconds, None);
+        match dtype {
+            DataType::Datetime(TimeUnit::Nanoseconds, None) => {
+                // Polars' own cast, stepped down one where it went up.
+                let ns = col(name.clone()).cast(DataType::Int64);
+                let t = col(name).cast(us.clone()).cast(DataType::Int64);
+                let floored = when((t.clone() * lit(1_000i64)).gt(ns))
+                    .then(t.clone() - lit(1i64))
+                    .otherwise(t);
+                Out::new(floored.cast(us.clone()), us)
+            }
+            DataType::Datetime(TimeUnit::Milliseconds, None) => {
+                Out::new(col(name).cast(us.clone()), us)
+            }
+            _ => Out::new(col(name), dtype),
+        }
     }
 }
 
@@ -121,6 +139,7 @@ pub fn expr(node: &Node, cx: &Cx) -> Option<Out> {
         // enclosing sheet is a frame this expression is not over.
         Ir::RowCol { depth: 0, col } => cx.read(*col),
         Ir::Call(func, args) => call(*func, args, cx),
+        Ir::Binary(BinOp::In, l, r) => within(expr(l, cx)?, r, cx),
         Ir::Unary(op, operand) => unary(*op, expr(operand, cx)?),
         Ir::Binary(op, l, r) => binary(*op, expr(l, cx)?, expr(r, cx)?),
         Ir::If(cond, yes, no) => {
@@ -292,6 +311,67 @@ fn unary(op: UnOp, operand: Out) -> Option<Out> {
 /// trigonometric function among them — which is a size question (task 1.3)
 /// rather than a semantic one.
 fn call(func: Func, args: &[Node], cx: &Cx) -> Option<Out> {
+    // The tests of text against text (filter-by-expression D174): both
+    // sides text, and the answer a truth value, empty of an empty cell.
+    if let Func::StartsWith | Func::EndsWith | Func::Contains | Func::Matches = func {
+        let [text, part] = args else {
+            return None;
+        };
+        let (text, part) = (expr(text, cx)?, expr(part, cx)?);
+        if text.dtype != DataType::String || part.dtype != DataType::String {
+            return None;
+        }
+        let s = text.expr.str();
+        let test = match func {
+            Func::StartsWith => s.starts_with(part.expr),
+            Func::EndsWith => s.ends_with(part.expr),
+            Func::Contains => s.contains_literal(part.expr),
+            // Polars calls a regex match `contains`; strict, so that a bad
+            // one fails rather than matching nothing.
+            _ => s.contains(part.expr, true),
+        };
+        return Out::new(test, DataType::Boolean);
+    }
+    if func == Func::ContainsAny {
+        let [text, parts] = args else {
+            return None;
+        };
+        let text = expr(text, cx)?;
+        let Ir::VecLit(items) = &parts.kind else {
+            return None;
+        };
+        let parts: Vec<String> = items
+            .iter()
+            .map(|item| match &item.kind {
+                Ir::Lit(Lit::String(s)) => Some(s.clone()),
+                _ => None,
+            })
+            .collect::<Option<_>>()?;
+        if text.dtype != DataType::String {
+            return None;
+        }
+        let parts = lit(Series::new(PlSmallStr::EMPTY, parts)).implode();
+        return Out::new(text.expr.str().contains_any(parts, false), DataType::Boolean);
+    }
+    // A value among its column's. Over this row's cell the checker gives
+    // the column and the row's place as well, which Polars needs neither
+    // of: its answer is a column's already.
+    if let Func::IsUnique | Func::IsDuplicated | Func::IsFirstDistinct | Func::IsLastDistinct = func {
+        let column = expr(args.first()?, cx)?;
+        let kept = exact_scale(&column.dtype) == Some(0)
+            || is_float(&column.dtype)
+            || holdable(&column.dtype);
+        if !kept {
+            return None;
+        }
+        let test = match func {
+            Func::IsUnique => column.expr.is_unique(),
+            Func::IsDuplicated => column.expr.is_duplicated(),
+            Func::IsFirstDistinct => column.expr.is_first_distinct(),
+            _ => column.expr.is_last_distinct(),
+        };
+        return Out::new(test, DataType::Boolean);
+    }
     let [arg] = args else {
         return None;
     };
@@ -305,6 +385,37 @@ fn call(func: Func, args: &[Node], cx: &Cx) -> Option<Out> {
         // Over any other the engine answers `false` for every value it
         // holds, and Polars has no answer at all, so it is left alone.
         Func::IsNan if is_float(&out.dtype) => Out::new(out.expr.is_nan(), DataType::Boolean)?,
+        Func::IsFinite if is_float(&out.dtype) => {
+            Out::new(out.expr.is_finite(), DataType::Boolean)?
+        }
+        Func::IsInfinite if is_float(&out.dtype) => {
+            Out::new(out.expr.is_infinite(), DataType::Boolean)?
+        }
+        // An exact number is always finite, and empty stays empty.
+        Func::IsFinite | Func::IsInfinite if exact_scale(&out.dtype).is_some() => Out::new(
+            when(out.expr.is_not_null())
+                .then(lit(func == Func::IsFinite))
+                .otherwise(lit(NULL).cast(DataType::Boolean)),
+            DataType::Boolean,
+        )?,
+        Func::IsLeapYear
+            if matches!(
+                out.dtype,
+                DataType::Date | DataType::Datetime(TimeUnit::Microseconds, None)
+            ) =>
+        {
+            Out::new(out.expr.dt().is_leap_year(), DataType::Boolean)?
+        }
+        Func::LenChars if out.dtype == DataType::String => Out::new(
+            out.expr.str().len_chars().cast(DataType::Int64),
+            DataType::Int64,
+        )?,
+        Func::ToLowercase if out.dtype == DataType::String => {
+            Out::new(out.expr.str().to_lowercase(), DataType::String)?
+        }
+        Func::ToUppercase if out.dtype == DataType::String => {
+            Out::new(out.expr.str().to_uppercase(), DataType::String)?
+        }
         // A part of a date or a time. The dtype says which parts there are:
         // a `Date` has no hour and a `Time` no month, and the engine
         // reports either as an error, so a column with the wrong half is
@@ -349,6 +460,72 @@ fn part(func: Func, out: Out) -> Option<Out> {
         Func::TimeOf if timed => Out::new(out.expr.cast(DataType::Time), DataType::Time),
         _ => None,
     }
+}
+
+/// `x in list` and `x.is_in(list)`: Polars' `is_in` over a list written
+/// out, every element a literal of the needle's dtype, and `is_between`
+/// over a range of whole numbers for a whole number. An empty needle is
+/// empty and an empty element matches nothing, on both paths.
+fn within(needle: Out, hay: &Node, cx: &Cx) -> Option<Out> {
+    match &hay.kind {
+        Ir::VecLit(items) => {
+            let values: Vec<AnyValue<'static>> = items
+                .iter()
+                .map(|item| match &item.kind {
+                    Ir::Lit(l) => element(l, &needle.dtype),
+                    _ => None,
+                })
+                .collect::<Option<_>>()?;
+            let list =
+                Series::from_any_values_and_dtype(PlSmallStr::EMPTY, &values, &needle.dtype, true)
+                    .ok()?;
+            Out::new(needle.expr.is_in(lit(list).implode(), false), DataType::Boolean)
+        }
+        Ir::Binary(op, lo, hi) if exact_scale(&needle.dtype) == Some(0) => {
+            let (after, exclusive) = op.range_ends()?;
+            let (lo, hi) = (expr(lo, cx)?, expr(hi, cx)?);
+            between(needle, lo, hi, after, exclusive)
+        }
+        Ir::Unary(UnOp::UpTo, hi) if exact_scale(&needle.dtype) == Some(0) => {
+            let hi = expr(hi, cx)?;
+            between(needle, Out::new(lit(0i64), DataType::Int64)?, hi, false, true)
+        }
+        _ => None,
+    }
+}
+
+fn between(needle: Out, lo: Out, hi: Out, after: bool, exclusive: bool) -> Option<Out> {
+    if exact_scale(&lo.dtype) != Some(0) || exact_scale(&hi.dtype) != Some(0) {
+        return None;
+    }
+    let closed = match (after, exclusive) {
+        (false, false) => ClosedInterval::Both,
+        (false, true) => ClosedInterval::Left,
+        (true, false) => ClosedInterval::Right,
+        (true, true) => ClosedInterval::None,
+    };
+    let int = |e: Expr| e.strict_cast(DataType::Int64);
+    Out::new(
+        int(needle.expr).is_between(int(lo.expr), int(hi.expr), closed),
+        DataType::Boolean,
+    )
+}
+
+/// A literal as an element of a list of `dtype`, or `None` where it is not
+/// exactly one: a list of another dtype is the engine's to compare.
+fn element(l: &Lit, dtype: &DataType) -> Option<AnyValue<'static>> {
+    Some(match (l, dtype) {
+        (Lit::Int(n, _), d) if exact_scale(d) == Some(0) => AnyValue::Int64(*n),
+        (Lit::Float(f), DataType::Float64) => AnyValue::Float64(*f),
+        (Lit::String(s), DataType::String) => AnyValue::StringOwned(s.as_str().into()),
+        (Lit::Boolean(b), DataType::Boolean) => AnyValue::Boolean(*b),
+        (Lit::Date(d), DataType::Date) => AnyValue::Date(*d),
+        (Lit::DateTime(us), DataType::Datetime(TimeUnit::Microseconds, None)) => {
+            AnyValue::Datetime(*us, TimeUnit::Microseconds, None)
+        }
+        (Lit::Time(ns), DataType::Time) => AnyValue::Time(*ns),
+        _ => return None,
+    })
 }
 
 fn binary(op: BinOp, l: Out, r: Out) -> Option<Out> {

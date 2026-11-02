@@ -127,7 +127,7 @@ impl Tables {
 /// million rows and twenty columns reads neither the rows nor the columns —
 /// and a column no formula mentions is never read at all.
 pub fn read(program: &mut Program, dir: &Path, diags: &mut Vec<Diagnostic>) -> Tables {
-    read_holding(program, dir, diags, &Store::new())
+    read_holding(program, dir, diags, &Store::new(), Copying::Wait)
 }
 
 /// [`read`], where some files are held whole in `store` (D157): a column of
@@ -138,18 +138,20 @@ pub fn read_holding(
     dir: &Path,
     diags: &mut Vec<Diagnostic>,
     store: &Store,
+    copying: Copying,
 ) -> Tables {
     let mut frames = Tables::for_program(program);
     for (t, sheet) in program.sheets.iter_mut().enumerate() {
         let Some(source) = sheet.source.clone() else {
             continue;
         };
-        let path = dir.join(&source.path);
-        match scan(&path).and_then(|frame| {
-            let height = rows(dir, &source)?;
-            Ok((frame, height))
+        // A CSV is read from its Parquet copy, or its sample meanwhile.
+        match located(&dir.join(&source.path), copying).and_then(|path| {
+            let frame = scan(&path)?;
+            let height = rows(&path)?;
+            Ok((frame, height, path))
         }) {
-            Ok((frame, height)) => {
+            Ok((frame, height, path)) => {
                 let whole = store
                     .get(&path)
                     .filter(|w| identity(&path).as_ref() == Some(&w.identity))
@@ -179,8 +181,8 @@ pub fn read_holding(
 /// The row count of a source, from the footer alone: no row group is read. A
 /// sheet's length is fixed before evaluation begins, and this is what fixes
 /// it.
-pub fn rows(dir: &Path, source: &Source) -> Result<usize, String> {
-    let file = open(&dir.join(&source.path))?;
+pub fn rows(path: &Path) -> Result<usize, String> {
+    let file = open(path)?;
     ParquetReader::new(file)
         .num_rows()
         .map_err(|e| e.to_string())
@@ -260,13 +262,15 @@ fn fill(
                     format!("add `{name}` to the table's schema, with the type the file will hold")
                 }
                 (true, false) => format!(
-                    "add `{}` to the table's schema, with `from \"{name}\"` and the type the file will hold",
-                    suggest(name)
+                    "add `{}` to the table's schema, with `from {}` and the type the file will hold",
+                    suggest(name),
+                    omasheet_omx::lexer::quoted(name)
                 ),
                 (false, true) => format!("add `{name} : {ty}` to the table's schema"),
                 (false, false) => format!(
-                    "add `{} : {ty} from \"{name}\"` to the table's schema",
-                    suggest(name)
+                    "add `{} : {ty} from {}` to the table's schema",
+                    suggest(name),
+                    omasheet_omx::lexer::quoted(name)
                 ),
             };
             diags.push(
@@ -460,4 +464,161 @@ fn suggest(name: &str) -> String {
 /// column's own name where there is none.
 fn held_as(col: &Column) -> &str {
     col.from.as_deref().unwrap_or(&col.name)
+}
+
+// ---- A CSV, read through a Parquet copy (open-a-big-csv D153) ------------
+
+/// How a source that is not Parquet is found: from its copy, waited for if
+/// there is none yet, or from the sample of its first rows meanwhile.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Copying {
+    /// Write the copy now if there is none, and read that: the command line
+    /// and the tests, which have no screen to show a sample on.
+    Wait,
+    /// Read the copy if there is one, and otherwise the sample, written now
+    /// if need be: the app, which writes the copy on a worker.
+    Sample,
+}
+
+/// How many rows the sample of a CSV holds, shown while its copy is written.
+pub const SAMPLE_ROWS: usize = 1_000;
+
+/// The rows a CSV's types are worked out from, for the sample and the copy
+/// alike, so the two have the same columns.
+const INFER_ROWS: usize = 10_000;
+
+/// Whether `path` names a CSV, which a table reads through a copy.
+pub fn is_csv(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("csv"))
+}
+
+/// Where copies are kept: `$OMASHEET_CACHE`, or `omasheet` in
+/// `$XDG_CACHE_HOME`, or in `~/.cache`.
+pub fn cache_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("OMASHEET_CACHE") {
+        return PathBuf::from(dir);
+    }
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("omasheet")
+}
+
+/// The stem every copy of the CSV at `path` is named with, whatever its
+/// state: a hash of where it is.
+fn family(path: &Path) -> String {
+    use std::hash::{Hash, Hasher};
+    let full = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    full.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+/// The name of the copy of the CSV at `path` as it is now, by its length
+/// and when it was written: a CSV changed has a copy of another name.
+fn copy_name(path: &Path) -> Option<String> {
+    let (len, modified) = identity(path)?;
+    let nanos = modified
+        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos());
+    Some(format!("{}-{len}-{nanos}", family(path)))
+}
+
+/// The copy of the CSV at `path`, if one has been written for it as it is
+/// now.
+pub fn copy_of(path: &Path) -> Option<PathBuf> {
+    let copy = cache_dir().join(format!("{}.parquet", copy_name(path)?));
+    copy.is_file().then_some(copy)
+}
+
+/// The file a source is read from: the source itself, unless it is a CSV,
+/// and then its copy, or as `copying` says where there is none yet.
+pub fn located(path: &Path, copying: Copying) -> Result<PathBuf, String> {
+    if !is_csv(path) {
+        return Ok(path.to_path_buf());
+    }
+    if let Some(copy) = copy_of(path) {
+        return Ok(copy);
+    }
+    match copying {
+        Copying::Wait => convert(path),
+        Copying::Sample => sample(path),
+    }
+}
+
+/// A reader of the CSV at `path`, with the types worked out as the sample
+/// and the copy both work them out.
+fn csv_scan(path: &Path) -> Result<LazyFrame, String> {
+    open(path)?;
+    LazyCsvReader::new(PlPath::from_str(&path.to_string_lossy()))
+        .with_has_header(true)
+        .with_infer_schema_length(Some(INFER_ROWS))
+        .with_try_parse_dates(true)
+        .finish()
+        .map_err(|e| e.to_string())
+}
+
+/// Write `frame` to `target` through a file beside it, renamed into place
+/// once whole, so that a copy half written is never read.
+fn sink_to(frame: LazyFrame, target: &Path) -> Result<(), String> {
+    let dir = target.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let partial = target.with_extension(format!("partial-{}", std::process::id()));
+    let written = frame
+        .sink_parquet(
+            SinkTarget::Path(PlPath::from_str(&partial.to_string_lossy())),
+            ParquetWriteOptions::default(),
+            None,
+            SinkOptions::default(),
+        )
+        .and_then(|f| f.collect_with_engine(Engine::Streaming));
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&partial);
+        return Err(e.to_string());
+    }
+    std::fs::rename(&partial, target).map_err(|e| e.to_string())
+}
+
+/// The first [`SAMPLE_ROWS`] rows of the CSV at `path`, written as a small
+/// Parquet file to read until the copy is ready: what a table over a big
+/// CSV shows in the moment after it is opened.
+pub fn sample(path: &Path) -> Result<PathBuf, String> {
+    let name = copy_name(path).ok_or_else(|| "there is no such file".to_string())?;
+    let target = cache_dir().join(format!("{name}.sample.parquet"));
+    if !target.is_file() {
+        sink_to(csv_scan(path)?.slice(0, SAMPLE_ROWS as IdxSize), &target)?;
+    }
+    Ok(target)
+}
+
+/// Write the copy of the CSV at `path`, streamed so that the CSV is never
+/// held whole, and take away the copies and samples of it as it was
+/// before. For a worker: nothing here touches a document. Where a value
+/// further down does not have the type the first rows gave its column,
+/// the types are worked out again from every row.
+pub fn convert(path: &Path) -> Result<PathBuf, String> {
+    let name = copy_name(path).ok_or_else(|| "there is no such file".to_string())?;
+    let target = cache_dir().join(format!("{name}.parquet"));
+    if sink_to(csv_scan(path)?, &target).is_err() {
+        let every_row = LazyCsvReader::new(PlPath::from_str(&path.to_string_lossy()))
+            .with_has_header(true)
+            .with_infer_schema_length(None)
+            .with_try_parse_dates(true)
+            .finish()
+            .map_err(|e| e.to_string())?;
+        sink_to(every_row, &target)?;
+    }
+    // Earlier copies of this CSV, and its sample, are of no more use.
+    let stem = family(path);
+    if let Ok(entries) = std::fs::read_dir(cache_dir()) {
+        for entry in entries.flatten() {
+            let file = entry.file_name().to_string_lossy().to_string();
+            if file.starts_with(&stem) && !file.starts_with(&format!("{name}.parquet")) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    Ok(target)
 }
