@@ -229,6 +229,29 @@ fn extension(path: &Path) -> String {
     ext.to_string_lossy().to_ascii_lowercase()
 }
 
+/// Refuse to import `file`, which is too big to write as text, and print
+/// the `table` line that reads it where it is, ready to paste into a file.
+fn too_big(file: &Path) -> ExitCode {
+    let full = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
+    let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+    let name = match omasheet_interop::identifier(&stem) {
+        empty if empty.is_empty() => "Table".to_string(),
+        name => name,
+    };
+    println!(
+        "table {name} := dataframe[{}]",
+        omasheet_engine::omx::lexer::quoted(&full.to_string_lossy())
+    );
+    eprintln!(
+        "omasheet: {} is too big to import as text (over {} MB): a table reads it where it \
+         is, read-only, as the line printed says; open the file in the app, or paste the line \
+         into an .omx file",
+        file.display(),
+        omasheet_engine::table::BIG_FILE / (1024 * 1024)
+    );
+    ExitCode::FAILURE
+}
+
 fn import(file: &Path, output: Option<&Path>, options: Options) -> Result<ExitCode, ExitCode> {
     let kind = extension(file);
     if !matches!(kind.as_str(), "xlsx" | "csv" | "json" | "parquet") {
@@ -236,6 +259,12 @@ fn import(file: &Path, output: Option<&Path>, options: Options) -> Result<ExitCo
             "cannot import {}: give an XLSX Workbook (.xlsx), a CSV file (.csv), JSON (.json) or Parquet (.parquet)",
             file.display()
         ));
+    }
+    // A big CSV or Parquet file would be millions of rows of text: what is
+    // printed instead is the line that reads it where it is (D146).
+    let big = std::fs::metadata(file).is_ok_and(|m| m.len() > omasheet_engine::table::BIG_FILE);
+    if big && matches!(kind.as_str(), "csv" | "parquet") {
+        return Ok(too_big(file));
     }
     let bytes = std::fs::read(file).map_err(|e| {
         eprintln!("omasheet: cannot read {}: {e}", file.display());

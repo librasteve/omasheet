@@ -493,11 +493,6 @@ fn style() -> Style {
     })
 }
 
-/// A document that shows dates and times the way the user's locale does.
-/// The size above which a CSV is opened as a table rather than imported as
-/// text (open-a-big-csv D146).
-const BIG_CSV: u64 = 4 * 1024 * 1024;
-
 /// What the status bar says of a selection.
 fn summary_text(summary: Option<omasheet_engine::doc::Summary>) -> String {
     let Some(summary) = summary else {
@@ -711,7 +706,7 @@ impl qobject::File {
         }
         // A CSV too big to import as text (open-a-big-csv D146).
         if kind == "csv"
-            && std::fs::metadata(&path).is_ok_and(|m| m.len() > BIG_CSV)
+            && std::fs::metadata(&path).is_ok_and(|m| m.len() > omasheet_engine::table::BIG_FILE)
             && self.as_mut().open_table(&path)
         {
             return true;

@@ -480,6 +480,11 @@ pub enum Copying {
     Sample,
 }
 
+/// The size above which a CSV or Parquet file is opened as a table over the
+/// file rather than imported as text (open-a-big-csv D146): the app opens it
+/// so, and `omasheet import` refuses it and prints the line that does.
+pub const BIG_FILE: u64 = 4 * 1024 * 1024;
+
 /// How many rows the sample of a CSV holds, shown while its copy is written.
 pub const SAMPLE_ROWS: usize = 1_000;
 
@@ -540,6 +545,7 @@ pub fn located(path: &Path, copying: Copying) -> Result<PathBuf, String> {
         return Ok(path.to_path_buf());
     }
     if let Some(copy) = copy_of(path) {
+        touch(&copy);
         return Ok(copy);
     }
     match copying {
@@ -690,6 +696,8 @@ pub fn convert(path: &Path) -> Result<PathBuf, String> {
     if sink_to(csv_scan(path, Some(schema))?, &target).is_err() {
         sink_to(csv_scan(path, None)?, &target)?;
     }
+    // The cache kept within its budget, the copy just written aside.
+    prune(&cache_dir(), cache_budget(), &target);
     // Earlier copies of this CSV, and its sample, are of no more use.
     if let Ok(entries) = std::fs::read_dir(cache_dir()) {
         for entry in entries.flatten() {
@@ -700,4 +708,129 @@ pub fn convert(path: &Path) -> Result<PathBuf, String> {
         }
     }
     Ok(target)
+}
+
+/// What the cache of copies may take: 10 GB, or a tenth of the space free
+/// on its disk where that is less (open-a-big-csv D153).
+pub fn cache_budget() -> u64 {
+    const MOST: u64 = 10 * 1_000_000_000;
+    match free_space(&cache_dir()) {
+        Some(free) => MOST.min(free / 10),
+        None => MOST,
+    }
+}
+
+/// The bytes free to a user on the disk that holds `dir`, or the nearest
+/// folder above it that there is.
+#[cfg(unix)]
+fn free_space(dir: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = dir.ancestors().find(|d| d.exists())?;
+    let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: `path` is a NUL-terminated string and `stat` is ours to fill.
+    if unsafe { libc::statvfs(path.as_ptr(), &mut stat) } != 0 {
+        return None;
+    }
+    Some(stat.f_bavail as u64 * stat.f_frsize as u64)
+}
+
+#[cfg(not(unix))]
+fn free_space(_dir: &Path) -> Option<u64> {
+    None
+}
+
+/// Mark a copy as just used, which is what the cache keeps the most of.
+fn touch(copy: &Path) {
+    if let Ok(file) = std::fs::File::options().append(true).open(copy) {
+        let _ = file.set_modified(std::time::SystemTime::now());
+    }
+}
+
+/// Take copies out of the cache at `dir`, the least lately used first,
+/// until what is left takes no more than `budget` bytes; `keep`, the copy
+/// just written, stays whatever its size. A copy's sample goes with it.
+/// What was taken out, by name.
+pub fn prune(dir: &Path, budget: u64, keep: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut copies: Vec<(std::time::SystemTime, u64, PathBuf)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            let name = path.file_name()?.to_str()?.to_string();
+            let copy = name.ends_with(".parquet") && !name.ends_with(".sample.parquet");
+            let meta = e.metadata().ok()?;
+            copy.then_some(())?;
+            Some((meta.modified().ok()?, meta.len(), path))
+        })
+        .collect();
+    let mut total: u64 = copies.iter().map(|(_, len, _)| len).sum();
+    copies.sort_by_key(|(used, _, _)| *used);
+    let mut gone = Vec::new();
+    for (_, len, path) in copies {
+        if total <= budget {
+            break;
+        }
+        if path == keep {
+            continue;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total -= len;
+            let _ = std::fs::remove_file(path.with_extension("sample.parquet"));
+            gone.push(
+                path.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
+            );
+        }
+    }
+    gone
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn the_cache_lets_the_least_lately_used_copies_go_first() {
+        let dir = std::env::temp_dir().join(format!("omasheet-prune-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = SystemTime::now();
+        // Three copies of 100 bytes, used an hour, a minute and a second
+        // ago, the first with a sample beside it.
+        let make = |name: &str, ago: u64| {
+            let path = dir.join(name);
+            std::fs::write(&path, [0u8; 100]).unwrap();
+            let file = std::fs::File::options().append(true).open(&path).unwrap();
+            file.set_modified(now - Duration::from_secs(ago)).unwrap();
+            path
+        };
+        make("a.parquet", 3600);
+        make("a.sample.parquet", 3600);
+        let b = make("b.parquet", 60);
+        let c = make("c.parquet", 1);
+        // Within 250 bytes, the oldest goes, and its sample with it.
+        assert_eq!(prune(&dir, 250, &c), ["a.parquet"]);
+        assert!(!dir.join("a.sample.parquet").exists());
+        // Within 50, the copy just written stays whatever its size.
+        assert_eq!(prune(&dir, 50, &c), ["b.parquet"]);
+        assert!(!b.exists() && c.exists());
+        // Used again, a copy counts as the newest.
+        touch(&c);
+        assert!(std::fs::metadata(&c).unwrap().modified().unwrap() >= now);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_budget_is_ten_gigabytes_or_a_tenth_of_the_space_free() {
+        let budget = cache_budget();
+        assert!(budget > 0 && budget <= 10 * 1_000_000_000);
+        if let Some(free) = free_space(Path::new("/")) {
+            assert!(free > 0);
+        }
+    }
 }

@@ -351,6 +351,53 @@ fn import_reads_what_export_wrote() {
 }
 
 #[test]
+fn import_of_a_big_csv_prints_the_table_that_reads_it_instead() {
+    let dir = scratch("import-big");
+    let mut csv = String::from("N,Name\n");
+    let mut n = 0u64;
+    while csv.len() <= 4 * 1024 * 1024 {
+        csv.push_str(&format!("{n},row {n}\n"));
+        n += 1;
+    }
+    let big = path(&dir, "big.csv");
+    std::fs::write(&big, &csv).unwrap();
+
+    // Refused, with the line to paste and why.
+    let out = omasheet(&["import", &big]);
+    assert!(!out.status.success());
+    let line = stdout(&out);
+    let full = std::fs::canonicalize(&big).unwrap();
+    assert_eq!(
+        line,
+        format!("table big := dataframe['{}']\n", full.display())
+    );
+    assert!(
+        stderr(&out).contains("too big to import"),
+        "{}",
+        stderr(&out)
+    );
+
+    // And the line reads every row of it, through a copy in the cache.
+    let file = path(&dir, "big.omx");
+    std::fs::write(&file, &line).unwrap();
+    let out = Command::new(program())
+        .args(["eval", "--file", &file, "big.N.count()"])
+        .env("OMASHEET_CACHE", dir.join("cache"))
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out).trim(), n.to_string());
+
+    // A small CSV is imported as text, as before.
+    let small = path(&dir, "small.csv");
+    std::fs::write(&small, "N,Name\n1,one\n").unwrap();
+    let out = omasheet(&["import", &small]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stdout(&out).contains("sheet small"), "{}", stdout(&out));
+}
+
+#[test]
 fn import_says_what_it_can_read() {
     let out = omasheet(&["import", "README.md"]);
     assert_eq!(out.status.code(), Some(2));
