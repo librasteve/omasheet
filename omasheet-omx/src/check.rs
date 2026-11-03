@@ -578,6 +578,55 @@ fn as_filter(e: &mut Expr, name: &str) -> Result<(), Diagnostic> {
     }
 }
 
+/// Zero written out: `0`, `0.0`, `-0`.
+fn is_zero(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Lit(Lit::Int(n, _)) => *n == 0,
+        ExprKind::Lit(Lit::Decimal(d)) => d.is_zero(),
+        ExprKind::Unary(UnOp::Neg, inner) => is_zero(inner),
+        _ => false,
+    }
+}
+
+/// A whole number written out: `4`, `-6`, `0x10`.
+fn const_int(e: &Expr) -> Option<i64> {
+    match &e.kind {
+        ExprKind::Lit(Lit::Int(n, _)) => Some(*n),
+        ExprKind::Unary(UnOp::Neg, inner) => const_int(inner).and_then(|n| n.checked_neg()),
+        _ => None,
+    }
+}
+
+/// Whether `a / b` is a quotient of whole numbers written out that comes to a
+/// whole number: `4/2`.
+fn divides(a: &Expr, b: &Expr) -> bool {
+    match (const_int(a), const_int(b)) {
+        (Some(a), Some(b)) => b != 0 && a.checked_rem(b) == Some(0),
+        _ => false,
+    }
+}
+
+/// Whether `e` is a quotient or a power, or is made from one: the kind of
+/// `Decimal` that may well turn out whole (`4/2`), as a column's cannot be
+/// told until its values are read.
+fn from_quotient(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Binary(BinOp::Div | BinOp::Pow, _, _) => true,
+        ExprKind::Binary(BinOp::Add | BinOp::Sub | BinOp::Mul, a, b) => {
+            from_quotient(a) || from_quotient(b)
+        }
+        ExprKind::Unary(UnOp::Neg, inner) => from_quotient(inner),
+        _ => false,
+    }
+}
+
+/// Whether `ty`, the type of `e`, may stand where a whole number is wanted:
+/// it is one, or it is a `Decimal` that a quotient made and whose value is
+/// read when it is used, a fraction of it being reported there.
+fn whole_enough(ty: &Ty, e: &Expr) -> bool {
+    ty.is_whole() || (matches!(ty, Ty::Scalar(S::Decimal)) && from_quotient(e))
+}
+
 fn static_of(e: &Expr) -> Option<Static> {
     fn int(e: &Expr) -> Option<i64> {
         match &e.kind {
@@ -2219,6 +2268,12 @@ impl<'a> Checker<'a> {
                 (S::Int | S::Decimal | S::Fraction | S::Percent, S::Float) => {
                     "use `.Float` to convert to Float"
                 }
+                // A division by zero, `1/0`, is a `Float`, which no exact
+                // column holds.
+                (S::Float, S::Decimal | S::Fraction | S::Percent) => {
+                    "declare the column `Float` or leave out its type, use `.Decimal`, or guard \
+                     a division by zero"
+                }
                 (S::Percent, S::Int) => "declare the column as `Percent`, or use `.Integer`",
                 (S::Percent, S::Decimal) => "declare the column as `Percent`, or use `.Decimal`",
                 (S::Decimal, S::Int) => "declare the column as `Decimal`, or use `.Integer`",
@@ -2377,7 +2432,7 @@ impl<'a> Checker<'a> {
             }
             ExprKind::Unary(UnOp::UpTo, operand) => {
                 let (node, ty) = self.lower(operand, sc);
-                if !ty.is_whole() {
+                if !whole_enough(&ty, operand) {
                     self.err(
                         operand.span,
                         format!("the end of a range must be Int, found {}", ty.describe()),
@@ -2711,7 +2766,7 @@ impl<'a> Checker<'a> {
         match op {
             BinOp::Range | BinOp::RangeEx | BinOp::RangeFrom | BinOp::RangeBoth => {
                 for (ty, e) in [(&lty, l), (&rty, r)] {
-                    if !ty.is_whole() {
+                    if !whole_enough(ty, e) {
                         self.err(
                             e.span,
                             format!("the ends of a range must be Int, found {}", ty.describe()),
@@ -2860,19 +2915,29 @@ impl<'a> Checker<'a> {
                 let whole = matches!(r.kind, ExprKind::Lit(Lit::Int(_, _)));
                 match (op, a.wider(b)) {
                     (BinOp::Pow, w) if whole && (w.is_int() || w == S::Decimal) => w,
+                    // A power is exact only for a whole exponent; any other
+                    // is worked out in floating point.
+                    (BinOp::Pow, w) if w != S::Float && !b.is_int() && b != S::Any => S::Float,
+                    // No exact number is a division by zero, so a divisor
+                    // written as zero makes it a `Float`: `Inf`, `-Inf`
+                    // or `NaN`.
+                    (BinOp::Div, w) if w.is_exact() && is_zero(r) => S::Float,
+                    // A quotient of whole numbers written out that comes to
+                    // one, `4/2`, is a whole number.
+                    (BinOp::Div, w) if w.is_int() && divides(l, r) => S::Int,
                     // A quotient or a power of decimals is a decimal, though
                     // it need not end.
                     (BinOp::Div | BinOp::Pow, w) if w.is_int() || w == S::Decimal => S::Decimal,
-                    // Percentages add up to a percentage; anything else
-                    // done with one gives the plain number.
-                    (BinOp::Add | BinOp::Sub, S::Percent) => S::Percent,
-                    (_, S::Percent) => S::Decimal,
+                    // Anything else is the wider of the two, so that two
+                    // fractions give a fraction and two percentages a
+                    // percentage.
                     (_, w) => w,
                 }
             }
         } else if op.is_bitwise() {
-            let whole = |s: S| s.is_int() || s == S::Any;
-            if !whole(a) || !whole(b) {
+            let whole =
+                |s: S, e: &Expr| s.is_int() || s == S::Any || (s == S::Decimal && from_quotient(e));
+            if !whole(a, l) || !whole(b, r) {
                 self.err(
                     span,
                     format!("`{sym}` needs whole numbers on both sides, found {a} and {b}"),
@@ -3546,7 +3611,7 @@ impl<'a> Checker<'a> {
                 let mut nodes = vec![date];
                 if months {
                     let (n, nty) = self.lower(&args[1], sc);
-                    if !nty.is_whole() {
+                    if !whole_enough(&nty, &args[1]) {
                         self.err(
                             args[1].span,
                             format!("a number of months must be Int, found {}", nty.describe()),
@@ -3948,7 +4013,7 @@ impl<'a> Checker<'a> {
                 if matches!(places.kind, Ir::Error) {
                     return fail;
                 }
-                if !pty.is_whole() {
+                if !whole_enough(&pty, &args[1]) {
                     self.err_help(
                         args[1].span,
                         format!(
@@ -4134,7 +4199,7 @@ impl<'a> Checker<'a> {
             return (Offset(None), Some(0));
         };
         let (node, ty) = self.lower(e, sc);
-        if !ty.is_whole() {
+        if !whole_enough(&ty, e) {
             self.err(
                 e.span,
                 format!("a row offset must be Int, found {}", ty.describe()),
@@ -4262,7 +4327,7 @@ impl<'a> Checker<'a> {
                     }
                     None => {
                         let (node, ty) = ck.lower(e, sc);
-                        if !ty.is_whole() {
+                        if !whole_enough(&ty, e) {
                             ck.err(
                                 e.span,
                                 format!("the ends of a range must be Int, found {}", ty.describe()),
@@ -4336,7 +4401,7 @@ impl<'a> Checker<'a> {
             return RowPick::all(nrows);
         }
         match ty {
-            Ty::Scalar(s) if s.is_int() => {
+            Ty::Scalar(s) if s.is_int() || whole_enough(&Ty::Scalar(s), e) => {
                 if let (Some(Static::Int(k)), Some(n)) = (static_of(e), nrows) {
                     let at = if k < 0 { k + n as i64 } else { k };
                     if at < 0 || at >= n as i64 {

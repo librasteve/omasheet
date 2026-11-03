@@ -217,6 +217,13 @@ read as one; `Integer` is what is written.
 | `Email` | `name@example.com` |
 | `Uuid` | `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f` |
 
+A division by zero is `Inf`, `-Inf` or `NaN`, which are `Float`s. A column
+left to its cells is as wide as they are, so one that holds such a value is a
+`Float` column, and a Parquet export writes it as one, with every value kept.
+A column declared `Decimal`, `Fraction` or `Percent` cannot hold one: its cell
+is an error that says to declare the column `Float`, leave out its type, or
+guard the division.
+
 A `_` may stand anywhere among a number's digits, before or after the
 point, to group them: `1_000_000`, `10_00_000`, `0.000_1`, `0xFF_FF`. It
 may not stand in an exponent.
@@ -293,6 +300,37 @@ column of one takes the others, showing what it holds its own way: `1/7` is
 `0.14285714285714285714…` in a `Decimal` column, `1/7` in a `Fraction`
 column, and `14.29%` in a `Percent` column.
 
+The types sit in a lattice, and a column, a sum or a product takes the join
+of what is in it. `Integer`, `Decimal` and `Float` each take over the one
+before: `1` with `1.0` is a `Decimal`, and either with `1e0` a `Float`.
+`Hex`, `Octal` and `Binary` are `Integer`s shown another way, and `Fraction`
+and `Percent` are `Decimal`s shown another way. Two of one give that one;
+two different ones, or one with its parent, give the parent:
+
+| | `1` | `1.0` | `1e0` | text |
+|---|---|---|---|---|
+| `1` | `Integer` | `Decimal` | `Float` | any |
+| `1.0` | `Decimal` | `Decimal` | `Float` | any |
+| `1e0` | `Float` | `Float` | `Float` | any |
+| text | any | any | any | `String` |
+
+| | `0b1` | `0o1` | `0x1` | `1` |
+|---|---|---|---|---|
+| `0b1` | `Binary` | `Integer` | `Integer` | `Integer` |
+| `0o1` | `Integer` | `Octal` | `Integer` | `Integer` |
+| `0x1` | `Integer` | `Integer` | `Hex` | `Integer` |
+| `1` | `Integer` | `Integer` | `Integer` | `Integer` |
+
+| | `100%` | `1/1` | `1.0` |
+|---|---|---|---|
+| `100%` | `Percent` | `Decimal` | `Decimal` |
+| `1/1` | `Decimal` | `Fraction` | `Decimal` |
+| `1.0` | `Decimal` | `Decimal` | `Decimal` |
+
+A column of numbers and text is of any type, and each cell is as it was
+written. What a file keeps of a cell is the text that was entered: a number
+as it was written, or the text of a formula.
+
 A `Percent` column takes any exact number and shows it as a percentage: `0.4`
 there is `40%`, and so is `= Profit / Revenue` when it comes to two fifths.
 A `20%` in a `Decimal` column is the number it stands for, `0.2`.
@@ -303,16 +341,19 @@ and `2.75` is `2 3/4`. The fraction is worked out from the number rather
 than remembered from the cell, so one nobody wrote is found too — a seventh
 added to a seventh shows as `2/7`. Only a fraction whose denominator is
 10000 or less is looked for; past that the number is shown as a decimal.
-Anything worked out from a fraction is a fraction, so a `:=` column over one
-shows fractions without being declared.
+Two fractions give a fraction, so a `:=` column of `Yield + Yield` over a
+`Fraction` column shows fractions without being declared; a fraction with
+any other number gives a `Decimal`, so `Yield * 2` shows `4.666…`.
 
 A fraction of two whole numbers is an exact `Decimal`: `1/7` and `22/7` are
 both read that way, and one may be written with a space, `2 3/4` for `11/4`.
 Neither part need be the smaller: `11/3` and `5 7/3` are fine, and a
 `Fraction` column shows them as `3 2/3` and `7 1/3`. A column with no type
-whose cells include one written with a `/` is a `Fraction` column, and the
-cell is kept as it was written. A column declared `Decimal` takes the same
-cells and shows them as decimals.
+whose cells are all written with a `/` is a `Fraction` column; with any other
+number among them it is a `Decimal` one. A column declared `Decimal` takes the
+same cells and shows them as decimals.
+In a formula a fraction is written in angle brackets, `<1/10>` or `<2 3/4>`,
+since a bare `1/10` there is a quotient.
 
 An `Integer`, `Decimal` or `Float` column may say how its numbers are shown,
 after its type in brackets, as a C `printf` conversion without its `%`:

@@ -148,8 +148,80 @@ fn floating_point_is_asked_for_never_assumed() {
         calc("1/3 + 1/7 + 1/11 + 1/13 + 1/17"),
         "0.702846173434408728526375585199"
     );
-    assert!(calc_err(None, "2 ** 0.5").contains("`.Float`"));
+    // A power is exact only for a whole exponent; any other is a Float.
+    assert!(calc("2 ** 0.5").starts_with("1.41421"));
     assert!(calc_err(None, "approx(1/3)").contains("unknown function `approx`"));
+}
+
+/// A quotient that comes to a whole number goes where one is wanted.
+#[test]
+fn a_whole_quotient_is_a_whole_number() {
+    assert_eq!(calc("[1, 2, 3][4/2]"), "3");
+    assert_eq!(calc("[1, 2, 3, 4][0 .. 4/2]"), "[1, 2, 3]");
+    assert_eq!(calc("round(3.14159, 4/2)"), "3.14");
+    assert_eq!(calc("(10/5) +& 3"), "2");
+    // One that does not is reported where it is used, not where it is typed.
+    assert!(calc_err(None, "[1, 2, 3][5/2]").contains("whole number"));
+    assert!(calc_err(None, "(10/4) +& 3").contains("whole number"));
+    // `=1/1` is an Integer, so it fits an Integer column.
+    let file = "sheet T\n\nI : Integer\n\n| I |\n| - |\n| =1/1 |\n| =9/3 |\n";
+    assert!(lint_errors(file).is_empty(), "{:?}", lint_errors(file));
+}
+
+/// A division by zero is a `Float`: an exact column left to its cells takes
+/// it, and a declared one says why it cannot.
+#[test]
+fn a_division_by_zero_makes_a_column_of_it_a_float() {
+    let file = "sheet T\n\n| U |\n| - |\n| =1/0 |\n| 2.5 |\n";
+    let view = shown(file);
+    assert!(view.contains("Inf"), "{view}");
+    let declared = "sheet T\n\nU : Decimal\n\n| U |\n| - |\n| =1/0 |\n| 2.5 |\n";
+    let said = lint_errors(declared).join("\n");
+    assert!(
+        said.contains("declared `Decimal` but this is `Float`"),
+        "{said}"
+    );
+    assert!(said.contains("declare the column `Float`"), "{said}");
+    // And a `Float` column takes it, however it is written.
+    let float = "sheet T\n\nU : Float\n\n| U |\n| - |\n| =1/0 |\n| =0/0 |\n| =-1/0 |\n";
+    assert!(lint_errors(float).is_empty(), "{:?}", lint_errors(float));
+    assert_eq!(ask(float, "T.U"), "[Inf, NaN, -Inf]");
+}
+
+/// A fraction is written in angle brackets in a formula.
+#[test]
+fn a_fraction_is_written_in_angle_brackets() {
+    let show = |expr: &str| {
+        let out = eval(None, "<expression>", expr);
+        assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
+        out.output.trim_end().to_string()
+    };
+    assert_eq!(calc("<1/10>"), "1/10");
+    // In full a fraction is `n/d`; shown, it has its whole part.
+    assert_eq!(calc("<2 3/4>"), "11/4");
+    assert_eq!(show("<2 3/4>"), "2 3/4");
+    assert_eq!(calc("-<3/4>"), "-3/4");
+    assert_eq!(calc("<-2 3/4>"), "-11/4");
+    assert_eq!(show("<-2 3/4>"), "-2 3/4");
+    assert_eq!(calc("<1/10> + <1/10>"), "1/5");
+    assert_eq!(calc("<1 1/2> * 2"), "3");
+    // With a decimal it is a decimal; a bare quotient is still one.
+    assert_eq!(calc("<1/10> + 0.5"), "0.6");
+    assert_eq!(calc("1/10 + 1/10"), "0.2");
+    // A comparison is as it was.
+    assert_eq!(calc("1 < 2"), "true");
+    assert_eq!(calc("<1/10> < <1/5>"), "true");
+    assert!(calc_err(None, "<1/0>").contains("denominator"));
+    assert!(calc_err(None, "<1/10").contains("`>`"));
+    // `+<` is a shift, and a sum with a fraction run into it says how to write one.
+    for e in ["1+<1/10>", "<1/10>+<1/10>", "1+<2 3/4>"] {
+        assert!(
+            calc_err(None, e).contains("put a space after the `+`"),
+            "{e}"
+        );
+    }
+    assert_eq!(calc("<1/10> + <1/10>"), "1/5");
+    assert_eq!(calc("1 +< 2"), "4");
 }
 
 /// `Decimal` is an exact number shown as a decimal, cut and marked where it
@@ -241,14 +313,15 @@ fn percents() {
     assert_eq!(calc("-12.5%"), "-12.5%");
     assert_eq!(calc("20% == 0.2"), "true");
 
-    // Percents add up to a Percent; anything else done with one gives the
+    // Two Percents give a Percent; anything else done with one gives the
     // plain number.
     assert_eq!(calc("20% + 5%"), "25%");
     assert_eq!(calc("20% - 5%"), "15%");
     assert_eq!(calc("-(20%)"), "-20%");
     assert_eq!(calc("abs(-20%)"), "20%");
     assert_eq!(calc("100 * 20%"), "20");
-    assert_eq!(calc("20% * 50%"), "0.1");
+    assert_eq!(calc("20% * 50%"), "10%");
+    assert_eq!(calc("20% * 0.5"), "0.1");
     assert_eq!(calc("1 + 20%"), "1.2");
     assert_eq!(calc("20% / 3"), "0.0666666666666666666666666666667");
     assert_eq!(calc("[20%, 10%].sum()"), "30%");
@@ -386,14 +459,19 @@ fn fractions() {
     assert_eq!(show("(1/10000).Fraction"), "1/10000");
     assert_eq!(show("(1/10001).Fraction"), "0.00009999000099990000…");
     // A Fraction column shows its cells as fractions, whichever way they
-    // were written, and anything worked out from one is a fraction too.
-    let file = "sheet F\n\nYield : Fraction\n\nYield | Doubled | Half\n\
-                1/7 | * | *\n2 3/4 | * | *\n0.5 | * | *\n3 | * | *\n\
-                Doubled := Yield * 2\nHalf := Yield / 2\n";
+    // were written, and two fractions give a fraction; a fraction with any
+    // other number is a Decimal, declared a Fraction here to be shown as one.
+    let file = "sheet F\n\nYield : Fraction\nHalf : Fraction\n\nYield | Doubled | Half | Tripled\n\
+                1/7 | * | * | *\n2 3/4 | * | * | *\n0.5 | * | * | *\n3 | * | * | *\n\
+                Doubled := Yield + Yield\nHalf := Yield / 2\nTripled := Yield * 3\n";
     assert!(lint_errors(file).is_empty(), "{:?}", lint_errors(file));
     assert_eq!(ask(file, "F.Yield"), "[1/7, 11/4, 1/2, 3]");
     assert_eq!(ask(file, "F.Doubled"), "[2/7, 11/2, 1, 6]");
     assert_eq!(ask(file, "F.Half"), "[1/14, 11/8, 1/4, 3/2]");
+    assert_eq!(
+        ask(file, "F.Tripled"),
+        "[0.428571428571428571428571428571, 8.25, 1.5, 9]"
+    );
     // It holds what a Decimal holds, so the two go either way.
     assert_eq!(calc("(1/7).Fraction == 1/7"), "true");
     assert_eq!(
@@ -2485,7 +2563,7 @@ fn how_much_of_the_corpus_lowers() {
     // moved.
     assert_eq!(
         (offered, lowered, refused, failed),
-        (76, 26, 49, 1),
+        (80, 27, 52, 1),
         "the corpus lowers differently than task 8.3 records"
     );
 }
@@ -3533,9 +3611,9 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // Lest the whole thing pass by checking nothing. Eight of the
     // corpus's columns come from a file, all of `analysis.omx`, and those
     // are taken at once whichever way the rest is calculated, which is 16
-    // of the 42. The other twenty-six are the columns lowering forced
+    // of the 43. The other twenty-seven are the columns lowering forced
     // calculates in one step, and 8.3 is where that number is read.
-    assert_eq!(taken, 42, "the columns taken at once");
+    assert_eq!(taken, 43, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read

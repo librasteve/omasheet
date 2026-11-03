@@ -77,8 +77,21 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
             })
             .collect();
 
+        // A column left to its cells takes the widest of what they hold, and
+        // a division by zero is a `Float`: `Inf`, `-Inf` or `NaN`. So an
+        // exact column with one in it is written as a `Float`, which holds
+        // them, where a decimal has no room (the exact cells keep their
+        // value, as a `Float` has it).
+        let ty = if !col.declared
+            && col.ty.is_exact()
+            && cells.iter().any(|v| matches!(v, Value::Float(_)))
+        {
+            S::Float
+        } else {
+            col.ty
+        };
         // A whole column of nulls has no type of its own to write.
-        let series = match col.ty {
+        let series = match ty {
             S::Int | S::Hex | S::Octal | S::Binary => {
                 let v: Vec<Option<i64>> = cells
                     .iter()

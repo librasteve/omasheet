@@ -3815,6 +3815,20 @@ impl Document {
                     column.ty = found.to_string();
                 }
             }
+            // A column left to its cells is as wide as they are: one that
+            // holds `Inf`, `-Inf` or `NaN`, which a division by zero comes
+            // to, is a `Float` whatever exact numbers are beside it.
+            for (c, column) in columns.iter_mut().enumerate() {
+                let exact = sheet.cols[c].ty.is_exact() && !sheet.cols[c].ty.is_int();
+                if column.declared || !exact {
+                    continue;
+                }
+                let infinite =
+                    |cell: &CellSnap| matches!(cell.display.as_str(), "Inf" | "-Inf" | "NaN");
+                if rows.iter().any(|row| infinite(&row[c])) {
+                    column.ty = S::Float.to_string();
+                }
+            }
             // A table sorted in the grid is shown in that order, while its
             // file still has as many rows as the order numbers. A paged
             // sheet takes the order as its rows are asked for.
@@ -3926,8 +3940,21 @@ mod tests {
     }
 
     #[test]
+    fn a_division_by_zero_makes_a_column_left_to_its_cells_a_float() {
+        let doc =
+            Document::from_text("sheet T\n\n| U | V |\n| - | - |\n| =1/0 | 1.5 |\n| 2.5 | 2 |\n");
+        let columns = &doc.snapshot().sheets[0].columns;
+        assert_eq!(columns[0].ty, "Float");
+        assert_eq!(columns[1].ty, "Decimal");
+        assert_eq!(col(&doc, 0, 0), ["Inf", "2.5"]);
+        // A declared column keeps its type, and its cell is the error.
+        let doc = Document::from_text("sheet T\n\nU : Decimal\n\n| U |\n| - |\n| =1/0 |\n");
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
+    }
+
+    #[test]
     fn a_value_written_as_a_fraction_makes_a_fraction_column() {
-        let mut doc = Document::from_text("sheet T\n\nA | B\n1 | \n2 | 0.5\n");
+        let mut doc = Document::from_text("sheet T\n\nA | B\n1 | \n2 | 1/2\n");
         assert!(doc.set_cell(0, 0, 1, "1/3"));
         assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Fraction");
         assert_eq!(col(&doc, 0, 1), ["1/3", "1/2"]);
@@ -3935,10 +3962,11 @@ mod tests {
         // is kept as it was typed.
         assert!(!doc.text().contains("Fraction"), "{}", doc.text());
         assert!(doc.text().contains("1/3"), "{}", doc.text());
-        // A decimal typed beside it stays a fraction, as any exact number
-        // does.
+        // A decimal typed beside it makes the column a decimal one, a
+        // fraction and a decimal being a decimal.
         assert!(doc.set_cell(0, 1, 1, "0.25"));
-        assert_eq!(col(&doc, 0, 1), ["1/3", "1/4"]);
+        assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Decimal");
+        assert_eq!(col(&doc, 0, 1), ["0.33333333333333333333…", "0.25"]);
         // So does a whole number and a part, proper or not.
         let doc = Document::from_text("sheet T\n\nA\n1 1/2\n5 7/3\n11/3\n");
         assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Fraction");

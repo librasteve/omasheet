@@ -889,6 +889,23 @@ fn parquet_writes_a_file_for_each_sheet() {
 }
 
 #[test]
+fn parquet_keeps_a_division_by_zero_in_a_column_left_to_its_cells() {
+    // A column with no type line is as wide as its cells: `1/0` is `Inf`, a
+    // `Float`, so the column is one, and every value comes back.
+    let file = "sheet T\n\n| U | V |\n| --- | --- |\n\
+                | =1/0 | 1.5 |\n| 2.5 | =0/0 |\n| 3 | =-1/0 |\n";
+    let out = parquet_of(file, None);
+    assert!(out.notices.is_empty(), "{:?}", out.notices);
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    assert!(back.source.contains("U : Float"), "{}", back.source);
+    assert_eq!(eval(&back.source, "t[U; 0]"), "Inf");
+    assert_eq!(eval(&back.source, "t[U; 1]"), "2.5");
+    assert_eq!(eval(&back.source, "t[V; 1]"), "NaN");
+    assert_eq!(eval(&back.source, "t[V; 2]"), "-Inf");
+}
+
+#[test]
 fn parquet_takes_each_column_type_from_the_schema() {
     let file = "sheet T\n\n\
                 N : Int\nP : Decimal\nR : Percent\nF : Float\nS : String\n\

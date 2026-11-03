@@ -342,19 +342,6 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     if let Some(scaled) = scale(op, a, b) {
         return scaled;
     }
-    // Percentages add up to a percentage; anything else done with one gives
-    // the plain number.
-    if let (Value::Percent(x), Value::Percent(y), BinOp::Add | BinOp::Sub) = (a, b, op) {
-        let sum = if op == BinOp::Add {
-            x.checked_add(*y)
-        } else {
-            x.checked_sub(*y)
-        };
-        return match sum {
-            Some(d) => Ok(Value::Percent(d)),
-            None => Err(TOO_LARGE.to_string()),
-        };
-    }
     let (Some(x), Some(y)) = (number(a), number(b)) else {
         return Err(format!(
             "cannot apply `{}` to {} and {}",
@@ -369,16 +356,19 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         (Value::Int(_, p), Value::Int(_, q)) if p == q && op != BinOp::Div => *p,
         _ => Base::Dec,
     };
+    // A power is exact only for a whole exponent: any other is worked out
+    // in floating point, as the type checker says.
+    let floating = op == BinOp::Pow && !matches!(b, Value::Int(..));
     match (&x, &y) {
-        // Anything done with a fraction gives a fraction.
-        (N::Exact(x), N::Exact(y)) => exact_arith(op, x, y).map(|v| {
-            if matches!(a, Value::Fraction(_)) || matches!(b, Value::Fraction(_)) {
-                v.fraction()
-            } else if let Value::Int(n, _) = v {
-                Value::Int(n, base)
-            } else {
-                v
-            }
+        // Two of one kind give that kind, so two fractions give a fraction and
+        // two percentages a percentage; any other mix is the plain number.
+        (N::Exact(x), N::Exact(y)) if !floating => exact_arith(op, x, y).map(|v| match (a, b) {
+            (Value::Fraction(_), Value::Fraction(_)) => v.fraction(),
+            (Value::Percent(_), Value::Percent(_)) => v.percent(),
+            _ => match v {
+                Value::Int(n, _) => Value::Int(n, base),
+                v => v,
+            },
         }),
         _ => {
             let (x, y) = (real(&x), real(&y));
@@ -1204,14 +1194,21 @@ mod tests {
         );
         // One with no fraction of a small enough denominator is a decimal.
         assert_eq!(shown(1, 10_001), "0.00009999000099990000…");
-        // Anything done with a fraction gives a fraction.
+        // Two fractions give a fraction; a fraction with a decimal, a decimal.
         let sum = arith(
+            BinOp::Add,
+            &Value::Fraction(rat(1, 3)),
+            &Value::Fraction(rat(1, 6)),
+        )
+        .expect("adds");
+        assert_eq!(format_scalar(&sum, false), "1/2");
+        let mixed = arith(
             BinOp::Add,
             &Value::Fraction(rat(1, 3)),
             &Value::Decimal(rat(1, 6)),
         )
         .expect("adds");
-        assert_eq!(format_scalar(&sum, false), "1/2");
+        assert_eq!(format_scalar(&mixed, false), "0.5");
     }
 
     #[test]

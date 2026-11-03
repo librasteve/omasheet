@@ -131,24 +131,23 @@ impl S {
 
     fn rank(self) -> u8 {
         match self {
-            S::Int | S::Hex | S::Octal | S::Binary => 0,
-            S::Decimal => 1,
-            S::Fraction | S::Percent => 2,
-            S::Float => 3,
-            _ => 4,
+            S::Int | S::Hex | S::Octal | S::Binary | S::Decimal | S::Fraction | S::Percent => 0,
+            S::Float => 1,
+            _ => 2,
         }
     }
 
-    /// The wider of two numeric types. A `Percent` next to another kind of
-    /// exact number is a `Decimal`, or a `Fraction` next to one. Whole
-    /// numbers shown in two different bases are an `Int`.
+    /// The wider of two numeric types. `Hex`, `Octal` and `Binary` are
+    /// `Integer`s, and `Fraction` and `Percent` are `Decimal`s, shown another
+    /// way: two of one type stay it, and two different members of a family
+    /// are the family's own type. An `Integer` and a `Decimal` are a
+    /// `Decimal`, and a `Float` beside either is a `Float`.
     pub fn wider(self, other: S) -> S {
-        let either = self == S::Percent || other == S::Percent;
-        if self != other && self.is_int() && other.is_int() {
-            S::Int
-        } else if self != other && either && self.is_exact() && other.is_exact() {
-            if self == S::Fraction || other == S::Fraction {
-                S::Fraction
+        if self == other {
+            self
+        } else if self.is_exact() && other.is_exact() {
+            if self.is_int() && other.is_int() {
+                S::Int
             } else {
                 S::Decimal
             }
@@ -371,5 +370,53 @@ impl Ty {
             Ty::Sheet(_) => "a sheet".into(),
             Ty::Row(_) => "a row".into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::S::*;
+
+    /// The tables of the type lattice: the number types, then each family.
+    #[test]
+    fn the_number_types_join_by_family() {
+        // Integer, Decimal, Float: the more infectious wins.
+        assert_eq!(Int.join(Decimal), Some(Decimal));
+        assert_eq!(Int.join(Float), Some(Float));
+        assert_eq!(Decimal.join(Float), Some(Float));
+        // The radix types are Integers shown another way.
+        assert_eq!(Hex.join(Hex), Some(Hex));
+        for (a, b) in [
+            (Hex, Octal),
+            (Octal, Binary),
+            (Binary, Hex),
+            (Hex, Int),
+            (Int, Octal),
+        ] {
+            assert_eq!(a.join(b), Some(Int), "{a} with {b}");
+            assert_eq!(b.join(a), Some(Int), "{b} with {a}");
+        }
+        // Fraction and Percent are Decimals shown another way.
+        assert_eq!(Fraction.join(Fraction), Some(Fraction));
+        assert_eq!(Percent.join(Percent), Some(Percent));
+        for (a, b) in [
+            (Fraction, Percent),
+            (Fraction, Decimal),
+            (Percent, Decimal),
+            (Fraction, Int),
+            (Percent, Int),
+            (Fraction, Hex),
+        ] {
+            assert_eq!(a.join(b), Some(Decimal), "{a} with {b}");
+            assert_eq!(b.join(a), Some(Decimal), "{b} with {a}");
+        }
+        // A Float beside any of them is a Float.
+        for a in [Fraction, Percent, Hex, Int, Decimal] {
+            assert_eq!(a.join(Float), Some(Float), "{a} with Float");
+        }
+        // A number with text is not a type of either: `Any` for a column.
+        assert_eq!(Int.join(String), None);
+        assert_eq!(String.join(String), Some(String));
+        assert_eq!(Any.join(Fraction), Some(Any));
     }
 }

@@ -1663,10 +1663,19 @@ impl<'p> Engine<'p> {
         if ok {
             Ok(v)
         } else {
+            // A division by zero is a `Float` however exact the numbers
+            // divided, which an exact column cannot hold.
+            let hint = match &v {
+                Value::Float(f) if !f.is_finite() && col.ty.is_exact() => {
+                    "; a division by zero is Inf or NaN, so declare the column `Float` \
+                     or leave out its type, or guard the division"
+                }
+                _ => "",
+            };
             fail(
                 span,
                 format!(
-                    "column `{}` is declared `{}` but this is {}",
+                    "column `{}` is declared `{}` but this is {}{hint}",
                     col.name,
                     col.ty,
                     v.kind()
@@ -2102,6 +2111,10 @@ impl<'p> Engine<'p> {
                         (UnOp::Neg, Value::Percent(r)) => r
                             .checked_neg()
                             .map(Value::Percent)
+                            .map_or_else(|| fail(span, "the number is too large".to_string()), Ok),
+                        (UnOp::Neg, Value::Fraction(r)) => r
+                            .checked_neg()
+                            .map(Value::Fraction)
                             .map_or_else(|| fail(span, "the number is too large".to_string()), Ok),
                         (UnOp::Neg, Value::Duration(t)) => {
                             t.checked_neg().map(Value::Duration).map_or_else(
@@ -2981,7 +2994,8 @@ impl<'p> Engine<'p> {
                 // gathers for the aggregate asked for. A column walked in
                 // place converts each cell as it goes, so a second walk
                 // would be a second conversion of every row.
-                let (mut present, mut timed, mut percent) = (0usize, true, true);
+                let (mut present, mut timed, mut percent, mut fraction) =
+                    (0usize, true, true, true);
                 let mut walk = |see: &mut dyn FnMut(Value)| -> Result<(), Fail> {
                     for item in &items {
                         // A cell in error poisons the column it is read
@@ -2994,6 +3008,7 @@ impl<'p> Engine<'p> {
                                 present += 1;
                                 timed &= matches!(v, Value::Duration(_));
                                 percent &= matches!(v, Value::Percent(_));
+                                fraction &= matches!(v, Value::Fraction(_));
                             }
                             see(v);
                         });
@@ -3063,9 +3078,15 @@ impl<'p> Engine<'p> {
                 })?;
                 // Lengths of time add up to one, from none.
                 let timed = present > 0 && timed;
-                // The sum and the average of percentages are percentages.
+                // The sum and the average of percentages are percentages,
+                // and of fractions fractions.
                 let percent = present > 0 && percent;
-                let kept = |v: Value| if percent { v.percent() } else { v };
+                let fraction = present > 0 && fraction;
+                let kept = |v: Value| match (percent, fraction) {
+                    (true, _) => v.percent(),
+                    (_, true) => v.fraction(),
+                    _ => v,
+                };
                 let sum = || -> R {
                     match (timed, by_time) {
                         (true, Some(total)) => total,
@@ -3584,6 +3605,7 @@ fn agg_value(func: Func, ty: S, any: AnyValue, count: Option<i64>) -> Option<Val
             let mean = arith(BinOp::Div, &value, &Value::int(n)).ok()?;
             match ty {
                 S::Percent => mean.percent(),
+                S::Fraction => mean.fraction(),
                 _ => mean,
             }
         }

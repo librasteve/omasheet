@@ -82,14 +82,29 @@ whole part where there is one: `x.Fraction` gives `1/8` for `0.125` and
 `2 3/4` for `2.75`. The fraction is worked out from the number, not
 remembered from where it was written, so `(2/7 + 3/7).Fraction` is `5/7`.
 Only a denominator of 10000 or less is looked for; past that the number is
-shown as a decimal. Anything done with a fraction gives a fraction, and
-`--exact` writes it as `n/d`, which is how a file carries one.
+shown as a decimal. Two fractions give a fraction, and a fraction with any
+other number gives a `Decimal`: in a `Fraction` column, `Yield + Yield` is
+still a fraction, where `Yield * 2` is a `Decimal`.
+`--exact` writes a fraction as `n/d`, which is how a file carries one.
 
-Percentages add up to a percentage:
-`20% + 5%` is `25%`, and so are their sum, average, least and greatest.
-Anything else done with one gives the plain number: `100 * 20%` is `20`,
-`1 + 20%` is `1.2`, and `20% == 0.2` is true. To show a result as a
-percentage, declare its column `Percent` or write `x.Percent`.
+In a formula `1/10` is a quotient, a `Decimal`. A fraction is written in angle
+brackets, `<1/10>`, `<-3/4>` or `<2 3/4>`, and is a `Fraction` as `1/10` is in a
+cell, so `<1/10> + <1/10>` is `1/5`. It is the same as `Fraction(1/10)`. A
+space goes before one that follows a `+`, since `+<` is a shift; the error
+for `1+<1/10>` says so.
+
+Two percentages give a percentage: `20% + 5%` is `25%`, and so are their
+sum, average, least and greatest. A percentage with any other number gives
+the plain number: `100 * 20%` is `20`, `1 + 20%` is `1.2`, and `20% == 0.2`
+is true. To show a result as a percentage, declare its column `Percent` or
+write `x.Percent`.
+
+A quotient of whole numbers is a `Decimal`, though `4/2` written out is an
+`Integer`. A quotient is taken where a whole number is wanted, `[1, 2, 3][4/2]`,
+and reported there if it is not whole, `5/2`.
+
+A power with a whole exponent is exact; with any other, `2 ** 0.5`, it is a
+`Float`, as `sqrt(2)` is.
 
 `+ - * / **`, `== != < > <= >=`, `and or not`, `in`, and `a // b` (b when a
 is empty). `if c then a else b`.

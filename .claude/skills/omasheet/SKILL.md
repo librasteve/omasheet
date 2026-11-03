@@ -173,7 +173,7 @@ A `Fraction` is the same number shown as a fraction of whole numbers: to
 show a column that way, declare it, as in `Share : Fraction`, or write
 `x.Fraction`. The fraction is worked out from the number, so
 `(2/7 + 3/7).Fraction` is `5/7`; a denominator past 10000 is shown as a
-decimal instead. Anything worked out from a fraction is a fraction.
+decimal instead. Two fractions give a fraction; a fraction with any other number gives a Decimal.
 
 Arithmetic is exact decimal arithmetic: `0.1 + 0.2 == 0.3` is true, and
 nothing wraps. A division that does not end within 38 digits is rounded

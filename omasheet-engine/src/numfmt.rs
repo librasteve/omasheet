@@ -423,7 +423,16 @@ mod tests {
                         if ours == "too large" {
                             continue;
                         }
-                        assert_eq!(ours, c_double(&format, x), "%{format} of {x:e}");
+                        let theirs = c_double(&format, x);
+                        // Whether a NaN takes the sign flag is C's own
+                        // choice: glibc shows `+nan` and macOS `nan`, so
+                        // either is a pass.
+                        if x.is_nan() {
+                            let bare = |t: &str| t.replace([' ', '+'], "");
+                            assert_eq!(bare(&ours), bare(&theirs), "%{format} of NaN");
+                        } else {
+                            assert_eq!(ours, theirs, "%{format} of {x:e}");
+                        }
                     }
                 }
             }
@@ -477,6 +486,11 @@ mod tests {
             for size in ["", "8", ".0", ".3", "12.5", "-6"] {
                 for conv in ["d", "i", "x", "X", "o", "b", "B"] {
                     if flags.contains('#') && matches!(conv, "d" | "i") {
+                        continue;
+                    }
+                    // `%b` is C23, and not every C library has it: macOS
+                    // prints a `b`, where glibc prints the digits.
+                    if matches!(conv, "b" | "B") && c_long("b", 5) != "101" {
                         continue;
                     }
                     let format = format!("{flags}{size}{conv}");

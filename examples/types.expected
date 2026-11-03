@@ -63,3 +63,25 @@ Site                   | Contact               | Ref                            
 -----------------------|-----------------------|--------------------------------------|-------------------|-------------------|----------------------
 https://example.com    | name@example.com      | 7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f | sales@example.com | sales@example.com | name@example.com
 mailto:help@example.uk | a.b+tag@example.co.uk | 00000000-0000-0000-0000-000000000000 | ops@example.co.uk | ops@example.co.uk | a.b+tag@example.co.uk
+
+sheet Joined
+
+Fractions | Percents | Mixed                   | Whole | Root               | Written
+----------|----------|-------------------------|-------|--------------------|--------
+      1/2 |      50% |                    0.25 |   1.5 | 0.7071067811865476 |   3 1/4
+      2/3 |      25% | 0.16666666666666666666… |     2 |  0.816496580927726 |  3 5/12
+
+sheet Lattice
+
+Left     | Right    | Sum
+---------|----------|---------------------------------
+Integer  | Decimal  | 1.33333333333333333333333333333
+Decimal  | Float    | 1.3333333333333333
+Hex      | Hex      | 0x2
+Hex      | Octal    | 2
+Hex      | Integer  | 2
+Fraction | Fraction | 1/2
+Fraction | Percent  | 0.583333333333333333333333333333
+Fraction | Decimal  | 0.5
+Percent  | Percent  | 50%
+Percent  | Integer  | 1.2

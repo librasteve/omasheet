@@ -62,8 +62,8 @@ Whole   := Inverse * Numbers[Count; *]
 Taxed   := Numbers[Price; *] * 1.2
 Split   := Numbers[Price; *] / 3
 
-# Percents add up to a Percent. Anything else done with one gives the plain
-# number, so a price times a rate is a price.
+# Two Percents give a Percent. A Percent with any other number gives a
+# Decimal, so a price times a rate is a price.
 Raised  := Numbers[Rate; *] + 5%
 Part    := Numbers[Price; *] * Numbers[Rate; *]
 
@@ -115,8 +115,9 @@ AsNum     := Value.Float
 AsBool    := Value.Boolean
 AsText    := Value.String
 
-# A Fraction column shows what it holds as a fraction, and anything worked
-# out from one is a fraction too.
+# A Fraction column shows what it holds as a fraction. Two fractions give a
+# fraction; a fraction with any other number gives a Decimal, so Yield * 2
+# would be 4.666… and not 4 2/3.
 sheet Mixes
 
 Yield : Fraction
@@ -128,7 +129,7 @@ Yield : Fraction
 | lean   | 2 3/4 | *       | *     |
 | wide   | 0.5   | *       | *     |
 
-Doubled := Yield * 2
+Doubled := Yield + Yield
 Share   := Yield.Percent
 
 # String is read the way a cell is.
@@ -170,3 +171,42 @@ Checked := Written.Email
 
 # Any of them is text, and goes where text is asked for.
 AsText  := Contact.String
+
+# What a sum, product or quotient is follows from its two sides. Integer,
+# Decimal and Float are each wider than the one before. Fraction and Percent
+# are Decimals shown another way, so two of one give that one, and a mix of
+# them, or with an Integer or Decimal, gives a Decimal. A power with a whole
+# exponent is exact; with any other it is a Float, as a root is. In a
+# formula `1/10` is a quotient, a Decimal; a fraction is written in angle
+# brackets, `<1/10>` or `<2 3/4>`, as it is in a cell. Put a space before one
+# after a `+`, since `+<` is a shift.
+sheet Joined
+
+| Fractions | Percents | Mixed | Whole | Root | Written |
+| --------- | -------- | ----- | ----- | ---- | ------- |
+| 1/2       | 50%      | *     | *     | *    | *       |
+| 2/3       | 25%      | *     | *     | *    | *       |
+
+Mixed   := Fractions * Percents
+Whole   := Fractions * 3
+Root    := Fractions ** 0.5
+Written := <2 3/4> + Fractions
+
+# The join of each pair of types, shown by what a sum of them looks like.
+# Integer, Decimal and Float: a Float is shown in fewer digits than the
+# exact Decimal beside it. Hex, Octal and Binary join to an Integer unless
+# both are the same; Fraction and Percent join to a Decimal unless both are.
+sheet Lattice
+
+| Left     | Right    | Sum                                             |
+| -------- | -------- | ----------------------------------------------- |
+| Integer  | Decimal  | =(1 + 1/3).String                               |
+| Decimal  | Float    | =(1/3 + 1e0).String                             |
+| Hex      | Hex      | =(Hex(1) + Hex(1)).String                       |
+| Hex      | Octal    | =(Hex(1) + Octal(1)).String                     |
+| Hex      | Integer  | =(Hex(1) + 1).String                            |
+| Fraction | Fraction | =(Fraction(1/3) + Fraction(1/6)).String         |
+| Fraction | Percent  | =(Fraction(1/3) + Percent(25%)).String          |
+| Fraction | Decimal  | =(Fraction(1/3) + 1/6).String                   |
+| Percent  | Percent  | =(Percent(20%) + Percent(30%)).String           |
+| Percent  | Integer  | =(Percent(20%) + 1).String                      |

@@ -7,6 +7,7 @@
 //! unary `-`, `**`, then postfix `[ ]`, `.Name` and calls.
 
 use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp, reads_back};
+use crate::decimal::Dec;
 use crate::diag::{Diagnostic, Span};
 use crate::lexer::{Tok, Token, lex};
 
@@ -19,11 +20,38 @@ pub fn parse_expr(text: &str, src: u32, base: usize) -> R<Expr> {
     if p.peek() == &Tok::Eof {
         return Err(Diagnostic::new(p.span(), "expected an expression"));
     }
-    let e = p.seq()?;
-    if p.peek() != &Tok::Eof {
-        return Err(p.unexpected("an operator or the end of the expression"));
+    let parsed = p.seq().and_then(|e| {
+        if p.peek() == &Tok::Eof {
+            Ok(e)
+        } else {
+            Err(p.unexpected("an operator or the end of the expression"))
+        }
+    });
+    parsed.map_err(|d| shift_or_fraction(&p.toks, text, base, d))
+}
+
+/// `a+<1/10>` reads as a shift, `+<`, and a `>` with nothing to compare. A
+/// `+<` run straight into a number, with a `>` somewhere after it, is most
+/// likely a sum with a fraction, so the error says how to write one.
+fn shift_or_fraction(toks: &[Token], text: &str, base: usize, d: Diagnostic) -> Diagnostic {
+    if d.help.is_some() {
+        return d;
     }
-    Ok(e)
+    let touching = |t: &Token| {
+        let at = (t.span.end as usize).saturating_sub(base);
+        t.tok == Tok::PlusLt
+            && text
+                .as_bytes()
+                .get(at)
+                .is_some_and(|b| b.is_ascii_digit() || *b == b'-')
+    };
+    let Some(i) = toks.iter().position(touching) else {
+        return d;
+    };
+    if !toks[i..].iter().any(|t| t.tok == Tok::Gt) {
+        return d;
+    }
+    d.with_help("`+<` is a shift; to add a fraction put a space after the `+`, as in `a + <1/10>`")
 }
 
 struct Parser {
@@ -409,6 +437,87 @@ impl Parser {
         }
     }
 
+    /// A fraction written out: `<1/10>`, `<-3/4>`, `<2 3/4>` or `<3>`. It is
+    /// the `Fraction` of that number, as `Fraction(1/10)` would be, so that it
+    /// is a fraction in a formula as `1/10` is in a cell, where a bare `1/10`
+    /// is a quotient.
+    fn fraction(&mut self) -> R<Expr> {
+        let start = self.span();
+        self.bump();
+        let negative = self.eat(&Tok::Minus);
+        let whole = |t: &Tok| match t {
+            Tok::Int(n, crate::types::Base::Dec) => Some(*n),
+            _ => None,
+        };
+        let bad =
+            |p: &Self| Err(p.unexpected("a fraction such as `<1/10>` or `<2 3/4>`, closed by `>`"));
+        let Some(first) = whole(self.peek()) else {
+            // A decimal on its own, `<0.5>`, is the fraction it is.
+            if let Tok::Decimal(r) = self.peek().clone() {
+                self.bump();
+                return self.fraction_of(start, negative, Some(r));
+            }
+            return bad(self);
+        };
+        self.bump();
+        // `<3>`, `<1/10>` or `<2 3/4>`.
+        let value = if let Some(n) = whole(self.peek()) {
+            self.bump();
+            if !self.eat(&Tok::Slash) {
+                return bad(self);
+            }
+            let Some(d) = whole(self.peek()) else {
+                return bad(self);
+            };
+            let d_span = self.bump().span;
+            let part = self.quotient(n, d, d_span)?;
+            Dec::from_i64(first).checked_add(part)
+        } else if self.eat(&Tok::Slash) {
+            let Some(d) = whole(self.peek()) else {
+                return bad(self);
+            };
+            let d_span = self.bump().span;
+            Some(self.quotient(first, d, d_span)?)
+        } else {
+            Some(Dec::from_i64(first))
+        };
+        self.fraction_of(start, negative, value)
+    }
+
+    /// `n/d` as an exact number, or the error of a zero denominator.
+    fn quotient(&self, n: i64, d: i64, span: Span) -> R<Dec> {
+        if d == 0 {
+            return Err(Diagnostic::new(
+                span,
+                "a fraction has a denominator that is not zero",
+            ));
+        }
+        Dec::from_i64(n)
+            .checked_div(Dec::from_i64(d))
+            .ok_or_else(|| Diagnostic::new(span, "this fraction is too large"))
+    }
+
+    /// Close a fraction at `>`, as the `Fraction` of `value`.
+    fn fraction_of(&mut self, start: Span, negative: bool, value: Option<Dec>) -> R<Expr> {
+        if self.peek() != &Tok::Gt {
+            return Err(self.unexpected("`>` to close the fraction"));
+        }
+        let end = self.bump().span;
+        let span = start.to(end);
+        let Some(value) = value.and_then(|v| if negative { v.checked_neg() } else { Some(v) })
+        else {
+            return Err(Diagnostic::new(span, "this fraction is too large"));
+        };
+        let literal = Expr {
+            kind: ExprKind::Lit(Lit::Decimal(value)),
+            span,
+        };
+        Ok(Expr {
+            kind: ExprKind::Call("Fraction".into(), span, vec![literal]),
+            span,
+        })
+    }
+
     fn primary(&mut self) -> R<Expr> {
         let span = self.span();
         let lit = |kind: Lit| ExprKind::Lit(kind);
@@ -432,6 +541,7 @@ impl Parser {
             Tok::True => lit(Lit::Boolean(true)),
             Tok::False => lit(Lit::Boolean(false)),
             Tok::Star => ExprKind::Cursor,
+            Tok::Lt => return self.fraction(),
             Tok::Dollar => {
                 self.bump();
                 if !self.eat(&Tok::Minus) {
