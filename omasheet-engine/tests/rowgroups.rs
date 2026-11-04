@@ -55,7 +55,9 @@ fn fixture(dir: &std::path::Path) -> std::path::PathBuf {
 /// the file, and what the expression answered. `None` asks nothing, which
 /// is the cost of opening the file and calculating the sheet.
 fn cost(expr: Option<&str>) -> (usize, String) {
-    let dir = scratch("rowgroups");
+    // A directory for each test: they run side by side, and each clears the
+    // one it uses before it writes the fixture.
+    let dir = scratch(&format!("rowgroups-{:?}", std::thread::current().id()));
     fixture(&dir);
     let (mut program, mut diags) = compile(TABLE, 0);
     assert!(diags.is_empty(), "{diags:?}");

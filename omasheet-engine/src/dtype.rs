@@ -307,3 +307,22 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
     };
     Some(series.into_column())
 }
+
+/// A column that declares a zone, as Polars holds one: the instants, with
+/// the zone on the dtype. `None` for a value that is not a date-time in a
+/// zone, or a zone Polars has no name for.
+pub fn zoned_column(name: &str, zone: &str, values: &[Value]) -> Option<PlColumn> {
+    let instants: Vec<Option<i64>> = values
+        .iter()
+        .map(|v| match v {
+            Value::Datetime(_, Some(z)) => Some(Some(z.utc)),
+            Value::Null => Some(None),
+            _ => None,
+        })
+        .collect::<Option<_>>()?;
+    let tz = TimeZone::opt_try_new(Some(zone)).ok()?;
+    Series::new(name.into(), instants)
+        .cast(&DataType::Datetime(TimeUnit::Microseconds, tz))
+        .ok()
+        .map(Series::into_column)
+}

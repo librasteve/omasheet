@@ -157,9 +157,9 @@ Each of these is then carried through Parquet, as task 2.9 of
       checks every operator between every pair of column types both ways, on
       written edge values and on a seeded generator. Extended 2026-11-04 with
       `Duration` and a column in a declared zone (the hour London's clocks
-      skip, the hour they repeat). A zoned column is not lowered, so it
-      agrees by being on the engine either way; the cases are there for
-      when it is. The generator now has a seed for each pair, which found a
+      skip, the hour they repeat). Comparing two zoned columns of
+      one zone is lowered and agrees (D70a); every other operation on a
+      zoned column stays on the engine, and agrees by being the same path The generator now has a seed for each pair, which found a
       standing disagreement: a wide `Decimal * Integer` that Polars wraps
       silently, pinned as an ignored test
 

@@ -313,3 +313,30 @@ fn a_wide_decimal_product_agrees_either_way() {
     let text = sheet("Decimal", "Integer", "*", &rows);
     assert_eq!(difference(&text, &rows), None);
 }
+
+/// A column in a zone is lowered for one thing: comparing it with another
+/// column of the same zone, which Polars does on the instants as the engine
+/// does. Everything else about it stays on the engine, and the grid above
+/// checks that each of those agrees by being the same path.
+#[test]
+fn zoned_columns_of_one_zone_are_compared_by_polars_and_agree() {
+    let (ty, edges) = TYPES
+        .iter()
+        .find(|(t, _)| t.starts_with("Datetime(\""))
+        .copied()
+        .expect("a zoned type in the list");
+    let rows = pairs(edges, edges);
+    for op in ["==", "!=", "<", ">", "<=", ">="] {
+        let text = sheet(ty, ty, op, &rows);
+        assert_eq!(
+            attempt(&text),
+            Some(Attempt::Lowered),
+            "`{op}` was not lowered"
+        );
+        assert_eq!(difference(&text, &rows), None, "`{op}` disagrees");
+    }
+    // Against a column on the file's own clocks it is compared by the zone
+    // the engine works out, so that is left to the engine.
+    let text = sheet(ty, "Datetime", "<", &pairs(edges, &["2025-07-01T09:30"]));
+    assert_eq!(attempt(&text), Some(Attempt::Refused));
+}

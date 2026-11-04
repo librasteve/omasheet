@@ -56,8 +56,13 @@ pub struct Out {
 }
 
 impl Out {
+    /// What an operation gives. Never a date-time in a zone: a zoned column
+    /// may be read and compared, but its instants are held as Polars holds
+    /// them and a sheet shows them on the zone's clocks, so one that left
+    /// the plan would be read back as a wall clock. An operation that would
+    /// give one is not lowered.
     fn new(expr: Expr, dtype: DataType) -> Option<Out> {
-        Some(Out { expr, dtype })
+        (!zoned(&dtype)).then_some(Out { expr, dtype })
     }
 
     /// The omasheet type this gives, or `None` for a dtype no omasheet type
@@ -101,14 +106,20 @@ impl<'a> Cx<'a> {
     fn read(&self, c: usize) -> Option<Out> {
         let column = (self.column)(c)?;
         let (name, dtype) = (column.name().clone(), column.dtype().clone());
-        // A date-time in a zone is held as an instant, and compares with the
-        // wall clocks of a sheet by the zone it is shown on: the engine's.
-        if matches!(dtype, DataType::Datetime(_, Some(_))) {
-            return None;
-        }
         let mut taken = self.taken.borrow_mut();
         if !taken.iter().any(|held| held.name() == &name) {
             taken.push(column);
+        }
+        drop(taken);
+        // A date-time in a zone is held as an instant. It is read in
+        // microseconds only, and compared with a column of the same zone
+        // only (see `pair`): against a wall clock it would be compared by
+        // the zone it is shown on, which the engine works out.
+        if matches!(dtype, DataType::Datetime(_, Some(_))) {
+            return zoned(&dtype).then(|| Out {
+                expr: col(name),
+                dtype,
+            });
         }
         // A Parquet date-time in nanoseconds or milliseconds is read as the
         // microseconds a sheet holds, as `dtype::cell` reads each value:
@@ -135,6 +146,12 @@ impl<'a> Cx<'a> {
 /// An expression as one Polars expression over the whole column, or `None`
 /// where Polars has not the same answer for some part of it.
 pub fn expr(node: &Node, cx: &Cx) -> Option<Out> {
+    // A column in a zone is read only to be compared; as the answer itself
+    // it is not lowered.
+    inner(node, cx).filter(|out| !zoned(&out.dtype))
+}
+
+fn inner(node: &Node, cx: &Cx) -> Option<Out> {
     match &node.kind {
         Ir::Lit(l) => literal(l),
         Ir::Const(i) => literal(&lit_of((cx.constant)(*i)?)?),
@@ -144,15 +161,15 @@ pub fn expr(node: &Node, cx: &Cx) -> Option<Out> {
         // enclosing sheet is a frame this expression is not over.
         Ir::RowCol { depth: 0, col } => cx.read(*col),
         Ir::Call(func, args) => call(*func, args, cx),
-        Ir::Binary(BinOp::In, l, r) => within(expr(l, cx)?, r, cx),
-        Ir::Unary(op, operand) => unary(*op, expr(operand, cx)?),
-        Ir::Binary(op, l, r) => binary(*op, expr(l, cx)?, expr(r, cx)?),
+        Ir::Binary(BinOp::In, l, r) => within(inner(l, cx)?, r, cx),
+        Ir::Unary(op, operand) => unary(*op, inner(operand, cx)?),
+        Ir::Binary(op, l, r) => binary(*op, inner(l, cx)?, inner(r, cx)?),
         Ir::If(cond, yes, no) => {
-            let cond = expr(cond, cx)?;
+            let cond = inner(cond, cx)?;
             if cond.dtype != DataType::Boolean {
                 return None;
             }
-            let (yes, no) = (expr(yes, cx)?, expr(no, cx)?);
+            let (yes, no) = (inner(yes, cx)?, inner(no, cx)?);
             let (yes, no, dtype) = pair(yes, no)?;
             Out::new(when(cond.expr).then(yes).otherwise(no), dtype)
         }
@@ -322,7 +339,7 @@ fn call(func: Func, args: &[Node], cx: &Cx) -> Option<Out> {
         let [text, part] = args else {
             return None;
         };
-        let (text, part) = (expr(text, cx)?, expr(part, cx)?);
+        let (text, part) = (inner(text, cx)?, inner(part, cx)?);
         if text.dtype != DataType::String || part.dtype != DataType::String {
             return None;
         }
@@ -341,7 +358,7 @@ fn call(func: Func, args: &[Node], cx: &Cx) -> Option<Out> {
         let [text, parts] = args else {
             return None;
         };
-        let text = expr(text, cx)?;
+        let text = inner(text, cx)?;
         let Ir::VecLit(items) = &parts.kind else {
             return None;
         };
@@ -366,7 +383,7 @@ fn call(func: Func, args: &[Node], cx: &Cx) -> Option<Out> {
     // of: its answer is a column's already.
     if let Func::IsUnique | Func::IsDuplicated | Func::IsFirstDistinct | Func::IsLastDistinct = func
     {
-        let column = expr(args.first()?, cx)?;
+        let column = inner(args.first()?, cx)?;
         let kept = exact_scale(&column.dtype) == Some(0)
             || is_float(&column.dtype)
             || holdable(&column.dtype);
@@ -384,7 +401,7 @@ fn call(func: Func, args: &[Node], cx: &Cx) -> Option<Out> {
     let [arg] = args else {
         return None;
     };
-    let out = expr(arg, cx)?;
+    let out = inner(arg, cx)?;
     Some(match func {
         // Whether a cell is empty, which is the one call that asks about
         // the absence rather than the value, so every dtype answers it and
@@ -495,11 +512,11 @@ fn within(needle: Out, hay: &Node, cx: &Cx) -> Option<Out> {
         }
         Ir::Binary(op, lo, hi) if exact_scale(&needle.dtype) == Some(0) => {
             let (after, exclusive) = op.range_ends()?;
-            let (lo, hi) = (expr(lo, cx)?, expr(hi, cx)?);
+            let (lo, hi) = (inner(lo, cx)?, inner(hi, cx)?);
             between(needle, lo, hi, after, exclusive)
         }
         Ir::Unary(UnOp::UpTo, hi) if exact_scale(&needle.dtype) == Some(0) => {
-            let hi = expr(hi, cx)?;
+            let hi = inner(hi, cx)?;
             between(
                 needle,
                 Out::new(lit(0i64), DataType::Int64)?,
@@ -681,7 +698,7 @@ fn pair(l: Out, r: Out) -> Option<(Expr, Expr, DataType)> {
         // file's own zone: the same dtype on both sides and nothing to
         // convert. A zone on the dtype is one column one zone (D70), which
         // waits for the column that carries it.
-        _ if l.dtype == r.dtype && holdable(&l.dtype) => l.dtype.clone(),
+        _ if l.dtype == r.dtype && (holdable(&l.dtype) || zoned(&l.dtype)) => l.dtype.clone(),
         _ => return None,
     };
     Some((
@@ -725,6 +742,12 @@ fn temporal(dtype: &DataType) -> bool {
         DataType::Duration(unit) => *unit == TimeUnit::Microseconds,
         _ => false,
     }
+}
+
+/// Whether a dtype is a date-time in microseconds in a zone: the instants
+/// of a column that declares one, or that a Parquet file holds in one.
+fn zoned(dtype: &DataType) -> bool {
+    matches!(dtype, DataType::Datetime(TimeUnit::Microseconds, Some(_)))
 }
 
 /// Whether a dtype is one a sheet holds values of, with no conversion

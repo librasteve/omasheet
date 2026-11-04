@@ -617,7 +617,7 @@ impl<'p> Engine<'p> {
             engine.filters.borrow_mut().push((t, Attempt::Refused));
             None
         };
-        let column = |c| self.pl_column(t, c);
+        let column = |c| self.plan_column(t, c);
         let constant = |i| self.const_value(i).ok();
         let cx = lower::Cx::new(&column, &constant);
         let Some(out) = lower::expr(node, &cx) else {
@@ -690,7 +690,7 @@ impl<'p> Engine<'p> {
     /// holds anything of the engine. `None` where the filter does not lower.
     pub fn filter_plan(&self, t: usize, node: &Node) -> Option<(DataFrame, Expr)> {
         let nrows = self.prog.sheets[t].nrows;
-        let column = |c| self.pl_column(t, c);
+        let column = |c| self.plan_column(t, c);
         let constant = |i| self.const_value(i).ok();
         let cx = lower::Cx::new(&column, &constant);
         let out = lower::expr(node, &cx)?;
@@ -1192,7 +1192,7 @@ impl<'p> Engine<'p> {
     /// of its own for some part of it.
     fn plan(&self, t: usize, c: usize, node: &Node) -> Option<(DataFrame, Expr)> {
         let col = &self.prog.sheets[t].cols[c];
-        let column = |cc| self.pl_column(t, cc);
+        let column = |cc| self.plan_column(t, cc);
         let constant = |i| self.const_value(i).ok();
         let cx = lower::Cx::new(&column, &constant);
         let out = lower::expr(node, &cx)?;
@@ -1262,6 +1262,27 @@ impl<'p> Engine<'p> {
             Cell::Lit(l) => self.lit_in(t, c, &l),
             _ => Value::Error,
         }
+    }
+
+    /// A column for a lowered plan to read. That is [`Engine::pl_column`],
+    /// and for a column of the text that declares a zone, the instants its
+    /// cells are, with the zone on the dtype; the column is read only to be
+    /// compared with another of the same zone, and nothing of it is read
+    /// back out of the copy.
+    fn plan_column(&self, t: usize, c: usize) -> Option<PlColumn> {
+        let col = &self.prog.sheets[t].cols[c];
+        let (Some((zone, _)), false) = (&col.zone, matches!(col.kind, ColKind::Frame)) else {
+            return self.pl_column(t, c);
+        };
+        if let Some(copy) = self.copies.borrow()[t][c].clone() {
+            return Some(copy);
+        }
+        let values: Vec<Value> = (0..self.prog.sheets[t].nrows)
+            .map(|r| self.cell_shown(t, c, r))
+            .collect();
+        let built = crate::dtype::zoned_column(&col.name, zone, &values)?;
+        self.copies.borrow_mut()[t][c] = Some(built.clone());
+        Some(built)
     }
 
     /// One column of a sheet as the dataframe holds it: a `table`'s own
