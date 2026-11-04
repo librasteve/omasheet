@@ -15,5 +15,5 @@
 - [ ] 3.4 Tag `v0.1.0` and publish the first release; install from it on a clean machine
 
 ## 4. Omarchy repository (goal)
-- [ ] 4.1 Recipe for `omacom-io/omarchy-pkgs` from the tagged source archive, with a `package.json` that watches the releases
+- [x] 4.1 Recipe for `omacom-io/omarchy-pkgs` from the tagged source archive, with a `package.json` that watches the releases. Written 2026-11-04 in `pkgbuild/omarchy-pkgs/omasheet/` against the v0.1.6 archive, whose checksum it carries. Checked so far by `bash -n` and by reading it against their `omacalc` recipe; not yet built, and their `helpers/upstream-watch.py check` and `tests/pinned-sources.sh` are not yet run, which 4.2 does
 - [ ] 4.2 Build it with their `bin/build`, and open the PR
