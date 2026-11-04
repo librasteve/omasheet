@@ -35,8 +35,12 @@
 - [ ] 4.6 `docs/interop.md`
 
 ## 5. Examples and checks
-- [ ] 5.1 `examples/display.omx`: the `Complexes` sheet back; `examples/types.omx`: `Wave`, `Size`, `Turned` and `AsComplex` back; `.expected` files regenerated
-- [ ] 5.2 The tests removed by `4f85389` in `omasheet-engine/tests/spec.rs`, `interop.rs` and `value.rs`, restored and updated for the lattice
-- [ ] 5.3 A Parquet round trip of a `Complex` column, and a read of a `Struct{re, im}` file written by another tool
-- [ ] 5.4 `README.md`: the type list
-- [ ] 5.5 The workspace passes
+- [ ] 5.1 `examples/display.omx`: the `Complexes` sheet back, from `4f85389^`, with `Num` written `Float`; `examples/types.omx`: `Wave`, `Size`, `Turned` and `AsComplex` back, and the header comment's list of types; `.expected` files regenerated
+- [ ] 5.2 `examples/showcase/undeclared.omx`, `CoreTypes` sheet: a `_3plus4i` column left undeclared and a `_3plus4is : Complex` column declared, beside the `Integer`, `Decimal` and `Float` pairs, with the same rows (`x+x`, `x-x`, `x*x`, `x/x`, the four with a constant `1`, and the `x/0`, `(x-x)/0`, `1/0` and `0/0` rows). The `.floor()` variants do not apply to a `Complex` and are written without. `x/0` is the case to look at: a `Complex` absorbs the infinity (D188 and the lattice rule), so it is `Inf` in each part, and it should show as such, not as an error
+- [ ] 5.3 `examples/showcase/undeclared.omx`, a `Joins` sheet: an undeclared column holding `1`, `1.5`, `1e0` and `3+4i`, whose heading shows `Complex`, and the same cells in a column declared `Float`, where `3+4i` is an error and `3+0i` is `3`; the same pair for `Integer` with `0b1` and `0x1F`, shown as `1` and `31` (D203). This is the lattice and the declared-column rule in one place
+- [ ] 5.4 `examples/showcase/undeclared.omx` is run in the app, not only through the CLI: the heading of an undeclared column, and a `Complex` cell entered into an `Integer` column
+- [ ] 5.5 `examples/functions.omx`: `re`, `im`, `conj`, `arg`, and `abs`, `sqrt`, `exp`, `ln` of a `Complex`; `examples/logic.omx` or `types.omx`: `3+4i = 3+4i`, and `1i < 2i` as the error it is
+- [ ] 5.6 A Parquet round trip of a `Complex` column, and a read of a `Struct{re, im}` file written by another tool; a `examples/` Parquet is not added, the test writes its own
+- [ ] 5.7 The tests removed by `4f85389` in `omasheet-engine/tests/spec.rs`, `interop.rs` and `value.rs`, restored and updated for the lattice
+- [ ] 5.8 `README.md`: the type list
+- [ ] 5.9 The workspace passes, and every example matches its `.expected`
