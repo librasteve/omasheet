@@ -107,8 +107,11 @@ that change goes on beside it.
       `file.rs`'s `is_zone_name` checks only the shape of the name, so a zone
       the engine cannot find is a diagnostic at check time, as a `zone`
       declaration's is
-- [ ] 5.4 Unsigned dtypes read and preserved, with a notice for a `UInt64`
-      above `i64::MAX`
+- [x] 5.4 Unsigned dtypes read and preserved, with a notice for a `UInt64`
+      above `i64::MAX`. Done 2026-11-04: the `i8`, `i16`, `u8` and `u16`
+      dtypes are built in, the Parquet import says when a `UInt64` holds
+      values past an `i64` (read as `Decimal`), and a `table`'s integers
+      are written back at their own width and sign
 
 Each of these is then carried through Parquet, as task 2.9 of
 `add-dataframe-interop`.

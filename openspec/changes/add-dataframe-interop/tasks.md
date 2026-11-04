@@ -55,7 +55,13 @@ unsigned widths — reach Parquet as 2.9 once they land.
 - [ ] 2.9 Once `add-polars-dtypes` section 5 lands: `Duration`
       columns read and written rather than left out, a `DateTime`'s zone kept,
       and an integer column written back at the width and signedness its
-      schema had rather than as `int64`
+      schema had rather than as `int64`.
+      Done 2026-11-04: `Duration` (read as ISO 8601, written as
+      `Duration(us)`) and integer width and sign (a `table`'s columns go
+      back as the dtype the file held, the narrow dtypes now being built
+      in). Still open: a `DateTime`'s zone, which a declared zone (5.3a)
+      now makes possible to write as `Datetime(us, tz)` and read back as
+      `Datetime("tz")`, but which is not yet carried through Parquet
 - [x] 2.8 A round-trip over the `examples/` corpus, asserting a second trip is
       a fixed point — the shape of the CSV round-trip test
 

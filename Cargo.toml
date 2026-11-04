@@ -43,6 +43,12 @@ polars = { version = "0.51", default-features = false, features = [
     "dtype-datetime",
     "dtype-time",
     "dtype-duration",
+    # The narrow whole numbers a Parquet file may hold, read and written
+    # back at their own width and sign (add-polars-dtypes 5.4).
+    "dtype-i8",
+    "dtype-i16",
+    "dtype-u8",
+    "dtype-u16",
     # The tests a filter is written with (filter-by-expression D177).
     "strings",
     "regex",

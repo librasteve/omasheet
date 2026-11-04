@@ -1529,3 +1529,66 @@ Price : Int
         out.errors
     );
 }
+
+#[test]
+fn parquet_says_when_a_uint64_is_past_an_int() {
+    use polars::prelude::*;
+    let write = |values: [u64; 2]| {
+        let mut df =
+            DataFrame::new(vec![Series::new("Big".into(), values).into_column()]).unwrap();
+        let mut bytes = Cursor::new(Vec::new());
+        ParquetWriter::new(&mut bytes).finish(&mut df).unwrap();
+        bytes.into_inner()
+    };
+    // Past an `i64` the values are read as exact decimals, and it is said.
+    let wide = parquet::import("t", &write([1, u64::MAX])).expect("imports");
+    assert!(wide.source.contains("18446744073709551615"), "{}", wide.source);
+    assert!(
+        wide.notices.iter().any(|n| n.contains("`Big`") && n.contains("UInt64")),
+        "{:?}",
+        wide.notices
+    );
+    // Within an `i64` there is nothing to say.
+    let small = parquet::import("t", &write([1, 2])).expect("imports");
+    assert!(small.notices.is_empty(), "{:?}", small.notices);
+}
+
+#[test]
+fn parquet_round_trips_a_duration() {
+    let text = "sheet T\n\nLen : Duration\n\nLen\nPT1H30M\nP1DT6H\n-PT30M\n\n";
+    let out = parquet_of(text, None);
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    assert!(back.source.contains(" : Duration"), "{}", back.source);
+    for d in ["PT1H30M", "P1DT6H", "-PT30M"] {
+        assert!(back.source.contains(d), "{d} missing:\n{}", back.source);
+    }
+}
+
+#[test]
+fn parquet_writes_a_tables_integers_at_their_width_and_sign() {
+    use polars::prelude::*;
+    let dir = scratch("widths");
+    let mut df = DataFrame::new(vec![
+        Series::new("Small".into(), [1i64, 200]).cast(&DataType::UInt8).unwrap().into_column(),
+        Series::new("Mid".into(), [-5i64, 70_000]).cast(&DataType::Int32).unwrap().into_column(),
+        Series::new("Big".into(), [1i64, 2]).into_column(),
+    ])
+    .unwrap();
+    let mut file = std::fs::File::create(dir.join("w.parquet")).unwrap();
+    ParquetWriter::new(&mut file).finish(&mut df).unwrap();
+    let options = omasheet_engine::Options {
+        base: Some(dir.clone()),
+        ..options()
+    };
+    let text = "table T := dataframe['w.parquet']\n";
+    let out = parquet::export("file.omx", text, None, options).expect("exports");
+    let back = ParquetReader::new(Cursor::new(out.files[0].bytes.clone()))
+        .finish()
+        .unwrap();
+    let dtype = |n: &str| back.column(n).unwrap().dtype().clone();
+    assert_eq!(dtype("Small"), DataType::UInt8);
+    assert_eq!(dtype("Mid"), DataType::Int32);
+    assert_eq!(dtype("Big"), DataType::Int64);
+    assert_eq!(back.column("Small").unwrap().u8().unwrap().get(1), Some(200));
+}

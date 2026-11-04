@@ -32,6 +32,7 @@ pub fn type_of(dtype: &DataType) -> Option<S> {
         DataType::Date => S::Date,
         DataType::Time => S::Time,
         DataType::Datetime(..) => S::DateTime,
+        DataType::Duration(_) => S::Duration,
         DataType::Null => S::Any,
         _ => return None,
     })
