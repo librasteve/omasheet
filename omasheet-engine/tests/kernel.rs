@@ -416,9 +416,10 @@ fn zoned_columns_of_one_zone_are_compared_by_polars_and_agree() {
 ///   Polars wraps the product to a plausible number. The engine is right.
 /// - Any operator with a `Float` on one side (`+ - * /`): the last digit
 ///   differs, the two paths turning a `Decimal` into an `f64` differently.
-/// - `//` with different types on its two sides: the engine keeps the left
-///   value as it is, and Polars makes the result a `Float`, which loses
-///   digits from a `Decimal` or an `Integer`.
+/// - `//` with a `Float` on one side and an exact number on the other:
+///   fixed the same day. Polars made the result a `Float`, which cut a
+///   `Decimal` or an `Integer` to 16 digits, where the engine keeps the left
+///   value as it is; such a fallback is no longer lowered.
 ///
 /// `**`, `/` between exact numbers (which is not lowered), the comparisons
 /// and the logical operators never disagreed.

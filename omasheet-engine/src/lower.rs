@@ -589,6 +589,15 @@ fn binary(op: BinOp, l: Out, r: Out, cx: &Cx) -> Option<Out> {
         // for some; a failure in it then fails the whole group, which falls
         // back to the engine and is calculated exactly as before.
         BinOp::Fallback => {
+            // The engine gives the left value as it is and the right one
+            // where it is empty, so the column holds each as what it was.
+            // Polars gives both one dtype, and a `Float` among exact numbers
+            // makes that a `Float`, which cuts a `Decimal` or an `Integer`
+            // to 16 digits. So a fallback between the two kinds is the
+            // engine's.
+            if is_float(&l.dtype) != is_float(&r.dtype) {
+                return None;
+            }
             let (l, r, dtype) = pair(l, r)?;
             Out::new(l.fill_null(r), dtype)
         }
