@@ -124,8 +124,9 @@ size, and each with its *before* already measured and pinned by a test.
       4,138.6 ms rebuild at a million rows, and 819.5 of 1,836.0 where
       every column lowers. Both figures are `add-columnar-core` task 7.3's,
       taken on this machine, and this is what they are measured against
-- [ ] 3.4 Scrolling a million-row table in the app, which is the one test
+- [x] 3.4 Scrolling a million-row table in the app, which is the one test
       of this that is not a number
+      Done by hand, 2026-11-04 (owner).
 
 ## 4. Verification
 
@@ -146,7 +147,8 @@ size, and each with its *before* already measured and pinned by a test.
       -- -D warnings`, `cargo test --workspace --no-fail-fast` over what
       `add-dataframe-interop` built. Moved from its task 8.1 (owner,
       2026-10-30)
-- [ ] 5.3 Open a real Parquet file, and an unknown one, and confirm the
+- [x] 5.3 Open a real Parquet file, and an unknown one, and confirm the
       schema drives the displayed types. A source names one file (3.6
       there), so not several. Moved from `add-dataframe-interop` task 8.2
       (owner, 2026-10-30)
+      Done by hand, 2026-11-04 (owner).

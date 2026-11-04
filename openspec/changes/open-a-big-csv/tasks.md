@@ -165,8 +165,9 @@ Parquet alone.
       first time off-thread, then ≤ 50 ms from the cache
 - [ ] 5.4 Peak memory over a session that sums every numeric column:
       ≤ 150 MB + the columns' Arrow size, including during conversion
-- [ ] 5.5 By hand in the app: open, scroll, jump, edit, and confirm that the
+- [x] 5.5 By hand in the app: open, scroll, jump, edit, and confirm that the
       window never stops responding
+      Done by hand, 2026-11-04 (owner).
 
 ## 6. Verification
 
