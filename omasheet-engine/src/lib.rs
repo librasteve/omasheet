@@ -213,6 +213,15 @@ fn render_file(program: &Program, engine: &Engine) -> String {
     let mut consts = String::new();
     for (i, c) in program.consts.iter().enumerate() {
         let shown = match engine.const_value(i) {
+            _ if c.columns.is_some() => format!(
+                "[{}]",
+                c.columns
+                    .iter()
+                    .flatten()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Ok(Value::Sheet(_)) => "<sheet>".to_string(),
             Ok(Value::Row(_)) => "<row>".to_string(),
             Ok(Value::Null) => "empty".to_string(),

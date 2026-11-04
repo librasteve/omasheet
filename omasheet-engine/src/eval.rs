@@ -261,19 +261,6 @@ fn held_cell(column: &PlColumn, r: usize, ty: S) -> Cell {
 /// Some rows of a column read from its file, and the row they start at.
 type Window = (usize, PlColumn);
 
-/// A value from a column the dataframe holds, read the way
-/// [`Engine::column_shown`] reads one: the same [`cell_of`] and the same
-/// reading of the literal it gives, so that the two cannot disagree.
-fn frame_value(value: polars::prelude::AnyValue, ty: S) -> Value {
-    match cell_of(value, ty) {
-        Cell::Empty => Value::Null,
-        Cell::Lit(l) => lit_value(&l, ty),
-        Cell::Markdown(s) => Value::String(Rc::from(s.as_str()), true),
-        // `cell_of` gives one of the three.
-        _ => Value::Error,
-    }
-}
-
 /// One argument of an aggregate, as the aggregate walks it (D79, item 2 of
 /// `hold-less-of-a-big-file`). A whole column the dataframe holds is kept
 /// as that column and walked in place, so that summing twenty million
@@ -288,7 +275,6 @@ enum Items {
     /// in `column_shown`.
     Column {
         series: polars::prelude::Series,
-        ty: S,
         len: usize,
         at: (usize, usize),
     },
@@ -315,7 +301,6 @@ impl Items {
             Items::Many(vs) => vs.iter().cloned().for_each(f),
             Items::Column {
                 series,
-                ty,
                 len,
                 at: (t, c),
             } => {
@@ -324,7 +309,7 @@ impl Items {
                 for (r, any) in series.iter().take(*len).enumerate() {
                     match slots.map(|s| &s[r]) {
                         Some(Slot::Done(v)) => f(v.clone()),
-                        _ => f(frame_value(any, *ty)),
+                        _ => f(engine.value_of(*t, *c, any)),
                     }
                 }
             }
@@ -1253,12 +1238,17 @@ impl<'p> Engine<'p> {
     /// instant there; a time the zone's clocks never show is left as it is.
     fn lit_in(&self, t: usize, c: usize, l: &Lit) -> Value {
         let col = &self.prog.sheets[t].cols[c];
-        if let (Some((name, span)), Lit::DateTime(wall)) = (&col.zone, l)
+        if let (Some((name, span)), Lit::Datetime(at)) = (&col.zone, l)
             && let Ok(zone) = self.zone(name, *span)
-            && let Some(utc) = zone.to_utc(*wall)
+            // A file's own column holds the instant, as Polars does; the
+            // cells of a column of the text hold the wall clock.
+            && let Some(utc) = match col.kind {
+                ColKind::Frame => Some(*at),
+                _ => zone.to_utc(*at),
+            }
             && let Some(z) = Zoned::at(utc, &zone, &self.home)
         {
-            return Value::Zoned(Rc::new(z));
+            return Value::zoned(z);
         }
         lit_value(l, col.ty)
     }
@@ -1280,10 +1270,12 @@ impl<'p> Engine<'p> {
     /// to be held as, or that holds a value which does not fit the type the
     /// column says it has.
     fn pl_column(&self, t: usize, c: usize) -> Option<PlColumn> {
-        // A declared zone puts the cells on the clocks of that zone, so the
-        // instant is not the number a dataframe would hold them as; the
-        // values of such a column are the engine's own.
-        if self.prog.sheets[t].cols[c].zone.is_some() {
+        // A declared zone puts the cells of the text on the clocks of that
+        // zone, so the instant is not the number a dataframe would hold them
+        // as; the values of such a column are the engine's own. A file's
+        // own zoned column is held as the instants Polars holds.
+        let col = &self.prog.sheets[t].cols[c];
+        if col.zone.is_some() && !matches!(col.kind, ColKind::Frame) {
             return None;
         }
         // Cloning a Polars column clones the handles, not the buffers.
@@ -1551,7 +1543,7 @@ impl<'p> Engine<'p> {
         self.read_range(t, c, rows);
         let value = |cell: Cell| match cell {
             Cell::Empty => Value::Null,
-            Cell::Lit(l) => lit_value(&l, col.ty),
+            Cell::Lit(l) => self.lit_in(t, c, &l),
             Cell::Markdown(s) => Value::String(Rc::from(s.as_str()), true),
             Cell::Invalid | Cell::Formula(_) => Value::Error,
         };
@@ -1635,7 +1627,7 @@ impl<'p> Engine<'p> {
                 Some(Slot::Busy) => Value::Error,
                 _ => match cell_of(value, ty) {
                     Cell::Empty => Value::Null,
-                    Cell::Lit(l) => lit_value(&l, ty),
+                    Cell::Lit(l) => self.lit_in(t, c, &l),
                     // `cell_of` gives one of the three.
                     _ => Value::Error,
                 },
@@ -1673,15 +1665,15 @@ impl<'p> Engine<'p> {
         let v = dressed(v, col);
         // A column with a zone shows an instant on that zone's clocks.
         let v = match (&col.zone, &v) {
-            (Some((name, zspan)), Value::DateTime(_) | Value::Zoned(_)) => {
+            (Some((name, zspan)), Value::Datetime(_, None) | Value::Datetime(_, Some(_))) => {
                 let zone = self.zone(name, *zspan)?;
                 let utc = match &v {
-                    Value::DateTime(wall) => self.home.to_utc(*wall),
-                    Value::Zoned(z) => Some(z.utc),
+                    Value::Datetime(wall, None) => self.home.to_utc(*wall),
+                    Value::Datetime(_, Some(z)) => Some(z.utc),
                     _ => None,
                 };
                 match utc.and_then(|u| Zoned::at(u, &zone, &self.home)) {
-                    Some(z) => Value::Zoned(Rc::new(z)),
+                    Some(z) => Value::zoned(z),
                     None => return fail(span, "the date-time is out of range"),
                 }
             }
@@ -1704,7 +1696,10 @@ impl<'p> Engine<'p> {
                     | (Value::Boolean(_), S::Boolean)
                     | (Value::Date(_), S::Date)
                     | (Value::Time(_), S::Time)
-                    | (Value::DateTime(_) | Value::Zoned(_), S::DateTime)
+                    | (
+                        Value::Datetime(_, None) | Value::Datetime(_, Some(_)),
+                        S::Datetime
+                    )
             );
         if ok {
             Ok(v)
@@ -2079,7 +2074,7 @@ impl<'p> Engine<'p> {
     /// the values.
     fn whole_column(&self, t: usize, c: usize) -> Option<Items> {
         let sheet = &self.prog.sheets[t];
-        let (nrows, ty) = (sheet.nrows, sheet.cols[c].ty);
+        let nrows = sheet.nrows;
         let got = self.held.borrow()[t][c].clone();
         let column = match got {
             Some(column) => column,
@@ -2102,7 +2097,6 @@ impl<'p> Engine<'p> {
         }
         Some(Items::Column {
             series: column.as_materialized_series().rechunk(),
-            ty,
             len: nrows,
             at: (t, c),
         })
@@ -2427,8 +2421,10 @@ impl<'p> Engine<'p> {
                 (Func::IsFinite, v) if v.is_numeric() => Value::Boolean(true),
                 (Func::IsInfinite, v) if v.is_numeric() => Value::Boolean(false),
                 (Func::IsLeapYear, Value::Date(d)) => leap(*d),
-                (Func::IsLeapYear, Value::DateTime(t)) => leap(date::split_datetime(*t).0),
-                (Func::IsLeapYear, Value::Zoned(z)) => leap(date::split_datetime(z.wall).0),
+                (Func::IsLeapYear, Value::Datetime(t, None)) => leap(date::split_datetime(*t).0),
+                (Func::IsLeapYear, Value::Datetime(_, Some(z))) => {
+                    leap(date::split_datetime(z.wall).0)
+                }
                 (
                     Func::LenChars
                     | Func::ToLowercase
@@ -2556,7 +2552,7 @@ impl<'p> Engine<'p> {
                         // The next second, which is what it was before
                         // either was held any finer.
                         Value::Time(t) => Ok(Value::Time(t + date::NANOS)),
-                        Value::DateTime(t) => Ok(Value::DateTime(t + date::MICROS)),
+                        Value::Datetime(t, None) => Ok(Value::Datetime(t + date::MICROS, None)),
                         v if v.is_numeric() => {
                             let one = match v {
                                 Value::Int(_, b) => Value::Int(1, *b),
@@ -2631,11 +2627,12 @@ impl<'p> Engine<'p> {
                             Some(d) => Ok(Value::Date(d)),
                             None => fail(span, "this date falls outside the calendar".to_string()),
                         },
-                        Value::DateTime(t) => {
+                        Value::Datetime(t, None) => {
                             let (days, time) = date::split_datetime(*t);
                             match shift(days) {
-                                Some(d) => Ok(Value::DateTime(
+                                Some(d) => Ok(Value::Datetime(
                                     d as i64 * date::DAY_MICROS + time / date::NANOS_PER_MICRO,
+                                    None,
                                 )),
                                 None => {
                                     fail(span, "this date falls outside the calendar".to_string())
@@ -2686,7 +2683,7 @@ impl<'p> Engine<'p> {
                 }
             }
             Func::Today => Ok(Value::Date(date::split_datetime(self.now).0)),
-            Func::Now => Ok(Value::DateTime(self.now)),
+            Func::Now => Ok(Value::Datetime(self.now, None)),
             Func::Pi => Ok(Value::Float(std::f64::consts::PI)),
             Func::E => Ok(Value::Float(std::f64::consts::E)),
             Func::Math(m) => {
@@ -2745,11 +2742,11 @@ impl<'p> Engine<'p> {
                     // The instant, and the zone the value is in.
                     let (utc, wall, zone) = match v {
                         Value::Null => return Ok(Value::Null),
-                        Value::DateTime(t) => match self.home.to_utc(*t) {
+                        Value::Datetime(t, None) => match self.home.to_utc(*t) {
                             Some(utc) => (utc, *t, &self.home),
                             None => return out_of_range(),
                         },
-                        Value::Zoned(z) => (z.utc, z.wall, &z.zone),
+                        Value::Datetime(_, Some(z)) => (z.utc, z.wall, &z.zone),
                         other => {
                             return fail(
                                 args[0].span,
@@ -2762,10 +2759,10 @@ impl<'p> Engine<'p> {
                         (Some(target), _) if **target == *self.home => self
                             .home
                             .from_utc(utc)
-                            .map(Value::DateTime)
+                            .map(|t| Value::Datetime(t, None))
                             .map_or_else(out_of_range, Ok),
                         (Some(target), _) => Zoned::at(utc, target, &self.home)
-                            .map(|z| Value::Zoned(Rc::new(z)))
+                            .map(Value::zoned)
                             .map_or_else(out_of_range, Ok),
                         (None, Func::Offset) => {
                             Ok(Value::int((wall - utc).div_euclid(date::MICROS)))
@@ -2820,11 +2817,11 @@ impl<'p> Engine<'p> {
                         Value::Null => return Ok(Value::Null),
                         Value::Date(d) => (Some(*d), None),
                         Value::Time(t) => (None, Some(*t)),
-                        Value::DateTime(t) => {
+                        Value::Datetime(t, None) => {
                             let (days, time) = date::split_datetime(*t);
                             (Some(days), Some(time))
                         }
-                        Value::Zoned(z) => {
+                        Value::Datetime(_, Some(z)) => {
                             let (days, time) = date::split_datetime(z.wall);
                             (Some(days), Some(time))
                         }
@@ -3432,9 +3429,9 @@ impl<'p> Engine<'p> {
             return None;
         }
         match v {
-            Value::DateTime(t) => {
+            Value::Datetime(t, None) => {
                 let wall = self.local.from_utc(self.home.to_utc(*t)?)?;
-                Some(Value::DateTime(wall))
+                Some(Value::Datetime(wall, None))
             }
             Value::Vector(items) => Some(Value::Vector(Rc::new(
                 items
@@ -3490,15 +3487,17 @@ impl<'p> Engine<'p> {
         Some(match v {
             Value::Date(d) => Moment::date(*d),
             Value::Time(t) => Moment::time(*t),
-            Value::DateTime(t) => {
+            Value::Datetime(t, None) => {
                 let (wall, zone) = match self.localised(v) {
-                    Some(Value::DateTime(local)) => (local, &self.local),
+                    Some(Value::Datetime(local, None)) => (local, &self.local),
                     _ => (*t, &self.home),
                 };
                 let at = zone.to_utc(wall).and_then(|utc| instant(wall, utc, zone));
                 Moment::datetime(wall, at)
             }
-            Value::Zoned(z) => Moment::datetime(z.wall, instant(z.wall, z.utc, &z.zone)),
+            Value::Datetime(_, Some(z)) => {
+                Moment::datetime(z.wall, instant(z.wall, z.utc, &z.zone))
+            }
             _ => return None,
         })
     }

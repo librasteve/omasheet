@@ -2563,7 +2563,7 @@ fn how_much_of_the_corpus_lowers() {
     // moved.
     assert_eq!(
         (offered, lowered, refused, failed),
-        (80, 27, 52, 1),
+        (83, 27, 55, 1),
         "the corpus lowers differently than task 8.3 records"
     );
 }
@@ -3537,7 +3537,7 @@ fn an_aggregate_walks_a_whole_column_as_it_would_its_values() {
 /// Values as their `Debug`, which is the strictest comparison there is of
 /// them: `Value` has no `PartialEq`, and what is shown would hide the very
 /// differences worth catching — the Markdown flag on a string, a `Zoned`
-/// where a `DateTime` was expected, an `Integer` where a `Decimal` was.
+/// where a `Datetime` was expected, an `Integer` where a `Decimal` was.
 fn debugged(values: &[omasheet_engine::Value]) -> Vec<String> {
     values.iter().map(|v| format!("{v:?}")).collect()
 }
@@ -3776,4 +3776,36 @@ fn a_column_declares_its_zone() {
     assert!(lint_errors(&bad)[0].contains("does not take a zone"));
     let bad = file.replace("Europe/London", "Mars/Base");
     assert!(lint_errors(&bad)[0].contains("there is no time zone"));
+}
+
+#[test]
+fn a_constant_names_a_list_of_columns() {
+    let file = "const Keys = [Region, Month]\nconst Shown = [Region, Revenue]\n\n\
+        sheet Sales\n\n| Region | Month | Revenue |\n| - | - | - |\n\
+        | N | Jan | 10 |\n| N | Jan | 5 |\n| S | Jan | 3 |\n\n\
+        sheet ByKeys := Sales |> group_by(Keys) |> agg(Total := Revenue.sum())\n\n\
+        sheet Picked := Sales |> select(Shown)\n\n\
+        sheet Sorted := Sales |> sort(Keys, desc)\n";
+    let out = shown(file);
+    // The list is shown as it was written, and group_by, select and sort take it.
+    assert!(out.contains("const Keys = [Region, Month]"), "{out}");
+    assert!(out.contains("N      | Jan   |    15"), "{out}");
+    assert!(out.contains("Region | Revenue"), "{out}");
+    // The sheet the list is used on has to have the columns.
+    let bad = file.replace("select(Shown)", "select(Keys, Nope)");
+    assert!(
+        lint_errors(&bad)[0].contains("no column `Nope`"),
+        "{:?}",
+        lint_errors(&bad)
+    );
+    // It is not a value.
+    let bad = format!("{file}\nsheet X := Keys\n");
+    assert!(lint_errors(&bad)[0].contains("is a list of columns"));
+    // A list of constants is still an ordinary list.
+    let plain = "const A = 1\nconst B = 2\nconst Both = [A, B]\n";
+    assert!(
+        shown(plain).contains("const Both = [1, 2]"),
+        "{}",
+        shown(plain)
+    );
 }

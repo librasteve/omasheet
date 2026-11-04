@@ -7,7 +7,7 @@ Units as column types.
 ### Requirement: Column schema
 A sheet SHALL be able to declare the type of each column with lines of the form
 `<Column> : <Type>` placed between the `sheet` line and the header row. A type
-SHALL be a base type (`Int`, `Fraction`, `Num`, `Complex`, `Text`, `Date`, `Time`, `DateTime`, `Bool`) or
+SHALL be a base type (`Int`, `Fraction`, `Num`, `Complex`, `Text`, `Date`, `Time`, `Datetime`, `Bool`) or
 a unit (which implies `Fraction` with that unit). A column with no declaration SHALL
 have its type inferred from its cells.
 

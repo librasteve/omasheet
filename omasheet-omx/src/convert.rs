@@ -74,7 +74,7 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
         [Tok::Text(s), Tok::Eof] => Lit::String(s.clone()),
         [Tok::Date(d), Tok::Eof] => Lit::Date(*d),
         [Tok::Time(t), Tok::Eof] => Lit::Time(*t),
-        [Tok::DateTime(t), Tok::Eof] => Lit::DateTime(*t),
+        [Tok::Datetime(t), Tok::Eof] => Lit::Datetime(*t),
         [Tok::Duration(t), Tok::Eof] => Lit::Duration(*t),
         [Tok::Minus, Tok::Duration(t), Tok::Eof] => Lit::Duration(t.checked_neg()?),
         [Tok::True, Tok::Eof] => Lit::Boolean(true),
@@ -94,7 +94,7 @@ pub fn lit_type(l: &Lit) -> S {
         Lit::Boolean(_) => S::Boolean,
         Lit::Date(_) => S::Date,
         Lit::Time(_) => S::Time,
-        Lit::DateTime(_) => S::DateTime,
+        Lit::Datetime(_) => S::Datetime,
         Lit::Duration(_) => S::Duration,
     }
 }
@@ -225,9 +225,9 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
         (Lit::Int(n, _), S::Boolean) => Lit::Boolean(*n != 0),
         (Lit::Decimal(r), S::Boolean) => Lit::Boolean(!r.is_zero()),
         (Lit::Float(f), S::Boolean) => Lit::Boolean(*f != 0.0),
-        (Lit::DateTime(t), S::Date) => Lit::Date(crate::date::split_datetime(*t).0),
-        (Lit::DateTime(t), S::Time) => Lit::Time(crate::date::split_datetime(*t).1),
-        (Lit::Date(d), S::DateTime) => Lit::DateTime(*d as i64 * crate::date::DAY_MICROS),
+        (Lit::Datetime(t), S::Date) => Lit::Date(crate::date::split_datetime(*t).0),
+        (Lit::Datetime(t), S::Time) => Lit::Time(crate::date::split_datetime(*t).1),
+        (Lit::Date(d), S::Datetime) => Lit::Datetime(*d as i64 * crate::date::DAY_MICROS),
         _ => return no(),
     })
 }
@@ -258,7 +258,7 @@ mod tests {
         S::Boolean,
         S::Date,
         S::Time,
-        S::DateTime,
+        S::Datetime,
         S::Url,
         S::Email,
         S::Uuid,
@@ -370,7 +370,7 @@ mod tests {
         assert_eq!(convert(&moment, S::Date), Ok(lit("2025-01-31")));
         assert_eq!(convert(&moment, S::Time), Ok(lit("09:30")));
         assert_eq!(
-            convert(&lit("2025-01-31"), S::DateTime),
+            convert(&lit("2025-01-31"), S::Datetime),
             Ok(lit("2025-01-31T00:00"))
         );
         assert_eq!(

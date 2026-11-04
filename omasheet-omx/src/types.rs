@@ -33,7 +33,7 @@ pub enum S {
     Boolean,
     Date,
     Time,
-    DateTime,
+    Datetime,
     /// A length of time, in microseconds: `PT1H30M`.
     Duration,
     /// Text that reads as a web address: a scheme, then the rest of the
@@ -65,7 +65,7 @@ impl S {
             "String" => S::String,
             "Date" => S::Date,
             "Time" => S::Time,
-            "Datetime" => S::DateTime,
+            "Datetime" => S::Datetime,
             "Duration" => S::Duration,
             "Boolean" => S::Boolean,
             "Url" => S::Url,
@@ -102,7 +102,7 @@ impl S {
 
     /// A date, a time of day, or both.
     pub fn is_temporal(self) -> bool {
-        matches!(self, S::Date | S::Time | S::DateTime)
+        matches!(self, S::Date | S::Time | S::Datetime)
     }
 
     /// Text, or one of the kinds of text that read as something narrower.
@@ -121,7 +121,7 @@ impl S {
             (S::Any, t) | (t, S::Any) if timed(t) => S::Any,
             (t, i) if t.is_temporal() && i.is_int() => t,
             (i, t) if t.is_temporal() && i.is_int() && !minus => t,
-            (S::Date, S::Time) | (S::Time, S::Date) if !minus => S::DateTime,
+            (S::Date, S::Time) | (S::Time, S::Date) if !minus => S::Datetime,
             (a, b) if a == b && a.is_temporal() && minus => S::Duration,
             (t, S::Duration) if timed(t) => t,
             (S::Duration, t) if t.is_temporal() && !minus => t,
@@ -189,8 +189,8 @@ impl S {
                     number || self == S::Boolean
                 }
                 S::Percent | S::Boolean => number,
-                S::Date | S::Time => self == S::DateTime,
-                S::DateTime => self == S::Date,
+                S::Date | S::Time => self == S::Datetime,
+                S::Datetime => self == S::Date,
                 S::Duration => false,
             }
     }
@@ -226,7 +226,7 @@ impl fmt::Display for S {
             S::Boolean => "Boolean",
             S::Date => "Date",
             S::Time => "Time",
-            S::DateTime => "Datetime",
+            S::Datetime => "Datetime",
             S::Duration => "Duration",
             S::Url => "Url",
             S::Email => "Email",

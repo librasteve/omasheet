@@ -81,9 +81,10 @@ that change goes on beside it.
 - [x] 5.2b The shown form, the same ISO 8601 the literal is written in, so a
       computed duration round-trips through the file. A selectable display
       format is later work and out of this change
-- [ ] 5.3 `DateTime` subsumes `Zoned`: one type carrying an optional zone,
+- [x] 5.3 `Datetime` subsumes `Zoned`: one type carrying an optional zone,
       with `convert_time_zone`, `utc`, `local`, `base_utc_offset` and
-      `time_zone` returning it
+      `time_zone` returning it. Done 2026-11-04: `Value::Zoned` is gone, and
+      a date-time is `Value::Datetime(wall, Option<Rc<Zoned>>)`
 - [x] 5.3a A column may **declare** its zone, which today only a computed
       column can have (owner, 2026-10-26): `Logged : Datetime("Europe/London")`,
       mirroring how Polars prints the dtype, and unambiguous because `Time`
@@ -92,7 +93,7 @@ that change goes on beside it.
       adds a keyword.
 
       The zone lives in the schema and is not repeated per cell: a cell holds
-      the wall clock of that column's zone, as `Lit::DateTime(z.wall)` already
+      the wall clock of that column's zone, as `Lit::Datetime(z.wall)` already
       writes one. What is typed into the column is taken in the column's zone,
       so a cell never shifts by being re-entered -- the rule the file's own
       zone already follows.
@@ -118,9 +119,14 @@ Each of these is then carried through Parquet, as task 2.9 of
 
 ## 6. Column lists (`omx-expressions`)
 
-- [ ] 6.1 Promote `Ty::Vector` to a nameable column list, and let `ColSel::Many`
+- [x] 6.1 Promote `Ty::Vector` to a nameable column list, and let `ColSel::Many`
       carry one, so the Polars operations that take several columns can be
-      expressed
+      expressed. Done 2026-11-04 (owner: a value to bind and reuse): `const
+      Keys = [Region, Month]`, looked up in whichever sheet it is used on and
+      spliced into the columns of `group_by`, `select`, `sort` and `join`.
+      `ColSel::Many` already carried a resolved list and is unchanged;
+      `Ty::Vector` is not the carrier, the list being names with no sheet to
+      resolve them in until it is used. `Sales[; Keys]` is left for later
 
 ## 7. The documents
 
@@ -145,8 +151,17 @@ Each of these is then carried through Parquet, as task 2.9 of
       -D warnings`, `cargo test --workspace --no-fail-fast`
 - [x] 8.2 Tests pinning the new losses, so they are deliberate: `(1/3) * 3`,
       `1/7 * 7`, `Date - Date`, and whatever 0.1 settles for `2 ** 64`
-- [ ] 8.3 Property-test the scalar path against a one-row Polars series for
-      each dtype pair, once `add-dataframe-interop` brings the crate in
+- [x] 8.3 Property-test the scalar path against a one-row Polars series for
+      each dtype pair, once `add-dataframe-interop` brings the crate in. This
+      is `omasheet-engine/tests/kernel.rs` (`add-columnar-core` 8.1), which
+      checks every operator between every pair of column types both ways, on
+      written edge values and on a seeded generator. Extended 2026-11-04 with
+      `Duration` and a column in a declared zone (the hour London's clocks
+      skip, the hour they repeat). A zoned column is not lowered, so it
+      agrees by being on the engine either way; the cases are there for
+      when it is. The generator now has a seed for each pair, which found a
+      standing disagreement: a wide `Decimal * Integer` that Polars wraps
+      silently, pinned as an ignored test
 
 ## 9. Guard digits, and `Fraction` as a display (D37, D38)
 

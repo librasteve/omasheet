@@ -287,6 +287,14 @@ fn fill(
         }
     }
 
+    // A column the file holds in a zone shows on that zone's clocks.
+    let zones: std::collections::HashMap<String, String> = schema
+        .iter()
+        .filter_map(|(name, dtype)| match dtype {
+            DataType::Datetime(_, Some(tz)) => Some((name.to_string(), tz.to_string())),
+            _ => None,
+        })
+        .collect();
     let schema = schema.clone();
     let names: Vec<String> = sheet.cols.iter().map(|c| held_as(c).to_string()).collect();
     for (c, col) in sheet.cols.iter_mut().enumerate() {
@@ -301,6 +309,11 @@ fn fill(
             frames.set(t, c, Held::Absent);
             continue;
         };
+        if col.zone.is_none()
+            && let Some(tz) = zones.get(names[c].as_str())
+        {
+            col.zone = Some((tz.clone(), col.span));
+        }
         match type_of(dtype) {
             Some(ty) if col.declared && !ty.assignable_to(col.ty) => diags.push(
                 Diagnostic::new(

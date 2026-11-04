@@ -154,6 +154,9 @@ pub struct Const {
     pub name: String,
     pub node: Node,
     pub ty: Ty,
+    /// The columns it names, when it is a list of them: `[Region, Month]`.
+    /// Such a constant has no value, only the names for a function to take.
+    pub columns: Option<Vec<String>>,
     stat: Option<Static>,
 }
 
@@ -240,6 +243,9 @@ struct ConstInfo {
     span: Span,
     decl: usize,
     stat: Option<Static>,
+    /// The columns of a constant that is a list of them, for a checker made
+    /// over a finished program, which has no source to read the list from.
+    columns: Option<Vec<String>>,
 }
 
 enum St<T> {
@@ -687,7 +693,7 @@ fn seed_time(e: &Expr) -> Option<i64> {
     match &e.kind {
         ExprKind::Lit(Lit::Date(d)) => Some(*d as i64),
         ExprKind::Lit(Lit::Time(t)) => Some(t.div_euclid(date::NANOS)),
-        ExprKind::Lit(Lit::DateTime(t)) => Some(t.div_euclid(date::MICROS)),
+        ExprKind::Lit(Lit::Datetime(t)) => Some(t.div_euclid(date::MICROS)),
         _ => None,
     }
 }
@@ -933,6 +939,7 @@ impl<'a> Checker<'a> {
                 span: c.node.span,
                 decl: i,
                 stat: c.stat,
+                columns: c.columns.clone(),
             });
         }
         ck.funcs = prog.funcs.clone();
@@ -1072,7 +1079,7 @@ impl<'a> Checker<'a> {
                     );
                 }
                 if let Some((_, span)) = &line.zone {
-                    if line.ty != S::DateTime {
+                    if line.ty != S::Datetime {
                         ck.done.push(
                             Diagnostic::new(*span, format!("{} does not take a zone", line.ty))
                                 .with_help("only a Datetime column declares a zone"),
@@ -1081,7 +1088,10 @@ impl<'a> Checker<'a> {
                         ck.done.push(
                             Diagnostic::new(
                                 *span,
-                                format!("`{}` is read from a file, which holds its own zone", line.name),
+                                format!(
+                                    "`{}` is read from a file, which holds its own zone",
+                                    line.name
+                                ),
                             )
                             .with_help("a declared zone is for a column of cells"),
                         );
@@ -1153,6 +1163,7 @@ impl<'a> Checker<'a> {
                 span: c.span,
                 decl,
                 stat: c.expr.as_ref().and_then(static_of),
+                columns: None,
             });
             ck.const_state.push(St::Pending);
             ck.const_out.push(None);
@@ -1243,6 +1254,66 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The columns a constant names, when it is a list of them:
+    /// `const Keys = [Region, Month]`. It is one when its value is a list of
+    /// bare names and none of them is a constant, a sheet or a function,
+    /// which would make it an ordinary list. The names are not looked up
+    /// here, there being no sheet; whichever sheet the list is used on has
+    /// to have them.
+    fn column_list(&self, name: &str) -> Option<Vec<Expr>> {
+        let info = self.consts.iter().find(|c| c.name == name)?;
+        if let Some(columns) = &info.columns {
+            return Some(
+                columns
+                    .iter()
+                    .map(|n| Expr {
+                        kind: ExprKind::Name(n.clone()),
+                        span: Span::default(),
+                    })
+                    .collect(),
+            );
+        }
+        let ast = self.ast?;
+        let ExprKind::VecLit(items) = &ast.consts[info.decl].expr.as_ref()?.kind else {
+            return None;
+        };
+        let bare = !items.is_empty()
+            && items.iter().all(|i| match &i.kind {
+                ExprKind::Name(n) => {
+                    !self.consts.iter().any(|c| &c.name == n)
+                        && !self.sheets.iter().any(|t| &t.name == n)
+                        && !self.funcs.iter().any(|f| &f.name == n)
+                }
+                _ => false,
+            });
+        bare.then(|| items.clone())
+    }
+
+    /// `args` with each name from `from` on that is a list of columns
+    /// replaced by the columns, so that `group_by(Keys)` is
+    /// `group_by(Region, Month)`. A name a sheet has as a column is that
+    /// column, and is left.
+    fn spliced(&self, args: &[Expr], from: usize) -> Vec<Expr> {
+        let is_column = |n: &str| {
+            self.sheets
+                .iter()
+                .any(|t| t.cols.iter().any(|c| c.name == n))
+        };
+        let mut out = Vec::with_capacity(args.len());
+        for (i, a) in args.iter().enumerate() {
+            if i >= from
+                && let ExprKind::Name(n) = &a.kind
+                && !is_column(n)
+                && let Some(items) = self.column_list(n)
+            {
+                out.extend(items);
+            } else {
+                out.push(a.clone());
+            }
+        }
+        out
+    }
+
     fn ensure_const(&mut self, i: usize) {
         if !matches!(self.const_state[i], St::Pending) {
             return;
@@ -1252,6 +1323,11 @@ impl<'a> Checker<'a> {
         let saved = (mem::take(&mut self.cur), mem::take(&mut self.deps));
         let decl = &ast.consts[self.consts[i].decl];
         let (node, ty) = match &decl.expr {
+            // Names of columns of whichever sheet it is used on, so there
+            // is nothing here to look them up in.
+            Some(_) if self.column_list(&self.consts[i].name).is_some() => {
+                (Node::error(decl.span), Ty::Any)
+            }
             Some(e) => {
                 let mut scope = Scope {
                     frames: Vec::new(),
@@ -1378,6 +1454,7 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> (Node, Ty) {
         let usage = "Sales |> group_by(Region) |> agg(Revenue.sum())";
+        let keys = &self.spliced(keys, 0)[..];
         let mut scope = Scope {
             frames: Vec::new(),
             own: false,
@@ -1524,6 +1601,7 @@ impl<'a> Checker<'a> {
     /// after it as Polars' does. The node given back is the left sheet's,
     /// and what it is joined to is kept for the engine (D85).
     fn lower_join(&mut self, t: usize, args: &[Expr], span: Span) -> (Node, Ty) {
+        let args = &self.spliced(args, 2)[..];
         let usage = "sheet Both := Sales |> join(Targets, Month, left)";
         let fail = |ck: &mut Checker, at: Span, why: &str| {
             ck.err_help(at, why.to_string(), format!("usage: `{usage}`"));
@@ -1908,7 +1986,7 @@ impl<'a> Checker<'a> {
         sc: &mut Scope,
     ) -> (Node, Ty) {
         let (node, ty) = self.lower(base, sc);
-        let dated = |s: S| matches!(s, S::Any | S::Date | S::DateTime);
+        let dated = |s: S| matches!(s, S::Any | S::Date | S::Datetime);
         let out = match ty {
             Ty::Any => Ty::Any,
             Ty::Scalar(s) if dated(s) => Ty::Scalar(s),
@@ -2203,7 +2281,7 @@ impl<'a> Checker<'a> {
         let ordered = match stop_ty {
             Ty::Any => true,
             Ty::Scalar(s) => {
-                s.is_numeric() || matches!(s, S::Any | S::Date | S::Time | S::DateTime)
+                s.is_numeric() || matches!(s, S::Any | S::Date | S::Time | S::Datetime)
             }
             _ => false,
         };
@@ -2343,7 +2421,7 @@ impl<'a> Checker<'a> {
             (Some(l @ Lit::Float(_)), S::Float) => Some(l),
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
-            (Some(l @ Lit::DateTime(_)), S::DateTime) => Some(l),
+            (Some(l @ Lit::Datetime(_)), S::Datetime) => Some(l),
             (Some(l @ Lit::Duration(_)), S::Duration) => Some(l),
             (Some(l @ Lit::Boolean(_)), S::Boolean) => Some(l),
             // A narrower kind of text is the text itself, once it reads as
@@ -2383,7 +2461,7 @@ impl<'a> Checker<'a> {
                     S::Boolean => "enter `true` or `false`, or start the cell with `=` for a formula",
                     S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
                     S::Time => "enter a time such as `09:30` or `09:30:15`, or start the cell with `=` for a formula",
-                    S::DateTime => "enter a date-time such as `2025-01-31T09:30`, or start the cell with `=` for a formula",
+                    S::Datetime => "enter a date-time such as `2025-01-31T09:30`, or start the cell with `=` for a formula",
                     S::Duration => "enter a duration such as `PT1H30M` or `P2D`, or start the cell with `=` for a formula",
                     S::Url => "enter a web address such as `https://example.com`, or start the cell with `=` for a formula",
                     S::Email => "enter an email address such as `name@example.com`, or start the cell with `=` for a formula",
@@ -2718,6 +2796,14 @@ impl<'a> Checker<'a> {
                 .push((DepNode::Col(shape.sheet, c), DepKind::Whole));
             let s = self.col_type(shape.sheet, c);
             return (Node::new(Ir::GroupCol(c), span), Ty::Vector(s, None));
+        }
+        if self.column_list(name).is_some() {
+            self.err_help(
+                span,
+                format!("`{name}` is a list of columns"),
+                format!("use it where a function takes columns, as `Sales |> group_by({name})`"),
+            );
+            return (Node::error(span), Ty::Any);
         }
         if let Some(i) = self.consts.iter().position(|c| c.name == name) {
             self.deps.push((DepNode::Const(i), DepKind::Whole));
@@ -3103,7 +3189,7 @@ impl<'a> Checker<'a> {
         let (takes, gives, what): (fn(S) -> bool, S, &str) = match name {
             "is_finite" | "is_infinite" => (S::is_numeric, S::Boolean, "a number"),
             "is_leap_year" => (
-                |s| matches!(s, S::Date | S::DateTime),
+                |s| matches!(s, S::Date | S::Datetime),
                 S::Boolean,
                 "a Date or a Datetime",
             ),
@@ -3218,6 +3304,13 @@ impl<'a> Checker<'a> {
         sc: &mut Scope,
     ) -> (Node, Ty) {
         let fail = (Node::error(span), Ty::Any);
+        let spliced;
+        let args = if matches!(name, "select" | "sort") {
+            spliced = self.spliced(args, 1);
+            &spliced[..]
+        } else {
+            args
+        };
         let arity = |ck: &mut Checker, want: usize, usage: &str| {
             if args.len() == want {
                 true
@@ -3617,7 +3710,7 @@ impl<'a> Checker<'a> {
                     return fail;
                 }
                 let (date, dty) = self.lower(&args[0], sc);
-                let dated = |s: S| matches!(s, S::Any | S::Date | S::DateTime);
+                let dated = |s: S| matches!(s, S::Any | S::Date | S::Datetime);
                 let ty = match dty {
                     Ty::Any => Ty::Any,
                     Ty::Scalar(s) if dated(s) => Ty::Scalar(s),
@@ -3678,7 +3771,7 @@ impl<'a> Checker<'a> {
                 let (func, s) = if name == "today" {
                     (Func::Today, S::Date)
                 } else {
-                    (Func::Now, S::DateTime)
+                    (Func::Now, S::Datetime)
                 };
                 (Node::new(Ir::Call(func, Vec::new()), span), Ty::Scalar(s))
             }
@@ -3708,7 +3801,7 @@ impl<'a> Checker<'a> {
                     _ => (Func::TimeOf, S::Time, S::Time),
                 };
                 let (arg, aty) = self.lower(&args[0], sc);
-                let fits = |s: S| matches!(s, S::Any | S::DateTime) || s == from;
+                let fits = |s: S| matches!(s, S::Any | S::Datetime) || s == from;
                 let ty = match aty {
                     Ty::Any | Ty::Scalar(S::Any) => Ty::Scalar(out),
                     Ty::Scalar(s) if fits(s) => Ty::Scalar(out),
@@ -3768,16 +3861,16 @@ impl<'a> Checker<'a> {
                     return fail;
                 }
                 let (func, out) = match name {
-                    "convert_time_zone" => (Func::ToZone, S::DateTime),
-                    "utc" => (Func::Utc, S::DateTime),
-                    "local" => (Func::Local, S::DateTime),
+                    "convert_time_zone" => (Func::ToZone, S::Datetime),
+                    "utc" => (Func::Utc, S::Datetime),
+                    "local" => (Func::Local, S::Datetime),
                     "base_utc_offset" => (Func::Offset, S::Int),
                     _ => (Func::ZoneName, S::String),
                 };
                 let (arg, aty) = self.lower(&args[0], sc);
                 let ty = match aty {
-                    Ty::Any | Ty::Scalar(S::Any | S::DateTime) => Ty::Scalar(out),
-                    Ty::Vector(S::Any | S::DateTime, n) => Ty::Vector(out, n),
+                    Ty::Any | Ty::Scalar(S::Any | S::Datetime) => Ty::Scalar(out),
+                    Ty::Vector(S::Any | S::Datetime, n) => Ty::Vector(out, n),
                     other => {
                         if !matches!(arg.kind, Ir::Error) {
                             self.err_help(
@@ -4759,7 +4852,7 @@ impl<'a> Checker<'a> {
                     .and_then(|decl| decl.schema.iter().find(|l| l.name == col.name));
                 let format = line.and_then(|l| l.format.clone());
                 let zone = line
-                    .filter(|l| l.ty == S::DateTime)
+                    .filter(|l| l.ty == S::Datetime)
                     .and_then(|l| l.zone.clone());
                 cols.push(Column {
                     name: col.name,
@@ -4796,12 +4889,29 @@ impl<'a> Checker<'a> {
             });
         }
         let mut consts = Vec::new();
+        let lists: Vec<Option<Vec<String>>> = self
+            .consts
+            .iter()
+            .map(|c| {
+                self.column_list(&c.name).map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|i| match &i.kind {
+                            ExprKind::Name(n) => Some(n.clone()),
+                            _ => None,
+                        })
+                        .collect()
+                })
+            })
+            .collect();
         for (i, info) in mem::take(&mut self.consts).into_iter().enumerate() {
             let ty = match &self.const_state[i] {
                 St::Done(t) | St::Busy(t) => t.clone(),
                 St::Pending => Ty::Any,
             };
+            let columns = lists[i].clone().or(info.columns.clone());
             consts.push(Const {
+                columns,
                 name: info.name,
                 node: self.const_out[i].take().unwrap_or(Node::error(info.span)),
                 ty,

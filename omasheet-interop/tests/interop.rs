@@ -1534,17 +1534,22 @@ Price : Int
 fn parquet_says_when_a_uint64_is_past_an_int() {
     use polars::prelude::*;
     let write = |values: [u64; 2]| {
-        let mut df =
-            DataFrame::new(vec![Series::new("Big".into(), values).into_column()]).unwrap();
+        let mut df = DataFrame::new(vec![Series::new("Big".into(), values).into_column()]).unwrap();
         let mut bytes = Cursor::new(Vec::new());
         ParquetWriter::new(&mut bytes).finish(&mut df).unwrap();
         bytes.into_inner()
     };
     // Past an `i64` the values are read as exact decimals, and it is said.
     let wide = parquet::import("t", &write([1, u64::MAX])).expect("imports");
-    assert!(wide.source.contains("18446744073709551615"), "{}", wide.source);
     assert!(
-        wide.notices.iter().any(|n| n.contains("`Big`") && n.contains("UInt64")),
+        wide.source.contains("18446744073709551615"),
+        "{}",
+        wide.source
+    );
+    assert!(
+        wide.notices
+            .iter()
+            .any(|n| n.contains("`Big`") && n.contains("UInt64")),
         "{:?}",
         wide.notices
     );
@@ -1570,8 +1575,14 @@ fn parquet_writes_a_tables_integers_at_their_width_and_sign() {
     use polars::prelude::*;
     let dir = scratch("widths");
     let mut df = DataFrame::new(vec![
-        Series::new("Small".into(), [1i64, 200]).cast(&DataType::UInt8).unwrap().into_column(),
-        Series::new("Mid".into(), [-5i64, 70_000]).cast(&DataType::Int32).unwrap().into_column(),
+        Series::new("Small".into(), [1i64, 200])
+            .cast(&DataType::UInt8)
+            .unwrap()
+            .into_column(),
+        Series::new("Mid".into(), [-5i64, 70_000])
+            .cast(&DataType::Int32)
+            .unwrap()
+            .into_column(),
         Series::new("Big".into(), [1i64, 2]).into_column(),
     ])
     .unwrap();
@@ -1590,5 +1601,86 @@ fn parquet_writes_a_tables_integers_at_their_width_and_sign() {
     assert_eq!(dtype("Small"), DataType::UInt8);
     assert_eq!(dtype("Mid"), DataType::Int32);
     assert_eq!(dtype("Big"), DataType::Int64);
-    assert_eq!(back.column("Small").unwrap().u8().unwrap().get(1), Some(200));
+    assert_eq!(
+        back.column("Small").unwrap().u8().unwrap().get(1),
+        Some(200)
+    );
+}
+
+#[test]
+fn parquet_keeps_a_datetimes_zone() {
+    use polars::prelude::*;
+    let text = "sheet T\n\nLogged : Datetime(\"Europe/London\")\n\n\
+                Logged\n2025-03-01T09:30\n2025-07-01T09:30\n";
+    let out = parquet_of(text, None);
+    // Written as instants in the zone: 09:30 in July in London is 08:30 UTC.
+    let df = ParquetReader::new(Cursor::new(out.files[0].bytes.clone()))
+        .finish()
+        .unwrap();
+    let col = df.column("Logged").unwrap();
+    assert!(
+        matches!(col.dtype(), DataType::Datetime(TimeUnit::Microseconds, Some(tz)) if tz.as_str() == "Europe/London"),
+        "{:?}",
+        col.dtype()
+    );
+    let us = col.datetime().unwrap().phys.get(1).unwrap();
+    assert_eq!(us, 1_751_358_600_000_000); // 2025-07-01T08:30:00Z
+    // Read back, the zone is declared again and the cells are the wall clock.
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    assert!(
+        back.source.contains("Datetime(\"Europe/London\")"),
+        "{}",
+        back.source
+    );
+    assert!(back.source.contains("2025-07-01T09:30"), "{}", back.source);
+    assert!(back.source.contains("2025-03-01T09:30"), "{}", back.source);
+}
+
+#[test]
+fn a_table_shows_a_zoned_column_on_its_own_clocks() {
+    let dir = scratch("table-zoned");
+    let text = "sheet T\n\nLogged : Datetime(\"Europe/London\")\n\n\
+                Logged\n2025-03-01T09:30\n2025-07-01T09:30\n";
+    let out = parquet_of(text, None);
+    std::fs::write(dir.join("z.parquet"), &out.files[0].bytes).unwrap();
+    let table = "table Logs := dataframe['z.parquet']\n\nLogged : Datetime\n";
+    let shown = with_tables(&dir, table);
+    assert!(shown.ok(), "{:?}", shown.errors);
+    // The file holds the instants; the sheet shows them on the zone's clocks,
+    // with the offset that zone had on each day.
+    assert!(
+        shown.output.contains("2025-03-01T09:30+00:00"),
+        "{}",
+        shown.output
+    );
+    assert!(
+        shown.output.contains("2025-07-01T09:30+01:00"),
+        "{}",
+        shown.output
+    );
+    // The same instant is one on another zone's clocks, and compares equal.
+    let eq = format!(
+        "{table}\nsheet C := Logs |> select(Logged)\n\nconst Gap = Logs.Logged.max() - Logs.Logged.min()\n"
+    );
+    let shown = with_tables(&dir, &eq);
+    assert!(shown.ok(), "{:?}", shown.errors);
+    assert!(shown.output.contains("P121DT23H"), "{}", shown.output);
+    // Written again, the zone is kept.
+    let again = parquet::export(
+        "file.omx",
+        table,
+        None,
+        omasheet_engine::Options {
+            base: Some(dir.clone()),
+            ..options()
+        },
+    )
+    .expect("exports");
+    let back = parquet::import("t", &again.files[0].bytes).expect("imports");
+    assert!(
+        back.source.contains("Datetime(\"Europe/London\")"),
+        "{}",
+        back.source
+    );
 }

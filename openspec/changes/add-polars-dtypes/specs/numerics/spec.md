@@ -10,7 +10,7 @@ Each type SHALL be a name for one Polars dtype, and SHALL hold exactly what
 that dtype holds. `Int` SHALL be `Int64`, `Decimal` and `Percent` SHALL be
 `Decimal(38, s)`, `Float` SHALL be `Float64`, `Boolean` SHALL be `Boolean`,
 `String` SHALL be `String`, `Date` SHALL be `Date`,
-`Time` SHALL be `Time`, `DateTime` SHALL be `Datetime` with an optional zone,
+`Time` SHALL be `Time`, `Datetime` SHALL be `Datetime` with an optional zone,
 `Duration` SHALL be `Duration`, and `Null` SHALL be `Null`.
 
 A file MAY declare any of those names. Unsigned dtypes SHALL be read and

@@ -531,7 +531,7 @@ impl Parser {
             }
             Tok::Date(d) => lit(Lit::Date(d)),
             Tok::Time(t) => lit(Lit::Time(t)),
-            Tok::DateTime(t) => lit(Lit::DateTime(t)),
+            Tok::Datetime(t) => lit(Lit::Datetime(t)),
             Tok::Duration(t) => lit(Lit::Duration(t)),
             Tok::True => lit(Lit::Boolean(true)),
             Tok::False => lit(Lit::Boolean(false)),

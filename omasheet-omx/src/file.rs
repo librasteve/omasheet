@@ -935,7 +935,7 @@ mod tests {
             .map(|l| l.format.as_ref().unwrap().to_string())
             .collect();
         assert_eq!(shown, ["%d %b %Y", "%]%H%] %z", "%I:%M %p"]);
-        assert_eq!(schema[1].ty, S::DateTime);
+        assert_eq!(schema[1].ty, S::Datetime);
     }
 
     #[test]

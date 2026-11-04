@@ -20,7 +20,7 @@ decimal edges, a value with no dtype — and hands it the rest.
   column selection becomes a filter, a projection or a limit; an aggregate
   becomes a Polars aggregate. MODIFIED: a row-recursive column stays on the
   engine, and a lowered group that fails falls back to it wholly
-- **numerics** — MODIFIED: `Time` is held in nanoseconds and `DateTime` in
+- **numerics** — MODIFIED: `Time` is held in nanoseconds and `Datetime` in
   microseconds, as Polars holds them, so that no sub-second value is lost at
   the Parquet boundary. ADDED: neither `/` nor `mean` is lowered on an exact
   column, the two places Polars' decimal arithmetic and `Dec` disagree
@@ -40,7 +40,7 @@ columns* and *What is not lowered*.
 - `ColKind::Frame` loses its payload and `Engine` gains a frame store, so
   every match over them is touched — in the engine, the interop crate and the
   app
-- `Value::Time` and `Value::DateTime` change unit. `+ 1` still means one
+- `Value::Time` and `Value::Datetime` change unit. `+ 1` still means one
   second, which is what the goldens for `datetimes` and `zones` check
 - The app's per-keystroke rebuild is the sharpest risk: a `collect()` is
   slower than the row loop for a ten-row sheet, which is omasheet's typical

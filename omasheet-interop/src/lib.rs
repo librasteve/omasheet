@@ -83,6 +83,10 @@ pub struct Grid {
     pub rows: Vec<Vec<Datum>>,
     /// Keep every row, so that a row stays where a formula looks for it.
     pub fixed: bool,
+    /// The zone a `Datetime` column declares, by column: `Datetime("Europe/London")`.
+    /// Its cells are then the wall clock of that zone. Empty for a source
+    /// with no zones.
+    pub zones: Vec<Option<String>>,
 }
 
 impl Grid {
@@ -101,6 +105,7 @@ impl Grid {
             headers,
             rows,
             fixed: false,
+            zones: Vec::new(),
         }
     }
 }
@@ -328,16 +333,22 @@ pub(crate) fn write_named(
         let types: Vec<(Option<S>, bool)> = (0..width)
             .map(|c| column_type(&rows.iter().map(|row| &row[c]).collect::<Vec<_>>()))
             .collect();
-        let declared: Vec<(&str, S)> = (0..width)
-            .filter_map(|c| Some((columns[c].as_str(), types[c].0?)))
+        let declared: Vec<(&str, S, Option<&str>)> = (0..width)
+            .filter_map(|c| {
+                let zone = grid.zones.get(c).and_then(|z| z.as_deref());
+                Some((columns[c].as_str(), types[c].0?, zone))
+            })
             .collect();
         let longest = declared
             .iter()
-            .map(|(name, _)| name.len())
+            .map(|(name, _, _)| name.len())
             .max()
             .unwrap_or(0);
-        for (name, ty) in &declared {
-            out.push_str(&format!("{name:longest$} : {ty}\n"));
+        for (name, ty, zone) in &declared {
+            match zone.filter(|_| *ty == S::Datetime) {
+                Some(zone) => out.push_str(&format!("{name:longest$} : {ty}(\"{zone}\")\n")),
+                None => out.push_str(&format!("{name:longest$} : {ty}\n")),
+            }
         }
         if !declared.is_empty() {
             out.push('\n');

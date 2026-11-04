@@ -101,6 +101,11 @@ impl<'a> Cx<'a> {
     fn read(&self, c: usize) -> Option<Out> {
         let column = (self.column)(c)?;
         let (name, dtype) = (column.name().clone(), column.dtype().clone());
+        // A date-time in a zone is held as an instant, and compares with the
+        // wall clocks of a sheet by the zone it is shown on: the engine's.
+        if matches!(dtype, DataType::Datetime(_, Some(_))) {
+            return None;
+        }
         let mut taken = self.taken.borrow_mut();
         if !taken.iter().any(|held| held.name() == &name) {
             taken.push(column);
@@ -243,7 +248,7 @@ fn literal(l: &Lit) -> Option<Out> {
             lit(Scalar::new(DataType::Time, AnyValue::Time(*ns))),
             DataType::Time,
         ),
-        Lit::DateTime(us) => {
+        Lit::Datetime(us) => {
             let dtype = DataType::Datetime(TimeUnit::Microseconds, None);
             let value = AnyValue::DatetimeOwned(*us, TimeUnit::Microseconds, None);
             Out::new(lit(Scalar::new(dtype.clone(), value)), dtype)
@@ -272,7 +277,7 @@ fn lit_of(v: Value) -> Option<Lit> {
         Value::Boolean(b) => Lit::Boolean(b),
         Value::Date(d) => Lit::Date(d),
         Value::Time(t) => Lit::Time(t),
-        Value::DateTime(t) => Lit::DateTime(t),
+        Value::Datetime(t, None) => Lit::Datetime(t),
         Value::Duration(t) => Lit::Duration(t),
         _ => return None,
     })
@@ -533,7 +538,7 @@ fn element(l: &Lit, dtype: &DataType) -> Option<AnyValue<'static>> {
         (Lit::String(s), DataType::String) => AnyValue::StringOwned(s.as_str().into()),
         (Lit::Boolean(b), DataType::Boolean) => AnyValue::Boolean(*b),
         (Lit::Date(d), DataType::Date) => AnyValue::Date(*d),
-        (Lit::DateTime(us), DataType::Datetime(TimeUnit::Microseconds, None)) => {
+        (Lit::Datetime(us), DataType::Datetime(TimeUnit::Microseconds, None)) => {
             AnyValue::Datetime(*us, TimeUnit::Microseconds, None)
         }
         (Lit::Time(ns), DataType::Time) => AnyValue::Time(*ns),

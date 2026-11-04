@@ -43,6 +43,8 @@ polars = { version = "0.51", default-features = false, features = [
     "dtype-datetime",
     "dtype-time",
     "dtype-duration",
+    # A zoned Datetime is kept through Parquet (add-dataframe-interop 2.9).
+    "timezones",
     # The narrow whole numbers a Parquet file may hold, read and written
     # back at their own width and sign (add-polars-dtypes 5.4).
     "dtype-i8",

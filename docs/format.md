@@ -440,6 +440,13 @@ accepts them in your locale's form.
 
 ## Constants, functions, zone
 
+- `const Keys = [Region, Month]` names a list of columns, to use again where a
+  function takes columns: `Sales |> group_by(Keys)`, and the same in `select`,
+  `sort` and `join`. The names are looked up in the sheet it is used on, so
+  one list serves every sheet that has those columns, and it can sit beside
+  plain names, as `group_by(Keys, Quarter)`. It is only for taking columns:
+  it is not a value, and a list of constants or numbers is still an ordinary
+  list.
 - `const Name = expression`
 - `fn Name(a, b) = expression` — sees its parameters, constants and sheets,
   not the row it is called from. The comment above it is its description.

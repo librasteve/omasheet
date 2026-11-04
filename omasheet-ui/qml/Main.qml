@@ -2860,7 +2860,8 @@ ApplicationWindow {
                                     // the cell is wide, and a cell made after
                                     // it would otherwise be drawn over them.
                                     z: win.openCell !== null && win.openCell.tab === win.tab
-                                        && win.openCell.row === row && win.openCell.col === index ? 1 : 0
+                                        && win.openCell.row === row && win.openCell.col === index ? 1
+                                        : (win.editing && current ? 1 : 0)
                                     color: (selected && !alone) || marked
                                         ? Qt.rgba(win.selectionFill.r, win.selectionFill.g, win.selectionFill.b, 0.55)
                                         : column && column.computed ? win.computedTint : "transparent"
@@ -3048,7 +3049,13 @@ ApplicationWindow {
                                     }
 
                                     Loader {
-                                        anchors.fill: parent
+                                        // Text too wide for the cell carries on
+                                        // over the cells to the right, on an
+                                        // opaque ground (the editor's own).
+                                        anchors.left: parent.left
+                                        anchors.top: parent.top
+                                        anchors.bottom: parent.bottom
+                                        width: item ? Math.max(parent.width, item.contentWidth + item.leftPadding + item.rightPadding + 4) : parent.width
                                         active: win.editing && cellItem.current
                                         // A `TextArea`, a cell being able to
                                         // hold a newline: the box at the top
@@ -3479,7 +3486,6 @@ ApplicationWindow {
 
                 FooterButton { label: "+ Row"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.insertRow(true) }
                 FooterButton { label: "+ Column"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
-                FooterButton { label: "+ Formula"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("computed") }
                 FooterButton { label: "+ Constant"; quiet: true; onClicked: promptDialog.ask("const") }
                 FooterButton { label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
                 FooterButton { label: "</>"; quiet: true; active: win.showSource; onClicked: win.viewSource(!win.showSource) }
@@ -3495,11 +3501,31 @@ ApplicationWindow {
         // the right, what is counted rather than said, and the notes to
         // read. Most of the time there is nothing to say and it is empty.
         Rectangle {
+            id: messageBar
             Layout.fillWidth: true
             Layout.preferredHeight: win.fontSize + 10
             color: win.panelColor
 
             Rectangle { width: parent.width; height: 1; color: win.lineColor }
+
+            // A message that has been said (a refusal, what was just done)
+            // fades after a few seconds; resting the mouse on the bar
+            // brings it back, and holds it while there. States that are
+            // still true (working, moving, a formula column) do not fade.
+            HoverHandler {
+                id: barHover
+                onHoveredChanged: {
+                    barMessage.faded = false;
+                    if (!hovered)
+                        fadeTimer.restart();
+                }
+            }
+            Timer {
+                id: fadeTimer
+                interval: 5000
+                running: barMessage.passing && !barHover.hovered
+                onTriggered: barMessage.faded = barMessage.passing && !barHover.hovered
+            }
 
             // What the app has to say, centred in the bar whatever else
             // sits beside it, so it reads as the answer to what was done.
@@ -3511,6 +3537,18 @@ ApplicationWindow {
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
                 readonly property bool moving: win.grabbedHere
+                // Said once, as against a state that holds.
+                readonly property bool passing: win.busyText.length === 0 && !win.filterPending
+                    && !moving && !win.formulaCell
+                    && (win.notice.length > 0 || file.status.length > 0)
+                property bool faded: false
+                opacity: faded ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 700 } }
+                onTextChanged: {
+                    faded = false;
+                    fadeTimer.restart();
+                }
+                onPassingChanged: faded = false
                 text: win.busyText.length > 0 ? win.busyText
                     : win.filterPending ? "Filtering\u2026"
                     : win.notice.length > 0 ? win.notice
@@ -4218,8 +4256,8 @@ ApplicationWindow {
         id: openDialog
         title: "Open file"
         fileMode: Dialogs.FileDialog.OpenFile
-        // A workbook, a CSV file or JSON is imported: it opens as a new file.
-        nameFilters: ["Files, workbooks, CSV and JSON (*.omx *.xlsx *.csv *.json)", "Omasheet (*.omx)", "All files (*)"]
+        // A workbook, a CSV file, JSON or Parquet is imported: it opens as a new file.
+        nameFilters: ["Files, workbooks, CSV, JSON and Parquet (*.omx *.xlsx *.csv *.json *.parquet)", "Omasheet (*.omx)", "All files (*)"]
         onAccepted: {
             win.pendingUrl = selectedFile;
             win.run("openUrl");
@@ -4376,7 +4414,8 @@ ApplicationWindow {
         modal: true
         width: Math.min(win.width - 80, 760)
         title: file.status
-        standardButtons: Dialog.Close
+        standardButtons: Dialog.Ok
+        onAccepted: file.notes = ""
         onClosed: grid.forceActiveFocus()
         contentItem: ListView {
             implicitHeight: Math.min(contentHeight, 360)

@@ -64,7 +64,7 @@ enum Kind {
     Bool,
     Date,
     Time,
-    DateTime,
+    Datetime,
     /// A length of time, which a workbook counts in days as it does a date.
     Duration,
     Unknown,
@@ -166,7 +166,7 @@ fn kind_of(s: S) -> Kind {
         S::Boolean => Kind::Bool,
         S::Date => Kind::Date,
         S::Time => Kind::Time,
-        S::DateTime => Kind::DateTime,
+        S::Datetime => Kind::Datetime,
         S::Duration => Kind::Duration,
         S::Any => Kind::Unknown,
     }
@@ -257,7 +257,7 @@ impl Writer<'_> {
             Value::Boolean(_) => Kind::Bool,
             Value::Date(_) => Kind::Date,
             Value::Time(_) => Kind::Time,
-            Value::DateTime(_) | Value::Zoned(_) => Kind::DateTime,
+            Value::Datetime(_, None) | Value::Datetime(_, Some(_)) => Kind::Datetime,
             Value::Duration(_) => Kind::Duration,
             Value::Null => kind_of(sheet.cols[c].ty),
             _ => Kind::Unknown,
@@ -549,12 +549,12 @@ impl Writer<'_> {
                 let prec = if days < 0.0 { NEG } else { ATOM };
                 Expr::new(format!("{days}"), prec, Kind::Duration)
             }
-            Lit::DateTime(t) => {
+            Lit::Datetime(t) => {
                 let (days, time) = date::split_datetime(*t);
                 if time == 0 {
-                    Expr::atom(ymd(days), Kind::DateTime)
+                    Expr::atom(ymd(days), Kind::Datetime)
                 } else {
-                    Expr::new(format!("{}+{}", ymd(days), hms(time)), ADD, Kind::DateTime)
+                    Expr::new(format!("{}+{}", ymd(days), hms(time)), ADD, Kind::Datetime)
                 }
             }
         })
@@ -563,8 +563,8 @@ impl Writer<'_> {
     /// `+ - * / **`. A workbook counts a time in days where a file counts
     /// it in seconds.
     fn arithmetic(&self, op: BinOp, a: Expr, b: Expr) -> Result<Expr, Why> {
-        use Kind::{Date, DateTime, Duration, Number, Time};
-        let clock = |k: Kind| matches!(k, Time | DateTime);
+        use Kind::{Date, Datetime, Duration, Number, Time};
+        let clock = |k: Kind| matches!(k, Time | Datetime);
         let seconds = |e: &Expr| format!("{}/86400", e.within(POW));
         let (sym, prec) = match op {
             BinOp::Add => ("+", ADD),
@@ -586,7 +586,7 @@ impl Writer<'_> {
             (_, Number, Number) => plain(Number),
             (BinOp::Add, Date, Number) | (BinOp::Sub, Date, Number) => plain(Date),
             (BinOp::Add, Number, Date) => plain(Date),
-            (BinOp::Add, Date, Time) | (BinOp::Add, Time, Date) => plain(DateTime),
+            (BinOp::Add, Date, Time) | (BinOp::Add, Time, Date) => plain(Datetime),
             // A duration is days, as a date is; beside a date only its
             // whole days count, and beside a time it wraps round midnight.
             (BinOp::Sub, Date, Date) => plain(Duration),
@@ -597,8 +597,8 @@ impl Writer<'_> {
             (BinOp::Add | BinOp::Sub, Time, Duration) | (BinOp::Add, Duration, Time) => {
                 Expr::atom(format!("MOD({},1)", plain(Time).text), Time)
             }
-            (BinOp::Add | BinOp::Sub, DateTime, Duration) => plain(DateTime),
-            (BinOp::Add, Duration, DateTime) => plain(DateTime),
+            (BinOp::Add | BinOp::Sub, Datetime, Duration) => plain(Datetime),
+            (BinOp::Add, Duration, Datetime) => plain(Datetime),
             (BinOp::Add | BinOp::Sub, k, Number) if clock(k) => {
                 Expr::new(format!("{}{sym}{}", a.within(ADD), seconds(&b)), ADD, k)
             }
@@ -620,7 +620,7 @@ impl Writer<'_> {
         let named = |name: &str, kind: Kind| Ok(Some(Expr::atom(format!("{name}()"), kind)));
         match func {
             Func::Today => return named("TODAY", Kind::Date),
-            Func::Now => return named("NOW", Kind::DateTime),
+            Func::Now => return named("NOW", Kind::Datetime),
             Func::Pi => return named("PI", Kind::Number),
             Func::E => return Ok(Some(Expr::atom("EXP(1)".into(), Kind::Number))),
             _ => {}
@@ -647,8 +647,8 @@ impl Writer<'_> {
         };
         let of = |name: &str, kind: Kind| Expr::atom(format!("{name}({})", x.text), kind);
         let number = x.kind == Kind::Number;
-        let dated = matches!(x.kind, Kind::Date | Kind::DateTime);
-        let timed = matches!(x.kind, Kind::Time | Kind::DateTime);
+        let dated = matches!(x.kind, Kind::Date | Kind::Datetime);
+        let timed = matches!(x.kind, Kind::Time | Kind::Datetime);
         Ok(Some(match func {
             Func::Year if dated => of("YEAR", Kind::Number),
             Func::Month if dated => of("MONTH", Kind::Number),
@@ -658,12 +658,12 @@ impl Writer<'_> {
             Func::Hour if timed => of("HOUR", Kind::Number),
             Func::Minute if timed => of("MINUTE", Kind::Number),
             Func::Second if timed => of("SECOND", Kind::Number),
-            Func::DateOf | Func::To(S::Date) if x.kind == Kind::DateTime => of("INT", Kind::Date),
-            Func::TimeOf | Func::To(S::Time) if x.kind == Kind::DateTime => {
+            Func::DateOf | Func::To(S::Date) if x.kind == Kind::Datetime => of("INT", Kind::Date),
+            Func::TimeOf | Func::To(S::Time) if x.kind == Kind::Datetime => {
                 Expr::atom(format!("MOD({},1)", x.text), Kind::Time)
             }
-            Func::To(S::DateTime) if x.kind == Kind::Date => Expr {
-                kind: Kind::DateTime,
+            Func::To(S::Datetime) if x.kind == Kind::Date => Expr {
+                kind: Kind::Datetime,
                 ..x.clone()
             },
             Func::To(S::Int | S::Hex | S::Octal | S::Binary) if number => of("TRUNC", Kind::Number),

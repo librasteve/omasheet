@@ -27,7 +27,7 @@ pub enum Tok {
     Time(i64),
     /// Microseconds since the start of 1970-01-01, on the clocks of the
     /// file's own zone, as Polars holds a `Datetime`.
-    DateTime(i64),
+    Datetime(i64),
     /// Microseconds: `PT1H30M`.
     Duration(i64),
     Ident(String),
@@ -90,7 +90,7 @@ impl Tok {
             Tok::Str(_) | Tok::Text(_) => "a string".into(),
             Tok::Date(_) => "a date".into(),
             Tok::Time(_) => "a time".into(),
-            Tok::DateTime(_) => "a date-time".into(),
+            Tok::Datetime(_) => "a date-time".into(),
             Tok::Duration(_) => "a duration".into(),
             Tok::Ident(name) => format!("`{name}`"),
             Tok::Eof => "the end of the expression".into(),
@@ -525,7 +525,7 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
         }
         let secs = if seconds_of_datetime { part(17, 19) } else { 0 };
         return match date::datetime_from(days, part(11, 13), part(14, 16), secs) {
-            Some(t) => Ok((Tok::DateTime(t + datetime_frac), end)),
+            Some(t) => Ok((Tok::Datetime(t + datetime_frac), end)),
             None => Err((
                 format!("`{}` is not a real time", &text[i + 11..end]),
                 i + 11,
@@ -669,11 +669,11 @@ mod tests {
         let noon = date::datetime_from(day, 12, 0, 0).unwrap();
         assert_eq!(
             toks("2025-01-31T12:00:00.5")[0],
-            Tok::DateTime(noon + 500_000)
+            Tok::Datetime(noon + 500_000)
         );
         assert_eq!(
             toks("2025-01-31T12:00:00.000001")[0],
-            Tok::DateTime(noon + 1)
+            Tok::Datetime(noon + 1)
         );
         // Past what the unit keeps is said rather than quietly dropped.
         let why = |text: &str| lex(text, 0, 0).unwrap_err().message;
@@ -771,11 +771,11 @@ mod tests {
         let day = date::from_ymd(2025, 1, 1).unwrap();
         assert_eq!(
             toks("2025-01-01T09:30")[0],
-            Tok::DateTime(date::datetime_from(day, 9, 30, 0).unwrap())
+            Tok::Datetime(date::datetime_from(day, 9, 30, 0).unwrap())
         );
         assert_eq!(
             toks("2025-01-01T09:30:15")[0],
-            Tok::DateTime(date::datetime_from(day, 9, 30, 15).unwrap())
+            Tok::Datetime(date::datetime_from(day, 9, 30, 15).unwrap())
         );
         assert!(lex("2025-01-01T24:00", 0, 0).is_err());
         assert!(lex("2025-01-01T09", 0, 0).is_err());

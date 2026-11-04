@@ -20,7 +20,7 @@ impl Format {
     /// `Date`, `Time` or `Datetime`, and a number format for any other.
     pub fn parse(text: &str, ty: S) -> Result<Format, FormatError> {
         match ty {
-            S::Date | S::Time | S::DateTime => DateFormat::parse(text).map(Format::Date),
+            S::Date | S::Time | S::Datetime => DateFormat::parse(text).map(Format::Date),
             _ => NumFormat::parse(text).map(Format::Number),
         }
     }
@@ -39,7 +39,7 @@ impl Format {
         match ty {
             S::Date => Some("the conversions of a date, as `%d %b %Y`"),
             S::Time => Some("the conversions of a time, as `%H:%M`"),
-            S::DateTime => Some("the conversions of a date and a time, as `%d %b %Y %H:%M`"),
+            S::Datetime => Some("the conversions of a date and a time, as `%d %b %Y %H:%M`"),
             _ => NumFormat::conversions_of(ty),
         }
     }
@@ -47,7 +47,7 @@ impl Format {
     /// What a format is, for a diagnostic about one that does not read.
     pub fn help(ty: S) -> &'static str {
         match ty {
-            S::Date | S::Time | S::DateTime => {
+            S::Date | S::Time | S::Datetime => {
                 "a date or time format is a C `strftime` format, as `%d %b %Y`"
             }
             _ => "a format is a C `printf` conversion without its `%`, as `'.2f`",

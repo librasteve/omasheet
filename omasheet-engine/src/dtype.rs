@@ -31,7 +31,7 @@ pub fn type_of(dtype: &DataType) -> Option<S> {
         DataType::String => S::String,
         DataType::Date => S::Date,
         DataType::Time => S::Time,
-        DataType::Datetime(..) => S::DateTime,
+        DataType::Datetime(..) => S::Datetime,
         DataType::Duration(_) => S::Duration,
         DataType::Null => S::Any,
         _ => return None,
@@ -89,7 +89,7 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
                 TimeUnit::Milliseconds => n.checked_mul(MICROS / 1_000),
             };
             match micros.filter(|m| i32::try_from(m.div_euclid(DAY * MICROS)).is_ok()) {
-                Some(micros) => Cell::Lit(Lit::DateTime(micros)),
+                Some(micros) => Cell::Lit(Lit::Datetime(micros)),
                 None => Cell::Invalid,
             }
         }
@@ -126,7 +126,7 @@ pub fn dtype(ty: S, scale: u32) -> Option<DataType> {
         S::Boolean => DataType::Boolean,
         S::Date => DataType::Date,
         S::Time => DataType::Time,
-        S::DateTime => DataType::Datetime(TimeUnit::Microseconds, None),
+        S::Datetime => DataType::Datetime(TimeUnit::Microseconds, None),
         S::Duration => DataType::Duration(TimeUnit::Microseconds),
         S::Any => return None,
     })
@@ -270,7 +270,7 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
                 .collect::<Option<_>>()?;
             Series::new(name, v).cast(&DataType::Date).ok()?
         }
-        // A `Time` and a `DateTime` are held in the units Polars holds them
+        // A `Time` and a `Datetime` are held in the units Polars holds them
         // in, so neither is scaled on the way across.
         S::Time => Series::new(
             name,
@@ -282,10 +282,10 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
         )
         .cast(&DataType::Time)
         .ok()?,
-        S::DateTime => Series::new(
+        S::Datetime => Series::new(
             name,
             all(&|v| match v {
-                Value::DateTime(us) => Some(Some(*us)),
+                Value::Datetime(us, None) => Some(Some(*us)),
                 v if null(v) => Some(None),
                 _ => None,
             })?,

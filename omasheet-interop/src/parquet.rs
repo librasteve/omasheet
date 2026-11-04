@@ -221,12 +221,30 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
                     .cast(&DataType::Duration(TimeUnit::Microseconds))
                     .map_err(|e| e.to_string())?
             }
-            S::DateTime => {
+            // A column that declares a zone is written as the instants its
+            // cells are, in that zone, as Polars holds a zoned `Datetime`.
+            S::Datetime if col.zone.is_some() => {
+                let zone = col.zone.as_ref().map(|(z, _)| z.as_str());
                 let v: Vec<Option<i64>> = cells
                     .iter()
                     .map(|v| match v {
-                        Value::DateTime(us) => Some(*us),
-                        Value::Zoned(z) => Some(z.wall),
+                        Value::Datetime(_, Some(z)) => Some(z.utc),
+                        _ => None,
+                    })
+                    .collect();
+                Series::new(name, v)
+                    .cast(&DataType::Datetime(
+                        TimeUnit::Microseconds,
+                        TimeZone::opt_try_new(zone).map_err(|e| e.to_string())?,
+                    ))
+                    .map_err(|e| e.to_string())?
+            }
+            S::Datetime => {
+                let v: Vec<Option<i64>> = cells
+                    .iter()
+                    .map(|v| match v {
+                        Value::Datetime(us, None) => Some(*us),
+                        Value::Datetime(_, Some(z)) => Some(z.wall),
                         _ => None,
                     })
                     .collect();
@@ -395,6 +413,29 @@ fn skeleton(text: &str, name: &str, file: &crate::File) -> String {
     out
 }
 
+/// A `Datetime` of a Parquet file as the wall clock it is written as. One in
+/// a zone is held as the instant, so it is put on that zone's clocks, which
+/// is what a column that declares the zone holds.
+fn datetime_cell(n: i64, unit: TimeUnit, zone: Option<&str>) -> Datum {
+    use omasheet_engine::omx::date;
+    let micros = match unit {
+        TimeUnit::Nanoseconds => n.div_euclid(NANOS / MICROS),
+        TimeUnit::Microseconds => n,
+        TimeUnit::Milliseconds => n.saturating_mul(1_000),
+    };
+    let wall = match zone {
+        None => Some(micros),
+        Some(name) => omasheet_engine::zone::Zone::named(name).and_then(|z| z.from_utc(micros)),
+    };
+    let Some(secs) = wall.map(|w| w.div_euclid(MICROS)) else {
+        return Datum::Empty;
+    };
+    match i32::try_from(secs.div_euclid(DAY)) {
+        Ok(_) => Datum::Lit(date::format_datetime(secs * MICROS), S::Datetime),
+        Err(_) => Datum::Empty,
+    }
+}
+
 /// One cell of a Parquet column, as the type its schema gives.
 fn cell(value: AnyValue<'_>, ty: S) -> Datum {
     use omasheet_engine::omx::date;
@@ -426,16 +467,9 @@ fn cell(value: AnyValue<'_>, ty: S) -> Datum {
             None => Datum::Empty,
         },
         AnyValue::Date(days) => Datum::Lit(date::format(days), S::Date),
-        AnyValue::Datetime(n, unit, _) | AnyValue::DatetimeOwned(n, unit, _) => {
-            let secs = match unit {
-                TimeUnit::Nanoseconds => n.div_euclid(NANOS),
-                TimeUnit::Microseconds => n.div_euclid(MICROS),
-                TimeUnit::Milliseconds => n.div_euclid(1_000),
-            };
-            match i32::try_from(secs.div_euclid(DAY)) {
-                Ok(_) => Datum::Lit(date::format_datetime(secs * MICROS), S::DateTime),
-                Err(_) => Datum::Empty,
-            }
+        AnyValue::Datetime(n, unit, tz) => datetime_cell(n, unit, tz.map(|z| z.as_str())),
+        AnyValue::DatetimeOwned(n, unit, tz) => {
+            datetime_cell(n, unit, tz.as_ref().map(|z| z.as_str()))
         }
         AnyValue::Time(ns) => Datum::Lit(date::format_time(ns.div_euclid(NANOS) * NANOS), S::Time),
         // A duration is held to the microsecond, and written in ISO 8601.
@@ -598,6 +632,17 @@ pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
         }
     }
 
+    // A `Datetime` in a zone keeps it, as a declared zone.
+    let zones: Vec<Option<String>> = kept
+        .iter()
+        .map(
+            |(name, _)| match df.column(name).map(|c| c.dtype().clone()) {
+                Ok(DataType::Datetime(_, Some(tz))) => Some(tz.to_string()),
+                _ => None,
+            },
+        )
+        .collect();
+
     let mut rows: Vec<Vec<Datum>> = Vec::with_capacity(df.height() + 1);
     rows.push(
         kept.iter()
@@ -618,6 +663,7 @@ pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
     // lines written come from the file and not from reading the values.
     let mut grid = Grid::from_rows(name, rows);
     grid.fixed = true;
+    grid.zones = zones;
     let source = write_omx(vec![grid], &mut notices);
     Ok(Imported { source, notices })
 }

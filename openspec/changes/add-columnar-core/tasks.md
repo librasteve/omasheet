@@ -198,7 +198,7 @@ what stops a table's rows being exploded into cells.
 ## 4. The units (D68)
 
 - [x] 4.1 `Value::Time` in nanoseconds of day, `i64`
-- [x] 4.2 `Value::DateTime` in microseconds, and `Zoned`'s wall and instant
+- [x] 4.2 `Value::Datetime` in microseconds, and `Zoned`'s wall and instant
       with it. `date.rs` is the one module that knows the factors: `DAY`,
       `NANOS`, `MICROS`, `NANOS_PER_MICRO`, `DAY_NANOS`, `DAY_MICROS` and an
       `hms` that splits a time into its clock parts. The copies `dtype.rs`
@@ -285,7 +285,7 @@ what stops a table's rows being exploded into cells.
       A date-time literal with a seventh fractional digit is therefore a
       diagnostic, saying that a date-time holds microseconds -- not a
       silent truncation, which is the bug 4.4 is holding the line against.
-      `Value::DateTime` stays a bare `i64` of microseconds, as D68 has it,
+      `Value::Datetime` stays a bare `i64` of microseconds, as D68 has it,
       with no `TimeUnit` to carry.
 
       The lexer must take the fraction inside the time branch

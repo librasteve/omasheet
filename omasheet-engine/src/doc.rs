@@ -2175,7 +2175,11 @@ impl Document {
             None
         } else {
             let mean = arith(BinOp::Div, &sum, &Value::int(numbers as i64)).ok()?;
-            let show = |v: &Value| format_styled(v, false, &self.style);
+            // To two places: it is a glance, not the figure.
+            let show = |v: &Value| {
+                let v = crate::value::round_digits(v, 2).unwrap_or_else(|_| v.clone());
+                format_styled(&v, false, &self.style)
+            };
             Some((show(&sum), show(&mean)))
         };
         Some(Summary { count, numbers })
@@ -2234,7 +2238,7 @@ impl Document {
                 | (S::Boolean, DataType::Boolean)
                 | (S::Date, DataType::Date)
                 | (S::Time, DataType::Time)
-                | (S::DateTime, DataType::Datetime(_, None)) => Kind::Counted,
+                | (S::Datetime, DataType::Datetime(_, None)) => Kind::Counted,
                 _ => return None,
             };
             columns.push((column, kind));
@@ -2253,7 +2257,11 @@ impl Document {
             None
         } else {
             let mean = arith(BinOp::Div, &sum, &Value::int(numbers as i64)).ok()?;
-            let show = |v: &Value| format_styled(v, false, &self.style);
+            // To two places: it is a glance, not the figure.
+            let show = |v: &Value| {
+                let v = crate::value::round_digits(v, 2).unwrap_or_else(|_| v.clone());
+                format_styled(&v, false, &self.style)
+            };
             Some((show(&sum), show(&mean)))
         };
         Some(Summary { count, numbers })
@@ -3808,6 +3816,17 @@ impl Document {
             let decl = ast.consts.iter().find(|d| d.name == c.name);
             let value = engine.const_value(i).unwrap_or(Value::Error);
             let display = match &value {
+                _ if c.columns.is_some() => {
+                    format!(
+                        "[{}]",
+                        c.columns
+                            .iter()
+                            .flatten()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
                 Value::Null => "empty".to_string(),
                 Value::Vector(_) | Value::String(..) => engine.show(&value, true),
                 other => show(other),
@@ -5717,19 +5736,10 @@ mod tests {
         let numbers = |s: &str, a: &str| Some((s.to_string(), a.to_string()));
         // Exact numbers add up exactly, and are shown as cells are.
         let a = sum((0, 1), (2, 1));
-        assert_eq!(
-            (a.count, a.numbers),
-            (
-                3,
-                numbers("3.33333333333333333333…", "1.11111111111111111111…")
-            )
-        );
+        assert_eq!((a.count, a.numbers), (3, numbers("3.33", "1.11")));
         // Text counts but does not add; an empty cell does neither.
         let top = sum((0, 0), (1, 2));
-        assert_eq!(
-            (top.count, top.numbers),
-            (5, numbers("3.5", "1.16666666666666666666…"))
-        );
+        assert_eq!((top.count, top.numbers), (5, numbers("3.5", "1.17")));
         // One Num makes the total a Num.
         let b = sum((0, 2), (2, 2));
         assert_eq!((b.count, b.numbers), (2, numbers("100.5", "50.25")));
