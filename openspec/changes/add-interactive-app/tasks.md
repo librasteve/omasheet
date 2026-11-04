@@ -19,7 +19,7 @@
 - [x] 2.8 Follow the Omarchy theme colours
 
 ## 3. Not yet done
-- [ ] 3.1 Try every keyboard shortcut and mouse gesture by hand (only the functions behind them were exercised headlessly)
+- [x] 3.1 Try every keyboard shortcut and mouse gesture by hand (only the functions behind them were exercised headlessly): done by hand, 2026-11-04
 - [x] 3.2 Build the window in CI (needs Qt 6 on the runner): `ci.yml`
       runs on `archlinux:base-devel` with `qt6-base` and
       `qt6-declarative`, and builds and tests the whole workspace, the
