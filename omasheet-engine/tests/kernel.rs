@@ -404,27 +404,28 @@ fn zoned_columns_of_one_zone_are_compared_by_polars_and_agree() {
 /// wraps, or rounds, or answers nothing, so this is where the two paths are
 /// most likely to part.
 ///
-/// It names every disagreement and fails on any, which is the point of it,
-/// and is ignored until they are fixed. `KERNEL_SEED=<n>` draws another grid.
+/// It names every disagreement and fails on any. `KERNEL_SEED=<n>` draws
+/// another grid and `KERNEL_SHOW=1` shows both sheets where they differ.
 ///
-/// What forty seeds found on 2026-11-04, by kind:
+/// What forty seeds found on 2026-11-04, and what was done:
 ///
-/// - `+` and `-` between exact numbers: Polars answers `#ERROR` where the
-///   engine, whose point moves when a result has no room, answers. Seen
-///   where the sum needs the 39th digit at the column's shared scale.
-/// - `*` between exact numbers (`Decimal`, `Integer`, `Percent`, any two):
-///   Polars wraps the product to a plausible number. The engine is right.
-/// - Any operator with a `Float` on one side (`+ - * /`): the last digit
-///   differs, the two paths turning a `Decimal` into an `f64` differently.
+/// - `+` and `-` between exact numbers: Polars answered `#ERROR` where the
+///   engine, whose point moves when a result has no room, answers. And `*`
+///   between exact numbers: Polars wrapped the product to a plausible
+///   number. Both are now estimated in `lower::arith` and a column that comes
+///   near the edge is the engine's (D72e).
 /// - `//` with a `Float` on one side and an exact number on the other:
-///   fixed the same day. Polars made the result a `Float`, which cut a
-///   `Decimal` or an `Integer` to 16 digits, where the engine keeps the left
-///   value as it is; such a fallback is no longer lowered.
+///   Polars made the result a `Float`, which cut a `Decimal` or an `Integer`
+///   to 16 digits. Not lowered.
+/// - Any operator with a `Float` beside a `Decimal` that has a fractional
+///   part: the last digit differed, Polars making the `f64` at the scale of
+///   the whole column and the engine at the scale of the cell. Following
+///   Polars would make a cell depend on its neighbours, so it is not
+///   lowered (owner, 2026-11-04).
 ///
 /// `**`, `/` between exact numbers (which is not lowered), the comparisons
 /// and the logical operators never disagreed.
 #[test]
-#[ignore = "finds standing disagreements at the ends of the decimal range; see above"]
 fn a_grid_at_the_ends_of_the_ranges_agrees_either_way() {
     // `KERNEL_SEED=<number>` draws a different grid, to look further than the
     // one written down; the failure says which seed it was.
@@ -462,7 +463,7 @@ fn a_grid_at_the_ends_of_the_ranges_agrees_either_way() {
     eprintln!("disagreements by operator: {by_op:?}");
     assert!(
         differ.is_empty(),
-        "{} of the grid disagree:\n{}",
+        "{} of the grid disagree (seed {seed}):\n{}",
         differ.len(),
         differ.join("\n")
     );

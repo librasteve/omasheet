@@ -708,6 +708,14 @@ fn arith(op: BinOp, l: Out, r: Out, cx: &Cx) -> Option<Out> {
             let expr = apply(l.expr.strict_cast(ld), r.expr.strict_cast(rd));
             Out::new(expr, decimal(scale))
         }
+        // A float beside an exact number with a fractional part is the
+        // engine's. Both make an `f64` of the decimal as `unscaled /
+        // 10^scale`, but Polars does it at the scale of the whole column and
+        // the engine at the scale of the cell, and the two differ in the last
+        // digit for some scales. Following Polars would make a cell's answer
+        // depend on the other rows of its column, so it is not lowered. A
+        // whole number is the same `f64` either way.
+        (Some(s), _) | (_, Some(s)) if s > 0 && (is_float(&l.dtype) || is_float(&r.dtype)) => None,
         // A float on either side, and the other a number: both as `f64`,
         // which is what the engine does with the pair.
         (x, y) if (x.is_some() || is_float(&l.dtype)) && (y.is_some() || is_float(&r.dtype)) => {
@@ -745,6 +753,11 @@ fn compare(op: BinOp, l: Out, r: Out) -> Option<Out> {
 fn pair(l: Out, r: Out) -> Option<(Expr, Expr, DataType)> {
     let dtype = match (exact_scale(&l.dtype), exact_scale(&r.dtype)) {
         (Some(x), Some(y)) => decimal(x.max(y)),
+        // For the reason `arith` gives: a decimal with a fractional part is
+        // not made an `f64` the same way by the two paths.
+        (Some(s), _) | (_, Some(s)) if s > 0 && (is_float(&l.dtype) || is_float(&r.dtype)) => {
+            return None;
+        }
         (x, y) if (x.is_some() || is_float(&l.dtype)) && (y.is_some() || is_float(&r.dtype)) => {
             DataType::Float64
         }
