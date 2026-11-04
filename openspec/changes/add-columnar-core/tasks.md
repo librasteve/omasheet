@@ -53,11 +53,29 @@ what stops a table's rows being exploded into cells.
 - [x] 1.3 ~~Whether 13% is worth enumerating features to avoid~~: dropped
       (owner, 2026-10-28). It was the owner's call, the figure is known, and
       nothing here depended on it
-- [ ] 1.4 The PKGBUILD levers re-measured, **after all the Polars work**
+- [x] 1.4 The PKGBUILD levers re-measured, **after all the Polars work**
       rather than as soon as the lowering landed (owner, 2026-10-28). Fat
       LTO folding the Polars generics is where the 44 MB became 20 MB, and
       the lazy stack is more of the same generics, so a measurement taken
       while Polars changes are still outstanding would only be taken again
+
+      Measured 2026-11-04 at `9e0e19c`, macOS ARM, `omasheet-ui` (the
+      `omasheet` binary), each into a fresh target directory, the second
+      with the PKGBUILD's `CARGO_PROFILE_RELEASE_*` (fat LTO, one codegen
+      unit, `panic = abort`, strip):
+
+      | | Plain `--release` | With the levers |
+      |---|---|---|
+      | `omasheet` | 95,512,704 bytes | 39,052,704 bytes |
+      | Build | 5 m 27 s (library crates already built) | 11 m 04 s |
+
+      The levers still take about 59%, as before (44 MB to 20 MB was 55%).
+      But both figures are much larger than the earlier ones — 50.4 MB
+      plain at 1.2 and about 20 MB with the levers — and this task does not
+      say why. The plain build is not stripped, which the 1.2 one may have
+      been, and `timezones`, `csv` and the extra integer dtypes have come in
+      since; which of these is the growth was not measured, and would need
+      a build each with a feature taken out
 
 ## 2. The layering (D61, D62)
 
