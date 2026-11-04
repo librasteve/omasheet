@@ -1175,9 +1175,14 @@ impl Grid {
         } else {
             edits.push((he, he, format!("\n{rule}")));
         }
-        let kept: Vec<usize> = self.rows.iter().filter_map(|(o, _)| *o).collect();
+        let mut kept = vec![false; t.row_lines.len()];
+        for origin in self.rows.iter().filter_map(|(o, _)| *o) {
+            if let Some(k) = kept.get_mut(origin) {
+                *k = true;
+            }
+        }
         for (i, span) in t.row_lines.iter().enumerate() {
-            if !kept.contains(&i) {
+            if !kept[i] {
                 // Remove the line and its line ending.
                 let (s, e) = range(*span);
                 let end = if text[e..].starts_with("\r\n") {
@@ -1211,13 +1216,20 @@ impl Grid {
         if !pending.is_empty() {
             edits.push((anchor, anchor, pending));
         }
-        let mut out = text.to_string();
+        // Written once, front to back: replacing in the text edit by edit
+        // would move the rest of it each time a line changed length. The
+        // edits do not overlap, and those at one place go in the order made.
         let mut order: Vec<usize> = (0..edits.len()).collect();
-        order.sort_by(|&a, &b| edits[b].0.cmp(&edits[a].0).then(b.cmp(&a)));
+        order.sort_by_key(|&k| (edits[k].0, k));
+        let mut out = String::with_capacity(text.len());
+        let mut at = 0;
         for k in order {
             let (s, e, ref replacement) = edits[k];
-            out.replace_range(s..e, replacement);
+            out.push_str(&text[at..s]);
+            out.push_str(replacement);
+            at = e;
         }
+        out.push_str(&text[at..]);
         out
     }
 }
