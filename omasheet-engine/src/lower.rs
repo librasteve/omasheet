@@ -83,6 +83,9 @@ pub struct Cx<'a> {
     column: &'a dyn Fn(usize) -> Option<PlColumn>,
     constant: &'a dyn Fn(usize) -> Option<Value>,
     taken: RefCell<Vec<PlColumn>>,
+    /// For each `+`, `-` and `*` of exact numbers, a test that is true where
+    /// the result might need more digits than a decimal holds.
+    risks: RefCell<Vec<Expr>>,
 }
 
 impl<'a> Cx<'a> {
@@ -94,7 +97,21 @@ impl<'a> Cx<'a> {
             column,
             constant,
             taken: RefCell::new(Vec::new()),
+            risks: RefCell::new(Vec::new()),
         }
+    }
+
+    /// True for a row where some exact `+`, `-` or `*` of the expression
+    /// might not fit: Polars wraps such a result, or answers an error, where
+    /// the engine moves its point, so a plan with one in it is not believed.
+    /// `None` where the expression has no such operation to be careful of.
+    pub fn at_risk(&self) -> Option<Expr> {
+        self.risks
+            .borrow()
+            .iter()
+            .cloned()
+            .reduce(|a, b| a.or(b))
+            .map(|risk| risk.fill_null(lit(false)))
     }
 
     /// The columns the expression read, each once, in the order it asked
@@ -163,7 +180,7 @@ fn inner(node: &Node, cx: &Cx) -> Option<Out> {
         Ir::Call(func, args) => call(*func, args, cx),
         Ir::Binary(BinOp::In, l, r) => within(inner(l, cx)?, r, cx),
         Ir::Unary(op, operand) => unary(*op, inner(operand, cx)?),
-        Ir::Binary(op, l, r) => binary(*op, inner(l, cx)?, inner(r, cx)?),
+        Ir::Binary(op, l, r) => binary(*op, inner(l, cx)?, inner(r, cx)?, cx),
         Ir::If(cond, yes, no) => {
             let cond = inner(cond, cx)?;
             if cond.dtype != DataType::Boolean {
@@ -563,9 +580,9 @@ fn element(l: &Lit, dtype: &DataType) -> Option<AnyValue<'static>> {
     })
 }
 
-fn binary(op: BinOp, l: Out, r: Out) -> Option<Out> {
+fn binary(op: BinOp, l: Out, r: Out, cx: &Cx) -> Option<Out> {
     match op {
-        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => arith(op, l, r),
+        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => arith(op, l, r, cx),
         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => compare(op, l, r),
         // `a // b` is `b` where `a` is nothing. Polars has no short-circuit,
         // so it calculates `b` for every row where the engine calculates it
@@ -610,7 +627,7 @@ fn binary(op: BinOp, l: Out, r: Out) -> Option<Out> {
 /// Arithmetic, where the two sides agree exactly with the engine's: `+`,
 /// `-` and `*` on exact numbers held as a `Decimal(38, s)`, and the same
 /// four on floating-point numbers.
-fn arith(op: BinOp, l: Out, r: Out) -> Option<Out> {
+fn arith(op: BinOp, l: Out, r: Out, cx: &Cx) -> Option<Out> {
     let apply = |l: Expr, r: Expr| match op {
         BinOp::Add => l + r,
         BinOp::Sub => l - r,
@@ -651,6 +668,34 @@ fn arith(op: BinOp, l: Out, r: Out) -> Option<Out> {
                 BinOp::Mul => (decimal(x), decimal(y)),
                 _ => (decimal(scale), decimal(scale)),
             };
+            // Polars holds a decimal at 38 digits and wraps, or answers an
+            // error, where it needs a 39th; the engine moves its point. So
+            // the size of what Polars has to hold is estimated in floating
+            // point, and a row that comes within a hundredth of the limit is
+            // one the plan is not believed for: a float is good to a part in
+            // 10^16, so that is margin enough, and a wider one would give up
+            // a `Fraction` column at scale 38 whose sum plainly fits.
+            //
+            // For `+` and `-` that is the result, at the scale both sides
+            // were cast to. For `*` it is not the result: Polars brings the
+            // two sides to the larger of their scales and multiplies those
+            // numbers before it scales the answer back, so what must fit is
+            // the product at *twice* the larger scale, however small the
+            // answer is. Found by the grid at the ends of the ranges
+            // (`kernel.rs`): `1335897.6 * 244800296630449` in a column of
+            // scale 10 holds a 33-digit answer, and wraps.
+            let (lf, rf) = (
+                l.expr.clone().cast(DataType::Float64),
+                r.expr.clone().cast(DataType::Float64),
+            );
+            let (size, held_at) = match op {
+                BinOp::Mul => (lf * rf, 2 * x.max(y)),
+                BinOp::Add => (lf + rf, scale),
+                _ => (lf - rf, scale),
+            };
+            let limit = 9.9e37 / 10f64.powi(held_at as i32);
+            let beyond = size.clone().gt_eq(lit(limit)).or(size.lt_eq(lit(-limit)));
+            cx.risks.borrow_mut().push(beyond);
             let expr = apply(l.expr.strict_cast(ld), r.expr.strict_cast(rd));
             Out::new(expr, decimal(scale))
         }

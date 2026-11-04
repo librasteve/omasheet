@@ -142,6 +142,11 @@ fn difference(text: &str, rows: &[(String, String)]) -> Option<String> {
     // The rendered sheet is one line per row, under two lines of header.
     let lines = |out: &str| -> Vec<String> { out.lines().skip(4).map(str::to_string).collect() };
     let (ours, theirs) = (lines(&engine.output), lines(&polars.output));
+    // `KERNEL_SHOW=1` prints both sheets whole where they differ, which is
+    // how to see the row a line that differs only in its padding is about.
+    if ours != theirs && std::env::var_os("KERNEL_SHOW").is_some() {
+        eprintln!("ENGINE:\n{}\nPOLARS:\n{}", engine.output, polars.output);
+    }
     let (i, ours, theirs) = ours
         .iter()
         .zip(&theirs)
@@ -248,6 +253,58 @@ impl Lcg {
             _ => edges[self.below(edges.len() as u64) as usize].to_string(),
         }
     }
+
+    /// As [`Lcg::value`], but reaching for the ends of what a type holds
+    /// rather than the middle: a whole number as wide as an `i64`, a decimal
+    /// of up to 38 digits at a scale anywhere in `0..=37`, and one so small
+    /// that nearly every digit is after the point.
+    fn wide(&mut self, ty: &str, edges: &[&str], cap: usize) -> String {
+        match ty {
+            "Integer" => match self.below(3) {
+                0 => format!("{}", ((self.next() << 32) ^ self.next()) as i64),
+                1 => format!("{}", i64::MAX - self.below(1_000) as i64),
+                _ => format!("{}", i64::MIN + self.below(1_000) as i64),
+            },
+            "Decimal" => {
+                // The column has one scale, the widest any value needs, and
+                // every value has to fit at it or the column is declined and
+                // never reaches Polars. So the column's scale is capped, and
+                // a value has as many digits before the point as the cap
+                // leaves room for: wide where the cap is low, and narrow
+                // before a point that sits far to the right.
+                let frac = match self.below(3) {
+                    0 => 0,
+                    1 => cap,
+                    _ => self.below(cap as u64 + 1) as usize,
+                };
+                let whole = match self.below(3) {
+                    0 => 0,
+                    1 => 38 - cap,
+                    _ => self.below((38 - cap) as u64 + 1) as usize,
+                };
+                let digit = |lcg: &mut Lcg| char::from(b'1' + lcg.below(9) as u8);
+                let int_part = if whole == 0 {
+                    "0".to_string()
+                } else {
+                    (0..whole).map(|_| digit(self)).collect()
+                };
+                let frac_part: String = (0..frac).map(|_| digit(self)).collect();
+                let sign = if self.below(2) == 0 { "-" } else { "" };
+                if frac == 0 {
+                    format!("{sign}{int_part}")
+                } else {
+                    format!("{sign}{int_part}.{frac_part}")
+                }
+            }
+            "Float" => match self.below(3) {
+                0 => format!("{}e{}", self.below(9) + 1, self.below(300)),
+                1 => format!("{}e-{}", self.below(9) + 1, self.below(300)),
+                _ => format!("{}", self.next() as f64 / 1_000.0 - 1_000_000.0),
+            },
+            "Percent" => format!("{}%", self.next() % 1_000_000_000_000),
+            _ => self.value(ty, edges),
+        }
+    }
 }
 
 #[test]
@@ -288,14 +345,13 @@ fn a_generated_grid_agrees_either_way() {
 }
 
 /// Found 2026-11-04 by the generated grid, when a type added to the list
-/// moved the values it drew: a `Decimal` column times a wide `Integer`.
-/// The engine is right; Polars wraps the product silently (or answers a null
-/// the lowered column's guard does not catch), because `Int64` is cast to
-/// the column's scale before the multiply and the intermediate passes what
-/// an `i128` holds. The guard in `lower::arith` believes a null, not a
-/// wrapped number. Remove the `ignore` when `Decimal * Integer` is bounded.
+/// moved the values it drew: a `Decimal` column times a wide `Integer`. The
+/// engine was right and Polars wrapped the product silently, because it
+/// multiplies at twice the larger scale before scaling the answer back, and
+/// that passed what an `i128` holds although the answer itself did not.
+/// `lower::arith` now estimates what Polars must hold and gives the column
+/// to the engine when it is near the edge.
 #[test]
-#[ignore = "Polars wraps a wide Decimal * Integer product; see the comment"]
 fn a_wide_decimal_product_agrees_either_way() {
     let rows: Vec<(String, String)> = [
         ("-4.31345428", "232091885816215"),
@@ -339,4 +395,74 @@ fn zoned_columns_of_one_zone_are_compared_by_polars_and_agree() {
     // the engine works out, so that is left to the engine.
     let text = sheet(ty, "Datetime", "<", &pairs(edges, &["2025-07-01T09:30"]));
     assert_eq!(attempt(&text), Some(Attempt::Refused));
+}
+
+/// The generated grid again with operands at the ends of what each type
+/// holds: whole numbers as wide as an `i64`, decimals of up to 38 digits and
+/// down to `1e-37`, floats from `1e-300` to `1e300`. A lowered column is
+/// Polars' answer, and Polars does not stop at the ends of a decimal: it
+/// wraps, or rounds, or answers nothing, so this is where the two paths are
+/// most likely to part.
+///
+/// It names every disagreement and fails on any, which is the point of it,
+/// and is ignored until they are fixed. `KERNEL_SEED=<n>` draws another grid.
+///
+/// What forty seeds found on 2026-11-04, by kind:
+///
+/// - `+` and `-` between exact numbers: Polars answers `#ERROR` where the
+///   engine, whose point moves when a result has no room, answers. Seen
+///   where the sum needs the 39th digit at the column's shared scale.
+/// - `*` between exact numbers (`Decimal`, `Integer`, `Percent`, any two):
+///   Polars wraps the product to a plausible number. The engine is right.
+/// - Any operator with a `Float` on one side (`+ - * /`): the last digit
+///   differs, the two paths turning a `Decimal` into an `f64` differently.
+/// - `//` with different types on its two sides: the engine keeps the left
+///   value as it is, and Polars makes the result a `Float`, which loses
+///   digits from a `Decimal` or an `Integer`.
+///
+/// `**`, `/` between exact numbers (which is not lowered), the comparisons
+/// and the logical operators never disagreed.
+#[test]
+#[ignore = "finds standing disagreements at the ends of the decimal range; see above"]
+fn a_grid_at_the_ends_of_the_ranges_agrees_either_way() {
+    // `KERNEL_SEED=<number>` draws a different grid, to look further than the
+    // one written down; the failure says which seed it was.
+    let seed: u64 = std::env::var("KERNEL_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0x5EED_0000_0000_00A1);
+    let mut differ = Vec::new();
+    let mut by_op: std::collections::BTreeMap<String, usize> = Default::default();
+    for (ta, ea) in TYPES {
+        for (tb, eb) in TYPES {
+            let mut lcg = Lcg(ta
+                .bytes()
+                .chain(*b"|")
+                .chain(tb.bytes())
+                .fold(seed, |h, b| h.wrapping_mul(31).wrapping_add(b as u64)));
+            // The scale each column of decimals is held at, drawn from the
+            // whole range: 0 is whole numbers, 37 is almost all fraction.
+            const CAPS: [usize; 6] = [0, 4, 10, 18, 28, 37];
+            let (ca, cb) = (CAPS[lcg.below(6) as usize], CAPS[lcg.below(6) as usize]);
+            let mut rows: Vec<(String, String)> = (0..12)
+                .map(|_| (lcg.wide(ta, ea, ca), lcg.wide(tb, eb, cb)))
+                .collect();
+            rows.push((String::new(), lcg.wide(tb, eb, cb)));
+            rows.push((lcg.wide(ta, ea, ca), String::new()));
+            for op in OPS {
+                let text = sheet(ta, tb, op, &rows);
+                if let Some(how) = difference(&text, &rows) {
+                    *by_op.entry(op.to_string()).or_default() += 1;
+                    differ.push(format!("`{ta} {op} {tb}`: {how}"));
+                }
+            }
+        }
+    }
+    eprintln!("disagreements by operator: {by_op:?}");
+    assert!(
+        differ.is_empty(),
+        "{} of the grid disagree:\n{}",
+        differ.len(),
+        differ.join("\n")
+    );
 }

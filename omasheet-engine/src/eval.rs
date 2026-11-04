@@ -628,6 +628,7 @@ impl<'p> Engine<'p> {
         if out.dtype != DataType::Boolean {
             return refused(self);
         }
+        let risk = cx.at_risk();
         let columns = cx.taken();
         // A condition reading no column is the same answer for every row,
         // and the engine has it without a plan.
@@ -637,6 +638,12 @@ impl<'p> Engine<'p> {
         let Ok(frame) = DataFrame::new(columns) else {
             return refused(self);
         };
+        // A row an arithmetic of the condition might not fit is one Polars
+        // cannot be believed for, so the engine picks the rows.
+        if risk.is_some_and(|risk| any_at_risk(&frame, risk)) {
+            self.filters.borrow_mut().push((t, Attempt::Failed));
+            return None;
+        }
         // `#row` is a name no omasheet column can have, so it cannot be one
         // of the sheet's own.
         let kept = frame
@@ -697,11 +704,16 @@ impl<'p> Engine<'p> {
         if out.dtype != DataType::Boolean {
             return None;
         }
+        let risk = cx.at_risk();
         let columns = cx.taken();
         if columns.is_empty() || columns.iter().any(|c| c.len() != nrows) {
             return None;
         }
-        Some((DataFrame::new(columns).ok()?, out.expr))
+        let frame = DataFrame::new(columns).ok()?;
+        if risk.is_some_and(|risk| any_at_risk(&frame, risk)) {
+            return None;
+        }
+        Some((frame, out.expr))
     }
 
     /// The rows of a whole sheet in the order its key columns put them,
@@ -1202,6 +1214,10 @@ impl<'p> Engine<'p> {
         if col.declared && !out.ty()?.assignable_to(col.ty) {
             return None;
         }
+        // A row whose result might not fit is nothing here, and a nothing
+        // with every column present is the one `run_lowered` does not
+        // believe: the column is then the engine's, whole.
+        let risk = cx.at_risk();
         let columns = cx.taken();
         // An expression reading no column at all is one value repeated, and
         // the row loop has already memoised it by the second row.
@@ -1209,7 +1225,13 @@ impl<'p> Engine<'p> {
             return None;
         }
         let frame = DataFrame::new(columns).ok()?;
-        Some((frame, out.expr.alias(col.name.as_str())))
+        let expr = match risk {
+            Some(risk) => polars::prelude::when(risk)
+                .then(polars::prelude::lit(polars::prelude::NULL).cast(out.dtype.clone()))
+                .otherwise(out.expr),
+            None => out.expr,
+        };
+        Some((frame, expr.alias(col.name.as_str())))
     }
 
     /// Column `c` of sheet `t` as a Polars column, in the order of its rows:
@@ -3710,6 +3732,19 @@ fn ordinal_day(days: i32) -> i64 {
 /// column was there and whose answer is nothing. The leading space is what
 /// keeps it from any name a column of a sheet could have.
 const UNACCOUNTED: &str = " unaccounted for";
+
+/// Whether the test is true for any row of the frame, or cannot be had:
+/// either way the plan is not one to believe.
+fn any_at_risk(frame: &DataFrame, risk: Expr) -> bool {
+    frame
+        .clone()
+        .lazy()
+        .select([risk.any(true)])
+        .collect()
+        .ok()
+        .and_then(|df| df.get_columns().first()?.bool().ok()?.get(0))
+        .unwrap_or(true)
+}
 
 /// Whether every null in a lowered column is one the columns it read
 /// account for. A flag that cannot be read at all counts as not.
