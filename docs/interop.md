@@ -58,7 +58,8 @@ an object of such lists is a sheet for each, named by its key.
   `Decimal`, and `1.5e3` a `Float`. `true` and `false` are `Boolean`, and `null`
   is an empty cell.
 - JSON has no dates, so a string that is a date, a time or a date-time is
-  one. So is `"Inf"`, `"-Inf"` or `"NaN"`. Any other string is text, a
+  one. So is a string that is a `Complex`, `"3+4i"`, or `"Inf"`, `"-Inf"`
+  or `"NaN"`. Any other string is text, a
   number in quotes too: `"42"`.
 - A list or an object inside a row is kept as text, and reported.
 
@@ -139,7 +140,8 @@ row become a cell. Each formula is written for the row it is on:
 - These are not, and the value is written: a calculation on a whole column
   at once, `Sales.Revenue * 2`; rows picked by any other condition, by a
   list or by a range value; `in` and ranges as values; `//` after a
-  calculation; text conversions; time zones; complex numbers. Each is
+  calculation; text conversions; time zones; complex numbers (a workbook has
+  none). Each is
   reported with the columns it happened in.
 - A cell that comes to nothing, or that failed, is left empty, with no
   formula.
@@ -173,6 +175,7 @@ name. With `--sheet` it is the rows of that sheet alone.
 | `Integer`, `Decimal`, `Fraction` | a number, in full; one that does not end, such as `1/3`, as `0.333333333333333333333333333333` |
 | `Percent` | the number it stands for: `20%` is `0.2` |
 | `Float` | a number; `Inf`, `-Inf` and `NaN` as strings |
+| `Complex` | a string, as a file writes it: `"3+4i"` |
 | `String`, `Boolean` | a string; `true` or `false` |
 | `Date`, `Time`, `Datetime` | a string, as a file writes it: `"2025-01-31"` |
 | an empty cell, or one that failed | `null` |
@@ -214,6 +217,7 @@ type its own name stands for rather than converted into something near it.
 | `Integer` | `int64` |
 | `Decimal`, `Percent` | `decimal(38, s)`, at the widest scale the column needs |
 | `Float` | `double` |
+| `Complex` | a `struct` of two `double`s, `re` and `im` |
 | `Boolean` | `boolean` |
 | `String` | UTF-8 `byte_array` |
 | `Date` | `date32` |
@@ -230,7 +234,10 @@ would not read back as it: a `double` column becomes `Age : Float`, while an
 there is still the schema's type, not a guess. A column that is all nulls,
 or whose values do not go together, has no line to hold it and reads as its
 cells do. A column Parquet holds in a shape a sheet cannot render — a list,
-a struct, a map — is left out and named in a notice.
+a struct, a map — is left out and named in a notice. The one struct a sheet
+does render is a `Complex`: exactly two `double` fields, `re` then `im`. A
+null struct is an empty cell; one with only one of its parts null is not a
+number, and is left empty.
 
 A `Percent` is written as the decimal it holds: `20%` is `0.2`. Its display
 is no part of its value, so it comes back as a `Decimal`.
@@ -272,7 +279,11 @@ computed sheet's columns are kept as a sheet of their own rows.
 An import copies the rows into the `.omx`. A `table` leaves them where they
 are — `table Sales := dataframe['sales.parquet']`, written up in
 [the format guide](format.md) — and then reads as little of the file as the
-question needs.
+question needs. The file may be Parquet or CSV; a CSV is first copied to
+Parquet in the cache (`$OMASHEET_CACHE`, else `$XDG_CACHE_HOME/omasheet`, else
+`~/.cache/omasheet`), once for each version of the file, and read from that
+copy. The app shows a sample of its first 1,000 rows while the copy is
+written; the command line waits for it.
 
 Opening one reads the footer and nothing else: the schema, which is where
 the columns and their types come from, and the row count, which is the

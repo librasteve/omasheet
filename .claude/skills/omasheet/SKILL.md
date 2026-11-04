@@ -96,7 +96,10 @@ sheet Summary
 - Older files leave out the outer pipes and the `---` line, `Jan | 100`; they
   still read. There a `|` at the start or end of a row is an empty cell.
 - `table Name := dataframe['data/sales.parquet']` in place of `sheet Name`: a
-  sheet whose rows are in one Parquet file beside the `.omx`.
+  sheet whose rows are in one Parquet file beside the `.omx`. A `.csv` works
+  too (`dataframe['data/sales.csv']`), read through a cached Parquet copy;
+  its types are inferred from the first 10,000 rows, so a price column is
+  `Float`, not `Decimal`.
   Write the `Column : Type` lines it expects and no rows; its columns are
   selected and computed over as any sheet's, but no cell of it can be
   edited and nothing is written back to the files.
@@ -133,7 +136,7 @@ sheet Summary
 
 ## Types
 
-`Integer`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,
+`Integer`, `Decimal`, `Fraction`, `Percent`, `Float`, `Complex`, `String`, `Boolean`,
 `Date`, `Time`, `Datetime`, `Duration`, `Url`, `Email`, `Uuid`.
 A column with no type line takes its type from its cells, which is usually
 what you want; declare one when the cells could be read another way.
@@ -145,6 +148,7 @@ what you want; declare one when the cells could be read another way.
 | `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction, `1/7` and `2 3/4` |
 | `Percent` | `20%` — exact, shown as a percentage |
 | `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `'Inf'` in code, `"Inf"` in a cell), which is what a division by zero gives |
+| `Complex` | `3+4i`, `-1.5-2i`, `2i` — two `Float` parts, above `Float` in the lattice; no order, so no `<` or sort. `re im conj arg` and `abs sqrt exp ln` take one; `z.Float` works only where the imaginary part is zero (to within `1e-15`) |
 | `Boolean` | `true`, `false` |
 | `Date`, `Time`, `Datetime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO. A fraction of a second goes after the seconds, `09:30:15.5`: nine digits for a `Time`, six for a `Datetime` |
 | `Duration` | `PT1H30M`, `P2D`, `-PT30M` — ISO 8601, weeks to seconds only (no `Y`, no calendar `M`). Two dates or times subtract to one; get a number with `.total_hours()` and the like |

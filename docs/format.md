@@ -64,9 +64,9 @@ Tax    := Profit * 20%
 of its name in the header row is an error, and so is anything but `*` in a
 cell of a computed column.
 
-## Tables: a sheet whose rows are in Parquet
+## Tables: a sheet whose rows are in Parquet or CSV
 
-A sheet may read its rows from a Parquet file instead of holding them:
+A sheet may read its rows from a Parquet or CSV file instead of holding them:
 
 ```omx
 table Sales := dataframe['data/sales.parquet']
@@ -79,8 +79,16 @@ Profit := Revenue - Cost
 ```
 
 `table` takes the place of `sheet` and closes the sheet before it. The
-string names one Parquet file, read from beside the `.omx` file. No row is
-written in the file, and the row count comes from the Parquet.
+string names one Parquet or CSV file, read from beside the `.omx` file. No
+row is written in the file, and the row count comes from the Parquet.
+
+A CSV is named the same way, `dataframe['data/sales.csv']`, and is read
+through a Parquet copy kept in the cache, so everything below holds for it
+too. Its column types are not written in the file, so they are worked out
+from its first 10,000 rows: a schema line must say what was found, and a
+column of `1.5`, `2.25` and `4` is `Float`, never `Decimal`. A CSV that
+holds exact decimals is better imported (`omasheet import`), or written as
+Parquet, which carries its types.
 
 A column whose name in the file is not a name a formula could write — one
 with a space or a slash in it, which Parquet allows and omasheet does not —
@@ -208,6 +216,7 @@ read as one; `Integer` is what is written.
 | `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction |
 | `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
 | `Float` | `1.5e3`, `Inf`, `-Inf`, `NaN` — floating point |
+| `Complex` | `3+4i`, `-1.5-2i`, `2i` — a real and an imaginary part, each a `Float`; a real number in a `Complex` column is that number with no imaginary part |
 | `String` | `hi` or `"hi"`  (escape \|) |
 | `Boolean` | `true`, `false` |
 | `Date` | `2025-01-31` |
@@ -301,18 +310,24 @@ column of one takes the others, showing what it holds its own way: `1/7` is
 column, and `14.29%` in a `Percent` column.
 
 The types sit in a lattice, and a column, a sum or a product takes the join
-of what is in it. `Integer`, `Decimal` and `Float` each take over the one
-before: `1` with `1.0` is a `Decimal`, and either with `1e0` a `Float`.
+of what is in it. `Integer`, `Decimal`, `Float` and `Complex` each take over
+the one before: `1` with `1.0` is a `Decimal`, either with `1e0` a `Float`,
+and any of them with `3+4i` a `Complex`.
 `Hex`, `Octal` and `Binary` are `Integer`s shown another way, and `Fraction`
 and `Percent` are `Decimal`s shown another way. Two of one give that one;
 two different ones, or one with its parent, give the parent:
 
-| | `1` | `1.0` | `1e0` | text |
-|---|---|---|---|---|
-| `1` | `Integer` | `Decimal` | `Float` | any |
-| `1.0` | `Decimal` | `Decimal` | `Float` | any |
-| `1e0` | `Float` | `Float` | `Float` | any |
-| text | any | any | any | `String` |
+| | `1` | `1.0` | `1e0` | `3+4i` | text |
+|---|---|---|---|---|---|
+| `1` | `Integer` | `Decimal` | `Float` | `Complex` | any |
+| `1.0` | `Decimal` | `Decimal` | `Float` | `Complex` | any |
+| `1e0` | `Float` | `Float` | `Float` | `Complex` | any |
+| `3+4i` | `Complex` | `Complex` | `Complex` | `Complex` | any |
+| text | any | any | any | any | `String` |
+
+A member of a family joins with a `Complex` as its parent would: `0x10 + 1i`
+is `16+1i`. A `Complex` has no order, so it cannot be compared with `<` or
+sorted, but `=` and `!=` compare both parts exactly.
 
 | | `0b1` | `0o1` | `0x1` | `1` |
 |---|---|---|---|---|
@@ -326,6 +341,12 @@ two different ones, or one with its parent, give the parent:
 | `100%` | `Percent` | `Decimal` | `Decimal` |
 | `1/1` | `Decimal` | `Fraction` | `Decimal` |
 | `1.0` | `Decimal` | `Decimal` | `Decimal` |
+
+A cell in a column with a declared type is accepted when it converts to that
+type, and is then shown in the type's own format: `0b1` in an `Integer` column
+is shown `1`, and `3+0i` in a `Float` column is `3`. A `Complex` converts to a
+real number only when its imaginary part is zero, to within `1e-15`, as in
+Raku, so `3+4i` in a `Float` column is an error.
 
 A column of numbers and text is of any type, and each cell is as it was
 written. What a file keeps of a cell is the text that was entered: a number
