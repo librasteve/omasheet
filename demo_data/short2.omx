@@ -1,1 +1,0 @@
-table Yellow_tripdata_2026_01 := dataframe['yellow_tripdata_2026-01.parquet']
