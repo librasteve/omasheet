@@ -75,6 +75,7 @@ omasheet print examples/budget.omx      # print the calculated file
 omasheet eval '1/3 + 1/6'               # 0.5, exactly
 omasheet export examples/budget.omx --xlsx [or --csv | --json | --parquet]
 omasheet render examples/report.md --html
+omasheet render examples/showcase/short-report.md --html   # no .omx file, the sheet is in the Markdown
 ```
 
 ## AI Skill
