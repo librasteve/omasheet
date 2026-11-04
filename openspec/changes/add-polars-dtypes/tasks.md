@@ -84,7 +84,7 @@ that change goes on beside it.
 - [ ] 5.3 `DateTime` subsumes `Zoned`: one type carrying an optional zone,
       with `convert_time_zone`, `utc`, `local`, `base_utc_offset` and
       `time_zone` returning it
-- [ ] 5.3a A column may **declare** its zone, which today only a computed
+- [x] 5.3a A column may **declare** its zone, which today only a computed
       column can have (owner, 2026-10-26): `Logged : Datetime("Europe/London")`,
       mirroring how Polars prints the dtype, and unambiguous because `Time`
       and `Duration` take no argument. The rejected alternative was a clause,
@@ -134,7 +134,7 @@ Each of these is then carried through Parquet, as task 2.9 of
 - [x] 7.5 Mark D11 superseded in
       `archive/add-sheet-operations/design.md`. Found done, 2026-10-31:
       it reads Superseded, by D14 here
-- [ ] 7.6 Version bump, and a note that the change is breaking
+- [x] 7.6 Version bump, and a note that the change is breaking. The bump was 0.1.6; the README note was added 2026-11-04
 
 ## 8. Verification
 

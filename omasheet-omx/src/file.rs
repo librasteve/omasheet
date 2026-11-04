@@ -106,6 +106,11 @@ pub struct SchemaLine {
     /// How the column's values are shown: `Price : Decimal['.2f]`,
     /// `Due : Date[%d %b %Y]`.
     pub format: Option<Format>,
+    /// The time zone a `Datetime` column declares: `Logged :
+    /// Datetime("Europe/London")`. Its cells are the wall clock of that
+    /// zone. The name is as written; whether there is such a zone is for
+    /// the engine.
+    pub zone: Option<(String, Span)>,
 }
 
 #[derive(Debug)]
@@ -617,6 +622,42 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             // format is read once the type says which kind it is.
             let mut format_text = None;
             let mut after_ty = &body[k..];
+            // `Datetime("Europe/London")`: the zone its cells are the wall
+            // clock of, before any format.
+            let mut zone = None;
+            if k > 0 && after_ty.starts_with('(') {
+                let open = ty_at + k + 1;
+                let inner = &after_ty[1..];
+                match inner.find(')') {
+                    Some(close) => {
+                        let text = inner[..close].trim();
+                        let name = text
+                            .strip_prefix('"')
+                            .and_then(|t| t.strip_suffix('"'))
+                            .or_else(|| text.strip_prefix('\'').and_then(|t| t.strip_suffix('\'')));
+                        match name {
+                            Some(name) if is_zone_name(name) => {
+                                zone = Some((name.to_string(), Span::new(src, open, open + close)));
+                            }
+                            _ => diags.push(
+                                Diagnostic::new(
+                                    Span::new(src, open, open + close),
+                                    "a zone is the name of a time zone in quotes".to_string(),
+                                )
+                                .with_help("as `Datetime(\"Europe/London\")`"),
+                            ),
+                        }
+                        after_ty = &after_ty[close + 2..];
+                    }
+                    None => {
+                        diags.push(Diagnostic::new(
+                            Span::new(src, open - 1, ty_at + body.len()),
+                            "a zone is closed with `)`".to_string(),
+                        ));
+                        after_ty = "";
+                    }
+                }
+            }
             if k > 0 && after_ty.starts_with('[') {
                 let open = ty_at + k + 1;
                 match closing(&after_ty[1..]) {
@@ -677,6 +718,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                         from,
                         from_span,
                         format,
+                        zone,
                     })
                 }
                 None => diags.push(

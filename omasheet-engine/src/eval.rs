@@ -209,9 +209,18 @@ pub struct Engine<'p> {
 }
 
 /// The complaint about a file that names a time zone there is none of.
-pub fn unknown_zone(prog: &Program) -> Option<Diagnostic> {
-    let (name, span) = prog.zone.as_ref()?;
-    Zone::named(name).is_none().then(|| no_zone(name, *span))
+pub fn unknown_zone(prog: &Program) -> Vec<Diagnostic> {
+    let columns = prog
+        .sheets
+        .iter()
+        .flat_map(|t| t.cols.iter())
+        .filter_map(|c| c.zone.as_ref());
+    prog.zone
+        .iter()
+        .chain(columns)
+        .filter(|(name, _)| Zone::named(name).is_none())
+        .map(|(name, span)| no_zone(name, *span))
+        .collect()
 }
 
 fn no_zone(name: &str, span: Span) -> Diagnostic {
@@ -419,7 +428,7 @@ impl<'p> Engine<'p> {
                 .iter()
                 .map(|t| Rc::new((0..t.cols.len()).collect()))
                 .collect(),
-            diags: RefCell::new(unknown_zone(&prog).into_iter().collect()),
+            diags: RefCell::new(unknown_zone(&prog)),
             options,
             home,
             local,
@@ -1239,13 +1248,28 @@ impl<'p> Engine<'p> {
         (own || self.cells.borrow()[t][c].is_none()).then_some(column)
     }
 
+    /// One literal of column `c` of sheet `t`. In a column that declares a
+    /// zone a date-time is the wall clock of that zone, so it is read as an
+    /// instant there; a time the zone's clocks never show is left as it is.
+    fn lit_in(&self, t: usize, c: usize, l: &Lit) -> Value {
+        let col = &self.prog.sheets[t].cols[c];
+        if let (Some((name, span)), Lit::DateTime(wall)) = (&col.zone, l)
+            && let Ok(zone) = self.zone(name, *span)
+            && let Some(utc) = zone.to_utc(*wall)
+            && let Some(z) = Zoned::at(utc, &zone, &self.home)
+        {
+            return Value::Zoned(Rc::new(z));
+        }
+        lit_value(l, col.ty)
+    }
+
     /// A value of column `c` of sheet `t`, as it is held by Polars, read as
     /// [`Engine::column_shown`] reads it.
     pub fn value_of(&self, t: usize, c: usize, value: AnyValue) -> Value {
         let ty = self.prog.sheets[t].cols[c].ty;
         match cell_of(value, ty) {
             Cell::Empty => Value::Null,
-            Cell::Lit(l) => lit_value(&l, ty),
+            Cell::Lit(l) => self.lit_in(t, c, &l),
             _ => Value::Error,
         }
     }
@@ -1256,6 +1280,12 @@ impl<'p> Engine<'p> {
     /// to be held as, or that holds a value which does not fit the type the
     /// column says it has.
     fn pl_column(&self, t: usize, c: usize) -> Option<PlColumn> {
+        // A declared zone puts the cells on the clocks of that zone, so the
+        // instant is not the number a dataframe would hold them as; the
+        // values of such a column are the engine's own.
+        if self.prog.sheets[t].cols[c].zone.is_some() {
+            return None;
+        }
         // Cloning a Polars column clones the handles, not the buffers.
         if let Some(held) = self.held.borrow()[t][c].clone() {
             return Some(held);
@@ -1350,7 +1380,7 @@ impl<'p> Engine<'p> {
         // short row in the text is.
         let value_of = |cell: Option<&Cell>| match cell {
             None | Some(Cell::Empty) => Ok(Value::Null),
-            Some(Cell::Lit(l)) => Ok(lit_value(l, col.ty)),
+            Some(Cell::Lit(l)) => Ok(self.lit_in(t, c, l)),
             Some(Cell::Markdown(s)) => Ok(Value::String(Rc::from(s.as_str()), true)),
             Some(Cell::Formula(node)) => formula(node),
             Some(Cell::Invalid) => Err(Fail::Poison),
@@ -1641,6 +1671,22 @@ impl<'p> Engine<'p> {
         // own type — gave one or the other throughout. A column has one
         // type, so it has one dress, and both paths put it on.
         let v = dressed(v, col);
+        // A column with a zone shows an instant on that zone's clocks.
+        let v = match (&col.zone, &v) {
+            (Some((name, zspan)), Value::DateTime(_) | Value::Zoned(_)) => {
+                let zone = self.zone(name, *zspan)?;
+                let utc = match &v {
+                    Value::DateTime(wall) => self.home.to_utc(*wall),
+                    Value::Zoned(z) => Some(z.utc),
+                    _ => None,
+                };
+                match utc.and_then(|u| Zoned::at(u, &zone, &self.home)) {
+                    Some(z) => Value::Zoned(Rc::new(z)),
+                    None => return fail(span, "the date-time is out of range"),
+                }
+            }
+            _ => v,
+        };
         let ok = !col.declared
             || matches!(
                 (&v, col.ty),

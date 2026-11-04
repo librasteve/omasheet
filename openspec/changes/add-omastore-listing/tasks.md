@@ -13,7 +13,7 @@
 
 ## 3. Discovery
 - [x] 3.1 Add the `omarchy` topic, so the store finds the repository without a GitHub token
-- [ ] 3.2 `README.md`: link `omastore://librasteve/omasheet`
+- [x] 3.2 `README.md`: link `omastore://librasteve/omasheet`
 
 ## 4. Verify
 - [ ] 4.1 Install Omasheet from OmaStore on a clean machine and open an `.omx` file from the launcher

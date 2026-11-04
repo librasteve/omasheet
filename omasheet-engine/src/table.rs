@@ -245,6 +245,7 @@ fn fill(
                 kind: ColKind::Frame,
                 from: None,
                 format: None,
+                zone: None,
                 elementwise: false,
             });
         }

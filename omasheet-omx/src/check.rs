@@ -104,6 +104,9 @@ pub struct Column {
     /// How the column's values are shown, where its type line says:
     /// `Price : Decimal['.2f]`.
     pub format: Option<Format>,
+    /// The time zone a `Datetime` column declares, which its cells are the
+    /// wall clock of: `Logged : Datetime("Europe/London")`.
+    pub zone: Option<(String, Span)>,
     /// Every reference the formula makes reaches the row it is evaluated
     /// for, so the whole column is one expression over the columns it
     /// reads rather than a calculation per row. The dependency analysis
@@ -1067,6 +1070,22 @@ impl<'a> Checker<'a> {
                             "`from` names a column of a table's Parquet; this sheet holds its own rows",
                         ),
                     );
+                }
+                if let Some((_, span)) = &line.zone {
+                    if line.ty != S::DateTime {
+                        ck.done.push(
+                            Diagnostic::new(*span, format!("{} does not take a zone", line.ty))
+                                .with_help("only a Datetime column declares a zone"),
+                        );
+                    } else if t.source.is_some() {
+                        ck.done.push(
+                            Diagnostic::new(
+                                *span,
+                                format!("`{}` is read from a file, which holds its own zone", line.name),
+                            )
+                            .with_help("a declared zone is for a column of cells"),
+                        );
+                    }
                 }
                 match cols.iter_mut().find(|c| c.name == line.name) {
                     Some(c) if c.declared.is_some() => ck.done.push(Diagnostic::new(
@@ -4734,11 +4753,14 @@ impl<'a> Checker<'a> {
                 let kind = self.col_out[t][c]
                     .take()
                     .unwrap_or(ColKind::Computed(Node::error(col.span)));
-                let format = self
+                let line = self
                     .ast
                     .and_then(|ast| ast.sheets.get(info.decl))
-                    .and_then(|decl| decl.schema.iter().find(|l| l.name == col.name))
-                    .and_then(|l| l.format.clone());
+                    .and_then(|decl| decl.schema.iter().find(|l| l.name == col.name));
+                let format = line.and_then(|l| l.format.clone());
+                let zone = line
+                    .filter(|l| l.ty == S::DateTime)
+                    .and_then(|l| l.zone.clone());
                 cols.push(Column {
                     name: col.name,
                     span: col.span,
@@ -4746,6 +4768,7 @@ impl<'a> Checker<'a> {
                     declared: col.declared.is_some(),
                     from: col.from,
                     format,
+                    zone,
                     // A column of cells or of a file's own rows is not a
                     // formula, so there is nothing of it to lower, whatever
                     // the cells' own formulas read.

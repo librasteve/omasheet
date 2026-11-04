@@ -3757,3 +3757,23 @@ fn the_polars_tests_say_what_is_wrong_before_any_row_is_read() {
     assert_eq!(calc("0 < 5 <= 10"), "true");
     assert_eq!(calc("0 < 5 <= 4"), "false");
 }
+
+#[test]
+fn a_column_declares_its_zone() {
+    let file = "sheet Log\n\nLogged : Datetime(\"Europe/London\")\n\n\
+                Logged | N\n2025-03-01T09:30 | 1\n2025-07-01T09:30 | 2\n";
+    // Shown with the offset of the zone's own daylight saving.
+    assert_eq!(ask(file, "Log[Logged; 0]"), "2025-03-01T09:30+00:00");
+    assert_eq!(ask(file, "Log[Logged; 1]"), "2025-07-01T09:30+01:00");
+    // Subtracted on the instant: an hour short of 122 days, for the clocks
+    // going forward between the two.
+    assert_eq!(
+        ask(file, "Log.Logged.max() - Log.Logged.min()"),
+        "P121DT23H"
+    );
+    // Only a Datetime declares one, and the zone has to exist.
+    let bad = file.replace("Datetime(", "Date(");
+    assert!(lint_errors(&bad)[0].contains("does not take a zone"));
+    let bad = file.replace("Europe/London", "Mars/Base");
+    assert!(lint_errors(&bad)[0].contains("there is no time zone"));
+}
