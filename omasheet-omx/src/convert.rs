@@ -33,6 +33,22 @@ pub fn parse_mixed(text: &str) -> Option<Dec> {
     if negative { r.checked_neg() } else { Some(r) }
 }
 
+/// How near zero the imaginary part of a `Complex` must be for it to be
+/// made a real number: Raku's `$*TOLERANCE`, and an absolute test. Nothing
+/// else in the language uses a tolerance (D201, D202).
+pub const IMAG_TOLERANCE: f64 = 1e-15;
+
+/// A `Complex` as it is written, `3+4i`, for a message.
+pub fn complex_text(re: f64, im: f64) -> String {
+    let sign = if im.is_sign_negative() && !im.is_nan() {
+        '-'
+    } else {
+        '+'
+    };
+    let i = if im.is_finite() { "i" } else { "\\i" };
+    format!("{re}{sign}{}{i}", im.abs())
+}
+
 /// A value written on its own, such as `42`, `-1/7`, `2 3/4`, `3+4i` or
 /// `2025-01-31`. `None` if the text is anything else.
 pub fn parse_literal(text: &str) -> Option<Lit> {
@@ -47,6 +63,28 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
             .checked_div(Dec::from_i64(d))
             .map(Lit::Fraction)
     };
+    // A complex number: `4i`, `3+4i`, `-1.5-2i`.
+    let real = |t: &Tok| match t {
+        Tok::Int(n, _) => Some(*n as f64),
+        // Read as the nearest `f64`, as the imaginary part is, so that a
+        // part written from a `Float` reads back as that `Float`.
+        Tok::Decimal(r) | Tok::Percent(r) => r.to_plain_string().parse().ok(),
+        Tok::Float(f) => Some(*f),
+        _ => None,
+    };
+    let (negative, rest) = match toks.as_slice() {
+        [Tok::Minus, rest @ ..] => (true, rest),
+        rest => (false, rest),
+    };
+    let sign = if negative { -1.0 } else { 1.0 };
+    match rest {
+        [Tok::Imag(im), Tok::Eof] => return Some(Lit::Complex(0.0, sign * im)),
+        [re, op @ (Tok::Plus | Tok::Minus), Tok::Imag(im), Tok::Eof] => {
+            let im = if **op == Tok::Minus { -im } else { *im };
+            return Some(Lit::Complex(sign * real(re)?, im));
+        }
+        _ => {}
+    }
     Some(match toks.as_slice() {
         [
             Tok::Int(n, Base::Dec),
@@ -90,6 +128,7 @@ pub fn lit_type(l: &Lit) -> S {
         Lit::Fraction(_) => S::Fraction,
         Lit::Percent(_) => S::Percent,
         Lit::Float(_) => S::Float,
+        Lit::Complex(..) => S::Complex,
         Lit::String(_) => S::String,
         Lit::Boolean(_) => S::Boolean,
         Lit::Date(_) => S::Date,
@@ -125,6 +164,28 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     };
     if from == to || to == S::Any {
         return Ok(lit.clone());
+    }
+    // A `Complex` is a real number when its imaginary part is zero, to
+    // within Raku's tolerance, and is otherwise refused (D201).
+    if let Lit::Complex(re, im) = lit {
+        if to == S::Boolean {
+            return Ok(Lit::Boolean(*re != 0.0 || *im != 0.0));
+        }
+        if to.is_exact() || to == S::Float {
+            return if im.abs() < IMAG_TOLERANCE {
+                if to == S::Float {
+                    Ok(Lit::Float(*re))
+                } else {
+                    // An exact number is made from the real part's value.
+                    convert(&Lit::Float(*re), S::Decimal).and_then(|d| convert(&d, to))
+                }
+            } else {
+                Err(format!(
+                    "Cannot convert {} to {to}: imaginary part not zero",
+                    complex_text(*re, *im)
+                ))
+            };
+        }
     }
     // A fraction is the exact number it stands for, shown as a fraction, so it
     // is converted as that number is; and any exact number may be one.
@@ -222,6 +283,13 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
                 None => return no(),
             }
         }
+        (
+            Lit::Int(..) | Lit::Decimal(_) | Lit::Percent(_) | Lit::Boolean(_) | Lit::Float(_),
+            S::Complex,
+        ) => match real(lit) {
+            Some(f) => Lit::Complex(f, 0.0),
+            None => return no(),
+        },
         (Lit::Int(n, _), S::Boolean) => Lit::Boolean(*n != 0),
         (Lit::Decimal(r), S::Boolean) => Lit::Boolean(!r.is_zero()),
         (Lit::Float(f), S::Boolean) => Lit::Boolean(*f != 0.0),
@@ -246,7 +314,7 @@ mod tests {
         assert_eq!(parse_literal("'x'"), None);
     }
 
-    const TYPES: [S; 15] = [
+    const TYPES: [S; 16] = [
         S::Int,
         S::Hex,
         S::Octal,
@@ -254,6 +322,7 @@ mod tests {
         S::Decimal,
         S::Percent,
         S::Float,
+        S::Complex,
         S::String,
         S::Boolean,
         S::Date,
@@ -306,6 +375,16 @@ mod tests {
         assert_eq!(parse_literal("1 2 3/4"), None);
         assert_eq!(convert(&lit("1.5e3"), S::Int), Ok(lit("1500")));
         assert_eq!(convert(&lit("1/4"), S::Float), Ok(Lit::Float(0.25)));
+        assert_eq!(convert(&lit("3"), S::Complex), Ok(Lit::Complex(3.0, 0.0)));
+        // A Complex is a real number only when its imaginary part is zero.
+        assert_eq!(convert(&lit("3+0i"), S::Int), Ok(lit("3")));
+        assert_eq!(convert(&lit("3+1e-16i"), S::Float), Ok(Lit::Float(3.0)));
+        assert!(convert(&lit("3+1e-15i"), S::Float).is_err());
+        assert_eq!(
+            convert(&lit("3+4i"), S::Float),
+            Err("Cannot convert 3+4i to Float: imaginary part not zero".to_string())
+        );
+        assert_eq!(convert(&lit("3+4i"), S::Boolean), Ok(lit("true")));
         assert_eq!(convert(&lit("true"), S::Int), Ok(lit("1")));
         assert_eq!(convert(&lit("0.5"), S::Boolean), Ok(lit("true")));
         assert!(convert(&Lit::Float(f64::NAN), S::Int).is_err());

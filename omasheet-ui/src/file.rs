@@ -626,7 +626,7 @@ impl qobject::File {
             name => name,
         };
         let doc = document(&format!(
-            "table {name} := dataframe[{}]\n",
+            "view {name} := dataframe[{}]\n",
             omasheet_engine::omx::lexer::quoted(full)
         ));
         let csv = omasheet_engine::table::is_csv(path);
@@ -653,7 +653,7 @@ impl qobject::File {
         let status = if csv {
             String::new()
         } else {
-            format!("Opened {file} as a read-only table ({rows} rows)")
+            format!("Opened {file} as a read-only view ({rows} rows)")
         };
         self.refresh(&status);
         true
@@ -885,7 +885,7 @@ impl qobject::File {
     }
 
     /// Edit sheet `sheet`, and say why in the status bar when it takes no
-    /// edit at all: a `table` is a read-only view of its Parquet file.
+    /// edit at all: a `view` is read-only over its Parquet file.
     fn edit_sheet(
         mut self: Pin<&mut Self>,
         sheet: i32,

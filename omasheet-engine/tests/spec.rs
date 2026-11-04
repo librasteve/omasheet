@@ -914,6 +914,62 @@ fn index_with_no_sheet_name() {
 }
 
 #[test]
+fn complex_numbers() {
+    // Written with `i`, and built from parts.
+    assert_eq!(calc("3+4i"), "3+4i");
+    assert_eq!(calc("(1+2i) * (3-1i)"), "5+5i");
+    assert_eq!(calc("2i * 2i"), "-4+0i");
+    assert_eq!(calc("Complex(3, 4) == 3+4i"), "true");
+    assert_eq!(calc("[re(3+4i), im(3+4i), abs(3+4i)]"), "[3, 4, 5]");
+    assert_eq!(calc("conj(3+4i)"), "3-4i");
+    assert_eq!(calc("degrees(arg(2i))"), "90");
+    assert_eq!(calc("sqrt(-4+0i)"), "0+2i");
+    assert_eq!(calc("ln(exp(1+1i))"), "1+1i");
+    assert_eq!(calc("3.Complex"), "3+0i");
+    assert_eq!(calc("Complex(3, 4)"), "3+4i");
+    assert_eq!(calc("sqrt(-2+0i)"), "0+1.4142135623730951i");
+    // A Complex is above Float: any number beside one gives a Complex.
+    assert_eq!(calc("1 + 1i"), "1+1i");
+    assert_eq!(calc("0x10 + 1i"), "16+1i");
+    assert_eq!(calc("1/3 + 1i"), "0.3333333333333333+1i");
+    assert_eq!(calc("(1+1i) ** 2"), "0+2i");
+    assert_eq!(calc("2i ** -2"), "-0.25-0i");
+    assert_eq!(calc("[Inf\\i, 1+NaN\\i]"), "[0+Inf\\i, 1+NaN\\i]");
+    // Real numbers have the same parts.
+    assert_eq!(calc("[re(5/2), im(7), conj(3)]"), "[2.5, 0, 3]");
+    assert!(calc_err(None, "sin(1i)").contains("`sin` cannot be applied to Complex"));
+    // No order, but equality, exactly (D198, D202).
+    let e = calc_err(None, "1i < 2i");
+    assert!(e.contains("no order"), "{e}");
+    assert_eq!(calc("3+4i == 3+4i"), "true");
+    assert_eq!(calc("3+4i != 3+5i"), "true");
+    // Made a real number only where its imaginary part is zero (D201).
+    assert_eq!(calc("(3+0i).Integer"), "3");
+    assert_eq!(calc("(3+1e-16i).Float"), "3");
+    assert!(calc_err(None, "(3+4i).Float").contains("imaginary part not zero"));
+    assert!(calc_err(None, "(3+1e-15i).Float").contains("imaginary part not zero"));
+    // A column of them: literal cells, a real number, and a formula.
+    let file = "sheet Z\n\nV : Complex\n\nV | Size\n3+4i | *\n-2i | *\n5 | *\n-1.5-2i | *\n= [V; *-4] * 1i | *\n\nSize := abs(V)\n";
+    assert_eq!(ask(file, "Z.V"), "[3+4i, 0-2i, 5+0i, -1.5-2i, -4+3i]");
+    assert_eq!(ask(file, "Z.Size"), "[5, 2, 5, 2.5, 5]");
+    assert_eq!(ask(file, "Z.V.sum()"), "2.5+3i");
+    // Undeclared, a column of them is still Complex.
+    let inferred = file.replace("V : Complex\n\n", "");
+    assert_eq!(ask(&inferred, "Z[V; 1]"), "0-2i");
+    let bad = lint_errors("sheet Z\n\nV : Complex\n\nV\nfour\n");
+    assert!(bad[0].contains("such as `3+4i`"), "{bad:?}");
+    // A Complex in a Float column is accepted where its imaginary part is
+    // zero (D203).
+    let float = "sheet Z\n\nV : Float\n\nV\n3+0i\n";
+    assert_eq!(ask(float, "Z.V"), "[3]");
+    let refused = lint_errors("sheet Z\n\nV : Float\n\nV\n3+4i\n");
+    assert!(
+        refused[0].contains("imaginary part not zero"),
+        "{refused:?}"
+    );
+}
+
+#[test]
 fn math_functions() {
     // Exact numbers stay exact where they can.
     assert_eq!(calc("abs(-7/2)"), "3.5");
@@ -2563,7 +2619,10 @@ fn how_much_of_the_corpus_lowers() {
     // moved.
     assert_eq!(
         (offered, lowered, refused, failed),
-        (83, 27, 55, 1),
+        // `Complex` came back with `examples/complex.omx` and its columns in
+        // `types.omx`: 19 more, all refused, since a struct has no Polars
+        // arithmetic (restore-complex D200). Nothing else moved.
+        (102, 27, 74, 1),
         "the corpus lowers differently than task 8.3 records"
     );
 }
@@ -2628,7 +2687,7 @@ fn both_ways(file: &str, expr: &str, dir: Option<&str>) -> Ran {
 /// The titanic table of `examples/analysis.omx`, whose 887 rows are in a
 /// Parquet file.
 const TABLE: &str = "\
-table Passengers := dataframe['titanic.parquet']
+view Passengers := dataframe['titanic.parquet']
 
 Survived : Int
 Pclass   : Int

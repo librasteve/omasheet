@@ -64,12 +64,12 @@ Tax    := Profit * 20%
 of its name in the header row is an error, and so is anything but `*` in a
 cell of a computed column.
 
-## Tables: a sheet whose rows are in Parquet or CSV
+## Views: a sheet whose rows are in Parquet or CSV
 
 A sheet may read its rows from a Parquet or CSV file instead of holding them:
 
 ```omx
-table Sales := dataframe['data/sales.parquet']
+view Sales := dataframe['data/sales.parquet']
 
 Month   : String
 Revenue : Integer
@@ -78,7 +78,7 @@ Cost    : Integer
 Profit := Revenue - Cost
 ```
 
-`table` takes the place of `sheet` and closes the sheet before it. The
+`view` takes the place of `sheet` and closes the sheet before it. The
 string names one Parquet or CSV file, read from beside the `.omx` file. No
 row is written in the file, and the row count comes from the Parquet.
 
@@ -109,7 +109,7 @@ there is reported.
 The schema lines are the columns, in the order they are written, and they
 say what the file is expected to hold: a column the file holds under another
 type, or holds and the schema does not mention, is reported rather than
-quietly taken from either side. A table with no schema lines at all takes
+quietly taken from either side. A view with no schema lines at all takes
 its columns from the file, which is how a source is read before its schema
 has been written down.
 
@@ -141,12 +141,12 @@ own, with its name and its type. A grouped sheet has a row for each group,
 its key columns first and an aggregate after them, and a joined sheet a row
 for each pair of rows matched, the left sheet's columns and then the other's.
 
-All of them are read-only, as a table is: nothing is ever written back to
+All of them are read-only, as a view is: nothing is ever written back to
 the sheet they come from, and a cell of one cannot be edited. Its formula
 is its text, so that is what is changed — in the app, by the box at the top.
 A sort in the app's grid of a sheet made by a filter, a sort or a
 selection is written into its formula, as a `|> sort(…)` at the end; a
-grouped or joined sheet is sorted in the grid alone, as a table is, its
+grouped or joined sheet is sorted in the grid alone, as a view is, its
 formula ending in a stage nothing can come after.
 
 Exporting one writes its rows as values; importing them back gives a sheet

@@ -173,6 +173,24 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
                     .collect();
                 Series::new(name, v)
             }
+            // A struct of two `Float64`s, `re` and `im` (D195). A null cell
+            // has both parts null.
+            S::Complex => {
+                let part = |pick: fn((f64, f64)) -> f64, name: &str| {
+                    let v: Vec<Option<f64>> = cells
+                        .iter()
+                        .map(|v| match v {
+                            Value::Complex(re, im) => Some(pick((*re, *im))),
+                            other => exact(other).map(|d| pick((d.to_f64(), 0.0))),
+                        })
+                        .collect();
+                    Series::new(name.into(), v)
+                };
+                let (re, im) = (part(|z| z.0, "re"), part(|z| z.1, "im"));
+                StructChunked::from_series(name, cells.len(), [re, im].iter())
+                    .map_err(|e| e.to_string())?
+                    .into_series()
+            }
             S::Boolean => {
                 let v: Vec<Option<bool>> = cells
                     .iter()
@@ -482,6 +500,27 @@ fn cell(value: AnyValue<'_>, ty: S) -> Datum {
             match micros {
                 Some(m) => Datum::Lit(omasheet_engine::omx::duration::format(m), S::Duration),
                 None => Datum::Empty,
+            }
+        }
+        // A `Complex`: a struct of `re` and `im`, written as `3+4i`.
+        value @ (AnyValue::Struct(..) | AnyValue::StructOwned(_)) if ty == S::Complex => {
+            match omasheet_engine::dtype::complex_parts(value) {
+                Some((Some(re), Some(im))) => {
+                    // Each part as a `Float` is written, so that a very
+                    // large or small one is in e notation, not in digits.
+                    let sign = if im.is_sign_negative() && !im.is_nan() {
+                        '-'
+                    } else {
+                        '+'
+                    };
+                    let i = if im.is_finite() { "i" } else { "\\i" };
+                    Datum::Lit(
+                        format!("{}{sign}{}{i}", float_text(re), float_text(im.abs())),
+                        S::Complex,
+                    )
+                }
+                Some((None, None)) => Datum::Empty,
+                _ => Datum::Empty,
             }
         }
         // Anything else is written the way Polars shows it, as text.

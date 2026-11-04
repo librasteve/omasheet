@@ -88,7 +88,7 @@ yet applied, applies it and leaves the popup open, to try another; **OK** or
 Enter applies it and closes. **Clear filter** removes it and leaves the popup
 open. It is checked as it is
 typed, before anything is read: the box turns red while it is wrong, and
-holding the pointer over it says why. So the popup opens at once on a table
+holding the pointer over it says why. So the popup opens at once on a view
 of millions of rows. The circle is solid
 while the column is filtered, and filters on several columns all apply.
 
@@ -110,7 +110,7 @@ while the column is filtered, and filters on several columns all apply.
 
 A filter compares values, not what is shown, so `* == 3` finds a cell shown
 as `3.00`. An empty cell fails every comparison: `* != 3` hides empty cells
-too, and `* != 3 or * == ''` keeps them. On a table every filter is one
+too, and `* != 3 or * == ''` keeps them. On a view every filter is one
 Polars pass over the column. The [expressions](expressions.md#functions)
 lists the functions.
 

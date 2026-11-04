@@ -4164,6 +4164,7 @@ ApplicationWindow {
         TypeEntry { typeName: "Fraction"; narrower: true }
         TypeEntry { typeName: "Percent"; narrower: true }
         TypeEntry { typeName: "Float" }
+        TypeEntry { typeName: "Complex" }
         TypeEntry { typeName: "String" }
         TypeEntry { typeName: "Email"; narrower: true }
         TypeEntry { typeName: "Url"; narrower: true }

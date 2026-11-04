@@ -60,7 +60,7 @@ pub struct FuncDecl {
     pub doc: String,
 }
 
-/// `table <Name> := dataframe["<path>"]`: where a sheet's rows come from,
+/// `view <Name> := dataframe["<path>"]`: where a sheet's rows come from,
 /// when they are not in the file.
 #[derive(Debug)]
 pub struct SourceDecl {
@@ -459,8 +459,8 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             }
         }
 
-        // table <Name> := <expr>
-        if let Some(rest) = after_keyword(trimmed, "table") {
+        // view <Name> := <expr>
+        if let Some(rest) = after_keyword(trimmed, "view") {
             let n = ident_len(rest);
             let tail = rest[n..].trim_start();
             if n > 0 && tail.starts_with(":=") {
@@ -579,7 +579,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             diags.push(
                 Diagnostic::new(
                     Span::new(src, at, at + trimmed.len()),
-                    "expected `sheet <Name>`, `table <Name> := dataframe['<path>']`, \
+                    "expected `sheet <Name>`, `view <Name> := dataframe['<path>']`, \
                      `const <Name> = <expression>`, \
                      `fn <Name>(<parameters>) = <expression>` or `zone <Area/City>`",
                 )
@@ -864,7 +864,7 @@ mod tests {
     #[test]
     fn parses_a_number_format() {
         let mut diags = Vec::new();
-        let src = "table T := dataframe['x.parquet']\n\nPrice : Decimal['.2f]\nCount : Integer[#x] from 'Count of'\nAge : Float\n";
+        let src = "view T := dataframe['x.parquet']\n\nPrice : Decimal['.2f]\nCount : Integer[#x] from 'Count of'\nAge : Float\n";
         let ast = parse_file(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         let schema = &ast.sheets[0].schema;
@@ -941,7 +941,7 @@ mod tests {
     #[test]
     fn parses_a_from_clause() {
         let mut diags = Vec::new();
-        let src = "table T := dataframe['x.parquet']\n\nSiblings : Int from 'Siblings/Spouses Aboard'\nAge : Float\n";
+        let src = "view T := dataframe['x.parquet']\n\nSiblings : Int from 'Siblings/Spouses Aboard'\nAge : Float\n";
         let ast = parse_file(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         let schema = &ast.sheets[0].schema;
@@ -959,7 +959,7 @@ mod tests {
         // A `from` with no name in quotes says so, and the type still reads.
         let mut diags = Vec::new();
         let ast = parse_file(
-            "table T := dataframe['x']\n\nA : Int from B\n",
+            "view T := dataframe['x']\n\nA : Int from B\n",
             0,
             &mut diags,
         );

@@ -34,7 +34,7 @@ fn options() -> Options {
     }
 }
 
-/// The options for a file read from `dir`, where a `table` finds the
+/// The options for a file read from `dir`, where a `view` finds the
 /// Parquet it reads beside it. Exporting one without this cannot find its
 /// rows, and says so rather than writing a sheet with none.
 fn options_beside(dir: &str) -> Options {
@@ -739,6 +739,15 @@ sheet YearEnd
 }
 
 #[test]
+fn xlsx_writes_a_complex_as_text_and_says_so() {
+    let text = "sheet T\n\nZ : Complex\n\nZ\n3+4i\n2\n";
+    let out = xlsx::export("t.omx", text, None, options()).unwrap();
+    assert!(!out.notices.is_empty(), "a workbook has no complex cell");
+    let back = xlsx::import(&out.files[0].bytes, options()).unwrap();
+    assert!(back.source.contains("3+4i"), "{}", back.source);
+}
+
+#[test]
 fn xlsx_round_trips_values() {
     let out = xlsx::export("budget.omx", BUDGET, None, options()).unwrap();
     let back = xlsx::import(&out.files[0].bytes, options()).unwrap();
@@ -1129,7 +1138,7 @@ Feb   | 12000   | 7000
 
 /// A table over those three columns, with a formula over two of them.
 const TABLE: &str = "\
-table Sales := dataframe['sales.parquet']
+view Sales := dataframe['sales.parquet']
 
 Month   : String
 Revenue : Int
@@ -1286,7 +1295,7 @@ fn a_table_with_rows_of_its_own_is_reported() {
 #[test]
 fn a_source_that_is_not_a_dataframe_is_reported() {
     let dir = scratch("table-source");
-    let out = with_tables(&dir, "table Sales := 1 + 1\n");
+    let out = with_tables(&dir, "view Sales := 1 + 1\n");
     assert!(!out.ok());
     assert!(
         out.errors
@@ -1320,7 +1329,7 @@ fn a_document_shows_a_table_and_takes_no_edit() {
     // Nothing of it can be edited, and the text is left as it was.
     let before = doc.text().to_string();
     let why =
-        "table `Sales` is a read-only view of `sales.parquet`: import that file to make edits";
+        "view `Sales` is read-only, reading `sales.parquet`: import that file to make edits";
     assert!(!doc.set_cell(0, 0, 0, "Mar"));
     assert!(!doc.insert_rows(0, 0, 1));
     assert!(!doc.delete_rows(0, 0, 1));
@@ -1367,7 +1376,7 @@ fn a_column_is_read_under_the_name_the_file_holds_it_by() {
     let dir = scratch("table-from");
     odd_named_file(&dir);
     let text = "\
-table Sales := dataframe['odd.parquet']
+view Sales := dataframe['odd.parquet']
 
 Month : String
 Units : Int from 'Units/Boxes Sold'
@@ -1392,7 +1401,7 @@ const Total = Sales.Units.sum()
 fn a_column_the_schema_does_not_name_says_how_to_name_it() {
     let dir = scratch("table-from-missing");
     odd_named_file(&dir);
-    let text = "table Sales := dataframe['odd.parquet']\n\nMonth : String\n";
+    let text = "view Sales := dataframe['odd.parquet']\n\nMonth : String\n";
     let out = with_tables(&dir, text);
     assert!(!out.ok());
     // The help offers the one form that can name it, under a name made
@@ -1458,7 +1467,7 @@ fn a_column_of_nulls_fits_the_declared_type() {
     // The file holds nothing in `Note`, so it contradicts no declaration:
     // the type is the text's to say.
     let text = "\
-table Sales := dataframe['null.parquet']
+view Sales := dataframe['null.parquet']
 
 Month : String
 Note  : String
@@ -1473,7 +1482,7 @@ Note  : String
 fn a_column_of_nulls_the_schema_does_not_name_is_said_without_a_type() {
     let dir = scratch("table-null-missing");
     null_column_file(&dir);
-    let text = "table Sales := dataframe['null.parquet']\n\nMonth : String\n";
+    let text = "view Sales := dataframe['null.parquet']\n\nMonth : String\n";
     let out = with_tables(&dir, text);
     assert!(!out.ok());
     // There is no type to offer, and `Any` is not one that can be written.
@@ -1514,7 +1523,7 @@ fn a_declared_type_narrower_than_the_file_is_reported() {
     );
     std::fs::write(dir.join("price.parquet"), &exported.files[0].bytes).unwrap();
     let text = "\
-table Prices := dataframe['price.parquet']
+view Prices := dataframe['price.parquet']
 
 Month : String
 Price : Int
@@ -1559,6 +1568,72 @@ fn parquet_says_when_a_uint64_is_past_an_int() {
 }
 
 #[test]
+fn parquet_round_trips_a_complex_column_as_a_struct() {
+    use polars::prelude::*;
+    let text = "sheet T\n\nZ : Complex\n\nZ\n3+4i\n-1.5-2i\n5\n\n";
+    let out = parquet_of(text, None);
+    // The column is a struct of two `Float64`s, `re` then `im` (D195).
+    let df = ParquetReader::new(Cursor::new(out.files[0].bytes.clone()))
+        .finish()
+        .expect("reads");
+    let dtype = df.column("Z").unwrap().dtype().clone();
+    assert!(omasheet_engine::dtype::is_complex(&dtype), "{dtype:?}");
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    assert!(back.source.contains(" : Complex"), "{}", back.source);
+    assert_eq!(eval(&back.source, "t.Z"), "[3+4i, -1.5-2i, 5+0i]");
+    assert_eq!(eval(&back.source, "t.Z.sum()"), "6.5+2i");
+}
+
+#[test]
+fn parquet_drops_a_struct_that_is_not_a_complex() {
+    use polars::prelude::*;
+    let pair = |a: &str, b: &str| {
+        StructChunked::from_series(
+            "S".into(),
+            2,
+            [
+                Series::new(a.into(), [1.0, 2.0]),
+                Series::new(b.into(), [3.0, 4.0]),
+            ]
+            .iter(),
+        )
+        .unwrap()
+        .into_series()
+    };
+    for (a, b, kept) in [("re", "im", true), ("x", "y", false), ("im", "re", false)] {
+        let mut df = DataFrame::new(vec![
+            Series::new("N".into(), [1i64, 2]).into_column(),
+            pair(a, b).into_column(),
+        ])
+        .unwrap();
+        let mut bytes = Vec::new();
+        ParquetWriter::new(&mut bytes).finish(&mut df).unwrap();
+        let back = parquet::import("t", &bytes).expect("imports");
+        assert_eq!(
+            back.source.contains(": Complex"),
+            kept,
+            "{a},{b}:\n{}",
+            back.source
+        );
+        assert_eq!(back.notices.is_empty(), kept, "{a},{b}: {:?}", back.notices);
+    }
+}
+
+#[test]
+fn json_writes_a_complex_as_text_and_reads_it_back() {
+    let text = "sheet T\n\nZ : Complex\n\nZ\n3+4i\n2\n";
+    let out = json_of(text, None);
+    assert!(
+        text_of(&out, 0).contains("\"3+4i\""),
+        "{}",
+        text_of(&out, 0)
+    );
+    let back = json::import("t", &out.files[0].bytes).expect("imports");
+    assert_eq!(eval(&back.source, "T.Z"), "[3+4i, 2+0i]");
+}
+
+#[test]
 fn parquet_round_trips_a_duration() {
     let text = "sheet T\n\nLen : Duration\n\nLen\nPT1H30M\nP1DT6H\n-PT30M\n\n";
     let out = parquet_of(text, None);
@@ -1592,7 +1667,7 @@ fn parquet_writes_a_tables_integers_at_their_width_and_sign() {
         base: Some(dir.clone()),
         ..options()
     };
-    let text = "table T := dataframe['w.parquet']\n";
+    let text = "view T := dataframe['w.parquet']\n";
     let out = parquet::export("file.omx", text, None, options).expect("exports");
     let back = ParquetReader::new(Cursor::new(out.files[0].bytes.clone()))
         .finish()
@@ -1644,7 +1719,7 @@ fn a_table_shows_a_zoned_column_on_its_own_clocks() {
                 Logged\n2025-03-01T09:30\n2025-07-01T09:30\n";
     let out = parquet_of(text, None);
     std::fs::write(dir.join("z.parquet"), &out.files[0].bytes).unwrap();
-    let table = "table Logs := dataframe['z.parquet']\n\nLogged : Datetime\n";
+    let table = "view Logs := dataframe['z.parquet']\n\nLogged : Datetime\n";
     let shown = with_tables(&dir, table);
     assert!(shown.ok(), "{:?}", shown.errors);
     // The file holds the instants; the sheet shows them on the zone's clocks,

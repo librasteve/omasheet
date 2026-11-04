@@ -18,6 +18,8 @@ pub enum Lit {
     /// Written with a `%`: `20%`, held as `0.2`.
     Percent(Dec),
     Float(f64),
+    /// Real and imaginary parts: `3+4i`.
+    Complex(f64, f64),
     String(String),
     Boolean(bool),
     /// Days since 1970-01-01.

@@ -1,0 +1,66 @@
+# Complex numbers: a real and an imaginary part, each a Float. `3+4i` is the
+# sum of `3` and `4i`, and a Complex is above Float in the type lattice, so a
+# real number beside one makes the result a Complex.
+#
+# A Complex has no order, so there is no `<`, `max` or sort; `=` and `!=` take
+# both parts, exactly. To get a real number out, use `re` or `abs`, or `.Float`
+# where the imaginary part is zero (to within Raku's 1e-15, and nowhere else
+# does omasheet use a tolerance).
+# In a Parquet file a Complex column is a struct of two doubles, `re` and `im`.
+
+sheet Parts
+
+Z : Complex
+
+| Z       | Re | Im | Abs | Angle | Conj | Root | Exp | Ln |
+| ------- | -- | -- | --- | ----- | ---- | ---- | --- | -- |
+| 3+4i    | *  | *  | *   | *     | *    | *    | *   | *  |
+| -4      | *  | *  | *   | *     | *    | *    | *   | *  |
+| 2i      | *  | *  | *   | *     | *    | *    | *   | *  |
+| -1.5-2i | *  | *  | *   | *     | *    | *    | *   | *  |
+
+Re    := re(Z)
+Im    := im(Z)
+Abs   := abs(Z)
+Angle := arg(Z)
+Conj  := conj(Z)
+Root  := sqrt(Z)
+Exp   := exp(Z)
+Ln    := ln(Z)
+
+# The four operations, and a power: a whole exponent is repeated
+# multiplication, as in Raku, and any other is exp(w ln z).
+sheet Arithmetic
+
+A : Complex
+B : Complex
+
+| A    | B    | Sum | Difference | Product | Quotient | Squared | Real  | Same |
+| ---- | ---- | --- | ---------- | ------- | -------- | ------- | ----- | ---- |
+| 1+2i | 3-1i | *   | *          | *       | *        | *       | *     | *    |
+| 2i   | 2i   | *   | *          | *       | *        | *       | *     | *    |
+| 1+1i | 1-1i | *   | *          | *       | *        | *       | *     | *    |
+
+Sum        := A + B
+Difference := A - B
+Product    := A * B
+Quotient   := A / B
+Squared    := A ** 2
+Real       := A * 2
+Same       := A == A
+
+# A real number in a Complex column has no imaginary part, and a Complex is
+# a real number only where its imaginary part is zero.
+sheet Reals
+
+Z : Complex
+
+| Z    | IsReal  | AsFloat | AsInteger |
+| ---- | ------- | ------- | --------- |
+| 5    | *       | *       | *         |
+| 3+0i | *       | *       | *         |
+| 2.5  | *       | *       | *         |
+
+IsReal    := im(Z) == 0
+AsFloat   := Z.Float
+AsInteger := re(Z).Integer

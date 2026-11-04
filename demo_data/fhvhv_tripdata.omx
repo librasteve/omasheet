@@ -1,1 +1,1 @@
-table Passengers := dataframe['fhvhv_tripdata_2019-03.parquet']
+view Passengers := dataframe['fhvhv_tripdata_2019-03.parquet']

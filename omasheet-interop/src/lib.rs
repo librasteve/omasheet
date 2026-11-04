@@ -499,7 +499,7 @@ pub(crate) fn with_file<T>(
     let mut sources = Sources::new();
     let src = sources.add(name, text);
     let (mut program, mut diags) = compile(text, src);
-    // A `table` holds its rows in a file of its own, which has to be read
+    // A `view` holds its rows in a file of its own, which has to be read
     // before anything can be written out of it (D62).
     let mut tables = table::Tables::default();
     if diags.is_empty() {

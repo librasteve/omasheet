@@ -41,6 +41,7 @@ const OPERATOR: Why = "values were written in place of formulas that use `in` or
 const BITWISE: Why = "values were written in place of formulas that use a bitwise operator";
 const FUNCTION: Why =
     "values were written in place of formulas that use a function a workbook has not got";
+const COMPLEX: Why = "values were written in place of formulas with complex numbers";
 const LITERAL: Why =
     "values were written in place of formulas with a number or text a workbook cannot hold";
 const OTHER_SHEET: Why =
@@ -168,7 +169,7 @@ fn kind_of(s: S) -> Kind {
         S::Time => Kind::Time,
         S::Datetime => Kind::Datetime,
         S::Duration => Kind::Duration,
-        S::Any => Kind::Unknown,
+        S::Complex | S::Any => Kind::Unknown,
     }
 }
 
@@ -537,6 +538,7 @@ impl Writer<'_> {
                 })
             }
             Lit::Float(_) => return Err(LITERAL),
+            Lit::Complex(..) => return Err(COMPLEX),
             Lit::String(s) if s.chars().count() <= LONGEST_TEXT => {
                 Expr::atom(format!("\"{}\"", s.replace('"', "\"\"")), Kind::Text)
             }
@@ -712,9 +714,11 @@ impl Writer<'_> {
                     MathFn::Log2 => {
                         return Ok(Some(Expr::atom(format!("LOG({},2)", x.text), Kind::Number)));
                     }
+                    MathFn::Re | MathFn::Im | MathFn::Conj | MathFn::Arg => return Err(COMPLEX),
                 };
                 of(name, Kind::Number)
             }
+            Func::Complex => return Err(COMPLEX),
             Func::Year
             | Func::Month
             | Func::Day

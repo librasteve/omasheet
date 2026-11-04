@@ -1735,6 +1735,7 @@ impl<'p> Engine<'p> {
                     | (Value::Fraction(_), S::Fraction)
                     | (Value::Percent(_), S::Percent)
                     | (Value::Float(_), S::Float)
+                    | (Value::Complex(..), S::Complex)
                     | (Value::String(..), S::String | S::Url | S::Email | S::Uuid)
                     | (Value::Boolean(_), S::Boolean)
                     | (Value::Date(_), S::Date)
@@ -2727,6 +2728,24 @@ impl<'p> Engine<'p> {
             }
             Func::Today => Ok(Value::Date(date::split_datetime(self.now).0)),
             Func::Now => Ok(Value::Datetime(self.now, None)),
+            Func::Complex => {
+                let mut parts = [0.0; 2];
+                for (part, arg) in parts.iter_mut().zip(args) {
+                    *part = match self.eval(arg, fr)? {
+                        Value::Null => return Ok(Value::Null),
+                        Value::Int(n, _) => n as f64,
+                        Value::Decimal(d) | Value::Fraction(d) | Value::Percent(d) => d.to_f64(),
+                        Value::Float(f) => f,
+                        other => {
+                            return fail(
+                                arg.span,
+                                format!("`Complex` needs real numbers, found {}", other.kind()),
+                            );
+                        }
+                    };
+                }
+                Ok(Value::Complex(parts[0], parts[1]))
+            }
             Func::Pi => Ok(Value::Float(std::f64::consts::PI)),
             Func::E => Ok(Value::Float(std::f64::consts::E)),
             Func::Math(m) => {

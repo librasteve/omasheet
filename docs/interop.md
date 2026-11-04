@@ -188,7 +188,7 @@ columns it happened in.
 - Ctrl+O opens an XLSX Workbook, a CSV file, JSON or Parquet as well as an
   `.omx` file. It is imported as a new file, not yet saved.
 - A Parquet file of more than 10,000 rows is not imported: it opens as a
-  new file of one `table` that reads it where it is, named by its whole
+  new file of one `view` that reads it where it is, named by its whole
   path, so a month of NYC taxi trips opens at once. It is read-only, and
   saving it writes a one-line `.omx`. The grid formats the rows it shows
   as it scrolls; a sort or a filter in the grid reads the whole column.
@@ -271,13 +271,13 @@ rows put under its header: a computed column is a formula again, its cells
 the ones the sheet declared, a `Percent` included. A tool that knows
 nothing of the metadata sees an ordinary Parquet file. A formula that
 reads another sheet, which the Parquet file does not hold, is kept as it
-is, and reports that sheet missing until it is there again. A table's or a
+is, and reports that sheet missing until it is there again. A view's or a
 computed sheet's columns are kept as a sheet of their own rows.
 
-### What a table reads
+### What a view reads
 
-An import copies the rows into the `.omx`. A `table` leaves them where they
-are — `table Sales := dataframe['sales.parquet']`, written up in
+An import copies the rows into the `.omx`. A `view` leaves them where they
+are — `view Sales := dataframe['sales.parquet']`, written up in
 [the format guide](format.md) — and then reads as little of the file as the
 question needs. The file may be Parquet or CSV; a CSV is first copied to
 Parquet in the cache (`$OMASHEET_CACHE`, else `$XDG_CACHE_HOME/omasheet`, else

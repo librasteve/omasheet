@@ -162,6 +162,8 @@ pub enum Func {
     Quantile,
     /// A value as another type: `Int(x)`, `Num(x)` and the rest.
     To(S),
+    /// `Complex(re, im)`: a complex number from its two parts.
+    Complex,
     /// The next value after this one: a number plus one, or the next text
     /// in the way letters and digits count up, `AZ` to `BA`.
     Succ,

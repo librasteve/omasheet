@@ -95,7 +95,7 @@ sheet Summary
   spaces between pipes, `|     |`, a sheet of one column too.
 - Older files leave out the outer pipes and the `---` line, `Jan | 100`; they
   still read. There a `|` at the start or end of a row is an empty cell.
-- `table Name := dataframe['data/sales.parquet']` in place of `sheet Name`: a
+- `view Name := dataframe['data/sales.parquet']` in place of `sheet Name`: a
   sheet whose rows are in one Parquet file beside the `.omx`. A `.csv` works
   too (`dataframe['data/sales.csv']`), read through a cached Parquet copy;
   its types are inferred from the first 10,000 rows, so a price column is
@@ -104,7 +104,7 @@ sheet Summary
   selected and computed over as any sheet's, but no cell of it can be
   edited and nothing is written back to the files.
 - Names are identifiers: letters, digits and `_`, no spaces. `UnitPrice`, not
-  `Unit Price`. A table's column that the file names otherwise is given one
+  `Unit Price`. A view's column that the file names otherwise is given one
   with `from`: `SiblingsSpousesAboard : Integer from 'Siblings/Spouses Aboard'`.
   Form the name on the left from the file's own, dropping whatever a name
   has no room for; do not shorten it, or it says something the column does

@@ -3,6 +3,8 @@
 //! The functions of OMX: what each is called, and what a person browsing
 //! them is told. The checker and the function directory both read this.
 
+use crate::types::S;
+
 /// A function of one number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MathFn {
@@ -27,6 +29,14 @@ pub enum MathFn {
     Tanh,
     Radians,
     Degrees,
+    /// The real part of a complex number.
+    Re,
+    /// The imaginary part.
+    Im,
+    /// The complex conjugate.
+    Conj,
+    /// The angle of a complex number, in radians.
+    Arg,
 }
 
 impl MathFn {
@@ -47,13 +57,30 @@ impl MathFn {
     pub fn is_exact(self) -> bool {
         matches!(
             self,
-            MathFn::Abs | MathFn::Sign | MathFn::Round | MathFn::Floor | MathFn::Ceil
+            MathFn::Abs
+                | MathFn::Sign
+                | MathFn::Round
+                | MathFn::Floor
+                | MathFn::Ceil
+                | MathFn::Re
+                | MathFn::Im
+                | MathFn::Conj
         )
     }
 
     /// Whether the result is always a whole number, given an exact one.
     pub fn is_whole(self) -> bool {
-        self.is_exact() && !matches!(self, MathFn::Abs)
+        self.is_exact() && !matches!(self, MathFn::Abs | MathFn::Re | MathFn::Conj)
+    }
+
+    /// The type of the result for a complex number, or `None` if the
+    /// function does not take one.
+    pub fn of_complex(self) -> Option<S> {
+        match self {
+            MathFn::Abs | MathFn::Re | MathFn::Im | MathFn::Arg => Some(S::Float),
+            MathFn::Conj | MathFn::Sqrt | MathFn::Exp | MathFn::Ln => Some(S::Complex),
+            _ => None,
+        }
     }
 
     pub fn apply(self, x: f64) -> f64 {
@@ -80,6 +107,10 @@ impl MathFn {
             MathFn::Tanh => x.tanh(),
             MathFn::Radians => x.to_radians(),
             MathFn::Degrees => x.to_degrees(),
+            MathFn::Re | MathFn::Conj => x,
+            MathFn::Im => 0.0,
+            MathFn::Arg if x < 0.0 => std::f64::consts::PI,
+            MathFn::Arg => 0.0,
         }
     }
 }
@@ -135,6 +166,7 @@ const CONVERT: &str = "Convert";
 const MATH: &str = "Math";
 const LOG: &str = "Log & Exp";
 const TRIG: &str = "Trigonometry";
+const COMPLEX: &str = "Complex";
 const TIME: &str = "Time & Date";
 const BITWISE: &str = "Bitwise";
 const TEXT: &str = "Text";
@@ -166,6 +198,10 @@ pub const ABOUT: &[(&str, &str)] = &[
     ),
     (LOG, "Takes: a number."),
     (TRIG, "Takes: a number as an angle in radians."),
+    (
+        COMPLEX,
+        "Takes: a complex number such as 3+4i, or a real one, which has no imaginary part.",
+    ),
     (TIME, "Object: Date, Time, Datetime or Duration."),
     (
         BITWISE,
@@ -588,6 +624,41 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "pi",
         "pi()",
         "The ratio of a circle's circumference to its diameter, 3.14159...",
+    ),
+    doc(
+        COMPLEX,
+        "Complex",
+        "Complex(re, im)",
+        "A complex number from its real and imaginary parts, or from a real number: x.Complex. \
+         Also written 3+4i.",
+    ),
+    math_doc(
+        COMPLEX,
+        "re",
+        "re(z)",
+        "The real part of a complex number.",
+        MathFn::Re,
+    ),
+    math_doc(
+        COMPLEX,
+        "im",
+        "im(z)",
+        "The imaginary part of a complex number.",
+        MathFn::Im,
+    ),
+    math_doc(
+        COMPLEX,
+        "conj",
+        "conj(z)",
+        "The complex conjugate: the imaginary part with its sign changed.",
+        MathFn::Conj,
+    ),
+    math_doc(
+        COMPLEX,
+        "arg",
+        "arg(z)",
+        "The angle of a complex number, in radians from -pi to pi.",
+        MathFn::Arg,
     ),
     doc(
         TEXT,

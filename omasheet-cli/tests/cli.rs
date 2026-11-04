@@ -369,7 +369,7 @@ fn import_of_a_big_csv_prints_the_table_that_reads_it_instead() {
     let full = std::fs::canonicalize(&big).unwrap();
     assert_eq!(
         line,
-        format!("table big := dataframe['{}']\n", full.display())
+        format!("view big := dataframe['{}']\n", full.display())
     );
     assert!(
         stderr(&out).contains("too big to import"),
@@ -464,7 +464,7 @@ fn export_writes_the_rows_a_table_reads() {
     assert!(out.status.success(), "{}", stderr(&out));
     std::fs::write(
         path(&dir, "table.omx"),
-        "table Sales := dataframe['sales.parquet']\n\n\
+        "view Sales := dataframe['sales.parquet']\n\n\
          Month   : String\nRevenue : Integer\nCost    : Integer\n\n\
          Profit := Revenue - Cost\n",
     )
@@ -500,7 +500,7 @@ fn render_shows_the_rows_a_table_reads() {
     // A table over it, with a formula, and a document that asks for both.
     std::fs::write(
         path(&dir, "table.omx"),
-        "table Sales := dataframe['sales.parquet']\n\n\
+        "view Sales := dataframe['sales.parquet']\n\n\
          Month   : String\nRevenue : Integer\nCost    : Integer\n\n\
          Profit := Revenue - Cost\n",
     )

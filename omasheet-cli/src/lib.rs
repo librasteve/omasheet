@@ -230,7 +230,7 @@ fn extension(path: &Path) -> String {
 }
 
 /// Refuse to import `file`, which is too big to write as text, and print
-/// the `table` line that reads it where it is, ready to paste into a file.
+/// the `view` line that reads it where it is, ready to paste into a file.
 fn too_big(file: &Path) -> ExitCode {
     let full = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
     let stem = file.file_stem().unwrap_or_default().to_string_lossy();
@@ -239,11 +239,11 @@ fn too_big(file: &Path) -> ExitCode {
         name => name,
     };
     println!(
-        "table {name} := dataframe[{}]",
+        "view {name} := dataframe[{}]",
         omasheet_engine::omx::lexer::quoted(&full.to_string_lossy())
     );
     eprintln!(
-        "omasheet: {} is too big to import as text (over {} MB): a table reads it where it \
+        "omasheet: {} is too big to import as text (over {} MB): a view reads it where it \
          is, read-only, as the line printed says; open the file in the app, or paste the line \
          into an .omx file",
         file.display(),
@@ -448,7 +448,7 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
                 }
             };
             let mut options = env.options()?;
-            // As for `print` and `render`: a `table` reads its rows from
+            // As for `print` and `render`: a `view` reads its rows from
             // beside the file, so the file's own directory is the base.
             options.base = Some(beside(&file));
             export(
@@ -467,7 +467,7 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
             env,
         }) => {
             let mut options = env.options()?;
-            // A `table` reads its rows from beside the document, as it does
+            // A `view` reads its rows from beside the document, as it does
             // from beside a file: before the render path read a table at all
             // this went unnoticed, the base being used for nothing here.
             options.base = Some(beside(&file));
@@ -477,7 +477,7 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
         Some(Command::Print { file, env }) => {
             let mut options = env.options()?;
             let text = read(&file)?;
-            // A `table` reads its rows from beside the file, so the file's
+            // A `view` reads its rows from beside the file, so the file's
             // own directory is what its source is relative to.
             options.base = Some(beside(&file));
             Ok(finish(omasheet_engine::view_with(

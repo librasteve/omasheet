@@ -62,7 +62,7 @@ pub struct SheetSnap {
     /// sheet whose rows are a file's or another sheet's (D80).
     pub paged: bool,
     /// The Parquet file the rows are read from, for a `table`; `None` for a
-    /// sheet that holds its own rows. A table is a read-only view: the file
+    /// sheet that holds its own rows. A `view` is read-only: the file
     /// is never written back, so no edit of it is taken (D49).
     pub source: Option<String>,
     /// The sheet is written as `:=` lines alone, so it has no text behind a
@@ -309,6 +309,7 @@ fn exact_text(v: &Value, quoted: bool, shown: &str, style: &Style) -> Option<Str
         | Value::Decimal(_)
         | Value::Percent(_)
         | Value::Float(_)
+        | Value::Complex(..)
         | Value::Vector(_) => format_exact(v, quoted, style),
         _ => return None,
     };
@@ -387,6 +388,7 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
         "Decimal" => "Decimal: an exact decimal number, e.g. 19.99 or 20%".into(),
         "Percent" => "Percent: an exact number shown as a percentage, e.g. 20%".into(),
         "Float" => "Float: a floating-point number, e.g. 1.5, 2e-3 or Inf".into(),
+        "Complex" => "Complex: a real and an imaginary part, e.g. 3+4i or 2i".into(),
         "Boolean" => "Boolean: true or false".into(),
         "String" => "String".into(),
         "Url" => "Url: a web address, e.g. https://example.com".into(),
@@ -1886,7 +1888,7 @@ impl Document {
         }
         let path = snap.source.as_ref()?;
         Some(format!(
-            "table `{}` is a read-only view of `{path}`: import that file to make edits",
+            "view `{}` is read-only, reading `{path}`: import that file to make edits",
             snap.name
         ))
     }
@@ -4203,7 +4205,7 @@ mod tests {
 
     #[test]
     fn a_table_is_sorted_in_the_grid_alone() {
-        let table = "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n";
+        let table = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n";
         let mut doc = Document::from_text(table);
         doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
         doc.sort_rows(0, 5, true).expect("sorts");
@@ -4230,7 +4232,7 @@ mod tests {
 
     #[test]
     fn a_table_sort_is_a_step_to_undo_and_redo() {
-        let text = "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nsheet Notes\n\nA\n1\n";
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nsheet Notes\n\nA\n1\n";
         let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
         // Held whole, and paged as a big table is.
         for paged in [false, true] {
@@ -4352,7 +4354,7 @@ mod tests {
 
     #[test]
     fn a_paged_table_shows_what_a_held_one_does() {
-        let text = "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n\nsheet Firsts := Passengers |> filter(Pclass == 1)\n";
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n\nsheet Firsts := Passengers |> filter(Pclass == 1)\n";
         let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
         let mut held = Document::from_text(text);
         held.set_base(base);
@@ -4418,7 +4420,7 @@ mod tests {
 
     #[test]
     fn a_paged_summary_answers_as_a_held_one_reading_only_what_is_selected() {
-        let text = "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n\nsheet Firsts := Passengers |> filter(Pclass == 1)\n";
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n\nsheet Firsts := Passengers |> filter(Pclass == 1)\n";
         let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
         let mut held = Document::from_text(text);
         held.set_base(base);
@@ -4482,7 +4484,7 @@ mod tests {
             &file,
         )
         .unwrap();
-        let text = "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n";
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n";
         let open = || {
             let mut doc = Document::from_text(text);
             doc.set_base(&dir);
@@ -4620,11 +4622,11 @@ mod tests {
         let titanic = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
         let cases = [
             (
-                "table T := dataframe['edge.parquet']\n",
+                "view T := dataframe['edge.parquet']\n",
                 dir.to_str().unwrap(),
             ),
             (
-                "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n",
+                "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n",
                 titanic,
             ),
         ];
@@ -4668,11 +4670,11 @@ mod tests {
         let titanic = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
         let cases = [
             (
-                "table T := dataframe['edge.parquet']\n",
+                "view T := dataframe['edge.parquet']\n",
                 dir.to_str().unwrap(),
             ),
             (
-                "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n",
+                "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n",
                 titanic,
             ),
         ];
@@ -4756,7 +4758,7 @@ mod tests {
             .finish(&mut frame)
             .unwrap();
         for paged in [false, true] {
-            let mut doc = Document::from_text("table T := dataframe['units.parquet']\n");
+            let mut doc = Document::from_text("view T := dataframe['units.parquet']\n");
             doc.set_base(dir.to_str().unwrap());
             if paged {
                 doc.set_paged_rows(1);
@@ -4800,7 +4802,7 @@ mod tests {
             ));
         }
         std::fs::write(dir.join("x.csv"), &csv).unwrap();
-        let text = "table T := dataframe['x.csv']\n";
+        let text = "view T := dataframe['x.csv']\n";
         let open = |screen: bool| {
             let mut doc = if screen {
                 Document::on_screen(text, Style::ISO, Names::default())
@@ -4871,7 +4873,7 @@ mod tests {
 
     #[test]
     fn a_mistake_in_one_sheet_leaves_a_table_its_rows() {
-        let table = "table Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n";
+        let table = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n";
         let mut doc = Document::from_text(table);
         doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
         let rows = doc.snapshot().sheets[0].rows.len();

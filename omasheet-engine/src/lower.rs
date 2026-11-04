@@ -272,6 +272,9 @@ fn literal(l: &Lit) -> Option<Out> {
             Out::new(lit(Scalar::new(dtype.clone(), value)), dtype)
         }
         Lit::Float(f) => Out::new(lit(*f), DataType::Float64),
+        // Polars has no arithmetic for a struct, so a `Complex` stays on
+        // the engine (D200).
+        Lit::Complex(..) => None,
         Lit::String(s) => Out::new(lit(s.clone()), DataType::String),
         Lit::Boolean(b) => Out::new(lit(*b), DataType::Boolean),
         Lit::Date(d) => Out::new(

@@ -486,7 +486,7 @@ fn column_table(dir: &std::path::Path, rows: usize) {
 /// fresh engine: the file's column is read inside it either way, so what
 /// the two lowerings differ by is what the answer was made from.
 fn column_cost(dir: &std::path::Path, expr: &str, lowering: Lowering) -> (Duration, usize, String) {
-    let text = "table T := dataframe['column.parquet']\n\nWhole : Integer\nReal  : Float\n";
+    let text = "view T := dataframe['column.parquet']\n\nWhole : Integer\nReal  : Float\n";
     let (mut program, mut diags) = compile(text, 0);
     assert!(diags.is_empty(), "{diags:?}");
     let tables = table::read(&mut program, dir, &mut diags);
@@ -576,7 +576,7 @@ fn a_filter_on_a_big_table() {
     for file in files.iter().filter(|f| std::path::Path::new(f).exists()) {
         let started = Instant::now();
         let doc = Document::from_text(&format!(
-            "table T := dataframe[{}]\n",
+            "view T := dataframe[{}]\n",
             omasheet_engine::omx::lexer::quoted(file)
         ));
         let sheet = &doc.snapshot().sheets[0];
@@ -654,7 +654,7 @@ fn a_big_csv_through_its_copy() {
     // SAFETY: the one test of this binary that sets it, before any reads.
     unsafe { std::env::set_var("OMASHEET_CACHE", &cache) };
     let text = format!(
-        "table T := dataframe[{}]\n",
+        "view T := dataframe[{}]\n",
         omasheet_engine::omx::lexer::quoted(&csv.to_string_lossy())
     );
     let names = omasheet_engine::datefmt::Names::default();

@@ -7,7 +7,7 @@
 # clause gives each a name that one can, keeping every word of the file's
 # own: a shorter name would say something the column does not.
 
-table Passengers := dataframe['titanic.parquet']
+view Passengers := dataframe['titanic.parquet']
 
 Survived              : Integer
 Pclass                : Integer

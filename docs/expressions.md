@@ -69,6 +69,7 @@ Numbers are shown the way Raku shows them:
 | `Fraction` | `1/7`, `3/4`, `2 3/4`, `333 1/3`; `3` when it is whole |
 | `Percent` | `20%`, `12.5%`, `41.67%` |
 | `Float` | `100`, `1.5`, `1.4142135623730951`; `1e+21` or `1.5e-16` when very large or small; `Inf`, `-Inf`, `NaN` |
+| `Complex` | each part as a `Float`: `3+4i`, `1.5-2i`, `0+1.4142135623730951i`; both parts cut alike when too wide; `0+Inf\i` for an infinite imaginary part |
 
 A `Float` that is a whole number looks like an `Integer`, but it is still a `Float`.
 
@@ -163,7 +164,8 @@ vector is converted value by value.
 | `x.Integer` | a whole number: `19.99` gives `19`, `-19.99` gives `-19` |
 | `x.Decimal` | the same number as a decimal: `(1/8).Decimal` is `0.125`, `(1/3).Decimal` is `0.333…` |
 | `x.Percent` | the same number as a percentage: `0.4` gives `40%`, `5/12` gives `41.67%` |
-| `x.Float` | a floating-point number |
+| `x.Float` | a floating-point number; of a `Complex`, its real part, where its imaginary part is zero to within `1e-15`, and otherwise an error |
+| `x.Complex`, `Complex(re, im)` | a complex number from a real one, or from two |
 | `x.String` | any value as text, written the way a file writes it |
 | `x.Boolean` | `false` for zero, `true` for any other number |
 | `x.Date`, `x.Time` | that half of a `Datetime` |
@@ -174,6 +176,34 @@ Text is read the way a cell is: `'42'.Integer` is `42`, `'20%'.Decimal` is `1/5`
 `1`. To round rather than drop the fraction, use `round(x)`; `round(x, 2)`
 rounds to two decimal places. For the nearest hundred, divide, round and
 multiply back: `round(x / 100) * 100`.
+
+## Complex numbers
+
+An imaginary number is written with an `i`, `4i`, and `3+4i` is the sum of
+`3` and `4i`. `Inf\i` and `NaN\i` are an infinite and a not-a-number imaginary
+part. A `Complex` is above `Float` in the type lattice, so any number beside
+one gives a `Complex`:
+
+```
+(1+2i) * (3-1i)        5+5i
+abs(3+4i)              5
+sqrt(-4+0i)            0+2i
+conj(3+4i)             3-4i
+degrees(arg(2i))       90
+(1+1i) ** 2            0+2i
+```
+
+`+ - * /` and `**` follow the rules of complex numbers; a whole exponent is
+repeated multiplication, as in Raku. `re(z)` and `im(z)` are the parts,
+`conj(z)` the conjugate and `arg(z)` the angle in radians. `abs`, `sqrt`,
+`exp` and `ln` take a `Complex`; the other functions do not. A real number
+has the same parts, with no imaginary part: `im(7)` is `0`.
+
+A `Complex` has no order: `1i < 2i` is an error. `=` and `!=` compare both
+parts exactly. To get a real number out, use `re(z)` or `abs(z)`, or `z.Float`,
+which works only where the imaginary part is zero to within `1e-15`, Raku's
+tolerance, and is otherwise an error. That tolerance is used nowhere else:
+`im(z) = 0` is the exact test.
 
 ## Names
 
@@ -351,6 +381,7 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
   or of this row's cell, `Name.is_duplicated()`, which is answered among the
   column's. An empty cell is a value of its own here
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
+- Complex: `re im conj arg`, with `abs sqrt exp ln` for a `Complex` too
 - Counting up: `succ` — a number plus one, or the next text, `AZ` to `BA`
 - Converting: `Integer Decimal Percent Float String Boolean Date Time Datetime
   Duration`,
@@ -366,7 +397,7 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
   base_utc_offset() time_zone()`
 - Your own: `fn` in the file
 
-The tests are those Polars has, under Polars' names, so a table's column is
+The tests are those Polars has, under Polars' names, so a view's column is
 tested by Polars in one pass rather than a row at a time.
 
 The app lists them all under `fn()` (F1).

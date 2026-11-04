@@ -976,9 +976,9 @@ impl<'a> Checker<'a> {
                     ck.done.push(
                         Diagnostic::new(
                             t.header_line,
-                            format!("table `{}` has rows of its own", t.name),
+                            format!("view `{}` has rows of its own", t.name),
                         )
-                        .with_help("a table's rows come from its source: remove them"),
+                        .with_help("a view's rows come from its source: remove them"),
                     );
                 }
                 for line in &t.schema {
@@ -1074,7 +1074,7 @@ impl<'a> Checker<'a> {
                             format!("sheet `{}` reads no file", t.name),
                         )
                         .with_help(
-                            "`from` names a column of a table's Parquet; this sheet holds its own rows",
+                            "`from` names a column of a view's Parquet; this sheet holds its own rows",
                         ),
                     );
                 }
@@ -2327,7 +2327,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The path in `dataframe["<path>"]`, the one source a `table` may have.
+    /// The path in `dataframe["<path>"]`, the one source a `view` may have.
     /// `None`, with a diagnostic, for anything else written there.
     fn source_path(&mut self, decl: &SourceDecl, sheet: &str) -> Option<Source> {
         let expr = decl.expr.as_ref()?;
@@ -2345,9 +2345,9 @@ impl<'a> Checker<'a> {
         self.done.push(
             Diagnostic::new(
                 decl.expr_span,
-                format!("table `{sheet}` does not say what to read"),
+                format!("view `{sheet}` does not say what to read"),
             )
-            .with_help("a table is written `table <Name> := dataframe['<path>']`"),
+            .with_help("a view is written `view <Name> := dataframe['<path>']`"),
         );
         None
     }
@@ -2358,6 +2358,12 @@ impl<'a> Checker<'a> {
             let help = match (found, want) {
                 (S::Int | S::Decimal | S::Fraction | S::Percent, S::Float) => {
                     "use `.Float` to convert to Float"
+                }
+                (S::Int | S::Decimal | S::Fraction | S::Percent | S::Float, S::Complex) => {
+                    "use `.Complex` to convert to Complex"
+                }
+                (S::Complex, S::Float) => {
+                    "use `.Float` where the imaginary part is zero, or `re(...)` for the real part"
                 }
                 // A division by zero, `1/0`, is a `Float`, which no exact
                 // column holds.
@@ -2419,6 +2425,37 @@ impl<'a> Checker<'a> {
                 Some(Lit::Float(r.to_f64()))
             }
             (Some(l @ Lit::Float(_)), S::Float) => Some(l),
+            // A real number in a `Complex` column has no imaginary part.
+            (
+                Some(
+                    l @ (Lit::Int(..)
+                    | Lit::Decimal(_)
+                    | Lit::Fraction(_)
+                    | Lit::Percent(_)
+                    | Lit::Float(_)),
+                ),
+                S::Complex,
+            ) => crate::convert::convert(&l, S::Complex).ok(),
+            (Some(l @ Lit::Complex(..)), S::Complex) => Some(l),
+            // A `Complex` is a real number when its imaginary part is zero
+            // (D203); the conversion says when it is not.
+            (
+                Some(l @ Lit::Complex(..)),
+                S::Float
+                | S::Int
+                | S::Hex
+                | S::Octal
+                | S::Binary
+                | S::Decimal
+                | S::Fraction
+                | S::Percent,
+            ) => match crate::convert::convert(&l, want) {
+                Ok(l) => Some(l),
+                Err(msg) => {
+                    self.err(span, msg);
+                    return None;
+                }
+            },
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
             (Some(l @ Lit::Datetime(_)), S::Datetime) => Some(l),
@@ -2458,6 +2495,7 @@ impl<'a> Checker<'a> {
                     S::Fraction => "enter a number such as `1/7`, `2 3/4` or `19.99`, or start the cell with `=` for a formula",
                     S::Percent => "enter a percentage such as `20%`, or start the cell with `=` for a formula",
                     S::Float => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
+                    S::Complex => "enter a complex number such as `3+4i`, or start the cell with `=` for a formula",
                     S::Boolean => "enter `true` or `false`, or start the cell with `=` for a formula",
                     S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
                     S::Time => "enter a time such as `09:30` or `09:30:15`, or start the cell with `=` for a formula",
@@ -3025,7 +3063,11 @@ impl<'a> Checker<'a> {
                     (BinOp::Pow, w) if whole && (w.is_int() || w == S::Decimal) => w,
                     // A power is exact only for a whole exponent; any other
                     // is worked out in floating point.
-                    (BinOp::Pow, w) if w != S::Float && !b.is_int() && b != S::Any => S::Float,
+                    (BinOp::Pow, w)
+                        if w != S::Float && w != S::Complex && !b.is_int() && b != S::Any =>
+                    {
+                        S::Float
+                    }
                     // No exact number is a division by zero, so a divisor
                     // written as zero makes it a `Float`: `Inf`, `-Inf`
                     // or `NaN`.
@@ -3065,12 +3107,22 @@ impl<'a> Checker<'a> {
             let equality = matches!(op, BinOp::Eq | BinOp::Ne);
             let ok = unknown
                 || match a.join(b) {
-                    Some(S::Boolean) => equality,
+                    Some(S::Boolean | S::Complex) => equality,
                     Some(_) => true,
                     None => false,
                 };
             if !ok {
-                self.err(span, format!("cannot compare {a} and {b} with `{sym}`"));
+                if a.join(b) == Some(S::Complex) {
+                    self.err_help(
+                        span,
+                        format!(
+                            "cannot compare {a} and {b} with `{sym}`: Complex values have no order"
+                        ),
+                        "compare their parts, for example `abs(z) < abs(w)`, or use `=` and `!=`",
+                    );
+                } else {
+                    self.err(span, format!("cannot compare {a} and {b} with `{sym}`"));
+                }
                 return fail;
             }
             S::Boolean
@@ -3481,7 +3533,7 @@ impl<'a> Checker<'a> {
                         return fail;
                     }
                     Func::Mean | Func::Median if s.is_int() || s == S::Decimal => S::Decimal,
-                    Func::Min | Func::Max if matches!(s, S::Boolean) => {
+                    Func::Min | Func::Max if matches!(s, S::Boolean | S::Complex) => {
                         self.err(span, format!("{s} values have no order for `{name}`"));
                         return fail;
                     }
@@ -4095,6 +4147,41 @@ impl<'a> Checker<'a> {
                     Ty::Scalar(S::Float),
                 )
             }
+            "Complex" if args.len() == 2 => {
+                let mut nodes = Vec::new();
+                for a in args {
+                    let (node, ty) = self.lower(a, sc);
+                    if !matches!(
+                        ty,
+                        Ty::Any
+                            | Ty::Scalar(
+                                S::Any
+                                    | S::Int
+                                    | S::Hex
+                                    | S::Octal
+                                    | S::Binary
+                                    | S::Decimal
+                                    | S::Fraction
+                                    | S::Percent
+                                    | S::Float
+                            )
+                    ) {
+                        self.err(
+                            a.span,
+                            format!(
+                                "`Complex` needs real numbers, but this is {}",
+                                ty.describe()
+                            ),
+                        );
+                        return fail;
+                    }
+                    nodes.push(node);
+                }
+                (
+                    Node::new(Ir::Call(Func::Complex, nodes), span),
+                    Ty::Scalar(S::Complex),
+                )
+            }
             _ if S::from_name(name).is_some() => {
                 if !arity(self, 1, &format!("{name}(x)")) {
                     return fail;
@@ -4169,6 +4256,7 @@ impl<'a> Checker<'a> {
                 // An exact number stays exact where the function allows it.
                 let out = |s: S| match s {
                     S::Any => Some(S::Any),
+                    S::Complex => m.of_complex(),
                     s if s.is_exact() && m.is_whole() => Some(S::Int),
                     s if s.is_exact() && m.is_exact() => Some(s),
                     s if s.is_exact() || s == S::Float => Some(S::Float),
