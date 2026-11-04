@@ -85,3 +85,20 @@ Fraction | Percent  | 0.583333333333333333333333333333
 Fraction | Decimal  | 0.5
 Percent  | Percent  | 50%
 Percent  | Integer  | 1.2
+
+sheet Free
+
+Written | Bases
+--------|------
+      1 |  0b11
+    1.1 |   255
+    1/2 |  0o17
+    23% |     7
+ 100000 |  0x10
+
+sheet Set
+
+Bin        | Frac | Pct | Dec
+-----------|------|-----|-----
+    0b1111 |  1/2 | 50% |  0.5
+0b11111111 |  1/4 | 25% | 0.25

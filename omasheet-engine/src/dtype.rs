@@ -45,6 +45,7 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
     // so a whole one in a column of a base comes back in that base.
     let exact = |d: Dec| match (ty, d.to_i64()) {
         (S::Percent, _) => Cell::Lit(Lit::Percent(d)),
+        (S::Fraction, _) => Cell::Lit(Lit::Fraction(d)),
         (t, Some(n)) if t.is_int() => Cell::Lit(Lit::Int(n, Base::of(t))),
         _ => Cell::Lit(Lit::Decimal(d)),
     };

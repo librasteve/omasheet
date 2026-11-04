@@ -146,6 +146,7 @@ impl Value {
         match l {
             Lit::Int(n, b) => Value::Int(*n, *b),
             Lit::Decimal(r) => Value::exact(*r),
+            Lit::Fraction(r) => Value::Fraction(*r),
             Lit::Percent(r) => Value::Percent(*r),
             Lit::Float(f) => Value::Float(*f),
             Lit::String(s) => Value::text(s),
@@ -201,9 +202,8 @@ impl Value {
     fn to_lit(&self) -> Option<Lit> {
         Some(match self {
             Value::Int(n, b) => Lit::Int(*n, *b),
-            // A `Fraction` is a `Decimal` shown another way; there is no
-            // fraction literal to be had.
-            Value::Decimal(r) | Value::Fraction(r) => Lit::Decimal(*r),
+            Value::Decimal(r) => Lit::Decimal(*r),
+            Value::Fraction(r) => Lit::Fraction(*r),
             Value::Percent(r) => Lit::Percent(*r),
             Value::Float(f) => Lit::Float(*f),
             Value::String(s, _) => Lit::String(s.to_string()),

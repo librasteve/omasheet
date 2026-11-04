@@ -33,17 +33,11 @@ pub fn parse_mixed(text: &str) -> Option<Dec> {
     if negative { r.checked_neg() } else { Some(r) }
 }
 
-/// Whether `text` is a number written as a fraction, `1/7` or `2 3/4`, which
-/// is an exact `Decimal` to the parser but a `Fraction` to the column it is in.
-pub fn is_fraction(text: &str) -> bool {
-    text.contains('/') && matches!(parse_literal(text.trim()), Some(Lit::Decimal(_)))
-}
-
 /// A value written on its own, such as `42`, `-1/7`, `2 3/4`, `3+4i` or
 /// `2025-01-31`. `None` if the text is anything else.
 pub fn parse_literal(text: &str) -> Option<Lit> {
     if let Some(r) = parse_mixed(text) {
-        return Some(Lit::Decimal(r));
+        return Some(Lit::Fraction(r));
     }
     let toks = lex(text, 0, 0).ok()?;
     let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
@@ -51,7 +45,7 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
     let fraction = |n: i64, d: i64| {
         Dec::from_i64(n)
             .checked_div(Dec::from_i64(d))
-            .map(Lit::Decimal)
+            .map(Lit::Fraction)
     };
     Some(match toks.as_slice() {
         [
@@ -93,6 +87,7 @@ pub fn lit_type(l: &Lit) -> S {
     match l {
         Lit::Int(_, b) => b.ty(),
         Lit::Decimal(_) => S::Decimal,
+        Lit::Fraction(_) => S::Fraction,
         Lit::Percent(_) => S::Percent,
         Lit::Float(_) => S::Float,
         Lit::String(_) => S::String,
@@ -123,13 +118,33 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     let no = || Err(format!("{from} cannot be made {}", a(to)));
     let real = |l: &Lit| match l {
         Lit::Int(n, _) => Some(*n as f64),
-        Lit::Decimal(r) | Lit::Percent(r) => Some(r.to_f64()),
+        Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) => Some(r.to_f64()),
         Lit::Float(f) => Some(*f),
         Lit::Boolean(b) => Some(*b as u8 as f64),
         _ => None,
     };
     if from == to || to == S::Any {
         return Ok(lit.clone());
+    }
+    // A fraction is the exact number it stands for, shown as a fraction, so it
+    // is converted as that number is; and any exact number may be one.
+    if to == S::Fraction {
+        return match lit {
+            Lit::Int(n, _) => Ok(Lit::Fraction(Dec::from_i64(*n))),
+            Lit::Decimal(r) | Lit::Percent(r) => Ok(Lit::Fraction(*r)),
+            Lit::String(s) => parse_literal(s.trim())
+                .filter(|l| !matches!(l, Lit::String(_)))
+                .and_then(|l| convert(&l, to).ok())
+                .ok_or_else(|| format!("`{s}` is not {}", a(to))),
+            _ => no(),
+        };
+    }
+    if let Lit::Fraction(r) = lit {
+        let plain = match r.to_i64() {
+            Some(n) => Lit::Int(n, Base::Dec),
+            None => Lit::Decimal(*r),
+        };
+        return convert(&plain, to);
     }
     // The bases hold the same whole numbers, so a number goes through
     // decimal to be shown in another one.
@@ -259,11 +274,23 @@ mod tests {
         assert_eq!(convert(&lit("-19.99"), S::Int), Ok(lit("-19")));
         assert_eq!(convert(&lit("1e-1"), S::Decimal), Ok(lit("0.1")));
         assert_eq!(convert(&lit("1/8"), S::Decimal), Ok(lit("0.125")));
-        assert_eq!(convert(&lit("1/3"), S::Decimal), Ok(lit("1/3")));
-        // A fraction of whole numbers is an exact `Decimal`.
+        // A fraction is the number it stands for, as a `Decimal` or a `Fraction`.
+        assert_eq!(
+            convert(&lit("1/3"), S::Decimal),
+            Ok(Lit::Decimal(
+                Dec::from_i64(1).checked_div(Dec::from_i64(3)).unwrap()
+            ))
+        );
+        assert_eq!(convert(&lit("0.125"), S::Fraction), Ok(lit("1/8")));
+        assert_eq!(
+            convert(&lit("3"), S::Fraction),
+            Ok(Lit::Fraction(Dec::from_i64(3)))
+        );
+        // A fraction of whole numbers is the exact number it stands for,
+        // written as a fraction.
         assert_eq!(
             lit("7/3"),
-            Lit::Decimal(Dec::from_i64(7).checked_div(Dec::from_i64(3)).unwrap())
+            Lit::Fraction(Dec::from_i64(7).checked_div(Dec::from_i64(3)).unwrap())
         );
         assert_eq!(convert(&lit("-22/7"), S::Int), Ok(lit("-3")));
         // A whole number and a part is the fraction they come to.
@@ -296,7 +323,8 @@ mod tests {
         let text = |s: &str| Lit::String(s.to_string());
         assert_eq!(convert(&text(" 42 "), S::Int), Ok(lit("42")));
         assert_eq!(convert(&text("19.99"), S::Int), Ok(lit("19")));
-        assert_eq!(convert(&text("20%"), S::Decimal), Ok(lit("1/5")));
+        assert_eq!(convert(&text("20%"), S::Decimal), Ok(lit("0.2")));
+        assert_eq!(convert(&text("20%"), S::Fraction), Ok(lit("1/5")));
         assert_eq!(convert(&text("16:10"), S::Time), Ok(lit("16:10")));
         assert_eq!(convert(&text("2025-01-31"), S::Date), Ok(lit("2025-01-31")));
         assert_eq!(

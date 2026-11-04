@@ -375,62 +375,6 @@ fn iso_entry(style: &Style, ty: &str, input: &str) -> Option<String> {
     }
 }
 
-/// A whole number typed into a cell, as the file keeps it: in the base of
-/// a `Hex`, `Octal` or `Binary` column, and otherwise in the base it was
-/// typed in, with its prefix in lower case (D127): `0XFF` is `0xff`, and
-/// `255` in a `Hex` column is `0xff` too. `None` if it is not one.
-fn based_entry(ty: &str, input: &str) -> Option<String> {
-    let Some(Lit::Int(n, typed)) = omasheet_omx::convert::parse_literal(input.trim()) else {
-        return None;
-    };
-    let base = match Base::of(S::from_name(ty).unwrap_or(S::Any)) {
-        Base::Dec if ty.is_empty() || ty == "Integer" => typed,
-        Base::Dec => return None,
-        column => column,
-    };
-    (base != Base::Dec).then(|| base.write(n))
-}
-
-/// `text` with each column of sheet `decl` that the file leaves to its
-/// cells declared `Hex`, `Octal` or `Binary`, where every cell of it is a
-/// whole number written in that one base (D125). The prefix says what the
-/// column is, so the file says it too.
-fn based_declared(mut text: String, decl: &SheetDecl) -> String {
-    let undeclared = |name: &str| !decl.schema.iter().any(|l| l.name == name);
-    let mut found = Vec::new();
-    for (h, (name, _)) in decl.header.iter().enumerate() {
-        if !undeclared(name) {
-            continue;
-        }
-        let mut base = None;
-        for row in &decl.rows {
-            let Some(cell) = row.get(h).filter(|c| !c.text.is_empty()) else {
-                continue;
-            };
-            match omasheet_omx::convert::parse_literal(&cell.text) {
-                Some(Lit::Int(_, b)) if b != Base::Dec && base.is_none_or(|was| was == b) => {
-                    base = Some(b);
-                }
-                _ => {
-                    base = None;
-                    break;
-                }
-            }
-        }
-        if let Some(b) = base {
-            found.push((name.clone(), b.ty()));
-        }
-    }
-    for (name, ty) in found {
-        let ast = parse_file(&text, 0, &mut Vec::new());
-        let Some(decl) = ast.sheets.iter().find(|t| t.name == decl.name) else {
-            break;
-        };
-        text = retyped(&text, decl, &name, Some(ty));
-    }
-    text
-}
-
 /// What can be typed into a cell of a column of type `ty`, with an example
 /// written the way `style` reads it. Empty when the type is not known.
 pub fn entry_hint(style: &Style, ty: &str) -> String {
@@ -2023,16 +1967,11 @@ impl Document {
                     grid.rows.push((None, blank));
                 }
                 let ty = types.get(*col).map_or("", String::as_str);
-                grid.rows[*row].1[*col] = iso_entry(&style, ty, text)
-                    .or_else(|| based_entry(ty, text))
-                    .unwrap_or_else(|| clean_cell(text));
-            }
-        })
-        .map(|text| {
-            let ast = parse_file(&text, 0, &mut Vec::new());
-            match self.sheet_decl(&ast, sheet) {
-                Some(decl) => based_declared(text.clone(), decl),
-                None => text,
+                // The file keeps the text as it was entered (D186): a column's
+                // type shows it in its own format, and a type is never set
+                // by what is typed into a cell (D191).
+                grid.rows[*row].1[*col] =
+                    iso_entry(&style, ty, text).unwrap_or_else(|| clean_cell(text));
             }
         })
     }
@@ -3966,7 +3905,8 @@ mod tests {
         // fraction and a decimal being a decimal.
         assert!(doc.set_cell(0, 1, 1, "0.25"));
         assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Decimal");
-        assert_eq!(col(&doc, 0, 1), ["0.33333333333333333333…", "0.25"]);
+        // Each cell keeps the format its own contents give it (D192).
+        assert_eq!(col(&doc, 0, 1), ["1/3", "0.25"]);
         // So does a whole number and a part, proper or not.
         let doc = Document::from_text("sheet T\n\nA\n1 1/2\n5 7/3\n11/3\n");
         assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Fraction");
@@ -3976,6 +3916,16 @@ mod tests {
         assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
         let doc = Document::from_text("sheet T\n\nA : Decimal\n\nA\n1/3\n");
         assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
+        // The same for a percentage: the first cell gives the type that is
+        // shown, a later one widens it, and the file declares nothing (D194).
+        let mut doc = Document::from_text("sheet T\n\nA\n\n\n");
+        assert!(doc.set_cell(0, 0, 0, "23%"));
+        let column = &doc.snapshot().sheets[0].columns[0];
+        assert!(!column.declared && column.ty == "Percent");
+        assert!(doc.set_cell(0, 1, 0, "1/2"));
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
+        assert_eq!(col(&doc, 0, 0), ["23%", "1/2"]);
+        assert!(!doc.text().contains("Decimal"), "{}", doc.text());
         // A fraction among text is text.
         let mut doc = Document::from_text("sheet T\n\nA\nabc\n\n");
         assert!(doc.set_cell(0, 1, 0, "1/3"));
@@ -4937,30 +4887,36 @@ mod tests {
     }
 
     #[test]
-    fn a_column_of_prefixed_values_is_declared_as_its_base() {
+    fn a_prefixed_value_does_not_set_a_column_type() {
         let text =
             "sheet Regs\n\n| Name | Addr |\n| ---- | ---- |\n| a    |      |\n| b    |      |\n";
         let mut doc = Document::from_text(text);
-        // Typed in either case, it is shown and kept in lower case, and the
-        // file says what the column is (D125, D127).
+        // The first cell gives the type that is shown, and the file says
+        // nothing about it: only a type line or setting the type does
+        // (D191), and the file keeps the text as it was entered (D186).
         assert!(doc.set_cell(0, 0, 1, "0xFF"));
-        assert!(doc.text().contains("Addr : Hex\n"), "{}", doc.text());
-        assert!(doc.text().contains("| 0xff "), "{}", doc.text());
+        assert!(!doc.text().contains("Addr :"), "{}", doc.text());
+        assert!(doc.text().contains("| 0xFF "), "{}", doc.text());
         let column = &doc.snapshot().sheets[0].columns[1];
-        assert!(column.declared && column.ty == "Hex");
-        assert_eq!(col(&doc, 0, 1), ["0xff", ""]);
-        // A plain number in a `Hex` column is kept in its base, and a
+        assert!(!column.declared && column.ty == "Hex");
+        // The next cell widens the type, and neither cell is altered.
+        assert!(doc.set_cell(0, 1, 1, "255"));
+        assert!(!doc.text().contains("Addr :"), "{}", doc.text());
+        assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Integer");
+        assert_eq!(col(&doc, 0, 1), ["0xff", "255"]);
+        // Setting the type puts one format on every cell, and the file
+        // still has what was entered.
+        assert!(doc.set_column_types(0, &[1], Some("Hex")));
+        assert_eq!(col(&doc, 0, 1), ["0xff", "0xff"]);
+        assert!(doc.text().contains("| 255 "), "{}", doc.text());
+        // An `Integer` entered in a `Binary` column is shown in binary: a
+        // way to convert a base on the fly.
+        let mut doc = Document::from_text("sheet T\n\nA : Binary\n\n| A |\n| - |\n|   |\n");
+        assert!(doc.set_cell(0, 0, 0, "15"));
+        assert_eq!(col(&doc, 0, 0), ["0b1111"]);
+        assert!(doc.text().contains("| 15 "), "{}", doc.text());
+        // A plain number in a declared `Hex` column is edited in hex, and a
         // negative one is written so that it reads back (D132).
-        assert!(doc.set_cell(0, 1, 1, "-255"));
-        assert!(doc.text().contains("| -0xff "), "{}", doc.text());
-        assert_eq!(col(&doc, 0, 1), ["0xff", "0xffffffffffffff01"]);
-        assert_eq!(doc.snapshot().sheets[0].rows[1][1].source, "-0xff");
-        // A column of decimal numbers is left to its cells.
-        let mut doc = Document::from_text(text);
-        assert!(doc.set_cell(0, 0, 1, "0b11"));
-        assert!(doc.set_cell(0, 1, 1, "3"));
-        assert!(doc.text().contains("Addr : Binary\n"), "{}", doc.text());
-        // A plain number in a declared `Hex` column is edited in hex.
         let doc = Document::from_text("sheet T\n\nA : Hex\n\n| A   |\n| --- |\n| 255 |\n| -1  |\n");
         let rows = &doc.snapshot().sheets[0].rows;
         assert_eq!(

@@ -649,7 +649,7 @@ fn static_of(e: &Expr) -> Option<Static> {
 fn seed_num(e: &Expr) -> Option<Dec> {
     match &e.kind {
         ExprKind::Lit(Lit::Int(i, _)) => Some(Dec::from_i64(*i)),
-        ExprKind::Lit(Lit::Decimal(r) | Lit::Percent(r)) => Some(*r),
+        ExprKind::Lit(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)) => Some(*r),
         ExprKind::Unary(UnOp::Neg, inner) => seed_num(inner).and_then(|r| r.checked_neg()),
         // `1/3` written out, where the lexer did not take it for one.
         ExprKind::Binary(BinOp::Div, a, b) => {
@@ -1691,13 +1691,7 @@ impl<'a> Checker<'a> {
                     } else {
                         match self.literal_cell(&cell.text, cell.span, declared) {
                             Some(lit) => {
-                                // A fraction is a `Decimal` to the parser, but
-                                // its column is a `Fraction` one.
-                                widen(if crate::convert::is_fraction(&cell.text) {
-                                    S::Fraction
-                                } else {
-                                    lit_type(&lit)
-                                });
+                                widen(lit_type(&lit));
                                 cells.push(match lit {
                                     // In quotes it is text as it is.
                                     Lit::String(s) if !quoted(&cell.text) => Cell::Markdown(s),
@@ -2304,20 +2298,29 @@ impl<'a> Checker<'a> {
         let fitted = match (parsed, want) {
             // A whole number takes the base of its column, whichever it
             // was written in.
-            (Some(Lit::Int(n, _)), want) if want.is_exact() && want != S::Percent => {
+            (Some(Lit::Int(n, _)), want)
+                if want.is_exact() && !matches!(want, S::Percent | S::Fraction) =>
+            {
                 Some(Lit::Int(n, Base::of(want)))
             }
-            (Some(l @ Lit::Decimal(_)), S::Decimal | S::Fraction) => Some(l),
-            // Any exact number in a `Percent` column is a percentage: `0.4`
-            // is `40%`. A `20%` elsewhere is the number it stands for.
-            (Some(l @ Lit::Percent(_)), S::Percent) => Some(l),
-            (Some(Lit::Int(n, _)), S::Percent) => Some(Lit::Percent(Dec::from_i64(n))),
-            (Some(Lit::Decimal(r)), S::Percent) => Some(Lit::Percent(r)),
-            (Some(l @ Lit::Percent(_)), S::Decimal | S::Fraction) => {
+            // Setting a type puts one format on every cell: any exact number
+            // in a `Fraction` column is a fraction, in a `Percent` column a
+            // percentage (`0.4` is `40%`), and in a `Decimal` column the
+            // number it stands for.
+            (Some(Lit::Int(n, _)), S::Fraction) => Some(Lit::Fraction(Dec::from_i64(n))),
+            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Fraction) => Some(Lit::Fraction(r)),
+            (Some(l @ Lit::Fraction(_)), S::Fraction) => Some(l),
+            (Some(l @ Lit::Decimal(_)), S::Decimal) => Some(l),
+            (Some(l @ Lit::Fraction(_) | l @ Lit::Percent(_)), S::Decimal) => {
                 crate::convert::convert(&l, S::Decimal).ok()
             }
+            (Some(l @ Lit::Percent(_)), S::Percent) => Some(l),
+            (Some(Lit::Int(n, _)), S::Percent) => Some(Lit::Percent(Dec::from_i64(n))),
+            (Some(Lit::Decimal(r) | Lit::Fraction(r)), S::Percent) => Some(Lit::Percent(r)),
             (Some(Lit::Int(n, _)), S::Float) => Some(Lit::Float(n as f64)),
-            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Float) => Some(Lit::Float(r.to_f64())),
+            (Some(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)), S::Float) => {
+                Some(Lit::Float(r.to_f64()))
+            }
             (Some(l @ Lit::Float(_)), S::Float) => Some(l),
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),

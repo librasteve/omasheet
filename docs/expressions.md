@@ -90,8 +90,10 @@ still a fraction, where `Yield * 2` is a `Decimal`.
 In a formula `1/10` is a quotient, a `Decimal`. A fraction is written in angle
 brackets, `<1/10>`, `<-3/4>` or `<2 3/4>`, and is a `Fraction` as `1/10` is in a
 cell, so `<1/10> + <1/10>` is `1/5`. It is the same as `Fraction(1/10)`. A
-space goes before one that follows a `+`, since `+<` is a shift; the error
-for `1+<1/10>` says so.
+fraction with a whole number is a `Decimal`, `<1/10> + 1` being `1.1`, so
+where the result should stay a fraction use `<1/1>` for one: `<1/10> + <1/1>`
+is `1 1/10`. A space goes before a fraction that follows a `+`, since `+<` is
+a shift; the error for `1+<1/10>` says so.
 
 Two percentages give a percentage: `20% + 5%` is `25%`, and so are their
 sum, average, least and greatest. A percentage with any other number gives

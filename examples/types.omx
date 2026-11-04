@@ -210,3 +210,33 @@ sheet Lattice
 | Fraction | Decimal  | =(Fraction(1/3) + 1/6).String                   |
 | Percent  | Percent  | =(Percent(20%) + Percent(30%)).String           |
 | Percent  | Integer  | =(Percent(20%) + 1).String                      |
+
+# A column with no type line takes its type from the cells it holds, as the
+# join of them, and a cell is shown as it was written: 1, 1.1, 1/2, 23% and
+# 1e5 and text may stand together, and none changes the others. The cells
+# never set the type; the heading shows what they come to. The first column
+# is a Float one, the second an Integer one, whatever bases are in it.
+sheet Free
+
+| Written | Bases |
+| ------- | ----- |
+| 1       | 0b11  |
+| 1.1     | 255   |
+| 1/2     | 0o17  |
+| 23%     | 7     |
+| 1e5     | 0x10  |
+
+# Setting the type is different: it puts one format on every cell, and a value
+# that fits is shown in it, whichever way it was written. The file keeps what
+# was entered, so 15 is 0b1111 in a Binary column, a way to change a base.
+sheet Set
+
+Bin  : Binary
+Frac : Fraction
+Pct  : Percent
+Dec  : Decimal
+
+| Bin  | Frac | Pct  | Dec |
+| ---- | ---- | ---- | --- |
+| 15   | 0.5  | 1/2  | 1/2 |
+| 0xff | 25%  | 0.25 | 25% |

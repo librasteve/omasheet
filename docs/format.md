@@ -194,6 +194,7 @@ sheet's rows were derived.
 `Float`, `String`, `Boolean`, `Date`, `Time`, `Datetime`, `Duration`, `Url`,
 `Email`, `Uuid`.
 A column with no `Name : Type` line takes its type from its cells.
+The cells never set a column's type: only a `Name : Type` line, or setting the type in the app, does. An undeclared column's type is the join of the cells it holds, worked out as they are entered: the first gives it, and each later one widens it if it needs to. Each cell is shown in the format its own contents give it, so `1`, `1.1`, `1/2`, `23%`, `1e5` and text may stand together and none is changed by what is entered beside it. Setting a type is different: it applies one common format, and a compatible value is shown in it, so `15` entered in a `Binary` column is `0b1111`, a way to convert a base on the fly. The file keeps each cell as it was entered.
 `Integer` was called `Int` before, and a column declared that way is still
 read as one; `Integer` is what is written.
 
@@ -239,8 +240,7 @@ base gives that base, but for `/`, and on any other mix gives an `Integer`:
 `0xF0 + 0x0F` is `0xff` and `0xF0 + 1` is `241`. A format on the column
 shows the number by its conversion instead: `Hex[08X]` shows 255 as
 `000000FF`. `Hex(x)`, `Octal(x)` and `Binary(x)` convert as `Integer(x)`
-does. A column of cells all written in one base is a column of that type,
-and the app writes the type into the file.
+does.
 
 A `Time` and a `Datetime` may carry a fraction of a second after the
 seconds: `09:30:15.5`, `2025-01-31T09:30:15.123456`. The fraction always
@@ -352,8 +352,13 @@ Neither part need be the smaller: `11/3` and `5 7/3` are fine, and a
 whose cells are all written with a `/` is a `Fraction` column; with any other
 number among them it is a `Decimal` one. A column declared `Decimal` takes the
 same cells and shows them as decimals.
-In a formula a fraction is written in angle brackets, `<1/10>` or `<2 3/4>`,
-since a bare `1/10` there is a quotient.
+
+In a formula a fraction is written in angle brackets, `<1/10>`, `<-3/4>` or
+`<2 3/4>`, since a bare `1/10` there is a quotient, a `Decimal`. A fraction
+with a whole number is a `Decimal` too, so `<1/10> + 1` is `1.1`; to stay
+a fraction add `<1/1>`, the fraction that is one, and `<1/10> + <1/1>` is
+`1 1/10`. A space goes before a fraction that follows a `+`, since `+<` is a
+shift.
 
 An `Integer`, `Decimal` or `Float` column may say how its numbers are shown,
 after its type in brackets, as a C `printf` conversion without its `%`:

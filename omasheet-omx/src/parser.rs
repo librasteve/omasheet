@@ -438,9 +438,8 @@ impl Parser {
     }
 
     /// A fraction written out: `<1/10>`, `<-3/4>`, `<2 3/4>` or `<3>`. It is
-    /// the `Fraction` of that number, as `Fraction(1/10)` would be, so that it
-    /// is a fraction in a formula as `1/10` is in a cell, where a bare `1/10`
-    /// is a quotient.
+    /// a `Fraction` literal, as `1/10` is in a cell, where in a formula a bare
+    /// `1/10` is a quotient.
     fn fraction(&mut self) -> R<Expr> {
         let start = self.span();
         self.bump();
@@ -508,12 +507,8 @@ impl Parser {
         else {
             return Err(Diagnostic::new(span, "this fraction is too large"));
         };
-        let literal = Expr {
-            kind: ExprKind::Lit(Lit::Decimal(value)),
-            span,
-        };
         Ok(Expr {
-            kind: ExprKind::Call("Fraction".into(), span, vec![literal]),
+            kind: ExprKind::Lit(Lit::Fraction(value)),
             span,
         })
     }

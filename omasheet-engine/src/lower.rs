@@ -254,7 +254,7 @@ fn literal(l: &Lit) -> Option<Out> {
             Out::new(lit(Scalar::new(dtype.clone(), value)), dtype)
         }
         // A percentage is display, not a dtype (D69).
-        Lit::Percent(_) => None,
+        Lit::Percent(_) | Lit::Fraction(_) => None,
     }
 }
 
