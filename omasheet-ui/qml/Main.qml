@@ -800,6 +800,34 @@ ApplicationWindow {
 
     // ---- editing -----------------------------------------------------------
 
+    // Why the selected cells take no edit, or "": the data of a view is its
+    // file's, and a calculated sheet has no cell of its own. A formula
+    // column appended to a view, a decorator, takes its formula as any
+    // other does, so a selection of those alone is free to edit.
+    function readOnlyWhy() {
+        var why = sheet.why || "";
+        if (why.length === 0 || sheet.isConsts)
+            return "";
+        if (sheet.view)
+            return why;
+        for (var c = selLeft; c <= selRight; c++) {
+            var column = sheet.columns[c];
+            if (!column || !column.computed)
+                return why;
+        }
+        return "";
+    }
+
+    // Refuse an edit of read-only cells before it is begun, and say why in
+    // the status bar. True if it was refused.
+    function refusedEdit() {
+        var why = readOnlyWhy();
+        if (why.length === 0)
+            return false;
+        file.status = why;
+        return true;
+    }
+
     function startEditing(seed) {
         // A calculated sheet has one formula, written in the box at the
         // top: Enter on any of its cells goes there, as for a column, and
@@ -808,9 +836,14 @@ ApplicationWindow {
             if (seed === null) {
                 formulaField.forceActiveFocus();
                 formulaField.selectAll();
+            } else {
+                refusedEdit();
             }
             return;
         }
+        // The data of a view is its file's: no editor opens (D207).
+        if (refusedEdit())
+            return;
         if (!cellAt(curRow, curCol))
             return;
         if (sheet.isConsts && curCol !== 1)
@@ -1440,6 +1473,13 @@ ApplicationWindow {
         // A formula column always has its formula: there is nothing to cut.
         if (formulaCell)
             return;
+        // Nothing read-only is cut: it is copied, and the bar says so (D208).
+        var why = readOnlyWhy();
+        if (why.length > 0) {
+            copySelection();
+            file.status = "Copied, not cut. " + why;
+            return;
+        }
         notice = "";
         // A whole sheet is picked up, to be moved to where it is pasted.
         if (selKind === "all" && !sheet.isConsts) {
@@ -1520,6 +1560,8 @@ ApplicationWindow {
     }
 
     function clearSelection() {
+        if (refusedEdit())
+            return;
         if (!sheet.isConsts)
             keeping(0, 0, function() { file.clearCells(tab, selTop, selLeft, selBottom, selRight); });
     }
@@ -1557,6 +1599,8 @@ ApplicationWindow {
             selectAll();
             return;
         }
+        if (refusedEdit())
+            return;
         grabbed = null;
         var text = clipboard.take();
         // The paste and the names it gives columns are undone as one.
@@ -1588,6 +1632,8 @@ ApplicationWindow {
     // Paste what the copied cells showed, not their formulas.
     function pasteValues() {
         notice = "";
+        if (refusedEdit())
+            return;
         grabbed = null;
         var text = clipboard.take();
         // The paste and the names it gives columns are undone as one.
@@ -1624,10 +1670,28 @@ ApplicationWindow {
 
     function pasteTransposed() {
         notice = "";
+        if (refusedEdit())
+            return;
         grabbed = null;
         var text = clipboard.take();
         if (text.length > 0 && !sheet.isConsts)
             pasteWith(text, function() { return file.pasteTransposed(tab, selTop, selLeft, selBottom, selRight, text); });
+    }
+
+    // Cells copied or cut here can be pasted as a reference to them, in a
+    // sheet's data cells or in a formula column.
+    readonly property bool canPasteReference: marked !== null && selKind === "cells"
+        && !sheet.isConsts && marked.tab < tabs.length && !tabs[marked.tab].isConsts
+
+    // Paste a live reference to what was copied, not its values (D210).
+    function pasteReference() {
+        notice = "";
+        if (refusedEdit())
+            return;
+        grabbed = null;
+        var text = clipboard.take();
+        if (text.length > 0 && !sheet.isConsts)
+            pasteWith(text, function() { return file.pasteReference(tab, selTop, selLeft, selBottom, selRight, text); });
     }
 
     // A new sheet beside the one shown: asked for by name.
@@ -2425,11 +2489,12 @@ ApplicationWindow {
                         win.copySelection();
                     } else if (ctrl && event.key === Qt.Key_X) {
                         win.cutSelection();
+                    } else if (ctrl && shift && event.key === Qt.Key_T) {
+                        if (win.canTranspose) win.pasteTransposed();
+                    } else if (ctrl && shift && event.key === Qt.Key_R) {
+                        if (win.canPasteReference) win.pasteReference();
                     } else if (ctrl && event.key === Qt.Key_V) {
-                        if (event.modifiers & Qt.AltModifier) {
-                            if (win.canTranspose) win.pasteTransposed();
-                        }
-                        else if (shift) {
+                        if (shift) {
                             if (!win.marked || !win.spansFormula(win.marked)) win.pasteValues();
                         }
                         else
@@ -4022,6 +4087,7 @@ ApplicationWindow {
             enabled: cellMenu.hasRows && win.canPasteValues
             onTriggered: win.pasteValues()
         }
+        MenuEntry { text: "Paste reference"; enabled: cellMenu.hasRows && win.canPasteReference; onTriggered: win.pasteReference() }
         MenuEntry { text: "Paste transposed"; enabled: cellMenu.hasRows && win.canTranspose; onTriggered: win.pasteTransposed() }
         MenuEntry { text: "Clear"; enabled: cellMenu.hasRows && !win.formulaCell; onTriggered: win.clearSelection() }
         // Delete, for what is selected as a whole.
@@ -4418,17 +4484,33 @@ ApplicationWindow {
         standardButtons: Dialog.Ok
         onAccepted: file.notes = ""
         onClosed: grid.forceActiveFocus()
-        contentItem: ListView {
+        // Selectable, to be copied: Ctrl+C copies what is selected, or all
+        // of it.
+        contentItem: Flickable {
             implicitHeight: Math.min(contentHeight, 360)
+            contentHeight: notesText.implicitHeight
             clip: true
-            spacing: 8
-            model: file.notes.length > 0 ? file.notes.split("\n") : []
-            delegate: Text {
-                required property string modelData
-                width: ListView.view.width
-                text: modelData
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            TextEdit {
+                id: notesText
+                width: parent.width
+                text: file.notes
+                readOnly: true
+                selectByMouse: true
+                selectByKeyboard: true
+                focus: true
                 color: win.textColor
+                selectionColor: win.accentColor
                 wrapMode: Text.Wrap
+                Keys.onPressed: function(event) {
+                    if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_C) {
+                        if (selectedText.length === 0)
+                            selectAll();
+                        copy();
+                        event.accepted = true;
+                    }
+                }
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.noteSize
@@ -4770,6 +4852,18 @@ ApplicationWindow {
         title: "Problems"
         standardButtons: Dialog.Close
         onClosed: grid.forceActiveFocus()
+        // A click goes to the cell, so Ctrl+C copies every problem.
+        focus: true
+        Shortcut {
+            sequence: "Ctrl+C"
+            enabled: problemsDialog.visible
+            onActivated: {
+                var lines = [];
+                for (var i = 0; i < win.snap.problems.length; i++)
+                    lines.push("line " + win.snap.problems[i].line + ": " + win.snap.problems[i].message);
+                clipboard.put(lines.join("\n"));
+            }
+        }
         contentItem: ListView {
             implicitHeight: Math.min(contentHeight, 360)
             clip: true
@@ -5079,8 +5173,24 @@ ApplicationWindow {
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-            Label {
+            // Selectable, to be copied: Ctrl+C copies what is selected, or
+            // all of it.
+            TextEdit {
                 id: helpText
+                readOnly: true
+                selectByMouse: true
+                selectByKeyboard: true
+                focus: true
+                color: win.textColor
+                selectionColor: win.accentColor
+                Keys.onPressed: function(event) {
+                    if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_C) {
+                        if (selectedText.length === 0)
+                            selectAll();
+                        copy();
+                        event.accepted = true;
+                    }
+                }
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.dialogSize

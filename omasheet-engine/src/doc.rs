@@ -300,6 +300,22 @@ fn shown_text(engine: &Engine, v: &Value) -> String {
     }
 }
 
+/// Why a sheet's data takes no edit, if it takes none: it is calculated
+/// from an expression, or it is a `view` of a Parquet file (D49).
+pub fn read_only_why(snap: &SheetSnap) -> Option<String> {
+    if let Some(expr) = &snap.view {
+        return Some(format!(
+            "sheet `{}` is calculated from `{expr}`: change the sheets it reads, or its own formula",
+            snap.name
+        ));
+    }
+    let path = snap.source.as_ref()?;
+    Some(format!(
+        "view `{}` is read-only, reading `{path}`: import that file to make edits",
+        snap.name
+    ))
+}
+
 /// What a number shown with fewer digits than it has is in full.
 fn exact_text(v: &Value, quoted: bool, shown: &str, style: &Style) -> Option<String> {
     let full = match v {
@@ -889,16 +905,22 @@ fn one_cell(
 /// reference to one cell follows it: a range or a whole column reads the
 /// place, and so does a formula column.
 fn follow_cut(ast: &FileAst, text: &str, t: usize, block: &Block, by: (i64, i64)) -> Vec<Edit> {
+    follow_cells(ast, text, t, block, &|r, c| {
+        (r as i64 + by.0, c as i64 + by.1)
+    })
+}
+
+/// Where a cell of a block goes: its row and column once put down.
+type Whither<'a> = &'a dyn Fn(usize, usize) -> (i64, i64);
+
+/// As `follow_cut`, for a block whose cells each go where `map` says, as
+/// when they are turned about.
+fn follow_cells(ast: &FileAst, text: &str, t: usize, block: &Block, map: Whither) -> Vec<Edit> {
     let mut edits = Vec::new();
     let decl = &ast.sheets[t];
     let cols = column_names(decl);
     let nrows = decl.rows.len();
     let inside = |r: usize, c: usize| block.0.contains(&r) && block.1.contains(&c);
-    let column = |c: usize| {
-        usize::try_from(c as i64 + by.1)
-            .ok()
-            .and_then(|c| cols.get(c))
-    };
     for (at, expr) in formulas(ast) {
         let (mut found, mut names) = (Vec::new(), Vec::new());
         sites(&expr, false, &mut found, &mut names);
@@ -914,20 +936,22 @@ fn follow_cut(ast: &FileAst, text: &str, t: usize, block: &Block, by: (i64, i64)
             if !inside(r, c) {
                 continue;
             }
-            if by.0 != 0 {
-                let to = r as i64 + by.0;
+            let (to_row, to_col) = map(r, c);
+            if to_row != r as i64 {
                 put(
                     &mut edits,
                     text,
                     row_span,
-                    row.write(to, own.map(|o| o.0), nrows),
+                    row.write(to_row, own.map(|o| o.0), nrows),
                 );
             }
-            if by.1 != 0 {
-                let to = c as i64 + by.1;
+            if to_col != c as i64 {
                 let new = match col {
-                    Some(pick) => Some(pick.write(to, own.map(|o| o.1), cols.len())),
-                    None => column(c).map(|name| name.to_string()),
+                    Some(pick) => Some(pick.write(to_col, own.map(|o| o.1), cols.len())),
+                    None => usize::try_from(to_col)
+                        .ok()
+                        .and_then(|c| cols.get(c))
+                        .map(|name| name.to_string()),
                 };
                 if let Some(new) = new {
                     put(&mut edits, text, col_span, new);
@@ -939,12 +963,16 @@ fn follow_cut(ast: &FileAst, text: &str, t: usize, block: &Block, by: (i64, i64)
             continue;
         };
         for (name, span) in names {
-            let cut = cols
+            let Some(c) = cols
                 .iter()
                 .position(|c| *c == name)
-                .filter(|c| inside(r, *c));
-            if let Some(new) = cut.and_then(column) {
-                let new = match by.0 {
+                .filter(|c| inside(r, *c))
+            else {
+                continue;
+            };
+            let (to_row, to_col) = map(r, c);
+            if let Some(new) = usize::try_from(to_col).ok().and_then(|c| cols.get(c)) {
+                let new = match to_row - r as i64 {
                     0 => new.to_string(),
                     rows => format!("[{new}; {}]", offset_text(rows)),
                 };
@@ -975,6 +1003,99 @@ fn shift_slot(slot: &Expr, by: i64, text: &str, edits: &mut Vec<Edit>) {
         }
         None => shift(slot, edits),
     }
+}
+
+/// Where cell (`r`, `c`) of `block` goes when it is put down turned about
+/// with its first cell at `to`: its row is a column, and its column a row.
+fn turn_at(block: &Block, to: (usize, usize), r: usize, c: usize) -> (i64, i64) {
+    (
+        (to.0 + c) as i64 - block.1.start as i64,
+        (to.1 + r) as i64 - block.0.start as i64,
+    )
+}
+
+/// The source of a cell of `block` put down turned about, where `map` says:
+/// what it reads in the block it still reads, at the cell's new place. A row
+/// it reads by counting, or a column of its own row, is counted again from
+/// there. What it reads of a range or a column is the place, as for a move.
+fn turned_cell(
+    cell: &str,
+    from: (usize, usize),
+    block: &Block,
+    map: Whither,
+    sheet: &str,
+    nrows: usize,
+    cols: &[&str],
+) -> String {
+    let Some(Ok(expr)) = cell.strip_prefix('=').map(|body| parse_expr(body, 0, 1)) else {
+        return cell.to_string();
+    };
+    let (now_row, now_col) = map(from.0, from.1);
+    let by = (now_row - from.0 as i64, now_col - from.1 as i64);
+    let own = (usize::try_from(now_row).ok(), usize::try_from(now_col).ok());
+    let inside = |r: usize, c: usize| block.0.contains(&r) && block.1.contains(&c);
+    let (mut found, mut names) = (Vec::new(), Vec::new());
+    sites(&expr, false, &mut found, &mut names);
+    let mut edits = Vec::new();
+    for site in found {
+        if site.nested || site.sheet.is_some_and(|name| name != sheet) {
+            continue;
+        }
+        if let Some(((r, row, row_span), (c, col, col_span))) =
+            one_cell(&site, Some(from), nrows, cols)
+            && inside(r, c)
+        {
+            let (to_row, to_col) = map(r, c);
+            put(&mut edits, cell, row_span, row.write(to_row, own.0, nrows));
+            match col {
+                Some(pick) => put(
+                    &mut edits,
+                    cell,
+                    col_span,
+                    pick.write(to_col, own.1, cols.len()),
+                ),
+                None => {
+                    if let Some(name) = usize::try_from(to_col).ok().and_then(|c| cols.get(c)) {
+                        put(&mut edits, cell, col_span, name.to_string());
+                    }
+                }
+            }
+            continue;
+        }
+        if let Some(slot) = site.row {
+            shift_slot(slot, by.0, cell, &mut edits);
+        }
+        if let ColPart::Slot(slot) = site.col {
+            shift_slot(slot, by.1, cell, &mut edits);
+        }
+    }
+    // A column named on its own is that column of the cell's own row: in
+    // the block it is the cell it was, and outside it the row it was in.
+    for (name, span) in names {
+        let Some(c) = cols.iter().position(|c| *c == name) else {
+            continue;
+        };
+        let (name, rows) = if inside(from.0, c) {
+            let (to_row, to_col) = map(from.0, c);
+            let Some(name) = usize::try_from(to_col).ok().and_then(|c| cols.get(c)) else {
+                continue;
+            };
+            (*name, to_row - now_row)
+        } else {
+            (name, from.0 as i64 - now_row)
+        };
+        let new = match rows {
+            0 => name.to_string(),
+            rows => format!("[{name}; {}]", offset_text(rows)),
+        };
+        put(&mut edits, cell, span, new);
+    }
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = cell.to_string();
+    for (s, e, new) in edits {
+        out.replace_range(s..e, &new);
+    }
+    out
 }
 
 /// The source of a cell of `block`, cut from `from` in a sheet and put down
@@ -1891,18 +2012,24 @@ impl Document {
     /// `None` for a sheet that holds its own rows. Every edit of such a
     /// sheet is refused, and a front end can say so before one is tried.
     pub fn read_only(&self, sheet: usize) -> Option<String> {
+        read_only_why(self.snapshot.sheets.get(sheet)?)
+    }
+
+    /// Why the cells of column `col` of sheet `sheet` take no edit, if they
+    /// take none: a sheet calculated from an expression has no cell of its
+    /// own, and the data columns of a `view` are its file's. A formula column
+    /// appended to a view, a decorator, is the file's own text and is
+    /// edited by its formula, as any other is.
+    pub fn read_only_cell(&self, sheet: usize, col: usize) -> Option<String> {
         let snap = self.snapshot.sheets.get(sheet)?;
-        if let Some(expr) = &snap.view {
-            return Some(format!(
-                "sheet `{}` is calculated from `{expr}`: change the sheets it reads, or its own formula",
-                snap.name
-            ));
+        let decorator = snap.source.is_some()
+            && snap.view.is_none()
+            && snap.columns.get(col).is_some_and(|c| c.formula.is_some());
+        if decorator {
+            None
+        } else {
+            self.read_only(sheet)
         }
-        let path = snap.source.as_ref()?;
-        Some(format!(
-            "view `{}` is read-only, reading `{path}`: import that file to make edits",
-            snap.name
-        ))
     }
 
     /// Why sheet `sheet` has no cell to take an edit: a table's rows are in
@@ -2029,6 +2156,97 @@ impl Document {
         }
     }
 
+    /// A block copied from `from` and put down turned about at `to`, as the
+    /// rows of columns: each cell's formula still reads what it read, now at
+    /// the place it has been put. Short rows are filled out.
+    pub fn turn_block(
+        &self,
+        sheet: usize,
+        from: (usize, usize),
+        to: (usize, usize),
+        block: &[Vec<String>],
+    ) -> Vec<Vec<String>> {
+        let ast = self.ast();
+        self.turned(&ast, sheet, from, to, block).1
+    }
+
+    /// As `paste_cut`, but turned about: the cells are put down as the rows
+    /// of columns, and a formula elsewhere that read one of them reads it
+    /// where it has gone.
+    pub fn paste_cut_turned(
+        &mut self,
+        sheet: usize,
+        from: (usize, usize),
+        to: (usize, usize),
+        block: &[Vec<String>],
+    ) -> bool {
+        let ast = self.ast();
+        let (Some(t), turned) = self.turned(&ast, sheet, from, to, block) else {
+            return false;
+        };
+        let width = block.iter().map(Vec::len).max().unwrap_or(0);
+        let cut: Block = (from.0..from.0 + block.len(), from.1..from.1 + width);
+        let map = |r: usize, c: usize| turn_at(&cut, to, r, c);
+        let edits = follow_cells(&ast, &self.text, t, &cut, &map);
+        let followed = rewritten(&self.text, &ast, edits);
+        let mut cells = Vec::new();
+        for (j, line) in turned.iter().enumerate() {
+            for (i, cell) in line.iter().enumerate() {
+                cells.push((to.0 + j, to.1 + i, cell.clone()));
+            }
+        }
+        match self.cells_set(&followed, sheet, &cells) {
+            Some(text) => self.commit(text),
+            None => false,
+        }
+    }
+
+    /// The index of sheet `sheet` in `ast`, and a block turned about.
+    fn turned(
+        &self,
+        ast: &FileAst,
+        sheet: usize,
+        from: (usize, usize),
+        to: (usize, usize),
+        block: &[Vec<String>],
+    ) -> (Option<usize>, Vec<Vec<String>>) {
+        let width = block.iter().map(Vec::len).max().unwrap_or(0);
+        let name = self.snapshot.sheets.get(sheet).map(|t| t.name.clone());
+        let t = name
+            .as_ref()
+            .and_then(|name| ast.sheets.iter().position(|t| &t.name == name));
+        let cut: Block = (from.0..from.0 + block.len(), from.1..from.1 + width);
+        let map = |r: usize, c: usize| turn_at(&cut, to, r, c);
+        let turned = (0..width)
+            .map(|j| {
+                block
+                    .iter()
+                    .enumerate()
+                    .map(|(i, line)| {
+                        let cell = line.get(j).cloned().unwrap_or_default();
+                        match (t, &name) {
+                            (Some(t), Some(name)) => {
+                                let decl = &ast.sheets[t];
+                                let cols = column_names(decl);
+                                turned_cell(
+                                    &cell,
+                                    (from.0 + i, from.1 + j),
+                                    &cut,
+                                    &map,
+                                    name,
+                                    decl.rows.len(),
+                                    &cols,
+                                )
+                            }
+                            _ => cell,
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        (t, turned)
+    }
+
     /// How many rows sheet `sheet` has, paged or not.
     pub fn row_count(&self, sheet: usize) -> usize {
         self.snapshot.sheets.get(sheet).map_or(0, |t| t.nrows)
@@ -2080,6 +2298,16 @@ impl Document {
                     .collect()
             })
             .collect()
+    }
+
+    /// The row of the source that is shown at row `r` of sheet `sheet`:
+    /// where a table has been sorted in the grid, the row it was before the
+    /// sort, which is the row a formula reads (D215).
+    pub fn source_row(&self, sheet: usize, r: usize) -> usize {
+        if self.snapshot.sheets.get(sheet).is_none() {
+            return r;
+        }
+        self.file_row(sheet, r)
     }
 
     /// The row of the file shown at row `r` of a paged sheet: where it has
@@ -3239,7 +3467,9 @@ impl Document {
     }
 
     pub fn set_column_formula(&mut self, sheet: usize, col: usize, expr: &str) -> bool {
-        if self.read_only(sheet).is_some() {
+        // A decorator on a view takes its formula; only a sheet calculated
+        // from an expression has none of its own.
+        if self.read_only_cell(sheet, col).is_some() {
             return false;
         }
         let expr = expr
@@ -4213,6 +4443,57 @@ mod tests {
         assert!(doc.undo() && doc.undo());
         assert_eq!(doc.text(), file);
         assert_eq!(without_last_sort("T |> resort(N)"), "T |> resort(N)");
+    }
+
+    #[test]
+    fn a_decorator_on_a_view_takes_a_formula_and_the_data_does_not() {
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nName : String\nFare : Float\n\nDouble := Fare * 2\n";
+        let mut doc = Document::from_text(text);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        let names: Vec<_> = doc.snapshot().sheets[0]
+            .columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        assert_eq!(names, ["Name", "Fare", "Double"]);
+        // The file's columns take no edit, and say why; the decorator does.
+        assert!(
+            doc.read_only_cell(0, 0)
+                .is_some_and(|w| w.contains("read-only"))
+        );
+        assert!(doc.read_only_cell(0, 1).is_some());
+        assert_eq!(doc.read_only_cell(0, 2), None);
+        assert!(!doc.set_cell(0, 0, 1, "7"));
+        assert!(doc.set_column_formula(0, 2, "Fare * 3"));
+        assert!(
+            doc.text().contains("Double := Fare * 3\n"),
+            "{}",
+            doc.text()
+        );
+        // A sheet calculated from an expression has no cell of its own.
+        let calc = format!("{text}\nsheet Top := Passengers |> head(2)\n");
+        let mut doc = Document::from_text(&calc);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        assert!(doc.read_only_cell(1, 0).is_some());
+    }
+
+    #[test]
+    fn the_source_row_of_a_sorted_view_is_the_file_row() {
+        let table =
+            "view Passengers := dataframe['titanic.parquet']\n\nName : String\nFare : Float\n";
+        let mut doc = Document::from_text(table);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        // Unsorted, the row shown is the row of the file.
+        assert_eq!(doc.source_row(0, 0), 0);
+        assert_eq!(doc.source_row(0, 7), 7);
+        // Sorted in the grid, the top row shown is another row of the file.
+        doc.sort_rows(0, 1, true).expect("sorts");
+        assert_ne!(doc.source_row(0, 0), 0);
+        let at = doc.source_row(0, 0);
+        assert_eq!(doc.snapshot().sheets[0].rows[0][1].display, "512.3292");
+        // A sheet that does not exist is left as it was.
+        assert_eq!(doc.source_row(9, 4), 4);
+        let _ = at;
     }
 
     #[test]

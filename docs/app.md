@@ -62,7 +62,8 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+Alt+Left/Right | Previous / next sheet |
 | Ctrl+C / X / V | Copy / Cut / Paste |
 | Ctrl+Shift+V | Paste values: not formulas |
-| Ctrl+Alt+V | Paste transposed: rows as columns |
+| Ctrl+Shift+T | Paste transposed: rows as columns |
+| Ctrl+Shift+R | Paste reference: a live link to the cells copied |
 | Ctrl+Enter | Insert row below (Shift: above) |
 | Delete | Clear |
 | Ctrl+Delete | Delete the selected rows, columns or sheet |
@@ -77,6 +78,18 @@ rewrites the text, and saving writes exactly that.
 | F2 | Edit |
 | F3 | View source |
 | F11 | Fullscreen |
+
+### Read-only views, and pasting a reference
+
+The data columns of a `view` are its Parquet file's, and nothing is written back to it. Typing on one, Enter, Delete and a paste do nothing and say why in the status bar, before an editor opens. A cut from one is a copy. A formula column appended to a view, a decorator, is edited like any other.
+
+Ctrl+Shift+R, **Paste reference**, pastes a live link to the cells last copied or cut in the app, not their values (Ctrl+V and Ctrl+Shift+V still paste those):
+
+- into data cells, a formula for each cell: `= Passengers[Fare; 3]`
+- into a formula column, its formula, read row by row: `Passengers[Fare; *]` for a column, `Passengers[Fare; *+5]` where the rows copied start five below the rows pasted onto, and `Passengers[Fare; 3]` for one cell
+- from the same sheet, without its name: `Fare`, `[Fare; 3]`
+
+The status bar says what was written. A reference to a row of a view sorted in the grid is to the row it has in the file, not the row it is shown in; rows in a sorted order cannot be pasted into a formula column, since the order is not a shift. A reference to a row is to its place, as one written by hand is: if rows are inserted above it in a sheet of the file's own, it reads what is now there. What reaches the system clipboard is still the values as tab-separated text, so another program pastes those: a reference is for a paste into this app.
 
 ### Sorting and filtering
 

@@ -152,6 +152,19 @@ pub mod qobject {
             col1: i32,
             text: &QString,
         ) -> QString;
+        /// Paste a live reference to the cells last copied here, as formulas
+        /// (D210). Empty on success, which says what it wrote in the status
+        /// bar; otherwise why it could not.
+        #[qinvokable]
+        fn paste_reference(
+            self: Pin<&mut File>,
+            sheet: i32,
+            row0: i32,
+            col0: i32,
+            row1: i32,
+            col1: i32,
+            text: &QString,
+        ) -> QString;
         /// Paste as `paste_cells` does, but turned about: each copied row
         /// goes down a column.
         #[qinvokable]
@@ -991,6 +1004,30 @@ impl qobject::File {
         let text = text.to_string();
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
         self.pasted(|clip, doc| clip.paste(doc, index(sheet), from, to, &text))
+    }
+
+    fn paste_reference(
+        mut self: Pin<&mut Self>,
+        sheet: i32,
+        row0: i32,
+        col0: i32,
+        row1: i32,
+        col1: i32,
+        text: &QString,
+    ) -> QString {
+        let text = text.to_string();
+        let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
+        let said = self
+            .as_mut()
+            .clip(|clip, doc| clip.paste_reference(doc, index(sheet), from, to, &text));
+        match said {
+            Ok(Some(said)) => {
+                self.refresh(&said);
+                QString::default()
+            }
+            Ok(None) => QString::default(),
+            Err(message) => QString::from(&message),
+        }
     }
 
     fn paste_values(

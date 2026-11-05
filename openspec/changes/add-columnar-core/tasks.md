@@ -75,7 +75,9 @@ what stops a table's rows being exploded into cells.
       say why. The plain build is not stripped, which the 1.2 one may have
       been, and `timezones`, `csv` and the extra integer dtypes have come in
       since; which of these is the growth was not measured, and would need
-      a build each with a feature taken out
+      a build each with a feature taken out.
+      Left there: about 40 MB is accepted as the size of the package
+      (owner, 2026-11-04)
 
 ## 2. The layering (D61, D62)
 

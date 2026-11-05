@@ -2,7 +2,7 @@
 
 //! The document snapshot as JSON, for the QML side to parse.
 
-use omasheet_engine::doc::{CellSnap, FuncSnap, Snapshot};
+use omasheet_engine::doc::{CellSnap, FuncSnap, Snapshot, read_only_why};
 use omasheet_engine::omx::funcs::FuncDoc;
 
 fn string(out: &mut String, s: &str) {
@@ -88,6 +88,10 @@ pub fn snapshot(snap: &Snapshot) -> String {
         field(out, "view", t.view.as_deref().unwrap_or(""));
         out.push(',');
         field(out, "from", t.source.as_deref().unwrap_or(""));
+        out.push(',');
+        // Why its data cells take no edit, where they take none; a formula
+        // column on a view still does (D207).
+        field(out, "why", &read_only_why(t).unwrap_or_default());
         out.push_str(",\"columns\":");
         list(out, &t.columns, |out, c| {
             out.push('{');
@@ -196,9 +200,10 @@ mod tests {
         let json = super::snapshot(doc.snapshot());
         // A sheet says what its rows come from before its columns: the
         // expression of one calculated from an expression, or a table's
-        // file. Both empty for a sheet whose rows are its own.
+        // file, then why its data takes no edit. All empty for a sheet whose
+        // rows are its own.
         assert!(json.starts_with(
-            "{\"sheets\":[{\"name\":\"T\",\"view\":\"\",\"from\":\"\",\"columns\":[{\"name\":\"A\""
+            "{\"sheets\":[{\"name\":\"T\",\"view\":\"\",\"from\":\"\",\"why\":\"\",\"columns\":[{\"name\":\"A\""
         ));
         assert!(json.contains("\"d\":\"say \\\"hi\\\"\""), "{json}");
         assert!(json.contains(

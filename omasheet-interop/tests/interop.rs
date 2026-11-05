@@ -1333,7 +1333,6 @@ fn a_document_shows_a_table_and_takes_no_edit() {
     assert!(!doc.insert_rows(0, 0, 1));
     assert!(!doc.delete_rows(0, 0, 1));
     assert!(!doc.set_column_types(0, &[1], Some("Float")));
-    assert!(!doc.set_column_formula(0, 3, "Revenue"));
     assert_eq!(doc.add_column(0, "Extra").unwrap_err(), why);
     assert_eq!(doc.insert_column(0, 0, "Extra").unwrap_err(), why);
     assert_eq!(doc.rename_column(0, 0, "When").unwrap_err(), why);
@@ -1345,6 +1344,14 @@ fn a_document_shows_a_table_and_takes_no_edit() {
         why
     );
     assert_eq!(doc.text(), before);
+
+    // A formula column appended to the view, a decorator, is the file's own
+    // text and takes a formula; the columns of the Parquet file do not
+    // (paste-as-reference D207).
+    assert_eq!(doc.read_only_cell(0, 0).as_deref(), Some(why));
+    assert_eq!(doc.read_only_cell(0, 3), None);
+    assert!(doc.set_column_formula(0, 3, "Revenue"));
+    assert!(doc.text().contains("Profit := Revenue\n"), "{}", doc.text());
 }
 
 #[test]
