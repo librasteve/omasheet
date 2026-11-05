@@ -3967,7 +3967,7 @@ ApplicationWindow {
                     color: win.textColor
                     selectionColor: win.selectionFill
                     selectByMouse: true
-                    font.family: "monospace"
+                    font.family: win.monoFamily
                     font.pixelSize: columnPopup.textSize
                     onTextChanged: columnPopup.check()
                     Keys.onReturnPressed: columnPopup.accept()
@@ -4087,7 +4087,7 @@ ApplicationWindow {
             enabled: cellMenu.hasRows && win.canPasteValues
             onTriggered: win.pasteValues()
         }
-        MenuEntry { text: "Paste reference"; enabled: cellMenu.hasRows && win.canPasteReference; onTriggered: win.pasteReference() }
+        MenuEntry { text: "Paste references"; enabled: cellMenu.hasRows && win.canPasteReference; onTriggered: win.pasteReference() }
         MenuEntry { text: "Paste transposed"; enabled: cellMenu.hasRows && win.canTranspose; onTriggered: win.pasteTransposed() }
         MenuEntry { text: "Clear"; enabled: cellMenu.hasRows && !win.formulaCell; onTriggered: win.clearSelection() }
         // Delete, for what is selected as a whole.

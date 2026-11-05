@@ -44,6 +44,8 @@ struct Referent {
     sheet: String,
     /// Their columns, left to right.
     cols: Vec<String>,
+    /// Every column of the sheet, for the names a formula reads there.
+    sheet_cols: Vec<String>,
     /// The row of the source each came from: for a table sorted in the
     /// grid, not the row it is shown in (D215).
     rows: Vec<usize>,
@@ -100,6 +102,7 @@ fn referent(doc: &Document, sheet: usize, from: Cell, to: Cell, text: &str) -> O
     (!cols.is_empty()).then(|| Referent {
         text: text.to_string(),
         sheet: t.name.clone(),
+        sheet_cols: t.columns.iter().map(|c| c.name.clone()).collect(),
         cols,
         rows: (from.0..=last).map(|r| doc.source_row(sheet, r)).collect(),
     })
@@ -364,6 +367,33 @@ impl Clip {
         (parse_block(&copied.text) == parse_block(text)).then_some(copied)
     }
 
+    /// `block`, the cells last cut or copied, with the formulas in it made to
+    /// read what they read on the sheet they came from, where they are put
+    /// down on another one (D214). As it was for anything else.
+    fn read_where_it_was(
+        &self,
+        doc: &Document,
+        sheet: usize,
+        block: &[Vec<String>],
+    ) -> Vec<Vec<String>> {
+        let here = doc.snapshot().sheets.get(sheet).map(|t| t.name.as_str());
+        let Some(r) = self
+            .refer
+            .as_ref()
+            .filter(|r| Some(r.sheet.as_str()) != here && parse_block(&r.text) == block)
+        else {
+            return block.to_vec();
+        };
+        block
+            .iter()
+            .map(|line| {
+                line.iter()
+                    .map(|cell| omasheet_engine::doc::qualified(cell, &r.sheet, &r.sheet_cols))
+                    .collect()
+            })
+            .collect()
+    }
+
     /// Paste `text` at a block of cells. Whether anything changed, or why
     /// it could not be pasted: what was cut is then still cut.
     pub fn paste(
@@ -374,11 +404,14 @@ impl Clip {
         to: Cell,
         text: &str,
     ) -> Result<bool, String> {
-        let block = parse_block(text);
+        let original = parse_block(text);
+        // A formula copied from another sheet is made to read where it
+        // read (D214); what was cut is known by the text it was copied as.
+        let block = self.read_where_it_was(doc, sheet, &original);
         // One formula onto formula columns is their formula, and the cell
         // it was cut from is cleared, in one step.
         if let Some(formulas) = formula_target(doc, sheet, from, to, &block)? {
-            let cut = self.take_cut(doc, &block);
+            let cut = self.take_cut(doc, &original);
             return Ok(doc.as_one(|doc| {
                 for (col, formula) in &formulas {
                     doc.set_column_formula(sheet, *col, formula);
@@ -391,7 +424,7 @@ impl Clip {
         refused(doc, sheet, from, to, &block)?;
         // Cells cut from this sheet, with nothing done since, are moved;
         // one cell onto several fills them all.
-        let cut = self.take_cut(doc, &block);
+        let cut = self.take_cut(doc, &original);
         let fills = block.len() == 1 && block[0].len() == 1 && from != to;
         if let Some(cut) = &cut
             && cut.sheet == sheet
@@ -1161,5 +1194,25 @@ mod tests {
         assert_eq!(held(&doc, 0)[1], "||2|4");
         assert_eq!(held(&doc, 0)[2], "0|0|= [C; 0] + [D; 1]|0");
         assert_eq!(shown(&doc, 2, 2), "5");
+    }
+
+    #[test]
+    fn a_formula_pasted_onto_another_sheet_reads_where_it_read() {
+        let mut doc = doc();
+        let mut clip = Clip::default();
+        // `= A+B` of T, copied and pasted on U: still T's A and B.
+        let text = clip.copy(&doc, 0, (0, 2), (0, 2));
+        assert_eq!(clip.paste(&mut doc, 1, (0, 0), (0, 0), &text), Ok(true));
+        assert_eq!(held(&doc, 1)[0], "= T[A; *]+T[B; *]|");
+        assert_eq!(col_display(&doc, 1, 0)[0], "3");
+        // On its own sheet it is pasted as it was written.
+        assert_eq!(clip.paste(&mut doc, 0, (1, 2), (1, 2), &text), Ok(true));
+        assert_eq!(held(&doc, 0)[1], "10|20|= A+B|");
+        // A cut formula moved to another sheet reads where it read too.
+        let mut doc = self::doc();
+        let text = clip.cut(&doc, 0, (0, 2), (0, 2));
+        assert_eq!(clip.paste(&mut doc, 1, (0, 1), (0, 1), &text), Ok(true));
+        assert_eq!(held(&doc, 1)[0], "|= T[A; *]+T[B; *]");
+        assert_eq!(held(&doc, 0)[0], "1|2||");
     }
 }

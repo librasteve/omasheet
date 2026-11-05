@@ -516,6 +516,8 @@ struct Site<'a> {
     /// Inside a slot of another index, where the current row is a row of
     /// that index and not the formula's own.
     nested: bool,
+    /// The whole index as written.
+    at: Span,
 }
 
 /// The sheet an index is into, if its base says so: `Some(None)` for an
@@ -576,6 +578,7 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
                     row: slots[1].as_ref(),
                     col: ColPart::Field(name, *span),
                     nested,
+                    at: e.span,
                 });
                 if let Some(slot) = &slots[1] {
                     sites(slot, true, out, names);
@@ -595,6 +598,7 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
                         _ => ColPart::All,
                     },
                     nested,
+                    at: e.span,
                 });
             } else if let ExprKind::Field(inner, name, span) = &base.kind
                 && let ExprKind::Name(sheet) = &inner.kind
@@ -606,6 +610,7 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
                     row: slots[0].as_ref(),
                     col: ColPart::Field(name, *span),
                     nested,
+                    at: e.span,
                 });
             } else {
                 sites(base, nested, out, names);
@@ -1089,6 +1094,38 @@ fn turned_cell(
             rows => format!("[{name}; {}]", offset_text(rows)),
         };
         put(&mut edits, cell, span, new);
+    }
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = cell.to_string();
+    for (s, e, new) in edits {
+        out.replace_range(s..e, &new);
+    }
+    out
+}
+
+/// A formula copied from `sheet` and put down on a different sheet, with
+/// what it read there made to say so, so that it reads what it read: an
+/// index with no sheet name is into `sheet`, and a column of its own row,
+/// named alone, is `sheet`'s column of that row (D214). `cols` are the
+/// columns of `sheet`. Anything else is as it was.
+pub fn qualified(cell: &str, sheet: &str, cols: &[String]) -> String {
+    let Some(Ok(expr)) = cell.strip_prefix('=').map(|body| parse_expr(body, 0, 1)) else {
+        return cell.to_string();
+    };
+    let (mut found, mut names) = (Vec::new(), Vec::new());
+    sites(&expr, false, &mut found, &mut names);
+    let mut edits: Vec<Edit> = Vec::new();
+    for site in &found {
+        if site.nested || site.sheet.is_some() {
+            continue;
+        }
+        let start = site.at.start as usize;
+        edits.push((start, start, sheet.to_string()));
+    }
+    for (name, span) in &names {
+        if cols.iter().any(|c| c == name) {
+            put(&mut edits, cell, *span, format!("{sheet}[{name}; *]"));
+        }
     }
     edits.sort_by_key(|e| std::cmp::Reverse(e.0));
     let mut out = cell.to_string();
@@ -4494,6 +4531,25 @@ mod tests {
         // A sheet that does not exist is left as it was.
         assert_eq!(doc.source_row(9, 4), 4);
         let _ = at;
+    }
+
+    #[test]
+    fn a_formula_copied_to_another_sheet_is_made_to_read_where_it_read() {
+        let cols: Vec<String> = ["A", "B"].iter().map(|c| c.to_string()).collect();
+        let q = |cell: &str| qualified(cell, "T", &cols);
+        // An index with no sheet name is into the sheet it came from.
+        assert_eq!(q("= [A; *-1] * 2"), "= T[A; *-1] * 2");
+        assert_eq!(q("=[B; 3]"), "=T[B; 3]");
+        // A column named on its own is that column of the cell's own row.
+        assert_eq!(q("= A + B"), "= T[A; *] + T[B; *]");
+        // A name that is no column of the sheet is left, and so is a sheet
+        // already named, and anything that is not a formula.
+        assert_eq!(q("= A * Rate"), "= T[A; *] * Rate");
+        assert_eq!(q("= U[A; 1] + [B; 2]"), "= U[A; 1] + T[B; 2]");
+        assert_eq!(q("5"), "5");
+        assert_eq!(q("= 1 +"), "= 1 +");
+        // Formed again, it reads the same.
+        assert_eq!(q(&q("= [A; 1] + B")), q("= [A; 1] + B"));
     }
 
     #[test]

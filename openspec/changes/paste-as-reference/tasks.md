@@ -12,9 +12,9 @@
 - [x] 2.3 Paste as Reference into data cells: a formula in each (D211)
 - [x] 2.4 Paste as Reference into a formula column: the column's formula, aligned by row with the offset of D212; one formula for each column of a block
 - [x] 2.5 The sheet's name left out from the same sheet (D213)
-- [ ] 2.6 Names in a copied formula qualified for another sheet (D214) *(not built: `sites` in `doc.rs` finds the indexes and bare names to rewrite, but the rewrite and its tests are still to do)*
+- [x] 2.6 Names in a copied formula qualified for another sheet (D214) *(`qualified` in `doc.rs`, applied by `Clip::paste` for a copy or a cut onto a different sheet)*
 - [x] 2.7 The status bar says what was written (D216)
-- [x] 2.8 Tests: a view column pasted into a decorator column, into another sheet's formula column and into data cells; rows 5 to 9 onto row 0; one cell; a sorted view; a formula copied across sheets *(clip tests: views, decorators, sorted views, offsets, cross-sheet, cut; not a formula copied across sheets, see 2.6)*
+- [x] 2.8 Tests: a view column pasted into a decorator column, into another sheet's formula column and into data cells; rows 5 to 9 onto row 0; one cell; a sorted view; a formula copied across sheets *(clip tests: views, decorators, sorted views, offsets, cross-sheet, cut)*
 
 ## 3. The command (`app`)
 - [x] 3.1 Paste as Reference in the cell menu, enabled where a reference can be made, and its key, Ctrl+Shift+R (D217)

@@ -89,6 +89,8 @@ Ctrl+Shift+R, **Paste reference**, pastes a live link to the cells last copied o
 - into a formula column, its formula, read row by row: `Passengers[Fare; *]` for a column, `Passengers[Fare; *+5]` where the rows copied start five below the rows pasted onto, and `Passengers[Fare; 3]` for one cell
 - from the same sheet, without its name: `Fare`, `[Fare; 3]`
 
+A formula copied or cut and pasted onto a different sheet has the names in it made explicit, so that it still reads what it read: `= [Revenue; *-1]` from `Sales` becomes `= Sales[Revenue; *-1]`, and `= A + B` becomes `= Sales[A; *] + Sales[B; *]`. On its own sheet it is pasted as written.
+
 The status bar says what was written. A reference to a row of a view sorted in the grid is to the row it has in the file, not the row it is shown in; rows in a sorted order cannot be pasted into a formula column, since the order is not a shift. A reference to a row is to its place, as one written by hand is: if rows are inserted above it in a sheet of the file's own, it reads what is now there. What reaches the system clipboard is still the values as tab-separated text, so another program pastes those: a reference is for a paste into this app.
 
 ### Sorting and filtering
