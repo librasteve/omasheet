@@ -3683,12 +3683,13 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
             }
         }
     }
-    // Lest the whole thing pass by checking nothing. Eight of the
-    // corpus's columns come from a file, all of `analysis.omx`, and those
-    // are taken at once whichever way the rest is calculated, which is 16
-    // of the 43. The other twenty-seven are the columns lowering forced
-    // calculates in one step, and 8.3 is where that number is read.
-    assert_eq!(taken, 43, "the columns taken at once");
+    // Lest the whole thing pass by checking nothing. Sixteen of the
+    // corpus's columns come from a file, eight in `analysis.omx` and eight
+    // in `ccp.omx`, and those are taken at once whichever way the rest is
+    // calculated, which is 32 of the 59. The other twenty-seven are the
+    // columns lowering forced calculates in one step, and 8.3 is where that
+    // number is read.
+    assert_eq!(taken, 59, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read

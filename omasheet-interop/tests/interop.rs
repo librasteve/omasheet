@@ -1339,11 +1339,17 @@ fn a_document_shows_a_table_and_takes_no_edit() {
     assert_eq!(doc.delete_columns(0, 0, 1).unwrap_err(), why);
     assert_eq!(doc.move_rows(0, 0, 1, 1).unwrap_err(), why);
     assert_eq!(doc.move_columns(0, 0, 1, 1).unwrap_err(), why);
-    assert_eq!(
-        doc.add_computed(0, "Twice", "Revenue * 2").unwrap_err(),
-        why
-    );
     assert_eq!(doc.text(), before);
+
+    // A formula column is the one thing it takes: a decorator, a line after
+    // the file's columns.
+    doc.add_computed(0, "Twice", "Revenue * 2").unwrap();
+    assert!(
+        doc.text().contains("Twice := Revenue * 2\n"),
+        "{}",
+        doc.text()
+    );
+    assert!(doc.undo());
 
     // A formula column appended to the view, a decorator, is the file's own
     // text and takes a formula; the columns of the Parquet file do not

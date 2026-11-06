@@ -1275,6 +1275,16 @@ impl<'a> Checker<'a> {
         self.sheets[t].cols.iter().position(|c| c.name == name)
     }
 
+    /// How many rows sheet `t` has, if the check can know: a file's rows
+    /// are not counted until it is read, so a row by number is checked
+    /// against them then, not here.
+    fn known_rows(&self, t: usize) -> Option<usize> {
+        match self.sheets[t].source {
+            Some(_) => None,
+            None => Some(self.sheets[t].nrows),
+        }
+    }
+
     fn all_cols(&self, t: usize) -> Rc<Vec<usize>> {
         Rc::new((0..self.sheets[t].cols.len()).collect())
     }
@@ -2605,7 +2615,7 @@ impl<'a> Checker<'a> {
                 let ty = Ty::Sheet(SheetTy {
                     sheet: t,
                     cols: self.all_cols(t),
-                    rows: Some(self.sheets[t].nrows),
+                    rows: self.known_rows(t),
                     kind: DepKind::Whole,
                 });
                 (Node::new(Ir::Sheet(t), span), ty)
@@ -2909,7 +2919,7 @@ impl<'a> Checker<'a> {
             let ty = Ty::Sheet(SheetTy {
                 sheet: t,
                 cols: self.all_cols(t),
-                rows: Some(self.sheets[t].nrows),
+                rows: self.known_rows(t),
                 kind: DepKind::Whole,
             });
             return (Node::new(Ir::Sheet(t), span), ty);

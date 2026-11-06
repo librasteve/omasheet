@@ -56,8 +56,13 @@ ApplicationWindow {
         openCell = openCell && openCell.tab === tab && openCell.row === row && openCell.col === col
             ? null : { tab: tab, row: row, col: col };
     }
-    // Ctrl+plus and Ctrl+minus change the size; everything scales from it.
-    property int fontSize: baseFontSize
+    // Ctrl+plus and Ctrl+minus change the size, and everything scales from
+    // it. The size zoomed to is kept per user, so the next launch opens at
+    // it; Ctrl+0 forgets it and goes back to the desktop's.
+    property int fontSize: {
+        var saved = file.savedFontSize();
+        return saved > 0 ? Math.max(8, Math.min(40, saved)) : baseFontSize;
+    }
     // The smaller sizes are a share of it rather than so many pixels off,
     // so they keep their proportions at any size: a fixed `- 3` is a tenth
     // off at 30 and a third off at 9. The shares are Omarchy's own type
@@ -78,6 +83,7 @@ ApplicationWindow {
 
     function zoom(step) {
         fontSize = step === 0 ? baseFontSize : Math.max(8, Math.min(40, fontSize + step));
+        file.saveFontSize(step === 0 ? 0 : fontSize);
     }
 
     Material.theme: file.darkMode ? Material.Dark : Material.Light
@@ -1380,6 +1386,45 @@ ApplicationWindow {
         return name;
     }
 
+    // The name offered for a new column going in as column `at` (-1 for the
+    // end), from the one to its left: the next letters on if that is
+    // lettered (B after A, AA after Z), else its name made free with
+    // `_001`, `_002`... Nothing where there is no column to its left.
+    function suggestedColumnName(at) {
+        var cols = sheet.columns;
+        var left = at < 0 ? cols.length - 1 : at - 1;
+        if (sheet.isConsts || left < 0 || left >= cols.length)
+            return "";
+        var taken = namesTaken(-1, -1);
+        var name = cols[left].name;
+        for (var i = 0; i < maxLetterColumns; i++) {
+            if (columnLetters(i) !== name)
+                continue;
+            for (var k = i + 1; k < maxLetterColumns; k++)
+                if (!taken[columnLetters(k)])
+                    return columnLetters(k);
+            break;
+        }
+        return copyName(name, taken);
+    }
+
+    // Whole columns of another place are pasted with the whole sheet selected.
+    function columnsOnSheet(text) {
+        return selKind === "all" && !sheet.isConsts && marked !== null && marked.columns
+            && marked.text === text && marked.tab < tabs.length;
+    }
+
+    // The name a column copied from sheet `tabFrom` is given where `taken`
+    // are the names there: its own if it came from another sheet and no
+    // column has it, otherwise a copy's.
+    function pastedName(from, tabFrom, taken) {
+        if (tabFrom !== tab && !taken[from]) {
+            taken[from] = true;
+            return from;
+        }
+        return copyName(from, taken);
+    }
+
     // The names of this sheet's columns, but for `first` to `last`.
     function namesTaken(first, last) {
         var taken = {};
@@ -1392,7 +1437,7 @@ ApplicationWindow {
     // Columns pasted onto one column past the last are added for them, as
     // rows are: named as those they were copied from.
     function growColumns(text, t) {
-        if (selKind !== "column" || t[1] !== t[3])
+        if ((selKind !== "column" && !columnsOnSheet(text)) || t[1] !== t[3])
             return "";
         var width = text.split("\n")[0].split("\t").length;
         var need = t[1] + width - sheet.columns.length;
@@ -1401,7 +1446,7 @@ ApplicationWindow {
         var names = [];
         for (var i = width - need; i < width; i++) {
             var from = m !== null ? tabs[m.tab].columns[m.left + i] : null;
-            names.push(copyName(from ? from.name : "Column", taken));
+            names.push(from ? pastedName(from.name, m.tab, taken) : copyName("Column", taken));
         }
         var end = sheet.columns.length;
         for (var k = 0; k < names.length; k++) {
@@ -1416,18 +1461,19 @@ ApplicationWindow {
     // free with `_001`, `_002`...
     function pastedColumns() {
         var m = marked;
-        if (m === null || !m.columns || selKind !== "column" || m.tab >= tabs.length
+        var whole = selKind === "all";
+        if (m === null || !m.columns || (selKind !== "column" && !whole) || m.tab >= tabs.length
             || (m.tab === tab && m.left === selLeft))
             return;
-        var count = Math.min(m.right - m.left + 1, selRight - selLeft + 1);
-        var at = selLeft;
+        var count = Math.min(m.right - m.left + 1, whole ? sheet.columns.length : selRight - selLeft + 1);
+        var at = whole ? 0 : selLeft;
         var taken = namesTaken(at, at + count - 1);
         var names = [];
         for (var i = 0; i < count; i++) {
             var from = tabs[m.tab].columns[m.left + i];
             if (!from)
                 return;
-            names.push(copyName(from.name, taken));
+            names.push(pastedName(from.name, m.tab, taken));
         }
         // A name may be one another of these columns has now: each is
         // first given a name no column has, then its own.
@@ -1583,10 +1629,16 @@ ApplicationWindow {
     // several rows, and one whole column several columns, as one cell takes
     // a block: from there on, at their own size.
     function pasteTarget(text) {
+        // Whole columns pasted onto a whole sheet go in from its corner.
+        if (columnsOnSheet(text))
+            return [0, 0, 0, 0];
         if (selKind === "row" && selTop === selBottom && text.indexOf("\n") >= 0)
             return [selTop, selLeft, selTop, selLeft];
         if (selKind === "column" && selLeft === selRight && text.split("\n")[0].indexOf("\t") >= 0)
             return [selTop, selLeft, selTop, selLeft];
+        // Columns are pasted whole: rows past the sheet's last are added.
+        if (selKind === "column" && (text.indexOf("\n") >= 0 || text.indexOf("\t") >= 0))
+            return [selTop, selLeft, Math.max(selBottom, selTop + text.split("\n").length - 1), selRight];
         return [selTop, selLeft, selBottom, selRight];
     }
 
@@ -1948,6 +2000,27 @@ ApplicationWindow {
 
     // Columns go in before or after the selection: the ones cut or copied as
     // whole columns if any are waiting, else one new one, asked for by name.
+    // The letters a spreadsheet gives column `n` (from 0): A to Z, then AA
+    // to ZZ, which is as far as a sheet kept in letters goes.
+    function columnLetters(n) {
+        var a = String.fromCharCode(65 + n % 26);
+        return n < 26 ? a : String.fromCharCode(65 + Math.floor(n / 26) - 1) + a;
+    }
+    readonly property int maxLetterColumns: 702
+    // Whether the sheet's columns are named A, B, C... in order, as a new
+    // sheet's are: more of them can then be added by number, carrying on
+    // from the last.
+    readonly property bool letterSheet: {
+        var cols = sheet.columns;
+        if (sheet.isConsts || cols.length === 0 || cols.length > maxLetterColumns)
+            return false;
+        for (var i = 0; i < cols.length; i++) {
+            if (cols[i].name !== columnLetters(i))
+                return false;
+        }
+        return true;
+    }
+
     function insertColumnsHere(after) {
         if (colsOnHand !== null)
             insertColumnsOnHand(after);
@@ -2586,6 +2659,7 @@ ApplicationWindow {
                             }
                         }
                         Repeater {
+                            id: headCells
                             model: win.sheet.columns.length
                             Rectangle {
                                 id: headCell
@@ -4082,7 +4156,7 @@ ApplicationWindow {
         onClosed: {
             if (promptDialog.visible)
                 promptDialog.takeFocus();
-            else if (!typeMenu.visible)
+            else if (!typeMenu.visible && !columnPopup.visible)
                 grid.forceActiveFocus();
         }
         // Close set, to fit a long menu on a small window.
@@ -4119,6 +4193,7 @@ ApplicationWindow {
             enabled: visible && cellMenu.hasRows
             onTriggered: win.deleteRows()
         }
+        MenuRule { visible: cellMenu.columns }
         MenuEntry {
             text: cellMenu.columnCount > 1 ? "Delete " + cellMenu.columnCount + " columns" : "Delete column"
             visible: cellMenu.columns
@@ -4181,7 +4256,6 @@ ApplicationWindow {
         }
         // Columns, when whole columns are selected. A column added
         // from the footer goes at the end.
-        MenuRule { visible: cellMenu.columns }
         MenuEntry {
             text: win.colsOnHand !== null ? "Insert cells before" : "Insert column before"
             visible: cellMenu.columns
@@ -4194,6 +4268,15 @@ ApplicationWindow {
             enabled: visible && cellMenu.editable
             onTriggered: win.insertColumnsHere(true)
         }
+        // A sheet still in letters: a number of columns, named on from the
+        // last, at the end so that the letters stay in order.
+        MenuEntry {
+            text: "Insert columns\u2026"
+            visible: cellMenu.columns && win.letterSheet
+            enabled: visible && cellMenu.editable && win.sheet.columns.length < win.maxLetterColumns
+            onTriggered: promptDialog.ask("columns")
+        }
+        MenuRule { visible: cellMenu.columns }
         MenuEntry {
             text: "Rename column…"
             visible: cellMenu.columns
@@ -4216,6 +4299,18 @@ ApplicationWindow {
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.sheet.columns.length > 0 && win.allFormattable()
             onTriggered: promptDialog.ask("format")
+        }
+        // The filter box from the column's header, for the one column.
+        MenuEntry {
+            text: "Set filter\u2026"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.selLeft === win.selRight
+                && win.sheet.columns.length > 0
+            onTriggered: {
+                var head = headCells.itemAt(win.selLeft);
+                if (head)
+                    columnPopup.openFor(win.selLeft, head);
+            }
         }
         MenuEntry {
             text: "Clear type"
@@ -4351,6 +4446,15 @@ ApplicationWindow {
             win.pendingUrl = selectedFile;
             win.run("openUrl");
         }
+    }
+
+    Dialogs.FileDialog {
+        id: frameDialog
+        title: "Dataframe file"
+        fileMode: Dialogs.FileDialog.OpenFile
+        nameFilters: ["Parquet and CSV (*.parquet *.csv)", "All files (*)"]
+        onAccepted: promptDialog.dataUrl = selectedFile
+        onRejected: if (promptDialog.dataUrl.toString().length === 0) frameBox.checked = false
     }
 
     Dialogs.FileDialog {
@@ -4666,10 +4770,18 @@ ApplicationWindow {
         property int column: 0
         // Where a new column or sheet goes; -1 for the end.
         property int at: -1
+        // The file a new sheet reads its rows from, when it is a dataframe.
+        property url dataUrl
+        // Asked for a number, in the one box.
+        readonly property bool counted: kind === "rows" || kind === "columns"
+        // A file's sheet holds no data of its own: a column added to it is a formula.
+        readonly property bool formulaOnly: (kind === "column" || kind === "computed")
+            && !win.sheet.isConsts && !win.sheet.view && (win.sheet.why || "").length > 0
         readonly property bool needsExpr: kind === "computed" || kind === "const"
             || (kind === "sheet" && formulaBox.checked)
         title: kind === "sheet" ? "New sheet"
              : kind === "rows" ? "Insert rows in " + win.sheet.name
+             : kind === "columns" ? "Insert columns in " + win.sheet.name
              : kind === "renameSheet" ? "Rename sheet " + win.sheet.name
              : kind === "rename" ? "Rename column " + (win.sheet.columns[column] ? win.sheet.columns[column].name : "")
              : kind === "format" ? "Format of column " + (win.sheet.columns[column] ? win.sheet.columns[column].name : "")
@@ -4708,9 +4820,14 @@ ApplicationWindow {
             nameField.text = what === "rename" && win.sheet.columns[column] ? win.sheet.columns[column].name
                 : what === "sheet" ? freeSheetName()
                 : what === "renameSheet" ? win.sheet.name
+                : what === "column" ? win.suggestedColumnName(at)
                 : what === "format" && win.sheet.columns[column] ? win.sheet.columns[column].format : "";
             exprField.text = "";
-            formulaBox.checked = what === "computed";
+            if (what === "column" && !win.sheet.isConsts && !win.sheet.view && (win.sheet.why || "").length > 0)
+                kind = "computed";
+            formulaBox.checked = kind === "computed";
+            frameBox.checked = false;
+            dataUrl = "";
             countBox.text = "5";
             problem.text = "";
             open();
@@ -4721,7 +4838,7 @@ ApplicationWindow {
         onOpened: takeFocus()
         function takeFocus() {
             forceActiveFocus();
-            if (kind === "rows") {
+            if (counted) {
                 countBox.forceActiveFocus();
                 countBox.deselect();
                 countBox.cursorPosition = countBox.text.length;
@@ -4740,17 +4857,61 @@ ApplicationWindow {
             return "";
         }
 
+        // What the number typed comes to, as the rows or columns it would
+        // add are labelled in the sheet: "5 means 4..8" for rows, which are
+        // numbered from 0 as the gutter has them, and "5 means D..H" for
+        // columns. Blank while the number is not one that would be taken.
+        readonly property string meaning: {
+            var text = countBox.text.trim();
+            var n = Number(text);
+            if (!counted || text.length === 0 || !Number.isInteger(n) || n < 1)
+                return "";
+            if (kind === "rows") {
+                if (n > 10000)
+                    return "";
+                var first = win.sheet.nrows === 0 ? 0 : win.selBottom + 1;
+                return n + (n === 1 ? " means row " + first : " means " + first + ".." + (first + n - 1));
+            }
+            var have = win.sheet.columns.length;
+            if (have + n > win.maxLetterColumns)
+                return "";
+            return n + (n === 1 ? " means column " + win.columnLetters(have)
+                : " means " + win.columnLetters(have) + ".." + win.columnLetters(have + n - 1));
+        }
+
+        // Add the columns after the last, lettered on from it.
+        function addLetterColumns() {
+            var have = win.sheet.columns.length;
+            var room = win.maxLetterColumns - have;
+            var count = Number(countBox.text.trim());
+            if (!Number.isInteger(count) || count < 1 || count > room)
+                return "Enter a number of columns from 1 to " + room;
+            var mark = file.undoMark();
+            var problem = "";
+            // At the end, so nothing marked moves.
+            for (var k = 0; k < count && problem.length === 0; k++)
+                problem = file.addColumn(win.tab, win.columnLetters(have + k));
+            file.joinSince(mark);
+            return problem;
+        }
+
         function submit() {
             var message;
             var whole = win.selKind === "column";
             var all = win.selKind === "all";
             if (kind === "rows") {
                 message = addRows();
+            } else if (kind === "columns") {
+                message = addLetterColumns();
             } else if (kind === "sheet") {
                 // A new sheet renumbers the tabs, so nothing stays marked.
                 var formula = formulaBox.checked ? exprField.text : "";
-                message = at < 0 ? file.addSheet(nameField.text, formula)
-                                 : file.insertSheet(at, nameField.text, formula);
+                if (frameBox.checked)
+                    message = dataUrl.toString().length === 0 ? "Choose a file"
+                        : file.insertView(at < 0 ? win.snap.sheets.length : at, nameField.text, dataUrl);
+                else
+                    message = at < 0 ? file.addSheet(nameField.text, formula)
+                                     : file.insertSheet(at, nameField.text, formula);
             } else {
                 // New rows go at the end, and new columns at `at` or the end.
                 win.keeping(win.sheet.nrows, at < 0 ? win.sheet.columns.length : at, function() {
@@ -4786,7 +4947,7 @@ ApplicationWindow {
                 accept();
                 return;
             }
-            if (kind === "rows") {
+            if (counted) {
                 countBox.forceActiveFocus();
                 countBox.selectAll();
             } else if (!exprField.activeFocus) {
@@ -4802,7 +4963,7 @@ ApplicationWindow {
             // How many rows, typed.
             TextField {
                 id: countBox
-                visible: promptDialog.kind === "rows"
+                visible: promptDialog.counted
                 Layout.fillWidth: true
                 validator: IntValidator { bottom: 1; top: 10000 }
                 font.family: win.font.family
@@ -4810,9 +4971,19 @@ ApplicationWindow {
                 font.pixelSize: win.dialogSize
                 onAccepted: promptDialog.tryAccept()
             }
+            // What that number comes to, in the labels the sheet shows.
+            Label {
+                visible: promptDialog.counted && promptDialog.meaning.length > 0
+                Layout.fillWidth: true
+                text: promptDialog.meaning
+                color: win.mutedColor
+                font.family: win.font.family
+                font.features: win.font.features
+                font.pixelSize: win.noteSize
+            }
             TextField {
                 id: nameField
-                visible: promptDialog.kind !== "rows"
+                visible: !promptDialog.counted
                 focus: true
                 Layout.fillWidth: true
                 placeholderText: promptDialog.kind === "format" ? win.formatExample(promptDialog.column) : "Name"
@@ -4832,13 +5003,44 @@ ApplicationWindow {
                 font.features: win.font.features
                 font.pixelSize: win.dialogSize
                 onToggled: {
+                    if (!checked && promptDialog.formulaOnly) {
+                        checked = true;
+                        problem.text = "A column of a file's sheet must be a formula: its data is read-only";
+                        return;
+                    }
                     // A sheet keeps its kind: it is one sheet either way,
                     // with rows of its own or a view of another's.
                     if (promptDialog.kind !== "sheet")
                         promptDialog.kind = checked ? "computed" : "column";
-                    if (checked)
+                    if (checked) {
+                        frameBox.checked = false;
                         exprField.forceActiveFocus();
+                    }
                 }
+            }
+            // A sheet may be a dataframe: its rows read from a Parquet or CSV file.
+            CheckBox {
+                id: frameBox
+                visible: promptDialog.kind === "sheet"
+                text: "Dataframe"
+                font.family: win.font.family
+                font.features: win.font.features
+                font.pixelSize: win.dialogSize
+                onToggled: {
+                    if (checked) {
+                        formulaBox.checked = false;
+                        frameDialog.open();
+                    }
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: promptDialog.kind === "sheet" && frameBox.checked && promptDialog.dataUrl.toString().length > 0
+                text: promptDialog.dataUrl.toString().split("/").pop()
+                elide: Text.ElideLeft
+                font.family: win.font.family
+                font.features: win.font.features
+                font.pixelSize: win.noteSize
             }
             TextField {
                 id: exprField

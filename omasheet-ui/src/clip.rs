@@ -214,6 +214,11 @@ fn block_text(doc: &Document, sheet: usize, from: Cell, to: Cell, values: bool) 
             .map(|(c, cell)| match &t.columns[c].formula {
                 _ if values => cell.exact.clone().unwrap_or_else(|| cell.display.clone()),
                 Some(formula) => format!("= {formula}"),
+                // A cell of a file's has no text behind it: its value is
+                // what it holds.
+                None if cell.source.is_empty() => {
+                    cell.exact.clone().unwrap_or_else(|| cell.display.clone())
+                }
                 None => cell.source.clone(),
             })
             .collect();
@@ -1339,6 +1344,69 @@ mod tests {
             said.as_ref().is_err_and(|e| e.contains("read-only")),
             "{said:?}"
         );
+    }
+
+    #[test]
+    fn a_view_put_in_from_a_file_can_be_copied_and_referred_to() {
+        let mut doc =
+            Document::from_text("sheet S\n\n| A | B |\n| - | - |\n|   |   |\n|   |   |\n");
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        doc.insert_view(
+            0,
+            "Dataframe",
+            "titanic.parquet",
+            omasheet_interop::identifier,
+        )
+        .unwrap();
+        assert!(
+            doc.text()
+                .contains("SiblingsSpousesAboard : Integer from 'Siblings/Spouses Aboard'"),
+            "{}",
+            doc.text()
+        );
+        let mut clip = Clip::default();
+        let text = clip.copy(&doc, 0, (0, 0), (1, 1));
+        assert!(!text.trim().is_empty(), "{text:?}");
+        let said = clip.paste_reference(&mut doc, 1, (0, 0), (0, 0), &text);
+        assert!(said.is_ok(), "{said:?}");
+        assert!(
+            doc.snapshot().problems.is_empty(),
+            "{:?}",
+            doc.snapshot().problems
+        );
+        assert_eq!(clip.paste(&mut doc, 1, (0, 0), (0, 0), &text), Ok(true));
+    }
+
+    #[test]
+    fn tmp_ccp() {
+        let text =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/ccp.omx"))
+                .unwrap();
+        let text = text.split("\nview Titanic").next().unwrap().to_string()
+            + "\nsheet Sheet1\n\n| A | B | C |\n| - | - | - |\n|   |   |   |\n|   |   |   |\n|   |   |   |\n";
+        let mut doc = Document::from_text(&text);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        let n = doc.snapshot().sheets.len() - 1;
+        let mut clip = Clip::default();
+        for top in [0usize, 1] {
+            let t = clip.copy(&doc, 0, (top, 0), (top + 2, 2));
+            eprintln!("copied {top}: {t:?}");
+            eprintln!("{:?}", clip.paste(&mut doc, n, (0, 0), (0, 0), &t));
+            let s = &doc.text()[doc.text().find("sheet Sheet1").unwrap()..];
+            eprintln!("{s}");
+        }
+    }
+
+    #[test]
+    fn a_formula_column_put_in_a_view_goes_after_its_columns() {
+        let mut doc = view();
+        doc.insert_computed(0, 0, "Triple", "Fare * 3").unwrap();
+        let names: Vec<_> = doc.snapshot().sheets[0]
+            .columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        assert_eq!(names, ["Name", "Fare", "Double", "Triple"]);
     }
 
     #[test]

@@ -3264,7 +3264,11 @@ impl Document {
         let mark = self.undo.len();
         self.add_computed(sheet, name, expr)?;
         let last = self.snapshot.sheets[sheet].columns.len() - 1;
-        self.move_columns(sheet, last, 1, at.min(last))?;
+        // A file's sheet keeps its own columns in the file's order: a
+        // formula column added to it goes after them.
+        if self.no_cells(sheet).is_none() {
+            self.move_columns(sheet, last, 1, at.min(last))?;
+        }
         self.squash(mark);
         Ok(())
     }
@@ -3695,13 +3699,49 @@ impl Document {
     /// Add `Name := expression` to a sheet, as its last column: the header
     /// row names it, with `*` for its cells.
     pub fn add_computed(&mut self, sheet: usize, name: &str, expr: &str) -> Result<(), String> {
-        if let Some(why) = self.read_only(sheet) {
+        // A sheet calculated from an expression takes no column; a view of
+        // a file takes a decorator, a line after its schema.
+        let file = self
+            .snapshot
+            .sheets
+            .get(sheet)
+            .is_some_and(|t| t.source.is_some() && t.view.is_none());
+        if !file && let Some(why) = self.read_only(sheet) {
             return Err(why);
         }
         let name = valid_name(name)?.to_string();
         let expr = expr.trim().trim_start_matches('=').trim();
         if expr.is_empty() {
             return Err("a computed column needs an expression".into());
+        }
+        if file {
+            if self.snapshot.sheets[sheet]
+                .columns
+                .iter()
+                .any(|c| c.name == name)
+            {
+                return Err(format!(
+                    "sheet `{}` already has a column `{name}`",
+                    self.snapshot.sheets[sheet].name
+                ));
+            }
+            let ast = self.ast();
+            let Some(decl) = self.sheet_decl(&ast, sheet) else {
+                return Err("there is no such sheet".into());
+            };
+            let (_, end) = self.sheet_lines(decl);
+            let gap = if decl.computed.is_empty() { "\n" } else { "" };
+            let mut text = self.text.clone();
+            let line = format!("{gap}{name} := {}\n", expr.replace('\n', " "));
+            // The last line of the sheet may lack its newline.
+            if end > 0 && !text[..end].ends_with('\n') {
+                text.insert(end, '\n');
+                text.insert_str(end + 1, &line);
+            } else {
+                text.insert_str(end, &line);
+            }
+            self.commit(text);
+            return Ok(());
         }
         let Some(n) = self.snapshot.sheets.get(sheet).map(|t| t.columns.len()) else {
             return Err("there is no such sheet".into());
@@ -3903,11 +3943,6 @@ impl Document {
         formula: Option<&str>,
     ) -> Result<(), String> {
         let name = valid_name(name)?.to_string();
-        let taken = self.snapshot.consts.iter().any(|c| c.name == name)
-            || self.snapshot.sheets.iter().any(|t| t.name == name);
-        if taken {
-            return Err(format!("the name `{name}` is already used"));
-        }
         // A sheet calculated from an expression has no grid of its own:
         // its rows are the view the expression gives (D90).
         let block = match formula.map(str::trim).filter(|f| !f.is_empty()) {
@@ -3916,6 +3951,69 @@ impl Document {
                 "sheet {name}\n\n| A   | B   | C   |\n| --- | --- | --- |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n"
             ),
         };
+        self.insert_block(at, &name, block)
+    }
+
+    /// Put in before sheet `at` a view of the Parquet or CSV file at
+    /// `path`. Its columns are written as schema lines, named by `naming`
+    /// from the file's own, so that other sheets can refer to them: a
+    /// view with none has no columns until it is read, and a formula
+    /// naming one is refused.
+    pub fn insert_view(
+        &mut self,
+        at: usize,
+        name: &str,
+        path: &str,
+        naming: impl Fn(&str) -> String,
+    ) -> Result<(), String> {
+        let name = valid_name(name)?.to_string();
+        let path = path.trim();
+        if path.is_empty() {
+            return Err("choose a file".into());
+        }
+        if path.contains('\'') || path.contains('\n') {
+            return Err("the file name cannot hold a quote or a line break".into());
+        }
+        let block = format!("view {name} := dataframe['{path}']\n");
+        let mut result = Ok(());
+        self.as_one(|doc| {
+            result = doc.insert_block(at, &name, block.clone());
+            if result.is_err() {
+                return;
+            }
+            let Some(sheet) = doc.snapshot.sheets.iter().find(|t| t.name == name) else {
+                return;
+            };
+            let mut lines = String::new();
+            let mut seen = std::collections::HashSet::new();
+            for c in sheet.columns.iter().filter(|c| c.formula.is_none()) {
+                let id = naming(&c.name);
+                if c.ty.is_empty() || id.is_empty() || !seen.insert(id.clone()) {
+                    return;
+                }
+                lines.push_str(&format!("{id} : {}", c.ty));
+                if id != c.name {
+                    if c.name.contains('\'') {
+                        return;
+                    }
+                    lines.push_str(&format!(" from '{}'", c.name));
+                }
+                lines.push('\n');
+            }
+            if !lines.is_empty() {
+                let text = doc.text.replacen(&block, &format!("{block}\n{lines}"), 1);
+                doc.commit(text);
+            }
+        });
+        result
+    }
+
+    fn insert_block(&mut self, at: usize, name: &str, block: String) -> Result<(), String> {
+        let taken = self.snapshot.consts.iter().any(|c| c.name == name)
+            || self.snapshot.sheets.iter().any(|t| t.name == name);
+        if taken {
+            return Err(format!("the name `{name}` is already used"));
+        }
         let ast = self.ast();
         let text = match self.sheet_decl(&ast, at) {
             Some(decl) => {
@@ -6916,6 +7014,28 @@ mod tests {
         assert!(doc.move_rows(0, 0, 2, 3).is_err());
         assert!(doc.move_rows(0, 1, 1, 1).is_ok());
         assert_eq!(doc.text(), before);
+    }
+
+    #[test]
+    fn a_view_of_a_file_can_be_put_in() {
+        let mut doc = Document::from_text("sheet Sales\n\nMonth | Revenue\nJan   | 100\n");
+        doc.insert_view(usize::MAX, "Frame", "data/sales.parquet", |n| n.to_string())
+            .unwrap();
+        assert!(
+            doc.text()
+                .contains("view Frame := dataframe['data/sales.parquet']\n"),
+            "{}",
+            doc.text()
+        );
+        assert!(
+            doc.insert_view(0, "Frame", "x.csv", |n| n.to_string())
+                .is_err()
+        );
+        assert!(doc.insert_view(0, "Other", "", |n| n.to_string()).is_err());
+        assert!(
+            doc.insert_view(0, "Other", "it's.csv", |n| n.to_string())
+                .is_err()
+        );
     }
 
     #[test]

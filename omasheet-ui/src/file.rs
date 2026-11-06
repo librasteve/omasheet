@@ -323,6 +323,9 @@ pub mod qobject {
             name: &QString,
             formula: &QString,
         ) -> QString;
+        /// A new view of the Parquet or CSV file `url`, before sheet `at`.
+        #[qinvokable]
+        fn insert_view(self: Pin<&mut File>, at: i32, name: &QString, url: &QUrl) -> QString;
         #[qinvokable]
         fn rename_sheet(self: Pin<&mut File>, sheet: i32, name: &QString) -> QString;
         #[qinvokable]
@@ -378,6 +381,23 @@ pub mod qobject {
         /// desktop does not say.
         #[qinvokable]
         fn desktop_font_size(self: &File) -> i32;
+        /// The text size the user last zoomed to, in pixels; 0 if none.
+        #[qinvokable]
+        fn saved_font_size(self: &File) -> i32;
+        /// Keep a zoomed text size for the next launch; 0 forgets it.
+        #[qinvokable]
+        fn save_font_size(self: &File, size: i32);
+        /// Seconds after an edit before the file saves itself; 0 is never.
+        #[qinvokable]
+        fn autosave_seconds(self: &File) -> i32;
+        /// The windows open last time, as `width,height` pairs joined by
+        /// `;`; empty if none were kept.
+        #[qinvokable]
+        fn saved_windows(self: &File) -> QString;
+        /// Keep the windows that are open, in the form `saved_windows`
+        /// gives; empty forgets them.
+        #[qinvokable]
+        fn save_windows(self: &File, windows: &QString);
         /// The count, sum and average of a block of cells, for the footer.
         #[qinvokable]
         fn selection_summary(
@@ -1370,6 +1390,24 @@ impl qobject::File {
         self.try_edit(|doc| doc.insert_sheet(index(at), &name, Some(formula.as_str())))
     }
 
+    fn insert_view(self: Pin<&mut Self>, at: i32, name: &QString, url: &QUrl) -> QString {
+        let name = name.to_string();
+        let file = PathBuf::from(url.to_local_file_or_default().to_string());
+        // Always relative: to the saved file's folder, or to where the app runs.
+        let dir = self
+            .rust()
+            .path
+            .as_ref()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .or_else(|| std::env::current_dir().ok());
+        let shown = match dir {
+            Some(dir) => relative_path(&file, &dir),
+            None => file,
+        };
+        let shown = shown.to_string_lossy().to_string();
+        self.try_edit(|doc| doc.insert_view(index(at), &name, &shown, omasheet_interop::identifier))
+    }
+
     fn rename_sheet(self: Pin<&mut Self>, sheet: i32, name: &QString) -> QString {
         let name = name.to_string();
         self.try_edit(|doc| doc.rename_sheet(index(sheet), &name))
@@ -1451,6 +1489,26 @@ impl qobject::File {
 
     fn desktop_font_size(&self) -> i32 {
         crate::theme::base_font_size().map_or(0, |size| size as i32)
+    }
+
+    fn saved_font_size(&self) -> i32 {
+        crate::theme::saved_font_size().map_or(0, |size| size as i32)
+    }
+
+    fn save_font_size(&self, size: i32) {
+        crate::theme::save_font_size(size.max(0) as u32);
+    }
+
+    fn autosave_seconds(&self) -> i32 {
+        crate::theme::autosave_seconds() as i32
+    }
+
+    fn saved_windows(&self) -> QString {
+        QString::from(crate::theme::read_config("windows").trim())
+    }
+
+    fn save_windows(&self, windows: &QString) {
+        crate::theme::write_config("windows", &windows.to_string());
     }
 
     fn entry_hint(&self, ty: &QString) -> QString {
@@ -1683,4 +1741,33 @@ fn file_name(path: &std::path::Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// `file` as a path from folder `dir`, climbing with `..` where it must.
+fn relative_path(file: &std::path::Path, dir: &std::path::Path) -> PathBuf {
+    let file: Vec<_> = file.components().collect();
+    let dir: Vec<_> = dir.components().collect();
+    let common = file.iter().zip(&dir).take_while(|(a, b)| a == b).count();
+    let mut out = PathBuf::new();
+    for _ in common..dir.len() {
+        out.push("..");
+    }
+    for part in &file[common..] {
+        out.push(part);
+    }
+    out
+}
+
+#[cfg(test)]
+mod relative_tests {
+    use super::relative_path;
+    use std::path::Path;
+
+    #[test]
+    fn a_path_is_made_relative_to_a_folder() {
+        let rel = |f, d| relative_path(Path::new(f), Path::new(d));
+        assert_eq!(rel("/a/b/data/x.csv", "/a/b"), Path::new("data/x.csv"));
+        assert_eq!(rel("/a/data/x.csv", "/a/b"), Path::new("../data/x.csv"));
+        assert_eq!(rel("/a/b/x.csv", "/a/b"), Path::new("x.csv"));
+    }
 }
