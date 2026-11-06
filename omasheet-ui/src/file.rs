@@ -326,6 +326,9 @@ pub mod qobject {
         /// A new view of the Parquet or CSV file `url`, before sheet `at`.
         #[qinvokable]
         fn insert_view(self: Pin<&mut File>, at: i32, name: &QString, url: &QUrl) -> QString;
+        /// A copy of sheet `sheet` put in just after it.
+        #[qinvokable]
+        fn duplicate_sheet(self: Pin<&mut File>, sheet: i32) -> QString;
         #[qinvokable]
         fn rename_sheet(self: Pin<&mut File>, sheet: i32, name: &QString) -> QString;
         #[qinvokable]
@@ -387,6 +390,12 @@ pub mod qobject {
         /// Keep a zoomed text size for the next launch; 0 forgets it.
         #[qinvokable]
         fn save_font_size(self: &File, size: i32);
+        /// The file last opened or saved, if it is still there; empty if not.
+        #[qinvokable]
+        fn last_file(self: &File) -> QString;
+        /// Keep the file last opened or saved, for the next launch's Open.
+        #[qinvokable]
+        fn keep_last_file(self: &File, path: &QString);
         /// Seconds after an edit before the file saves itself; 0 is never.
         #[qinvokable]
         fn autosave_seconds(self: &File) -> i32;
@@ -1421,6 +1430,10 @@ impl qobject::File {
         self.try_edit(|doc| doc.move_sheet(index(from), index(to)))
     }
 
+    fn duplicate_sheet(self: Pin<&mut Self>, sheet: i32) -> QString {
+        self.try_edit(|doc| doc.duplicate_sheet(index(sheet)).map(|_| ()))
+    }
+
     fn paste_sheet(self: Pin<&mut Self>, from: i32, to: i32) -> QString {
         self.try_edit(|doc| doc.paste_sheet(index(from), index(to)).map(|_| ()))
     }
@@ -1497,6 +1510,24 @@ impl qobject::File {
 
     fn save_font_size(&self, size: i32) {
         crate::theme::save_font_size(size.max(0) as u32);
+    }
+
+    fn last_file(&self) -> QString {
+        let text = crate::theme::read_config("last-file");
+        let path = text.trim();
+        if !path.is_empty() && std::path::Path::new(path).is_file() {
+            QString::from(path)
+        } else {
+            QString::default()
+        }
+    }
+
+    fn keep_last_file(&self, path: &QString) {
+        // In full: it may have been given as a path from the folder the
+        // program was started in.
+        let path = path.to_string();
+        let full = std::fs::canonicalize(&path).map_or(path, |p| p.to_string_lossy().into_owned());
+        crate::theme::write_config("last-file", &full);
     }
 
     fn autosave_seconds(&self) -> i32 {

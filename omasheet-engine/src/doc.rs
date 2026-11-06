@@ -4202,6 +4202,37 @@ impl Document {
         Ok(())
     }
 
+    /// Put a copy of sheet `from` in just after it, under its name made free
+    /// with `_001`, `_002`... The name it was given.
+    pub fn duplicate_sheet(&mut self, from: usize) -> Result<String, String> {
+        let ast = self.ast();
+        let Some(source) = self.sheet_decl(&ast, from) else {
+            return Err("there is no such sheet".into());
+        };
+        let taken = |name: &str| {
+            self.snapshot.consts.iter().any(|c| c.name == name)
+                || self.snapshot.sheets.iter().any(|t| t.name == name)
+        };
+        let base = copy_base(&source.name);
+        let name = (1..)
+            .map(|n| format!("{base}_{n:03}"))
+            .find(|name| !taken(name))
+            .unwrap_or_default();
+        let (s0, s1) = self.sheet_lines(source);
+        let mut block = self.text[s0..s1].to_string();
+        let at = source.span.start as usize - s0;
+        let Some(k) = block[at..].find(&source.name).map(|k| at + k) else {
+            return Err("the sheet's name was not found".into());
+        };
+        block.replace_range(k..k + source.name.len(), &name);
+        if !block.ends_with('\n') {
+            block.push('\n');
+        }
+        let text = format!("{}\n{block}{}", &self.text[..s1], &self.text[s1..]);
+        self.commit(text);
+        Ok(name)
+    }
+
     /// Make sheet `to` a copy of sheet `from`: its columns, types, rows and
     /// formulas, under `from`'s name made free with `_001`, `_002`...
     /// The name it was given.
@@ -6809,6 +6840,23 @@ mod tests {
         assert!(doc.text().contains("| 1 |\n\n# Three\nsheet V"));
         doc.move_sheet(1, 0).unwrap();
         assert_eq!(doc.text(), text);
+    }
+
+    #[test]
+    fn a_sheet_is_duplicated_just_after_itself() {
+        let text = "sheet T\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n# Kept\nsheet U\n\n| X |\n| - |\n| 9 |\n";
+        let mut doc = Document::from_text(text);
+        assert_eq!(doc.duplicate_sheet(0), Ok("T_001".to_string()));
+        let names: Vec<_> = doc
+            .snapshot()
+            .sheets
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        assert_eq!(names, ["T", "T_001", "U"]);
+        assert_eq!(doc.duplicate_sheet(0), Ok("T_002".to_string()));
+        assert!(doc.snapshot().problems.is_empty());
+        assert!(doc.text().contains("# Kept\nsheet U"), "{}", doc.text());
     }
 
     #[test]

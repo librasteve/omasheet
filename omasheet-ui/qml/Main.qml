@@ -1388,22 +1388,23 @@ ApplicationWindow {
 
     // The name offered for a new column going in as column `at` (-1 for the
     // end), from the one to its left: the next letters on if that is
-    // lettered (B after A, AA after Z), else its name made free with
-    // `_001`, `_002`... Nothing where there is no column to its left.
+    // lettered and they are free (B after A, AA after Z), else its name made
+    // free with `_001`, `_002`... Put in before the first column there is none to its
+    // left, so it is the name of the column it goes before that is made free
+    // the same way.
     function suggestedColumnName(at) {
         var cols = sheet.columns;
-        var left = at < 0 ? cols.length - 1 : at - 1;
-        if (sheet.isConsts || left < 0 || left >= cols.length)
+        if (sheet.isConsts || cols.length === 0)
             return "";
         var taken = namesTaken(-1, -1);
-        var name = cols[left].name;
-        for (var i = 0; i < maxLetterColumns; i++) {
-            if (columnLetters(i) !== name)
-                continue;
-            for (var k = i + 1; k < maxLetterColumns; k++)
-                if (!taken[columnLetters(k)])
-                    return columnLetters(k);
-            break;
+        if (at === 0)
+            return copyName(cols[0].name, taken);
+        var name = cols[at < 0 ? cols.length - 1 : Math.min(at, cols.length) - 1].name;
+        // Only the very next letters, and only if free: put in before B,
+        // the next after A is B itself, so it is A made free instead.
+        for (var i = 0; i + 1 < maxLetterColumns; i++) {
+            if (columnLetters(i) === name && !taken[columnLetters(i + 1)])
+                return columnLetters(i + 1);
         }
         return copyName(name, taken);
     }
@@ -1640,6 +1641,27 @@ ApplicationWindow {
         if (selKind === "column" && (text.indexOf("\n") >= 0 || text.indexOf("\t") >= 0))
             return [selTop, selLeft, Math.max(selBottom, selTop + text.split("\n").length - 1), selRight];
         return [selTop, selLeft, selBottom, selRight];
+    }
+
+    // A sheet's tab dragged to a new place: sheet `from` becomes sheet `to`.
+    // The sheet shown stays the sheet shown, wherever it has gone to, and the
+    // constants stay last, as a sheet of their own.
+    function dropTab(from, to) {
+        if (from === to || from < 0 || to < 0 || from >= tabs.length || to >= tabs.length
+                || tabs[from].isConsts || tabs[to].isConsts)
+            return;
+        applySource();
+        var shown = tab === from ? to
+            : from < tab && to >= tab ? tab - 1
+            : from > tab && to <= tab ? tab + 1
+            : tab;
+        var problem = file.moveSheet(from, to);
+        if (problem.length > 0) {
+            errorDialog.say(problem);
+            return;
+        }
+        if (shown !== tab)
+            switchTab(shown);
     }
 
     function pasteSelection() {
@@ -2131,7 +2153,7 @@ ApplicationWindow {
             tab = 0;
             switchTab(0);
         } else if (action === "open") {
-            openDialog.open();
+            openDialog.show();
         } else if (action === "openUrl") {
             var url = pendingUrl;
             busy("Opening\u2026", function() {
@@ -2170,10 +2192,17 @@ ApplicationWindow {
     Connections {
         target: file
         function onRevisionChanged() { win.reload(); }
+        // The file in use is the one the next Open starts from.
+        function onFilePathChanged() {
+            if (file.filePath.length > 0)
+                file.keepLastFile(file.filePath);
+        }
     }
 
     Component.onCompleted: {
         reload();
+        if (file.filePath.length > 0)
+            file.keepLastFile(file.filePath);
         grid.forceActiveFocus();
     }
 
@@ -2720,12 +2749,11 @@ ApplicationWindow {
                                     }
                                 }
                                 // The telltale on the type's line, which opens the
-                                // column's sort and filter: an empty circle when
-                                // neither has touched it, a solid one while the
-                                // column is filtered or once it has been sorted this
-                                // session, with an up caret above it once sorted
-                                // ascending and a down caret below it once sorted
-                                // descending.
+                                // column's sort and filter: an empty circle unless
+                                // the column is filtered, when it is solid; a sort
+                                // is shown by the caret alone, an up caret above the
+                                // circle once sorted ascending and a down caret
+                                // below it once sorted descending.
                                 Item {
                                     id: filterButton
                                     // Above the header's own mouse area, which
@@ -2734,7 +2762,7 @@ ApplicationWindow {
                                     visible: !win.sheet.isConsts
                                     readonly property bool active: win.filtered(headCell.index)
                                     readonly property string sorted: win.sortedAs(headCell.index)
-                                    readonly property bool solid: active || win.wasSorted(headCell.index)
+                                    readonly property bool solid: active
                                     width: visible ? win.noteSize : 0
                                     height: typeLine.height
                                     anchors.right: parent.right
@@ -2749,15 +2777,17 @@ ApplicationWindow {
                                     }
                                     Text {
                                         visible: filterButton.sorted.length > 0
-                                        anchors.horizontalCenter: dot.horizontalCenter
-                                        anchors.bottom: filterButton.sorted === "asc" ? dot.top : undefined
-                                        anchors.top: filterButton.sorted === "desc" ? dot.bottom : undefined
-                                        anchors.bottomMargin: -3
-                                        anchors.topMargin: -3
+                                        // Placed from the circle's own place rather than
+                                        // anchored to it: an anchor switched on and off as
+                                        // the sort changes can leave the last one behind,
+                                        // which put an up caret below the circle.
+                                        x: dot.x + (dot.width - width) / 2
+                                        y: filterButton.sorted === "asc" ? dot.y + 3 - height : dot.y + dot.height - 3
                                         // The carets the box at the top opens and closes with.
                                         text: filterButton.sorted === "asc" ? "\u2303" : "\u2304"
                                         color: win.accentColor
-                                        font.pixelSize: Math.round(win.noteSize * 0.8)
+                                        font.bold: true
+                                        font.pixelSize: Math.round(win.noteSize * 1.05)
                                     }
                                     MouseArea {
                                         anchors.fill: parent
@@ -3554,6 +3584,28 @@ ApplicationWindow {
                         height: tabStrip.height
                         width: implicitWidth
                         spacing: 2
+                        // The tab being dragged, or -1, and the gap it is over:
+                        // 0 is before the first sheet, and the number of sheets
+                        // is after the last.
+                        property int dragFrom: -1
+                        property int gap: -1
+                        readonly property int sheets: {
+                            var n = 0;
+                            while (n < win.tabs.length && !win.tabs[n].isConsts)
+                                n++;
+                            return n;
+                        }
+                        // The gap for a pointer at `x` along the row: before the
+                        // first tab whose middle it has not passed. The constants
+                        // stay last, so it never goes past the sheets.
+                        function gapAt(x) {
+                            for (var i = 0; i < sheets; i++) {
+                                var item = tabRepeater.itemAt(i);
+                                if (item && x < item.x + item.width / 2)
+                                    return i;
+                            }
+                            return sheets;
+                        }
                         Repeater {
                             id: tabRepeater
                             model: win.tabs.length
@@ -3576,6 +3628,72 @@ ApplicationWindow {
                                 onClicked: {
                                     win.viewSource(false);
                                     win.switchTab(index);
+                                }
+                                // Dragged along the row to another place among the
+                                // sheets; a click that does not move is still a click.
+                                opacity: dragger.active ? 0.5 : 1
+                                // Where the tab being dragged would land: a line in
+                                // the gap nearest the pointer, which is the left of a
+                                // tab, or the right of the last sheet. Drawn by the tab
+                                // beside the gap, so it stays with it.
+                                readonly property bool landing: tabRow.dragFrom >= 0
+                                    && tabRow.gap !== tabRow.dragFrom && tabRow.gap !== tabRow.dragFrom + 1
+                                Rectangle {
+                                    visible: tabButton.landing && tabRow.gap === tabButton.index
+                                    x: tabButton.index === 0 ? 0 : -2
+                                    y: 3
+                                    width: 2
+                                    height: parent.height - 6
+                                    radius: 1
+                                    color: win.accentColor
+                                    z: 2
+                                }
+                                Rectangle {
+                                    visible: tabButton.landing && tabRow.gap === tabRow.sheets
+                                        && tabButton.index === tabRow.sheets - 1
+                                    x: parent.width - 2
+                                    y: 3
+                                    width: 2
+                                    height: parent.height - 6
+                                    radius: 1
+                                    color: win.accentColor
+                                    z: 2
+                                }
+                                DragHandler {
+                                    id: dragger
+                                    target: null
+                                    acceptedButtons: Qt.LeftButton
+                                    yAxis.enabled: false
+                                    enabled: !win.tabs[tabButton.index].isConsts && win.renamingTab !== tabButton.index
+                                    onActiveChanged: {
+                                        if (active) {
+                                            tabRow.dragFrom = tabButton.index;
+                                            tabRow.gap = tabButton.index;
+                                        } else {
+                                            // Taking the tab out leaves the gaps after
+                                            // it one place nearer the front.
+                                            var from = tabRow.dragFrom, gap = tabRow.gap;
+                                            tabRow.dragFrom = -1;
+                                            tabRow.gap = -1;
+                                            win.dropTab(from, gap > from ? gap - 1 : gap);
+                                        }
+                                    }
+                                    onCentroidChanged: {
+                                        if (active)
+                                            tabRow.gap = tabRow.gapAt(tabButton.mapToItem(tabRow, centroid.position.x, 0).x);
+                                    }
+                                }
+                                // Double-clicked, a sheet's name is typed over in place,
+                                // as from F2. The first click has made it the sheet
+                                // shown; the constants have no name to change.
+                                onDoubleClicked: {
+                                    if (win.tabs[index].isConsts)
+                                        return;
+                                    win.viewSource(false);
+                                    win.switchTab(index);
+                                    // After the click's own focus change, which would
+                                    // otherwise take the keyboard back from the box.
+                                    Qt.callLater(function() { win.renamingTab = index; });
                                 }
                                 // The tab's own menu: the sheet shown stays as it is,
                                 // so that this one can be opened in a window beside it.
@@ -3885,6 +4003,7 @@ ApplicationWindow {
         property string tip: ""
         signal clicked()
         signal rightClicked()
+        signal doubleClicked()
         ToolTip.visible: tip.length > 0 && area.containsMouse
         ToolTip.delay: 400
         ToolTip.text: tip
@@ -3920,6 +4039,10 @@ ApplicationWindow {
                 }
                 button.clicked();
                 grid.forceActiveFocus();
+            }
+            onDoubleClicked: function(mouse) {
+                if (mouse.button === Qt.LeftButton)
+                    button.doubleClicked();
             }
         }
     }
@@ -4187,6 +4310,7 @@ ApplicationWindow {
         MenuEntry { text: "Paste transposed"; enabled: cellMenu.hasRows && win.canTranspose; onTriggered: win.pasteTransposed() }
         MenuEntry { text: "Clear"; enabled: cellMenu.hasRows && !win.formulaCell; onTriggered: win.clearSelection() }
         // Delete, for what is selected as a whole.
+        MenuRule { visible: cellMenu.rows }
         MenuEntry {
             text: cellMenu.rowCount > 1 ? "Delete " + cellMenu.rowCount + " rows" : "Delete row"
             visible: cellMenu.rows
@@ -4209,13 +4333,7 @@ ApplicationWindow {
         // The sheet, when the whole of it is selected.
         MenuRule { visible: cellMenu.whole }
         MenuEntry {
-            text: "Insert sheet before"
-            visible: cellMenu.whole
-            enabled: visible
-            onTriggered: win.newSheet(false)
-        }
-        MenuEntry {
-            text: "Insert sheet after"
+            text: "Insert sheet"
             visible: cellMenu.whole
             enabled: visible
             onTriggered: win.newSheet(true)
@@ -4233,7 +4351,6 @@ ApplicationWindow {
             onTriggered: win.newWindow(win.tab)
         }
         // Rows, when whole rows are selected.
-        MenuRule { visible: cellMenu.rows }
         MenuEntry {
             text: win.rowsOnHand !== null ? "Insert cells above"
                 : cellMenu.rowCount > 1 ? "Insert " + cellMenu.rowCount + " rows above" : "Insert row above"
@@ -4381,28 +4498,17 @@ ApplicationWindow {
         // Each of these shows the sheet first, with the whole of it
         // selected, as the same entry does from the grid.
         MenuEntry {
-            text: "Cut"
+            text: "Duplicate sheet"
             visible: tabMenu.isSheet
             enabled: visible
-            onTriggered: { win.goToSheet(tabMenu.index); win.cutSelection(); }
-        }
-        MenuEntry {
-            text: "Copy"
-            visible: tabMenu.isSheet
-            enabled: visible
-            onTriggered: { win.goToSheet(tabMenu.index); win.copySelection(); }
-        }
-        MenuEntry {
-            text: "Paste"
-            visible: tabMenu.isSheet
-            enabled: visible && (win.canPaste || win.grabbed !== null)
-            onTriggered: { win.goToSheet(tabMenu.index); win.pasteSelection(); }
-        }
-        MenuEntry {
-            text: "Clear"
-            visible: tabMenu.isSheet
-            enabled: visible
-            onTriggered: { win.goToSheet(tabMenu.index); win.clearSelection(); }
+            onTriggered: {
+                win.goToSheet(tabMenu.index);
+                var problem = file.duplicateSheet(tabMenu.index);
+                if (problem.length > 0)
+                    errorDialog.say(problem);
+                else
+                    win.switchTab(tabMenu.index + 1);
+            }
         }
         MenuEntry {
             text: "Delete sheet"
@@ -4412,13 +4518,7 @@ ApplicationWindow {
         }
         MenuRule { visible: tabMenu.isSheet }
         MenuEntry {
-            text: "Insert sheet before"
-            visible: tabMenu.isSheet
-            enabled: visible
-            onTriggered: { win.goToSheet(tabMenu.index); win.newSheet(false); }
-        }
-        MenuEntry {
-            text: "Insert sheet after"
+            text: "Insert sheet"
             visible: tabMenu.isSheet
             enabled: visible
             onTriggered: { win.goToSheet(tabMenu.index); win.newSheet(true); }
@@ -4442,6 +4542,17 @@ ApplicationWindow {
         fileMode: Dialogs.FileDialog.OpenFile
         // A workbook, a CSV file, JSON or Parquet is imported: it opens as a new file.
         nameFilters: ["Files, workbooks, CSV, JSON and Parquet (*.omx *.xlsx *.csv *.json *.parquet)", "Omasheet (*.omx)", "All files (*)"]
+        // Opens in the folder of the last file opened or saved, even after
+        // a restart, with that file picked. The folder is set as well as the
+        // file: a native dialog goes by the folder.
+        function show() {
+            var last = file.lastFile();
+            if (last.length > 0) {
+                currentFolder = Qt.url("file://" + encodeURI(last.substring(0, last.lastIndexOf("/"))));
+                selectedFile = Qt.url("file://" + encodeURI(last));
+            }
+            open();
+        }
         onAccepted: {
             win.pendingUrl = selectedFile;
             win.run("openUrl");
