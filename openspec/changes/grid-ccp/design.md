@@ -21,11 +21,15 @@ Source: the conversation of 2026-11-06. Builds on `paste-as-reference` (D210 to 
 | D223 | Decided | A copy onto the same sheet maps an inside column name to the column it landed in | Today the text is pasted as written, so a name does not follow the copy on one sheet while it does on another (D214) |
 | D224 | Decided | Values and References do not change: Values has no formulas to rewrite, and References writes a fixed read of the source cell (D211, D212) | |
 | D225 | Decided | The status bar says nothing about a paste that mixes reads at the copy with reads of the original | Owner, 2026-11-06 |
+| D226 | Decided | Inside a copied block a column name is relative to the block: it is read in the column it landed in. A numbered column, `[0; *]`, is fixed and is left as it is | Owner, 2026-11-06. OMX has no `$`: a name is a column, which is the `$A` of a spreadsheet, and left alone it would leave a copied `C = A + B` reading the original `A` and `B`. Outside the block a name stays a column, and is read on the sheet pasted on (D220). To keep a read on the original in a block, write the column by number |
+| D227 | Decided | The circular-reference check is made by cell where a read names its cell: a formula that reads a fixed row of its own column is circular only if that row is the cell itself, or a cell that reads it back. Its message names the cell | Owner, 2026-11-06. The check was made by column, so `[B; 0]` in column B was reported as `B → B` although row 0 holds a literal. A frozen read (D222) and Paste Reference (D211) write that form, so they would be flagged for what is not a cycle. The old help, "not itself in the same row", was not what the formula did |
 
 ## Holding
 
 - A fixed read is a place and not a row's identity: if rows are inserted above it, it reads what is there now. The docs say so for a reference already.
 - A column name kept for an outside read has no column to read if the sheet pasted on lacks it. The cell shows the usual error for an unknown column; nothing is rewritten to hide it.
+
+- A negative row, `[A; -1]`, is fixed from the end and is left as written by every paste; only an offset is turned into a number (D222).
 
 ## Risks
 

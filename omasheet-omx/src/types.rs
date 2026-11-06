@@ -339,6 +339,10 @@ pub enum DepKind {
     Back,
     /// Only rows strictly after the current row.
     Fwd,
+    /// One row fixed by number, such as `[B; 0]`. It can only be a cycle
+    /// through that cell reading itself, which is found when it is
+    /// calculated and is then named by its row.
+    Fixed,
     /// Any rows.
     Whole,
 }

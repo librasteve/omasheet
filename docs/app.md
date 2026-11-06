@@ -89,9 +89,19 @@ Ctrl+Shift+R, **Paste reference**, pastes a live link to the cells last copied o
 - into a formula column, its formula, read row by row: `Passengers[Fare; *]` for a column, `Passengers[Fare; *+5]` where the rows copied start five below the rows pasted onto, and `Passengers[Fare; 3]` for one cell
 - from the same sheet, without its name: `Fare`, `[Fare; 3]`
 
-A formula copied or cut and pasted onto a different sheet still reads what it read. What it read inside the block you copied it reads at the copy, on the new sheet: copy `A`, `B` and `C = A + B` together and the pasted `C` adds the pasted `A` and `B`. What it read outside the block it reads where it was, with the sheet named: copy `C` alone and the pasted one is `= Sales[A; *] + B`, since `B` is in the block and `A` is not. A range or a whole column counts as outside. Pasted into a formula column, a formula is the column's one formula and reads the sheet it came from. On its own sheet a formula is pasted as written.
-
 The status bar says what was written. A reference to a row of a view sorted in the grid is to the row it has in the file, not the row it is shown in; rows in a sorted order cannot be pasted into a formula column, since the order is not a shift. A reference to a row is to its place, as one written by hand is: if rows are inserted above it in a sheet of the file's own, it reads what is now there. What reaches the system clipboard is still the values as tab-separated text, so another program pastes those: a reference is for a paste into this app.
+
+### Copying, cutting and pasting formulas
+
+A copy and a cut treat a formula differently, as a spreadsheet's do, and a paste on another sheet is no different from one on the same sheet.
+
+A **copy** keeps a formula's relative reads relative: `[A; *-1]` is the row above wherever it lands, and a column named alone, `A`, is that column of its row. A fixed read, a row by number or a sheet by name (`[A; 5]`, `Sales[A; 5]`), is left as it is. What it read inside the block you copied it reads at the copy: copy `A`, `B` and `C = A + B` together and the pasted `C` adds the pasted `A` and `B`, in the columns they landed in. A column given by number, `[0; *]`, is fixed and stays on the first column. What it read outside the block it reads from where it is pasted: copy `C` alone and the pasted one adds the `A` and `B` of the sheet it is on.
+
+A **cut** is a move: every read keeps reading the same cell. Cut `C = A + B` and paste it three rows down and it becomes `= [A; *-3] + [B; *-3]`; on another sheet, `= Sales[A; *] + Sales[B; *]`. A cell inside the block moves with it. A range or a whole column counts as outside whatever you copy or cut.
+
+**Paste transposed** puts the cells down turned about, so an offset has no meaning and cannot be kept. What a formula read inside the block it reads at the turned copy. What it read outside is fixed to the cell it read, as a reference: `= [A; 0]`, or `= Sales[A; 0]` from another sheet. The status bar says nothing about it.
+
+Pasted into a formula column, a formula is the column's one formula. Paste values pastes what the cells showed, and Paste reference a link to them.
 
 ### Sorting and filtering
 

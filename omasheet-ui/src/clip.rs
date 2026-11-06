@@ -5,7 +5,7 @@
 //! came from. Nothing here knows of Qt, so all of it is tested here.
 
 use omasheet_engine::Document;
-use omasheet_engine::doc::{CopiedFrom, carried, carried_turned};
+use omasheet_engine::doc::{CopiedFrom, carried, carried_turned, copied_cell};
 
 /// A cell: its row and column.
 type Cell = (usize, usize);
@@ -69,6 +69,8 @@ pub struct Clip {
 /// What a formula pasted from another sheet needs to be carried over to
 /// where it lands (D214).
 struct Carry {
+    /// Whether the cells were cut, and so move, and not copied (D221).
+    cut: bool,
     from: CopiedFrom,
     /// The top left cell of the block, on the sheet it came from.
     origin: Cell,
@@ -81,14 +83,18 @@ impl Carry {
     /// `text`, the cell `(i, j)` of the block, put down at `at`.
     fn cell(&self, text: &str, (i, j): Cell, at: Cell) -> String {
         let was = (self.origin.0 + i, self.origin.1 + j);
-        carried(
-            text,
-            was,
-            &self.from,
-            at,
-            &self.target_cols,
-            self.target_rows,
-        )
+        if self.cut {
+            carried(
+                text,
+                was,
+                &self.from,
+                at,
+                &self.target_cols,
+                self.target_rows,
+            )
+        } else {
+            copied_cell(text, was, &self.from, at, &self.target_cols)
+        }
     }
 }
 
@@ -430,8 +436,9 @@ impl Clip {
         let r = self
             .refer
             .as_ref()
-            .filter(|r| r.sheet != t.name && parse_block(&r.text) == block)?;
+            .filter(|r| parse_block(&r.text) == block)?;
         Some(Carry {
+            cut: false,
             from: CopiedFrom {
                 sheet: r.sheet.clone(),
                 cols: r.sheet_cols.clone(),
@@ -508,6 +515,10 @@ impl Clip {
         // Cells cut from this sheet, with nothing done since, are moved;
         // one cell onto several fills them all.
         let cut = self.take_cut(doc, &original);
+        let carry = carry.map(|c| Carry {
+            cut: cut.is_some(),
+            ..c
+        });
         let fills = block.len() == 1 && block[0].len() == 1 && from != to;
         if let Some(cut) = &cut
             && cut.sheet == sheet
@@ -817,7 +828,8 @@ mod tests {
         let text = clip.cut(&doc, 0, (0, 2), (0, 2));
         assert_eq!(clip.paste(&mut doc, 0, (1, 2), (1, 2), &text), Ok(true));
         assert_eq!(held(&doc, 0)[0], "1|2||");
-        assert_eq!(held(&doc, 0)[1], "10|20|= A+B|");
+        // It reads the cells it read, now a row up (D221).
+        assert_eq!(held(&doc, 0)[1], "10|20|= [A; *-1]+[B; *-1]|");
     }
 
     #[test]
@@ -1306,18 +1318,17 @@ mod tests {
     }
 
     #[test]
-    fn a_formula_pasted_onto_another_sheet_reads_where_it_read() {
+    fn a_formula_pasted_onto_another_sheet_reads_where_it_is_pasted() {
         let mut doc = doc();
         let mut clip = Clip::default();
-        // `= A+B` of T, copied and pasted on U: still T's A and B.
+        // `= A+B` of T, copied and pasted on U: its A and B are U's (D220).
         let text = clip.copy(&doc, 0, (0, 2), (0, 2));
         assert_eq!(clip.paste(&mut doc, 1, (0, 0), (0, 0), &text), Ok(true));
-        assert_eq!(held(&doc, 1)[0], "= T[A; *]+T[B; *]|");
-        assert_eq!(col_display(&doc, 1, 0)[0], "3");
+        assert_eq!(held(&doc, 1)[0], "= A+B|");
         // On its own sheet it is pasted as it was written.
         assert_eq!(clip.paste(&mut doc, 0, (1, 2), (1, 2), &text), Ok(true));
         assert_eq!(held(&doc, 0)[1], "10|20|= A+B|");
-        // A cut formula moved to another sheet reads where it read too.
+        // A cut formula moved to another sheet reads where it read (D221).
         let mut doc = self::doc();
         let text = clip.cut(&doc, 0, (0, 2), (0, 2));
         assert_eq!(clip.paste(&mut doc, 1, (0, 1), (0, 1), &text), Ok(true));
@@ -1354,19 +1365,17 @@ mod tests {
     }
 
     #[test]
-    fn what_a_pasted_formula_read_outside_the_block_it_reads_where_it_was() {
-        // Without A: `C = A+B` has B inside, now P, and A outside, still
-        // the A of T in its own row.
-        let (held, shown) = pasted_cells(((0, 1), (0, 2)), (0, 0));
-        assert_eq!(held[0], "2|= T[A; *]+P||");
-        assert_eq!(shown[0], "3");
-        // A row above the block is outside it: still the row of T it was.
+    fn what_a_pasted_formula_read_outside_the_block_it_reads_where_it_is_pasted() {
+        // Without A: `C = A+B` has B inside, now P, and A outside, a column
+        // name that is read on the sheet pasted on (D220).
+        let (held, _) = pasted_cells(((0, 1), (0, 2)), (0, 0));
+        assert_eq!(held[0], "2|= A+P||");
+        // A row above the block is outside it: counted from the formula.
         let (held, _) = pasted_cells(((1, 0), (1, 2)), (1, 0));
-        assert_eq!(held[1], "10|20|= T[A; *-1] + P|");
-        // Put down on another row, the row it read is the row it read.
-        let (held, shown) = pasted_cells(((0, 1), (0, 2)), (1, 0));
-        assert_eq!(held[1], "2|= T[A; *-1]+P||");
-        assert_eq!(shown[1], "3");
+        assert_eq!(held[1], "10|20|= [A; *-1] + P|");
+        // Put down on another row, nothing is counted again.
+        let (held, _) = pasted_cells(((0, 1), (0, 2)), (1, 0));
+        assert_eq!(held[1], "2|= A+P||");
     }
 
     #[test]
@@ -1409,5 +1418,67 @@ mod tests {
             assert_eq!(doc.snapshot().sheets[1].rows[3][1].display, "3");
             assert_eq!(doc.snapshot().sheets[1].rows[3][2].display, "5");
         }
+    }
+
+    const WIDE: &str = "sheet T\n\nA | B | C | D | E | F\n1 | 2 | = A+B | 0 | 0 | 0\n3 | 4 | = [0; *]+B | 0 | 0 | 0\n5 | 6 | 7 | 0 | 0 | 0\n0 | 0 | 0 | 0 | 0 | 0\n0 | 0 | 0 | 0 | 0 | 0\n0 | 0 | 0 | 0 | 0 | 0\n0 | 0 | 0 | 0 | 0 | 0\n";
+
+    #[test]
+    fn a_name_in_a_copied_block_is_the_column_it_landed_in() {
+        let mut doc = Document::from_text(WIDE);
+        let mut clip = Clip::default();
+        let text = clip.copy(&doc, 0, (0, 0), (1, 2));
+        assert_eq!(clip.paste(&mut doc, 0, (3, 3), (3, 3), &text), Ok(true));
+        // A name is the column it landed in; a column by number is fixed.
+        assert_eq!(held(&doc, 0)[3], "0|0|0|1|2|= D+E");
+        assert_eq!(held(&doc, 0)[4], "0|0|0|3|4|= [0; *]+E");
+    }
+
+    #[test]
+    fn a_cut_formula_goes_on_reading_the_cells_it_read() {
+        let mut doc = Document::from_text(WIDE);
+        let mut clip = Clip::default();
+        let text = clip.cut(&doc, 0, (0, 2), (0, 2));
+        assert_eq!(clip.paste(&mut doc, 0, (3, 2), (3, 2), &text), Ok(true));
+        // Three rows down, it reads the row it did.
+        assert_eq!(held(&doc, 0)[3], "0|0|= [A; *-3]+[B; *-3]|0|0|0");
+        assert_eq!(held(&doc, 0)[0], "1|2||0|0|0");
+    }
+
+    #[test]
+    fn what_a_turned_block_reads_outside_it_is_fixed() {
+        // Only B and C are copied: `A` is left out of the block.
+        let mut doc = Document::from_text(GRID);
+        let mut clip = Clip::default();
+        let text = clip.copy(&doc, 0, (0, 1), (1, 2));
+        assert_eq!(
+            clip.paste_transposed(&mut doc, 0, (3, 0), (3, 0), &text),
+            Ok(true)
+        );
+        // Both read the A of row 0, as they did, and each its B.
+        assert_eq!(held(&doc, 0)[4], "= [A; 0]+[A; *-1]|= [A; 0]+[B; *-1]|9|9");
+    }
+
+    #[test]
+    fn what_a_block_turned_onto_another_sheet_reads_outside_it_is_fixed() {
+        let text = "sheet T\n\nA | B | C\n1 | 2 | = A+B\n3 | 4 | = [A; *-1]+B\n\nsheet U\n\nA | B | C\n0 | 0 | 0\n0 | 0 | 0\n0 | 0 | 0\n";
+        let mut doc = Document::from_text(text);
+        let mut clip = Clip::default();
+        let block = clip.copy(&doc, 0, (0, 1), (1, 2));
+        assert_eq!(
+            clip.paste_transposed(&mut doc, 1, (0, 0), (0, 0), &block),
+            Ok(true)
+        );
+        assert_eq!(held(&doc, 1)[1], "= T[A; 0]+[A; *-1]|= T[A; 0]+[B; *-1]|0");
+    }
+
+    #[test]
+    fn a_fixed_read_in_a_copied_formula_is_left_as_it_is() {
+        let text = "sheet T\n\nA | B | C\n1 | 2 | = T[A; 1] + B\n10 | 20 | 0\n\nsheet V\n\nP | Q | R\n  |   |\n  |   |\n";
+        let mut doc = Document::from_text(text);
+        let mut clip = Clip::default();
+        let block = clip.copy(&doc, 0, (0, 1), (0, 2));
+        assert_eq!(clip.paste(&mut doc, 1, (0, 0), (0, 0), &block), Ok(true));
+        // `B` is in the block, now `P`; the row of T by name is left alone.
+        assert_eq!(held(&doc, 1)[0], "2|= T[A; 1] + P|");
     }
 }

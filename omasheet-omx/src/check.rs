@@ -4618,11 +4618,18 @@ impl<'a> Checker<'a> {
                         );
                     }
                 }
+                // A row by number is one cell, and so is no cycle of its
+                // own: it is one if that cell reads itself, which the
+                // calculation finds and names.
+                let kind = match static_of(e) {
+                    Some(Static::Int(_)) if own => DepKind::Fixed,
+                    _ => DepKind::Whole,
+                };
                 RowPick {
                     sel: RowSel::Pos(Box::new(node)),
                     one: true,
                     len: None,
-                    kind: DepKind::Whole,
+                    kind,
                 }
             }
             Ty::Range => RowPick {
@@ -4900,7 +4907,7 @@ impl<'a> Checker<'a> {
                 };
                 self.done.push(
                     Diagnostic::new(span, format!("circular reference: {}", path.join(" → ")))
-                        .with_help("a column may read its own earlier rows, such as `[; *-1]`, but not itself in the same row"),
+                        .with_help("a column may read its own earlier rows, such as `[; *-1]`, or one row by number, such as `[; 0]`, but not itself in the same row or all of itself"),
                 );
             }
             match nodes[scc.nodes[0]] {
@@ -5082,6 +5089,22 @@ mod tests {
     fn reading_an_earlier_row_is_not_elementwise() {
         let p = sheet("Running := Revenue + [Running; *-1] // 0");
         assert!(!is_elementwise(&p, "Running"));
+    }
+
+    /// A sheet whose column `B` holds a seed in its first row and a cell
+    /// that reads a row of `B` by number.
+    fn seeded(cell: &str) -> Vec<Diagnostic> {
+        let text = format!("sheet T\n\n| A | B |\n| - | - |\n| 1 | 100 |\n| 2 | {cell} |\n");
+        compile(&text, 0).1
+    }
+
+    #[test]
+    fn a_cell_may_read_a_row_of_its_own_column_by_number() {
+        // The seed is a literal, so nothing reads itself (D227).
+        assert!(seeded("=[B; 0]*A").is_empty());
+        assert!(seeded("=[B; -2]*A").is_empty());
+        // All of the column, or a row that is not fixed, still is.
+        assert!(!seeded("=sum(B)").is_empty());
     }
 
     #[test]

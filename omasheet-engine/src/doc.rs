@@ -993,10 +993,13 @@ fn follow_cells(ast: &FileAst, text: &str, t: usize, block: &Block, map: Whither
 /// `*` is the formula's own, wherever it is, and a range that ends on one
 /// goes with the formula as it is.
 fn shift_slot(slot: &Expr, by: i64, text: &str, edits: &mut Vec<Edit>) {
-    let shift = |e: &Expr, edits: &mut Vec<Edit>| {
-        if let Some(Pick::Off(d)) = Pick::of(e) {
-            put(edits, text, e.span, offset_text(d - by));
-        }
+    let single = range_ends(slot).is_none();
+    let shift = |e: &Expr, edits: &mut Vec<Edit>| match Pick::of(e) {
+        Some(Pick::Off(d)) => put(edits, text, e.span, offset_text(d - by)),
+        // A plain `*` read of a cell that is not moving: it is that row
+        // still, and so is no longer the formula's own.
+        Some(Pick::Here) if by != 0 && single => put(edits, text, e.span, offset_text(-by)),
+        _ => {}
     };
     match range_ends(slot) {
         Some((lo, hi, ..)) => {
@@ -1017,6 +1020,38 @@ fn turn_at(block: &Block, to: (usize, usize), r: usize, c: usize) -> (i64, i64) 
         (to.0 + c) as i64 - block.1.start as i64,
         (to.1 + r) as i64 - block.0.start as i64,
     )
+}
+
+/// What a formula cut or turned, and put down on a different cell, does with
+/// a read of a cell outside its block (D221, D222).
+#[derive(Clone, Copy)]
+enum Outside {
+    /// It goes on reading the same cell, counted again from the new place
+    /// by this many rows and columns.
+    Rebase((i64, i64)),
+    /// It reads the same cell, as a reference to it: a row by number.
+    Freeze,
+}
+
+/// A read of one cell fixed on the cell it read: its row as a number, and
+/// its column by name where it counted from its own. A reference as the
+/// paste of one writes it (D210), whichever cell it is put down in.
+fn freeze_cell(
+    edits: &mut Vec<Edit>,
+    text: &str,
+    (r, row, row_span): (usize, Pick, Span),
+    (c, col, col_span): (usize, Option<Pick>, Span),
+    cols: &[&str],
+) {
+    if !matches!(row, Pick::At(_)) {
+        put(edits, text, row_span, r.to_string());
+    }
+    if let Some(pick) = col
+        && !matches!(pick, Pick::At(_))
+        && let Some(name) = cols.get(c)
+    {
+        put(edits, text, col_span, (*name).to_string());
+    }
 }
 
 /// The source of a cell of `block` put down turned about, where `map` says:
@@ -1046,10 +1081,17 @@ fn turned_cell(
         if site.nested || site.sheet.is_some_and(|name| name != sheet) {
             continue;
         }
-        if let Some(((r, row, row_span), (c, col, col_span))) =
-            one_cell(&site, Some(from), nrows, cols)
-            && inside(r, c)
+        let one = one_cell(&site, Some(from), nrows, cols);
+        // What it reads outside the block it goes on reading, as a
+        // reference to that cell: an offset means nothing once the cells
+        // are turned about.
+        if let Some((row, col)) = one
+            && !inside(row.0, col.0)
         {
+            freeze_cell(&mut edits, cell, row, col, cols);
+            continue;
+        }
+        if let Some(((r, row, row_span), (c, col, col_span))) = one {
             let (to_row, to_col) = map(r, c);
             put(&mut edits, cell, row_span, row.write(to_row, own.0, nrows));
             match col {
@@ -1087,7 +1129,8 @@ fn turned_cell(
             };
             (*name, to_row - now_row)
         } else {
-            (name, from.0 as i64 - now_row)
+            put(&mut edits, cell, span, format!("[{name}; {}]", from.0));
+            continue;
         };
         let new = match rows {
             0 => name.to_string(),
@@ -1149,6 +1192,63 @@ pub struct CopiedFrom {
     pub across: std::ops::Range<usize>,
 }
 
+/// A formula of a block copied from `src` and put down at `to` on a sheet
+/// whose columns are `target`, from `from` where it was: on the same sheet
+/// or on a different one. A relative read stays relative, and a fixed one is
+/// left as it is (D219); the sheet pasted on is the one it reads (D220). A
+/// column name read of the block's own cells is the column it landed in
+/// (D226), where the row is the formula's own or counted from it.
+pub fn copied_cell(
+    cell: &str,
+    from: (usize, usize),
+    src: &CopiedFrom,
+    to: (usize, usize),
+    target: &[String],
+) -> String {
+    let Some(Ok(expr)) = cell.strip_prefix('=').map(|body| parse_expr(body, 0, 1)) else {
+        return cell.to_string();
+    };
+    let cols: Vec<&str> = src.cols.iter().map(String::as_str).collect();
+    let by = to.1 as i64 - from.1 as i64;
+    let inside = |r: usize, c: usize| src.rows.contains(&r) && src.across.contains(&c);
+    let landed = |c: usize| {
+        usize::try_from(c as i64 + by)
+            .ok()
+            .and_then(|c| target.get(c))
+            .cloned()
+    };
+    let (mut found, mut names) = (Vec::new(), Vec::new());
+    sites(&expr, false, &mut found, &mut names);
+    let mut edits: Vec<Edit> = Vec::new();
+    for site in &found {
+        if site.nested || site.sheet.is_some() {
+            continue;
+        }
+        if let Some(((r, row, _), (c, None, col_span))) =
+            one_cell(site, Some(from), src.nrows, &cols)
+            && inside(r, c)
+            && matches!(row, Pick::Here | Pick::Off(_))
+            && let Some(name) = landed(c)
+        {
+            put(&mut edits, cell, col_span, name);
+        }
+    }
+    for (name, span) in &names {
+        if let Some(c) = cols.iter().position(|c| c == name)
+            && inside(from.0, c)
+            && let Some(name) = landed(c)
+        {
+            put(&mut edits, cell, *span, name);
+        }
+    }
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = cell.to_string();
+    for (s, e, new) in edits {
+        out.replace_range(s..e, &new);
+    }
+    out
+}
+
 /// A formula of a block copied from another sheet, put down at `to` on a
 /// sheet whose columns are `target`, from `from` where it was. What it
 /// read inside the block it still reads, at the copy: the cell it stood
@@ -1165,7 +1265,16 @@ pub fn carried(
 ) -> String {
     let by = (to.0 as i64 - from.0 as i64, to.1 as i64 - from.1 as i64);
     let map = |r: usize, c: usize| (r as i64 + by.0, c as i64 + by.1);
-    carried_by(cell, from, src, to, target, target_nrows, &map)
+    carried_by(
+        cell,
+        from,
+        src,
+        to,
+        target,
+        target_nrows,
+        &map,
+        Outside::Rebase(by),
+    )
 }
 
 /// As `carried`, for a block put down turned about with its first cell at
@@ -1182,10 +1291,21 @@ pub fn carried_turned(
 ) -> String {
     let block: Block = (src.rows.clone(), src.across.clone());
     let map = |r: usize, c: usize| turn_at(&block, origin, r, c);
-    carried_by(cell, from, src, to, target, target_nrows, &map)
+    carried_by(
+        cell,
+        from,
+        src,
+        to,
+        target,
+        target_nrows,
+        &map,
+        Outside::Freeze,
+    )
 }
 
-/// `carried`, with `map` saying where each cell of the block went.
+/// `carried`, with `map` saying where each cell of the block went, and
+/// `outside` what becomes of a read of a cell outside it.
+#[allow(clippy::too_many_arguments)]
 fn carried_by(
     cell: &str,
     from: (usize, usize),
@@ -1194,6 +1314,7 @@ fn carried_by(
     target: &[String],
     target_nrows: usize,
     map: Whither,
+    outside: Outside,
 ) -> String {
     let Some(Ok(expr)) = cell.strip_prefix('=').map(|body| parse_expr(body, 0, 1)) else {
         return cell.to_string();
@@ -1209,8 +1330,8 @@ fn carried_by(
         if site.nested || site.sheet.is_some() {
             continue;
         }
-        if let Some(((r, row, row_span), (c, col, col_span))) =
-            one_cell(site, Some(from), src.nrows, &cols)
+        let one = one_cell(site, Some(from), src.nrows, &cols);
+        if let Some(((r, row, row_span), (c, col, col_span))) = one
             && inside(r, c)
         {
             let (tr, tc) = map(r, c);
@@ -1230,6 +1351,21 @@ fn carried_by(
                 );
                 put(&mut edits, cell, col_span, column);
                 continue;
+            }
+        }
+        match outside {
+            Outside::Freeze => {
+                if let Some((row, col)) = one {
+                    freeze_cell(&mut edits, cell, row, col, &cols);
+                }
+            }
+            Outside::Rebase(by) => {
+                if let Some(slot) = site.row {
+                    shift_slot(slot, by.0, cell, &mut edits);
+                }
+                if let ColPart::Slot(slot) = site.col {
+                    shift_slot(slot, by.1, cell, &mut edits);
+                }
             }
         }
         let start = site.at.start as usize;
@@ -1252,6 +1388,9 @@ fn carried_by(
                 0 => name.clone(),
                 rows => format!("[{name}; {}]", offset_text(rows)),
             },
+            None if matches!(outside, Outside::Freeze) => {
+                format!("{}[{name}; {}]", src.sheet, from.0)
+            }
             None => format!(
                 "{}[{name}; {}]",
                 src.sheet,
@@ -1284,9 +1423,32 @@ fn moved_cell(
     let Some(Ok(expr)) = cell.strip_prefix('=').map(|body| parse_expr(body, 0, 1)) else {
         return cell.to_string();
     };
-    let mut found = Vec::new();
-    sites(&expr, false, &mut found, &mut Vec::new());
+    let (mut found, mut names) = (Vec::new(), Vec::new());
+    sites(&expr, false, &mut found, &mut names);
     let mut edits = Vec::new();
+    // A column named on its own is that column of the cell's own row: cut
+    // with the block it is the cell it was, in the column it landed in, and
+    // outside it the row it was in.
+    for (name, span) in names {
+        let Some(c) = cols.iter().position(|c| *c == name) else {
+            continue;
+        };
+        if block.0.contains(&from.0) && block.1.contains(&c) {
+            if let Some(new) = usize::try_from(c as i64 + by.1)
+                .ok()
+                .and_then(|c| cols.get(c))
+            {
+                put(&mut edits, cell, span, new.to_string());
+            }
+        } else if by.0 != 0 {
+            put(
+                &mut edits,
+                cell,
+                span,
+                format!("[{name}; {}]", offset_text(-by.0)),
+            );
+        }
+    }
     for site in found {
         if site.nested || site.sheet.is_some_and(|name| name != sheet) {
             continue;
@@ -6428,10 +6590,11 @@ mod tests {
             moved("= T[*-1; *-1]", (2, 3), (2..3, 3..4), (1, -1)),
             "= T[*; *-2]"
         );
-        // A plain `*` is the cell's own, and a range ending on one goes as it is.
+        // A plain `*` read of a cell that is not cut is that cell still, and
+        // a range ending on one goes as it is.
         assert_eq!(
             moved("= [*; *-1]", (2, 3), (2..3, 3..4), (0, -2)),
-            "= [*; *-1]"
+            "= [*+2; *-1]"
         );
         assert_eq!(
             moved("= sum([B; *-2..*])", (2, 3), (2..3, 3..4), (2, 0)),
@@ -6441,12 +6604,14 @@ mod tests {
             moved("= sum([B; *-2..*-1])", (2, 3), (2..3, 3..4), (2, 0)),
             "= sum([B; *-4..*-3])"
         );
-        // Numbers and names say where they mean already.
+        // A number says where it means already, and a name alone or a `*`
+        // is the row it was in (D221).
         assert_eq!(
             moved("= [1; 0] + [B; *] + B", (2, 3), (2..3, 3..4), (2, -2)),
-            "= [1; 0] + [B; *] + B"
+            "= [1; 0] + [B; *-2] + [B; *-2]"
         );
-        // Cells cut together stay as far apart; a number or a name follows.
+        // Cells cut together stay as far apart; a number or a name follows. A
+        // cell not cut with it is read where it is, a row up from here.
         assert_eq!(
             moved(
                 "= [*-1; *] + [*-3; *] + [C; 2]",
@@ -6454,7 +6619,7 @@ mod tests {
                 (2..3, 2..4),
                 (1, -2)
             ),
-            "= [*-1; *] + [*-1; *] + [A; 3]"
+            "= [*-1; *] + [*-1; *-1] + [A; 3]"
         );
         assert_eq!(moved("*-1", (2, 3), (2..3, 3..4), (0, -2)), "*-1");
     }

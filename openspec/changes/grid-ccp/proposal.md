@@ -9,6 +9,8 @@ The cells of a block can be pasted four ways: as they are (formulas), as values,
 - **app**: MODIFIED. A copy keeps relative reads relative, on the same sheet and on another (D219, D220). What a formula read inside the block it reads at the copy, in the column it landed in; what it read outside, by name or offset, it reads on the sheet it is pasted on. This reverses D214 for a copy.
 - **app**: MODIFIED. A cut is a move (D221). Every read of a formula cut keeps reading the same cell, with its sheet named where that is another, and the formulas elsewhere that read a cell cut follow it. D214 stands for a cut.
 - **app**: MODIFIED. A transposed paste, copy or cut, reads inside the block at the turned copy, and fixes what it read outside the block to the cell it read, as a reference (D222).
+- **app**: ADDED. Inside a copied block a column name is read in the column it landed in, and a numbered column is fixed (D226).
+- **engine**: MODIFIED. A formula that reads a fixed row of its own column is circular only if that row is the cell itself or reads it back; the check is by cell, and the message names it (D227). Without it a frozen read or a pasted reference to the same column is reported as a cycle.
 - **app**: UNCHANGED. Paste Values pastes values; Paste Reference pastes references (D211, D212). What reaches the system clipboard is still tab-separated text.
 
 ## Impact

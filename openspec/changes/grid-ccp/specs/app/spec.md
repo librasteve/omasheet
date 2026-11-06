@@ -82,6 +82,41 @@ A transposed paste, of a copy or a cut, SHALL read what a formula read inside th
 - **WHEN** they are pasted transposed
 - **THEN** that formula reads the cell where it went
 
+### Requirement: A column name inside a copied block is relative to the block
+
+Inside a copied block a column name SHALL be read in the column it landed in. A column given by number SHALL be fixed and SHALL be left as it is. Outside the block a column name SHALL be kept and read on the sheet pasted on.
+
+#### Scenario: A name inside the block
+
+- **GIVEN** `A`, `B` and `C = A + B` copied together
+- **WHEN** they are pasted onto `D`, `E` and `F` of the same sheet
+- **THEN** `F` is `= D+E`
+
+#### Scenario: A numbered column inside the block
+
+- **GIVEN** `A`, `B` and `C = [0; *] + B` copied together
+- **WHEN** they are pasted onto `D`, `E` and `F`
+- **THEN** `F` is `= [0; *]+E`, still reading the first column
+
+### Requirement: A formula may read a fixed row of its own column
+
+A formula SHALL be reported as circular only if a cell reads itself, directly or through the cells it reads. A fixed row of its own column that is another cell, and does not read back, SHALL NOT be circular, whatever the column. The report SHALL name the cell.
+
+#### Scenario: A seed in the first row
+
+- **GIVEN** a column whose first row is `100` and whose other rows are `= [B; 0] * A`
+- **THEN** no cell is circular
+
+#### Scenario: A cell that reads itself
+
+- **GIVEN** the third row of a column is `= [B; 2] + 1`
+- **THEN** that cell is reported as circular, naming its row
+
+#### Scenario: A frozen read
+
+- **GIVEN** a transposed paste puts `= T[A; 3]` into column `A`
+- **THEN** the cell is not circular unless row 3 of `A` reads it back
+
 ### Requirement: Paste Values and Paste Reference are not changed by the rules above
 
 Paste Values SHALL paste what the cells showed, with no formula to rewrite. Paste Reference SHALL write a fixed read of each cell it was made from, as before.

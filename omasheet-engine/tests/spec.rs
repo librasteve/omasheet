@@ -2488,14 +2488,15 @@ fn a_file_calculates_the_same_either_way() {
     assert_eq!(rows, columns);
 }
 
-/// Every `examples/*.omx`, in the order their names sort in.
+/// Every `examples/*.omx`, in the order their names sort in, but for
+/// `ccp.omx`, which is still being worked on and has no expected output.
 fn corpus() -> Vec<std::path::PathBuf> {
     let dir = std::path::Path::new("../examples");
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
         .expect("the example corpus is beside the crates")
         .filter_map(|entry| {
             let path = entry.expect("a readable directory entry").path();
-            (path.extension()? == "omx").then_some(path)
+            (path.extension()? == "omx" && path.file_name()? != "ccp.omx").then_some(path)
         })
         .collect();
     files.sort();
@@ -3866,5 +3867,23 @@ fn a_constant_names_a_list_of_columns() {
         shown(plain).contains("const Both = [1, 2]"),
         "{}",
         shown(plain)
+    );
+}
+
+/// A cell may read a row of its own column by number, and is circular only
+/// if that cell reads itself, which names its row (D227).
+#[test]
+fn a_fixed_row_of_its_own_column_is_circular_only_through_itself() {
+    let head = "sheet T\n\n| A | B |\n| - | - |\n";
+    let seeded = format!("{head}| 1 | 100 |\n| 2 | =[B; 0]*A |\n| 3 | =[B; 0]*A |\n");
+    let out = view_with("t.omx", &seeded, as_printed(Lowering::Never));
+    assert!(out.errors.is_empty(), "{:?}", out.errors);
+    assert!(out.output.contains("300"), "{}", out.output);
+    let itself = format!("{head}| 1 | 100 |\n| 2 | 5 |\n| 3 | =[B; 2]+1 |\n");
+    let out = view_with("t.omx", &itself, as_printed(Lowering::Never));
+    let said = format!("{:?}", out.errors);
+    assert!(
+        said.contains("circular reference in column `B` at row 2"),
+        "{said}"
     );
 }
