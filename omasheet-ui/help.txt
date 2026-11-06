@@ -7,7 +7,7 @@ Ctrl+0               Reset zoom
 
 Ctrl+C / X / V       Copy / cut / paste
 Ctrl+Shift+V         Paste values
-Ctrl+Shift+R         Paste reference
+Ctrl+Shift+R         Paste references
 Ctrl+Shift+T         Paste transposed
 Delete               Clear
 Ctrl+Delete          Delete

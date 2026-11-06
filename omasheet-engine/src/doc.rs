@@ -1135,6 +1135,139 @@ pub fn qualified(cell: &str, sheet: &str, cols: &[String]) -> String {
     out
 }
 
+/// A block of cells copied from a sheet, as a formula in it needs to know
+/// where it came from.
+pub struct CopiedFrom {
+    /// The sheet it was on.
+    pub sheet: String,
+    /// Every column of that sheet, in order.
+    pub cols: Vec<String>,
+    /// How many rows that sheet has.
+    pub nrows: usize,
+    /// The rows and the columns the block covered.
+    pub rows: std::ops::Range<usize>,
+    pub across: std::ops::Range<usize>,
+}
+
+/// A formula of a block copied from another sheet, put down at `to` on a
+/// sheet whose columns are `target`, from `from` where it was. What it
+/// read inside the block it still reads, at the copy: the cell it stood
+/// for, in the sheet it is on now. What it read outside the block it still
+/// reads where it was, on the sheet it came from, which is made to say so.
+/// A range or a column reads the place, and so counts as outside (D214).
+pub fn carried(
+    cell: &str,
+    from: (usize, usize),
+    src: &CopiedFrom,
+    to: (usize, usize),
+    target: &[String],
+    target_nrows: usize,
+) -> String {
+    let by = (to.0 as i64 - from.0 as i64, to.1 as i64 - from.1 as i64);
+    let map = |r: usize, c: usize| (r as i64 + by.0, c as i64 + by.1);
+    carried_by(cell, from, src, to, target, target_nrows, &map)
+}
+
+/// As `carried`, for a block put down turned about with its first cell at
+/// `origin`: the cell at `from` is put down at `to`, and what it read
+/// inside the block it reads where that went.
+pub fn carried_turned(
+    cell: &str,
+    from: (usize, usize),
+    src: &CopiedFrom,
+    origin: (usize, usize),
+    to: (usize, usize),
+    target: &[String],
+    target_nrows: usize,
+) -> String {
+    let block: Block = (src.rows.clone(), src.across.clone());
+    let map = |r: usize, c: usize| turn_at(&block, origin, r, c);
+    carried_by(cell, from, src, to, target, target_nrows, &map)
+}
+
+/// `carried`, with `map` saying where each cell of the block went.
+fn carried_by(
+    cell: &str,
+    from: (usize, usize),
+    src: &CopiedFrom,
+    to: (usize, usize),
+    target: &[String],
+    target_nrows: usize,
+    map: Whither,
+) -> String {
+    let Some(Ok(expr)) = cell.strip_prefix('=').map(|body| parse_expr(body, 0, 1)) else {
+        return cell.to_string();
+    };
+    let cols: Vec<&str> = src.cols.iter().map(String::as_str).collect();
+    let inside = |r: usize, c: usize| src.rows.contains(&r) && src.across.contains(&c);
+    let (mut found, mut names) = (Vec::new(), Vec::new());
+    sites(&expr, false, &mut found, &mut names);
+    let mut edits: Vec<Edit> = Vec::new();
+    for site in &found {
+        // One that names its sheet says what it reads, and one inside the
+        // slot of another is read as that index reads it.
+        if site.nested || site.sheet.is_some() {
+            continue;
+        }
+        if let Some(((r, row, row_span), (c, col, col_span))) =
+            one_cell(site, Some(from), src.nrows, &cols)
+            && inside(r, c)
+        {
+            let (tr, tc) = map(r, c);
+            let column = match col {
+                Some(pick) => Some(pick.write(tc, Some(to.1), target.len())),
+                None => usize::try_from(tc)
+                    .ok()
+                    .and_then(|c| target.get(c))
+                    .cloned(),
+            };
+            if let Some(column) = column {
+                put(
+                    &mut edits,
+                    cell,
+                    row_span,
+                    row.write(tr, Some(to.0), target_nrows),
+                );
+                put(&mut edits, cell, col_span, column);
+                continue;
+            }
+        }
+        let start = site.at.start as usize;
+        edits.push((start, start, src.sheet.clone()));
+    }
+    // A column named on its own is that column of the formula's own row: in
+    // the block it is the cell it was, now in the column it landed in, and
+    // outside it the row it was on, in the sheet it was on.
+    for (name, span) in &names {
+        let Some(c) = cols.iter().position(|c| c == name) else {
+            continue;
+        };
+        let (land_row, land_col) = map(from.0, c);
+        let landed = usize::try_from(land_col)
+            .ok()
+            .and_then(|c| target.get(c))
+            .filter(|_| inside(from.0, c));
+        let new = match landed {
+            Some(name) => match land_row - to.0 as i64 {
+                0 => name.clone(),
+                rows => format!("[{name}; {}]", offset_text(rows)),
+            },
+            None => format!(
+                "{}[{name}; {}]",
+                src.sheet,
+                offset_text(from.0 as i64 - to.0 as i64)
+            ),
+        };
+        put(&mut edits, cell, *span, new);
+    }
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = cell.to_string();
+    for (s, e, new) in edits {
+        out.replace_range(s..e, &new);
+    }
+    out
+}
+
 /// The source of a cell of `block`, cut from `from` in a sheet and put down
 /// `by` rows and columns away. What its formula reads by an offset it still
 /// reads: a move sideways counts the columns again, and a move up or down

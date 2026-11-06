@@ -5,6 +5,7 @@
 //! came from. Nothing here knows of Qt, so all of it is tested here.
 
 use omasheet_engine::Document;
+use omasheet_engine::doc::{CopiedFrom, carried, carried_turned};
 
 /// A cell: its row and column.
 type Cell = (usize, usize);
@@ -46,6 +47,9 @@ struct Referent {
     cols: Vec<String>,
     /// Every column of the sheet, for the names a formula reads there.
     sheet_cols: Vec<String>,
+    /// How many rows the sheet had, and where the block began on it.
+    sheet_rows: usize,
+    at: Cell,
     /// The row of the source each came from: for a table sorted in the
     /// grid, not the row it is shown in (D215).
     rows: Vec<usize>,
@@ -60,6 +64,49 @@ pub struct Clip {
     copied: Option<Copied>,
     /// Where the cells last cut or copied came from.
     refer: Option<Referent>,
+}
+
+/// What a formula pasted from another sheet needs to be carried over to
+/// where it lands (D214).
+struct Carry {
+    from: CopiedFrom,
+    /// The top left cell of the block, on the sheet it came from.
+    origin: Cell,
+    /// The columns, and the rows, of the sheet it lands on.
+    target_cols: Vec<String>,
+    target_rows: usize,
+}
+
+impl Carry {
+    /// `text`, the cell `(i, j)` of the block, put down at `at`.
+    fn cell(&self, text: &str, (i, j): Cell, at: Cell) -> String {
+        let was = (self.origin.0 + i, self.origin.1 + j);
+        carried(
+            text,
+            was,
+            &self.from,
+            at,
+            &self.target_cols,
+            self.target_rows,
+        )
+    }
+}
+
+impl Carry {
+    /// As `cell`, for a block put down turned about with its first cell at
+    /// `origin`: `text` is the cell `(i, j)` of the block, put down at `at`.
+    fn turned_cell(&self, text: &str, (i, j): Cell, origin: Cell, at: Cell) -> String {
+        let was = (self.origin.0 + i, self.origin.1 + j);
+        carried_turned(
+            text,
+            was,
+            &self.from,
+            origin,
+            at,
+            &self.target_cols,
+            self.target_rows,
+        )
+    }
 }
 
 /// A reference to one cell, `Sales[Revenue; 3]`, or `[Revenue; 3]` from the
@@ -103,6 +150,8 @@ fn referent(doc: &Document, sheet: usize, from: Cell, to: Cell, text: &str) -> O
         text: text.to_string(),
         sheet: t.name.clone(),
         sheet_cols: t.columns.iter().map(|c| c.name.clone()).collect(),
+        sheet_rows: t.nrows,
+        at: from,
         cols,
         rows: (from.0..=last).map(|r| doc.source_row(sheet, r)).collect(),
     })
@@ -270,6 +319,7 @@ fn put_block(
     to: Cell,
     block: Vec<Vec<String>>,
     cut: Option<Cut>,
+    carry: Option<&Carry>,
 ) -> bool {
     let single = block.len() == 1 && block[0].len() == 1;
     let computed: Vec<bool> = doc
@@ -279,15 +329,21 @@ fn put_block(
         .map(|t| t.columns.iter().map(|c| c.formula.is_some()).collect())
         .unwrap_or_default();
     let mut cells = Vec::new();
-    let mut put = |row: usize, col: usize, text: &str| {
+    // `(i, j)` is the cell of the block the text is, which a formula needs
+    // to know to be carried over from another sheet.
+    let mut put = |row: usize, col: usize, text: &str, of: Cell| {
         if computed.get(col) == Some(&false) {
-            cells.push((row, col, text.to_string()));
+            let text = match carry {
+                Some(carry) => carry.cell(text, of, (row, col)),
+                None => text.to_string(),
+            };
+            cells.push((row, col, text));
         }
     };
     if single {
         for row in from.0..=to.0.max(from.0) {
             for col in from.1..=to.1.max(from.1) {
-                put(row, col, &block[0][0]);
+                put(row, col, &block[0][0], (0, 0));
             }
         }
     } else {
@@ -300,7 +356,7 @@ fn put_block(
         };
         for (i, line) in block.iter().enumerate().take(rows) {
             for (j, text) in line.iter().enumerate().take(cols) {
-                put(from.0 + i, from.1 + j, text);
+                put(from.0 + i, from.1 + j, text, (i, j));
             }
         }
     }
@@ -367,9 +423,32 @@ impl Clip {
         (parse_block(&copied.text) == parse_block(text)).then_some(copied)
     }
 
+    /// What a formula needs to be carried to `sheet` from the sheet the cells
+    /// `block` were last cut or copied on, if that is another sheet.
+    fn carry(&self, doc: &Document, sheet: usize, block: &[Vec<String>]) -> Option<Carry> {
+        let t = doc.snapshot().sheets.get(sheet)?;
+        let r = self
+            .refer
+            .as_ref()
+            .filter(|r| r.sheet != t.name && parse_block(&r.text) == block)?;
+        Some(Carry {
+            from: CopiedFrom {
+                sheet: r.sheet.clone(),
+                cols: r.sheet_cols.clone(),
+                nrows: r.sheet_rows,
+                rows: r.at.0..r.at.0 + r.rows.len(),
+                across: r.at.1..r.at.1 + r.cols.len(),
+            },
+            origin: r.at,
+            target_cols: t.columns.iter().map(|c| c.name.clone()).collect(),
+            target_rows: t.nrows,
+        })
+    }
+
     /// `block`, the cells last cut or copied, with the formulas in it made to
     /// read what they read on the sheet they came from, where they are put
-    /// down on another one (D214). As it was for anything else.
+    /// down on another one (D214). As it was for anything else. For a formula
+    /// column, whose one formula is every row's.
     fn read_where_it_was(
         &self,
         doc: &Document,
@@ -406,8 +485,12 @@ impl Clip {
     ) -> Result<bool, String> {
         let original = parse_block(text);
         // A formula copied from another sheet is made to read where it
-        // read (D214); what was cut is known by the text it was copied as.
+        // read (D214): into a formula column it is the column's formula, and
+        // reads the sheet it came from; in cells, what it read inside the
+        // block it reads at the copy. What was cut is known by the text it
+        // was copied as.
         let block = self.read_where_it_was(doc, sheet, &original);
+        let carry = self.carry(doc, sheet, &original);
         // One formula onto formula columns is their formula, and the cell
         // it was cut from is cleared, in one step.
         if let Some(formulas) = formula_target(doc, sheet, from, to, &block)? {
@@ -435,7 +518,15 @@ impl Clip {
                 doc.paste_cut(cut.sheet, cut.at, from, &block);
             }));
         }
-        Ok(put_block(doc, sheet, from, to, block, cut))
+        Ok(put_block(
+            doc,
+            sheet,
+            from,
+            to,
+            original,
+            cut,
+            carry.as_ref(),
+        ))
     }
 
     /// Paste a live reference to the cells last copied or cut here (D210).
@@ -538,7 +629,7 @@ impl Clip {
         let block = parse_block(values.as_deref().unwrap_or(text));
         refused(doc, sheet, from, to, &block)?;
         let cut = self.take_cut(doc, &parse_block(text));
-        Ok(put_block(doc, sheet, from, to, block, cut))
+        Ok(put_block(doc, sheet, from, to, block, cut, None))
     }
 
     /// Paste `text` turned about: its rows as columns.
@@ -562,7 +653,25 @@ impl Clip {
             None => self.copied_from(doc, &block),
         };
         let Some((_, at)) = origin.filter(|(s, _)| *s == sheet) else {
-            return Ok(put_block(doc, sheet, from, to, turned, cut));
+            // From another sheet, a formula is made to read what it read
+            // there (D214), and what it read in the block, where that went.
+            let single = turned.len() == 1 && turned[0].len() == 1;
+            let carry = self.carry(doc, sheet, &block);
+            let turned = match &carry {
+                Some(carry) if !single => turned
+                    .iter()
+                    .enumerate()
+                    .map(|(j, line)| {
+                        let cell = |(i, text): (usize, &String)| {
+                            carry.turned_cell(text, (i, j), from, (from.0 + j, from.1 + i))
+                        };
+                        line.iter().enumerate().map(cell).collect()
+                    })
+                    .collect(),
+                _ => turned,
+            };
+            let carry = carry.filter(|_| single);
+            return Ok(put_block(doc, sheet, from, to, turned, cut, carry.as_ref()));
         };
         if let Some(cut) = &cut {
             return Ok(doc.as_one(|doc| {
@@ -571,7 +680,7 @@ impl Clip {
             }));
         }
         let turned = doc.turn_block(sheet, at, from, &block);
-        Ok(put_block(doc, sheet, from, to, turned, None))
+        Ok(put_block(doc, sheet, from, to, turned, None, None))
     }
 
     /// Where `block` was copied from, if the cells there are still it.
@@ -1214,5 +1323,91 @@ mod tests {
         assert_eq!(clip.paste(&mut doc, 1, (0, 1), (0, 1), &text), Ok(true));
         assert_eq!(held(&doc, 1)[0], "|= T[A; *]+T[B; *]");
         assert_eq!(held(&doc, 0)[0], "1|2||");
+    }
+
+    const TWO: &str = "sheet T\n\nA  | B  | C\n1  | 2  | = A+B\n10 | 20 | = [A; *-1] + A\n\nsheet V\n\nP | Q | R | S\n  |   |   |\n  |   |   |\n";
+
+    fn pasted_cells(copy: (Cell, Cell), at: Cell) -> (Vec<String>, Vec<String>) {
+        let mut doc = Document::from_text(TWO);
+        let mut clip = Clip::default();
+        let text = clip.copy(&doc, 0, copy.0, copy.1);
+        assert_eq!(clip.paste(&mut doc, 1, at, at, &text), Ok(true));
+        (
+            held(&doc, 1),
+            col_display(&doc, 1, at.1 + (copy.1.1 - copy.0.1)),
+        )
+    }
+
+    #[test]
+    fn what_a_pasted_formula_read_inside_the_block_it_reads_at_the_copy() {
+        // The whole row: `C = A+B` reads the copies of A and B beside it,
+        // named as the columns they landed in are.
+        let (held, shown) = pasted_cells(((0, 0), (0, 2)), (0, 0));
+        assert_eq!(held[0], "1|2|= P+Q|");
+        assert_eq!(shown[0], "3");
+        // Put down a column along, they are the columns they landed in.
+        let (held, _) = pasted_cells(((0, 0), (0, 2)), (0, 1));
+        assert_eq!(held[0], "|1|2|= Q+R");
+        // And a row counted from is counted again from where it is.
+        let (held, _) = pasted_cells(((0, 0), (1, 2)), (0, 0));
+        assert_eq!(held[1], "10|20|= [P; *-1] + P|");
+    }
+
+    #[test]
+    fn what_a_pasted_formula_read_outside_the_block_it_reads_where_it_was() {
+        // Without A: `C = A+B` has B inside, now P, and A outside, still
+        // the A of T in its own row.
+        let (held, shown) = pasted_cells(((0, 1), (0, 2)), (0, 0));
+        assert_eq!(held[0], "2|= T[A; *]+P||");
+        assert_eq!(shown[0], "3");
+        // A row above the block is outside it: still the row of T it was.
+        let (held, _) = pasted_cells(((1, 0), (1, 2)), (1, 0));
+        assert_eq!(held[1], "10|20|= T[A; *-1] + P|");
+        // Put down on another row, the row it read is the row it read.
+        let (held, shown) = pasted_cells(((0, 1), (0, 2)), (1, 0));
+        assert_eq!(held[1], "2|= T[A; *-1]+P||");
+        assert_eq!(shown[1], "3");
+    }
+
+    #[test]
+    fn a_range_or_a_column_in_a_pasted_formula_reads_the_place() {
+        let text =
+            "sheet T\n\nA  | B\n1  | = A.sum()\n10 | = T.A.sum()\n\nsheet V\n\nP | Q\n  |\n  |\n";
+        let mut doc = Document::from_text(text);
+        let mut clip = Clip::default();
+        // A whole column is outside whatever block was copied from it.
+        let copied = clip.copy(&doc, 0, (0, 0), (1, 1));
+        assert_eq!(clip.paste(&mut doc, 1, (0, 0), (0, 0), &copied), Ok(true));
+        assert!(
+            held(&doc, 1)[1].contains("T.A.sum()"),
+            "{:?}",
+            held(&doc, 1)
+        );
+    }
+
+    #[test]
+    fn a_block_turned_onto_another_sheet_reads_the_copy() {
+        let text = "sheet T\n\nA | B | C\n1 | 2 | = A+B\n3 | 4 | = [A; *-1]+B\n5 | 6 | 7\n\nsheet U\n\nA | B | C | D\n0 | 0 | 0 | 0\n0 | 0 | 0 | 0\n0 | 0 | 0 | 0\n0 | 0 | 0 | 0\n";
+        for cutting in [false, true] {
+            let mut doc = Document::from_text(text);
+            let mut clip = Clip::default();
+            let block = if cutting {
+                clip.cut(&doc, 0, (0, 0), (1, 2))
+            } else {
+                clip.copy(&doc, 0, (0, 0), (1, 2))
+            };
+            assert_eq!(
+                clip.paste_transposed(&mut doc, 1, (1, 1), (1, 1), &block),
+                Ok(true)
+            );
+            let u = held(&doc, 1);
+            assert_eq!(u[1], "0|1|3|0");
+            assert_eq!(u[2], "0|2|4|0");
+            // What each read of the block it reads in the copy: 1 + 2, and
+            // 1 + 4.
+            assert_eq!(u[3], "0|= [B; *-2]+[B; *-1]|= [B; *-2]+[C; *-1]|0");
+            assert_eq!(doc.snapshot().sheets[1].rows[3][1].display, "3");
+            assert_eq!(doc.snapshot().sheets[1].rows[3][2].display, "5");
+        }
     }
 }

@@ -12,7 +12,7 @@
 - [x] 2.3 Paste as Reference into data cells: a formula in each (D211)
 - [x] 2.4 Paste as Reference into a formula column: the column's formula, aligned by row with the offset of D212; one formula for each column of a block
 - [x] 2.5 The sheet's name left out from the same sheet (D213)
-- [x] 2.6 Names in a copied formula qualified for another sheet (D214) *(`qualified` in `doc.rs`, applied by `Clip::paste` for a copy or a cut onto a different sheet)*
+- [x] 2.6 A formula pasted onto another sheet reads inside the block at the copy and outside it where it was (D214, superseded for a copy by `grid-ccp` D220): `carried` in `doc.rs` for cells, `qualified` for a formula column's formula, both applied by `Clip::paste`
 - [x] 2.7 The status bar says what was written (D216)
 - [x] 2.8 Tests: a view column pasted into a decorator column, into another sheet's formula column and into data cells; rows 5 to 9 onto row 0; one cell; a sorted view; a formula copied across sheets *(clip tests: views, decorators, sorted views, offsets, cross-sheet, cut)*
 

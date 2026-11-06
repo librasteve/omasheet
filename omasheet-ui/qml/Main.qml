@@ -1275,7 +1275,11 @@ ApplicationWindow {
 
     // Cells cut and pasted, still on the clipboard to paste again as copies.
     property bool movedOnce: false
-    readonly property bool canPaste: marked !== null || movedOnce
+    // Cells copied in this window, or text on the system clipboard from
+    // anywhere: another window of the app, which shares the clipboard and
+    // what it remembers of a copy but not this window's mark, or another
+    // program.
+    readonly property bool canPaste: marked !== null || movedOnce || clipboard.canPaste
 
     // Whole rows waiting to go in as rows of their own, rather than blank
     // ones: cut, to be moved there, or copied, to go in as copies.
@@ -1650,9 +1654,13 @@ ApplicationWindow {
     // Several cells copied or cut, to be turned about onto cells: put down
     // from the one selected, or the corner of a block.
     // Not when any of them is in a formula column.
-    readonly property bool canTranspose: marked !== null && selKind === "cells" && !sheet.isConsts
-        && (marked.top !== marked.bottom || marked.left !== marked.right)
-        && !spansFormula(marked)
+    // Text from another window or program has no mark here to say what it
+    // is, so it is tried: a paste that cannot be made says why.
+    readonly property bool canTranspose: selKind === "cells" && !sheet.isConsts
+        && (marked !== null
+            ? (marked.top !== marked.bottom || marked.left !== marked.right)
+                && !spansFormula(marked)
+            : clipboard.canPaste)
 
     // Values, not when the cells were in a formula column, or are put in one.
     readonly property bool canPasteValues: canPaste && !formulaCell
@@ -1680,8 +1688,12 @@ ApplicationWindow {
 
     // Cells copied or cut here can be pasted as a reference to them, in a
     // sheet's data cells or in a formula column.
-    readonly property bool canPasteReference: marked !== null && selKind === "cells"
-        && !sheet.isConsts && marked.tab < tabs.length && !tabs[marked.tab].isConsts
+    // From another window it is the app's memory of the last copy that says,
+    // when the paste is made, whether there are cells to refer to.
+    readonly property bool canPasteReference: selKind === "cells" && !sheet.isConsts
+        && (marked !== null
+            ? marked.tab < tabs.length && !tabs[marked.tab].isConsts
+            : clipboard.canPaste)
 
     // Paste a live reference to what was copied, not its values (D210).
     function pasteReference() {

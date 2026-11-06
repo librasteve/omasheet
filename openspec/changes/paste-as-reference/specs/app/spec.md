@@ -67,10 +67,30 @@ The status bar SHALL say what was written. What is put on the system clipboard S
 
 ### Requirement: A copied formula keeps what it read
 
-A formula copied from one sheet and pasted onto a different one SHALL have the names in it qualified with the sheet it came from, so that it reads what it read.
+*Superseded for a copy by `grid-ccp` (D220): a copy now reads relative to where it is pasted. This holds for a cut.*
 
-#### Scenario: A formula pasted onto another sheet
+A formula copied or cut from one sheet and pasted onto a different one SHALL read what it read. What it read inside the copied block SHALL be read at the copy, on the sheet it is on now, in the column it landed in. What it read outside the block SHALL be read where it was, with the source sheet named. A range or a whole column SHALL count as outside. Pasted into a formula column it SHALL be the column's formula, and SHALL read the sheet it came from.
 
-- **GIVEN** a formula `[Revenue; *-1]` on `Sales`, copied
-- **WHEN** it is pasted onto a formula column of another sheet
-- **THEN** its formula is `Sales[Revenue; *-1]`
+#### Scenario: A block copied whole
+
+- **GIVEN** `A`, `B` and `C = A + B` of `Sales` copied together
+- **WHEN** they are pasted onto columns `P`, `Q` and `R` of another sheet
+- **THEN** `R` is `= P+Q`
+
+#### Scenario: A formula copied without what it read
+
+- **GIVEN** `B` and `C = A + B` of `Sales` copied, without `A`
+- **WHEN** they are pasted onto `P` and `Q` of another sheet
+- **THEN** `Q` is `= Sales[A; *]+P`
+
+#### Scenario: A row above the block
+
+- **GIVEN** `C = [A; *-1] + A` in the second row of `Sales`, copied with `A` and `B` of that row only
+- **WHEN** they are pasted onto another sheet
+- **THEN** the formula is `= Sales[A; *-1] + P`
+
+#### Scenario: Its own sheet
+
+- **GIVEN** a formula copied
+- **WHEN** it is pasted onto the sheet it came from
+- **THEN** it is pasted as written
