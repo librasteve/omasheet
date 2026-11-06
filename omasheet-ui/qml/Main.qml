@@ -56,24 +56,6 @@ ApplicationWindow {
         openCell = openCell && openCell.tab === tab && openCell.row === row && openCell.col === col
             ? null : { tab: tab, row: row, col: col };
     }
-    // Hover tips. The pointer rests on something for `tipDelay` before its tip
-    // begins to fade in, and the fade takes `tipFadeIn`. It then stays up for
-    // `tipHold` before it fades out, which takes `tipFadeOut`. In milliseconds.
-    readonly property int tipDelay: 3000
-    readonly property int tipFadeIn: 1500
-    readonly property int tipHold: 2000
-    readonly property int tipFadeOut: 500
-    // From when it begins to show, which is when its fade-in begins.
-    readonly property int tipTimeout: tipFadeIn + tipHold
-    // Every tip is the one shared tool tip, so its fades are set once, here.
-    Transition {
-        id: tipFade
-        NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: win.tipFadeIn }
-    }
-    Transition {
-        id: tipFadeAway
-        NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: win.tipFadeOut }
-    }
     // Ctrl+plus and Ctrl+minus change the size, and everything scales from
     // it. The size zoomed to is kept per user, so the next launch opens at
     // it; Ctrl+0 forgets it and goes back to the desktop's.
@@ -436,7 +418,7 @@ ApplicationWindow {
             }
             var w = Math.round(Math.min(46, Math.max(7, chars + 2)) * metrics.averageCharacterWidth) + 14;
             // Never narrower than the type line beside the telltale: the
-            // type, a mark before it (`:`, `=` or `:=`, with a little over)
+            // type, a mark before it (`:`, `=` or `=:`, with a little over)
             // where it is set or the column is a formula, and `[]` after it
             // where it has a format. A type is never cut off, so this is
             // what keeps it clear of the telltale. It is set smaller, so a
@@ -1246,6 +1228,24 @@ ApplicationWindow {
     property var grabbed: null
     // Why the last move was refused, shown in the footer.
     property string notice: ""
+    // What the pointer is resting on, or a fault in what is being typed,
+    // said in the footer for as long as it holds: where a tip would have
+    // been. It is set by `hover` from whatever has something to say, and
+    // cleared by the same one, the last to speak being the one heard.
+    property string hint: ""
+    property bool hintBad: false
+    property var hintFrom: null
+    function hover(from, text, bad) {
+        if (text.length > 0) {
+            hintFrom = from;
+            hint = text;
+            hintBad = !!bad;
+        } else if (hintFrom === from) {
+            hintFrom = null;
+            hint = "";
+            hintBad = false;
+        }
+    }
     // Whether the selection was last made from a row number or a column
     // header, to tell a row from a column where one selection is both.
     property bool byRow: false
@@ -1892,6 +1892,53 @@ ApplicationWindow {
         return true;
     }
 
+    // Whether a calculated column is among the columns selected.
+    function anyComputed() {
+        for (var c = selLeft; c <= selRight; c++) {
+            if (sheet.columns[c] && sheet.columns[c].computed)
+                return true;
+        }
+        return false;
+    }
+
+    function anyFormatted() {
+        for (var c = selLeft; c <= selRight; c++) {
+            if (sheet.columns[c] && sheet.columns[c].format)
+                return true;
+        }
+        return false;
+    }
+
+    function anyFiltered() {
+        for (var c = selLeft; c <= selRight; c++) {
+            if (sheet.columns[c] && filtered(c))
+                return true;
+        }
+        return false;
+    }
+
+    // Take the format off the selected columns, or the filter.
+    function clearFormats() {
+        if (sheet.isConsts)
+            return;
+        var problem = file.setColumnFormat(tab, selLeft, selRight - selLeft + 1, "");
+        if (problem.length > 0)
+            errorDialog.say(problem);
+    }
+    function clearFilters() {
+        var all = JSON.parse(JSON.stringify(filters));
+        var f = all[sheet.name] || {};
+        for (var c = selLeft; c <= selRight; c++) {
+            if (sheet.columns[c])
+                f[sheet.columns[c].name] = "";
+        }
+        all[sheet.name] = f;
+        busy("Filtering\u2026", function() {
+            filters = all;
+            filterRev++;
+        });
+    }
+
     function anyDeclared() {
         for (var c = selLeft; c <= selRight; c++) {
             if (sheet.columns[c] && sheet.columns[c].declared)
@@ -2229,8 +2276,6 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
-        ToolTip.toolTip.enter = tipFade;
-        ToolTip.toolTip.exit = tipFadeAway;
         reload();
         if (file.filePath.length > 0)
             file.keepLastFile(file.filePath);
@@ -2336,14 +2381,10 @@ ApplicationWindow {
                     elide: Text.ElideMiddle
                     Layout.maximumWidth: 260
                     rightPadding: 6
-                    MouseArea {
-                        id: fileArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        ToolTip.visible: containsMouse && file.filePath.length > 0
-                        ToolTip.delay: win.tipDelay
-                        ToolTip.timeout: win.tipTimeout
-                        ToolTip.text: file.filePath
+                    // Where the file is, said in the footer while the pointer is on it.
+                    HoverHandler {
+                        id: nameHover
+                        onHoveredChanged: win.hover(nameHover, hovered ? file.filePath : "", false)
                     }
                 }
 
@@ -2766,7 +2807,7 @@ ApplicationWindow {
                                         id: typeLine
                                         readonly property bool computed: !!headCell.column && headCell.column.computed && !win.sheet.isConsts
                                         readonly property bool declared: !!headCell.column && headCell.column.declared
-                                        readonly property string mark: (declared ? ":" : "") + (computed ? "=" : "")
+                                        readonly property string mark: (computed ? "=" : "") + (declared ? ":" : "")
                                         readonly property bool formatted: !!headCell.column && !!headCell.column.format
                                         width: parent.width
                                         textFormat: Text.StyledText
@@ -2868,12 +2909,6 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                    // The formula of a formula column, in full.
-                                    readonly property bool hasFormula: !!headCell.column && headCell.column.computed && !win.sheet.isConsts
-                                    ToolTip.visible: containsMouse && !cellMenu.visible && hasFormula
-                                    ToolTip.delay: win.tipDelay
-                                    ToolTip.timeout: win.tipTimeout
-                                    ToolTip.text: hasFormula ? headCell.column.name + " := " + headCell.column.formula : ""
                                     onPressed: function(mouse) {
                                         if (mouse.button === Qt.RightButton) {
                                             win.openMenu(-1, headCell.index);
@@ -3230,27 +3265,28 @@ ApplicationWindow {
                                     }
 
                                     MouseArea {
+                                        id: cellArea
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         // A drag selects or picks: the views do not take it to scroll.
                                         preventStealing: true
                                         property bool picking: false
-                                        // Why the cell failed, or a number shown
-                                        // with fewer digits than it has, in full;
-                                        // or what is cut off at the cell's edge,
-                                        // except in a String column, where text
-                                        // running past the edge is what is expected
-                                        // and needs no tip.
-                                        readonly property string tip: cellItem.cell
+                                        // Why the cell failed, or a number shown with fewer
+                                        // digits than it has, in full; or what is cut off at
+                                        // the cell's edge, except in a String column, where
+                                        // text running past the edge is what is expected.
+                                        // Said in the footer while the pointer is on it.
+                                        readonly property string said: cellItem.cell
                                             ? cellItem.cell.e || cellItem.cell.x
                                                 || (cellText.truncated && !(cellItem.column && cellItem.column.type === "String")
                                                     ? cellItem.cell.d : "")
                                             : ""
-                                        ToolTip.visible: containsMouse && !cellMenu.visible && tip.length > 0
-                                        ToolTip.delay: win.tipDelay
-                                        ToolTip.timeout: win.tipTimeout
-                                        ToolTip.text: tip
+                                        readonly property bool failed: !!cellItem.cell && !!cellItem.cell.e
+                                        function say() { win.hover(cellArea, containsMouse && !cellMenu.visible ? said : "", failed); }
+                                        onContainsMouseChanged: say()
+                                        onSaidChanged: say()
+                                        Component.onDestruction: win.hover(cellArea, "", false)
                                         // A link in the cell under the pointer, opened with Ctrl and a click.
                                         readonly property string link: containsMouse
                                             ? cellText.linkAt(mouseX - cellText.x, mouseY - cellText.y) : ""
@@ -3887,7 +3923,7 @@ ApplicationWindow {
                     && !moving && !win.formulaCell
                     && (win.notice.length > 0 || file.status.length > 0)
                 property bool faded: false
-                opacity: faded ? 0 : 1
+                opacity: faded && win.hint.length === 0 ? 0 : 1
                 Behavior on opacity { NumberAnimation { duration: 700 } }
                 onTextChanged: {
                     faded = false;
@@ -3896,6 +3932,7 @@ ApplicationWindow {
                 onPassingChanged: faded = false
                 text: win.busyText.length > 0 ? win.busyText
                     : win.filterPending ? "Filtering\u2026"
+                    : win.hint.length > 0 ? win.hint
                     : win.notice.length > 0 ? win.notice
                     : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
                     : win.formulaCell ? "This is a formula column, this change will apply to the entire column"
@@ -3906,7 +3943,8 @@ ApplicationWindow {
                     // here, the bar being one line tall.
                     : win.sheet.view ? win.sheet.name + " := " + win.sheet.view.replace(/\s+/g, " ")
                     : ""
-                color: win.notice.length > 0 ? win.errorColor : win.mutedColor
+                color: win.hint.length > 0 ? (win.hintBad ? win.errorColor : win.mutedColor)
+                    : win.notice.length > 0 ? win.errorColor : win.mutedColor
                 elide: Text.ElideRight
                 font.family: win.font.family
                 font.features: win.font.features
@@ -4065,15 +4103,11 @@ ApplicationWindow {
         property bool active: false
         property bool quiet: false
         property color textColor: win.textColor
-        // Said when the pointer rests on it, where there is anything to say.
+        // Said in the footer while the pointer is on it, where there is anything to say.
         property string tip: ""
         signal clicked()
         signal rightClicked()
         signal doubleClicked()
-        ToolTip.visible: tip.length > 0 && area.containsMouse
-        ToolTip.delay: win.tipDelay
-        ToolTip.timeout: win.tipTimeout
-        ToolTip.text: tip
         implicitWidth: buttonText.implicitWidth + 22
         implicitHeight: win.fontSize * 2
         // In the footer's row these keep their width: the tabs, which can
@@ -4099,6 +4133,8 @@ ApplicationWindow {
             anchors.fill: parent
             hoverEnabled: true
             acceptedButtons: Qt.LeftButton | Qt.RightButton
+            onContainsMouseChanged: win.hover(button, containsMouse ? button.tip : "", false)
+            Component.onDestruction: win.hover(button, "", false)
             onClicked: function(mouse) {
                 if (mouse.button === Qt.RightButton) {
                     button.rightClicked();
@@ -4376,7 +4412,12 @@ ApplicationWindow {
         }
         MenuEntry { text: "Paste references"; enabled: cellMenu.hasRows && win.canPasteReference; onTriggered: win.pasteReference() }
         MenuEntry { text: "Paste transposed"; enabled: cellMenu.hasRows && win.canTranspose; onTriggered: win.pasteTransposed() }
-        MenuEntry { text: "Clear"; enabled: cellMenu.hasRows && !win.formulaCell; onTriggered: win.clearSelection() }
+        // A calculated column is its formula: there is nothing in it to clear.
+        MenuEntry {
+            text: "Clear"
+            enabled: cellMenu.hasRows && !win.formulaCell && !(cellMenu.columns && win.anyComputed())
+            onTriggered: win.clearSelection()
+        }
         // Delete, for what is selected as a whole.
         MenuRule { visible: cellMenu.rows }
         MenuEntry {
@@ -4386,6 +4427,12 @@ ApplicationWindow {
             onTriggered: win.deleteRows()
         }
         MenuRule { visible: cellMenu.columns }
+        MenuEntry {
+            text: "Rename column"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.selLeft === win.selRight && win.sheet.columns.length > 0
+            onTriggered: promptDialog.ask("rename")
+        }
         MenuEntry {
             text: cellMenu.columnCount > 1 ? "Delete " + cellMenu.columnCount + " columns" : "Delete column"
             visible: cellMenu.columns
@@ -4407,7 +4454,7 @@ ApplicationWindow {
             onTriggered: win.newSheet(true)
         }
         MenuEntry {
-            text: "Rename sheet…"
+            text: "Rename sheet"
             visible: cellMenu.whole
             enabled: visible
             onTriggered: promptDialog.ask("renameSheet")
@@ -4463,12 +4510,6 @@ ApplicationWindow {
         }
         MenuRule { visible: cellMenu.columns }
         MenuEntry {
-            text: "Rename column…"
-            visible: cellMenu.columns
-            enabled: visible && cellMenu.editable && win.selLeft === win.selRight && win.sheet.columns.length > 0
-            onTriggered: promptDialog.ask("rename")
-        }
-        MenuEntry {
             text: "Set type\u2026"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.sheet.columns.length > 0
@@ -4502,6 +4543,18 @@ ApplicationWindow {
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.anyDeclared()
             onTriggered: win.setColumnTypes("")
+        }
+        MenuEntry {
+            text: "Clear format"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.anyFormatted()
+            onTriggered: win.clearFormats()
+        }
+        MenuEntry {
+            text: "Clear filter"
+            visible: cellMenu.columns
+            enabled: visible && win.anyFiltered()
+            onTriggered: win.clearFilters()
         }
     }
 
@@ -4566,6 +4619,12 @@ ApplicationWindow {
         // Each of these shows the sheet first, with the whole of it
         // selected, as the same entry does from the grid.
         MenuEntry {
+            text: "Insert sheet"
+            visible: tabMenu.isSheet
+            enabled: visible
+            onTriggered: { win.goToSheet(tabMenu.index); win.newSheet(true); }
+        }
+        MenuEntry {
             text: "Duplicate sheet"
             visible: tabMenu.isSheet
             enabled: visible
@@ -4579,24 +4638,18 @@ ApplicationWindow {
             }
         }
         MenuEntry {
+            text: "Rename sheet"
+            visible: tabMenu.isSheet
+            enabled: visible
+            onTriggered: { win.goToSheet(tabMenu.index); promptDialog.ask("renameSheet"); }
+        }
+        MenuEntry {
             text: "Delete sheet"
             visible: tabMenu.isSheet
             enabled: visible
             onTriggered: { win.goToSheet(tabMenu.index); win.deleteSheet(); }
         }
         MenuRule { visible: tabMenu.isSheet }
-        MenuEntry {
-            text: "Insert sheet"
-            visible: tabMenu.isSheet
-            enabled: visible
-            onTriggered: { win.goToSheet(tabMenu.index); win.newSheet(true); }
-        }
-        MenuEntry {
-            text: "Rename sheet\u2026"
-            visible: tabMenu.isSheet
-            enabled: visible
-            onTriggered: { win.goToSheet(tabMenu.index); promptDialog.ask("renameSheet"); }
-        }
         // This one leaves the sheet shown as it is: the two are then side
         // by side, a window each.
         MenuEntry { text: "Open in new window"; onTriggered: win.newWindow(tabMenu.index) }
