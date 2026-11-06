@@ -436,12 +436,16 @@ ApplicationWindow {
             }
             var w = Math.round(Math.min(46, Math.max(7, chars + 2)) * metrics.averageCharacterWidth) + 14;
             // Never narrower than the type line beside the telltale: the
-            // type, `:= ` before it in a formula column and `[]` after it
-            // where it has a format. It is set smaller, so a short type
-            // such as `Integer` fits the width an empty column has already.
+            // type, a mark before it (`:`, `=` or `:=`, with a little over)
+            // where it is set or the column is a formula, and `[]` after it
+            // where it has a format. A type is never cut off, so this is
+            // what keeps it clear of the telltale. It is set smaller, so a
+            // short type such as `Integer` fits the width an empty column
+            // has already.
             if (cols[c].type.length > 0) {
+                var marked = cols[c].declared || (cols[c].computed && !sheet.isConsts);
                 var typeChars = cols[c].type.length
-                    + (cols[c].computed && !sheet.isConsts ? 3 : 0) + (cols[c].format ? 2 : 0);
+                    + (marked ? 3 : 0) + (cols[c].format ? 2 : 0);
                 var telltale = sheet.isConsts ? 0 : win.noteSize;
                 w = Math.max(w, Math.ceil(typeChars * noteMetrics.averageCharacterWidth) + telltale + 14);
             }
@@ -2773,7 +2777,7 @@ ApplicationWindow {
                                         font.family: win.font.family
                                         font.features: win.font.features
                                         font.pixelSize: win.noteSize
-                                        elide: Text.ElideRight
+                                        elide: Text.ElideNone
                                     }
                                 }
                                 // The telltale to the right of the name and a little
