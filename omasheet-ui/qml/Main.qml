@@ -56,6 +56,24 @@ ApplicationWindow {
         openCell = openCell && openCell.tab === tab && openCell.row === row && openCell.col === col
             ? null : { tab: tab, row: row, col: col };
     }
+    // Hover tips. The pointer rests on something for `tipDelay` before its tip
+    // begins to fade in, and the fade takes `tipFadeIn`. It then stays up for
+    // `tipHold` before it fades out, which takes `tipFadeOut`. In milliseconds.
+    readonly property int tipDelay: 3000
+    readonly property int tipFadeIn: 1500
+    readonly property int tipHold: 2000
+    readonly property int tipFadeOut: 500
+    // From when it begins to show, which is when its fade-in begins.
+    readonly property int tipTimeout: tipFadeIn + tipHold
+    // Every tip is the one shared tool tip, so its fades are set once, here.
+    Transition {
+        id: tipFade
+        NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: win.tipFadeIn }
+    }
+    Transition {
+        id: tipFadeAway
+        NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: win.tipFadeOut }
+    }
     // Ctrl+plus and Ctrl+minus change the size, and everything scales from
     // it. The size zoomed to is kept per user, so the next launch opens at
     // it; Ctrl+0 forgets it and goes back to the desktop's.
@@ -586,7 +604,14 @@ ApplicationWindow {
         var st = sortState(sheet.name);
         return !!st && !!sheet.columns[col] && st.done[sheet.columns[col].name] === true;
     }
+    // The steps to undo there were when the sort last asked for began.
+    property int sortMark: -1
     function noteSort(col, desc) {
+        // A column already in the order asked for is left as it is, with no
+        // step to undo; so there is nothing for an undo to take the caret
+        // back with, and it is not lit.
+        if (file.undoMark() === sortMark)
+            return;
         var name = sheet.columns[col].name;
         sortLog = sortLog.concat([{ mark: file.undoMark(), sheet: sheet.name, col: name, desc: desc }]);
         sortRev++;
@@ -2200,6 +2225,8 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        ToolTip.toolTip.enter = tipFade;
+        ToolTip.toolTip.exit = tipFadeAway;
         reload();
         if (file.filePath.length > 0)
             file.keepLastFile(file.filePath);
@@ -2310,7 +2337,8 @@ ApplicationWindow {
                         anchors.fill: parent
                         hoverEnabled: true
                         ToolTip.visible: containsMouse && file.filePath.length > 0
-                        ToolTip.delay: 400
+                        ToolTip.delay: win.tipDelay
+                        ToolTip.timeout: win.tipTimeout
                         ToolTip.text: file.filePath
                     }
                 }
@@ -2714,9 +2742,9 @@ ApplicationWindow {
                                     x: 7
                                     width: parent.width - 14
                                     Text {
-                                        // Clear of the telltale's caret, which
-                                        // stands above it when sorted up.
-                                        width: parent.width - (filterButton.sorted === "asc" ? filterButton.width : 0)
+                                        id: nameLine
+                                        // Clear of the telltale, which stands to its right.
+                                        width: parent.width - filterButton.width
                                         text: headCell.column ? headCell.column.name : ""
                                         color: win.textColor
                                         font.family: win.font.family
@@ -2725,22 +2753,22 @@ ApplicationWindow {
                                         font.bold: true
                                         elide: Text.ElideRight
                                     }
-                                    // The type: marked `:=` in a formula column, and
-                                    // plain rather than muted where it is declared,
-                                    // with `[]` after it where it has a format, which
-                                    // the context menu shows and changes.
+                                    // The type, always muted, with a mark right before it in
+                                    // the accent colour: `:` where the type is set, `=` in a
+                                    // formula column, and `:=` where it is both. `[]` follows
+                                    // it where it has a format, which the context menu shows
+                                    // and changes.
                                     Text {
                                         id: typeLine
                                         readonly property bool computed: !!headCell.column && headCell.column.computed && !win.sheet.isConsts
                                         readonly property bool declared: !!headCell.column && headCell.column.declared
-                                        readonly property color typeColor: declared ? win.textColor : win.mutedColor
+                                        readonly property string mark: (declared ? ":" : "") + (computed ? "=" : "")
                                         readonly property bool formatted: !!headCell.column && !!headCell.column.format
-                                        width: parent.width - filterButton.width
+                                        width: parent.width
                                         textFormat: Text.StyledText
                                         text: !headCell.column ? ""
-                                            : (computed ? "<font color=\"" + win.accentColor + "\">:=</font> " : "")
-                                              + "<font color=\"" + typeColor + "\">" + headCell.column.type
-                                              + (formatted ? "[]" : "") + "</font>"
+                                            : (mark.length > 0 ? "<font color=\"" + win.accentColor + "\">" + mark + "</font>" : "")
+                                              + headCell.column.type + (formatted ? "[]" : "")
                                         color: win.mutedColor
                                         font.family: win.font.family
                                         font.features: win.font.features
@@ -2748,8 +2776,10 @@ ApplicationWindow {
                                         elide: Text.ElideRight
                                     }
                                 }
-                                // The telltale on the type's line, which opens the
-                                // column's sort and filter: an empty circle unless
+                                // The telltale to the right of the name and a little
+                                // below its middle, which opens the column's sort and
+                                // filter, with room for a caret above or below it: an
+                                // empty circle unless
                                 // the column is filtered, when it is solid; a sort
                                 // is shown by the caret alone, an up caret above the
                                 // circle once sorted ascending and a down caret
@@ -2764,10 +2794,10 @@ ApplicationWindow {
                                     readonly property string sorted: win.sortedAs(headCell.index)
                                     readonly property bool solid: active
                                     width: visible ? win.noteSize : 0
-                                    height: typeLine.height
+                                    height: win.noteSize + 2
                                     anchors.right: parent.right
                                     anchors.rightMargin: 4
-                                    y: headLabels.y + typeLine.y
+                                    y: headLabels.y + nameLine.height / 2 + 3 - height / 2
                                     Text {
                                         id: dot
                                         anchors.centerIn: parent
@@ -2775,19 +2805,44 @@ ApplicationWindow {
                                         color: filterButton.solid ? win.accentColor : win.mutedColor
                                         font.pixelSize: win.noteSize
                                     }
-                                    Text {
+                                    // The sort's caret: one chevron, drawn here rather than
+                                    // set in a font, whose up and down carets differ in
+                                    // weight and in where they sit. Descending is the same
+                                    // chevron turned over, and it stands as far below the
+                                    // circle's middle as the ascending one stands above it,
+                                    // so the two are mirror images.
+                                    Item {
+                                        id: caret
                                         visible: filterButton.sorted.length > 0
-                                        // Placed from the circle's own place rather than
-                                        // anchored to it: an anchor switched on and off as
-                                        // the sort changes can leave the last one behind,
-                                        // which put an up caret below the circle.
+                                        readonly property real span: Math.round(win.noteSize * 0.95)
+                                        readonly property real arm: span / 2 / Math.cos(40 * Math.PI / 180)
+                                        readonly property real thick: Math.max(2, Math.round(win.noteSize / 6))
+                                        width: span
+                                        height: Math.ceil(arm * Math.sin(40 * Math.PI / 180) + thick)
                                         x: dot.x + (dot.width - width) / 2
-                                        y: filterButton.sorted === "asc" ? dot.y + 3 - height : dot.y + dot.height - 3
-                                        // The carets the box at the top opens and closes with.
-                                        text: filterButton.sorted === "asc" ? "\u2303" : "\u2304"
-                                        color: win.accentColor
-                                        font.bold: true
-                                        font.pixelSize: Math.round(win.noteSize * 1.05)
+                                        y: dot.y + dot.height / 2 - height / 2
+                                            + (filterButton.sorted === "asc" ? -1 : 1) * (win.noteSize * 0.5 + height / 2 - 1)
+                                        rotation: filterButton.sorted === "asc" ? 0 : 180
+                                        Rectangle {
+                                            x: caret.span / 2 - caret.arm
+                                            y: 0
+                                            width: caret.arm
+                                            height: caret.thick
+                                            radius: caret.thick / 2
+                                            color: win.accentColor
+                                            transformOrigin: Item.Right
+                                            rotation: -40
+                                        }
+                                        Rectangle {
+                                            x: caret.span / 2
+                                            y: 0
+                                            width: caret.arm
+                                            height: caret.thick
+                                            radius: caret.thick / 2
+                                            color: win.accentColor
+                                            transformOrigin: Item.Left
+                                            rotation: 40
+                                        }
                                     }
                                     MouseArea {
                                         anchors.fill: parent
@@ -2812,7 +2867,8 @@ ApplicationWindow {
                                     // The formula of a formula column, in full.
                                     readonly property bool hasFormula: !!headCell.column && headCell.column.computed && !win.sheet.isConsts
                                     ToolTip.visible: containsMouse && !cellMenu.visible && hasFormula
-                                    ToolTip.delay: 400
+                                    ToolTip.delay: win.tipDelay
+                                    ToolTip.timeout: win.tipTimeout
                                     ToolTip.text: hasFormula ? headCell.column.name + " := " + headCell.column.formula : ""
                                     onPressed: function(mouse) {
                                         if (mouse.button === Qt.RightButton) {
@@ -3178,12 +3234,18 @@ ApplicationWindow {
                                         property bool picking: false
                                         // Why the cell failed, or a number shown
                                         // with fewer digits than it has, in full;
-                                        // or what is cut off at the cell's edge.
+                                        // or what is cut off at the cell's edge,
+                                        // except in a String column, where text
+                                        // running past the edge is what is expected
+                                        // and needs no tip.
                                         readonly property string tip: cellItem.cell
-                                            ? cellItem.cell.e || cellItem.cell.x || (cellText.truncated ? cellItem.cell.d : "")
+                                            ? cellItem.cell.e || cellItem.cell.x
+                                                || (cellText.truncated && !(cellItem.column && cellItem.column.type === "String")
+                                                    ? cellItem.cell.d : "")
                                             : ""
                                         ToolTip.visible: containsMouse && !cellMenu.visible && tip.length > 0
-                                        ToolTip.delay: 400
+                                        ToolTip.delay: win.tipDelay
+                                        ToolTip.timeout: win.tipTimeout
                                         ToolTip.text: tip
                                         // A link in the cell under the pointer, opened with Ctrl and a click.
                                         readonly property string link: containsMouse
@@ -4005,7 +4067,8 @@ ApplicationWindow {
         signal rightClicked()
         signal doubleClicked()
         ToolTip.visible: tip.length > 0 && area.containsMouse
-        ToolTip.delay: 400
+        ToolTip.delay: win.tipDelay
+        ToolTip.timeout: win.tipTimeout
         ToolTip.text: tip
         implicitWidth: buttonText.implicitWidth + 22
         implicitHeight: win.fontSize * 2
@@ -4091,6 +4154,7 @@ ApplicationWindow {
             var c = col;
             close();
             win.busy("Sorting\u2026", function() {
+                win.sortMark = file.undoMark();
                 var problem = file.sortRows(win.tab, c, desc);
                 // "…": a big table, sorted on a worker; `sorted` says when.
                 if (problem === "\u2026")
