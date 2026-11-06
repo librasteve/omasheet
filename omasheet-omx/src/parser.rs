@@ -354,6 +354,7 @@ impl Parser {
             let op = match self.peek() {
                 Tok::Star => BinOp::Mul,
                 Tok::Slash => BinOp::Div,
+                Tok::Rem => BinOp::Rem,
                 // And the bitwise and and the shifts as a product does.
                 Tok::PlusAmp => BinOp::BitAnd,
                 Tok::PlusLt => BinOp::Shl,

@@ -84,6 +84,22 @@ fn lint_errors(file: &str) -> Vec<String> {
 // ---- numerics ------------------------------------------------------------
 
 #[test]
+fn a_remainder_takes_the_sign_of_the_divisor() {
+    assert_eq!(calc("7 % 3"), "1");
+    assert_eq!(calc("(0 - 7) % 3"), "2");
+    assert_eq!(calc("7 % (0 - 3)"), "-2");
+    assert_eq!(calc("7.5 % 2"), "1.5");
+    // It binds as `*` does, and is `NaN` by zero as `0/0` is.
+    assert_eq!(calc("2 * 7 % 3"), "2");
+    assert_eq!(calc("5 % 0"), "NaN");
+    // Divisible by.
+    assert_eq!(calc("9 % 3 == 0"), "true");
+    assert_eq!(calc("10 % 3 == 0"), "false");
+    // A percentage is still one, and is not a remainder.
+    assert_eq!(calc("20% + 1"), "1.2");
+}
+
+#[test]
 fn large_integers_keep_thirty_eight_digits_and_move_the_point() {
     // Past an `i64` a whole number is still exact, as a decimal.
     assert_eq!(calc("2 ** 64"), "18446744073709551616");
@@ -2488,15 +2504,14 @@ fn a_file_calculates_the_same_either_way() {
     assert_eq!(rows, columns);
 }
 
-/// Every `examples/*.omx`, in the order their names sort in, but for
-/// `ccp.omx`, which is still being worked on and has no expected output.
+/// Every `examples/*.omx`, in the order their names sort in.
 fn corpus() -> Vec<std::path::PathBuf> {
     let dir = std::path::Path::new("../examples");
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
         .expect("the example corpus is beside the crates")
         .filter_map(|entry| {
             let path = entry.expect("a readable directory entry").path();
-            (path.extension()? == "omx" && path.file_name()? != "ccp.omx").then_some(path)
+            (path.extension()? == "omx").then_some(path)
         })
         .collect();
     files.sort();

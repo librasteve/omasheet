@@ -568,6 +568,13 @@ impl Writer<'_> {
         use Kind::{Date, Datetime, Duration, Number, Time};
         let clock = |k: Kind| matches!(k, Time | Datetime);
         let seconds = |e: &Expr| format!("{}/86400", e.within(POW));
+        // There is no operator for it, only `MOD`.
+        if op == BinOp::Rem {
+            return match (a.kind, b.kind) {
+                (Number, Number) => Ok(Expr::atom(format!("MOD({},{})", a.text, b.text), Number)),
+                _ => Err(TYPE),
+            };
+        }
         let (sym, prec) = match op {
             BinOp::Add => ("+", ADD),
             BinOp::Sub => ("-", ADD),

@@ -424,7 +424,9 @@ pub fn compile_expr(prog: &Program, text: &str, src: u32) -> Result<(Node, Ty), 
 }
 
 /// What a filter may call (filter-by-expression D162): the tests Polars
-/// has and the parts of a date or time, each of which lowers.
+/// has, the parts of a date or time, and every function the directory has
+/// under a name Polars gives its own. A filter written as a sheet formula,
+/// `T |> filter(...)`, is not held to this list: it takes any function.
 const FILTER_CALLS: &[&str] = &[
     "is_null",
     "is_not_null",
@@ -461,6 +463,54 @@ const FILTER_CALLS: &[&str] = &[
     "nanosecond",
     "date",
     "time",
+    "abs",
+    "arccos",
+    "arcsin",
+    "arctan",
+    "base_utc_offset",
+    "cast",
+    "ceil",
+    "convert_time_zone",
+    "cos",
+    "cosh",
+    "count",
+    "degrees",
+    "exp",
+    "fill_null",
+    "filter",
+    "first",
+    "floor",
+    "head",
+    "join",
+    "last",
+    "len",
+    "log10",
+    "max",
+    "mean",
+    "median",
+    "min",
+    "month_end",
+    "month_start",
+    "product",
+    "quantile",
+    "radians",
+    "round",
+    "shift",
+    "sign",
+    "sin",
+    "sinh",
+    "sort",
+    "sqrt",
+    "std",
+    "sum",
+    "tail",
+    "tan",
+    "tanh",
+    "total_days",
+    "total_hours",
+    "total_minutes",
+    "total_seconds",
+    "var",
 ];
 
 /// A filter on column `col` of sheet `sheet`: an expression in which `*`
@@ -3071,7 +3121,7 @@ impl<'a> Checker<'a> {
                     // No exact number is a division by zero, so a divisor
                     // written as zero makes it a `Float`: `Inf`, `-Inf`
                     // or `NaN`.
-                    (BinOp::Div, w) if w.is_exact() && is_zero(r) => S::Float,
+                    (BinOp::Div | BinOp::Rem, w) if w.is_exact() && is_zero(r) => S::Float,
                     // A quotient of whole numbers written out that comes to
                     // one, `4/2`, is a whole number.
                     (BinOp::Div, w) if w.is_int() && divides(l, r) => S::Int,

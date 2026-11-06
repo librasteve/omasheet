@@ -101,6 +101,8 @@ A **cut** is a move: every read keeps reading the same cell. Cut `C = A + B` and
 
 **Paste transposed** puts the cells down turned about, so an offset has no meaning and cannot be kept. What a formula read inside the block it reads at the turned copy. What it read outside is fixed to the cell it read, as a reference: `= [A; 0]`, or `= Sales[A; 0]` from another sheet. The status bar says nothing about it.
 
+A copy or a cut of cells on a filtered sheet takes the rows that are shown and leaves out those the filter hides; a cut clears only the cells it took, and what was taken is pasted as plain cells, since the rows are not a block the sheet holds.
+
 Pasted into a formula column, a formula is the column's one formula. Paste values pastes what the cells showed, and Paste reference a link to them.
 
 ### Sorting and filtering

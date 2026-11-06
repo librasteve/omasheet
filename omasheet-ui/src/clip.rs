@@ -33,6 +33,9 @@ struct Cut {
     /// The file as the cells were cut: a paste takes them from where they
     /// were only if nothing has changed since.
     before: String,
+    /// The rows were picked out of a filtered sheet, so the block is not
+    /// one the sheet holds, and a move cannot follow it.
+    scattered: bool,
 }
 
 /// Where the cells last cut or copied came from, for a reference to them
@@ -53,6 +56,9 @@ struct Referent {
     /// The row of the source each came from: for a table sorted in the
     /// grid, not the row it is shown in (D215).
     rows: Vec<usize>,
+    /// The rows were picked out of a filtered sheet: they are not the rows
+    /// between the first and the last.
+    scattered: bool,
 }
 
 /// What was last cut or copied in this app, beside the clipboard's text.
@@ -160,6 +166,7 @@ fn referent(doc: &Document, sheet: usize, from: Cell, to: Cell, text: &str) -> O
         at: from,
         cols,
         rows: (from.0..=last).map(|r| doc.source_row(sheet, r)).collect(),
+        scattered: false,
     })
 }
 
@@ -213,6 +220,36 @@ fn block_text(doc: &Document, sheet: usize, from: Cell, to: Cell, values: bool) 
         lines.push(cells.join("\t"));
     }
     lines.join("\n")
+}
+
+/// The cells of `rows` as `block_text` gives a block: a line for each row.
+fn rows_text(
+    doc: &Document,
+    sheet: usize,
+    rows: &[usize],
+    (left, right): (usize, usize),
+    values: bool,
+) -> String {
+    let lines: Vec<String> = rows
+        .iter()
+        .map(|&r| block_text(doc, sheet, (r, left), (r, right), values))
+        .collect();
+    lines.join("\n")
+}
+
+/// Where the cells of `rows` came from, as `referent` has it for a block.
+fn referent_rows(
+    doc: &Document,
+    sheet: usize,
+    rows: &[usize],
+    (left, right): (usize, usize),
+    text: &str,
+) -> Option<Referent> {
+    let first = *rows.first()?;
+    let mut found = referent(doc, sheet, (first, left), (first, right), text)?;
+    found.rows = rows.iter().map(|&r| doc.source_row(sheet, r)).collect();
+    found.scattered = true;
+    Some(found)
 }
 
 /// The cells of a block that can be cleared, each to be set to nothing.
@@ -407,8 +444,76 @@ impl Clip {
             text: text.clone(),
             blanks: blanks(doc, sheet, from, to),
             before: doc.text().to_string(),
+            scattered: false,
         });
         text
+    }
+
+    /// Copy the cells of `rows`, the ones a filter shows of a block, from
+    /// column `left` to `right`. Rows that run on from one another are a
+    /// block like any other.
+    pub fn copy_rows(
+        &mut self,
+        doc: &Document,
+        sheet: usize,
+        rows: &[usize],
+        (left, right): (usize, usize),
+    ) -> String {
+        match (rows.first(), rows.last()) {
+            (Some(&first), Some(&last)) if rows.windows(2).all(|w| w[1] == w[0] + 1) => {
+                self.copy(doc, sheet, (first, left), (last, right))
+            }
+            (Some(&first), Some(_)) => {
+                let (text, values) = (
+                    rows_text(doc, sheet, rows, (left, right), false),
+                    rows_text(doc, sheet, rows, (left, right), true),
+                );
+                self.refer = referent_rows(doc, sheet, rows, (left, right), &text);
+                self.cut = None;
+                self.copied = Some(Copied {
+                    sheet,
+                    at: (first, left),
+                    text: text.clone(),
+                    values,
+                });
+                text
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// Cut the cells of `rows`, as `copy_rows` copies them: the cells that
+    /// are shown, and nothing that is hidden.
+    pub fn cut_rows(
+        &mut self,
+        doc: &Document,
+        sheet: usize,
+        rows: &[usize],
+        (left, right): (usize, usize),
+    ) -> String {
+        match (rows.first(), rows.last()) {
+            (Some(&first), Some(&last)) if rows.windows(2).all(|w| w[1] == w[0] + 1) => {
+                self.cut(doc, sheet, (first, left), (last, right))
+            }
+            (Some(&first), Some(_)) => {
+                let text = rows_text(doc, sheet, rows, (left, right), false);
+                self.refer = referent_rows(doc, sheet, rows, (left, right), &text);
+                let blanks = rows
+                    .iter()
+                    .flat_map(|&r| blanks(doc, sheet, (r, left), (r, right)))
+                    .collect();
+                self.cut = Some(Cut {
+                    sheet,
+                    at: (first, left),
+                    text: text.clone(),
+                    blanks,
+                    before: doc.text().to_string(),
+                    scattered: true,
+                });
+                text
+            }
+            _ => String::new(),
+        }
     }
 
     /// Leave what was cut where it is.
@@ -436,7 +541,7 @@ impl Clip {
         let r = self
             .refer
             .as_ref()
-            .filter(|r| parse_block(&r.text) == block)?;
+            .filter(|r| !r.scattered && parse_block(&r.text) == block)?;
         Some(Carry {
             cut: false,
             from: CopiedFrom {
@@ -523,6 +628,7 @@ impl Clip {
         if let Some(cut) = &cut
             && cut.sheet == sheet
             && !fills
+            && !cut.scattered
         {
             return Ok(doc.as_one(|doc| {
                 doc.set_cells(cut.sheet, &cut.blanks);
@@ -591,9 +697,11 @@ impl Clip {
                     cell_ref(same, &r.sheet, name, &r.rows[0].to_string())
                 } else {
                     if r.rows.windows(2).any(|w| w[1] != w[0] + 1) {
-                        return Err("Cannot paste a reference to rows in a sorted order: \
+                        return Err(
+                            "Cannot paste a reference to rows in a sorted or filtered order: \
                              copy one cell, or clear the sort"
-                            .into());
+                                .into(),
+                        );
                     }
                     column_ref(same, &r.sheet, name, r.rows[0] as i64 - from.0 as i64)
                 };
@@ -660,7 +768,8 @@ impl Clip {
         // has been turned to: a formula is not the same text once the
         // cells it reads have gone elsewhere.
         let origin = match &cut {
-            Some(cut) => Some((cut.sheet, cut.at)),
+            Some(cut) if !cut.scattered => Some((cut.sheet, cut.at)),
+            Some(_) => None,
             None => self.copied_from(doc, &block),
         };
         let Some((_, at)) = origin.filter(|(s, _)| *s == sheet) else {
@@ -1247,7 +1356,8 @@ mod tests {
         let many = clip.copy(&doc, 0, (0, 1), (3, 1));
         let said = clip.paste_reference(&mut doc, 0, (0, 2), (0, 2), &many);
         assert!(
-            said.as_ref().is_err_and(|e| e.contains("sorted order")),
+            said.as_ref()
+                .is_err_and(|e| e.contains("sorted or filtered order")),
             "{said:?}"
         );
     }
@@ -1480,5 +1590,36 @@ mod tests {
         assert_eq!(clip.paste(&mut doc, 1, (0, 0), (0, 0), &block), Ok(true));
         // `B` is in the block, now `P`; the row of T by name is left alone.
         assert_eq!(held(&doc, 1)[0], "2|= T[A; 1] + P|");
+    }
+
+    #[test]
+    fn a_copy_of_a_filtered_block_takes_the_rows_that_are_shown() {
+        let mut doc = Document::from_text(GRID);
+        let mut clip = Clip::default();
+        // Rows 0 and 2 are shown, row 1 is hidden by the filter.
+        let text = clip.copy_rows(&doc, 0, &[0, 2], (0, 1));
+        assert_eq!(text, "1\t2\n5\t6");
+        assert_eq!(clip.paste(&mut doc, 0, (3, 0), (3, 0), &text), Ok(true));
+        assert_eq!(held(&doc, 0)[3], "1|2|9|9");
+        assert_eq!(held(&doc, 0)[4], "5|6|9|9");
+        // Rows that run on are a block like any other.
+        assert_eq!(clip.copy_rows(&doc, 0, &[0, 1], (0, 1)), "1\t2\n3\t4");
+    }
+
+    #[test]
+    fn a_cut_of_a_filtered_block_clears_only_the_rows_that_are_shown() {
+        let mut doc = Document::from_text(GRID);
+        let mut clip = Clip::default();
+        let text = clip.cut_rows(&doc, 0, &[0, 2], (0, 1));
+        assert_eq!(text, "1\t2\n5\t6");
+        assert_eq!(clip.paste(&mut doc, 0, (3, 0), (3, 0), &text), Ok(true));
+        // The hidden row is where it was, and the shown ones have moved.
+        assert_eq!(held(&doc, 0)[0], "||= A+B|0");
+        assert_eq!(held(&doc, 0)[1], "3|4|= [A; *-1]+B|0");
+        assert_eq!(held(&doc, 0)[2], "||7|8");
+        assert_eq!(held(&doc, 0)[3], "1|2|9|9");
+        assert_eq!(held(&doc, 0)[4], "5|6|9|9");
+        assert!(doc.undo());
+        assert_eq!(held(&doc, 0)[0], "1|2|= A+B|0");
     }
 }

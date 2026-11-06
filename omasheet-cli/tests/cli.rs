@@ -69,10 +69,6 @@ fn examples_match_their_expected_output() {
         if path.extension().is_none_or(|e| e != "omx") {
             continue;
         }
-        // Still being worked on, and with no expected output yet.
-        if path.file_name().is_some_and(|n| n == "ccp.omx") {
-            continue;
-        }
         let before = std::fs::read(&path).unwrap();
         // A column's format shows its numbers as the locale writes them:
         // the `C` locale writes them as the expected output does.

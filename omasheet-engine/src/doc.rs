@@ -4952,6 +4952,10 @@ mod tests {
         assert_eq!(shown(&[("N", "* != 2 or *.is_null()")]), Ok(vec![1, 2]));
         assert_eq!(shown(&[("N", "0 < * <= 5")]), Ok(vec![0, 3]));
         assert_eq!(shown(&[("N", "N > 5")]), Ok(vec![1]));
+        // Any function the directory has under a Polars name (D162).
+        assert_eq!(shown(&[("N", "sqrt(*) > 3")]), Ok(vec![1]));
+        assert_eq!(shown(&[("N", "floor(* / 3) == 3")]), Ok(vec![1]));
+        assert_eq!(shown(&[("N", "abs(* - 10) < 5")]), Ok(vec![1]));
         assert_eq!(
             shown(&[("Name", "*.starts_with('a'..'b')")]),
             Ok(vec![0, 1])
@@ -4979,9 +4983,9 @@ mod tests {
                 .contains("true or false")
         );
         assert!(
-            shown(&[("N", "sum(*) > 1")])
+            shown(&[("N", "* > today()")])
                 .unwrap_err()
-                .contains("cannot call `sum`")
+                .contains("cannot call `today`")
         );
         // And checked alone, as the popup does with each key.
         assert_eq!(doc.check_filter(0, 1, "0 < * <= 5"), Ok(()));

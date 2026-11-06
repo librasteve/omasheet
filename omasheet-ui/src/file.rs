@@ -943,6 +943,18 @@ impl qobject::File {
         act(&mut rust.clip, &mut rust.doc)
     }
 
+    /// The rows from `top` to `bottom` that the filter shows, where it hides
+    /// any of them: what a copy or a cut takes is what can be seen.
+    fn rows_shown(&self, top: usize, bottom: usize) -> Option<Vec<usize>> {
+        let shown = self.rust().shown.borrow();
+        let shown = shown.as_ref()?;
+        let visible = |r: &usize| shown.pos.get(*r).is_none_or(|&p| p >= 0);
+        let rows: Vec<usize> = (top.min(bottom)..=top.max(bottom))
+            .filter(visible)
+            .collect();
+        (rows.len() < top.abs_diff(bottom) + 1).then_some(rows)
+    }
+
     /// A paste, published if it changed anything: why not, if it was refused.
     fn pasted(
         mut self: Pin<&mut Self>,
@@ -973,6 +985,12 @@ impl qobject::File {
         col1: i32,
     ) -> QString {
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
+        if let Some(rows) = self.rows_shown(from.0, to.0) {
+            let cols = (from.1, to.1);
+            return QString::from(
+                &self.clip(|clip, doc| clip.copy_rows(doc, index(sheet), &rows, cols)),
+            );
+        }
         QString::from(&self.clip(|clip, doc| clip.copy(doc, index(sheet), from, to)))
     }
 
@@ -985,6 +1003,12 @@ impl qobject::File {
         col1: i32,
     ) -> QString {
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
+        if let Some(rows) = self.rows_shown(from.0, to.0) {
+            let cols = (from.1, to.1);
+            return QString::from(
+                &self.clip(|clip, doc| clip.cut_rows(doc, index(sheet), &rows, cols)),
+            );
+        }
         QString::from(&self.clip(|clip, doc| clip.cut(doc, index(sheet), from, to)))
     }
 

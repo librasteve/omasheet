@@ -113,6 +113,9 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    /// `%`: what is left over from a division, taking the sign of the
+    /// divisor, as a spreadsheet's `MOD` does.
+    Rem,
     Pow,
     /// `+&`, `+|`, `+^`, `+<` and `+>`, on whole numbers.
     BitAnd,
@@ -143,6 +146,7 @@ impl BinOp {
             BinOp::Sub => "-",
             BinOp::Mul => "*",
             BinOp::Div => "/",
+            BinOp::Rem => "%",
             BinOp::Pow => "**",
             BinOp::BitAnd => "+&",
             BinOp::BitOr => "+|",
@@ -180,7 +184,7 @@ impl BinOp {
     pub fn is_arithmetic(self) -> bool {
         matches!(
             self,
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Pow
         )
     }
 

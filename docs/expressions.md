@@ -102,6 +102,14 @@ the plain number: `100 * 20%` is `20`, `1 + 20%` is `1.2`, and `20% == 0.2`
 is true. To show a result as a percentage, declare its column `Percent` or
 write `x.Percent`.
 
+`a % b` is what is left over when `a` is divided by `b` in whole steps down,
+so it has the sign of `b`, as a workbook's `MOD(a, b)` does: `7 % 3` is `1`,
+`-7 % 3` is `2`, `7 % -3` is `-2` and `7.5 % 2` is `1.5`. It binds as `*`
+and `/` do. A `%` straight after a number is a percentage (`20%`), so a
+remainder is written with spaces round it. A number is divisible by another
+when the remainder is zero: `x % 3 == 0`. Exact numbers stay exact, and
+`x % 0` is `NaN`, as `0/0` is. A workbook export writes `MOD(a, b)`.
+
 A quotient of whole numbers is a `Decimal`, though `4/2` written out is an
 `Integer`. A quotient is taken where a whole number is wanted, `[1, 2, 3][4/2]`,
 and reported there if it is not whole, `5/2`.

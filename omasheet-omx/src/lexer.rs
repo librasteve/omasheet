@@ -54,6 +54,8 @@ pub enum Tok {
     PlusGt,
     Star,
     Slash,
+    /// `%` on its own, the remainder; after a number it is a percentage.
+    Rem,
     Pow,
     EqEq,
     NotEq,
@@ -122,6 +124,7 @@ impl Tok {
             Tok::PlusGt => "+>",
             Tok::Star => "*",
             Tok::Slash => "/",
+            Tok::Rem => "%",
             Tok::Pow => "**",
             Tok::EqEq => "==",
             Tok::NotEq => "!=",
@@ -363,6 +366,7 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                 b'-' => Tok::Minus,
                 b'*' => Tok::Star,
                 b'/' => Tok::Slash,
+                b'%' => Tok::Rem,
                 b'<' => Tok::Lt,
                 b'>' => Tok::Gt,
                 b'=' => Tok::Assign,
@@ -615,7 +619,15 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
         while word(k) {
             k += 1;
         }
-        return Err((format!("`{}` is not a number", &text[i..k]), i, k));
+        let said = if percent {
+            format!(
+                "`{}` is not a number; a remainder is written with spaces, `7 % 3`",
+                &text[i..k]
+            )
+        } else {
+            format!("`{}` is not a number", &text[i..k])
+        };
+        return Err((said, i, k));
     }
 
     let tok = if is_float {

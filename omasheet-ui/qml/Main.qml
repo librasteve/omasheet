@@ -770,7 +770,7 @@ ApplicationWindow {
     function switchTab(index) {
         if (index < 0 || index >= tabs.length)
             return;
-        stopEditing();
+        commitEditing();
         // Not when the sheet here is no longer the one that was left, as
         // after a delete: then `index` is this tab.
         if (index !== tab && tab < tabs.length)
@@ -959,6 +959,15 @@ ApplicationWindow {
         stopPicking();
         resetBox();
         grid.forceActiveFocus();
+    }
+
+    // A click away from the cell being edited writes what is typed, as
+    // Enter does, and goes where the click went: it is not an Escape.
+    function commitEditing() {
+        if (editing && editor)
+            editor.finish(0, 0);
+        else
+            stopEditing();
     }
 
     // F2 on a whole column: its header cell takes the new name.
@@ -2010,7 +2019,7 @@ ApplicationWindow {
     // Right-click: keep a selection that contains the cell, otherwise move
     // to it. A negative row or column means the whole column or row.
     function openMenu(row, col) {
-        stopEditing();
+        commitEditing();
         grid.forceActiveFocus();
         var maxRow = Math.max(0, sheet.nrows - 1);
         var maxCol = Math.max(0, sheet.columns.length - 1);
@@ -2567,7 +2576,7 @@ ApplicationWindow {
                                 acceptedButtons: Qt.LeftButton | Qt.RightButton
                                 // A right-click opens the sheet's menu, above its tab.
                                 onClicked: function(mouse) {
-                                    win.stopEditing();
+                                    win.commitEditing();
                                     win.selectAll();
                                     if (mouse.button === Qt.RightButton) {
                                         grid.forceActiveFocus();
@@ -2707,7 +2716,7 @@ ApplicationWindow {
                                             return;
                                         }
                                         // Select the whole column.
-                                        win.stopEditing();
+                                        win.commitEditing();
                                         win.byRow = false;
                                         win.byCol = true;
                                         // The cursor waits in the first cell.
@@ -2888,7 +2897,7 @@ ApplicationWindow {
                                             return;
                                         }
                                         // Select the whole row.
-                                        win.stopEditing();
+                                        win.commitEditing();
                                         win.byRow = true;
                                         win.byCol = false;
                                         // The cursor waits in the first cell.
@@ -3095,7 +3104,7 @@ ApplicationWindow {
                                                 return;
                                             }
                                             if (win.editing)
-                                                win.stopEditing();
+                                                win.commitEditing();
                                             grid.forceActiveFocus();
                                             win.selectCell(cellItem.row, cellItem.index, mouse.modifiers & Qt.ShiftModifier);
                                         }
@@ -3247,17 +3256,18 @@ ApplicationWindow {
                                                         return;
                                                     }
                                                     // Up and Down have nowhere to go in the cell's one
-                                                    // line, and Left at the start of the text or Right at
-                                                    // its end have nowhere further. The first press stays
-                                                    // where it is; the same key pressed again writes what
-                                                    // is typed and selects the cell that way, as Tab does.
+                                                    // line, and so write what is typed and select the
+                                                    // cell above or below, as Enter and Tab do. Left at
+                                                    // the start of the text or Right at its end have
+                                                    // nowhere further: the first press stays where it
+                                                    // is; the same key pressed again does the same.
                                                     // Held down, it does neither.
                                                     if ((event.modifiers & (Qt.ShiftModifier | Qt.ControlModifier | Qt.AltModifier)) === 0
                                                             && (d[0] !== 0 || (selectedText.length === 0
                                                                 && cursorPosition === (d[1] < 0 ? 0 : text.length)))) {
                                                         event.accepted = true;
                                                         if (!event.isAutoRepeat) {
-                                                            if (nudged === event.key)
+                                                            if (nudged === event.key || (d[0] !== 0 && text.indexOf("\n") < 0))
                                                                 finish(d[0], d[1]);
                                                             else
                                                                 nudged = event.key;
@@ -3294,7 +3304,7 @@ ApplicationWindow {
                 width: hflick.width - x
                 height: hflick.height
                 onPressed: {
-                    win.stopEditing();
+                    win.commitEditing();
                     win.deselect();
                 }
             }
@@ -3304,7 +3314,7 @@ ApplicationWindow {
                 width: beside.x
                 height: hflick.height - y
                 onPressed: {
-                    win.stopEditing();
+                    win.commitEditing();
                     win.deselect();
                 }
             }

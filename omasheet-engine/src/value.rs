@@ -442,6 +442,7 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
                 BinOp::Sub => x - y,
                 BinOp::Mul => x * y,
                 BinOp::Div => x / y,
+                BinOp::Rem => x - (x / y).floor() * y,
                 _ => x.powf(y),
             }))
         }
@@ -626,6 +627,18 @@ fn exact_arith(op: BinOp, x: &Dec, y: &Dec) -> Result<Value, String> {
                 return Ok(Value::Float(over_zero(&x)));
             }
             x.checked_div(y)
+        }
+        // What is left of a division that goes by whole steps down, so that
+        // the result has the sign of the divisor: no exact number is a
+        // remainder by zero, which is `NaN`.
+        BinOp::Rem => {
+            if y.is_zero() {
+                return Ok(Value::Float(f64::NAN));
+            }
+            x.checked_div(y)
+                .map(Dec::floor)
+                .and_then(|q| q.checked_mul(y))
+                .and_then(|m| x.checked_sub(m))
         }
         _ => {
             if !y.is_integer() {
