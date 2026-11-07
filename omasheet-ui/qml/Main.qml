@@ -325,6 +325,7 @@ ApplicationWindow {
         var y = rowsView.contentY;
         // Any edit may renumber the columns that were cut.
         grabbed = null;
+        cutHold.grab = null;
         // What was copied stays marked through an edit that says where it
         // went, and no other.
         if (!keepMark)
@@ -740,6 +741,7 @@ ApplicationWindow {
     // Let go of anything cut or copied, and leave the selection.
     function unmark() {
         grabbed = null;
+        cutHold.grab = null;
         marked = null;
         movedOnce = false;
         file.forgetCut();
@@ -1229,6 +1231,10 @@ ApplicationWindow {
     // Ctrl+V: `{tab, rows, first, count}`; a whole sheet, `{tab, sheet}`;
     // or null.
     property var grabbed: null
+    // The whole rows or columns last cut, shared by every window on the
+    // file (see App.qml): a window that did not cut them can still move them.
+    property QtObject cutHold: QtObject { property var grab: null }
+    readonly property var foreign: grabbed !== null ? grabbed : cutHold.grab
     // Why the last move was refused, shown in the footer.
     property string notice: ""
     // What the pointer is resting on, or a fault in what is being typed,
@@ -1333,25 +1339,25 @@ ApplicationWindow {
     // `{cut, count}`, or null when none are.
     // Whole rows cut on another sheet: they move here by being copied in
     // and taken out there.
-    readonly property bool grabbedElsewhereRows: grabbed !== null && !grabbed.sheet && grabbed.rows === true
-        && grabbed.tab !== tab && grabbed.tab < tabs.length && !sheet.isConsts
-        && grabbed.text !== undefined && grabbed.text.length > 0
+    readonly property bool grabbedElsewhereRows: foreign !== null && !foreign.sheet && foreign.rows === true
+        && foreign.tab !== tab && foreign.tab < tabs.length && !sheet.isConsts
+        && foreign.text !== undefined && foreign.text.length > 0
     readonly property var rowsOnHand: grabbedHere && grabbed.rows
         ? { cut: true, count: grabbed.count }
         : grabbedElsewhereRows
-        ? { cut: true, count: grabbed.count, elsewhere: true }
+        ? { cut: true, count: foreign.count, elsewhere: true }
         : marked !== null && marked.rows && !sheet.isConsts && marked.tab < tabs.length
             && marked.text.length > 0
         ? { cut: false, count: marked.bottom - marked.top + 1 }
         : null
-    readonly property bool grabbedElsewhereColumns: grabbed !== null && !grabbed.sheet && grabbed.rows === false
-        && grabbed.tab !== tab && grabbed.tab < tabs.length && !sheet.isConsts
-        && grabbed.text !== undefined && grabbed.text.length > 0 && grabbed.names !== undefined
+    readonly property bool grabbedElsewhereColumns: foreign !== null && !foreign.sheet && foreign.rows === false
+        && foreign.tab !== tab && foreign.tab < tabs.length && !sheet.isConsts
+        && foreign.text !== undefined && foreign.text.length > 0 && foreign.names !== undefined
     // The same for whole columns.
     readonly property var colsOnHand: grabbedHere && !grabbed.rows
         ? { cut: true, count: grabbed.count }
         : grabbedElsewhereColumns
-        ? { cut: true, count: grabbed.count, elsewhere: true }
+        ? { cut: true, count: foreign.count, elsewhere: true }
         : marked !== null && marked.columns && !sheet.isConsts && marked.tab < tabs.length
             && marked.text.length > 0
         ? { cut: false, count: marked.right - marked.left + 1 }
@@ -1595,6 +1601,7 @@ ApplicationWindow {
         var kind = grabKind;
         if (kind === "" && !sheet.isConsts) {
             grabbed = null;
+            cutHold.grab = null;
             var text = file.cutCells(tab, selTop, selLeft, selBottom, selRight);
             mark(text, true);
             clipboard.put(text);
@@ -1612,6 +1619,7 @@ ApplicationWindow {
                         names: sheet.columns.slice(selLeft, selRight + 1).map(function(c) { return c.name; }) };
         else
             clearSelection();
+        cutHold.grab = grabbed;
     }
 
     // Put what was cut down where the selection is. It lands on the selected
@@ -1648,6 +1656,7 @@ ApplicationWindow {
 
     function copySelection() {
         grabbed = null;
+        cutHold.grab = null;
         var text;
         if (sheet.isConsts) {
             var lines = [];
@@ -1734,6 +1743,16 @@ ApplicationWindow {
         }
         if (refusedEdit())
             return;
+        // Rows or columns cut on another sheet go in before the selection
+        // and are taken out there.
+        if (rowsOnHand !== null && rowsOnHand.elsewhere) {
+            insertRowsOnHand(false);
+            return;
+        }
+        if (colsOnHand !== null && colsOnHand.elsewhere) {
+            insertColumnsOnHand(false);
+            return;
+        }
         grabbed = null;
         var text = clipboard.take();
         // The paste and the names it gives columns are undone as one.
@@ -2102,6 +2121,18 @@ ApplicationWindow {
             insertRows(below, count);
     }
 
+    // What to say when whole rows or columns pasted do not fit the sheet they
+    // go into: rows wider than it are clipped, and columns longer than it
+    // make it longer.
+    function lengthNote(text, rows) {
+        var lines = text.split("\n");
+        if (rows)
+            return lines[0].split("\t").length > sheet.columns.length
+                ? "Source length is longer than target length, clipping cols." : "";
+        return lines.length > sheet.nrows
+            ? "Source length is longer than target length, adding rows." : "";
+    }
+
     // Put the rows cut or copied as whole rows in above or below the
     // selection, where blank ones would go: cut rows move there, and copied
     // rows go in as copies, still on the clipboard to go in again.
@@ -2114,9 +2145,12 @@ ApplicationWindow {
         var count = hand.count;
         var whole = selKind === "row";
         var col = selLeft;
+        var said = "";
         if (hand.elsewhere) {
-            var from = grabbed;
+            var from = foreign;
             grabbed = null;
+            cutHold.grab = null;
+            said = lengthNote(from.text, true);
             var m0 = file.undoMark();
             var bad = "";
             keeping(at, 0, function() {
@@ -2145,6 +2179,7 @@ ApplicationWindow {
             // The rows and what goes in them are undone as one. They go
             // down from the first cell of the first new row, whole.
             var text = marked.text;
+            said = lengthNote(text, true);
             var mark = file.undoMark();
             var problem = "";
             keeping(at, 0, function() {
@@ -2166,6 +2201,8 @@ ApplicationWindow {
             selectCell(at + count - 1, col, true);
         }
         showRow(at + count - 1);
+        if (said.length > 0)
+            notice = said;
     }
 
     // Columns go in before or after the selection: the ones cut or copied as
@@ -2227,9 +2264,12 @@ ApplicationWindow {
         notice = "";
         var at = after ? selRight + 1 : selLeft;
         var count = hand.count;
+        var said = "";
         if (hand.elsewhere) {
-            var src = grabbed;
+            var src = foreign;
             grabbed = null;
+            cutHold.grab = null;
+            said = lengthNote(src.text, false);
             var taken2 = namesTaken(-1, -1);
             var names2 = src.names.map(function(n) { return pastedName(n, src.tab, taken2); });
             var m0 = file.undoMark();
@@ -2264,6 +2304,7 @@ ApplicationWindow {
             for (var i = 0; i < count; i++)
                 names.push(copyName(from[m.left + i] ? from[m.left + i].name : "Column", taken));
             var text = m.text;
+            said = lengthNote(text, false);
             var mark = file.undoMark();
             var problem = "";
             keeping(0, at, function() {
@@ -2280,6 +2321,8 @@ ApplicationWindow {
         }
         selectLine(false, at, false);
         selectLine(false, at + count - 1, true);
+        if (said.length > 0)
+            notice = said;
     }
 
     function deleteRows() {

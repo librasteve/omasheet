@@ -10,6 +10,8 @@ QtObject {
     id: app
 
     property File file: File {}
+    // Whole rows or columns cut in any window, for the others to move.
+    property QtObject cutHold: QtObject { property var grab: null }
     // How many windows are open.
     property int count: 0
 
@@ -19,6 +21,7 @@ QtObject {
     property Component view: Main {
         id: window
         file: app.file
+        cutHold: app.cutHold
         alone: app.count === 1
         onNewWindow: function(tab) { app.open(tab, fontSize, 0, 0, null, null); }
         onWidthChanged: if (window === app.primary) keep.restart()
