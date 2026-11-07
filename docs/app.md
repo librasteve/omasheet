@@ -64,14 +64,16 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+Shift+V | Paste values: not formulas |
 | Ctrl+Shift+T | Paste transposed: rows as columns |
 | Ctrl+Shift+R | Paste reference: a live link to the cells copied |
-| Ctrl+Enter | Insert row below (Shift: above) |
+| Ctrl+Enter | Insert row/col after (Shift: before) |
 | Delete | Clear |
 | Ctrl+Delete | Delete the selected rows, columns or sheet |
 | Ctrl+O / S | Open / save |
 | Ctrl+Shift+S | Save as |
 | Ctrl+E | Export as an XLSX Workbook, CSV or JSON |
 | Ctrl+K | New constant |
-| Ctrl+N | New sheet after this one |
+| Ctrl+N | New sheet |
+| Ctrl+D | Duplicate sheet |
+| Ctrl+Alt+Shift+Left/Right | Move sheet left / right |
 | Ctrl+Shift+N | New window on this file |
 | Ctrl+Alt+N | New file |
 | F1 | View functions |

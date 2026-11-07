@@ -11,7 +11,7 @@ QtObject {
 
     property File file: File {}
     // Whole rows or columns cut in any window, for the others to move.
-    property QtObject cutHold: QtObject { property var grab: null }
+    property QtObject cutHold: QtObject { property var grab: null; property var copy: null }
     // How many windows are open.
     property int count: 0
 

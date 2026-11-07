@@ -164,6 +164,7 @@ pub mod qobject {
             row1: i32,
             col1: i32,
             text: &QString,
+            by_row: bool,
         ) -> QString;
         /// Paste as `paste_cells` does, but turned about: each copied row
         /// goes down a column.
@@ -1068,12 +1069,13 @@ impl qobject::File {
         row1: i32,
         col1: i32,
         text: &QString,
+        by_row: bool,
     ) -> QString {
         let text = text.to_string();
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
-        let said = self
-            .as_mut()
-            .clip(|clip, doc| clip.paste_reference(doc, index(sheet), from, to, &text));
+        let said = self.as_mut().clip(|clip, doc| {
+            clip.paste_reference_in(doc, index(sheet), from, to, &text, by_row)
+        });
         match said {
             Ok(Some(said)) => {
                 self.refresh(&said);

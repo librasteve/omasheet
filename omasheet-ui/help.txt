@@ -14,17 +14,20 @@ Ctrl+Delete          Delete
 
 Ctrl+O / S           Open / save
 Ctrl+Shift+S         Save as
-Ctrl+E               Export as a workbook, CSV or JSON
+Ctrl+E               Export
 
 Ctrl+K               New constant
-Ctrl+N               New sheet after this one
-Ctrl+Shift+N         New window on this file
+Ctrl+N               New sheet
+Ctrl+D               Duplicate sheet
+Ctrl+Shift+N         New window
 Ctrl+Alt+N           New file
+Ctrl+W               Close this window
 
-Ctrl+Enter           Insert row below
-Ctrl+Shift+Enter     Insert row above
+Ctrl+Enter           Insert row/col after
+Ctrl+Shift+Enter     Insert row/col before
 Ctrl+Arrows          Go to end cell
 Ctrl+Alt+L/R         Previous / next sheet
+Ctrl+Alt+Shift+L/R   Move sheet left / right
 Alt+Enter            Newline
 Ctrl+click           Open link
 
@@ -35,8 +38,8 @@ F11                  Fullscreen
 
 A cell starting with = is a formula
 In a formula, text is in 'single quotes'
+Text is Markdown unless in "double quotes"
 A column's filter: * is the cell, as 0 < * <= 10
-Text is Markdown unless in "quotes"
 Dates and times: {locale}
 
 About

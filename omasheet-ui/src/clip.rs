@@ -663,6 +663,21 @@ impl Clip {
         to: Cell,
         text: &str,
     ) -> Result<Option<String>, String> {
+        self.paste_reference_in(doc, sheet, from, to, text, false)
+    }
+
+    /// As `paste_reference`. Onto whole rows (`by_row`) the formula columns
+    /// are passed over: a row has no formula of its own to set in one, and
+    /// each of its other cells is frozen to the source cell it stands for.
+    pub fn paste_reference_in(
+        &mut self,
+        doc: &mut Document,
+        sheet: usize,
+        from: Cell,
+        to: Cell,
+        text: &str,
+        by_row: bool,
+    ) -> Result<Option<String>, String> {
         let Some(r) = self
             .refer
             .clone()
@@ -696,6 +711,9 @@ impl Clip {
                 break;
             };
             let name = &r.cols[if single { 0 } else { j }];
+            if target.formula.is_some() && by_row {
+                continue;
+            }
             if target.formula.is_some() {
                 let expr = if r.rows.len() == 1 {
                     // One row has nothing to align with: the cell itself.
@@ -1258,6 +1276,18 @@ mod tests {
             Ok(true)
         );
         assert_eq!(held(&doc, 0)[2], "= [B; 1]|||");
+    }
+
+    #[test]
+    fn a_row_as_a_reference_freezes_each_cell_and_passes_formula_columns_over() {
+        let mut doc = doc();
+        let mut clip = Clip::default();
+        let text = clip.copy(&doc, 0, (0, 0), (0, 3));
+        let said = clip.paste_reference_in(&mut doc, 0, (2, 0), (2, 3), &text, true);
+        assert!(matches!(said, Ok(Some(_))), "{said:?}");
+        assert_eq!(held(&doc, 0)[2], "= [A; 0]|= [B; 0]|= [C; 0]|");
+        // The formula column is as it was.
+        assert!(doc.text().contains("Sum := A + B\n"), "{}", doc.text());
     }
 
     #[test]

@@ -740,6 +740,7 @@ ApplicationWindow {
 
     // Let go of anything cut or copied, and leave the selection.
     function unmark() {
+        cutHold.copy = null;
         grabbed = null;
         cutHold.grab = null;
         marked = null;
@@ -1233,7 +1234,7 @@ ApplicationWindow {
     property var grabbed: null
     // The whole rows or columns last cut, shared by every window on the
     // file (see App.qml): a window that did not cut them can still move them.
-    property QtObject cutHold: QtObject { property var grab: null }
+    property QtObject cutHold: QtObject { property var grab: null; property var copy: null }
     readonly property var foreign: grabbed !== null ? grabbed : cutHold.grab
     // Why the last move was refused, shown in the footer.
     property string notice: ""
@@ -1367,6 +1368,8 @@ ApplicationWindow {
         movedOnce = false;
         marked = { tab: tab, top: selTop, left: selLeft, bottom: selBottom, right: selRight, text: text, cut: !!cut, columns: selKind === "column", rows: selKind === "row",
                    sheet: selKind === "all" };
+        // For the other windows: whether what is on the clipboard is whole rows or columns.
+        cutHold.copy = { rows: selKind === "row", columns: selKind === "column" };
     }
 
     // Where the rows or columns `first` to `last` are once `by` of them are
@@ -1418,6 +1421,7 @@ ApplicationWindow {
         // again, they are copies.
         if (cut) {
             marked = null;
+            cutHold.copy = null;
             movedOnce = true;
         }
         return true;
@@ -1698,6 +1702,24 @@ ApplicationWindow {
         return [selTop, selLeft, selBottom, selRight];
     }
 
+    // The sheet shown, copied in just after it and shown.
+    function duplicateShownSheet() {
+        if (sheet.isConsts || tabs.length === 0)
+            return;
+        var at = tab;
+        var problem = file.duplicateSheet(at);
+        if (problem.length > 0)
+            errorDialog.say(problem);
+        else
+            switchTab(at + 1);
+    }
+
+    // The sheet shown moved one place left or right.
+    function moveShownSheet(by) {
+        if (!sheet.isConsts)
+            dropTab(tab, tab + by);
+    }
+
     // A sheet's tab dragged to a new place: sheet `from` becomes sheet `to`.
     // The sheet shown stays the sheet shown, wherever it has gone to, and the
     // constants stay last, as a sheet of their own.
@@ -1821,9 +1843,12 @@ ApplicationWindow {
     // Values, not when the cells were in a formula column, or are put in one.
     // Whole rows or columns waiting go only onto whole rows or columns, as
     // many as are selected, and nothing else goes onto those.
-    readonly property bool pasteFits: (rowsOnHand === null || selKind === "row")
-        && (colsOnHand === null || selKind === "column")
-    readonly property string pasteFitsNot: rowsOnHand !== null ? "Whole rows paste onto whole rows."
+    readonly property bool handRows: rowsOnHand !== null
+        || (marked === null && grabbed === null && cutHold.copy !== null && cutHold.copy.rows)
+    readonly property bool handCols: colsOnHand !== null
+        || (marked === null && grabbed === null && cutHold.copy !== null && cutHold.copy.columns)
+    readonly property bool pasteFits: (!handRows || selKind === "row") && (!handCols || selKind === "column")
+    readonly property string pasteFitsNot: handRows ? "Whole rows paste onto whole rows."
         : "Whole columns paste onto whole columns."
     readonly property bool canPasteValues: canPaste && !formulaCell && pasteFits
         && !(marked !== null && spansFormula(marked))
@@ -1852,7 +1877,7 @@ ApplicationWindow {
     // sheet's data cells or in a formula column.
     // From another window it is the app's memory of the last copy that says,
     // when the paste is made, whether there are cells to refer to.
-    readonly property bool canPasteReference: selKind === "cells" && !sheet.isConsts
+    readonly property bool canPasteReference: selKind !== "all" && !sheet.isConsts
         && (marked !== null
             ? marked.tab < tabs.length && !tabs[marked.tab].isConsts
             : clipboard.canPaste)
@@ -1865,7 +1890,7 @@ ApplicationWindow {
         grabbed = null;
         var text = clipboard.take();
         if (text.length > 0 && !sheet.isConsts)
-            pasteWith(text, function() { return file.pasteReference(tab, selTop, selLeft, selBottom, selRight, text); });
+            pasteWith(text, function() { return file.pasteReference(tab, selTop, selLeft, selBottom, selRight, text, selKind === "row"); });
     }
 
     // A new sheet beside the one shown: asked for by name.
@@ -2491,9 +2516,15 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+O"; onActivated: win.guard("open") }
     Shortcut { sequence: "Ctrl+E"; onActivated: exportChoice.open() }
     Shortcut { sequence: "Ctrl+N"; enabled: !win.typing; onActivated: win.newSheet(true) }
+    Shortcut { sequence: "Ctrl+D"; enabled: !win.typing; onActivated: win.duplicateShownSheet() }
+    Shortcut { sequence: "Ctrl+Alt+Shift+Left"; enabled: !win.typing; onActivated: win.moveShownSheet(-1) }
+    Shortcut { sequence: "Ctrl+Alt+Shift+Right"; enabled: !win.typing; onActivated: win.moveShownSheet(1) }
     Shortcut { sequence: "Ctrl+K"; enabled: !win.typing; onActivated: promptDialog.ask("const") }
     Shortcut { sequence: "Ctrl+Shift+N"; onActivated: win.newWindow(win.tab) }
     Shortcut { sequence: "Ctrl+Alt+N"; onActivated: win.guard("new") }
+    // Cmd+W on a Mac (Qt reads Cmd as Ctrl there); the unsaved-changes check
+    // in onClosing still applies.
+    Shortcut { sequence: "Ctrl+W"; onActivated: win.close() }
     Shortcut { sequence: "Ctrl+Z"; enabled: !win.typing; onActivated: file.undo() }
     Shortcut { sequences: ["Ctrl+Shift+Z", "Ctrl+Y"]; enabled: !win.typing; onActivated: file.redo() }
     Shortcut { sequences: ["Ctrl++", "Ctrl+="]; onActivated: win.zoom(1) }
@@ -2806,10 +2837,13 @@ ApplicationWindow {
                     break;
                 case Qt.Key_Return:
                 case Qt.Key_Enter:
-                    // A row goes in beside whole rows, or one cell, and nothing else.
+                    // A row goes in beside whole rows, or one cell, and a
+                    // column beside whole columns, and nothing else.
                     if (ctrl) {
                         if (win.selKind === "row")
                             win.insertRowsHere(!shift, win.selBottom - win.selTop + 1);
+                        else if (win.selKind === "column")
+                            win.insertColumnsHere(!shift);
                         else if (win.selKind === "cells" && win.selTop === win.selBottom && win.selLeft === win.selRight)
                             win.insertRowsHere(!shift, 1);
                     }
