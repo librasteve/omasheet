@@ -1721,6 +1721,10 @@ ApplicationWindow {
 
     function pasteSelection() {
         notice = "";
+        if (!pasteFits) {
+            notice = pasteFitsNot;
+            return;
+        }
         if (grabbedHere) {
             dropGrabbed();
             return;
@@ -1784,6 +1788,10 @@ ApplicationWindow {
     // Paste what the copied cells showed, not their formulas.
     function pasteValues() {
         notice = "";
+        if (!pasteFits) {
+            notice = pasteFitsNot;
+            return;
+        }
         if (refusedEdit())
             return;
         grabbed = null;
@@ -1811,7 +1819,13 @@ ApplicationWindow {
             : clipboard.canPaste)
 
     // Values, not when the cells were in a formula column, or are put in one.
-    readonly property bool canPasteValues: canPaste && !formulaCell
+    // Whole rows or columns waiting go only onto whole rows or columns, as
+    // many as are selected, and nothing else goes onto those.
+    readonly property bool pasteFits: (rowsOnHand === null || selKind === "row")
+        && (colsOnHand === null || selKind === "column")
+    readonly property string pasteFitsNot: rowsOnHand !== null ? "Whole rows paste onto whole rows."
+        : "Whole columns paste onto whole columns."
+    readonly property bool canPasteValues: canPaste && !formulaCell && pasteFits
         && !(marked !== null && spansFormula(marked))
 
     function spansFormula(m) {
@@ -4556,7 +4570,7 @@ ApplicationWindow {
             text: "Paste"
             visible: !win.sheet.isConsts
             // Only while something copied or cut is waiting to go down.
-            enabled: (win.sheet.nrows > 0 && win.canPaste) || win.grabbedHere
+            enabled: ((win.sheet.nrows > 0 && win.canPaste) || win.grabbedHere) && win.pasteFits
             onTriggered: win.pasteSelection()
         }
         MenuEntry {
