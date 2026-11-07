@@ -186,17 +186,6 @@ pub fn save_font_size(size: u32) {
     );
 }
 
-/// How long the user's file is left alone after an edit before it is saved
-/// of itself, in seconds: the number in the `autosave` settings file, where
-/// 0 turns autosave off. Ten where there is none or it is not a number.
-pub fn autosave_seconds() -> u32 {
-    read_config("autosave")
-        .trim()
-        .parse()
-        .unwrap_or(10)
-        .min(3600)
-}
-
 /// `base-size` under `[font]` in a `shell.toml`, past every other table.
 fn font_base_size(text: &str) -> Option<u32> {
     let mut in_font = false;

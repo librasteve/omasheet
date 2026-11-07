@@ -396,9 +396,6 @@ pub mod qobject {
         /// Keep the file last opened or saved, for the next launch's Open.
         #[qinvokable]
         fn keep_last_file(self: &File, path: &QString);
-        /// Seconds after an edit before the file saves itself; 0 is never.
-        #[qinvokable]
-        fn autosave_seconds(self: &File) -> i32;
         /// The windows open last time, as `width,height` pairs joined by
         /// `;`; empty if none were kept.
         #[qinvokable]
@@ -1528,10 +1525,6 @@ impl qobject::File {
         let path = path.to_string();
         let full = std::fs::canonicalize(&path).map_or(path, |p| p.to_string_lossy().into_owned());
         crate::theme::write_config("last-file", &full);
-    }
-
-    fn autosave_seconds(&self) -> i32 {
-        crate::theme::autosave_seconds() as i32
     }
 
     fn saved_windows(&self) -> QString {

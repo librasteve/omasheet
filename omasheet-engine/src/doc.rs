@@ -5063,6 +5063,18 @@ mod tests {
     }
 
     #[test]
+    fn a_filter_holds_through_a_sort() {
+        let file = "sheet T\n\nName : Text\nN : Decimal[.2f]\n\n| Name | N |\n| --- | --- |\n| Coffee | -0.04 |\n| Cake | 0 |\n| Tea | 2.25 |\n";
+        let mut doc = Document::from_text(file);
+        let f = vec![("N".to_string(), "* > 1".to_string())];
+        assert_eq!(doc.shown_rows(0, &f), Ok(vec![2]));
+        doc.sort_rows(0, 1, true).unwrap();
+        assert_eq!(doc.shown_rows(0, &f), Ok(vec![0]));
+        doc.sort_rows(0, 1, false).unwrap();
+        assert_eq!(doc.shown_rows(0, &f), Ok(vec![2]));
+    }
+
+    #[test]
     fn a_filter_shows_the_rows_its_expressions_are_true_of() {
         let file = "sheet T\n\nName | N\nb | 2\na | 10\nc |\nd | 2\n";
         let doc = Document::from_text(file);

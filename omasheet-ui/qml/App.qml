@@ -55,30 +55,6 @@ QtObject {
         onTriggered: app.keepPrimary()
     }
 
-    // Autosave: a file that already has a name is saved once it has been
-    // left alone after an edit for the seconds in the `autosave` file of
-    // the user's config (`~/.config/omasheet/autosave`), ten if it says
-    // nothing and never if it says 0. One that has never
-    // been saved is left for the user to name, so no dialog comes up on its
-    // own, and a formula still being typed is not in the file until it is
-    // entered.
-    readonly property int autosaveSeconds: file.autosaveSeconds()
-    property Timer autosave: Timer {
-        interval: Math.max(1, app.autosaveSeconds) * 1000
-        onTriggered: {
-            if (app.file.modified && app.file.filePath.length > 0)
-                app.file.save();
-        }
-    }
-
-    property Connections edits: Connections {
-        target: app.file
-        function onRevisionChanged() {
-            if (app.file.modified && app.autosaveSeconds > 0)
-                app.autosave.restart();
-        }
-    }
-
     // Whether a window kept at (x, y) would still have its title bar on a
     // screen, as when a monitor it was on has been unplugged since.
     function onScreen(x, y, width) {

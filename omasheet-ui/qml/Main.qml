@@ -469,6 +469,9 @@ ApplicationWindow {
     // shown stay as they were, and `filtered` brings the count.
     property var filterShown: ({ count: -1 })
     property bool filterPending: false
+    // Makes each answer differ from the last: QML takes two objects of the
+    // same contents to be no change, and the rows would stay as they were.
+    property int filterSerial: 0
     // The filter as Rust is given it, and everything that changes what it
     // shows: the sheet, its filters, and the file's every revision.
     readonly property string filterSpec: {
@@ -487,7 +490,7 @@ ApplicationWindow {
         var count = file.filterRows(tab, filterSpec);
         filterPending = count === -3;
         if (!filterPending)
-            filterShown = { count: count };
+            filterShown = { count: count, serial: ++filterSerial };
     }
     Connections {
         target: file
@@ -497,7 +500,7 @@ ApplicationWindow {
         }
         function onFiltered(count) {
             win.filterPending = false;
-            win.filterShown = { count: count };
+            win.filterShown = { count: count, serial: ++filterSerial };
         }
         function onSorted(col, descending, problem) {
             if (problem.length > 0)
