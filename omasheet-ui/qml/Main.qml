@@ -1620,7 +1620,8 @@ ApplicationWindow {
             grabbed = { tab: tab, rows: true, first: selTop, count: selBottom - selTop + 1, text: picked };
         else if (kind === "column")
             grabbed = { tab: tab, rows: false, first: selLeft, count: selRight - selLeft + 1, text: picked,
-                        names: sheet.columns.slice(selLeft, selRight + 1).map(function(c) { return c.name; }) };
+                        names: sheet.columns.slice(selLeft, selRight + 1).map(function(c) { return c.name; }),
+                        formulas: sheet.columns.slice(selLeft, selRight + 1).map(function(c) { return c.computed ? c.formula : ""; }) };
         else
             clearSelection();
         cutHold.grab = grabbed;
@@ -1702,6 +1703,10 @@ ApplicationWindow {
         return [selTop, selLeft, selBottom, selRight];
     }
 
+    // A view of a file: its own columns are fixed and formula columns go
+    // among them.
+    readonly property bool frameSheet: !sheet.isConsts && !sheet.view && (sheet.why || "").length > 0
+
     // The sheet shown, copied in just after it and shown.
     function duplicateShownSheet() {
         if (sheet.isConsts || tabs.length === 0)
@@ -1767,7 +1772,8 @@ ApplicationWindow {
             selectAll();
             return;
         }
-        if (refusedEdit())
+        // Columns go in among a file's own, which take no edit themselves.
+        if (!(handCols && frameSheet) && refusedEdit())
             return;
         // Rows or columns cut on another sheet go in before the selection
         // and are taken out there.
@@ -1775,7 +1781,7 @@ ApplicationWindow {
             insertRowsOnHand(false);
             return;
         }
-        if (colsOnHand !== null && colsOnHand.elsewhere) {
+        if (colsOnHand !== null && (colsOnHand.elsewhere || frameSheet)) {
             insertColumnsOnHand(false);
             return;
         }
@@ -2271,7 +2277,7 @@ ApplicationWindow {
         var count = selRight - selLeft + 1;
         if (colsOnHand !== null)
             insertColumnsOnHand(after);
-        else if (count > 1 && !sheet.isConsts)
+        else if (count > 1 && !sheet.isConsts && !frameSheet)
             insertBlankColumns(after ? selRight + 1 : selLeft, count);
         else
             promptDialog.ask("column", after ? selRight + 1 : selLeft);
@@ -2313,11 +2319,21 @@ ApplicationWindow {
             var names2 = src.names.map(function(n) { return pastedName(n, src.tab, taken2); });
             var m0 = file.undoMark();
             var bad = "";
+            var onlyFormulas = src.formulas !== undefined && src.formulas.every(function(f) { return f && f.length > 0; });
+            if (frameSheet && !onlyFormulas)
+                bad = "Only formula columns go into a file's sheet.";
             keeping(0, at, function() {
-                for (var k = 0; k < names2.length && bad.length === 0; k++)
-                    bad = file.insertColumn(tab, at + k, names2[k]);
-                if (bad.length === 0)
-                    bad = file.pasteCells(tab, 0, at, 0, at, src.text);
+                if (bad.length > 0)
+                    return;
+                if (frameSheet) {
+                    for (var j = 0; j < names2.length && bad.length === 0; j++)
+                        bad = file.insertComputed(tab, at + j, names2[j], src.formulas[j]);
+                } else {
+                    for (var k = 0; k < names2.length && bad.length === 0; k++)
+                        bad = file.insertColumn(tab, at + k, names2[k]);
+                    if (bad.length === 0)
+                        bad = file.pasteCells(tab, 0, at, 0, at, src.text);
+                }
                 if (bad.length === 0)
                     bad = file.deleteColumns(src.tab, src.first, src.count);
             });
@@ -2346,7 +2362,21 @@ ApplicationWindow {
             said = lengthNote(text, false);
             var mark = file.undoMark();
             var problem = "";
+            var formulas = [];
+            for (var q = 0; q < count; q++) {
+                var fc = from[m.left + q];
+                formulas.push(fc && fc.computed ? fc.formula : "");
+            }
+            if (frameSheet && !formulas.every(function(f) { return f.length > 0; }))
+                problem = "Only formula columns go into a file's sheet.";
             keeping(0, at, function() {
+                if (problem.length > 0)
+                    return;
+                if (frameSheet) {
+                    for (var j = 0; j < names.length && problem.length === 0; j++)
+                        problem = file.insertComputed(tab, at + j, names[j], formulas[j]);
+                    return;
+                }
                 for (var k = 0; k < names.length && problem.length === 0; k++)
                     problem = file.insertColumn(tab, at + k, names[k]);
                 if (problem.length === 0)
@@ -2980,7 +3010,10 @@ ApplicationWindow {
                                 }
                                 width: win.colWidths[index] || 0
                                 height: win.headerHeight
-                                color: index >= win.selLeft && index <= win.selRight
+                                // Stronger while the sort and filter box beside it is open.
+                                color: columnPopup.visible && columnPopup.col === index
+                                    ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.4)
+                                    : index >= win.selLeft && index <= win.selRight
                                     ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.16)
                                     : win.panelColor
                                 Column {

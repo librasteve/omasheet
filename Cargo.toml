@@ -70,3 +70,10 @@ pulldown-cmark = { version = "0.13", default-features = false, features = ["html
 # crates keep theirs, so a backtrace through omasheet still has line numbers.
 [profile.dev.package."*"]
 debug = false
+
+# A release binary: stripped, and linked as one unit so the unused part of
+# Polars is dropped.
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

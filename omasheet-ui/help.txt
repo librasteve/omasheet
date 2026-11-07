@@ -17,8 +17,8 @@ Ctrl+Shift+S         Save as
 Ctrl+E               Export
 
 Ctrl+K               New constant
-Ctrl+N               New sheet
 Ctrl+D               Duplicate sheet
+Ctrl+N               New sheet
 Ctrl+Shift+N         New window
 Ctrl+Alt+N           New file
 Ctrl+W               Close this window

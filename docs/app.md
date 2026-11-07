@@ -71,8 +71,8 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+Shift+S | Save as |
 | Ctrl+E | Export as an XLSX Workbook, CSV or JSON |
 | Ctrl+K | New constant |
-| Ctrl+N | New sheet |
 | Ctrl+D | Duplicate sheet |
+| Ctrl+N | New sheet |
 | Ctrl+Alt+Shift+Left/Right | Move sheet left / right |
 | Ctrl+Shift+N | New window on this file |
 | Ctrl+Alt+N | New file |

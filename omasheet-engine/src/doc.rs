@@ -2869,7 +2869,7 @@ impl Document {
     /// type, or with `None` leave them to take their type from their cells.
     /// One undoable step. A cell that does not fit is left to be an error.
     pub fn set_column_types(&mut self, sheet: usize, cols: &[usize], ty: Option<&str>) -> bool {
-        if self.no_cells(sheet).is_some() {
+        if self.no_cells(sheet).is_some() && !self.decorators_only(sheet, cols) {
             return false;
         }
         let ty = match ty.map(S::from_name) {
@@ -2907,7 +2907,12 @@ impl Document {
         cols: &[usize],
         format: Option<&str>,
     ) -> Result<(), String> {
-        if let Some(why) = self.no_cells(sheet) {
+        // How a column of a file is shown is the app's to say, where the
+        // schema names it: the file is not touched.
+        if let Some(why) = self.no_cells(sheet)
+            && !self.decorators_only(sheet, cols)
+            && !self.declared_in_view(sheet, cols)
+        {
             return Err(why);
         }
         let snap = self.snapshot.sheets.get(sheet).ok_or_else(String::new)?;
@@ -2978,7 +2983,8 @@ impl Document {
         first: usize,
         count: usize,
     ) -> Result<(), String> {
-        if let Some(why) = self.no_cells(sheet) {
+        let frame = self.frame_sheet(sheet);
+        if !frame && let Some(why) = self.no_cells(sheet) {
             return Err(why);
         }
         let Some(snap) = self.snapshot.sheets.get(sheet) else {
@@ -2990,6 +2996,12 @@ impl Document {
         }
         if count == n {
             return Err("a sheet keeps at least one column".into());
+        }
+        if frame && snap.columns[first..first + count].iter().any(|c| c.formula.is_none()) {
+            return Err(format!(
+                "view `{}` is read-only: only its formula columns can be deleted",
+                snap.name
+            ));
         }
         let gone = first..first + count;
         let kept = |k: &usize| !gone.contains(k);
@@ -3026,8 +3038,13 @@ impl Document {
         for (s, e) in cuts.into_iter().rev() {
             text.replace_range(s..e, "");
         }
-        let Some(text) = self.arranged(&text, sheet, &order) else {
-            return Err("there is no such sheet".into());
+        let text = if frame {
+            text
+        } else {
+            let Some(text) = self.arranged(&text, sheet, &order) else {
+                return Err("there is no such sheet".into());
+            };
+            text
         };
         self.commit(text);
         Ok(())
@@ -3104,7 +3121,9 @@ impl Document {
 
     /// Rename a column, and every reference to it, in one undoable step.
     pub fn rename_column(&mut self, sheet: usize, col: usize, name: &str) -> Result<(), String> {
-        if let Some(why) = self.read_only(sheet) {
+        // A decorator on a view is the file's own text, and is renamed as any
+        // formula column is; the view's data columns are its file's.
+        if let Some(why) = self.read_only_cell(sheet, col) {
             return Err(why);
         }
         let new = valid_name(name)?.to_string();
@@ -3266,7 +3285,7 @@ impl Document {
         let last = self.snapshot.sheets[sheet].columns.len() - 1;
         // A file's sheet keeps its own columns in the file's order: a
         // formula column added to it goes after them.
-        if self.no_cells(sheet).is_none() {
+        if self.no_cells(sheet).is_none() || self.frame_sheet(sheet) {
             self.move_columns(sheet, last, 1, at.min(last))?;
         }
         self.squash(mark);
@@ -3667,7 +3686,8 @@ impl Document {
         count: usize,
         to: usize,
     ) -> Result<(), String> {
-        if let Some(why) = self.no_cells(sheet) {
+        let frame = self.frame_sheet(sheet);
+        if !frame && let Some(why) = self.no_cells(sheet) {
             return Err(why);
         }
         let Some(snap) = self.snapshot.sheets.get(sheet) else {
@@ -3680,6 +3700,14 @@ impl Document {
         if to == first {
             return Ok(());
         }
+        // A file's own columns stay in its order: only decorators move,
+        // among them.
+        if frame && snap.columns[first..first + count].iter().any(|c| c.formula.is_none()) {
+            return Err(format!(
+                "view `{}` is read-only: only its formula columns can be moved",
+                snap.name
+            ));
+        }
         let mut order: Vec<usize> = (0..n).collect();
         let block: Vec<usize> = order.drain(first..first + count).collect();
         order.splice(to..to, block);
@@ -3689,11 +3717,126 @@ impl Document {
             .collect();
 
         let followed = self.followed(sheet, false, &order);
-        let Some(text) = self.arranged(&followed, sheet, &names) else {
+        let arranged = if frame {
+            let moved: Vec<String> = names[to..to + count].to_vec();
+            let after = names.get(to + count).cloned();
+            let before = if to > 0 { Some(names[to - 1].clone()) } else { None };
+            self.decorators_moved(&followed, sheet, &moved, after.as_deref(), before.as_deref())
+        } else {
+            self.arranged(&followed, sheet, &names)
+        };
+        let Some(text) = arranged else {
             return Err("the columns cannot be moved".into());
         };
         self.commit(text);
         Ok(())
+    }
+
+    /// Whether `cols` are all decorators of a view of a file, the formula
+    /// columns that are its own and take a type and a format as any does.
+    fn decorators_only(&self, sheet: usize, cols: &[usize]) -> bool {
+        self.frame_sheet(sheet)
+            && self.snapshot.sheets.get(sheet).is_some_and(|t| {
+                !cols.is_empty()
+                    && cols
+                        .iter()
+                        .all(|&c| t.columns.get(c).is_some_and(|c| c.formula.is_some()))
+            })
+    }
+
+    /// Whether `cols` are all columns of a view that its schema declares.
+    fn declared_in_view(&self, sheet: usize, cols: &[usize]) -> bool {
+        self.frame_sheet(sheet)
+            && self.snapshot.sheets.get(sheet).is_some_and(|t| {
+                !cols.is_empty()
+                    && cols
+                        .iter()
+                        .all(|&c| t.columns.get(c).is_some_and(|c| c.declared))
+            })
+    }
+
+    /// Whether sheet `sheet` is a view of a file, whose own columns are
+    /// fixed and whose decorators are lines among its schema.
+    fn frame_sheet(&self, sheet: usize) -> bool {
+        self.snapshot
+            .sheets
+            .get(sheet)
+            .is_some_and(|t| t.source.is_some() && t.view.is_none())
+    }
+
+    /// The lines of the columns of a view, as `(name, start, end)` whole
+    /// lines of `text`: its schema lines and its `Name := expression` lines.
+    fn column_lines(text: &str, decl: &omasheet_omx::file::SheetDecl) -> Vec<(String, usize, usize)> {
+        let line = |s: usize, e: usize| {
+            let start = text[..s].rfind('\n').map_or(0, |k| k + 1);
+            let end = text[e..].find('\n').map_or(text.len(), |k| e + k + 1);
+            (start, end)
+        };
+        let mut lines: Vec<(String, usize, usize)> = decl
+            .schema
+            .iter()
+            .map(|l| {
+                let (a, b) = line(l.span.start as usize, l.span.end as usize);
+                (l.name.clone(), a, b)
+            })
+            .chain(decl.computed.iter().map(|c| {
+                let (a, b) = line(c.span.start as usize, c.expr_span.end as usize);
+                (c.name.clone(), a, b)
+            }))
+            .collect();
+        lines.sort_by_key(|l| l.1);
+        lines
+    }
+
+    /// `text` with the decorators `moved` taken out of their lines and put
+    /// in again where they now stand: before the column `after`, or if it
+    /// is none, after the column `before`.
+    fn decorators_moved(
+        &self,
+        text: &str,
+        sheet: usize,
+        moved: &[String],
+        after: Option<&str>,
+        before: Option<&str>,
+    ) -> Option<String> {
+        let ast = parse_file(text, 0, &mut Vec::new());
+        let decl = self.sheet_decl(&ast, sheet)?;
+        let lines = Self::column_lines(text, decl);
+        let mut taken = String::new();
+        for name in moved {
+            let (_, a, b) = lines.iter().find(|l| &l.0 == name)?;
+            taken.push_str(&text[*a..*b]);
+        }
+        if !taken.ends_with('\n') {
+            taken.push('\n');
+        }
+        let mut rest = text.to_string();
+        let mut cuts: Vec<(usize, usize)> = moved
+            .iter()
+            .filter_map(|n| lines.iter().find(|l| &l.0 == n).map(|l| (l.1, l.2)))
+            .collect();
+        cuts.sort_unstable();
+        for (a, b) in cuts.into_iter().rev() {
+            rest.replace_range(a..b, "");
+        }
+        let ast = parse_file(&rest, 0, &mut Vec::new());
+        let decl = self.sheet_decl(&ast, sheet)?;
+        let lines = Self::column_lines(&rest, decl);
+        let at = match (after, before) {
+            (Some(n), _) => lines.iter().find(|l| l.0 == n)?.1,
+            (None, Some(n)) => {
+                let end = lines.iter().find(|l| l.0 == n)?.2;
+                if end > 0 && !rest[..end].ends_with('\n') {
+                    rest.insert(end, '\n');
+                    end + 1
+                } else {
+                    end
+                }
+            }
+            (None, None) => return None,
+        };
+        rest.insert_str(at, &taken);
+        Some(rest)
     }
 
     /// Add `Name := expression` to a sheet, as its last column: the header
@@ -4953,6 +5096,67 @@ mod tests {
         assert!(doc.undo() && doc.undo());
         assert_eq!(doc.text(), file);
         assert_eq!(without_last_sort("T |> resort(N)"), "T |> resort(N)");
+    }
+
+    #[test]
+    fn a_formula_column_takes_a_type_and_a_format_even_on_a_view() {
+        let text = "sheet T\n\nA | B\n1 | *\n2 | *\n\nB := A * 2\n";
+        let mut doc = Document::from_text(text);
+        assert!(doc.set_column_types(0, &[1], Some("Decimal")));
+        assert_eq!(doc.set_column_format(0, &[1], Some(".2f")), Ok(()));
+        assert!(doc.text().contains("B : Decimal[.2f]"), "{}", doc.text());
+        let v = "view P := dataframe['titanic.parquet']\n\nFare : Float\n\nDouble := Fare * 2\n";
+        let mut doc = Document::from_text(v);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        assert!(doc.set_column_types(0, &[1], Some("Float")));
+        assert_eq!(doc.set_column_format(0, &[1], Some(".1f")), Ok(()));
+        assert!(doc.text().contains("Double : Float[.1f]"), "{}", doc.text());
+        // The file's own column takes a format, not a type.
+        assert!(!doc.set_column_types(0, &[0], Some("Integer")));
+        assert_eq!(doc.set_column_format(0, &[0], Some(".2f")), Ok(()));
+        assert!(doc.text().contains("Fare   : Float[.2f]"), "{}", doc.text());
+        assert_eq!(doc.set_column_format(0, &[0], None), Ok(()));
+        assert!(doc.text().contains("Fare   : Float\n"), "{}", doc.text());
+    }
+
+    #[test]
+    fn decorators_move_among_the_columns_of_a_view() {
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nName : String\nPclass : Integer\nFare : Float\n\nDouble := Fare * 2\n";
+        let mut doc = Document::from_text(text);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        let names = |d: &Document| -> Vec<String> {
+            d.snapshot().sheets[0].columns.iter().map(|c| c.name.clone()).collect()
+        };
+        assert_eq!(names(&doc), ["Name", "Pclass", "Fare", "Double"]);
+        // Into the middle of the file's columns, and back to the end.
+        assert_eq!(doc.move_columns(0, 3, 1, 1), Ok(()));
+        assert_eq!(names(&doc), ["Name", "Double", "Pclass", "Fare"]);
+        assert_eq!(doc.move_columns(0, 1, 1, 3), Ok(()));
+        assert_eq!(names(&doc), ["Name", "Pclass", "Fare", "Double"]);
+        // The file's own columns stay where they are.
+        assert!(doc.move_columns(0, 0, 1, 2).is_err());
+        // A new decorator goes where it is asked, first or in the middle.
+        assert_eq!(doc.insert_computed(0, 2, "Mid", "Fare + 1"), Ok(()));
+        assert_eq!(names(&doc), ["Name", "Pclass", "Mid", "Fare", "Double"]);
+        assert_eq!(doc.insert_computed(0, 0, "Top", "Fare + 2"), Ok(()));
+        assert_eq!(names(&doc), ["Top", "Name", "Pclass", "Mid", "Fare", "Double"]);
+        // A decorator goes, a file's column does not.
+        assert_eq!(doc.delete_columns(0, 3, 1), Ok(()));
+        assert_eq!(names(&doc), ["Top", "Name", "Pclass", "Fare", "Double"]);
+        assert!(doc.delete_columns(0, 1, 1).is_err());
+        assert!(doc.undo());
+        assert_eq!(names(&doc), ["Top", "Name", "Pclass", "Mid", "Fare", "Double"]);
+    }
+
+    #[test]
+    fn a_decorator_on_a_view_can_be_renamed_and_the_data_cannot() {
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nName : String\nFare : Float\n\nDouble := Fare * 2\nTriple := Double + Fare\n";
+        let mut doc = Document::from_text(text);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        assert!(doc.rename_column(0, 1, "Price").is_err());
+        assert_eq!(doc.rename_column(0, 2, "Twice"), Ok(()));
+        assert!(doc.text().contains("Twice := Fare * 2"), "{}", doc.text());
+        assert!(doc.text().contains("Triple := Twice + Fare"), "{}", doc.text());
     }
 
     #[test]

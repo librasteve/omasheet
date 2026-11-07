@@ -1032,8 +1032,26 @@ impl<'a> Checker<'a> {
                     );
                 }
                 for line in &t.schema {
-                    if cols.iter().any(|c| c.name == line.name) {
+                    // The type line of a decorator is not a column of the file.
+                    if cols.iter().any(|c| c.name == line.name)
+                        || t.computed.iter().any(|c| c.name == line.name)
+                    {
                         continue;
+                    }
+                    // A decorator written among the schema lines sits among
+                    // the columns where it is written.
+                    for (k, cd) in t.computed.iter().enumerate() {
+                        if cd.span.start < line.span.start
+                            && !cols.iter().any(|c| c.name == cd.name)
+                        {
+                            cols.push(ColInfo {
+                                name: cd.name.clone(),
+                                span: cd.span,
+                                declared: None,
+                                src: ColSrc::Computed(k),
+                                from: None,
+                            });
+                        }
                     }
                     cols.push(ColInfo {
                         name: line.name.clone(),
