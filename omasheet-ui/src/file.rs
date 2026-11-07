@@ -343,6 +343,10 @@ pub mod qobject {
         fn add_const(self: Pin<&mut File>, name: &QString, expr: &QString) -> QString;
         #[qinvokable]
         fn set_const(self: Pin<&mut File>, index: i32, expr: &QString);
+        #[qinvokable]
+        fn delete_const(self: Pin<&mut File>, index: i32) -> QString;
+        #[qinvokable]
+        fn delete_all_consts(self: Pin<&mut File>);
 
         #[qinvokable]
         fn undo(self: Pin<&mut File>);
@@ -1443,6 +1447,14 @@ impl qobject::File {
     fn set_const(self: Pin<&mut Self>, index_: i32, expr: &QString) {
         let expr = expr.to_string();
         self.edit(|doc| doc.set_const(index(index_), &expr));
+    }
+
+    fn delete_const(self: Pin<&mut Self>, index_: i32) -> QString {
+        self.try_edit(|doc| doc.delete_const(index(index_)))
+    }
+
+    fn delete_all_consts(self: Pin<&mut Self>) {
+        self.edit(|doc| doc.delete_all_consts());
     }
 
     fn undo(self: Pin<&mut Self>) {

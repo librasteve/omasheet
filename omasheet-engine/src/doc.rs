@@ -3929,6 +3929,55 @@ impl Document {
         Ok(())
     }
 
+    /// Take constant `index` out of the file: its line. A formula that
+    /// reads it is left to be shown as an error.
+    pub fn delete_const(&mut self, index: usize) -> Result<(), String> {
+        let Some(name) = self.snapshot.consts.get(index).map(|c| c.name.clone()) else {
+            return Err("there is no such constant".into());
+        };
+        self.remove_consts(|n| n == name);
+        Ok(())
+    }
+
+    /// Take every constant out of the file.
+    pub fn delete_all_consts(&mut self) -> bool {
+        self.remove_consts(|_| true)
+    }
+
+    fn remove_consts(&mut self, gone: impl Fn(&str) -> bool) -> bool {
+        let ast = self.ast();
+        let mut spans: Vec<(usize, usize)> = ast
+            .consts
+            .iter()
+            .filter(|c| gone(&c.name))
+            .map(|c| {
+                let start = self.line_start(c.span.start as usize);
+                let end = self.text[c.span.end as usize..]
+                    .find('\n')
+                    .map_or(self.text.len(), |i| c.span.end as usize + i + 1);
+                (start, end)
+            })
+            .collect();
+        spans.sort();
+        let mut text = self.text.clone();
+        for (start, end) in spans.into_iter().rev() {
+            text.replace_range(start..end, "");
+            // The blank lines left standing where it was go with it, at
+            // the top of the file or under another blank line.
+            let at = start;
+            let blank_before = text[..at].is_empty() || text[..at].ends_with("\n\n");
+            if blank_before {
+                while let Some(rest) = text[at..].split_inclusive('\n').next() {
+                    if !rest.trim().is_empty() {
+                        break;
+                    }
+                    text.replace_range(at..at + rest.len(), "");
+                }
+            }
+        }
+        self.commit(text)
+    }
+
     /// Append a new sheet with one empty row.
     pub fn add_sheet(&mut self, name: &str, formula: Option<&str>) -> Result<(), String> {
         self.insert_sheet(usize::MAX, name, formula)
@@ -5999,6 +6048,21 @@ mod tests {
             "{:?}",
             doc.snapshot().problems
         );
+    }
+
+    #[test]
+    fn constants_can_be_deleted() {
+        let mut doc = Document::from_text(
+            "const A = 1\nconst B = 2\nconst C = 3\n\nsheet T\n\n| X |\n| - |\n| 1 |\n",
+        );
+        doc.delete_const(1).unwrap();
+        let names: Vec<_> = doc.snapshot().consts.iter().map(|c| c.name.clone()).collect();
+        assert_eq!(names, ["A", "C"]);
+        assert!(doc.delete_const(5).is_err());
+        assert!(doc.delete_all_consts());
+        assert!(doc.snapshot().consts.is_empty());
+        assert_eq!(doc.snapshot().sheets.len(), 1);
+        assert!(doc.text().starts_with("sheet T"), "{:?}", doc.text());
     }
 
     #[test]

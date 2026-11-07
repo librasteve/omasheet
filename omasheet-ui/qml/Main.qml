@@ -1331,15 +1331,27 @@ ApplicationWindow {
     // Whole rows waiting to go in as rows of their own, rather than blank
     // ones: cut, to be moved there, or copied, to go in as copies.
     // `{cut, count}`, or null when none are.
+    // Whole rows cut on another sheet: they move here by being copied in
+    // and taken out there.
+    readonly property bool grabbedElsewhereRows: grabbed !== null && !grabbed.sheet && grabbed.rows === true
+        && grabbed.tab !== tab && grabbed.tab < tabs.length && !sheet.isConsts
+        && grabbed.text !== undefined && grabbed.text.length > 0
     readonly property var rowsOnHand: grabbedHere && grabbed.rows
         ? { cut: true, count: grabbed.count }
+        : grabbedElsewhereRows
+        ? { cut: true, count: grabbed.count, elsewhere: true }
         : marked !== null && marked.rows && !sheet.isConsts && marked.tab < tabs.length
             && marked.text.length > 0
         ? { cut: false, count: marked.bottom - marked.top + 1 }
         : null
+    readonly property bool grabbedElsewhereColumns: grabbed !== null && !grabbed.sheet && grabbed.rows === false
+        && grabbed.tab !== tab && grabbed.tab < tabs.length && !sheet.isConsts
+        && grabbed.text !== undefined && grabbed.text.length > 0 && grabbed.names !== undefined
     // The same for whole columns.
     readonly property var colsOnHand: grabbedHere && !grabbed.rows
         ? { cut: true, count: grabbed.count }
+        : grabbedElsewhereColumns
+        ? { cut: true, count: grabbed.count, elsewhere: true }
         : marked !== null && marked.columns && !sheet.isConsts && marked.tab < tabs.length
             && marked.text.length > 0
         ? { cut: false, count: marked.right - marked.left + 1 }
@@ -1589,13 +1601,15 @@ ApplicationWindow {
             return;
         }
         copySelection();
+        var picked = marked !== null ? marked.text : "";
         // Rows and columns picked up are outlined dashed, to be moved.
         if (kind !== "")
             marked = null;
         if (kind === "row")
-            grabbed = { tab: tab, rows: true, first: selTop, count: selBottom - selTop + 1 };
+            grabbed = { tab: tab, rows: true, first: selTop, count: selBottom - selTop + 1, text: picked };
         else if (kind === "column")
-            grabbed = { tab: tab, rows: false, first: selLeft, count: selRight - selLeft + 1 };
+            grabbed = { tab: tab, rows: false, first: selLeft, count: selRight - selLeft + 1, text: picked,
+                        names: sheet.columns.slice(selLeft, selRight + 1).map(function(c) { return c.name; }) };
         else
             clearSelection();
     }
@@ -1847,6 +1861,40 @@ ApplicationWindow {
             selectAll();
     }
 
+    // A constant is deleted from the Constants sheet, asked first: a
+    // formula that reads it is left showing an error.
+    property int constGone: -1
+    function deleteConstant() {
+        if (!sheet.isConsts || curRow < 0 || curRow >= sheet.nrows)
+            return;
+        stopEditing();
+        constGone = curRow;
+        deleteConstDialog.open();
+    }
+
+    function deleteConstantNow() {
+        if (!sheet.isConsts || constGone < 0 || constGone >= sheet.nrows)
+            return;
+        var at = constGone;
+        notice = file.deleteConst(at);
+        if (notice.length > 0)
+            return;
+        // The Constants sheet is gone with its last constant.
+        if (sheet.isConsts)
+            selectCell(Math.min(at, sheet.nrows - 1), 0, false);
+    }
+
+    function deleteAllConstants() {
+        stopEditing();
+        deleteAllConstsDialog.open();
+    }
+
+    function deleteAllConstantsNow() {
+        file.deleteAllConsts();
+        if (tabs.length > 0 && sheet.isConsts)
+            switchTab(0);
+    }
+
     function deleteColumns() {
         if (sheet.isConsts)
             return;
@@ -2019,10 +2067,15 @@ ApplicationWindow {
         insertRows(below, 1);
     }
 
-    function insertRows(below, count) {
+    // A new row after the last, wherever the selection is.
+    function appendRow() {
+        insertRows(true, 1, true);
+    }
+
+    function insertRows(below, count, atEnd) {
         if (sheet.isConsts || count < 1)
             return;
-        var at = sheet.nrows === 0 ? 0 : (below ? selBottom + 1 : selTop);
+        var at = sheet.nrows === 0 ? 0 : (atEnd ? sheet.nrows : (below ? selBottom + 1 : selTop));
         // The left of the selection: a whole-row selection ends at the last
         // column, and following it would pan the view to the right.
         var col = selLeft;
@@ -2061,7 +2114,23 @@ ApplicationWindow {
         var count = hand.count;
         var whole = selKind === "row";
         var col = selLeft;
-        if (hand.cut) {
+        if (hand.elsewhere) {
+            var from = grabbed;
+            grabbed = null;
+            var m0 = file.undoMark();
+            var bad = "";
+            keeping(at, 0, function() {
+                file.insertRows(tab, at, count);
+                bad = file.pasteCells(tab, at, 0, at, 0, from.text);
+                if (bad.length === 0)
+                    file.deleteRows(from.tab, from.first, from.count);
+            });
+            file.joinSince(m0);
+            if (bad.length > 0) {
+                errorDialog.say(bad);
+                return;
+            }
+        } else if (hand.cut) {
             var g = grabbed;
             grabbed = null;
             // Where they are already: nothing to move.
@@ -2123,10 +2192,29 @@ ApplicationWindow {
     }
 
     function insertColumnsHere(after) {
+        var count = selRight - selLeft + 1;
         if (colsOnHand !== null)
             insertColumnsOnHand(after);
+        else if (count > 1 && !sheet.isConsts)
+            insertBlankColumns(after ? selRight + 1 : selLeft, count);
         else
             promptDialog.ask("column", after ? selRight + 1 : selLeft);
+    }
+
+    // `count` blank columns at `at`, each named as the one to its left would
+    // be offered, in one step to undo, and left selected.
+    function insertBlankColumns(at, count) {
+        var mark = file.undoMark();
+        var problem = "";
+        keeping(0, at, function() {
+            for (var k = 0; k < count && problem.length === 0; k++)
+                problem = file.insertColumn(tab, at + k, suggestedColumnName(at + k));
+        });
+        file.joinSince(mark);
+        if (problem.length > 0)
+            errorDialog.say(problem);
+        selectLine(false, at, false);
+        selectLine(false, at + count - 1, true);
     }
 
     // Put the columns cut or copied as whole columns in before or after the
@@ -2139,7 +2227,27 @@ ApplicationWindow {
         notice = "";
         var at = after ? selRight + 1 : selLeft;
         var count = hand.count;
-        if (hand.cut) {
+        if (hand.elsewhere) {
+            var src = grabbed;
+            grabbed = null;
+            var taken2 = namesTaken(-1, -1);
+            var names2 = src.names.map(function(n) { return pastedName(n, src.tab, taken2); });
+            var m0 = file.undoMark();
+            var bad = "";
+            keeping(0, at, function() {
+                for (var k = 0; k < names2.length && bad.length === 0; k++)
+                    bad = file.insertColumn(tab, at + k, names2[k]);
+                if (bad.length === 0)
+                    bad = file.pasteCells(tab, 0, at, 0, at, src.text);
+                if (bad.length === 0)
+                    bad = file.deleteColumns(src.tab, src.first, src.count);
+            });
+            file.joinSince(m0);
+            if (bad.length > 0) {
+                errorDialog.say(bad);
+                return;
+            }
+        } else if (hand.cut) {
             var g = grabbed;
             grabbed = null;
             if (at >= g.first && at <= g.first + g.count)
@@ -3868,7 +3976,7 @@ ApplicationWindow {
 
                 Item { Layout.fillWidth: true }
 
-                FooterButton { label: "+ Row"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.insertRow(true) }
+                FooterButton { label: "+ Row"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.appendRow() }
                 FooterButton { label: "+ Column"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
                 FooterButton { label: "+ Constant"; quiet: true; onClicked: promptDialog.ask("const") }
                 FooterButton { label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
@@ -4396,12 +4504,14 @@ ApplicationWindow {
 
         MenuEntry {
             text: "Cut"
+            visible: !win.sheet.isConsts
             enabled: (cellMenu.hasRows || win.grabKind.length > 0) && !win.formulaCell
             onTriggered: win.cutSelection()
         }
-        MenuEntry { text: "Copy"; enabled: win.sheet.nrows > 0; onTriggered: win.copySelection() }
+        MenuEntry { text: "Copy"; visible: !win.sheet.isConsts; enabled: win.sheet.nrows > 0; onTriggered: win.copySelection() }
         MenuEntry {
             text: "Paste"
+            visible: !win.sheet.isConsts
             // Only while something copied or cut is waiting to go down.
             enabled: (win.sheet.nrows > 0 && win.canPaste) || win.grabbedHere
             onTriggered: win.pasteSelection()
@@ -4410,16 +4520,24 @@ ApplicationWindow {
             // One cell copied is one value.
             text: win.marked !== null && win.marked.top === win.marked.bottom
                 && win.marked.left === win.marked.right ? "Paste value" : "Paste values"
+            visible: !win.sheet.isConsts
             enabled: cellMenu.hasRows && win.canPasteValues
             onTriggered: win.pasteValues()
         }
-        MenuEntry { text: "Paste references"; enabled: cellMenu.hasRows && win.canPasteReference; onTriggered: win.pasteReference() }
-        MenuEntry { text: "Paste transposed"; enabled: cellMenu.hasRows && win.canTranspose; onTriggered: win.pasteTransposed() }
+        MenuEntry { text: "Paste references"; visible: !win.sheet.isConsts; enabled: cellMenu.hasRows && win.canPasteReference; onTriggered: win.pasteReference() }
+        MenuEntry { text: "Paste transposed"; visible: !win.sheet.isConsts; enabled: cellMenu.hasRows && win.canTranspose; onTriggered: win.pasteTransposed() }
         // A calculated column is its formula: there is nothing in it to clear.
         MenuEntry {
             text: "Clear"
+            visible: !win.sheet.isConsts
             enabled: cellMenu.hasRows && !win.formulaCell && !(cellMenu.columns && win.anyComputed())
             onTriggered: win.clearSelection()
+        }
+        MenuEntry {
+            text: "Delete constant"
+            visible: win.sheet.isConsts
+            enabled: visible && win.sheet.nrows > 0
+            onTriggered: win.deleteConstant()
         }
         // Delete, for what is selected as a whole.
         MenuRule { visible: cellMenu.rows }
@@ -4430,12 +4548,6 @@ ApplicationWindow {
             onTriggered: win.deleteRows()
         }
         MenuRule { visible: cellMenu.columns }
-        MenuEntry {
-            text: "Rename column"
-            visible: cellMenu.columns
-            enabled: visible && cellMenu.editable && win.selLeft === win.selRight && win.sheet.columns.length > 0
-            onTriggered: promptDialog.ask("rename")
-        }
         MenuEntry {
             text: cellMenu.columnCount > 1 ? "Delete " + cellMenu.columnCount + " columns" : "Delete column"
             visible: cellMenu.columns
@@ -4492,13 +4604,15 @@ ApplicationWindow {
         // Columns, when whole columns are selected. A column added
         // from the footer goes at the end.
         MenuEntry {
-            text: win.colsOnHand !== null ? "Insert cells before" : "Insert column before"
+            text: win.colsOnHand !== null ? "Insert cells before"
+                : cellMenu.columnCount > 1 ? "Insert " + cellMenu.columnCount + " columns before" : "Insert column before"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable
             onTriggered: win.insertColumnsHere(false)
         }
         MenuEntry {
-            text: win.colsOnHand !== null ? "Insert cells after" : "Insert column after"
+            text: win.colsOnHand !== null ? "Insert cells after"
+                : cellMenu.columnCount > 1 ? "Insert " + cellMenu.columnCount + " columns after" : "Insert column after"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable
             onTriggered: win.insertColumnsHere(true)
@@ -4512,6 +4626,12 @@ ApplicationWindow {
             onTriggered: promptDialog.ask("columns")
         }
         MenuRule { visible: cellMenu.columns }
+        MenuEntry {
+            text: "Rename column"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.selLeft === win.selRight && win.sheet.columns.length > 0
+            onTriggered: promptDialog.ask("rename")
+        }
         MenuEntry {
             text: "Set type\u2026"
             visible: cellMenu.columns
@@ -4651,6 +4771,12 @@ ApplicationWindow {
             visible: tabMenu.isSheet
             enabled: visible
             onTriggered: { win.goToSheet(tabMenu.index); win.deleteSheet(); }
+        }
+        MenuEntry {
+            text: "Delete All"
+            visible: !tabMenu.isSheet
+            enabled: visible
+            onTriggered: { win.goToSheet(tabMenu.index); win.deleteAllConstants(); }
         }
         MenuRule { visible: tabMenu.isSheet }
         // This one leaves the sheet shown as it is: the two are then side
@@ -4948,6 +5074,62 @@ ApplicationWindow {
             font.pixelSize: win.dialogSize
         }
         onAccepted: win.deleteSheetNow()
+        onClosed: grid.forceActiveFocus()
+    }
+
+    Dialog {
+        font.pixelSize: win.dialogSize
+        id: deleteConstDialog
+        anchors.centerIn: parent
+        modal: true
+        width: 440
+        focus: true
+        title: "Delete constant"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        // Each button names its key.
+        Component.onCompleted: {
+            standardButton(Dialog.Ok).text = "Delete    D";
+            standardButton(Dialog.Cancel).text = "Cancel    C";
+        }
+        Shortcut { sequence: "D"; enabled: deleteConstDialog.visible; onActivated: deleteConstDialog.accept() }
+        Shortcut { sequence: "C"; enabled: deleteConstDialog.visible; onActivated: deleteConstDialog.reject() }
+        Label {
+            width: parent.width
+            text: "Delete the constant " + (win.constGone >= 0 && win.constGone < win.sheet.nrows ? win.sheet.rows[win.constGone][0].d : "") + "? A formula that reads it will show an error."
+            wrapMode: Text.Wrap
+            font.family: win.font.family
+            font.features: win.font.features
+            font.pixelSize: win.dialogSize
+        }
+        onAccepted: win.deleteConstantNow()
+        onClosed: grid.forceActiveFocus()
+    }
+
+    Dialog {
+        font.pixelSize: win.dialogSize
+        id: deleteAllConstsDialog
+        anchors.centerIn: parent
+        modal: true
+        width: 440
+        focus: true
+        title: "Delete all constants"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        // Each button names its key.
+        Component.onCompleted: {
+            standardButton(Dialog.Ok).text = "Delete    D";
+            standardButton(Dialog.Cancel).text = "Cancel    C";
+        }
+        Shortcut { sequence: "D"; enabled: deleteAllConstsDialog.visible; onActivated: deleteAllConstsDialog.accept() }
+        Shortcut { sequence: "C"; enabled: deleteAllConstsDialog.visible; onActivated: deleteAllConstsDialog.reject() }
+        Label {
+            width: parent.width
+            text: "Delete all " + win.sheet.nrows + " constants? Formulas that read them will show errors."
+            wrapMode: Text.Wrap
+            font.family: win.font.family
+            font.features: win.font.features
+            font.pixelSize: win.dialogSize
+        }
+        onAccepted: win.deleteAllConstantsNow()
         onClosed: grid.forceActiveFocus()
     }
 
