@@ -1032,6 +1032,10 @@ fn csv_schema(head: &[u8]) -> Result<CsvTypes, String> {
     let mut decimals = Vec::new();
     let mut hex = Vec::new();
     let mut percents = Vec::new();
+    let mut literals = Vec::new();
+    let time = regex::Regex::new(TIME).unwrap();
+    let duration = regex::Regex::new(DURATION).unwrap();
+    let underscored = regex::Regex::new(UNDERSCORED).unwrap();
     let percent = regex::Regex::new(r"^-?\d+(\.(\d+))?%$").unwrap();
     for column in frame.get_columns() {
         if matches!(column.dtype(), DataType::Float64)
@@ -1056,6 +1060,20 @@ fn csv_schema(head: &[u8]) -> Result<CsvTypes, String> {
                 schema.with_column(column.name().clone(), DataType::String);
                 decimals.push((column.name().clone(), scale));
             }
+            continue;
+        }
+        // Polars reads `TRUE` as a boolean, and an import reads it as text:
+        // only `true` and `false` are booleans.
+        if matches!(column.dtype(), DataType::Boolean)
+            && let Ok(words) = texts
+                .column(column.name().as_str())
+                .and_then(|c| c.str().cloned())
+            && !words
+                .into_iter()
+                .flatten()
+                .all(|w| w == "true" || w == "false")
+        {
+            schema.with_column(column.name().clone(), DataType::String);
             continue;
         }
         let Ok(texts) = column.str() else {
@@ -1092,6 +1110,21 @@ fn csv_schema(head: &[u8]) -> Result<CsvTypes, String> {
         let every = |re: &regex::Regex| {
             texts.null_count() < texts.len() && texts.into_iter().flatten().all(|t| re.is_match(t))
         };
+        for (re, literal) in [
+            (&time, Literal::Time),
+            (&duration, Literal::Duration),
+            (&underscored, Literal::Underscored),
+        ] {
+            // Some of an underscored column's values have none: a column
+            // with no underscore at all was whole numbers to Polars.
+            let has = |t: &str| !matches!(literal, Literal::Underscored) || t.contains('_');
+            if every(re) && texts.into_iter().flatten().any(has) {
+                literals.push((column.name().clone(), literal));
+            }
+        }
+        if literals.last().is_some_and(|(n, _)| n == column.name()) {
+            continue;
+        }
         let dtype = if every(&date) {
             DataType::Date
         } else if every(&datetime) {
@@ -1106,6 +1139,7 @@ fn csv_schema(head: &[u8]) -> Result<CsvTypes, String> {
         decimals,
         percents,
         hex,
+        literals,
     })
 }
 
@@ -1123,7 +1157,28 @@ struct CsvTypes {
     decimals: Decimals,
     percents: Decimals,
     hex: Vec<PlSmallStr>,
+    literals: Vec<(PlSmallStr, Literal)>,
 }
+
+/// The other literals an import reads in a CSV cell, which a column made of
+/// them is converted to: a time of day, an ISO duration, a whole number with
+/// underscores (`1_000`).
+#[derive(Clone, Copy)]
+enum Literal {
+    Time,
+    Duration,
+    Underscored,
+}
+
+/// An ISO 8601 duration as an import reads one, in days, hours, minutes and
+/// seconds, with at least one of them.
+const DURATION: &str = r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$";
+
+/// A time of day, `10:30`, `10:30:15` or `10:30:15.5`.
+const TIME: &str = r"^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,9})?)?$";
+
+/// A whole number written with underscores between digits.
+const UNDERSCORED: &str = r"^-?\d+(_\d+)*$";
 
 /// The key of the file-level metadata that names, one to a line, the columns
 /// of a copy that are percentages: a table shows them as such.
@@ -1161,6 +1216,66 @@ const MOST_PLACES: usize = 18;
 /// The columns read as text and made decimals, by name, with their scale.
 type Decimals = Vec<(PlSmallStr, usize)>;
 
+/// The expression that makes the text column `name` the literal it is. A value
+/// that is not one fails the conversion, and so the copy, which is worked out
+/// again from every row, as text.
+fn literal_column(name: &PlSmallStr, literal: Literal) -> Expr {
+    let text = col(name.clone());
+    match literal {
+        Literal::Time => {
+            // `10:30` has no seconds; they are put in, and the time read.
+            let full = text
+                .str()
+                .replace(lit(r"^(\d{2}:\d{2})$"), lit("${1}:00"), false);
+            full.str()
+                .to_time(StrptimeOptions {
+                    format: Some("%H:%M:%S%.f".into()),
+                    strict: true,
+                    ..Default::default()
+                })
+                .alias(name.clone())
+        }
+        Literal::Underscored => text
+            .str()
+            .replace_all(lit("_"), lit(""), true)
+            .cast(DataType::Int64)
+            .alias(name.clone()),
+        Literal::Duration => {
+            let part = |group: usize| {
+                text.clone()
+                    .str()
+                    .extract(lit(DURATION), group)
+                    .cast(DataType::Float64)
+                    .fill_null(lit(0.0))
+            };
+            // A value that is not a duration, or has no component (`P`,
+            // `PT`), fails the conversion: a column of `0`s and `x`s read
+            // strictly as numbers, added in as the `0.0` it is.
+            let valid = text
+                .clone()
+                .str()
+                .contains(lit(DURATION), false)
+                .and(text.clone().str().contains(lit(r"^PT?$"), false).not())
+                .fill_null(lit(false));
+            let guard = when(valid)
+                .then(lit("0"))
+                .otherwise(lit("x"))
+                .strict_cast(DataType::Float64);
+            let seconds = part(1) * lit(86_400.0)
+                + part(2) * lit(3_600.0)
+                + part(3) * lit(60.0)
+                + part(4)
+                + guard;
+            // Half a microsecond up, then whole: durations here are not
+            // negative.
+            (seconds * lit(1_000_000.0) + lit(0.5))
+                .cast(DataType::Int64)
+                .cast(DataType::Duration(TimeUnit::Microseconds))
+                .alias(name.clone())
+        }
+    }
+}
+
 /// `frame` with each of `decimals` made the exact decimal its text is. A
 /// value with more places than the scale the head gave is turned into text
 /// that is not a number, so that the conversion fails and the file is
@@ -1182,6 +1297,12 @@ fn decimal_columns(frame: LazyFrame, types: &CsvTypes) -> LazyFrame {
         .alias(name.clone())
     });
     let exprs: Vec<Expr> = lowered
+        .chain(
+            types
+                .literals
+                .iter()
+                .map(|(name, literal)| literal_column(name, *literal)),
+        )
         .chain(types.percents.iter().map(|(name, places)| {
             // The text without its `%`, the decimal it is, and a hundredth of
             // that: exact, at two places more.

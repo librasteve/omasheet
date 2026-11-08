@@ -202,6 +202,16 @@ fn awkward_csvs() -> Vec<(&'static str, Vec<u8>)> {
                 .to_vec(),
         ),
         (
+            "timesdurations",
+            "at,took,big,flag\n10:30,PT1H30M,1_000,true\n23:59:59.5,P1D,2_500,false\n00:00:00,PT0S,3,true\n09:05,PT45.5S,-4_000,false\n"
+                .as_bytes()
+                .to_vec(),
+        ),
+        (
+            "uppercase",
+            "flag,note\nTRUE,a\nFALSE,b\nTRUE,c\n".as_bytes().to_vec(),
+        ),
+        (
             "mixed",
             "n,flag,text\n1,true,alpha\n2.5,false,beta\n3,true,gamma\n"
                 .as_bytes()
@@ -386,4 +396,77 @@ fn hex_text_in_a_json_file_is_text_as_it_is_in_an_import() {
         "view T := dataframe['codes.json']\n",
     );
     assert!(differing.is_empty(), "{differing:?}");
+}
+
+#[test]
+fn a_row_past_the_head_that_breaks_a_literal_column_turns_the_column_to_text() {
+    // The head of 10,000 rows says time, duration, underscored whole number,
+    // percentage and hexadecimal; a last row of text says otherwise, and the
+    // copy is worked out again from every row, so that nothing is lost.
+    let dir = scratch("late");
+    let mut text = String::from("at,took,big,rate,code\n");
+    for i in 0..10_500 {
+        text.push_str(&format!(
+            "{:02}:{:02},PT{}M,{}_000,{}%,0x{:X}\n",
+            i % 24,
+            i % 60,
+            i % 90,
+            1 + i % 9,
+            i % 100,
+            i
+        ));
+    }
+    text.push_str("n/a,n/a,n/a,n/a,n/a\n");
+    std::fs::write(dir.join("late.csv"), &text).unwrap();
+    // Every value is there as it was written, in a column of text: an import
+    // keeps the column's literals as the values they are, and a table, which
+    // has the column as text, shows what was written.
+    let mut tab = omasheet_engine::Document::from_text("view T := dataframe['late.csv']\n");
+    tab.set_base(&dir);
+    assert!(tab.snapshot().problems.is_empty());
+    let types: Vec<String> = tab.snapshot().sheets[0]
+        .columns
+        .iter()
+        .map(|c| c.ty.clone())
+        .collect();
+    assert_eq!(types, ["String"; 5]);
+    let rows = shown_rows(&tab, 0);
+    let written: Vec<Vec<String>> = text
+        .lines()
+        .skip(1)
+        .map(|l| l.split(',').map(str::to_string).collect())
+        .collect();
+    assert_eq!(rows, written);
+}
+
+/// What a table and an import are known to read differently in a CSV, held as
+/// they are so that a change is noticed (`open-a-big-csv` 3.2): a date and
+/// time with a space (`2024-03-05 10:00:00`) is a `Datetime` in a table and
+/// text in an import, which only knows the `T`; and octal and binary
+/// (`0o17`, `0b101`) are shown the same and are text to a table.
+#[test]
+fn what_a_table_and_an_import_still_read_differently() {
+    use omasheet_engine::Document;
+    let dir = scratch("known");
+    let text = "spaced,oct,bin\n2024-03-05 10:00:00,0o17,0b101\n2024-03-06 11:30:00,0o7,0b1\n";
+    std::fs::write(dir.join("known.csv"), text).unwrap();
+    let inline = csv::import("known", text.as_bytes()).unwrap().source;
+    let mut imp = Document::from_text(&inline);
+    imp.set_base(&dir);
+    let mut tab = Document::from_text("view T := dataframe['known.csv']\n");
+    tab.set_base(&dir);
+    let types = |d: &Document| -> Vec<String> {
+        d.snapshot().sheets[0]
+            .columns
+            .iter()
+            .map(|c| c.ty.clone())
+            .collect()
+    };
+    assert_eq!(types(&imp), ["String", "Octal", "Binary"]);
+    assert_eq!(types(&tab), ["Datetime", "String", "String"]);
+    // The octal and binary cells read the same; the date and time is shown
+    // as a date-time.
+    assert_eq!(shown_rows(&imp, 0)[0][1..], shown_rows(&tab, 0)[0][1..]);
+    assert_eq!(shown_rows(&tab, 0)[0][0], "2024-03-05T10:00");
+    assert_eq!(shown_rows(&imp, 0)[0][0], "2024-03-05 10:00:00");
 }

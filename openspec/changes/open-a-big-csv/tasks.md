@@ -391,7 +391,7 @@ Parquet alone.
       lines for a file, a line for each sheet. CSV still goes through Polars'
       own reader and `parquet` is already a frame; folding CSV into
       `RowSource` is not worth it, since Polars does it faster
-- [ ] 3.2 `csv`: `sniff`, then `scan_csv` with that schema; OMX-only literal
+- [x] 3.2 `csv`: `sniff`, then `scan_csv` with that schema; OMX-only literal
       types converted per batch. First stage done (2026-11-02,
       `table::csv_schema`): Polars works the types out from the first
       10,000 rows, and a text column whose values there are all ISO dates
@@ -399,6 +399,30 @@ Parquet alone.
       share that schema. Polars' `try_parse_dates` was the first try and
       took 520 ms over the head alone. Still to do: `Datum::read`'s types
       (`20%`, `0x1F`, durations), and a cell that does not parse reported
+
+      **Closed 2026-11-08.** Probing what `Datum::read` makes of a CSV cell
+      against what a table made of the same column (`differential.rs`)
+      found, and fixed, in `csv_schema` and `decimal_columns`: decimals
+      (`1.50`, exact), percentages (`20%`, exact, marked in the copy), hex
+      (`0x1F` shown lower case), times of day (`10:30`, `23:59:59.5`, as
+      `Time`), ISO durations (`PT1H30M`, `P1D`, as `Duration`), whole
+      numbers with underscores (`1_000`) and booleans (only `true` and
+      `false`; Polars read `TRUE` too, an import does not). Each applies to
+      a column whose head (10,000 rows) is all of that kind, and a value
+      further down that is not fails the copy, which is then worked out
+      again from every row as Polars reads it (text where it does not
+      fit), so no cell is lost or changed; a column of an import that mixes
+      literals and text shows each literal as the value it is, and a table
+      shows the text as written. That fallback is also the answer to "a cell
+      that does not parse is reported": none is dropped, so none needs
+      saying. Left as they are, held by `what_a_table_and_an_import_still_read_differently`:
+      a date and time with a space (`2024-03-05 10:00:00`) is a `Datetime`
+      in a table and text to an import, which only knows the `T`; octal and
+      binary (`0o17`, `0b101`) show the same and are text in a table; and
+      fractions (`1/2`) stay text (6.2). One late bad value in any column
+      sends the whole file back to Polars' reading, converted columns
+      included; a per-column fallback would keep the rest
+
 - [x] 3.3 `xlsx` and `json` building a `Series` per column directly, with no
       `Datum`; D154 for column-wide formulas
 
