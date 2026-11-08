@@ -661,7 +661,7 @@ Parquet alone.
       (`import_of_a_big_csv_...`, `..._json_...`, `..._workbook_of_values_...`)
       pass: each refuses, prints the `view` lines, and the lines read through
       copies
-- [ ] 4.4 The inline writer takes a frame, and `Grid`/`Datum` are deleted,
+- [x] 4.4 The inline writer takes a frame, and `Grid`/`Datum` are deleted,
       only once every `examples/*.expected` and the interop tests are
       byte-identical. Where they are not (a column's scale, mixed-type
       columns, the text of a literal), the owner decides before this goes in
@@ -702,6 +702,9 @@ Parquet alone.
       7. *Names*: an import turns a header into an identifier with a notice;
          a table keeps the file's own names and reaches an odd one with
          `from`.
+
+      **Superseded, not built (owner, 2026-11-08):** the importer and
+      `Grid`/`Datum` stay; the differential is the guard.
 
       My recommendation: do not build 4.4. Items 2, 3 and 5 are losses for the
       small, editable files the inline path exists for, and 5 alone stops
