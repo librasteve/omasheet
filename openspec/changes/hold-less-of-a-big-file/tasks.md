@@ -145,10 +145,32 @@ size, and each with its *before* already measured and pinned by a test.
       again as it scrolls. `doc.rs`'s `a_paged_table_shows_what_a_held_one_does`
       holds a paged table and a view of it to the held ones: blocks, the
       summary, a filter and a sort
-- [ ] 3.3 The timing harness again: the snapshot was 1,604.8 ms of a
+- [x] 3.3 The timing harness again: the snapshot was 1,604.8 ms of a
       4,138.6 ms rebuild at a million rows, and 819.5 of 1,836.0 where
       every column lowers. Both figures are `add-columnar-core` task 7.3's,
       taken on this machine, and this is what they are measured against
+      Done 2026-11-08, with a harness of its own,
+      `a_paged_table_rebuild_against_the_inline_one` in `timings.rs`: the
+      shape of `budget.omx` (a text column, two whole numbers, and three
+      calculated columns, one of them a division) as a Parquet table, opened
+      as the app opens it. Release, this machine, the quickest of three,
+      milliseconds:
+
+      | rows | open, rebuilt | a screen of 40 rows | add a formula column |
+      |---|---|---|---|
+      | 10 | 0.7 | 0.0 | 0.2 |
+      | 10³ | 3.7 | 0.0 | 4.1 |
+      | 10⁵ | 42.7 | 0.1 | 43.3 |
+      | 10⁶ | 412.8 | 0.1 | 418.3 |
+
+      Against the same shape inline, which the same machine and day gave at a
+      million rows (`where_the_time_goes`): a rebuild of 4,662.6 ms with the
+      `Summary` sheet, 2,449.5 where every column lowers, and a snapshot of
+      1,537.4 ms and 797.8. The snapshot of the table is a screen, 0.1 ms,
+      and does not grow with the rows; what is left of a rebuild is the
+      lowered columns' own run (the 1M-row `Profit`, `Tax` and `Margin`),
+      which is why it still grows. Ten times quicker than the inline sheet,
+      and the baseline's 1,604.8 ms of snapshot is gone for a table
 - [x] 3.4 Scrolling a million-row table in the app, which is the one test
       of this that is not a number
       Done by hand, 2026-11-04 (owner).

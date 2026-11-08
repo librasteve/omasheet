@@ -1172,3 +1172,80 @@ fn an_edit_over_a_big_table_reads_no_column_again() {
     }
     println!("\nmilliseconds, one run each, page cache warm\n");
 }
+
+/// `hold-less-of-a-big-file` 3.3: the rebuild of a table of `budget`'s
+/// shape, a Parquet file and three calculated columns, against the same rows
+/// written inline, which `where_the_time_goes` measures. The snapshot of
+/// the table is the rows on the screen (D80), so it should not grow with
+/// the rows; the inline sheet's is every cell of every column.
+///
+/// ```text
+/// cargo test -p omasheet-engine --test timings --release -- --ignored --nocapture a_paged_table_rebuild
+/// ```
+#[test]
+#[ignore = "a measurement, not an assertion: run it in release with --ignored --nocapture"]
+fn a_paged_table_rebuild_against_the_inline_one() {
+    use omasheet_engine::Document;
+    use polars::prelude::*;
+    const SCREEN: usize = 40;
+    let names = omasheet_engine::datefmt::Names::default();
+    let style = omasheet_engine::omx::date::Style::ISO;
+    let dir = std::env::temp_dir().join(format!("omasheet-paged-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a directory");
+    println!("\n{:>9}  {:<22} {:>9}  note", "rows", "step", "time ms");
+    for rows in ROWS {
+        let month: Vec<&str> = (0..rows)
+            .map(|r| ["Jan", "Feb", "Mar", "Apr", "May", "Jun"][r % 6])
+            .collect();
+        let revenue: Vec<i64> = (0..rows).map(|r| 10_000 + (r % 997) as i64 * 13).collect();
+        let cost: Vec<i64> = (0..rows).map(|r| 6_000 + (r % 89) as i64 * 7).collect();
+        let mut frame =
+            df!["Month" => month, "Revenue" => revenue, "Cost" => cost].expect("a frame");
+        let path = dir.join(format!("sales{rows}.parquet"));
+        let mut file = std::fs::File::create(&path).expect("a file");
+        ParquetWriter::new(&mut file)
+            .finish(&mut frame)
+            .expect("a written Parquet");
+        let text = format!(
+            "view Sales := dataframe[{}]\n\nMonth : String\nRevenue : Integer\nCost : Integer\n\n\
+             Profit := Revenue - Cost\nTax    := Profit * 20%\nMargin := Profit / Revenue\n",
+            omasheet_engine::omx::lexer::quoted(&path.to_string_lossy())
+        );
+        let best = |f: &dyn Fn() -> Duration| (0..RUNS).map(|_| f()).min().unwrap_or_default();
+        let open = best(&|| {
+            let started = Instant::now();
+            let doc = Document::on_screen(&text, style, names.clone());
+            std::hint::black_box(&doc);
+            started.elapsed()
+        });
+        let doc = Document::on_screen(&text, style, names.clone());
+        let nrows = doc.row_count(0);
+        let screen = best(&|| {
+            let started = Instant::now();
+            std::hint::black_box(doc.rows(0, nrows / 2, SCREEN));
+            started.elapsed()
+        });
+        // A formula column added to the open table: the rebuild an edit pays.
+        let edit = best(&|| {
+            let mut d = Document::on_screen(&text, style, names.clone());
+            let at = d.snapshot().sheets[0].columns.len();
+            let started = Instant::now();
+            let _ = d.insert_computed(0, at, "Extra", "Revenue + Cost");
+            let time = started.elapsed();
+            std::hint::black_box(&d);
+            time
+        });
+        for (step, time, note) in [
+            ("open, rebuilt", open, format!("{nrows} rows")),
+            ("a screen of 40 rows", screen, "from the middle".to_string()),
+            (
+                "add a formula column",
+                edit,
+                "an edit of the open table".to_string(),
+            ),
+        ] {
+            println!("{rows:>9}  {step:<22} {:>9}  {note}", ms(time));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
