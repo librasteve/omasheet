@@ -1,6 +1,6 @@
 # Fruit report
 
-Here are the fruit sales for today ({{ today() }}).
+Here are the fruit sales for {{ today() }}.
 
 ```omx
 sheet Fruit
