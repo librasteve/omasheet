@@ -376,7 +376,7 @@ Parquet alone.
 
 ## 3. One funnel, first stage: big files (D147, D152, D153)
 
-- [ ] 3.1 The reader interface: named `DataFrame`s, plus XLSX formulas.
+- [x] 3.1 The reader interface: named `DataFrame`s, plus XLSX formulas.
       `parquet` is already one
 
       Two readers done, JSON then XLSX (2026-11-07), and the interface is
@@ -399,7 +399,7 @@ Parquet alone.
       share that schema. Polars' `try_parse_dates` was the first try and
       took 520 ms over the head alone. Still to do: `Datum::read`'s types
       (`20%`, `0x1F`, durations), and a cell that does not parse reported
-- [ ] 3.3 `xlsx` and `json` building a `Series` per column directly, with no
+- [x] 3.3 `xlsx` and `json` building a `Series` per column directly, with no
       `Datum`; D154 for column-wide formulas
 
       JSON and XLSX done 2026-11-07 (below), and D154, the formulas of a
@@ -412,8 +412,10 @@ Parquet alone.
       a later row does not fit (a number among whole ones, a key that is new,
       a string among numbers) the types are worked out again from every row
       and it is written again, as a CSV's are. Whole numbers are `Int64`,
-      other numbers `Float64` (not the exact decimals `omasheet import`
-      makes: the same as a CSV copy), `true`/`false` `Boolean`, a string that
+      other numbers `Float64`, except that a number written with digits, a
+      point and digits (to 15 digits) is an exact `Decimal(38, s)`, as
+      `omasheet import` makes it and as a CSV copy now does (2026-11-08;
+      see 6.2), `true`/`false` `Boolean`, a string that
       is an ISO date or date-time in every cell `Date` or `Datetime`, anything
       else text, with a list or an object as its JSON. A key a row lacks is a
       null. Shapes: a list of objects, a list of lists whose first row is the
