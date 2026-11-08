@@ -5737,6 +5737,97 @@ mod tests {
     }
 
     #[test]
+    fn an_aggregate_over_many_row_groups_is_the_one_over_a_single_group_and_holds_no_column() {
+        use polars::prelude::*;
+        let dir = std::env::temp_dir().join(format!("omasheet-stream-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rows = 30_000usize;
+        // Order-sensitive floats with gaps and a NaN, whole numbers with
+        // gaps, and dates, the same in both files.
+        let mut x = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let floats: Vec<Option<f64>> = (0..rows)
+            .map(|i| match i {
+                _ if i % 11 == 0 => None,
+                12_345 => Some(f64::NAN),
+                _ => {
+                    let m = (next() % 1_000_000) as f64 / 7.0;
+                    let e = 10f64.powi((next() % 17) as i32 - 6);
+                    Some(if next() % 2 == 0 { m * e } else { -m * e })
+                }
+            })
+            .collect();
+        let ints: Vec<Option<i64>> = (0..rows)
+            .map(|i| (i % 7 != 0).then(|| (next() % 2_000_000) as i64 - 1_000_000))
+            .collect();
+        let days: Vec<Option<i32>> = (0..rows)
+            .map(|i| (i % 13 != 0).then(|| 18_000 + (next() % 3_000) as i32))
+            .collect();
+        let write = |name: &str, group: usize| {
+            let mut frame = df![
+                "I" => &ints,
+                "F" => &floats,
+                "D" => &days,
+            ]
+            .unwrap();
+            frame = frame
+                .lazy()
+                .with_column(col("D").cast(DataType::Date))
+                .collect()
+                .unwrap();
+            let mut file = std::fs::File::create(dir.join(name)).unwrap();
+            ParquetWriter::new(&mut file)
+                .with_row_group_size(Some(group))
+                .finish(&mut frame)
+                .unwrap();
+        };
+        write("many.parquet", 1_000);
+        write("one.parquet", rows);
+        let text = |file: &str| {
+            format!(
+                "view T := dataframe['{file}']\n\nI : Integer\nF : Float\nD : Date\n\n\
+                 const SumI = T.I.sum()\nconst MeanI = T.I.mean()\nconst MinI = T.I.min()\n\
+                 const MaxI = T.I.max()\nconst CountI = T.I.count()\nconst LenI = T.I.len()\n\
+                 const SumF = T.F.sum()\nconst MeanF = T.F.mean()\nconst MinF = T.F.min()\n\
+                 const MaxF = T.F.max()\nconst CountF = T.F.count()\n\
+                 const MinD = T.D.min()\nconst MaxD = T.D.max()\nconst CountD = T.D.count()\n"
+            )
+        };
+        let run = |file: &str| {
+            let mut doc = Document::from_text(&text(file));
+            doc.set_base(&dir);
+            doc.set_paged_rows(100);
+            doc.set_column_budget(1 << 30);
+            assert!(
+                doc.snapshot().problems.is_empty(),
+                "{:?}",
+                doc.snapshot().problems
+            );
+            let shown: Vec<String> = doc
+                .snapshot()
+                .consts
+                .iter()
+                .map(|c| c.display.clone())
+                .collect();
+            (shown, doc.column_cache())
+        };
+        let (many, many_cache) = run("many.parquet");
+        let (one, one_cache) = run("one.parquet");
+        assert_eq!(many.len(), 14);
+        assert_eq!(many, one, "streamed and whole answers differ");
+        // Streamed, the cache is not asked for the column at all; the file of
+        // one row group is read whole, through it.
+        assert_eq!(many_cache.misses, 0, "no column was read whole: {many_cache:?}");
+        assert!(one_cache.misses > 0, "{one_cache:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_formula_column_over_a_big_table_is_calculated_for_the_rows_shown() {
         use polars::prelude::*;
         let dir = std::env::temp_dir().join(format!("omasheet-defer-{}", std::process::id()));

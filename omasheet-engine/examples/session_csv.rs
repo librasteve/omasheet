@@ -52,8 +52,16 @@ fn memory_mib() -> (f64, f64) {
 }
 
 fn main() {
-    let Some(csv) = std::env::args().nth(1) else {
-        eprintln!("usage: session_csv <file.csv>");
+    // As the app does it: the copy is made by this program run again, unless
+    // `--here` says to make it in this process.
+    if let Some(code) = omasheet_engine::table::run_child() {
+        std::process::exit(code);
+    }
+    if !std::env::args().any(|a| a == "--here") {
+        omasheet_engine::table::copy_in_children();
+    }
+    let Some(csv) = std::env::args().skip(1).find(|a| a != "--here") else {
+        eprintln!("usage: session_csv [--here] <file.csv>");
         std::process::exit(2);
     };
     let csv = std::fs::canonicalize(csv).expect("a file");

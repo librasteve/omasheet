@@ -705,7 +705,7 @@ Parquet alone.
       every digit; an edit with all four on the sheet 7–18 ms. The first
       time is therefore about 90 ms a column on the thread that draws, not
       off it, and with 2.1 superseded that is what stays
-- [ ] 5.4 Peak memory over a session that sums every numeric column:
+- [x] 5.4 Peak memory over a session that sums every numeric column:
       ≤ 150 MB + the columns' Arrow size, including during conversion
 
       Measured 2026-11-07 by `session_csv` (peak memory footprint, which is
@@ -783,6 +783,31 @@ Parquet alone.
       first sums (909 against 699 after), and the copy leaves ~450 MiB
       that the reads reuse. A later sum of the same column with another
       function reads it again (~90 ms)
+      **Streaming scan built (D155), 2026-11-08.** An aggregate (sum,
+      mean, min, max, count, len) over a file's own column of more than one
+      row group, not held and not in the cache, is read a row group at a
+      time, eight at once on threads: Polars' aggregate runs over each group
+      and the partials are put together by the same aggregate (a sum of
+      sums, the least of the least; `run_agg`'s guards and the decimal
+      bound then run over the combined row, unchanged). A float sum or mean
+      carries its running total from group to group in row order, so it is
+      the walk's answer to the last bit. A file of one row group is read
+      whole as before (a slice would decode the whole group every time).
+      Test: `an_aggregate_over_many_row_groups_is_the_one_over_a_single_group_and_holds_no_column`
+      (ints, floats with gaps and a NaN, dates, 14 aggregates, 30 groups
+      against 1: identical displays, the cache never asked). 1.1 GB,
+      `session_csv`, copy in-process: sums 355 -> 560-810 ms (the machine
+      was noisy; read per group, not whole), after the sums 699 -> 613-650
+      MiB, session peak 909 -> **772-809 MiB** against 794. What is left is
+      the ~480 MiB the copy leaves in the process plus the added formula
+      column (~155 MiB): with the copy in a child (reverted, in `1f82fb9`)
+      the baseline would be ~10 MiB
+      **Child copy put back, 2026-11-08** (owner's go-ahead; the code of the
+      first attempt, `OMASHEET_COPY_CHILD`, `POLARS_MAX_THREADS=2`,
+      `omasheet_cli::main`, `session_csv --here` for in-process).
+      1.1 GB, `session_csv`: copy 3.7-4.5 s, 10 MiB after it; after the
+      sums 217 MiB; session peak **380 MiB** (target 794), twice over;
+      sums 400 ms, edit with sums 7 ms, answers identical. **5.4 met**
 - [x] 5.5 By hand in the app: open, scroll, jump, edit, and confirm that the
       window never stops responding
       Done by hand, 2026-11-04 (owner).

@@ -15,3 +15,4 @@ coinvent-omasheet-format-chatgpt.md
 !/demo_data/README.md
 !/demo_data/fetch.sh
 !/demo_data/*.omx
+*.swp

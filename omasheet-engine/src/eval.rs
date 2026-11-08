@@ -43,6 +43,10 @@ use std::rc::Rc;
 /// shown, on each side (`open-a-big-csv` 1.3). A screen is a few dozen rows
 /// and a step of a scroll a few more, so this is many hundreds of frames
 /// of scrolling in either direction before the next read.
+/// Row groups read at once for an aggregate over a column too tall to hold
+/// (D155): 8 of 262,144 rows is 2M rows of one column at a time.
+const BATCH: usize = 8;
+
 const READ_AHEAD: usize = 8_192;
 
 /// The rows past the read-ahead that a column to be deferred is tried on:
@@ -1352,6 +1356,210 @@ impl<'p> Engine<'p> {
     /// of rows, a vector, several arguments together, or a block all go to
     /// the engine. Those are section 6's remaining tasks rather than this
     /// one's.
+    /// The row groups of column `c` of sheet `t`, as a start and a length,
+    /// where the column is to be read a group at a time for an aggregate
+    /// (D155): it is a file's own column of more than one row group, which
+    /// nothing holds and the document's cache does not have, and it has the
+    /// rows the sheet has. Reading it whole would hold a column that the
+    /// answer to the aggregate then makes of no use.
+    fn stream_groups(&self, t: usize, c: usize) -> Option<Vec<(usize, usize)>> {
+        let col = &self.prog.sheets[t].cols[c];
+        if !matches!(col.kind, ColKind::Frame)
+            || col.zone.is_some()
+            || self.held.borrow()[t][c].is_some()
+            || self.cells.borrow()[t][c].is_some()
+        {
+            return None;
+        }
+        let Some(
+            held @ Held::Column {
+                path,
+                name,
+                whole: None,
+                cache: Some(cache),
+            },
+        ) = self.tables.get(t, c)
+        else {
+            return None;
+        };
+        let identity = crate::table::identity(path)?;
+        if cache.holds(path, name, &identity) {
+            return None;
+        }
+        let groups = held.groups()?;
+        (groups.iter().map(|g| g.1).sum::<usize>() == self.prog.sheets[t].nrows).then_some(groups)
+    }
+
+    /// One row group of column `c` of sheet `t`, read now.
+    fn read_group(&self, t: usize, c: usize, (start, len): (usize, usize)) -> Option<PlColumn> {
+        let column = self.tables.get(t, c)?.read_range(start, len)?;
+        (column.len() == len).then(|| {
+            *self.rows_read.borrow_mut() += len;
+            column
+        })
+    }
+
+    /// `groups` of column `c` of sheet `t`, each read on a thread of its
+    /// own, in the order given. They are taken a batch at a time, so the most
+    /// held is a batch of row groups, a few MB each.
+    fn read_groups(&self, t: usize, c: usize, groups: &[(usize, usize)]) -> Option<Vec<PlColumn>> {
+        let held = self.tables.get(t, c)?;
+        let read = |&(start, len): &(usize, usize)| {
+            held.read_range(start, len).filter(|col| col.len() == len)
+        };
+        let out: Vec<Option<PlColumn>> = if groups.len() == 1 {
+            vec![read(&groups[0])]
+        } else {
+            std::thread::scope(|scope| {
+                let jobs: Vec<_> = groups
+                    .iter()
+                    .map(|group| scope.spawn(move || read(group)))
+                    .collect();
+                jobs.into_iter()
+                    .map(|job| job.join().ok().flatten())
+                    .collect()
+            })
+        };
+        let out: Option<Vec<PlColumn>> = out.into_iter().collect();
+        if let Some(out) = &out {
+            *self.rows_read.borrow_mut() += out.iter().map(|col| col.len()).sum::<usize>();
+        }
+        out
+    }
+
+    /// The one-row frame `select` gives over the whole of a column read a
+    /// group at a time: each group's, then those put together as the
+    /// aggregate puts them together (a sum of sums, the least of the least
+    /// ones, a count of counts), so the plan that follows is the one for a
+    /// column read whole.
+    #[allow(clippy::too_many_arguments)]
+    fn fold_groups(
+        &self,
+        t: usize,
+        c: usize,
+        groups: &[(usize, usize)],
+        first: PlColumn,
+        select: &[Expr],
+        func: Func,
+        dtype: &DataType,
+    ) -> polars::prelude::PolarsResult<DataFrame> {
+        use polars::prelude::{col, polars_err};
+        let mut parts: Option<DataFrame> = None;
+        let mut first = Some(first);
+        for batch in groups.chunks(BATCH) {
+            // The first group is already read, and the rest of its batch
+            // is read beside it.
+            let mut columns = Vec::with_capacity(batch.len());
+            let rest = match first.take() {
+                Some(column) => {
+                    columns.push(column);
+                    &batch[1..]
+                }
+                None => batch,
+            };
+            if !rest.is_empty() {
+                columns.extend(
+                    self.read_groups(t, c, rest).ok_or_else(
+                        || polars_err!(ComputeError: "a row group could not be read"),
+                    )?,
+                );
+            }
+            for column in columns {
+                let part = DataFrame::new(vec![column])?
+                    .lazy()
+                    .select(select)
+                    .collect()?;
+                match &mut parts {
+                    None => parts = Some(part),
+                    Some(all) => {
+                        all.vstack_mut(&part)?;
+                    }
+                }
+            }
+        }
+        self.reads.borrow_mut().push((t, c));
+        let parts = parts.ok_or_else(|| polars_err!(ComputeError: "no row groups"))?;
+        let agg = match func {
+            Func::Min => col("agg").min(),
+            Func::Max if lower::float(dtype) => col("agg").nan_max(),
+            Func::Max => col("agg").max(),
+            _ => col("agg").sum(),
+        };
+        let mut combine = vec![agg.alias("agg")];
+        for (name, put) in [
+            ("number", col("number").any(true)),
+            ("count", col("count").sum()),
+            ("lo", col("lo").min()),
+            ("hi", col("hi").max()),
+        ] {
+            if parts.get_column_names().iter().any(|n| n.as_str() == name) {
+                combine.push(put.alias(name));
+            }
+        }
+        parts.lazy().select(combine).collect()
+    }
+
+    /// The total or mean of a column of floats read a group at a time, in
+    /// the order and from the start [`Engine::float_total`] has, so that the
+    /// answer is the same to the last bit: the running total is carried from
+    /// one group to the next.
+    fn stream_float(&self, func: Func, args: &[Node], span: Span) -> Option<R> {
+        use polars::prelude::DataType;
+        if !matches!(func, Func::Sum | Func::Mean) {
+            return None;
+        }
+        let [arg] = args else {
+            return None;
+        };
+        let Ir::Column { sheet: t, col: c } = arg.kind else {
+            return None;
+        };
+        if self.prog.sheets[t].cols[c].ty != S::Float {
+            return None;
+        }
+        let groups = self.stream_groups(t, c)?;
+        let (mut total, mut present) = (0.0_f64, 0usize);
+        for batch in groups.chunks(BATCH) {
+            for column in self.read_groups(t, c, batch)? {
+                let series = column.as_materialized_series();
+                match series.dtype() {
+                    DataType::Float64 => {
+                        for chunk in series.f64().ok()?.downcast_iter() {
+                            for x in chunk.iter().flatten() {
+                                total += *x;
+                                present += 1;
+                            }
+                        }
+                    }
+                    DataType::Float32 => {
+                        for chunk in series.f32().ok()?.downcast_iter() {
+                            for x in chunk.iter().flatten() {
+                                total += f64::from(*x);
+                                present += 1;
+                            }
+                        }
+                    }
+                    // Anything else is for the walk.
+                    _ => return None,
+                }
+            }
+        }
+        if present == 0 {
+            return None;
+        }
+        self.reads.borrow_mut().push((t, c));
+        self.float_totals.set(self.float_totals.get() + 1);
+        Some(match func {
+            Func::Sum => Ok(Value::Float(total)),
+            _ => arith(
+                BinOp::Div,
+                &Value::Float(total),
+                &Value::int(present as i64),
+            )
+            .or_else(|m| fail(span, m)),
+        })
+    }
+
     fn run_agg(&self, func: Func, args: &[Node]) -> Option<Value> {
         if self.options.lowering == Lowering::Never {
             return None;
@@ -1373,7 +1581,14 @@ impl<'p> Engine<'p> {
                 .push((t, c, Attempt::Refused));
             None
         };
-        let Some(column) = self.pl_column(t, c) else {
+        // A column of a file of many row groups, not held and not wanted
+        // again, is taken a group at a time (D155), so what is held is a
+        // group and not the column.
+        let groups = self.stream_groups(t, c);
+        let Some(column) = (match &groups {
+            Some(groups) => self.read_group(t, c, groups[0]),
+            None => self.pl_column(t, c),
+        }) else {
             return refused(self);
         };
         let (name, dtype) = (column.name().clone(), column.dtype().clone());
@@ -1424,8 +1639,15 @@ impl<'p> Engine<'p> {
             select.push(lo.alias("lo"));
             select.push(hi.alias("hi"));
         }
-        let frame = DataFrame::new(vec![column]).ok()?;
-        let Ok(out) = frame.lazy().select(select).collect() else {
+        let out = match &groups {
+            None => DataFrame::new(vec![column])
+                .ok()?
+                .lazy()
+                .select(select)
+                .collect(),
+            Some(groups) => self.fold_groups(t, c, groups, column, &select, func, &dtype),
+        };
+        let Ok(out) = out else {
             self.aggregates.borrow_mut().push((t, c, Attempt::Failed));
             return None;
         };
@@ -3104,6 +3326,9 @@ impl<'p> Engine<'p> {
         // An aggregate over a whole column the dataframe holds is Polars'
         // to take, which is a pass over a column rather than a value read
         // per row. Anything else falls through to the engine below.
+        if let Some(done) = self.stream_float(func, args, span) {
+            return done;
+        }
         if let Some(value) = self.run_agg(func, args) {
             return Ok(value);
         }
