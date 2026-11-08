@@ -2916,18 +2916,10 @@ impl<'p> Engine<'p> {
                 let b = self.eval(base, fr)?;
                 self.index(b, rows, cols, span, fr)
             }
-            Ir::Field { base, col } => match self.eval(base, fr)? {
-                Value::Sheet(v) => self.column(v.sheet, *col, &v.rows),
-                Value::Row(r) => self.cell(r.sheet, *col, r.row),
-                Value::Null => Ok(Value::Null),
-                other => fail(
-                    span,
-                    format!(
-                        "a column can be read from a sheet or row, not {}",
-                        other.kind()
-                    ),
-                ),
-            },
+            Ir::Field { base, col } => {
+                let base = self.eval(base, fr)?;
+                self.field(base, *col, span)
+            }
             Ir::Call(func, args) => self.call(*func, args, span, fr),
             Ir::Apply { name, args, body } => {
                 let mut values = Vec::with_capacity(args.len());
@@ -2965,6 +2957,22 @@ impl<'p> Engine<'p> {
                 },
                 other => Ok(other),
             },
+        }
+    }
+
+    /// Column `col` of what `base` came to: of a sheet's rows, or of a row.
+    fn field(&self, base: Value, col: usize, span: Span) -> R {
+        match base {
+            Value::Sheet(v) => self.column(v.sheet, col, &v.rows),
+            Value::Row(r) => self.cell(r.sheet, col, r.row),
+            Value::Null => Ok(Value::Null),
+            other => fail(
+                span,
+                format!(
+                    "a column can be read from a sheet or row, not {}",
+                    other.kind()
+                ),
+            ),
         }
     }
 
@@ -3808,7 +3816,26 @@ impl<'p> Engine<'p> {
                         items.push(column);
                         continue;
                     }
-                    match self.eval(arg, fr)? {
+                    // How many rows of a file's column a selection keeps is
+                    // the rows it keeps: `len` counts what is empty too, so
+                    // the values are not read to be counted. A column that
+                    // is calculated is read, since its cells can fail.
+                    let value = match &arg.kind {
+                        Ir::Field { base, col } if func == Func::Len && args.len() == 1 => {
+                            let base = self.eval(base, fr)?;
+                            if let Value::Sheet(v) = &base
+                                && matches!(
+                                    self.prog.sheets[v.sheet].cols[*col].kind,
+                                    ColKind::Frame
+                                )
+                            {
+                                return Ok(Value::int(v.rows.len() as i64));
+                            }
+                            self.field(base, *col, arg.span)?
+                        }
+                        _ => self.eval(arg, fr)?,
+                    };
+                    match value {
                         Value::Vector(v) => items.push(Items::Many(v)),
                         Value::Sheet(v) if func == Func::Len && args.len() == 1 => {
                             return Ok(Value::int(v.rows.len() as i64));

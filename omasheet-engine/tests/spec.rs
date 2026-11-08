@@ -3502,6 +3502,41 @@ Same := Note == 'x'
     }
 }
 
+/// `len` of a column of a selection is the rows the selection keeps, and the
+/// same count whether or not the column's values are read to be counted.
+#[test]
+fn len_of_a_selected_column_is_the_rows_kept() {
+    let dir = Some("../examples");
+    for (expr, answer) in [
+        ("Passengers[; Pclass == 1].Name.len()", "216"),
+        ("Passengers[; Pclass == 3].Age.len()", "487"),
+        ("Passengers[; Pclass == 9].Name.len()", "0"),
+        ("Passengers[; Age > 60].Fare.len()", "26"),
+        ("Passengers.Name.len()", "887"),
+    ] {
+        let ran = both_ways(TABLE, expr, dir);
+        assert_eq!(ran.shown, answer, "{expr}");
+    }
+    // Against the count that does read the values, which has no empty cells
+    // to differ by in these columns.
+    for (counted, read) in [
+        (
+            "Passengers[; Age > 60].Fare.len()",
+            "Passengers[; Age > 60].Fare.count()",
+        ),
+        (
+            "Passengers[; Pclass == 3].Age.len()",
+            "Passengers[; Pclass == 3].Name.count()",
+        ),
+    ] {
+        assert_eq!(
+            both_ways(TABLE, counted, dir).shown,
+            both_ways(TABLE, read, dir).shown,
+            "{counted}"
+        );
+    }
+}
+
 #[test]
 fn unselected_columns_are_not_read() {
     // A `table`'s columns are a plan each, and nothing of the file is read
@@ -3533,14 +3568,10 @@ fn unselected_columns_are_not_read() {
     assert_eq!(open(None), [], "opened and calculated, nothing asked");
     // One column summed: that column, and none of the other seven.
     assert_eq!(open(Some("Passengers.Fare.sum()")), [(0, 5)]);
-    // A condition over one column and a count of another: those two of
-    // the eight. `Name` is read because a column selection answers with a
-    // vector of its values, which `len` then counts — counting the rows
-    // kept without reading them is work for another day.
-    assert_eq!(
-        open(Some("Passengers[; Pclass == 1].Name.len()")),
-        [(0, 1), (0, 2)]
-    );
+    // A condition over one column and a count of another: only the one the
+    // condition reads. The rows kept are counted, and `Name`'s values, which
+    // `len` would only count, are not read (hold-less task 2.2).
+    assert_eq!(open(Some("Passengers[; Pclass == 1].Name.len()")), [(0, 1)]);
 }
 
 #[test]

@@ -105,9 +105,18 @@ size, and each with its *before* already measured and pinned by a test.
       145 → 15 MiB each. Over a month of NYC taxi (4.09M rows), release CLI:
       a float `mean` 1.48 s, 634 MB → 0.22 s, 102 MB; `median` 2.33 s,
       634 MB → 1.60 s, 319 MB (it sorts the values, so it keeps them)
-- [ ] 2.2 `Passengers[; Pclass == 1].Name.len()` counts without reading
+- [x] 2.2 `Passengers[; Pclass == 1].Name.len()` counts without reading
       `Name`'s values, which `spec.rs`'s `unselected_columns_are_not_read`
       records as reading them today
+      Done 2026-11-08: `len` of a file's column over a selection returns the
+      rows the selection keeps, without asking for the column
+      (`Engine::field`, factored out of `Ir::Field`, and the `Len` arm of
+      `call_uncalculated`). Only a file's own column: a calculated one is
+      still read, since its cells can fail and `len` would have said so.
+      `unselected_columns_are_not_read` now expects `[(0, 1)]` where it
+      expected `[(0, 1), (0, 2)]`; `len_of_a_selected_column_is_the_rows_kept`
+      checks the counts (216, 487, 0, 26) and against `count` of a column
+      read. Workspace tests, clippy and fmt clean
 - [ ] 2.3 A sum over a selection taken by Polars — `add-columnar-core`
       task 6.3's last bullet, which left it on the engine because a
       selection answers with a vector
