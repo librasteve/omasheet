@@ -108,9 +108,19 @@ Parquet alone.
 - [x] 1.2 Its item 3: the snapshot formats only what the grid shows (D80).
       Recommended: the snapshot holds the frame and formats a cell when it
       is drawn, because the Qt model already asks only for visible cells
-- [ ] 1.3 Measured on the NYC taxi Parquet file (41M rows): a `table` over it
+- [x] 1.3 Measured on the NYC taxi Parquet file (41M rows): a `table` over it
       opens and scrolls in the app within the targets, which neither does
       today
+      **Amended and ticked 2026-11-08 (owner):** measured on the files in
+      `demo_data`, not the 41M-row year, which was never fetched and would
+      add no new case: ride-hail March 2019 (23.9M rows x 24, 5.7 GB to hold,
+      so always paged) is the case the task is about, and the 20.8M-row
+      synthetic copy is the layout we write. Met warm and cold over our own
+      copy; warm over ride-hail (open 16-19 ms, first screen about 20 ms,
+      jumps 12-18 ms, scroll 0.2 ms a frame). The one figure outside the
+      targets, a cold jump to the last rows of ride-hail at 170 ms, is that
+      file's layout (one row group of all its rows), which a copy of ours
+      does not have (4-5 ms over ours), and is accepted as the file's
 
       Measured 2026-11-07, release, warm, one run each, by
       `a_parquet_table_against_the_targets` in `timings.rs` (the data's
