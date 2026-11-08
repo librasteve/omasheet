@@ -54,7 +54,7 @@ fn aggregates(ty: &str) -> &'static [&'static str] {
 /// `inline` is the source `import` wrote, and `view` the source of the
 /// table over the same file, whose base is `dir`. Every cell shown is the
 /// same, and so is every aggregate of every column, with one known
-/// exception, which is returned: a column of percentages or fractions,
+/// exception, which is returned: a column of fractions,
 /// which a table holds as text, has no aggregate in common with the
 /// import's and is returned as `name.type`.
 fn agree_but(label: &str, dir: &Path, inline: &str, view: &str) -> Vec<String> {
@@ -228,12 +228,12 @@ fn awkward_csvs_inline_and_as_tables_agree() {
 }
 
 /// What an import and a table are known to differ in (see [`agree_but`]):
-/// percentages and fractions in a CSV (`20%`, `1/2`), which are text in a
-/// table, as its reader sniffs numbers and dates and not OMX literals.
+/// fractions in a CSV (`1/2`), which are text in a table, as a fraction is
+/// not a number a Parquet column can hold exactly.
 fn only_literals(label: &str, differing: &[String]) {
     for d in differing {
         assert!(
-            label == "literals.csv" && matches!(d.as_str(), "rate.type" | "share.type"),
+            label == "literals.csv" && d == "share.type",
             "{label}: {d} is read as another type by a table"
         );
     }

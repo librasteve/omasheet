@@ -822,13 +822,14 @@ Parquet alone.
 
 - [ ] 6.1 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
       -- -D warnings`, `cargo test --workspace`
-- [ ] 6.2 The differential: for a corpus of CSV, XLSX and JSON files (quoted
+- [x] 6.2 The differential: for a corpus of CSV, XLSX and JSON files (quoted
       newlines, CRLF, a BOM, no final newline, empty cells, OMX-only
       literals), the inline sheet and the table over the converted copy
       answer the same for every column and every aggregate; and every
       aggregate gives the same answer on the streaming engine as on the
       in-memory one (D155), including NaN, null, empty and decimal columns
-      Built 2026-11-08, not ticked: `omasheet-interop/tests/differential.rs`
+      Built and ticked 2026-11-08, with fractions (`1/2`) in a CSV the one
+      accepted difference (text in a table): `omasheet-interop/tests/differential.rs`
       (8 awkward CSVs: plain, CRLF, BOM, no final newline, quoted newlines,
       empty cells, percent/fraction literals, mixed; a 3,000-row CSV, a
       2,000-row JSON and a 2,000-row workbook sheet with gaps, dates and
@@ -860,8 +861,19 @@ Parquet alone.
       `SumPrice` is now `5221245285.26`, exact, where the float sum was
       `5221245285.26108`. (2) a CSV column of percentages or fractions
       (`20%`, `1/2`) is a number inline and text in a table (3.2's OMX
-      literals), so it has no sum or mean there. The differential holds that
-      as the only difference allowed, and fails if a second appears. Hex
+      literals), so it has no sum or mean there. **Percentages fixed,
+      2026-11-08**: a CSV column whose head values are all `n%` is made the
+      exact decimal each is (`7.5%` is `0.075`, two places more than the
+      text), and the copy's file-level metadata names such columns
+      (`omasheet.percent`, one to a line), which `fill` reads: a table over
+      the copy types them `Percent` where its text declares nothing, so the
+      app and the printed `view` lines show `20%`, and a declared `Decimal`
+      or `Percent` takes them (exact types are assignable). A value further
+      down that is not a percentage fails the copy, which is worked out
+      again from every row, as text. Fractions (`1/2`) remain text in a
+      table: a fraction is not a number a Parquet column holds exactly. The
+      differential holds that as the only difference allowed, and fails if
+      a second appears. Hex
       (`0x1F`) showed differently (`0x1f` inline, `0x1F` as a table);
       **fixed 2026-11-08 for a CSV**: a column whose head values are all
       `0x` and hex digits has each such value lowercased in the copy (a text

@@ -277,9 +277,20 @@ fn fill(
         ));
         return;
     };
+    // A copy marks the columns that are percentages: decimals, shown as such.
+    let percents = percent_columns(path);
     let held: Vec<(String, S)> = schema
         .iter()
-        .filter_map(|(name, dtype)| type_of(dtype).map(|ty| (name.to_string(), ty)))
+        .filter_map(|(name, dtype)| {
+            type_of(dtype).map(|ty| {
+                let ty = if percents.iter().any(|p| p == name.as_str()) {
+                    S::Percent
+                } else {
+                    ty
+                };
+                (name.to_string(), ty)
+            })
+        })
         .collect();
 
     // A table with no schema lines takes its columns from the file, so that
@@ -997,7 +1008,7 @@ fn csv_head(path: &Path) -> Result<Vec<u8>, String> {
 /// every value of which in the head is an ISO date, or an ISO date and
 /// time, is read as one. Polars' own `try_parse_dates` would do that too,
 /// but takes half a second over the head of a file of seven columns.
-fn csv_schema(head: &[u8]) -> Result<(SchemaRef, Decimals, Vec<PlSmallStr>), String> {
+fn csv_schema(head: &[u8]) -> Result<CsvTypes, String> {
     let frame = CsvReadOptions::default()
         .with_has_header(true)
         .with_infer_schema_length(Some(INFER_ROWS))
@@ -1020,6 +1031,8 @@ fn csv_schema(head: &[u8]) -> Result<(SchemaRef, Decimals, Vec<PlSmallStr>), Str
     let mut schema = (**frame.schema()).clone();
     let mut decimals = Vec::new();
     let mut hex = Vec::new();
+    let mut percents = Vec::new();
+    let percent = regex::Regex::new(r"^-?\d+(\.(\d+))?%$").unwrap();
     for column in frame.get_columns() {
         if matches!(column.dtype(), DataType::Float64)
             && let Ok(words) = texts
@@ -1048,6 +1061,28 @@ fn csv_schema(head: &[u8]) -> Result<(SchemaRef, Decimals, Vec<PlSmallStr>), Str
         let Ok(texts) = column.str() else {
             continue;
         };
+        // A column of nothing but percentages (`7.5%`) is the decimals they
+        // are (`0.075`), marked in the file so that it is shown as they are.
+        if texts.null_count() < texts.len() {
+            let mut places = Some(0usize);
+            for word in texts.into_iter().flatten() {
+                match percent.captures(word) {
+                    Some(c) => {
+                        places = places.map(|p| p.max(c.get(2).map_or(0, |m| m.len())));
+                    }
+                    None => {
+                        places = None;
+                        break;
+                    }
+                }
+            }
+            if let Some(places) = places
+                && places + 2 <= MOST_PLACES
+            {
+                percents.push((column.name().clone(), places));
+                continue;
+            }
+        }
         // A column of nothing but hexadecimal numbers is shown in lower
         // case, as an import shows them.
         if texts.null_count() < texts.len() && texts.into_iter().flatten().all(is_hex) {
@@ -1066,13 +1101,58 @@ fn csv_schema(head: &[u8]) -> Result<(SchemaRef, Decimals, Vec<PlSmallStr>), Str
         };
         schema.with_column(column.name().clone(), dtype);
     }
-    Ok((std::sync::Arc::new(schema), decimals, hex))
+    Ok(CsvTypes {
+        schema: std::sync::Arc::new(schema),
+        decimals,
+        percents,
+        hex,
+    })
 }
 
 /// Whether `s` is a hexadecimal number as an import reads one: `0x1F`.
 fn is_hex(s: &str) -> bool {
     s.strip_prefix("0x")
         .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// What the head of a CSV says its columns are, beyond what Polars infers:
+/// the schema to read it with, the columns made decimals, the ones that are
+/// percentages (made decimals too, and marked), and the hexadecimal ones.
+struct CsvTypes {
+    schema: SchemaRef,
+    decimals: Decimals,
+    percents: Decimals,
+    hex: Vec<PlSmallStr>,
+}
+
+/// The key of the file-level metadata that names, one to a line, the columns
+/// of a copy that are percentages: a table shows them as such.
+const PERCENT_KEY: &str = "omasheet.percent";
+
+/// The columns of the copy at `path` that are marked as percentages.
+fn percent_columns(path: &Path) -> Vec<String> {
+    let Ok(file) = open(path) else {
+        return Vec::new();
+    };
+    let mut reader = ParquetReader::new(file);
+    let Ok(meta) = reader.get_metadata() else {
+        return Vec::new();
+    };
+    meta.key_value_metadata
+        .iter()
+        .flatten()
+        .find(|kv| kv.key == PERCENT_KEY)
+        .and_then(|kv| kv.value.clone())
+        .map(|v| v.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+/// The metadata that marks `percents` as percentages, for the writer.
+fn percent_marks(percents: &Decimals) -> Option<KeyValueMetadata> {
+    (!percents.is_empty()).then(|| {
+        let names: Vec<&str> = percents.iter().map(|(n, _)| n.as_str()).collect();
+        KeyValueMetadata::from_static(vec![(PERCENT_KEY.to_string(), names.join("\n"))])
+    })
 }
 
 /// The most places after the point a column read as exact decimals has.
@@ -1085,7 +1165,8 @@ type Decimals = Vec<(PlSmallStr, usize)>;
 /// value with more places than the scale the head gave is turned into text
 /// that is not a number, so that the conversion fails and the file is
 /// worked out again from every row, rather than the digits being dropped.
-fn decimal_columns(frame: LazyFrame, decimals: &Decimals, hex: &[PlSmallStr]) -> LazyFrame {
+fn decimal_columns(frame: LazyFrame, types: &CsvTypes) -> LazyFrame {
+    let (decimals, hex) = (&types.decimals, &types.hex);
     // Only a value that is a hexadecimal number is changed, so a text further
     // down the column is left as it is.
     let lowered = hex.iter().map(|name| {
@@ -1101,6 +1182,25 @@ fn decimal_columns(frame: LazyFrame, decimals: &Decimals, hex: &[PlSmallStr]) ->
         .alias(name.clone())
     });
     let exprs: Vec<Expr> = lowered
+        .chain(types.percents.iter().map(|(name, places)| {
+            // The text without its `%`, the decimal it is, and a hundredth of
+            // that: exact, at two places more.
+            let text = col(name.clone());
+            let fits = text
+                .clone()
+                .str()
+                .contains(lit(format!(r"^-?\d+(\.\d{{1,{places}}})?%$")), true)
+                .fill_null(lit(true));
+            (when(fits)
+                .then(text.str().replace(lit("%"), lit(""), true))
+                .otherwise(lit("not a number"))
+                .str()
+                .to_decimal(*places)
+                .cast(DataType::Decimal(Some(38), Some(places + 4)))
+                / lit(100i64).cast(DataType::Decimal(Some(38), Some(0))))
+            .cast(DataType::Decimal(Some(38), Some(places + 2)))
+            .alias(name.clone())
+        }))
         .chain(decimals.iter().map(|(name, scale)| {
             let text = col(name.clone());
             let fits = text
@@ -1141,14 +1241,17 @@ fn csv_scan(path: &Path, schema: Option<SchemaRef>) -> Result<LazyFrame, String>
 
 /// Write `frame` to `target` through a file beside it, renamed into place
 /// once whole, so that a copy half written is never read.
-fn sink_to(frame: LazyFrame, target: &Path) -> Result<(), String> {
+fn sink_to(frame: LazyFrame, target: &Path, marks: Option<KeyValueMetadata>) -> Result<(), String> {
     let dir = target.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let partial = target.with_extension(format!("partial-{}", std::process::id()));
     let written = frame
         .sink_parquet(
             SinkTarget::Path(PlPath::from_str(&partial.to_string_lossy())),
-            ParquetWriteOptions::default(),
+            ParquetWriteOptions {
+                key_value_metadata: marks,
+                ..Default::default()
+            },
             None,
             SinkOptions::default(),
         )
@@ -1187,21 +1290,22 @@ pub fn sample(path: &Path) -> Result<PathBuf, String> {
         // Only the head of the file is given to Polars: given the file, its
         // reader sets about the whole of it however few rows are asked for.
         let head = csv_head(&file)?;
-        let (schema, decimals, hex) = csv_schema(&head)?;
+        let types = csv_schema(&head)?;
         let frame = CsvReadOptions::default()
             .with_has_header(true)
-            .with_schema(Some(schema))
+            .with_schema(Some(types.schema.clone()))
             .with_n_rows(Some(SAMPLE_ROWS))
             .into_reader_with_file_handle(std::io::Cursor::new(head))
             .finish()
             .map_err(|e| e.to_string())?;
-        let mut frame = decimal_columns(frame.lazy(), &decimals, &hex)
+        let mut frame = decimal_columns(frame.lazy(), &types)
             .collect()
             .map_err(|e| e.to_string())?;
         std::fs::create_dir_all(cache_dir()).map_err(|e| e.to_string())?;
         let partial = target.with_extension(format!("partial-{}", std::process::id()));
         let file = File::create(&partial).map_err(|e| e.to_string())?;
         ParquetWriter::new(file)
+            .with_key_value_metadata(percent_marks(&types.percents))
             .finish(&mut frame)
             .map_err(|e| e.to_string())?;
         std::fs::rename(&partial, &target).map_err(|e| e.to_string())?;
@@ -1320,14 +1424,11 @@ pub fn convert_here(path: &Path) -> Result<PathBuf, String> {
             // Where a value further down does not have the type the head
             // gave its column, the types are worked out again from every
             // row.
-            let (schema, decimals, hex) = csv_schema(&csv_head(&file)?)?;
-            if sink_to(
-                decimal_columns(csv_scan(&file, Some(schema))?, &decimals, &hex),
-                &target,
-            )
-            .is_err()
-            {
-                sink_to(csv_scan(&file, None)?, &target)?;
+            let types = csv_schema(&csv_head(&file)?)?;
+            let marks = percent_marks(&types.percents);
+            let typed = csv_scan(&file, Some(types.schema.clone()))?;
+            if sink_to(decimal_columns(typed, &types), &target, marks).is_err() {
+                sink_to(csv_scan(&file, None)?, &target, None)?;
             }
         }
     }
