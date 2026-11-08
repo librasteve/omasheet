@@ -848,6 +848,25 @@ ApplicationWindow {
         if (why.length === 0)
             return false;
         file.status = why;
+        // The same words again would not light the bar a second time, so
+        // each refusal asks for it.
+        refusalRev++;
+        return true;
+    }
+    property int refusalRev: 0
+
+    // Whether column `col` has a name of its own to change: not where the
+    // sheet is a file's or calculated, whose columns are not ours.
+    // True if its name was refused, with the bar lit to say why.
+    function refusedRename(col) {
+        var why = sheet.why || "";
+        var column = sheet.columns[col];
+        if (why.length === 0 || sheet.isConsts || !column)
+            return false;
+        if (!sheet.view && column.computed)
+            return false;
+        file.status = why;
+        refusalRev++;
         return true;
     }
 
@@ -3004,7 +3023,7 @@ ApplicationWindow {
                                 Connections {
                                     target: win
                                     function onRenameColumnAsked(col) {
-                                        if (col === headCell.index)
+                                        if (col === headCell.index && !win.refusedRename(col))
                                             headCell.renaming = true;
                                     }
                                 }
@@ -3177,7 +3196,8 @@ ApplicationWindow {
                                         if (mouse.button !== Qt.LeftButton || win.sheet.isConsts || !headCell.column)
                                             return;
                                         win.notice = "";
-                                        headCell.renaming = true;
+                                        if (!win.refusedRename(headCell.index))
+                                            headCell.renaming = true;
                                     }
                                 }
                                 Loader {
@@ -4165,6 +4185,14 @@ ApplicationWindow {
                     fadeTimer.restart();
                 }
                 onPassingChanged: faded = false
+                // A refusal repeated lights the bar again.
+                Connections {
+                    target: win
+                    function onRefusalRevChanged() {
+                        barMessage.faded = false;
+                        fadeTimer.restart();
+                    }
+                }
                 text: win.busyText.length > 0 ? win.busyText
                     : win.filterPending ? "Filtering\u2026"
                     : win.hint.length > 0 ? win.hint
@@ -4403,7 +4431,11 @@ ApplicationWindow {
         property string fault: ""
         readonly property bool sortable: !win.sheet.isConsts
         padding: 8
-        width: Math.round(win.fontSize * 16.5)
+        width: Math.min(Math.round(win.fontSize * 30), win.width - 16)
+        // The filter is written on several lines when it is long: the caret
+        // beside the box opens it out, and Enter then starts a line, with
+        // Ctrl+Enter to apply.
+        property bool multiline: false
         // Smaller than the grid: the controls of Material are made for touch.
         readonly property int textSize: win.captionSize
         readonly property int lineHeight: Math.round(textSize * 1.9)
@@ -4413,8 +4445,15 @@ ApplicationWindow {
         function openFor(c, item) {
             col = c;
             parent = item;
-            x = 0;
-            y = item.height;
+            multiline = false;
+            // Beside the column, lapping a little over its right edge so
+            // that it stays plain whose box it is; to its left, over the
+            // column, where there is no room on the right.
+            var lap = Math.round(win.fontSize * 0.8);
+            var right = item.mapToItem(null, item.width - lap, 0).x;
+            x = right + width <= win.width - 8 ? item.width - lap
+                : Math.max(-item.mapToItem(null, 0, 0).x + 8, lap - width);
+            y = 0;
             applied = win.filterOf(c);
             filterField.text = applied;
             check();
@@ -4505,37 +4544,91 @@ ApplicationWindow {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.maximumWidth: columnPopup.availableWidth
-                implicitHeight: columnPopup.lineHeight + 4
+                implicitHeight: columnPopup.multiline
+                    ? Math.round(columnPopup.textSize * 1.5) * 6 + 8
+                    : columnPopup.lineHeight + 4
                 color: "transparent"
                 radius: 2
                 border.color: columnPopup.fault.length > 0 ? win.errorColor
                     : filterField.activeFocus ? win.accentColor : win.lineColor
-                // What is wrong, for a pointer held over the red box.
-                HoverHandler { id: filterHover }
-                ToolTip.visible: filterHover.hovered && columnPopup.fault.length > 0
-                ToolTip.text: columnPopup.fault
-                ToolTip.delay: 300
-                TextInput {
-                    id: filterField
+                Flickable {
+                    id: filterScroll
                     anchors.fill: parent
                     anchors.leftMargin: 6
-                    anchors.rightMargin: 6
-                    verticalAlignment: TextInput.AlignVCenter
+                    anchors.rightMargin: caretButton.width + 4
+                    anchors.topMargin: columnPopup.multiline ? 4 : 0
+                    anchors.bottomMargin: columnPopup.multiline ? 4 : 0
                     clip: true
-                    color: win.textColor
-                    selectionColor: win.selectionFill
-                    selectByMouse: true
-                    font.family: win.monoFamily
-                    font.pixelSize: columnPopup.textSize
-                    onTextChanged: columnPopup.check()
-                    Keys.onReturnPressed: columnPopup.accept()
-                    Keys.onEnterPressed: columnPopup.accept()
+                    contentWidth: width
+                    contentHeight: filterField.contentHeight
+                    interactive: columnPopup.multiline
+                    boundsBehavior: Flickable.StopAtBounds
+                    TextEdit {
+                        id: filterField
+                        width: filterScroll.width
+                        height: columnPopup.multiline ? Math.max(contentHeight, filterScroll.height) : filterScroll.height
+                        verticalAlignment: columnPopup.multiline ? TextEdit.AlignTop : TextEdit.AlignVCenter
+                        wrapMode: columnPopup.multiline ? TextEdit.Wrap : TextEdit.NoWrap
+                        color: win.textColor
+                        selectionColor: win.selectionFill
+                        selectByMouse: true
+                        font.family: win.monoFamily
+                        font.pixelSize: columnPopup.textSize
+                        onTextChanged: columnPopup.check()
+                        // One line: a newline is not typed, Enter applies.
+                        // Many: Enter starts a line, Ctrl+Enter applies.
+                        Keys.onReturnPressed: function(event) {
+                            if (columnPopup.multiline && !(event.modifiers & Qt.ControlModifier))
+                                event.accepted = false;
+                            else
+                                columnPopup.accept();
+                        }
+                        Keys.onEnterPressed: function(event) {
+                            if (columnPopup.multiline && !(event.modifiers & Qt.ControlModifier))
+                                event.accepted = false;
+                            else
+                                columnPopup.accept();
+                        }
+                        // Keeps the caret in view as a long filter is typed.
+                        onCursorRectangleChanged: {
+                            var r = cursorRectangle;
+                            if (r.y < filterScroll.contentY)
+                                filterScroll.contentY = r.y;
+                            else if (r.y + r.height > filterScroll.contentY + filterScroll.height)
+                                filterScroll.contentY = r.y + r.height - filterScroll.height;
+                        }
+                        Text {
+                            anchors.verticalCenter: columnPopup.multiline ? undefined : parent.verticalCenter
+                            visible: filterField.text.length === 0
+                            text: "e.g. * >= 3"
+                            color: win.mutedColor
+                            font: filterField.font
+                        }
+                    }
+                }
+                // The caret that opens the box out to several lines, and
+                // closes it again.
+                Item {
+                    id: caretButton
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    width: columnPopup.lineHeight
+                    height: columnPopup.lineHeight + 4
                     Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: filterField.text.length === 0
-                        text: "e.g. * >= 3"
-                        color: win.mutedColor
-                        font: filterField.font
+                        anchors.centerIn: parent
+                        text: columnPopup.multiline ? "\u25B4" : "\u25BE"
+                        color: caretMouse.containsMouse ? win.accentColor : win.mutedColor
+                        font.pixelSize: columnPopup.textSize
+                    }
+                    MouseArea {
+                        id: caretMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            columnPopup.multiline = !columnPopup.multiline;
+                            filterField.forceActiveFocus();
+                        }
                     }
                 }
             }
@@ -4755,6 +4848,14 @@ ApplicationWindow {
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.selLeft === win.selRight && win.sheet.columns.length > 0
             onTriggered: promptDialog.ask("rename")
+        }
+        MenuEntry {
+            text: "Set as formula\u2026"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.selLeft === win.selRight
+                && !!win.sheet.columns[win.selLeft] && !win.sheet.columns[win.selLeft].computed
+                && !win.sheet.view && (win.sheet.why || "").length === 0
+            onTriggered: promptDialog.ask("setFormula")
         }
         MenuEntry {
             text: "Set type\u2026"
@@ -5318,7 +5419,7 @@ ApplicationWindow {
         // A file's sheet holds no data of its own: a column added to it is a formula.
         readonly property bool formulaOnly: (kind === "column" || kind === "computed")
             && !win.sheet.isConsts && !win.sheet.view && (win.sheet.why || "").length > 0
-        readonly property bool needsExpr: kind === "computed" || kind === "const"
+        readonly property bool needsExpr: kind === "computed" || kind === "const" || kind === "setFormula"
             || (kind === "sheet" && formulaBox.checked)
         title: kind === "sheet" ? "New sheet"
              : kind === "rows" ? "Insert rows in " + win.sheet.name
@@ -5328,6 +5429,7 @@ ApplicationWindow {
              : kind === "format" ? "Format of column " + (win.sheet.columns[column] ? win.sheet.columns[column].name : "")
              : kind === "column" ? "New column in " + win.sheet.name
              : kind === "computed" ? "New formula column in " + win.sheet.name
+             : kind === "setFormula" ? "Set column " + (win.sheet.columns[column] ? win.sheet.columns[column].name : "") + " as formula"
              : "New constant"
         focus: true
         // Not `standardButtons`: Ok would close the dialog before a refused
@@ -5358,7 +5460,7 @@ ApplicationWindow {
             kind = what;
             at = where === undefined ? -1 : where;
             column = win.curCol;
-            nameField.text = what === "rename" && win.sheet.columns[column] ? win.sheet.columns[column].name
+            nameField.text = (what === "rename" || what === "setFormula") && win.sheet.columns[column] ? win.sheet.columns[column].name
                 : what === "sheet" ? freeSheetName()
                 : what === "renameSheet" ? win.sheet.name
                 : what === "column" ? win.suggestedColumnName(at)
@@ -5379,7 +5481,9 @@ ApplicationWindow {
         onOpened: takeFocus()
         function takeFocus() {
             forceActiveFocus();
-            if (counted) {
+            if (kind === "setFormula") {
+                exprField.forceActiveFocus();
+            } else if (counted) {
                 countBox.forceActiveFocus();
                 countBox.deselect();
                 countBox.cursorPosition = countBox.text.length;
@@ -5459,6 +5563,7 @@ ApplicationWindow {
                     message = kind === "rename" ? file.renameColumn(win.tab, column, nameField.text)
                         : kind === "format" ? file.setColumnFormat(win.tab, win.selLeft, win.selRight - win.selLeft + 1, nameField.text)
                         : kind === "renameSheet" ? file.renameSheet(win.tab, nameField.text)
+                        : kind === "setFormula" ? file.setColumnAsFormula(win.tab, column, nameField.text, exprField.text)
                         : kind === "column" ? (at < 0 ? file.addColumn(win.tab, nameField.text)
                                                       : file.insertColumn(win.tab, at, nameField.text))
                         : kind === "computed" ? (at < 0 ? file.addComputed(win.tab, nameField.text, exprField.text)
@@ -5583,11 +5688,21 @@ ApplicationWindow {
                 font.features: win.font.features
                 font.pixelSize: win.noteSize
             }
+            Label {
+                Layout.fillWidth: true
+                visible: promptDialog.kind === "setFormula"
+                text: "The column's data is replaced by the formula, one formula for every row. Undo brings it back."
+                wrapMode: Text.Wrap
+                color: win.mutedColor
+                font.family: win.font.family
+                font.features: win.font.features
+                font.pixelSize: win.noteSize
+            }
             TextField {
                 id: exprField
                 Layout.fillWidth: true
                 visible: promptDialog.needsExpr
-                placeholderText: promptDialog.kind === "computed" ? "Expression, e.g. Revenue - Cost"
+                placeholderText: promptDialog.kind === "computed" || promptDialog.kind === "setFormula" ? "Formula, e.g. = Revenue - Cost"
                     : promptDialog.kind === "sheet" ? "Expression, e.g. Sales |> head(3)"
                     : "Expression, e.g. 20%"
                 font.family: win.font.family

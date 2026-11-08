@@ -307,17 +307,11 @@ fn shown_text(engine: &Engine, v: &Value) -> String {
 /// Why a sheet's data takes no edit, if it takes none: it is calculated
 /// from an expression, or it is a `view` of a Parquet file (D49).
 pub fn read_only_why(snap: &SheetSnap) -> Option<String> {
-    if let Some(expr) = &snap.view {
-        return Some(format!(
-            "sheet `{}` is calculated from `{expr}`: change the sheets it reads, or its own formula",
-            snap.name
-        ));
+    if snap.view.is_some() {
+        return Some(format!("`{}` is calculated: edit its formula", snap.name));
     }
-    let path = snap.source.as_ref()?;
-    Some(format!(
-        "view `{}` is read-only, reading `{path}`: import that file to make edits",
-        snap.name
-    ))
+    snap.source.as_ref()?;
+    Some(format!("`{}` is read-only: import to edit", snap.name))
 }
 
 /// What a number shown with fewer digits than it has is in full.
@@ -3937,6 +3931,61 @@ impl Document {
         Some(rest)
     }
 
+    /// Make column `col`, one of data, a formula column in the same place:
+    /// its cells are given up for `expr`. It keeps its name, unless `name`
+    /// is another. One step to undo, and nothing changed where it fails.
+    pub fn set_column_as_formula(
+        &mut self,
+        sheet: usize,
+        col: usize,
+        name: &str,
+        expr: &str,
+    ) -> Result<(), String> {
+        if let Some(why) = self.no_cells(sheet) {
+            return Err(why);
+        }
+        let Some(snap) = self.snapshot.sheets.get(sheet) else {
+            return Err("there is no such sheet".into());
+        };
+        let Some(column) = snap.columns.get(col) else {
+            return Err("there is no such column".into());
+        };
+        if column.formula.is_some() {
+            return Err("that column is already a formula".into());
+        }
+        let name = match name.trim() {
+            "" => column.name.clone(),
+            given => given.to_string(),
+        };
+        let n = snap.columns.len();
+        let mut temp = String::from("Formula_");
+        while snap.columns.iter().any(|c| c.name == temp) {
+            temp.push('_');
+        }
+        let mark = self.undo.len();
+        let done = (|| {
+            // Alongside the data until it goes, so a sheet of one column
+            // is never without one.
+            self.add_computed(sheet, &temp, expr)?;
+            self.delete_columns(sheet, col, 1)?;
+            self.rename_column(sheet, n - 1, &name)?;
+            self.move_columns(sheet, n - 1, 1, col)
+        })();
+        match done {
+            Ok(()) => {
+                self.squash(mark);
+                Ok(())
+            }
+            Err(why) => {
+                while self.undo.len() > mark {
+                    self.undo();
+                }
+                self.redo.clear();
+                Err(why)
+            }
+        }
+    }
+
     /// Add `Name := expression` to a sheet, as its last column: the header
     /// row names it, with `*` for its cells.
     pub fn add_computed(&mut self, sheet: usize, name: &str, expr: &str) -> Result<(), String> {
@@ -4904,6 +4953,32 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_data_column_becomes_a_formula() {
+        let mut doc = Document::from_text(
+            "sheet S\n\n| A | B | C |\n| - | - | - |\n| 1 | 5 | 7 |\n| 2 | 6 | 8 |\n",
+        );
+        let before = doc.text().to_string();
+        let mark = doc.undo_mark();
+        doc.set_column_as_formula(0, 1, "B", "= A * 10").unwrap();
+        let names: Vec<_> = doc.snapshot().sheets[0]
+            .columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        assert_eq!(names, ["A", "B", "C"]);
+        assert_eq!(doc.snapshot().sheets[0].columns[1].formula.is_some(), true);
+        assert_eq!(doc.undo_mark(), mark + 1);
+        assert!(doc.undo());
+        assert_eq!(doc.text(), before);
+        // A failure leaves it as it was.
+        assert!(doc.set_column_as_formula(0, 5, "B", "A").is_err());
+        assert_eq!(doc.text(), before);
+        // A sheet of one column.
+        let mut one = Document::from_text("sheet S\n\n| A |\n| - |\n| 1 |\n");
+        one.set_column_as_formula(0, 0, "A", "= 3").unwrap();
+    }
+
     use super::*;
 
     const SALES: &str = "# sales\nconst Rate = 20%\n\nsheet Sales\n\n| Month | Revenue | Cost | Profit | Tax |\n| ----- | ------- | ---- | ------ | --- |\n| Jan   | 100     | 60   | *      | *   |\n| Feb   | 120     | 70   | *      | *   |\n\nProfit := Revenue - Cost\nTax := Profit * Rate\n";

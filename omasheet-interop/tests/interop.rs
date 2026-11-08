@@ -1328,7 +1328,7 @@ fn a_document_shows_a_table_and_takes_no_edit() {
 
     // Nothing of it can be edited, and the text is left as it was.
     let before = doc.text().to_string();
-    let why = "view `Sales` is read-only, reading `sales.parquet`: import that file to make edits";
+    let why = "`Sales` is read-only: import to edit";
     assert!(!doc.set_cell(0, 0, 0, "Mar"));
     assert!(!doc.insert_rows(0, 0, 1));
     assert!(!doc.delete_rows(0, 0, 1));

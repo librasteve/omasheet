@@ -216,6 +216,15 @@ pub mod qobject {
         /// Add an empty column as column `at`.
         #[qinvokable]
         fn insert_column(self: Pin<&mut File>, sheet: i32, at: i32, name: &QString) -> QString;
+        /// Make data column `col` a formula column, its cells given up.
+        #[qinvokable]
+        fn set_column_as_formula(
+            self: Pin<&mut File>,
+            sheet: i32,
+            col: i32,
+            name: &QString,
+            expr: &QString,
+        ) -> QString;
         /// Add a formula column as column `at`.
         #[qinvokable]
         fn insert_computed(
@@ -1145,6 +1154,17 @@ impl qobject::File {
     ) -> QString {
         let (name, expr) = (name.to_string(), expr.to_string());
         self.try_edit(|doc| doc.insert_computed(index(sheet), index(at), &name, &expr))
+    }
+
+    fn set_column_as_formula(
+        self: Pin<&mut Self>,
+        sheet: i32,
+        col: i32,
+        name: &QString,
+        expr: &QString,
+    ) -> QString {
+        let (name, expr) = (name.to_string(), expr.to_string());
+        self.try_edit(|doc| doc.set_column_as_formula(index(sheet), index(col), &name, &expr))
     }
 
     fn add_computed(self: Pin<&mut Self>, sheet: i32, name: &QString, expr: &QString) -> QString {
