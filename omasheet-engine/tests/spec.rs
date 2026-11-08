@@ -2997,14 +2997,32 @@ N := (0/0).Float
 }
 
 #[test]
-fn an_aggregate_over_a_selection_stays_on_the_engine() {
-    // The argument has to be a whole column: a selection of rows is section
-    // 6's remaining work, not this task's.
+fn an_aggregate_over_a_selection_is_taken_by_polars() {
+    // The rows a selection keeps are gathered from the column and the plan
+    // is the whole column's (hold-less task 2.3): the same answer as the
+    // engine's, from a plan and not from a vector of values.
     let dir = Some("../examples");
     let oldest = both_ways(TABLE, "Passengers[; Survived == 1].Age.max()", dir);
     assert_eq!(oldest.shown, "80");
-    assert!(oldest.aggregates.is_empty());
-    // And the selection is real: 342 of the 887 rows survived.
+    assert_eq!(oldest.aggregates, [Attempt::Lowered]);
+    for expr in [
+        "Passengers[; Pclass == 1].Survived.sum()",
+        "Passengers[; Pclass == 3].Survived.sum()",
+        "Passengers[; Pclass == 1].Survived.mean()",
+        "Passengers[; Age > 60].Age.min()",
+        "Passengers[; Age > 60].Fare.max()",
+        "Passengers[; Sex == 'female'].Pclass.max()",
+        "Passengers[; Pclass == 2].Age.count()",
+        "Passengers[; Pclass == 9].Survived.sum()",
+        "Passengers[; Pclass == 9].Age.max()",
+    ] {
+        // Whatever it comes to, the engine's own answer is the same.
+        both_ways(TABLE, expr, dir);
+    }
+    let kept = both_ways(TABLE, "Passengers[; Pclass == 1].Survived.sum()", dir);
+    assert_eq!(kept.aggregates, [Attempt::Lowered]);
+    // The selection is real: 342 of the 887 rows survived. A count of the
+    // rows kept asks for no column at all.
     let survivors = both_ways(TABLE, "Passengers[; Survived == 1].Age.len()", dir);
     assert_eq!(survivors.shown, "342");
     assert!(survivors.aggregates.is_empty());

@@ -1561,17 +1561,56 @@ impl<'p> Engine<'p> {
     }
 
     fn run_agg(&self, func: Func, args: &[Node]) -> Option<Value> {
-        if self.options.lowering == Lowering::Never {
-            return None;
-        }
         let [arg] = args else {
             return None;
         };
         let Ir::Column { sheet: t, col: c } = arg.kind else {
             return None;
         };
-        let nrows = self.prog.sheets[t].nrows;
-        if nrows == 0 || (self.options.lowering == Lowering::Auto && nrows < ROW_THRESHOLD) {
+        self.run_agg_over(func, t, c, None)
+    }
+
+    /// An aggregate of the rows a selection kept of a file's column, taken
+    /// by Polars as a whole column is: the column is read, the kept rows
+    /// are gathered from it in the order the selection has them, and the
+    /// plan is the one a whole column has. A column read for this is not
+    /// held for the rest of the run, as an aggregate of one is not.
+    fn run_agg_selected(&self, func: Func, t: usize, c: usize, rows: &[usize]) -> Option<Value> {
+        if !matches!(self.prog.sheets[t].cols[c].kind, ColKind::Frame) {
+            return None;
+        }
+        // Rows within a small stretch of the file, a `head` or a `tail`, are
+        // read as that stretch is (D78) and summed by the engine: gathering
+        // them from the whole column would read all of it for a few rows.
+        let (Some(&lo), Some(&hi)) = (rows.iter().min(), rows.iter().max()) else {
+            return None;
+        };
+        if (hi + 1 - lo) * 4 < self.prog.sheets[t].nrows {
+            return None;
+        }
+        let was_held = self.held.borrow()[t][c].is_some();
+        let value = self.run_agg_over(func, t, c, Some(rows));
+        if !was_held {
+            self.held.borrow_mut()[t][c] = None;
+        }
+        value
+    }
+
+    /// `func` of column `c` of sheet `t`: of the whole of it, or of `rows`
+    /// of it where a selection kept only those.
+    fn run_agg_over(
+        &self,
+        func: Func,
+        t: usize,
+        c: usize,
+        rows: Option<&[usize]>,
+    ) -> Option<Value> {
+        if self.options.lowering == Lowering::Never {
+            return None;
+        }
+        let sheet_rows = self.prog.sheets[t].nrows;
+        let nrows = rows.map_or(sheet_rows, <[usize]>::len);
+        if nrows == 0 || (self.options.lowering == Lowering::Auto && sheet_rows < ROW_THRESHOLD) {
             return None;
         }
         let refused = |engine: &Engine| {
@@ -1584,10 +1623,21 @@ impl<'p> Engine<'p> {
         // A column of a file of many row groups, not held and not wanted
         // again, is taken a group at a time (D155), so what is held is a
         // group and not the column.
-        let groups = self.stream_groups(t, c);
-        let Some(column) = (match &groups {
-            Some(groups) => self.read_group(t, c, groups[0]),
-            None => self.pl_column(t, c),
+        let groups = match rows {
+            Some(_) => None,
+            None => self.stream_groups(t, c),
+        };
+        let Some(column) = (match (&groups, rows) {
+            (Some(groups), _) => self.read_group(t, c, groups[0]),
+            (None, Some(rows)) => self.pl_column(t, c).and_then(|whole| {
+                let at: Vec<polars::prelude::IdxSize> = rows
+                    .iter()
+                    .map(|&r| r as polars::prelude::IdxSize)
+                    .collect();
+                let at = polars::prelude::IdxCa::from_vec("at".into(), at);
+                whole.take(&at).ok()
+            }),
+            (None, None) => self.pl_column(t, c),
         }) else {
             return refused(self);
         };
@@ -3821,15 +3871,25 @@ impl<'p> Engine<'p> {
                     // the values are not read to be counted. A column that
                     // is calculated is read, since its cells can fail.
                     let value = match &arg.kind {
-                        Ir::Field { base, col } if func == Func::Len && args.len() == 1 => {
+                        Ir::Field { base, col } if args.len() == 1 => {
                             let base = self.eval(base, fr)?;
-                            if let Value::Sheet(v) = &base
+                            if func == Func::Len
+                                && let Value::Sheet(v) = &base
                                 && matches!(
                                     self.prog.sheets[v.sheet].cols[*col].kind,
                                     ColKind::Frame
                                 )
                             {
                                 return Ok(Value::int(v.rows.len() as i64));
+                            }
+                            // The other aggregates of it are Polars' where
+                            // the column is a file's.
+                            if args.len() == 1
+                                && let Value::Sheet(v) = &base
+                                && let Some(value) =
+                                    self.run_agg_selected(func, v.sheet, *col, &v.rows)
+                            {
+                                return Ok(value);
                             }
                             self.field(base, *col, arg.span)?
                         }

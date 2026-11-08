@@ -117,9 +117,25 @@ size, and each with its *before* already measured and pinned by a test.
       expected `[(0, 1), (0, 2)]`; `len_of_a_selected_column_is_the_rows_kept`
       checks the counts (216, 487, 0, 26) and against `count` of a column
       read. Workspace tests, clippy and fmt clean
-- [ ] 2.3 A sum over a selection taken by Polars — `add-columnar-core`
+- [x] 2.3 A sum over a selection taken by Polars — `add-columnar-core`
       task 6.3's last bullet, which left it on the engine because a
       selection answers with a vector
+      Done 2026-11-08: an aggregate of a file's column over a selection is
+      taken as a whole column's is. The column is read, the kept rows are
+      gathered from it in the selection's order, and the plan is the one a
+      whole column has (`Engine::run_agg_selected` over `run_agg_over`); the
+      column is not held afterwards. Same rules as for a whole column, so a
+      float `sum` and `mean` stay on the engine, and a `sum` is bounded by
+      the rows kept. A selection within a quarter of the file, which a
+      `head` or `tail` is, keeps the engine and its range read (D78):
+      `a_range_then_the_whole_column_reads_the_column_again` caught the
+      first version reading the whole column for five rows.
+      `an_aggregate_over_a_selection_is_taken_by_polars` (was `..._stays_on_
+      the_engine`) holds ten expressions to the engine's answer, Never
+      against Always. Measured, release CLI, the month of taxi trips (3.7M
+      rows), `payment_type == 1`: `passenger_count.sum()` 0.46 s, 510 MB
+      → 0.10 s, 269 MB; `fare_amount.max()` 0.24 s, 511 MB → 0.09 s,
+      234 MB; the answers are the same
 
 ## 3. The snapshot shows what is on screen
 
