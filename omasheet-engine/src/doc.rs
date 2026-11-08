@@ -77,6 +77,9 @@ pub struct SheetSnap {
     /// its own, and a formula a sort cannot be added to the end of, so it
     /// is sorted in the grid alone, as a table is.
     pub grouped: bool,
+    /// The rows are a file's first few, shown while the rest is copied: the
+    /// sheet has more rows than it shows, as many as the file has.
+    pub sampled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -4383,6 +4386,42 @@ impl Document {
         self.text[..at].rfind('\n').map_or(0, |k| k + 1)
     }
 
+    /// The file a table sheet reads, as a path from where the document is
+    /// kept; `None` for a sheet that is not a table over a file.
+    pub fn table_file(&self, sheet: usize) -> Option<std::path::PathBuf> {
+        let t = self.snapshot.sheets.get(sheet)?;
+        if t.view.is_some() {
+            return None;
+        }
+        let base = self.base.clone().unwrap_or_else(|| ".".into());
+        Some(base.join(t.source.as_ref()?))
+    }
+
+    /// Put in place of table `sheet` the sheet `block`, as an import writes
+    /// one, under the name the table had: its rows are then the document's
+    /// own, to be edited. One undoable step. Refused for a table with a
+    /// formula column, which an inline sheet would lose.
+    pub fn copy_table_into_document(&mut self, sheet: usize, block: &str) -> Result<(), String> {
+        if self.table_file(sheet).is_none() {
+            return Err("only a table over a file can be copied into the document".into());
+        }
+        let ast = self.ast();
+        let Some(decl) = self.sheet_decl(&ast, sheet) else {
+            return Err("there is no such sheet".into());
+        };
+        if !decl.computed.is_empty() {
+            return Err(format!(
+                "`{}` has formula columns, which would be lost: delete them first",
+                decl.name
+            ));
+        }
+        let (start, end) = self.sheet_lines(decl);
+        let mut text = self.text.clone();
+        text.replace_range(start..end, &format!("{}\n", block.trim_end()));
+        self.commit(text);
+        Ok(())
+    }
+
     /// Give sheet `sheet` another name, in its own line and wherever a
     /// formula names it.
     pub fn rename_sheet(&mut self, sheet: usize, name: &str) -> Result<(), String> {
@@ -4865,6 +4904,14 @@ impl Document {
                         .to_string()
                 }),
                 grouped: sheet.group.is_some() || sheet.join.is_some(),
+                sampled: sheet.source.as_ref().is_some_and(|s| {
+                    let path = self
+                        .base
+                        .clone()
+                        .unwrap_or_else(|| ".".into())
+                        .join(&s.path);
+                    crate::table::is_converted(&path) && crate::table::copy_of(&path).is_none()
+                }),
             });
         }
         for (i, c) in program.consts.iter().enumerate() {
@@ -6465,6 +6512,8 @@ mod tests {
             screen.snapshot().problems
         );
         assert_eq!(screen.snapshot().sheets[0].nrows, crate::table::SAMPLE_ROWS);
+        // It says it is a sample, for the grid to say there is more to come.
+        assert!(screen.snapshot().sheets[0].sampled);
         assert_eq!(
             types(&screen),
             ["String", "Integer", "Decimal", "Date", "Datetime"]
@@ -6482,6 +6531,7 @@ mod tests {
         assert!(screen.converted(&csv_path));
         assert!(screen.to_convert().is_empty());
         assert_eq!(screen.snapshot().sheets[0].nrows, 1500);
+        assert!(!screen.snapshot().sheets[0].sampled);
         assert_eq!(
             types(&screen),
             ["String", "Integer", "Decimal", "Date", "Datetime"]

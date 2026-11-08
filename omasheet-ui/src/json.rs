@@ -108,7 +108,10 @@ pub fn snapshot(snap: &Snapshot) -> String {
                 c.declared
             ));
         });
-        out.push_str(&format!(",\"nrows\":{},\"paged\":{}", t.nrows, t.paged));
+        out.push_str(&format!(
+            ",\"nrows\":{},\"paged\":{},\"sampled\":{}",
+            t.nrows, t.paged, t.sampled
+        ));
         out.push_str(",\"rows\":");
         cell_rows(out, &t.rows);
         out.push('}');

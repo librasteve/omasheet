@@ -343,6 +343,10 @@ pub mod qobject {
         fn rename_sheet(self: Pin<&mut File>, sheet: i32, name: &QString) -> QString;
         #[qinvokable]
         fn delete_sheet(self: Pin<&mut File>, sheet: i32) -> QString;
+        /// Replace table `sheet`, which reads a file, by the file's rows
+        /// written into the document, to be edited. The problem, or empty.
+        #[qinvokable]
+        fn copy_into_document(self: Pin<&mut File>, sheet: i32) -> QString;
         /// Sheet `from` moved to be sheet `to`.
         #[qinvokable]
         fn move_sheet(self: Pin<&mut File>, from: i32, to: i32) -> QString;
@@ -1444,6 +1448,20 @@ impl qobject::File {
         self.try_edit(|doc| doc.delete_sheet(index(sheet)))
     }
 
+    fn copy_into_document(self: Pin<&mut Self>, sheet: i32) -> QString {
+        self.try_edit(|doc| {
+            let at = index(sheet);
+            let name = doc
+                .snapshot()
+                .sheets
+                .get(at)
+                .map(|t| t.name.clone())
+                .ok_or("there is no such sheet")?;
+            let block = table_as_sheet(doc, at, &name)?;
+            doc.copy_table_into_document(at, &block)
+        })
+    }
+
     fn move_sheet(self: Pin<&mut Self>, from: i32, to: i32) -> QString {
         self.try_edit(|doc| doc.move_sheet(index(from), index(to)))
     }
@@ -1823,4 +1841,52 @@ mod relative_tests {
         assert_eq!(rel("/a/data/x.csv", "/a/b"), Path::new("../data/x.csv"));
         assert_eq!(rel("/a/b/x.csv", "/a/b"), Path::new("x.csv"));
     }
+}
+
+/// The rows of the file that table `sheet` reads, written as an inline sheet
+/// of the table's name: what an import writes, so the two are alike. Refused
+/// for a file that is too big to be written into the text, which is what a
+/// table is for, and for one of several sheets, which an import would write
+/// as several.
+fn table_as_sheet(doc: &Document, sheet: usize, name: &str) -> Result<String, String> {
+    let path = doc
+        .table_file(sheet)
+        .ok_or("only a table over a file can be copied into the document")?;
+    let shown = path.to_string_lossy().to_string();
+    if shown.contains('#') {
+        return Err(format!(
+            "`{name}` is one sheet of a workbook or JSON file: import the file to edit it"
+        ));
+    }
+    let big = std::fs::metadata(&path)
+        .map(|m| m.len() > omasheet_engine::table::BIG_FILE)
+        .map_err(|e| format!("cannot read {shown}: {e}"))?;
+    let kind = path
+        .extension()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_ascii_lowercase();
+    let rows = doc.row_count(sheet);
+    if rows > PAGED_ROWS || (big && kind != "parquet") {
+        return Err(format!(
+            "`{name}` has too many rows to be copied into the document ({rows}): it stays a table"
+        ));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {shown}: {e}"))?;
+    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+    let imported = match kind.as_str() {
+        "xlsx" | "xlsm" => omasheet_interop::xlsx::import(&bytes, Options::default()),
+        "json" => omasheet_interop::json::import(&stem, &bytes),
+        "parquet" => omasheet_interop::parquet::import(&stem, &bytes),
+        _ => omasheet_interop::csv::import(&stem, &bytes),
+    }?;
+    let source = imported.source;
+    if source.matches("\nsheet ").count() > 0 || !source.starts_with("sheet ") {
+        return Err(format!(
+            "`{name}` is a file of several sheets: import it to edit it"
+        ));
+    }
+    // The table's name, so that what refers to it still does.
+    let (_, rest) = source.split_once('\n').unwrap_or((&source, ""));
+    Ok(format!("sheet {name}\n{rest}"))
 }

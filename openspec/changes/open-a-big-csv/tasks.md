@@ -619,13 +619,17 @@ Parquet alone.
       the waited read (`a_csv_table_shows_its_sample_and_then_its_copy_alike`,
       `a_json_table_...`) pass, as do the three differentials over CSV, JSON
       and a workbook sheet read through their copies
-- [ ] 3.6 The sniffed sample shown while the copy is written; loading rows
+- [x] 3.6 The sniffed sample shown while the copy is written; loading rows
       beyond it. The sample done (2026-11-02): its first 1,000 rows, read
       from the file's head bytes and written as a small Parquet file, shown
       at once; `Document::to_convert` and `converted`; the app copies on a
       worker under the status-bar spinner and moves over when it is
-      written. Not done: rows past the sample marked as loading (the table
-      shows 1,000 rows until the copy arrives)
+      written. Rows past the sample marked, 2026-11-08 (built; checked by eye
+      and approved 2026-11-08): `SheetSnap.sampled` is
+      true while the table reads its sample, and the grid shows a pill at
+      its foot, "Showing the first 1000 rows -- loading the rest", with a
+      spinner; the status bar holds its message while it is true, where it
+      faded. Tested in `a_csv_table_shows_its_sample_and_then_its_copy_alike`
 
 ## 4. Opening (D146), and the funnel's second stage
 
@@ -654,7 +658,15 @@ Parquet alone.
       fails in every row of a table of millions listed a problem for each,
       a snapshot of 447 MB that crashed the app's JSON parser (the list is
       now capped at 200)
-- [ ] 4.2 "Copy into the document" for a table under the threshold
+- [x] 4.2 "Copy into the document" for a table under the threshold
+      Built 2026-11-08, checked by eye and approved the same day: a sheet tab's menu has
+      "Copy into the document" for a table over a file. It writes the file
+      as `omasheet import` would, under the table's name, in place of the
+      table, in one undoable step (`Document::copy_table_into_document`;
+      the app's `copy_into_document`). Refused, with why: a file over 4 MB
+      (or a table of more than 10,000 rows), one sheet of a workbook or JSON
+      file of several, and a table with a formula column, which an inline
+      sheet would lose. Tests: `omasheet-interop/tests/copy_into_document.rs`
 - [x] 4.3 `omasheet import` above the threshold refuses and prints the
       `table` lines, ready to paste
       Done for CSV, Parquet and, 2026-11-07, JSON (a line for each sheet);

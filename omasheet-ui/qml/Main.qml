@@ -138,7 +138,7 @@ ApplicationWindow {
         resetBox();
     }
     readonly property var sheet: tab < tabs.length ? tabs[tab] : emptySheet
-    readonly property var emptySheet: ({ name: "", columns: [], rows: [], nrows: 0, paged: false, isConsts: false })
+    readonly property var emptySheet: ({ name: "", columns: [], rows: [], nrows: 0, paged: false, sampled: false, isConsts: false })
     property var colWidths: []
     property real totalWidth: 0
 
@@ -3811,6 +3811,43 @@ ApplicationWindow {
                 orientation: Qt.Horizontal
                 policy: ScrollBar.AsNeeded
             }
+
+            // Rows past the sample of a file still being copied: the grid
+            // ends at the sample, and this says there is more to come.
+            Rectangle {
+                id: loadingMore
+                visible: win.sheet.sampled === true
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: hbar.needed ? hbar.height + 8 : 8
+                radius: height / 2
+                color: win.overColor
+                border.color: win.lineColor
+                width: loadingRow.implicitWidth + 24
+                height: loadingRow.implicitHeight + 10
+                opacity: 0.95
+                Row {
+                    id: loadingRow
+                    anchors.centerIn: parent
+                    spacing: 8
+                    BusyIndicator {
+                        running: loadingMore.visible
+                        height: loadingText.implicitHeight + 4
+                        width: height
+                        padding: 0
+                        Material.accent: win.accentColor
+                    }
+                    Text {
+                        id: loadingText
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Showing the first " + win.sheet.nrows
+                            + " rows — loading the rest…"
+                        color: win.mutedColor
+                        font.family: win.font.family
+                        font.pixelSize: win.captionSize
+                    }
+                }
+            }
         }
 
         // The source: the file as it is written, to read and to edit. An
@@ -4175,7 +4212,7 @@ ApplicationWindow {
                 readonly property bool moving: win.grabbedHere
                 // Said once, as against a state that holds.
                 readonly property bool passing: win.busyText.length === 0 && !win.filterPending
-                    && !moving && !win.formulaCell
+                    && !moving && !win.formulaCell && win.sheet.sampled !== true
                     && (win.notice.length > 0 || file.status.length > 0)
                 property bool faded: false
                 opacity: faded && win.hint.length === 0 ? 0 : 1
@@ -4990,6 +5027,19 @@ ApplicationWindow {
             visible: tabMenu.isSheet
             enabled: visible
             onTriggered: { win.goToSheet(tabMenu.index); promptDialog.ask("renameSheet"); }
+        }
+        // A table over a file, written into the document as a sheet of its
+        // own, to be edited: refused, with why, where it is too big.
+        MenuEntry {
+            text: "Copy into the document"
+            visible: tabMenu.isSheet && !!win.tabs[tabMenu.index].from && !win.tabs[tabMenu.index].view
+            enabled: visible
+            onTriggered: {
+                win.goToSheet(tabMenu.index);
+                var problem = file.copyIntoDocument(tabMenu.index);
+                if (problem.length > 0)
+                    errorDialog.say(problem);
+            }
         }
         MenuEntry {
             text: "Delete sheet"
