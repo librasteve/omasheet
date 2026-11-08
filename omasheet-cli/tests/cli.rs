@@ -351,6 +351,157 @@ fn import_reads_what_export_wrote() {
 }
 
 #[test]
+fn import_of_a_big_json_prints_a_table_for_each_sheet_and_they_read_through_copies() {
+    let dir = scratch("import-big-json");
+    let mut rows = String::new();
+    let mut n = 0u64;
+    while rows.len() <= 4 * 1024 * 1024 {
+        if n > 0 {
+            rows.push(',');
+        }
+        rows.push_str(&format!("{{\"N\": {n}, \"Name\": \"row {n}\"}}"));
+        n += 1;
+    }
+    let big = path(&dir, "big.json");
+    std::fs::write(
+        &big,
+        format!("{{\"Rows\": [{rows}], \"Other sheet\": [{{\"A\": 1}}, {{\"A\": 2}}]}}"),
+    )
+    .unwrap();
+
+    // Refused, with a line for each sheet, which a source names by `#`.
+    let out = omasheet(&["import", &big]);
+    assert!(!out.status.success());
+    let lines = stdout(&out);
+    let full = std::fs::canonicalize(&big).unwrap();
+    assert_eq!(
+        lines,
+        format!(
+            "view Rows := dataframe['{0}#Rows']\nview OtherSheet := dataframe['{0}#Other sheet']\n",
+            full.display()
+        )
+    );
+    assert!(
+        stderr(&out).contains("too big to import"),
+        "{}",
+        stderr(&out)
+    );
+
+    // And the lines read each sheet through a copy in the cache.
+    let file = path(&dir, "big.omx");
+    std::fs::write(&file, &lines).unwrap();
+    for (expr, expect) in [
+        ("Rows.N.count()", n.to_string()),
+        ("OtherSheet.A.sum()", "3".into()),
+    ] {
+        let out = Command::new(program())
+            .args(["eval", "--file", &file, expr])
+            .env("OMASHEET_CACHE", dir.join("cache"))
+            .current_dir(root())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{expr}: {}", stderr(&out));
+        assert_eq!(stdout(&out).trim(), expect, "{expr}");
+    }
+
+    // A bare list is one table, named by the file alone.
+    let list = path(&dir, "list.json");
+    let mut text = String::from("[");
+    let mut m = 0u64;
+    while text.len() <= 4 * 1024 * 1024 {
+        if m > 0 {
+            text.push(',');
+        }
+        text.push_str(&format!("{{\"N\": {m}}}"));
+        m += 1;
+    }
+    text.push(']');
+    std::fs::write(&list, text).unwrap();
+    let out = omasheet(&["import", &list]);
+    assert!(!out.status.success());
+    let full = std::fs::canonicalize(&list).unwrap();
+    assert_eq!(
+        stdout(&out),
+        format!("view list := dataframe['{}']\n", full.display())
+    );
+
+    // A small JSON file is imported as text, as before.
+    let small = path(&dir, "small.json");
+    std::fs::write(&small, r#"[{"N": 1}]"#).unwrap();
+    let out = omasheet(&["import", &small]);
+    assert!(out.status.success(), "{}", stderr(&out));
+}
+
+/// A workbook over the size at which one is read as tables, of text that
+/// does not compress: a few cells of a great many characters, so that it is
+/// big without being slow to make.
+fn big_workbook(file: &str) {
+    use rust_xlsxwriter::Workbook;
+    let mut book = Workbook::new();
+    let sheet = book.add_worksheet();
+    sheet.set_name("Data").unwrap();
+    let mut x = 0x9E37_79B9_7F4A_7C15_u64;
+    // Printable characters but for the three XML has a use for.
+    let alphabet: Vec<char> = (33u8..127)
+        .map(char::from)
+        .filter(|c| !matches!(c, '&' | '<' | '>' | '"' | '\'' | '=' | '#' | '|' | '`'))
+        .collect();
+    let mut text = || {
+        (0..1_000)
+            .map(|_| {
+                x = x
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                alphabet[(x >> 33) as usize % alphabet.len()]
+            })
+            .collect::<String>()
+    };
+    sheet.write_string(0, 0, "Text").unwrap();
+    for r in 1..=6_000 {
+        sheet.write_string(r, 0, text()).unwrap();
+    }
+    book.save(file).unwrap();
+}
+
+#[test]
+fn import_of_a_big_workbook_of_values_prints_a_table_for_each_sheet() {
+    let dir = scratch("import-big-xlsx");
+    let values = path(&dir, "values.xlsx");
+    big_workbook(&values);
+    assert!(std::fs::metadata(&values).unwrap().len() > 4 * 1024 * 1024);
+
+    // Values only: refused, with the line to paste, and it reads.
+    let out = omasheet(&["import", &values]);
+    assert!(!out.status.success());
+    let full = std::fs::canonicalize(&values).unwrap();
+    assert_eq!(
+        stdout(&out),
+        format!("view Data := dataframe['{}#Data']\n", full.display())
+    );
+    assert!(
+        stderr(&out).contains("too big to import"),
+        "{}",
+        stderr(&out)
+    );
+    let file = path(&dir, "values.omx");
+    std::fs::write(&file, stdout(&out)).unwrap();
+    let out = Command::new(program())
+        .args(["eval", "--file", &file, "Data.Text.count()"])
+        .env("OMASHEET_CACHE", dir.join("cache"))
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out).trim(), "6000");
+
+    // A workbook with a formula in it is imported and not refused, since a
+    // table would lose the formula: `table_source` says so for it, and it is
+    // tested there (`table_source_names_each_sheet_of_a_workbook...`). It is
+    // not done here, where importing a workbook over the size takes a minute
+    // in a build with no optimisation.
+}
+
+#[test]
 fn import_of_a_big_csv_prints_the_table_that_reads_it_instead() {
     let dir = scratch("import-big");
     let mut csv = String::from("N,Name\n");

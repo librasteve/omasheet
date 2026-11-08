@@ -14,3 +14,6 @@ rust_xlsxwriter.workspace = true
 csv.workspace = true
 polars.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+libc.workspace = true

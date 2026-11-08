@@ -973,6 +973,48 @@ pub fn translate(formula: &str, worksheets: &[Worksheet], here: usize, row: u32)
     })
 }
 
+/// The formula with each cell it names given as how many rows it is from the
+/// formula's own, `row` counting from the top of the worksheet, and a cell
+/// held with a `$` as the place it is held at. Two formulas of a column that
+/// has one filled down it come to the same text, whatever row each is on;
+/// formulas that differ anywhere else do not. `None` where the formula is
+/// not one that can be read, and so not one to call the same as another.
+///
+/// This is cheaper than [`translate`], which also says what it means, and is
+/// what finds the column filled down without translating every row of it.
+pub fn relative(formula: &str, row: u32) -> Option<String> {
+    let text = formula.trim().trim_start_matches('=');
+    let mut out = String::with_capacity(text.len() + 8);
+    for tok in lex(text).ok()? {
+        match tok {
+            Tok::Float(s) | Tok::Word(s) => out.push_str(&s),
+            Tok::Str(s) => {
+                out.push('"');
+                out.push_str(&s.replace('"', "\\\""));
+                out.push('"');
+            }
+            Tok::Cell(c) if c.fixed => out.push_str(&format!("C{}R{}$", c.col, c.row)),
+            Tok::Cell(c) => out.push_str(&format!(
+                "C{}R[{}]",
+                c.col,
+                i64::from(c.row) - i64::from(row)
+            )),
+            Tok::Worksheet(name) => {
+                out.push_str(&name);
+                out.push('!');
+            }
+            Tok::Op(op) => out.push_str(op),
+            Tok::Open => out.push('('),
+            Tok::Close => out.push(')'),
+            Tok::Comma => out.push(','),
+            Tok::Colon => out.push(':'),
+        }
+        // Between tokens, so that two words are not one.
+        out.push(' ');
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1126,5 +1168,29 @@ mod tests {
         assert_eq!(omx("Rate*2"), "no: it uses the name `Rate`");
         assert_eq!(omx("SUM(B2:B4"), format!("no: {UNREADABLE}"));
         assert!(translate("TODAY()", &worksheets(), 0, 2).unwrap().volatile);
+    }
+
+    #[test]
+    fn a_formula_filled_down_a_column_has_the_same_relative_form_on_every_row() {
+        // `=A2*2` in row 2 and `=A3*2` in row 3 are one formula; `=A2*3` is not.
+        let at = |f: &str, row| relative(f, row).unwrap();
+        assert_eq!(at("=A2*2", 1), at("=A3*2", 2));
+        assert_eq!(at("=B2-C2", 1), at("=B500-C500", 499));
+        assert_ne!(at("=A2*2", 1), at("=A3*3", 2));
+        // Where it looks is part of it: the row above, and the same row.
+        assert_ne!(at("=A1*2", 1), at("=A2*2", 1));
+        assert_eq!(at("=A1+A2", 1), at("=A2+A3", 2));
+        // A cell held with a `$` stays where it is, whatever row it is on, so
+        // the rows of a column that all look at it are one formula, and one
+        // that looks at the cell next to it each time is not the same.
+        assert_eq!(at("=A2*B$1", 1), at("=A3*B$1", 2));
+        assert_ne!(at("=A2*B$1", 1), at("=A3*B$2", 2));
+        // Another sheet, a function with a digit in its name, text with a
+        // cell in it.
+        assert_eq!(at("=Rates!B2+LOG10(A2)", 1), at("=Rates!B3+LOG10(A3)", 2));
+        assert_ne!(at("=\"A1\"", 0), at("=\"A2\"", 0));
+        // What cannot be read is not one to call the same.
+        assert_eq!(relative("={1,2}", 0), None);
+        assert_eq!(relative("=#REF!", 0), None);
     }
 }

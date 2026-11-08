@@ -1869,17 +1869,22 @@ dependencies = [
  "omasheet-engine",
  "omasheet-interop",
  "omasheet-md",
+ "rust_xlsxwriter",
 ]
 
 [[package]]
 name = "omasheet-engine"
 version = "0.1.6"
 dependencies = [
+ "calamine",
  "jiff",
  "libc",
  "omasheet-omx",
  "polars",
  "regex",
+ "rust_xlsxwriter",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1888,6 +1893,7 @@ version = "0.1.6"
 dependencies = [
  "calamine",
  "csv",
+ "libc",
  "omasheet-engine",
  "omasheet-md",
  "polars",

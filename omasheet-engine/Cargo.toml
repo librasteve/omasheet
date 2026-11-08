@@ -9,8 +9,14 @@ repository.workspace = true
 [dependencies]
 omasheet-omx.workspace = true
 jiff.workspace = true
+calamine.workspace = true
 polars.workspace = true
 regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+
+[dev-dependencies]
+rust_xlsxwriter.workspace = true

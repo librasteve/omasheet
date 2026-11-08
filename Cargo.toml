@@ -62,6 +62,7 @@ polars = { version = "0.51", default-features = false, features = [
     "is_last_distinct",
 ] }
 regex = "1"
+serde = "1"
 serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 

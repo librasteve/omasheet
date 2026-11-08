@@ -230,18 +230,9 @@ fn extension(path: &Path) -> String {
 }
 
 /// Refuse to import `file`, which is too big to write as text, and print
-/// the `view` line that reads it where it is, ready to paste into a file.
-fn too_big(file: &Path) -> ExitCode {
-    let full = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
-    let stem = file.file_stem().unwrap_or_default().to_string_lossy();
-    let name = match omasheet_interop::identifier(&stem) {
-        empty if empty.is_empty() => "Table".to_string(),
-        name => name,
-    };
-    println!(
-        "view {name} := dataframe[{}]",
-        omasheet_engine::omx::lexer::quoted(&full.to_string_lossy())
-    );
+/// the `view` lines that read it where it is, ready to paste into a file.
+fn too_big(file: &Path, lines: &str) -> ExitCode {
+    print!("{lines}");
     eprintln!(
         "omasheet: {} is too big to import as text (over {} MB): a view reads it where it \
          is, read-only, as the line printed says; open the file in the app, or paste the line \
@@ -260,11 +251,20 @@ fn import(file: &Path, output: Option<&Path>, options: Options) -> Result<ExitCo
             file.display()
         ));
     }
-    // A big CSV or Parquet file would be millions of rows of text: what is
-    // printed instead is the line that reads it where it is (D146).
+    // A big CSV, JSON, XLSX or Parquet file would be millions of rows of text:
+    // what is printed instead is the line that reads it where it is (D146).
     let big = std::fs::metadata(file).is_ok_and(|m| m.len() > omasheet_engine::table::BIG_FILE);
-    if big && matches!(kind.as_str(), "csv" | "parquet") {
-        return Ok(too_big(file));
+    if big && matches!(kind.as_str(), "csv" | "json" | "parquet" | "xlsx") {
+        match omasheet_interop::table_source(file) {
+            Ok(lines) => return Ok(too_big(file, &lines)),
+            // A workbook with a formula in it is imported, which keeps them;
+            // a table has values and no formulas.
+            Err(_) if kind == "xlsx" => {}
+            Err(why) => {
+                eprintln!("omasheet: cannot read {}: {why}", file.display());
+                return Ok(ExitCode::FAILURE);
+            }
+        }
     }
     let bytes = std::fs::read(file).map_err(|e| {
         eprintln!("omasheet: cannot read {}: {e}", file.display());
@@ -497,6 +497,12 @@ fn beside(file: &Path) -> PathBuf {
 /// Run the command line this program was started with. With no command,
 /// `open` is called to open the app, on the file given if there was one.
 pub fn main(open: impl FnOnce(Option<&Path>) -> ExitCode) -> ExitCode {
+    // A copy of a big file is made in a process of its own, this program
+    // started again, so the memory it takes goes back when it is done.
+    if let Some(code) = omasheet_engine::table::run_child() {
+        return ExitCode::from(code as u8);
+    }
+    omasheet_engine::table::copy_in_children();
     match run(Cli::parse(), open) {
         Ok(code) | Err(code) => code,
     }

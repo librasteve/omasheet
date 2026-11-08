@@ -15,9 +15,12 @@ pub mod zone;
 
 pub use doc::Document;
 pub use eval::Engine;
+mod copyframe;
 pub mod dtype;
+pub mod jsoncopy;
 pub mod lower;
 pub mod table;
+pub mod xlsxcopy;
 
 pub use omasheet_omx as omx;
 pub use value::Value;
@@ -61,6 +64,14 @@ pub struct Options {
     /// Whether a column that can be calculated in one step over the whole
     /// dataframe is (D74).
     pub lowering: Lowering,
+    /// For a `table` of more rows than this, a column that can be calculated
+    /// in one step is not calculated over the whole column when the engine
+    /// runs, but for the rows asked to be shown, a window at a time, and
+    /// over the whole column only when something asks for the whole column
+    /// (`open-a-big-csv` 2.2). `None` calculates every such column whole
+    /// at once, as it always did; the document sets it to the number of
+    /// rows over which it pages a sheet.
+    pub defer_rows: Option<usize>,
 }
 
 /// Whether a column is calculated by Polars over the whole column or by the

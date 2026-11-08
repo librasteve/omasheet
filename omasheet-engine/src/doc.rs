@@ -217,6 +217,10 @@ pub struct Document {
     /// More rows than this and a sheet the text does not hold is paged.
     /// [`PAGED_ROWS`], but for a test.
     paged_rows: usize,
+    /// The columns of tables read whole, kept across rebuilds so that an
+    /// edit does not read them from their files again (D150). See
+    /// [`Document::column_cache`].
+    columns: crate::table::ColumnCache,
 }
 
 impl Default for Document {
@@ -2062,6 +2066,7 @@ impl Document {
             column_errors: Vec::new(),
             paged_rows: PAGED_ROWS,
             copying,
+            columns: Default::default(),
         };
         doc.rebuild();
         doc
@@ -2102,6 +2107,19 @@ impl Document {
         &self.snapshot
     }
 
+    /// What the document's cache of whole columns has done and holds.
+    pub fn column_cache(&self) -> crate::table::CacheStats {
+        self.columns.stats()
+    }
+
+    /// Replace the cache with one of a given budget, in bytes, which holds
+    /// nothing: for a test, and for a caller that knows the memory better
+    /// than a quarter of what the machine has.
+    pub fn set_column_budget(&mut self, bytes: usize) {
+        self.columns = crate::table::ColumnCache::with_budget(bytes);
+        self.rebuild();
+    }
+
     /// Every table's file that is paged and not yet held whole, with what
     /// holding it would take (D157). Whether to hold it is the caller's to
     /// decide, against the memory there is, and the reading is the caller's
@@ -2119,7 +2137,7 @@ impl Document {
             };
             let path = base.join(&source.path);
             // A CSV not yet copied is shown from its sample, which is small.
-            if crate::table::is_csv(&path) && crate::table::copy_of(&path).is_none() {
+            if crate::table::is_converted(&path) && crate::table::copy_of(&path).is_none() {
                 continue;
             }
             let path = self.file_of(&path);
@@ -2156,6 +2174,8 @@ impl Document {
         {
             return false;
         }
+        // The same columns kept as well would be the data twice.
+        self.columns.evict_file(&path);
         self.whole.insert(path, whole);
         self.rebuild();
         true
@@ -2164,7 +2184,7 @@ impl Document {
     /// The file a table's source at `path` is read from: itself, or for a
     /// CSV its copy, or its sample while there is none.
     fn file_of(&self, path: &std::path::Path) -> std::path::PathBuf {
-        if !crate::table::is_csv(path) {
+        if !crate::table::is_converted(path) {
             return path.to_path_buf();
         }
         crate::table::copy_of(path).unwrap_or_else(|| path.to_path_buf())
@@ -2180,7 +2200,8 @@ impl Document {
             .filter_map(|s| s.source.as_ref())
             .map(|source| base.join(&source.path))
             .find(|named| {
-                crate::table::is_csv(named) && crate::table::copy_of(named).as_deref() == Some(read)
+                crate::table::is_converted(named)
+                    && crate::table::copy_of(named).as_deref() == Some(read)
             })
             .unwrap_or_else(|| read.to_path_buf())
     }
@@ -2199,7 +2220,7 @@ impl Document {
                 continue;
             };
             let path = base.join(&source.path);
-            if crate::table::is_csv(&path)
+            if crate::table::is_converted(&path)
                 && crate::table::copy_of(&path).is_none()
                 && !out.contains(&path)
             {
@@ -2602,6 +2623,8 @@ impl Document {
             return Vec::new();
         };
         let file_rows: Vec<usize> = (from..end).map(|r| self.file_row(sheet, r)).collect();
+        // The columns' windows read side by side rather than one by one.
+        engine.prefetch_rows(sheet, &file_rows);
         let program = engine.program();
         let mut columns: Vec<std::vec::IntoIter<Value>> = (0..t.columns.len())
             .map(|c| engine.rows_shown(sheet, c, &file_rows).into_iter())
@@ -4476,8 +4499,14 @@ impl Document {
         // Read whatever else is wrong: a mistake in one sheet is no reason
         // for a table beside it to lose its rows.
         let base = self.base.clone().unwrap_or_else(|| ".".into());
-        let tables =
-            crate::table::read_holding(&mut program, &base, &mut diags, &self.whole, self.copying);
+        let tables = crate::table::read_holding(
+            &mut program,
+            &base,
+            &mut diags,
+            &self.whole,
+            self.copying,
+            Some(&self.columns),
+        );
         // A file the text no longer names, or one changed since it was read,
         // is not held any longer.
         let named: std::collections::HashSet<std::path::PathBuf> = program
@@ -4489,6 +4518,10 @@ impl Document {
         self.whole.retain(|path, w| {
             named.contains(path) && crate::table::identity(path).as_ref() == Some(&w.identity)
         });
+        // What is held whole is not also kept as columns: the cache's budget
+        // gives way to it (D150, D157).
+        self.columns
+            .reserve(self.whole.values().map(|w| w.bytes).sum());
         // A view's row count is settled before the grid is built from it.
         let view_options = Options {
             base: self.base.clone(),
@@ -4504,6 +4537,7 @@ impl Document {
                 style: self.style,
                 names: self.names.clone(),
                 local: self.local,
+                defer_rows: Some(self.paged_rows),
                 ..Options::default()
             },
             tables,
@@ -5516,6 +5550,258 @@ mod tests {
     }
 
     #[test]
+    fn a_column_read_whole_is_kept_across_an_edit() {
+        // A copy of its own, since the file is changed below.
+        let dir = std::env::temp_dir().join(format!("omasheet-kept-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("titanic.parquet");
+        std::fs::copy(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/titanic.parquet"),
+            &file,
+        )
+        .unwrap();
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\n\nTwice := Fare * 2\n";
+        let mut doc = Document::from_text(text);
+        doc.set_base(&dir);
+        doc.set_paged_rows(100);
+        // A fresh cache over the paged document: the first build above was
+        // of a table small enough to calculate whole.
+        doc.set_column_budget(1 << 30);
+        // Opening reads no column whole: the formula column is calculated
+        // for the rows shown, so what it reads of the file is a window.
+        assert_eq!(doc.column_cache().misses, 0, "nothing wants a whole column");
+
+        // A sort reads the column it sorts by, whole, and keeps it.
+        doc.sort_rows(0, 5, false).unwrap();
+        let opened = doc.column_cache();
+        assert!(opened.misses > 0, "a sort reads a column from the file");
+        assert_eq!(opened.entries, opened.misses, "and keeps each of them");
+        assert!(opened.bytes > 0);
+
+        // An edit rebuilds the engine, which starts with none of its
+        // columns. What it needs of the file's, it takes from the cache.
+        assert!(doc.set_text(&format!("{text}Thrice := Fare * 3\n")));
+        doc.sort_rows(0, 5, true).unwrap();
+        let edited = doc.column_cache();
+        assert_eq!(edited.misses, opened.misses, "nothing read again");
+        assert!(edited.hits > opened.hits, "the column came from the cache");
+        assert!(doc.set_text(text));
+        doc.sort_rows(0, 5, false).unwrap();
+        assert_eq!(doc.column_cache().misses, opened.misses);
+
+        // The file changed under it: the kept column is not the file's.
+        let changed = std::fs::read(&file).unwrap();
+        std::fs::write(&file, &changed).unwrap();
+        let bumped = std::fs::File::options().write(true).open(&file).unwrap();
+        bumped
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(doc.set_text(&format!("{text}Again := Fare * 4\n")));
+        doc.sort_rows(0, 5, true).unwrap();
+        assert!(
+            doc.column_cache().misses > opened.misses,
+            "a file changed since is read again"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_table_held_whole_is_not_also_kept_as_columns_and_the_cache_gives_way() {
+        let dir = std::env::temp_dir().join(format!("omasheet-share-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("titanic.parquet");
+        std::fs::copy(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/titanic.parquet"),
+            &file,
+        )
+        .unwrap();
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\n\nTwice := Fare * 2\n";
+        let mut doc = Document::from_text(text);
+        doc.set_base(&dir);
+        doc.set_paged_rows(100);
+        doc.set_column_budget(10_000_000);
+        doc.sort_rows(0, 5, false).unwrap();
+        let kept = doc.column_cache();
+        assert!(kept.entries > 0 && kept.bytes > 0, "{kept:?}");
+        assert_eq!(kept.budget, 10_000_000);
+
+        let want = doc.to_hold().remove(0);
+        let whole = crate::table::read_whole(&want.path, &want.columns).unwrap();
+        let held_bytes = whole.bytes;
+        assert!(held_bytes > 0);
+        assert!(doc.hold(want.path.clone(), whole));
+        let after = doc.column_cache();
+        assert_eq!(after.entries, 0, "its columns are the table's now");
+        assert_eq!(after.bytes, 0);
+        assert_eq!(after.budget, 10_000_000 - held_bytes, "the budget gave way");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_scroll_reads_the_file_once_for_many_frames() {
+        use polars::prelude::*;
+        let dir = std::env::temp_dir().join(format!("omasheet-ahead-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rows = 40_000usize;
+        let mut frame = df!["N" => (0..rows as i64).collect::<Vec<i64>>()].unwrap();
+        let mut file = std::fs::File::create(dir.join("n.parquet")).unwrap();
+        ParquetWriter::new(&mut file)
+            .with_row_group_size(Some(1_000))
+            .finish(&mut frame)
+            .unwrap();
+        let mut doc = Document::from_text("view T := dataframe['n.parquet']\n");
+        doc.set_base(&dir);
+        doc.set_paged_rows(100);
+        let read = |doc: &Document| doc.engine.as_ref().unwrap().rows_read();
+        let first_cell = |doc: &Document, from: usize| doc.rows(0, from, 40)[0][0].display.clone();
+        let before = read(&doc);
+
+        // The first screen reads a window around it, not the 40 rows alone.
+        assert_eq!(first_cell(&doc, 0), "0");
+        let first = read(&doc) - before;
+        assert!(first > 40 && first < rows, "{first} rows read");
+
+        // A scroll of three rows at a time, a thousand steps, stays in it.
+        for step in 0..1_000 {
+            let from = step * 3;
+            assert_eq!(first_cell(&doc, from), from.to_string());
+        }
+        assert_eq!(read(&doc) - before, first, "nothing read again");
+
+        // A jump out of the window reads one more, and what it shows is
+        // right at the very end as well.
+        assert_eq!(first_cell(&doc, 20_000), "20000");
+        let jumped = read(&doc) - before;
+        assert!(jumped > first);
+        assert_eq!(first_cell(&doc, rows - 40), (rows - 40).to_string());
+        let last = doc.rows(0, rows - 40, 40);
+        assert_eq!(last.last().unwrap()[0].display, (rows - 1).to_string());
+        // Back in a window already read, nothing more is read.
+        let settled = read(&doc);
+        assert_eq!(first_cell(&doc, rows - 100), (rows - 100).to_string());
+        assert_eq!(read(&doc), settled);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_jump_reads_every_columns_window_and_shows_the_right_rows() {
+        use polars::prelude::*;
+        let dir = std::env::temp_dir().join(format!("omasheet-side-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rows = 40_000usize;
+        // Six columns, a cell of which says which row and column it is.
+        let columns: Vec<Column> = (0..6)
+            .map(|j| {
+                Column::new(
+                    format!("C{j}").into(),
+                    (0..rows as i64).map(|r| r * 10 + j).collect::<Vec<i64>>(),
+                )
+            })
+            .collect();
+        let mut frame = DataFrame::new(columns).unwrap();
+        let mut file = std::fs::File::create(dir.join("six.parquet")).unwrap();
+        ParquetWriter::new(&mut file)
+            .with_row_group_size(Some(1_000))
+            .finish(&mut frame)
+            .unwrap();
+        let mut doc = Document::from_text("view T := dataframe['six.parquet']\n");
+        doc.set_base(&dir);
+        doc.set_paged_rows(100);
+        let read = |doc: &Document| doc.engine.as_ref().unwrap().rows_read();
+        let shown = |doc: &Document, from: usize| -> Vec<Vec<String>> {
+            doc.rows(0, from, 40)
+                .iter()
+                .map(|row| row.iter().map(|c| c.display.clone()).collect())
+                .collect()
+        };
+        let expect = |from: usize| -> Vec<Vec<String>> {
+            (from..from + 40)
+                .map(|r| (0..6).map(|j| (r * 10 + j).to_string()).collect())
+                .collect()
+        };
+        let before = read(&doc);
+
+        // A jump to the middle: all six columns' windows, read at once, and
+        // every cell is the cell of that row and column.
+        assert_eq!(shown(&doc, 20_000), expect(20_000));
+        let window = 40 + 2 * 8_192;
+        assert_eq!(read(&doc) - before, 6 * window);
+
+        // Scrolling on from there reads nothing, and a jump to the ends is
+        // as right as the middle was.
+        assert_eq!(shown(&doc, 20_003), expect(20_003));
+        assert_eq!(read(&doc) - before, 6 * window);
+        assert_eq!(shown(&doc, 0), expect(0));
+        assert_eq!(shown(&doc, rows - 40), expect(rows - 40));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_formula_column_over_a_big_table_is_calculated_for_the_rows_shown() {
+        use polars::prelude::*;
+        let dir = std::env::temp_dir().join(format!("omasheet-defer-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rows = 40_000usize;
+        let mut frame = df!["N" => (0..rows as i64).collect::<Vec<i64>>()].unwrap();
+        let mut file = std::fs::File::create(dir.join("n.parquet")).unwrap();
+        ParquetWriter::new(&mut file)
+            .with_row_group_size(Some(1_000))
+            .finish(&mut frame)
+            .unwrap();
+        let text = "view T := dataframe['n.parquet']\n\nN : Integer\n\nTwice := N * 2\nThrice := Twice + N\n";
+        let mut doc = Document::from_text(text);
+        doc.set_base(&dir);
+        doc.set_paged_rows(100);
+        // The paged document now, so nothing below is the first build's.
+        doc.set_column_budget(1 << 30);
+        let reads = |doc: &Document| doc.engine.as_ref().unwrap().rows_read();
+        let cells = |doc: &Document, from: usize| -> Vec<Vec<String>> {
+            doc.rows(0, from, 40)
+                .iter()
+                .map(|row| row.iter().map(|c| c.display.clone()).collect())
+                .collect()
+        };
+        let expect = |from: usize| -> Vec<Vec<String>> {
+            (from..from + 40)
+                .map(|r| vec![r.to_string(), (r * 2).to_string(), (r * 3).to_string()])
+                .collect()
+        };
+
+        // Nothing was read of the file for the formula columns when the
+        // engine ran, and nothing of them calculated: the whole of each
+        // would be 40,000 values, and the aggregate over Thrice below, which
+        // wants all of it, is the one thing that reads it.
+        let opened = reads(&doc);
+        assert!(opened < rows, "{opened} values read opening");
+        let held_whole = |doc: &Document, c: usize| doc.engine.as_ref().unwrap().holds_whole(0, c);
+        assert!(!held_whole(&doc, 1), "Twice is not calculated whole");
+        assert!(!held_whole(&doc, 2), "Thrice is not calculated whole");
+
+        // The rows shown are right, a column of formulas over a column of
+        // formulas over the file's, at the start, in the middle and at the
+        // end, and a scroll on from each reads nothing more.
+        for from in [0, 20_000, rows - 40] {
+            assert_eq!(cells(&doc, from), expect(from), "from {from}");
+        }
+        let shown = reads(&doc);
+        assert!(shown < rows * 3, "windows, not columns: {shown} read");
+        assert_eq!(cells(&doc, rows - 43), expect(rows - 43));
+        assert_eq!(reads(&doc), shown, "inside a window already read");
+        assert!(!held_whole(&doc, 1) && !held_whole(&doc, 2));
+
+        // An aggregate wants the whole of the column, so it is calculated
+        // then, and is the sum of every row of it.
+        let total: usize = (0..rows).map(|r| r * 3).sum();
+        assert!(doc.set_text(&format!("{text}\nconst Total = T.Thrice.sum()\n")));
+        let shown_total = doc.snapshot().consts[0].display.clone();
+        assert_eq!(shown_total, total.to_string());
+        assert!(held_whole(&doc, 2), "calculated whole when asked for");
+        // And what is shown is the same after it was.
+        assert_eq!(cells(&doc, 20_000), expect(20_000));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_table_held_whole_answers_as_one_read_from_its_file() {
         // A copy of its own, since the file is changed below.
         let dir = std::env::temp_dir().join(format!("omasheet-hold-{}", std::process::id()));
@@ -5817,12 +6103,24 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Where the copies of the tests that read a CSV or JSON file go: one
+    /// place for the whole run, set once, since the environment is the
+    /// process's and the tests run side by side.
+    fn test_cache() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let dir = std::env::temp_dir().join(format!("omasheet-copies-{}", std::process::id()));
+            // SAFETY: before any test reads a source that is copied, and
+            // only once.
+            unsafe { std::env::set_var("OMASHEET_CACHE", dir) };
+        });
+    }
+
     #[test]
     fn a_csv_table_shows_its_sample_and_then_its_copy_alike() {
         let dir = std::env::temp_dir().join(format!("omasheet-csvt-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        // SAFETY: the one test that sets it; no other reads a CSV.
-        unsafe { std::env::set_var("OMASHEET_CACHE", dir.join("cache")) };
+        test_cache();
         let mut csv = String::from("Name,N,X,Day,At\n");
         for i in 0..1500 {
             let name = if i % 7 == 0 {
@@ -5910,6 +6208,194 @@ mod tests {
                 .len(),
             25
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_json_table_names_a_sheet_and_shows_its_sample_and_then_its_copy_alike() {
+        let dir = std::env::temp_dir().join(format!("omasheet-jsont-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        test_cache();
+        let mut rows = Vec::new();
+        for i in 0..1500 {
+            rows.push(format!(
+                "{{\"Name\": \"n{i}\", \"N\": {}, \"X\": {}.5, \"Day\": \"2021-06-{:02}\"}}",
+                if i % 11 == 0 {
+                    "null".to_string()
+                } else {
+                    (i % 13).to_string()
+                },
+                i % 5,
+                i % 28 + 1,
+            ));
+        }
+        let book = format!(
+            "{{\"Rows\": [{}], \"Other\": [{{\"A\": 1}}, {{\"A\": 2}}]}}",
+            rows.join(",")
+        );
+        std::fs::write(dir.join("book.json"), book).unwrap();
+        let text =
+            "view T := dataframe['book.json#Rows']\n\nview U := dataframe['book.json#Other']\n";
+        let open = |screen: bool| {
+            let mut doc = if screen {
+                Document::on_screen(text, Style::ISO, Names::default())
+            } else {
+                Document::from_text(text)
+            };
+            doc.set_base(&dir);
+            doc
+        };
+        let types = |doc: &Document, t: usize| -> Vec<String> {
+            doc.snapshot().sheets[t]
+                .columns
+                .iter()
+                .map(|c| c.ty.clone())
+                .collect()
+        };
+        let shown = |doc: &Document, t: usize| -> Vec<Vec<String>> {
+            doc.rows(t, 0, 1500)
+                .into_iter()
+                .map(|row| row.into_iter().map(|c| c.display).collect())
+                .collect()
+        };
+
+        // On a screen, each sheet's sample at once, and a copy of each wanted.
+        let mut screen = open(true);
+        assert!(
+            screen.snapshot().problems.is_empty(),
+            "{:?}",
+            screen.snapshot().problems
+        );
+        assert_eq!(screen.snapshot().sheets[0].nrows, crate::table::SAMPLE_ROWS);
+        assert_eq!(screen.snapshot().sheets[1].nrows, 2);
+        assert_eq!(types(&screen, 0), ["String", "Integer", "Float", "Date"]);
+        assert_eq!(types(&screen, 1), ["Integer"]);
+        let rows_path = dir.join("book.json#Rows");
+        let other_path = dir.join("book.json#Other");
+        assert_eq!(
+            screen.to_convert(),
+            vec![rows_path.clone(), other_path.clone()]
+        );
+        let sample = shown(&screen, 0);
+        assert_eq!(sample[1], ["n1", "1", "1.5", "2021-06-02"]);
+        // A null is empty.
+        assert_eq!(sample[0][1], "");
+
+        // Copied, each is the whole sheet, and the first rows are the sample's.
+        crate::table::convert(&rows_path).unwrap();
+        crate::table::convert(&other_path).unwrap();
+        assert!(screen.converted(&rows_path));
+        assert!(screen.to_convert().is_empty());
+        assert_eq!(screen.snapshot().sheets[0].nrows, 1500);
+        assert_eq!(screen.snapshot().sheets[1].nrows, 2);
+        assert_eq!(shown(&screen, 0)[..sample.len()], sample[..]);
+        assert_eq!(shown(&screen, 1), [["1"], ["2"]]);
+
+        // Read where it waits for the copy, the same rows.
+        let waited = open(false);
+        assert_eq!(shown(&waited, 0), shown(&screen, 0));
+        // Filters as a Parquet table does.
+        assert_eq!(
+            screen
+                .shown_rows(0, &[("N".into(), "* == 3".into())])
+                .unwrap()
+                .len(),
+            (0..1500).filter(|i| i % 11 != 0 && i % 13 == 3).count()
+        );
+        // A sheet that is not there is a diagnostic, not a panic.
+        let missing = {
+            let mut doc = Document::from_text("view T := dataframe['book.json#Nope']\n");
+            doc.set_base(&dir);
+            doc
+        };
+        assert!(!missing.snapshot().problems.is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_aggregate_over_a_copied_file_is_kept_across_edits_and_not_for_another_file() {
+        let dir = std::env::temp_dir().join(format!("omasheet-answers-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        test_cache();
+        let write = |rows: usize, step: usize| {
+            let mut csv = String::from("N,X\n");
+            for i in 0..rows {
+                csv.push_str(&format!("{},{}.5\n", i * step, i % 7));
+            }
+            std::fs::write(dir.join("a.csv"), csv).unwrap();
+        };
+        write(5_000, 1);
+        let text = "view T := dataframe['a.csv']\n\nN : Integer\nX : Float\n\n\
+                    const SumN = T.N.sum()\nconst SumX = T.X.sum()\nconst MaxN = T.N.max()\n";
+        let mut doc = Document::from_text(text);
+        doc.set_base(&dir);
+        assert!(
+            doc.snapshot().problems.is_empty(),
+            "{:?}",
+            doc.snapshot().problems
+        );
+        let consts = |doc: &Document| -> Vec<String> {
+            doc.snapshot()
+                .consts
+                .iter()
+                .map(|c| c.display.clone())
+                .collect()
+        };
+        let sum_n: usize = (0..5_000).sum();
+        let first = consts(&doc);
+        assert_eq!(first[0], sum_n.to_string());
+        assert_eq!(first[2], "4999");
+        let kept = doc.column_cache();
+        assert_eq!(kept.answers, 3, "three answers kept: {kept:?}");
+        assert_eq!(kept.answer_hits, 0);
+
+        // An edit that touches none of it rebuilds, and the sums are given
+        // from where they were kept: the same answers, none added up again.
+        // A float sum is one the engine walks, and is kept as well.
+        assert!(doc.set_text(&format!("{text}\nconst Again = 1\n")));
+        let after = doc.column_cache();
+        assert_eq!(after.answer_hits, 3, "{after:?}");
+        assert_eq!(after.misses, kept.misses, "no column was read again");
+        assert_eq!(consts(&doc)[..3], first[..]);
+
+        // The file is not the same file now: its copy is another, and what
+        // was kept of the first is not given for it.
+        write(5_000, 2);
+        assert!(doc.set_text(text));
+        let again = consts(&doc);
+        assert_eq!(again[0], (sum_n * 2).to_string());
+        assert_eq!(again[2], "9998");
+        assert_eq!(
+            doc.column_cache().answer_hits,
+            3,
+            "nothing kept was given for it"
+        );
+
+        // A column declared as another type is another answer.
+        let as_float = text.replace("N : Integer", "N : Float");
+        assert!(doc.set_text(&as_float));
+        // Three for the first copy, three for the second, and the two over
+        // `N` again as a float: the sum of `X` is the same answer as it was.
+        assert_eq!(doc.column_cache().answers, 8, "kept by the type as well");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_copy_in_the_cache_keeps_its_identity_when_it_is_read() {
+        let dir = std::env::temp_dir().join(format!("omasheet-identity-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        test_cache();
+        std::fs::write(dir.join("b.csv"), "N\n1\n2\n3\n").unwrap();
+        let path = dir.join("b.csv");
+        let copy = crate::table::convert(&path).unwrap();
+        let before = crate::table::identity(&copy);
+        // Read for a table, which touches it, a while later.
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        assert_eq!(crate::table::located(&path, Copying::Wait).unwrap(), copy);
+        assert_eq!(crate::table::identity(&copy), before);
+        // A file that is not in the cache has the time it was written.
+        let outside = crate::table::identity(&path).unwrap();
+        assert!(outside.1.is_some());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

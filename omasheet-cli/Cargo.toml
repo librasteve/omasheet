@@ -11,3 +11,6 @@ omasheet-engine.workspace = true
 omasheet-interop.workspace = true
 omasheet-md.workspace = true
 clap.workspace = true
+
+[dev-dependencies]
+rust_xlsxwriter.workspace = true

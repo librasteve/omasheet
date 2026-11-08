@@ -31,6 +31,9 @@ pub enum Held {
         path: PathBuf,
         name: String,
         whole: Option<Box<PlColumn>>,
+        /// Where a column read whole is kept for the next rebuild (D150),
+        /// when the document that holds this has one.
+        cache: Option<ColumnCache>,
     },
     /// The source has no such column. The mismatch is said once, as a
     /// diagnostic; every cell of it is then in error rather than empty,
@@ -42,7 +45,26 @@ impl Held {
     /// The column itself, read now. `None` where the file will not give it,
     /// which is a file changed or taken away since its schema was read.
     pub fn read(&self) -> Option<PlColumn> {
-        self.read_rows(None)
+        let Held::Column {
+            path,
+            name,
+            whole: None,
+            cache: Some(cache),
+        } = self
+        else {
+            return self.read_rows(None);
+        };
+        // Taken from the cache where the file is as it was when the column
+        // was put there, and put there when it is read (D150).
+        let identity = identity(path)?;
+        if let Some(column) = cache.get(path, name, &identity) {
+            return Some(column);
+        }
+        let column = self.read_rows(None)?;
+        let bytes = estimate(path, std::slice::from_ref(name))
+            .unwrap_or_else(|_| column.as_materialized_series().estimated_size());
+        cache.put(path, name, identity, column.clone(), bytes);
+        Some(column)
     }
 
     /// `len` rows of the column from row `start`, read now. Polars' reader
@@ -127,7 +149,7 @@ impl Tables {
 /// million rows and twenty columns reads neither the rows nor the columns —
 /// and a column no formula mentions is never read at all.
 pub fn read(program: &mut Program, dir: &Path, diags: &mut Vec<Diagnostic>) -> Tables {
-    read_holding(program, dir, diags, &Store::new(), Copying::Wait)
+    read_holding(program, dir, diags, &Store::new(), Copying::Wait, None)
 }
 
 /// [`read`], where some files are held whole in `store` (D157): a column of
@@ -139,6 +161,7 @@ pub fn read_holding(
     diags: &mut Vec<Diagnostic>,
     store: &Store,
     copying: Copying,
+    cache: Option<&ColumnCache>,
 ) -> Tables {
     let mut frames = Tables::for_program(program);
     for (t, sheet) in program.sheets.iter_mut().enumerate() {
@@ -159,7 +182,7 @@ pub fn read_holding(
                 fill(
                     t,
                     sheet,
-                    (frame, &path, whole),
+                    (frame, &path, whole, cache),
                     height,
                     &source,
                     diags,
@@ -215,7 +238,7 @@ fn scan(path: &Path) -> Result<LazyFrame, String> {
 fn fill(
     t: usize,
     sheet: &mut omasheet_omx::check::Sheet,
-    (mut frame, path, whole): (LazyFrame, &Path, Option<&DataFrame>),
+    (mut frame, path, whole, cache): (LazyFrame, &Path, Option<&DataFrame>, Option<&ColumnCache>),
     height: usize,
     source: &Source,
     diags: &mut Vec<Diagnostic>,
@@ -343,6 +366,7 @@ fn fill(
                 path: path.to_path_buf(),
                 name: names[c].clone(),
                 whole: whole.and_then(|f| f.column(names[c].as_str()).ok().cloned().map(Box::new)),
+                cache: cache.cloned(),
             },
         );
     }
@@ -355,9 +379,283 @@ fn fill(
 pub type Identity = (u64, Option<std::time::SystemTime>);
 
 /// The identity of the file at `path` now, or `None` where there is none.
+///
+/// A copy in the cache has no time in it. Each read of a copy touches it, so
+/// that the pruning knows which was used last, and a time that changes every
+/// time it is read would make every copy a different file at the next look:
+/// the columns kept of it, and a table held whole from it, would be taken
+/// for another file's. What a copy is a copy of is in its name, which says
+/// the length and the time of the file it was made from.
 pub fn identity(path: &Path) -> Option<Identity> {
     let meta = std::fs::metadata(path).ok()?;
+    if path.parent() == Some(cache_dir().as_path()) {
+        return Some((meta.len(), None));
+    }
     Some((meta.len(), meta.modified().ok()))
+}
+
+/// The columns a document has read whole, kept from one rebuild to the next
+/// (open-a-big-csv D150). An edit rebuilds the engine, and the engine's own
+/// columns go with it; this belongs to the document, so a column read for
+/// an aggregate, a sort or a filter is not read again from the file after
+/// the next keystroke.
+///
+/// Keyed by the file and the column's name in it, and each entry carries
+/// the identity the file had when the column was read, so a file changed
+/// since is a miss and its old entry is replaced rather than given out.
+/// Entries are dropped least recently used first once the bytes they take
+/// pass the budget, which is a quarter of the machine's memory unless the
+/// caller says otherwise, and a column that is by itself over the budget is
+/// not kept. A column read for a range is never put here: it is not the
+/// column.
+///
+/// The size of an entry is what [`estimate`] says from the footer, and not
+/// Polars' own figure, which counts little of a text column (D157).
+#[derive(Clone)]
+pub struct ColumnCache(std::sync::Arc<std::sync::Mutex<CacheInner>>);
+
+struct CacheInner {
+    entries: std::collections::HashMap<(PathBuf, String), CacheEntry>,
+    bytes: usize,
+    budget: usize,
+    /// What tables held whole take, which the budget gives way to (D157).
+    reserved: usize,
+    /// What an aggregate over a whole column of a file came to, by the file,
+    /// the column and the function: the answer, kept from one rebuild to the next so that
+    /// an edit does not add up a column of twenty million rows again
+    /// (D155). Each carries the identity the file had, and is of no use to
+    /// a file that is another now.
+    answers: std::collections::HashMap<(PathBuf, String, String), Answer>,
+    answer_hits: usize,
+    tick: u64,
+    hits: usize,
+    misses: usize,
+}
+
+impl CacheInner {
+    /// What the entries may take now: the budget less what is held whole.
+    fn allowed(&self) -> usize {
+        self.budget.saturating_sub(self.reserved)
+    }
+
+    /// Drop the least recently used until what is kept is allowed.
+    fn trim(&mut self) {
+        while self.bytes > self.allowed() {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, e)| e.used)
+                .map(|(k, _)| k.clone())
+            else {
+                break;
+            };
+            if let Some(gone) = self.entries.remove(&oldest) {
+                self.bytes -= gone.bytes;
+            }
+        }
+    }
+}
+
+struct Answer {
+    identity: Identity,
+    value: crate::eval::Scalar,
+}
+
+struct CacheEntry {
+    identity: Identity,
+    column: PlColumn,
+    bytes: usize,
+    used: u64,
+}
+
+/// What a cache has done and holds, for a test and for the status.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct CacheStats {
+    /// What the entries may take now, after what is held whole.
+    pub budget: usize,
+    pub hits: usize,
+    pub misses: usize,
+    pub entries: usize,
+    pub bytes: usize,
+    /// How many aggregates are kept, and how many times one was given again
+    /// instead of being added up.
+    pub answers: usize,
+    pub answer_hits: usize,
+}
+
+impl Default for ColumnCache {
+    fn default() -> Self {
+        ColumnCache::with_budget(physical_memory() / 4)
+    }
+}
+
+impl ColumnCache {
+    /// A cache that keeps at most `budget` bytes.
+    pub fn with_budget(budget: usize) -> ColumnCache {
+        ColumnCache(std::sync::Arc::new(std::sync::Mutex::new(CacheInner {
+            entries: Default::default(),
+            bytes: 0,
+            budget,
+            reserved: 0,
+            answers: Default::default(),
+            answer_hits: 0,
+            tick: 0,
+            hits: 0,
+            misses: 0,
+        })))
+    }
+
+    fn inner(&self) -> std::sync::MutexGuard<'_, CacheInner> {
+        // Nothing in here can be left half done by a panic.
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The column, if it was kept and the file is as it was. A miss is
+    /// counted here, because it is followed by the read it stands for.
+    fn get(&self, path: &Path, name: &str, identity: &Identity) -> Option<PlColumn> {
+        let mut inner = self.inner();
+        inner.tick += 1;
+        let tick = inner.tick;
+        let key = (path.to_path_buf(), name.to_string());
+        match inner.entries.get_mut(&key) {
+            Some(entry) if &entry.identity == identity => {
+                entry.used = tick;
+                let column = entry.column.clone();
+                inner.hits += 1;
+                Some(column)
+            }
+            Some(_) => {
+                // Changed since: of no use to anyone.
+                if let Some(old) = inner.entries.remove(&key) {
+                    inner.bytes -= old.bytes;
+                }
+                inner.misses += 1;
+                None
+            }
+            None => {
+                inner.misses += 1;
+                None
+            }
+        }
+    }
+
+    /// Keep a column read whole, and drop the least recently used until
+    /// what is kept is within the budget.
+    fn put(&self, path: &Path, name: &str, identity: Identity, column: PlColumn, bytes: usize) {
+        let mut inner = self.inner();
+        if bytes > inner.allowed() {
+            return;
+        }
+        inner.tick += 1;
+        let used = inner.tick;
+        let key = (path.to_path_buf(), name.to_string());
+        if let Some(old) = inner.entries.insert(
+            key,
+            CacheEntry {
+                identity,
+                column,
+                bytes,
+                used,
+            },
+        ) {
+            inner.bytes -= old.bytes;
+        }
+        inner.bytes += bytes;
+        inner.trim();
+    }
+
+    /// Tell the cache what tables held whole take. Its budget gives way to
+    /// that, and what no longer fits is dropped, least recently used first.
+    pub fn reserve(&self, bytes: usize) {
+        let mut inner = self.inner();
+        inner.reserved = bytes;
+        inner.trim();
+    }
+
+    /// Drop every column of the file at `path`: the file is held whole, and
+    /// a column kept here as well would be the same data twice.
+    pub fn evict_file(&self, path: &Path) {
+        let mut inner = self.inner();
+        let gone: Vec<_> = inner
+            .entries
+            .keys()
+            .filter(|(p, _)| p == path)
+            .cloned()
+            .collect();
+        for key in gone {
+            if let Some(entry) = inner.entries.remove(&key) {
+                inner.bytes -= entry.bytes;
+            }
+        }
+    }
+
+    /// What an aggregate over the column came to, where it was kept and the
+    /// file is as it was.
+    pub(crate) fn answer(
+        &self,
+        path: &Path,
+        name: &str,
+        key: &str,
+        identity: &Identity,
+    ) -> Option<crate::eval::Scalar> {
+        let mut inner = self.inner();
+        let kept = inner
+            .answers
+            .get(&(path.to_path_buf(), name.to_string(), key.to_string()))?;
+        let value = (&kept.identity == identity).then(|| kept.value.clone())?;
+        inner.answer_hits += 1;
+        Some(value)
+    }
+
+    /// Keep what an aggregate over the column came to.
+    pub(crate) fn put_answer(
+        &self,
+        path: &Path,
+        name: &str,
+        key: &str,
+        identity: Identity,
+        value: crate::eval::Scalar,
+    ) {
+        let mut inner = self.inner();
+        // Each is a few bytes, but a file that is written again is another
+        // copy with answers of its own: not for ever.
+        if inner.answers.len() >= MOST_ANSWERS {
+            inner.answers.clear();
+        }
+        inner.answers.insert(
+            (path.to_path_buf(), name.to_string(), key.to_string()),
+            Answer { identity, value },
+        );
+    }
+
+    pub fn stats(&self) -> CacheStats {
+        let inner = self.inner();
+        CacheStats {
+            budget: inner.allowed(),
+            hits: inner.hits,
+            misses: inner.misses,
+            entries: inner.entries.len(),
+            bytes: inner.bytes,
+            answers: inner.answers.len(),
+            answer_hits: inner.answer_hits,
+        }
+    }
+}
+
+/// The most aggregates a document keeps the answers of.
+const MOST_ANSWERS: usize = 4096;
+
+/// The machine's physical memory in bytes, or 4 GiB where it cannot be asked.
+fn physical_memory() -> usize {
+    #[cfg(unix)]
+    {
+        let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+        let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if pages > 0 && size > 0 {
+            return pages as usize * size as usize;
+        }
+    }
+    4 << 30
 }
 
 /// A table's file read whole, with the identity it had when it was read.
@@ -365,6 +663,9 @@ pub fn identity(path: &Path) -> Option<Identity> {
 pub struct Whole {
     pub identity: Identity,
     pub frame: DataFrame,
+    /// What holding it takes, as [`estimate`] says from the footer, which is
+    /// what the cache's budget gives way to (D150, D157).
+    pub bytes: usize,
 }
 
 /// The files a document holds whole, by the path its sources name them by
@@ -442,7 +743,12 @@ pub fn read_whole(path: &Path, names: &[String]) -> Result<Whole, String> {
         .with_columns(Some(names.to_vec()))
         .finish()
         .map_err(|e| e.to_string())?;
-    Ok(Whole { identity, frame })
+    let bytes = estimate(path, names).unwrap_or_else(|_| frame.estimated_size());
+    Ok(Whole {
+        identity,
+        frame,
+        bytes,
+    })
 }
 
 /// A name for a column the file holds under one omasheet cannot write: what
@@ -506,10 +812,61 @@ pub const SAMPLE_ROWS: usize = 1_000;
 /// alike, so the two have the same columns.
 const INFER_ROWS: usize = 10_000;
 
+/// What a source that a table reads through a copy is made of.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kind {
+    Csv,
+    Json,
+    Xlsx,
+}
+
+/// The kind a file is, by its extension.
+fn kind_of_file(file: &Path) -> Option<Kind> {
+    let ext = file.extension()?;
+    if ext.eq_ignore_ascii_case("csv") {
+        Some(Kind::Csv)
+    } else if ext.eq_ignore_ascii_case("json") {
+        Some(Kind::Json)
+    } else if ext.eq_ignore_ascii_case("xlsx") || ext.eq_ignore_ascii_case("xlsm") {
+        Some(Kind::Xlsx)
+    } else {
+        None
+    }
+}
+
+/// A source's file, and the sheet of it that is named: `book.json#Sales` is
+/// the sheet `Sales` of `book.json` (open-a-big-csv, `file#Sheet`). Only
+/// where what is before the last `#` is a file of a kind with sheets, and
+/// there is no file of the whole name, so a file called `a#b.json` is
+/// itself.
+pub fn split_sheet(path: &Path) -> (PathBuf, Option<String>) {
+    if !path.exists() {
+        let text = path.to_string_lossy();
+        if let Some(at) = text.rfind('#') {
+            let file = PathBuf::from(&text[..at]);
+            let sheet = &text[at + 1..];
+            if !sheet.is_empty() && kind_of_file(&file).is_some() {
+                return (file, Some(sheet.to_string()));
+            }
+        }
+    }
+    (path.to_path_buf(), None)
+}
+
+/// What a source is, where it is one a table reads through a copy.
+pub fn kind(path: &Path) -> Option<Kind> {
+    kind_of_file(&split_sheet(path).0)
+}
+
 /// Whether `path` names a CSV, which a table reads through a copy.
 pub fn is_csv(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("csv"))
+    kind(path) == Some(Kind::Csv)
+}
+
+/// Whether `path` names a source a table reads through a copy: a CSV, a JSON
+/// file or an XLSX workbook.
+pub fn is_converted(path: &Path) -> bool {
+    kind(path).is_some()
 }
 
 /// Where copies are kept: `$OMASHEET_CACHE`, or `omasheet` in
@@ -529,16 +886,18 @@ pub fn cache_dir() -> PathBuf {
 /// state: a hash of where it is.
 fn family(path: &Path) -> String {
     use std::hash::{Hash, Hasher};
-    let full = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let (file, sheet) = split_sheet(path);
+    let full = std::fs::canonicalize(&file).unwrap_or(file);
     let mut h = std::collections::hash_map::DefaultHasher::new();
     full.hash(&mut h);
+    sheet.hash(&mut h);
     format!("{:016x}", h.finish())
 }
 
 /// The name of the copy of the CSV at `path` as it is now, by its length
 /// and when it was written: a CSV changed has a copy of another name.
 fn copy_name(path: &Path) -> Option<String> {
-    let (len, modified) = identity(path)?;
+    let (len, modified) = identity(&split_sheet(path).0)?;
     let nanos = modified
         .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
         .map_or(0, |d| d.as_nanos());
@@ -555,7 +914,7 @@ pub fn copy_of(path: &Path) -> Option<PathBuf> {
 /// The file a source is read from: the source itself, unless it is a CSV,
 /// and then its copy, or as `copying` says where there is none yet.
 pub fn located(path: &Path, copying: Copying) -> Result<PathBuf, String> {
-    if !is_csv(path) {
+    if !is_converted(path) {
         return Ok(path.to_path_buf());
     }
     if let Some(copy) = copy_of(path) {
@@ -664,10 +1023,27 @@ fn sink_to(frame: LazyFrame, target: &Path) -> Result<(), String> {
 pub fn sample(path: &Path) -> Result<PathBuf, String> {
     let name = copy_name(path).ok_or_else(|| "there is no such file".to_string())?;
     let target = cache_dir().join(format!("{name}.sample.parquet"));
-    if !target.is_file() {
+    let (file, sheet) = split_sheet(path);
+    if !target.is_file() && matches!(kind(path), Some(Kind::Json | Kind::Xlsx)) {
+        std::fs::create_dir_all(cache_dir()).map_err(|e| e.to_string())?;
+        let partial = target.with_extension(format!("partial-{}", std::process::id()));
+        let sampled = match kind(path) {
+            Some(Kind::Xlsx) => {
+                crate::xlsxcopy::sample(&file, sheet.as_deref(), INFER_ROWS, SAMPLE_ROWS, &partial)
+            }
+            _ => {
+                crate::jsoncopy::sample(&file, sheet.as_deref(), INFER_ROWS, SAMPLE_ROWS, &partial)
+            }
+        };
+        if let Err(e) = sampled {
+            let _ = std::fs::remove_file(&partial);
+            return Err(e);
+        }
+        std::fs::rename(&partial, &target).map_err(|e| e.to_string())?;
+    } else if !target.is_file() {
         // Only the head of the file is given to Polars: given the file, its
         // reader sets about the whole of it however few rows are asked for.
-        let head = csv_head(path)?;
+        let head = csv_head(&file)?;
         let mut frame = CsvReadOptions::default()
             .with_has_header(true)
             .with_schema(Some(csv_schema(&head)?))
@@ -692,6 +1068,80 @@ pub fn sample(path: &Path) -> Result<PathBuf, String> {
 /// further down does not have the type the first rows gave its column,
 /// the types are worked out again from every row.
 pub fn convert(path: &Path) -> Result<PathBuf, String> {
+    if let Some(program) = COPIER.get() {
+        // Where the child could not be started, the copy is made here.
+        if let Some(done) = convert_in_child(program, path) {
+            return done;
+        }
+    }
+    convert_here(path)
+}
+
+/// The program that makes copies in a process of its own, where one is set
+/// (`open-a-big-csv` 5.4). Polars' streaming engine keeps what it grew to
+/// while writing a copy, about 460 MiB, for as long as its process lives; a
+/// child gives it back to the machine as it exits.
+static COPIER: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// The variable that makes a process a copier, holding the source to copy.
+pub const COPY_CHILD: &str = "OMASHEET_COPY_CHILD";
+
+/// Threads a child copies with: two keep it near 230 MB, for about 3.7 s a
+/// million rows, where eight take about 500 MB.
+const CHILD_THREADS: &str = "2";
+
+/// From now on copies are made by running this program, as a child with
+/// [`COPY_CHILD`] set; it must call [`run_child`] first thing. Called by
+/// the app and the command line, not by tests or libraries, which copy in
+/// their own process.
+pub fn copy_in_children() {
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = COPIER.set(exe);
+    }
+}
+
+/// `Some` if this process was started to make a copy: it makes it, says
+/// where it is on stdout or why not on stderr, and the exit code is for
+/// the caller to return.
+pub fn run_child() -> Option<i32> {
+    let source = std::env::var_os(COPY_CHILD)?;
+    Some(match convert_here(Path::new(&source)) {
+        Ok(target) => {
+            println!("{}", target.display());
+            0
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    })
+}
+
+/// `None` if the child could not be started.
+fn convert_in_child(program: &Path, path: &Path) -> Option<Result<PathBuf, String>> {
+    let out = std::process::Command::new(program)
+        .env(COPY_CHILD, path)
+        .env("POLARS_MAX_THREADS", CHILD_THREADS)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if out.status.success() {
+        let text = String::from_utf8_lossy(&out.stdout);
+        return Some(match text.lines().last() {
+            Some(line) if !line.is_empty() => Ok(PathBuf::from(line)),
+            _ => Err("the copy left no file".to_string()),
+        });
+    }
+    let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Some(Err(if why.is_empty() {
+        "the copy stopped".to_string()
+    } else {
+        why
+    }))
+}
+
+/// [`convert`], in this process.
+pub fn convert_here(path: &Path) -> Result<PathBuf, String> {
     let name = copy_name(path).ok_or_else(|| "there is no such file".to_string())?;
     let target = cache_dir().join(format!("{name}.parquet"));
     // What a copy cut short left behind: the app closed while writing it.
@@ -704,11 +1154,30 @@ pub fn convert(path: &Path) -> Result<PathBuf, String> {
             }
         }
     }
-    // Where a value further down does not have the type the head gave its
-    // column, the types are worked out again from every row.
-    let schema = csv_schema(&csv_head(path)?)?;
-    if sink_to(csv_scan(path, Some(schema))?, &target).is_err() {
-        sink_to(csv_scan(path, None)?, &target)?;
+    let (file, sheet) = split_sheet(path);
+    match kind(path) {
+        Some(kind @ (Kind::Json | Kind::Xlsx)) => {
+            std::fs::create_dir_all(cache_dir()).map_err(|e| e.to_string())?;
+            let partial = target.with_extension(format!("partial-{}", std::process::id()));
+            let made = match kind {
+                Kind::Xlsx => crate::xlsxcopy::convert(&file, sheet.as_deref(), &partial),
+                _ => crate::jsoncopy::convert(&file, sheet.as_deref(), &partial),
+            };
+            if let Err(e) = made {
+                let _ = std::fs::remove_file(&partial);
+                return Err(e);
+            }
+            std::fs::rename(&partial, &target).map_err(|e| e.to_string())?;
+        }
+        _ => {
+            // Where a value further down does not have the type the head
+            // gave its column, the types are worked out again from every
+            // row.
+            let schema = csv_schema(&csv_head(&file)?)?;
+            if sink_to(csv_scan(&file, Some(schema))?, &target).is_err() {
+                sink_to(csv_scan(&file, None)?, &target)?;
+            }
+        }
     }
     // The cache kept within its budget, the copy just written aside.
     prune(&cache_dir(), cache_budget(), &target);
@@ -846,5 +1315,105 @@ mod cache_tests {
         if let Some(free) = free_space(Path::new("/")) {
             assert!(free > 0);
         }
+    }
+}
+
+#[cfg(test)]
+mod column_cache_tests {
+    use super::*;
+
+    fn column(name: &str, n: i64) -> PlColumn {
+        PlColumn::new(name.into(), (0..n).collect::<Vec<i64>>())
+    }
+
+    fn id(len: u64) -> Identity {
+        (len, None)
+    }
+
+    #[test]
+    fn the_least_recently_used_column_goes_first_when_the_budget_is_passed() {
+        let cache = ColumnCache::with_budget(100);
+        let path = Path::new("a.parquet");
+        cache.put(path, "a", id(1), column("a", 4), 40);
+        cache.put(path, "b", id(1), column("b", 4), 40);
+        // `a` is used again, so `b` is the older.
+        assert!(cache.get(path, "a", &id(1)).is_some());
+        cache.put(path, "c", id(1), column("c", 4), 40);
+        assert!(cache.get(path, "b", &id(1)).is_none(), "b went");
+        assert!(cache.get(path, "a", &id(1)).is_some());
+        assert!(cache.get(path, "c", &id(1)).is_some());
+        let stats = cache.stats();
+        assert_eq!((stats.entries, stats.bytes), (2, 80));
+    }
+
+    #[test]
+    fn a_column_over_the_budget_by_itself_is_not_kept() {
+        let cache = ColumnCache::with_budget(100);
+        let path = Path::new("a.parquet");
+        cache.put(path, "big", id(1), column("big", 4), 101);
+        assert_eq!(cache.stats().entries, 0);
+        assert!(cache.get(path, "big", &id(1)).is_none());
+    }
+
+    #[test]
+    fn a_column_of_a_file_changed_since_is_a_miss_and_is_dropped() {
+        let cache = ColumnCache::with_budget(100);
+        let path = Path::new("a.parquet");
+        cache.put(path, "a", id(1), column("a", 4), 40);
+        assert!(cache.get(path, "a", &id(2)).is_none());
+        let stats = cache.stats();
+        assert_eq!((stats.entries, stats.bytes, stats.misses), (0, 0, 1));
+        // The same name in another file is another column.
+        cache.put(path, "a", id(2), column("a", 4), 40);
+        assert!(cache.get(Path::new("b.parquet"), "a", &id(2)).is_none());
+        assert!(cache.get(path, "a", &id(2)).is_some());
+    }
+
+    #[test]
+    fn putting_a_column_again_replaces_it_without_counting_it_twice() {
+        let cache = ColumnCache::with_budget(100);
+        let path = Path::new("a.parquet");
+        cache.put(path, "a", id(1), column("a", 4), 40);
+        cache.put(path, "a", id(2), column("a", 8), 60);
+        let stats = cache.stats();
+        assert_eq!((stats.entries, stats.bytes), (1, 60));
+    }
+
+    #[test]
+    fn the_budget_gives_way_to_what_is_held_whole() {
+        let cache = ColumnCache::with_budget(100);
+        let path = Path::new("a.parquet");
+        cache.put(path, "a", id(1), column("a", 4), 40);
+        cache.put(path, "b", id(1), column("b", 4), 40);
+        assert_eq!(cache.stats().budget, 100);
+        // 70 held whole leaves 30, which neither column fits in.
+        cache.reserve(70);
+        let stats = cache.stats();
+        assert_eq!((stats.budget, stats.entries, stats.bytes), (30, 0, 0));
+        // And nothing over what is left is kept afterwards.
+        cache.put(path, "a", id(1), column("a", 4), 40);
+        assert_eq!(cache.stats().entries, 0);
+        cache.put(path, "c", id(1), column("c", 4), 20);
+        assert_eq!(cache.stats().entries, 1);
+        // What is held whole going again gives the room back.
+        cache.reserve(0);
+        assert_eq!(cache.stats().budget, 100);
+        // More held than the budget is a budget of nothing, not a wrap.
+        cache.reserve(500);
+        assert_eq!(cache.stats().budget, 0);
+    }
+
+    #[test]
+    fn a_file_held_whole_has_none_of_its_columns_kept_as_well() {
+        let cache = ColumnCache::with_budget(1000);
+        let (a, b) = (Path::new("a.parquet"), Path::new("b.parquet"));
+        cache.put(a, "x", id(1), column("x", 4), 40);
+        cache.put(a, "y", id(1), column("y", 4), 40);
+        cache.put(b, "x", id(1), column("x", 4), 40);
+        cache.evict_file(a);
+        let stats = cache.stats();
+        assert_eq!((stats.entries, stats.bytes), (1, 40));
+        assert!(cache.get(b, "x", &id(1)).is_some());
+        assert!(cache.get(a, "x", &id(1)).is_none());
     }
 }

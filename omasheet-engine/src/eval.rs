@@ -10,7 +10,7 @@
 use crate::datefmt::{Instant, Moment, format_date};
 use crate::dtype::{cell_of, column_of};
 use crate::numfmt::format_number;
-use crate::table::{Held, Tables};
+use crate::table::{ColumnCache, Held, Identity, Tables};
 use crate::value::{
     RowRef, Value, View, arith, bitwise, compare, complement, equal, format_exact, format_styled,
     math, round_digits, sort_order,
@@ -36,7 +36,18 @@ use polars::prelude::{
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
+
+/// How many rows a grid's read of a big table's column goes past the rows
+/// shown, on each side (`open-a-big-csv` 1.3). A screen is a few dozen rows
+/// and a step of a scroll a few more, so this is many hundreds of frames
+/// of scrolling in either direction before the next read.
+const READ_AHEAD: usize = 8_192;
+
+/// The rows past the read-ahead that a column to be deferred is tried on:
+/// a screen's worth, so that the try is of what the first screen will be.
+const PROBE_ROWS: usize = 64;
 
 /// Why an evaluation stopped.
 pub enum Fail {
@@ -137,6 +148,10 @@ pub struct Engine<'p> {
     /// value does — text written bare in a cell is Markdown where a file is
     /// shown as a document, and no Polars string holds that.
     copies: RefCell<Vec<Vec<Option<PlColumn>>>>,
+    /// A column calculated in one step that has not been, and is calculated
+    /// for the rows that are shown a window at a time instead, until
+    /// something asks for the whole of it (`Options::defer_rows`).
+    deferred: RefCell<Vec<Vec<bool>>>,
     /// Some rows of a `table`'s column, read from the file for a row range
     /// asked for before the whole column was, and the row they start at.
     /// Kept apart from `held`, which is only ever the whole column: a range
@@ -164,6 +179,9 @@ pub struct Engine<'p> {
     /// a column read whole, and the rows of the range for one read for a
     /// row range (D78). `tests/rowgroups.rs` watches it.
     rows_read: RefCell<usize>,
+    /// How many sums and means of a column of floats were taken as a loop
+    /// over the floats and not by a walk of values.
+    float_totals: std::cell::Cell<usize>,
     /// A memoisation slot per cell, by sheet, column and row. A column's
     /// slots are made when a cell of it is first asked for: a sheet of a
     /// million rows whose columns all come from a file needs none of them,
@@ -261,6 +279,89 @@ fn held_cell(column: &PlColumn, r: usize, ty: S) -> Cell {
 /// Some rows of a column read from its file, and the row they start at.
 type Window = (usize, PlColumn);
 
+/// A value an aggregate came to, in a form a document can keep between its
+/// rebuilds and share with the engines it makes: no `Rc` in it. Only the
+/// kinds of answer there are in plenty, numbers and dates and the like;
+/// anything else is worked out each time.
+#[derive(Clone, Debug)]
+pub(crate) enum Scalar {
+    Null,
+    Int(i64, Base),
+    Decimal(Dec),
+    Fraction(Dec),
+    Percent(Dec),
+    Float(f64),
+    Boolean(bool),
+    Date(i32),
+    Time(i64),
+    Datetime(i64),
+    Duration(i64),
+    Text(String, bool),
+}
+
+impl Scalar {
+    /// The value as one that can be kept, where it is one.
+    pub(crate) fn of(v: &Value) -> Option<Scalar> {
+        Some(match v {
+            Value::Null => Scalar::Null,
+            Value::Int(n, base) => Scalar::Int(*n, *base),
+            Value::Decimal(d) => Scalar::Decimal(*d),
+            Value::Fraction(d) => Scalar::Fraction(*d),
+            Value::Percent(d) => Scalar::Percent(*d),
+            Value::Float(f) => Scalar::Float(*f),
+            Value::Boolean(b) => Scalar::Boolean(*b),
+            Value::Date(d) => Scalar::Date(*d),
+            Value::Time(t) => Scalar::Time(*t),
+            Value::Datetime(us, None) => Scalar::Datetime(*us),
+            Value::Duration(us) => Scalar::Duration(*us),
+            Value::String(s, bare) => Scalar::Text(s.to_string(), *bare),
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn value(&self) -> Value {
+        match self {
+            Scalar::Null => Value::Null,
+            Scalar::Int(n, base) => Value::Int(*n, *base),
+            Scalar::Decimal(d) => Value::Decimal(*d),
+            Scalar::Fraction(d) => Value::Fraction(*d),
+            Scalar::Percent(d) => Value::Percent(*d),
+            Scalar::Float(f) => Value::Float(*f),
+            Scalar::Boolean(b) => Value::Boolean(*b),
+            Scalar::Date(d) => Value::Date(*d),
+            Scalar::Time(t) => Value::Time(*t),
+            Scalar::Datetime(us) => Value::Datetime(*us, None),
+            Scalar::Duration(us) => Value::Duration(*us),
+            Scalar::Text(s, bare) => Value::String(Rc::from(s.as_str()), *bare),
+        }
+    }
+}
+
+/// The sheet and the column of an aggregate's one argument.
+fn args_sheet(args: &[Node]) -> usize {
+    match args {
+        [
+            Node {
+                kind: Ir::Column { sheet, .. },
+                ..
+            },
+        ] => *sheet,
+        _ => 0,
+    }
+}
+
+fn args_col(args: &[Node]) -> usize {
+    match args {
+        [
+            Node {
+                kind: Ir::Column { col, .. },
+                ..
+            },
+        ] => *col,
+        _ => 0,
+    }
+}
+
 /// One argument of an aggregate, as the aggregate walks it (D79, item 2 of
 /// `hold-less-of-a-big-file`). A whole column the dataframe holds is kept
 /// as that column and walked in place, so that summing twenty million
@@ -306,6 +407,16 @@ impl Items {
             } => {
                 let cells = engine.cells.borrow();
                 let slots = cells[*t][*c].as_deref();
+                // `Series::iter` is over one chunk, so a column of several is
+                // made one, which is a copy of it: what the loop over floats
+                // does not need.
+                let one;
+                let series = if series.n_chunks() > 1 {
+                    one = series.rechunk();
+                    &one
+                } else {
+                    series
+                };
                 for (r, any) in series.iter().take(*len).enumerate() {
                     match slots.map(|s| &s[r]) {
                         Some(Slot::Done(v)) => f(v.clone()),
@@ -378,6 +489,12 @@ impl<'p> Engine<'p> {
                     .map(|t| vec![None; t.cols.len()])
                     .collect(),
             ),
+            deferred: RefCell::new(
+                prog.sheets
+                    .iter()
+                    .map(|t| vec![false; t.cols.len()])
+                    .collect(),
+            ),
             views: RefCell::new(vec![Slot::Pending; prog.sheets.len()]),
             groups: RefCell::new(vec![None; prog.sheets.len()]),
             grouping: RefCell::new(Vec::new()),
@@ -395,6 +512,7 @@ impl<'p> Engine<'p> {
             marks: RefCell::new(Vec::new()),
             reads: RefCell::new(Vec::new()),
             rows_read: RefCell::new(0),
+            float_totals: std::cell::Cell::new(0),
             cells: RefCell::new(
                 prog.sheets
                     .iter()
@@ -447,7 +565,7 @@ impl<'p> Engine<'p> {
                     {
                         continue;
                     }
-                    if self.run_lowered(cols) {
+                    if self.try_defer(cols) || self.run_lowered(cols) {
                         continue;
                     }
                     let n = self.prog.sheets[t].nrows;
@@ -534,17 +652,36 @@ impl<'p> Engine<'p> {
             self.attempts.borrow_mut().push((t, c, Attempt::Refused));
             return false;
         };
-        // A null Polars cannot account for is not an answer. A decimal
-        // product wider than the 38 digits it is held in comes back as
-        // nothing at all rather than as an error, and so does a cast that
-        // did not take; the engine answers both, one by giving up its guard
-        // digits and the other by saying what went wrong in the row it went
-        // wrong in. So the plan carries a flag beside the answer: a row
-        // whose every column was there and whose answer is nothing. Where
-        // one is found the column is given up whole, the same as a plan
-        // that will not collect. A constant that is itself nothing trips it
-        // too, and the engine gives the same answer for that a little
-        // slower.
+        // Whole or nothing: where the result is not one to believe it is
+        // discarded, no diagnostic is filed for the attempt, and the group
+        // is calculated again row by row, which is what produces a per-cell
+        // error with the row in it (D67).
+        let Some(column) = self.lowered_column(frame, expr, nrows) else {
+            self.attempts.borrow_mut().push((t, c, Attempt::Failed));
+            return false;
+        };
+        self.held.borrow_mut()[t][c] = Some(column);
+        self.attempts.borrow_mut().push((t, c, Attempt::Lowered));
+        true
+    }
+
+    /// What a plan comes to, or `None` where it is not an answer to believe.
+    ///
+    /// A null Polars cannot account for is not an answer. A decimal product
+    /// wider than the 38 digits it is held in comes back as nothing at all
+    /// rather than as an error, and so does a cast that did not take; the
+    /// engine answers both, one by giving up its guard digits and the other
+    /// by saying what went wrong in the row it went wrong in. So the plan
+    /// carries a flag beside the answer: a row whose every column was there
+    /// and whose answer is nothing. Where one is found the column is given
+    /// up whole, the same as a plan that will not collect. A constant that
+    /// is itself nothing trips it too, and the engine gives the same answer
+    /// for that a little slower.
+    ///
+    /// Nothing of the frame is borrowed from here on: the plan is built and
+    /// the columns owned before the collect, which Polars runs on a pool of
+    /// its own threads (D67's `RefCell` discipline).
+    fn lowered_column(&self, frame: DataFrame, expr: Expr, len: usize) -> Option<PlColumn> {
         let unaccounted = frame
             .get_column_names()
             .into_iter()
@@ -552,43 +689,173 @@ impl<'p> Engine<'p> {
                 flag.and(polars::prelude::col(name.clone()).is_not_null())
             })
             .alias(UNACCOUNTED);
-        // Nothing of the frame is borrowed from here on: the plan is built
-        // and the columns owned before the collect, which Polars runs on a
-        // pool of its own threads (D67's `RefCell` discipline).
-        let collected = frame
+        let column = frame
             .lazy()
             .select([expr, unaccounted])
             .collect()
             .ok()
             .filter(accounted_for)
-            .and_then(|df| df.get_columns().first().cloned());
-        let Some(column) = collected.filter(|column| column.len() == nrows) else {
-            // Whole or nothing: the result is discarded, no diagnostic is
-            // filed for the attempt, and the group is calculated again row
-            // by row — which is what produces a per-cell error with the row
-            // in it (D67).
-            self.attempts.borrow_mut().push((t, c, Attempt::Failed));
-            return false;
-        };
+            .and_then(|df| df.get_columns().first().cloned())
+            .filter(|column| column.len() == len)?;
         // Polars gives arithmetic a dtype of precision `None`; the full 38
         // is what a Parquet write and the schema in the text agree on
         // (D72a).
-        let column = match column.dtype() {
+        match column.dtype() {
             DataType::Decimal(None, Some(scale)) => {
-                let wanted = crate::dtype::decimal(*scale as u32);
-                match column.cast(&wanted) {
-                    Ok(stamped) => stamped,
-                    Err(_) => {
-                        self.attempts.borrow_mut().push((t, c, Attempt::Failed));
-                        return false;
-                    }
-                }
+                column.cast(&crate::dtype::decimal(*scale as u32)).ok()
             }
-            _ => column,
+            _ => Some(column),
+        }
+    }
+
+    /// Whether a column that can be calculated in one step is left to be
+    /// calculated for the rows shown (`Options::defer_rows`), and so is
+    /// not now. Only for a `table`'s sheet of more rows than the option
+    /// says, and only where the plan takes the first window of it: a column
+    /// that Polars will not do is the row loop's, now and whole, as ever.
+    fn try_defer(&self, cols: &[(usize, usize)]) -> bool {
+        let Some(limit) = self.options.defer_rows else {
+            return false;
         };
-        self.held.borrow_mut()[t][c] = Some(column);
-        self.attempts.borrow_mut().push((t, c, Attempt::Lowered));
-        true
+        let &[(t, c)] = cols else {
+            return false;
+        };
+        let sheet = &self.prog.sheets[t];
+        let ColKind::Computed(node) = &sheet.cols[c].kind else {
+            return false;
+        };
+        if self.options.lowering == Lowering::Never
+            || sheet.source.is_none()
+            || sheet.nrows <= limit
+            || !sheet.cols[c].elementwise
+        {
+            return false;
+        }
+        self.deferred.borrow_mut()[t][c] = true;
+        let to = sheet.nrows.min(READ_AHEAD + PROBE_ROWS);
+        if self.computed_window(t, c, node, 0, to).is_some() {
+            return true;
+        }
+        self.deferred.borrow_mut()[t][c] = false;
+        false
+    }
+
+    /// Whether column `c` of sheet `t` has been calculated over the whole
+    /// column and is held so, for a test of what is left to windows.
+    pub fn holds_whole(&self, t: usize, c: usize) -> bool {
+        self.held.borrow()[t][c].is_some()
+    }
+
+    /// A deferred column calculated whole after all, because something
+    /// asked for the whole of it or for a cell the windows do not give. It
+    /// is the lowering the engine would have done when it ran, or, where
+    /// that will not take it, the row loop's, cell by cell.
+    fn materialise(&self, t: usize, c: usize) {
+        if !self.deferred.borrow()[t][c] {
+            return;
+        }
+        self.deferred.borrow_mut()[t][c] = false;
+        self.windows.borrow_mut()[t][c] = None;
+        self.run_lowered(&[(t, c)]);
+    }
+
+    /// Rows `from..to` of a deferred column, calculated by Polars over the
+    /// same rows of the columns it reads, and kept as the window of it.
+    fn computed_window(
+        &self,
+        t: usize,
+        c: usize,
+        node: &Node,
+        from: usize,
+        to: usize,
+    ) -> Option<PlColumn> {
+        if let Some((start, window)) = &self.windows.borrow()[t][c]
+            && *start <= from
+            && to <= start + window.len()
+        {
+            return Some(window.slice((from - start) as i64, to - from));
+        }
+        let col = &self.prog.sheets[t].cols[c];
+        if !col.elementwise || col.zone.is_some() {
+            return None;
+        }
+        let column = |cc: usize| self.window_column(t, cc, from, to);
+        let (frame, expr) = self.plan_with(t, c, node, &column)?;
+        let window = self.lowered_column(frame, expr, to - from)?;
+        self.windows.borrow_mut()[t][c] = Some((from, window.clone()));
+        Some(window)
+    }
+
+    /// Rows `from..to` of column `c` of sheet `t` as a Polars column: a
+    /// slice of what is held whole, the rows read from a file or
+    /// calculated for a window, or a slice of the whole column where it
+    /// can only be had whole.
+    fn window_column(&self, t: usize, c: usize, from: usize, to: usize) -> Option<PlColumn> {
+        let col = &self.prog.sheets[t].cols[c];
+        let len = to - from;
+        if col.zone.is_some() && !matches!(col.kind, ColKind::Frame) {
+            return None;
+        }
+        if let Some(whole) = self.held.borrow()[t][c].clone() {
+            return Some(whole.slice(from as i64, len));
+        }
+        match (&col.kind, self.tables.get(t, c)) {
+            (ColKind::Frame, Some(held @ Held::Column { .. })) => {
+                if let Some((start, window)) = &self.windows.borrow()[t][c]
+                    && *start <= from
+                    && to <= start + window.len()
+                {
+                    return Some(window.slice((from - start) as i64, len));
+                }
+                let window = held.read_range(from, len)?;
+                self.keep_window(t, c, from, window.clone());
+                Some(window)
+            }
+            (ColKind::Frame, _) => None,
+            (ColKind::Computed(node), _) if self.deferred.borrow()[t][c] => {
+                self.computed_window(t, c, node, from, to)
+            }
+            _ => self
+                .pl_column(t, c)
+                .map(|whole| whole.slice(from as i64, len)),
+        }
+    }
+
+    /// The rows a deferred column shows, out of its window, calculating a
+    /// window around them first where none of the windows holds them.
+    fn deferred_rows(&self, t: usize, c: usize, rows: &[usize]) -> Option<Vec<Value>> {
+        let (&lo, &hi) = (rows.iter().min()?, rows.iter().max()?);
+        let col = &self.prog.sheets[t].cols[c];
+        let ColKind::Computed(node) = &col.kind else {
+            return None;
+        };
+        let covered = matches!(
+            &self.windows.borrow()[t][c],
+            Some((start, window)) if *start <= lo && hi < start + window.len()
+        );
+        if !covered {
+            let nrows = self.prog.sheets[t].nrows;
+            let from = lo.saturating_sub(READ_AHEAD);
+            let to = (hi + 1).saturating_add(READ_AHEAD).min(nrows);
+            self.computed_window(t, c, node, from, to)?;
+        }
+        let windows = self.windows.borrow();
+        let (start, window) = windows[t][c].as_ref()?;
+        Some(
+            rows.iter()
+                .map(
+                    |&r| match r.checked_sub(*start).filter(|&i| i < window.len()) {
+                        Some(i) => match held_cell(window, i, col.ty) {
+                            Cell::Empty => Value::Null,
+                            Cell::Lit(l) => self.lit_in(t, c, &l),
+                            Cell::Markdown(s) => Value::String(Rc::from(s.as_str()), true),
+                            Cell::Invalid | Cell::Formula(_) => Value::Error,
+                        },
+                        None => Value::Error,
+                    },
+                )
+                .collect(),
+        )
     }
 
     /// The rows of a sheet a condition keeps, picked by Polars in one pass
@@ -1203,10 +1470,22 @@ impl<'p> Engine<'p> {
     /// expression that calculates it, or `None` where Polars has no answer
     /// of its own for some part of it.
     fn plan(&self, t: usize, c: usize, node: &Node) -> Option<(DataFrame, Expr)> {
-        let col = &self.prog.sheets[t].cols[c];
         let column = |cc| self.plan_column(t, cc);
+        self.plan_with(t, c, node, &column)
+    }
+
+    /// [`Engine::plan`] over the columns `column` gives: whole ones, or the
+    /// same rows of each, for a window.
+    fn plan_with(
+        &self,
+        t: usize,
+        c: usize,
+        node: &Node,
+        column: &dyn Fn(usize) -> Option<PlColumn>,
+    ) -> Option<(DataFrame, Expr)> {
+        let col = &self.prog.sheets[t].cols[c];
         let constant = |i| self.const_value(i).ok();
-        let cx = lower::Cx::new(&column, &constant);
+        let cx = lower::Cx::new(column, &constant);
         let out = lower::expr(node, &cx)?;
         // The same answer the row path's `fit` gives: a column that says
         // what it holds holds it, and a lowered result of another type is
@@ -1313,6 +1592,8 @@ impl<'p> Engine<'p> {
     /// to be held as, or that holds a value which does not fit the type the
     /// column says it has.
     fn pl_column(&self, t: usize, c: usize) -> Option<PlColumn> {
+        // Asked for whole, a column left to its windows is calculated.
+        self.materialise(t, c);
         // A declared zone puts the cells of the text on the clocks of that
         // zone, so the instant is not the number a dataframe would hold them
         // as; the values of such a column are the engine's own. A file's
@@ -1389,6 +1670,9 @@ impl<'p> Engine<'p> {
     /// The value of one cell, calculating it if needed.
     pub fn cell(&self, t: usize, c: usize, r: usize) -> R {
         let col = &self.prog.sheets[t].cols[c];
+        // A cell on its own is not a window's worth, and its neighbours
+        // are likely to be asked for next.
+        self.materialise(t, c);
         {
             let mut cells = self.cells.borrow_mut();
             let slots =
@@ -1522,30 +1806,118 @@ impl<'p> Engine<'p> {
     /// groups that hold it (D78). A column already read whole, or a range
     /// already read that holds these rows, is left as it is.
     fn read_range(&self, t: usize, c: usize, rows: &[usize]) {
-        let (Some(&lo), Some(&hi)) = (rows.iter().min(), rows.iter().max()) else {
+        self.read_range_ahead(t, c, rows, 0);
+    }
+
+    /// As [`Engine::read_range`], but reading `ahead` rows more on each side
+    /// of the rows asked for. A grid asks for a screen at a time, a few rows
+    /// further on at each step of a scroll, and a window that is exactly
+    /// the screen is walked off the end of by the next step: every frame
+    /// would read the row group again. With rows read ahead the next many
+    /// frames are inside the window and read nothing. The window stays a
+    /// range, never the column (D78, D150).
+    fn read_range_ahead(&self, t: usize, c: usize, rows: &[usize], ahead: usize) {
+        let Some((from, to)) = self.window_wanted(t, c, rows, ahead) else {
             return;
         };
-        let len = hi + 1 - lo;
-        if len >= self.prog.sheets[t].nrows || self.held.borrow()[t][c].is_some() {
+        let Some(held) = self.tables.get(t, c) else {
             return;
+        };
+        // A file that will not give the range leaves the cells to the
+        // whole read, which says so as it would have.
+        let Some(window) = held.read_range(from, to - from) else {
+            return;
+        };
+        self.keep_window(t, c, from, window);
+    }
+
+    /// The rows `from..to` that column `c` of sheet `t` has to read to show
+    /// `rows` with `ahead` rows more on each side, or `None` where it has
+    /// nothing to read: not a column of a file, held already, covering the
+    /// rows already, or the rows are the whole sheet.
+    fn window_wanted(
+        &self,
+        t: usize,
+        c: usize,
+        rows: &[usize],
+        ahead: usize,
+    ) -> Option<(usize, usize)> {
+        let (&lo, &hi) = (rows.iter().min()?, rows.iter().max()?);
+        let nrows = self.prog.sheets[t].nrows;
+        if hi + 1 - lo >= nrows || self.held.borrow()[t][c].is_some() {
+            return None;
         }
-        let Some(held @ Held::Column { .. }) = self.tables.get(t, c) else {
-            return;
+        let Some(Held::Column { .. }) = self.tables.get(t, c) else {
+            return None;
         };
         if let Some((start, window)) = &self.windows.borrow()[t][c]
             && *start <= lo
             && hi < start + window.len()
         {
-            return;
+            return None;
         }
-        // A file that will not give the range leaves the cells to the
-        // whole read, which says so as it would have.
-        let Some(window) = held.read_range(lo, len) else {
-            return;
-        };
+        Some((
+            lo.saturating_sub(ahead),
+            (hi + 1).saturating_add(ahead).min(nrows),
+        ))
+    }
+
+    fn keep_window(&self, t: usize, c: usize, from: usize, window: PlColumn) {
         self.reads.borrow_mut().push((t, c));
         *self.rows_read.borrow_mut() += window.len();
-        self.windows.borrow_mut()[t][c] = Some((lo, window));
+        self.windows.borrow_mut()[t][c] = Some((from, window));
+    }
+
+    /// Read, on several threads, the windows that showing `rows` of sheet
+    /// `t` needs of its columns, so that [`Engine::rows_shown`] finds each
+    /// of them read (D80). A screen of a table of 24 columns reads 24
+    /// windows, which are independent files' worth of decoding, and one
+    /// after another they were most of the 50–70 ms a jump cost. The
+    /// answers are the same ones: each window is what `rows_shown` would
+    /// have read, only read beside the others. With fewer than two to read
+    /// there is nothing to share and `rows_shown` reads it itself.
+    pub fn prefetch_rows(&self, t: usize, rows: &[usize]) {
+        let wanted: Vec<(usize, usize, usize, &Held)> = (0..self.prog.sheets[t].cols.len())
+            .filter(|&c| {
+                // The columns `rows_shown` reads as a range.
+                matches!(self.prog.sheets[t].cols[c].kind, ColKind::Frame)
+                    && self.cells.borrow()[t][c].is_none()
+            })
+            .filter_map(|c| {
+                let (from, to) = self.window_wanted(t, c, rows, READ_AHEAD)?;
+                Some((c, from, to, self.tables.get(t, c)?))
+            })
+            .collect();
+        if wanted.len() < 2 {
+            return;
+        }
+        let workers = std::thread::available_parallelism()
+            .map_or(4, |n| n.get())
+            .min(wanted.len());
+        let mut read: Vec<(usize, usize, Option<PlColumn>)> = Vec::with_capacity(wanted.len());
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = wanted
+                .chunks(wanted.len().div_ceil(workers))
+                .map(|chunk| {
+                    scope.spawn(move || {
+                        chunk
+                            .iter()
+                            .map(|&(c, from, to, held)| (c, from, held.read_range(from, to - from)))
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            for handle in handles {
+                // A thread that panicked read nothing: its columns are read
+                // again by `rows_shown`, which says what went wrong.
+                read.extend(handle.join().unwrap_or_default());
+            }
+        });
+        for (c, from, window) in read {
+            if let Some(window) = window {
+                self.keep_window(t, c, from, window);
+            }
+        }
     }
 
     /// Row `r` of a `table`'s column, out of the range last read of it,
@@ -1577,13 +1949,21 @@ impl<'p> Engine<'p> {
     /// the range read does not hold, is the cell as `cell_shown` has it.
     pub fn rows_shown(&self, t: usize, c: usize, rows: &[usize]) -> Vec<Value> {
         let col = &self.prog.sheets[t].cols[c];
+        // A column left to its windows is calculated for these rows alone,
+        // or, if its window will not be had, calculated whole.
+        if self.deferred.borrow()[t][c] {
+            if let Some(values) = self.deferred_rows(t, c, rows) {
+                return values;
+            }
+            self.materialise(t, c);
+        }
         let own = matches!(col.kind, ColKind::Frame)
             && matches!(self.tables.get(t, c), Some(Held::Column { .. }))
             && self.cells.borrow()[t][c].is_none();
         if !own {
             return rows.iter().map(|&r| self.cell_shown(t, c, r)).collect();
         }
-        self.read_range(t, c, rows);
+        self.read_range_ahead(t, c, rows, READ_AHEAD);
         let value = |cell: Cell| match cell {
             Cell::Empty => Value::Null,
             Cell::Lit(l) => self.lit_in(t, c, &l),
@@ -2139,11 +2519,75 @@ impl<'p> Engine<'p> {
         {
             return None;
         }
+        // In the chunks it is held in: a column read from a file of many row
+        // groups is many chunks. The loop over floats takes them as they are;
+        // the walk of values needs one, and makes it when it walks (below).
         Some(Items::Column {
-            series: column.as_materialized_series().rechunk(),
+            series: column.as_materialized_series().clone(),
             len: nrows,
             at: (t, c),
         })
+    }
+
+    /// The total of a whole column of floats, and how many of them were not
+    /// empty, in the order the engine adds them: from `0.0`, a row at a
+    /// time, each as the float it is. That is what the walk of values comes
+    /// to for such a column (`arith` adds a float to the `0` it starts from
+    /// as `0.0 + x`, and a float to a float as `x + y`; an empty cell is
+    /// passed over and a `NaN` is a value that makes the total one), and
+    /// so the answer is the same to the last bit, where adding them in
+    /// another order, as Polars does, is not (D72).
+    ///
+    /// `None` leaves it to the walk: a column that is not a `Float` as the
+    /// sheet has it, so that each cell would be read as another kind of
+    /// number; one with cells already worked out, whose values are theirs;
+    /// one not as long as the sheet; or one with nothing in it, whose total
+    /// is a `0` and not a `0.0`.
+    fn float_total(
+        &self,
+        series: &polars::prelude::Series,
+        len: usize,
+        (t, c): (usize, usize),
+    ) -> Option<(f64, usize)> {
+        use polars::prelude::DataType;
+        if self.prog.sheets[t].cols[c].ty != S::Float
+            || series.len() != len
+            || self.cells.borrow()[t][c].is_some()
+        {
+            return None;
+        }
+        let (mut total, mut present) = (0.0_f64, 0usize);
+        match series.dtype() {
+            DataType::Float64 => {
+                for chunk in series.f64().ok()?.downcast_iter() {
+                    for x in chunk.iter().flatten() {
+                        total += *x;
+                        present += 1;
+                    }
+                }
+            }
+            DataType::Float32 => {
+                for chunk in series.f32().ok()?.downcast_iter() {
+                    for x in chunk.iter().flatten() {
+                        total += f64::from(*x);
+                        present += 1;
+                    }
+                }
+            }
+            _ => return None,
+        }
+        if present == 0 {
+            return None;
+        }
+        self.float_totals.set(self.float_totals.get() + 1);
+        Some((total, present))
+    }
+
+    /// How many sums and means of a column of floats were taken as a loop
+    /// over the floats, which the answer cannot tell from a walk of values:
+    /// for a test that it was the loop that gave it.
+    pub fn float_totals(&self) -> usize {
+        self.float_totals.get()
     }
 
     fn column(&self, t: usize, c: usize, rows: &[usize]) -> R {
@@ -2567,7 +3011,81 @@ impl<'p> Engine<'p> {
         }
     }
 
+    /// A call, where an aggregate over a whole column of a file is kept for
+    /// the next time it is asked (D155): by the file and what it was when
+    /// it was read, the column and its declared type, and the function. A
+    /// document that edits a cell or a formula rebuilds, and without this
+    /// every `const Total = Sheet.Amount.sum()` of it would add up twenty
+    /// million rows again. What is kept is the answer, a value, and only
+    /// the kinds of value that can be kept in a form the document shares
+    /// between its rebuilds.
     fn call(&self, func: Func, args: &[Node], span: Span, fr: &mut Frames) -> R {
+        let place = self.answer_place(func, args);
+        if let Some((cache, path, name, identity, key)) = &place
+            && let Some(kept) = cache.answer(path, name, key, identity)
+        {
+            self.aggregates
+                .borrow_mut()
+                .push((args_sheet(args), args_col(args), Attempt::Lowered));
+            return Ok(kept.value());
+        }
+        let result = self.call_uncalculated(func, args, span, fr);
+        if let (Some((cache, path, name, identity, key)), Ok(value)) = (place, &result)
+            && let Some(kept) = Scalar::of(value)
+        {
+            cache.put_answer(&path, &name, &key, identity, kept);
+        }
+        result
+    }
+
+    /// Where an answer for `func` over `args` is kept, and what it is kept
+    /// by, where it is one that can be: an aggregate of one whole column
+    /// read from a file by a document that keeps its columns.
+    fn answer_place(
+        &self,
+        func: Func,
+        args: &[Node],
+    ) -> Option<(ColumnCache, PathBuf, String, Identity, String)> {
+        if !matches!(
+            func,
+            Func::Sum
+                | Func::Mean
+                | Func::Min
+                | Func::Max
+                | Func::Count
+                | Func::Len
+                | Func::Median
+                | Func::Product
+                | Func::First
+                | Func::Last
+        ) {
+            return None;
+        }
+        let [arg] = args else {
+            return None;
+        };
+        let Ir::Column { sheet: t, col: c } = arg.kind else {
+            return None;
+        };
+        let col = &self.prog.sheets[t].cols[c];
+        if !matches!(col.kind, ColKind::Frame) {
+            return None;
+        }
+        let Some(Held::Column {
+            path,
+            name,
+            cache: Some(cache),
+            ..
+        }) = self.tables.get(t, c)
+        else {
+            return None;
+        };
+        let identity = crate::table::identity(path)?;
+        let key = format!("{func:?} of {}", col.ty);
+        Some((cache.clone(), path.clone(), name.clone(), identity, key))
+    }
+
+    fn call_uncalculated(&self, func: Func, args: &[Node], span: Span, fr: &mut Frames) -> R {
         // An aggregate over a whole column the dataframe holds is Polars'
         // to take, which is a pass over a column rather than a value read
         // per row. Anything else falls through to the engine below.
@@ -3093,6 +3611,22 @@ impl<'p> Engine<'p> {
                             );
                         }
                     }
+                }
+                // A sum or a mean of a column of floats, taken as the walk
+                // below takes it, and not by making a value of each cell.
+                if matches!(func, Func::Sum | Func::Mean)
+                    && let [Items::Column { series, len, at }] = items.as_slice()
+                    && let Some((total, present)) = self.float_total(series, *len, *at)
+                {
+                    return match func {
+                        Func::Sum => Ok(Value::Float(total)),
+                        _ => arith(
+                            BinOp::Div,
+                            &Value::Float(total),
+                            &Value::int(present as i64),
+                        )
+                        .or_else(|m| fail(span, m)),
+                    };
                 }
                 // One walk over every value, nulls and all, in order: what
                 // is not empty, what it is all of, and whatever `see`

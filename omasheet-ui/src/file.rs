@@ -658,22 +658,15 @@ impl qobject::File {
     /// The file is named by its whole path, so that the `.omx` saved from
     /// this reads it wherever it is saved.
     fn open_table(mut self: Pin<&mut Self>, path: &std::path::Path) -> bool {
-        let Ok(full) = std::fs::canonicalize(path) else {
+        // The `view` lines that read the file where it is: one, or for a JSON
+        // object of lists one for each sheet.
+        let Ok(text) = omasheet_interop::table_source(path) else {
             return false;
         };
-        let Some(full) = full.to_str() else {
-            return false;
-        };
-        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
-        let name = match omasheet_interop::identifier(&stem) {
-            empty if empty.is_empty() => "Table".to_string(),
-            name => name,
-        };
-        let doc = document(&format!(
-            "view {name} := dataframe[{}]\n",
-            omasheet_engine::omx::lexer::quoted(full)
-        ));
-        let csv = omasheet_engine::table::is_csv(path);
+        let doc = document(&text);
+        // A CSV or JSON file is read through a copy, which `convert_tables`
+        // writes.
+        let csv = omasheet_engine::table::is_converted(path);
         let rows = doc.row_count(0);
         if !csv && (rows <= PAGED_ROWS || !doc.snapshot().sheets[0].paged) {
             return false;
@@ -748,8 +741,10 @@ impl qobject::File {
         if kind == "parquet" && self.as_mut().open_table(&path) {
             return true;
         }
-        // A CSV too big to import as text (open-a-big-csv D146).
-        if kind == "csv"
+        // A CSV, JSON or XLSX file too big to import as text (open-a-big-csv
+        // D146). A workbook with a formula in it is not opened so, since a
+        // table has values and no formulas, and is imported below.
+        if matches!(kind.as_str(), "csv" | "json" | "xlsx")
             && std::fs::metadata(&path).is_ok_and(|m| m.len() > omasheet_engine::table::BIG_FILE)
             && self.as_mut().open_table(&path)
         {

@@ -20,6 +20,7 @@ use omasheet_engine::{Engine, Options, Value};
 use rust_xlsxwriter::{Format, Workbook, Worksheet, XlsxError};
 use std::io::Cursor;
 
+pub(crate) mod table;
 mod write;
 
 /// Days from the day a workbook counts from, 1899-12-30, to 1970-01-01.
