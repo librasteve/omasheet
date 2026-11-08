@@ -570,7 +570,7 @@ Parquet alone.
       `~/.cache/omasheet`; named by a hash of the canonical path, then the
       length and mtime; written to `.partial-<pid>` and renamed; a new copy
       takes away the CSV's earlier copies, its sample and any partial file
-- [ ] 3.5 `dataframe["x.csv"]` (and `.xlsx`, `.json`) resolved by
+- [x] 3.5 `dataframe["x.csv"]` (and `.xlsx`, `.json`) resolved by
       `table::read` to the cached copy; the engine reads Parquet alone.
       JSON and XLSX done 2026-11-07, with the sheet named by `file.json#Sheet`
       and `book.xlsx#Sheet` (D160): the copy's name is a hash of the file and the sheet, so each
@@ -579,6 +579,10 @@ Parquet alone.
       (the command line and tests convert first) or `Copying::Sample`
       (`Document::on_screen`, the app). Tested: sample, copy and a waited
       read give the same rows and types
+      Checked and ticked 2026-11-08: the tests for the sample, the copy and
+      the waited read (`a_csv_table_shows_its_sample_and_then_its_copy_alike`,
+      `a_json_table_...`) pass, as do the three differentials over CSV, JSON
+      and a workbook sheet read through their copies
 - [ ] 3.6 The sniffed sample shown while the copy is written; loading rows
       beyond it. The sample done (2026-11-02): its first 1,000 rows, read
       from the file's head bytes and written as a small Parquet file, shown
@@ -608,7 +612,7 @@ Parquet alone.
       (125 MB), reopening with the copy current 35 ms; in the app, the
       15M rows shown and held in memory (1.2 GB) within 4 s
 - [ ] 4.2 "Copy into the document" for a table under the threshold
-- [ ] 4.3 `omasheet import` above the threshold refuses and prints the
+- [x] 4.3 `omasheet import` above the threshold refuses and prints the
       `table` lines, ready to paste
       Done for CSV, Parquet and, 2026-11-07, JSON (a line for each sheet);
       test `import_of_a_big_json_prints_a_table_for_each_sheet_and_they_read_through_copies`.
@@ -617,6 +621,10 @@ Parquet alone.
       with a formula is imported, for the reason under 3.3. The import of a
       workbook over the size is not in a test, which takes a minute in a build
       without optimisation
+      Checked and ticked 2026-11-08: the three tests
+      (`import_of_a_big_csv_...`, `..._json_...`, `..._workbook_of_values_...`)
+      pass: each refuses, prints the `view` lines, and the lines read through
+      copies
 - [ ] 4.4 The inline writer takes a frame, and `Grid`/`Datum` are deleted,
       only once every `examples/*.expected` and the interop tests are
       byte-identical. Where they are not (a column's scale, mixed-type
@@ -644,8 +652,14 @@ Parquet alone.
       200 over 16 ms, warm and cold (1.3 has the table); reopening with the
       copy current **13.6 ms** warm, **30.6 ms** cold, to a table that
       scrolls, sorts and sums
-- [ ] 5.3 Edit a formula column: visible cells ≤ 50 ms; `Amount.sum()`
+- [x] 5.3 Edit a formula column: visible cells ≤ 50 ms; `Amount.sum()`
       first time off-thread, then ≤ 50 ms from the cache
+      **Amended 2026-11-08 (owner):** the first time is taken on the thread
+      that draws, at no more than about 0.5 s for the four numeric columns
+      of the 1.1 GB file (400 ms measured: a column is read a row group at
+      a time, never held), where the task asked for it off-thread; then
+      ≤ 50 ms from the cache. Met as amended: edit with sums 7 ms, first
+      sums 400-470 ms, a repeat from the cache
 
       Measured 2026-11-07 by `session_csv` (release, the 1.1 GB CSV, a
       document with `const Sum… = T.<column>.sum()` for each of `id`, `qty`,
