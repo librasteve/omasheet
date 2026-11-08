@@ -4460,7 +4460,8 @@ ApplicationWindow {
     // filter is an expression in which `*` is the cell (filter-by-expression
     // D160, D171): checked as it is typed, with no row read. Apply applies
     // it and stays open, to try another; OK or Enter applies it and closes.
-    // Esc, or a click elsewhere, leaves what was last applied.
+    // Sorting stays open too. Esc, or a click elsewhere, leaves what was last
+    // applied.
     Popup {
         id: columnPopup
         property int col: 0
@@ -4501,9 +4502,11 @@ ApplicationWindow {
         function check() {
             fault = file.checkFilter(win.tab, col, filterField.text);
         }
+        // Sorting leaves the box open, as applying a filter does, for the
+        // filter to be written or changed after: OK or Cancel closes it.
         function sortBy(desc) {
             var c = col;
-            close();
+            filterField.forceActiveFocus();
             win.busy("Sorting\u2026", function() {
                 win.sortMark = file.undoMark();
                 var problem = file.sortRows(win.tab, c, desc);
