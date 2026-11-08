@@ -85,10 +85,12 @@ row is written in the file, and the row count comes from the Parquet.
 A CSV is named the same way, `dataframe['data/sales.csv']`, and is read
 through a Parquet copy kept in the cache, so everything below holds for it
 too. Its column types are not written in the file, so they are worked out
-from its first 10,000 rows: a schema line must say what was found, and a
-column of `1.5`, `2.25` and `4` is `Float`, never `Decimal`. A CSV that
-holds exact decimals is better imported (`omasheet import`), or written as
-Parquet, which carries its types.
+from its first 10,000 rows: a schema line must say what was found. A column
+of plain numbers with a point, `1.5`, `2.25` and `4`, is `Decimal`, read
+exactly, with as many places as the most any value has (up to 18); a column
+of whole numbers is `Integer`. A column with an exponent (`1.5e3`), a `NaN`
+or `Inf`, or more than 18 places is `Float`. Parquet carries its types, and
+is read as they are.
 
 A column whose name in the file is not a name a formula could write — one
 with a space or a slash in it, which Parquet allows and omasheet does not —

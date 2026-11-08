@@ -98,8 +98,10 @@ sheet Summary
 - `view Name := dataframe['data/sales.parquet']` in place of `sheet Name`: a
   sheet whose rows are in one Parquet file beside the `.omx`. A `.csv` works
   too (`dataframe['data/sales.csv']`), read through a cached Parquet copy;
-  its types are inferred from the first 10,000 rows, so a price column is
-  `Float`, not `Decimal`.
+  its types are inferred from the first 10,000 rows: a column of plain
+  numbers with a point (`19.99`) is `Decimal`, read exactly, and one of
+  whole numbers `Integer`; only a column with an exponent (`1.5e3`),
+  `NaN` or `Inf`, or more than 18 places is `Float`. Declare what was found.
   Write the `Column : Type` lines it expects and no rows; its columns are
   selected and computed over as any sheet's, but no cell of it can be
   edited and nothing is written back to the files.
