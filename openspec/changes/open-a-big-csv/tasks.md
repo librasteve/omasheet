@@ -748,7 +748,7 @@ Parquet alone.
       the columns held and what it holds itself, about 680 MiB, under the 794
       of the target, and the copy's 500 MB (or 227 MB with two threads, 3.7 s)
       would be a child's.
-      **Built, 2026-11-08 (owner's go-ahead).** `table::convert` runs the
+      **Built, 2026-11-08 (owner's go-ahead), then reverted the same day: it does not bring the peak down (measured below).** `table::convert` runs the
       program itself again with `OMASHEET_COPY_CHILD=<source>` and
       `POLARS_MAX_THREADS=2`; the child calls `convert_here` and prints the
       copy's path. `omasheet_cli::main` (the app and the command line both go
@@ -757,8 +757,32 @@ Parquet alone.
       in-process as before. If the child cannot be started the copy is made
       in-process. The 100 MB CSV through the release CLI: the parent's peak
       footprint is 144 MB, the copy being the child's. The app's session
-      peak is not yet re-measured (the `session_csv` example copies
-      in-process, so it still shows 1,080 MiB)
+      peak is measured below.
+      **Measured, 1.1 GB file, `session_csv` (child by default, `--here` for
+      in-process), 2026-11-08:** copy 4.6 s in a child (2 threads) against
+      2.3 s in-process; footprint after the copy 10 MiB against 500. But
+      after the sums 1,078 MiB against 1,081, and the final peak 1,239
+      against 1,242. **The child does not bring the session under 794 MiB,
+      and my earlier reading was wrong**: the ~463 MiB "retained after the
+      copy" was not the copy's, it is what the column reads leave (the
+      cache holds 644 MiB for 11 columns, and the footprint over it is
+      ~430 MiB more, which the reads grew to and the allocator keeps). The
+      child is reverted: it took the copy's 500 MB off the app during the
+      copy only, for twice the copy time. What is left to cut is in
+      the reads: 11 columns held (644 MiB) for sums whose answers are
+      cached, and the added formula column (~155 MiB)
+      **Aggregate reads no longer kept, 2026-11-08.** The footprint was not
+      the cache (making it hold 0 MiB changed nothing): the engine keeps a
+      column it has read in its `held` slot for the whole run, so four sums
+      held four columns until the run ended. `Engine::call` now lets go of
+      a column read only to answer an aggregate (from `held`, and from the
+      cache), keeping the answer. 1.1 GB, `session_csv`, copy in-process:
+      after the sums 1,081 -> 699 MiB, session peak 1,242 -> **909 MiB**
+      (target 794); sums 355 ms, edit with sums 7 ms, the answers
+      identical. Still 115 MiB over; the peak is a transient inside the
+      first sums (909 against 699 after), and the copy leaves ~450 MiB
+      that the reads reuse. A later sum of the same column with another
+      function reads it again (~90 ms)
 - [x] 5.5 By hand in the app: open, scroll, jump, edit, and confirm that the
       window never stops responding
       Done by hand, 2026-11-04 (owner).
@@ -773,5 +797,5 @@ Parquet alone.
       answer the same for every column and every aggregate; and every
       aggregate gives the same answer on the streaming engine as on the
       in-memory one (D155), including NaN, null, empty and decimal columns
-- [ ] 6.3 Every `examples/*.expected` byte-identical: a small file still
+- [x] 6.3 Every `examples/*.expected` byte-identical: a small file still
       opens inline as before

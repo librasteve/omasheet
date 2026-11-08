@@ -497,12 +497,6 @@ fn beside(file: &Path) -> PathBuf {
 /// Run the command line this program was started with. With no command,
 /// `open` is called to open the app, on the file given if there was one.
 pub fn main(open: impl FnOnce(Option<&Path>) -> ExitCode) -> ExitCode {
-    // A copy of a big file is made in a process of its own, this program
-    // started again, so the memory it takes goes back when it is done.
-    if let Some(code) = omasheet_engine::table::run_child() {
-        return ExitCode::from(code as u8);
-    }
-    omasheet_engine::table::copy_in_children();
     match run(Cli::parse(), open) {
         Ok(code) | Err(code) => code,
     }

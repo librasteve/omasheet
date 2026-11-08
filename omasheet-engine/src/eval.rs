@@ -3029,11 +3029,26 @@ impl<'p> Engine<'p> {
                 .push((args_sheet(args), args_col(args), Attempt::Lowered));
             return Ok(kept.value());
         }
+        // A column read only to be summed is not kept: its answer is, and
+        // the column is 8 bytes a row for every aggregate of a session.
+        let had = place
+            .as_ref()
+            .is_some_and(|(cache, path, name, identity, _)| cache.holds(path, name, identity));
+        let at = (args_sheet(args), args_col(args));
+        let was_held = place.is_none() || self.held.borrow()[at.0][at.1].is_some();
         let result = self.call_uncalculated(func, args, span, fr);
         if let (Some((cache, path, name, identity, key)), Ok(value)) = (place, &result)
             && let Some(kept) = Scalar::of(value)
         {
             cache.put_answer(&path, &name, &key, identity, kept);
+            if !had {
+                cache.drop_column(&path, &name);
+            }
+            // Nor is it held for the rest of this run: later cells that want
+            // it read it again, from the cache if the budget has room.
+            if !was_held {
+                self.held.borrow_mut()[at.0][at.1] = None;
+            }
         }
         result
     }

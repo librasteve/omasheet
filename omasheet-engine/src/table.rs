@@ -589,6 +589,27 @@ impl ColumnCache {
         }
     }
 
+    /// Whether the column is kept, as the file is. Not a use of it.
+    pub(crate) fn holds(&self, path: &Path, name: &str, identity: &Identity) -> bool {
+        let inner = self.inner();
+        let key = (path.to_path_buf(), name.to_string());
+        inner
+            .entries
+            .get(&key)
+            .is_some_and(|e| &e.identity == identity)
+    }
+
+    /// Let go of the column, if it is kept.
+    pub(crate) fn drop_column(&self, path: &Path, name: &str) {
+        let mut inner = self.inner();
+        if let Some(entry) = inner
+            .entries
+            .remove(&(path.to_path_buf(), name.to_string()))
+        {
+            inner.bytes -= entry.bytes;
+        }
+    }
+
     /// What an aggregate over the column came to, where it was kept and the
     /// file is as it was.
     pub(crate) fn answer(
@@ -1068,80 +1089,6 @@ pub fn sample(path: &Path) -> Result<PathBuf, String> {
 /// further down does not have the type the first rows gave its column,
 /// the types are worked out again from every row.
 pub fn convert(path: &Path) -> Result<PathBuf, String> {
-    if let Some(program) = COPIER.get() {
-        // Where the child could not be started, the copy is made here.
-        if let Some(done) = convert_in_child(program, path) {
-            return done;
-        }
-    }
-    convert_here(path)
-}
-
-/// The program that makes copies in a process of its own, where one is set
-/// (`open-a-big-csv` 5.4). Polars' streaming engine keeps what it grew to
-/// while writing a copy, about 460 MiB, for as long as its process lives; a
-/// child gives it back to the machine as it exits.
-static COPIER: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-
-/// The variable that makes a process a copier, holding the source to copy.
-pub const COPY_CHILD: &str = "OMASHEET_COPY_CHILD";
-
-/// Threads a child copies with: two keep it near 230 MB, for about 3.7 s a
-/// million rows, where eight take about 500 MB.
-const CHILD_THREADS: &str = "2";
-
-/// From now on copies are made by running this program, as a child with
-/// [`COPY_CHILD`] set; it must call [`run_child`] first thing. Called by
-/// the app and the command line, not by tests or libraries, which copy in
-/// their own process.
-pub fn copy_in_children() {
-    if let Ok(exe) = std::env::current_exe() {
-        let _ = COPIER.set(exe);
-    }
-}
-
-/// `Some` if this process was started to make a copy: it makes it, says
-/// where it is on stdout or why not on stderr, and the exit code is for
-/// the caller to return.
-pub fn run_child() -> Option<i32> {
-    let source = std::env::var_os(COPY_CHILD)?;
-    Some(match convert_here(Path::new(&source)) {
-        Ok(target) => {
-            println!("{}", target.display());
-            0
-        }
-        Err(e) => {
-            eprintln!("{e}");
-            1
-        }
-    })
-}
-
-/// `None` if the child could not be started.
-fn convert_in_child(program: &Path, path: &Path) -> Option<Result<PathBuf, String>> {
-    let out = std::process::Command::new(program)
-        .env(COPY_CHILD, path)
-        .env("POLARS_MAX_THREADS", CHILD_THREADS)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    if out.status.success() {
-        let text = String::from_utf8_lossy(&out.stdout);
-        return Some(match text.lines().last() {
-            Some(line) if !line.is_empty() => Ok(PathBuf::from(line)),
-            _ => Err("the copy left no file".to_string()),
-        });
-    }
-    let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
-    Some(Err(if why.is_empty() {
-        "the copy stopped".to_string()
-    } else {
-        why
-    }))
-}
-
-/// [`convert`], in this process.
-pub fn convert_here(path: &Path) -> Result<PathBuf, String> {
     let name = copy_name(path).ok_or_else(|| "there is no such file".to_string())?;
     let target = cache_dir().join(format!("{name}.parquet"));
     // What a copy cut short left behind: the app closed while writing it.
