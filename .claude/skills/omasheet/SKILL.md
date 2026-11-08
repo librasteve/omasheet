@@ -102,6 +102,8 @@ sheet Summary
   numbers with a point (`19.99`) is `Decimal`, read exactly, and one of
   whole numbers `Integer`; only a column with an exponent (`1.5e3`),
   `NaN` or `Inf`, or more than 18 places is `Float`. Declare what was found.
+  A Parquet `Float` column (a price) is read as exact decimals by declaring
+  it `Decimal`: `Price : Decimal`.
   Write the `Column : Type` lines it expects and no rows; its columns are
   selected and computed over as any sheet's, but no cell of it can be
   edited and nothing is written back to the files.

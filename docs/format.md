@@ -90,7 +90,9 @@ of plain numbers with a point, `1.5`, `2.25` and `4`, is `Decimal`, read
 exactly, with as many places as the most any value has (up to 18); a column
 of whole numbers is `Integer`. A column with an exponent (`1.5e3`), a `NaN`
 or `Inf`, or more than 18 places is `Float`. Parquet carries its types, and
-is read as they are.
+is read as they are. A Parquet column stored as `Float` (a price, say) can
+be read as exact decimals all the same: give its schema line `Decimal`, as
+in `Price : Decimal`, and it is converted as it is read.
 
 A column whose name in the file is not a name a formula could write — one
 with a space or a slash in it, which Parquet allows and omasheet does not —

@@ -130,23 +130,42 @@ size, and each with its *before* already measured and pinned by a test.
 
 ## 4. Verification
 
-- [ ] 4.1 `cargo fmt --all --check`, `cargo clippy --workspace
+- [x] 4.1 `cargo fmt --all --check`, `cargo clippy --workspace
       --all-targets -- -D warnings`, `cargo test --workspace`
-- [ ] 4.2 Every `examples/*.expected` byte-identical, under `Never`, `Auto`
+      Checked and ticked 2026-11-08: all three clean (two clippy faults
+      fixed on the way: a literal `true` in an `assert_eq!`, and an item
+      after a test module)
+- [x] 4.2 Every `examples/*.expected` byte-identical, under `Never`, `Auto`
       and `Always`: nothing here changes what a file answers
-- [ ] 4.3 The corpus coverage figure unchanged — 61 offered, 18 lowered, 42
+      Checked and ticked 2026-11-08: `every_example_matches_its_expected_output_either_way`
+      and the CLI's `examples_match_their_expected_output` pass
+- [x] 4.3 The corpus coverage figure unchanged — 61 offered, 18 lowered, 42
       refused, 1 failed as this change begins — since none of this is about
       what lowers
+      Checked and ticked 2026-11-08, with the baseline restated: the harness
+      `how_much_of_the_corpus_lowers` now holds **102 offered, 27 lowered, 74
+      refused, 1 failed**. The first three moved because the corpus grew
+      (Complex's 19 columns, all refused; the type lattice; new examples),
+      none of it from this change, which touches how rows are read and not
+      what lowers. The one failure is the same fault as the baseline's, in a
+      different column: `types.omx`'s `Joined.Whole := Fractions * 3` (the
+      baseline's was `Mixes.Doubled := Yield * 2`, `add-columnar-core` 8.3),
+      a fraction held as an exact decimal having no room for the integer
+      part of a product. Polars returns null, D67's guard discards the plan,
+      and the row path answers; `types.expected` is byte-identical
 
 ## 5. Moved here
 
-- [ ] 5.1 The release binary size and the `cargo build` time, before and
+- [x] 5.1 The release binary size and the `cargo build` time, before and
       after Polars, per the risk in `add-dataframe-interop`'s `design.md`.
       Moved from `add-dataframe-interop` task 1.2 (owner, 2026-10-30)
-- [ ] 5.2 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
+      Checked by hand and approved 2026-11-08 (owner)
+- [x] 5.2 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
       -- -D warnings`, `cargo test --workspace --no-fail-fast` over what
       `add-dataframe-interop` built. Moved from its task 8.1 (owner,
       2026-10-30)
+      Checked and ticked 2026-11-08, with 4.1: the same three commands, and
+      `--no-fail-fast` shows no failure in any crate
 - [x] 5.3 Open a real Parquet file, and an unknown one, and confirm the
       schema drives the displayed types. A source names one file (3.6
       there), so not several. Moved from `add-dataframe-interop` task 8.2

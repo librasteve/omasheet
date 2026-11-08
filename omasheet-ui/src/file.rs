@@ -1829,20 +1829,6 @@ fn relative_path(file: &std::path::Path, dir: &std::path::Path) -> PathBuf {
     out
 }
 
-#[cfg(test)]
-mod relative_tests {
-    use super::relative_path;
-    use std::path::Path;
-
-    #[test]
-    fn a_path_is_made_relative_to_a_folder() {
-        let rel = |f, d| relative_path(Path::new(f), Path::new(d));
-        assert_eq!(rel("/a/b/data/x.csv", "/a/b"), Path::new("data/x.csv"));
-        assert_eq!(rel("/a/data/x.csv", "/a/b"), Path::new("../data/x.csv"));
-        assert_eq!(rel("/a/b/x.csv", "/a/b"), Path::new("x.csv"));
-    }
-}
-
 /// The rows of the file that table `sheet` reads, written as an inline sheet
 /// of the table's name: what an import writes, so the two are alike. Refused
 /// for a file that is too big to be written into the text, which is what a
@@ -1889,4 +1875,18 @@ fn table_as_sheet(doc: &Document, sheet: usize, name: &str) -> Result<String, St
     // The table's name, so that what refers to it still does.
     let (_, rest) = source.split_once('\n').unwrap_or((&source, ""));
     Ok(format!("sheet {name}\n{rest}"))
+}
+
+#[cfg(test)]
+mod relative_tests {
+    use super::relative_path;
+    use std::path::Path;
+
+    #[test]
+    fn a_path_is_made_relative_to_a_folder() {
+        let rel = |f, d| relative_path(Path::new(f), Path::new(d));
+        assert_eq!(rel("/a/b/data/x.csv", "/a/b"), Path::new("data/x.csv"));
+        assert_eq!(rel("/a/data/x.csv", "/a/b"), Path::new("../data/x.csv"));
+        assert_eq!(rel("/a/b/x.csv", "/a/b"), Path::new("x.csv"));
+    }
 }

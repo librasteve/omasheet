@@ -5014,7 +5014,7 @@ mod tests {
             .map(|c| c.name.clone())
             .collect();
         assert_eq!(names, ["A", "B", "C"]);
-        assert_eq!(doc.snapshot().sheets[0].columns[1].formula.is_some(), true);
+        assert!(doc.snapshot().sheets[0].columns[1].formula.is_some());
         assert_eq!(doc.undo_mark(), mark + 1);
         assert!(doc.undo());
         assert_eq!(doc.text(), before);
