@@ -3310,8 +3310,8 @@ impl Document {
         let mark = self.undo.len();
         self.add_computed(sheet, name, expr)?;
         let last = self.snapshot.sheets[sheet].columns.len() - 1;
-        // A file's sheet keeps its own columns in the file's order: a
-        // formula column added to it goes after them.
+        // A file's own columns keep the file's order, and a formula column
+        // of a view stands where it is put, among them or after them.
         if self.no_cells(sheet).is_none() || self.frame_sheet(sheet) {
             self.move_columns(sheet, last, 1, at.min(last))?;
         }

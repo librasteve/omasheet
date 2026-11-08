@@ -1068,9 +1068,9 @@ impl qobject::File {
     ) -> QString {
         let text = text.to_string();
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
-        let said = self.as_mut().clip(|clip, doc| {
-            clip.paste_reference_in(doc, index(sheet), from, to, &text, by_row)
-        });
+        let said = self
+            .as_mut()
+            .clip(|clip, doc| clip.paste_reference_in(doc, index(sheet), from, to, &text, by_row));
         match said {
             Ok(Some(said)) => {
                 self.refresh(&said);

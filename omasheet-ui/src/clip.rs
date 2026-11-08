@@ -655,6 +655,7 @@ impl Clip {
     /// Into data cells each gets a formula for the cell it stands for; into
     /// a formula column the column's formula is set, aligned by row
     /// (D212). What was written, or why nothing was.
+    #[cfg(test)]
     pub fn paste_reference(
         &mut self,
         doc: &mut Document,
@@ -1428,7 +1429,7 @@ mod tests {
     }
 
     #[test]
-    fn a_formula_column_put_in_a_view_goes_after_its_columns() {
+    fn a_formula_column_put_in_a_view_goes_where_it_is_put() {
         let mut doc = view();
         doc.insert_computed(0, 0, "Triple", "Fare * 3").unwrap();
         let names: Vec<_> = doc.snapshot().sheets[0]
@@ -1436,7 +1437,9 @@ mod tests {
             .iter()
             .map(|c| c.name.clone())
             .collect();
-        assert_eq!(names, ["Name", "Fare", "Double", "Triple"]);
+        // A formula column of a view may stand among the file's columns
+        // (`d81945f`): put first, it is first.
+        assert_eq!(names, ["Triple", "Name", "Fare", "Double"]);
     }
 
     #[test]

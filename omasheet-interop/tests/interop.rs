@@ -1336,9 +1336,17 @@ fn a_document_shows_a_table_and_takes_no_edit() {
     assert_eq!(doc.add_column(0, "Extra").unwrap_err(), why);
     assert_eq!(doc.insert_column(0, 0, "Extra").unwrap_err(), why);
     assert_eq!(doc.rename_column(0, 0, "When").unwrap_err(), why);
-    assert_eq!(doc.delete_columns(0, 0, 1).unwrap_err(), why);
+    // A formula column of a view can be deleted and moved, so these two say
+    // that it is only those.
+    assert_eq!(
+        doc.delete_columns(0, 0, 1).unwrap_err(),
+        "view `Sales` is read-only: only its formula columns can be deleted"
+    );
     assert_eq!(doc.move_rows(0, 0, 1, 1).unwrap_err(), why);
-    assert_eq!(doc.move_columns(0, 0, 1, 1).unwrap_err(), why);
+    assert_eq!(
+        doc.move_columns(0, 0, 1, 1).unwrap_err(),
+        "view `Sales` is read-only: only its formula columns can be moved"
+    );
     assert_eq!(doc.text(), before);
 
     // A formula column is the one thing it takes: a decorator, a line after
@@ -1971,7 +1979,9 @@ fn a_workbook_sheet_with_offsets_gaps_and_every_kind_of_cell_reads_as_an_import_
     // import.
     assert_eq!(
         types,
-        ["String", "Datetime", "Time", "Duration", "Boolean", "Decimal"]
+        [
+            "String", "Datetime", "Time", "Duration", "Boolean", "Decimal"
+        ]
     );
     let rows = shown_rows(&table, 0);
     assert_eq!(rows.len(), 4, "the empty row between is a row");

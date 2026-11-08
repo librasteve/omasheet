@@ -846,8 +846,17 @@ Parquet alone.
 
 ## 6. Verification
 
-- [ ] 6.1 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
+- [x] 6.1 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
       -- -D warnings`, `cargo test --workspace`
+      Met 2026-11-08: `cargo fmt --all --check` clean, `cargo clippy
+      --workspace --all-targets -- -D warnings` clean, `cargo test
+      --workspace` 564 passed, 0 failed. Four tests that failed before this
+      change were brought up to date: `examples/ccp.expected` regenerated
+      from `ccp.omx` (its `Data` sheet had changed); the read-only view's
+      delete and move messages; a formula column put first in a view goes
+      first (`d81945f`); and in the UI crate `paste_reference` is
+      `cfg(test)` and `too_many_arguments` is allowed for the Qt bridge
+
 - [x] 6.2 The differential: for a corpus of CSV, XLSX and JSON files (quoted
       newlines, CRLF, a BOM, no final newline, empty cells, OMX-only
       literals), the inline sheet and the table over the converted copy

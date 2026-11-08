@@ -8,6 +8,10 @@
 //! in `file.rs`, which wraps the engine's editable
 //! [`Document`](omasheet_engine::Document).
 
+// A Qt invokable takes its arguments one by one, and the paste of a reference
+// takes eight; the bridge's own code will not take an attribute for it.
+#![allow(clippy::too_many_arguments)]
+
 mod clip;
 mod file;
 mod json;
