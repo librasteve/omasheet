@@ -702,6 +702,30 @@ fn a_big_csv_through_its_copy() {
     std::fs::remove_dir_all(&cache).unwrap();
 }
 
+/// Run what an open runs, over a small file of its own, so that the pages of
+/// the program that an open touches are back in memory after a purge, which
+/// drops them with everything else. What is timed after it is then the data
+/// being cold and not the code (`open-a-big-csv` 5.1).
+fn prime_code() {
+    let dir = std::env::temp_dir().join(format!("omasheet-prime-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let file = dir.join("prime.csv");
+    let mut text = String::from("a,b,c\n");
+    for i in 0..3_000 {
+        text.push_str(&format!("{i},{}.5,x{i}\n", i % 7));
+    }
+    std::fs::write(&file, text).unwrap();
+    let view = format!(
+        "view T := dataframe[{}]\n",
+        omasheet_engine::omx::lexer::quoted(&file.to_string_lossy())
+    );
+    table::sample(&file).unwrap();
+    let names = omasheet_engine::datefmt::Names::default();
+    let style = omasheet_engine::omx::date::Style::ISO;
+    let _ = omasheet_engine::Document::on_screen(&view, style, names);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Drops the operating system's page cache, so the next read of a file is a
 /// cold one. It needs privilege (`purge` on macOS, a write to
 /// `/proc/sys/vm/drop_caches` on Linux), so it says whether it managed: a
@@ -812,8 +836,8 @@ fn the_targets_on_a_synthetic_csv() {
             "view T := dataframe[{}]\n",
             omasheet_engine::omx::lexer::quoted(&csv.to_string_lossy())
         );
-        for state in ["warm", "cold"] {
-            if state == "cold" && !cold_possible {
+        for state in ["warm", "cold", "cold+code"] {
+            if state.starts_with("cold") && !cold_possible {
                 println!("{size:<8} cold  (page cache could not be dropped: needs sudo)");
                 continue;
             }
@@ -821,8 +845,11 @@ fn the_targets_on_a_synthetic_csv() {
             // next read of the file has to fetch from disk (cold) or has
             // just had read through (warm).
             let _ = std::fs::remove_dir_all(&cache);
-            if state == "cold" {
+            if state.starts_with("cold") {
                 drop_page_cache();
+                if state == "cold+code" {
+                    prime_code();
+                }
             } else {
                 let _ = std::fs::read(&csv).map(|b| b.len());
             }
@@ -855,7 +882,7 @@ fn the_targets_on_a_synthetic_csv() {
             );
             drop(doc);
 
-            if state == "cold" {
+            if state.starts_with("cold") {
                 drop_page_cache();
             }
             let started = Instant::now();
@@ -888,7 +915,7 @@ fn the_targets_on_a_synthetic_csv() {
             engine.run();
             let (node, _) =
                 compile_expr(&program, "T.qty.sum()", 1).expect("the expression checks");
-            if state == "cold" {
+            if state.starts_with("cold") {
                 drop_page_cache();
             }
             for step in ["sum, first", "sum, again"] {

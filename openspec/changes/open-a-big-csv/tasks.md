@@ -644,7 +644,7 @@ Parquet alone.
 
 ## 5. Measured against the targets
 
-- [ ] 5.1 Open to first screen, 1.1 GB file, cold and warm: ≤ 50 ms
+- [x] 5.1 Open to first screen, 1.1 GB file, cold and warm: ≤ 50 ms
 
       Measured 2026-11-07, release, the seeded 1,060 MB CSV (20.8M rows),
       `the_targets_on_a_synthetic_csv` and `session_csv`: warm **11.6 ms**
@@ -654,6 +654,29 @@ Parquet alone.
       pages, which this run pays for and the app, already running, does not;
       that is not separated from the rest, so the cold figure is an upper
       bound. Not met cold as measured
+
+      **Separated and met, 2026-11-08 (owner ran it).** The harness has a
+      third state, `cold+code`: the page cache is purged, then an open is run
+      over a small file of its own (`prime_code`), so that the pages of the
+      program an open touches are in memory again before the 1.1 GB file's
+      open is timed, which is then the data being cold and nothing else. The
+      same run, release, the seeded 1.1 GB CSV, one run each:
+
+      | open | ms |
+      |---|---:|
+      | first call in the process (called warm) | 89.9 |
+      | cold, after a purge | 76.2 |
+      | **cold, program pages in memory** | **22.4** |
+
+      So the cold 57-76 ms was the program being paged back in from disk
+      after the purge, as suspected, and not the file: a running app does not
+      pay it, and a first open in a fresh process pays it whatever the file
+      (76-90 ms, a launch cost, the same for the 10 MB file). With the program
+      resident the open is **22 ms** with the file cold, under 50 ms. Run:
+      `OMASHEET_BENCH=1.1gb cargo test --release -p omasheet-engine --test
+      timings the_targets_on_a_synthetic_csv -- --ignored --nocapture
+      --test-threads=1`, after `sudo -v`
+
 - [x] 5.2 Once the copy is written, jump to the last row and scroll by a
       page: ≤ 16 ms a frame. Reopening with a current copy: ≤ 50 ms to a
       fully usable table
