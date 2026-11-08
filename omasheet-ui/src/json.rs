@@ -248,3 +248,47 @@ mod tests {
         assert!(json.ends_with("\"code\":\"\"}]"));
     }
 }
+
+#[cfg(test)]
+mod big_table_tests {
+    use omasheet_engine::Document;
+    use omasheet_engine::datefmt::Names;
+    use omasheet_engine::omx::date::Style;
+
+    /// A formula that fails in every row of a table of millions listed a
+    /// problem for each, a snapshot of hundreds of megabytes that the app's
+    /// JSON parser could not hold: the list stops at a few hundred.
+    #[test]
+    fn a_formula_failing_in_every_row_leaves_a_small_snapshot() {
+        let dir = std::env::temp_dir().join(format!("omasheet-json-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // SAFETY: this test is the only one in the binary that reads it.
+        unsafe { std::env::set_var("OMASHEET_CACHE", dir.join("cache")) };
+        let csv = dir.join("t.csv");
+        let mut text = String::from("a,b\n");
+        for i in 0..5000 {
+            text.push_str(&format!("{i},{}.5\n", i));
+        }
+        std::fs::write(&csv, text).unwrap();
+        let source = format!(
+            "view T := dataframe[{}]\n",
+            omasheet_engine::omx::lexer::quoted(&csv.to_string_lossy())
+        );
+        let mut doc = Document::on_screen(&source, Style::ISO, Names::default());
+        omasheet_engine::table::convert(&csv).unwrap();
+        assert!(doc.converted(&csv));
+        doc.insert_computed(0, 2, "Twice", "b * 2e0").unwrap();
+        assert!(doc.set_column_types(0, &[2], Some("Decimal")));
+        let problems = &doc.snapshot().problems;
+        assert_eq!(problems.len(), 201, "{}", problems.len());
+        assert!(
+            problems[200].message.contains("more like these"),
+            "{}",
+            problems[200].message
+        );
+        let json = super::snapshot(doc.snapshot());
+        assert_eq!(json.matches("\"problems\"").count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

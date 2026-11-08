@@ -1547,6 +1547,56 @@ fn copy_base(name: &str) -> &str {
     }
 }
 
+/// The schema lines that name the file's own columns, `id : Integer`, each
+/// `from` the file's name where that is not the identifier. `None` if a
+/// column has no type or no usable name, or two take the same one.
+fn schema_lines(columns: &[ColumnSnap], naming: &dyn Fn(&str) -> String) -> Option<String> {
+    let mut lines = String::new();
+    let mut seen = std::collections::HashSet::new();
+    for c in columns.iter().filter(|c| c.formula.is_none()) {
+        let id = naming(&c.name);
+        if c.ty.is_empty() || id.is_empty() || !seen.insert(id.clone()) {
+            return None;
+        }
+        lines.push_str(&format!("{id} : {}", c.ty));
+        if id != c.name {
+            if c.name.contains('\'') {
+                return None;
+            }
+            lines.push_str(&format!(" from '{}'", c.name));
+        }
+        lines.push('\n');
+    }
+    Some(lines)
+}
+
+/// A column's name as an identifier, as an import would name it: itself if
+/// it is one, and otherwise its letters and digits with a capital after each
+/// gap, which a `from` then ties to the file's name.
+fn plain_identifier(raw: &str) -> String {
+    if ident_len(raw) == raw.len() {
+        return raw.to_string();
+    }
+    let mut id = String::new();
+    let mut gap = false;
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            id.push(if gap && !id.is_empty() {
+                c.to_ascii_uppercase()
+            } else {
+                c
+            });
+            gap = false;
+        } else {
+            gap = true;
+        }
+    }
+    if id.starts_with(|c: char| c.is_ascii_digit()) {
+        id.insert(0, '_');
+    }
+    id
+}
+
 fn valid_name(name: &str) -> Result<&str, String> {
     let name = name.trim();
     if name.is_empty() || ident_len(name) != name.len() {
@@ -1556,6 +1606,10 @@ fn valid_name(name: &str) -> Result<&str, String> {
     }
     Ok(name)
 }
+
+/// The most problems a snapshot lists; a formula failing in every row of a
+/// table of millions would otherwise list them all.
+const MOST_PROBLEMS: usize = 200;
 
 /// The header and rows of a sheet as text, plus where each row came from.
 struct Grid {
@@ -3918,8 +3972,21 @@ impl Document {
             };
             let (_, end) = self.sheet_lines(decl);
             let gap = if decl.computed.is_empty() { "\n" } else { "" };
+            // A table that names no columns shows the file's own; one
+            // formula line would stand for them all, so they are named first.
+            let schema = if decl.schema.is_empty() {
+                schema_lines(&self.snapshot.sheets[sheet].columns, &plain_identifier)
+                    .ok_or("the file's columns need names to be written down first")?
+            } else {
+                String::new()
+            };
+            let gap = if schema.is_empty() { gap } else { "\n" };
             let mut text = self.text.clone();
-            let line = format!("{gap}{name} := {}\n", expr.replace('\n', " "));
+            let line = format!(
+                "{gap}{schema}{gap2}{name} := {}\n",
+                expr.replace('\n', " "),
+                gap2 = if schema.is_empty() { "" } else { "\n" }
+            );
             // The last line of the sheet may lack its newline.
             if end > 0 && !text[..end].ends_with('\n') {
                 text.insert(end, '\n');
@@ -4220,22 +4287,9 @@ impl Document {
             let Some(sheet) = doc.snapshot.sheets.iter().find(|t| t.name == name) else {
                 return;
             };
-            let mut lines = String::new();
-            let mut seen = std::collections::HashSet::new();
-            for c in sheet.columns.iter().filter(|c| c.formula.is_none()) {
-                let id = naming(&c.name);
-                if c.ty.is_empty() || id.is_empty() || !seen.insert(id.clone()) {
-                    return;
-                }
-                lines.push_str(&format!("{id} : {}", c.ty));
-                if id != c.name {
-                    if c.name.contains('\'') {
-                        return;
-                    }
-                    lines.push_str(&format!(" from '{}'", c.name));
-                }
-                lines.push('\n');
-            }
+            let Some(lines) = schema_lines(&sheet.columns, &naming) else {
+                return;
+            };
             if !lines.is_empty() {
                 let text = doc.text.replacen(&block, &format!("{block}\n{lines}"), 1);
                 doc.commit(text);
@@ -4806,8 +4860,13 @@ impl Document {
         // problem takes a cell of its own: without that, every failure in
         // one column would be gone to at the same row.
         let mut taken = vec![false; located.len()];
+        // A formula over a table fails in every row it fails in: millions of
+        // problems would be written out and parsed by the app, and the first
+        // few hundred say all there is to say.
+        let shown = diags.len().min(MOST_PROBLEMS);
         snapshot.problems = diags
             .iter()
+            .take(shown)
             .map(|d| {
                 let (line, column) = sources.line_col(d.span.src, d.span.start);
                 let at = located
@@ -4829,6 +4888,14 @@ impl Document {
                 }
             })
             .collect();
+        if diags.len() > shown {
+            snapshot.problems.push(Problem {
+                line: 0,
+                column: 0,
+                message: format!("and {} more like these", diags.len() - shown),
+                cell: None,
+            });
+        }
         self.snapshot = snapshot;
         self.column_errors = column_errors;
         self.engine = Some(engine);

@@ -629,7 +629,7 @@ Parquet alone.
 
 ## 4. Opening (D146), and the funnel's second stage
 
-- [ ] 4.1 The threshold, and the app opening any of the four formats above
+- [x] 4.1 The threshold, and the app opening any of the four formats above
       it as a table; the status bar says it is read-only and why. JSON done
       2026-11-07 (not looked at in the window, which this session cannot
       do): over 4 MB `open_file` calls `open_table` for a `.json` as for a
@@ -646,7 +646,14 @@ Parquet alone.
       ride-hail CSV, cache empty: first screen 25 ms (sample 20 ms, open
       5 ms; was the inline import, which never finished), the copy 1.8 s
       (125 MB), reopening with the copy current 35 ms; in the app, the
-      15M rows shown and held in memory (1.2 GB) within 4 s
+      15M rows shown and held in memory (1.2 GB) within 4 s. Checked by
+      eye in the app and approved 2026-11-08: CSV, JSON, XLSX and Parquet
+      open as read-only tables. It turned up two faults, both fixed: a
+      formula column added to a table with no schema lines hid the file's
+      own columns (they are now written down first), and a formula that
+      fails in every row of a table of millions listed a problem for each,
+      a snapshot of 447 MB that crashed the app's JSON parser (the list is
+      now capped at 200)
 - [ ] 4.2 "Copy into the document" for a table under the threshold
 - [x] 4.3 `omasheet import` above the threshold refuses and prints the
       `table` lines, ready to paste
