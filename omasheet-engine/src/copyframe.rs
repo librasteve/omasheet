@@ -40,6 +40,9 @@ pub(crate) enum Kind {
     Nothing,
     Bool,
     Int,
+    /// Numbers with places after the point, held exactly: the most places
+    /// any has. An import reads `1.50` as an exact decimal, so does a copy.
+    Decimal(u8),
     Float,
     Date,
     Datetime,
@@ -55,6 +58,9 @@ impl Kind {
             (a, b) if a == b => a,
             (Nothing, k) | (k, Nothing) => k,
             (Int, Float) | (Float, Int) => Float,
+            (Decimal(a), Decimal(b)) => Decimal(a.max(b)),
+            (Int, Decimal(s)) | (Decimal(s), Int) => Decimal(s),
+            (Decimal(_), Float) | (Float, Decimal(_)) => Float,
             // A date is the date-time at its midnight, so a column of dates
             // with a time on some is a column of date-times.
             (Date, Datetime) | (Datetime, Date) => Datetime,
@@ -71,6 +77,9 @@ pub(crate) enum Cell {
     Bool(bool),
     Int(i64),
     Float(f64),
+    /// A number written as a plain decimal, with this many places after the
+    /// point (`2.50` is 2): held exactly, as an import holds it.
+    Dec(f64, u8),
     /// A number as it was written, where it is neither of the above.
     Number(String),
     Str(String),
@@ -84,6 +93,23 @@ pub(crate) enum Cell {
     Nested(String),
 }
 
+/// How many places after the point the float `f` is written with, where it
+/// is a plain decimal that an `f64` holds exactly to 15 digits: `1.5` is 1.
+/// `None` for a whole number, which is not one with places, for one with
+/// more digits than that, and for `NaN` and the infinities.
+pub(crate) fn decimal_places(f: f64) -> Option<u8> {
+    if !f.is_finite() || f.abs() >= 1e15 {
+        return None;
+    }
+    if f.fract() == 0.0 {
+        return None;
+    }
+    (1..=15u8).find(|&places| {
+        let scaled = f * 10f64.powi(i32::from(places));
+        scaled.abs() < 1e15 && (scaled.round() / 10f64.powi(i32::from(places))) == f
+    })
+}
+
 impl Cell {
     pub(crate) fn kind(&self) -> Kind {
         match self {
@@ -91,6 +117,7 @@ impl Cell {
             Cell::Bool(_) => Kind::Bool,
             Cell::Int(_) => Kind::Int,
             Cell::Float(_) => Kind::Float,
+            Cell::Dec(_, places) => Kind::Decimal(*places),
             Cell::Date(_) => Kind::Date,
             Cell::Datetime(_) => Kind::Datetime,
             Cell::Time(_) => Kind::Time,
@@ -105,7 +132,7 @@ impl Cell {
             Cell::Null => None,
             Cell::Bool(b) => Some(b.to_string()),
             Cell::Int(i) => Some(i.to_string()),
-            Cell::Float(f) => Some(f.to_string()),
+            Cell::Float(f) | Cell::Dec(f, _) => Some(f.to_string()),
             Cell::Number(s) | Cell::Str(s) | Cell::Nested(s) => Some(s),
             // A date or a time as it is written: only in a column that is
             // text because of the others, so the string was one.
@@ -181,7 +208,7 @@ pub(crate) fn label(cell: Option<&Cell>) -> String {
         Some(Cell::Null) | None => String::new(),
         Some(Cell::Bool(b)) => b.to_string(),
         Some(Cell::Int(i)) => i.to_string(),
-        Some(Cell::Float(f)) => f.to_string(),
+        Some(Cell::Float(f) | Cell::Dec(f, _)) => f.to_string(),
         Some(Cell::Number(s) | Cell::Nested(s)) => s.clone(),
         Some(Cell::Date(d)) => date::format(*d),
         Some(Cell::Datetime(us)) => date::format_datetime(*us),
@@ -282,6 +309,8 @@ enum Builder {
     Bool(Vec<Option<bool>>),
     Int(Vec<Option<i64>>),
     Float(Vec<Option<f64>>),
+    /// The scale, and each value times ten to the scale, a whole number.
+    Decimal(u8, Vec<Option<i64>>),
     Date(Vec<Option<i32>>),
     Datetime(Vec<Option<i64>>),
     Time(Vec<Option<i64>>),
@@ -295,6 +324,7 @@ impl Builder {
             Kind::Bool => Builder::Bool(Vec::new()),
             Kind::Int => Builder::Int(Vec::new()),
             Kind::Float => Builder::Float(Vec::new()),
+            Kind::Decimal(scale) => Builder::Decimal(scale, Vec::new()),
             Kind::Date => Builder::Date(Vec::new()),
             Kind::Datetime => Builder::Datetime(Vec::new()),
             Kind::Time => Builder::Time(Vec::new()),
@@ -311,6 +341,7 @@ impl Builder {
             (Builder::Bool(v), None) => v.push(None),
             (Builder::Int(v), None) => v.push(None),
             (Builder::Float(v), None) => v.push(None),
+            (Builder::Decimal(_, v), None) => v.push(None),
             (Builder::Date(v), None) => v.push(None),
             (Builder::Datetime(v), None) => v.push(None),
             (Builder::Time(v), None) => v.push(None),
@@ -318,8 +349,19 @@ impl Builder {
             (Builder::Str(v), None) => v.push(None),
             (Builder::Bool(v), Some(Cell::Bool(b))) => v.push(Some(b)),
             (Builder::Int(v), Some(Cell::Int(i))) => v.push(Some(i)),
-            (Builder::Float(v), Some(Cell::Float(f))) => v.push(Some(f)),
+            (Builder::Float(v), Some(Cell::Float(f) | Cell::Dec(f, _))) => v.push(Some(f)),
             (Builder::Float(v), Some(Cell::Int(i))) => v.push(Some(i as f64)),
+            // A value with more places than the column was given, or a whole
+            // number too big for a float to hold, is not what it holds.
+            (Builder::Decimal(scale, v), Some(Cell::Dec(f, places))) if places <= *scale => {
+                v.push(Some((f * 10f64.powi(i32::from(*scale))).round() as i64))
+            }
+            (Builder::Decimal(scale, v), Some(Cell::Int(i))) => {
+                match i.checked_mul(10i64.pow(u32::from(*scale))) {
+                    Some(n) if n.unsigned_abs() < 1_000_000_000_000_000 => v.push(Some(n)),
+                    _ => return false,
+                }
+            }
             (Builder::Date(v), Some(Cell::Date(d))) => v.push(Some(d)),
             (Builder::Datetime(v), Some(Cell::Datetime(us))) => v.push(Some(us)),
             // A date in a column of date-times is at its midnight.
@@ -339,6 +381,7 @@ impl Builder {
             Builder::Bool(v) => v.len(),
             Builder::Int(v) => v.len(),
             Builder::Float(v) => v.len(),
+            Builder::Decimal(_, v) => v.len(),
             Builder::Date(v) => v.len(),
             Builder::Datetime(v) => v.len(),
             Builder::Time(v) => v.len(),
@@ -353,6 +396,26 @@ impl Builder {
             Builder::Bool(v) => Column::new(name, std::mem::take(v)),
             Builder::Int(v) => Column::new(name, std::mem::take(v)),
             Builder::Float(v) => Column::new(name, std::mem::take(v)),
+            // The digits as text and the text as the decimal it is, which
+            // is exact where a cast from a float would drop what is past
+            // the last place a float holds.
+            Builder::Decimal(scale, v) => {
+                let scale = usize::from(*scale);
+                let texts: Vec<Option<String>> = std::mem::take(v)
+                    .into_iter()
+                    .map(|n| n.map(|n| scaled_text(n, scale)))
+                    .collect();
+                Column::new(name, texts)
+                    .str()
+                    .map_err(|e| e.to_string())?
+                    .to_decimal(scale)
+                    .map_err(|e| e.to_string())?
+                    .into_column()
+                    // Whatever precision the digits came to, one for every
+                    // batch of the file.
+                    .cast(&DataType::Decimal(Some(38), Some(scale)))
+                    .map_err(|e| e.to_string())?
+            }
             Builder::Date(v) => Column::new(name, std::mem::take(v))
                 .cast(&DataType::Date)
                 .map_err(|e| e.to_string())?,
@@ -368,6 +431,19 @@ impl Builder {
             Builder::Str(v) => Column::new(name, std::mem::take(v)),
         };
         Ok(column)
+    }
+}
+
+/// `n` times ten to the minus `scale`, as the digits it is written with.
+fn scaled_text(n: i64, scale: usize) -> String {
+    let digits = n.unsigned_abs().to_string();
+    let digits = format!("{digits:0>width$}", width = scale + 1);
+    let (whole, places) = digits.split_at(digits.len() - scale);
+    let sign = if n < 0 { "-" } else { "" };
+    if scale == 0 {
+        format!("{sign}{whole}")
+    } else {
+        format!("{sign}{whole}.{places}")
     }
 }
 

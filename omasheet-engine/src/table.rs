@@ -997,21 +997,63 @@ fn csv_head(path: &Path) -> Result<Vec<u8>, String> {
 /// every value of which in the head is an ISO date, or an ISO date and
 /// time, is read as one. Polars' own `try_parse_dates` would do that too,
 /// but takes half a second over the head of a file of seven columns.
-fn csv_schema(head: &[u8]) -> Result<SchemaRef, String> {
+fn csv_schema(head: &[u8]) -> Result<(SchemaRef, Decimals, Vec<PlSmallStr>), String> {
     let frame = CsvReadOptions::default()
         .with_has_header(true)
         .with_infer_schema_length(Some(INFER_ROWS))
         .into_reader_with_file_handle(std::io::Cursor::new(head))
         .finish()
         .map_err(|e| e.to_string())?;
+    // The same head, every column as the text it is, for the columns that
+    // Polars made floats of: an import reads `1.50` as an exact decimal, and
+    // so does a table (open-a-big-csv 6.2).
+    let texts = CsvReadOptions::default()
+        .with_has_header(true)
+        .with_infer_schema_length(Some(0))
+        .into_reader_with_file_handle(std::io::Cursor::new(head))
+        .finish()
+        .map_err(|e| e.to_string())?;
     let date = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap();
     let datetime =
         regex::Regex::new(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?$").unwrap();
+    let plain = regex::Regex::new(r"^-?\d+(\.(\d+))?$").unwrap();
     let mut schema = (**frame.schema()).clone();
+    let mut decimals = Vec::new();
+    let mut hex = Vec::new();
     for column in frame.get_columns() {
+        if matches!(column.dtype(), DataType::Float64)
+            && let Ok(words) = texts
+                .column(column.name().as_str())
+                .and_then(|c| c.str().cloned())
+        {
+            // Every value a plain number, and the most places after the
+            // point is the scale. Anything else (an exponent, `NaN`) is a
+            // float, as it is to Polars.
+            let (mut scale, mut all) = (0usize, true);
+            for word in words.into_iter().flatten() {
+                match plain.captures(word) {
+                    Some(c) => scale = scale.max(c.get(2).map_or(0, |m| m.len())),
+                    None => {
+                        all = false;
+                        break;
+                    }
+                }
+            }
+            if all && (1..=MOST_PLACES).contains(&scale) {
+                schema.with_column(column.name().clone(), DataType::String);
+                decimals.push((column.name().clone(), scale));
+            }
+            continue;
+        }
         let Ok(texts) = column.str() else {
             continue;
         };
+        // A column of nothing but hexadecimal numbers is shown in lower
+        // case, as an import shows them.
+        if texts.null_count() < texts.len() && texts.into_iter().flatten().all(is_hex) {
+            hex.push(column.name().clone());
+            continue;
+        }
         let every = |re: &regex::Regex| {
             texts.null_count() < texts.len() && texts.into_iter().flatten().all(|t| re.is_match(t))
         };
@@ -1024,7 +1066,61 @@ fn csv_schema(head: &[u8]) -> Result<SchemaRef, String> {
         };
         schema.with_column(column.name().clone(), dtype);
     }
-    Ok(std::sync::Arc::new(schema))
+    Ok((std::sync::Arc::new(schema), decimals, hex))
+}
+
+/// Whether `s` is a hexadecimal number as an import reads one: `0x1F`.
+fn is_hex(s: &str) -> bool {
+    s.strip_prefix("0x")
+        .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// The most places after the point a column read as exact decimals has.
+const MOST_PLACES: usize = 18;
+
+/// The columns read as text and made decimals, by name, with their scale.
+type Decimals = Vec<(PlSmallStr, usize)>;
+
+/// `frame` with each of `decimals` made the exact decimal its text is. A
+/// value with more places than the scale the head gave is turned into text
+/// that is not a number, so that the conversion fails and the file is
+/// worked out again from every row, rather than the digits being dropped.
+fn decimal_columns(frame: LazyFrame, decimals: &Decimals, hex: &[PlSmallStr]) -> LazyFrame {
+    // Only a value that is a hexadecimal number is changed, so a text further
+    // down the column is left as it is.
+    let lowered = hex.iter().map(|name| {
+        let text = col(name.clone());
+        when(
+            text.clone()
+                .str()
+                .contains(lit(r"^0x[0-9a-fA-F]+$"), true)
+                .fill_null(lit(false)),
+        )
+        .then(text.clone().str().to_lowercase())
+        .otherwise(text)
+        .alias(name.clone())
+    });
+    let exprs: Vec<Expr> = lowered
+        .chain(decimals.iter().map(|(name, scale)| {
+            let text = col(name.clone());
+            let fits = text
+                .clone()
+                .str()
+                .contains(lit(format!(r"^-?\d+(\.\d{{1,{scale}}})?$")), true)
+                .fill_null(lit(true));
+            when(fits)
+                .then(text)
+                .otherwise(lit("not a decimal"))
+                .str()
+                .to_decimal(*scale)
+                .alias(name.clone())
+        }))
+        .collect();
+    if exprs.is_empty() {
+        frame
+    } else {
+        frame.with_columns(exprs)
+    }
 }
 
 /// A reader of the CSV at `path`, with the types `schema` gives it, or
@@ -1091,12 +1187,16 @@ pub fn sample(path: &Path) -> Result<PathBuf, String> {
         // Only the head of the file is given to Polars: given the file, its
         // reader sets about the whole of it however few rows are asked for.
         let head = csv_head(&file)?;
-        let mut frame = CsvReadOptions::default()
+        let (schema, decimals, hex) = csv_schema(&head)?;
+        let frame = CsvReadOptions::default()
             .with_has_header(true)
-            .with_schema(Some(csv_schema(&head)?))
+            .with_schema(Some(schema))
             .with_n_rows(Some(SAMPLE_ROWS))
             .into_reader_with_file_handle(std::io::Cursor::new(head))
             .finish()
+            .map_err(|e| e.to_string())?;
+        let mut frame = decimal_columns(frame.lazy(), &decimals, &hex)
+            .collect()
             .map_err(|e| e.to_string())?;
         std::fs::create_dir_all(cache_dir()).map_err(|e| e.to_string())?;
         let partial = target.with_extension(format!("partial-{}", std::process::id()));
@@ -1220,8 +1320,13 @@ pub fn convert_here(path: &Path) -> Result<PathBuf, String> {
             // Where a value further down does not have the type the head
             // gave its column, the types are worked out again from every
             // row.
-            let schema = csv_schema(&csv_head(&file)?)?;
-            if sink_to(csv_scan(&file, Some(schema))?, &target).is_err() {
+            let (schema, decimals, hex) = csv_schema(&csv_head(&file)?)?;
+            if sink_to(
+                decimal_columns(csv_scan(&file, Some(schema))?, &decimals, &hex),
+                &target,
+            )
+            .is_err()
+            {
                 sink_to(csv_scan(&file, None)?, &target)?;
             }
         }

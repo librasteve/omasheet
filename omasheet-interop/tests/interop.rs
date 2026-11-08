@@ -1967,11 +1967,11 @@ fn a_workbook_sheet_with_offsets_gaps_and_every_kind_of_cell_reads_as_an_import_
         .map(|c| c.ty.clone())
         .collect();
     // A column with a time on one of its dates is a column of date-times; a
-    // 2.5 among whole numbers makes the column a float, which an import
-    // makes a decimal.
+    // 2.5 among whole numbers makes the column a decimal, as it does an
+    // import.
     assert_eq!(
         types,
-        ["String", "Datetime", "Time", "Duration", "Boolean", "Float"]
+        ["String", "Datetime", "Time", "Duration", "Boolean", "Decimal"]
     );
     let rows = shown_rows(&table, 0);
     assert_eq!(rows.len(), 4, "the empty row between is a row");

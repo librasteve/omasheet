@@ -70,7 +70,7 @@ fn main() {
     unsafe { std::env::set_var("OMASHEET_CACHE", &cache) };
     let text = format!(
         "view T := dataframe[{}]\n\nid : Integer\ndate : Date\nregion : String\nproduct : String\n\
-         qty : Integer\nprice : Float\namount : Float\n\n\
+         qty : Integer\nprice : Decimal\namount : Decimal\n\n\
          const SumId = T.id.sum()\nconst SumQty = T.qty.sum()\n\
          const SumPrice = T.price.sum()\nconst SumAmount = T.amount.sum()\n",
         omasheet_engine::omx::lexer::quoted(&csv.to_string_lossy())

@@ -352,8 +352,14 @@ Parquet alone.
       on the main thread: the rebuild when a table arrives in memory or a
       copy is written (~40 ms on 15M rows), and a select-all summary
       (0.6 s on short2)
-- [ ] 2b.7 Listing a column's distinct values in Polars (`unique`, then the
+- [x] 2b.7 Listing a column's distinct values in Polars (`unique`, then the
       first 1,000 in sort order), not a walk over every row
+      Superseded, 2026-11-08: nothing lists a column's distinct values any
+      more. The popup that did (`values_matching`, D159) went out with
+      `8d330b5`, when a filter became an expression written by the user, and
+      `git grep` finds no caller or definition left. Distinct values are a
+      filter expression now (`*.is_first_distinct()`, lowered to Polars and
+      tested over a copy in `doc.rs`)
 - [x] 2b.8 The probe in `Main.qml` taken out before this change is merged.
       Done 2026-11-02, in filter-by-expression; later probes were
       temporary and none is left
@@ -822,5 +828,45 @@ Parquet alone.
       answer the same for every column and every aggregate; and every
       aggregate gives the same answer on the streaming engine as on the
       in-memory one (D155), including NaN, null, empty and decimal columns
+      Built 2026-11-08, not ticked: `omasheet-interop/tests/differential.rs`
+      (8 awkward CSVs: plain, CRLF, BOM, no final newline, quoted newlines,
+      empty cells, percent/fraction literals, mixed; a 3,000-row CSV, a
+      2,000-row JSON and a 2,000-row workbook sheet with gaps, dates and
+      booleans: every cell shown and every aggregate of every column, inline
+      against the table) and the streaming half in `doc.rs`
+      (`an_aggregate_over_many_row_groups_...`: 29 aggregates over int,
+      float with NaN and gaps, date, decimal, all-empty and all-NaN
+      columns, 30 row groups against 1). Everything agrees but **two
+      differences the differential found**, of which the first is fixed:
+      (1) a column of numbers with a decimal point (`1.50`) was an exact
+      `Decimal` inline and a `Float` in a table, so a sum of it differed in
+      the last digits (400,615.19 inline, 400,615.1900000002 as a table).
+      **Fixed, 2026-11-08:** a table's copy now holds such a column as
+      `Decimal(38, s)`, `s` the most places in the head: a CSV column that
+      Polars made a float of, whose head values are all plain numbers, is
+      read as text and made a decimal by `str.to_decimal` (a value with more
+      places than the head had is made not a number first, so the copy fails
+      and is worked out again from every row, as a float, rather than the
+      digits being dropped); a JSON number written with digits, a point and
+      digits, and a workbook float that is a plain decimal to 15 digits, is
+      a `Cell::Dec` and a `Kind::Decimal(places)` that widens to the most
+      places (a float beside it makes the column a float). Whole numbers
+      stay integers, and an exponent (`1e3`) or more than 15 digits stays a
+      float. A document that declares such a column `Float` now gets the
+      type error it gets for any exact column (`Decimal` is not assignable
+      to `Float`): `session_csv` declares `price` and `amount` `Decimal`.
+      1.1 GB, `session_csv`, child copy: copy 5.3 s (3.7-4.5 before), sums
+      471 ms (400), peak 430 MiB (380), edit with sums 7 ms; and
+      `SumPrice` is now `5221245285.26`, exact, where the float sum was
+      `5221245285.26108`. (2) a CSV column of percentages or fractions
+      (`20%`, `1/2`) is a number inline and text in a table (3.2's OMX
+      literals), so it has no sum or mean there. The differential holds that
+      as the only difference allowed, and fails if a second appears. Hex
+      (`0x1F`) showed differently (`0x1f` inline, `0x1F` as a table);
+      **fixed 2026-11-08 for a CSV**: a column whose head values are all
+      `0x` and hex digits has each such value lowercased in the copy (a text
+      further down is left as it is). Only a CSV cell is read as a literal
+      by an import, so a JSON or workbook string `"0x1F"` is text in both
+      and stays as written (held by a test)
 - [x] 6.3 Every `examples/*.expected` byte-identical: a small file still
       opens inline as before

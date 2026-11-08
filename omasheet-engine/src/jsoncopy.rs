@@ -48,6 +48,11 @@ fn text_cell(s: &str) -> Cell {
     }
 }
 
+/// The digits of a number written as `raw`, without its sign and point.
+fn digits(raw: &str) -> usize {
+    raw.chars().filter(char::is_ascii_digit).count()
+}
+
 /// A number written as `raw`, as the cell it is.
 fn number_cell(raw: &str) -> Cell {
     if !raw.contains(['.', 'e', 'E'])
@@ -56,6 +61,17 @@ fn number_cell(raw: &str) -> Cell {
         return Cell::Int(i);
     }
     match raw.parse::<f64>() {
+        // Written as digits, a point and digits, and within what a float
+        // holds exactly: a decimal, as an import reads it.
+        Ok(f) if f.is_finite() && !raw.contains(['e', 'E']) => {
+            let places = raw.split_once('.').map_or(0, |(_, after)| after.len());
+            match u8::try_from(places) {
+                Ok(places) if (1..=15).contains(&places) && f.abs() < 1e15 && digits(raw) <= 15 => {
+                    Cell::Dec(f, places)
+                }
+                _ => Cell::Float(f),
+            }
+        }
         Ok(f) if f.is_finite() => Cell::Float(f),
         _ => Cell::Number(raw.to_string()),
     }
@@ -725,8 +741,11 @@ mod tests {
             .collect();
         assert_eq!(names, ["id", "name", "price", "ok", "on", "extra"]);
         assert_eq!(df.column("id").unwrap().dtype(), &DataType::Int64);
-        // A 2.5 and a 3: the column is a float, and holds both.
-        assert_eq!(df.column("price").unwrap().dtype(), &DataType::Float64);
+        // A 2.5 and a 3: the column is a decimal, and holds both.
+        assert_eq!(
+            df.column("price").unwrap().dtype(),
+            &DataType::Decimal(Some(38), Some(1))
+        );
         assert_eq!(df.column("ok").unwrap().dtype(), &DataType::Boolean);
         assert_eq!(df.column("on").unwrap().dtype(), &DataType::Date);
         assert_eq!(df.column("name").unwrap().dtype(), &DataType::String);
@@ -895,11 +914,15 @@ mod tests {
             .collect();
         assert_eq!(names, ["i", "x", "s", "late"]);
         assert_eq!(df.column("i").unwrap().dtype(), &DataType::Int64);
-        // A float, holding the 2.5 and the whole numbers beside it.
-        assert_eq!(df.column("x").unwrap().dtype(), &DataType::Float64);
+        // A decimal, holding the 2.5 and the whole numbers beside it.
+        assert_eq!(
+            df.column("x").unwrap().dtype(),
+            &DataType::Decimal(Some(38), Some(1))
+        );
+        // 2.5 at one place is 25, as the digits of a decimal at scale 1.
         assert_eq!(
             df.column("x").unwrap().get(HEAD_ROWS + 100).unwrap(),
-            AnyValue::Float64(2.5)
+            AnyValue::Decimal(25, 1)
         );
         // Text, holding 7 as it was written and "seven".
         assert_eq!(df.column("s").unwrap().dtype(), &DataType::String);
@@ -928,7 +951,12 @@ mod tests {
         assert_eq!(df.column("d").unwrap().dtype(), &DataType::Float64);
         // A whole number past what `i64` holds is a float, not an error.
         assert_eq!(df.column("e").unwrap().dtype(), &DataType::Float64);
-        assert_eq!(df.column("f").unwrap().dtype(), &DataType::Float64);
+        // 0.1 and a 5 are a decimal; 3.5 beside 1E-2, written with an
+        // exponent, is a float.
+        assert_eq!(
+            df.column("f").unwrap().dtype(),
+            &DataType::Decimal(Some(38), Some(1))
+        );
         assert_eq!(
             df.column("a").unwrap().get(1).unwrap(),
             AnyValue::Int64(i64::MAX)

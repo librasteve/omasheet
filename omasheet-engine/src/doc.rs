@@ -3020,7 +3020,11 @@ impl Document {
         if count == n {
             return Err("a sheet keeps at least one column".into());
         }
-        if frame && snap.columns[first..first + count].iter().any(|c| c.formula.is_none()) {
+        if frame
+            && snap.columns[first..first + count]
+                .iter()
+                .any(|c| c.formula.is_none())
+        {
             return Err(format!(
                 "view `{}` is read-only: only its formula columns can be deleted",
                 snap.name
@@ -3725,7 +3729,11 @@ impl Document {
         }
         // A file's own columns stay in its order: only decorators move,
         // among them.
-        if frame && snap.columns[first..first + count].iter().any(|c| c.formula.is_none()) {
+        if frame
+            && snap.columns[first..first + count]
+                .iter()
+                .any(|c| c.formula.is_none())
+        {
             return Err(format!(
                 "view `{}` is read-only: only its formula columns can be moved",
                 snap.name
@@ -3743,8 +3751,18 @@ impl Document {
         let arranged = if frame {
             let moved: Vec<String> = names[to..to + count].to_vec();
             let after = names.get(to + count).cloned();
-            let before = if to > 0 { Some(names[to - 1].clone()) } else { None };
-            self.decorators_moved(&followed, sheet, &moved, after.as_deref(), before.as_deref())
+            let before = if to > 0 {
+                Some(names[to - 1].clone())
+            } else {
+                None
+            };
+            self.decorators_moved(
+                &followed,
+                sheet,
+                &moved,
+                after.as_deref(),
+                before.as_deref(),
+            )
         } else {
             self.arranged(&followed, sheet, &names)
         };
@@ -3789,7 +3807,10 @@ impl Document {
 
     /// The lines of the columns of a view, as `(name, start, end)` whole
     /// lines of `text`: its schema lines and its `Name := expression` lines.
-    fn column_lines(text: &str, decl: &omasheet_omx::file::SheetDecl) -> Vec<(String, usize, usize)> {
+    fn column_lines(
+        text: &str,
+        decl: &omasheet_omx::file::SheetDecl,
+    ) -> Vec<(String, usize, usize)> {
         let line = |s: usize, e: usize| {
             let start = text[..s].rfind('\n').map_or(0, |k| k + 1);
             let end = text[e..].find('\n').map_or(text.len(), |k| e + k + 1);
@@ -5159,7 +5180,11 @@ mod tests {
         let mut doc = Document::from_text(text);
         doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
         let names = |d: &Document| -> Vec<String> {
-            d.snapshot().sheets[0].columns.iter().map(|c| c.name.clone()).collect()
+            d.snapshot().sheets[0]
+                .columns
+                .iter()
+                .map(|c| c.name.clone())
+                .collect()
         };
         assert_eq!(names(&doc), ["Name", "Pclass", "Fare", "Double"]);
         // Into the middle of the file's columns, and back to the end.
@@ -5173,13 +5198,19 @@ mod tests {
         assert_eq!(doc.insert_computed(0, 2, "Mid", "Fare + 1"), Ok(()));
         assert_eq!(names(&doc), ["Name", "Pclass", "Mid", "Fare", "Double"]);
         assert_eq!(doc.insert_computed(0, 0, "Top", "Fare + 2"), Ok(()));
-        assert_eq!(names(&doc), ["Top", "Name", "Pclass", "Mid", "Fare", "Double"]);
+        assert_eq!(
+            names(&doc),
+            ["Top", "Name", "Pclass", "Mid", "Fare", "Double"]
+        );
         // A decorator goes, a file's column does not.
         assert_eq!(doc.delete_columns(0, 3, 1), Ok(()));
         assert_eq!(names(&doc), ["Top", "Name", "Pclass", "Fare", "Double"]);
         assert!(doc.delete_columns(0, 1, 1).is_err());
         assert!(doc.undo());
-        assert_eq!(names(&doc), ["Top", "Name", "Pclass", "Mid", "Fare", "Double"]);
+        assert_eq!(
+            names(&doc),
+            ["Top", "Name", "Pclass", "Mid", "Fare", "Double"]
+        );
     }
 
     #[test]
@@ -5190,7 +5221,11 @@ mod tests {
         assert!(doc.rename_column(0, 1, "Price").is_err());
         assert_eq!(doc.rename_column(0, 2, "Twice"), Ok(()));
         assert!(doc.text().contains("Twice := Fare * 2"), "{}", doc.text());
-        assert!(doc.text().contains("Triple := Twice + Fare"), "{}", doc.text());
+        assert!(
+            doc.text().contains("Triple := Twice + Fare"),
+            "{}",
+            doc.text()
+        );
     }
 
     #[test]
@@ -5768,16 +5803,27 @@ mod tests {
         let days: Vec<Option<i32>> = (0..rows)
             .map(|i| (i % 13 != 0).then(|| 18_000 + (next() % 3_000) as i32))
             .collect();
+        // Money in cents, as a decimal column; a column with nothing in it;
+        // and one of nothing but NaNs.
+        let cents: Vec<Option<f64>> = ints.iter().map(|v| v.map(|n| n as f64 / 100.0)).collect();
+        let empty: Vec<Option<f64>> = vec![None; rows];
+        let nans: Vec<Option<f64>> = vec![Some(f64::NAN); rows];
         let write = |name: &str, group: usize| {
             let mut frame = df![
                 "I" => &ints,
                 "F" => &floats,
                 "D" => &days,
+                "M" => &cents,
+                "E" => &empty,
+                "Z" => &nans,
             ]
             .unwrap();
             frame = frame
                 .lazy()
-                .with_column(col("D").cast(DataType::Date))
+                .with_columns([
+                    col("D").cast(DataType::Date),
+                    col("M").cast(DataType::Decimal(Some(18), Some(2))),
+                ])
                 .collect()
                 .unwrap();
             let mut file = std::fs::File::create(dir.join(name)).unwrap();
@@ -5790,12 +5836,18 @@ mod tests {
         write("one.parquet", rows);
         let text = |file: &str| {
             format!(
-                "view T := dataframe['{file}']\n\nI : Integer\nF : Float\nD : Date\n\n\
+                "view T := dataframe['{file}']\n\nI : Integer\nF : Float\nD : Date\nM : Decimal\nE : Float\nZ : Float\n\n\
                  const SumI = T.I.sum()\nconst MeanI = T.I.mean()\nconst MinI = T.I.min()\n\
                  const MaxI = T.I.max()\nconst CountI = T.I.count()\nconst LenI = T.I.len()\n\
                  const SumF = T.F.sum()\nconst MeanF = T.F.mean()\nconst MinF = T.F.min()\n\
                  const MaxF = T.F.max()\nconst CountF = T.F.count()\n\
-                 const MinD = T.D.min()\nconst MaxD = T.D.max()\nconst CountD = T.D.count()\n"
+                 const MinD = T.D.min()\nconst MaxD = T.D.max()\nconst CountD = T.D.count()\n\
+                 const SumM = T.M.sum()\nconst MeanM = T.M.mean()\nconst MinM = T.M.min()\n\
+                 const MaxM = T.M.max()\nconst CountM = T.M.count()\n\
+                 const SumE = T.E.sum()\nconst MeanE = T.E.mean()\nconst MinE = T.E.min()\n\
+                 const MaxE = T.E.max()\nconst CountE = T.E.count()\n\
+                 const SumZ = T.Z.sum()\nconst MeanZ = T.Z.mean()\nconst MinZ = T.Z.min()\n\
+                 const MaxZ = T.Z.max()\nconst CountZ = T.Z.count()\n"
             )
         };
         let run = |file: &str| {
@@ -5818,12 +5870,18 @@ mod tests {
         };
         let (many, many_cache) = run("many.parquet");
         let (one, one_cache) = run("one.parquet");
-        assert_eq!(many.len(), 14);
+        assert_eq!(many.len(), 29);
         assert_eq!(many, one, "streamed and whole answers differ");
         // Streamed, the cache is not asked for the column at all; the file of
         // one row group is read whole, through it.
-        assert_eq!(many_cache.misses, 0, "no column was read whole: {many_cache:?}");
-        assert!(one_cache.misses > 0, "{one_cache:?}");
+        // The exceptions are the answers a column with nothing to sum, or
+        // nothing but NaNs to take the least of, leaves to the walk: of the
+        // 29 over six columns, up to five are read whole, all of them over
+        // the empty column or the column of NaNs.
+        assert!(
+            many_cache.misses <= 5 && many_cache.misses < one_cache.misses,
+            "streamed: {many_cache:?}, single group: {one_cache:?}"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -6267,7 +6325,7 @@ mod tests {
         assert_eq!(screen.snapshot().sheets[0].nrows, crate::table::SAMPLE_ROWS);
         assert_eq!(
             types(&screen),
-            ["String", "Integer", "Float", "Date", "Datetime"]
+            ["String", "Integer", "Decimal", "Date", "Datetime"]
         );
         let csv_path = dir.join("x.csv");
         assert_eq!(screen.to_convert(), vec![csv_path.clone()]);
@@ -6284,7 +6342,7 @@ mod tests {
         assert_eq!(screen.snapshot().sheets[0].nrows, 1500);
         assert_eq!(
             types(&screen),
-            ["String", "Integer", "Float", "Date", "Datetime"]
+            ["String", "Integer", "Decimal", "Date", "Datetime"]
         );
         assert_eq!(shown(&screen)[..sample.len()], sample[..]);
 
@@ -6359,7 +6417,7 @@ mod tests {
         );
         assert_eq!(screen.snapshot().sheets[0].nrows, crate::table::SAMPLE_ROWS);
         assert_eq!(screen.snapshot().sheets[1].nrows, 2);
-        assert_eq!(types(&screen, 0), ["String", "Integer", "Float", "Date"]);
+        assert_eq!(types(&screen, 0), ["String", "Integer", "Decimal", "Date"]);
         assert_eq!(types(&screen, 1), ["Integer"]);
         let rows_path = dir.join("book.json#Rows");
         let other_path = dir.join("book.json#Other");
@@ -6416,7 +6474,7 @@ mod tests {
             std::fs::write(dir.join("a.csv"), csv).unwrap();
         };
         write(5_000, 1);
-        let text = "view T := dataframe['a.csv']\n\nN : Integer\nX : Float\n\n\
+        let text = "view T := dataframe['a.csv']\n\nN : Integer\nX : Decimal\n\n\
                     const SumN = T.N.sum()\nconst SumX = T.X.sum()\nconst MaxN = T.N.max()\n";
         let mut doc = Document::from_text(text);
         doc.set_base(&dir);
@@ -6837,7 +6895,12 @@ mod tests {
             "const A = 1\nconst B = 2\nconst C = 3\n\nsheet T\n\n| X |\n| - |\n| 1 |\n",
         );
         doc.delete_const(1).unwrap();
-        let names: Vec<_> = doc.snapshot().consts.iter().map(|c| c.name.clone()).collect();
+        let names: Vec<_> = doc
+            .snapshot()
+            .consts
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
         assert_eq!(names, ["A", "C"]);
         assert!(doc.delete_const(5).is_err());
         assert!(doc.delete_all_consts());

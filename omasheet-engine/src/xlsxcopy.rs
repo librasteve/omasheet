@@ -100,7 +100,12 @@ fn cell_of(value: &DataRef) -> Cell {
         // A workbook keeps every number as a float; one that is whole is
         // whole, as an import has it.
         DataRef::Float(f) if f.fract() == 0.0 && f.abs() < 9.0e15 => Cell::Int(*f as i64),
-        DataRef::Float(f) => Cell::Float(*f),
+        // A number with places after the point is the decimal it is written
+        // as, as an import reads it.
+        DataRef::Float(f) => match copyframe::decimal_places(*f) {
+            Some(places) => Cell::Dec(*f, places),
+            None => Cell::Float(*f),
+        },
         DataRef::Bool(b) => Cell::Bool(*b),
         DataRef::DateTime(t) if t.is_duration() => {
             Cell::Duration((t.as_f64() * DAY as f64 * 1_000_000.0).round() as i64)
