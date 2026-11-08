@@ -666,6 +666,50 @@ Parquet alone.
       byte-identical. Where they are not (a column's scale, mixed-type
       columns, the text of a literal), the owner decides before this goes in
 
+      **Write-up for the owner, 2026-11-08, not decided.** 4.4 would have
+      `import` stop reading a file into `Grid`/`Datum` (104 uses in nine
+      files) and write the inline sheet from the frame a table's copy is
+      made of, so that one reader decides every type. What the differential
+      (`omasheet-interop/tests/differential.rs`) says that would do:
+
+      Already the same inline and as a table, cell for cell and aggregate
+      for aggregate: whole numbers, exact decimals, percentages, hex, dates,
+      date-times with a `T`, times, ISO durations, underscored numbers,
+      booleans, blanks, quoted newlines, CRLF, BOM, no final newline.
+
+      Would change if the writer took a frame:
+      1. *The spelling of a cell in the saved file.* An import keeps what
+         was written (`1.50`, `0xFF`, `1_000`, `1e3`, `20.0%`, `PT1H`), and
+         shows it normalised; a frame holds the value, so the file would say
+         `1.5`, `0xff`, `1000`, `1000`, `20%`, `PT1H`. Same display, different
+         bytes. Accepting it makes the importer's output canonical.
+      2. *Fractions, octal and binary* (`1/2`, `0o17`, `0b101`) are typed by
+         an import and text in a frame. Display is the same; a formula over
+         a fraction column stops working. Losing this is a regression for
+         inline sheets.
+      3. *A column that mixes literals and text* (numbers and an `n/a`): an
+         import types each cell, so the numbers still add; a frame makes the
+         column text, and a sum of it fails. Also a regression.
+      4. *A date and time with a space* (`2024-03-05 10:00:00`): text to an
+         import, `Datetime` in a frame. A gain, and a change.
+      5. *XLSX formulas, rows kept in place (`Grid.fixed`), zones and
+         notices* live in `Grid` and have no frame: only a formula filled
+         down a column does (D154). A workbook with any other formula would
+         still need `Grid`, so it could not be deleted.
+      6. *Numbers past a frame's reach*: a whole number past `i64`, more than
+         18 places, and, from JSON or a workbook, more than 15 digits, are
+         exact in an import and `Float` in a frame.
+      7. *Names*: an import turns a header into an identifier with a notice;
+         a table keeps the file's own names and reaches an odd one with
+         `from`.
+
+      My recommendation: do not build 4.4. Items 2, 3 and 5 are losses for the
+      small, editable files the inline path exists for, and 5 alone stops
+      `Grid`/`Datum` from being deleted. The big-file path is already one
+      reader (the copy), and the differential holds the two together, so
+      what 4.4 was for is met without removing the inline importer. Mark it
+      superseded, and keep the differential as the guard
+
 ## 5. Measured against the targets
 
 - [x] 5.1 Open to first screen, 1.1 GB file, cold and warm: ≤ 50 ms
