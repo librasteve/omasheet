@@ -187,11 +187,18 @@ columns it happened in.
 
 - Ctrl+O opens an XLSX Workbook, a CSV file, JSON or Parquet as well as an
   `.omx` file. It is imported as a new file, not yet saved.
-- A Parquet file of more than 10,000 rows is not imported: it opens as a
-  new file of one `view` that reads it where it is, named by its whole
-  path, so a month of NYC taxi trips opens at once. It is read-only, and
-  saving it writes a one-line `.omx`. The grid formats the rows it shows
-  as it scrolls; a sort or a filter in the grid reads the whole column.
+- A CSV, JSON or XLSX Workbook of more than 4 MB, and a Parquet file of
+  more than 10,000 rows, is not imported: it opens as a new file of one
+  `view` that reads it where it is, named by its whole path, so a month of
+  NYC taxi trips, or a CSV of twenty million rows, opens at once. It is
+  read-only, and saving it writes a one-line `.omx`. A CSV, JSON or XLSX
+  is first copied to Parquet in the cache; the app shows its first 1,000
+  rows at once, with "Showing the first N rows — loading the rest…" at the
+  foot of the grid until the copy is done. The grid formats only the rows it
+  shows as it scrolls; a sort or a filter in the grid is one pass over the
+  column. **Copy into the document**, on the tab's menu, copies the rows into
+  the file as a sheet of its own to edit; it refuses a table with formula
+  columns, a table too big to hold, and a workbook of several sheets.
 - Ctrl+E exports, and asks what as: every sheet as an XLSX Workbook (X) or
   as JSON (J), or the sheet shown as CSV (C). It then asks where.
 - What was changed, rounded or left behind is listed, and stays under

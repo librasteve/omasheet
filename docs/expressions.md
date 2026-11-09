@@ -189,7 +189,7 @@ multiply back: `round(x / 100) * 100`.
 
 An imaginary number is written with an `i`, `4i`, and `3+4i` is the sum of
 `3` and `4i`. `Inf\i` and `NaN\i` are an infinite and a not-a-number imaginary
-part. A `Complex` is above `Float` in the type lattice, so any number beside
+part. A `Complex` is the most infectious number type, so any number beside
 one gives a `Complex`:
 
 ```

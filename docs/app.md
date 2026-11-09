@@ -85,6 +85,8 @@ rewrites the text, and saving writes exactly that.
 
 The data columns of a `view` are its Parquet file's, and nothing is written back to it. Typing on one, Enter, Delete and a paste do nothing and say why in the status bar, before an editor opens. A cut from one is a copy. A formula column appended to a view, a decorator, is edited like any other.
 
+A sheet that reads a big file shows the first 1,000 rows at once, with "Showing the first N rows — loading the rest…" at the foot of the grid while its Parquet copy is written. **Copy into the document**, on its tab's menu, copies its rows into the file as a sheet of your own to edit. It refuses a table with formula columns, which would be lost, and one too big to hold.
+
 Ctrl+Shift+R, **Paste reference**, pastes a live link to the cells last copied or cut in the app, not their values (Ctrl+V and Ctrl+Shift+V still paste those):
 
 - into data cells, a formula for each cell: `= Passengers[Fare; 3]`

@@ -313,13 +313,31 @@ column of one takes the others, showing what it holds its own way: `1/7` is
 `0.14285714285714285714…` in a `Decimal` column, `1/7` in a `Fraction`
 column, and `14.29%` in a `Percent` column.
 
-The types sit in a lattice, and a column, a sum or a product takes the join
-of what is in it. `Integer`, `Decimal`, `Float` and `Complex` each take over
-the one before: `1` with `1.0` is a `Decimal`, either with `1e0` a `Float`,
-and any of them with `3+4i` a `Complex`.
-`Hex`, `Octal` and `Binary` are `Integer`s shown another way, and `Fraction`
-and `Percent` are `Decimal`s shown another way. Two of one give that one;
-two different ones, or one with its parent, give the parent:
+The numeric types form a hierarchy of increasingly expressive number systems, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
+
+- **`Integer` (ℤ)**: whole numbers
+- **`Decimal` (ℚ)**: exact numbers with a fractional part, held to 38 digits
+- **`Float` (ℝ)**: real numbers, approximately represented
+- **`Complex` (ℂ)**: complex numbers
+
+For any operation, and for the cells of a column, the result is the **more infectious** of the types it is made from, the least number system that holds them both: `Integer` + `Decimal` is a `Decimal`, `Decimal` * `Float` is a `Float`, and `Float` + `Complex` is a `Complex`. This is a model, not the machine's: an integer is an `i64`, a `Decimal` a 38-digit fixed point and a `Float` an `f64`, each of finite precision.
+
+Each type may be shown more than one way:
+
+| Type | Literal | Shown as |
+|---|---|---|
+| `Integer` | `1` | `Hex` `0xff`, `Octal` `0o17`, `Binary` `0b101` |
+| `Decimal` | `1.0` | `Fraction` `1/7`, `2 3/4`; `Percent` `14.29%` |
+| `Float` | `1e0` | none |
+| `Complex` | `3+4i` | none |
+
+- Two values shown the same way keep it: `Hex` + `Hex` is a `Hex`, and `Fraction` + `Fraction` a `Fraction`.
+- Two different ways of showing one type give the plain type: `Hex` + `Binary` is an `Integer`, and `Fraction` + `Percent` a `Decimal`.
+- Different types give the more infectious, shown plain: `Fraction` * `Integer` is a `Decimal`.
+- A power with a whole exponent is exact; with any other, such as `2 ** 0.5`, it is a `Float`, as are the trigonometric, exponential and logarithmic functions.
+- A number beside text gives `Any`.
+
+The joins, written out:
 
 | | `1` | `1.0` | `1e0` | `3+4i` | text |
 |---|---|---|---|---|---|
@@ -329,7 +347,7 @@ two different ones, or one with its parent, give the parent:
 | `3+4i` | `Complex` | `Complex` | `Complex` | `Complex` | any |
 | text | any | any | any | any | `String` |
 
-A member of a family joins with a `Complex` as its parent would: `0x10 + 1i`
+A way of showing a type joins with a `Complex` as the type would: `0x10 + 1i`
 is `16+1i`. A `Complex` has no order, so it cannot be compared with `<` or
 sorted, but `=` and `!=` compare both parts exactly.
 
