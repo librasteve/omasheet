@@ -4,7 +4,7 @@ The second of two stages, built on `add-polars-dtypes`; both are on the
 `polars` branch. The type mapping below is a naming, not a conversion, only
 once an omasheet type *is* a Polars dtype: sections 1 to 4 of that change made
 it so for the types there are now, and section 2 here uses them. The types
-still to come there — `Duration`, a `DateTime` with a zone, and
+still to come there — `Duration`, a `Datetime` with a zone, and
 unsigned widths — reach Parquet as 2.9 once they land.
 
 ## 0. Settle the open questions
@@ -52,10 +52,18 @@ unsigned widths — reach Parquet as 2.9 once they land.
       `import` restoring the source it keeps with the file's rows under its
       header. Checked from the CLI over `budget.omx`, and read by Python
       Polars 2.1.0 as an ordinary file
-- [ ] 2.9 Once `add-polars-dtypes` section 5 lands: `Duration`
-      columns read and written rather than left out, a `DateTime`'s zone kept,
+- [x] 2.9 Once `add-polars-dtypes` section 5 lands: `Duration`
+      columns read and written rather than left out, a `Datetime`'s zone kept,
       and an integer column written back at the width and signedness its
-      schema had rather than as `int64`
+      schema had rather than as `int64`.
+      Done 2026-11-04: `Duration` (read as ISO 8601, written as
+      `Duration(us)`); integer width and sign (a `table`'s columns go back as
+      the dtype the file held, the narrow dtypes now being built in); and a
+      declared zone (`Datetime("Europe/London")`) is written as
+      `Datetime(us, tz)` holding the instants and read back as the same
+      declaration with the wall clock in the cells. A `table`'s own zoned column
+      shows on its zone's clocks and is written back with its zone; such a
+      column stays with the engine rather than lowering to Polars
 - [x] 2.8 A round-trip over the `examples/` corpus, asserting a second trip is
       a fixed point — the shape of the CSV round-trip test
 

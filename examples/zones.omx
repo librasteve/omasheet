@@ -6,14 +6,19 @@
 #    taken in the file's zone, so a cell never shifts by being re-entered.
 #    The command line shows what is stored unless you pass `--locale`.
 #
-# 2. It is `.convert_time_zone("Asia/Tokyo")`, not `.in(...)`: `in` is the membership
+# 2. It is `.convert_time_zone('Asia/Tokyo')`, not `.in(...)`: `in` is the membership
 #    operator. A converted date-time prints its offset from UTC; one in the
 #    file's own zone prints none.
 #
 # 3. In the file's own zone the clocks are taken at their word. Across zones
 #    it is the instant that counts. See the Clocks sheet.
 #
-# 4. `now()`, `today()` and `.local()` depend on when and where the file is
+# 4. A column can declare a zone of its own, as Logs does below, whatever the
+#    file's zone is. What is typed into it is the wall clock of that zone, and
+#    each value is shown with its offset, which follows that zone's daylight
+#    saving. A Parquet file that holds a zone is read, and written, the same way.
+#
+# 5. `now()`, `today()` and `.local()` depend on when and where the file is
 #    opened, so this example leaves them out. `--now` and `--zone` pin them.
 
 zone America/New_York
@@ -32,14 +37,14 @@ Placed : Datetime
 # and 4 in summer; Tokyo keeps no daylight saving.
 Offset  := Placed.base_utc_offset() / 3600
 UTC     := Placed.utc()
-London  := Placed.convert_time_zone("Europe/London")
-Tokyo   := Placed.convert_time_zone("Asia/Tokyo")
+London  := Placed.convert_time_zone('Europe/London')
+Tokyo   := Placed.convert_time_zone('Asia/Tokyo')
 # The parts are those of the zone the value is in: Linus's call is already
 # next year in Tokyo.
 TokyoOn := Tokyo.date()
 Zone    := Tokyo.time_zone()
 # Back in the file's own zone it is an ordinary date-time again.
-Back    := Tokyo.convert_time_zone("America/New_York")
+Back    := Tokyo.convert_time_zone('America/New_York')
 # A converted value is still the same instant.
 Same    := Tokyo == Placed
 
@@ -60,4 +65,25 @@ Elapsed := (To.utc() - From.utc()).total_hours()
 
 # 02:30 on 9 March 2025 does not exist in New York. It is read as if the
 # clocks had not gone forward, so through UTC and back it comes out as 03:30.
-const Skipped = (2025-03-09 + 02:30).utc().convert_time_zone("America/New_York")
+const Skipped = (2025-03-09 + 02:30).utc().convert_time_zone('America/New_York')
+
+sheet Logs
+
+# This column keeps London time, though the file is in New York. The first
+# cell is on GMT (+00:00) and the second on BST (+01:00).
+Logged : Datetime("Europe/London")
+
+| Logged           | Event  | Offset | NewYork | Same |
+| ---------------- | ------ | ------ | ------- | ---- |
+| 2025-03-01T09:30 | winter | *      | *       | *    |
+| 2025-07-01T09:30 | summer | *      | *       | *    |
+
+Offset  := Logged.base_utc_offset() / 3600
+# The same instant on the file's own clocks, which print no offset.
+NewYork := Logged.convert_time_zone('America/New_York')
+# Comparison is on the instant, not the wall clock.
+Same    := NewYork == Logged
+
+# Subtraction is on the instant too: 1 March to 1 July is 122 days on the
+# wall, but the clocks went forward in between, so an hour less.
+const LogGap = Logs.Logged.max() - Logs.Logged.min()

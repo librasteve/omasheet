@@ -31,8 +31,11 @@ pub fn type_of(dtype: &DataType) -> Option<S> {
         DataType::String => S::String,
         DataType::Date => S::Date,
         DataType::Time => S::Time,
-        DataType::Datetime(..) => S::DateTime,
+        DataType::Datetime(..) => S::Datetime,
+        DataType::Duration(_) => S::Duration,
         DataType::Null => S::Any,
+        // The one struct a sheet can render: a `Complex` (D199).
+        d if is_complex(d) => S::Complex,
         _ => return None,
     })
 }
@@ -45,6 +48,7 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
     // so a whole one in a column of a base comes back in that base.
     let exact = |d: Dec| match (ty, d.to_i64()) {
         (S::Percent, _) => Cell::Lit(Lit::Percent(d)),
+        (S::Fraction, _) => Cell::Lit(Lit::Fraction(d)),
         (t, Some(n)) if t.is_int() => Cell::Lit(Lit::Int(n, Base::of(t))),
         _ => Cell::Lit(Lit::Decimal(d)),
     };
@@ -87,7 +91,7 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
                 TimeUnit::Milliseconds => n.checked_mul(MICROS / 1_000),
             };
             match micros.filter(|m| i32::try_from(m.div_euclid(DAY * MICROS)).is_ok()) {
-                Some(micros) => Cell::Lit(Lit::DateTime(micros)),
+                Some(micros) => Cell::Lit(Lit::Datetime(micros)),
                 None => Cell::Invalid,
             }
         }
@@ -101,6 +105,15 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
                 TimeUnit::Milliseconds => n.checked_mul(MICROS / 1_000),
             };
             micros.map_or(Cell::Invalid, |m| Cell::Lit(Lit::Duration(m)))
+        }
+        // A `Complex` is a struct of two `Float64`s. Both parts null is a
+        // null; one is not a number (D199).
+        value @ (AnyValue::Struct(..) | AnyValue::StructOwned(_)) if ty == S::Complex => {
+            match complex_parts(value) {
+                Some((Some(re), Some(im))) => Cell::Lit(Lit::Complex(re, im)),
+                Some((None, None)) => Cell::Empty,
+                _ => Cell::Invalid,
+            }
         }
         // Anything else is held as Polars shows it.
         other => Cell::Lit(Lit::String(other.to_string())),
@@ -120,14 +133,47 @@ pub fn dtype(ty: S, scale: u32) -> Option<DataType> {
         S::Int | S::Hex | S::Octal | S::Binary => DataType::Int64,
         S::Decimal | S::Fraction | S::Percent => decimal(scale),
         S::Float => DataType::Float64,
+        S::Complex => complex_dtype(),
         S::String | S::Url | S::Email | S::Uuid => DataType::String,
         S::Boolean => DataType::Boolean,
         S::Date => DataType::Date,
         S::Time => DataType::Time,
-        S::DateTime => DataType::Datetime(TimeUnit::Microseconds, None),
+        S::Datetime => DataType::Datetime(TimeUnit::Microseconds, None),
         S::Duration => DataType::Duration(TimeUnit::Microseconds),
         S::Any => return None,
     })
+}
+
+/// The dtype a `Complex` is stored as: a struct of two `Float64`s, `re` and
+/// `im`, which is all of Polars that holds one (D195).
+pub fn complex_dtype() -> DataType {
+    DataType::Struct(vec![
+        Field::new("re".into(), DataType::Float64),
+        Field::new("im".into(), DataType::Float64),
+    ])
+}
+
+/// The `re` and `im` of one value of a [`complex_dtype`] column, each `None`
+/// where it is null. `None` if the value is not such a struct.
+pub fn complex_parts(value: AnyValue<'_>) -> Option<(Option<f64>, Option<f64>)> {
+    let AnyValue::StructOwned(parts) = value.into_static() else {
+        return None;
+    };
+    let part = |v: &AnyValue<'_>| match v {
+        AnyValue::Float64(f) => Some(Some(*f)),
+        AnyValue::Null => Some(None),
+        _ => None,
+    };
+    match parts.0.as_slice() {
+        [re, im] => Some((part(re)?, part(im)?)),
+        _ => None,
+    }
+}
+
+/// Whether a dtype is exactly the struct a `Complex` is stored as: `re`
+/// then `im`, both `Float64`, and nothing else (D199).
+pub fn is_complex(dtype: &DataType) -> bool {
+    *dtype == complex_dtype()
 }
 
 /// `Decimal(38, scale)`: the dtype a `Dec` is, since a `Dec` was built to be
@@ -268,7 +314,7 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
                 .collect::<Option<_>>()?;
             Series::new(name, v).cast(&DataType::Date).ok()?
         }
-        // A `Time` and a `DateTime` are held in the units Polars holds them
+        // A `Time` and a `Datetime` are held in the units Polars holds them
         // in, so neither is scaled on the way across.
         S::Time => Series::new(
             name,
@@ -280,10 +326,10 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
         )
         .cast(&DataType::Time)
         .ok()?,
-        S::DateTime => Series::new(
+        S::Datetime => Series::new(
             name,
             all(&|v| match v {
-                Value::DateTime(us) => Some(Some(*us)),
+                Value::Datetime(us, None) => Some(Some(*us)),
                 v if null(v) => Some(None),
                 _ => None,
             })?,
@@ -300,8 +346,30 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
         )
         .cast(&DataType::Duration(TimeUnit::Microseconds))
         .ok()?,
+        // Polars has no arithmetic for a struct, so a `Complex` column is
+        // the engine's to calculate and is never handed over (D200).
+        S::Complex => return None,
         // A column of anything: there is no one dtype to hold it as.
         S::Any => return None,
     };
     Some(series.into_column())
+}
+
+/// A column that declares a zone, as Polars holds one: the instants, with
+/// the zone on the dtype. `None` for a value that is not a date-time in a
+/// zone, or a zone Polars has no name for.
+pub fn zoned_column(name: &str, zone: &str, values: &[Value]) -> Option<PlColumn> {
+    let instants: Vec<Option<i64>> = values
+        .iter()
+        .map(|v| match v {
+            Value::Datetime(_, Some(z)) => Some(Some(z.utc)),
+            Value::Null => Some(None),
+            _ => None,
+        })
+        .collect::<Option<_>>()?;
+    let tz = TimeZone::opt_try_new(Some(zone)).ok()?;
+    Series::new(name.into(), instants)
+        .cast(&DataType::Datetime(TimeUnit::Microseconds, tz))
+        .ok()
+        .map(Series::into_column)
 }

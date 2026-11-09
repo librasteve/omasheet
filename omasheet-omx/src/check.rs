@@ -104,6 +104,9 @@ pub struct Column {
     /// How the column's values are shown, where its type line says:
     /// `Price : Decimal['.2f]`.
     pub format: Option<Format>,
+    /// The time zone a `Datetime` column declares, which its cells are the
+    /// wall clock of: `Logged : Datetime("Europe/London")`.
+    pub zone: Option<(String, Span)>,
     /// Every reference the formula makes reaches the row it is evaluated
     /// for, so the whole column is one expression over the columns it
     /// reads rather than a calculation per row. The dependency analysis
@@ -151,6 +154,9 @@ pub struct Const {
     pub name: String,
     pub node: Node,
     pub ty: Ty,
+    /// The columns it names, when it is a list of them: `[Region, Month]`.
+    /// Such a constant has no value, only the names for a function to take.
+    pub columns: Option<Vec<String>>,
     stat: Option<Static>,
 }
 
@@ -237,6 +243,9 @@ struct ConstInfo {
     span: Span,
     decl: usize,
     stat: Option<Static>,
+    /// The columns of a constant that is a list of them, for a checker made
+    /// over a finished program, which has no source to read the list from.
+    columns: Option<Vec<String>>,
 }
 
 enum St<T> {
@@ -414,6 +423,269 @@ pub fn compile_expr(prog: &Program, text: &str, src: u32) -> Result<(Node, Ty), 
     }
 }
 
+/// What a filter may call (filter-by-expression D162): the tests Polars
+/// has, the parts of a date or time, and every function the directory has
+/// under a name Polars gives its own. A filter written as a sheet formula,
+/// `T |> filter(...)`, is not held to this list: it takes any function.
+const FILTER_CALLS: &[&str] = &[
+    "is_null",
+    "is_not_null",
+    "is_nan",
+    "is_not_nan",
+    "is_finite",
+    "is_infinite",
+    "is_in",
+    "starts_with",
+    "ends_with",
+    "contains",
+    "matches",
+    "contains_any",
+    "len_chars",
+    "to_lowercase",
+    "to_uppercase",
+    "is_leap_year",
+    "is_unique",
+    "is_duplicated",
+    "is_first_distinct",
+    "is_last_distinct",
+    "year",
+    "month",
+    "day",
+    "weekday",
+    "quarter",
+    "week",
+    "ordinal_day",
+    "hour",
+    "minute",
+    "second",
+    "millisecond",
+    "microsecond",
+    "nanosecond",
+    "date",
+    "time",
+    "abs",
+    "arccos",
+    "arcsin",
+    "arctan",
+    "base_utc_offset",
+    "cast",
+    "ceil",
+    "convert_time_zone",
+    "cos",
+    "cosh",
+    "count",
+    "degrees",
+    "exp",
+    "fill_null",
+    "filter",
+    "first",
+    "floor",
+    "head",
+    "join",
+    "last",
+    "len",
+    "log10",
+    "max",
+    "mean",
+    "median",
+    "min",
+    "month_end",
+    "month_start",
+    "product",
+    "quantile",
+    "radians",
+    "round",
+    "shift",
+    "sign",
+    "sin",
+    "sinh",
+    "sort",
+    "sqrt",
+    "std",
+    "sum",
+    "tail",
+    "tan",
+    "tanh",
+    "total_days",
+    "total_hours",
+    "total_minutes",
+    "total_seconds",
+    "var",
+];
+
+/// A filter on column `col` of sheet `sheet`: an expression in which `*`
+/// is this row's cell in that column (filter-by-expression D160, D161).
+/// It is checked as a formula of the sheet's own rows is, so the engine
+/// answers it a row at a time and Polars a column at a time, and it must
+/// be true or false.
+pub fn compile_filter(
+    prog: &Program,
+    sheet: usize,
+    col: usize,
+    text: &str,
+) -> Result<Node, Vec<Diagnostic>> {
+    let mut expr = parse_expr(text, 0, 0).map_err(|d| vec![d])?;
+    let Some(name) = prog
+        .sheets
+        .get(sheet)
+        .and_then(|t| t.cols.get(col))
+        .map(|c| c.name.clone())
+    else {
+        return Err(vec![Diagnostic::new(expr.span, "there is no such column")]);
+    };
+    as_filter(&mut expr, &name).map_err(|d| vec![d])?;
+    let mut ck = Checker::for_program(prog, text, 0);
+    let mut scope = Scope {
+        frames: vec![sheet],
+        own: true,
+        col: Some(col),
+        group: None,
+    };
+    let (node, ty) = ck.lower(&expr, &mut scope);
+    if !ck.cur.is_empty() {
+        return Err(ck.cur);
+    }
+    match ty {
+        Ty::Any | Ty::Scalar(S::Any | S::Boolean) => Ok(node),
+        other => Err(vec![
+            Diagnostic::new(
+                expr.span,
+                format!(
+                    "a filter is true or false for each row, but this is {}",
+                    other.describe()
+                ),
+            )
+            .with_help("compare `*`, the cell, with something: `* > 10`"),
+        ]),
+    }
+}
+
+/// `*` made the cell of column `name`, and anything a filter does not take
+/// refused where it is written: another column, a sheet, an index, an `if`.
+fn as_filter(e: &mut Expr, name: &str) -> Result<(), Diagnostic> {
+    let span = e.span;
+    let calls = "a filter takes the tests Polars has: `starts_with`, `contains`, `is_in`, \
+                 `is_null` and the rest";
+    match &mut e.kind {
+        ExprKind::Cursor => {
+            e.kind = ExprKind::Name(name.to_string());
+            Ok(())
+        }
+        ExprKind::Lit(_) => Ok(()),
+        // The column by its own name is the same cell.
+        ExprKind::Name(n) if n == name => Ok(()),
+        ExprKind::Name(n) => Err(Diagnostic::new(
+            span,
+            format!("a filter is about its own column: write `*` for its value, not `{n}`"),
+        )),
+        ExprKind::Unary(_, a) => as_filter(a, name),
+        // `* == ''` asks for an empty cell, whatever the column holds
+        // (D165), and `* != ''` for one that is not.
+        ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), a, b)
+            if [&**a, &**b]
+                .iter()
+                .any(|e| matches!(&e.kind, ExprKind::Lit(Lit::String(t)) if t.is_empty())) =>
+        {
+            let negate = *op == BinOp::Ne;
+            let empty = |e: &Expr| matches!(&e.kind, ExprKind::Lit(Lit::String(t)) if t.is_empty());
+            let mut value = if empty(a) {
+                (**b).clone()
+            } else {
+                (**a).clone()
+            };
+            as_filter(&mut value, name)?;
+            let test = Expr {
+                kind: ExprKind::Call("is_null".into(), span, vec![value]),
+                span,
+            };
+            e.kind = if negate {
+                ExprKind::Unary(UnOp::Not, Box::new(test))
+            } else {
+                test.kind
+            };
+            Ok(())
+        }
+        ExprKind::Binary(_, a, b) => {
+            as_filter(a, name)?;
+            as_filter(b, name)
+        }
+        ExprKind::VecLit(items) => items.iter_mut().try_for_each(|i| as_filter(i, name)),
+        ExprKind::Call(f, _, args) if FILTER_CALLS.contains(&f.as_str()) => {
+            args.iter_mut().try_for_each(|a| as_filter(a, name))
+        }
+        ExprKind::Call(f, at, _) => {
+            Err(Diagnostic::new(*at, format!("a filter cannot call `{f}`")).with_help(calls))
+        }
+        // `*.year`, a part written without its brackets, is a call.
+        ExprKind::Field(base, f, at) if FILTER_CALLS.contains(&f.as_str()) => {
+            as_filter(base, name)?;
+            let (f, at) = (f.clone(), *at);
+            let base = std::mem::replace(
+                base.as_mut(),
+                Expr {
+                    kind: ExprKind::Cursor,
+                    span,
+                },
+            );
+            e.kind = ExprKind::Call(f, at, vec![base]);
+            Ok(())
+        }
+        _ => Err(
+            Diagnostic::new(span, "a filter compares `*`, the cell, with values")
+                .with_help("as `* > 10`, `0 < * <= 5` or `*.starts_with('A')`"),
+        ),
+    }
+}
+
+/// Zero written out: `0`, `0.0`, `-0`.
+fn is_zero(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Lit(Lit::Int(n, _)) => *n == 0,
+        ExprKind::Lit(Lit::Decimal(d)) => d.is_zero(),
+        ExprKind::Unary(UnOp::Neg, inner) => is_zero(inner),
+        _ => false,
+    }
+}
+
+/// A whole number written out: `4`, `-6`, `0x10`.
+fn const_int(e: &Expr) -> Option<i64> {
+    match &e.kind {
+        ExprKind::Lit(Lit::Int(n, _)) => Some(*n),
+        ExprKind::Unary(UnOp::Neg, inner) => const_int(inner).and_then(|n| n.checked_neg()),
+        _ => None,
+    }
+}
+
+/// Whether `a / b` is a quotient of whole numbers written out that comes to a
+/// whole number: `4/2`.
+fn divides(a: &Expr, b: &Expr) -> bool {
+    match (const_int(a), const_int(b)) {
+        (Some(a), Some(b)) => b != 0 && a.checked_rem(b) == Some(0),
+        _ => false,
+    }
+}
+
+/// Whether `e` is a quotient or a power, or is made from one: the kind of
+/// `Decimal` that may well turn out whole (`4/2`), as a column's cannot be
+/// told until its values are read.
+fn from_quotient(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Binary(BinOp::Div | BinOp::Pow, _, _) => true,
+        ExprKind::Binary(BinOp::Add | BinOp::Sub | BinOp::Mul, a, b) => {
+            from_quotient(a) || from_quotient(b)
+        }
+        ExprKind::Unary(UnOp::Neg, inner) => from_quotient(inner),
+        _ => false,
+    }
+}
+
+/// Whether `ty`, the type of `e`, may stand where a whole number is wanted:
+/// it is one, or it is a `Decimal` that a quotient made and whose value is
+/// read when it is used, a fraction of it being reported there.
+fn whole_enough(ty: &Ty, e: &Expr) -> bool {
+    ty.is_whole() || (matches!(ty, Ty::Scalar(S::Decimal)) && from_quotient(e))
+}
+
 fn static_of(e: &Expr) -> Option<Static> {
     fn int(e: &Expr) -> Option<i64> {
         match &e.kind {
@@ -436,7 +708,7 @@ fn static_of(e: &Expr) -> Option<Static> {
 fn seed_num(e: &Expr) -> Option<Dec> {
     match &e.kind {
         ExprKind::Lit(Lit::Int(i, _)) => Some(Dec::from_i64(*i)),
-        ExprKind::Lit(Lit::Decimal(r) | Lit::Percent(r)) => Some(*r),
+        ExprKind::Lit(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)) => Some(*r),
         ExprKind::Unary(UnOp::Neg, inner) => seed_num(inner).and_then(|r| r.checked_neg()),
         // `1/3` written out, where the lexer did not take it for one.
         ExprKind::Binary(BinOp::Div, a, b) => {
@@ -471,7 +743,7 @@ fn seed_time(e: &Expr) -> Option<i64> {
     match &e.kind {
         ExprKind::Lit(Lit::Date(d)) => Some(*d as i64),
         ExprKind::Lit(Lit::Time(t)) => Some(t.div_euclid(date::NANOS)),
-        ExprKind::Lit(Lit::DateTime(t)) => Some(t.div_euclid(date::MICROS)),
+        ExprKind::Lit(Lit::Datetime(t)) => Some(t.div_euclid(date::MICROS)),
         _ => None,
     }
 }
@@ -717,6 +989,7 @@ impl<'a> Checker<'a> {
                 span: c.node.span,
                 decl: i,
                 stat: c.stat,
+                columns: c.columns.clone(),
             });
         }
         ck.funcs = prog.funcs.clone();
@@ -753,14 +1026,32 @@ impl<'a> Checker<'a> {
                     ck.done.push(
                         Diagnostic::new(
                             t.header_line,
-                            format!("table `{}` has rows of its own", t.name),
+                            format!("view `{}` has rows of its own", t.name),
                         )
-                        .with_help("a table's rows come from its source: remove them"),
+                        .with_help("a view's rows come from its source: remove them"),
                     );
                 }
                 for line in &t.schema {
-                    if cols.iter().any(|c| c.name == line.name) {
+                    // The type line of a decorator is not a column of the file.
+                    if cols.iter().any(|c| c.name == line.name)
+                        || t.computed.iter().any(|c| c.name == line.name)
+                    {
                         continue;
+                    }
+                    // A decorator written among the schema lines sits among
+                    // the columns where it is written.
+                    for (k, cd) in t.computed.iter().enumerate() {
+                        if cd.span.start < line.span.start
+                            && !cols.iter().any(|c| c.name == cd.name)
+                        {
+                            cols.push(ColInfo {
+                                name: cd.name.clone(),
+                                span: cd.span,
+                                declared: None,
+                                src: ColSrc::Computed(k),
+                                from: None,
+                            });
+                        }
                     }
                     cols.push(ColInfo {
                         name: line.name.clone(),
@@ -851,9 +1142,28 @@ impl<'a> Checker<'a> {
                             format!("sheet `{}` reads no file", t.name),
                         )
                         .with_help(
-                            "`from` names a column of a table's Parquet; this sheet holds its own rows",
+                            "`from` names a column of a view's Parquet; this sheet holds its own rows",
                         ),
                     );
+                }
+                if let Some((_, span)) = &line.zone {
+                    if line.ty != S::Datetime {
+                        ck.done.push(
+                            Diagnostic::new(*span, format!("{} does not take a zone", line.ty))
+                                .with_help("only a Datetime column declares a zone"),
+                        );
+                    } else if t.source.is_some() {
+                        ck.done.push(
+                            Diagnostic::new(
+                                *span,
+                                format!(
+                                    "`{}` is read from a file, which holds its own zone",
+                                    line.name
+                                ),
+                            )
+                            .with_help("a declared zone is for a column of cells"),
+                        );
+                    }
                 }
                 match cols.iter_mut().find(|c| c.name == line.name) {
                     Some(c) if c.declared.is_some() => ck.done.push(Diagnostic::new(
@@ -921,6 +1231,7 @@ impl<'a> Checker<'a> {
                 span: c.span,
                 decl,
                 stat: c.expr.as_ref().and_then(static_of),
+                columns: None,
             });
             ck.const_state.push(St::Pending);
             ck.const_out.push(None);
@@ -982,6 +1293,16 @@ impl<'a> Checker<'a> {
         self.sheets[t].cols.iter().position(|c| c.name == name)
     }
 
+    /// How many rows sheet `t` has, if the check can know: a file's rows
+    /// are not counted until it is read, so a row by number is checked
+    /// against them then, not here.
+    fn known_rows(&self, t: usize) -> Option<usize> {
+        match self.sheets[t].source {
+            Some(_) => None,
+            None => Some(self.sheets[t].nrows),
+        }
+    }
+
     fn all_cols(&self, t: usize) -> Rc<Vec<usize>> {
         Rc::new((0..self.sheets[t].cols.len()).collect())
     }
@@ -1011,6 +1332,66 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The columns a constant names, when it is a list of them:
+    /// `const Keys = [Region, Month]`. It is one when its value is a list of
+    /// bare names and none of them is a constant, a sheet or a function,
+    /// which would make it an ordinary list. The names are not looked up
+    /// here, there being no sheet; whichever sheet the list is used on has
+    /// to have them.
+    fn column_list(&self, name: &str) -> Option<Vec<Expr>> {
+        let info = self.consts.iter().find(|c| c.name == name)?;
+        if let Some(columns) = &info.columns {
+            return Some(
+                columns
+                    .iter()
+                    .map(|n| Expr {
+                        kind: ExprKind::Name(n.clone()),
+                        span: Span::default(),
+                    })
+                    .collect(),
+            );
+        }
+        let ast = self.ast?;
+        let ExprKind::VecLit(items) = &ast.consts[info.decl].expr.as_ref()?.kind else {
+            return None;
+        };
+        let bare = !items.is_empty()
+            && items.iter().all(|i| match &i.kind {
+                ExprKind::Name(n) => {
+                    !self.consts.iter().any(|c| &c.name == n)
+                        && !self.sheets.iter().any(|t| &t.name == n)
+                        && !self.funcs.iter().any(|f| &f.name == n)
+                }
+                _ => false,
+            });
+        bare.then(|| items.clone())
+    }
+
+    /// `args` with each name from `from` on that is a list of columns
+    /// replaced by the columns, so that `group_by(Keys)` is
+    /// `group_by(Region, Month)`. A name a sheet has as a column is that
+    /// column, and is left.
+    fn spliced(&self, args: &[Expr], from: usize) -> Vec<Expr> {
+        let is_column = |n: &str| {
+            self.sheets
+                .iter()
+                .any(|t| t.cols.iter().any(|c| c.name == n))
+        };
+        let mut out = Vec::with_capacity(args.len());
+        for (i, a) in args.iter().enumerate() {
+            if i >= from
+                && let ExprKind::Name(n) = &a.kind
+                && !is_column(n)
+                && let Some(items) = self.column_list(n)
+            {
+                out.extend(items);
+            } else {
+                out.push(a.clone());
+            }
+        }
+        out
+    }
+
     fn ensure_const(&mut self, i: usize) {
         if !matches!(self.const_state[i], St::Pending) {
             return;
@@ -1020,6 +1401,11 @@ impl<'a> Checker<'a> {
         let saved = (mem::take(&mut self.cur), mem::take(&mut self.deps));
         let decl = &ast.consts[self.consts[i].decl];
         let (node, ty) = match &decl.expr {
+            // Names of columns of whichever sheet it is used on, so there
+            // is nothing here to look them up in.
+            Some(_) if self.column_list(&self.consts[i].name).is_some() => {
+                (Node::error(decl.span), Ty::Any)
+            }
             Some(e) => {
                 let mut scope = Scope {
                     frames: Vec::new(),
@@ -1146,6 +1532,7 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> (Node, Ty) {
         let usage = "Sales |> group_by(Region) |> agg(Revenue.sum())";
+        let keys = &self.spliced(keys, 0)[..];
         let mut scope = Scope {
             frames: Vec::new(),
             own: false,
@@ -1292,6 +1679,7 @@ impl<'a> Checker<'a> {
     /// after it as Polars' does. The node given back is the left sheet's,
     /// and what it is joined to is kept for the engine (D85).
     fn lower_join(&mut self, t: usize, args: &[Expr], span: Span) -> (Node, Ty) {
+        let args = &self.spliced(args, 2)[..];
         let usage = "sheet Both := Sales |> join(Targets, Month, left)";
         let fail = |ck: &mut Checker, at: Span, why: &str| {
             ck.err_help(at, why.to_string(), format!("usage: `{usage}`"));
@@ -1676,7 +2064,7 @@ impl<'a> Checker<'a> {
         sc: &mut Scope,
     ) -> (Node, Ty) {
         let (node, ty) = self.lower(base, sc);
-        let dated = |s: S| matches!(s, S::Any | S::Date | S::DateTime);
+        let dated = |s: S| matches!(s, S::Any | S::Date | S::Datetime);
         let out = match ty {
             Ty::Any => Ty::Any,
             Ty::Scalar(s) if dated(s) => Ty::Scalar(s),
@@ -1971,7 +2359,7 @@ impl<'a> Checker<'a> {
         let ordered = match stop_ty {
             Ty::Any => true,
             Ty::Scalar(s) => {
-                s.is_numeric() || matches!(s, S::Any | S::Date | S::Time | S::DateTime)
+                s.is_numeric() || matches!(s, S::Any | S::Date | S::Time | S::Datetime)
             }
             _ => false,
         };
@@ -2017,7 +2405,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The path in `dataframe["<path>"]`, the one source a `table` may have.
+    /// The path in `dataframe["<path>"]`, the one source a `view` may have.
     /// `None`, with a diagnostic, for anything else written there.
     fn source_path(&mut self, decl: &SourceDecl, sheet: &str) -> Option<Source> {
         let expr = decl.expr.as_ref()?;
@@ -2035,9 +2423,9 @@ impl<'a> Checker<'a> {
         self.done.push(
             Diagnostic::new(
                 decl.expr_span,
-                format!("table `{sheet}` does not say what to read"),
+                format!("view `{sheet}` does not say what to read"),
             )
-            .with_help("a table is written `table <Name> := dataframe[\"<path>\"]`"),
+            .with_help("a view is written `view <Name> := dataframe['<path>']`"),
         );
         None
     }
@@ -2048,6 +2436,18 @@ impl<'a> Checker<'a> {
             let help = match (found, want) {
                 (S::Int | S::Decimal | S::Fraction | S::Percent, S::Float) => {
                     "use `.Float` to convert to Float"
+                }
+                (S::Int | S::Decimal | S::Fraction | S::Percent | S::Float, S::Complex) => {
+                    "use `.Complex` to convert to Complex"
+                }
+                (S::Complex, S::Float) => {
+                    "use `.Float` where the imaginary part is zero, or `re(...)` for the real part"
+                }
+                // A division by zero, `1/0`, is a `Float`, which no exact
+                // column holds.
+                (S::Float, S::Decimal | S::Fraction | S::Percent) => {
+                    "declare the column `Float` or leave out its type, use `.Decimal`, or guard \
+                     a division by zero"
                 }
                 (S::Percent, S::Int) => "declare the column as `Percent`, or use `.Integer`",
                 (S::Percent, S::Decimal) => "declare the column as `Percent`, or use `.Decimal`",
@@ -2079,24 +2479,64 @@ impl<'a> Checker<'a> {
         let fitted = match (parsed, want) {
             // A whole number takes the base of its column, whichever it
             // was written in.
-            (Some(Lit::Int(n, _)), want) if want.is_exact() && want != S::Percent => {
+            (Some(Lit::Int(n, _)), want)
+                if want.is_exact() && !matches!(want, S::Percent | S::Fraction) =>
+            {
                 Some(Lit::Int(n, Base::of(want)))
             }
-            (Some(l @ Lit::Decimal(_)), S::Decimal | S::Fraction) => Some(l),
-            // Any exact number in a `Percent` column is a percentage: `0.4`
-            // is `40%`. A `20%` elsewhere is the number it stands for.
-            (Some(l @ Lit::Percent(_)), S::Percent) => Some(l),
-            (Some(Lit::Int(n, _)), S::Percent) => Some(Lit::Percent(Dec::from_i64(n))),
-            (Some(Lit::Decimal(r)), S::Percent) => Some(Lit::Percent(r)),
-            (Some(l @ Lit::Percent(_)), S::Decimal | S::Fraction) => {
+            // Setting a type puts one format on every cell: any exact number
+            // in a `Fraction` column is a fraction, in a `Percent` column a
+            // percentage (`0.4` is `40%`), and in a `Decimal` column the
+            // number it stands for.
+            (Some(Lit::Int(n, _)), S::Fraction) => Some(Lit::Fraction(Dec::from_i64(n))),
+            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Fraction) => Some(Lit::Fraction(r)),
+            (Some(l @ Lit::Fraction(_)), S::Fraction) => Some(l),
+            (Some(l @ Lit::Decimal(_)), S::Decimal) => Some(l),
+            (Some(l @ Lit::Fraction(_) | l @ Lit::Percent(_)), S::Decimal) => {
                 crate::convert::convert(&l, S::Decimal).ok()
             }
+            (Some(l @ Lit::Percent(_)), S::Percent) => Some(l),
+            (Some(Lit::Int(n, _)), S::Percent) => Some(Lit::Percent(Dec::from_i64(n))),
+            (Some(Lit::Decimal(r) | Lit::Fraction(r)), S::Percent) => Some(Lit::Percent(r)),
             (Some(Lit::Int(n, _)), S::Float) => Some(Lit::Float(n as f64)),
-            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Float) => Some(Lit::Float(r.to_f64())),
+            (Some(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)), S::Float) => {
+                Some(Lit::Float(r.to_f64()))
+            }
             (Some(l @ Lit::Float(_)), S::Float) => Some(l),
+            // A real number in a `Complex` column has no imaginary part.
+            (
+                Some(
+                    l @ (Lit::Int(..)
+                    | Lit::Decimal(_)
+                    | Lit::Fraction(_)
+                    | Lit::Percent(_)
+                    | Lit::Float(_)),
+                ),
+                S::Complex,
+            ) => crate::convert::convert(&l, S::Complex).ok(),
+            (Some(l @ Lit::Complex(..)), S::Complex) => Some(l),
+            // A `Complex` is a real number when its imaginary part is zero
+            // (D203); the conversion says when it is not.
+            (
+                Some(l @ Lit::Complex(..)),
+                S::Float
+                | S::Int
+                | S::Hex
+                | S::Octal
+                | S::Binary
+                | S::Decimal
+                | S::Fraction
+                | S::Percent,
+            ) => match crate::convert::convert(&l, want) {
+                Ok(l) => Some(l),
+                Err(msg) => {
+                    self.err(span, msg);
+                    return None;
+                }
+            },
             (Some(l @ Lit::Date(_)), S::Date) => Some(l),
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
-            (Some(l @ Lit::DateTime(_)), S::DateTime) => Some(l),
+            (Some(l @ Lit::Datetime(_)), S::Datetime) => Some(l),
             (Some(l @ Lit::Duration(_)), S::Duration) => Some(l),
             (Some(l @ Lit::Boolean(_)), S::Boolean) => Some(l),
             // A narrower kind of text is the text itself, once it reads as
@@ -2133,10 +2573,11 @@ impl<'a> Checker<'a> {
                     S::Fraction => "enter a number such as `1/7`, `2 3/4` or `19.99`, or start the cell with `=` for a formula",
                     S::Percent => "enter a percentage such as `20%`, or start the cell with `=` for a formula",
                     S::Float => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
+                    S::Complex => "enter a complex number such as `3+4i`, or start the cell with `=` for a formula",
                     S::Boolean => "enter `true` or `false`, or start the cell with `=` for a formula",
                     S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
                     S::Time => "enter a time such as `09:30` or `09:30:15`, or start the cell with `=` for a formula",
-                    S::DateTime => "enter a date-time such as `2025-01-31T09:30`, or start the cell with `=` for a formula",
+                    S::Datetime => "enter a date-time such as `2025-01-31T09:30`, or start the cell with `=` for a formula",
                     S::Duration => "enter a duration such as `PT1H30M` or `P2D`, or start the cell with `=` for a formula",
                     S::Url => "enter a web address such as `https://example.com`, or start the cell with `=` for a formula",
                     S::Email => "enter an email address such as `name@example.com`, or start the cell with `=` for a formula",
@@ -2192,7 +2633,7 @@ impl<'a> Checker<'a> {
                 let ty = Ty::Sheet(SheetTy {
                     sheet: t,
                     cols: self.all_cols(t),
-                    rows: Some(self.sheets[t].nrows),
+                    rows: self.known_rows(t),
                     kind: DepKind::Whole,
                 });
                 (Node::new(Ir::Sheet(t), span), ty)
@@ -2207,7 +2648,7 @@ impl<'a> Checker<'a> {
             }
             ExprKind::Unary(UnOp::UpTo, operand) => {
                 let (node, ty) = self.lower(operand, sc);
-                if !ty.is_whole() {
+                if !whole_enough(&ty, operand) {
                     self.err(
                         operand.span,
                         format!("the end of a range must be Int, found {}", ty.describe()),
@@ -2472,6 +2913,14 @@ impl<'a> Checker<'a> {
             let s = self.col_type(shape.sheet, c);
             return (Node::new(Ir::GroupCol(c), span), Ty::Vector(s, None));
         }
+        if self.column_list(name).is_some() {
+            self.err_help(
+                span,
+                format!("`{name}` is a list of columns"),
+                format!("use it where a function takes columns, as `Sales |> group_by({name})`"),
+            );
+            return (Node::error(span), Ty::Any);
+        }
         if let Some(i) = self.consts.iter().position(|c| c.name == name) {
             self.deps.push((DepNode::Const(i), DepKind::Whole));
             let ty = self.const_type(i);
@@ -2488,7 +2937,7 @@ impl<'a> Checker<'a> {
             let ty = Ty::Sheet(SheetTy {
                 sheet: t,
                 cols: self.all_cols(t),
-                rows: Some(self.sheets[t].nrows),
+                rows: self.known_rows(t),
                 kind: DepKind::Whole,
             });
             return (Node::new(Ir::Sheet(t), span), ty);
@@ -2541,7 +2990,7 @@ impl<'a> Checker<'a> {
         match op {
             BinOp::Range | BinOp::RangeEx | BinOp::RangeFrom | BinOp::RangeBoth => {
                 for (ty, e) in [(&lty, l), (&rty, r)] {
-                    if !ty.is_whole() {
+                    if !whole_enough(ty, e) {
                         self.err(
                             e.span,
                             format!("the ends of a range must be Int, found {}", ty.describe()),
@@ -2690,19 +3139,33 @@ impl<'a> Checker<'a> {
                 let whole = matches!(r.kind, ExprKind::Lit(Lit::Int(_, _)));
                 match (op, a.wider(b)) {
                     (BinOp::Pow, w) if whole && (w.is_int() || w == S::Decimal) => w,
+                    // A power is exact only for a whole exponent; any other
+                    // is worked out in floating point.
+                    (BinOp::Pow, w)
+                        if w != S::Float && w != S::Complex && !b.is_int() && b != S::Any =>
+                    {
+                        S::Float
+                    }
+                    // No exact number is a division by zero, so a divisor
+                    // written as zero makes it a `Float`: `Inf`, `-Inf`
+                    // or `NaN`.
+                    (BinOp::Div | BinOp::Rem, w) if w.is_exact() && is_zero(r) => S::Float,
+                    // A quotient of whole numbers written out that comes to
+                    // one, `4/2`, is a whole number.
+                    (BinOp::Div, w) if w.is_int() && divides(l, r) => S::Int,
                     // A quotient or a power of decimals is a decimal, though
                     // it need not end.
                     (BinOp::Div | BinOp::Pow, w) if w.is_int() || w == S::Decimal => S::Decimal,
-                    // Percentages add up to a percentage; anything else
-                    // done with one gives the plain number.
-                    (BinOp::Add | BinOp::Sub, S::Percent) => S::Percent,
-                    (_, S::Percent) => S::Decimal,
+                    // Anything else is the wider of the two, so that two
+                    // fractions give a fraction and two percentages a
+                    // percentage.
                     (_, w) => w,
                 }
             }
         } else if op.is_bitwise() {
-            let whole = |s: S| s.is_int() || s == S::Any;
-            if !whole(a) || !whole(b) {
+            let whole =
+                |s: S, e: &Expr| s.is_int() || s == S::Any || (s == S::Decimal && from_quotient(e));
+            if !whole(a, l) || !whole(b, r) {
                 self.err(
                     span,
                     format!("`{sym}` needs whole numbers on both sides, found {a} and {b}"),
@@ -2722,12 +3185,22 @@ impl<'a> Checker<'a> {
             let equality = matches!(op, BinOp::Eq | BinOp::Ne);
             let ok = unknown
                 || match a.join(b) {
-                    Some(S::Boolean) => equality,
+                    Some(S::Boolean | S::Complex) => equality,
                     Some(_) => true,
                     None => false,
                 };
             if !ok {
-                self.err(span, format!("cannot compare {a} and {b} with `{sym}`"));
+                if a.join(b) == Some(S::Complex) {
+                    self.err_help(
+                        span,
+                        format!(
+                            "cannot compare {a} and {b} with `{sym}`: Complex values have no order"
+                        ),
+                        "compare their parts, for example `abs(z) < abs(w)`, or use `=` and `!=`",
+                    );
+                } else {
+                    self.err(span, format!("cannot compare {a} and {b} with `{sym}`"));
+                }
                 return fail;
             }
             S::Boolean
@@ -2756,6 +3229,202 @@ impl<'a> Checker<'a> {
         (node, ty)
     }
 
+    /// The tests Polars has that give a boolean, and the text functions
+    /// they are written with, under Polars' names (filter-by-expression
+    /// D174). Each is a function of one value, so a column formula or a
+    /// filter answers it a row at a time and Polars a column at a time,
+    /// except the four that ask about a value among its column's.
+    fn lower_test(&mut self, name: &str, args: &[Expr], span: Span, sc: &mut Scope) -> (Node, Ty) {
+        let fail = (Node::error(span), Ty::Any);
+        let two = matches!(
+            name,
+            "starts_with" | "ends_with" | "contains" | "matches" | "contains_any"
+        );
+        let usage = match name {
+            "starts_with" => "Name.starts_with('A')".to_string(),
+            "ends_with" => "Name.ends_with('son')".to_string(),
+            "contains" => "Name.contains('an')".to_string(),
+            "matches" => "Name.matches('^A.*n$')".to_string(),
+            "contains_any" => "Name.contains_any(['an', 'en'])".to_string(),
+            "is_leap_year" => "Placed.is_leap_year()".to_string(),
+            "len_chars" | "to_lowercase" | "to_uppercase" => format!("Name.{name}()"),
+            "is_finite" | "is_infinite" => format!("Price.{name}()"),
+            _ => format!("Sales.Name.{name}()"),
+        };
+        let want = if two { 2 } else { 1 };
+        if args.len() != want {
+            self.err_help(
+                span,
+                format!(
+                    "`{name}` takes {want} argument{}, found {}",
+                    if want == 1 { "" } else { "s" },
+                    args.len()
+                ),
+                format!("usage: `{usage}`"),
+            );
+            return fail;
+        }
+        // `x.is_in(list)` is `x in list` (D173), with `fill_null` below.
+        // `starts_with('A'..'C')`: the first letter in a range, which is a
+        // pair of comparisons and no slicing (D167).
+        if name == "starts_with"
+            && let ExprKind::Binary(
+                op @ (BinOp::Range | BinOp::RangeEx | BinOp::RangeFrom | BinOp::RangeBoth),
+                lo,
+                hi,
+            ) = &args[1].kind
+        {
+            let letter = |e: &Expr| match &e.kind {
+                ExprKind::Lit(Lit::String(s)) if s.chars().count() == 1 => s.chars().next(),
+                _ => None,
+            };
+            let next = |c: char| char::from_u32(c as u32 + 1);
+            let after = matches!(op, BinOp::RangeFrom | BinOp::RangeBoth);
+            let before = matches!(op, BinOp::RangeEx | BinOp::RangeBoth);
+            let bounds = letter(lo).zip(letter(hi)).and_then(|(lo, hi)| {
+                let from = if after { next(lo)? } else { lo };
+                let to = if before { hi } else { next(hi)? };
+                Some((from, to))
+            });
+            let Some((from, to)) = bounds else {
+                self.err_help(
+                    args[1].span,
+                    "a range in `starts_with` is of single letters",
+                    "as `Name.starts_with('A'..'C')`",
+                );
+                return fail;
+            };
+            let text = |c: char| Expr {
+                kind: ExprKind::Lit(Lit::String(c.to_string())),
+                span: args[1].span,
+            };
+            let compare = |op: BinOp, c: char| Expr {
+                kind: ExprKind::Binary(op, Box::new(args[0].clone()), Box::new(text(c))),
+                span,
+            };
+            let form = Expr {
+                kind: ExprKind::Binary(
+                    BinOp::And,
+                    Box::new(compare(BinOp::Ge, from)),
+                    Box::new(compare(BinOp::Lt, to)),
+                ),
+                span,
+            };
+            return self.lower(&form, sc);
+        }
+        let column = matches!(
+            name,
+            "is_unique" | "is_duplicated" | "is_first_distinct" | "is_last_distinct"
+        );
+        let (takes, gives, what): (fn(S) -> bool, S, &str) = match name {
+            "is_finite" | "is_infinite" => (S::is_numeric, S::Boolean, "a number"),
+            "is_leap_year" => (
+                |s| matches!(s, S::Date | S::Datetime),
+                S::Boolean,
+                "a Date or a Datetime",
+            ),
+            "len_chars" => (S::is_text, S::Int, "text"),
+            "to_lowercase" | "to_uppercase" => (S::is_text, S::String, "text"),
+            _ if column => (|_| true, S::Boolean, "a value"),
+            _ => (S::is_text, S::Boolean, "text"),
+        };
+        let (arg, aty) = self.lower(&args[0], sc);
+        let ty = match &aty {
+            Ty::Any | Ty::Scalar(S::Any) => Ty::Scalar(gives),
+            Ty::Scalar(s) if takes(*s) => Ty::Scalar(gives),
+            Ty::Vector(s, n) if *s == S::Any || takes(*s) => Ty::Vector(gives, *n),
+            other => {
+                if !matches!(arg.kind, Ir::Error) {
+                    self.err(
+                        args[0].span,
+                        format!("`{name}` needs {what}, but this is {}", other.describe()),
+                    );
+                }
+                return fail;
+            }
+        };
+        let func = match name {
+            "is_finite" => Func::IsFinite,
+            "is_infinite" => Func::IsInfinite,
+            "is_leap_year" => Func::IsLeapYear,
+            "len_chars" => Func::LenChars,
+            "to_lowercase" => Func::ToLowercase,
+            "to_uppercase" => Func::ToUppercase,
+            "starts_with" => Func::StartsWith,
+            "ends_with" => Func::EndsWith,
+            "contains" => Func::Contains,
+            "matches" => Func::Matches,
+            "contains_any" => Func::ContainsAny,
+            "is_unique" => Func::IsUnique,
+            "is_duplicated" => Func::IsDuplicated,
+            "is_first_distinct" => Func::IsFirstDistinct,
+            _ => Func::IsLastDistinct,
+        };
+        let mut call = vec![arg];
+        if two {
+            let (pat, pty) = self.lower(&args[1], sc);
+            let text = |s: &S| *s == S::Any || s.is_text();
+            let fits = match (&pty, name) {
+                (Ty::Any, _) => true,
+                (Ty::Vector(s, _), "contains_any") => text(s),
+                (Ty::Scalar(s), n) if n != "contains_any" => text(s),
+                _ => false,
+            };
+            if !fits {
+                if !matches!(pat.kind, Ir::Error) {
+                    let looked = if name == "contains_any" {
+                        "a vector of texts"
+                    } else {
+                        "text"
+                    };
+                    self.err_help(
+                        args[1].span,
+                        format!(
+                            "`{name}` looks for {looked}, but this is {}",
+                            pty.describe()
+                        ),
+                        format!("usage: `{usage}`"),
+                    );
+                }
+                return fail;
+            }
+            // A regex written out is checked here, not met a row at a time.
+            if name == "matches"
+                && let ExprKind::Lit(Lit::String(re)) = &args[1].kind
+                && let Err(e) = regex::Regex::new(re)
+            {
+                let why = e.to_string();
+                let last = why.lines().last().unwrap_or("").trim().to_string();
+                self.err(args[1].span, format!("this is not a regex: {last}"));
+                return fail;
+            }
+            call.push(pat);
+        }
+        // A value among its column's: over a vector each element's answer;
+        // over this row's cell, the column is given too, and the row's place.
+        if column && !matches!(ty, Ty::Vector(..)) {
+            let Ir::RowCol { depth, col } = call[0].kind else {
+                if !matches!(call[0].kind, Ir::Error) {
+                    self.err_help(
+                        args[0].span,
+                        format!(
+                            "`{name}` asks about a value among its column's, so it takes a column"
+                        ),
+                        format!(
+                            "as `Name.{name}()` in a column's formula, or `Sales.Name.{name}()`"
+                        ),
+                    );
+                }
+                return fail;
+            };
+            let t = sc.frames[sc.frames.len() - 1 - depth];
+            self.deps.push((DepNode::Col(t, col), DepKind::Whole));
+            call.push(Node::new(Ir::Column { sheet: t, col }, span));
+            call.push(Node::new(Ir::RowIndex { depth }, span));
+        }
+        (Node::new(Ir::Call(func, call), span), ty)
+    }
+
     fn lower_call(
         &mut self,
         name: &str,
@@ -2765,6 +3434,13 @@ impl<'a> Checker<'a> {
         sc: &mut Scope,
     ) -> (Node, Ty) {
         let fail = (Node::error(span), Ty::Any);
+        let spliced;
+        let args = if matches!(name, "select" | "sort") {
+            spliced = self.spliced(args, 1);
+            &spliced[..]
+        } else {
+            args
+        };
         let arity = |ck: &mut Checker, want: usize, usage: &str| {
             if args.len() == want {
                 true
@@ -2935,7 +3611,7 @@ impl<'a> Checker<'a> {
                         return fail;
                     }
                     Func::Mean | Func::Median if s.is_int() || s == S::Decimal => S::Decimal,
-                    Func::Min | Func::Max if matches!(s, S::Boolean) => {
+                    Func::Min | Func::Max if matches!(s, S::Boolean | S::Complex) => {
                         self.err(span, format!("{s} values have no order for `{name}`"));
                         return fail;
                     }
@@ -2968,6 +3644,10 @@ impl<'a> Checker<'a> {
                 };
                 self.lower(&form, sc)
             }
+            "is_finite" | "is_infinite" | "is_leap_year" | "len_chars" | "to_lowercase"
+            | "to_uppercase" | "starts_with" | "ends_with" | "contains" | "matches"
+            | "contains_any" | "is_unique" | "is_duplicated" | "is_first_distinct"
+            | "is_last_distinct" => self.lower_test(name, args, span, sc),
             "is_null" | "is_not_null" | "is_nan" | "is_not_nan" => {
                 if !arity(self, 1, &format!("Sheet.Column.{name}()")) {
                     return fail;
@@ -3160,7 +3840,7 @@ impl<'a> Checker<'a> {
                     return fail;
                 }
                 let (date, dty) = self.lower(&args[0], sc);
-                let dated = |s: S| matches!(s, S::Any | S::Date | S::DateTime);
+                let dated = |s: S| matches!(s, S::Any | S::Date | S::Datetime);
                 let ty = match dty {
                     Ty::Any => Ty::Any,
                     Ty::Scalar(s) if dated(s) => Ty::Scalar(s),
@@ -3176,7 +3856,7 @@ impl<'a> Checker<'a> {
                 let mut nodes = vec![date];
                 if months {
                     let (n, nty) = self.lower(&args[1], sc);
-                    if !nty.is_whole() {
+                    if !whole_enough(&nty, &args[1]) {
                         self.err(
                             args[1].span,
                             format!("a number of months must be Int, found {}", nty.describe()),
@@ -3221,7 +3901,7 @@ impl<'a> Checker<'a> {
                 let (func, s) = if name == "today" {
                     (Func::Today, S::Date)
                 } else {
-                    (Func::Now, S::DateTime)
+                    (Func::Now, S::Datetime)
                 };
                 (Node::new(Ir::Call(func, Vec::new()), span), Ty::Scalar(s))
             }
@@ -3251,7 +3931,7 @@ impl<'a> Checker<'a> {
                     _ => (Func::TimeOf, S::Time, S::Time),
                 };
                 let (arg, aty) = self.lower(&args[0], sc);
-                let fits = |s: S| matches!(s, S::Any | S::DateTime) || s == from;
+                let fits = |s: S| matches!(s, S::Any | S::Datetime) || s == from;
                 let ty = match aty {
                     Ty::Any | Ty::Scalar(S::Any) => Ty::Scalar(out),
                     Ty::Scalar(s) if fits(s) => Ty::Scalar(out),
@@ -3303,7 +3983,7 @@ impl<'a> Checker<'a> {
             "convert_time_zone" | "utc" | "local" | "base_utc_offset" | "time_zone" => {
                 let takes_zone = name == "convert_time_zone";
                 let usage = if takes_zone {
-                    "Orders.Placed.convert_time_zone(\"Asia/Tokyo\")".to_string()
+                    "Orders.Placed.convert_time_zone('Asia/Tokyo')".to_string()
                 } else {
                     format!("Orders.Placed.{name}()")
                 };
@@ -3311,16 +3991,16 @@ impl<'a> Checker<'a> {
                     return fail;
                 }
                 let (func, out) = match name {
-                    "convert_time_zone" => (Func::ToZone, S::DateTime),
-                    "utc" => (Func::Utc, S::DateTime),
-                    "local" => (Func::Local, S::DateTime),
+                    "convert_time_zone" => (Func::ToZone, S::Datetime),
+                    "utc" => (Func::Utc, S::Datetime),
+                    "local" => (Func::Local, S::Datetime),
                     "base_utc_offset" => (Func::Offset, S::Int),
                     _ => (Func::ZoneName, S::String),
                 };
                 let (arg, aty) = self.lower(&args[0], sc);
                 let ty = match aty {
-                    Ty::Any | Ty::Scalar(S::Any | S::DateTime) => Ty::Scalar(out),
-                    Ty::Vector(S::Any | S::DateTime, n) => Ty::Vector(out, n),
+                    Ty::Any | Ty::Scalar(S::Any | S::Datetime) => Ty::Scalar(out),
+                    Ty::Vector(S::Any | S::Datetime, n) => Ty::Vector(out, n),
                     other => {
                         if !matches!(arg.kind, Ir::Error) {
                             self.err_help(
@@ -3346,7 +4026,7 @@ impl<'a> Checker<'a> {
                                 "`convert_time_zone` needs the name of a time zone, but this is {}",
                                 zty.describe()
                             ),
-                            "for example `\"Europe/London\"`",
+                            "for example `'Europe/London'`",
                         );
                         return fail;
                     }
@@ -3355,7 +4035,7 @@ impl<'a> Checker<'a> {
                 (Node::new(Ir::Call(func, nodes), span), ty)
             }
             "filter" => {
-                if !arity(self, 2, "Sales |> filter(Region == \"UK\")") {
+                if !arity(self, 2, "Sales |> filter(Region == 'UK')") {
                     return fail;
                 }
                 let (b, bty) = self.lower(&args[0], sc);
@@ -3545,6 +4225,41 @@ impl<'a> Checker<'a> {
                     Ty::Scalar(S::Float),
                 )
             }
+            "Complex" if args.len() == 2 => {
+                let mut nodes = Vec::new();
+                for a in args {
+                    let (node, ty) = self.lower(a, sc);
+                    if !matches!(
+                        ty,
+                        Ty::Any
+                            | Ty::Scalar(
+                                S::Any
+                                    | S::Int
+                                    | S::Hex
+                                    | S::Octal
+                                    | S::Binary
+                                    | S::Decimal
+                                    | S::Fraction
+                                    | S::Percent
+                                    | S::Float
+                            )
+                    ) {
+                        self.err(
+                            a.span,
+                            format!(
+                                "`Complex` needs real numbers, but this is {}",
+                                ty.describe()
+                            ),
+                        );
+                        return fail;
+                    }
+                    nodes.push(node);
+                }
+                (
+                    Node::new(Ir::Call(Func::Complex, nodes), span),
+                    Ty::Scalar(S::Complex),
+                )
+            }
             _ if S::from_name(name).is_some() => {
                 if !arity(self, 1, &format!("{name}(x)")) {
                     return fail;
@@ -3578,7 +4293,7 @@ impl<'a> Checker<'a> {
                 if matches!(places.kind, Ir::Error) {
                     return fail;
                 }
-                if !pty.is_whole() {
+                if !whole_enough(&pty, &args[1]) {
                     self.err_help(
                         args[1].span,
                         format!(
@@ -3619,6 +4334,7 @@ impl<'a> Checker<'a> {
                 // An exact number stays exact where the function allows it.
                 let out = |s: S| match s {
                     S::Any => Some(S::Any),
+                    S::Complex => m.of_complex(),
                     s if s.is_exact() && m.is_whole() => Some(S::Int),
                     s if s.is_exact() && m.is_exact() => Some(s),
                     s if s.is_exact() || s == S::Float => Some(S::Float),
@@ -3764,7 +4480,7 @@ impl<'a> Checker<'a> {
             return (Offset(None), Some(0));
         };
         let (node, ty) = self.lower(e, sc);
-        if !ty.is_whole() {
+        if !whole_enough(&ty, e) {
             self.err(
                 e.span,
                 format!("a row offset must be Int, found {}", ty.describe()),
@@ -3892,7 +4608,7 @@ impl<'a> Checker<'a> {
                     }
                     None => {
                         let (node, ty) = ck.lower(e, sc);
-                        if !ty.is_whole() {
+                        if !whole_enough(&ty, e) {
                             ck.err(
                                 e.span,
                                 format!("the ends of a range must be Int, found {}", ty.describe()),
@@ -3966,7 +4682,7 @@ impl<'a> Checker<'a> {
             return RowPick::all(nrows);
         }
         match ty {
-            Ty::Scalar(s) if s.is_int() => {
+            Ty::Scalar(s) if s.is_int() || whole_enough(&Ty::Scalar(s), e) => {
                 if let (Some(Static::Int(k)), Some(n)) = (static_of(e), nrows) {
                     let at = if k < 0 { k + n as i64 } else { k };
                     if at < 0 || at >= n as i64 {
@@ -3980,11 +4696,18 @@ impl<'a> Checker<'a> {
                         );
                     }
                 }
+                // A row by number is one cell, and so is no cycle of its
+                // own: it is one if that cell reads itself, which the
+                // calculation finds and names.
+                let kind = match static_of(e) {
+                    Some(Static::Int(_)) if own => DepKind::Fixed,
+                    _ => DepKind::Whole,
+                };
                 RowPick {
                     sel: RowSel::Pos(Box::new(node)),
                     one: true,
                     len: None,
-                    kind: DepKind::Whole,
+                    kind,
                 }
             }
             Ty::Range => RowPick {
@@ -4017,7 +4740,7 @@ impl<'a> Checker<'a> {
                         "a row selector must be a position, a range or a condition, found {}",
                         other.describe()
                     ),
-                    "for example `[; 0]`, `[; 0..2]`, `[; *-1]` or `[; Region == \"UK\"]`",
+                    "for example `[; 0]`, `[; 0..2]`, `[; *-1]` or `[; Region == 'UK']`",
                 );
                 RowPick::all(nrows)
             }
@@ -4262,7 +4985,7 @@ impl<'a> Checker<'a> {
                 };
                 self.done.push(
                     Diagnostic::new(span, format!("circular reference: {}", path.join(" → ")))
-                        .with_help("a column may read its own earlier rows, such as `[; *-1]`, but not itself in the same row"),
+                        .with_help("a column may read its own earlier rows, such as `[; *-1]`, or one row by number, such as `[; 0]`, but not itself in the same row or all of itself"),
                 );
             }
             match nodes[scc.nodes[0]] {
@@ -4296,11 +5019,14 @@ impl<'a> Checker<'a> {
                 let kind = self.col_out[t][c]
                     .take()
                     .unwrap_or(ColKind::Computed(Node::error(col.span)));
-                let format = self
+                let line = self
                     .ast
                     .and_then(|ast| ast.sheets.get(info.decl))
-                    .and_then(|decl| decl.schema.iter().find(|l| l.name == col.name))
-                    .and_then(|l| l.format.clone());
+                    .and_then(|decl| decl.schema.iter().find(|l| l.name == col.name));
+                let format = line.and_then(|l| l.format.clone());
+                let zone = line
+                    .filter(|l| l.ty == S::Datetime)
+                    .and_then(|l| l.zone.clone());
                 cols.push(Column {
                     name: col.name,
                     span: col.span,
@@ -4308,6 +5034,7 @@ impl<'a> Checker<'a> {
                     declared: col.declared.is_some(),
                     from: col.from,
                     format,
+                    zone,
                     // A column of cells or of a file's own rows is not a
                     // formula, so there is nothing of it to lower, whatever
                     // the cells' own formulas read.
@@ -4335,12 +5062,29 @@ impl<'a> Checker<'a> {
             });
         }
         let mut consts = Vec::new();
+        let lists: Vec<Option<Vec<String>>> = self
+            .consts
+            .iter()
+            .map(|c| {
+                self.column_list(&c.name).map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|i| match &i.kind {
+                            ExprKind::Name(n) => Some(n.clone()),
+                            _ => None,
+                        })
+                        .collect()
+                })
+            })
+            .collect();
         for (i, info) in mem::take(&mut self.consts).into_iter().enumerate() {
             let ty = match &self.const_state[i] {
                 St::Done(t) | St::Busy(t) => t.clone(),
                 St::Pending => Ty::Any,
             };
+            let columns = lists[i].clone().or(info.columns.clone());
             consts.push(Const {
+                columns,
                 name: info.name,
                 node: self.const_out[i].take().unwrap_or(Node::error(info.span)),
                 ty,
@@ -4423,6 +5167,22 @@ mod tests {
     fn reading_an_earlier_row_is_not_elementwise() {
         let p = sheet("Running := Revenue + [Running; *-1] // 0");
         assert!(!is_elementwise(&p, "Running"));
+    }
+
+    /// A sheet whose column `B` holds a seed in its first row and a cell
+    /// that reads a row of `B` by number.
+    fn seeded(cell: &str) -> Vec<Diagnostic> {
+        let text = format!("sheet T\n\n| A | B |\n| - | - |\n| 1 | 100 |\n| 2 | {cell} |\n");
+        compile(&text, 0).1
+    }
+
+    #[test]
+    fn a_cell_may_read_a_row_of_its_own_column_by_number() {
+        // The seed is a literal, so nothing reads itself (D227).
+        assert!(seeded("=[B; 0]*A").is_empty());
+        assert!(seeded("=[B; -2]*A").is_empty());
+        // All of the column, or a row that is not fixed, still is.
+        assert!(!seeded("=sum(B)").is_empty());
     }
 
     #[test]

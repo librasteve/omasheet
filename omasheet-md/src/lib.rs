@@ -568,7 +568,7 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
         sources.render(&d)
     };
     let (mut program, mut diags) = compile(&joined.text, 0);
-    // A `table` holds its rows in a file of its own, which has to be read
+    // A `view` holds its rows in a file of its own, which has to be read
     // before the document can show them (D62).
     let mut tables = table::Tables::default();
     if diags.is_empty() {

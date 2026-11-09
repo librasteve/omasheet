@@ -46,7 +46,7 @@ entry box, or in the cell itself, SHALL replace the cell's source.
 - **THEN** the column's expression changes and every row of `Profit` is recalculated
 
 ### Requirement: Dates and times follow the locale
-The grid SHALL show `Date`, `Time` and `DateTime` values the way the locale of
+The grid SHALL show `Date`, `Time` and `Datetime` values the way the locale of
 the operating system writes them, with a four-digit year. A date or time
 committed into a cell of such a column, or of a column with no type yet, SHALL
 be accepted in the locale's form as well as the ISO form, and SHALL be stored in
@@ -67,8 +67,8 @@ the file in the ISO form. The entry box SHALL show the stored ISO form.
 - **THEN** the file holds `2026-09-10`
 
 ### Requirement: Date-times on local clocks
-The grid SHALL show the `DateTime` values of a file in another time zone on the
-clocks of the machine. A `DateTime` moved to a zone with `.to_zone()` or `.utc()`
+The grid SHALL show the `Datetime` values of a file in another time zone on the
+clocks of the machine. A `Datetime` moved to a zone with `.to_zone()` or `.utc()`
 SHALL be shown in that zone with its offset. The entry box SHALL show, and what
 is committed SHALL be taken in, the file's zone; the file SHALL NOT change
 because of where it is opened.

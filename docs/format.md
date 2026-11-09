@@ -64,12 +64,12 @@ Tax    := Profit * 20%
 of its name in the header row is an error, and so is anything but `*` in a
 cell of a computed column.
 
-## Tables: a sheet whose rows are in Parquet
+## Views: a sheet whose rows are in Parquet or CSV
 
-A sheet may read its rows from a Parquet file instead of holding them:
+A sheet may read its rows from a Parquet or CSV file instead of holding them:
 
 ```omx
-table Sales := dataframe["data/sales.parquet"]
+view Sales := dataframe['data/sales.parquet']
 
 Month   : String
 Revenue : Integer
@@ -78,16 +78,28 @@ Cost    : Integer
 Profit := Revenue - Cost
 ```
 
-`table` takes the place of `sheet` and closes the sheet before it. The
-string names one Parquet file, read from beside the `.omx` file. No row is
-written in the file, and the row count comes from the Parquet.
+`view` takes the place of `sheet` and closes the sheet before it. The
+string names one Parquet or CSV file, read from beside the `.omx` file. No
+row is written in the file, and the row count comes from the Parquet.
+
+A CSV is named the same way, `dataframe['data/sales.csv']`, and is read
+through a Parquet copy kept in the cache, so everything below holds for it
+too. Its column types are not written in the file, so they are worked out
+from its first 10,000 rows: a schema line must say what was found. A column
+of plain numbers with a point, `1.5`, `2.25` and `4`, is `Decimal`, read
+exactly, with as many places as the most any value has (up to 18); a column
+of whole numbers is `Integer`. A column with an exponent (`1.5e3`), a `NaN`
+or `Inf`, or more than 18 places is `Float`. Parquet carries its types, and
+is read as they are. A Parquet column stored as `Float` (a price, say) can
+be read as exact decimals all the same: give its schema line `Decimal`, as
+in `Price : Decimal`, and it is converted as it is read.
 
 A column whose name in the file is not a name a formula could write — one
 with a space or a slash in it, which Parquet allows and omasheet does not —
 is given a name here with a `from` clause:
 
 ```omx
-SiblingsSpousesAboard : Integer from "Siblings/Spouses Aboard"
+SiblingsSpousesAboard : Integer from 'Siblings/Spouses Aboard'
 ```
 
 The quoted name is the file's, used to find the column and to check it; the
@@ -101,7 +113,7 @@ there is reported.
 The schema lines are the columns, in the order they are written, and they
 say what the file is expected to hold: a column the file holds under another
 type, or holds and the schema does not mention, is reported rather than
-quietly taken from either side. A table with no schema lines at all takes
+quietly taken from either side. A view with no schema lines at all takes
 its columns from the file, which is how a source is read before its schema
 has been written down.
 
@@ -133,12 +145,12 @@ own, with its name and its type. A grouped sheet has a row for each group,
 its key columns first and an aggregate after them, and a joined sheet a row
 for each pair of rows matched, the left sheet's columns and then the other's.
 
-All of them are read-only, as a table is: nothing is ever written back to
+All of them are read-only, as a view is: nothing is ever written back to
 the sheet they come from, and a cell of one cannot be edited. Its formula
 is its text, so that is what is changed — in the app, by the box at the top.
 A sort in the app's grid of a sheet made by a filter, a sort or a
 selection is written into its formula, as a `|> sort(…)` at the end; a
-grouped or joined sheet is sorted in the grid alone, as a table is, its
+grouped or joined sheet is sorted in the grid alone, as a view is, its
 formula ending in a stage nothing can come after.
 
 Exporting one writes its rows as values; importing them back gives a sheet
@@ -194,6 +206,7 @@ sheet's rows were derived.
 `Float`, `String`, `Boolean`, `Date`, `Time`, `Datetime`, `Duration`, `Url`,
 `Email`, `Uuid`.
 A column with no `Name : Type` line takes its type from its cells.
+The cells never set a column's type: only a `Name : Type` line, or setting the type in the app, does. An undeclared column's type is the join of the cells it holds, worked out as they are entered: the first gives it, and each later one widens it if it needs to. Each cell is shown in the format its own contents give it, so `1`, `1.1`, `1/2`, `23%`, `1e5` and text may stand together and none is changed by what is entered beside it. Setting a type is different: it applies one common format, and a compatible value is shown in it, so `15` entered in a `Binary` column is `0b1111`, a way to convert a base on the fly. The file keeps each cell as it was entered.
 `Integer` was called `Int` before, and a column declared that way is still
 read as one; `Integer` is what is written.
 
@@ -207,6 +220,7 @@ read as one; `Integer` is what is written.
 | `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction |
 | `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
 | `Float` | `1.5e3`, `Inf`, `-Inf`, `NaN` — floating point |
+| `Complex` | `3+4i`, `-1.5-2i`, `2i` — a real and an imaginary part, each a `Float`; a real number in a `Complex` column is that number with no imaginary part |
 | `String` | `hi` or `"hi"`  (escape \|) |
 | `Boolean` | `true`, `false` |
 | `Date` | `2025-01-31` |
@@ -216,6 +230,13 @@ read as one; `Integer` is what is written.
 | `Url` | `https://example.com`, `mailto:name@example.com` |
 | `Email` | `name@example.com` |
 | `Uuid` | `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f` |
+
+A division by zero is `Inf`, `-Inf` or `NaN`, which are `Float`s. A column
+left to its cells is as wide as they are, so one that holds such a value is a
+`Float` column, and a Parquet export writes it as one, with every value kept.
+A column declared `Decimal`, `Fraction` or `Percent` cannot hold one: its cell
+is an error that says to declare the column `Float`, leave out its type, or
+guard the division.
 
 A `_` may stand anywhere among a number's digits, before or after the
 point, to group them: `1_000_000`, `10_00_000`, `0.000_1`, `0xFF_FF`. It
@@ -232,8 +253,7 @@ base gives that base, but for `/`, and on any other mix gives an `Integer`:
 `0xF0 + 0x0F` is `0xff` and `0xF0 + 1` is `241`. A format on the column
 shows the number by its conversion instead: `Hex[08X]` shows 255 as
 `000000FF`. `Hex(x)`, `Octal(x)` and `Binary(x)` convert as `Integer(x)`
-does. A column of cells all written in one base is a column of that type,
-and the app writes the type into the file.
+does.
 
 A `Time` and a `Datetime` may carry a fraction of a second after the
 seconds: `09:30:15.5`, `2025-01-31T09:30:15.123456`. The fraction always
@@ -267,8 +287,8 @@ declared.
 Text written bare may hold Markdown: `a **slow** start`,
 `see the [lease](lease.pdf)`. The app shows it as that, and so does a
 [rendered document](interop.md#markdown). Text in quotes is as it is:
-`"2 * 3 * 4"`. So is the text a formula makes, as it is written in quotes
-there; a value read from a cell is Markdown or not as that cell is.
+`"2 * 3 * 4"`. So is the text a formula makes, as it is written in single
+quotes there (a cell's text is in double quotes and code's in single); a value read from a cell is Markdown or not as that cell is.
 `omasheet print` shows every cell as it is written.
 
 A `Url`, an `Email` and a `Uuid` are text read as something narrower. A
@@ -293,6 +313,67 @@ column of one takes the others, showing what it holds its own way: `1/7` is
 `0.14285714285714285714…` in a `Decimal` column, `1/7` in a `Fraction`
 column, and `14.29%` in a `Percent` column.
 
+The numeric types form a hierarchy of increasingly expressive number systems, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
+
+- **`Integer` (ℤ)**: whole numbers
+- **`Decimal` (ℚ)**: exact numbers with a fractional part, held to 38 digits
+- **`Float` (ℝ)**: real numbers, approximately represented
+- **`Complex` (ℂ)**: complex numbers
+
+For any operation, and for the cells of a column, the result is the **more infectious** of the types it is made from, the least number system that holds them both: `Integer` + `Decimal` is a `Decimal`, `Decimal` * `Float` is a `Float`, and `Float` + `Complex` is a `Complex`. This is a model, not the machine's: an integer is an `i64`, a `Decimal` a 38-digit fixed point and a `Float` an `f64`, each of finite precision.
+
+Each type may be shown more than one way:
+
+| Type | Literal | Shown as |
+|---|---|---|
+| `Integer` | `1` | `Hex` `0xff`, `Octal` `0o17`, `Binary` `0b101` |
+| `Decimal` | `1.0` | `Fraction` `1/7`, `2 3/4`; `Percent` `14.29%` |
+| `Float` | `1e0` | none |
+| `Complex` | `3+4i` | none |
+
+- Two values shown the same way keep it: `Hex` + `Hex` is a `Hex`, and `Fraction` + `Fraction` a `Fraction`.
+- Two different ways of showing one type give the plain type: `Hex` + `Binary` is an `Integer`, and `Fraction` + `Percent` a `Decimal`.
+- Different types give the more infectious, shown plain: `Fraction` * `Integer` is a `Decimal`.
+- A power with a whole exponent is exact; with any other, such as `2 ** 0.5`, it is a `Float`, as are the trigonometric, exponential and logarithmic functions.
+- A number beside text gives `Any`.
+
+The joins, written out:
+
+| | `1` | `1.0` | `1e0` | `3+4i` | text |
+|---|---|---|---|---|---|
+| `1` | `Integer` | `Decimal` | `Float` | `Complex` | any |
+| `1.0` | `Decimal` | `Decimal` | `Float` | `Complex` | any |
+| `1e0` | `Float` | `Float` | `Float` | `Complex` | any |
+| `3+4i` | `Complex` | `Complex` | `Complex` | `Complex` | any |
+| text | any | any | any | any | `String` |
+
+A way of showing a type joins with a `Complex` as the type would: `0x10 + 1i`
+is `16+1i`. A `Complex` has no order, so it cannot be compared with `<` or
+sorted, but `=` and `!=` compare both parts exactly.
+
+| | `0b1` | `0o1` | `0x1` | `1` |
+|---|---|---|---|---|
+| `0b1` | `Binary` | `Integer` | `Integer` | `Integer` |
+| `0o1` | `Integer` | `Octal` | `Integer` | `Integer` |
+| `0x1` | `Integer` | `Integer` | `Hex` | `Integer` |
+| `1` | `Integer` | `Integer` | `Integer` | `Integer` |
+
+| | `100%` | `1/1` | `1.0` |
+|---|---|---|---|
+| `100%` | `Percent` | `Decimal` | `Decimal` |
+| `1/1` | `Decimal` | `Fraction` | `Decimal` |
+| `1.0` | `Decimal` | `Decimal` | `Decimal` |
+
+A cell in a column with a declared type is accepted when it converts to that
+type, and is then shown in the type's own format: `0b1` in an `Integer` column
+is shown `1`, and `3+0i` in a `Float` column is `3`. A `Complex` converts to a
+real number only when its imaginary part is zero, to within `1e-15`, as in
+Raku, so `3+4i` in a `Float` column is an error.
+
+A column of numbers and text is of any type, and each cell is as it was
+written. What a file keeps of a cell is the text that was entered: a number
+as it was written, or the text of a formula.
+
 A `Percent` column takes any exact number and shows it as a percentage: `0.4`
 there is `40%`, and so is `= Profit / Revenue` when it comes to two fifths.
 A `20%` in a `Decimal` column is the number it stands for, `0.2`.
@@ -303,12 +384,24 @@ and `2.75` is `2 3/4`. The fraction is worked out from the number rather
 than remembered from the cell, so one nobody wrote is found too — a seventh
 added to a seventh shows as `2/7`. Only a fraction whose denominator is
 10000 or less is looked for; past that the number is shown as a decimal.
-Anything worked out from a fraction is a fraction, so a `:=` column over one
-shows fractions without being declared.
+Two fractions give a fraction, so a `:=` column of `Yield + Yield` over a
+`Fraction` column shows fractions without being declared; a fraction with
+any other number gives a `Decimal`, so `Yield * 2` shows `4.666…`.
 
 A fraction of two whole numbers is an exact `Decimal`: `1/7` and `22/7` are
 both read that way, and one may be written with a space, `2 3/4` for `11/4`.
-Writing `1/7` in a cell does not make the column a `Fraction`; declare it.
+Neither part need be the smaller: `11/3` and `5 7/3` are fine, and a
+`Fraction` column shows them as `3 2/3` and `7 1/3`. A column with no type
+whose cells are all written with a `/` is a `Fraction` column; with any other
+number among them it is a `Decimal` one. A column declared `Decimal` takes the
+same cells and shows them as decimals.
+
+In a formula a fraction is written in angle brackets, `<1/10>`, `<-3/4>` or
+`<2 3/4>`, since a bare `1/10` there is a quotient, a `Decimal`. A fraction
+with a whole number is a `Decimal` too, so `<1/10> + 1` is `1.1`; to stay
+a fraction add `<1/1>`, the fraction that is one, and `<1/10> + <1/1>` is
+`1 1/10`. A space goes before a fraction that follows a `+`, since `+<` is a
+shift.
 
 An `Integer`, `Decimal` or `Float` column may say how its numbers are shown,
 after its type in brackets, as a C `printf` conversion without its `%`:
@@ -390,11 +483,24 @@ accepts them in your locale's form.
 
 ## Constants, functions, zone
 
+- `const Keys = [Region, Month]` names a list of columns, to use again where a
+  function takes columns: `Sales |> group_by(Keys)`, and the same in `select`,
+  `sort` and `join`. The names are looked up in the sheet it is used on, so
+  one list serves every sheet that has those columns, and it can sit beside
+  plain names, as `group_by(Keys, Quarter)`. It is only for taking columns:
+  it is not a value, and a list of constants or numbers is still an ordinary
+  list.
 - `const Name = expression`
 - `fn Name(a, b) = expression` — sees its parameters, constants and sheets,
   not the row it is called from. The comment above it is its description.
 - `zone Area/City` before the first sheet says which time zone the file's
   date-times are in. Without it, they are in the zone of the machine.
+- `Logged : Datetime("Europe/London")` declares the zone of one column. Its
+  cells are the wall clock of that zone, so what is typed in is taken there,
+  and each is shown with its offset, which follows the zone's daylight
+  saving: `2025-03-01T09:30+00:00`, `2025-07-01T09:30+01:00`. Comparison and
+  subtraction are on the instant. Only a column of cells declares a zone, not
+  one read from a file, and a zone the system does not know is an error.
 
 ---
 

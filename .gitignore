@@ -7,3 +7,12 @@ coinvent-omasheet-format-chatgpt.md
 
 # Machine-specific Claude Code settings.
 .claude/settings.local.json
+
+# Large test files, downloaded by demo_data/fetch.sh from the demo-data
+# release (see demo_data/README.md); not in Git. The .omx files that open
+# them are.
+/demo_data/*
+!/demo_data/README.md
+!/demo_data/fetch.sh
+!/demo_data/*.omx
+*.swp

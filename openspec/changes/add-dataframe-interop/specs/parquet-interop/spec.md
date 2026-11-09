@@ -23,11 +23,11 @@ omasheet type that names the Parquet type it finds.
 | `String` | `byte_array`, UTF-8 |
 | `Date` | `date32` |
 | `Time` | `time64`, nanoseconds |
-| `DateTime` | `timestamp`, microseconds, with the file's zone where it has one |
+| `Datetime` | `timestamp`, microseconds, with the file's zone where it has one |
 | `Duration` | `duration`, microseconds |
 | `Null` | a null in the column's own type |
 
-The `Duration` and zoned `DateTime` rows, and keeping a column's width and
+The `Duration` and zoned `Datetime` rows, and keeping a column's width and
 signedness, come with those types in `add-polars-dtypes`. Until then a
 `Duration` column is left out on import with a notice, a zone is not kept,
 and an integer column is written as `int64`.

@@ -162,6 +162,8 @@ pub enum Func {
     Quantile,
     /// A value as another type: `Int(x)`, `Num(x)` and the rest.
     To(S),
+    /// `Complex(re, im)`: a complex number from its two parts.
+    Complex,
     /// The next value after this one: a number plus one, or the next text
     /// in the way letters and digits count up, `AZ` to `BA`.
     Succ,
@@ -180,6 +182,34 @@ pub enum Func {
     /// Whether a value is a `NaN`. Empty of an empty cell, which is a
     /// different kind of absence and has no answer to this.
     IsNan,
+    /// Whether a number is neither infinite nor `NaN`, and whether it is
+    /// infinite. An exact number is always finite.
+    IsFinite,
+    IsInfinite,
+    /// Whether a date falls in a leap year.
+    IsLeapYear,
+    /// The number of characters in a text.
+    LenChars,
+    ToLowercase,
+    ToUppercase,
+    /// Whether a text starts with, ends with or holds another, literally.
+    StartsWith,
+    EndsWith,
+    Contains,
+    /// Whether a text matches a regex anywhere in it, as Polars'
+    /// `str.contains` does.
+    Matches,
+    /// Whether a text holds any of a vector of texts.
+    ContainsAny,
+    /// Whether a value is the only one of its kind in its column, whether
+    /// it is not, and whether it is the first or the last of its kind
+    /// there. Over a vector, each element's answer. Over this row's cell,
+    /// the arguments are the cell, its whole column and the row's place:
+    /// the column is answered once and the row looked up in it.
+    IsUnique,
+    IsDuplicated,
+    IsFirstDistinct,
+    IsLastDistinct,
     Today,
     Now,
     Year,

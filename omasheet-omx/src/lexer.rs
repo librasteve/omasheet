@@ -16,14 +16,20 @@ pub enum Tok {
     /// A number with a `%`, already divided by a hundred.
     Percent(Dec),
     Float(f64),
+    /// An imaginary number, `4i`.
+    Imag(f64),
+    /// `'…'`, a string in code (D168).
     Str(String),
+    /// `"…"`, text as a table cell writes it. Code does not take it: the
+    /// parser says to use single quotes, and a cell takes only this.
+    Text(String),
     /// Days since 1970-01-01.
     Date(i32),
     /// Nanoseconds since midnight, as Polars holds a `Time`.
     Time(i64),
     /// Microseconds since the start of 1970-01-01, on the clocks of the
     /// file's own zone, as Polars holds a `Datetime`.
-    DateTime(i64),
+    Datetime(i64),
     /// Microseconds: `PT1H30M`.
     Duration(i64),
     Ident(String),
@@ -48,6 +54,8 @@ pub enum Tok {
     PlusGt,
     Star,
     Slash,
+    /// `%` on its own, the remainder; after a number it is a percentage.
+    Rem,
     Pow,
     EqEq,
     NotEq,
@@ -82,11 +90,13 @@ pub enum Tok {
 impl Tok {
     pub fn describe(&self) -> String {
         match self {
-            Tok::Int(..) | Tok::Decimal(_) | Tok::Percent(_) | Tok::Float(_) => "a number".into(),
-            Tok::Str(_) => "a string".into(),
+            Tok::Int(..) | Tok::Decimal(_) | Tok::Percent(_) | Tok::Float(_) | Tok::Imag(_) => {
+                "a number".into()
+            }
+            Tok::Str(_) | Tok::Text(_) => "a string".into(),
             Tok::Date(_) => "a date".into(),
             Tok::Time(_) => "a time".into(),
-            Tok::DateTime(_) => "a date-time".into(),
+            Tok::Datetime(_) => "a date-time".into(),
             Tok::Duration(_) => "a duration".into(),
             Tok::Ident(name) => format!("`{name}`"),
             Tok::Eof => "the end of the expression".into(),
@@ -114,6 +124,7 @@ impl Tok {
             Tok::PlusGt => "+>",
             Tok::Star => "*",
             Tok::Slash => "/",
+            Tok::Rem => "%",
             Tok::Pow => "**",
             Tok::EqEq => "==",
             Tok::NotEq => "!=",
@@ -142,6 +153,24 @@ impl Tok {
             _ => "",
         }
     }
+}
+
+/// `s` as a string in code, in single quotes (D168): what reads back as
+/// `s`. Everything that writes OMX writes a string this way.
+pub fn quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        match c {
+            '\'' => out.push_str("\\'"),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
 }
 
 #[derive(Clone, Debug)]
@@ -224,7 +253,17 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                     } else {
                         f64::NAN
                     };
-                    Tok::Float(f)
+                    // As an imaginary part the `i` is kept apart: `Inf\i`.
+                    if b[i..].starts_with(b"\\i")
+                        && !b
+                            .get(i + 2)
+                            .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
+                    {
+                        i += 2;
+                        Tok::Imag(f)
+                    } else {
+                        Tok::Float(f)
+                    }
                 }
                 _ => Tok::Ident(word.to_string()),
             };
@@ -234,7 +273,10 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
             });
             continue;
         }
-        if c == b'"' {
+        if c == b'\'' || c == b'"' {
+            // `'…'` in code, `"…"` in a cell (D168); each escapes its own
+            // quote, and either may stand in the other unescaped.
+            let quote = c as char;
             let mut s = String::new();
             i += 1;
             loop {
@@ -246,7 +288,7 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                 };
                 i += ch.len_utf8();
                 match ch {
-                    '"' => break,
+                    ch if ch == quote => break,
                     '\\' => {
                         let Some(esc) = text[i..].chars().next() else {
                             continue;
@@ -255,14 +297,14 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                         s.push(match esc {
                             'n' => '\n',
                             't' => '\t',
-                            '"' => '"',
                             '\\' => '\\',
+                            esc if esc == quote => quote,
                             other => {
                                 return Err(Diagnostic::new(
                                     span(i - other.len_utf8() - 1, i),
                                     format!("unknown escape `\\{other}`"),
                                 )
-                                .with_help("the escapes are \\\" \\\\ \\n and \\t"));
+                                .with_help(format!("the escapes are \\{quote} \\\\ \\n and \\t")));
                             }
                         });
                     }
@@ -270,7 +312,11 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                 }
             }
             out.push(Token {
-                tok: Tok::Str(s),
+                tok: if quote == '"' {
+                    Tok::Text(s)
+                } else {
+                    Tok::Str(s)
+                },
                 span: span(start, i),
             });
             continue;
@@ -320,6 +366,7 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
                 b'-' => Tok::Minus,
                 b'*' => Tok::Star,
                 b'/' => Tok::Slash,
+                b'%' => Tok::Rem,
                 b'<' => Tok::Lt,
                 b'>' => Tok::Gt,
                 b'=' => Tok::Assign,
@@ -496,7 +543,7 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
         }
         let secs = if seconds_of_datetime { part(17, 19) } else { 0 };
         return match date::datetime_from(days, part(11, 13), part(14, 16), secs) {
-            Some(t) => Ok((Tok::DateTime(t + datetime_frac), end)),
+            Some(t) => Ok((Tok::Datetime(t + datetime_frac), end)),
             None => Err((
                 format!("`{}` is not a real time", &text[i + 11..end]),
                 i + 11,
@@ -560,12 +607,27 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
     let raw: String = text[i..j].chars().filter(|&c| c != '_').collect();
     let percent = j < b.len() && b[j] == b'%';
     let end = if percent { j + 1 } else { j };
+    // An imaginary number: `4i`, `2.5i`.
+    if !percent && j < b.len() && b[j] == b'i' && !word(j + 1) {
+        let f: f64 = raw
+            .parse()
+            .map_err(|_| (format!("`{raw}i` is not a number"), i, j + 1))?;
+        return Ok((Tok::Imag(f), j + 1));
+    }
     if word(end) {
         let mut k = end;
         while word(k) {
             k += 1;
         }
-        return Err((format!("`{}` is not a number", &text[i..k]), i, k));
+        let said = if percent {
+            format!(
+                "`{}` is not a number; a remainder is written with spaces, `7 % 3`",
+                &text[i..k]
+            )
+        } else {
+            format!("`{}` is not a number", &text[i..k])
+        };
+        return Err((said, i, k));
     }
 
     let tok = if is_float {
@@ -612,6 +674,22 @@ mod tests {
     }
 
     #[test]
+    fn strings_in_code_and_text_in_a_cell() {
+        // Code quotes with `'`, a cell with `"` (D168); each escapes its own.
+        assert_eq!(toks("'it\\'s'")[0], Tok::Str("it's".into()));
+        assert_eq!(toks("'say \"hi\"'")[0], Tok::Str("say \"hi\"".into()));
+        assert_eq!(toks("'a\\\\b\\n'")[0], Tok::Str("a\\b\n".into()));
+        assert_eq!(toks("\"it's\"")[0], Tok::Text("it's".into()));
+        let bad = lex("'a\\\"'", 0, 0).unwrap_err();
+        assert!(bad.message.contains("unknown escape"), "{}", bad.message);
+        assert!(lex("'open", 0, 0).is_err());
+        // What writes code writes what reads back.
+        for s in ["plain", "it's", "a\\b", "two\nlines", "say \"hi\""] {
+            assert_eq!(toks(&quoted(s))[0], Tok::Str(s.into()), "{s}");
+        }
+    }
+
+    #[test]
     fn a_fraction_of_a_second() {
         // A time is nanoseconds of day, so nine digits of a second.
         assert_eq!(
@@ -624,11 +702,11 @@ mod tests {
         let noon = date::datetime_from(day, 12, 0, 0).unwrap();
         assert_eq!(
             toks("2025-01-31T12:00:00.5")[0],
-            Tok::DateTime(noon + 500_000)
+            Tok::Datetime(noon + 500_000)
         );
         assert_eq!(
             toks("2025-01-31T12:00:00.000001")[0],
-            Tok::DateTime(noon + 1)
+            Tok::Datetime(noon + 1)
         );
         // Past what the unit keeps is said rather than quietly dropped.
         let why = |text: &str| lex(text, 0, 0).unwrap_err().message;
@@ -659,6 +737,13 @@ mod tests {
             ]
         );
         assert!(lex("10m", 0, 0).is_err());
+        assert_eq!(toks("4i")[0], Tok::Imag(4.0));
+        assert_eq!(
+            toks("3+2.5i"),
+            vec![Tok::Int(3, Base::Dec), Tok::Plus, Tok::Imag(2.5), Tok::Eof]
+        );
+        assert_eq!(toks("Inf\\i")[0], Tok::Imag(f64::INFINITY));
+        assert!(lex("2in", 0, 0).is_err());
     }
 
     #[test]
@@ -726,11 +811,11 @@ mod tests {
         let day = date::from_ymd(2025, 1, 1).unwrap();
         assert_eq!(
             toks("2025-01-01T09:30")[0],
-            Tok::DateTime(date::datetime_from(day, 9, 30, 0).unwrap())
+            Tok::Datetime(date::datetime_from(day, 9, 30, 0).unwrap())
         );
         assert_eq!(
             toks("2025-01-01T09:30:15")[0],
-            Tok::DateTime(date::datetime_from(day, 9, 30, 15).unwrap())
+            Tok::Datetime(date::datetime_from(day, 9, 30, 15).unwrap())
         );
         assert!(lex("2025-01-01T24:00", 0, 0).is_err());
         assert!(lex("2025-01-01T09", 0, 0).is_err());

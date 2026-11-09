@@ -31,7 +31,7 @@ Weekday := On.weekday()
 Month   := On.month()
 Delay   := Logged - Begins
 Late    := Logged.date() > On
-Sydney  := Logged.convert_time_zone("Australia/Sydney")
+Sydney  := Logged.convert_time_zone('Australia/Sydney')
 
 sheet Totals
 

@@ -95,14 +95,21 @@ sheet Summary
   spaces between pipes, `|     |`, a sheet of one column too.
 - Older files leave out the outer pipes and the `---` line, `Jan | 100`; they
   still read. There a `|` at the start or end of a row is an empty cell.
-- `table Name := dataframe["data/sales.parquet"]` in place of `sheet Name`: a
-  sheet whose rows are in one Parquet file beside the `.omx`.
+- `view Name := dataframe['data/sales.parquet']` in place of `sheet Name`: a
+  sheet whose rows are in one Parquet file beside the `.omx`. A `.csv` works
+  too (`dataframe['data/sales.csv']`), read through a cached Parquet copy;
+  its types are inferred from the first 10,000 rows: a column of plain
+  numbers with a point (`19.99`) is `Decimal`, read exactly, and one of
+  whole numbers `Integer`; only a column with an exponent (`1.5e3`),
+  `NaN` or `Inf`, or more than 18 places is `Float`. Declare what was found.
+  A Parquet `Float` column (a price) is read as exact decimals by declaring
+  it `Decimal`: `Price : Decimal`.
   Write the `Column : Type` lines it expects and no rows; its columns are
   selected and computed over as any sheet's, but no cell of it can be
   edited and nothing is written back to the files.
 - Names are identifiers: letters, digits and `_`, no spaces. `UnitPrice`, not
-  `Unit Price`. A table's column that the file names otherwise is given one
-  with `from`: `SiblingsSpousesAboard : Integer from "Siblings/Spouses Aboard"`.
+  `Unit Price`. A view's column that the file names otherwise is given one
+  with `from`: `SiblingsSpousesAboard : Integer from 'Siblings/Spouses Aboard'`.
   Form the name on the left from the file's own, dropping whatever a name
   has no room for; do not shorten it, or it says something the column does
   not.
@@ -125,10 +132,15 @@ sheet Summary
 - Bare text is Markdown where a file is shown, in the app and in a
   rendered document: `a **slow** start`, `[lease](lease.pdf)`. Quote text
   whose `*`, `_`, `[` or backticks are meant as they are: `"2 * 3 * 4"`.
+- **Quotes: a cell's text takes double quotes, code takes single.** Code is
+  everything outside a table cell: `:=` lines, `const`, a cell's `= …`,
+  `dataframe['…']`, `from '…'`, `{{ }}`. So `Name // 'Unknown'` and
+  `Sex == 'female'`; a `"…"` in code is an error. Escapes are `\'`, `\\`,
+  `\n`, `\t`; a format's grouping `'` is written `'%\'.2f'`.
 
 ## Types
 
-`Integer`, `Decimal`, `Fraction`, `Percent`, `Float`, `String`, `Boolean`,
+`Integer`, `Decimal`, `Fraction`, `Percent`, `Float`, `Complex`, `String`, `Boolean`,
 `Date`, `Time`, `Datetime`, `Duration`, `Url`, `Email`, `Uuid`.
 A column with no type line takes its type from its cells, which is usually
 what you want; declare one when the cells could be read another way.
@@ -139,7 +151,8 @@ what you want; declare one when the cells could be read another way.
 | `Decimal` | `19.99`, `1/7`, `2 3/4` — exact |
 | `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction, `1/7` and `2 3/4` |
 | `Percent` | `20%` — exact, shown as a percentage |
-| `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `"Inf"`), which is what a division by zero gives |
+| `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `'Inf'` in code, `"Inf"` in a cell), which is what a division by zero gives |
+| `Complex` | `3+4i`, `-1.5-2i`, `2i` — two `Float` parts, the most infectious number type; no order, so no `<` or sort. `re im conj arg` and `abs sqrt exp ln` take one; `z.Float` works only where the imaginary part is zero (to within `1e-15`) |
 | `Boolean` | `true`, `false` |
 | `Date`, `Time`, `Datetime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO. A fraction of a second goes after the seconds, `09:30:15.5`: nine digits for a `Time`, six for a `Datetime` |
 | `Duration` | `PT1H30M`, `P2D`, `-PT30M` — ISO 8601, weeks to seconds only (no `Y`, no calendar `M`). Two dates or times subtract to one; get a number with `.total_hours()` and the like |
@@ -168,7 +181,7 @@ A `Fraction` is the same number shown as a fraction of whole numbers: to
 show a column that way, declare it, as in `Share : Fraction`, or write
 `x.Fraction`. The fraction is worked out from the number, so
 `(2/7 + 3/7).Fraction` is `5/7`; a denominator past 10000 is shown as a
-decimal instead. Anything worked out from a fraction is a fraction.
+decimal instead. Two fractions give a fraction; a fraction with any other number gives a Decimal.
 
 Arithmetic is exact decimal arithmetic: `0.1 + 0.2 == 0.3` is true, and
 nothing wraps. A division that does not end within 38 digits is rounded
@@ -222,9 +235,9 @@ that do not fit are cut and marked `…`. Only the display is cut, and
   before this one. `Inf` fills the column, and any other limit stops there
   and leaves the rest empty. The days of the week and the months of the
   year are known by name, in full or in three letters, and go round:
-  `"Monday", "Tuesday" ... Inf`, `"Jan", "Feb" ... Inf`, and
-  `"Jan-2026", "Apr-2026" ... Inf` for quarters. Any other text counts up
-  as letters and digits do, `"A", "B" ... Inf` and `"AY" ... "BA"`. Dates
+  `'Monday', 'Tuesday' ... Inf`, `'Jan', 'Feb' ... Inf`, and
+  `'Jan-2026', 'Apr-2026' ... Inf` for quarters. Any other text counts up
+  as letters and digits do, `'A', 'B' ... Inf` and `'AY' ... 'BA'`. Dates
   step by whole days and times by seconds, except that the same day of
   each month steps by months: `2025-01-01, 2025-02-01 ... Inf`, and
   `2025-01-31, 2025-02-28 ... Inf` for the end of each month.
@@ -248,7 +261,7 @@ that do not fit are cut and marked `…`. Only the display is cut, and
   whatever is beside them, while `true and` and `false or` an empty cell are
   empty. Write `a // false` where the answer should be false.
 - A lookup that finds one row fills a cell with its value; none gives empty,
-  so add `// "none"`; several is an error.
+  so add `// 'none'`; several is an error.
 
 ## Workbooks, CSV, JSON and Markdown
 

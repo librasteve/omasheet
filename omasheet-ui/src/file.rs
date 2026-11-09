@@ -8,11 +8,13 @@ use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QUrl};
 use omasheet_engine::datefmt::Names;
-use omasheet_engine::doc::{BLANK, entry_hint};
+use omasheet_engine::doc::{BLANK, PAGED_ROWS, entry_hint};
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::{Document, Options, locale};
 use omasheet_interop::parquet;
 use omasheet_interop::{Exported, Imported};
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -46,11 +48,19 @@ pub mod qobject {
         #[qproperty(QString, theme_error)]
         #[qproperty(QString, export_warning)]
         #[qproperty(QString, snapshot_path)]
+        /// Whether something is being read in the background, for the
+        /// spinner in the status bar.
+        #[qproperty(bool, working)]
         type File = super::FileRust;
 
         /// The whole file as JSON: sheets, constants and problems.
         #[qinvokable]
         fn snapshot_json(self: &File) -> QString;
+        /// `count` rows of sheet `sheet` from row `from`, as JSON in the
+        /// shape of a sheet's `rows`: how the grid reads a paged sheet,
+        /// whose rows the snapshot does not hold.
+        #[qinvokable]
+        fn rows_json(self: &File, sheet: i32, from: i32, count: i32) -> QString;
         /// The file as it is written, for the source view: every sheet's
         /// lines aligned, as editing it there will leave them.
         #[qinvokable]
@@ -142,6 +152,20 @@ pub mod qobject {
             col1: i32,
             text: &QString,
         ) -> QString;
+        /// Paste a live reference to the cells last copied here, as formulas
+        /// (D210). Empty on success, which says what it wrote in the status
+        /// bar; otherwise why it could not.
+        #[qinvokable]
+        fn paste_reference(
+            self: Pin<&mut File>,
+            sheet: i32,
+            row0: i32,
+            col0: i32,
+            row1: i32,
+            col1: i32,
+            text: &QString,
+            by_row: bool,
+        ) -> QString;
         /// Paste as `paste_cells` does, but turned about: each copied row
         /// goes down a column.
         #[qinvokable]
@@ -192,6 +216,15 @@ pub mod qobject {
         /// Add an empty column as column `at`.
         #[qinvokable]
         fn insert_column(self: Pin<&mut File>, sheet: i32, at: i32, name: &QString) -> QString;
+        /// Make data column `col` a formula column, its cells given up.
+        #[qinvokable]
+        fn set_column_as_formula(
+            self: Pin<&mut File>,
+            sheet: i32,
+            col: i32,
+            name: &QString,
+            expr: &QString,
+        ) -> QString;
         /// Add a formula column as column `at`.
         #[qinvokable]
         fn insert_computed(
@@ -225,19 +258,63 @@ pub mod qobject {
         #[qinvokable]
         fn move_rows(self: Pin<&mut File>, sheet: i32, first: i32, count: i32, to: i32) -> QString;
         /// Move `count` columns from `first` so the first becomes column `to`.
-        /// The rows of sheet `sheet` a filter shows, as a JSON list of row
-        /// numbers. `hide` is each filtered column's name followed by the
-        /// texts it hides, separated by U+001F, the columns by U+001E.
+        /// Filter sheet `sheet`, and say how many rows it shows: -1 where
+        /// nothing is filtered and every row shows, and -2 where a filter
+        /// fails, which [`filter_problem`](Self::filter_problem) then says,
+        /// and the filter before stays in force. `filters` is each filtered
+        /// column's name and its expression, separated by U+001F, the
+        /// columns by U+001E (filter-by-expression D172). The rows are kept
+        /// here, for [`row_at`](Self::row_at) and [`pos_of`](Self::pos_of)
+        /// to answer from: a big table's would be millions, too many to
+        /// hand to QML.
         #[qinvokable]
-        fn shown_rows(self: &File, sheet: i32, hide: &QString) -> QString;
-        /// The texts column `col` shows, each once and in order, as a JSON
-        /// list: what its filter chooses among.
+        fn filter_rows(self: &File, sheet: i32, filters: &QString) -> i32;
+        /// Why the last filter failed, as `Column: why`.
         #[qinvokable]
-        fn distinct_shown(self: &File, sheet: i32, col: i32) -> QString;
+        fn filter_problem(self: &File) -> QString;
+        /// What is wrong with `expr` as a filter of column `col` of sheet
+        /// `sheet`, or nothing: checked as it is typed, and no row read.
+        #[qinvokable]
+        fn check_filter(self: &File, sheet: i32, col: i32, expr: &QString) -> QString;
+        /// The row shown at place `pos` of the filtered list, or -1 past its
+        /// ends; `pos` itself where nothing is filtered.
+        #[qinvokable]
+        fn row_at(self: &File, pos: i32) -> i32;
+        /// The place in the filtered list of row `row`, or -1 where it is
+        /// hidden; `row` itself where nothing is filtered.
+        #[qinvokable]
+        fn pos_of(self: &File, row: i32) -> i32;
+        /// Whether any row from `top` to `bottom` is hidden by the filter.
+        #[qinvokable]
+        fn hides_between(self: &File, top: i32, bottom: i32) -> bool;
         /// The rows of sheet `sheet` rearranged in the order of column
         /// `col`, descending or not.
         #[qinvokable]
         fn sort_rows(self: Pin<&mut File>, sheet: i32, col: i32, descending: bool) -> QString;
+        /// A filter worked out on a worker has been: `count` rows shown,
+        /// or -2 where it failed (see `filter_problem`).
+        #[qsignal]
+        fn filtered(self: Pin<&mut File>, count: i32);
+        /// The summary asked for as number `asked` by `ask_summary`, worked
+        /// out on a worker.
+        #[qsignal]
+        fn summarized(self: Pin<&mut File>, asked: i32, text: QString);
+        /// `selection_summary`, or for a big selection "…" now and the
+        /// text by `summarized` once a worker has added it up.
+        #[qinvokable]
+        fn ask_summary(
+            self: Pin<&mut File>,
+            asked: i32,
+            sheet: i32,
+            row0: i32,
+            col0: i32,
+            row1: i32,
+            col1: i32,
+        ) -> QString;
+        /// A sort done on a worker has been, with what went wrong if
+        /// anything.
+        #[qsignal]
+        fn sorted(self: Pin<&mut File>, col: i32, descending: bool, problem: QString);
         #[qinvokable]
         fn move_columns(
             self: Pin<&mut File>,
@@ -256,10 +333,20 @@ pub mod qobject {
             name: &QString,
             formula: &QString,
         ) -> QString;
+        /// A new view of the Parquet or CSV file `url`, before sheet `at`.
+        #[qinvokable]
+        fn insert_view(self: Pin<&mut File>, at: i32, name: &QString, url: &QUrl) -> QString;
+        /// A copy of sheet `sheet` put in just after it.
+        #[qinvokable]
+        fn duplicate_sheet(self: Pin<&mut File>, sheet: i32) -> QString;
         #[qinvokable]
         fn rename_sheet(self: Pin<&mut File>, sheet: i32, name: &QString) -> QString;
         #[qinvokable]
         fn delete_sheet(self: Pin<&mut File>, sheet: i32) -> QString;
+        /// Replace table `sheet`, which reads a file, by the file's rows
+        /// written into the document, to be edited. The problem, or empty.
+        #[qinvokable]
+        fn copy_into_document(self: Pin<&mut File>, sheet: i32) -> QString;
         /// Sheet `from` moved to be sheet `to`.
         #[qinvokable]
         fn move_sheet(self: Pin<&mut File>, from: i32, to: i32) -> QString;
@@ -270,6 +357,10 @@ pub mod qobject {
         fn add_const(self: Pin<&mut File>, name: &QString, expr: &QString) -> QString;
         #[qinvokable]
         fn set_const(self: Pin<&mut File>, index: i32, expr: &QString);
+        #[qinvokable]
+        fn delete_const(self: Pin<&mut File>, index: i32) -> QString;
+        #[qinvokable]
+        fn delete_all_consts(self: Pin<&mut File>);
 
         #[qinvokable]
         fn undo(self: Pin<&mut File>);
@@ -311,6 +402,26 @@ pub mod qobject {
         /// desktop does not say.
         #[qinvokable]
         fn desktop_font_size(self: &File) -> i32;
+        /// The text size the user last zoomed to, in pixels; 0 if none.
+        #[qinvokable]
+        fn saved_font_size(self: &File) -> i32;
+        /// Keep a zoomed text size for the next launch; 0 forgets it.
+        #[qinvokable]
+        fn save_font_size(self: &File, size: i32);
+        /// The file last opened or saved, if it is still there; empty if not.
+        #[qinvokable]
+        fn last_file(self: &File) -> QString;
+        /// Keep the file last opened or saved, for the next launch's Open.
+        #[qinvokable]
+        fn keep_last_file(self: &File, path: &QString);
+        /// The windows open last time, as `width,height` pairs joined by
+        /// `;`; empty if none were kept.
+        #[qinvokable]
+        fn saved_windows(self: &File) -> QString;
+        /// Keep the windows that are open, in the form `saved_windows`
+        /// gives; empty forgets them.
+        #[qinvokable]
+        fn save_windows(self: &File, windows: &QString);
         /// The count, sum and average of a block of cells, for the footer.
         #[qinvokable]
         fn selection_summary(
@@ -325,6 +436,13 @@ pub mod qobject {
 
     // The theme is watched from a thread of its own.
     impl cxx_qt::Threading for File {}
+}
+
+/// The rows a filter shows, by number, and the place each row has among
+/// them, -1 for one it hides.
+struct Shown {
+    rows: Vec<usize>,
+    pos: Vec<i32>,
 }
 
 pub struct FileRust {
@@ -352,6 +470,7 @@ pub struct FileRust {
     export_warning: QString,
     /// Development aid: where to save a picture of the window, then quit.
     snapshot_path: QString,
+    working: bool,
 
     doc: Document,
     path: Option<PathBuf>,
@@ -361,6 +480,24 @@ pub struct FileRust {
     saved: String,
     /// What was last cut or copied here.
     clip: Clip,
+    /// Why the last filter failed. See [`qobject::File::filter_problem`].
+    filter_problem: RefCell<String>,
+    /// The rows the filter in force shows, and each row's place among them;
+    /// `None` while every row shows. See [`qobject::File::filter_rows`].
+    shown: RefCell<Option<Shown>>,
+    /// The tables' files being read whole on a worker (D157).
+    reading: HashSet<PathBuf>,
+    /// The CSV files being copied to Parquet on a worker (open-a-big-csv
+    /// D153), shown from their samples meanwhile.
+    converting: HashSet<PathBuf>,
+    /// The number of the last filter asked for: one worked out on a worker
+    /// and overtaken by another is dropped.
+    filter_asked: std::cell::Cell<u64>,
+    /// Whether a filter or a sort is being worked out on a worker.
+    busy_jobs: std::cell::Cell<usize>,
+    /// The files already said to be too big to hold, so that it is said
+    /// once rather than with every edit.
+    told: HashSet<PathBuf>,
 }
 
 impl Default for FileRust {
@@ -386,11 +523,19 @@ impl Default for FileRust {
             system_dark: true,
             watching: false,
             snapshot_path: QString::from(std::env::var("OMASHEET_UI_SNAPSHOT").unwrap_or_default()),
+            working: false,
             doc: document(BLANK),
             path: None,
             origin: None,
             saved: BLANK.to_string(),
             clip: Clip::default(),
+            filter_problem: RefCell::new(String::new()),
+            shown: RefCell::new(None),
+            reading: HashSet::new(),
+            converting: HashSet::new(),
+            filter_asked: std::cell::Cell::new(0),
+            busy_jobs: std::cell::Cell::new(0),
+            told: HashSet::new(),
         }
     }
 }
@@ -405,11 +550,27 @@ fn style() -> Style {
     })
 }
 
-/// A document that shows dates and times the way the user's locale does.
+/// What the status bar says of a selection.
+fn summary_text(summary: Option<omasheet_engine::doc::Summary>) -> String {
+    let Some(summary) = summary else {
+        return String::new();
+    };
+    let mut text = format!("Count {}", summary.count);
+    if let Some((sum, mean)) = summary.numbers {
+        text.push_str(&format!("   Sum {sum}   Mean {mean}"));
+    }
+    text
+}
+
+/// The rows above which a filter or a sort is worked out on a worker, so
+/// that the window goes on answering the desktop, which takes a window
+/// that stops answering for a few seconds to be hung.
+const WORKER_ROWS: usize = 200_000;
+
 fn document(text: &str) -> Document {
     static NAMES: OnceLock<Names> = OnceLock::new();
     let names = NAMES.get_or_init(locale::os_names);
-    Document::with_locale(text, style(), names.clone())
+    Document::on_screen(text, style(), names.clone())
 }
 
 fn index(n: i32) -> usize {
@@ -434,6 +595,14 @@ impl qobject::File {
         self.as_mut().set_modified(modified);
         self.as_mut().set_can_undo(can_undo);
         self.as_mut().set_can_redo(can_redo);
+        let copying = self.as_mut().convert_tables();
+        let note = self.as_mut().hold_tables();
+        let note = if note.is_empty() { copying } else { note };
+        let status = if status.is_empty() {
+            note.as_str()
+        } else {
+            status
+        };
         self.as_mut().set_status(QString::from(status));
         let next = self.rust().revision.wrapping_add(1);
         self.as_mut().set_revision(next);
@@ -464,6 +633,14 @@ impl qobject::File {
         QString::from(&json::snapshot(self.rust().doc.snapshot()))
     }
 
+    fn rows_json(&self, sheet: i32, from: i32, count: i32) -> QString {
+        let rows = self
+            .rust()
+            .doc
+            .rows(index(sheet), index(from), index(count));
+        QString::from(&json::rows(&rows))
+    }
+
     fn source_text(&self) -> QString {
         QString::from(&self.rust().doc.aligned_text())
     }
@@ -482,6 +659,54 @@ impl qobject::File {
         self.as_mut().set_notes(QString::default());
         self.as_mut().set_path(None);
         self.refresh("");
+    }
+
+    /// Open a big Parquet file as a new file, not yet saved, of one `table`
+    /// that reads it where it is: copied into the text, as an import does,
+    /// a file of millions of rows would never be shown. `false` for a file
+    /// of no more rows than a sheet is formatted whole at, which is
+    /// imported to be edited, and for one that cannot be read, which the
+    /// import then says why of.
+    ///
+    /// The file is named by its whole path, so that the `.omx` saved from
+    /// this reads it wherever it is saved.
+    fn open_table(mut self: Pin<&mut Self>, path: &std::path::Path) -> bool {
+        // The `view` lines that read the file where it is: one, or for a JSON
+        // object of lists one for each sheet.
+        let Ok(text) = omasheet_interop::table_source(path) else {
+            return false;
+        };
+        let doc = document(&text);
+        // A CSV or JSON file is read through a copy, which `convert_tables`
+        // writes.
+        let csv = omasheet_engine::table::is_converted(path);
+        let rows = doc.row_count(0);
+        if !csv && (rows <= PAGED_ROWS || !doc.snapshot().sheets[0].paged) {
+            return false;
+        }
+        // A CSV that cannot be read as one is imported, which says why.
+        if csv && !doc.snapshot().problems.is_empty() {
+            return false;
+        }
+        {
+            let mut rust = self.as_mut().rust_mut();
+            rust.doc = doc;
+            rust.saved = String::new();
+        }
+        let file = path.file_name().unwrap_or_default().to_string_lossy();
+        // No notes, and so no dialog: the table is there to be seen. The
+        // status bar says what it is; for a CSV, that its first rows are
+        // shown while the rest is read, which `convert_tables` says.
+        self.as_mut().set_notes(QString::default());
+        self.as_mut().set_path(None);
+        self.as_mut().rust_mut().origin = Some(path.to_path_buf());
+        let status = if csv {
+            String::new()
+        } else {
+            format!("Opened {file} as a read-only view ({rows} rows)")
+        };
+        self.refresh(&status);
+        true
     }
 
     /// Open a workbook, a CSV file or JSON as a new file, not yet saved.
@@ -526,6 +751,18 @@ impl qobject::File {
     fn open_file(mut self: Pin<&mut Self>, path: PathBuf) -> bool {
         let kind = path.extension().unwrap_or_default().to_string_lossy();
         let kind = kind.to_ascii_lowercase();
+        if kind == "parquet" && self.as_mut().open_table(&path) {
+            return true;
+        }
+        // A CSV, JSON or XLSX file too big to import as text (open-a-big-csv
+        // D146). A workbook with a formula in it is not opened so, since a
+        // table has values and no formulas, and is imported below.
+        if matches!(kind.as_str(), "csv" | "json" | "xlsx")
+            && std::fs::metadata(&path).is_ok_and(|m| m.len() > omasheet_engine::table::BIG_FILE)
+            && self.as_mut().open_table(&path)
+        {
+            return true;
+        }
         if matches!(kind.as_str(), "xlsx" | "csv" | "json" | "parquet") {
             return self.import_file(path, &kind);
         }
@@ -700,7 +937,7 @@ impl qobject::File {
     }
 
     /// Edit sheet `sheet`, and say why in the status bar when it takes no
-    /// edit at all: a `table` is a read-only view of its Parquet file.
+    /// edit at all: a `view` is read-only over its Parquet file.
     fn edit_sheet(
         mut self: Pin<&mut Self>,
         sheet: i32,
@@ -745,6 +982,18 @@ impl qobject::File {
         act(&mut rust.clip, &mut rust.doc)
     }
 
+    /// The rows from `top` to `bottom` that the filter shows, where it hides
+    /// any of them: what a copy or a cut takes is what can be seen.
+    fn rows_shown(&self, top: usize, bottom: usize) -> Option<Vec<usize>> {
+        let shown = self.rust().shown.borrow();
+        let shown = shown.as_ref()?;
+        let visible = |r: &usize| shown.pos.get(*r).is_none_or(|&p| p >= 0);
+        let rows: Vec<usize> = (top.min(bottom)..=top.max(bottom))
+            .filter(visible)
+            .collect();
+        (rows.len() < top.abs_diff(bottom) + 1).then_some(rows)
+    }
+
     /// A paste, published if it changed anything: why not, if it was refused.
     fn pasted(
         mut self: Pin<&mut Self>,
@@ -775,6 +1024,12 @@ impl qobject::File {
         col1: i32,
     ) -> QString {
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
+        if let Some(rows) = self.rows_shown(from.0, to.0) {
+            let cols = (from.1, to.1);
+            return QString::from(
+                &self.clip(|clip, doc| clip.copy_rows(doc, index(sheet), &rows, cols)),
+            );
+        }
         QString::from(&self.clip(|clip, doc| clip.copy(doc, index(sheet), from, to)))
     }
 
@@ -787,6 +1042,12 @@ impl qobject::File {
         col1: i32,
     ) -> QString {
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
+        if let Some(rows) = self.rows_shown(from.0, to.0) {
+            let cols = (from.1, to.1);
+            return QString::from(
+                &self.clip(|clip, doc| clip.cut_rows(doc, index(sheet), &rows, cols)),
+            );
+        }
         QString::from(&self.clip(|clip, doc| clip.cut(doc, index(sheet), from, to)))
     }
 
@@ -806,6 +1067,31 @@ impl qobject::File {
         let text = text.to_string();
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
         self.pasted(|clip, doc| clip.paste(doc, index(sheet), from, to, &text))
+    }
+
+    fn paste_reference(
+        mut self: Pin<&mut Self>,
+        sheet: i32,
+        row0: i32,
+        col0: i32,
+        row1: i32,
+        col1: i32,
+        text: &QString,
+        by_row: bool,
+    ) -> QString {
+        let text = text.to_string();
+        let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
+        let said = self
+            .as_mut()
+            .clip(|clip, doc| clip.paste_reference_in(doc, index(sheet), from, to, &text, by_row));
+        match said {
+            Ok(Some(said)) => {
+                self.refresh(&said);
+                QString::default()
+            }
+            Ok(None) => QString::default(),
+            Err(message) => QString::from(&message),
+        }
     }
 
     fn paste_values(
@@ -874,6 +1160,17 @@ impl qobject::File {
         self.try_edit(|doc| doc.insert_computed(index(sheet), index(at), &name, &expr))
     }
 
+    fn set_column_as_formula(
+        self: Pin<&mut Self>,
+        sheet: i32,
+        col: i32,
+        name: &QString,
+        expr: &QString,
+    ) -> QString {
+        let (name, expr) = (name.to_string(), expr.to_string());
+        self.try_edit(|doc| doc.set_column_as_formula(index(sheet), index(col), &name, &expr))
+    }
+
     fn add_computed(self: Pin<&mut Self>, sheet: i32, name: &QString, expr: &QString) -> QString {
         let (name, expr) = (name.to_string(), expr.to_string());
         self.try_edit(|doc| doc.add_computed(index(sheet), &name, &expr))
@@ -919,30 +1216,193 @@ impl qobject::File {
         self.try_edit(|doc| doc.move_rows(index(sheet), index(first), index(count), index(to)))
     }
 
-    fn shown_rows(&self, sheet: i32, hide: &QString) -> QString {
-        let hide: Vec<(String, Vec<String>)> = hide
+    fn filter_rows(&self, sheet: i32, filters: &QString) -> i32 {
+        let filters: Vec<(String, String)> = filters
             .to_string()
             .split('\u{1e}')
-            .filter(|column| !column.is_empty())
             .filter_map(|column| {
-                let mut parts = column.split('\u{1f}');
-                let name = parts.next()?.to_string();
-                Some((name, parts.map(str::to_string).collect()))
+                let (name, expr) = column.split_once('\u{1f}')?;
+                Some((name.to_string(), expr.to_string())).filter(|(_, e)| !e.trim().is_empty())
             })
             .collect();
-        QString::from(&json::numbers(
-            &self.rust().doc.shown_rows(index(sheet), &hide),
-        ))
+        let rust = self.rust();
+        let asked = rust.filter_asked.get() + 1;
+        rust.filter_asked.set(asked);
+        if filters.is_empty() {
+            *rust.shown.borrow_mut() = None;
+            return -1;
+        }
+        let job = match rust.doc.filter_job(index(sheet), &filters) {
+            Ok(job) => job,
+            Err(why) => {
+                *rust.filter_problem.borrow_mut() = why;
+                return -2;
+            }
+        };
+        // A big one is run on a worker, so that the window goes on
+        // answering the desktop; the rows shown stay as they were until it
+        // comes back, and -3 says so.
+        if job.rows() > WORKER_ROWS {
+            rust.busy_jobs.set(rust.busy_jobs.get() + 1);
+            let thread = self.qt_thread();
+            std::thread::spawn(move || {
+                let rows = job.run();
+                let _ = thread.queue(move |file| file.filter_ran(asked, sheet, filters, rows));
+            });
+            return -3;
+        }
+        let rows = match job.run() {
+            Some(rows) => Ok(rows),
+            None => rust.doc.shown_rows(index(sheet), &filters),
+        };
+        match rows {
+            Ok(rows) => self.show_rows(sheet, rows),
+            Err(why) => {
+                *rust.filter_problem.borrow_mut() = why;
+                -2
+            }
+        }
     }
 
-    fn distinct_shown(&self, sheet: i32, col: i32) -> QString {
-        QString::from(&json::texts(
-            &self.rust().doc.distinct_shown(index(sheet), index(col)),
-        ))
+    /// Keep `rows` as the rows the filter shows, and give their count.
+    fn show_rows(&self, sheet: i32, rows: Vec<usize>) -> i32 {
+        let rust = self.rust();
+        let n = rust.doc.row_count(index(sheet));
+        let mut pos = vec![-1; n];
+        for (k, &r) in rows.iter().enumerate() {
+            if let Some(p) = pos.get_mut(r) {
+                *p = k as i32;
+            }
+        }
+        let count = rows.len() as i32;
+        *rust.shown.borrow_mut() = Some(Shown { rows, pos });
+        count
     }
 
-    fn sort_rows(self: Pin<&mut Self>, sheet: i32, col: i32, descending: bool) -> QString {
+    fn filter_problem(&self) -> QString {
+        QString::from(&*self.rust().filter_problem.borrow())
+    }
+
+    fn check_filter(&self, sheet: i32, col: i32, expr: &QString) -> QString {
+        match self
+            .rust()
+            .doc
+            .check_filter(index(sheet), index(col), &expr.to_string())
+        {
+            Ok(()) => QString::default(),
+            Err(why) => QString::from(&why),
+        }
+    }
+
+    fn row_at(&self, pos: i32) -> i32 {
+        match &*self.rust().shown.borrow() {
+            None => pos,
+            Some(shown) => usize::try_from(pos)
+                .ok()
+                .and_then(|p| shown.rows.get(p))
+                .map_or(-1, |&r| r as i32),
+        }
+    }
+
+    fn pos_of(&self, row: i32) -> i32 {
+        match &*self.rust().shown.borrow() {
+            None => row,
+            Some(shown) => usize::try_from(row)
+                .ok()
+                .and_then(|r| shown.pos.get(r))
+                .copied()
+                .unwrap_or(-1),
+        }
+    }
+
+    fn hides_between(&self, top: i32, bottom: i32) -> bool {
+        match &*self.rust().shown.borrow() {
+            None => false,
+            Some(shown) => {
+                let (top, bottom) = (index(top.min(bottom)), index(top.max(bottom)));
+                shown
+                    .pos
+                    .get(top..=bottom.min(shown.pos.len().saturating_sub(1)))
+                    .is_some_and(|block| block.iter().any(|&p| p < 0))
+            }
+        }
+    }
+
+    fn sort_rows(mut self: Pin<&mut Self>, sheet: i32, col: i32, descending: bool) -> QString {
+        // A big table is put in order on a worker; `sorted` says when, and
+        // the "…" returned now says it is coming.
+        let job = self
+            .rust()
+            .doc
+            .sort_job(index(sheet), index(col), descending);
+        if let Some(job) = job.filter(|_| self.rust().doc.row_count(index(sheet)) > WORKER_ROWS) {
+            self.rust().busy_jobs.set(self.rust().busy_jobs.get() + 1);
+            self.as_mut().set_working(true);
+            let thread = self.qt_thread();
+            std::thread::spawn(move || {
+                let shown = job.run();
+                let _ = thread.queue(move |file| file.sort_ran(job, shown, col, descending));
+            });
+            return QString::from("\u{2026}");
+        }
         self.try_edit(|doc| doc.sort_rows(index(sheet), index(col), descending))
+    }
+
+    /// A sort run on a worker has come back: the table is put in that
+    /// order, unless it has changed meanwhile and is sorted again here.
+    fn sort_ran(
+        mut self: Pin<&mut Self>,
+        job: omasheet_engine::doc::SortJob,
+        shown: Vec<usize>,
+        col: i32,
+        descending: bool,
+    ) {
+        self.rust()
+            .busy_jobs
+            .set(self.rust().busy_jobs.get().saturating_sub(1));
+        let problem = self
+            .as_mut()
+            .try_edit(move |doc| doc.finish_sort(job, shown));
+        self.as_mut().update_working();
+        self.as_mut().sorted(col, descending, problem);
+    }
+
+    /// A filter run on a worker has come back: kept, unless another has
+    /// been asked for since.
+    fn filter_ran(
+        mut self: Pin<&mut Self>,
+        asked: u64,
+        sheet: i32,
+        filters: Vec<(String, String)>,
+        rows: Option<Vec<usize>>,
+    ) {
+        self.rust()
+            .busy_jobs
+            .set(self.rust().busy_jobs.get().saturating_sub(1));
+        self.as_mut().update_working();
+        if asked != self.rust().filter_asked.get() {
+            return;
+        }
+        let rows = match rows {
+            Some(rows) => Ok(rows),
+            None => self.rust().doc.shown_rows(index(sheet), &filters),
+        };
+        let count = match rows {
+            Ok(rows) => self.show_rows(sheet, rows),
+            Err(why) => {
+                *self.rust().filter_problem.borrow_mut() = why;
+                -2
+            }
+        };
+        self.as_mut().filtered(count);
+    }
+
+    /// Whether anything is being done on a worker, for the spinner.
+    fn update_working(mut self: Pin<&mut Self>) {
+        let rust = self.rust();
+        let busy =
+            !rust.reading.is_empty() || !rust.converting.is_empty() || rust.busy_jobs.get() > 0;
+        self.as_mut().set_working(busy);
     }
 
     fn move_columns(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, to: i32) -> QString {
@@ -961,6 +1421,24 @@ impl qobject::File {
         self.try_edit(|doc| doc.insert_sheet(index(at), &name, Some(formula.as_str())))
     }
 
+    fn insert_view(self: Pin<&mut Self>, at: i32, name: &QString, url: &QUrl) -> QString {
+        let name = name.to_string();
+        let file = PathBuf::from(url.to_local_file_or_default().to_string());
+        // Always relative: to the saved file's folder, or to where the app runs.
+        let dir = self
+            .rust()
+            .path
+            .as_ref()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .or_else(|| std::env::current_dir().ok());
+        let shown = match dir {
+            Some(dir) => relative_path(&file, &dir),
+            None => file,
+        };
+        let shown = shown.to_string_lossy().to_string();
+        self.try_edit(|doc| doc.insert_view(index(at), &name, &shown, omasheet_interop::identifier))
+    }
+
     fn rename_sheet(self: Pin<&mut Self>, sheet: i32, name: &QString) -> QString {
         let name = name.to_string();
         self.try_edit(|doc| doc.rename_sheet(index(sheet), &name))
@@ -970,8 +1448,26 @@ impl qobject::File {
         self.try_edit(|doc| doc.delete_sheet(index(sheet)))
     }
 
+    fn copy_into_document(self: Pin<&mut Self>, sheet: i32) -> QString {
+        self.try_edit(|doc| {
+            let at = index(sheet);
+            let name = doc
+                .snapshot()
+                .sheets
+                .get(at)
+                .map(|t| t.name.clone())
+                .ok_or("there is no such sheet")?;
+            let block = table_as_sheet(doc, at, &name)?;
+            doc.copy_table_into_document(at, &block)
+        })
+    }
+
     fn move_sheet(self: Pin<&mut Self>, from: i32, to: i32) -> QString {
         self.try_edit(|doc| doc.move_sheet(index(from), index(to)))
+    }
+
+    fn duplicate_sheet(self: Pin<&mut Self>, sheet: i32) -> QString {
+        self.try_edit(|doc| doc.duplicate_sheet(index(sheet)).map(|_| ()))
     }
 
     fn paste_sheet(self: Pin<&mut Self>, from: i32, to: i32) -> QString {
@@ -986,6 +1482,14 @@ impl qobject::File {
     fn set_const(self: Pin<&mut Self>, index_: i32, expr: &QString) {
         let expr = expr.to_string();
         self.edit(|doc| doc.set_const(index(index_), &expr));
+    }
+
+    fn delete_const(self: Pin<&mut Self>, index_: i32) -> QString {
+        self.try_edit(|doc| doc.delete_const(index(index_)))
+    }
+
+    fn delete_all_consts(self: Pin<&mut Self>) {
+        self.edit(|doc| doc.delete_all_consts());
     }
 
     fn undo(self: Pin<&mut Self>) {
@@ -1044,6 +1548,40 @@ impl qobject::File {
         crate::theme::base_font_size().map_or(0, |size| size as i32)
     }
 
+    fn saved_font_size(&self) -> i32 {
+        crate::theme::saved_font_size().map_or(0, |size| size as i32)
+    }
+
+    fn save_font_size(&self, size: i32) {
+        crate::theme::save_font_size(size.max(0) as u32);
+    }
+
+    fn last_file(&self) -> QString {
+        let text = crate::theme::read_config("last-file");
+        let path = text.trim();
+        if !path.is_empty() && std::path::Path::new(path).is_file() {
+            QString::from(path)
+        } else {
+            QString::default()
+        }
+    }
+
+    fn keep_last_file(&self, path: &QString) {
+        // In full: it may have been given as a path from the folder the
+        // program was started in.
+        let path = path.to_string();
+        let full = std::fs::canonicalize(&path).map_or(path, |p| p.to_string_lossy().into_owned());
+        crate::theme::write_config("last-file", &full);
+    }
+
+    fn saved_windows(&self) -> QString {
+        QString::from(crate::theme::read_config("windows").trim())
+    }
+
+    fn save_windows(&self, windows: &QString) {
+        crate::theme::write_config("windows", &windows.to_string());
+    }
+
     fn entry_hint(&self, ty: &QString) -> QString {
         // Only where the way to write a value is not plain from its type.
         let ty = ty.to_string();
@@ -1062,14 +1600,166 @@ impl qobject::File {
     fn selection_summary(&self, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {
         let doc = &self.rust().doc;
         let from = (index(row0), index(col0));
-        let Some(summary) = doc.summary(index(sheet), from, (index(row1), index(col1))) else {
-            return QString::default();
+        QString::from(&summary_text(doc.summary(
+            index(sheet),
+            from,
+            (index(row1), index(col1)),
+        )))
+    }
+
+    fn ask_summary(
+        mut self: Pin<&mut Self>,
+        asked: i32,
+        sheet: i32,
+        row0: i32,
+        col0: i32,
+        row1: i32,
+        col1: i32,
+    ) -> QString {
+        let rows = index(row0)..index(row1) + 1;
+        let cols = index(col0)..index(col1) + 1;
+        let job = self.rust().doc.summary_job(index(sheet), rows, cols);
+        let Some(job) = job.filter(|j| j.rows() > WORKER_ROWS) else {
+            return self.selection_summary(sheet, row0, col0, row1, col1);
         };
-        let mut text = format!("Count {}", summary.count);
-        if let Some((sum, mean)) = summary.numbers {
-            text.push_str(&format!("   Sum {sum}   Mean {mean}"));
+        self.rust().busy_jobs.set(self.rust().busy_jobs.get() + 1);
+        self.as_mut().update_working();
+        let thread = self.qt_thread();
+        std::thread::spawn(move || {
+            let added = job.run();
+            let _ = thread.queue(move |mut file| {
+                file.rust()
+                    .busy_jobs
+                    .set(file.rust().busy_jobs.get().saturating_sub(1));
+                file.as_mut().update_working();
+                let text = match added {
+                    Some(added) => summary_text(file.rust().doc.summary_from(added)),
+                    // What Polars would not add up is added a value at a time.
+                    None => file
+                        .selection_summary(sheet, row0, col0, row1, col1)
+                        .to_string(),
+                };
+                file.as_mut().summarized(asked, QString::from(&text));
+            });
+        });
+        QString::from("\u{2026}")
+    }
+
+    /// Read whole, on a worker, each paged table that fits in half the memory
+    /// there is free, so that it is given from memory once it arrives
+    /// (D157); and say of one that does not fit that it is kept on disk,
+    /// and why. Returns what to say, if anything.
+    fn hold_tables(mut self: Pin<&mut Self>) -> String {
+        let wanted = self.rust().doc.to_hold();
+        if wanted.is_empty() {
+            return String::new();
         }
-        QString::from(&text)
+        let Some(free) = mem_available() else {
+            return String::new();
+        };
+        let mut note = String::new();
+        for want in wanted {
+            let name = file_name(&self.rust().doc.source_file(&want.path));
+            if self.rust().reading.contains(&want.path) {
+                continue;
+            }
+            if want.bytes >= free / 2 {
+                if self.as_mut().rust_mut().told.insert(want.path.clone()) {
+                    note = format!(
+                        "{name} kept on disk: {} to hold, {} free",
+                        bytes_text(want.bytes),
+                        bytes_text(free)
+                    );
+                }
+                continue;
+            }
+            self.as_mut().rust_mut().reading.insert(want.path.clone());
+            self.as_mut().set_working(true);
+            note = format!(
+                "Reading {name} into memory ({})\u{2026}",
+                bytes_text(want.bytes)
+            );
+            let thread = self.qt_thread();
+            std::thread::spawn(move || {
+                let got = omasheet_engine::table::read_whole(&want.path, &want.columns);
+                let _ = thread.queue(move |file| file.whole_read(want.path, want.bytes, got));
+            });
+        }
+        note
+    }
+
+    /// Copy to Parquet, on a worker each, the CSV files the document's
+    /// tables read that have no copy yet (open-a-big-csv D153). Returns
+    /// what to say, if anything.
+    fn convert_tables(mut self: Pin<&mut Self>) -> String {
+        let mut note = String::new();
+        for csv in self.rust().doc.to_convert() {
+            if !self.as_mut().rust_mut().converting.insert(csv.clone()) {
+                continue;
+            }
+            self.as_mut().set_working(true);
+            note = format!(
+                "Showing the first {} rows of {}, read-only, while the rest is read\u{2026}",
+                omasheet_engine::table::SAMPLE_ROWS,
+                file_name(&csv)
+            );
+            let thread = self.qt_thread();
+            std::thread::spawn(move || {
+                let got = omasheet_engine::table::convert(&csv).map(|_| ());
+                let _ = thread.queue(move |file| file.csv_converted(csv, got));
+            });
+        }
+        note
+    }
+
+    /// A CSV's copy has been written, or could not be.
+    fn csv_converted(mut self: Pin<&mut Self>, csv: PathBuf, got: Result<(), String>) {
+        self.as_mut().rust_mut().converting.remove(&csv);
+        self.as_mut().update_working();
+        let name = file_name(&csv);
+        match got {
+            Ok(()) => {
+                if self.as_mut().rust_mut().doc.converted(&csv) {
+                    let rows = self
+                        .rust()
+                        .doc
+                        .snapshot()
+                        .sheets
+                        .first()
+                        .map_or(0, |t| t.nrows);
+                    self.refresh(&format!("{name} read: {rows} rows"));
+                }
+            }
+            Err(why) => self
+                .as_mut()
+                .set_status(QString::from(&format!("Cannot read all of {name}: {why}"))),
+        }
+    }
+
+    /// A table's file has been read whole, or could not be. `bytes` is what
+    /// it was estimated to take, which is what it takes (measured within 3%
+    /// of the memory it adds), where Polars' own `estimated_size` counts
+    /// little of a column of text.
+    fn whole_read(
+        mut self: Pin<&mut Self>,
+        path: PathBuf,
+        bytes: usize,
+        got: Result<omasheet_engine::table::Whole, String>,
+    ) {
+        self.as_mut().rust_mut().reading.remove(&path);
+        self.as_mut().update_working();
+        let name = file_name(&self.rust().doc.source_file(&path));
+        match got {
+            Ok(whole) => {
+                let size = bytes_text(bytes);
+                if self.as_mut().rust_mut().doc.hold(path, whole) {
+                    self.refresh(&format!("{name} held in memory ({size})"));
+                }
+            }
+            Err(why) => self.as_mut().set_status(QString::from(&format!(
+                "Cannot read {name} into memory: {why}"
+            ))),
+        }
     }
 
     fn follow_theme(mut self: Pin<&mut Self>, system_dark: bool) {
@@ -1094,5 +1784,109 @@ impl qobject::File {
             .set_theme_selection(QString::from(&theme.selection));
         self.as_mut().set_theme_muted(QString::from(&theme.muted));
         self.as_mut().set_theme_error(QString::from(&theme.error));
+    }
+}
+
+/// The memory the system says can be had without swapping, in bytes:
+/// `MemAvailable` in `/proc/meminfo`. `None` where there is no such file,
+/// and then no table is held whole.
+fn mem_available() -> Option<usize> {
+    let info = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let line = info.lines().find(|l| l.starts_with("MemAvailable:"))?;
+    let kb: usize = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kb * 1024)
+}
+
+/// A size as the status bar says it: `501 MB`, `3.2 GB`.
+fn bytes_text(bytes: usize) -> String {
+    let mb = bytes as f64 / 1e6;
+    if mb < 1000.0 {
+        format!("{mb:.0} MB")
+    } else {
+        format!("{:.1} GB", mb / 1000.0)
+    }
+}
+
+/// The last part of a path, for the status bar.
+fn file_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// `file` as a path from folder `dir`, climbing with `..` where it must.
+fn relative_path(file: &std::path::Path, dir: &std::path::Path) -> PathBuf {
+    let file: Vec<_> = file.components().collect();
+    let dir: Vec<_> = dir.components().collect();
+    let common = file.iter().zip(&dir).take_while(|(a, b)| a == b).count();
+    let mut out = PathBuf::new();
+    for _ in common..dir.len() {
+        out.push("..");
+    }
+    for part in &file[common..] {
+        out.push(part);
+    }
+    out
+}
+
+/// The rows of the file that table `sheet` reads, written as an inline sheet
+/// of the table's name: what an import writes, so the two are alike. Refused
+/// for a file that is too big to be written into the text, which is what a
+/// table is for, and for one of several sheets, which an import would write
+/// as several.
+fn table_as_sheet(doc: &Document, sheet: usize, name: &str) -> Result<String, String> {
+    let path = doc
+        .table_file(sheet)
+        .ok_or("only a table over a file can be copied into the document")?;
+    let shown = path.to_string_lossy().to_string();
+    if shown.contains('#') {
+        return Err(format!(
+            "`{name}` is one sheet of a workbook or JSON file: import the file to edit it"
+        ));
+    }
+    let big = std::fs::metadata(&path)
+        .map(|m| m.len() > omasheet_engine::table::BIG_FILE)
+        .map_err(|e| format!("cannot read {shown}: {e}"))?;
+    let kind = path
+        .extension()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_ascii_lowercase();
+    let rows = doc.row_count(sheet);
+    if rows > PAGED_ROWS || (big && kind != "parquet") {
+        return Err(format!(
+            "`{name}` has too many rows to be copied into the document ({rows}): it stays a table"
+        ));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {shown}: {e}"))?;
+    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+    let imported = match kind.as_str() {
+        "xlsx" | "xlsm" => omasheet_interop::xlsx::import(&bytes, Options::default()),
+        "json" => omasheet_interop::json::import(&stem, &bytes),
+        "parquet" => omasheet_interop::parquet::import(&stem, &bytes),
+        _ => omasheet_interop::csv::import(&stem, &bytes),
+    }?;
+    let source = imported.source;
+    if source.matches("\nsheet ").count() > 0 || !source.starts_with("sheet ") {
+        return Err(format!(
+            "`{name}` is a file of several sheets: import it to edit it"
+        ));
+    }
+    // The table's name, so that what refers to it still does.
+    let (_, rest) = source.split_once('\n').unwrap_or((&source, ""));
+    Ok(format!("sheet {name}\n{rest}"))
+}
+
+#[cfg(test)]
+mod relative_tests {
+    use super::relative_path;
+    use std::path::Path;
+
+    #[test]
+    fn a_path_is_made_relative_to_a_folder() {
+        let rel = |f, d| relative_path(Path::new(f), Path::new(d));
+        assert_eq!(rel("/a/b/data/x.csv", "/a/b"), Path::new("data/x.csv"));
+        assert_eq!(rel("/a/data/x.csv", "/a/b"), Path::new("../data/x.csv"));
+        assert_eq!(rel("/a/b/x.csv", "/a/b"), Path::new("x.csv"));
     }
 }

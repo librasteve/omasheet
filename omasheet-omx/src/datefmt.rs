@@ -210,7 +210,7 @@ impl DateFormat {
             match ty {
                 S::Date => matches!(needs, Needs::Time | Needs::Instant),
                 S::Time => matches!(needs, Needs::Date | Needs::Instant),
-                S::DateTime => false,
+                S::Datetime => false,
                 _ => true,
             }
         })
@@ -218,7 +218,7 @@ impl DateFormat {
 
     /// Whether a column of type `ty` takes this format.
     pub fn takes(&self, ty: S) -> bool {
-        matches!(ty, S::Date | S::Time | S::DateTime) && self.refused(ty).is_none()
+        matches!(ty, S::Date | S::Time | S::Datetime) && self.refused(ty).is_none()
     }
 
     /// Where conversion `conv` first is in the text, in bytes from its
@@ -320,7 +320,7 @@ mod tests {
         assert!(read("%I:%M %p").takes(S::Time));
         assert!(!read("%a %H").takes(S::Time));
         assert!(!read("%H %z").takes(S::Time));
-        assert!(read("%c %z %Z %s %f").takes(S::DateTime));
+        assert!(read("%c %z %Z %s %f").takes(S::Datetime));
         assert!(!read("%Y").takes(S::Int));
         assert!(read("%n").takes(S::Time));
     }

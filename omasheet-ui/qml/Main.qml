@@ -56,8 +56,13 @@ ApplicationWindow {
         openCell = openCell && openCell.tab === tab && openCell.row === row && openCell.col === col
             ? null : { tab: tab, row: row, col: col };
     }
-    // Ctrl+plus and Ctrl+minus change the size; everything scales from it.
-    property int fontSize: baseFontSize
+    // Ctrl+plus and Ctrl+minus change the size, and everything scales from
+    // it. The size zoomed to is kept per user, so the next launch opens at
+    // it; Ctrl+0 forgets it and goes back to the desktop's.
+    property int fontSize: {
+        var saved = file.savedFontSize();
+        return saved > 0 ? Math.max(8, Math.min(40, saved)) : baseFontSize;
+    }
     // The smaller sizes are a share of it rather than so many pixels off,
     // so they keep their proportions at any size: a fixed `- 3` is a tenth
     // off at 30 and a third off at 9. The shares are Omarchy's own type
@@ -70,11 +75,15 @@ ApplicationWindow {
     readonly property int dialogSize: captionSize
     readonly property int rowHeight: fontSize * 2
     readonly property int headerHeight: Math.round(fontSize * 3.3)
-    readonly property int gutterWidth: Math.round(fontSize * 3.4)
+    // Wide enough for the last row's number: a digit of the caption font is
+    // about 0.62 of its size, with a font-size of room beside it.
+    readonly property int gutterWidth: Math.round(Math.max(fontSize * 3.4,
+        captionSize * 0.62 * String(Math.max(0, (sheet ? sheet.nrows : 0) - 1)).length + fontSize * 1.2))
     onFontSizeChanged: Qt.callLater(function() { win.measure(); win.reveal(); })
 
     function zoom(step) {
         fontSize = step === 0 ? baseFontSize : Math.max(8, Math.min(40, fontSize + step));
+        file.saveFontSize(step === 0 ? 0 : fontSize);
     }
 
     Material.theme: file.darkMode ? Material.Dark : Material.Light
@@ -82,21 +91,24 @@ ApplicationWindow {
     Material.background: pageColor
     Material.foreground: textColor
     color: pageColor
-    font.family: "monospace"
+    // Qt has no "monospace" alias on macOS, where the name falls through to
+    // a proportional face; Menlo ships with every Mac.
+    readonly property string monoFamily: Qt.platform.os === "osx" ? "Menlo" : "monospace"
+    font.family: monoFamily
     font.pixelSize: fontSize
     // No ligatures: `|>`, `==` and `:=` are shown as they are typed.
     font.features: { "calt": 0, "liga": 0 }
 
     FontMetrics {
         id: metrics
-        font.family: "monospace"
+        font.family: win.monoFamily
         font.pixelSize: win.fontSize
         font.features: win.font.features
     }
     // The header's type line, which is set smaller.
     FontMetrics {
         id: noteMetrics
-        font.family: "monospace"
+        font.family: win.monoFamily
         font.pixelSize: win.noteSize
         font.features: win.font.features
     }
@@ -126,7 +138,7 @@ ApplicationWindow {
         resetBox();
     }
     readonly property var sheet: tab < tabs.length ? tabs[tab] : emptySheet
-    readonly property var emptySheet: ({ name: "", columns: [], rows: [], isConsts: false })
+    readonly property var emptySheet: ({ name: "", columns: [], rows: [], nrows: 0, paged: false, sampled: false, isConsts: false })
     property var colWidths: []
     property real totalWidth: 0
 
@@ -134,6 +146,9 @@ ApplicationWindow {
     // up or down a row draws just the one. So each last frame is drawn twice.
     property bool drawnAgain: false
     onFrameSwapped: {
+        // The spinner `busy` shows is on the screen: its work can begin.
+        if (busyWork !== null)
+            busyStart.drawn = true;
         drawnAgain = !drawnAgain;
         if (drawnAgain)
             update();
@@ -163,6 +178,76 @@ ApplicationWindow {
     readonly property int selBottom: Math.max(curRow, anchorRow)
     readonly property int selLeft: Math.min(curCol, anchorCol)
     readonly property int selRight: Math.max(curCol, anchorCol)
+    // What is being done that takes a while, said in the status bar beside
+    // a spinner, or "". `busy` says it, lets that frame be drawn, and then
+    // does the work: the work holds the app's thread, but the spinner is
+    // turned by the render thread, so it goes on turning.
+    property string busyText: ""
+    property var busyWork: null
+    function busy(text, work) {
+        if (busyWork !== null) {
+            work();
+            return;
+        }
+        busyText = text;
+        busyWork = work;
+        busyStart.restart();
+    }
+    function runBusy() {
+        busyStart.stop();
+        var work = busyWork;
+        if (work === null)
+            return;
+        try {
+            work();
+        } finally {
+            busyWork = null;
+            busyText = "";
+        }
+    }
+    Timer {
+        // The frame with the spinner is drawn, or a moment has passed in
+        // which it would have been.
+        id: busyStart
+        property bool drawn: false
+        interval: 16
+        repeat: true
+        onTriggered: if (drawn || ++tries > 6) win.runBusy()
+        property int tries: 0
+        function restart() { drawn = false; tries = 0; start(); }
+    }
+
+    // Count, Sum and Mean of the cells selected, for the status bar, or ""
+    // for one cell. Worked out once the selection has stopped changing:
+    // moving the cursor sets one end and then the other, and in between
+    // the selection can be the whole of a table of millions of rows.
+    property string selSummary: ""
+    property int summaryAsked: 0
+    readonly property string selKey: [tab, selTop, selLeft, selBottom, selRight].join(",")
+    onSelKeyChanged: summarize()
+    onSnapChanged: summarize()
+    function summarize() {
+        summaryAsked++;
+        selSummary = "";
+        summaryTimer.restart();
+    }
+    Timer {
+        id: summaryTimer
+        interval: 150
+        onTriggered: {
+            var several = !win.sheet.isConsts && win.tabs.length > 0
+                && (win.selTop !== win.selBottom || win.selLeft !== win.selRight);
+            if (!several || !win.snap) {
+                win.selSummary = "";
+                return;
+            }
+            // A big one is added up on a worker, and `summarized` brings it,
+            // unless the selection has moved on by then.
+            win.summaryAsked++;
+            var text = file.askSummary(win.summaryAsked, win.tab, win.selTop, win.selLeft, win.selBottom, win.selRight);
+            win.selSummary = text === "\u2026" ? "Adding up\u2026" : text;
+        }
+    }
 
     // Where the arrow keys are pointing a formula reference, while one is
     // being typed: -1 when no such pick is under way.
@@ -206,8 +291,33 @@ ApplicationWindow {
     property url pendingUrl
 
     function cellAt(row, col) {
-        var r = sheet.rows[row];
+        var r = sheet.paged ? pagedRow(row) : sheet.rows[row];
         return r && r[col] ? r[col] : null;
+    }
+
+    // A paged sheet -- a big table, or a sheet calculated from one -- is
+    // not in the snapshot row by row: its rows are asked for a block at a
+    // time as the grid reaches them, and the blocks last asked for kept.
+    // The blocks are a plain object, not a property, so filling one in the
+    // middle of drawing a row changes no binding; a reload empties them.
+    readonly property int pageSize: 200
+    readonly property int pagesKept: 50
+    property var pages: ({})
+    property var pageOrder: []
+    function pagedRow(row) {
+        if (row < 0 || row >= sheet.nrows)
+            return null;
+        var block = Math.floor(row / pageSize);
+        var key = tab + ":" + block;
+        var page = pages[key];
+        if (page === undefined) {
+            page = JSON.parse(file.rowsJson(tab, block * pageSize, pageSize));
+            pages[key] = page;
+            pageOrder.push(key);
+            if (pageOrder.length > pagesKept)
+                delete pages[pageOrder.shift()];
+        }
+        return page[row - block * pageSize];
     }
 
     function reload() {
@@ -215,6 +325,7 @@ ApplicationWindow {
         var y = rowsView.contentY;
         // Any edit may renumber the columns that were cut.
         grabbed = null;
+        cutHold.grab = null;
         // What was copied stays marked through an edit that says where it
         // went, and no other.
         if (!keepMark)
@@ -222,6 +333,10 @@ ApplicationWindow {
         // Stay on the same sheet when another window adds or removes one.
         var name = sheet.name, consts = sheet.isConsts;
         var parsed = JSON.parse(file.snapshotJson());
+        // Rows of a paged sheet asked for before this are of the file as
+        // it was.
+        pages = {};
+        pageOrder = [];
         var list = [];
         for (var i = 0; i < parsed.sheets.length; i++) {
             parsed.sheets[i].isConsts = false;
@@ -245,7 +360,9 @@ ApplicationWindow {
                     { name: "Expression", type: "", formula: "", computed: false, declared: false },
                     { name: "Value", type: "", formula: "", computed: true, declared: false }
                 ],
-                rows: rows
+                rows: rows,
+                nrows: rows.length,
+                paged: false
             });
         }
         snap = parsed;
@@ -293,16 +410,25 @@ ApplicationWindow {
         var cols = sheet.columns;
         for (var c = 0; c < cols.length; c++) {
             var chars = cols[c].name.length;
-            for (var r = 0; r < sheet.rows.length; r++)
-                chars = Math.max(chars, lineWidth(sheet.rows[r][c].d));
+            // A paged sheet is measured by its first block of rows.
+            var measured = sheet.paged ? Math.min(sheet.nrows, pageSize) : sheet.nrows;
+            for (var r = 0; r < measured; r++) {
+                var cell = cellAt(r, c);
+                if (cell)
+                    chars = Math.max(chars, lineWidth(cell.d));
+            }
             var w = Math.round(Math.min(46, Math.max(7, chars + 2)) * metrics.averageCharacterWidth) + 14;
             // Never narrower than the type line beside the telltale: the
-            // type, `:= ` before it in a formula column and `[]` after it
-            // where it has a format. It is set smaller, so a short type
-            // such as `Integer` fits the width an empty column has already.
+            // type, a mark before it (`:`, `=` or `=:`, with a little over)
+            // where it is set or the column is a formula, and `[]` after it
+            // where it has a format. A type is never cut off, so this is
+            // what keeps it clear of the telltale. It is set smaller, so a
+            // short type such as `Integer` fits the width an empty column
+            // has already.
             if (cols[c].type.length > 0) {
+                var marked = cols[c].declared || (cols[c].computed && !sheet.isConsts);
                 var typeChars = cols[c].type.length
-                    + (cols[c].computed && !sheet.isConsts ? 3 : 0) + (cols[c].format ? 2 : 0);
+                    + (marked ? 3 : 0) + (cols[c].format ? 2 : 0);
                 var telltale = sheet.isConsts ? 0 : win.noteSize;
                 w = Math.max(w, Math.ceil(typeChars * noteMetrics.averageCharacterWidth) + telltale + 14);
             }
@@ -314,7 +440,7 @@ ApplicationWindow {
     }
 
     function clampCursor() {
-        var maxRow = Math.max(0, sheet.rows.length - 1);
+        var maxRow = Math.max(0, sheet.nrows - 1);
         var maxCol = Math.max(0, sheet.columns.length - 1);
         curRow = Math.min(curRow, maxRow);
         anchorRow = Math.min(anchorRow, maxRow);
@@ -322,53 +448,87 @@ ApplicationWindow {
         anchorCol = Math.min(anchorCol, maxCol);
     }
 
-    // The filters in force, by sheet and then column name: the display
-    // texts each column does not show. A filter is a view of the sheet and
-    // nothing more -- it hides rows in the grid, and the file, a save and
-    // an export all still hold every row -- where a sort rearranges the
-    // rows in the file.
+    // The filters in force, by sheet and then column name: each column's
+    // expression, in which `*` is the cell (filter-by-expression D160). A
+    // filter is a view of the sheet and nothing more -- it hides rows in
+    // the grid, and the file, a save and an export all still hold every
+    // row -- where a sort rearranges the rows in the file.
     property var filters: ({})
     property int filterRev: 0
-    // The rows the grid lists, by number, while a filter is in force, and
-    // `null` while every row shows. The document works them out, once for
-    // each change of the sheet or the filter; the grid then lists these and
-    // no others, so a row a filter hides costs nothing at all.
-    readonly property var shownRows: {
+    // The filters as they last worked: one that fails when it is applied
+    // gives way to these, and says why.
+    property var goodFilters: ({})
+    // How many rows the grid lists while a filter is in force, and -1 while
+    // every row shows. The document works out which, once for each change
+    // of the sheet or the filter, and keeps them: a big table's are
+    // millions, too many to bring here, so the grid asks it for the row at
+    // a place and the place of a row. A new object each time, so that what
+    // reads it follows every change of the filter, not only of the count.
+    //
+    // A big table's filter is worked out on a worker, so that the window
+    // goes on answering the desktop: `filterRows` then says -3, the rows
+    // shown stay as they were, and `filtered` brings the count.
+    property var filterShown: ({ count: -1 })
+    property bool filterPending: false
+    // Makes each answer differ from the last: QML takes two objects of the
+    // same contents to be no change, and the rows would stay as they were.
+    property int filterSerial: 0
+    // The filter as Rust is given it, and everything that changes what it
+    // shows: the sheet, its filters, and the file's every revision.
+    readonly property string filterSpec: {
         filterRev;
         var f = filters[sheet.name];
-        if (!f || sheet.isConsts)
-            return null;
         var parts = [];
-        for (var name in f)
-            if (f[name] && f[name].length > 0)
-                parts.push([name].concat(f[name]).join("\u001f"));
-        if (parts.length === 0)
-            return null;
-        return JSON.parse(file.shownRows(tab, parts.join("\u001e")));
+        if (f && !sheet.isConsts)
+            for (var name in f)
+                if (f[name] && f[name].length > 0)
+                    parts.push(name + "\u001f" + f[name]);
+        return parts.join("\u001e");
     }
-    // Where each row is in the list, or -1 where it is hidden.
-    readonly property var rowPos: {
-        if (shownRows === null)
-            return null;
-        var pos = [];
-        for (var r = 0; r < sheet.rows.length; r++)
-            pos.push(-1);
-        for (var k = 0; k < shownRows.length; k++)
-            pos[shownRows[k]] = k;
-        return pos;
+    readonly property string filterKey: tab + "\u001d" + filterSpec + "\u001d" + file.revision
+    onFilterKeyChanged: runFilter()
+    function runFilter() {
+        var count = file.filterRows(tab, filterSpec);
+        filterPending = count === -3;
+        if (!filterPending)
+            filterShown = { count: count, serial: ++filterSerial };
     }
-    readonly property int shownCount: shownRows === null ? sheet.rows.length : shownRows.length
+    Connections {
+        target: file
+        function onSummarized(asked, text) {
+            if (asked === win.summaryAsked)
+                win.selSummary = text;
+        }
+        function onFiltered(count) {
+            win.filterPending = false;
+            win.filterShown = { count: count, serial: ++filterSerial };
+        }
+        function onSorted(col, descending, problem) {
+            if (problem.length > 0)
+                win.notice = problem;
+            else
+                win.noteSort(col, descending);
+        }
+    }
+    onFilterShownChanged: {
+        if (filterShown.count === -2) {
+            notice = file.filterProblem();
+            filters = JSON.parse(JSON.stringify(goodFilters));
+            filterRev++;
+        } else {
+            goodFilters = JSON.parse(JSON.stringify(filters));
+        }
+    }
+    readonly property int shownCount: filterShown.count < 0 ? sheet.nrows : filterShown.count
     function isHidden(row) {
-        return rowPos !== null && rowPos[row] < 0;
+        return filterShown.count >= 0 && file.posOf(row) < 0;
     }
     // The place of a row in the list, and the row at a place in it.
     function posOf(row) {
-        return rowPos === null ? row : Math.max(0, rowPos[row]);
+        return filterShown.count < 0 ? row : Math.max(0, file.posOf(row));
     }
     function rowAt(pos) {
-        if (shownRows === null)
-            return pos;
-        return pos >= 0 && pos < shownRows.length ? shownRows[pos] : -1;
+        return filterShown.count < 0 ? pos : file.rowAt(pos);
     }
     // The row drawn at `y` down the list, the nearest one past either end.
     function rowAtY(y) {
@@ -377,38 +537,40 @@ ApplicationWindow {
         return rowAt(Math.max(0, Math.min(shownCount - 1, Math.floor(y / rowHeight))));
     }
     function filtered(col) {
+        return filterOf(col).length > 0;
+    }
+    // The expression column `col` is filtered by, or "".
+    function filterOf(col) {
         filterRev;
         var f = filters[sheet.name];
-        var out = f && sheet.columns[col] ? f[sheet.columns[col].name] : null;
-        return !!out && out.length > 0;
+        var expr = f && sheet.columns[col] ? f[sheet.columns[col].name] : "";
+        return typeof expr === "string" ? expr.trim() : "";
     }
-    function setFilter(col, excluded) {
-        var all = filters;
+    function setFilter(col, expr) {
+        var all = JSON.parse(JSON.stringify(filters));
         var f = all[sheet.name] || {};
-        f[sheet.columns[col].name] = excluded;
+        f[sheet.columns[col].name] = expr.trim();
         all[sheet.name] = f;
-        filters = all;
-        filterRev++;
+        busy("Filtering\u2026", function() {
+            filters = all;
+            filterRev++;
+        });
     }
     // What each sheet has been sorted by: every column, whose telltale
     // stays solid, and the last one and which way, which is the order the
-    // rows are in and so the one that shows a caret. A sort of a sheet of
-    // its own rows, or of a calculated one, is a step to undo, so each is
-    // kept with the number of steps to undo it left: it is in force while
-    // there are at least that many, and goes and comes back with the step.
-    // An edit made after an undo drops the steps it was undone past, and
-    // the sorts with them. A table's sort is the grid's order alone, which
-    // nothing undoes, and is kept apart. All of it is forgotten with the
-    // file, as a filter is.
+    // rows are in and so the one that shows a caret. Every sort is a step
+    // to undo -- of a sheet's own rows, of a calculated one, or of a table,
+    // whose order is the grid's alone -- so each is kept with the number of
+    // steps to undo it left: it is in force while there are at least that
+    // many, and goes and comes back with the step. An edit made after an
+    // undo drops the steps it was undone past, and the sorts with them. All
+    // of it is forgotten with the file, as a filter is.
     property var sortLog: []
-    property var viewSorts: ({})
     property int undoDepth: 0
     property int editCount: 0
     property int sortRev: 0
     function sortState(name) {
         sortRev;
-        if (viewSorts[name])
-            return viewSorts[name];
         var state = null;
         for (var i = 0; i < sortLog.length; i++) {
             var e = sortLog[i];
@@ -432,17 +594,16 @@ ApplicationWindow {
         var st = sortState(sheet.name);
         return !!st && !!sheet.columns[col] && st.done[sheet.columns[col].name] === true;
     }
+    // The steps to undo there were when the sort last asked for began.
+    property int sortMark: -1
     function noteSort(col, desc) {
+        // A column already in the order asked for is left as it is, with no
+        // step to undo; so there is nothing for an undo to take the caret
+        // back with, and it is not lit.
+        if (file.undoMark() === sortMark)
+            return;
         var name = sheet.columns[col].name;
-        if (sheet.from) {
-            var all = viewSorts;
-            var done = all[sheet.name] ? all[sheet.name].done : {};
-            done[name] = true;
-            all[sheet.name] = { col: name, desc: desc, done: done };
-            viewSorts = all;
-        } else {
-            sortLog = sortLog.concat([{ mark: file.undoMark(), sheet: sheet.name, col: name, desc: desc }]);
-        }
+        sortLog = sortLog.concat([{ mark: file.undoMark(), sheet: sheet.name, col: name, desc: desc }]);
         sortRev++;
     }
     // Keep up with the history after each change of the file: an undo or a
@@ -464,7 +625,7 @@ ApplicationWindow {
     // The nearest row that is shown, going `dir` from `row` and then the
     // other way if there is none.
     function shownFrom(row, dir) {
-        var last = sheet.rows.length - 1;
+        var last = sheet.nrows - 1;
         for (var r = row; r >= 0 && r <= last; r += dir)
             if (!isHidden(r))
                 return r;
@@ -476,26 +637,19 @@ ApplicationWindow {
     // Whether more than one row is selected and a hidden one is among them:
     // what is done to the selection would be done to rows nobody can see.
     function selectionHidesRows() {
-        if (rowPos === null || selTop === selBottom)
+        if (filterShown.count < 0 || selTop === selBottom)
             return false;
-        for (var r = selTop; r <= selBottom; r++)
-            if (isHidden(r))
-                return true;
-        return false;
-    }
-    // The texts a column shows, each once, in the order of their values.
-    function valuesOf(col) {
-        return JSON.parse(file.distinctShown(tab, col));
+        return file.hidesBetween(selTop, selBottom);
     }
 
     function selectCell(row, col, extend) {
-        if (sheet.rows.length === 0 || sheet.columns.length === 0)
+        if (sheet.nrows === 0 || sheet.columns.length === 0)
             return;
         if (!extend) {
             byRow = false;
             byCol = false;
         }
-        row = Math.max(0, Math.min(sheet.rows.length - 1, row));
+        row = Math.max(0, Math.min(sheet.nrows - 1, row));
         curRow = isHidden(row) ? shownFrom(row, row >= curRow ? 1 : -1) : row;
         curCol = Math.max(0, Math.min(sheet.columns.length - 1, col));
         if (!extend) {
@@ -509,7 +663,7 @@ ApplicationWindow {
     // `index`, from where the selection was if it is to `extend`. The cursor
     // waits in the first cell.
     function selectLine(rows, index, extend) {
-        var maxRow = Math.max(0, sheet.rows.length - 1);
+        var maxRow = Math.max(0, sheet.nrows - 1);
         var maxCol = Math.max(0, sheet.columns.length - 1);
         byRow = rows;
         byCol = !rows;
@@ -539,7 +693,7 @@ ApplicationWindow {
     function arrow(dRow, dCol, ctrl, extend) {
         var vertical = dRow !== 0;
         var d = vertical ? dRow : dCol;
-        var max = Math.max(0, (vertical ? sheet.rows.length : sheet.columns.length) - 1);
+        var max = Math.max(0, (vertical ? sheet.nrows : sheet.columns.length) - 1);
         var cur = vertical ? curRow : curCol;
         var to = ctrl ? (d < 0 ? 0 : max) : cur + d;
         if (vertical ? selKind === "row" : selKind === "column") {
@@ -568,7 +722,7 @@ ApplicationWindow {
     function selectAll() {
         byRow = false;
         byCol = false;
-        anchorRow = Math.max(0, sheet.rows.length - 1);
+        anchorRow = Math.max(0, sheet.nrows - 1);
         anchorCol = Math.max(0, sheet.columns.length - 1);
         curRow = 0;
         curCol = 0;
@@ -586,7 +740,9 @@ ApplicationWindow {
 
     // Let go of anything cut or copied, and leave the selection.
     function unmark() {
+        cutHold.copy = null;
         grabbed = null;
+        cutHold.grab = null;
         marked = null;
         movedOnce = false;
         file.forgetCut();
@@ -597,8 +753,26 @@ ApplicationWindow {
         revealAt(curRow, curCol);
     }
 
+    // Scroll the rows just far enough to show place `pos` whole. Every row
+    // is `rowHeight` high, so where a place is is a multiplication; a
+    // ListView's own positionViewAtIndex lays rows out on its way there,
+    // which on a table of millions of rows takes seconds.
+    function showPlace(pos) {
+        if (pos < 0)
+            return;
+        var top = rowsView.originY + pos * rowHeight;
+        var bottom = top + rowHeight;
+        var y = rowsView.contentY;
+        if (top < y)
+            y = top;
+        else if (bottom > y + rowsView.height)
+            y = bottom - rowsView.height;
+        if (y !== rowsView.contentY)
+            rowsView.contentY = y;
+    }
+
     function revealAt(row, col) {
-        rowsView.positionViewAtIndex(posOf(row), ListView.Contain);
+        showPlace(posOf(row));
         var x = gutterWidth;
         for (var c = 0; c < col; c++)
             x += colWidths[c];
@@ -619,7 +793,7 @@ ApplicationWindow {
     function switchTab(index) {
         if (index < 0 || index >= tabs.length)
             return;
-        stopEditing();
+        commitEditing();
         // Not when the sheet here is no longer the one that was left, as
         // after a delete: then `index` is this tab.
         if (index !== tab && tab < tabs.length)
@@ -649,6 +823,53 @@ ApplicationWindow {
 
     // ---- editing -----------------------------------------------------------
 
+    // Why the selected cells take no edit, or "": the data of a view is its
+    // file's, and a calculated sheet has no cell of its own. A formula
+    // column appended to a view, a decorator, takes its formula as any
+    // other does, so a selection of those alone is free to edit.
+    function readOnlyWhy() {
+        var why = sheet.why || "";
+        if (why.length === 0 || sheet.isConsts)
+            return "";
+        if (sheet.view)
+            return why;
+        for (var c = selLeft; c <= selRight; c++) {
+            var column = sheet.columns[c];
+            if (!column || !column.computed)
+                return why;
+        }
+        return "";
+    }
+
+    // Refuse an edit of read-only cells before it is begun, and say why in
+    // the status bar. True if it was refused.
+    function refusedEdit() {
+        var why = readOnlyWhy();
+        if (why.length === 0)
+            return false;
+        file.status = why;
+        // The same words again would not light the bar a second time, so
+        // each refusal asks for it.
+        refusalRev++;
+        return true;
+    }
+    property int refusalRev: 0
+
+    // Whether column `col` has a name of its own to change: not where the
+    // sheet is a file's or calculated, whose columns are not ours.
+    // True if its name was refused, with the bar lit to say why.
+    function refusedRename(col) {
+        var why = sheet.why || "";
+        var column = sheet.columns[col];
+        if (why.length === 0 || sheet.isConsts || !column)
+            return false;
+        if (!sheet.view && column.computed)
+            return false;
+        file.status = why;
+        refusalRev++;
+        return true;
+    }
+
     function startEditing(seed) {
         // A calculated sheet has one formula, written in the box at the
         // top: Enter on any of its cells goes there, as for a column, and
@@ -657,9 +878,14 @@ ApplicationWindow {
             if (seed === null) {
                 formulaField.forceActiveFocus();
                 formulaField.selectAll();
+            } else {
+                refusedEdit();
             }
             return;
         }
+        // The data of a view is its file's: no editor opens (D207).
+        if (refusedEdit())
+            return;
         if (!cellAt(curRow, curCol))
             return;
         if (sheet.isConsts && curCol !== 1)
@@ -695,7 +921,7 @@ ApplicationWindow {
         var boxes = [];
         if (text.trim().charAt(0) !== "=")
             return boxes;
-        var nRows = sheet.rows.length, nCols = sheet.columns.length;
+        var nRows = sheet.nrows, nCols = sheet.columns.length;
         // One end of a span: `*`, `*+n`, `*-n`, a position, `-n` from the
         // end, or for columns a name.
         var end = function(t, here, n, names) {
@@ -777,6 +1003,15 @@ ApplicationWindow {
         grid.forceActiveFocus();
     }
 
+    // A click away from the cell being edited writes what is typed, as
+    // Enter does, and goes where the click went: it is not an Escape.
+    function commitEditing() {
+        if (editing && editor)
+            editor.finish(0, 0);
+        else
+            stopEditing();
+    }
+
     // F2 on a whole column: its header cell takes the new name.
     signal renameColumnAsked(int col)
     // The tab whose sheet is being renamed in place, or -1.
@@ -804,7 +1039,7 @@ ApplicationWindow {
         if (pickRow >= 0)
             return true;
         // Quoted text is no part of the formula's shape.
-        var text = editor.text.replace(/"(\\.|[^"\\])*"?/g, function(q) { return q.replace(/./g, "x"); });
+        var text = editor.text.replace(/'(\\.|[^'\\])*'?|"(\\.|[^"\\])*"?/g, function(q) { return q.replace(/./g, "x"); });
         var before = text.slice(0, editor.cursorPosition);
         var after = text.slice(editor.cursorPosition).replace(/^\s+/, "");
         if ((before.match(/\[/g) || []).length > (before.match(/\]/g) || []).length)
@@ -882,7 +1117,7 @@ ApplicationWindow {
     function pickDrag(row, col) {
         if (pickAt < 0 || !editor)
             return;
-        row = Math.max(0, Math.min(sheet.rows.length - 1, row));
+        row = Math.max(0, Math.min(sheet.nrows - 1, row));
         col = Math.max(0, Math.min(sheet.columns.length - 1, col));
         editor.remove(pickAt, pickAt + pickLen);
         var ref = refForRange(pickFromRow, pickFromCol, row, col, pickAbsolute);
@@ -898,7 +1133,7 @@ ApplicationWindow {
     // lands on, exactly as a click on that cell would. Returns whether
     // there was a formula to pick a cell for.
     function pickArrow(dRow, dCol, absolute, extend, toEnd) {
-        if (!canPick() || sheet.rows.length === 0 || sheet.columns.length === 0)
+        if (!canPick() || sheet.nrows === 0 || sheet.columns.length === 0)
             return false;
         if (pickRow < 0) {
             pickRow = curRow;
@@ -909,7 +1144,7 @@ ApplicationWindow {
         } else {
             editor.remove(pickAt, pickAt + pickLen);
         }
-        var clampRow = function(r) { return Math.max(0, Math.min(sheet.rows.length - 1, r)); };
+        var clampRow = function(r) { return Math.max(0, Math.min(sheet.nrows - 1, r)); };
         var clampCol = function(c) { return Math.max(0, Math.min(sheet.columns.length - 1, c)); };
         // Shift grows a range from where it started: the next cell, if no
         // pick was under way. Without it the pick is one cell again.
@@ -918,7 +1153,7 @@ ApplicationWindow {
             pickFromCol = clampCol(pickCol + dCol);
         }
         // Ctrl goes all the way to the first or last cell.
-        var far = toEnd ? Math.max(sheet.rows.length, sheet.columns.length) : 1;
+        var far = toEnd ? Math.max(sheet.nrows, sheet.columns.length) : 1;
         pickRow = clampRow(pickRow + dRow * far);
         pickCol = clampCol(pickCol + dCol * far);
         if (!extend) {
@@ -1016,25 +1251,47 @@ ApplicationWindow {
     // Ctrl+V: `{tab, rows, first, count}`; a whole sheet, `{tab, sheet}`;
     // or null.
     property var grabbed: null
+    // The whole rows or columns last cut, shared by every window on the
+    // file (see App.qml): a window that did not cut them can still move them.
+    property QtObject cutHold: QtObject { property var grab: null; property var copy: null }
+    readonly property var foreign: grabbed !== null ? grabbed : cutHold.grab
     // Why the last move was refused, shown in the footer.
     property string notice: ""
+    // What the pointer is resting on, or a fault in what is being typed,
+    // said in the footer for as long as it holds: where a tip would have
+    // been. It is set by `hover` from whatever has something to say, and
+    // cleared by the same one, the last to speak being the one heard.
+    property string hint: ""
+    property bool hintBad: false
+    property var hintFrom: null
+    function hover(from, text, bad) {
+        if (text.length > 0) {
+            hintFrom = from;
+            hint = text;
+            hintBad = !!bad;
+        } else if (hintFrom === from) {
+            hintFrom = null;
+            hint = "";
+            hintBad = false;
+        }
+    }
     // Whether the selection was last made from a row number or a column
     // header, to tell a row from a column where one selection is both.
     property bool byRow: false
     property bool byCol: false
     readonly property bool wholeColumns: !sheet.isConsts && sheet.columns.length > 0
-        && selTop === 0 && selBottom >= sheet.rows.length - 1
-    readonly property bool wholeRows: !sheet.isConsts && sheet.rows.length > 0
+        && selTop === 0 && selBottom >= sheet.nrows - 1
+    readonly property bool wholeRows: !sheet.isConsts && sheet.nrows > 0
         && selLeft === 0 && selRight >= sheet.columns.length - 1
     // What is selected: whole "row"s, whole "column"s, "all" of the sheet,
     // or a block of "cells". The menu and the keys act on rows only for rows
     // and cells, and on columns only for columns and cells.
     readonly property string selKind: {
-        if (sheet.isConsts || sheet.rows.length === 0)
+        if (sheet.isConsts || sheet.nrows === 0)
             return "cells";
         // One cell of a sheet with one row is a cell, unless its header or
         // row number was what was clicked.
-        var cols = wholeColumns && (byCol || sheet.rows.length > 1);
+        var cols = wholeColumns && (byCol || sheet.nrows > 1);
         var rows = wholeRows && (byRow || sheet.columns.length > 1);
         if (cols && rows)
             return byRow ? "row" : byCol ? "column" : "all";
@@ -1073,13 +1330,13 @@ ApplicationWindow {
     // or columns cut to be moved; null if nothing.
     readonly property var outline: sheetMark !== null
         ? (sheetMark.tab !== tab ? null
-            : { top: 0, bottom: sheet.rows.length - 1, left: 0, right: sheet.columns.length - 1,
+            : { top: 0, bottom: sheet.nrows - 1, left: 0, right: sheet.columns.length - 1,
                 cut: sheetMark.cut, columns: true, rows: true })
         : grabbedHere
         ? (grabbed.rows
             ? { top: grabbed.first, bottom: grabbed.first + grabbed.count - 1,
                 left: 0, right: sheet.columns.length - 1, cut: true, columns: false, rows: true }
-            : { top: 0, bottom: sheet.rows.length - 1,
+            : { top: 0, bottom: sheet.nrows - 1,
                 left: grabbed.first, right: grabbed.first + grabbed.count - 1, cut: true, columns: true, rows: false })
         : marked !== null && marked.tab === tab ? marked : null
 
@@ -1091,20 +1348,36 @@ ApplicationWindow {
 
     // Cells cut and pasted, still on the clipboard to paste again as copies.
     property bool movedOnce: false
-    readonly property bool canPaste: marked !== null || movedOnce
+    // Cells copied in this window, or text on the system clipboard from
+    // anywhere: another window of the app, which shares the clipboard and
+    // what it remembers of a copy but not this window's mark, or another
+    // program.
+    readonly property bool canPaste: marked !== null || movedOnce || clipboard.canPaste
 
     // Whole rows waiting to go in as rows of their own, rather than blank
     // ones: cut, to be moved there, or copied, to go in as copies.
     // `{cut, count}`, or null when none are.
+    // Whole rows cut on another sheet: they move here by being copied in
+    // and taken out there.
+    readonly property bool grabbedElsewhereRows: foreign !== null && !foreign.sheet && foreign.rows === true
+        && foreign.tab !== tab && foreign.tab < tabs.length && !sheet.isConsts
+        && foreign.text !== undefined && foreign.text.length > 0
     readonly property var rowsOnHand: grabbedHere && grabbed.rows
         ? { cut: true, count: grabbed.count }
+        : grabbedElsewhereRows
+        ? { cut: true, count: foreign.count, elsewhere: true }
         : marked !== null && marked.rows && !sheet.isConsts && marked.tab < tabs.length
             && marked.text.length > 0
         ? { cut: false, count: marked.bottom - marked.top + 1 }
         : null
+    readonly property bool grabbedElsewhereColumns: foreign !== null && !foreign.sheet && foreign.rows === false
+        && foreign.tab !== tab && foreign.tab < tabs.length && !sheet.isConsts
+        && foreign.text !== undefined && foreign.text.length > 0 && foreign.names !== undefined
     // The same for whole columns.
     readonly property var colsOnHand: grabbedHere && !grabbed.rows
         ? { cut: true, count: grabbed.count }
+        : grabbedElsewhereColumns
+        ? { cut: true, count: foreign.count, elsewhere: true }
         : marked !== null && marked.columns && !sheet.isConsts && marked.tab < tabs.length
             && marked.text.length > 0
         ? { cut: false, count: marked.right - marked.left + 1 }
@@ -1114,6 +1387,8 @@ ApplicationWindow {
         movedOnce = false;
         marked = { tab: tab, top: selTop, left: selLeft, bottom: selBottom, right: selRight, text: text, cut: !!cut, columns: selKind === "column", rows: selKind === "row",
                    sheet: selKind === "all" };
+        // For the other windows: whether what is on the clipboard is whole rows or columns.
+        cutHold.copy = { rows: selKind === "row", columns: selKind === "column" };
     }
 
     // Where the rows or columns `first` to `last` are once `by` of them are
@@ -1134,13 +1409,13 @@ ApplicationWindow {
         if (selectionHidesRows())
             return;
         var m = marked;
-        var rows = sheet.rows.length, cols = sheet.columns.length;
+        var rows = sheet.nrows, cols = sheet.columns.length;
         keepMark = true;
         edit();
         keepMark = false;
         if (m === null || m.tab !== tab)
             return;
-        var v = shifted(m.top, m.bottom, row, sheet.rows.length - rows);
+        var v = shifted(m.top, m.bottom, row, sheet.nrows - rows);
         var h = shifted(m.left, m.right, col, sheet.columns.length - cols);
         marked = v === null || h === null ? null
             : { tab: m.tab, top: v[0], left: h[0], bottom: v[1], right: h[1], text: m.text, cut: m.cut, columns: m.columns, rows: m.rows, sheet: m.sheet };
@@ -1154,7 +1429,7 @@ ApplicationWindow {
             marked = null;
         var cut = marked !== null && marked.cut;
         var problem = "";
-        keeping(row === undefined ? sheet.rows.length : row, col === undefined ? sheet.columns.length : col,
+        keeping(row === undefined ? sheet.nrows : row, col === undefined ? sheet.columns.length : col,
                 function() { problem = put() || ""; });
         // A paste that was refused says why, and what was cut is still cut.
         if (problem.length > 0) {
@@ -1165,6 +1440,7 @@ ApplicationWindow {
         // again, they are copies.
         if (cut) {
             marked = null;
+            cutHold.copy = null;
             movedOnce = true;
         }
         return true;
@@ -1183,6 +1459,46 @@ ApplicationWindow {
         return name;
     }
 
+    // The name offered for a new column going in as column `at` (-1 for the
+    // end), from the one to its left: the next letters on if that is
+    // lettered and they are free (B after A, AA after Z), else its name made
+    // free with `_001`, `_002`... Put in before the first column there is none to its
+    // left, so it is the name of the column it goes before that is made free
+    // the same way.
+    function suggestedColumnName(at) {
+        var cols = sheet.columns;
+        if (sheet.isConsts || cols.length === 0)
+            return "";
+        var taken = namesTaken(-1, -1);
+        if (at === 0)
+            return copyName(cols[0].name, taken);
+        var name = cols[at < 0 ? cols.length - 1 : Math.min(at, cols.length) - 1].name;
+        // Only the very next letters, and only if free: put in before B,
+        // the next after A is B itself, so it is A made free instead.
+        for (var i = 0; i + 1 < maxLetterColumns; i++) {
+            if (columnLetters(i) === name && !taken[columnLetters(i + 1)])
+                return columnLetters(i + 1);
+        }
+        return copyName(name, taken);
+    }
+
+    // Whole columns of another place are pasted with the whole sheet selected.
+    function columnsOnSheet(text) {
+        return selKind === "all" && !sheet.isConsts && marked !== null && marked.columns
+            && marked.text === text && marked.tab < tabs.length;
+    }
+
+    // The name a column copied from sheet `tabFrom` is given where `taken`
+    // are the names there: its own if it came from another sheet and no
+    // column has it, otherwise a copy's.
+    function pastedName(from, tabFrom, taken) {
+        if (tabFrom !== tab && !taken[from]) {
+            taken[from] = true;
+            return from;
+        }
+        return copyName(from, taken);
+    }
+
     // The names of this sheet's columns, but for `first` to `last`.
     function namesTaken(first, last) {
         var taken = {};
@@ -1195,7 +1511,7 @@ ApplicationWindow {
     // Columns pasted onto one column past the last are added for them, as
     // rows are: named as those they were copied from.
     function growColumns(text, t) {
-        if (selKind !== "column" || t[1] !== t[3])
+        if ((selKind !== "column" && !columnsOnSheet(text)) || t[1] !== t[3])
             return "";
         var width = text.split("\n")[0].split("\t").length;
         var need = t[1] + width - sheet.columns.length;
@@ -1204,7 +1520,7 @@ ApplicationWindow {
         var names = [];
         for (var i = width - need; i < width; i++) {
             var from = m !== null ? tabs[m.tab].columns[m.left + i] : null;
-            names.push(copyName(from ? from.name : "Column", taken));
+            names.push(from ? pastedName(from.name, m.tab, taken) : copyName("Column", taken));
         }
         var end = sheet.columns.length;
         for (var k = 0; k < names.length; k++) {
@@ -1219,18 +1535,19 @@ ApplicationWindow {
     // free with `_001`, `_002`...
     function pastedColumns() {
         var m = marked;
-        if (m === null || !m.columns || selKind !== "column" || m.tab >= tabs.length
+        var whole = selKind === "all";
+        if (m === null || !m.columns || (selKind !== "column" && !whole) || m.tab >= tabs.length
             || (m.tab === tab && m.left === selLeft))
             return;
-        var count = Math.min(m.right - m.left + 1, selRight - selLeft + 1);
-        var at = selLeft;
+        var count = Math.min(m.right - m.left + 1, whole ? sheet.columns.length : selRight - selLeft + 1);
+        var at = whole ? 0 : selLeft;
         var taken = namesTaken(at, at + count - 1);
         var names = [];
         for (var i = 0; i < count; i++) {
             var from = tabs[m.tab].columns[m.left + i];
             if (!from)
                 return;
-            names.push(copyName(from.name, taken));
+            names.push(pastedName(from.name, m.tab, taken));
         }
         // A name may be one another of these columns has now: each is
         // first given a name no column has, then its own.
@@ -1241,7 +1558,7 @@ ApplicationWindow {
         for (var j = 0; j < names.length; j++)
             if (sheet.columns[at + j].name !== names[j])
                 steps.push([at + j, copyName("Pasting", spare), names[j]]);
-        keeping(sheet.rows.length, sheet.columns.length, function() {
+        keeping(sheet.nrows, sheet.columns.length, function() {
             for (var pass = 1; pass <= 2; pass++) {
                 for (var i = 0; i < steps.length; i++) {
                     var problem = file.renameColumn(tab, steps[i][0], steps[i][pass]);
@@ -1267,14 +1584,14 @@ ApplicationWindow {
             return;
         var top = selTop;
         curRow = top;
-        anchorRow = Math.min(sheet.rows.length - 1, top + text.split("\n").length - 1);
+        anchorRow = Math.min(sheet.nrows - 1, top + text.split("\n").length - 1);
         showRow(anchorRow);
     }
 
     // Scroll to `row` once the list has been put back where it was after an
     // edit that added rows.
     function showRow(row) {
-        Qt.callLater(function() { rowsView.positionViewAtIndex(posOf(row), ListView.Contain); });
+        Qt.callLater(function() { win.showPlace(posOf(row)); });
     }
 
 
@@ -1289,6 +1606,13 @@ ApplicationWindow {
         // A formula column always has its formula: there is nothing to cut.
         if (formulaCell)
             return;
+        // Nothing read-only is cut: it is copied, and the bar says so (D208).
+        var why = readOnlyWhy();
+        if (why.length > 0) {
+            copySelection();
+            file.status = "Copied, not cut. " + why;
+            return;
+        }
         notice = "";
         // A whole sheet is picked up, to be moved to where it is pasted.
         if (selKind === "all" && !sheet.isConsts) {
@@ -1300,21 +1624,26 @@ ApplicationWindow {
         var kind = grabKind;
         if (kind === "" && !sheet.isConsts) {
             grabbed = null;
+            cutHold.grab = null;
             var text = file.cutCells(tab, selTop, selLeft, selBottom, selRight);
             mark(text, true);
             clipboard.put(text);
             return;
         }
         copySelection();
+        var picked = marked !== null ? marked.text : "";
         // Rows and columns picked up are outlined dashed, to be moved.
         if (kind !== "")
             marked = null;
         if (kind === "row")
-            grabbed = { tab: tab, rows: true, first: selTop, count: selBottom - selTop + 1 };
+            grabbed = { tab: tab, rows: true, first: selTop, count: selBottom - selTop + 1, text: picked };
         else if (kind === "column")
-            grabbed = { tab: tab, rows: false, first: selLeft, count: selRight - selLeft + 1 };
+            grabbed = { tab: tab, rows: false, first: selLeft, count: selRight - selLeft + 1, text: picked,
+                        names: sheet.columns.slice(selLeft, selRight + 1).map(function(c) { return c.name; }),
+                        formulas: sheet.columns.slice(selLeft, selRight + 1).map(function(c) { return c.computed ? c.formula : ""; }) };
         else
             clearSelection();
+        cutHold.grab = grabbed;
     }
 
     // Put what was cut down where the selection is. It lands on the selected
@@ -1340,7 +1669,7 @@ ApplicationWindow {
             byRow = true;
             byCol = false;
         } else {
-            anchorRow = Math.max(0, sheet.rows.length - 1);
+            anchorRow = Math.max(0, sheet.nrows - 1);
             anchorCol = to + g.count - 1;
             curRow = 0;
             curCol = to;
@@ -1351,6 +1680,7 @@ ApplicationWindow {
 
     function copySelection() {
         grabbed = null;
+        cutHold.grab = null;
         var text;
         if (sheet.isConsts) {
             var lines = [];
@@ -1369,6 +1699,8 @@ ApplicationWindow {
     }
 
     function clearSelection() {
+        if (refusedEdit())
+            return;
         if (!sheet.isConsts)
             keeping(0, 0, function() { file.clearCells(tab, selTop, selLeft, selBottom, selRight); });
     }
@@ -1377,15 +1709,68 @@ ApplicationWindow {
     // several rows, and one whole column several columns, as one cell takes
     // a block: from there on, at their own size.
     function pasteTarget(text) {
+        // Whole columns pasted onto a whole sheet go in from its corner.
+        if (columnsOnSheet(text))
+            return [0, 0, 0, 0];
         if (selKind === "row" && selTop === selBottom && text.indexOf("\n") >= 0)
             return [selTop, selLeft, selTop, selLeft];
         if (selKind === "column" && selLeft === selRight && text.split("\n")[0].indexOf("\t") >= 0)
             return [selTop, selLeft, selTop, selLeft];
+        // Columns are pasted whole: rows past the sheet's last are added.
+        if (selKind === "column" && (text.indexOf("\n") >= 0 || text.indexOf("\t") >= 0))
+            return [selTop, selLeft, Math.max(selBottom, selTop + text.split("\n").length - 1), selRight];
         return [selTop, selLeft, selBottom, selRight];
+    }
+
+    // A view of a file: its own columns are fixed and formula columns go
+    // among them.
+    readonly property bool frameSheet: !sheet.isConsts && !sheet.view && (sheet.why || "").length > 0
+
+    // The sheet shown, copied in just after it and shown.
+    function duplicateShownSheet() {
+        if (sheet.isConsts || tabs.length === 0)
+            return;
+        var at = tab;
+        var problem = file.duplicateSheet(at);
+        if (problem.length > 0)
+            errorDialog.say(problem);
+        else
+            switchTab(at + 1);
+    }
+
+    // The sheet shown moved one place left or right.
+    function moveShownSheet(by) {
+        if (!sheet.isConsts)
+            dropTab(tab, tab + by);
+    }
+
+    // A sheet's tab dragged to a new place: sheet `from` becomes sheet `to`.
+    // The sheet shown stays the sheet shown, wherever it has gone to, and the
+    // constants stay last, as a sheet of their own.
+    function dropTab(from, to) {
+        if (from === to || from < 0 || to < 0 || from >= tabs.length || to >= tabs.length
+                || tabs[from].isConsts || tabs[to].isConsts)
+            return;
+        applySource();
+        var shown = tab === from ? to
+            : from < tab && to >= tab ? tab - 1
+            : from > tab && to <= tab ? tab + 1
+            : tab;
+        var problem = file.moveSheet(from, to);
+        if (problem.length > 0) {
+            errorDialog.say(problem);
+            return;
+        }
+        if (shown !== tab)
+            switchTab(shown);
     }
 
     function pasteSelection() {
         notice = "";
+        if (!pasteFits) {
+            notice = pasteFitsNot;
+            return;
+        }
         if (grabbedHere) {
             dropGrabbed();
             return;
@@ -1404,6 +1789,19 @@ ApplicationWindow {
             }
             switchTab(to);
             selectAll();
+            return;
+        }
+        // Columns go in among a file's own, which take no edit themselves.
+        if (!(handCols && frameSheet) && refusedEdit())
+            return;
+        // Rows or columns cut on another sheet go in before the selection
+        // and are taken out there.
+        if (rowsOnHand !== null && rowsOnHand.elsewhere) {
+            insertRowsOnHand(false);
+            return;
+        }
+        if (colsOnHand !== null && (colsOnHand.elsewhere || frameSheet)) {
+            insertColumnsOnHand(false);
             return;
         }
         grabbed = null;
@@ -1437,6 +1835,12 @@ ApplicationWindow {
     // Paste what the copied cells showed, not their formulas.
     function pasteValues() {
         notice = "";
+        if (!pasteFits) {
+            notice = pasteFitsNot;
+            return;
+        }
+        if (refusedEdit())
+            return;
         grabbed = null;
         var text = clipboard.take();
         // The paste and the names it gives columns are undone as one.
@@ -1453,12 +1857,25 @@ ApplicationWindow {
     // Several cells copied or cut, to be turned about onto cells: put down
     // from the one selected, or the corner of a block.
     // Not when any of them is in a formula column.
-    readonly property bool canTranspose: marked !== null && selKind === "cells" && !sheet.isConsts
-        && (marked.top !== marked.bottom || marked.left !== marked.right)
-        && !spansFormula(marked)
+    // Text from another window or program has no mark here to say what it
+    // is, so it is tried: a paste that cannot be made says why.
+    readonly property bool canTranspose: selKind === "cells" && !sheet.isConsts
+        && (marked !== null
+            ? (marked.top !== marked.bottom || marked.left !== marked.right)
+                && !spansFormula(marked)
+            : clipboard.canPaste)
 
     // Values, not when the cells were in a formula column, or are put in one.
-    readonly property bool canPasteValues: canPaste && !formulaCell
+    // Whole rows or columns waiting go only onto whole rows or columns, as
+    // many as are selected, and nothing else goes onto those.
+    readonly property bool handRows: rowsOnHand !== null
+        || (marked === null && grabbed === null && cutHold.copy !== null && cutHold.copy.rows)
+    readonly property bool handCols: colsOnHand !== null
+        || (marked === null && grabbed === null && cutHold.copy !== null && cutHold.copy.columns)
+    readonly property bool pasteFits: (!handRows || selKind === "row") && (!handCols || selKind === "column")
+    readonly property string pasteFitsNot: handRows ? "Whole rows paste onto whole rows."
+        : "Whole columns paste onto whole columns."
+    readonly property bool canPasteValues: canPaste && !formulaCell && pasteFits
         && !(marked !== null && spansFormula(marked))
 
     function spansFormula(m) {
@@ -1473,10 +1890,32 @@ ApplicationWindow {
 
     function pasteTransposed() {
         notice = "";
+        if (refusedEdit())
+            return;
         grabbed = null;
         var text = clipboard.take();
         if (text.length > 0 && !sheet.isConsts)
             pasteWith(text, function() { return file.pasteTransposed(tab, selTop, selLeft, selBottom, selRight, text); });
+    }
+
+    // Cells copied or cut here can be pasted as a reference to them, in a
+    // sheet's data cells or in a formula column.
+    // From another window it is the app's memory of the last copy that says,
+    // when the paste is made, whether there are cells to refer to.
+    readonly property bool canPasteReference: selKind !== "all" && !sheet.isConsts
+        && (marked !== null
+            ? marked.tab < tabs.length && !tabs[marked.tab].isConsts
+            : clipboard.canPaste)
+
+    // Paste a live reference to what was copied, not its values (D210).
+    function pasteReference() {
+        notice = "";
+        if (refusedEdit())
+            return;
+        grabbed = null;
+        var text = clipboard.take();
+        if (text.length > 0 && !sheet.isConsts)
+            pasteWith(text, function() { return file.pasteReference(tab, selTop, selLeft, selBottom, selRight, text, selKind === "row"); });
     }
 
     // A new sheet beside the one shown: asked for by name.
@@ -1503,6 +1942,40 @@ ApplicationWindow {
         switchTab(Math.min(tab, tabs.length - 1));
         if (!sheet.isConsts)
             selectAll();
+    }
+
+    // A constant is deleted from the Constants sheet, asked first: a
+    // formula that reads it is left showing an error.
+    property int constGone: -1
+    function deleteConstant() {
+        if (!sheet.isConsts || curRow < 0 || curRow >= sheet.nrows)
+            return;
+        stopEditing();
+        constGone = curRow;
+        deleteConstDialog.open();
+    }
+
+    function deleteConstantNow() {
+        if (!sheet.isConsts || constGone < 0 || constGone >= sheet.nrows)
+            return;
+        var at = constGone;
+        notice = file.deleteConst(at);
+        if (notice.length > 0)
+            return;
+        // The Constants sheet is gone with its last constant.
+        if (sheet.isConsts)
+            selectCell(Math.min(at, sheet.nrows - 1), 0, false);
+    }
+
+    function deleteAllConstants() {
+        stopEditing();
+        deleteAllConstsDialog.open();
+    }
+
+    function deleteAllConstantsNow() {
+        file.deleteAllConsts();
+        if (tabs.length > 0 && sheet.isConsts)
+            switchTab(0);
     }
 
     function deleteColumns() {
@@ -1551,6 +2024,53 @@ ApplicationWindow {
                 return false;
         }
         return true;
+    }
+
+    // Whether a calculated column is among the columns selected.
+    function anyComputed() {
+        for (var c = selLeft; c <= selRight; c++) {
+            if (sheet.columns[c] && sheet.columns[c].computed)
+                return true;
+        }
+        return false;
+    }
+
+    function anyFormatted() {
+        for (var c = selLeft; c <= selRight; c++) {
+            if (sheet.columns[c] && sheet.columns[c].format)
+                return true;
+        }
+        return false;
+    }
+
+    function anyFiltered() {
+        for (var c = selLeft; c <= selRight; c++) {
+            if (sheet.columns[c] && filtered(c))
+                return true;
+        }
+        return false;
+    }
+
+    // Take the format off the selected columns, or the filter.
+    function clearFormats() {
+        if (sheet.isConsts)
+            return;
+        var problem = file.setColumnFormat(tab, selLeft, selRight - selLeft + 1, "");
+        if (problem.length > 0)
+            errorDialog.say(problem);
+    }
+    function clearFilters() {
+        var all = JSON.parse(JSON.stringify(filters));
+        var f = all[sheet.name] || {};
+        for (var c = selLeft; c <= selRight; c++) {
+            if (sheet.columns[c])
+                f[sheet.columns[c].name] = "";
+        }
+        all[sheet.name] = f;
+        busy("Filtering\u2026", function() {
+            filters = all;
+            filterRev++;
+        });
     }
 
     function anyDeclared() {
@@ -1630,10 +2150,15 @@ ApplicationWindow {
         insertRows(below, 1);
     }
 
-    function insertRows(below, count) {
+    // A new row after the last, wherever the selection is.
+    function appendRow() {
+        insertRows(true, 1, true);
+    }
+
+    function insertRows(below, count, atEnd) {
         if (sheet.isConsts || count < 1)
             return;
-        var at = sheet.rows.length === 0 ? 0 : (below ? selBottom + 1 : selTop);
+        var at = sheet.nrows === 0 ? 0 : (atEnd ? sheet.nrows : (below ? selBottom + 1 : selTop));
         // The left of the selection: a whole-row selection ends at the last
         // column, and following it would pan the view to the right.
         var col = selLeft;
@@ -1660,6 +2185,18 @@ ApplicationWindow {
             insertRows(below, count);
     }
 
+    // What to say when whole rows or columns pasted do not fit the sheet they
+    // go into: rows wider than it are clipped, and columns longer than it
+    // make it longer.
+    function lengthNote(text, rows) {
+        var lines = text.split("\n");
+        if (rows)
+            return lines[0].split("\t").length > sheet.columns.length
+                ? "Source length is longer than target length, clipping cols." : "";
+        return lines.length > sheet.nrows
+            ? "Source length is longer than target length, adding rows." : "";
+    }
+
     // Put the rows cut or copied as whole rows in above or below the
     // selection, where blank ones would go: cut rows move there, and copied
     // rows go in as copies, still on the clipboard to go in again.
@@ -1668,11 +2205,30 @@ ApplicationWindow {
         if (hand === null || sheet.isConsts)
             return;
         notice = "";
-        var at = sheet.rows.length === 0 ? 0 : (below ? selBottom + 1 : selTop);
+        var at = sheet.nrows === 0 ? 0 : (below ? selBottom + 1 : selTop);
         var count = hand.count;
         var whole = selKind === "row";
         var col = selLeft;
-        if (hand.cut) {
+        var said = "";
+        if (hand.elsewhere) {
+            var from = foreign;
+            grabbed = null;
+            cutHold.grab = null;
+            said = lengthNote(from.text, true);
+            var m0 = file.undoMark();
+            var bad = "";
+            keeping(at, 0, function() {
+                file.insertRows(tab, at, count);
+                bad = file.pasteCells(tab, at, 0, at, 0, from.text);
+                if (bad.length === 0)
+                    file.deleteRows(from.tab, from.first, from.count);
+            });
+            file.joinSince(m0);
+            if (bad.length > 0) {
+                errorDialog.say(bad);
+                return;
+            }
+        } else if (hand.cut) {
             var g = grabbed;
             grabbed = null;
             // Where they are already: nothing to move.
@@ -1687,6 +2243,7 @@ ApplicationWindow {
             // The rows and what goes in them are undone as one. They go
             // down from the first cell of the first new row, whole.
             var text = marked.text;
+            said = lengthNote(text, true);
             var mark = file.undoMark();
             var problem = "";
             keeping(at, 0, function() {
@@ -1708,15 +2265,57 @@ ApplicationWindow {
             selectCell(at + count - 1, col, true);
         }
         showRow(at + count - 1);
+        if (said.length > 0)
+            notice = said;
     }
 
     // Columns go in before or after the selection: the ones cut or copied as
     // whole columns if any are waiting, else one new one, asked for by name.
+    // The letters a spreadsheet gives column `n` (from 0): A to Z, then AA
+    // to ZZ, which is as far as a sheet kept in letters goes.
+    function columnLetters(n) {
+        var a = String.fromCharCode(65 + n % 26);
+        return n < 26 ? a : String.fromCharCode(65 + Math.floor(n / 26) - 1) + a;
+    }
+    readonly property int maxLetterColumns: 702
+    // Whether the sheet's columns are named A, B, C... in order, as a new
+    // sheet's are: more of them can then be added by number, carrying on
+    // from the last.
+    readonly property bool letterSheet: {
+        var cols = sheet.columns;
+        if (sheet.isConsts || cols.length === 0 || cols.length > maxLetterColumns)
+            return false;
+        for (var i = 0; i < cols.length; i++) {
+            if (cols[i].name !== columnLetters(i))
+                return false;
+        }
+        return true;
+    }
+
     function insertColumnsHere(after) {
+        var count = selRight - selLeft + 1;
         if (colsOnHand !== null)
             insertColumnsOnHand(after);
+        else if (count > 1 && !sheet.isConsts && !frameSheet)
+            insertBlankColumns(after ? selRight + 1 : selLeft, count);
         else
             promptDialog.ask("column", after ? selRight + 1 : selLeft);
+    }
+
+    // `count` blank columns at `at`, each named as the one to its left would
+    // be offered, in one step to undo, and left selected.
+    function insertBlankColumns(at, count) {
+        var mark = file.undoMark();
+        var problem = "";
+        keeping(0, at, function() {
+            for (var k = 0; k < count && problem.length === 0; k++)
+                problem = file.insertColumn(tab, at + k, suggestedColumnName(at + k));
+        });
+        file.joinSince(mark);
+        if (problem.length > 0)
+            errorDialog.say(problem);
+        selectLine(false, at, false);
+        selectLine(false, at + count - 1, true);
     }
 
     // Put the columns cut or copied as whole columns in before or after the
@@ -1729,7 +2328,40 @@ ApplicationWindow {
         notice = "";
         var at = after ? selRight + 1 : selLeft;
         var count = hand.count;
-        if (hand.cut) {
+        var said = "";
+        if (hand.elsewhere) {
+            var src = foreign;
+            grabbed = null;
+            cutHold.grab = null;
+            said = lengthNote(src.text, false);
+            var taken2 = namesTaken(-1, -1);
+            var names2 = src.names.map(function(n) { return pastedName(n, src.tab, taken2); });
+            var m0 = file.undoMark();
+            var bad = "";
+            var onlyFormulas = src.formulas !== undefined && src.formulas.every(function(f) { return f && f.length > 0; });
+            if (frameSheet && !onlyFormulas)
+                bad = "Only formula columns go into a file's sheet.";
+            keeping(0, at, function() {
+                if (bad.length > 0)
+                    return;
+                if (frameSheet) {
+                    for (var j = 0; j < names2.length && bad.length === 0; j++)
+                        bad = file.insertComputed(tab, at + j, names2[j], src.formulas[j]);
+                } else {
+                    for (var k = 0; k < names2.length && bad.length === 0; k++)
+                        bad = file.insertColumn(tab, at + k, names2[k]);
+                    if (bad.length === 0)
+                        bad = file.pasteCells(tab, 0, at, 0, at, src.text);
+                }
+                if (bad.length === 0)
+                    bad = file.deleteColumns(src.tab, src.first, src.count);
+            });
+            file.joinSince(m0);
+            if (bad.length > 0) {
+                errorDialog.say(bad);
+                return;
+            }
+        } else if (hand.cut) {
             var g = grabbed;
             grabbed = null;
             if (at >= g.first && at <= g.first + g.count)
@@ -1746,9 +2378,24 @@ ApplicationWindow {
             for (var i = 0; i < count; i++)
                 names.push(copyName(from[m.left + i] ? from[m.left + i].name : "Column", taken));
             var text = m.text;
+            said = lengthNote(text, false);
             var mark = file.undoMark();
             var problem = "";
+            var formulas = [];
+            for (var q = 0; q < count; q++) {
+                var fc = from[m.left + q];
+                formulas.push(fc && fc.computed ? fc.formula : "");
+            }
+            if (frameSheet && !formulas.every(function(f) { return f.length > 0; }))
+                problem = "Only formula columns go into a file's sheet.";
             keeping(0, at, function() {
+                if (problem.length > 0)
+                    return;
+                if (frameSheet) {
+                    for (var j = 0; j < names.length && problem.length === 0; j++)
+                        problem = file.insertComputed(tab, at + j, names[j], formulas[j]);
+                    return;
+                }
                 for (var k = 0; k < names.length && problem.length === 0; k++)
                     problem = file.insertColumn(tab, at + k, names[k]);
                 if (problem.length === 0)
@@ -1762,10 +2409,12 @@ ApplicationWindow {
         }
         selectLine(false, at, false);
         selectLine(false, at + count - 1, true);
+        if (said.length > 0)
+            notice = said;
     }
 
     function deleteRows() {
-        if (sheet.isConsts || sheet.rows.length === 0)
+        if (sheet.isConsts || sheet.nrows === 0)
             return;
         var top = selTop, gone = selBottom - selTop + 1;
         var whole = selKind === "row";
@@ -1783,9 +2432,9 @@ ApplicationWindow {
     // Right-click: keep a selection that contains the cell, otherwise move
     // to it. A negative row or column means the whole column or row.
     function openMenu(row, col) {
-        stopEditing();
+        commitEditing();
         grid.forceActiveFocus();
-        var maxRow = Math.max(0, sheet.rows.length - 1);
+        var maxRow = Math.max(0, sheet.nrows - 1);
         var maxCol = Math.max(0, sheet.columns.length - 1);
         var inRows = row < 0 || (row >= selTop && row <= selBottom);
         var inCols = col < 0 || (col >= selLeft && col <= selRight);
@@ -1822,16 +2471,19 @@ ApplicationWindow {
             tab = 0;
             switchTab(0);
         } else if (action === "open") {
-            openDialog.open();
+            openDialog.show();
         } else if (action === "openUrl") {
-            if (file.openUrl(pendingUrl)) {
-                places = ({});
-                tab = 0;
-                switchTab(0);
-                // What an import changed or left behind.
-                if (file.notes.length > 0)
-                    notesDialog.open();
-            }
+            var url = pendingUrl;
+            busy("Opening\u2026", function() {
+                if (file.openUrl(url)) {
+                    places = ({});
+                    tab = 0;
+                    switchTab(0);
+                    // What an import changed or left behind.
+                    if (file.notes.length > 0)
+                        notesDialog.open();
+                }
+            });
         }
     }
 
@@ -1858,10 +2510,17 @@ ApplicationWindow {
     Connections {
         target: file
         function onRevisionChanged() { win.reload(); }
+        // The file in use is the one the next Open starts from.
+        function onFilePathChanged() {
+            if (file.filePath.length > 0)
+                file.keepLastFile(file.filePath);
+        }
     }
 
     Component.onCompleted: {
         reload();
+        if (file.filePath.length > 0)
+            file.keepLastFile(file.filePath);
         grid.forceActiveFocus();
     }
 
@@ -1906,9 +2565,15 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+O"; onActivated: win.guard("open") }
     Shortcut { sequence: "Ctrl+E"; onActivated: exportChoice.open() }
     Shortcut { sequence: "Ctrl+N"; enabled: !win.typing; onActivated: win.newSheet(true) }
+    Shortcut { sequence: "Ctrl+D"; enabled: !win.typing; onActivated: win.duplicateShownSheet() }
+    Shortcut { sequence: "Ctrl+Alt+Shift+Left"; enabled: !win.typing; onActivated: win.moveShownSheet(-1) }
+    Shortcut { sequence: "Ctrl+Alt+Shift+Right"; enabled: !win.typing; onActivated: win.moveShownSheet(1) }
     Shortcut { sequence: "Ctrl+K"; enabled: !win.typing; onActivated: promptDialog.ask("const") }
     Shortcut { sequence: "Ctrl+Shift+N"; onActivated: win.newWindow(win.tab) }
     Shortcut { sequence: "Ctrl+Alt+N"; onActivated: win.guard("new") }
+    // Cmd+W on a Mac (Qt reads Cmd as Ctrl there); the unsaved-changes check
+    // in onClosing still applies.
+    Shortcut { sequence: "Ctrl+W"; onActivated: win.close() }
     Shortcut { sequence: "Ctrl+Z"; enabled: !win.typing; onActivated: file.undo() }
     Shortcut { sequences: ["Ctrl+Shift+Z", "Ctrl+Y"]; enabled: !win.typing; onActivated: file.redo() }
     Shortcut { sequences: ["Ctrl++", "Ctrl+="]; onActivated: win.zoom(1) }
@@ -1964,13 +2629,10 @@ ApplicationWindow {
                     elide: Text.ElideMiddle
                     Layout.maximumWidth: 260
                     rightPadding: 6
-                    MouseArea {
-                        id: fileArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        ToolTip.visible: containsMouse && file.filePath.length > 0
-                        ToolTip.delay: 400
-                        ToolTip.text: file.filePath
+                    // Where the file is, said in the footer while the pointer is on it.
+                    HoverHandler {
+                        id: nameHover
+                        onHoveredChanged: win.hover(nameHover, hovered ? file.filePath : "", false)
                     }
                 }
 
@@ -1990,7 +2652,7 @@ ApplicationWindow {
                     // that holds what is written in it.
                     readonly property string mark: win.sheet.view || (column && column.computed) ? " :=" : ""
                     text: win.sheet.isConsts
-                        ? (column && win.curRow < win.sheet.rows.length ? win.sheet.rows[win.curRow][0].d : "")
+                        ? (column && win.curRow < win.sheet.nrows ? win.sheet.rows[win.curRow][0].d : "")
                         : win.sheet.view ? win.sheet.name + mark
                         : across.length === 0 ? ""
                         : win.sheet.name + (win.selKind === "all" ? ""
@@ -2214,7 +2876,7 @@ ApplicationWindow {
                 case Qt.Key_PageUp: win.selectCell(win.rowAt(Math.max(0, win.posOf(win.curRow) - page)), win.curCol, shift); break;
                 case Qt.Key_PageDown: win.selectCell(win.rowAt(Math.min(win.shownCount - 1, win.posOf(win.curRow) + page)), win.curCol, shift); break;
                 case Qt.Key_Home: win.selectCell(ctrl ? 0 : win.curRow, 0, shift); break;
-                case Qt.Key_End: win.selectCell(ctrl ? win.sheet.rows.length - 1 : win.curRow, win.sheet.columns.length - 1, shift); break;
+                case Qt.Key_End: win.selectCell(ctrl ? win.sheet.nrows - 1 : win.curRow, win.sheet.columns.length - 1, shift); break;
                 case Qt.Key_Tab: win.selectCell(win.curRow, win.curCol + 1, false); break;
                 case Qt.Key_Backtab: win.selectCell(win.curRow, win.curCol - 1, false); break;
                 // F2 edits the cell in place, as Enter does a single cell.
@@ -2224,10 +2886,13 @@ ApplicationWindow {
                     break;
                 case Qt.Key_Return:
                 case Qt.Key_Enter:
-                    // A row goes in beside whole rows, or one cell, and nothing else.
+                    // A row goes in beside whole rows, or one cell, and a
+                    // column beside whole columns, and nothing else.
                     if (ctrl) {
                         if (win.selKind === "row")
                             win.insertRowsHere(!shift, win.selBottom - win.selTop + 1);
+                        else if (win.selKind === "column")
+                            win.insertColumnsHere(!shift);
                         else if (win.selKind === "cells" && win.selTop === win.selBottom && win.selLeft === win.selRight)
                             win.insertRowsHere(!shift, 1);
                     }
@@ -2271,11 +2936,12 @@ ApplicationWindow {
                         win.copySelection();
                     } else if (ctrl && event.key === Qt.Key_X) {
                         win.cutSelection();
+                    } else if (ctrl && shift && event.key === Qt.Key_T) {
+                        if (win.canTranspose) win.pasteTransposed();
+                    } else if (ctrl && shift && event.key === Qt.Key_R) {
+                        if (win.canPasteReference) win.pasteReference();
                     } else if (ctrl && event.key === Qt.Key_V) {
-                        if (event.modifiers & Qt.AltModifier) {
-                            if (win.canTranspose) win.pasteTransposed();
-                        }
-                        else if (shift) {
+                        if (shift) {
                             if (!win.marked || !win.spansFormula(win.marked)) win.pasteValues();
                         }
                         else
@@ -2336,7 +3002,7 @@ ApplicationWindow {
                                 acceptedButtons: Qt.LeftButton | Qt.RightButton
                                 // A right-click opens the sheet's menu, above its tab.
                                 onClicked: function(mouse) {
-                                    win.stopEditing();
+                                    win.commitEditing();
                                     win.selectAll();
                                     if (mouse.button === Qt.RightButton) {
                                         grid.forceActiveFocus();
@@ -2346,6 +3012,7 @@ ApplicationWindow {
                             }
                         }
                         Repeater {
+                            id: headCells
                             model: win.sheet.columns.length
                             Rectangle {
                                 id: headCell
@@ -2356,13 +3023,16 @@ ApplicationWindow {
                                 Connections {
                                     target: win
                                     function onRenameColumnAsked(col) {
-                                        if (col === headCell.index)
+                                        if (col === headCell.index && !win.refusedRename(col))
                                             headCell.renaming = true;
                                     }
                                 }
                                 width: win.colWidths[index] || 0
                                 height: win.headerHeight
-                                color: index >= win.selLeft && index <= win.selRight
+                                // Stronger while the sort and filter box beside it is open.
+                                color: columnPopup.visible && columnPopup.col === index
+                                    ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.4)
+                                    : index >= win.selLeft && index <= win.selRight
                                     ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.16)
                                     : win.panelColor
                                 Column {
@@ -2371,9 +3041,9 @@ ApplicationWindow {
                                     x: 7
                                     width: parent.width - 14
                                     Text {
-                                        // Clear of the telltale's caret, which
-                                        // stands above it when sorted up.
-                                        width: parent.width - (filterButton.sorted === "asc" ? filterButton.width : 0)
+                                        id: nameLine
+                                        // Clear of the telltale, which stands to its right.
+                                        width: parent.width - filterButton.width
                                         text: headCell.column ? headCell.column.name : ""
                                         color: win.textColor
                                         font.family: win.font.family
@@ -2382,36 +3052,37 @@ ApplicationWindow {
                                         font.bold: true
                                         elide: Text.ElideRight
                                     }
-                                    // The type: marked `:=` in a formula column, and
-                                    // plain rather than muted where it is declared,
-                                    // with `[]` after it where it has a format, which
-                                    // the context menu shows and changes.
+                                    // The type, always muted, with a mark right before it in
+                                    // the accent colour: `:` where the type is set, `=` in a
+                                    // formula column, and `:=` where it is both. `[]` follows
+                                    // it where it has a format, which the context menu shows
+                                    // and changes.
                                     Text {
                                         id: typeLine
                                         readonly property bool computed: !!headCell.column && headCell.column.computed && !win.sheet.isConsts
                                         readonly property bool declared: !!headCell.column && headCell.column.declared
-                                        readonly property color typeColor: declared ? win.textColor : win.mutedColor
+                                        readonly property string mark: (computed ? "=" : "") + (declared ? ":" : "")
                                         readonly property bool formatted: !!headCell.column && !!headCell.column.format
-                                        width: parent.width - filterButton.width
+                                        width: parent.width
                                         textFormat: Text.StyledText
                                         text: !headCell.column ? ""
-                                            : (computed ? "<font color=\"" + win.accentColor + "\">:=</font> " : "")
-                                              + "<font color=\"" + typeColor + "\">" + headCell.column.type
-                                              + (formatted ? "[]" : "") + "</font>"
+                                            : (mark.length > 0 ? "<font color=\"" + win.accentColor + "\">" + mark + "</font>" : "")
+                                              + headCell.column.type + (formatted ? "[]" : "")
                                         color: win.mutedColor
                                         font.family: win.font.family
                                         font.features: win.font.features
                                         font.pixelSize: win.noteSize
-                                        elide: Text.ElideRight
+                                        elide: Text.ElideNone
                                     }
                                 }
-                                // The telltale on the type's line, which opens the
-                                // column's sort and filter: an empty circle when
-                                // neither has touched it, a solid one while the
-                                // column is filtered or once it has been sorted this
-                                // session, with an up caret above it once sorted
-                                // ascending and a down caret below it once sorted
-                                // descending.
+                                // The telltale to the right of the name and a little
+                                // below its middle, which opens the column's sort and
+                                // filter, with room for a caret above or below it: an
+                                // empty circle unless
+                                // the column is filtered, when it is solid; a sort
+                                // is shown by the caret alone, an up caret above the
+                                // circle once sorted ascending and a down caret
+                                // below it once sorted descending.
                                 Item {
                                     id: filterButton
                                     // Above the header's own mouse area, which
@@ -2420,12 +3091,12 @@ ApplicationWindow {
                                     visible: !win.sheet.isConsts
                                     readonly property bool active: win.filtered(headCell.index)
                                     readonly property string sorted: win.sortedAs(headCell.index)
-                                    readonly property bool solid: active || win.wasSorted(headCell.index)
+                                    readonly property bool solid: active
                                     width: visible ? win.noteSize : 0
-                                    height: typeLine.height
+                                    height: win.noteSize + 2
                                     anchors.right: parent.right
                                     anchors.rightMargin: 4
-                                    y: headLabels.y + typeLine.y
+                                    y: headLabels.y + nameLine.height / 2 + 3 - height / 2
                                     Text {
                                         id: dot
                                         anchors.centerIn: parent
@@ -2433,17 +3104,44 @@ ApplicationWindow {
                                         color: filterButton.solid ? win.accentColor : win.mutedColor
                                         font.pixelSize: win.noteSize
                                     }
-                                    Text {
+                                    // The sort's caret: one chevron, drawn here rather than
+                                    // set in a font, whose up and down carets differ in
+                                    // weight and in where they sit. Descending is the same
+                                    // chevron turned over, and it stands as far below the
+                                    // circle's middle as the ascending one stands above it,
+                                    // so the two are mirror images.
+                                    Item {
+                                        id: caret
                                         visible: filterButton.sorted.length > 0
-                                        anchors.horizontalCenter: dot.horizontalCenter
-                                        anchors.bottom: filterButton.sorted === "asc" ? dot.top : undefined
-                                        anchors.top: filterButton.sorted === "desc" ? dot.bottom : undefined
-                                        anchors.bottomMargin: -3
-                                        anchors.topMargin: -3
-                                        // The carets the box at the top opens and closes with.
-                                        text: filterButton.sorted === "asc" ? "\u2303" : "\u2304"
-                                        color: win.accentColor
-                                        font.pixelSize: Math.round(win.noteSize * 0.8)
+                                        readonly property real span: Math.round(win.noteSize * 0.95)
+                                        readonly property real arm: span / 2 / Math.cos(40 * Math.PI / 180)
+                                        readonly property real thick: Math.max(2, Math.round(win.noteSize / 6))
+                                        width: span
+                                        height: Math.ceil(arm * Math.sin(40 * Math.PI / 180) + thick)
+                                        x: dot.x + (dot.width - width) / 2
+                                        y: dot.y + dot.height / 2 - height / 2
+                                            + (filterButton.sorted === "asc" ? -1 : 1) * (win.noteSize * 0.5 + height / 2 - 1)
+                                        rotation: filterButton.sorted === "asc" ? 0 : 180
+                                        Rectangle {
+                                            x: caret.span / 2 - caret.arm
+                                            y: 0
+                                            width: caret.arm
+                                            height: caret.thick
+                                            radius: caret.thick / 2
+                                            color: win.accentColor
+                                            transformOrigin: Item.Right
+                                            rotation: -40
+                                        }
+                                        Rectangle {
+                                            x: caret.span / 2
+                                            y: 0
+                                            width: caret.arm
+                                            height: caret.thick
+                                            radius: caret.thick / 2
+                                            color: win.accentColor
+                                            transformOrigin: Item.Left
+                                            rotation: 40
+                                        }
                                     }
                                     MouseArea {
                                         anchors.fill: parent
@@ -2465,22 +3163,17 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                    // The formula of a formula column, in full.
-                                    readonly property bool hasFormula: !!headCell.column && headCell.column.computed && !win.sheet.isConsts
-                                    ToolTip.visible: containsMouse && !cellMenu.visible && hasFormula
-                                    ToolTip.delay: 400
-                                    ToolTip.text: hasFormula ? headCell.column.name + " := " + headCell.column.formula : ""
                                     onPressed: function(mouse) {
                                         if (mouse.button === Qt.RightButton) {
                                             win.openMenu(-1, headCell.index);
                                             return;
                                         }
                                         // Select the whole column.
-                                        win.stopEditing();
+                                        win.commitEditing();
                                         win.byRow = false;
                                         win.byCol = true;
                                         // The cursor waits in the first cell.
-                                        win.anchorRow = Math.max(0, win.sheet.rows.length - 1);
+                                        win.anchorRow = Math.max(0, win.sheet.nrows - 1);
                                         win.anchorCol = (mouse.modifiers & Qt.ShiftModifier) ? win.anchorCol : headCell.index;
                                         win.curRow = 0;
                                         win.curCol = headCell.index;
@@ -2490,7 +3183,7 @@ ApplicationWindow {
                                     onPositionChanged: function(mouse) {
                                         if (!(pressedButtons & Qt.LeftButton))
                                             return;
-                                        var x = mapToItem(rowsView.contentItem, mouse.x, mouse.y).x - win.gutterWidth;
+                                        var x = mapToItem(rowsView, mouse.x, mouse.y).x - win.gutterWidth;
                                         var c = 0;
                                         while (c < win.colWidths.length - 1 && x > win.colWidths[c]) {
                                             x -= win.colWidths[c];
@@ -2503,7 +3196,8 @@ ApplicationWindow {
                                         if (mouse.button !== Qt.LeftButton || win.sheet.isConsts || !headCell.column)
                                             return;
                                         win.notice = "";
-                                        headCell.renaming = true;
+                                        if (!win.refusedRename(headCell.index))
+                                            headCell.renaming = true;
                                     }
                                 }
                                 Loader {
@@ -2552,26 +3246,72 @@ ApplicationWindow {
                         }
                     }
 
-                    ListView {
+                    // The rows: one screen of them, not a list as tall as
+                    // the sheet (open-a-big-csv D156). A list of millions
+                    // of rows is hundreds of millions of pixels tall, and
+                    // the scene graph places items in 32-bit floats, which
+                    // past 2^24 px land rows and gridlines on steps of 2,
+                    // 4, 8 px and more. Here the scroll is a number,
+                    // `contentY`, and each row drawn sits within a screen
+                    // of the top: the first is at place `first`, `offset`
+                    // px up.
+                    Item {
                         id: rowsView
                         width: hflick.contentWidth
                         height: hflick.height - win.headerHeight
                         clip: true
-                        boundsBehavior: Flickable.StopAtBounds
-                        model: win.shownCount
-                        reuseItems: true
-                        // The grid moves the selection. After an edit the
-                        // focus is left inside a row, and the list would
-                        // take Up and Down for itself.
-                        keyNavigationEnabled: false
-                        ScrollBar.vertical: vbar
+                        property real contentY: 0
+                        readonly property real originY: 0
+                        readonly property real contentHeight: win.shownCount * win.rowHeight
+                        readonly property int first: Math.floor(contentY / win.rowHeight)
+                        readonly property real offset: contentY - first * win.rowHeight
+                        readonly property int slots: Math.ceil(height / win.rowHeight) + 1
+                        // Always a number: NaN, before the sizes are known,
+                        // would never equal itself, and set it again forever.
+                        function clamp(y) {
+                            var most = contentHeight - height;
+                            if (!(most > 0))
+                                most = 0;
+                            if (!(y > 0))
+                                return 0;
+                            return Math.min(y, most);
+                        }
+                        function positionViewAtBeginning() {
+                            contentY = 0;
+                        }
+                        // Never past either end, however the scroll was set.
+                        onContentYChanged: if (contentY !== clamp(contentY)) contentY = clamp(contentY)
+                        onContentHeightChanged: contentY = clamp(contentY)
+                        onHeightChanged: contentY = clamp(contentY)
 
+                        // The wheel scrolls; a wheel the cells do not take
+                        // comes here. Sideways is the sheet's, left to it.
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.NoButton
+                            onWheel: function(wheel) {
+                                var dx = wheel.pixelDelta.x !== 0 ? wheel.pixelDelta.x : wheel.angleDelta.x;
+                                var dy = wheel.pixelDelta.y !== 0 ? wheel.pixelDelta.y
+                                    : wheel.angleDelta.y / 120 * 3 * win.rowHeight;
+                                if (Math.abs(dx) > Math.abs(dy)) {
+                                    wheel.accepted = false;
+                                    return;
+                                }
+                                rowsView.contentY = rowsView.clamp(rowsView.contentY - dy);
+                            }
+
+                        Repeater {
+                        model: Math.max(0, Math.min(rowsView.slots, win.shownCount - rowsView.first))
                         delegate: Row {
                             id: rowItem
+                            // Which of the rows drawn this is, from the top.
                             required property int index
-                            // The row of the sheet at this place in the list,
-                            // which a filter makes other than the place.
-                            readonly property int row: win.rowAt(index)
+                            // The place in the list it shows, and the row of
+                            // the sheet at that place, which a filter makes
+                            // other than the place.
+                            readonly property int place: rowsView.first + index
+                            readonly property int row: win.rowAt(place)
+                            y: index * win.rowHeight - rowsView.offset
                             height: win.rowHeight
                             // The row holding a cell opened out to its lines
                             // is drawn above the others: a list paints its
@@ -2611,7 +3351,7 @@ ApplicationWindow {
                                             return;
                                         }
                                         // Select the whole row.
-                                        win.stopEditing();
+                                        win.commitEditing();
                                         win.byRow = true;
                                         win.byCol = false;
                                         // The cursor waits in the first cell.
@@ -2625,8 +3365,8 @@ ApplicationWindow {
                                     onPositionChanged: function(mouse) {
                                         if (!(pressedButtons & Qt.LeftButton))
                                             return;
-                                        var p = mapToItem(rowsView.contentItem, mouse.x, mouse.y);
-                                        win.selectLine(true, win.rowAtY(p.y), true);
+                                        var p = mapToItem(rowsView, mouse.x, mouse.y);
+                                        win.selectLine(true, win.rowAtY(p.y + rowsView.contentY), true);
                                     }
                                 }
                             }
@@ -2660,7 +3400,8 @@ ApplicationWindow {
                                     // the cell is wide, and a cell made after
                                     // it would otherwise be drawn over them.
                                     z: win.openCell !== null && win.openCell.tab === win.tab
-                                        && win.openCell.row === row && win.openCell.col === index ? 1 : 0
+                                        && win.openCell.row === row && win.openCell.col === index ? 1
+                                        : (win.editing && current ? 1 : 0)
                                     color: (selected && !alone) || marked
                                         ? Qt.rgba(win.selectionFill.r, win.selectionFill.g, win.selectionFill.b, 0.55)
                                         : column && column.computed ? win.computedTint : "transparent"
@@ -2779,21 +3520,28 @@ ApplicationWindow {
                                     }
 
                                     MouseArea {
+                                        id: cellArea
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         // A drag selects or picks: the views do not take it to scroll.
                                         preventStealing: true
                                         property bool picking: false
-                                        // Why the cell failed, or a number shown
-                                        // with fewer digits than it has, in full;
-                                        // or what is cut off at the cell's edge.
-                                        readonly property string tip: cellItem.cell
-                                            ? cellItem.cell.e || cellItem.cell.x || (cellText.truncated ? cellItem.cell.d : "")
+                                        // Why the cell failed, or a number shown with fewer
+                                        // digits than it has, in full; or what is cut off at
+                                        // the cell's edge, except in a String column, where
+                                        // text running past the edge is what is expected.
+                                        // Said in the footer while the pointer is on it.
+                                        readonly property string said: cellItem.cell
+                                            ? cellItem.cell.e || cellItem.cell.x
+                                                || (cellText.truncated && !(cellItem.column && cellItem.column.type === "String")
+                                                    ? cellItem.cell.d : "")
                                             : ""
-                                        ToolTip.visible: containsMouse && !cellMenu.visible && tip.length > 0
-                                        ToolTip.delay: 400
-                                        ToolTip.text: tip
+                                        readonly property bool failed: !!cellItem.cell && !!cellItem.cell.e
+                                        function say() { win.hover(cellArea, containsMouse && !cellMenu.visible ? said : "", failed); }
+                                        onContainsMouseChanged: say()
+                                        onSaidChanged: say()
+                                        Component.onDestruction: win.hover(cellArea, "", false)
                                         // A link in the cell under the pointer, opened with Ctrl and a click.
                                         readonly property string link: containsMouse
                                             ? cellText.linkAt(mouseX - cellText.x, mouseY - cellText.y) : ""
@@ -2817,7 +3565,7 @@ ApplicationWindow {
                                                 return;
                                             }
                                             if (win.editing)
-                                                win.stopEditing();
+                                                win.commitEditing();
                                             grid.forceActiveFocus();
                                             win.selectCell(cellItem.row, cellItem.index, mouse.modifiers & Qt.ShiftModifier);
                                         }
@@ -2828,8 +3576,8 @@ ApplicationWindow {
                                             if (!(pressedButtons & Qt.LeftButton))
                                                 return;
                                             // Drag to extend the selection, or the pick.
-                                            var p = mapToItem(rowsView.contentItem, mouse.x, mouse.y);
-                                            var r = win.rowAtY(p.y);
+                                            var p = mapToItem(rowsView, mouse.x, mouse.y);
+                                            var r = win.rowAtY(p.y + rowsView.contentY);
                                             var x = p.x - win.gutterWidth;
                                             var c = 0;
                                             while (c < win.colWidths.length - 1 && x > win.colWidths[c]) {
@@ -2848,7 +3596,13 @@ ApplicationWindow {
                                     }
 
                                     Loader {
-                                        anchors.fill: parent
+                                        // Text too wide for the cell carries on
+                                        // over the cells to the right, on an
+                                        // opaque ground (the editor's own).
+                                        anchors.left: parent.left
+                                        anchors.top: parent.top
+                                        anchors.bottom: parent.bottom
+                                        width: item ? Math.max(parent.width, item.contentWidth + item.leftPadding + item.rightPadding + 4) : parent.width
                                         active: win.editing && cellItem.current
                                         // A `TextArea`, a cell being able to
                                         // hold a newline: the box at the top
@@ -2963,17 +3717,18 @@ ApplicationWindow {
                                                         return;
                                                     }
                                                     // Up and Down have nowhere to go in the cell's one
-                                                    // line, and Left at the start of the text or Right at
-                                                    // its end have nowhere further. The first press stays
-                                                    // where it is; the same key pressed again writes what
-                                                    // is typed and selects the cell that way, as Tab does.
+                                                    // line, and so write what is typed and select the
+                                                    // cell above or below, as Enter and Tab do. Left at
+                                                    // the start of the text or Right at its end have
+                                                    // nowhere further: the first press stays where it
+                                                    // is; the same key pressed again does the same.
                                                     // Held down, it does neither.
                                                     if ((event.modifiers & (Qt.ShiftModifier | Qt.ControlModifier | Qt.AltModifier)) === 0
                                                             && (d[0] !== 0 || (selectedText.length === 0
                                                                 && cursorPosition === (d[1] < 0 ? 0 : text.length)))) {
                                                         event.accepted = true;
                                                         if (!event.isAutoRepeat) {
-                                                            if (nudged === event.key)
+                                                            if (nudged === event.key || (d[0] !== 0 && text.indexOf("\n") < 0))
                                                                 finish(d[0], d[1]);
                                                             else
                                                                 nudged = event.key;
@@ -2996,6 +3751,8 @@ ApplicationWindow {
                                 }
                             }
                         }
+                        }
+                        }
                     }
                 }
             }
@@ -3008,7 +3765,7 @@ ApplicationWindow {
                 width: hflick.width - x
                 height: hflick.height
                 onPressed: {
-                    win.stopEditing();
+                    win.commitEditing();
                     win.deselect();
                 }
             }
@@ -3018,7 +3775,7 @@ ApplicationWindow {
                 width: beside.x
                 height: hflick.height - y
                 onPressed: {
-                    win.stopEditing();
+                    win.commitEditing();
                     win.deselect();
                 }
             }
@@ -3031,6 +3788,16 @@ ApplicationWindow {
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: hbar.needed ? hbar.height : 0
                 policy: ScrollBar.AsNeeded
+                // The rows' own scroll, which no Flickable keeps (D156). The
+                // handle stays big enough to take hold of on millions of rows.
+                minimumSize: 0.04
+                size: rowsView.contentHeight > 0 ? Math.min(1, rowsView.height / rowsView.contentHeight) : 1
+                Binding on position {
+                    when: !vbar.pressed
+                    value: rowsView.contentHeight > 0 ? rowsView.contentY / rowsView.contentHeight : 0
+                    restoreMode: Binding.RestoreNone
+                }
+                onPositionChanged: if (pressed) rowsView.contentY = rowsView.clamp(position * rowsView.contentHeight)
             }
 
             ScrollBar {
@@ -3043,6 +3810,43 @@ ApplicationWindow {
                 anchors.bottom: parent.bottom
                 orientation: Qt.Horizontal
                 policy: ScrollBar.AsNeeded
+            }
+
+            // Rows past the sample of a file still being copied: the grid
+            // ends at the sample, and this says there is more to come.
+            Rectangle {
+                id: loadingMore
+                visible: win.sheet.sampled === true
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: hbar.needed ? hbar.height + 8 : 8
+                radius: height / 2
+                color: win.overColor
+                border.color: win.lineColor
+                width: loadingRow.implicitWidth + 24
+                height: loadingRow.implicitHeight + 10
+                opacity: 0.95
+                Row {
+                    id: loadingRow
+                    anchors.centerIn: parent
+                    spacing: 8
+                    BusyIndicator {
+                        running: loadingMore.visible
+                        height: loadingText.implicitHeight + 4
+                        width: height
+                        padding: 0
+                        Material.accent: win.accentColor
+                    }
+                    Text {
+                        id: loadingText
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Showing the first " + win.sheet.nrows
+                            + " rows — loading the rest…"
+                        color: win.mutedColor
+                        font.family: win.font.family
+                        font.pixelSize: win.captionSize
+                    }
+                }
             }
         }
 
@@ -3174,6 +3978,28 @@ ApplicationWindow {
                         height: tabStrip.height
                         width: implicitWidth
                         spacing: 2
+                        // The tab being dragged, or -1, and the gap it is over:
+                        // 0 is before the first sheet, and the number of sheets
+                        // is after the last.
+                        property int dragFrom: -1
+                        property int gap: -1
+                        readonly property int sheets: {
+                            var n = 0;
+                            while (n < win.tabs.length && !win.tabs[n].isConsts)
+                                n++;
+                            return n;
+                        }
+                        // The gap for a pointer at `x` along the row: before the
+                        // first tab whose middle it has not passed. The constants
+                        // stay last, so it never goes past the sheets.
+                        function gapAt(x) {
+                            for (var i = 0; i < sheets; i++) {
+                                var item = tabRepeater.itemAt(i);
+                                if (item && x < item.x + item.width / 2)
+                                    return i;
+                            }
+                            return sheets;
+                        }
                         Repeater {
                             id: tabRepeater
                             model: win.tabs.length
@@ -3184,8 +4010,8 @@ ApplicationWindow {
                                 // one: its tab is marked, and says which file.
                                 readonly property string from: win.tabs[index].from || ""
                                 label: (from ? "\u25A4 " : "") + win.tabs[index].name
-                                tip: from ? from + ", " + win.tabs[index].rows.length
-                                    + (win.tabs[index].rows.length === 1 ? " row" : " rows") + ", read-only" : ""
+                                tip: from ? from + ", " + win.tabs[index].nrows
+                                    + (win.tabs[index].nrows === 1 ? " row" : " rows") + ", read-only" : ""
                                 active: index === win.tab && !win.showSource
                                 // The whole sheet copied or cut, outlined here too.
                                 readonly property bool marked: win.sheetMark !== null && win.sheetMark.tab === index
@@ -3196,6 +4022,72 @@ ApplicationWindow {
                                 onClicked: {
                                     win.viewSource(false);
                                     win.switchTab(index);
+                                }
+                                // Dragged along the row to another place among the
+                                // sheets; a click that does not move is still a click.
+                                opacity: dragger.active ? 0.5 : 1
+                                // Where the tab being dragged would land: a line in
+                                // the gap nearest the pointer, which is the left of a
+                                // tab, or the right of the last sheet. Drawn by the tab
+                                // beside the gap, so it stays with it.
+                                readonly property bool landing: tabRow.dragFrom >= 0
+                                    && tabRow.gap !== tabRow.dragFrom && tabRow.gap !== tabRow.dragFrom + 1
+                                Rectangle {
+                                    visible: tabButton.landing && tabRow.gap === tabButton.index
+                                    x: tabButton.index === 0 ? 0 : -2
+                                    y: 3
+                                    width: 2
+                                    height: parent.height - 6
+                                    radius: 1
+                                    color: win.accentColor
+                                    z: 2
+                                }
+                                Rectangle {
+                                    visible: tabButton.landing && tabRow.gap === tabRow.sheets
+                                        && tabButton.index === tabRow.sheets - 1
+                                    x: parent.width - 2
+                                    y: 3
+                                    width: 2
+                                    height: parent.height - 6
+                                    radius: 1
+                                    color: win.accentColor
+                                    z: 2
+                                }
+                                DragHandler {
+                                    id: dragger
+                                    target: null
+                                    acceptedButtons: Qt.LeftButton
+                                    yAxis.enabled: false
+                                    enabled: !win.tabs[tabButton.index].isConsts && win.renamingTab !== tabButton.index
+                                    onActiveChanged: {
+                                        if (active) {
+                                            tabRow.dragFrom = tabButton.index;
+                                            tabRow.gap = tabButton.index;
+                                        } else {
+                                            // Taking the tab out leaves the gaps after
+                                            // it one place nearer the front.
+                                            var from = tabRow.dragFrom, gap = tabRow.gap;
+                                            tabRow.dragFrom = -1;
+                                            tabRow.gap = -1;
+                                            win.dropTab(from, gap > from ? gap - 1 : gap);
+                                        }
+                                    }
+                                    onCentroidChanged: {
+                                        if (active)
+                                            tabRow.gap = tabRow.gapAt(tabButton.mapToItem(tabRow, centroid.position.x, 0).x);
+                                    }
+                                }
+                                // Double-clicked, a sheet's name is typed over in place,
+                                // as from F2. The first click has made it the sheet
+                                // shown; the constants have no name to change.
+                                onDoubleClicked: {
+                                    if (win.tabs[index].isConsts)
+                                        return;
+                                    win.viewSource(false);
+                                    win.switchTab(index);
+                                    // After the click's own focus change, which would
+                                    // otherwise take the keyboard back from the box.
+                                    Qt.callLater(function() { win.renamingTab = index; });
                                 }
                                 // The tab's own menu: the sheet shown stays as it is,
                                 // so that this one can be opened in a window beside it.
@@ -3265,9 +4157,8 @@ ApplicationWindow {
 
                 Item { Layout.fillWidth: true }
 
-                FooterButton { label: "+ Row"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.insertRow(true) }
+                FooterButton { label: "+ Row"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.appendRow() }
                 FooterButton { label: "+ Column"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
-                FooterButton { label: "+ Formula"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("computed") }
                 FooterButton { label: "+ Constant"; quiet: true; onClicked: promptDialog.ask("const") }
                 FooterButton { label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
                 FooterButton { label: "</>"; quiet: true; active: win.showSource; onClicked: win.viewSource(!win.showSource) }
@@ -3283,11 +4174,31 @@ ApplicationWindow {
         // the right, what is counted rather than said, and the notes to
         // read. Most of the time there is nothing to say and it is empty.
         Rectangle {
+            id: messageBar
             Layout.fillWidth: true
             Layout.preferredHeight: win.fontSize + 10
             color: win.panelColor
 
             Rectangle { width: parent.width; height: 1; color: win.lineColor }
+
+            // A message that has been said (a refusal, what was just done)
+            // fades after a few seconds; resting the mouse on the bar
+            // brings it back, and holds it while there. States that are
+            // still true (working, moving, a formula column) do not fade.
+            HoverHandler {
+                id: barHover
+                onHoveredChanged: {
+                    barMessage.faded = false;
+                    if (!hovered)
+                        fadeTimer.restart();
+                }
+            }
+            Timer {
+                id: fadeTimer
+                interval: 5000
+                running: barMessage.passing && !barHover.hovered
+                onTriggered: barMessage.faded = barMessage.passing && !barHover.hovered
+            }
 
             // What the app has to say, centred in the bar whatever else
             // sits beside it, so it reads as the answer to what was done.
@@ -3299,7 +4210,30 @@ ApplicationWindow {
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
                 readonly property bool moving: win.grabbedHere
-                text: win.notice.length > 0 ? win.notice
+                // Said once, as against a state that holds.
+                readonly property bool passing: win.busyText.length === 0 && !win.filterPending
+                    && !moving && !win.formulaCell && win.sheet.sampled !== true
+                    && (win.notice.length > 0 || file.status.length > 0)
+                property bool faded: false
+                opacity: faded && win.hint.length === 0 ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 700 } }
+                onTextChanged: {
+                    faded = false;
+                    fadeTimer.restart();
+                }
+                onPassingChanged: faded = false
+                // A refusal repeated lights the bar again.
+                Connections {
+                    target: win
+                    function onRefusalRevChanged() {
+                        barMessage.faded = false;
+                        fadeTimer.restart();
+                    }
+                }
+                text: win.busyText.length > 0 ? win.busyText
+                    : win.filterPending ? "Filtering\u2026"
+                    : win.hint.length > 0 ? win.hint
+                    : win.notice.length > 0 ? win.notice
                     : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
                     : win.formulaCell ? "This is a formula column, this change will apply to the entire column"
                     : file.status.length > 0 ? file.status
@@ -3309,11 +4243,26 @@ ApplicationWindow {
                     // here, the bar being one line tall.
                     : win.sheet.view ? win.sheet.name + " := " + win.sheet.view.replace(/\s+/g, " ")
                     : ""
-                color: win.notice.length > 0 ? win.errorColor : win.mutedColor
+                color: win.hint.length > 0 ? (win.hintBad ? win.errorColor : win.mutedColor)
+                    : win.notice.length > 0 ? win.errorColor : win.mutedColor
                 elide: Text.ElideRight
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.captionSize
+            }
+
+            // Turning while something takes a while: work in hand, or a
+            // file being read in the background.
+            BusyIndicator {
+                anchors.right: barMessage.left
+                anchors.rightMargin: 6
+                anchors.verticalCenter: parent.verticalCenter
+                height: parent.height - 6
+                width: height
+                padding: 0
+                running: win.busyText.length > 0 || file.working || win.filterPending
+                visible: running
+                Material.accent: win.accentColor
             }
 
             // On the right, what is counted rather than said: what a
@@ -3333,10 +4282,7 @@ ApplicationWindow {
                     Layout.fillHeight: true
                     verticalAlignment: Text.AlignVCenter
                     horizontalAlignment: Text.AlignRight
-                    // `win.snap` is read so that an edit recalculates it.
-                    text: several && win.snap
-                        ? file.selectionSummary(win.tab, win.selTop, win.selLeft, win.selBottom, win.selRight)
-                        : ""
+                    text: win.selSummary
                     color: win.mutedColor
                     elide: Text.ElideRight
                     font.family: win.font.family
@@ -3457,13 +4403,11 @@ ApplicationWindow {
         property bool active: false
         property bool quiet: false
         property color textColor: win.textColor
-        // Said when the pointer rests on it, where there is anything to say.
+        // Said in the footer while the pointer is on it, where there is anything to say.
         property string tip: ""
         signal clicked()
         signal rightClicked()
-        ToolTip.visible: tip.length > 0 && area.containsMouse
-        ToolTip.delay: 400
-        ToolTip.text: tip
+        signal doubleClicked()
         implicitWidth: buttonText.implicitWidth + 22
         implicitHeight: win.fontSize * 2
         // In the footer's row these keep their width: the tabs, which can
@@ -3489,6 +4433,8 @@ ApplicationWindow {
             anchors.fill: parent
             hoverEnabled: true
             acceptedButtons: Qt.LeftButton | Qt.RightButton
+            onContainsMouseChanged: win.hover(button, containsMouse ? button.tip : "", false)
+            Component.onDestruction: win.hover(button, "", false)
             onClicked: function(mouse) {
                 if (mouse.button === Qt.RightButton) {
                     button.rightClicked();
@@ -3496,6 +4442,10 @@ ApplicationWindow {
                 }
                 button.clicked();
                 grid.forceActiveFocus();
+            }
+            onDoubleClicked: function(mouse) {
+                if (mouse.button === Qt.LeftButton)
+                    button.doubleClicked();
             }
         }
     }
@@ -3507,32 +4457,23 @@ ApplicationWindow {
     // them in the file at once, as one step to undo; a calculated sheet is
     // sorted by its expression, which comes to end in `|> sort(...)`; and a
     // table, whose rows are its file's, is sorted in the grid alone. The
-    // filter is chosen here and takes effect with OK: Esc, or a click
-    // elsewhere, leaves it as it was.
+    // filter is an expression in which `*` is the cell (filter-by-expression
+    // D160, D171): checked as it is typed, with no row read. Apply applies
+    // it and stays open, to try another; OK or Enter applies it and closes.
+    // Sorting stays open too. Esc, or a click elsewhere, leaves what was last
+    // applied.
     Popup {
         id: columnPopup
         property int col: 0
-        property var values: []
-        property var excluded: ({})
-        property string search: ""
+        // What is wrong with the expression typed, or "".
+        property string fault: ""
         readonly property bool sortable: !win.sheet.isConsts
-        readonly property var listed: {
-            var out = [];
-            var q = search.toLowerCase();
-            for (var i = 0; i < values.length; i++)
-                if (q.length === 0 || values[i].toLowerCase().indexOf(q) >= 0)
-                    out.push(values[i]);
-            return out;
-        }
-        readonly property int shownCount: {
-            var n = 0;
-            for (var i = 0; i < listed.length; i++)
-                if (excluded[listed[i]] !== true)
-                    n++;
-            return n;
-        }
-        padding: 4
-        width: Math.round(win.fontSize * 11)
+        padding: 8
+        width: Math.min(Math.round(win.fontSize * 30), win.width - 16)
+        // The filter is written on several lines when it is long: the caret
+        // beside the box opens it out, and Enter then starts a line, with
+        // Ctrl+Enter to apply.
+        property bool multiline: false
         // Smaller than the grid: the controls of Material are made for touch.
         readonly property int textSize: win.captionSize
         readonly property int lineHeight: Math.round(textSize * 1.9)
@@ -3542,55 +4483,64 @@ ApplicationWindow {
         function openFor(c, item) {
             col = c;
             parent = item;
-            x = 0;
-            y = item.height;
-            values = win.valuesOf(c);
-            var f = win.filters[win.sheet.name];
-            var out = f && f[win.sheet.columns[c].name] ? f[win.sheet.columns[c].name] : [];
-            var map = {};
-            for (var i = 0; i < out.length; i++)
-                map[out[i]] = true;
-            excluded = map;
-            search = "";
-            valueSearch.text = "";
+            multiline = false;
+            // Beside the column, lapping a little over its right edge so
+            // that it stays plain whose box it is; to its left, over the
+            // column, where there is no room on the right.
+            var lap = Math.round(win.fontSize * 0.8);
+            var right = item.mapToItem(null, item.width - lap, 0).x;
+            x = right + width <= win.width - 8 ? item.width - lap
+                : Math.max(-item.mapToItem(null, 0, 0).x + 8, lap - width);
+            y = 0;
+            applied = win.filterOf(c);
+            filterField.text = applied;
+            check();
             open();
+            filterField.forceActiveFocus();
+            filterField.selectAll();
         }
+        function check() {
+            fault = file.checkFilter(win.tab, col, filterField.text);
+        }
+        // Sorting leaves the box open, as applying a filter does, for the
+        // filter to be written or changed after: OK or Cancel closes it.
         function sortBy(desc) {
-            var problem = file.sortRows(win.tab, col, desc);
-            close();
-            if (problem.length > 0)
-                win.notice = problem;
-            else
-                win.noteSort(col, desc);
-        }
-        function setAll(on) {
-            var map = {};
-            for (var k in excluded)
-                map[k] = true;
-            for (var i = 0; i < listed.length; i++) {
-                if (on)
-                    delete map[listed[i]];
+            var c = col;
+            filterField.forceActiveFocus();
+            win.busy("Sorting\u2026", function() {
+                win.sortMark = file.undoMark();
+                var problem = file.sortRows(win.tab, c, desc);
+                // "…": a big table, sorted on a worker; `sorted` says when.
+                if (problem === "\u2026")
+                    return;
+                if (problem.length > 0)
+                    win.notice = problem;
                 else
-                    map[listed[i]] = true;
-            }
-            excluded = map;
+                    win.noteSort(c, desc);
+            });
         }
-        function toggle(value, on) {
-            var map = {};
-            for (var k in excluded)
-                map[k] = true;
-            if (on)
-                delete map[value];
-            else
-                map[value] = true;
-            excluded = map;
-        }
+        // Whether the expression typed passes and is not the one in force:
+        // what Apply would change.
+        readonly property bool changed: fault.length === 0
+            && filterField.text.trim() !== applied
+        // What this popup last applied: the filter in force, without waiting
+        // for it to be set, which happens a frame later behind the spinner.
+        property string applied: ""
+        // Apply the expression and stay open, to try another.
         function apply() {
-            var out = [];
-            for (var k in excluded)
-                out.push(k);
-            win.setFilter(col, out);
-            close();
+            check();
+            if (fault.length > 0)
+                return false;
+            if (changed) {
+                applied = filterField.text.trim();
+                win.setFilter(col, filterField.text);
+            }
+            return true;
+        }
+        // Apply it and close: OK, and Enter.
+        function accept() {
+            if (apply())
+                close();
         }
 
         background: Rectangle {
@@ -3599,7 +4549,7 @@ ApplicationWindow {
             radius: 3
         }
         contentItem: ColumnLayout {
-            spacing: 1
+            spacing: 4
             MenuEntry {
                 visible: columnPopup.sortable
                 Layout.fillWidth: true
@@ -3622,71 +4572,109 @@ ApplicationWindow {
                 height: 1
                 color: win.lineColor
             }
+            Text {
+                Layout.fillWidth: true
+                Layout.maximumWidth: columnPopup.availableWidth
+                Layout.topMargin: 4
+                text: "Filter"
+                color: win.mutedColor
+                font.family: win.font.family
+                font.pixelSize: columnPopup.textSize
+            }
             Rectangle {
                 Layout.fillWidth: true
                 Layout.maximumWidth: columnPopup.availableWidth
-                implicitHeight: columnPopup.lineHeight + 2
+                implicitHeight: columnPopup.multiline
+                    ? Math.round(columnPopup.textSize * 1.5) * 6 + 8
+                    : columnPopup.lineHeight + 4
                 color: "transparent"
                 radius: 2
-                border.color: valueSearch.activeFocus ? win.accentColor : win.lineColor
-                TextInput {
-                    id: valueSearch
+                border.color: columnPopup.fault.length > 0 ? win.errorColor
+                    : filterField.activeFocus ? win.accentColor : win.lineColor
+                Flickable {
+                    id: filterScroll
                     anchors.fill: parent
                     anchors.leftMargin: 6
-                    anchors.rightMargin: 6
-                    verticalAlignment: TextInput.AlignVCenter
+                    anchors.rightMargin: caretButton.width + 4
+                    anchors.topMargin: columnPopup.multiline ? 4 : 0
+                    anchors.bottomMargin: columnPopup.multiline ? 4 : 0
                     clip: true
-                    color: win.textColor
-                    selectionColor: win.selectionFill
-                    font.family: win.font.family
-                    font.pixelSize: columnPopup.textSize
-                    onTextChanged: columnPopup.search = text
+                    contentWidth: width
+                    contentHeight: filterField.contentHeight
+                    interactive: columnPopup.multiline
+                    boundsBehavior: Flickable.StopAtBounds
+                    TextEdit {
+                        id: filterField
+                        width: filterScroll.width
+                        height: columnPopup.multiline ? Math.max(contentHeight, filterScroll.height) : filterScroll.height
+                        verticalAlignment: columnPopup.multiline ? TextEdit.AlignTop : TextEdit.AlignVCenter
+                        wrapMode: columnPopup.multiline ? TextEdit.Wrap : TextEdit.NoWrap
+                        color: win.textColor
+                        selectionColor: win.selectionFill
+                        selectByMouse: true
+                        font.family: win.monoFamily
+                        font.pixelSize: columnPopup.textSize
+                        onTextChanged: columnPopup.check()
+                        // One line: a newline is not typed, Enter applies.
+                        // Many: Enter starts a line, Ctrl+Enter applies.
+                        Keys.onReturnPressed: function(event) {
+                            if (columnPopup.multiline && !(event.modifiers & Qt.ControlModifier))
+                                event.accepted = false;
+                            else
+                                columnPopup.accept();
+                        }
+                        Keys.onEnterPressed: function(event) {
+                            if (columnPopup.multiline && !(event.modifiers & Qt.ControlModifier))
+                                event.accepted = false;
+                            else
+                                columnPopup.accept();
+                        }
+                        // Keeps the caret in view as a long filter is typed.
+                        onCursorRectangleChanged: {
+                            var r = cursorRectangle;
+                            if (r.y < filterScroll.contentY)
+                                filterScroll.contentY = r.y;
+                            else if (r.y + r.height > filterScroll.contentY + filterScroll.height)
+                                filterScroll.contentY = r.y + r.height - filterScroll.height;
+                        }
+                        Text {
+                            anchors.verticalCenter: columnPopup.multiline ? undefined : parent.verticalCenter
+                            visible: filterField.text.length === 0
+                            text: "e.g. * >= 3"
+                            color: win.mutedColor
+                            font: filterField.font
+                        }
+                    }
+                }
+                // The caret that opens the box out to several lines, and
+                // closes it again.
+                Item {
+                    id: caretButton
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    width: columnPopup.lineHeight
+                    height: columnPopup.lineHeight + 4
                     Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: valueSearch.text.length === 0
-                        text: "Search"
-                        color: win.mutedColor
-                        font: valueSearch.font
+                        anchors.centerIn: parent
+                        text: columnPopup.multiline ? "\u25B4" : "\u25BE"
+                        color: caretMouse.containsMouse ? win.accentColor : win.mutedColor
+                        font.pixelSize: columnPopup.textSize
+                    }
+                    MouseArea {
+                        id: caretMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            columnPopup.multiline = !columnPopup.multiline;
+                            filterField.forceActiveFocus();
+                        }
                     }
                 }
             }
-            CheckBox {
-                Layout.fillWidth: true
-                Layout.maximumWidth: columnPopup.availableWidth
-                text: "Show all"
-                font.family: win.font.family
-                font.pixelSize: columnPopup.textSize
-                implicitHeight: columnPopup.lineHeight
-                padding: 0
-                spacing: 2
-                tristate: true
-                checkState: columnPopup.shownCount === 0 ? Qt.Unchecked
-                    : columnPopup.shownCount === columnPopup.listed.length ? Qt.Checked : Qt.PartiallyChecked
-                nextCheckState: function() { return Qt.Checked; }
-                onClicked: columnPopup.setAll(columnPopup.shownCount !== columnPopup.listed.length)
-            }
-            ListView {
-                Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(contentHeight, columnPopup.lineHeight * 8)
-                clip: true
-                model: columnPopup.listed
-                boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar {}
-                delegate: CheckBox {
-                    required property string modelData
-                    width: ListView.view.width
-                    height: columnPopup.lineHeight
-                    text: modelData.length > 0 ? modelData : "(empty)"
-                    font.family: win.font.family
-                    font.pixelSize: columnPopup.textSize
-                    padding: 0
-                    spacing: 2
-                    checked: columnPopup.excluded[modelData] !== true
-                    onClicked: columnPopup.toggle(modelData, checked)
-                }
-            }
             Rectangle {
                 Layout.fillWidth: true
+                Layout.topMargin: 4
                 height: 1
                 color: win.lineColor
             }
@@ -3695,22 +4683,36 @@ ApplicationWindow {
                 text: "Clear filter"
                 implicitHeight: columnPopup.lineHeight
                 font.pixelSize: columnPopup.textSize
-                enabled: win.filtered(columnPopup.col)
+                enabled: columnPopup.applied.length > 0
+                // The filter goes, and the popup stays, to write another.
                 onClicked: {
-                    win.setFilter(columnPopup.col, []);
-                    columnPopup.close();
+                    columnPopup.applied = "";
+                    filterField.text = "";
+                    win.setFilter(columnPopup.col, "");
+                    filterField.forceActiveFocus();
                 }
             }
             RowLayout {
                 Layout.fillWidth: true
                 Layout.maximumWidth: columnPopup.availableWidth
-                Layout.topMargin: 3
-                spacing: 4
+                Layout.topMargin: 4
+                spacing: 6
                 Item { Layout.fillWidth: true }
+                // Lit while there is a passing expression to apply; OK is
+                // the filled one otherwise.
+                PopupButton {
+                    text: "Apply"
+                    primary: columnPopup.changed
+                    enabled: columnPopup.changed
+                    opacity: enabled ? 1 : 0.4
+                    onClicked: columnPopup.apply()
+                }
                 PopupButton {
                     text: "OK"
-                    primary: true
-                    onClicked: columnPopup.apply()
+                    primary: !columnPopup.changed
+                    enabled: columnPopup.fault.length === 0
+                    opacity: enabled ? 1 : 0.4
+                    onClicked: columnPopup.accept()
                 }
                 PopupButton {
                     text: "Cancel"
@@ -3725,9 +4727,9 @@ ApplicationWindow {
         target: file
         function onFilePathChanged() {
             win.filters = ({});
+            win.goodFilters = ({});
             win.filterRev++;
             win.sortLog = [];
-            win.viewSorts = ({});
             win.undoDepth = file.undoMark();
             win.editCount = file.editCount();
             win.sortRev++;
@@ -3737,7 +4739,7 @@ ApplicationWindow {
     Menu {
         id: cellMenu
         readonly property bool editable: !win.sheet.isConsts
-        readonly property bool hasRows: editable && win.sheet.rows.length > 0
+        readonly property bool hasRows: editable && win.sheet.nrows > 0
         readonly property int rowCount: win.selBottom - win.selTop + 1
         readonly property int columnCount: win.selRight - win.selLeft + 1
         // Which of its sections fit what is selected: whole rows or whole
@@ -3749,7 +4751,7 @@ ApplicationWindow {
         onClosed: {
             if (promptDialog.visible)
                 promptDialog.takeFocus();
-            else if (!typeMenu.visible)
+            else if (!typeMenu.visible && !columnPopup.visible)
                 grid.forceActiveFocus();
         }
         // Close set, to fit a long menu on a small window.
@@ -3759,32 +4761,50 @@ ApplicationWindow {
 
         MenuEntry {
             text: "Cut"
+            visible: !win.sheet.isConsts
             enabled: (cellMenu.hasRows || win.grabKind.length > 0) && !win.formulaCell
             onTriggered: win.cutSelection()
         }
-        MenuEntry { text: "Copy"; enabled: win.sheet.rows.length > 0; onTriggered: win.copySelection() }
+        MenuEntry { text: "Copy"; visible: !win.sheet.isConsts; enabled: win.sheet.nrows > 0; onTriggered: win.copySelection() }
         MenuEntry {
             text: "Paste"
+            visible: !win.sheet.isConsts
             // Only while something copied or cut is waiting to go down.
-            enabled: (win.sheet.rows.length > 0 && win.canPaste) || win.grabbedHere
+            enabled: ((win.sheet.nrows > 0 && win.canPaste) || win.grabbedHere) && win.pasteFits
             onTriggered: win.pasteSelection()
         }
         MenuEntry {
             // One cell copied is one value.
             text: win.marked !== null && win.marked.top === win.marked.bottom
                 && win.marked.left === win.marked.right ? "Paste value" : "Paste values"
+            visible: !win.sheet.isConsts
             enabled: cellMenu.hasRows && win.canPasteValues
             onTriggered: win.pasteValues()
         }
-        MenuEntry { text: "Paste transposed"; enabled: cellMenu.hasRows && win.canTranspose; onTriggered: win.pasteTransposed() }
-        MenuEntry { text: "Clear"; enabled: cellMenu.hasRows && !win.formulaCell; onTriggered: win.clearSelection() }
+        MenuEntry { text: "Paste references"; visible: !win.sheet.isConsts; enabled: cellMenu.hasRows && win.canPasteReference; onTriggered: win.pasteReference() }
+        MenuEntry { text: "Paste transposed"; visible: !win.sheet.isConsts; enabled: cellMenu.hasRows && win.canTranspose; onTriggered: win.pasteTransposed() }
+        // A calculated column is its formula: there is nothing in it to clear.
+        MenuEntry {
+            text: "Clear"
+            visible: !win.sheet.isConsts
+            enabled: cellMenu.hasRows && !win.formulaCell && !(cellMenu.columns && win.anyComputed())
+            onTriggered: win.clearSelection()
+        }
+        MenuEntry {
+            text: "Delete constant"
+            visible: win.sheet.isConsts
+            enabled: visible && win.sheet.nrows > 0
+            onTriggered: win.deleteConstant()
+        }
         // Delete, for what is selected as a whole.
+        MenuRule { visible: cellMenu.rows }
         MenuEntry {
             text: cellMenu.rowCount > 1 ? "Delete " + cellMenu.rowCount + " rows" : "Delete row"
             visible: cellMenu.rows
             enabled: visible && cellMenu.hasRows
             onTriggered: win.deleteRows()
         }
+        MenuRule { visible: cellMenu.columns }
         MenuEntry {
             text: cellMenu.columnCount > 1 ? "Delete " + cellMenu.columnCount + " columns" : "Delete column"
             visible: cellMenu.columns
@@ -3800,19 +4820,13 @@ ApplicationWindow {
         // The sheet, when the whole of it is selected.
         MenuRule { visible: cellMenu.whole }
         MenuEntry {
-            text: "Insert sheet before"
-            visible: cellMenu.whole
-            enabled: visible
-            onTriggered: win.newSheet(false)
-        }
-        MenuEntry {
-            text: "Insert sheet after"
+            text: "Insert sheet"
             visible: cellMenu.whole
             enabled: visible
             onTriggered: win.newSheet(true)
         }
         MenuEntry {
-            text: "Rename sheet…"
+            text: "Rename sheet"
             visible: cellMenu.whole
             enabled: visible
             onTriggered: promptDialog.ask("renameSheet")
@@ -3824,7 +4838,6 @@ ApplicationWindow {
             onTriggered: win.newWindow(win.tab)
         }
         // Rows, when whole rows are selected.
-        MenuRule { visible: cellMenu.rows }
         MenuEntry {
             text: win.rowsOnHand !== null ? "Insert cells above"
                 : cellMenu.rowCount > 1 ? "Insert " + cellMenu.rowCount + " rows above" : "Insert row above"
@@ -3847,24 +4860,42 @@ ApplicationWindow {
         }
         // Columns, when whole columns are selected. A column added
         // from the footer goes at the end.
-        MenuRule { visible: cellMenu.columns }
         MenuEntry {
-            text: win.colsOnHand !== null ? "Insert cells before" : "Insert column before"
+            text: win.colsOnHand !== null ? "Insert cells before"
+                : cellMenu.columnCount > 1 ? "Insert " + cellMenu.columnCount + " columns before" : "Insert column before"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable
             onTriggered: win.insertColumnsHere(false)
         }
         MenuEntry {
-            text: win.colsOnHand !== null ? "Insert cells after" : "Insert column after"
+            text: win.colsOnHand !== null ? "Insert cells after"
+                : cellMenu.columnCount > 1 ? "Insert " + cellMenu.columnCount + " columns after" : "Insert column after"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable
             onTriggered: win.insertColumnsHere(true)
         }
+        // A sheet still in letters: a number of columns, named on from the
+        // last, at the end so that the letters stay in order.
         MenuEntry {
-            text: "Rename column…"
+            text: "Insert columns\u2026"
+            visible: cellMenu.columns && win.letterSheet
+            enabled: visible && cellMenu.editable && win.sheet.columns.length < win.maxLetterColumns
+            onTriggered: promptDialog.ask("columns")
+        }
+        MenuRule { visible: cellMenu.columns }
+        MenuEntry {
+            text: "Rename column"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.selLeft === win.selRight && win.sheet.columns.length > 0
             onTriggered: promptDialog.ask("rename")
+        }
+        MenuEntry {
+            text: "Set as formula\u2026"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.selLeft === win.selRight
+                && !!win.sheet.columns[win.selLeft] && !win.sheet.columns[win.selLeft].computed
+                && !win.sheet.view && (win.sheet.why || "").length === 0
+            onTriggered: promptDialog.ask("setFormula")
         }
         MenuEntry {
             text: "Set type\u2026"
@@ -3883,11 +4914,35 @@ ApplicationWindow {
             enabled: visible && cellMenu.editable && win.sheet.columns.length > 0 && win.allFormattable()
             onTriggered: promptDialog.ask("format")
         }
+        // The filter box from the column's header, for the one column.
+        MenuEntry {
+            text: "Set filter\u2026"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.selLeft === win.selRight
+                && win.sheet.columns.length > 0
+            onTriggered: {
+                var head = headCells.itemAt(win.selLeft);
+                if (head)
+                    columnPopup.openFor(win.selLeft, head);
+            }
+        }
         MenuEntry {
             text: "Clear type"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.anyDeclared()
             onTriggered: win.setColumnTypes("")
+        }
+        MenuEntry {
+            text: "Clear format"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.anyFormatted()
+            onTriggered: win.clearFormats()
+        }
+        MenuEntry {
+            text: "Clear filter"
+            visible: cellMenu.columns
+            enabled: visible && win.anyFiltered()
+            onTriggered: win.clearFilters()
         }
     }
 
@@ -3918,6 +4973,7 @@ ApplicationWindow {
         TypeEntry { typeName: "Fraction"; narrower: true }
         TypeEntry { typeName: "Percent"; narrower: true }
         TypeEntry { typeName: "Float" }
+        TypeEntry { typeName: "Complex" }
         TypeEntry { typeName: "String" }
         TypeEntry { typeName: "Email"; narrower: true }
         TypeEntry { typeName: "Url"; narrower: true }
@@ -3951,28 +5007,42 @@ ApplicationWindow {
         // Each of these shows the sheet first, with the whole of it
         // selected, as the same entry does from the grid.
         MenuEntry {
-            text: "Cut"
+            text: "Insert sheet"
             visible: tabMenu.isSheet
             enabled: visible
-            onTriggered: { win.goToSheet(tabMenu.index); win.cutSelection(); }
+            onTriggered: { win.goToSheet(tabMenu.index); win.newSheet(true); }
         }
         MenuEntry {
-            text: "Copy"
+            text: "Duplicate sheet"
             visible: tabMenu.isSheet
             enabled: visible
-            onTriggered: { win.goToSheet(tabMenu.index); win.copySelection(); }
+            onTriggered: {
+                win.goToSheet(tabMenu.index);
+                var problem = file.duplicateSheet(tabMenu.index);
+                if (problem.length > 0)
+                    errorDialog.say(problem);
+                else
+                    win.switchTab(tabMenu.index + 1);
+            }
         }
         MenuEntry {
-            text: "Paste"
-            visible: tabMenu.isSheet
-            enabled: visible && (win.canPaste || win.grabbed !== null)
-            onTriggered: { win.goToSheet(tabMenu.index); win.pasteSelection(); }
-        }
-        MenuEntry {
-            text: "Clear"
+            text: "Rename sheet"
             visible: tabMenu.isSheet
             enabled: visible
-            onTriggered: { win.goToSheet(tabMenu.index); win.clearSelection(); }
+            onTriggered: { win.goToSheet(tabMenu.index); promptDialog.ask("renameSheet"); }
+        }
+        // A table over a file, written into the document as a sheet of its
+        // own, to be edited: refused, with why, where it is too big.
+        MenuEntry {
+            text: "Copy into the document"
+            visible: tabMenu.isSheet && !!win.tabs[tabMenu.index].from && !win.tabs[tabMenu.index].view
+            enabled: visible
+            onTriggered: {
+                win.goToSheet(tabMenu.index);
+                var problem = file.copyIntoDocument(tabMenu.index);
+                if (problem.length > 0)
+                    errorDialog.say(problem);
+            }
         }
         MenuEntry {
             text: "Delete sheet"
@@ -3980,25 +5050,13 @@ ApplicationWindow {
             enabled: visible
             onTriggered: { win.goToSheet(tabMenu.index); win.deleteSheet(); }
         }
+        MenuEntry {
+            text: "Delete All"
+            visible: !tabMenu.isSheet
+            enabled: visible
+            onTriggered: { win.goToSheet(tabMenu.index); win.deleteAllConstants(); }
+        }
         MenuRule { visible: tabMenu.isSheet }
-        MenuEntry {
-            text: "Insert sheet before"
-            visible: tabMenu.isSheet
-            enabled: visible
-            onTriggered: { win.goToSheet(tabMenu.index); win.newSheet(false); }
-        }
-        MenuEntry {
-            text: "Insert sheet after"
-            visible: tabMenu.isSheet
-            enabled: visible
-            onTriggered: { win.goToSheet(tabMenu.index); win.newSheet(true); }
-        }
-        MenuEntry {
-            text: "Rename sheet\u2026"
-            visible: tabMenu.isSheet
-            enabled: visible
-            onTriggered: { win.goToSheet(tabMenu.index); promptDialog.ask("renameSheet"); }
-        }
         // This one leaves the sheet shown as it is: the two are then side
         // by side, a window each.
         MenuEntry { text: "Open in new window"; onTriggered: win.newWindow(tabMenu.index) }
@@ -4010,12 +5068,32 @@ ApplicationWindow {
         id: openDialog
         title: "Open file"
         fileMode: Dialogs.FileDialog.OpenFile
-        // A workbook, a CSV file or JSON is imported: it opens as a new file.
-        nameFilters: ["Files, workbooks, CSV and JSON (*.omx *.xlsx *.csv *.json)", "Omasheet (*.omx)", "All files (*)"]
+        // A workbook, a CSV file, JSON or Parquet is imported: it opens as a new file.
+        nameFilters: ["Files, workbooks, CSV, JSON and Parquet (*.omx *.xlsx *.csv *.json *.parquet)", "Omasheet (*.omx)", "All files (*)"]
+        // Opens in the folder of the last file opened or saved, even after
+        // a restart, with that file picked. The folder is set as well as the
+        // file: a native dialog goes by the folder.
+        function show() {
+            var last = file.lastFile();
+            if (last.length > 0) {
+                currentFolder = Qt.url("file://" + encodeURI(last.substring(0, last.lastIndexOf("/"))));
+                selectedFile = Qt.url("file://" + encodeURI(last));
+            }
+            open();
+        }
         onAccepted: {
             win.pendingUrl = selectedFile;
             win.run("openUrl");
         }
+    }
+
+    Dialogs.FileDialog {
+        id: frameDialog
+        title: "Dataframe file"
+        fileMode: Dialogs.FileDialog.OpenFile
+        nameFilters: ["Parquet and CSV (*.parquet *.csv)", "All files (*)"]
+        onAccepted: promptDialog.dataUrl = selectedFile
+        onRejected: if (promptDialog.dataUrl.toString().length === 0) frameBox.checked = false
     }
 
     Dialogs.FileDialog {
@@ -4168,19 +5246,36 @@ ApplicationWindow {
         modal: true
         width: Math.min(win.width - 80, 760)
         title: file.status
-        standardButtons: Dialog.Close
+        standardButtons: Dialog.Ok
+        onAccepted: file.notes = ""
         onClosed: grid.forceActiveFocus()
-        contentItem: ListView {
+        // Selectable, to be copied: Ctrl+C copies what is selected, or all
+        // of it.
+        contentItem: Flickable {
             implicitHeight: Math.min(contentHeight, 360)
+            contentHeight: notesText.implicitHeight
             clip: true
-            spacing: 8
-            model: file.notes.length > 0 ? file.notes.split("\n") : []
-            delegate: Text {
-                required property string modelData
-                width: ListView.view.width
-                text: modelData
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            TextEdit {
+                id: notesText
+                width: parent.width
+                text: file.notes
+                readOnly: true
+                selectByMouse: true
+                selectByKeyboard: true
+                focus: true
                 color: win.textColor
+                selectionColor: win.accentColor
                 wrapMode: Text.Wrap
+                Keys.onPressed: function(event) {
+                    if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_C) {
+                        if (selectedText.length === 0)
+                            selectAll();
+                        copy();
+                        event.accepted = true;
+                    }
+                }
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.noteSize
@@ -4262,6 +5357,62 @@ ApplicationWindow {
 
     Dialog {
         font.pixelSize: win.dialogSize
+        id: deleteConstDialog
+        anchors.centerIn: parent
+        modal: true
+        width: 440
+        focus: true
+        title: "Delete constant"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        // Each button names its key.
+        Component.onCompleted: {
+            standardButton(Dialog.Ok).text = "Delete    D";
+            standardButton(Dialog.Cancel).text = "Cancel    C";
+        }
+        Shortcut { sequence: "D"; enabled: deleteConstDialog.visible; onActivated: deleteConstDialog.accept() }
+        Shortcut { sequence: "C"; enabled: deleteConstDialog.visible; onActivated: deleteConstDialog.reject() }
+        Label {
+            width: parent.width
+            text: "Delete the constant " + (win.constGone >= 0 && win.constGone < win.sheet.nrows ? win.sheet.rows[win.constGone][0].d : "") + "? A formula that reads it will show an error."
+            wrapMode: Text.Wrap
+            font.family: win.font.family
+            font.features: win.font.features
+            font.pixelSize: win.dialogSize
+        }
+        onAccepted: win.deleteConstantNow()
+        onClosed: grid.forceActiveFocus()
+    }
+
+    Dialog {
+        font.pixelSize: win.dialogSize
+        id: deleteAllConstsDialog
+        anchors.centerIn: parent
+        modal: true
+        width: 440
+        focus: true
+        title: "Delete all constants"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        // Each button names its key.
+        Component.onCompleted: {
+            standardButton(Dialog.Ok).text = "Delete    D";
+            standardButton(Dialog.Cancel).text = "Cancel    C";
+        }
+        Shortcut { sequence: "D"; enabled: deleteAllConstsDialog.visible; onActivated: deleteAllConstsDialog.accept() }
+        Shortcut { sequence: "C"; enabled: deleteAllConstsDialog.visible; onActivated: deleteAllConstsDialog.reject() }
+        Label {
+            width: parent.width
+            text: "Delete all " + win.sheet.nrows + " constants? Formulas that read them will show errors."
+            wrapMode: Text.Wrap
+            font.family: win.font.family
+            font.features: win.font.features
+            font.pixelSize: win.dialogSize
+        }
+        onAccepted: win.deleteAllConstantsNow()
+        onClosed: grid.forceActiveFocus()
+    }
+
+    Dialog {
+        font.pixelSize: win.dialogSize
         id: unsavedDialog
         anchors.centerIn: parent
         modal: true
@@ -4314,15 +5465,24 @@ ApplicationWindow {
         property int column: 0
         // Where a new column or sheet goes; -1 for the end.
         property int at: -1
-        readonly property bool needsExpr: kind === "computed" || kind === "const"
+        // The file a new sheet reads its rows from, when it is a dataframe.
+        property url dataUrl
+        // Asked for a number, in the one box.
+        readonly property bool counted: kind === "rows" || kind === "columns"
+        // A file's sheet holds no data of its own: a column added to it is a formula.
+        readonly property bool formulaOnly: (kind === "column" || kind === "computed")
+            && !win.sheet.isConsts && !win.sheet.view && (win.sheet.why || "").length > 0
+        readonly property bool needsExpr: kind === "computed" || kind === "const" || kind === "setFormula"
             || (kind === "sheet" && formulaBox.checked)
         title: kind === "sheet" ? "New sheet"
              : kind === "rows" ? "Insert rows in " + win.sheet.name
+             : kind === "columns" ? "Insert columns in " + win.sheet.name
              : kind === "renameSheet" ? "Rename sheet " + win.sheet.name
              : kind === "rename" ? "Rename column " + (win.sheet.columns[column] ? win.sheet.columns[column].name : "")
              : kind === "format" ? "Format of column " + (win.sheet.columns[column] ? win.sheet.columns[column].name : "")
              : kind === "column" ? "New column in " + win.sheet.name
              : kind === "computed" ? "New formula column in " + win.sheet.name
+             : kind === "setFormula" ? "Set column " + (win.sheet.columns[column] ? win.sheet.columns[column].name : "") + " as formula"
              : "New constant"
         focus: true
         // Not `standardButtons`: Ok would close the dialog before a refused
@@ -4353,12 +5513,17 @@ ApplicationWindow {
             kind = what;
             at = where === undefined ? -1 : where;
             column = win.curCol;
-            nameField.text = what === "rename" && win.sheet.columns[column] ? win.sheet.columns[column].name
+            nameField.text = (what === "rename" || what === "setFormula") && win.sheet.columns[column] ? win.sheet.columns[column].name
                 : what === "sheet" ? freeSheetName()
                 : what === "renameSheet" ? win.sheet.name
+                : what === "column" ? win.suggestedColumnName(at)
                 : what === "format" && win.sheet.columns[column] ? win.sheet.columns[column].format : "";
             exprField.text = "";
-            formulaBox.checked = what === "computed";
+            if (what === "column" && !win.sheet.isConsts && !win.sheet.view && (win.sheet.why || "").length > 0)
+                kind = "computed";
+            formulaBox.checked = kind === "computed";
+            frameBox.checked = false;
+            dataUrl = "";
             countBox.text = "5";
             problem.text = "";
             open();
@@ -4369,7 +5534,9 @@ ApplicationWindow {
         onOpened: takeFocus()
         function takeFocus() {
             forceActiveFocus();
-            if (kind === "rows") {
+            if (kind === "setFormula") {
+                exprField.forceActiveFocus();
+            } else if (counted) {
                 countBox.forceActiveFocus();
                 countBox.deselect();
                 countBox.cursorPosition = countBox.text.length;
@@ -4388,23 +5555,68 @@ ApplicationWindow {
             return "";
         }
 
+        // What the number typed comes to, as the rows or columns it would
+        // add are labelled in the sheet: "5 means 4..8" for rows, which are
+        // numbered from 0 as the gutter has them, and "5 means D..H" for
+        // columns. Blank while the number is not one that would be taken.
+        readonly property string meaning: {
+            var text = countBox.text.trim();
+            var n = Number(text);
+            if (!counted || text.length === 0 || !Number.isInteger(n) || n < 1)
+                return "";
+            if (kind === "rows") {
+                if (n > 10000)
+                    return "";
+                var first = win.sheet.nrows === 0 ? 0 : win.selBottom + 1;
+                return n + (n === 1 ? " means row " + first : " means " + first + ".." + (first + n - 1));
+            }
+            var have = win.sheet.columns.length;
+            if (have + n > win.maxLetterColumns)
+                return "";
+            return n + (n === 1 ? " means column " + win.columnLetters(have)
+                : " means " + win.columnLetters(have) + ".." + win.columnLetters(have + n - 1));
+        }
+
+        // Add the columns after the last, lettered on from it.
+        function addLetterColumns() {
+            var have = win.sheet.columns.length;
+            var room = win.maxLetterColumns - have;
+            var count = Number(countBox.text.trim());
+            if (!Number.isInteger(count) || count < 1 || count > room)
+                return "Enter a number of columns from 1 to " + room;
+            var mark = file.undoMark();
+            var problem = "";
+            // At the end, so nothing marked moves.
+            for (var k = 0; k < count && problem.length === 0; k++)
+                problem = file.addColumn(win.tab, win.columnLetters(have + k));
+            file.joinSince(mark);
+            return problem;
+        }
+
         function submit() {
             var message;
             var whole = win.selKind === "column";
             var all = win.selKind === "all";
             if (kind === "rows") {
                 message = addRows();
+            } else if (kind === "columns") {
+                message = addLetterColumns();
             } else if (kind === "sheet") {
                 // A new sheet renumbers the tabs, so nothing stays marked.
                 var formula = formulaBox.checked ? exprField.text : "";
-                message = at < 0 ? file.addSheet(nameField.text, formula)
-                                 : file.insertSheet(at, nameField.text, formula);
+                if (frameBox.checked)
+                    message = dataUrl.toString().length === 0 ? "Choose a file"
+                        : file.insertView(at < 0 ? win.snap.sheets.length : at, nameField.text, dataUrl);
+                else
+                    message = at < 0 ? file.addSheet(nameField.text, formula)
+                                     : file.insertSheet(at, nameField.text, formula);
             } else {
                 // New rows go at the end, and new columns at `at` or the end.
-                win.keeping(win.sheet.rows.length, at < 0 ? win.sheet.columns.length : at, function() {
+                win.keeping(win.sheet.nrows, at < 0 ? win.sheet.columns.length : at, function() {
                     message = kind === "rename" ? file.renameColumn(win.tab, column, nameField.text)
                         : kind === "format" ? file.setColumnFormat(win.tab, win.selLeft, win.selRight - win.selLeft + 1, nameField.text)
                         : kind === "renameSheet" ? file.renameSheet(win.tab, nameField.text)
+                        : kind === "setFormula" ? file.setColumnAsFormula(win.tab, column, nameField.text, exprField.text)
                         : kind === "column" ? (at < 0 ? file.addColumn(win.tab, nameField.text)
                                                       : file.insertColumn(win.tab, at, nameField.text))
                         : kind === "computed" ? (at < 0 ? file.addComputed(win.tab, nameField.text, exprField.text)
@@ -4434,7 +5646,7 @@ ApplicationWindow {
                 accept();
                 return;
             }
-            if (kind === "rows") {
+            if (counted) {
                 countBox.forceActiveFocus();
                 countBox.selectAll();
             } else if (!exprField.activeFocus) {
@@ -4450,7 +5662,7 @@ ApplicationWindow {
             // How many rows, typed.
             TextField {
                 id: countBox
-                visible: promptDialog.kind === "rows"
+                visible: promptDialog.counted
                 Layout.fillWidth: true
                 validator: IntValidator { bottom: 1; top: 10000 }
                 font.family: win.font.family
@@ -4458,9 +5670,19 @@ ApplicationWindow {
                 font.pixelSize: win.dialogSize
                 onAccepted: promptDialog.tryAccept()
             }
+            // What that number comes to, in the labels the sheet shows.
+            Label {
+                visible: promptDialog.counted && promptDialog.meaning.length > 0
+                Layout.fillWidth: true
+                text: promptDialog.meaning
+                color: win.mutedColor
+                font.family: win.font.family
+                font.features: win.font.features
+                font.pixelSize: win.noteSize
+            }
             TextField {
                 id: nameField
-                visible: promptDialog.kind !== "rows"
+                visible: !promptDialog.counted
                 focus: true
                 Layout.fillWidth: true
                 placeholderText: promptDialog.kind === "format" ? win.formatExample(promptDialog.column) : "Name"
@@ -4480,19 +5702,60 @@ ApplicationWindow {
                 font.features: win.font.features
                 font.pixelSize: win.dialogSize
                 onToggled: {
+                    if (!checked && promptDialog.formulaOnly) {
+                        checked = true;
+                        problem.text = "A column of a file's sheet must be a formula: its data is read-only";
+                        return;
+                    }
                     // A sheet keeps its kind: it is one sheet either way,
                     // with rows of its own or a view of another's.
                     if (promptDialog.kind !== "sheet")
                         promptDialog.kind = checked ? "computed" : "column";
-                    if (checked)
+                    if (checked) {
+                        frameBox.checked = false;
                         exprField.forceActiveFocus();
+                    }
                 }
+            }
+            // A sheet may be a dataframe: its rows read from a Parquet or CSV file.
+            CheckBox {
+                id: frameBox
+                visible: promptDialog.kind === "sheet"
+                text: "Dataframe"
+                font.family: win.font.family
+                font.features: win.font.features
+                font.pixelSize: win.dialogSize
+                onToggled: {
+                    if (checked) {
+                        formulaBox.checked = false;
+                        frameDialog.open();
+                    }
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: promptDialog.kind === "sheet" && frameBox.checked && promptDialog.dataUrl.toString().length > 0
+                text: promptDialog.dataUrl.toString().split("/").pop()
+                elide: Text.ElideLeft
+                font.family: win.font.family
+                font.features: win.font.features
+                font.pixelSize: win.noteSize
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: promptDialog.kind === "setFormula"
+                text: "The column's data is replaced by the formula, one formula for every row. Undo brings it back."
+                wrapMode: Text.Wrap
+                color: win.mutedColor
+                font.family: win.font.family
+                font.features: win.font.features
+                font.pixelSize: win.noteSize
             }
             TextField {
                 id: exprField
                 Layout.fillWidth: true
                 visible: promptDialog.needsExpr
-                placeholderText: promptDialog.kind === "computed" ? "Expression, e.g. Revenue - Cost"
+                placeholderText: promptDialog.kind === "computed" || promptDialog.kind === "setFormula" ? "Formula, e.g. = Revenue - Cost"
                     : promptDialog.kind === "sheet" ? "Expression, e.g. Sales |> head(3)"
                     : "Expression, e.g. 20%"
                 font.family: win.font.family
@@ -4522,6 +5785,18 @@ ApplicationWindow {
         title: "Problems"
         standardButtons: Dialog.Close
         onClosed: grid.forceActiveFocus()
+        // A click goes to the cell, so Ctrl+C copies every problem.
+        focus: true
+        Shortcut {
+            sequence: "Ctrl+C"
+            enabled: problemsDialog.visible
+            onActivated: {
+                var lines = [];
+                for (var i = 0; i < win.snap.problems.length; i++)
+                    lines.push("line " + win.snap.problems[i].line + ": " + win.snap.problems[i].message);
+                clipboard.put(lines.join("\n"));
+            }
+        }
         contentItem: ListView {
             implicitHeight: Math.min(contentHeight, 360)
             clip: true
@@ -4831,8 +6106,24 @@ ApplicationWindow {
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-            Label {
+            // Selectable, to be copied: Ctrl+C copies what is selected, or
+            // all of it.
+            TextEdit {
                 id: helpText
+                readOnly: true
+                selectByMouse: true
+                selectByKeyboard: true
+                focus: true
+                color: win.textColor
+                selectionColor: win.accentColor
+                Keys.onPressed: function(event) {
+                    if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_C) {
+                        if (selectedText.length === 0)
+                            selectAll();
+                        copy();
+                        event.accepted = true;
+                    }
+                }
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.dialogSize

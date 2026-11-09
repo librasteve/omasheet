@@ -229,6 +229,20 @@ fn extension(path: &Path) -> String {
     ext.to_string_lossy().to_ascii_lowercase()
 }
 
+/// Refuse to import `file`, which is too big to write as text, and print
+/// the `view` lines that read it where it is, ready to paste into a file.
+fn too_big(file: &Path, lines: &str) -> ExitCode {
+    print!("{lines}");
+    eprintln!(
+        "omasheet: {} is too big to import as text (over {} MB): a view reads it where it \
+         is, read-only, as the line printed says; open the file in the app, or paste the line \
+         into an .omx file",
+        file.display(),
+        omasheet_engine::table::BIG_FILE / (1024 * 1024)
+    );
+    ExitCode::FAILURE
+}
+
 fn import(file: &Path, output: Option<&Path>, options: Options) -> Result<ExitCode, ExitCode> {
     let kind = extension(file);
     if !matches!(kind.as_str(), "xlsx" | "csv" | "json" | "parquet") {
@@ -236,6 +250,21 @@ fn import(file: &Path, output: Option<&Path>, options: Options) -> Result<ExitCo
             "cannot import {}: give an XLSX Workbook (.xlsx), a CSV file (.csv), JSON (.json) or Parquet (.parquet)",
             file.display()
         ));
+    }
+    // A big CSV, JSON, XLSX or Parquet file would be millions of rows of text:
+    // what is printed instead is the line that reads it where it is (D146).
+    let big = std::fs::metadata(file).is_ok_and(|m| m.len() > omasheet_engine::table::BIG_FILE);
+    if big && matches!(kind.as_str(), "csv" | "json" | "parquet" | "xlsx") {
+        match omasheet_interop::table_source(file) {
+            Ok(lines) => return Ok(too_big(file, &lines)),
+            // A workbook with a formula in it is imported, which keeps them;
+            // a table has values and no formulas.
+            Err(_) if kind == "xlsx" => {}
+            Err(why) => {
+                eprintln!("omasheet: cannot read {}: {why}", file.display());
+                return Ok(ExitCode::FAILURE);
+            }
+        }
     }
     let bytes = std::fs::read(file).map_err(|e| {
         eprintln!("omasheet: cannot read {}: {e}", file.display());
@@ -419,7 +448,7 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
                 }
             };
             let mut options = env.options()?;
-            // As for `print` and `render`: a `table` reads its rows from
+            // As for `print` and `render`: a `view` reads its rows from
             // beside the file, so the file's own directory is the base.
             options.base = Some(beside(&file));
             export(
@@ -438,7 +467,7 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
             env,
         }) => {
             let mut options = env.options()?;
-            // A `table` reads its rows from beside the document, as it does
+            // A `view` reads its rows from beside the document, as it does
             // from beside a file: before the render path read a table at all
             // this went unnoticed, the base being used for nothing here.
             options.base = Some(beside(&file));
@@ -448,7 +477,7 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
         Some(Command::Print { file, env }) => {
             let mut options = env.options()?;
             let text = read(&file)?;
-            // A `table` reads its rows from beside the file, so the file's
+            // A `view` reads its rows from beside the file, so the file's
             // own directory is what its source is relative to.
             options.base = Some(beside(&file));
             Ok(finish(omasheet_engine::view_with(
@@ -468,6 +497,12 @@ fn beside(file: &Path) -> PathBuf {
 /// Run the command line this program was started with. With no command,
 /// `open` is called to open the app, on the file given if there was one.
 pub fn main(open: impl FnOnce(Option<&Path>) -> ExitCode) -> ExitCode {
+    // A copy of a big file is made in a process of its own, this program
+    // started again, so the memory it takes goes back when it is done.
+    if let Some(code) = omasheet_engine::table::run_child() {
+        return ExitCode::from(code as u8);
+    }
+    omasheet_engine::table::copy_in_children();
     match run(Cli::parse(), open) {
         Ok(code) | Err(code) => code,
     }

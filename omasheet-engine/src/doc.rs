@@ -13,6 +13,7 @@
 use crate::Options;
 use crate::datefmt::Names;
 use crate::eval::Engine;
+use crate::table::Copying;
 use crate::value::{Value, arith, delocalised, format_exact, format_styled};
 use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use omasheet_omx::colfmt::{Format, closing};
@@ -22,8 +23,20 @@ use omasheet_omx::parser::parse_expr;
 use omasheet_omx::types::Base;
 use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile, text};
 use std::cmp::Ordering;
+use std::sync::Arc;
 
 const UNDO_LIMIT: usize = 200;
+
+/// A sheet whose rows are not its own text and are more than this many is
+/// paged: its cells are formatted as the grid shows them rather than all at
+/// once (D80). One the text holds is formatted whole, since the text it is
+/// edited through is that size already.
+pub const PAGED_ROWS: usize = 10_000;
+
+/// How many rows of a paged sheet's selection [`Document::summary`] reads
+/// at a time. Small in tests, so that a selection of the Titanic file
+/// crosses blocks.
+const SUMMARY_ROWS: usize = if cfg!(test) { 100 } else { 16_384 };
 
 /// A fresh file: one small empty sheet to type into.
 pub const BLANK: &str = "sheet Sheet1\n\n| A   | B   | C   |\n| --- | --- | --- |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n";
@@ -40,9 +53,16 @@ pub struct Snapshot {
 pub struct SheetSnap {
     pub name: String,
     pub columns: Vec<ColumnSnap>,
+    /// Every row, formatted; empty for a paged sheet, whose rows are asked
+    /// for with [`Document::rows`].
     pub rows: Vec<Vec<CellSnap>>,
+    /// How many rows the sheet has, paged or not.
+    pub nrows: usize,
+    /// Its rows are formatted as they are asked for, not held here: a big
+    /// sheet whose rows are a file's or another sheet's (D80).
+    pub paged: bool,
     /// The Parquet file the rows are read from, for a `table`; `None` for a
-    /// sheet that holds its own rows. A table is a read-only view: the file
+    /// sheet that holds its own rows. A `view` is read-only: the file
     /// is never written back, so no edit of it is taken (D49).
     pub source: Option<String>,
     /// The sheet is written as `:=` lines alone, so it has no text behind a
@@ -57,6 +77,9 @@ pub struct SheetSnap {
     /// its own, and a formula a sort cannot be added to the end of, so it
     /// is sorted in the grid alone, as a table is.
     pub grouped: bool,
+    /// The rows are a file's first few, shown while the rest is copied: the
+    /// sheet has more rows than it shows, as many as the file has.
+    pub sampled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -137,11 +160,33 @@ pub struct Problem {
     pub cell: Option<(usize, usize, usize)>,
 }
 
+/// The grid's order of each sorted table, shared between the document and
+/// the steps of its history, so that a step keeps an order without copying
+/// it.
+type Orders = std::collections::HashMap<String, Arc<Vec<usize>>>;
+
+/// A state of the document to undo or redo to: its text, and the order the
+/// grid shows each table's rows in, which a sort changes without the text.
+struct Step {
+    text: String,
+    orders: Orders,
+}
+
+/// A table's file the document could hold whole, and what that would take
+/// (D157): the columns its sheet reads, and their size in memory as the
+/// file's footer gives it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToHold {
+    pub path: std::path::PathBuf,
+    pub columns: Vec<String>,
+    pub bytes: usize,
+}
+
 pub struct Document {
     text: String,
     snapshot: Snapshot,
-    undo: Vec<String>,
-    redo: Vec<String>,
+    undo: Vec<Step>,
+    redo: Vec<Step>,
     style: Style,
     /// What the locale calls the days and months, for a column's format.
     names: Names,
@@ -153,12 +198,32 @@ pub struct Document {
     base: Option<std::path::PathBuf>,
     /// The order a table's rows are shown in, by sheet name, where one has
     /// been sorted: the rows of its file, by number. A table's rows are not
-    /// the text's, so this is a view of them and nothing more -- it is not
-    /// written, saved or undone -- and the grid, a copy and the summary of
-    /// a selection all read the snapshot it orders.
-    orders: std::collections::HashMap<String, Vec<usize>>,
+    /// the text's, so this is a view of them -- it is not written or saved --
+    /// and the grid, a copy and the summary of a selection all read the
+    /// snapshot it orders. A sort is a step to undo, as an edit is.
+    orders: Orders,
+    /// The tables' files held whole in memory, by path (D157). Kept across
+    /// rebuilds, and dropped when the text no longer names the file or the
+    /// file has changed. See [`Document::to_hold`] and [`Document::hold`].
+    whole: crate::table::Store,
+    /// Whether a table over a CSV with no copy yet waits for one or shows
+    /// its sample meanwhile.
+    copying: Copying,
     /// How many edits have been committed. See [`Document::edit_count`].
     edits: usize,
+    /// The engine of the last rebuild, kept so that a paged sheet's cells
+    /// can be calculated and formatted when they are shown (D80).
+    engine: Option<Engine<'static>>,
+    /// Why each computed column of each sheet failed, for a paged sheet's
+    /// cells, which are made after the rebuild that knew.
+    column_errors: Vec<Vec<Option<String>>>,
+    /// More rows than this and a sheet the text does not hold is paged.
+    /// [`PAGED_ROWS`], but for a test.
+    paged_rows: usize,
+    /// The columns of tables read whole, kept across rebuilds so that an
+    /// edit does not read them from their files again (D150). See
+    /// [`Document::column_cache`].
+    columns: crate::table::ColumnCache,
 }
 
 impl Default for Document {
@@ -233,6 +298,73 @@ fn narrower_text_type(rows: &[Vec<CellSnap>], col: usize) -> Option<&'static str
     }
 }
 
+/// A value as a cell shows it where its column has no format.
+fn shown_text(engine: &Engine, v: &Value) -> String {
+    match v {
+        Value::Sheet(_) => "<sheet>".to_string(),
+        Value::Row(_) => "<row>".to_string(),
+        other => engine.show(other, false),
+    }
+}
+
+/// Why a sheet's data takes no edit, if it takes none: it is calculated
+/// from an expression, or it is a `view` of a Parquet file (D49).
+pub fn read_only_why(snap: &SheetSnap) -> Option<String> {
+    if snap.view.is_some() {
+        return Some(format!("`{}` is calculated: edit its formula", snap.name));
+    }
+    snap.source.as_ref()?;
+    Some(format!("`{}` is read-only: import to edit", snap.name))
+}
+
+/// What a number shown with fewer digits than it has is in full.
+fn exact_text(v: &Value, quoted: bool, shown: &str, style: &Style) -> Option<String> {
+    let full = match v {
+        // Two's complement is the whole number, not one cut short.
+        Value::Int(_, b) if *b != Base::Dec => return None,
+        Value::Int(_, _)
+        | Value::Decimal(_)
+        | Value::Percent(_)
+        | Value::Float(_)
+        | Value::Complex(..)
+        | Value::Vector(_) => format_exact(v, quoted, style),
+        _ => return None,
+    };
+    (full != shown).then_some(full)
+}
+
+/// A cell as the grid shows it: its value formatted as its column says.
+fn cell_snap(
+    engine: &Engine,
+    style: &Style,
+    format: Option<&Format>,
+    value: Value,
+    source: String,
+    error: Option<String>,
+) -> CellSnap {
+    let failed = matches!(value, Value::Error);
+    // A column's format shows its numbers as it says, so one it rounds is
+    // not one shown short.
+    let display = match format {
+        Some(_) => engine.show_in(&value, false, format),
+        None => shown_text(engine, &value),
+    };
+    let full = exact_text(&value, false, &display, style);
+    CellSnap {
+        shortened: format.is_none()
+            && full
+                .as_ref()
+                .is_some_and(|f| *f != delocalised(&display, style)),
+        exact: full,
+        display,
+        numeric: value.is_numeric(),
+        value,
+        formula: source.starts_with('='),
+        error: error.or_else(|| failed.then(|| "this cell could not be calculated".to_string())),
+        source,
+    }
+}
+
 fn contains(outer: Span, inner: Span) -> bool {
     inner.start >= outer.start && inner.start <= outer.end
 }
@@ -261,89 +393,6 @@ fn iso_entry(style: &Style, ty: &str, input: &str) -> Option<String> {
     }
 }
 
-/// A whole number and a part typed into a cell, `2 3/4`, as the decimal a
-/// file keeps, `2.75`. `None` if it is not one, or the column holds text.
-fn fraction_entry(ty: &str, input: &str) -> Option<String> {
-    let input = input.trim();
-    let text = matches!(ty, "String" | "Url" | "Email" | "Uuid");
-    let r = omasheet_omx::convert::parse_mixed(input).filter(|_| !text)?;
-    // Only where the decimal is no longer than what was typed. `2 3/4` is
-    // better kept as `2.75`, but `1 1/3` would become thirty-eight digits,
-    // and a file is for reading: leave that as it was written, which reads
-    // back as the same number.
-    let plain = r.to_plain_string();
-    (plain.len() <= input.len()).then_some(plain)
-}
-
-/// Whether `input` is a number written as a fraction, `1/3` or `2 3/4`.
-/// In a file it is a `Decimal`; typed into a column left to its cells, it
-/// makes the column a `Fraction` one.
-fn typed_fraction(input: &str) -> bool {
-    let input = input.trim();
-    input.contains('/')
-        && (omasheet_omx::convert::parse_mixed(input).is_some()
-            || matches!(
-                omasheet_omx::convert::parse_literal(input),
-                Some(Lit::Decimal(_))
-            ))
-}
-
-/// A whole number typed into a cell, as the file keeps it: in the base of
-/// a `Hex`, `Octal` or `Binary` column, and otherwise in the base it was
-/// typed in, with its prefix in lower case (D127): `0XFF` is `0xff`, and
-/// `255` in a `Hex` column is `0xff` too. `None` if it is not one.
-fn based_entry(ty: &str, input: &str) -> Option<String> {
-    let Some(Lit::Int(n, typed)) = omasheet_omx::convert::parse_literal(input.trim()) else {
-        return None;
-    };
-    let base = match Base::of(S::from_name(ty).unwrap_or(S::Any)) {
-        Base::Dec if ty.is_empty() || ty == "Integer" => typed,
-        Base::Dec => return None,
-        column => column,
-    };
-    (base != Base::Dec).then(|| base.write(n))
-}
-
-/// `text` with each column of sheet `decl` that the file leaves to its
-/// cells declared `Hex`, `Octal` or `Binary`, where every cell of it is a
-/// whole number written in that one base (D125). The prefix says what the
-/// column is, so the file says it too.
-fn based_declared(mut text: String, decl: &SheetDecl) -> String {
-    let undeclared = |name: &str| !decl.schema.iter().any(|l| l.name == name);
-    let mut found = Vec::new();
-    for (h, (name, _)) in decl.header.iter().enumerate() {
-        if !undeclared(name) {
-            continue;
-        }
-        let mut base = None;
-        for row in &decl.rows {
-            let Some(cell) = row.get(h).filter(|c| !c.text.is_empty()) else {
-                continue;
-            };
-            match omasheet_omx::convert::parse_literal(&cell.text) {
-                Some(Lit::Int(_, b)) if b != Base::Dec && base.is_none_or(|was| was == b) => {
-                    base = Some(b);
-                }
-                _ => {
-                    base = None;
-                    break;
-                }
-            }
-        }
-        if let Some(b) = base {
-            found.push((name.clone(), b.ty()));
-        }
-    }
-    for (name, ty) in found {
-        let ast = parse_file(&text, 0, &mut Vec::new());
-        let Some(decl) = ast.sheets.iter().find(|t| t.name == decl.name) else {
-            break;
-        };
-        text = retyped(&text, decl, &name, Some(ty));
-    }
-    text
-}
-
 /// What can be typed into a cell of a column of type `ty`, with an example
 /// written the way `style` reads it. Empty when the type is not known.
 pub fn entry_hint(style: &Style, ty: &str) -> String {
@@ -356,6 +405,7 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
         "Decimal" => "Decimal: an exact decimal number, e.g. 19.99 or 20%".into(),
         "Percent" => "Percent: an exact number shown as a percentage, e.g. 20%".into(),
         "Float" => "Float: a floating-point number, e.g. 1.5, 2e-3 or Inf".into(),
+        "Complex" => "Complex: a real and an imaginary part, e.g. 3+4i or 2i".into(),
         "Boolean" => "Boolean: true or false".into(),
         "String" => "String".into(),
         "Url" => "Url: a web address, e.g. https://example.com".into(),
@@ -467,6 +517,8 @@ struct Site<'a> {
     /// Inside a slot of another index, where the current row is a row of
     /// that index and not the formula's own.
     nested: bool,
+    /// The whole index as written.
+    at: Span,
 }
 
 /// The sheet an index is into, if its base says so: `Some(None)` for an
@@ -527,6 +579,7 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
                     row: slots[1].as_ref(),
                     col: ColPart::Field(name, *span),
                     nested,
+                    at: e.span,
                 });
                 if let Some(slot) = &slots[1] {
                     sites(slot, true, out, names);
@@ -546,6 +599,7 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
                         _ => ColPart::All,
                     },
                     nested,
+                    at: e.span,
                 });
             } else if let ExprKind::Field(inner, name, span) = &base.kind
                 && let ExprKind::Name(sheet) = &inner.kind
@@ -557,6 +611,7 @@ fn sites<'a>(e: &'a Expr, nested: bool, out: &mut Vec<Site<'a>>, names: &mut Vec
                     row: slots[0].as_ref(),
                     col: ColPart::Field(name, *span),
                     nested,
+                    at: e.span,
                 });
             } else {
                 sites(base, nested, out, names);
@@ -856,16 +911,22 @@ fn one_cell(
 /// reference to one cell follows it: a range or a whole column reads the
 /// place, and so does a formula column.
 fn follow_cut(ast: &FileAst, text: &str, t: usize, block: &Block, by: (i64, i64)) -> Vec<Edit> {
+    follow_cells(ast, text, t, block, &|r, c| {
+        (r as i64 + by.0, c as i64 + by.1)
+    })
+}
+
+/// Where a cell of a block goes: its row and column once put down.
+type Whither<'a> = &'a dyn Fn(usize, usize) -> (i64, i64);
+
+/// As `follow_cut`, for a block whose cells each go where `map` says, as
+/// when they are turned about.
+fn follow_cells(ast: &FileAst, text: &str, t: usize, block: &Block, map: Whither) -> Vec<Edit> {
     let mut edits = Vec::new();
     let decl = &ast.sheets[t];
     let cols = column_names(decl);
     let nrows = decl.rows.len();
     let inside = |r: usize, c: usize| block.0.contains(&r) && block.1.contains(&c);
-    let column = |c: usize| {
-        usize::try_from(c as i64 + by.1)
-            .ok()
-            .and_then(|c| cols.get(c))
-    };
     for (at, expr) in formulas(ast) {
         let (mut found, mut names) = (Vec::new(), Vec::new());
         sites(&expr, false, &mut found, &mut names);
@@ -881,20 +942,22 @@ fn follow_cut(ast: &FileAst, text: &str, t: usize, block: &Block, by: (i64, i64)
             if !inside(r, c) {
                 continue;
             }
-            if by.0 != 0 {
-                let to = r as i64 + by.0;
+            let (to_row, to_col) = map(r, c);
+            if to_row != r as i64 {
                 put(
                     &mut edits,
                     text,
                     row_span,
-                    row.write(to, own.map(|o| o.0), nrows),
+                    row.write(to_row, own.map(|o| o.0), nrows),
                 );
             }
-            if by.1 != 0 {
-                let to = c as i64 + by.1;
+            if to_col != c as i64 {
                 let new = match col {
-                    Some(pick) => Some(pick.write(to, own.map(|o| o.1), cols.len())),
-                    None => column(c).map(|name| name.to_string()),
+                    Some(pick) => Some(pick.write(to_col, own.map(|o| o.1), cols.len())),
+                    None => usize::try_from(to_col)
+                        .ok()
+                        .and_then(|c| cols.get(c))
+                        .map(|name| name.to_string()),
                 };
                 if let Some(new) = new {
                     put(&mut edits, text, col_span, new);
@@ -906,12 +969,16 @@ fn follow_cut(ast: &FileAst, text: &str, t: usize, block: &Block, by: (i64, i64)
             continue;
         };
         for (name, span) in names {
-            let cut = cols
+            let Some(c) = cols
                 .iter()
                 .position(|c| *c == name)
-                .filter(|c| inside(r, *c));
-            if let Some(new) = cut.and_then(column) {
-                let new = match by.0 {
+                .filter(|c| inside(r, *c))
+            else {
+                continue;
+            };
+            let (to_row, to_col) = map(r, c);
+            if let Some(new) = usize::try_from(to_col).ok().and_then(|c| cols.get(c)) {
+                let new = match to_row - r as i64 {
                     0 => new.to_string(),
                     rows => format!("[{new}; {}]", offset_text(rows)),
                 };
@@ -927,10 +994,13 @@ fn follow_cut(ast: &FileAst, text: &str, t: usize, block: &Block, by: (i64, i64)
 /// `*` is the formula's own, wherever it is, and a range that ends on one
 /// goes with the formula as it is.
 fn shift_slot(slot: &Expr, by: i64, text: &str, edits: &mut Vec<Edit>) {
-    let shift = |e: &Expr, edits: &mut Vec<Edit>| {
-        if let Some(Pick::Off(d)) = Pick::of(e) {
-            put(edits, text, e.span, offset_text(d - by));
-        }
+    let single = range_ends(slot).is_none();
+    let shift = |e: &Expr, edits: &mut Vec<Edit>| match Pick::of(e) {
+        Some(Pick::Off(d)) => put(edits, text, e.span, offset_text(d - by)),
+        // A plain `*` read of a cell that is not moving: it is that row
+        // still, and so is no longer the formula's own.
+        Some(Pick::Here) if by != 0 && single => put(edits, text, e.span, offset_text(-by)),
+        _ => {}
     };
     match range_ends(slot) {
         Some((lo, hi, ..)) => {
@@ -942,6 +1012,400 @@ fn shift_slot(slot: &Expr, by: i64, text: &str, edits: &mut Vec<Edit>) {
         }
         None => shift(slot, edits),
     }
+}
+
+/// Where cell (`r`, `c`) of `block` goes when it is put down turned about
+/// with its first cell at `to`: its row is a column, and its column a row.
+fn turn_at(block: &Block, to: (usize, usize), r: usize, c: usize) -> (i64, i64) {
+    (
+        (to.0 + c) as i64 - block.1.start as i64,
+        (to.1 + r) as i64 - block.0.start as i64,
+    )
+}
+
+/// What a formula cut or turned, and put down on a different cell, does with
+/// a read of a cell outside its block (D221, D222).
+#[derive(Clone, Copy)]
+enum Outside {
+    /// It goes on reading the same cell, counted again from the new place
+    /// by this many rows and columns.
+    Rebase((i64, i64)),
+    /// It reads the same cell, as a reference to it: a row by number.
+    Freeze,
+}
+
+/// A read of one cell fixed on the cell it read: its row as a number, and
+/// its column by name where it counted from its own. A reference as the
+/// paste of one writes it (D210), whichever cell it is put down in.
+fn freeze_cell(
+    edits: &mut Vec<Edit>,
+    text: &str,
+    (r, row, row_span): (usize, Pick, Span),
+    (c, col, col_span): (usize, Option<Pick>, Span),
+    cols: &[&str],
+) {
+    if !matches!(row, Pick::At(_)) {
+        put(edits, text, row_span, r.to_string());
+    }
+    if let Some(pick) = col
+        && !matches!(pick, Pick::At(_))
+        && let Some(name) = cols.get(c)
+    {
+        put(edits, text, col_span, (*name).to_string());
+    }
+}
+
+/// The source of a cell of `block` put down turned about, where `map` says:
+/// what it reads in the block it still reads, at the cell's new place. A row
+/// it reads by counting, or a column of its own row, is counted again from
+/// there. What it reads of a range or a column is the place, as for a move.
+fn turned_cell(
+    cell: &str,
+    from: (usize, usize),
+    block: &Block,
+    map: Whither,
+    sheet: &str,
+    nrows: usize,
+    cols: &[&str],
+) -> String {
+    let Some(Ok(expr)) = cell.strip_prefix('=').map(|body| parse_expr(body, 0, 1)) else {
+        return cell.to_string();
+    };
+    let (now_row, now_col) = map(from.0, from.1);
+    let by = (now_row - from.0 as i64, now_col - from.1 as i64);
+    let own = (usize::try_from(now_row).ok(), usize::try_from(now_col).ok());
+    let inside = |r: usize, c: usize| block.0.contains(&r) && block.1.contains(&c);
+    let (mut found, mut names) = (Vec::new(), Vec::new());
+    sites(&expr, false, &mut found, &mut names);
+    let mut edits = Vec::new();
+    for site in found {
+        if site.nested || site.sheet.is_some_and(|name| name != sheet) {
+            continue;
+        }
+        let one = one_cell(&site, Some(from), nrows, cols);
+        // What it reads outside the block it goes on reading, as a
+        // reference to that cell: an offset means nothing once the cells
+        // are turned about.
+        if let Some((row, col)) = one
+            && !inside(row.0, col.0)
+        {
+            freeze_cell(&mut edits, cell, row, col, cols);
+            continue;
+        }
+        if let Some(((r, row, row_span), (c, col, col_span))) = one {
+            let (to_row, to_col) = map(r, c);
+            put(&mut edits, cell, row_span, row.write(to_row, own.0, nrows));
+            match col {
+                Some(pick) => put(
+                    &mut edits,
+                    cell,
+                    col_span,
+                    pick.write(to_col, own.1, cols.len()),
+                ),
+                None => {
+                    if let Some(name) = usize::try_from(to_col).ok().and_then(|c| cols.get(c)) {
+                        put(&mut edits, cell, col_span, name.to_string());
+                    }
+                }
+            }
+            continue;
+        }
+        if let Some(slot) = site.row {
+            shift_slot(slot, by.0, cell, &mut edits);
+        }
+        if let ColPart::Slot(slot) = site.col {
+            shift_slot(slot, by.1, cell, &mut edits);
+        }
+    }
+    // A column named on its own is that column of the cell's own row: in
+    // the block it is the cell it was, and outside it the row it was in.
+    for (name, span) in names {
+        let Some(c) = cols.iter().position(|c| *c == name) else {
+            continue;
+        };
+        let (name, rows) = if inside(from.0, c) {
+            let (to_row, to_col) = map(from.0, c);
+            let Some(name) = usize::try_from(to_col).ok().and_then(|c| cols.get(c)) else {
+                continue;
+            };
+            (*name, to_row - now_row)
+        } else {
+            put(&mut edits, cell, span, format!("[{name}; {}]", from.0));
+            continue;
+        };
+        let new = match rows {
+            0 => name.to_string(),
+            rows => format!("[{name}; {}]", offset_text(rows)),
+        };
+        put(&mut edits, cell, span, new);
+    }
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = cell.to_string();
+    for (s, e, new) in edits {
+        out.replace_range(s..e, &new);
+    }
+    out
+}
+
+/// A formula copied from `sheet` and put down on a different sheet, with
+/// what it read there made to say so, so that it reads what it read: an
+/// index with no sheet name is into `sheet`, and a column of its own row,
+/// named alone, is `sheet`'s column of that row (D214). `cols` are the
+/// columns of `sheet`. Anything else is as it was.
+pub fn qualified(cell: &str, sheet: &str, cols: &[String]) -> String {
+    let Some(Ok(expr)) = cell.strip_prefix('=').map(|body| parse_expr(body, 0, 1)) else {
+        return cell.to_string();
+    };
+    let (mut found, mut names) = (Vec::new(), Vec::new());
+    sites(&expr, false, &mut found, &mut names);
+    let mut edits: Vec<Edit> = Vec::new();
+    for site in &found {
+        if site.nested || site.sheet.is_some() {
+            continue;
+        }
+        let start = site.at.start as usize;
+        edits.push((start, start, sheet.to_string()));
+    }
+    for (name, span) in &names {
+        if cols.iter().any(|c| c == name) {
+            put(&mut edits, cell, *span, format!("{sheet}[{name}; *]"));
+        }
+    }
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = cell.to_string();
+    for (s, e, new) in edits {
+        out.replace_range(s..e, &new);
+    }
+    out
+}
+
+/// A block of cells copied from a sheet, as a formula in it needs to know
+/// where it came from.
+pub struct CopiedFrom {
+    /// The sheet it was on.
+    pub sheet: String,
+    /// Every column of that sheet, in order.
+    pub cols: Vec<String>,
+    /// How many rows that sheet has.
+    pub nrows: usize,
+    /// The rows and the columns the block covered.
+    pub rows: std::ops::Range<usize>,
+    pub across: std::ops::Range<usize>,
+}
+
+/// A formula of a block copied from `src` and put down at `to` on a sheet
+/// whose columns are `target`, from `from` where it was: on the same sheet
+/// or on a different one. A relative read stays relative, and a fixed one is
+/// left as it is (D219); the sheet pasted on is the one it reads (D220). A
+/// column name read of the block's own cells is the column it landed in
+/// (D226), where the row is the formula's own or counted from it.
+pub fn copied_cell(
+    cell: &str,
+    from: (usize, usize),
+    src: &CopiedFrom,
+    to: (usize, usize),
+    target: &[String],
+) -> String {
+    let Some(Ok(expr)) = cell.strip_prefix('=').map(|body| parse_expr(body, 0, 1)) else {
+        return cell.to_string();
+    };
+    let cols: Vec<&str> = src.cols.iter().map(String::as_str).collect();
+    let by = to.1 as i64 - from.1 as i64;
+    let inside = |r: usize, c: usize| src.rows.contains(&r) && src.across.contains(&c);
+    let landed = |c: usize| {
+        usize::try_from(c as i64 + by)
+            .ok()
+            .and_then(|c| target.get(c))
+            .cloned()
+    };
+    let (mut found, mut names) = (Vec::new(), Vec::new());
+    sites(&expr, false, &mut found, &mut names);
+    let mut edits: Vec<Edit> = Vec::new();
+    for site in &found {
+        if site.nested || site.sheet.is_some() {
+            continue;
+        }
+        if let Some(((r, row, _), (c, None, col_span))) =
+            one_cell(site, Some(from), src.nrows, &cols)
+            && inside(r, c)
+            && matches!(row, Pick::Here | Pick::Off(_))
+            && let Some(name) = landed(c)
+        {
+            put(&mut edits, cell, col_span, name);
+        }
+    }
+    for (name, span) in &names {
+        if let Some(c) = cols.iter().position(|c| c == name)
+            && inside(from.0, c)
+            && let Some(name) = landed(c)
+        {
+            put(&mut edits, cell, *span, name);
+        }
+    }
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = cell.to_string();
+    for (s, e, new) in edits {
+        out.replace_range(s..e, &new);
+    }
+    out
+}
+
+/// A formula of a block copied from another sheet, put down at `to` on a
+/// sheet whose columns are `target`, from `from` where it was. What it
+/// read inside the block it still reads, at the copy: the cell it stood
+/// for, in the sheet it is on now. What it read outside the block it still
+/// reads where it was, on the sheet it came from, which is made to say so.
+/// A range or a column reads the place, and so counts as outside (D214).
+pub fn carried(
+    cell: &str,
+    from: (usize, usize),
+    src: &CopiedFrom,
+    to: (usize, usize),
+    target: &[String],
+    target_nrows: usize,
+) -> String {
+    let by = (to.0 as i64 - from.0 as i64, to.1 as i64 - from.1 as i64);
+    let map = |r: usize, c: usize| (r as i64 + by.0, c as i64 + by.1);
+    carried_by(
+        cell,
+        from,
+        src,
+        to,
+        target,
+        target_nrows,
+        &map,
+        Outside::Rebase(by),
+    )
+}
+
+/// As `carried`, for a block put down turned about with its first cell at
+/// `origin`: the cell at `from` is put down at `to`, and what it read
+/// inside the block it reads where that went.
+pub fn carried_turned(
+    cell: &str,
+    from: (usize, usize),
+    src: &CopiedFrom,
+    origin: (usize, usize),
+    to: (usize, usize),
+    target: &[String],
+    target_nrows: usize,
+) -> String {
+    let block: Block = (src.rows.clone(), src.across.clone());
+    let map = |r: usize, c: usize| turn_at(&block, origin, r, c);
+    carried_by(
+        cell,
+        from,
+        src,
+        to,
+        target,
+        target_nrows,
+        &map,
+        Outside::Freeze,
+    )
+}
+
+/// `carried`, with `map` saying where each cell of the block went, and
+/// `outside` what becomes of a read of a cell outside it.
+#[allow(clippy::too_many_arguments)]
+fn carried_by(
+    cell: &str,
+    from: (usize, usize),
+    src: &CopiedFrom,
+    to: (usize, usize),
+    target: &[String],
+    target_nrows: usize,
+    map: Whither,
+    outside: Outside,
+) -> String {
+    let Some(Ok(expr)) = cell.strip_prefix('=').map(|body| parse_expr(body, 0, 1)) else {
+        return cell.to_string();
+    };
+    let cols: Vec<&str> = src.cols.iter().map(String::as_str).collect();
+    let inside = |r: usize, c: usize| src.rows.contains(&r) && src.across.contains(&c);
+    let (mut found, mut names) = (Vec::new(), Vec::new());
+    sites(&expr, false, &mut found, &mut names);
+    let mut edits: Vec<Edit> = Vec::new();
+    for site in &found {
+        // One that names its sheet says what it reads, and one inside the
+        // slot of another is read as that index reads it.
+        if site.nested || site.sheet.is_some() {
+            continue;
+        }
+        let one = one_cell(site, Some(from), src.nrows, &cols);
+        if let Some(((r, row, row_span), (c, col, col_span))) = one
+            && inside(r, c)
+        {
+            let (tr, tc) = map(r, c);
+            let column = match col {
+                Some(pick) => Some(pick.write(tc, Some(to.1), target.len())),
+                None => usize::try_from(tc)
+                    .ok()
+                    .and_then(|c| target.get(c))
+                    .cloned(),
+            };
+            if let Some(column) = column {
+                put(
+                    &mut edits,
+                    cell,
+                    row_span,
+                    row.write(tr, Some(to.0), target_nrows),
+                );
+                put(&mut edits, cell, col_span, column);
+                continue;
+            }
+        }
+        match outside {
+            Outside::Freeze => {
+                if let Some((row, col)) = one {
+                    freeze_cell(&mut edits, cell, row, col, &cols);
+                }
+            }
+            Outside::Rebase(by) => {
+                if let Some(slot) = site.row {
+                    shift_slot(slot, by.0, cell, &mut edits);
+                }
+                if let ColPart::Slot(slot) = site.col {
+                    shift_slot(slot, by.1, cell, &mut edits);
+                }
+            }
+        }
+        let start = site.at.start as usize;
+        edits.push((start, start, src.sheet.clone()));
+    }
+    // A column named on its own is that column of the formula's own row: in
+    // the block it is the cell it was, now in the column it landed in, and
+    // outside it the row it was on, in the sheet it was on.
+    for (name, span) in &names {
+        let Some(c) = cols.iter().position(|c| c == name) else {
+            continue;
+        };
+        let (land_row, land_col) = map(from.0, c);
+        let landed = usize::try_from(land_col)
+            .ok()
+            .and_then(|c| target.get(c))
+            .filter(|_| inside(from.0, c));
+        let new = match landed {
+            Some(name) => match land_row - to.0 as i64 {
+                0 => name.clone(),
+                rows => format!("[{name}; {}]", offset_text(rows)),
+            },
+            None if matches!(outside, Outside::Freeze) => {
+                format!("{}[{name}; {}]", src.sheet, from.0)
+            }
+            None => format!(
+                "{}[{name}; {}]",
+                src.sheet,
+                offset_text(from.0 as i64 - to.0 as i64)
+            ),
+        };
+        put(&mut edits, cell, *span, new);
+    }
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = cell.to_string();
+    for (s, e, new) in edits {
+        out.replace_range(s..e, &new);
+    }
+    out
 }
 
 /// The source of a cell of `block`, cut from `from` in a sheet and put down
@@ -960,9 +1424,32 @@ fn moved_cell(
     let Some(Ok(expr)) = cell.strip_prefix('=').map(|body| parse_expr(body, 0, 1)) else {
         return cell.to_string();
     };
-    let mut found = Vec::new();
-    sites(&expr, false, &mut found, &mut Vec::new());
+    let (mut found, mut names) = (Vec::new(), Vec::new());
+    sites(&expr, false, &mut found, &mut names);
     let mut edits = Vec::new();
+    // A column named on its own is that column of the cell's own row: cut
+    // with the block it is the cell it was, in the column it landed in, and
+    // outside it the row it was in.
+    for (name, span) in names {
+        let Some(c) = cols.iter().position(|c| *c == name) else {
+            continue;
+        };
+        if block.0.contains(&from.0) && block.1.contains(&c) {
+            if let Some(new) = usize::try_from(c as i64 + by.1)
+                .ok()
+                .and_then(|c| cols.get(c))
+            {
+                put(&mut edits, cell, span, new.to_string());
+            }
+        } else if by.0 != 0 {
+            put(
+                &mut edits,
+                cell,
+                span,
+                format!("[{name}; {}]", offset_text(-by.0)),
+            );
+        }
+    }
     for site in found {
         if site.nested || site.sheet.is_some_and(|name| name != sheet) {
             continue;
@@ -1037,6 +1524,14 @@ fn clean_cell(input: &str) -> String {
     )
 }
 
+/// A diagnostic as one line, its help after it.
+fn said(d: &omasheet_omx::Diagnostic) -> String {
+    match &d.help {
+        Some(help) => format!("{} \u{2014} {help}", d.message),
+        None => d.message.clone(),
+    }
+}
+
 /// A name with any `_001` it was copied with taken off.
 fn copy_base(name: &str) -> &str {
     match name.rsplit_once('_') {
@@ -1049,6 +1544,56 @@ fn copy_base(name: &str) -> &str {
     }
 }
 
+/// The schema lines that name the file's own columns, `id : Integer`, each
+/// `from` the file's name where that is not the identifier. `None` if a
+/// column has no type or no usable name, or two take the same one.
+fn schema_lines(columns: &[ColumnSnap], naming: &dyn Fn(&str) -> String) -> Option<String> {
+    let mut lines = String::new();
+    let mut seen = std::collections::HashSet::new();
+    for c in columns.iter().filter(|c| c.formula.is_none()) {
+        let id = naming(&c.name);
+        if c.ty.is_empty() || id.is_empty() || !seen.insert(id.clone()) {
+            return None;
+        }
+        lines.push_str(&format!("{id} : {}", c.ty));
+        if id != c.name {
+            if c.name.contains('\'') {
+                return None;
+            }
+            lines.push_str(&format!(" from '{}'", c.name));
+        }
+        lines.push('\n');
+    }
+    Some(lines)
+}
+
+/// A column's name as an identifier, as an import would name it: itself if
+/// it is one, and otherwise its letters and digits with a capital after each
+/// gap, which a `from` then ties to the file's name.
+fn plain_identifier(raw: &str) -> String {
+    if ident_len(raw) == raw.len() {
+        return raw.to_string();
+    }
+    let mut id = String::new();
+    let mut gap = false;
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            id.push(if gap && !id.is_empty() {
+                c.to_ascii_uppercase()
+            } else {
+                c
+            });
+            gap = false;
+        } else {
+            gap = true;
+        }
+    }
+    if id.starts_with(|c: char| c.is_ascii_digit()) {
+        id.insert(0, '_');
+    }
+    id
+}
+
 fn valid_name(name: &str) -> Result<&str, String> {
     let name = name.trim();
     if name.is_empty() || ident_len(name) != name.len() {
@@ -1058,6 +1603,10 @@ fn valid_name(name: &str) -> Result<&str, String> {
     }
     Ok(name)
 }
+
+/// The most problems a snapshot lists; a formula failing in every row of a
+/// table of millions would otherwise list them all.
+const MOST_PROBLEMS: usize = 200;
 
 /// The header and rows of a sheet as text, plus where each row came from.
 struct Grid {
@@ -1134,9 +1683,14 @@ impl Grid {
         } else {
             edits.push((he, he, format!("\n{rule}")));
         }
-        let kept: Vec<usize> = self.rows.iter().filter_map(|(o, _)| *o).collect();
+        let mut kept = vec![false; t.row_lines.len()];
+        for origin in self.rows.iter().filter_map(|(o, _)| *o) {
+            if let Some(k) = kept.get_mut(origin) {
+                *k = true;
+            }
+        }
         for (i, span) in t.row_lines.iter().enumerate() {
-            if !kept.contains(&i) {
+            if !kept[i] {
                 // Remove the line and its line ending.
                 let (s, e) = range(*span);
                 let end = if text[e..].starts_with("\r\n") {
@@ -1170,13 +1724,20 @@ impl Grid {
         if !pending.is_empty() {
             edits.push((anchor, anchor, pending));
         }
-        let mut out = text.to_string();
+        // Written once, front to back: replacing in the text edit by edit
+        // would move the rest of it each time a line changed length. The
+        // edits do not overlap, and those at one place go in the order made.
         let mut order: Vec<usize> = (0..edits.len()).collect();
-        order.sort_by(|&a, &b| edits[b].0.cmp(&edits[a].0).then(b.cmp(&a)));
+        order.sort_by_key(|&k| (edits[k].0, k));
+        let mut out = String::with_capacity(text.len());
+        let mut at = 0;
         for k in order {
             let (s, e, ref replacement) = edits[k];
-            out.replace_range(s..e, replacement);
+            out.push_str(&text[at..s]);
+            out.push_str(replacement);
+            at = e;
         }
+        out.push_str(&text[at..]);
         out
     }
 }
@@ -1307,10 +1868,214 @@ fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
     out
 }
 
+/// A filter worked out as far as the document has to: what is left is
+/// Polars' to run, which a worker can, as none of it is the document's.
+/// See [`Document::filter_job`].
+pub struct FilterJob {
+    rows: usize,
+    /// The columns' masks answered here, a row at a time.
+    masks: Vec<Vec<bool>>,
+    /// The columns' filters lowered to Polars, each with its frame.
+    plans: Vec<(polars::prelude::DataFrame, polars::prelude::Expr)>,
+    /// The grid's order of the rows, where it has been sorted.
+    order: Option<Arc<Vec<usize>>>,
+}
+
+impl FilterJob {
+    /// How many rows the sheet has: what the work is over.
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// The rows shown, in the grid's order, or `None` where Polars fails on
+    /// a filter, which [`Document::shown_rows`] then answers on its own.
+    pub fn run(self) -> Option<Vec<usize>> {
+        let n = self.rows;
+        let mut keep = vec![true; n];
+        let mut and = |mask: Vec<bool>| {
+            for (k, m) in keep.iter_mut().zip(mask) {
+                *k &= m;
+            }
+        };
+        for mask in self.masks {
+            and(mask);
+        }
+        for (frame, expr) in self.plans {
+            and(crate::eval::run_filter_plan(frame, expr)?);
+        }
+        let order = self.order.as_deref();
+        Some(
+            (0..n)
+                .filter(|&p| keep[order.map_or(p, |o| o[p])])
+                .collect(),
+        )
+    }
+}
+
+/// A table's sort worked out as far as the document has to: the column in
+/// the order shown, for a worker to put in order. See
+/// [`Document::sort_job`] and [`Document::finish_sort`].
+pub struct SortJob {
+    sheet: usize,
+    col: usize,
+    desc: bool,
+    shown: polars::prelude::Series,
+    /// The grid's order when the job was made: the sort is of that, and is
+    /// not applied over another.
+    before: Option<Arc<Vec<usize>>>,
+}
+
+impl SortJob {
+    /// The places of the rows as shown, in the order of the column: a
+    /// stable `arg_sort`, as [`Document::sort_rows`] takes it.
+    pub fn run(&self) -> Vec<usize> {
+        self.shown
+            .arg_sort(polars::prelude::SortOptions {
+                descending: self.desc,
+                nulls_last: self.desc,
+                maintain_order: true,
+                multithreaded: true,
+                limit: None,
+            })
+            .into_no_null_iter()
+            .map(|i| i as usize)
+            .collect()
+    }
+}
+
+/// How a column of a [`SummaryJob`] is added up.
+enum Kind {
+    Whole,
+    Float,
+    /// Counted, with no numbers.
+    Counted,
+}
+
+/// A selection's summary worked out as far as the document has to: its
+/// columns as Polars holds them, for a worker to add up. See
+/// [`Document::summary_job`].
+pub struct SummaryJob {
+    rows: std::ops::Range<usize>,
+    order: Option<Arc<Vec<usize>>>,
+    columns: Vec<(polars::prelude::Column, Kind)>,
+}
+
+/// What a [`SummaryJob`] added up: how many values, how many of them
+/// numbers, and their sum.
+pub struct Added {
+    count: usize,
+    numbers: usize,
+    sum: Sum,
+}
+
+enum Sum {
+    Whole(i128),
+    Float(f64),
+}
+
+impl Added {
+    /// The sum as a value, or `None` past what a whole number holds.
+    fn sum(&self) -> Option<Value> {
+        Some(match self.sum {
+            Sum::Whole(w) => Value::int(i64::try_from(w).ok()?),
+            Sum::Float(f) => Value::Float(f),
+        })
+    }
+}
+
+impl SummaryJob {
+    /// How many rows it covers: what the work is over.
+    pub fn rows(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Add it up. `None` where Polars will not give a column as expected.
+    pub fn run(self) -> Option<Added> {
+        use polars::prelude::{DataType, IdxCa, StaticArray};
+        let rows = self.rows;
+        let (mut count, mut numbers) = (0usize, 0usize);
+        let mut ints = Vec::new();
+        let mut floats = Vec::new();
+        let mut kinds = Vec::new();
+        for (column, kind) in self.columns {
+            let column = match &self.order {
+                Some(order) => {
+                    let idx: Vec<_> = order[rows.clone()].iter().map(|&r| r as _).collect();
+                    column.take(&IdxCa::from_vec("".into(), idx)).ok()?
+                }
+                None => column.slice(rows.start as i64, rows.len()),
+            };
+            let held = column.len() - column.null_count();
+            match kind {
+                Kind::Whole => {
+                    ints.push(
+                        column
+                            .cast(&DataType::Int64)
+                            .ok()?
+                            .i64()
+                            .ok()?
+                            .rechunk()
+                            .into_owned(),
+                    );
+                    kinds.push(false);
+                    numbers += held;
+                }
+                Kind::Float => {
+                    floats.push(
+                        column
+                            .cast(&DataType::Float64)
+                            .ok()?
+                            .f64()
+                            .ok()?
+                            .rechunk()
+                            .into_owned(),
+                    );
+                    kinds.push(true);
+                    numbers += held;
+                }
+                Kind::Counted => {}
+            }
+            count += held;
+        }
+        let ints: Vec<_> = ints
+            .iter()
+            .map(|ca| ca.downcast_iter().next())
+            .collect::<Option<_>>()?;
+        let floats: Vec<_> = floats
+            .iter()
+            .map(|ca| ca.downcast_iter().next())
+            .collect::<Option<_>>()?;
+        let mut sum = Sum::Whole(0);
+        for r in 0..rows.len() {
+            let (mut i, mut f) = (ints.iter(), floats.iter());
+            for &float in &kinds {
+                sum = if float {
+                    match (f.next()?.get(r), &sum) {
+                        (None, _) => continue,
+                        (Some(v), Sum::Whole(w)) => Sum::Float(*w as f64 + v),
+                        (Some(v), Sum::Float(s)) => Sum::Float(s + v),
+                    }
+                } else {
+                    match (i.next()?.get(r), &sum) {
+                        (None, _) => continue,
+                        (Some(v), Sum::Whole(w)) => Sum::Whole(w + v as i128),
+                        (Some(v), Sum::Float(s)) => Sum::Float(s + v as f64),
+                    }
+                };
+            }
+        }
+        Some(Added {
+            count,
+            numbers,
+            sum,
+        })
+    }
+}
+
 impl Document {
     /// A document that shows dates and times as the file writes them.
     pub fn from_text(text: &str) -> Document {
-        Document::new(text, Style::ISO, Names::default(), false)
+        Document::new(text, Style::ISO, Names::default(), false, Copying::Wait)
     }
 
     /// A document for a person to look at: dates and times are shown in
@@ -1323,10 +2088,19 @@ impl Document {
     /// As [`Document::with_style`], with dates shown by a column's format
     /// in the language of `names`.
     pub fn with_locale(text: &str, style: Style, names: Names) -> Document {
-        Document::new(text, style, names, true)
+        Document::new(text, style, names, true, Copying::Wait)
     }
 
-    fn new(text: &str, style: Style, names: Names, local: bool) -> Document {
+    /// As [`Document::with_locale`], for a screen that should never wait
+    /// for a big CSV to be copied: a table over one shows the sample of its
+    /// first rows until the copy is written (open-a-big-csv D153), which
+    /// [`Document::to_convert`] says is wanted and
+    /// [`Document::converted`] takes up once it is.
+    pub fn on_screen(text: &str, style: Style, names: Names) -> Document {
+        Document::new(text, style, names, true, Copying::Sample)
+    }
+
+    fn new(text: &str, style: Style, names: Names, local: bool, copying: Copying) -> Document {
         let mut doc = Document {
             text: text.to_string(),
             snapshot: Snapshot::default(),
@@ -1337,7 +2111,13 @@ impl Document {
             local,
             base: None,
             orders: Default::default(),
+            whole: Default::default(),
             edits: 0,
+            engine: None,
+            column_errors: Vec::new(),
+            paged_rows: PAGED_ROWS,
+            copying,
+            columns: Default::default(),
         };
         doc.rebuild();
         doc
@@ -1348,6 +2128,14 @@ impl Document {
     /// its own text, and what a `table` names is beside the file.
     pub fn set_base(&mut self, dir: impl Into<std::path::PathBuf>) {
         self.base = Some(dir.into());
+        self.rebuild();
+    }
+
+    /// Page a sheet of more than `rows` rows the text does not hold, in
+    /// place of [`PAGED_ROWS`]: for a test to page a small file.
+    #[doc(hidden)]
+    pub fn set_paged_rows(&mut self, rows: usize) {
+        self.paged_rows = rows;
         self.rebuild();
     }
 
@@ -1370,6 +2158,145 @@ impl Document {
         &self.snapshot
     }
 
+    /// What the document's cache of whole columns has done and holds.
+    pub fn column_cache(&self) -> crate::table::CacheStats {
+        self.columns.stats()
+    }
+
+    /// Replace the cache with one of a given budget, in bytes, which holds
+    /// nothing: for a test, and for a caller that knows the memory better
+    /// than a quarter of what the machine has.
+    pub fn set_column_budget(&mut self, bytes: usize) {
+        self.columns = crate::table::ColumnCache::with_budget(bytes);
+        self.rebuild();
+    }
+
+    /// Every table's file that is paged and not yet held whole, with what
+    /// holding it would take (D157). Whether to hold it is the caller's to
+    /// decide, against the memory there is, and the reading is the caller's
+    /// to do, off the thread that draws: [`crate::table::read_whole`] then
+    /// [`Document::hold`].
+    pub fn to_hold(&self) -> Vec<ToHold> {
+        let Some(engine) = &self.engine else {
+            return Vec::new();
+        };
+        let base = self.base.clone().unwrap_or_else(|| ".".into());
+        let mut out: Vec<ToHold> = Vec::new();
+        for (sheet, snap) in engine.program().sheets.iter().zip(&self.snapshot.sheets) {
+            let Some(source) = &sheet.source else {
+                continue;
+            };
+            let path = base.join(&source.path);
+            // A CSV not yet copied is shown from its sample, which is small.
+            if crate::table::is_converted(&path) && crate::table::copy_of(&path).is_none() {
+                continue;
+            }
+            let path = self.file_of(&path);
+            if !snap.paged || self.whole.contains_key(&path) || out.iter().any(|h| h.path == path) {
+                continue;
+            }
+            // The columns the file is read for: the sheet's own, by the name
+            // the file gives them.
+            let columns: Vec<String> = sheet
+                .cols
+                .iter()
+                .filter(|c| matches!(c.kind, ColKind::Frame))
+                .map(|c| c.from.clone().unwrap_or_else(|| c.name.clone()))
+                .collect();
+            if let Ok(bytes) = crate::table::estimate(&path, &columns) {
+                out.push(ToHold {
+                    path,
+                    columns,
+                    bytes,
+                });
+            }
+        }
+        out
+    }
+
+    /// Hold the file at `path` whole, as a worker read it, and rebuild over
+    /// it, so that its columns are given from memory. `false`, and nothing
+    /// held, where the text no longer names the file, it has changed since
+    /// it was read, or it is held already.
+    pub fn hold(&mut self, path: std::path::PathBuf, whole: crate::table::Whole) -> bool {
+        if self.whole.contains_key(&path)
+            || crate::table::identity(&path).as_ref() != Some(&whole.identity)
+            || !self.to_hold().iter().any(|h| h.path == path)
+        {
+            return false;
+        }
+        // The same columns kept as well would be the data twice.
+        self.columns.evict_file(&path);
+        self.whole.insert(path, whole);
+        self.rebuild();
+        true
+    }
+
+    /// The file a table's source at `path` is read from: itself, or for a
+    /// CSV its copy, or its sample while there is none.
+    fn file_of(&self, path: &std::path::Path) -> std::path::PathBuf {
+        if !crate::table::is_converted(path) {
+            return path.to_path_buf();
+        }
+        crate::table::copy_of(path).unwrap_or_else(|| path.to_path_buf())
+    }
+
+    /// The file a table names, for a file it is read from: a CSV, for its
+    /// copy in the cache; any other file is itself. For what to call it.
+    pub fn source_file(&self, read: &std::path::Path) -> std::path::PathBuf {
+        let base = self.base.clone().unwrap_or_else(|| ".".into());
+        self.engine
+            .iter()
+            .flat_map(|e| e.program().sheets.iter())
+            .filter_map(|s| s.source.as_ref())
+            .map(|source| base.join(&source.path))
+            .find(|named| {
+                crate::table::is_converted(named)
+                    && crate::table::copy_of(named).as_deref() == Some(read)
+            })
+            .unwrap_or_else(|| read.to_path_buf())
+    }
+
+    /// The CSV files this document's tables read that have no copy yet, and
+    /// are shown from their samples meanwhile: each for a worker to
+    /// [`crate::table::convert`], and then [`Document::converted`].
+    pub fn to_convert(&self) -> Vec<std::path::PathBuf> {
+        let Some(engine) = &self.engine else {
+            return Vec::new();
+        };
+        let base = self.base.clone().unwrap_or_else(|| ".".into());
+        let mut out: Vec<std::path::PathBuf> = Vec::new();
+        for sheet in &engine.program().sheets {
+            let Some(source) = &sheet.source else {
+                continue;
+            };
+            let path = base.join(&source.path);
+            if crate::table::is_converted(&path)
+                && crate::table::copy_of(&path).is_none()
+                && !out.contains(&path)
+            {
+                out.push(path);
+            }
+        }
+        out
+    }
+
+    /// A CSV's copy has been written: its tables are read from it now,
+    /// whole, where they were shown from the sample. Whether anything
+    /// changed.
+    pub fn converted(&mut self, csv: &std::path::Path) -> bool {
+        if crate::table::copy_of(csv).is_none() {
+            return false;
+        }
+        self.rebuild();
+        true
+    }
+
+    /// Whether the file at `path` is held whole.
+    pub fn holds(&self, path: &std::path::Path) -> bool {
+        self.whole.contains_key(path)
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
@@ -1382,7 +2309,8 @@ impl Document {
         let Some(previous) = self.undo.pop() else {
             return false;
         };
-        self.redo.push(std::mem::replace(&mut self.text, previous));
+        let now = self.restore(previous);
+        self.redo.push(now);
         self.rebuild();
         true
     }
@@ -1391,9 +2319,28 @@ impl Document {
         let Some(next) = self.redo.pop() else {
             return false;
         };
-        self.undo.push(std::mem::replace(&mut self.text, next));
+        let now = self.restore(next);
+        self.undo.push(now);
         self.rebuild();
         true
+    }
+
+    /// Put the document back to `step`, giving the state it was in.
+    fn restore(&mut self, step: Step) -> Step {
+        Step {
+            text: std::mem::replace(&mut self.text, step.text),
+            orders: std::mem::replace(&mut self.orders, step.orders),
+        }
+    }
+
+    /// Keep the state the document was in as the step an edit undoes to.
+    fn push_step(&mut self, previous: Step) {
+        self.undo.push(previous);
+        if self.undo.len() > UNDO_LIMIT {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+        self.edits += 1;
     }
 
     /// How many steps there are to undo: a mark for [`Document::join_since`].
@@ -1419,12 +2366,11 @@ impl Document {
         if text == self.text {
             return false;
         }
-        self.undo.push(std::mem::replace(&mut self.text, text));
-        if self.undo.len() > UNDO_LIMIT {
-            self.undo.remove(0);
-        }
-        self.redo.clear();
-        self.edits += 1;
+        let previous = Step {
+            text: std::mem::replace(&mut self.text, text),
+            orders: self.orders.clone(),
+        };
+        self.push_step(previous);
         self.rebuild();
         true
     }
@@ -1449,7 +2395,7 @@ impl Document {
         edits(self);
         let changed = self.text != before;
         // The first of the edits left the text as it was to be undone to.
-        if self.undo.get(steps) == Some(&before) {
+        if self.undo.get(steps).map(|s| &s.text) == Some(&before) {
             self.undo.truncate(steps + usize::from(changed));
         }
         changed
@@ -1470,18 +2416,24 @@ impl Document {
     /// `None` for a sheet that holds its own rows. Every edit of such a
     /// sheet is refused, and a front end can say so before one is tried.
     pub fn read_only(&self, sheet: usize) -> Option<String> {
+        read_only_why(self.snapshot.sheets.get(sheet)?)
+    }
+
+    /// Why the cells of column `col` of sheet `sheet` take no edit, if they
+    /// take none: a sheet calculated from an expression has no cell of its
+    /// own, and the data columns of a `view` are its file's. A formula column
+    /// appended to a view, a decorator, is the file's own text and is
+    /// edited by its formula, as any other is.
+    pub fn read_only_cell(&self, sheet: usize, col: usize) -> Option<String> {
         let snap = self.snapshot.sheets.get(sheet)?;
-        if let Some(expr) = &snap.view {
-            return Some(format!(
-                "sheet `{}` is calculated from `{expr}`: change the sheets it reads, or its own formula",
-                snap.name
-            ));
+        let decorator = snap.source.is_some()
+            && snap.view.is_none()
+            && snap.columns.get(col).is_some_and(|c| c.formula.is_some());
+        if decorator {
+            None
+        } else {
+            self.read_only(sheet)
         }
-        let path = snap.source.as_ref()?;
-        Some(format!(
-            "table `{}` is a read-only view of `{path}`: import that file to make edits",
-            snap.name
-        ))
     }
 
     /// Why sheet `sheet` has no cell to take an edit: a table's rows are in
@@ -1550,15 +2502,6 @@ impl Document {
         let types: Vec<String> = columns
             .map(|c| c.iter().map(|c| c.ty.clone()).collect())
             .unwrap_or_default();
-        // The columns left to their cells that a fraction is typed into,
-        // which the file then declares `Fraction`.
-        let fractions: Vec<String> = cells
-            .iter()
-            .filter(|(_, _, text)| typed_fraction(text))
-            .filter_map(|(_, col, _)| columns?.get(*col))
-            .filter(|c| !c.declared && matches!(c.ty.as_str(), "" | "Integer" | "Decimal"))
-            .map(|c| c.name.clone())
-            .collect();
         self.grid_edited(text, sheet, |grid| {
             for (row, col, text) in cells {
                 if *col >= grid.header.len() || grid.formula[*col] {
@@ -1569,27 +2512,12 @@ impl Document {
                     grid.rows.push((None, blank));
                 }
                 let ty = types.get(*col).map_or("", String::as_str);
-                grid.rows[*row].1[*col] = iso_entry(&style, ty, text)
-                    .or_else(|| fraction_entry(ty, text))
-                    .or_else(|| based_entry(ty, text))
-                    .unwrap_or_else(|| clean_cell(text));
+                // The file keeps the text as it was entered (D186): a column's
+                // type shows it in its own format, and a type is never set
+                // by what is typed into a cell (D191).
+                grid.rows[*row].1[*col] =
+                    iso_entry(&style, ty, text).unwrap_or_else(|| clean_cell(text));
             }
-        })
-        .map(|text| {
-            let ast = parse_file(&text, 0, &mut Vec::new());
-            match self.sheet_decl(&ast, sheet) {
-                Some(decl) => based_declared(text.clone(), decl),
-                None => text,
-            }
-        })
-        .map(|mut text| {
-            for name in &fractions {
-                let ast = parse_file(&text, 0, &mut Vec::new());
-                if let Some(decl) = self.sheet_decl(&ast, sheet) {
-                    text = retyped(&text, decl, name, Some(S::Fraction));
-                }
-            }
-            text
         })
     }
 
@@ -1632,6 +2560,201 @@ impl Document {
         }
     }
 
+    /// A block copied from `from` and put down turned about at `to`, as the
+    /// rows of columns: each cell's formula still reads what it read, now at
+    /// the place it has been put. Short rows are filled out.
+    pub fn turn_block(
+        &self,
+        sheet: usize,
+        from: (usize, usize),
+        to: (usize, usize),
+        block: &[Vec<String>],
+    ) -> Vec<Vec<String>> {
+        let ast = self.ast();
+        self.turned(&ast, sheet, from, to, block).1
+    }
+
+    /// As `paste_cut`, but turned about: the cells are put down as the rows
+    /// of columns, and a formula elsewhere that read one of them reads it
+    /// where it has gone.
+    pub fn paste_cut_turned(
+        &mut self,
+        sheet: usize,
+        from: (usize, usize),
+        to: (usize, usize),
+        block: &[Vec<String>],
+    ) -> bool {
+        let ast = self.ast();
+        let (Some(t), turned) = self.turned(&ast, sheet, from, to, block) else {
+            return false;
+        };
+        let width = block.iter().map(Vec::len).max().unwrap_or(0);
+        let cut: Block = (from.0..from.0 + block.len(), from.1..from.1 + width);
+        let map = |r: usize, c: usize| turn_at(&cut, to, r, c);
+        let edits = follow_cells(&ast, &self.text, t, &cut, &map);
+        let followed = rewritten(&self.text, &ast, edits);
+        let mut cells = Vec::new();
+        for (j, line) in turned.iter().enumerate() {
+            for (i, cell) in line.iter().enumerate() {
+                cells.push((to.0 + j, to.1 + i, cell.clone()));
+            }
+        }
+        match self.cells_set(&followed, sheet, &cells) {
+            Some(text) => self.commit(text),
+            None => false,
+        }
+    }
+
+    /// The index of sheet `sheet` in `ast`, and a block turned about.
+    fn turned(
+        &self,
+        ast: &FileAst,
+        sheet: usize,
+        from: (usize, usize),
+        to: (usize, usize),
+        block: &[Vec<String>],
+    ) -> (Option<usize>, Vec<Vec<String>>) {
+        let width = block.iter().map(Vec::len).max().unwrap_or(0);
+        let name = self.snapshot.sheets.get(sheet).map(|t| t.name.clone());
+        let t = name
+            .as_ref()
+            .and_then(|name| ast.sheets.iter().position(|t| &t.name == name));
+        let cut: Block = (from.0..from.0 + block.len(), from.1..from.1 + width);
+        let map = |r: usize, c: usize| turn_at(&cut, to, r, c);
+        let turned = (0..width)
+            .map(|j| {
+                block
+                    .iter()
+                    .enumerate()
+                    .map(|(i, line)| {
+                        let cell = line.get(j).cloned().unwrap_or_default();
+                        match (t, &name) {
+                            (Some(t), Some(name)) => {
+                                let decl = &ast.sheets[t];
+                                let cols = column_names(decl);
+                                turned_cell(
+                                    &cell,
+                                    (from.0 + i, from.1 + j),
+                                    &cut,
+                                    &map,
+                                    name,
+                                    decl.rows.len(),
+                                    &cols,
+                                )
+                            }
+                            _ => cell,
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        (t, turned)
+    }
+
+    /// How many rows sheet `sheet` has, paged or not.
+    pub fn row_count(&self, sheet: usize) -> usize {
+        self.snapshot.sheets.get(sheet).map_or(0, |t| t.nrows)
+    }
+
+    /// `count` rows of sheet `sheet` from row `from`, as the grid shows
+    /// them: out of the snapshot for a sheet it holds, and calculated and
+    /// formatted now for a paged one (D80). Rows past the end are not there.
+    pub fn rows(&self, sheet: usize, from: usize, count: usize) -> Vec<Vec<CellSnap>> {
+        let Some(t) = self.snapshot.sheets.get(sheet) else {
+            return Vec::new();
+        };
+        let end = from.saturating_add(count).min(t.nrows);
+        if from >= end {
+            return Vec::new();
+        }
+        if !t.paged {
+            return t.rows[from..end].to_vec();
+        }
+        let Some(engine) = &self.engine else {
+            return Vec::new();
+        };
+        let file_rows: Vec<usize> = (from..end).map(|r| self.file_row(sheet, r)).collect();
+        // The columns' windows read side by side rather than one by one.
+        engine.prefetch_rows(sheet, &file_rows);
+        let program = engine.program();
+        let mut columns: Vec<std::vec::IntoIter<Value>> = (0..t.columns.len())
+            .map(|c| engine.rows_shown(sheet, c, &file_rows).into_iter())
+            .collect();
+        (from..end)
+            .map(|_| {
+                t.columns
+                    .iter()
+                    .zip(&mut columns)
+                    .enumerate()
+                    .map(|(c, (column, values))| {
+                        let value = values.next().unwrap_or(Value::Error);
+                        let failed = matches!(value, Value::Error);
+                        let source = column
+                            .formula
+                            .as_ref()
+                            .map_or(String::new(), |f| format!("= {f}"));
+                        let error = self
+                            .column_errors
+                            .get(sheet)
+                            .and_then(|errors| errors.get(c).cloned().flatten())
+                            .filter(|_| failed);
+                        let format = program.sheets[sheet].cols[c].format.as_ref();
+                        cell_snap(engine, &self.style, format, value, source, error)
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The row of the source that is shown at row `r` of sheet `sheet`:
+    /// where a table has been sorted in the grid, the row it was before the
+    /// sort, which is the row a formula reads (D215).
+    pub fn source_row(&self, sheet: usize, r: usize) -> usize {
+        if self.snapshot.sheets.get(sheet).is_none() {
+            return r;
+        }
+        self.file_row(sheet, r)
+    }
+
+    /// The row of the file shown at row `r` of a paged sheet: where it has
+    /// been sorted in the grid, the order says, and otherwise it is `r`.
+    fn file_row(&self, sheet: usize, r: usize) -> usize {
+        let t = &self.snapshot.sheets[sheet];
+        match self.orders.get(&t.name) {
+            Some(order) if order.len() == t.nrows => order.get(r).copied().unwrap_or(r),
+            _ => r,
+        }
+    }
+
+    /// Every value of column `col` of a paged sheet, in the order shown,
+    /// with the text each is shown as: what a sort and a filter read where
+    /// the snapshot holds no rows.
+    fn paged_column(&self, sheet: usize, col: usize) -> Vec<(Value, String)> {
+        let Some(engine) = &self.engine else {
+            return Vec::new();
+        };
+        let n = self.row_count(sheet);
+        let values = engine.column_shown(sheet, col).unwrap_or_else(|| {
+            let all: Vec<usize> = (0..n).collect();
+            engine.rows_shown(sheet, col, &all)
+        });
+        let format = engine.program().sheets[sheet].cols[col].format.as_ref();
+        let shown = |v: &Value| match format {
+            Some(_) => engine.show_in(v, false, format),
+            None => shown_text(engine, v),
+        };
+        (0..n)
+            .map(|r| {
+                let v = values
+                    .get(self.file_row(sheet, r))
+                    .cloned()
+                    .unwrap_or(Value::Error);
+                let text = shown(&v);
+                (v, text)
+            })
+            .collect()
+    }
+
     /// The count, sum and average of the block of cells from `(top, left)`
     /// to `(bottom, right)`. Numbers add up exactly, as they do in a formula.
     pub fn summary(
@@ -1640,16 +2763,10 @@ impl Document {
         (top, left): (usize, usize),
         (bottom, right): (usize, usize),
     ) -> Option<Summary> {
-        let rows = &self.snapshot.sheets.get(sheet)?.rows;
-        let values = rows
-            .iter()
-            .take(bottom + 1)
-            .skip(top)
-            .flat_map(|row| row.iter().take(right + 1).skip(left))
-            .map(|cell| &cell.value);
+        let t = self.snapshot.sheets.get(sheet)?;
         let (mut count, mut numbers) = (0, 0);
         let mut sum = Value::int(0.into());
-        for value in values {
+        let mut add = |value: &Value| {
             if !matches!(value, Value::Null | Value::Error) {
                 count += 1;
             }
@@ -1657,12 +2774,142 @@ impl Document {
                 numbers += 1;
                 sum = arith(BinOp::Add, &sum, value).ok()?;
             }
+            Some(())
+        };
+        let end = (bottom + 1).min(t.nrows);
+        let cols = left..(right + 1).min(t.columns.len());
+        if !t.paged {
+            for row in t.rows.get(top..end).unwrap_or_default() {
+                for cell in row.get(cols.clone()).unwrap_or_default() {
+                    add(&cell.value)?;
+                }
+            }
+        } else if let Some(fast) = self.summary_native(sheet, top..end, cols.clone()) {
+            (count, numbers, sum) = fast;
+        } else if let Some(engine) = &self.engine {
+            // A paged sheet's selection can be the whole of a big file, so
+            // only the selected columns are read, as values and not as the
+            // cells the grid draws, and a block of rows at a time, so that
+            // what is held is one block however much is selected. Within a
+            // block the values are added row by row, as a held sheet's are,
+            // so the two add floats in the same order and agree exactly.
+            if self.orders.contains_key(&t.name) && end > top {
+                // Sorted, a block's rows are anywhere in the file, and each
+                // block would read the span between them again. Asking for
+                // the first row and the last reads each column whole, once,
+                // and keeps it, so every block is answered from that.
+                let ends = [0, t.nrows - 1];
+                for c in cols.clone() {
+                    engine.rows_shown(sheet, c, &ends);
+                }
+            }
+            let mut from = top;
+            while from < end {
+                let to = (from + SUMMARY_ROWS).min(end);
+                let file_rows: Vec<usize> = (from..to).map(|r| self.file_row(sheet, r)).collect();
+                let columns: Vec<Vec<Value>> = cols
+                    .clone()
+                    .map(|c| engine.rows_shown(sheet, c, &file_rows))
+                    .collect();
+                for i in 0..file_rows.len() {
+                    for column in &columns {
+                        add(column.get(i).unwrap_or(&Value::Error))?;
+                    }
+                }
+                from = to;
+            }
         }
         let numbers = if numbers == 0 {
             None
         } else {
-            let mean = arith(BinOp::Div, &sum, &Value::int(numbers.into())).ok()?;
-            let show = |v: &Value| format_styled(v, false, &self.style);
+            let mean = arith(BinOp::Div, &sum, &Value::int(numbers as i64)).ok()?;
+            // To two places: it is a glance, not the figure.
+            let show = |v: &Value| {
+                let v = crate::value::round_digits(v, 2).unwrap_or_else(|_| v.clone());
+                format_styled(&v, false, &self.style)
+            };
+            Some((show(&sum), show(&mean)))
+        };
+        Some(Summary { count, numbers })
+    }
+
+    /// [`Document::summary`] of a big selection of a paged sheet, added up
+    /// over the Polars arrays: the count, how many numbers, and their sum.
+    /// See [`SummaryJob`].
+    fn summary_native(
+        &self,
+        sheet: usize,
+        rows: std::ops::Range<usize>,
+        cols: std::ops::Range<usize>,
+    ) -> Option<(usize, usize, Value)> {
+        let added = self.summary_job(sheet, rows, cols)?.run()?;
+        Some((added.count, added.numbers, added.sum()?))
+    }
+
+    /// [`Document::summary`] of a big selection of a paged sheet, as a job
+    /// for a worker to [`SummaryJob::run`] and [`Document::summary_from`] to
+    /// say. The numbers are added in the order the one-by-one path adds
+    /// them, row by row and across, and as `arith` adds them: whole numbers
+    /// exactly until the first float, and from then on as floats, so the
+    /// answer is the same. `None`, and the values are added one by one, for
+    /// a small selection, which reads only what it covers, and for columns
+    /// this does not read alike: exact numbers other than whole ones, and a
+    /// column whose values are converted to the sheet's type.
+    pub fn summary_job(
+        &self,
+        sheet: usize,
+        rows: std::ops::Range<usize>,
+        cols: std::ops::Range<usize>,
+    ) -> Option<SummaryJob> {
+        use polars::prelude::DataType;
+        let t = self.snapshot.sheets.get(sheet)?;
+        let rows = rows.start..rows.end.min(t.nrows);
+        if !t.paged || rows.len() <= SUMMARY_ROWS {
+            return None;
+        }
+        let engine = self.engine.as_ref()?;
+        let order = self
+            .orders
+            .get(&t.name)
+            .filter(|o| o.len() == t.nrows)
+            .cloned();
+        let mut columns = Vec::new();
+        for c in cols.start..cols.end.min(t.columns.len()) {
+            let column = engine.frame_values(sheet, c)?;
+            let ty = engine.program().sheets[sheet].cols[c].ty;
+            let kind = match (ty, column.dtype()) {
+                (S::Int, d) if d.is_integer() && !matches!(d, DataType::UInt64) => Kind::Whole,
+                (S::Float, DataType::Float32 | DataType::Float64) => Kind::Float,
+                // Counted, with no numbers. A date-time is out of a sheet's
+                // reach only millions of years away, so each held is a value.
+                (S::String, DataType::String)
+                | (S::Boolean, DataType::Boolean)
+                | (S::Date, DataType::Date)
+                | (S::Time, DataType::Time)
+                | (S::Datetime, DataType::Datetime(_, None)) => Kind::Counted,
+                _ => return None,
+            };
+            columns.push((column, kind));
+        }
+        Some(SummaryJob {
+            rows,
+            order,
+            columns,
+        })
+    }
+
+    /// What a [`SummaryJob`] added up, as [`Document::summary`] says it.
+    pub fn summary_from(&self, added: Added) -> Option<Summary> {
+        let (count, numbers, sum) = (added.count, added.numbers, added.sum()?);
+        let numbers = if numbers == 0 {
+            None
+        } else {
+            let mean = arith(BinOp::Div, &sum, &Value::int(numbers as i64)).ok()?;
+            // To two places: it is a glance, not the figure.
+            let show = |v: &Value| {
+                let v = crate::value::round_digits(v, 2).unwrap_or_else(|_| v.clone());
+                format_styled(&v, false, &self.style)
+            };
             Some((show(&sum), show(&mean)))
         };
         Some(Summary { count, numbers })
@@ -1696,7 +2943,7 @@ impl Document {
     /// type, or with `None` leave them to take their type from their cells.
     /// One undoable step. A cell that does not fit is left to be an error.
     pub fn set_column_types(&mut self, sheet: usize, cols: &[usize], ty: Option<&str>) -> bool {
-        if self.no_cells(sheet).is_some() {
+        if self.no_cells(sheet).is_some() && !self.decorators_only(sheet, cols) {
             return false;
         }
         let ty = match ty.map(S::from_name) {
@@ -1734,7 +2981,12 @@ impl Document {
         cols: &[usize],
         format: Option<&str>,
     ) -> Result<(), String> {
-        if let Some(why) = self.no_cells(sheet) {
+        // How a column of a file is shown is the app's to say, where the
+        // schema names it: the file is not touched.
+        if let Some(why) = self.no_cells(sheet)
+            && !self.decorators_only(sheet, cols)
+            && !self.declared_in_view(sheet, cols)
+        {
             return Err(why);
         }
         let snap = self.snapshot.sheets.get(sheet).ok_or_else(String::new)?;
@@ -1805,7 +3057,8 @@ impl Document {
         first: usize,
         count: usize,
     ) -> Result<(), String> {
-        if let Some(why) = self.no_cells(sheet) {
+        let frame = self.frame_sheet(sheet);
+        if !frame && let Some(why) = self.no_cells(sheet) {
             return Err(why);
         }
         let Some(snap) = self.snapshot.sheets.get(sheet) else {
@@ -1817,6 +3070,16 @@ impl Document {
         }
         if count == n {
             return Err("a sheet keeps at least one column".into());
+        }
+        if frame
+            && snap.columns[first..first + count]
+                .iter()
+                .any(|c| c.formula.is_none())
+        {
+            return Err(format!(
+                "view `{}` is read-only: only its formula columns can be deleted",
+                snap.name
+            ));
         }
         let gone = first..first + count;
         let kept = |k: &usize| !gone.contains(k);
@@ -1853,8 +3116,13 @@ impl Document {
         for (s, e) in cuts.into_iter().rev() {
             text.replace_range(s..e, "");
         }
-        let Some(text) = self.arranged(&text, sheet, &order) else {
-            return Err("there is no such sheet".into());
+        let text = if frame {
+            text
+        } else {
+            let Some(text) = self.arranged(&text, sheet, &order) else {
+                return Err("there is no such sheet".into());
+            };
+            text
         };
         self.commit(text);
         Ok(())
@@ -1931,7 +3199,9 @@ impl Document {
 
     /// Rename a column, and every reference to it, in one undoable step.
     pub fn rename_column(&mut self, sheet: usize, col: usize, name: &str) -> Result<(), String> {
-        if let Some(why) = self.read_only(sheet) {
+        // A decorator on a view is the file's own text, and is renamed as any
+        // formula column is; the view's data columns are its file's.
+        if let Some(why) = self.read_only_cell(sheet, col) {
             return Err(why);
         }
         let new = valid_name(name)?.to_string();
@@ -2091,7 +3361,11 @@ impl Document {
         let mark = self.undo.len();
         self.add_computed(sheet, name, expr)?;
         let last = self.snapshot.sheets[sheet].columns.len() - 1;
-        self.move_columns(sheet, last, 1, at.min(last))?;
+        // A file's own columns keep the file's order, and a formula column
+        // of a view stands where it is put, among them or after them.
+        if self.no_cells(sheet).is_none() || self.frame_sheet(sheet) {
+            self.move_columns(sheet, last, 1, at.min(last))?;
+        }
         self.squash(mark);
         Ok(())
     }
@@ -2189,52 +3463,124 @@ impl Document {
         Ok(())
     }
 
-    /// The rows of sheet `sheet` a filter shows, in order: those whose cell
-    /// in each filtered column is not one of the texts that column hides.
-    /// A filter is the grid's view of a sheet, so it is matched against the
-    /// cells as they are shown, and changes nothing.
-    pub fn shown_rows(&self, sheet: usize, hide: &[(String, Vec<String>)]) -> Vec<usize> {
-        let Some(t) = self.snapshot.sheets.get(sheet) else {
-            return Vec::new();
-        };
-        let tests: Vec<(usize, std::collections::HashSet<&str>)> = hide
-            .iter()
-            .filter(|(_, texts)| !texts.is_empty())
-            .filter_map(|(name, texts)| {
-                let c = t.columns.iter().position(|c| &c.name == name)?;
-                Some((c, texts.iter().map(String::as_str).collect()))
-            })
-            .collect();
-        (0..t.rows.len())
-            .filter(|&r| {
-                tests
-                    .iter()
-                    .all(|(c, set)| !set.contains(t.rows[r][*c].display.as_str()))
-            })
-            .collect()
+    /// The rows of sheet `sheet` a filter shows, in the grid's order: those
+    /// each filtered column's expression is true of, `*` in it being the
+    /// row's cell in that column (filter-by-expression D160). A filter is
+    /// the grid's view of a sheet, so it changes nothing. A table's is
+    /// answered by Polars over the column where it lowers (D162). The
+    /// first expression that fails is the answer instead, as
+    /// `Column: why`.
+    pub fn shown_rows(
+        &self,
+        sheet: usize,
+        filters: &[(String, String)],
+    ) -> Result<Vec<usize>, String> {
+        let job = self.filter_job(sheet, filters)?;
+        match job.run() {
+            Some(rows) => Ok(rows),
+            None => self.shown_rows_here(sheet, filters),
+        }
     }
 
-    /// The texts column `col` of sheet `sheet` shows, each once, in the
-    /// order a sort puts their values in: what a filter chooses among.
-    pub fn distinct_shown(&self, sheet: usize, col: usize) -> Vec<String> {
-        let Some(t) = self.snapshot.sheets.get(sheet) else {
-            return Vec::new();
+    /// [`Document::shown_rows`] as a job, for a worker to
+    /// [`FilterJob::run`]: each column's filter checked and lowered here,
+    /// and answered here where it does not lower. The first that fails is
+    /// the answer instead, as `Column: why`.
+    pub fn filter_job(
+        &self,
+        sheet: usize,
+        filters: &[(String, String)],
+    ) -> Result<FilterJob, String> {
+        let mut job = FilterJob {
+            rows: 0,
+            masks: Vec::new(),
+            plans: Vec::new(),
+            order: None,
         };
-        if col >= t.columns.len() {
-            return Vec::new();
+        let Some(t) = self.snapshot.sheets.get(sheet) else {
+            return Ok(job);
+        };
+        job.rows = t.nrows;
+        job.order = self
+            .orders
+            .get(&t.name)
+            .filter(|o| o.len() == t.nrows)
+            .cloned();
+        let Some(engine) = self.engine.as_ref() else {
+            return Ok(job);
+        };
+        for (name, text) in filters.iter().filter(|(_, text)| !text.trim().is_empty()) {
+            let Some(c) = t.columns.iter().position(|c| &c.name == name) else {
+                continue;
+            };
+            let node = omasheet_omx::check::compile_filter(engine.program(), sheet, c, text)
+                .map_err(|d| format!("{name}: {}", said(&d[0])))?;
+            match engine.filter_plan(sheet, &node) {
+                Some(plan) => job.plans.push(plan),
+                None => {
+                    let mask = engine
+                        .filter_mask(sheet, &node)
+                        .map_err(|why| format!("{name}: {why}"))?;
+                    if mask.len() != t.nrows {
+                        return Err(format!("{name}: the filter did not cover the sheet's rows"));
+                    }
+                    job.masks.push(mask);
+                }
+            }
         }
-        let mut seen = std::collections::HashSet::new();
-        let mut cells: Vec<&CellSnap> = t
-            .rows
-            .iter()
-            .map(|row| &row[col])
-            .filter(|cell| seen.insert(cell.display.as_str()))
-            .collect();
-        cells.sort_by(|a, b| {
-            crate::value::sort_order(&a.value, &b.value)
-                .unwrap_or_else(|_| a.display.cmp(&b.display))
-        });
-        cells.into_iter().map(|cell| cell.display.clone()).collect()
+        Ok(job)
+    }
+
+    /// [`Document::shown_rows`] answered here alone, each filter lowered
+    /// where it can be and otherwise a row at a time.
+    fn shown_rows_here(
+        &self,
+        sheet: usize,
+        filters: &[(String, String)],
+    ) -> Result<Vec<usize>, String> {
+        let Some(t) = self.snapshot.sheets.get(sheet) else {
+            return Ok(Vec::new());
+        };
+        let n = t.nrows;
+        let Some(engine) = self.engine.as_ref() else {
+            return Ok((0..n).collect());
+        };
+        let mut keep = vec![true; n];
+        for (name, text) in filters.iter().filter(|(_, text)| !text.trim().is_empty()) {
+            let Some(c) = t.columns.iter().position(|c| &c.name == name) else {
+                continue;
+            };
+            let node = omasheet_omx::check::compile_filter(engine.program(), sheet, c, text)
+                .map_err(|d| format!("{name}: {}", said(&d[0])))?;
+            let mask = engine
+                .filter_mask(sheet, &node)
+                .map_err(|why| format!("{name}: {why}"))?;
+            if mask.len() != n {
+                return Err(format!("{name}: the filter did not cover the sheet's rows"));
+            }
+            for (k, m) in keep.iter_mut().zip(mask) {
+                *k &= m;
+            }
+        }
+        let order = self.orders.get(&t.name).filter(|o| o.len() == n);
+        Ok((0..n)
+            .filter(|&p| keep[order.map_or(p, |o| o[p])])
+            .collect())
+    }
+
+    /// Whether `text` is a filter column `col` of sheet `sheet` takes:
+    /// checked, and no row read (filter-by-expression D172). `Err` says
+    /// what is wrong with it, as the popup shows it.
+    pub fn check_filter(&self, sheet: usize, col: usize, text: &str) -> Result<(), String> {
+        if text.trim().is_empty() {
+            return Ok(());
+        }
+        let Some(engine) = self.engine.as_ref() else {
+            return Ok(());
+        };
+        omasheet_omx::check::compile_filter(engine.program(), sheet, col, text)
+            .map(|_| ())
+            .map_err(|d| said(&d[0]))
     }
 
     /// A sheet calculated from an expression is sorted by its expression:
@@ -2272,24 +3618,138 @@ impl Document {
         if col >= t.columns.len() {
             return Err("there is no such column".into());
         }
-        let n = t.rows.len();
-        let mut shown: Vec<usize> = (0..n).collect();
+        let shown = self
+            .order_by_polars(sheet, col, desc)
+            .unwrap_or_else(|| self.order_by_values(sheet, col, desc));
+        self.put_in_order(sheet, shown)
+    }
+
+    /// [`Document::sort_rows`] of a table, as a job for a worker to
+    /// [`SortJob::run`] and then [`Document::finish_sort`]: the column, in
+    /// the order shown. `None` where the sheet is not a table or Polars
+    /// does not hold the column, and `sort_rows` sorts it here.
+    pub fn sort_job(&self, sheet: usize, col: usize, desc: bool) -> Option<SortJob> {
+        let t = self.snapshot.sheets.get(sheet)?;
+        t.source.as_ref()?;
+        let column = self.engine.as_ref()?.frame_column(sheet, col)?;
+        let n = t.nrows;
+        if column.len() != n {
+            return None;
+        }
+        let series = column.as_materialized_series();
+        let before = self.orders.get(&t.name).filter(|o| o.len() == n).cloned();
+        let shown = match &before {
+            Some(order) => {
+                let idx: Vec<polars::prelude::IdxSize> = order
+                    .iter()
+                    .map(|&r| r as polars::prelude::IdxSize)
+                    .collect();
+                series.take_slice(&idx).ok()?
+            }
+            None => series.clone(),
+        };
+        Some(SortJob {
+            sheet,
+            col,
+            desc,
+            shown,
+            before,
+        })
+    }
+
+    /// Put a table in the order a [`SortJob`] found, `shown`: unless the
+    /// table has changed since the job was made, and then it is sorted
+    /// here, as [`Document::sort_rows`] would.
+    pub fn finish_sort(&mut self, job: SortJob, shown: Vec<usize>) -> Result<(), String> {
+        let current = self.snapshot.sheets.get(job.sheet).map(|t| {
+            (
+                t.nrows,
+                self.orders
+                    .get(&t.name)
+                    .filter(|o| o.len() == t.nrows)
+                    .cloned(),
+            )
+        });
+        let unchanged = match current {
+            Some((n, order)) => {
+                n == shown.len()
+                    && match (&order, &job.before) {
+                        (None, None) => true,
+                        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                        _ => false,
+                    }
+            }
+            None => false,
+        };
+        if !unchanged {
+            return self.sort_rows(job.sheet, job.col, job.desc);
+        }
+        self.put_in_order(job.sheet, shown)
+    }
+
+    /// Show a table's rows in the order `shown`, the places of the rows as
+    /// they are shown now: one step to undo.
+    fn put_in_order(&mut self, sheet: usize, shown: Vec<usize>) -> Result<(), String> {
+        let t = &self.snapshot.sheets[sheet];
+        let n = t.nrows;
+        let before = self.orders.get(&t.name).filter(|o| o.len() == n);
+        let order: Vec<usize> = match before {
+            Some(before) => shown.iter().map(|&p| before[p]).collect(),
+            None => shown.clone(),
+        };
+        // Already in this order: nothing to do, and no step to undo.
+        if shown.iter().enumerate().all(|(k, &p)| k == p) {
+            return Ok(());
+        }
+        let name = t.name.clone();
+        let previous = Step {
+            text: self.text.clone(),
+            orders: self.orders.clone(),
+        };
+        self.push_step(previous);
+        let rows = std::mem::take(&mut self.snapshot.sheets[sheet].rows);
+        if !rows.is_empty() {
+            let mut rows: Vec<Option<Vec<CellSnap>>> = rows.into_iter().map(Some).collect();
+            self.snapshot.sheets[sheet].rows =
+                shown.iter().filter_map(|&p| rows[p].take()).collect();
+        }
+        self.orders.insert(name, Arc::new(order));
+        Ok(())
+    }
+
+    /// The rows of a table's sheet as shown, in the order column `col` puts
+    /// them, by their place in what is shown now: a stable sort, so ties
+    /// keep the order a sort before gave them. A Polars `arg_sort` of the
+    /// column (D158), which orders as [`crate::value::sort_order`] does: an
+    /// empty cell first ascending and last descending, a `NaN` greatest,
+    /// text by its bytes. `None` where the column is not one Polars holds,
+    /// for [`Document::order_by_values`] to sort.
+    fn order_by_polars(&self, sheet: usize, col: usize, desc: bool) -> Option<Vec<usize>> {
+        Some(self.sort_job(sheet, col, desc)?.run())
+    }
+
+    /// [`Document::order_by_polars`], a value at a time: for a column
+    /// Polars does not hold, and the measure the other is held to.
+    fn order_by_values(&self, sheet: usize, col: usize, desc: bool) -> Vec<usize> {
+        let t = &self.snapshot.sheets[sheet];
+        let paged: Vec<Value> = match t.paged {
+            true => self
+                .paged_column(sheet, col)
+                .into_iter()
+                .map(|(v, _)| v)
+                .collect(),
+            false => Vec::new(),
+        };
+        let value = |r: usize| match t.paged {
+            true => &paged[r],
+            false => &t.rows[r][col].value,
+        };
+        let mut shown: Vec<usize> = (0..t.nrows).collect();
         shown.sort_by(|&a, &b| {
-            let o = crate::value::sort_order(&t.rows[a][col].value, &t.rows[b][col].value)
-                .unwrap_or(Ordering::Equal);
+            let o = crate::value::sort_order(value(a), value(b)).unwrap_or(Ordering::Equal);
             if desc { o.reverse() } else { o }
         });
-        let before = match self.orders.get(&t.name) {
-            Some(order) if order.len() == n => order.clone(),
-            _ => (0..n).collect(),
-        };
-        let order: Vec<usize> = shown.iter().map(|&p| before[p]).collect();
-        let name = t.name.clone();
-        let rows = std::mem::take(&mut self.snapshot.sheets[sheet].rows);
-        let mut rows: Vec<Option<Vec<CellSnap>>> = rows.into_iter().map(Some).collect();
-        self.snapshot.sheets[sheet].rows = shown.iter().filter_map(|&p| rows[p].take()).collect();
-        self.orders.insert(name, order);
-        Ok(())
+        shown
     }
 
     /// Move `count` columns starting at `first` so that the first of them
@@ -2304,7 +3764,8 @@ impl Document {
         count: usize,
         to: usize,
     ) -> Result<(), String> {
-        if let Some(why) = self.no_cells(sheet) {
+        let frame = self.frame_sheet(sheet);
+        if !frame && let Some(why) = self.no_cells(sheet) {
             return Err(why);
         }
         let Some(snap) = self.snapshot.sheets.get(sheet) else {
@@ -2317,6 +3778,18 @@ impl Document {
         if to == first {
             return Ok(());
         }
+        // A file's own columns stay in its order: only decorators move,
+        // among them.
+        if frame
+            && snap.columns[first..first + count]
+                .iter()
+                .any(|c| c.formula.is_none())
+        {
+            return Err(format!(
+                "view `{}` is read-only: only its formula columns can be moved",
+                snap.name
+            ));
+        }
         let mut order: Vec<usize> = (0..n).collect();
         let block: Vec<usize> = order.drain(first..first + count).collect();
         order.splice(to..to, block);
@@ -2326,23 +3799,255 @@ impl Document {
             .collect();
 
         let followed = self.followed(sheet, false, &order);
-        let Some(text) = self.arranged(&followed, sheet, &names) else {
+        let arranged = if frame {
+            let moved: Vec<String> = names[to..to + count].to_vec();
+            let after = names.get(to + count).cloned();
+            let before = if to > 0 {
+                Some(names[to - 1].clone())
+            } else {
+                None
+            };
+            self.decorators_moved(
+                &followed,
+                sheet,
+                &moved,
+                after.as_deref(),
+                before.as_deref(),
+            )
+        } else {
+            self.arranged(&followed, sheet, &names)
+        };
+        let Some(text) = arranged else {
             return Err("the columns cannot be moved".into());
         };
         self.commit(text);
         Ok(())
     }
 
+    /// Whether `cols` are all decorators of a view of a file, the formula
+    /// columns that are its own and take a type and a format as any does.
+    fn decorators_only(&self, sheet: usize, cols: &[usize]) -> bool {
+        self.frame_sheet(sheet)
+            && self.snapshot.sheets.get(sheet).is_some_and(|t| {
+                !cols.is_empty()
+                    && cols
+                        .iter()
+                        .all(|&c| t.columns.get(c).is_some_and(|c| c.formula.is_some()))
+            })
+    }
+
+    /// Whether `cols` are all columns of a view that its schema declares.
+    fn declared_in_view(&self, sheet: usize, cols: &[usize]) -> bool {
+        self.frame_sheet(sheet)
+            && self.snapshot.sheets.get(sheet).is_some_and(|t| {
+                !cols.is_empty()
+                    && cols
+                        .iter()
+                        .all(|&c| t.columns.get(c).is_some_and(|c| c.declared))
+            })
+    }
+
+    /// Whether sheet `sheet` is a view of a file, whose own columns are
+    /// fixed and whose decorators are lines among its schema.
+    fn frame_sheet(&self, sheet: usize) -> bool {
+        self.snapshot
+            .sheets
+            .get(sheet)
+            .is_some_and(|t| t.source.is_some() && t.view.is_none())
+    }
+
+    /// The lines of the columns of a view, as `(name, start, end)` whole
+    /// lines of `text`: its schema lines and its `Name := expression` lines.
+    fn column_lines(
+        text: &str,
+        decl: &omasheet_omx::file::SheetDecl,
+    ) -> Vec<(String, usize, usize)> {
+        let line = |s: usize, e: usize| {
+            let start = text[..s].rfind('\n').map_or(0, |k| k + 1);
+            let end = text[e..].find('\n').map_or(text.len(), |k| e + k + 1);
+            (start, end)
+        };
+        let mut lines: Vec<(String, usize, usize)> = decl
+            .schema
+            .iter()
+            .map(|l| {
+                let (a, b) = line(l.span.start as usize, l.span.end as usize);
+                (l.name.clone(), a, b)
+            })
+            .chain(decl.computed.iter().map(|c| {
+                let (a, b) = line(c.span.start as usize, c.expr_span.end as usize);
+                (c.name.clone(), a, b)
+            }))
+            .collect();
+        lines.sort_by_key(|l| l.1);
+        lines
+    }
+
+    /// `text` with the decorators `moved` taken out of their lines and put
+    /// in again where they now stand: before the column `after`, or if it
+    /// is none, after the column `before`.
+    fn decorators_moved(
+        &self,
+        text: &str,
+        sheet: usize,
+        moved: &[String],
+        after: Option<&str>,
+        before: Option<&str>,
+    ) -> Option<String> {
+        let ast = parse_file(text, 0, &mut Vec::new());
+        let decl = self.sheet_decl(&ast, sheet)?;
+        let lines = Self::column_lines(text, decl);
+        let mut taken = String::new();
+        for name in moved {
+            let (_, a, b) = lines.iter().find(|l| &l.0 == name)?;
+            taken.push_str(&text[*a..*b]);
+        }
+        if !taken.ends_with('\n') {
+            taken.push('\n');
+        }
+        let mut rest = text.to_string();
+        let mut cuts: Vec<(usize, usize)> = moved
+            .iter()
+            .filter_map(|n| lines.iter().find(|l| &l.0 == n).map(|l| (l.1, l.2)))
+            .collect();
+        cuts.sort_unstable();
+        for (a, b) in cuts.into_iter().rev() {
+            rest.replace_range(a..b, "");
+        }
+        let ast = parse_file(&rest, 0, &mut Vec::new());
+        let decl = self.sheet_decl(&ast, sheet)?;
+        let lines = Self::column_lines(&rest, decl);
+        let at = match (after, before) {
+            (Some(n), _) => lines.iter().find(|l| l.0 == n)?.1,
+            (None, Some(n)) => {
+                let end = lines.iter().find(|l| l.0 == n)?.2;
+                if end > 0 && !rest[..end].ends_with('\n') {
+                    rest.insert(end, '\n');
+                    end + 1
+                } else {
+                    end
+                }
+            }
+            (None, None) => return None,
+        };
+        rest.insert_str(at, &taken);
+        Some(rest)
+    }
+
+    /// Make column `col`, one of data, a formula column in the same place:
+    /// its cells are given up for `expr`. It keeps its name, unless `name`
+    /// is another. One step to undo, and nothing changed where it fails.
+    pub fn set_column_as_formula(
+        &mut self,
+        sheet: usize,
+        col: usize,
+        name: &str,
+        expr: &str,
+    ) -> Result<(), String> {
+        if let Some(why) = self.no_cells(sheet) {
+            return Err(why);
+        }
+        let Some(snap) = self.snapshot.sheets.get(sheet) else {
+            return Err("there is no such sheet".into());
+        };
+        let Some(column) = snap.columns.get(col) else {
+            return Err("there is no such column".into());
+        };
+        if column.formula.is_some() {
+            return Err("that column is already a formula".into());
+        }
+        let name = match name.trim() {
+            "" => column.name.clone(),
+            given => given.to_string(),
+        };
+        let n = snap.columns.len();
+        let mut temp = String::from("Formula_");
+        while snap.columns.iter().any(|c| c.name == temp) {
+            temp.push('_');
+        }
+        let mark = self.undo.len();
+        let done = (|| {
+            // Alongside the data until it goes, so a sheet of one column
+            // is never without one.
+            self.add_computed(sheet, &temp, expr)?;
+            self.delete_columns(sheet, col, 1)?;
+            self.rename_column(sheet, n - 1, &name)?;
+            self.move_columns(sheet, n - 1, 1, col)
+        })();
+        match done {
+            Ok(()) => {
+                self.squash(mark);
+                Ok(())
+            }
+            Err(why) => {
+                while self.undo.len() > mark {
+                    self.undo();
+                }
+                self.redo.clear();
+                Err(why)
+            }
+        }
+    }
+
     /// Add `Name := expression` to a sheet, as its last column: the header
     /// row names it, with `*` for its cells.
     pub fn add_computed(&mut self, sheet: usize, name: &str, expr: &str) -> Result<(), String> {
-        if let Some(why) = self.read_only(sheet) {
+        // A sheet calculated from an expression takes no column; a view of
+        // a file takes a decorator, a line after its schema.
+        let file = self
+            .snapshot
+            .sheets
+            .get(sheet)
+            .is_some_and(|t| t.source.is_some() && t.view.is_none());
+        if !file && let Some(why) = self.read_only(sheet) {
             return Err(why);
         }
         let name = valid_name(name)?.to_string();
         let expr = expr.trim().trim_start_matches('=').trim();
         if expr.is_empty() {
             return Err("a computed column needs an expression".into());
+        }
+        if file {
+            if self.snapshot.sheets[sheet]
+                .columns
+                .iter()
+                .any(|c| c.name == name)
+            {
+                return Err(format!(
+                    "sheet `{}` already has a column `{name}`",
+                    self.snapshot.sheets[sheet].name
+                ));
+            }
+            let ast = self.ast();
+            let Some(decl) = self.sheet_decl(&ast, sheet) else {
+                return Err("there is no such sheet".into());
+            };
+            let (_, end) = self.sheet_lines(decl);
+            let gap = if decl.computed.is_empty() { "\n" } else { "" };
+            // A table that names no columns shows the file's own; one
+            // formula line would stand for them all, so they are named first.
+            let schema = if decl.schema.is_empty() {
+                schema_lines(&self.snapshot.sheets[sheet].columns, &plain_identifier)
+                    .ok_or("the file's columns need names to be written down first")?
+            } else {
+                String::new()
+            };
+            let gap = if schema.is_empty() { gap } else { "\n" };
+            let mut text = self.text.clone();
+            let line = format!(
+                "{gap}{schema}{gap2}{name} := {}\n",
+                expr.replace('\n', " "),
+                gap2 = if schema.is_empty() { "" } else { "\n" }
+            );
+            // The last line of the sheet may lack its newline.
+            if end > 0 && !text[..end].ends_with('\n') {
+                text.insert(end, '\n');
+                text.insert_str(end + 1, &line);
+            } else {
+                text.insert_str(end, &line);
+            }
+            self.commit(text);
+            return Ok(());
         }
         let Some(n) = self.snapshot.sheets.get(sheet).map(|t| t.columns.len()) else {
             return Err("there is no such sheet".into());
@@ -2440,7 +4145,9 @@ impl Document {
     }
 
     pub fn set_column_formula(&mut self, sheet: usize, col: usize, expr: &str) -> bool {
-        if self.read_only(sheet).is_some() {
+        // A decorator on a view takes its formula; only a sheet calculated
+        // from an expression has none of its own.
+        if self.read_only_cell(sheet, col).is_some() {
             return false;
         }
         let expr = expr
@@ -2528,6 +4235,55 @@ impl Document {
         Ok(())
     }
 
+    /// Take constant `index` out of the file: its line. A formula that
+    /// reads it is left to be shown as an error.
+    pub fn delete_const(&mut self, index: usize) -> Result<(), String> {
+        let Some(name) = self.snapshot.consts.get(index).map(|c| c.name.clone()) else {
+            return Err("there is no such constant".into());
+        };
+        self.remove_consts(|n| n == name);
+        Ok(())
+    }
+
+    /// Take every constant out of the file.
+    pub fn delete_all_consts(&mut self) -> bool {
+        self.remove_consts(|_| true)
+    }
+
+    fn remove_consts(&mut self, gone: impl Fn(&str) -> bool) -> bool {
+        let ast = self.ast();
+        let mut spans: Vec<(usize, usize)> = ast
+            .consts
+            .iter()
+            .filter(|c| gone(&c.name))
+            .map(|c| {
+                let start = self.line_start(c.span.start as usize);
+                let end = self.text[c.span.end as usize..]
+                    .find('\n')
+                    .map_or(self.text.len(), |i| c.span.end as usize + i + 1);
+                (start, end)
+            })
+            .collect();
+        spans.sort();
+        let mut text = self.text.clone();
+        for (start, end) in spans.into_iter().rev() {
+            text.replace_range(start..end, "");
+            // The blank lines left standing where it was go with it, at
+            // the top of the file or under another blank line.
+            let at = start;
+            let blank_before = text[..at].is_empty() || text[..at].ends_with("\n\n");
+            if blank_before {
+                while let Some(rest) = text[at..].split_inclusive('\n').next() {
+                    if !rest.trim().is_empty() {
+                        break;
+                    }
+                    text.replace_range(at..at + rest.len(), "");
+                }
+            }
+        }
+        self.commit(text)
+    }
+
     /// Append a new sheet with one empty row.
     pub fn add_sheet(&mut self, name: &str, formula: Option<&str>) -> Result<(), String> {
         self.insert_sheet(usize::MAX, name, formula)
@@ -2542,11 +4298,6 @@ impl Document {
         formula: Option<&str>,
     ) -> Result<(), String> {
         let name = valid_name(name)?.to_string();
-        let taken = self.snapshot.consts.iter().any(|c| c.name == name)
-            || self.snapshot.sheets.iter().any(|t| t.name == name);
-        if taken {
-            return Err(format!("the name `{name}` is already used"));
-        }
         // A sheet calculated from an expression has no grid of its own:
         // its rows are the view the expression gives (D90).
         let block = match formula.map(str::trim).filter(|f| !f.is_empty()) {
@@ -2555,6 +4306,56 @@ impl Document {
                 "sheet {name}\n\n| A   | B   | C   |\n| --- | --- | --- |\n|     |     |     |\n|     |     |     |\n|     |     |     |\n"
             ),
         };
+        self.insert_block(at, &name, block)
+    }
+
+    /// Put in before sheet `at` a view of the Parquet or CSV file at
+    /// `path`. Its columns are written as schema lines, named by `naming`
+    /// from the file's own, so that other sheets can refer to them: a
+    /// view with none has no columns until it is read, and a formula
+    /// naming one is refused.
+    pub fn insert_view(
+        &mut self,
+        at: usize,
+        name: &str,
+        path: &str,
+        naming: impl Fn(&str) -> String,
+    ) -> Result<(), String> {
+        let name = valid_name(name)?.to_string();
+        let path = path.trim();
+        if path.is_empty() {
+            return Err("choose a file".into());
+        }
+        if path.contains('\'') || path.contains('\n') {
+            return Err("the file name cannot hold a quote or a line break".into());
+        }
+        let block = format!("view {name} := dataframe['{path}']\n");
+        let mut result = Ok(());
+        self.as_one(|doc| {
+            result = doc.insert_block(at, &name, block.clone());
+            if result.is_err() {
+                return;
+            }
+            let Some(sheet) = doc.snapshot.sheets.iter().find(|t| t.name == name) else {
+                return;
+            };
+            let Some(lines) = schema_lines(&sheet.columns, &naming) else {
+                return;
+            };
+            if !lines.is_empty() {
+                let text = doc.text.replacen(&block, &format!("{block}\n{lines}"), 1);
+                doc.commit(text);
+            }
+        });
+        result
+    }
+
+    fn insert_block(&mut self, at: usize, name: &str, block: String) -> Result<(), String> {
+        let taken = self.snapshot.consts.iter().any(|c| c.name == name)
+            || self.snapshot.sheets.iter().any(|t| t.name == name);
+        if taken {
+            return Err(format!("the name `{name}` is already used"));
+        }
         let ast = self.ast();
         let text = match self.sheet_decl(&ast, at) {
             Some(decl) => {
@@ -2583,6 +4384,42 @@ impl Document {
     /// Where the line holding byte `at` starts.
     fn line_start(&self, at: usize) -> usize {
         self.text[..at].rfind('\n').map_or(0, |k| k + 1)
+    }
+
+    /// The file a table sheet reads, as a path from where the document is
+    /// kept; `None` for a sheet that is not a table over a file.
+    pub fn table_file(&self, sheet: usize) -> Option<std::path::PathBuf> {
+        let t = self.snapshot.sheets.get(sheet)?;
+        if t.view.is_some() {
+            return None;
+        }
+        let base = self.base.clone().unwrap_or_else(|| ".".into());
+        Some(base.join(t.source.as_ref()?))
+    }
+
+    /// Put in place of table `sheet` the sheet `block`, as an import writes
+    /// one, under the name the table had: its rows are then the document's
+    /// own, to be edited. One undoable step. Refused for a table with a
+    /// formula column, which an inline sheet would lose.
+    pub fn copy_table_into_document(&mut self, sheet: usize, block: &str) -> Result<(), String> {
+        if self.table_file(sheet).is_none() {
+            return Err("only a table over a file can be copied into the document".into());
+        }
+        let ast = self.ast();
+        let Some(decl) = self.sheet_decl(&ast, sheet) else {
+            return Err("there is no such sheet".into());
+        };
+        if !decl.computed.is_empty() {
+            return Err(format!(
+                "`{}` has formula columns, which would be lost: delete them first",
+                decl.name
+            ));
+        }
+        let (start, end) = self.sheet_lines(decl);
+        let mut text = self.text.clone();
+        text.replace_range(start..end, &format!("{}\n", block.trim_end()));
+        self.commit(text);
+        Ok(())
     }
 
     /// Give sheet `sheet` another name, in its own line and wherever a
@@ -2743,6 +4580,37 @@ impl Document {
         Ok(())
     }
 
+    /// Put a copy of sheet `from` in just after it, under its name made free
+    /// with `_001`, `_002`... The name it was given.
+    pub fn duplicate_sheet(&mut self, from: usize) -> Result<String, String> {
+        let ast = self.ast();
+        let Some(source) = self.sheet_decl(&ast, from) else {
+            return Err("there is no such sheet".into());
+        };
+        let taken = |name: &str| {
+            self.snapshot.consts.iter().any(|c| c.name == name)
+                || self.snapshot.sheets.iter().any(|t| t.name == name)
+        };
+        let base = copy_base(&source.name);
+        let name = (1..)
+            .map(|n| format!("{base}_{n:03}"))
+            .find(|name| !taken(name))
+            .unwrap_or_default();
+        let (s0, s1) = self.sheet_lines(source);
+        let mut block = self.text[s0..s1].to_string();
+        let at = source.span.start as usize - s0;
+        let Some(k) = block[at..].find(&source.name).map(|k| at + k) else {
+            return Err("the sheet's name was not found".into());
+        };
+        block.replace_range(k..k + source.name.len(), &name);
+        if !block.ends_with('\n') {
+            block.push('\n');
+        }
+        let text = format!("{}\n{block}{}", &self.text[..s1], &self.text[s1..]);
+        self.commit(text);
+        Ok(name)
+    }
+
     /// Make sheet `to` a copy of sheet `from`: its columns, types, rows and
     /// formulas, under `from`'s name made free with `_001`, `_002`...
     /// The name it was given.
@@ -2794,7 +4662,29 @@ impl Document {
         // Read whatever else is wrong: a mistake in one sheet is no reason
         // for a table beside it to lose its rows.
         let base = self.base.clone().unwrap_or_else(|| ".".into());
-        let tables = crate::table::read(&mut program, &base, &mut diags);
+        let tables = crate::table::read_holding(
+            &mut program,
+            &base,
+            &mut diags,
+            &self.whole,
+            self.copying,
+            Some(&self.columns),
+        );
+        // A file the text no longer names, or one changed since it was read,
+        // is not held any longer.
+        let named: std::collections::HashSet<std::path::PathBuf> = program
+            .sheets
+            .iter()
+            .filter_map(|s| s.source.as_ref())
+            .map(|source| self.file_of(&base.join(&source.path)))
+            .collect();
+        self.whole.retain(|path, w| {
+            named.contains(path) && crate::table::identity(path).as_ref() == Some(&w.identity)
+        });
+        // What is held whole is not also kept as columns: the cache's budget
+        // gives way to it (D150, D157).
+        self.columns
+            .reserve(self.whole.values().map(|w| w.bytes).sum());
         // A view's row count is settled before the grid is built from it.
         let view_options = Options {
             base: self.base.clone(),
@@ -2803,18 +4693,21 @@ impl Document {
             ..Options::default()
         };
         let tables = crate::resolve_views(&mut program, &view_options, tables);
-        let engine = Engine::with_tables(
-            &program,
+        // Kept after the rebuild, for a paged sheet's rows (D80).
+        let engine = Engine::owning(
+            program,
             Options {
                 style: self.style,
                 names: self.names.clone(),
                 local: self.local,
+                defer_rows: Some(self.paged_rows),
                 ..Options::default()
             },
             tables,
         );
         engine.run();
         diags.extend(engine.take_diags());
+        let program = engine.program();
         let ast = self.ast();
 
         // A cell that does not fit its column says so, and what the column
@@ -2843,25 +4736,10 @@ impl Document {
             None => d.message.clone(),
         };
         let within = |span: Span| diags.iter().find(|d| contains(span, d.span)).map(message);
-        let show = |v: &Value| match v {
-            Value::Sheet(_) => "<sheet>".to_string(),
-            Value::Row(_) => "<row>".to_string(),
-            other => engine.show(other, false),
-        };
-        // What a number shown with fewer digits than it has is in full.
-        let exact = |v: &Value, quoted: bool, shown: &str| {
-            let full = match v {
-                // Two's complement is the whole number, not one cut short.
-                Value::Int(_, b) if *b != Base::Dec => return None,
-                Value::Int(_, _)
-                | Value::Decimal(_)
-                | Value::Percent(_)
-                | Value::Float(_)
-                | Value::Vector(_) => format_exact(v, quoted, &self.style),
-                _ => return None,
-            };
-            (full != shown).then_some(full)
-        };
+        let show = |v: &Value| shown_text(&engine, v);
+        let exact =
+            |v: &Value, quoted: bool, shown: &str| exact_text(v, quoted, shown, &self.style);
+        let mut column_errors = Vec::new();
 
         let mut snapshot = Snapshot::default();
         // Where each problem is, for the problems list to go there. Only a
@@ -2870,7 +4748,7 @@ impl Document {
         for (t, sheet) in program.sheets.iter().enumerate() {
             let decl = ast.sheets.iter().find(|d| d.name == sheet.name);
             let mut columns = Vec::new();
-            let mut column_errors = Vec::new();
+            let mut column_errors_here = Vec::new();
             let mut column_spans = Vec::new();
             for col in sheet.cols.iter() {
                 let computed = decl
@@ -2890,18 +4768,22 @@ impl Document {
                     format: col.format.as_ref().map(|f| f.to_string()),
                 });
                 column_spans.push(computed.map(|ce| ce.expr_span));
-                column_errors.push(computed.and_then(|ce| within(ce.expr_span)));
+                column_errors_here.push(computed.and_then(|ce| within(ce.expr_span)));
             }
+            // A big sheet the text does not hold is formatted a page at a
+            // time, as the grid asks for it, and none of it here (D80).
+            let paged = sheet.nrows > self.paged_rows && decl.is_none_or(|d| d.rows.is_empty());
             // Column-wise before row-wise (D75): a column the dataframe
             // holds is walked once here, where asking for it a cell at a
             // time would find its chunk once per row. A column it does not
             // hold is `None` and is read a cell at a time below, which for
             // one already calculated is quicker than collecting it first.
             let mut shown: Vec<Option<Vec<Value>>> = (0..sheet.cols.len())
-                .map(|c| engine.column_shown(t, c))
+                .map(|c| (!paged).then(|| engine.column_shown(t, c)).flatten())
                 .collect();
-            let mut rows = Vec::with_capacity(sheet.nrows);
-            for r in 0..sheet.nrows {
+            let nrows = if paged { 0 } else { sheet.nrows };
+            let mut rows = Vec::with_capacity(nrows);
+            for r in 0..nrows {
                 let mut row = Vec::with_capacity(sheet.cols.len());
                 for (c, column) in columns.iter().enumerate() {
                     // Taken rather than copied: the snapshot below keeps
@@ -2926,7 +4808,7 @@ impl Document {
                             }
                             (
                                 format!("= {formula}"),
-                                failed.then(|| column_errors[c].clone()).flatten(),
+                                failed.then(|| column_errors_here[c].clone()).flatten(),
                             )
                         }
                         (None, Some(cell)) => {
@@ -2951,29 +4833,15 @@ impl Document {
                         }
                         (None, None) => (String::new(), None),
                     };
-                    // A column's format shows its numbers as it says, so
-                    // one it rounds is not one shown short.
                     let format = sheet.cols[c].format.as_ref();
-                    let display = match format {
-                        Some(_) => engine.show_in(&value, false, format),
-                        None => show(&value),
-                    };
-                    let full = exact(&value, false, &display);
-                    row.push(CellSnap {
-                        shortened: format.is_none()
-                            && full
-                                .as_ref()
-                                .is_some_and(|f| *f != delocalised(&display, &self.style)),
-                        exact: full,
-                        display,
-                        numeric: value.is_numeric(),
-                        value: value.clone(),
-                        formula: source.starts_with('='),
-                        error: error.or_else(|| {
-                            failed.then(|| "this cell could not be calculated".to_string())
-                        }),
+                    row.push(cell_snap(
+                        &engine,
+                        &self.style,
+                        format,
+                        value,
                         source,
-                    });
+                        error,
+                    ));
                 }
                 rows.push(row);
             }
@@ -2988,8 +4856,23 @@ impl Document {
                     column.ty = found.to_string();
                 }
             }
+            // A column left to its cells is as wide as they are: one that
+            // holds `Inf`, `-Inf` or `NaN`, which a division by zero comes
+            // to, is a `Float` whatever exact numbers are beside it.
+            for (c, column) in columns.iter_mut().enumerate() {
+                let exact = sheet.cols[c].ty.is_exact() && !sheet.cols[c].ty.is_int();
+                if column.declared || !exact {
+                    continue;
+                }
+                let infinite =
+                    |cell: &CellSnap| matches!(cell.display.as_str(), "Inf" | "-Inf" | "NaN");
+                if rows.iter().any(|row| infinite(&row[c])) {
+                    column.ty = S::Float.to_string();
+                }
+            }
             // A table sorted in the grid is shown in that order, while its
-            // file still has as many rows as the order numbers.
+            // file still has as many rows as the order numbers. A paged
+            // sheet takes the order as its rows are asked for.
             let rows = match self.orders.get(&sheet.name) {
                 Some(order)
                     if (sheet.source.is_some()
@@ -3006,9 +4889,12 @@ impl Document {
                 }
                 _ => rows,
             };
+            column_errors.push(column_errors_here);
             snapshot.sheets.push(SheetSnap {
                 name: sheet.name.clone(),
                 columns,
+                nrows: sheet.nrows,
+                paged,
                 rows,
                 source: sheet.source.as_ref().map(|s| s.path.clone()),
                 derived: sheet.rows_from.is_some(),
@@ -3018,12 +4904,31 @@ impl Document {
                         .to_string()
                 }),
                 grouped: sheet.group.is_some() || sheet.join.is_some(),
+                sampled: sheet.source.as_ref().is_some_and(|s| {
+                    let path = self
+                        .base
+                        .clone()
+                        .unwrap_or_else(|| ".".into())
+                        .join(&s.path);
+                    crate::table::is_converted(&path) && crate::table::copy_of(&path).is_none()
+                }),
             });
         }
         for (i, c) in program.consts.iter().enumerate() {
             let decl = ast.consts.iter().find(|d| d.name == c.name);
             let value = engine.const_value(i).unwrap_or(Value::Error);
             let display = match &value {
+                _ if c.columns.is_some() => {
+                    format!(
+                        "[{}]",
+                        c.columns
+                            .iter()
+                            .flatten()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
                 Value::Null => "empty".to_string(),
                 Value::Vector(_) | Value::String(..) => engine.show(&value, true),
                 other => show(other),
@@ -3051,8 +4956,13 @@ impl Document {
         // problem takes a cell of its own: without that, every failure in
         // one column would be gone to at the same row.
         let mut taken = vec![false; located.len()];
+        // A formula over a table fails in every row it fails in: millions of
+        // problems would be written out and parsed by the app, and the first
+        // few hundred say all there is to say.
+        let shown = diags.len().min(MOST_PROBLEMS);
         snapshot.problems = diags
             .iter()
+            .take(shown)
             .map(|d| {
                 let (line, column) = sources.line_col(d.span.src, d.span.start);
                 let at = located
@@ -3074,12 +4984,48 @@ impl Document {
                 }
             })
             .collect();
+        if diags.len() > shown {
+            snapshot.problems.push(Problem {
+                line: 0,
+                column: 0,
+                message: format!("and {} more like these", diags.len() - shown),
+                cell: None,
+            });
+        }
         self.snapshot = snapshot;
+        self.column_errors = column_errors;
+        self.engine = Some(engine);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_data_column_becomes_a_formula() {
+        let mut doc = Document::from_text(
+            "sheet S\n\n| A | B | C |\n| - | - | - |\n| 1 | 5 | 7 |\n| 2 | 6 | 8 |\n",
+        );
+        let before = doc.text().to_string();
+        let mark = doc.undo_mark();
+        doc.set_column_as_formula(0, 1, "B", "= A * 10").unwrap();
+        let names: Vec<_> = doc.snapshot().sheets[0]
+            .columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        assert_eq!(names, ["A", "B", "C"]);
+        assert!(doc.snapshot().sheets[0].columns[1].formula.is_some());
+        assert_eq!(doc.undo_mark(), mark + 1);
+        assert!(doc.undo());
+        assert_eq!(doc.text(), before);
+        // A failure leaves it as it was.
+        assert!(doc.set_column_as_formula(0, 5, "B", "A").is_err());
+        assert_eq!(doc.text(), before);
+        // A sheet of one column.
+        let mut one = Document::from_text("sheet S\n\n| A |\n| - |\n| 1 |\n");
+        one.set_column_as_formula(0, 0, "A", "= 3").unwrap();
+    }
+
     use super::*;
 
     const SALES: &str = "# sales\nconst Rate = 20%\n\nsheet Sales\n\n| Month | Revenue | Cost | Profit | Tax |\n| ----- | ------- | ---- | ------ | --- |\n| Jan   | 100     | 60   | *      | *   |\n| Feb   | 120     | 70   | *      | *   |\n\nProfit := Revenue - Cost\nTax := Profit * Rate\n";
@@ -3093,19 +5039,53 @@ mod tests {
     }
 
     #[test]
+    fn a_division_by_zero_makes_a_column_left_to_its_cells_a_float() {
+        let doc =
+            Document::from_text("sheet T\n\n| U | V |\n| - | - |\n| =1/0 | 1.5 |\n| 2.5 | 2 |\n");
+        let columns = &doc.snapshot().sheets[0].columns;
+        assert_eq!(columns[0].ty, "Float");
+        assert_eq!(columns[1].ty, "Decimal");
+        assert_eq!(col(&doc, 0, 0), ["Inf", "2.5"]);
+        // A declared column keeps its type, and its cell is the error.
+        let doc = Document::from_text("sheet T\n\nU : Decimal\n\n| U |\n| - |\n| =1/0 |\n");
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
+    }
+
+    #[test]
     fn a_value_written_as_a_fraction_makes_a_fraction_column() {
-        let mut doc = Document::from_text("sheet T\n\nA | B\n1 | \n");
+        let mut doc = Document::from_text("sheet T\n\nA | B\n1 | \n2 | 1/2\n");
         assert!(doc.set_cell(0, 0, 1, "1/3"));
         assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Fraction");
-        assert_eq!(col(&doc, 0, 1), ["1/3"]);
-        assert!(doc.text().contains("B : Fraction\n"), "{}", doc.text());
-        // A decimal typed beside it stays a fraction, as any exact number
-        // does.
-        assert!(doc.set_cell(0, 0, 1, "0.5"));
-        assert_eq!(col(&doc, 0, 1), ["1/2"]);
-        // In the file, `1/3` is a `Decimal`, and the column is left as it is.
-        let doc = Document::from_text("sheet T\n\nA\n0.5\n1/3\n");
+        assert_eq!(col(&doc, 0, 1), ["1/3", "1/2"]);
+        // The column is inferred from its cell, not declared, and the cell
+        // is kept as it was typed.
+        assert!(!doc.text().contains("Fraction"), "{}", doc.text());
+        assert!(doc.text().contains("1/3"), "{}", doc.text());
+        // A decimal typed beside it makes the column a decimal one, a
+        // fraction and a decimal being a decimal.
+        assert!(doc.set_cell(0, 1, 1, "0.25"));
+        assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Decimal");
+        // Each cell keeps the format its own contents give it (D192).
+        assert_eq!(col(&doc, 0, 1), ["1/3", "0.25"]);
+        // So does a whole number and a part, proper or not.
+        let doc = Document::from_text("sheet T\n\nA\n1 1/2\n5 7/3\n11/3\n");
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Fraction");
+        assert_eq!(col(&doc, 0, 0), ["1 1/2", "7 1/3", "3 2/3"]);
+        // A decimal alone is a `Decimal`, as is a fraction in a declared one.
+        let doc = Document::from_text("sheet T\n\nA\n0.5\n0.25\n");
         assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
+        let doc = Document::from_text("sheet T\n\nA : Decimal\n\nA\n1/3\n");
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
+        // The same for a percentage: the first cell gives the type that is
+        // shown, a later one widens it, and the file declares nothing (D194).
+        let mut doc = Document::from_text("sheet T\n\nA\n\n\n");
+        assert!(doc.set_cell(0, 0, 0, "23%"));
+        let column = &doc.snapshot().sheets[0].columns[0];
+        assert!(!column.declared && column.ty == "Percent");
+        assert!(doc.set_cell(0, 1, 0, "1/2"));
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
+        assert_eq!(col(&doc, 0, 0), ["23%", "1/2"]);
+        assert!(!doc.text().contains("Decimal"), "{}", doc.text());
         // A fraction among text is text.
         let mut doc = Document::from_text("sheet T\n\nA\nabc\n\n");
         assert!(doc.set_cell(0, 1, 0, "1/3"));
@@ -3166,39 +5146,39 @@ mod tests {
 
     #[test]
     fn a_sequence_of_text_counts_letters_and_digits_up() {
-        assert_eq!(seq(r#""A", "B" ... Inf"#, 3), ["A", "B", "C"]);
+        assert_eq!(seq(r#"'A', 'B' ... Inf"#, 3), ["A", "B", "C"]);
         // It carries at the end of the alphabet, as a workbook's columns do.
-        assert_eq!(seq(r#""Y" ... Inf"#, 4), ["Y", "Z", "AA", "AB"]);
-        assert_eq!(seq(r#""AY" ... "BA""#, 4), ["AY", "AZ", "BA", ""]);
+        assert_eq!(seq(r#"'Y' ... Inf"#, 4), ["Y", "Z", "AA", "AB"]);
+        assert_eq!(seq(r#"'AY' ... 'BA'"#, 4), ["AY", "AZ", "BA", ""]);
         // Only the last run of letters and digits moves.
-        assert_eq!(seq(r#""job-A9" ... Inf"#, 2), ["job-A9", "job-B0"]);
+        assert_eq!(seq(r#"'job-A9' ... Inf"#, 2), ["job-A9", "job-B0"]);
     }
 
     #[test]
     fn a_sequence_of_named_days_or_months_goes_round() {
         assert_eq!(
-            seq(r#""Monday", "Tuesday" ... Inf"#, 3),
+            seq(r#"'Monday', 'Tuesday' ... Inf"#, 3),
             ["Monday", "Tuesday", "Wednesday"]
         );
         // Sunday is followed by Monday, and December by January.
-        assert_eq!(seq(r#""Sat", "Sun" ... Inf"#, 3), ["Sat", "Sun", "Mon"]);
-        assert_eq!(seq(r#""Nov", "Dec" ... Inf"#, 3), ["Nov", "Dec", "Jan"]);
+        assert_eq!(seq(r#"'Sat', 'Sun' ... Inf"#, 3), ["Sat", "Sun", "Mon"]);
+        assert_eq!(seq(r#"'Nov', 'Dec' ... Inf"#, 3), ["Nov", "Dec", "Jan"]);
         assert_eq!(
-            seq(r#""January", "March" ... Inf"#, 3),
+            seq(r#"'January', 'March' ... Inf"#, 3),
             ["January", "March", "May"]
         );
         // A month with its year carries, and the way it is written is kept.
         assert_eq!(
-            seq(r#""Nov-2026", "Dec-2026" ... Inf"#, 3),
+            seq(r#"'Nov-2026', 'Dec-2026' ... Inf"#, 3),
             ["Nov-2026", "Dec-2026", "Jan-2027"]
         );
-        assert_eq!(seq(r#""mon", "tue" ... Inf"#, 2), ["mon", "tue"]);
+        assert_eq!(seq(r#"'mon', 'tue' ... Inf"#, 2), ["mon", "tue"]);
         assert_eq!(
-            seq(r#""Monday" ... "Wednesday""#, 4),
+            seq(r#"'Monday' ... 'Wednesday'"#, 4),
             ["Monday", "Tuesday", "Wednesday", ""]
         );
         // Text that is no such name still counts up letter by letter.
-        assert_eq!(seq(r#""AY" ... Inf"#, 3), ["AY", "AZ", "BA"]);
+        assert_eq!(seq(r#"'AY' ... Inf"#, 3), ["AY", "AZ", "BA"]);
     }
 
     #[test]
@@ -3363,8 +5343,153 @@ mod tests {
     }
 
     #[test]
+    fn a_formula_column_takes_a_type_and_a_format_even_on_a_view() {
+        let text = "sheet T\n\nA | B\n1 | *\n2 | *\n\nB := A * 2\n";
+        let mut doc = Document::from_text(text);
+        assert!(doc.set_column_types(0, &[1], Some("Decimal")));
+        assert_eq!(doc.set_column_format(0, &[1], Some(".2f")), Ok(()));
+        assert!(doc.text().contains("B : Decimal[.2f]"), "{}", doc.text());
+        let v = "view P := dataframe['titanic.parquet']\n\nFare : Float\n\nDouble := Fare * 2\n";
+        let mut doc = Document::from_text(v);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        assert!(doc.set_column_types(0, &[1], Some("Float")));
+        assert_eq!(doc.set_column_format(0, &[1], Some(".1f")), Ok(()));
+        assert!(doc.text().contains("Double : Float[.1f]"), "{}", doc.text());
+        // The file's own column takes a format, not a type.
+        assert!(!doc.set_column_types(0, &[0], Some("Integer")));
+        assert_eq!(doc.set_column_format(0, &[0], Some(".2f")), Ok(()));
+        assert!(doc.text().contains("Fare   : Float[.2f]"), "{}", doc.text());
+        assert_eq!(doc.set_column_format(0, &[0], None), Ok(()));
+        assert!(doc.text().contains("Fare   : Float\n"), "{}", doc.text());
+    }
+
+    #[test]
+    fn decorators_move_among_the_columns_of_a_view() {
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nName : String\nPclass : Integer\nFare : Float\n\nDouble := Fare * 2\n";
+        let mut doc = Document::from_text(text);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        let names = |d: &Document| -> Vec<String> {
+            d.snapshot().sheets[0]
+                .columns
+                .iter()
+                .map(|c| c.name.clone())
+                .collect()
+        };
+        assert_eq!(names(&doc), ["Name", "Pclass", "Fare", "Double"]);
+        // Into the middle of the file's columns, and back to the end.
+        assert_eq!(doc.move_columns(0, 3, 1, 1), Ok(()));
+        assert_eq!(names(&doc), ["Name", "Double", "Pclass", "Fare"]);
+        assert_eq!(doc.move_columns(0, 1, 1, 3), Ok(()));
+        assert_eq!(names(&doc), ["Name", "Pclass", "Fare", "Double"]);
+        // The file's own columns stay where they are.
+        assert!(doc.move_columns(0, 0, 1, 2).is_err());
+        // A new decorator goes where it is asked, first or in the middle.
+        assert_eq!(doc.insert_computed(0, 2, "Mid", "Fare + 1"), Ok(()));
+        assert_eq!(names(&doc), ["Name", "Pclass", "Mid", "Fare", "Double"]);
+        assert_eq!(doc.insert_computed(0, 0, "Top", "Fare + 2"), Ok(()));
+        assert_eq!(
+            names(&doc),
+            ["Top", "Name", "Pclass", "Mid", "Fare", "Double"]
+        );
+        // A decorator goes, a file's column does not.
+        assert_eq!(doc.delete_columns(0, 3, 1), Ok(()));
+        assert_eq!(names(&doc), ["Top", "Name", "Pclass", "Fare", "Double"]);
+        assert!(doc.delete_columns(0, 1, 1).is_err());
+        assert!(doc.undo());
+        assert_eq!(
+            names(&doc),
+            ["Top", "Name", "Pclass", "Mid", "Fare", "Double"]
+        );
+    }
+
+    #[test]
+    fn a_decorator_on_a_view_can_be_renamed_and_the_data_cannot() {
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nName : String\nFare : Float\n\nDouble := Fare * 2\nTriple := Double + Fare\n";
+        let mut doc = Document::from_text(text);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        assert!(doc.rename_column(0, 1, "Price").is_err());
+        assert_eq!(doc.rename_column(0, 2, "Twice"), Ok(()));
+        assert!(doc.text().contains("Twice := Fare * 2"), "{}", doc.text());
+        assert!(
+            doc.text().contains("Triple := Twice + Fare"),
+            "{}",
+            doc.text()
+        );
+    }
+
+    #[test]
+    fn a_decorator_on_a_view_takes_a_formula_and_the_data_does_not() {
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nName : String\nFare : Float\n\nDouble := Fare * 2\n";
+        let mut doc = Document::from_text(text);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        let names: Vec<_> = doc.snapshot().sheets[0]
+            .columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        assert_eq!(names, ["Name", "Fare", "Double"]);
+        // The file's columns take no edit, and say why; the decorator does.
+        assert!(
+            doc.read_only_cell(0, 0)
+                .is_some_and(|w| w.contains("read-only"))
+        );
+        assert!(doc.read_only_cell(0, 1).is_some());
+        assert_eq!(doc.read_only_cell(0, 2), None);
+        assert!(!doc.set_cell(0, 0, 1, "7"));
+        assert!(doc.set_column_formula(0, 2, "Fare * 3"));
+        assert!(
+            doc.text().contains("Double := Fare * 3\n"),
+            "{}",
+            doc.text()
+        );
+        // A sheet calculated from an expression has no cell of its own.
+        let calc = format!("{text}\nsheet Top := Passengers |> head(2)\n");
+        let mut doc = Document::from_text(&calc);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        assert!(doc.read_only_cell(1, 0).is_some());
+    }
+
+    #[test]
+    fn the_source_row_of_a_sorted_view_is_the_file_row() {
+        let table =
+            "view Passengers := dataframe['titanic.parquet']\n\nName : String\nFare : Float\n";
+        let mut doc = Document::from_text(table);
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
+        // Unsorted, the row shown is the row of the file.
+        assert_eq!(doc.source_row(0, 0), 0);
+        assert_eq!(doc.source_row(0, 7), 7);
+        // Sorted in the grid, the top row shown is another row of the file.
+        doc.sort_rows(0, 1, true).expect("sorts");
+        assert_ne!(doc.source_row(0, 0), 0);
+        let at = doc.source_row(0, 0);
+        assert_eq!(doc.snapshot().sheets[0].rows[0][1].display, "512.3292");
+        // A sheet that does not exist is left as it was.
+        assert_eq!(doc.source_row(9, 4), 4);
+        let _ = at;
+    }
+
+    #[test]
+    fn a_formula_copied_to_another_sheet_is_made_to_read_where_it_read() {
+        let cols: Vec<String> = ["A", "B"].iter().map(|c| c.to_string()).collect();
+        let q = |cell: &str| qualified(cell, "T", &cols);
+        // An index with no sheet name is into the sheet it came from.
+        assert_eq!(q("= [A; *-1] * 2"), "= T[A; *-1] * 2");
+        assert_eq!(q("=[B; 3]"), "=T[B; 3]");
+        // A column named on its own is that column of the cell's own row.
+        assert_eq!(q("= A + B"), "= T[A; *] + T[B; *]");
+        // A name that is no column of the sheet is left, and so is a sheet
+        // already named, and anything that is not a formula.
+        assert_eq!(q("= A * Rate"), "= T[A; *] * Rate");
+        assert_eq!(q("= U[A; 1] + [B; 2]"), "= U[A; 1] + T[B; 2]");
+        assert_eq!(q("5"), "5");
+        assert_eq!(q("= 1 +"), "= 1 +");
+        // Formed again, it reads the same.
+        assert_eq!(q(&q("= [A; 1] + B")), q("= [A; 1] + B"));
+    }
+
+    #[test]
     fn a_table_is_sorted_in_the_grid_alone() {
-        let table = "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n";
+        let table = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n";
         let mut doc = Document::from_text(table);
         doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
         doc.sort_rows(0, 5, true).expect("sorts");
@@ -3372,9 +5497,10 @@ mod tests {
         assert_eq!(rows.len(), 887);
         assert_eq!(rows[0][5].display, "512.3292");
         assert_eq!(rows[0][2].display, "Miss. Anna Ward");
-        // Nothing is written, so there is nothing to save or undo.
+        // Nothing is written, so there is nothing to save; but the sort is
+        // a step, so there is something to undo.
         assert_eq!(doc.text(), table);
-        assert!(!doc.can_undo());
+        assert!(doc.can_undo());
         // The order holds through a rebuild, and a second sort starts from
         // it: the ties at 512.3292 stay in the order the first one gave.
         doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
@@ -3389,31 +5515,1234 @@ mod tests {
     }
 
     #[test]
-    fn a_filter_shows_the_rows_whose_cells_it_does_not_hide() {
+    fn a_table_sort_is_a_step_to_undo_and_redo() {
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nsheet Notes\n\nA\n1\n";
+        let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
+        // Held whole, and paged as a big table is.
+        for paged in [false, true] {
+            let mut doc = Document::from_text(text);
+            doc.set_base(base);
+            if paged {
+                doc.set_paged_rows(100);
+            }
+            assert_eq!(doc.snapshot().sheets[0].paged, paged);
+            let names = |doc: &Document| -> Vec<String> {
+                doc.rows(0, 0, 3)
+                    .into_iter()
+                    .map(|r| r[2].display.clone())
+                    .collect()
+            };
+            let unsorted = names(&doc);
+            let edits = doc.edit_count();
+
+            doc.sort_rows(0, 5, true).expect("sorts");
+            let by_fare = names(&doc);
+            assert_ne!(by_fare, unsorted, "paged {paged}");
+            assert_eq!(doc.edit_count(), edits + 1);
+            // The same sort again changes nothing and is no step.
+            doc.sort_rows(0, 5, true).expect("sorts");
+            assert_eq!(doc.undo_mark(), 1);
+
+            assert!(doc.undo());
+            assert_eq!(names(&doc), unsorted, "undone, paged {paged}");
+            assert!(!doc.can_undo());
+            assert!(doc.redo());
+            assert_eq!(names(&doc), by_fare, "redone, paged {paged}");
+
+            // A sort, an edit of the text, and a second sort, undone one at
+            // a time: each takes back its own step and only that.
+            assert!(doc.set_cell(1, 0, 0, "2"));
+            let edited = doc.text().to_string();
+            assert_ne!(edited, text);
+            doc.sort_rows(0, 2, false).expect("sorts");
+            let by_name = names(&doc);
+            assert_ne!(by_name, by_fare);
+            assert_eq!(doc.text(), edited, "a sort writes nothing");
+            assert!(doc.undo());
+            assert_eq!(names(&doc), by_fare);
+            assert_eq!(doc.text(), edited);
+            assert!(doc.undo());
+            assert_eq!(names(&doc), by_fare, "the edit's undo keeps the order");
+            assert_eq!(doc.text(), text);
+            assert!(doc.undo());
+            assert_eq!(names(&doc), unsorted);
+            // And forward again, through all three.
+            assert!(doc.redo() && doc.redo() && doc.redo());
+            assert_eq!(names(&doc), by_name);
+            assert_eq!(doc.text(), edited);
+        }
+    }
+
+    #[test]
+    fn a_filter_holds_through_a_sort() {
+        let file = "sheet T\n\nName : Text\nN : Decimal[.2f]\n\n| Name | N |\n| --- | --- |\n| Coffee | -0.04 |\n| Cake | 0 |\n| Tea | 2.25 |\n";
+        let mut doc = Document::from_text(file);
+        let f = vec![("N".to_string(), "* > 1".to_string())];
+        assert_eq!(doc.shown_rows(0, &f), Ok(vec![2]));
+        doc.sort_rows(0, 1, true).unwrap();
+        assert_eq!(doc.shown_rows(0, &f), Ok(vec![0]));
+        doc.sort_rows(0, 1, false).unwrap();
+        assert_eq!(doc.shown_rows(0, &f), Ok(vec![2]));
+    }
+
+    #[test]
+    fn a_filter_shows_the_rows_its_expressions_are_true_of() {
         let file = "sheet T\n\nName | N\nb | 2\na | 10\nc |\nd | 2\n";
         let doc = Document::from_text(file);
-        assert_eq!(doc.shown_rows(0, &[]), [0, 1, 2, 3]);
-        let hide = |name: &str, texts: &[&str]| {
-            (
-                name.to_string(),
-                texts.iter().map(|t| t.to_string()).collect(),
+        let shown = |filters: &[(&str, &str)]| {
+            let filters: Vec<(String, String)> = filters
+                .iter()
+                .map(|(n, e)| (n.to_string(), e.to_string()))
+                .collect();
+            doc.shown_rows(0, &filters)
+        };
+        assert_eq!(shown(&[]), Ok(vec![0, 1, 2, 3]));
+        assert_eq!(shown(&[("N", "* == 2")]), Ok(vec![0, 3]));
+        // An empty cell fails every comparison (D165), and is asked for.
+        assert_eq!(shown(&[("N", "* != 2")]), Ok(vec![1]));
+        assert_eq!(shown(&[("N", "* != 2 or * == ''")]), Ok(vec![1, 2]));
+        assert_eq!(shown(&[("N", "* != 2 or *.is_null()")]), Ok(vec![1, 2]));
+        assert_eq!(shown(&[("N", "0 < * <= 5")]), Ok(vec![0, 3]));
+        assert_eq!(shown(&[("N", "N > 5")]), Ok(vec![1]));
+        // Any function the directory has under a Polars name (D162).
+        assert_eq!(shown(&[("N", "sqrt(*) > 3")]), Ok(vec![1]));
+        assert_eq!(shown(&[("N", "floor(* / 3) == 3")]), Ok(vec![1]));
+        assert_eq!(shown(&[("N", "abs(* - 10) < 5")]), Ok(vec![1]));
+        assert_eq!(
+            shown(&[("Name", "*.starts_with('a'..'b')")]),
+            Ok(vec![0, 1])
+        );
+        assert_eq!(shown(&[("N", "*.is_first_distinct()")]), Ok(vec![0, 1, 2]));
+        // Each column's filter, all at once.
+        assert_eq!(
+            shown(&[("N", "* == 2 or * > 5"), ("Name", "* != 'b'")]),
+            Ok(vec![1, 3])
+        );
+        // A column the sheet has not got, and an empty expression, hide nothing.
+        assert_eq!(
+            shown(&[("Gone", "* == 1"), ("N", "  ")]),
+            Ok(vec![0, 1, 2, 3])
+        );
+        // What is wrong is said, by column, before a row is read.
+        let wrong = shown(&[("N", "* == 'x'")]).unwrap_err();
+        assert!(wrong.starts_with("N: "), "{wrong}");
+        assert!(shown(&[("N", "* >")]).unwrap_err().starts_with("N: "));
+        let other = shown(&[("N", "Name == 'b'")]).unwrap_err();
+        assert!(other.contains("its own column"), "{other}");
+        assert!(
+            shown(&[("N", "* + 1")])
+                .unwrap_err()
+                .contains("true or false")
+        );
+        assert!(
+            shown(&[("N", "* > today()")])
+                .unwrap_err()
+                .contains("cannot call `today`")
+        );
+        // And checked alone, as the popup does with each key.
+        assert_eq!(doc.check_filter(0, 1, "0 < * <= 5"), Ok(()));
+        assert_eq!(
+            doc.check_filter(0, 1, "*.year == 2025").map_err(|_| ()),
+            Err(())
+        );
+        assert!(
+            doc.check_filter(0, 0, "*.matches('(')")
+                .unwrap_err()
+                .contains("regex")
+        );
+    }
+
+    #[test]
+    fn a_paged_table_shows_what_a_held_one_does() {
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n\nsheet Firsts := Passengers |> filter(Pclass == 1)\n";
+        let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
+        let mut held = Document::from_text(text);
+        held.set_base(base);
+        let mut paged = Document::from_text(text);
+        paged.set_base(base);
+        paged.set_paged_rows(100);
+        let shown = |doc: &Document,
+                     sheet: usize,
+                     from: usize,
+                     count: usize|
+         -> Vec<Vec<(String, String, Option<String>)>> {
+            doc.rows(sheet, from, count)
+                .into_iter()
+                .map(|row| {
+                    row.into_iter()
+                        .map(|c| (c.display, c.source, c.error))
+                        .collect()
+                })
+                .collect()
+        };
+        for sheet in 0..2 {
+            let (h, p) = (
+                &held.snapshot().sheets[sheet],
+                &paged.snapshot().sheets[sheet],
+            );
+            assert!(!h.paged && p.paged, "sheet {sheet}");
+            assert!(p.rows.is_empty(), "a paged sheet holds no rows");
+            assert_eq!(h.nrows, p.nrows);
+            assert_eq!(paged.row_count(sheet), h.rows.len());
+            let n = h.nrows;
+            // The start, a block across the middle, and past the end.
+            for (from, count) in [(0, 30), (n / 2 - 7, 30), (n - 5, 30), (n, 5)] {
+                assert_eq!(
+                    shown(&paged, sheet, from, count),
+                    shown(&held, sheet, from, count),
+                    "{sheet} {from}"
+                );
+            }
+            assert_eq!(
+                paged.summary(sheet, (3, 0), (90, 8)),
+                held.summary(sheet, (3, 0), (90, 8))
+            );
+        }
+        let hide = vec![("Sex".to_string(), "* != 'male'".to_string())];
+        assert_eq!(paged.shown_rows(0, &hide), held.shown_rows(0, &hide));
+        // Sorted in the grid, by a column of the file and by a formula.
+        for col in [5, 8] {
+            held.sort_rows(0, col, true).unwrap();
+            paged.sort_rows(0, col, true).unwrap();
+            assert_eq!(
+                shown(&paged, 0, 0, 40),
+                shown(&held, 0, 0, 40),
+                "sorted by {col}"
+            );
+            assert_eq!(
+                shown(&paged, 0, 850, 40),
+                shown(&held, 0, 850, 40),
+                "sorted by {col}"
+            );
+            assert_eq!(paged.shown_rows(0, &hide), held.shown_rows(0, &hide));
+        }
+    }
+
+    #[test]
+    fn a_paged_summary_answers_as_a_held_one_reading_only_what_is_selected() {
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n\nsheet Firsts := Passengers |> filter(Pclass == 1)\n";
+        let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
+        let mut held = Document::from_text(text);
+        held.set_base(base);
+        let mut paged = Document::from_text(text);
+        paged.set_base(base);
+        paged.set_paged_rows(100);
+
+        // One column of a fresh document is the only column read for it.
+        let before = paged.engine.as_ref().unwrap().reads();
+        let n = held.snapshot().sheets[0].nrows;
+        assert_eq!(
+            paged.summary(0, (0, 5), (n - 1, 5)),
+            held.summary(0, (0, 5), (n - 1, 5))
+        );
+        let read: Vec<_> = paged.engine.as_ref().unwrap().reads()[before.len()..].to_vec();
+        assert!(
+            read.iter().all(|&rc| rc == (0, 5)),
+            "a summary of Fare read {read:?}"
+        );
+
+        let blocks = |doc: &Document, sheet: usize| {
+            let n = doc.snapshot().sheets[sheet].nrows;
+            [
+                ((0, 0), (n - 1, 8)),       // everything, across many blocks
+                ((150, 4), (640, 6)),       // starts and ends inside a block
+                ((99, 5), (100, 5)),        // either side of a block's edge
+                ((n - 3, 0), (n + 50, 20)), // past the last row and column
+                ((n, 0), (n + 5, 8)),       // no rows at all
+            ]
+        };
+        for sheet in 0..2 {
+            for (from, to) in blocks(&held, sheet) {
+                let got = paged.summary(sheet, from, to);
+                assert_eq!(got, held.summary(sheet, from, to), "{sheet} {from:?}");
+                assert!(got.is_some());
+            }
+        }
+        // Sorted in the grid, by a column of the file and by a formula: the
+        // same rows in a new order, so the same count and the same sum.
+        for col in [5, 8] {
+            held.sort_rows(0, col, false).unwrap();
+            paged.sort_rows(0, col, false).unwrap();
+            for (from, to) in blocks(&held, 0) {
+                assert_eq!(
+                    paged.summary(0, from, to),
+                    held.summary(0, from, to),
+                    "sorted by {col}, {from:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_column_read_whole_is_kept_across_an_edit() {
+        // A copy of its own, since the file is changed below.
+        let dir = std::env::temp_dir().join(format!("omasheet-kept-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("titanic.parquet");
+        std::fs::copy(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/titanic.parquet"),
+            &file,
+        )
+        .unwrap();
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\n\nTwice := Fare * 2\n";
+        let mut doc = Document::from_text(text);
+        doc.set_base(&dir);
+        doc.set_paged_rows(100);
+        // A fresh cache over the paged document: the first build above was
+        // of a table small enough to calculate whole.
+        doc.set_column_budget(1 << 30);
+        // Opening reads no column whole: the formula column is calculated
+        // for the rows shown, so what it reads of the file is a window.
+        assert_eq!(doc.column_cache().misses, 0, "nothing wants a whole column");
+
+        // A sort reads the column it sorts by, whole, and keeps it.
+        doc.sort_rows(0, 5, false).unwrap();
+        let opened = doc.column_cache();
+        assert!(opened.misses > 0, "a sort reads a column from the file");
+        assert_eq!(opened.entries, opened.misses, "and keeps each of them");
+        assert!(opened.bytes > 0);
+
+        // An edit rebuilds the engine, which starts with none of its
+        // columns. What it needs of the file's, it takes from the cache.
+        assert!(doc.set_text(&format!("{text}Thrice := Fare * 3\n")));
+        doc.sort_rows(0, 5, true).unwrap();
+        let edited = doc.column_cache();
+        assert_eq!(edited.misses, opened.misses, "nothing read again");
+        assert!(edited.hits > opened.hits, "the column came from the cache");
+        assert!(doc.set_text(text));
+        doc.sort_rows(0, 5, false).unwrap();
+        assert_eq!(doc.column_cache().misses, opened.misses);
+
+        // The file changed under it: the kept column is not the file's.
+        let changed = std::fs::read(&file).unwrap();
+        std::fs::write(&file, &changed).unwrap();
+        let bumped = std::fs::File::options().write(true).open(&file).unwrap();
+        bumped
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(doc.set_text(&format!("{text}Again := Fare * 4\n")));
+        doc.sort_rows(0, 5, true).unwrap();
+        assert!(
+            doc.column_cache().misses > opened.misses,
+            "a file changed since is read again"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_table_held_whole_is_not_also_kept_as_columns_and_the_cache_gives_way() {
+        let dir = std::env::temp_dir().join(format!("omasheet-share-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("titanic.parquet");
+        std::fs::copy(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/titanic.parquet"),
+            &file,
+        )
+        .unwrap();
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\n\nTwice := Fare * 2\n";
+        let mut doc = Document::from_text(text);
+        doc.set_base(&dir);
+        doc.set_paged_rows(100);
+        doc.set_column_budget(10_000_000);
+        doc.sort_rows(0, 5, false).unwrap();
+        let kept = doc.column_cache();
+        assert!(kept.entries > 0 && kept.bytes > 0, "{kept:?}");
+        assert_eq!(kept.budget, 10_000_000);
+
+        let want = doc.to_hold().remove(0);
+        let whole = crate::table::read_whole(&want.path, &want.columns).unwrap();
+        let held_bytes = whole.bytes;
+        assert!(held_bytes > 0);
+        assert!(doc.hold(want.path.clone(), whole));
+        let after = doc.column_cache();
+        assert_eq!(after.entries, 0, "its columns are the table's now");
+        assert_eq!(after.bytes, 0);
+        assert_eq!(after.budget, 10_000_000 - held_bytes, "the budget gave way");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_scroll_reads_the_file_once_for_many_frames() {
+        use polars::prelude::*;
+        let dir = std::env::temp_dir().join(format!("omasheet-ahead-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rows = 40_000usize;
+        let mut frame = df!["N" => (0..rows as i64).collect::<Vec<i64>>()].unwrap();
+        let mut file = std::fs::File::create(dir.join("n.parquet")).unwrap();
+        ParquetWriter::new(&mut file)
+            .with_row_group_size(Some(1_000))
+            .finish(&mut frame)
+            .unwrap();
+        let mut doc = Document::from_text("view T := dataframe['n.parquet']\n");
+        doc.set_base(&dir);
+        doc.set_paged_rows(100);
+        let read = |doc: &Document| doc.engine.as_ref().unwrap().rows_read();
+        let first_cell = |doc: &Document, from: usize| doc.rows(0, from, 40)[0][0].display.clone();
+        let before = read(&doc);
+
+        // The first screen reads a window around it, not the 40 rows alone.
+        assert_eq!(first_cell(&doc, 0), "0");
+        let first = read(&doc) - before;
+        assert!(first > 40 && first < rows, "{first} rows read");
+
+        // A scroll of three rows at a time, a thousand steps, stays in it.
+        for step in 0..1_000 {
+            let from = step * 3;
+            assert_eq!(first_cell(&doc, from), from.to_string());
+        }
+        assert_eq!(read(&doc) - before, first, "nothing read again");
+
+        // A jump out of the window reads one more, and what it shows is
+        // right at the very end as well.
+        assert_eq!(first_cell(&doc, 20_000), "20000");
+        let jumped = read(&doc) - before;
+        assert!(jumped > first);
+        assert_eq!(first_cell(&doc, rows - 40), (rows - 40).to_string());
+        let last = doc.rows(0, rows - 40, 40);
+        assert_eq!(last.last().unwrap()[0].display, (rows - 1).to_string());
+        // Back in a window already read, nothing more is read.
+        let settled = read(&doc);
+        assert_eq!(first_cell(&doc, rows - 100), (rows - 100).to_string());
+        assert_eq!(read(&doc), settled);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_jump_reads_every_columns_window_and_shows_the_right_rows() {
+        use polars::prelude::*;
+        let dir = std::env::temp_dir().join(format!("omasheet-side-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rows = 40_000usize;
+        // Six columns, a cell of which says which row and column it is.
+        let columns: Vec<Column> = (0..6)
+            .map(|j| {
+                Column::new(
+                    format!("C{j}").into(),
+                    (0..rows as i64).map(|r| r * 10 + j).collect::<Vec<i64>>(),
+                )
+            })
+            .collect();
+        let mut frame = DataFrame::new(columns).unwrap();
+        let mut file = std::fs::File::create(dir.join("six.parquet")).unwrap();
+        ParquetWriter::new(&mut file)
+            .with_row_group_size(Some(1_000))
+            .finish(&mut frame)
+            .unwrap();
+        let mut doc = Document::from_text("view T := dataframe['six.parquet']\n");
+        doc.set_base(&dir);
+        doc.set_paged_rows(100);
+        let read = |doc: &Document| doc.engine.as_ref().unwrap().rows_read();
+        let shown = |doc: &Document, from: usize| -> Vec<Vec<String>> {
+            doc.rows(0, from, 40)
+                .iter()
+                .map(|row| row.iter().map(|c| c.display.clone()).collect())
+                .collect()
+        };
+        let expect = |from: usize| -> Vec<Vec<String>> {
+            (from..from + 40)
+                .map(|r| (0..6).map(|j| (r * 10 + j).to_string()).collect())
+                .collect()
+        };
+        let before = read(&doc);
+
+        // A jump to the middle: all six columns' windows, read at once, and
+        // every cell is the cell of that row and column.
+        assert_eq!(shown(&doc, 20_000), expect(20_000));
+        let window = 40 + 2 * 8_192;
+        assert_eq!(read(&doc) - before, 6 * window);
+
+        // Scrolling on from there reads nothing, and a jump to the ends is
+        // as right as the middle was.
+        assert_eq!(shown(&doc, 20_003), expect(20_003));
+        assert_eq!(read(&doc) - before, 6 * window);
+        assert_eq!(shown(&doc, 0), expect(0));
+        assert_eq!(shown(&doc, rows - 40), expect(rows - 40));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_aggregate_over_many_row_groups_is_the_one_over_a_single_group_and_holds_no_column() {
+        use polars::prelude::*;
+        let dir = std::env::temp_dir().join(format!("omasheet-stream-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rows = 30_000usize;
+        // Order-sensitive floats with gaps and a NaN, whole numbers with
+        // gaps, and dates, the same in both files.
+        let mut x = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let floats: Vec<Option<f64>> = (0..rows)
+            .map(|i| match i {
+                _ if i % 11 == 0 => None,
+                12_345 => Some(f64::NAN),
+                _ => {
+                    let m = (next() % 1_000_000) as f64 / 7.0;
+                    let e = 10f64.powi((next() % 17) as i32 - 6);
+                    Some(if next() % 2 == 0 { m * e } else { -m * e })
+                }
+            })
+            .collect();
+        let ints: Vec<Option<i64>> = (0..rows)
+            .map(|i| (i % 7 != 0).then(|| (next() % 2_000_000) as i64 - 1_000_000))
+            .collect();
+        let days: Vec<Option<i32>> = (0..rows)
+            .map(|i| (i % 13 != 0).then(|| 18_000 + (next() % 3_000) as i32))
+            .collect();
+        // Money in cents, as a decimal column; a column with nothing in it;
+        // and one of nothing but NaNs.
+        let cents: Vec<Option<f64>> = ints.iter().map(|v| v.map(|n| n as f64 / 100.0)).collect();
+        let empty: Vec<Option<f64>> = vec![None; rows];
+        let nans: Vec<Option<f64>> = vec![Some(f64::NAN); rows];
+        let write = |name: &str, group: usize| {
+            let mut frame = df![
+                "I" => &ints,
+                "F" => &floats,
+                "D" => &days,
+                "M" => &cents,
+                "E" => &empty,
+                "Z" => &nans,
+            ]
+            .unwrap();
+            frame = frame
+                .lazy()
+                .with_columns([
+                    col("D").cast(DataType::Date),
+                    col("M").cast(DataType::Decimal(Some(18), Some(2))),
+                ])
+                .collect()
+                .unwrap();
+            let mut file = std::fs::File::create(dir.join(name)).unwrap();
+            ParquetWriter::new(&mut file)
+                .with_row_group_size(Some(group))
+                .finish(&mut frame)
+                .unwrap();
+        };
+        write("many.parquet", 1_000);
+        write("one.parquet", rows);
+        let text = |file: &str| {
+            format!(
+                "view T := dataframe['{file}']\n\nI : Integer\nF : Float\nD : Date\nM : Decimal\nE : Float\nZ : Float\n\n\
+                 const SumI = T.I.sum()\nconst MeanI = T.I.mean()\nconst MinI = T.I.min()\n\
+                 const MaxI = T.I.max()\nconst CountI = T.I.count()\nconst LenI = T.I.len()\n\
+                 const SumF = T.F.sum()\nconst MeanF = T.F.mean()\nconst MinF = T.F.min()\n\
+                 const MaxF = T.F.max()\nconst CountF = T.F.count()\n\
+                 const MinD = T.D.min()\nconst MaxD = T.D.max()\nconst CountD = T.D.count()\n\
+                 const SumM = T.M.sum()\nconst MeanM = T.M.mean()\nconst MinM = T.M.min()\n\
+                 const MaxM = T.M.max()\nconst CountM = T.M.count()\n\
+                 const SumE = T.E.sum()\nconst MeanE = T.E.mean()\nconst MinE = T.E.min()\n\
+                 const MaxE = T.E.max()\nconst CountE = T.E.count()\n\
+                 const SumZ = T.Z.sum()\nconst MeanZ = T.Z.mean()\nconst MinZ = T.Z.min()\n\
+                 const MaxZ = T.Z.max()\nconst CountZ = T.Z.count()\n"
             )
         };
-        assert_eq!(doc.shown_rows(0, &[hide("N", &["2"])]), [1, 2]);
-        assert_eq!(
-            doc.shown_rows(0, &[hide("N", &["2"]), hide("Name", &["c"])]),
-            [1]
+        let run = |file: &str| {
+            let mut doc = Document::from_text(&text(file));
+            doc.set_base(&dir);
+            doc.set_paged_rows(100);
+            doc.set_column_budget(1 << 30);
+            assert!(
+                doc.snapshot().problems.is_empty(),
+                "{:?}",
+                doc.snapshot().problems
+            );
+            let shown: Vec<String> = doc
+                .snapshot()
+                .consts
+                .iter()
+                .map(|c| c.display.clone())
+                .collect();
+            (shown, doc.column_cache())
+        };
+        let (many, many_cache) = run("many.parquet");
+        let (one, one_cache) = run("one.parquet");
+        assert_eq!(many.len(), 29);
+        assert_eq!(many, one, "streamed and whole answers differ");
+        // Streamed, the cache is not asked for the column at all; the file of
+        // one row group is read whole, through it.
+        // The exceptions are the answers a column with nothing to sum, or
+        // nothing but NaNs to take the least of, leaves to the walk: of the
+        // 29 over six columns, up to five are read whole, all of them over
+        // the empty column or the column of NaNs.
+        assert!(
+            many_cache.misses <= 5 && many_cache.misses < one_cache.misses,
+            "streamed: {many_cache:?}, single group: {one_cache:?}"
         );
-        // A column the sheet has not got hides nothing.
-        assert_eq!(doc.shown_rows(0, &[hide("Gone", &["b"])]), [0, 1, 2, 3]);
-        // Each text once, in the order of the values: empty first, and 10
-        // after 2 because it is a number.
-        assert_eq!(doc.distinct_shown(0, 1), ["", "2", "10"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_formula_column_over_a_big_table_is_calculated_for_the_rows_shown() {
+        use polars::prelude::*;
+        let dir = std::env::temp_dir().join(format!("omasheet-defer-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rows = 40_000usize;
+        let mut frame = df!["N" => (0..rows as i64).collect::<Vec<i64>>()].unwrap();
+        let mut file = std::fs::File::create(dir.join("n.parquet")).unwrap();
+        ParquetWriter::new(&mut file)
+            .with_row_group_size(Some(1_000))
+            .finish(&mut frame)
+            .unwrap();
+        let text = "view T := dataframe['n.parquet']\n\nN : Integer\n\nTwice := N * 2\nThrice := Twice + N\n";
+        let mut doc = Document::from_text(text);
+        doc.set_base(&dir);
+        doc.set_paged_rows(100);
+        // The paged document now, so nothing below is the first build's.
+        doc.set_column_budget(1 << 30);
+        let reads = |doc: &Document| doc.engine.as_ref().unwrap().rows_read();
+        let cells = |doc: &Document, from: usize| -> Vec<Vec<String>> {
+            doc.rows(0, from, 40)
+                .iter()
+                .map(|row| row.iter().map(|c| c.display.clone()).collect())
+                .collect()
+        };
+        let expect = |from: usize| -> Vec<Vec<String>> {
+            (from..from + 40)
+                .map(|r| vec![r.to_string(), (r * 2).to_string(), (r * 3).to_string()])
+                .collect()
+        };
+
+        // Nothing was read of the file for the formula columns when the
+        // engine ran, and nothing of them calculated: the whole of each
+        // would be 40,000 values, and the aggregate over Thrice below, which
+        // wants all of it, is the one thing that reads it.
+        let opened = reads(&doc);
+        assert!(opened < rows, "{opened} values read opening");
+        let held_whole = |doc: &Document, c: usize| doc.engine.as_ref().unwrap().holds_whole(0, c);
+        assert!(!held_whole(&doc, 1), "Twice is not calculated whole");
+        assert!(!held_whole(&doc, 2), "Thrice is not calculated whole");
+
+        // The rows shown are right, a column of formulas over a column of
+        // formulas over the file's, at the start, in the middle and at the
+        // end, and a scroll on from each reads nothing more.
+        for from in [0, 20_000, rows - 40] {
+            assert_eq!(cells(&doc, from), expect(from), "from {from}");
+        }
+        let shown = reads(&doc);
+        assert!(shown < rows * 3, "windows, not columns: {shown} read");
+        assert_eq!(cells(&doc, rows - 43), expect(rows - 43));
+        assert_eq!(reads(&doc), shown, "inside a window already read");
+        assert!(!held_whole(&doc, 1) && !held_whole(&doc, 2));
+
+        // An aggregate wants the whole of the column, so it is calculated
+        // then, and is the sum of every row of it.
+        let total: usize = (0..rows).map(|r| r * 3).sum();
+        assert!(doc.set_text(&format!("{text}\nconst Total = T.Thrice.sum()\n")));
+        let shown_total = doc.snapshot().consts[0].display.clone();
+        assert_eq!(shown_total, total.to_string());
+        assert!(held_whole(&doc, 2), "calculated whole when asked for");
+        // And what is shown is the same after it was.
+        assert_eq!(cells(&doc, 20_000), expect(20_000));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_table_held_whole_answers_as_one_read_from_its_file() {
+        // A copy of its own, since the file is changed below.
+        let dir = std::env::temp_dir().join(format!("omasheet-hold-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("titanic.parquet");
+        std::fs::copy(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/titanic.parquet"),
+            &file,
+        )
+        .unwrap();
+        let text = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n";
+        let open = || {
+            let mut doc = Document::from_text(text);
+            doc.set_base(&dir);
+            doc.set_paged_rows(100);
+            doc
+        };
+        let (on_disk, mut held) = (open(), open());
+
+        // What there is to hold: the file's eight columns, by the names the
+        // file gives them, and not the formula.
+        let wanted = held.to_hold();
+        assert_eq!(wanted.len(), 1);
+        let want = &wanted[0];
+        assert_eq!(want.path, file);
+        assert_eq!(want.columns.len(), 8);
+        assert!(
+            want.columns
+                .contains(&"Siblings/Spouses Aboard".to_string())
+        );
+        let whole = crate::table::read_whole(&want.path, &want.columns).unwrap();
+        // The estimate errs high, and not by much more than the text costs.
+        let size = whole.frame.estimated_size();
+        assert!(want.bytes >= size, "estimate {} < {size}", want.bytes);
+        assert!(want.bytes < size * 3, "estimate {} vs {size}", want.bytes);
+
+        assert!(held.hold(want.path.clone(), whole.clone()));
+        assert!(held.holds(&file));
+        assert!(held.to_hold().is_empty(), "nothing more to hold");
+        assert!(!held.hold(want.path.clone(), whole.clone()), "held once");
+        let n = on_disk.snapshot().sheets[0].nrows;
+        let shown = |doc: &Document, from, count| -> Vec<Vec<String>> {
+            doc.rows(0, from, count)
+                .into_iter()
+                .map(|row| row.into_iter().map(|c| c.display).collect())
+                .collect()
+        };
+        for (from, count) in [(0, 30), (n / 2, 30), (n - 5, 30)] {
+            assert_eq!(shown(&held, from, count), shown(&on_disk, from, count));
+        }
+        assert_eq!(
+            held.summary(0, (0, 0), (n - 1, 8)),
+            on_disk.summary(0, (0, 0), (n - 1, 8))
+        );
+        let filter = vec![(
+            on_disk.snapshot().sheets[0].columns[5].name.clone(),
+            "*.is_first_distinct()".to_string(),
+        )];
+        assert_eq!(held.shown_rows(0, &filter), on_disk.shown_rows(0, &filter));
+        // Rows not asked for yet come from memory: with the file taken away
+        // they are still there, until a rebuild lets the file go.
+        let expected = shown(&on_disk, n / 4, 30);
+        let away = dir.join("away.parquet");
+        let not_held = open();
+        std::fs::rename(&file, &away).unwrap();
+        assert_eq!(shown(&held, n / 4, 30), expected);
+        assert_ne!(shown(&not_held, n / 4, 30), expected, "the file is gone");
+        std::fs::rename(&away, &file).unwrap();
+
+        // The file changed on disk: what was held is not given out again,
+        // and a frame read before the change is not taken.
+        let mut bytes = std::fs::read(&file).unwrap();
+        bytes.extend_from_slice(b"\0");
+        std::fs::write(dir.join("other.parquet"), &bytes).unwrap();
+        std::fs::rename(dir.join("other.parquet"), &file).unwrap();
+        held.set_paged_rows(100);
+        assert!(!held.holds(&file), "a changed file is let go");
+        assert!(!held.hold(want.path.clone(), whole));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A directory holding `edge.parquet`: 300 rows of the values that
+    /// order and show awkwardly, NaN, both infinities, -0.0 beside 0.0,
+    /// nulls, empty and accented text, dates, date-times, booleans and
+    /// decimals, with ties of each.
+    fn edge_file(name: &str) -> std::path::PathBuf {
+        use polars::prelude::*;
+        // A file of the values that order awkwardly: NaN, both infinities,
+        // -0.0 beside 0.0, nulls, empty and accented text, and ties of each.
+        let dir = std::env::temp_dir().join(format!("omasheet-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let n = 300;
+        let floats = [
+            1.5,
+            f64::NAN,
+            -0.0,
+            0.0,
+            2.0,
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+            -3.25,
+        ];
+        let texts = ["b", "", "B", "é", "a", "ab", "a", "Z"];
+        let f: Vec<Option<f64>> = (0..n)
+            .map(|i| (i % 9 != 4).then(|| floats[i % floats.len()]))
+            .collect();
+        let int: Vec<Option<i64>> = (0..n)
+            .map(|i| (i % 11 != 0).then_some(((i * 7) % 13) as i64 - 6))
+            .collect();
+        let text: Vec<Option<&str>> = (0..n)
+            .map(|i| (i % 10 != 3).then(|| texts[i % texts.len()]))
+            .collect();
+        let day: Vec<Option<i32>> = (0..n)
+            .map(|i| (i % 12 != 5).then_some(((i * 37) % 50) as i32 + 19_000))
+            .collect();
+        let at: Vec<Option<i64>> = (0..n)
+            .map(|i| (i % 13 != 6).then_some(((i * 53) % 40) as i64 * 3_600_000_000))
+            .collect();
+        let yes: Vec<Option<bool>> = (0..n).map(|i| (i % 7 != 2).then_some(i % 3 == 0)).collect();
+        let mut frame = DataFrame::new(vec![
+            Column::new("F".into(), f),
+            Column::new("I".into(), int),
+            Column::new("S".into(), text),
+            Column::new("D".into(), day).cast(&DataType::Date).unwrap(),
+            Column::new("T".into(), at)
+                .cast(&DataType::Datetime(TimeUnit::Microseconds, None))
+                .unwrap(),
+            Column::new("B".into(), yes),
+            Column::new(
+                "M".into(),
+                (0..n).map(|i| (i % 17) as f64 / 4.0).collect::<Vec<_>>(),
+            )
+            .cast(&DataType::Decimal(Some(10), Some(2)))
+            .unwrap(),
+        ])
+        .unwrap();
+        ParquetWriter::new(std::fs::File::create(dir.join("edge.parquet")).unwrap())
+            .finish(&mut frame)
+            .unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_table_sorts_by_polars_in_the_order_it_sorts_by_values() {
+        let dir = edge_file("sort");
+        let titanic = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
+        let cases = [
+            (
+                "view T := dataframe['edge.parquet']\n",
+                dir.to_str().unwrap(),
+            ),
+            (
+                "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n",
+                titanic,
+            ),
+        ];
+        for (text, base) in cases {
+            for paged in [false, true] {
+                let mut doc = Document::from_text(text);
+                doc.set_base(base);
+                if paged {
+                    doc.set_paged_rows(100);
+                }
+                assert_eq!(doc.snapshot().sheets[0].paged, paged);
+                let cols = doc.snapshot().sheets[0].columns.len();
+                assert!(cols >= 7, "{text}");
+                // From the file's order, and again after a sort by the second
+                // column, which a later sort's ties keep.
+                for first in [None, Some(1)] {
+                    if let Some(c) = first {
+                        doc.sort_rows(0, c, true).unwrap();
+                    }
+                    for col in 0..cols {
+                        for desc in [false, true] {
+                            let polars = doc.order_by_polars(0, col, desc);
+                            let name = &doc.snapshot().sheets[0].columns[col].name;
+                            assert!(polars.is_some(), "{name} is held by Polars");
+                            assert_eq!(
+                                polars.unwrap(),
+                                doc.order_by_values(0, col, desc),
+                                "{name} desc {desc} paged {paged} after {first:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_paged_filter_shows_what_a_held_one_does() {
+        let dir = edge_file("filter");
+        let titanic = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
+        let cases = [
+            (
+                "view T := dataframe['edge.parquet']\n",
+                dir.to_str().unwrap(),
+            ),
+            (
+                "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n\nTwice := Fare * 2\n",
+                titanic,
+            ),
+        ];
+        for (text, base) in cases {
+            let mut held = Document::from_text(text);
+            held.set_base(base);
+            let mut paged = Document::from_text(text);
+            paged.set_base(base);
+            paged.set_paged_rows(100);
+            assert!(paged.snapshot().sheets[0].paged && !held.snapshot().sheets[0].paged);
+            for sorted in [false, true] {
+                if sorted {
+                    held.sort_rows(0, 1, true).unwrap();
+                    paged.sort_rows(0, 1, true).unwrap();
+                }
+                let columns = held.snapshot().sheets[0].columns.clone();
+                for column in &columns {
+                    let mut tests = vec![
+                        "*.is_null()",
+                        "not *.is_null()",
+                        "*.is_duplicated()",
+                        "*.is_first_distinct()",
+                    ];
+                    match column.ty.as_str() {
+                        "Integer" | "Int" | "Decimal" => {
+                            tests.extend(["* > 1", "0 < * <= 2", "* in [0, 1]", "* != 1"])
+                        }
+                        "Float" => tests.extend(["* > 1.5", "0.5 < * <= 30.5", "*.is_finite()"]),
+                        "String" => tests.extend([
+                            "*.starts_with('A')",
+                            "*.starts_with('A'..'M')",
+                            "*.contains('a')",
+                            "*.to_lowercase().ends_with('e')",
+                            "*.len_chars() > 3",
+                            "* in ['male', 'b']",
+                        ]),
+                        _ => {}
+                    }
+                    for test in tests {
+                        let filter = vec![(column.name.clone(), test.to_string())];
+                        let want = held.shown_rows(0, &filter);
+                        assert!(want.is_ok(), "{} {test}: {want:?}", column.name);
+                        assert_eq!(
+                            paged.shown_rows(0, &filter),
+                            want,
+                            "{} {test} sorted {sorted}",
+                            column.name
+                        );
+                    }
+                }
+                // Two columns filtered at once.
+                let two = vec![
+                    (columns[0].name.clone(), "not *.is_null()".to_string()),
+                    (columns[2].name.clone(), "*.is_first_distinct()".to_string()),
+                ];
+                assert_eq!(paged.shown_rows(0, &two), held.shown_rows(0, &two));
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_filter_reads_nanoseconds_and_milliseconds_as_a_sheet_does() {
+        use polars::prelude::*;
+        let dir = std::env::temp_dir().join(format!("omasheet-units-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // One nanosecond before 1970 is 1969-12-31 floored, not 1970-01-01
+        // truncated; then a day in March 2019, and an empty cell.
+        let ns = [Some(-1i64), Some(1_552_608_000_000_000_123), None];
+        let ms = [Some(-1i64), Some(1_552_608_000_000), None];
+        let mut frame = DataFrame::new(vec![
+            Column::new("N".into(), ns)
+                .cast(&DataType::Datetime(TimeUnit::Nanoseconds, None))
+                .unwrap(),
+            Column::new("M".into(), ms)
+                .cast(&DataType::Datetime(TimeUnit::Milliseconds, None))
+                .unwrap(),
+        ])
+        .unwrap();
+        ParquetWriter::new(std::fs::File::create(dir.join("units.parquet")).unwrap())
+            .finish(&mut frame)
+            .unwrap();
+        for paged in [false, true] {
+            let mut doc = Document::from_text("view T := dataframe['units.parquet']\n");
+            doc.set_base(dir.to_str().unwrap());
+            if paged {
+                doc.set_paged_rows(1);
+            }
+            for c in ["N", "M"] {
+                let shown = |e: &str| doc.shown_rows(0, &[(c.to_string(), e.to_string())]);
+                assert_eq!(shown("*.day == 31"), Ok(vec![0]), "{c} paged {paged}");
+                assert_eq!(shown("*.year == 2019"), Ok(vec![1]), "{c} paged {paged}");
+                assert_eq!(shown("* >= 2019-03-15T00:00"), Ok(vec![1]), "{c}");
+                assert_eq!(shown("* < 1970-01-01T00:00"), Ok(vec![0]), "{c}");
+                assert_eq!(shown("*.is_null()"), Ok(vec![2]), "{c}");
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Where the copies of the tests that read a CSV or JSON file go: one
+    /// place for the whole run, set once, since the environment is the
+    /// process's and the tests run side by side.
+    fn test_cache() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let dir = std::env::temp_dir().join(format!("omasheet-copies-{}", std::process::id()));
+            // SAFETY: before any test reads a source that is copied, and
+            // only once.
+            unsafe { std::env::set_var("OMASHEET_CACHE", dir) };
+        });
+    }
+
+    #[test]
+    fn a_csv_table_shows_its_sample_and_then_its_copy_alike() {
+        let dir = std::env::temp_dir().join(format!("omasheet-csvt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        test_cache();
+        let mut csv = String::from("Name,N,X,Day,At\n");
+        for i in 0..1500 {
+            let name = if i % 7 == 0 {
+                "\"Smith, J\"".to_string()
+            } else {
+                format!("n{i}")
+            };
+            let n = if i % 11 == 0 {
+                String::new()
+            } else {
+                (i % 13).to_string()
+            };
+            csv.push_str(&format!(
+                "{name},{n},{}.5,2021-06-{:02},2021-06-01 00:{:02}:{:02}\n",
+                i % 5,
+                i % 28 + 1,
+                i % 60,
+                i % 59
+            ));
+        }
+        std::fs::write(dir.join("x.csv"), &csv).unwrap();
+        let text = "view T := dataframe['x.csv']\n";
+        let open = |screen: bool| {
+            let mut doc = if screen {
+                Document::on_screen(text, Style::ISO, Names::default())
+            } else {
+                Document::from_text(text)
+            };
+            doc.set_base(&dir);
+            doc
+        };
+        let types = |doc: &Document| -> Vec<String> {
+            doc.snapshot().sheets[0]
+                .columns
+                .iter()
+                .map(|c| c.ty.clone())
+                .collect()
+        };
+        let shown = |doc: &Document| -> Vec<Vec<String>> {
+            doc.rows(0, 0, 1500)
+                .into_iter()
+                .map(|row| row.into_iter().map(|c| c.display).collect())
+                .collect()
+        };
+
+        // On a screen, the sample at once, and the copy wanted.
+        let mut screen = open(true);
+        assert!(
+            screen.snapshot().problems.is_empty(),
+            "{:?}",
+            screen.snapshot().problems
+        );
+        assert_eq!(screen.snapshot().sheets[0].nrows, crate::table::SAMPLE_ROWS);
+        // It says it is a sample, for the grid to say there is more to come.
+        assert!(screen.snapshot().sheets[0].sampled);
+        assert_eq!(
+            types(&screen),
+            ["String", "Integer", "Decimal", "Date", "Datetime"]
+        );
+        let csv_path = dir.join("x.csv");
+        assert_eq!(screen.to_convert(), vec![csv_path.clone()]);
+        let sample = shown(&screen);
+        assert_eq!(
+            sample[0],
+            ["Smith, J", "", "0.5", "2021-06-01", "2021-06-01T00:00"]
+        );
+
+        // Copied, it is the whole file, and its first rows are the sample's.
+        crate::table::convert(&csv_path).unwrap();
+        assert!(screen.converted(&csv_path));
+        assert!(screen.to_convert().is_empty());
+        assert_eq!(screen.snapshot().sheets[0].nrows, 1500);
+        assert!(!screen.snapshot().sheets[0].sampled);
+        assert_eq!(
+            types(&screen),
+            ["String", "Integer", "Decimal", "Date", "Datetime"]
+        );
+        assert_eq!(shown(&screen)[..sample.len()], sample[..]);
+
+        // Read where it waits for the copy, the same rows.
+        let waited = open(false);
+        assert_eq!(shown(&waited), shown(&screen));
+        // And the copy filters and sums as a Parquet table does.
+        assert_eq!(
+            screen
+                .shown_rows(0, &[("At".into(), "*.minute == 0".into())])
+                .unwrap()
+                .len(),
+            25
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_json_table_names_a_sheet_and_shows_its_sample_and_then_its_copy_alike() {
+        let dir = std::env::temp_dir().join(format!("omasheet-jsont-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        test_cache();
+        let mut rows = Vec::new();
+        for i in 0..1500 {
+            rows.push(format!(
+                "{{\"Name\": \"n{i}\", \"N\": {}, \"X\": {}.5, \"Day\": \"2021-06-{:02}\"}}",
+                if i % 11 == 0 {
+                    "null".to_string()
+                } else {
+                    (i % 13).to_string()
+                },
+                i % 5,
+                i % 28 + 1,
+            ));
+        }
+        let book = format!(
+            "{{\"Rows\": [{}], \"Other\": [{{\"A\": 1}}, {{\"A\": 2}}]}}",
+            rows.join(",")
+        );
+        std::fs::write(dir.join("book.json"), book).unwrap();
+        let text =
+            "view T := dataframe['book.json#Rows']\n\nview U := dataframe['book.json#Other']\n";
+        let open = |screen: bool| {
+            let mut doc = if screen {
+                Document::on_screen(text, Style::ISO, Names::default())
+            } else {
+                Document::from_text(text)
+            };
+            doc.set_base(&dir);
+            doc
+        };
+        let types = |doc: &Document, t: usize| -> Vec<String> {
+            doc.snapshot().sheets[t]
+                .columns
+                .iter()
+                .map(|c| c.ty.clone())
+                .collect()
+        };
+        let shown = |doc: &Document, t: usize| -> Vec<Vec<String>> {
+            doc.rows(t, 0, 1500)
+                .into_iter()
+                .map(|row| row.into_iter().map(|c| c.display).collect())
+                .collect()
+        };
+
+        // On a screen, each sheet's sample at once, and a copy of each wanted.
+        let mut screen = open(true);
+        assert!(
+            screen.snapshot().problems.is_empty(),
+            "{:?}",
+            screen.snapshot().problems
+        );
+        assert_eq!(screen.snapshot().sheets[0].nrows, crate::table::SAMPLE_ROWS);
+        assert_eq!(screen.snapshot().sheets[1].nrows, 2);
+        assert_eq!(types(&screen, 0), ["String", "Integer", "Decimal", "Date"]);
+        assert_eq!(types(&screen, 1), ["Integer"]);
+        let rows_path = dir.join("book.json#Rows");
+        let other_path = dir.join("book.json#Other");
+        assert_eq!(
+            screen.to_convert(),
+            vec![rows_path.clone(), other_path.clone()]
+        );
+        let sample = shown(&screen, 0);
+        assert_eq!(sample[1], ["n1", "1", "1.5", "2021-06-02"]);
+        // A null is empty.
+        assert_eq!(sample[0][1], "");
+
+        // Copied, each is the whole sheet, and the first rows are the sample's.
+        crate::table::convert(&rows_path).unwrap();
+        crate::table::convert(&other_path).unwrap();
+        assert!(screen.converted(&rows_path));
+        assert!(screen.to_convert().is_empty());
+        assert_eq!(screen.snapshot().sheets[0].nrows, 1500);
+        assert_eq!(screen.snapshot().sheets[1].nrows, 2);
+        assert_eq!(shown(&screen, 0)[..sample.len()], sample[..]);
+        assert_eq!(shown(&screen, 1), [["1"], ["2"]]);
+
+        // Read where it waits for the copy, the same rows.
+        let waited = open(false);
+        assert_eq!(shown(&waited, 0), shown(&screen, 0));
+        // Filters as a Parquet table does.
+        assert_eq!(
+            screen
+                .shown_rows(0, &[("N".into(), "* == 3".into())])
+                .unwrap()
+                .len(),
+            (0..1500).filter(|i| i % 11 != 0 && i % 13 == 3).count()
+        );
+        // A sheet that is not there is a diagnostic, not a panic.
+        let missing = {
+            let mut doc = Document::from_text("view T := dataframe['book.json#Nope']\n");
+            doc.set_base(&dir);
+            doc
+        };
+        assert!(!missing.snapshot().problems.is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_aggregate_over_a_copied_file_is_kept_across_edits_and_not_for_another_file() {
+        let dir = std::env::temp_dir().join(format!("omasheet-answers-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        test_cache();
+        let write = |rows: usize, step: usize| {
+            let mut csv = String::from("N,X\n");
+            for i in 0..rows {
+                csv.push_str(&format!("{},{}.5\n", i * step, i % 7));
+            }
+            std::fs::write(dir.join("a.csv"), csv).unwrap();
+        };
+        write(5_000, 1);
+        let text = "view T := dataframe['a.csv']\n\nN : Integer\nX : Decimal\n\n\
+                    const SumN = T.N.sum()\nconst SumX = T.X.sum()\nconst MaxN = T.N.max()\n";
+        let mut doc = Document::from_text(text);
+        doc.set_base(&dir);
+        assert!(
+            doc.snapshot().problems.is_empty(),
+            "{:?}",
+            doc.snapshot().problems
+        );
+        let consts = |doc: &Document| -> Vec<String> {
+            doc.snapshot()
+                .consts
+                .iter()
+                .map(|c| c.display.clone())
+                .collect()
+        };
+        let sum_n: usize = (0..5_000).sum();
+        let first = consts(&doc);
+        assert_eq!(first[0], sum_n.to_string());
+        assert_eq!(first[2], "4999");
+        let kept = doc.column_cache();
+        assert_eq!(kept.answers, 3, "three answers kept: {kept:?}");
+        assert_eq!(kept.answer_hits, 0);
+
+        // An edit that touches none of it rebuilds, and the sums are given
+        // from where they were kept: the same answers, none added up again.
+        // A float sum is one the engine walks, and is kept as well.
+        assert!(doc.set_text(&format!("{text}\nconst Again = 1\n")));
+        let after = doc.column_cache();
+        assert_eq!(after.answer_hits, 3, "{after:?}");
+        assert_eq!(after.misses, kept.misses, "no column was read again");
+        assert_eq!(consts(&doc)[..3], first[..]);
+
+        // The file is not the same file now: its copy is another, and what
+        // was kept of the first is not given for it.
+        write(5_000, 2);
+        assert!(doc.set_text(text));
+        let again = consts(&doc);
+        assert_eq!(again[0], (sum_n * 2).to_string());
+        assert_eq!(again[2], "9998");
+        assert_eq!(
+            doc.column_cache().answer_hits,
+            3,
+            "nothing kept was given for it"
+        );
+
+        // A column declared as another type is another answer.
+        let as_float = text.replace("N : Integer", "N : Float");
+        assert!(doc.set_text(&as_float));
+        // Three for the first copy, three for the second, and the two over
+        // `N` again as a float: the sum of `X` is the same answer as it was.
+        assert_eq!(doc.column_cache().answers, 8, "kept by the type as well");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_copy_in_the_cache_keeps_its_identity_when_it_is_read() {
+        let dir = std::env::temp_dir().join(format!("omasheet-identity-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        test_cache();
+        std::fs::write(dir.join("b.csv"), "N\n1\n2\n3\n").unwrap();
+        let path = dir.join("b.csv");
+        let copy = crate::table::convert(&path).unwrap();
+        let before = crate::table::identity(&copy);
+        // Read for a table, which touches it, a while later.
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        assert_eq!(crate::table::located(&path, Copying::Wait).unwrap(), copy);
+        assert_eq!(crate::table::identity(&copy), before);
+        // A file that is not in the cache has the time it was written.
+        let outside = crate::table::identity(&path).unwrap();
+        assert!(outside.1.is_some());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn a_mistake_in_one_sheet_leaves_a_table_its_rows() {
-        let table = "table Passengers := dataframe[\"titanic.parquet\"]\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from \"Siblings/Spouses Aboard\"\nParents : Integer from \"Parents/Children Aboard\"\n";
+        let table = "view Passengers := dataframe['titanic.parquet']\n\nSurvived : Integer\nPclass : Integer\nName : String\nSex : String\nAge : Float\nFare : Float\nSiblings : Integer from 'Siblings/Spouses Aboard'\nParents : Integer from 'Parents/Children Aboard'\n";
         let mut doc = Document::from_text(table);
         doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples"));
         let rows = doc.snapshot().sheets[0].rows.len();
@@ -3448,30 +6777,36 @@ mod tests {
     }
 
     #[test]
-    fn a_column_of_prefixed_values_is_declared_as_its_base() {
+    fn a_prefixed_value_does_not_set_a_column_type() {
         let text =
             "sheet Regs\n\n| Name | Addr |\n| ---- | ---- |\n| a    |      |\n| b    |      |\n";
         let mut doc = Document::from_text(text);
-        // Typed in either case, it is shown and kept in lower case, and the
-        // file says what the column is (D125, D127).
+        // The first cell gives the type that is shown, and the file says
+        // nothing about it: only a type line or setting the type does
+        // (D191), and the file keeps the text as it was entered (D186).
         assert!(doc.set_cell(0, 0, 1, "0xFF"));
-        assert!(doc.text().contains("Addr : Hex\n"), "{}", doc.text());
-        assert!(doc.text().contains("| 0xff "), "{}", doc.text());
+        assert!(!doc.text().contains("Addr :"), "{}", doc.text());
+        assert!(doc.text().contains("| 0xFF "), "{}", doc.text());
         let column = &doc.snapshot().sheets[0].columns[1];
-        assert!(column.declared && column.ty == "Hex");
-        assert_eq!(col(&doc, 0, 1), ["0xff", ""]);
-        // A plain number in a `Hex` column is kept in its base, and a
+        assert!(!column.declared && column.ty == "Hex");
+        // The next cell widens the type, and neither cell is altered.
+        assert!(doc.set_cell(0, 1, 1, "255"));
+        assert!(!doc.text().contains("Addr :"), "{}", doc.text());
+        assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Integer");
+        assert_eq!(col(&doc, 0, 1), ["0xff", "255"]);
+        // Setting the type puts one format on every cell, and the file
+        // still has what was entered.
+        assert!(doc.set_column_types(0, &[1], Some("Hex")));
+        assert_eq!(col(&doc, 0, 1), ["0xff", "0xff"]);
+        assert!(doc.text().contains("| 255 "), "{}", doc.text());
+        // An `Integer` entered in a `Binary` column is shown in binary: a
+        // way to convert a base on the fly.
+        let mut doc = Document::from_text("sheet T\n\nA : Binary\n\n| A |\n| - |\n|   |\n");
+        assert!(doc.set_cell(0, 0, 0, "15"));
+        assert_eq!(col(&doc, 0, 0), ["0b1111"]);
+        assert!(doc.text().contains("| 15 "), "{}", doc.text());
+        // A plain number in a declared `Hex` column is edited in hex, and a
         // negative one is written so that it reads back (D132).
-        assert!(doc.set_cell(0, 1, 1, "-255"));
-        assert!(doc.text().contains("| -0xff "), "{}", doc.text());
-        assert_eq!(col(&doc, 0, 1), ["0xff", "0xffffffffffffff01"]);
-        assert_eq!(doc.snapshot().sheets[0].rows[1][1].source, "-0xff");
-        // A column of decimal numbers is left to its cells.
-        let mut doc = Document::from_text(text);
-        assert!(doc.set_cell(0, 0, 1, "0b11"));
-        assert!(doc.set_cell(0, 1, 1, "3"));
-        assert!(doc.text().contains("Addr : Binary\n"), "{}", doc.text());
-        // A plain number in a declared `Hex` column is edited in hex.
         let doc = Document::from_text("sheet T\n\nA : Hex\n\n| A   |\n| --- |\n| 255 |\n| -1  |\n");
         let rows = &doc.snapshot().sheets[0].rows;
         assert_eq!(
@@ -3744,6 +7079,26 @@ mod tests {
             "{:?}",
             doc.snapshot().problems
         );
+    }
+
+    #[test]
+    fn constants_can_be_deleted() {
+        let mut doc = Document::from_text(
+            "const A = 1\nconst B = 2\nconst C = 3\n\nsheet T\n\n| X |\n| - |\n| 1 |\n",
+        );
+        doc.delete_const(1).unwrap();
+        let names: Vec<_> = doc
+            .snapshot()
+            .consts
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        assert_eq!(names, ["A", "C"]);
+        assert!(doc.delete_const(5).is_err());
+        assert!(doc.delete_all_consts());
+        assert!(doc.snapshot().consts.is_empty());
+        assert_eq!(doc.snapshot().sheets.len(), 1);
+        assert!(doc.text().starts_with("sheet T"), "{:?}", doc.text());
     }
 
     #[test]
@@ -4137,7 +7492,8 @@ mod tests {
         );
         assert!(loose.text().contains("2026-10-08 | 09:30"));
 
-        // A whole number and a part is kept as the fraction it comes to.
+        // A whole number and a part is kept as it was written, and makes the
+        // column a `Fraction` one, which shows it the same way.
         let mut mixed = Document::from_text("sheet T\n\nN : String\n\nA | N\n  |\n  |\n");
         mixed.set_cells(
             0,
@@ -4147,15 +7503,13 @@ mod tests {
                 (0, 1, "2 3/4".to_string()),
             ],
         );
-        // `2 3/4` is kept as the shorter `2.75`; `-1 1/3` would run to
-        // thirty-eight digits, so it stays as it was written, and makes the
-        // column a `Fraction` one, which shows `2.75` as `2 3/4`.
-        assert!(mixed.text().contains("2.75   | 2 3/4"), "{}", mixed.text());
+        assert!(mixed.text().contains("2 3/4"), "{}", mixed.text());
         assert!(mixed.text().contains("-1 1/3"));
+        assert!(!mixed.text().contains("2.75"), "{}", mixed.text());
         let cell = &mixed.snapshot().sheets[0].rows[0][0];
         assert_eq!(
             (cell.display.as_str(), cell.source.as_str()),
-            ("2 3/4", "2.75")
+            ("2 3/4", "2 3/4")
         );
         assert_eq!(cell.exact, None);
         assert!(loose.text().contains("= 1/2"));
@@ -4273,19 +7627,10 @@ mod tests {
         let numbers = |s: &str, a: &str| Some((s.to_string(), a.to_string()));
         // Exact numbers add up exactly, and are shown as cells are.
         let a = sum((0, 1), (2, 1));
-        assert_eq!(
-            (a.count, a.numbers),
-            (
-                3,
-                numbers("3.33333333333333333333…", "1.11111111111111111111…")
-            )
-        );
+        assert_eq!((a.count, a.numbers), (3, numbers("3.33", "1.11")));
         // Text counts but does not add; an empty cell does neither.
         let top = sum((0, 0), (1, 2));
-        assert_eq!(
-            (top.count, top.numbers),
-            (5, numbers("3.5", "1.16666666666666666666…"))
-        );
+        assert_eq!((top.count, top.numbers), (5, numbers("3.5", "1.17")));
         // One Num makes the total a Num.
         let b = sum((0, 2), (2, 2));
         assert_eq!((b.count, b.numbers), (2, numbers("100.5", "50.25")));
@@ -4490,10 +7835,11 @@ mod tests {
             moved("= T[*-1; *-1]", (2, 3), (2..3, 3..4), (1, -1)),
             "= T[*; *-2]"
         );
-        // A plain `*` is the cell's own, and a range ending on one goes as it is.
+        // A plain `*` read of a cell that is not cut is that cell still, and
+        // a range ending on one goes as it is.
         assert_eq!(
             moved("= [*; *-1]", (2, 3), (2..3, 3..4), (0, -2)),
-            "= [*; *-1]"
+            "= [*+2; *-1]"
         );
         assert_eq!(
             moved("= sum([B; *-2..*])", (2, 3), (2..3, 3..4), (2, 0)),
@@ -4503,12 +7849,14 @@ mod tests {
             moved("= sum([B; *-2..*-1])", (2, 3), (2..3, 3..4), (2, 0)),
             "= sum([B; *-4..*-3])"
         );
-        // Numbers and names say where they mean already.
+        // A number says where it means already, and a name alone or a `*`
+        // is the row it was in (D221).
         assert_eq!(
             moved("= [1; 0] + [B; *] + B", (2, 3), (2..3, 3..4), (2, -2)),
-            "= [1; 0] + [B; *] + B"
+            "= [1; 0] + [B; *-2] + [B; *-2]"
         );
-        // Cells cut together stay as far apart; a number or a name follows.
+        // Cells cut together stay as far apart; a number or a name follows. A
+        // cell not cut with it is read where it is, a row up from here.
         assert_eq!(
             moved(
                 "= [*-1; *] + [*-3; *] + [C; 2]",
@@ -4516,7 +7864,7 @@ mod tests {
                 (2..3, 2..4),
                 (1, -2)
             ),
-            "= [*-1; *] + [*-1; *] + [A; 3]"
+            "= [*-1; *] + [*-1; *-1] + [A; 3]"
         );
         assert_eq!(moved("*-1", (2, 3), (2..3, 3..4), (0, -2)), "*-1");
     }
@@ -4604,6 +7952,23 @@ mod tests {
         assert!(doc.text().contains("| 1 |\n\n# Three\nsheet V"));
         doc.move_sheet(1, 0).unwrap();
         assert_eq!(doc.text(), text);
+    }
+
+    #[test]
+    fn a_sheet_is_duplicated_just_after_itself() {
+        let text = "sheet T\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n# Kept\nsheet U\n\n| X |\n| - |\n| 9 |\n";
+        let mut doc = Document::from_text(text);
+        assert_eq!(doc.duplicate_sheet(0), Ok("T_001".to_string()));
+        let names: Vec<_> = doc
+            .snapshot()
+            .sheets
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        assert_eq!(names, ["T", "T_001", "U"]);
+        assert_eq!(doc.duplicate_sheet(0), Ok("T_002".to_string()));
+        assert!(doc.snapshot().problems.is_empty());
+        assert!(doc.text().contains("# Kept\nsheet U"), "{}", doc.text());
     }
 
     #[test]
@@ -4809,6 +8174,28 @@ mod tests {
         assert!(doc.move_rows(0, 0, 2, 3).is_err());
         assert!(doc.move_rows(0, 1, 1, 1).is_ok());
         assert_eq!(doc.text(), before);
+    }
+
+    #[test]
+    fn a_view_of_a_file_can_be_put_in() {
+        let mut doc = Document::from_text("sheet Sales\n\nMonth | Revenue\nJan   | 100\n");
+        doc.insert_view(usize::MAX, "Frame", "data/sales.parquet", |n| n.to_string())
+            .unwrap();
+        assert!(
+            doc.text()
+                .contains("view Frame := dataframe['data/sales.parquet']\n"),
+            "{}",
+            doc.text()
+        );
+        assert!(
+            doc.insert_view(0, "Frame", "x.csv", |n| n.to_string())
+                .is_err()
+        );
+        assert!(doc.insert_view(0, "Other", "", |n| n.to_string()).is_err());
+        assert!(
+            doc.insert_view(0, "Other", "it's.csv", |n| n.to_string())
+                .is_err()
+        );
     }
 
     #[test]

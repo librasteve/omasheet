@@ -486,7 +486,7 @@ fn column_table(dir: &std::path::Path, rows: usize) {
 /// fresh engine: the file's column is read inside it either way, so what
 /// the two lowerings differ by is what the answer was made from.
 fn column_cost(dir: &std::path::Path, expr: &str, lowering: Lowering) -> (Duration, usize, String) {
-    let text = "table T := dataframe[\"column.parquet\"]\n\nWhole : Integer\nReal  : Float\n";
+    let text = "view T := dataframe['column.parquet']\n\nWhole : Integer\nReal  : Float\n";
     let (mut program, mut diags) = compile(text, 0);
     assert!(diags.is_empty(), "{diags:?}");
     let tables = table::read(&mut program, dir, &mut diags);
@@ -554,4 +554,698 @@ fn a_column_as_values_against_the_column() {
         "\nmilliseconds; a fresh engine each run, the file's column read inside \
          the expression either way\n"
     );
+}
+
+/// What a filter by expression costs on a big table (filter-by-expression
+/// task 3.6): checking it as it is typed, and applying it, which Polars
+/// does over the column. The files are the big ones of `demo_data`, not in
+/// Git; a file that is not there is passed over. `OMASHEET_BIG` names
+/// another, as a path.
+#[test]
+#[ignore = "a measurement: run in release with --ignored --nocapture"]
+fn a_filter_on_a_big_table() {
+    use omasheet_engine::Document;
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+    let mut files = vec![
+        format!("{root}/demo_data/fhvhv_tripdata_2019-03.parquet"),
+        format!("{root}/demo_data/yellow_tripdata_2026-01.parquet"),
+    ];
+    if let Ok(more) = std::env::var("OMASHEET_BIG") {
+        files.insert(0, more);
+    }
+    for file in files.iter().filter(|f| std::path::Path::new(f).exists()) {
+        let started = Instant::now();
+        let doc = Document::from_text(&format!(
+            "view T := dataframe[{}]\n",
+            omasheet_engine::omx::lexer::quoted(file)
+        ));
+        let sheet = &doc.snapshot().sheets[0];
+        println!(
+            "\n{file}: {} rows, {} columns, opened in {}",
+            sheet.nrows,
+            sheet.columns.len(),
+            ms(started.elapsed())
+        );
+        let pick = |types: &[&str]| {
+            sheet
+                .columns
+                .iter()
+                .position(|c| types.contains(&c.ty.as_str()))
+        };
+        let mut cases: Vec<(usize, &str)> = Vec::new();
+        if let Some(c) = pick(&["Float", "Decimal"]) {
+            cases.extend([(c, "* > 20"), (c, "10 < * <= 20"), (c, "*.is_null()")]);
+        }
+        if let Some(c) = pick(&["Integer", "Int"]) {
+            cases.extend([(c, "* in [1, 2]"), (c, "* != 1")]);
+        }
+        if let Some(c) = pick(&["String"]) {
+            cases.extend([
+                (c, "*.starts_with('B'..'C')"),
+                (c, "*.contains('02')"),
+                (c, "*.matches('^HV000[34]$')"),
+            ]);
+        }
+        if let Some(c) = pick(&["Datetime"]) {
+            cases.extend([(c, "*.day == 15"), (c, "* >= 2019-03-15T00:00")]);
+        }
+        for (c, expr) in cases {
+            let name = sheet.columns[c].name.clone();
+            let checked = Instant::now();
+            let check = doc.check_filter(0, c, expr);
+            let check_time = checked.elapsed();
+            let filter = vec![(name.clone(), expr.to_string())];
+            let first = Instant::now();
+            let rows = doc.shown_rows(0, &filter);
+            let first_time = first.elapsed();
+            let again = Instant::now();
+            let _ = doc.shown_rows(0, &filter);
+            let again_time = again.elapsed();
+            println!(
+                "  {name:<24} {expr:<28} check {:>8}  apply {:>9} (again {:>9})  {}",
+                ms(check_time),
+                ms(first_time),
+                ms(again_time),
+                match (&check, &rows) {
+                    (Err(why), _) | (_, Err(why)) => format!("error: {why}"),
+                    (Ok(()), Ok(rows)) => format!("{} rows", rows.len()),
+                }
+            );
+        }
+    }
+}
+
+/// open-a-big-csv 0.3 and 5.1: a big CSV opened for the app, shown from
+/// its sample, then copied to Parquet and opened from the copy, and opened
+/// again with the copy current. The copies go to a cache of their own.
+#[test]
+#[ignore = "a measurement, not an assertion: run it in release with --ignored --nocapture"]
+fn a_big_csv_through_its_copy() {
+    use omasheet_engine::Document;
+    use omasheet_engine::table;
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+    let csv = std::env::var("OMASHEET_BIG_CSV")
+        .unwrap_or_else(|_| format!("{root}/demo_data/fhvhv_tripdata_2021-06.csv"));
+    let csv = std::path::PathBuf::from(csv);
+    if !csv.exists() {
+        return;
+    }
+    let cache = std::env::temp_dir().join(format!("omasheet-csv-{}", std::process::id()));
+    // SAFETY: the one test of this binary that sets it, before any reads.
+    unsafe { std::env::set_var("OMASHEET_CACHE", &cache) };
+    let text = format!(
+        "view T := dataframe[{}]\n",
+        omasheet_engine::omx::lexer::quoted(&csv.to_string_lossy())
+    );
+    let names = omasheet_engine::datefmt::Names::default();
+    let style = omasheet_engine::omx::date::Style::ISO;
+
+    let started = Instant::now();
+    table::sample(&csv).unwrap();
+    println!("sample written in {}", ms(started.elapsed()));
+    let started = Instant::now();
+    let doc = Document::on_screen(&text, style, names.clone());
+    let sample = doc.snapshot().sheets[0].nrows;
+    println!(
+        "\n{}: opened from its sample ({sample} rows) in {}",
+        csv.display(),
+        ms(started.elapsed())
+    );
+    assert_eq!(doc.to_convert(), vec![csv.clone()]);
+
+    let started = Instant::now();
+    let copy = table::convert(&csv).unwrap();
+    let size = std::fs::metadata(&copy).unwrap().len();
+    println!(
+        "copied in {}, {} MB",
+        ms(started.elapsed()),
+        size / 1_000_000
+    );
+
+    let mut doc = doc;
+    let started = Instant::now();
+    assert!(doc.converted(&csv));
+    println!(
+        "read from the copy, {} rows, in {}",
+        doc.snapshot().sheets[0].nrows,
+        ms(started.elapsed())
+    );
+
+    let started = Instant::now();
+    let again = Document::on_screen(&text, style, names);
+    println!(
+        "opened again, copy current: {} rows in {}",
+        again.snapshot().sheets[0].nrows,
+        ms(started.elapsed())
+    );
+    assert!(again.to_convert().is_empty());
+    std::fs::remove_dir_all(&cache).unwrap();
+}
+
+/// Run what an open runs, over a small file of its own, so that the pages of
+/// the program that an open touches are back in memory after a purge, which
+/// drops them with everything else. What is timed after it is then the data
+/// being cold and not the code (`open-a-big-csv` 5.1).
+fn prime_code() {
+    let dir = std::env::temp_dir().join(format!("omasheet-prime-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let file = dir.join("prime.csv");
+    let mut text = String::from("a,b,c\n");
+    for i in 0..3_000 {
+        text.push_str(&format!("{i},{}.5,x{i}\n", i % 7));
+    }
+    std::fs::write(&file, text).unwrap();
+    let view = format!(
+        "view T := dataframe[{}]\n",
+        omasheet_engine::omx::lexer::quoted(&file.to_string_lossy())
+    );
+    table::sample(&file).unwrap();
+    let names = omasheet_engine::datefmt::Names::default();
+    let style = omasheet_engine::omx::date::Style::ISO;
+    let _ = omasheet_engine::Document::on_screen(&view, style, names);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Drops the operating system's page cache, so the next read of a file is a
+/// cold one. It needs privilege (`purge` on macOS, a write to
+/// `/proc/sys/vm/drop_caches` on Linux), so it says whether it managed: a
+/// run that cannot is reported as warm only, never as cold.
+fn drop_page_cache() -> bool {
+    use std::process::{Command, Stdio};
+    let run = |program: &str, args: &[&str]| {
+        Command::new(program)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    };
+    if cfg!(target_os = "macos") {
+        run("purge", &[]) || run("sudo", &["-n", "purge"])
+    } else {
+        run("sh", &["-c", "sync; echo 3 > /proc/sys/vm/drop_caches"])
+            || run(
+                "sudo",
+                &["-n", "sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"],
+            )
+    }
+}
+
+/// The process's peak resident set, in MiB. It only ever rises, so it is
+/// printed once for each file and is the high-water mark of everything run
+/// so far, mapped file pages included — which the counting allocator's
+/// figure leaves out.
+fn peak_rss_mib() -> f64 {
+    #[cfg(unix)]
+    {
+        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+        if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } == 0 {
+            // Bytes on macOS, kilobytes elsewhere.
+            let scale = if cfg!(target_os = "macos") {
+                1.0
+            } else {
+                1024.0
+            };
+            return usage.ru_maxrss as f64 * scale / (1024.0 * 1024.0);
+        }
+    }
+    0.0
+}
+
+/// open-a-big-csv 0.1: the figures the change is measured against, taken
+/// from the synthetic files `demo_data/generate.sh` makes, with the page
+/// cache warm and, where it can be dropped, cold. For each file, in the
+/// order the app pays them:
+///
+/// - **open**: the sample written and a `Document` drawn from it, which is
+///   the time to the first screen (target ≤ 50 ms);
+/// - **copy**: the streaming conversion to Parquet, with its size;
+/// - **reopen**: a `Document` over the file with the copy current (≤ 50 ms);
+/// - **sum, first**: `T.qty.sum()` over the copy, and **again** once the
+///   engine has it (≤ 50 ms from the cache).
+///
+/// Time is wall time of one run, since a cold figure cannot be repeated;
+/// memory is the peak the counting allocator saw above what was held before
+/// (mapped file pages are not in it; `peak RSS` after each file is). The
+/// scroll, jump and edit targets (5.2, 5.3) are frame times in the window
+/// and are taken in the app. `OMASHEET_BENCH` names the sizes, default
+/// `10mb,100mb,1.1gb`; a file that is not there is passed over.
+///
+/// ```text
+/// demo_data/generate.sh
+/// cargo test -p omasheet-engine --test timings --release -- --ignored --nocapture the_targets
+/// ```
+///
+/// Cold needs privilege: run `sudo -v` first, or the cold rows say so.
+#[test]
+#[ignore = "a measurement, not an assertion: run it in release with --ignored --nocapture"]
+fn the_targets_on_a_synthetic_csv() {
+    use omasheet_engine::Document;
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../demo_data");
+    let sizes = std::env::var("OMASHEET_BENCH").unwrap_or_else(|_| "10mb,100mb,1.1gb".into());
+    // `OMASHEET_BENCH_EXT=json` takes the JSON files instead of the CSVs.
+    let ext = std::env::var("OMASHEET_BENCH_EXT").unwrap_or_else(|_| "csv".into());
+    let cache = std::env::temp_dir().join(format!("omasheet-bench-{}", std::process::id()));
+    // SAFETY: the one test of this binary that sets it, before any reads.
+    unsafe { std::env::set_var("OMASHEET_CACHE", &cache) };
+    let names = omasheet_engine::datefmt::Names::default();
+    let style = omasheet_engine::omx::date::Style::ISO;
+    let cold_possible = drop_page_cache();
+    println!(
+        "\n{:<8} {:<5} {:<12} {:>10} {:>10}  note",
+        "file", "cache", "step", "time", "peak MiB"
+    );
+    let row =
+        |size: &str, cache_state: &str, step: &str, time: Duration, peak: usize, note: &str| {
+            println!(
+                "{size:<8} {cache_state:<5} {step:<12} {:>10} {:>10.1}  {note}",
+                ms(time),
+                peak as f64 / (1024.0 * 1024.0)
+            );
+        };
+    for size in sizes.split(',') {
+        let csv = std::path::PathBuf::from(format!("{root}/synthetic-{size}.{ext}"));
+        if !csv.exists() {
+            println!(
+                "{size}: {} is not there; demo_data/generate.sh makes it",
+                csv.display()
+            );
+            continue;
+        }
+        let text = format!(
+            "view T := dataframe[{}]\n",
+            omasheet_engine::omx::lexer::quoted(&csv.to_string_lossy())
+        );
+        for state in ["warm", "cold", "cold+code"] {
+            if state.starts_with("cold") && !cold_possible {
+                println!("{size:<8} cold  (page cache could not be dropped: needs sudo)");
+                continue;
+            }
+            // Each state starts from nothing written, and from a cache the
+            // next read of the file has to fetch from disk (cold) or has
+            // just had read through (warm).
+            let _ = std::fs::remove_dir_all(&cache);
+            if state.starts_with("cold") {
+                drop_page_cache();
+                if state == "cold+code" {
+                    prime_code();
+                }
+            } else {
+                let _ = std::fs::read(&csv).map(|b| b.len());
+            }
+
+            let started = Instant::now();
+            let (doc, peak) = peak_of(|| {
+                table::sample(&csv).unwrap();
+                Document::on_screen(&text, style, names.clone())
+            });
+            let sample = doc.snapshot().sheets[0].nrows;
+            row(
+                size,
+                state,
+                "open",
+                started.elapsed(),
+                peak,
+                &format!("{sample} rows shown"),
+            );
+
+            let started = Instant::now();
+            let (copy, peak) = peak_of(|| table::convert(&csv).unwrap());
+            let bytes = std::fs::metadata(&copy).unwrap().len();
+            row(
+                size,
+                state,
+                "copy",
+                started.elapsed(),
+                peak,
+                &format!("{} MB", bytes / 1_000_000),
+            );
+            drop(doc);
+
+            if state.starts_with("cold") {
+                drop_page_cache();
+            }
+            let started = Instant::now();
+            let (again, peak) = peak_of(|| Document::on_screen(&text, style, names.clone()));
+            row(
+                size,
+                state,
+                "reopen",
+                started.elapsed(),
+                peak,
+                &format!("{} rows", again.snapshot().sheets[0].nrows),
+            );
+            assert!(again.to_convert().is_empty());
+            drop(again);
+
+            // The first aggregate and the second, from one engine.
+            let (mut program, mut diags) = compile(&text, 0);
+            assert!(diags.is_empty(), "{diags:?}");
+            let tables = table::read(&mut program, std::path::Path::new(root), &mut diags);
+            assert!(diags.is_empty(), "{diags:?}");
+            let program = program;
+            let engine = Engine::with_tables(
+                &program,
+                Options {
+                    base: Some(root.into()),
+                    ..Options::default()
+                },
+                tables,
+            );
+            engine.run();
+            let (node, _) =
+                compile_expr(&program, "T.qty.sum()", 1).expect("the expression checks");
+            if state.starts_with("cold") {
+                drop_page_cache();
+            }
+            for step in ["sum, first", "sum, again"] {
+                let started = Instant::now();
+                let (answer, peak) = peak_of(|| engine.eval_top(&node));
+                let answer = answer.map_or("<error>".into(), |v| engine.show(&v, true));
+                row(
+                    size,
+                    state,
+                    step,
+                    started.elapsed(),
+                    peak,
+                    &format!("T.qty.sum() = {answer}"),
+                );
+            }
+        }
+        println!("{size:<8} peak RSS so far {:.0} MiB", peak_rss_mib());
+    }
+    println!(
+        "\nmilliseconds, one run each; peak is the counting allocator's, above what \
+         was held before the step\nscroll, jump and edit (5.2, 5.3) are frame times in \
+         the app\n"
+    );
+    let _ = std::fs::remove_dir_all(&cache);
+}
+
+/// open-a-big-csv 1.3: a `table` over a big Parquet file, against the
+/// targets, in the app's own terms. Opened as the app opens it
+/// (`Document::on_screen`), then a screen of rows asked for as the grid asks
+/// for them (`Document::rows`: 40 rows, every column, calculated and
+/// formatted): the first screen, a jump to the last rows and to the middle,
+/// and a scroll of 200 frames three rows at a time. Where the file would fit
+/// in memory (D157: here under 2.5 GB to hold) it is then held whole, as the
+/// app's worker does, and the same asked again, since that is what the grid
+/// moves over to.
+///
+/// Targets: open to first screen ≤ 50 ms, and a frame ≤ 16 ms. This takes
+/// the data's share of the frame; drawing it in the window is the app's,
+/// and is looked at by hand. The files are those of `demo_data`; the 41M-row
+/// NYC taxi year of `hold-less-of-a-big-file` is added by `OMASHEET_BIG`
+/// (a path). Cold needs privilege to drop the page cache (`sudo -v`).
+///
+/// ```text
+/// cargo test -p omasheet-engine --test timings --release -- --ignored --nocapture a_parquet_table
+/// ```
+#[test]
+#[ignore = "a measurement, not an assertion: run it in release with --ignored --nocapture"]
+fn a_parquet_table_against_the_targets() {
+    use omasheet_engine::Document;
+    const SCREEN: usize = 40;
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+    let mut files = vec![
+        format!("{root}/demo_data/fhvhv_tripdata_2019-03.parquet"),
+        format!("{root}/demo_data/yellow_tripdata_2026-01.parquet"),
+    ];
+    if let Ok(more) = std::env::var("OMASHEET_BIG") {
+        files.insert(0, more);
+    }
+    let names = omasheet_engine::datefmt::Names::default();
+    let style = omasheet_engine::omx::date::Style::ISO;
+    let cold_possible = drop_page_cache();
+    println!(
+        "\n{:<6} {:<7} {:<22} {:>9} {:>9}  note",
+        "cache", "state", "step", "time ms", "peak MiB"
+    );
+    for file in files.iter().filter(|f| std::path::Path::new(f).exists()) {
+        println!("\n{file}");
+        let text = format!(
+            "view T := dataframe[{}]\n",
+            omasheet_engine::omx::lexer::quoted(file)
+        );
+        for cache in ["warm", "cold"] {
+            if cache == "cold" && !cold_possible {
+                println!("cold   (page cache could not be dropped: needs sudo)");
+                continue;
+            }
+            if cache == "cold" {
+                drop_page_cache();
+            } else {
+                // Read through once, so that it is warm.
+                let _ = std::fs::read(file).map(|b| b.len());
+            }
+            let row = |state: &str, step: &str, time: Duration, peak: usize, note: &str| {
+                println!(
+                    "{cache:<6} {state:<7} {step:<22} {:>9} {:>9.1}  {note}",
+                    ms(time),
+                    peak as f64 / (1024.0 * 1024.0)
+                );
+            };
+            let started = Instant::now();
+            let (mut doc, peak) = peak_of(|| Document::on_screen(&text, style, names.clone()));
+            let nrows = doc.row_count(0);
+            row(
+                "paged",
+                "open",
+                started.elapsed(),
+                peak,
+                &format!("{nrows} rows"),
+            );
+            let mut held = false;
+            for state in ["paged", "held"] {
+                if state == "held" {
+                    let wanted = doc.to_hold();
+                    let Some(want) = wanted.first().filter(|h| h.bytes <= 2_500_000_000) else {
+                        println!(
+                            "{cache:<6} held    (not held: {} MB to hold)",
+                            wanted.first().map_or(0, |h| h.bytes / 1_000_000)
+                        );
+                        break;
+                    };
+                    let started = Instant::now();
+                    let (whole, peak) =
+                        peak_of(|| table::read_whole(&want.path, &want.columns).unwrap());
+                    let read_time = started.elapsed();
+                    row("held", "read whole (worker)", read_time, peak, "");
+                    // The swap is the part that runs on the thread that draws.
+                    let path = want.path.clone();
+                    let swapped = Instant::now();
+                    held = doc.hold(path, whole);
+                    row(
+                        "held",
+                        "hold: the swap (UI)",
+                        swapped.elapsed(),
+                        0,
+                        &format!("held: {held}"),
+                    );
+                    if !held {
+                        break;
+                    }
+                }
+                let screen = |doc: &Document, from: usize| {
+                    let started = Instant::now();
+                    let (rows, peak) = peak_of(|| doc.rows(0, from, SCREEN));
+                    assert!(!rows.is_empty());
+                    (started.elapsed(), peak)
+                };
+                let (t, peak) = screen(&doc, 0);
+                row(state, "first screen", t, peak, "");
+                let (t, peak) = screen(&doc, nrows.saturating_sub(SCREEN));
+                row(state, "jump to last rows", t, peak, "");
+                let (t, peak) = screen(&doc, nrows / 2);
+                row(state, "jump to middle", t, peak, "");
+                let mut frames: Vec<Duration> = (0..200)
+                    .map(|i| screen(&doc, nrows / 3 + i * 3).0)
+                    .collect();
+                frames.sort();
+                row(
+                    state,
+                    "scroll, median frame",
+                    frames[frames.len() / 2],
+                    0,
+                    &format!(
+                        "worst {}, over 16 ms: {}",
+                        ms(*frames.last().unwrap()),
+                        frames
+                            .iter()
+                            .filter(|f| **f > Duration::from_millis(16))
+                            .count()
+                    ),
+                );
+            }
+            let _ = held;
+        }
+    }
+    println!("\nmilliseconds, one run each; a frame is `Document::rows` of {SCREEN} rows\n");
+}
+
+/// open-a-big-csv 2.4: what the document's cache of whole columns saves
+/// once a column has been read whole, on the operations that read one: a
+/// sort by it, a filter by it, and the rebuild after an edit, which starts
+/// the engine again with none of its columns. Each step is timed and the
+/// cache's hits and misses are printed after it, so that a step that reads
+/// from the file shows as a miss and one that does not as a hit. Warm.
+///
+/// ```text
+/// cargo test -p omasheet-engine --test timings --release -- --ignored --nocapture an_edit_over
+/// ```
+#[test]
+#[ignore = "a measurement, not an assertion: run it in release with --ignored --nocapture"]
+fn an_edit_over_a_big_table_reads_no_column_again() {
+    use omasheet_engine::Document;
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+    let names = omasheet_engine::datefmt::Names::default();
+    let style = omasheet_engine::omx::date::Style::ISO;
+    println!(
+        "\n{:<34} {:<24} {:>9}  cache after",
+        "file", "step", "time ms"
+    );
+    for (file, column) in [
+        ("fhvhv_tripdata_2019-03.parquet", "PULocationID"),
+        ("yellow_tripdata_2026-01.parquet", "PULocationID"),
+    ] {
+        let path = format!("{root}/demo_data/{file}");
+        if !std::path::Path::new(&path).exists() {
+            continue;
+        }
+        let text = format!(
+            "view T := dataframe[{}]\n\nPULocationID : Integer\nDOLocationID : Integer\n",
+            omasheet_engine::omx::lexer::quoted(&path)
+        );
+        for kept in [false, true] {
+            let mut doc = Document::on_screen(&text, style, names.clone());
+            if !kept {
+                // A budget of nothing keeps nothing: every edit reads again.
+                doc.set_column_budget(0);
+            }
+            let file = format!("{file} ({})", if kept { "cache" } else { "no cache" });
+            let c = doc.snapshot().sheets[0]
+                .columns
+                .iter()
+                .position(|x| x.name == column)
+                .expect("the column");
+            let at = doc.snapshot().sheets[0].columns.len();
+            let say = |doc: &Document, step: &str, took: Duration| {
+                let s = doc.column_cache();
+                println!(
+                    "{file:<44} {step:<24} {:>9}  {} hits, {} misses, {} MiB",
+                    ms(took),
+                    s.hits,
+                    s.misses,
+                    s.bytes / (1024 * 1024)
+                );
+            };
+            let started = Instant::now();
+            doc.sort_rows(0, c, false).unwrap();
+            say(&doc, "sort ascending", started.elapsed());
+            let started = Instant::now();
+            doc.sort_rows(0, c, true).unwrap();
+            say(&doc, "sort descending", started.elapsed());
+            let filter = vec![(column.to_string(), "* in [1, 2]".to_string())];
+            let started = Instant::now();
+            let rows = doc.shown_rows(0, &filter).map(|r| r.len());
+            say(&doc, &format!("filter ({rows:?} rows)"), started.elapsed());
+            let started = Instant::now();
+            doc.insert_computed(0, at, "A", &format!("{column} + 1"))
+                .unwrap();
+            say(&doc, "edit: add a formula", started.elapsed());
+            let started = Instant::now();
+            doc.sort_rows(0, c, false).unwrap();
+            say(&doc, "sort after the edit", started.elapsed());
+            // The new column drawn: a screen of it, first at the start and then
+            // a jump to the middle and a scroll on from there.
+            let nrows = doc.row_count(0);
+            let started = Instant::now();
+            let _ = doc.rows(0, 0, 40);
+            say(&doc, "first screen with it", started.elapsed());
+            let started = Instant::now();
+            let _ = doc.rows(0, nrows / 2, 40);
+            say(&doc, "jump to the middle", started.elapsed());
+            let started = Instant::now();
+            let _ = doc.rows(0, nrows / 2 + 3, 40);
+            say(&doc, "scroll three rows", started.elapsed());
+        }
+    }
+    println!("\nmilliseconds, one run each, page cache warm\n");
+}
+
+/// `hold-less-of-a-big-file` 3.3: the rebuild of a table of `budget`'s
+/// shape, a Parquet file and three calculated columns, against the same rows
+/// written inline, which `where_the_time_goes` measures. The snapshot of
+/// the table is the rows on the screen (D80), so it should not grow with
+/// the rows; the inline sheet's is every cell of every column.
+///
+/// ```text
+/// cargo test -p omasheet-engine --test timings --release -- --ignored --nocapture a_paged_table_rebuild
+/// ```
+#[test]
+#[ignore = "a measurement, not an assertion: run it in release with --ignored --nocapture"]
+fn a_paged_table_rebuild_against_the_inline_one() {
+    use omasheet_engine::Document;
+    use polars::prelude::*;
+    const SCREEN: usize = 40;
+    let names = omasheet_engine::datefmt::Names::default();
+    let style = omasheet_engine::omx::date::Style::ISO;
+    let dir = std::env::temp_dir().join(format!("omasheet-paged-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a directory");
+    println!("\n{:>9}  {:<22} {:>9}  note", "rows", "step", "time ms");
+    for rows in ROWS {
+        let month: Vec<&str> = (0..rows)
+            .map(|r| ["Jan", "Feb", "Mar", "Apr", "May", "Jun"][r % 6])
+            .collect();
+        let revenue: Vec<i64> = (0..rows).map(|r| 10_000 + (r % 997) as i64 * 13).collect();
+        let cost: Vec<i64> = (0..rows).map(|r| 6_000 + (r % 89) as i64 * 7).collect();
+        let mut frame =
+            df!["Month" => month, "Revenue" => revenue, "Cost" => cost].expect("a frame");
+        let path = dir.join(format!("sales{rows}.parquet"));
+        let mut file = std::fs::File::create(&path).expect("a file");
+        ParquetWriter::new(&mut file)
+            .finish(&mut frame)
+            .expect("a written Parquet");
+        let text = format!(
+            "view Sales := dataframe[{}]\n\nMonth : String\nRevenue : Integer\nCost : Integer\n\n\
+             Profit := Revenue - Cost\nTax    := Profit * 20%\nMargin := Profit / Revenue\n",
+            omasheet_engine::omx::lexer::quoted(&path.to_string_lossy())
+        );
+        let best = |f: &dyn Fn() -> Duration| (0..RUNS).map(|_| f()).min().unwrap_or_default();
+        let open = best(&|| {
+            let started = Instant::now();
+            let doc = Document::on_screen(&text, style, names.clone());
+            std::hint::black_box(&doc);
+            started.elapsed()
+        });
+        let doc = Document::on_screen(&text, style, names.clone());
+        let nrows = doc.row_count(0);
+        let screen = best(&|| {
+            let started = Instant::now();
+            std::hint::black_box(doc.rows(0, nrows / 2, SCREEN));
+            started.elapsed()
+        });
+        // A formula column added to the open table: the rebuild an edit pays.
+        let edit = best(&|| {
+            let mut d = Document::on_screen(&text, style, names.clone());
+            let at = d.snapshot().sheets[0].columns.len();
+            let started = Instant::now();
+            let _ = d.insert_computed(0, at, "Extra", "Revenue + Cost");
+            let time = started.elapsed();
+            std::hint::black_box(&d);
+            time
+        });
+        for (step, time, note) in [
+            ("open, rebuilt", open, format!("{nrows} rows")),
+            ("a screen of 40 rows", screen, "from the middle".to_string()),
+            (
+                "add a formula column",
+                edit,
+                "an edit of the open table".to_string(),
+            ),
+        ] {
+            println!("{rows:>9}  {step:<22} {:>9}  {note}", ms(time));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

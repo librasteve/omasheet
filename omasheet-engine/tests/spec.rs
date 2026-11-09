@@ -84,6 +84,22 @@ fn lint_errors(file: &str) -> Vec<String> {
 // ---- numerics ------------------------------------------------------------
 
 #[test]
+fn a_remainder_takes_the_sign_of_the_divisor() {
+    assert_eq!(calc("7 % 3"), "1");
+    assert_eq!(calc("(0 - 7) % 3"), "2");
+    assert_eq!(calc("7 % (0 - 3)"), "-2");
+    assert_eq!(calc("7.5 % 2"), "1.5");
+    // It binds as `*` does, and is `NaN` by zero as `0/0` is.
+    assert_eq!(calc("2 * 7 % 3"), "2");
+    assert_eq!(calc("5 % 0"), "NaN");
+    // Divisible by.
+    assert_eq!(calc("9 % 3 == 0"), "true");
+    assert_eq!(calc("10 % 3 == 0"), "false");
+    // A percentage is still one, and is not a remainder.
+    assert_eq!(calc("20% + 1"), "1.2");
+}
+
+#[test]
 fn large_integers_keep_thirty_eight_digits_and_move_the_point() {
     // Past an `i64` a whole number is still exact, as a decimal.
     assert_eq!(calc("2 ** 64"), "18446744073709551616");
@@ -148,8 +164,80 @@ fn floating_point_is_asked_for_never_assumed() {
         calc("1/3 + 1/7 + 1/11 + 1/13 + 1/17"),
         "0.702846173434408728526375585199"
     );
-    assert!(calc_err(None, "2 ** 0.5").contains("`.Float`"));
+    // A power is exact only for a whole exponent; any other is a Float.
+    assert!(calc("2 ** 0.5").starts_with("1.41421"));
     assert!(calc_err(None, "approx(1/3)").contains("unknown function `approx`"));
+}
+
+/// A quotient that comes to a whole number goes where one is wanted.
+#[test]
+fn a_whole_quotient_is_a_whole_number() {
+    assert_eq!(calc("[1, 2, 3][4/2]"), "3");
+    assert_eq!(calc("[1, 2, 3, 4][0 .. 4/2]"), "[1, 2, 3]");
+    assert_eq!(calc("round(3.14159, 4/2)"), "3.14");
+    assert_eq!(calc("(10/5) +& 3"), "2");
+    // One that does not is reported where it is used, not where it is typed.
+    assert!(calc_err(None, "[1, 2, 3][5/2]").contains("whole number"));
+    assert!(calc_err(None, "(10/4) +& 3").contains("whole number"));
+    // `=1/1` is an Integer, so it fits an Integer column.
+    let file = "sheet T\n\nI : Integer\n\n| I |\n| - |\n| =1/1 |\n| =9/3 |\n";
+    assert!(lint_errors(file).is_empty(), "{:?}", lint_errors(file));
+}
+
+/// A division by zero is a `Float`: an exact column left to its cells takes
+/// it, and a declared one says why it cannot.
+#[test]
+fn a_division_by_zero_makes_a_column_of_it_a_float() {
+    let file = "sheet T\n\n| U |\n| - |\n| =1/0 |\n| 2.5 |\n";
+    let view = shown(file);
+    assert!(view.contains("Inf"), "{view}");
+    let declared = "sheet T\n\nU : Decimal\n\n| U |\n| - |\n| =1/0 |\n| 2.5 |\n";
+    let said = lint_errors(declared).join("\n");
+    assert!(
+        said.contains("declared `Decimal` but this is `Float`"),
+        "{said}"
+    );
+    assert!(said.contains("declare the column `Float`"), "{said}");
+    // And a `Float` column takes it, however it is written.
+    let float = "sheet T\n\nU : Float\n\n| U |\n| - |\n| =1/0 |\n| =0/0 |\n| =-1/0 |\n";
+    assert!(lint_errors(float).is_empty(), "{:?}", lint_errors(float));
+    assert_eq!(ask(float, "T.U"), "[Inf, NaN, -Inf]");
+}
+
+/// A fraction is written in angle brackets in a formula.
+#[test]
+fn a_fraction_is_written_in_angle_brackets() {
+    let show = |expr: &str| {
+        let out = eval(None, "<expression>", expr);
+        assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
+        out.output.trim_end().to_string()
+    };
+    assert_eq!(calc("<1/10>"), "1/10");
+    // In full a fraction is `n/d`; shown, it has its whole part.
+    assert_eq!(calc("<2 3/4>"), "11/4");
+    assert_eq!(show("<2 3/4>"), "2 3/4");
+    assert_eq!(calc("-<3/4>"), "-3/4");
+    assert_eq!(calc("<-2 3/4>"), "-11/4");
+    assert_eq!(show("<-2 3/4>"), "-2 3/4");
+    assert_eq!(calc("<1/10> + <1/10>"), "1/5");
+    assert_eq!(calc("<1 1/2> * 2"), "3");
+    // With a decimal it is a decimal; a bare quotient is still one.
+    assert_eq!(calc("<1/10> + 0.5"), "0.6");
+    assert_eq!(calc("1/10 + 1/10"), "0.2");
+    // A comparison is as it was.
+    assert_eq!(calc("1 < 2"), "true");
+    assert_eq!(calc("<1/10> < <1/5>"), "true");
+    assert!(calc_err(None, "<1/0>").contains("denominator"));
+    assert!(calc_err(None, "<1/10").contains("`>`"));
+    // `+<` is a shift, and a sum with a fraction run into it says how to write one.
+    for e in ["1+<1/10>", "<1/10>+<1/10>", "1+<2 3/4>"] {
+        assert!(
+            calc_err(None, e).contains("put a space after the `+`"),
+            "{e}"
+        );
+    }
+    assert_eq!(calc("<1/10> + <1/10>"), "1/5");
+    assert_eq!(calc("1 +< 2"), "4");
 }
 
 /// `Decimal` is an exact number shown as a decimal, cut and marked where it
@@ -212,7 +300,7 @@ fn decimals() {
     // One that does not end is shown cut and marked.
     assert_eq!(calc("(1/8).Decimal"), "0.125");
     assert_eq!(calc("(1.5e3).Decimal + 0.5"), "1500.5");
-    assert_eq!(calc("\"20%\".Decimal"), "0.2");
+    assert_eq!(calc("'20%'.Decimal"), "0.2");
     let shown = |expr: &str| {
         let out = eval(None, "<expression>", expr);
         assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
@@ -241,14 +329,15 @@ fn percents() {
     assert_eq!(calc("-12.5%"), "-12.5%");
     assert_eq!(calc("20% == 0.2"), "true");
 
-    // Percents add up to a Percent; anything else done with one gives the
+    // Two Percents give a Percent; anything else done with one gives the
     // plain number.
     assert_eq!(calc("20% + 5%"), "25%");
     assert_eq!(calc("20% - 5%"), "15%");
     assert_eq!(calc("-(20%)"), "-20%");
     assert_eq!(calc("abs(-20%)"), "20%");
     assert_eq!(calc("100 * 20%"), "20");
-    assert_eq!(calc("20% * 50%"), "0.1");
+    assert_eq!(calc("20% * 50%"), "10%");
+    assert_eq!(calc("20% * 0.5"), "0.1");
     assert_eq!(calc("1 + 20%"), "1.2");
     assert_eq!(calc("20% / 3"), "0.0666666666666666666666666666667");
     assert_eq!(calc("[20%, 10%].sum()"), "30%");
@@ -301,7 +390,7 @@ fn percents() {
         "41.6666666666666666666666666667%"
     );
     assert_eq!(calc("(1.5e-1).Percent"), "15%");
-    assert_eq!(calc("\"20%\".Percent"), "20%");
+    assert_eq!(calc("'20%'.Percent"), "20%");
     assert_eq!(calc("20%.Decimal"), "0.2");
     assert_eq!(calc("20%.Decimal"), "0.2");
     assert_eq!(calc("150%.Int"), "1");
@@ -386,14 +475,19 @@ fn fractions() {
     assert_eq!(show("(1/10000).Fraction"), "1/10000");
     assert_eq!(show("(1/10001).Fraction"), "0.00009999000099990000…");
     // A Fraction column shows its cells as fractions, whichever way they
-    // were written, and anything worked out from one is a fraction too.
-    let file = "sheet F\n\nYield : Fraction\n\nYield | Doubled | Half\n\
-                1/7 | * | *\n2 3/4 | * | *\n0.5 | * | *\n3 | * | *\n\
-                Doubled := Yield * 2\nHalf := Yield / 2\n";
+    // were written, and two fractions give a fraction; a fraction with any
+    // other number is a Decimal, declared a Fraction here to be shown as one.
+    let file = "sheet F\n\nYield : Fraction\nHalf : Fraction\n\nYield | Doubled | Half | Tripled\n\
+                1/7 | * | * | *\n2 3/4 | * | * | *\n0.5 | * | * | *\n3 | * | * | *\n\
+                Doubled := Yield + Yield\nHalf := Yield / 2\nTripled := Yield * 3\n";
     assert!(lint_errors(file).is_empty(), "{:?}", lint_errors(file));
     assert_eq!(ask(file, "F.Yield"), "[1/7, 11/4, 1/2, 3]");
     assert_eq!(ask(file, "F.Doubled"), "[2/7, 11/2, 1, 6]");
     assert_eq!(ask(file, "F.Half"), "[1/14, 11/8, 1/4, 3/2]");
+    assert_eq!(
+        ask(file, "F.Tripled"),
+        "[0.428571428571428571428571428571, 8.25, 1.5, 9]"
+    );
     // It holds what a Decimal holds, so the two go either way.
     assert_eq!(calc("(1/7).Fraction == 1/7"), "true");
     assert_eq!(
@@ -435,7 +529,7 @@ fn rationals_in_full() {
     assert_eq!(calc("10/6"), "1.66666666666666666666666666667");
     assert_eq!(calc("7/3 * 3"), "7");
     assert_eq!(calc("(7/3).Int"), "2");
-    assert_eq!(calc("\"22/7\".Decimal"), "3.14285714285714285714285714286");
+    assert_eq!(calc("'22/7'.Decimal"), "3.14285714285714285714285714286");
     // A whole number and a part may be written with a space, in a cell.
     assert_eq!(
         ask("sheet M\n\nA : Decimal\n\nA\n2 3/4\n", "M[A; 0]"),
@@ -506,11 +600,11 @@ fn conversions() {
     assert_eq!(calc("Boolean(0)"), "false");
     assert_eq!(calc("0.5.Boolean"), "true");
     // Text is read the way a cell is.
-    assert_eq!(calc("Int(\"42\") + 1"), "43");
-    assert_eq!(calc("\"20%\".Decimal"), "0.2");
-    assert_eq!(calc("Date(\"2025-01-31\") + 1"), "2025-02-01");
-    assert_eq!(calc("Boolean(\"true\")"), "true");
-    assert!(calc_err(None, "Int(\"abc\")").contains("`abc` is not an Int"));
+    assert_eq!(calc("Int('42') + 1"), "43");
+    assert_eq!(calc("'20%'.Decimal"), "0.2");
+    assert_eq!(calc("Date('2025-01-31') + 1"), "2025-02-01");
+    assert_eq!(calc("Boolean('true')"), "true");
+    assert!(calc_err(None, "Int('abc')").contains("`abc` is not an Int"));
     // Dates and times.
     assert_eq!(calc("2025-01-31T09:30.Date"), "2025-01-31");
     assert_eq!(calc("2025-01-31T09:30.Time"), "09:30");
@@ -602,9 +696,9 @@ fn cursor_survives_row_insertion() {
 
 #[test]
 fn predicate_selection() {
-    assert_eq!(ask(SALES, "Sales[; Region == \"UK\"].Revenue.sum()"), "250");
+    assert_eq!(ask(SALES, "Sales[; Region == 'UK'].Revenue.sum()"), "250");
     let dated = "sheet Sales\n\nDate | Region | Revenue\n2024-12-31 | UK | 1\n2025-03-01 | UK | 10\n2025-06-01 | US | 100\n2026-01-01 | UK | 1000\n";
-    let expr = "Sales[;\n    Region == \"UK\" and\n    Date >= 2025-01-01 and\n    Date < 2026-01-01\n].Revenue.sum()";
+    let expr = "Sales[;\n    Region == 'UK' and\n    Date >= 2025-01-01 and\n    Date < 2026-01-01\n].Revenue.sum()";
     assert_eq!(ask(dated, expr), "10");
 }
 
@@ -673,7 +767,7 @@ fn durations() {
     assert_eq!(calc("PT12H.total_days()"), "0.5");
     assert_eq!(calc("PT0.5S.total_seconds()"), "0.5");
     assert_eq!(calc("PT1H < PT90M"), "true");
-    assert_eq!(calc("Duration(\"PT1H\")"), "PT1H");
+    assert_eq!(calc("Duration('PT1H')"), "PT1H");
     // A year and a month are not a fixed length.
     for text in ["P1Y", "P1M", "P1Y2D"] {
         let err = calc_err(None, text);
@@ -836,6 +930,62 @@ fn index_with_no_sheet_name() {
 }
 
 #[test]
+fn complex_numbers() {
+    // Written with `i`, and built from parts.
+    assert_eq!(calc("3+4i"), "3+4i");
+    assert_eq!(calc("(1+2i) * (3-1i)"), "5+5i");
+    assert_eq!(calc("2i * 2i"), "-4+0i");
+    assert_eq!(calc("Complex(3, 4) == 3+4i"), "true");
+    assert_eq!(calc("[re(3+4i), im(3+4i), abs(3+4i)]"), "[3, 4, 5]");
+    assert_eq!(calc("conj(3+4i)"), "3-4i");
+    assert_eq!(calc("degrees(arg(2i))"), "90");
+    assert_eq!(calc("sqrt(-4+0i)"), "0+2i");
+    assert_eq!(calc("ln(exp(1+1i))"), "1+1i");
+    assert_eq!(calc("3.Complex"), "3+0i");
+    assert_eq!(calc("Complex(3, 4)"), "3+4i");
+    assert_eq!(calc("sqrt(-2+0i)"), "0+1.4142135623730951i");
+    // A Complex is above Float: any number beside one gives a Complex.
+    assert_eq!(calc("1 + 1i"), "1+1i");
+    assert_eq!(calc("0x10 + 1i"), "16+1i");
+    assert_eq!(calc("1/3 + 1i"), "0.3333333333333333+1i");
+    assert_eq!(calc("(1+1i) ** 2"), "0+2i");
+    assert_eq!(calc("2i ** -2"), "-0.25-0i");
+    assert_eq!(calc("[Inf\\i, 1+NaN\\i]"), "[0+Inf\\i, 1+NaN\\i]");
+    // Real numbers have the same parts.
+    assert_eq!(calc("[re(5/2), im(7), conj(3)]"), "[2.5, 0, 3]");
+    assert!(calc_err(None, "sin(1i)").contains("`sin` cannot be applied to Complex"));
+    // No order, but equality, exactly (D198, D202).
+    let e = calc_err(None, "1i < 2i");
+    assert!(e.contains("no order"), "{e}");
+    assert_eq!(calc("3+4i == 3+4i"), "true");
+    assert_eq!(calc("3+4i != 3+5i"), "true");
+    // Made a real number only where its imaginary part is zero (D201).
+    assert_eq!(calc("(3+0i).Integer"), "3");
+    assert_eq!(calc("(3+1e-16i).Float"), "3");
+    assert!(calc_err(None, "(3+4i).Float").contains("imaginary part not zero"));
+    assert!(calc_err(None, "(3+1e-15i).Float").contains("imaginary part not zero"));
+    // A column of them: literal cells, a real number, and a formula.
+    let file = "sheet Z\n\nV : Complex\n\nV | Size\n3+4i | *\n-2i | *\n5 | *\n-1.5-2i | *\n= [V; *-4] * 1i | *\n\nSize := abs(V)\n";
+    assert_eq!(ask(file, "Z.V"), "[3+4i, 0-2i, 5+0i, -1.5-2i, -4+3i]");
+    assert_eq!(ask(file, "Z.Size"), "[5, 2, 5, 2.5, 5]");
+    assert_eq!(ask(file, "Z.V.sum()"), "2.5+3i");
+    // Undeclared, a column of them is still Complex.
+    let inferred = file.replace("V : Complex\n\n", "");
+    assert_eq!(ask(&inferred, "Z[V; 1]"), "0-2i");
+    let bad = lint_errors("sheet Z\n\nV : Complex\n\nV\nfour\n");
+    assert!(bad[0].contains("such as `3+4i`"), "{bad:?}");
+    // A Complex in a Float column is accepted where its imaginary part is
+    // zero (D203).
+    let float = "sheet Z\n\nV : Float\n\nV\n3+0i\n";
+    assert_eq!(ask(float, "Z.V"), "[3]");
+    let refused = lint_errors("sheet Z\n\nV : Float\n\nV\n3+4i\n");
+    assert!(
+        refused[0].contains("imaginary part not zero"),
+        "{refused:?}"
+    );
+}
+
+#[test]
 fn math_functions() {
     // Exact numbers stay exact where they can.
     assert_eq!(calc("abs(-7/2)"), "3.5");
@@ -867,7 +1017,7 @@ fn math_functions() {
     assert_eq!(calc("round(1250 / 100) * 100"), "1300");
     assert!(calc_err(None, "round(1, 2, 3)").contains("`round` takes 1 or 2 arguments"));
     assert!(calc_err(None, "round(1, 0.01)").contains("number of decimal places"));
-    assert!(calc_err(None, "round(1, \"a\")").contains("number of decimal places"));
+    assert!(calc_err(None, "round(1, 'a')").contains("number of decimal places"));
     // The rest give a Num.
     assert_eq!(calc("sqrt(16)"), "4");
     assert_eq!(calc("exp(0)"), "1");
@@ -885,7 +1035,7 @@ fn math_functions() {
     assert_eq!(ask(SALES, "Sales.Revenue.sqrt().floor()"), "[10, 10, 12]");
     // Outside the domain, and on the wrong kind of value.
     assert_eq!(calc("[sqrt(-1), ln(0), arcsin(2)]"), "[NaN, -Inf, NaN]");
-    assert!(calc_err(None, "sin(\"x\")").contains("`sin` cannot be applied to String"));
+    assert!(calc_err(None, "sin('x')").contains("`sin` cannot be applied to String"));
     assert!(calc_err(None, "sqr(4)").contains("did you mean `sqrt`?"));
     // Every function in the directory is one the checker knows. The
     // operators are listed there too, by their symbols, and are not called.
@@ -918,13 +1068,13 @@ fn time_zones() {
 
     // The same instant on other clocks, with daylight saving.
     assert_eq!(
-        at("2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\")"),
+        at("2025-07-15T12:00.convert_time_zone('Asia/Tokyo')"),
         "2025-07-15T20:00+09:00"
     );
     assert_eq!(at("2025-07-15T12:00.utc()"), "2025-07-15T11:00+00:00");
     assert_eq!(at("2025-01-15T12:00.utc()"), "2025-01-15T12:00+00:00");
     assert_eq!(
-        at("2025-07-15T12:00.convert_time_zone(\"America/St_Johns\")"),
+        at("2025-07-15T12:00.convert_time_zone('America/St_Johns')"),
         "2025-07-15T08:30-02:30"
     );
     assert_eq!(at("2025-07-15T12:00.base_utc_offset()"), "3600");
@@ -934,38 +1084,36 @@ fn time_zones() {
     assert_eq!(at("2025-07-15T12:00.utc().base_utc_offset()"), "0");
     // Back to the file's own zone it is an ordinary date-time again.
     assert_eq!(
-        at(
-            "2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\").convert_time_zone(\"Europe/London\")"
-        ),
+        at("2025-07-15T12:00.convert_time_zone('Asia/Tokyo').convert_time_zone('Europe/London')"),
         "2025-07-15T12:00"
     );
     assert_eq!(at("2025-07-15T12:00.utc().local()"), "2025-07-15T12:00");
 
     // The parts are those of the zone it is in.
     assert_eq!(
-        at("2025-07-15T20:00.convert_time_zone(\"Asia/Tokyo\").hour()"),
+        at("2025-07-15T20:00.convert_time_zone('Asia/Tokyo').hour()"),
         "4"
     );
     assert_eq!(
-        at("2025-07-15T20:00.convert_time_zone(\"Asia/Tokyo\").date()"),
+        at("2025-07-15T20:00.convert_time_zone('Asia/Tokyo').date()"),
         "2025-07-16"
     );
     // Seconds are added on its own clocks.
     assert_eq!(
-        at("2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\") + 3600"),
+        at("2025-07-15T12:00.convert_time_zone('Asia/Tokyo') + 3600"),
         "2025-07-15T21:00+09:00"
     );
     // Across zones it is the instant that is compared and subtracted.
     assert_eq!(
-        at("2025-07-15T12:00.convert_time_zone(\"Asia/Tokyo\") == 2025-07-15T12:00"),
+        at("2025-07-15T12:00.convert_time_zone('Asia/Tokyo') == 2025-07-15T12:00"),
         "true"
     );
     assert_eq!(
-        at("2025-07-15T12:00.utc() < 2025-07-15T12:00:01.convert_time_zone(\"Asia/Tokyo\")"),
+        at("2025-07-15T12:00.utc() < 2025-07-15T12:00:01.convert_time_zone('Asia/Tokyo')"),
         "true"
     );
     assert_eq!(
-        at("2025-07-15T13:00.convert_time_zone(\"Asia/Tokyo\") - 2025-07-15T12:00.utc()"),
+        at("2025-07-15T13:00.convert_time_zone('Asia/Tokyo') - 2025-07-15T12:00.utc()"),
         "PT1H"
     );
     assert_eq!(at("2025-07-15T13:00 - 2025-07-15T12:00.utc()"), "PT1H");
@@ -984,7 +1132,7 @@ fn time_zones() {
     let out = eval_with(
         None,
         "<expression>",
-        "2025-07-15T12:00.convert_time_zone(\"Mars/Base\")",
+        "2025-07-15T12:00.convert_time_zone('Mars/Base')",
         london.clone(),
     );
     assert!(out.errors[0].contains("there is no time zone `Mars/Base`"));
@@ -993,7 +1141,7 @@ fn time_zones() {
 
     // A file names the zone its date-times are in.
     let file = "zone America/New_York\n\nsheet Calls\n\nAt | Tokyo\n2025-03-03T09:12 | *\n\n\
-                 Tokyo := At.convert_time_zone(\"Asia/Tokyo\")\n";
+                 Tokyo := At.convert_time_zone('Asia/Tokyo')\n";
     let ny = |expr: &str| with(&london, Some(file), expr);
     assert_eq!(ny("Calls[At; 0]"), "2025-03-03T09:12");
     assert_eq!(ny("Calls[At; 0].time_zone()"), "America/New_York");
@@ -1061,12 +1209,12 @@ fn one_slot_selects_columns() {
         "Revenue | Cost\n--------|-----\n    100 |   60"
     );
     // Rows alone need the `;`.
-    let err = calc_err(Some(SALES), "Sales[Region == \"UK\"]");
+    let err = calc_err(Some(SALES), "Sales[Region == 'UK']");
     assert!(
         err.contains("a column selector must be a column name"),
         "{err}"
     );
-    assert_eq!(ask(SALES, "Sales[; Region == \"UK\"].Revenue.sum()"), "250");
+    assert_eq!(ask(SALES, "Sales[; Region == 'UK'].Revenue.sum()"), "250");
     // A vector has one dimension, so its one slot is the element.
     assert_eq!(ask(SALES, "Sales.Revenue[1]"), "120");
     assert_eq!(ask(SALES, "Sales[Revenue][1]"), "120");
@@ -1088,37 +1236,31 @@ CustomerID | Amount | Customer
 7          | 20     | *
 1          | 10     | *
 
-Customer := Customers[; ID == CustomerID].Name // \"Unknown\"
+Customer := Customers[; ID == CustomerID].Name // 'Unknown'
 ";
-    assert_eq!(
-        ask(file, "Sales.Customer"),
-        "[\"Grace\", \"Unknown\", \"Ada\"]"
-    );
+    assert_eq!(ask(file, "Sales.Customer"), "['Grace', 'Unknown', 'Ada']");
 }
 
 #[test]
 fn operators() {
-    let file = sales_with("Prev := Sales[Revenue; *-1] // 0\nHome := Region in [\"UK\", \"IE\"]\n");
+    let file = sales_with("Prev := Sales[Revenue; *-1] // 0\nHome := Region in ['UK', 'IE']\n");
     assert_eq!(ask(&file, "Sales.Prev"), "[0, 100, 120]");
     assert_eq!(ask(&file, "Sales.Home"), "[true, false, true]");
-    let err = calc_err(Some(SALES), "Sales[; Region = \"UK\"]");
+    let err = calc_err(Some(SALES), "Sales[; Region = 'UK']");
     assert!(err.contains("=="), "{err}");
 }
 
 #[test]
 fn conditional_expression() {
-    let file = "sheet T\n\nRevenue | Region | Net\n2000 | UK | *\n500 | UK | *\n\nNet :=\n  if Revenue > 1000 and Region in [\"UK\", \"US\"]\n  then Revenue * 90%\n  else Revenue\n";
+    let file = "sheet T\n\nRevenue | Region | Net\n2000 | UK | *\n500 | UK | *\n\nNet :=\n  if Revenue > 1000 and Region in ['UK', 'US']\n  then Revenue * 90%\n  else Revenue\n";
     assert_eq!(ask(file, "T.Net"), "[1800, 500]");
 }
 
 #[test]
 fn value_shapes() {
-    assert!(ask(SALES, "Sales[; Region == \"UK\"]").starts_with("Month | Region"));
-    assert_eq!(
-        ask(SALES, "Sales[; Region == \"UK\"].Revenue"),
-        "[100, 150]"
-    );
-    assert_eq!(ask(SALES, "Sales[; Region == \"UK\"].Revenue.sum()"), "250");
+    assert!(ask(SALES, "Sales[; Region == 'UK']").starts_with("Month | Region"));
+    assert_eq!(ask(SALES, "Sales[; Region == 'UK'].Revenue"), "[100, 150]");
+    assert_eq!(ask(SALES, "Sales[; Region == 'UK'].Revenue.sum()"), "250");
 }
 
 #[test]
@@ -1139,7 +1281,7 @@ fn broadcasting() {
     assert_eq!(ask(SALES, "Sales.Revenue - Sales.Cost"), "[40, 50, 70]");
     assert_eq!(
         ask(SALES, "Sales[; Sales.Revenue > 110].Month"),
-        "[\"Feb\", \"Mar\"]"
+        "['Feb', 'Mar']"
     );
     let err = calc_err(None, "[1, 2, 3] + [1, 2, 3, 4]");
     assert!(err.contains("different lengths"), "{err}");
@@ -1147,10 +1289,10 @@ fn broadcasting() {
 
 #[test]
 fn pipe_operator() {
-    let piped = "Sales\n  |> filter(Region == \"UK\")\n  |> select(Revenue)\n  |> sum()";
+    let piped = "Sales\n  |> filter(Region == 'UK')\n  |> select(Revenue)\n  |> sum()";
     assert_eq!(
         ask(SALES, piped),
-        ask(SALES, "Sales[; Region == \"UK\"].Revenue.sum()")
+        ask(SALES, "Sales[; Region == 'UK'].Revenue.sum()")
     );
 }
 
@@ -1172,7 +1314,7 @@ fn sort_orders_a_sheet_by_a_column() {
     // keeps every column and every row either way.
     assert_eq!(
         ask(SALES, "(Sales |> sort(Cost)).Month"),
-        "[\"Jan\", \"Feb\", \"Mar\"]"
+        "['Jan', 'Feb', 'Mar']"
     );
     assert_eq!(
         ask(SALES, "Sales |> sort(Cost, desc) |> select(Month, Cost)"),
@@ -1199,18 +1341,18 @@ fn sort_is_stable_and_takes_more_than_one_key() {
     // Jan and Mar tie on Revenue and keep the order they came in.
     assert_eq!(
         ask(TIES, "(Sales |> sort(Revenue)).Month"),
-        "[\"Apr\", \"Feb\", \"Jan\", \"Mar\"]"
+        "['Apr', 'Feb', 'Jan', 'Mar']"
     );
     // Two keys, the second breaking the first's ties.
     assert_eq!(
         ask(TIES, "(Sales |> sort(Region, Revenue)).Month"),
-        "[\"Apr\", \"Jan\", \"Mar\", \"Feb\"]"
+        "['Apr', 'Jan', 'Mar', 'Feb']"
     );
     // Two sorts compose into what a reader expects, the first key the
     // weaker one.
     assert_eq!(
         ask(TIES, "(Sales |> sort(Month) |> sort(Region)).Month"),
-        "[\"Apr\", \"Jan\", \"Mar\", \"Feb\"]"
+        "['Apr', 'Jan', 'Mar', 'Feb']"
     );
 }
 
@@ -1223,7 +1365,7 @@ fn an_empty_cell_sorts_first() {
     );
     assert_eq!(
         ask(TIES, "(Sales |> sort(Revenue, desc)).Month"),
-        "[\"Jan\", \"Mar\", \"Feb\", \"Apr\"]"
+        "['Jan', 'Mar', 'Feb', 'Apr']"
     );
 }
 
@@ -1602,7 +1744,7 @@ fn cell_content() {
     );
     // They are written as they are shown, and text of the same is in quotes.
     assert_eq!(calc("[Inf, -Inf, NaN]"), "[Inf, -Inf, NaN]");
-    assert_eq!(calc("[\"Inf\", \"NaN\"]"), "[\"Inf\", \"NaN\"]");
+    assert_eq!(calc("['Inf', 'NaN']"), "['Inf', 'NaN']");
     assert_eq!(calc("[Inf - Inf, 1 / Inf, Inf + 1]"), "[NaN, 0, Inf]");
     assert_eq!(
         calc("[Inf == Inf, 1 < Inf, -Inf < 1]"),
@@ -1623,8 +1765,8 @@ fn cell_content() {
         ask(cells, "[T[Any; 0] < 0, T[Any; 1] != T[Any; 1]]"),
         "[true, false]"
     );
-    assert_eq!(ask(cells, "T.T"), "[\"Inf\", \"NaN\"]");
-    assert_eq!(ask(cells, "T.Quoted"), "[\"NaN\", \"Inf\"]");
+    assert_eq!(ask(cells, "T.T"), "['Inf', 'NaN']");
+    assert_eq!(ask(cells, "T.Quoted"), "['NaN', 'Inf']");
     // An unmarked expression in a typed column is an error.
     let errors = lint_errors("sheet T\n\nTax : Decimal\n\nRevenue | Tax\n100 | Revenue * 2\n");
     assert!(
@@ -1634,10 +1776,7 @@ fn cell_content() {
     );
     // An unmarked expression in a text column is text.
     let file = "sheet T\n\nNote : String\n\nRevenue | Note\n100 | Revenue - Cost\n200 | \"= see appendix\"\n";
-    assert_eq!(
-        ask(file, "T.Note"),
-        "[\"Revenue - Cost\", \"= see appendix\"]"
-    );
+    assert_eq!(ask(file, "T.Note"), "['Revenue - Cost', '= see appendix']");
     // An empty cell.
     assert_eq!(ask("sheet T\n\nA | B\n1 |\n", "T[B; 0]"), "empty");
 }
@@ -1761,7 +1900,7 @@ fn Margin(revenue, cost) = (revenue - cost) / revenue
 fn WithTax(x) = x * (1 + Rate)
 fn Twice(x) = WithTax(WithTax(x))
 fn Total(t) = t.Revenue.sum()
-fn NameOf(id) = Customers[; ID == id].Name // \"Unknown\"
+fn NameOf(id) = Customers[; ID == id].Name // 'Unknown'
 
 sheet Customers
 
@@ -1784,7 +1923,7 @@ Buyer   := NameOf(Who)
 #[test]
 fn custom_function_in_a_computed_column() {
     assert_eq!(ask(FUNCS, "Sales.Margin"), "[0.4, 0.25]");
-    assert_eq!(ask(FUNCS, "Sales.Buyer"), "[\"Ada\", \"Unknown\"]");
+    assert_eq!(ask(FUNCS, "Sales.Buyer"), "['Ada', 'Unknown']");
 }
 
 #[test]
@@ -1811,7 +1950,7 @@ fn custom_function_does_not_see_the_callers_row() {
 
 #[test]
 fn custom_function_is_checked_for_each_call() {
-    let err = calc_err(Some(FUNCS), "WithTax(\"ten\")");
+    let err = calc_err(Some(FUNCS), "WithTax('ten')");
     assert!(
         err.contains("in `WithTax`: cannot apply `*` to String"),
         "{err}"
@@ -1819,7 +1958,7 @@ fn custom_function_is_checked_for_each_call() {
     let err = calc_err(Some(FUNCS), "Margin(1)");
     assert!(err.contains("`Margin` takes 2 arguments, found 1"), "{err}");
     assert!(err.contains("Margin(revenue, cost)"), "{err}");
-    let err = calc_err(Some(FUNCS), "Margin(\"ten\", 1)");
+    let err = calc_err(Some(FUNCS), "Margin('ten', 1)");
     assert!(
         err.contains("in `Margin`: cannot apply `-` to String"),
         "{err}"
@@ -1945,8 +2084,8 @@ fn the_spread_and_the_middle() {
 #[test]
 fn the_first_rows_the_last_and_the_one_before() {
     // Each is the selection it is equivalent to, for a sheet and a column.
-    assert_eq!(ask(SALES, "(Sales |> head(2)).Month"), "[\"Jan\", \"Feb\"]");
-    assert_eq!(ask(SALES, "(Sales |> tail(2)).Month"), "[\"Feb\", \"Mar\"]");
+    assert_eq!(ask(SALES, "(Sales |> head(2)).Month"), "['Jan', 'Feb']");
+    assert_eq!(ask(SALES, "(Sales |> tail(2)).Month"), "['Feb', 'Mar']");
     assert_eq!(
         ask(SALES, "Sales |> head(2) |> select(Revenue) |> sum()"),
         "220"
@@ -1979,10 +2118,10 @@ fn empty_or_not() {
     );
     // The function and the operator it stands for are the same thing, and
     // each takes one value.
-    assert_eq!(ask(NOTES, "fill_null(T[Note; 1], \"none\")"), "none");
+    assert_eq!(ask(NOTES, "fill_null(T[Note; 1], 'none')"), "none");
     assert_eq!(
-        ask(NOTES, "T[Note; 1] // \"none\""),
-        ask(NOTES, "fill_null(T[Note; 1], \"none\")")
+        ask(NOTES, "T[Note; 1] // 'none'"),
+        ask(NOTES, "fill_null(T[Note; 1], 'none')")
     );
     assert_eq!(
         ask(NOTES, "is_in(T[N; 0], [1, 2])"),
@@ -2027,25 +2166,25 @@ fn casting_is_converting() {
 fn text_is_read_as_a_narrower_kind_of_text() {
     // The same four spellings a number's conversion has.
     let address = "name@example.com";
-    assert_eq!(calc(&format!("cast(\"{address}\", Email)")), address);
-    assert_eq!(calc(&format!("Email(\"{address}\")")), address);
-    assert_eq!(calc(&format!("\"{address}\".Email()")), address);
-    assert_eq!(calc(&format!("\"{address}\".Email")), address);
-    assert_eq!(calc("\"https://example.com\".Url"), "https://example.com");
+    assert_eq!(calc(&format!("cast('{address}', Email)")), address);
+    assert_eq!(calc(&format!("Email('{address}')")), address);
+    assert_eq!(calc(&format!("'{address}'.Email()")), address);
+    assert_eq!(calc(&format!("'{address}'.Email")), address);
+    assert_eq!(calc("'https://example.com'.Url"), "https://example.com");
     let uuid = "7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f";
-    assert_eq!(calc(&format!("\"{uuid}\".Uuid")), uuid);
+    assert_eq!(calc(&format!("'{uuid}'.Uuid")), uuid);
     // Any of them is text, and goes where text is asked for.
-    assert_eq!(calc(&format!("\"{address}\".Email.String")), address);
+    assert_eq!(calc(&format!("'{address}'.Email.String")), address);
 }
 
 #[test]
 fn text_that_does_not_read_as_one_says_so() {
-    let errors = calc_err(None, "Email(\"nope\")");
+    let errors = calc_err(None, "Email('nope')");
     assert!(errors.contains("`nope` is not an Email"), "{errors}");
-    let errors = calc_err(None, "Url(\"example.com\")");
+    let errors = calc_err(None, "Url('example.com')");
     assert!(errors.contains("`example.com` is not a Url"), "{errors}");
     // One kind of text is not another, and a number is none of them.
-    assert!(calc_err(None, "Uuid(\"https://example.com\")").contains("not a Uuid"));
+    assert!(calc_err(None, "Uuid('https://example.com')").contains("not a Uuid"));
     let errors = calc_err(None, "Email(42)");
     assert!(errors.contains("cannot be applied"), "{errors}");
 }
@@ -2496,7 +2635,10 @@ fn how_much_of_the_corpus_lowers() {
     // moved.
     assert_eq!(
         (offered, lowered, refused, failed),
-        (76, 26, 49, 1),
+        // `Complex` came back with `examples/complex.omx` and its columns in
+        // `types.omx`: 19 more, all refused, since a struct has no Polars
+        // arithmetic (restore-complex D200). Nothing else moved.
+        (102, 27, 74, 1),
         "the corpus lowers differently than task 8.3 records"
     );
 }
@@ -2561,7 +2703,7 @@ fn both_ways(file: &str, expr: &str, dir: Option<&str>) -> Ran {
 /// The titanic table of `examples/analysis.omx`, whose 887 rows are in a
 /// Parquet file.
 const TABLE: &str = "\
-table Passengers := dataframe[\"titanic.parquet\"]
+view Passengers := dataframe['titanic.parquet']
 
 Survived : Int
 Pclass   : Int
@@ -2569,8 +2711,8 @@ Name     : String
 Sex      : String
 Age      : Float
 Fare     : Float
-Siblings : Int from \"Siblings/Spouses Aboard\"
-Parents  : Int from \"Parents/Children Aboard\"
+Siblings : Int from 'Siblings/Spouses Aboard'
+Parents  : Int from 'Parents/Children Aboard'
 ";
 
 #[test]
@@ -2855,14 +2997,32 @@ N := (0/0).Float
 }
 
 #[test]
-fn an_aggregate_over_a_selection_stays_on_the_engine() {
-    // The argument has to be a whole column: a selection of rows is section
-    // 6's remaining work, not this task's.
+fn an_aggregate_over_a_selection_is_taken_by_polars() {
+    // The rows a selection keeps are gathered from the column and the plan
+    // is the whole column's (hold-less task 2.3): the same answer as the
+    // engine's, from a plan and not from a vector of values.
     let dir = Some("../examples");
     let oldest = both_ways(TABLE, "Passengers[; Survived == 1].Age.max()", dir);
     assert_eq!(oldest.shown, "80");
-    assert!(oldest.aggregates.is_empty());
-    // And the selection is real: 342 of the 887 rows survived.
+    assert_eq!(oldest.aggregates, [Attempt::Lowered]);
+    for expr in [
+        "Passengers[; Pclass == 1].Survived.sum()",
+        "Passengers[; Pclass == 3].Survived.sum()",
+        "Passengers[; Pclass == 1].Survived.mean()",
+        "Passengers[; Age > 60].Age.min()",
+        "Passengers[; Age > 60].Fare.max()",
+        "Passengers[; Sex == 'female'].Pclass.max()",
+        "Passengers[; Pclass == 2].Age.count()",
+        "Passengers[; Pclass == 9].Survived.sum()",
+        "Passengers[; Pclass == 9].Age.max()",
+    ] {
+        // Whatever it comes to, the engine's own answer is the same.
+        both_ways(TABLE, expr, dir);
+    }
+    let kept = both_ways(TABLE, "Passengers[; Pclass == 1].Survived.sum()", dir);
+    assert_eq!(kept.aggregates, [Attempt::Lowered]);
+    // The selection is real: 342 of the 887 rows survived. A count of the
+    // rows kept asks for no column at all.
     let survivors = both_ways(TABLE, "Passengers[; Survived == 1].Age.len()", dir);
     assert_eq!(survivors.shown, "342");
     assert!(survivors.aggregates.is_empty());
@@ -2877,7 +3037,7 @@ fn a_condition_picks_rows_in_one_pass() {
         ("Passengers[; Survived == 1].Age.len()", "342"),
         ("Passengers[; Pclass == 1].Name.len()", "216"),
         ("Passengers[; Age > 60].Age.len()", "26"),
-        ("Passengers[; Sex == \"female\"].Age.len()", "314"),
+        ("Passengers[; Sex == 'female'].Age.len()", "314"),
     ] {
         let ran = both_ways(TABLE, expr, dir);
         assert_eq!(ran.shown, answer, "{expr}");
@@ -2901,12 +3061,12 @@ fn a_sort_is_lowered_and_lands_the_rows_where_the_engine_does() {
     );
     assert_eq!(
         ties.shown,
-        "[\"Miss. Anna Ward\", \"Mr. Thomas Drake Martinez Cardeza\", \"Mr. Gustave J Lesurer\"]"
+        "['Miss. Anna Ward', 'Mr. Thomas Drake Martinez Cardeza', 'Mr. Gustave J Lesurer']"
     );
     assert_eq!(ties.filters, [Attempt::Lowered]);
     // More than one key, and the sheet's own order where they both tie.
     let two = both_ways(TABLE, "(Passengers |> sort(Pclass, Fare)).Name[0]", dir);
-    assert_eq!(two.shown, "\"Mr. William Harrison\"");
+    assert_eq!(two.shown, "'Mr. William Harrison'");
     assert_eq!(two.filters, [Attempt::Lowered]);
 }
 
@@ -2916,10 +3076,10 @@ fn a_sort_is_lowered_and_lands_the_rows_where_the_engine_does() {
 #[test]
 fn an_empty_cell_sorts_first_on_both_paths() {
     let up = both_ways(TIES, "(Sales |> sort(Revenue)).Month", None);
-    assert_eq!(up.shown, "[\"Apr\", \"Feb\", \"Jan\", \"Mar\"]");
+    assert_eq!(up.shown, "['Apr', 'Feb', 'Jan', 'Mar']");
     assert_eq!(up.filters, [Attempt::Lowered]);
     let down = both_ways(TIES, "(Sales |> sort(Revenue, desc)).Month", None);
-    assert_eq!(down.shown, "[\"Jan\", \"Mar\", \"Feb\", \"Apr\"]");
+    assert_eq!(down.shown, "['Jan', 'Mar', 'Feb', 'Apr']");
     assert_eq!(down.filters, [Attempt::Lowered]);
 }
 
@@ -2938,7 +3098,7 @@ fn the_rows_a_condition_keeps_stay_in_their_order() {
     let first = both_ways(TABLE, "Passengers[Name; Survived == 1][0]", dir);
     assert_eq!(
         first.shown,
-        "\"Mrs. John Bradley (Florence Briggs Thayer) Cumings\""
+        "'Mrs. John Bradley (Florence Briggs Thayer) Cumings'"
     );
 }
 
@@ -3296,7 +3456,7 @@ fn two_conditions_written_together_are_lowered() {
         ),
         ("Passengers[; Pclass == 1 or Pclass == 2].Age.len()", "400"),
         (
-            "Passengers[; Survived == 1 and Pclass == 1 and Sex == \"female\"].Age.len()",
+            "Passengers[; Survived == 1 and Pclass == 1 and Sex == 'female'].Age.len()",
             "91",
         ),
     ] {
@@ -3336,7 +3496,7 @@ sheet T
 | 1 | **bold**   | *    |
 | 2 | plain text | *    |
 
-Same := Note == \"x\"
+Same := Note == 'x'
 ";
     for lowering in [Lowering::Never, Lowering::Always] {
         let (program, diags) = compile(file, 0);
@@ -3357,6 +3517,41 @@ Same := Note == \"x\"
             .map(|r| engine.cell_shown(0, 1, r).is_markdown())
             .collect();
         assert_eq!(markdown, [true, true], "{lowering:?}");
+    }
+}
+
+/// `len` of a column of a selection is the rows the selection keeps, and the
+/// same count whether or not the column's values are read to be counted.
+#[test]
+fn len_of_a_selected_column_is_the_rows_kept() {
+    let dir = Some("../examples");
+    for (expr, answer) in [
+        ("Passengers[; Pclass == 1].Name.len()", "216"),
+        ("Passengers[; Pclass == 3].Age.len()", "487"),
+        ("Passengers[; Pclass == 9].Name.len()", "0"),
+        ("Passengers[; Age > 60].Fare.len()", "26"),
+        ("Passengers.Name.len()", "887"),
+    ] {
+        let ran = both_ways(TABLE, expr, dir);
+        assert_eq!(ran.shown, answer, "{expr}");
+    }
+    // Against the count that does read the values, which has no empty cells
+    // to differ by in these columns.
+    for (counted, read) in [
+        (
+            "Passengers[; Age > 60].Fare.len()",
+            "Passengers[; Age > 60].Fare.count()",
+        ),
+        (
+            "Passengers[; Pclass == 3].Age.len()",
+            "Passengers[; Pclass == 3].Name.count()",
+        ),
+    ] {
+        assert_eq!(
+            both_ways(TABLE, counted, dir).shown,
+            both_ways(TABLE, read, dir).shown,
+            "{counted}"
+        );
     }
 }
 
@@ -3391,14 +3586,74 @@ fn unselected_columns_are_not_read() {
     assert_eq!(open(None), [], "opened and calculated, nothing asked");
     // One column summed: that column, and none of the other seven.
     assert_eq!(open(Some("Passengers.Fare.sum()")), [(0, 5)]);
-    // A condition over one column and a count of another: those two of
-    // the eight. `Name` is read because a column selection answers with a
-    // vector of its values, which `len` then counts — counting the rows
-    // kept without reading them is work for another day.
-    assert_eq!(
-        open(Some("Passengers[; Pclass == 1].Name.len()")),
-        [(0, 1), (0, 2)]
-    );
+    // A condition over one column and a count of another: only the one the
+    // condition reads. The rows kept are counted, and `Name`'s values, which
+    // `len` would only count, are not read (hold-less task 2.2).
+    assert_eq!(open(Some("Passengers[; Pclass == 1].Name.len()")), [(0, 1)]);
+}
+
+#[test]
+fn an_aggregate_walks_a_whole_column_as_it_would_its_values() {
+    // A whole column the dataframe holds is walked where it is (D79); the
+    // same rows taken by a selection are a vector of values. Every
+    // aggregate over every type of column answers the same both ways, and
+    // fails the same way where it fails, under each lowering.
+    let dir = std::path::Path::new("../examples");
+    let (mut program, mut diags) = compile(TABLE, 0);
+    let tables = omasheet_engine::table::read(&mut program, dir, &mut diags);
+    assert!(diags.is_empty(), "{diags:?}");
+    let program = program;
+    let mut answered = 0;
+    for lowering in [Lowering::Never, Lowering::Auto, Lowering::Always] {
+        let answer = |expr: &str| {
+            // A fresh engine each time, so that one answer's reads and
+            // memoised cells cannot stand in for another's.
+            let tables =
+                omasheet_engine::table::read(&mut compile(TABLE, 0).0, dir, &mut Vec::new());
+            let engine = Engine::with_tables(
+                &program,
+                Options {
+                    base: Some(dir.to_path_buf()),
+                    lowering,
+                    ..Options::default()
+                },
+                tables,
+            );
+            engine.run();
+            // Refused by the checker: the same refusal either way.
+            let node = match compile_expr(&program, expr, 1) {
+                Ok((node, _)) => node,
+                Err(diags) => {
+                    return (None, diags.into_iter().map(|d| d.message).collect());
+                }
+            };
+            let value = engine.eval_top(&node);
+            let diags: Vec<String> = engine.take_diags().into_iter().map(|d| d.message).collect();
+            (value.map(|v| engine.render_value(&v)), diags)
+        };
+        for col in [
+            "Survived", "Pclass", "Name", "Sex", "Age", "Fare", "Siblings",
+        ] {
+            for func in [
+                "sum", "mean", "min", "max", "count", "len", "median", "product", "first", "last",
+            ] {
+                let whole = answer(&format!("Passengers.{col}.{func}()"));
+                let values = answer(&format!("Passengers[; Pclass > 0].{col}.{func}()"));
+                assert_eq!(whole, values, "{col}.{func}() under {lowering:?}");
+                answered += usize::from(whole.0.is_some());
+            }
+            // Two arguments: the column and a vector beside it.
+            let whole = answer(&format!("max(Passengers.{col}, Passengers.{col})"));
+            let values = answer(&format!(
+                "max(Passengers[; Pclass > 0].{col}, Passengers[; Pclass > 0].{col})"
+            ));
+            assert_eq!(whole, values, "max of two {col} under {lowering:?}");
+        }
+    }
+    drop(tables);
+    // Most of them are answers rather than refusals: a `sum` of names is
+    // refused both ways, a `mean` of ages is not.
+    assert!(answered > 150, "{answered} of 210 answered");
 }
 
 // ---- the snapshot (D75) ---------------------------------------------------
@@ -3406,7 +3661,7 @@ fn unselected_columns_are_not_read() {
 /// Values as their `Debug`, which is the strictest comparison there is of
 /// them: `Value` has no `PartialEq`, and what is shown would hide the very
 /// differences worth catching — the Markdown flag on a string, a `Zoned`
-/// where a `DateTime` was expected, an `Integer` where a `Decimal` was.
+/// where a `Datetime` was expected, an `Integer` where a `Decimal` was.
 fn debugged(values: &[omasheet_engine::Value]) -> Vec<String> {
     values.iter().map(|v| format!("{v:?}")).collect()
 }
@@ -3477,12 +3732,13 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
             }
         }
     }
-    // Lest the whole thing pass by checking nothing. Eight of the
-    // corpus's columns come from a file, all of `analysis.omx`, and those
-    // are taken at once whichever way the rest is calculated, which is 16
-    // of the 42. The other twenty-six are the columns lowering forced
-    // calculates in one step, and 8.3 is where that number is read.
-    assert_eq!(taken, 42, "the columns taken at once");
+    // Lest the whole thing pass by checking nothing. Sixteen of the
+    // corpus's columns come from a file, eight in `analysis.omx` and eight
+    // in `ccp.omx`, and those are taken at once whichever way the rest is
+    // calculated, which is 32 of the 59. The other twenty-seven are the
+    // columns lowering forced calculates in one step, and 8.3 is where that
+    // number is read.
+    assert_eq!(taken, 59, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read
@@ -3511,4 +3767,188 @@ fn a_column_walked_after_its_cells_gives_back_what_they_gave() {
             sheet.cols[c].name
         );
     }
+}
+
+/// The tests Polars has that give a boolean, and the text functions they
+/// are written with (filter-by-expression D174): each the same on both
+/// paths, and each lowered but the four that ask about a value among its
+/// column's, which read the whole column.
+#[test]
+fn the_polars_tests_answer_alike_on_both_paths() {
+    let file = "\
+sheet T
+
+F : Float
+
+| Name  | N | F    | Day        | Starts | Ends | Has | Re | AnyOf | Len | Low | Up | Fin | Infin | Leap | Uniq | Dup | First | Last | Range | Member |
+| ----- | - | ---- | ---------- | ------ | ---- | --- | -- | --- | --- | --- | -- | --- | ----- | ---- | ---- | --- | ----- | ---- | ----- | ------ |
+| Alice | 1 | 1.5  | 2024-02-29 | *      | *    | *   | *  | *   | *   | *   | *  | *   | *   | *    | *    | *   | *     | *    | *     | *  |
+| bob   | 2 | Inf  | 2023-03-01 | *      | *    | *   | *  | *   | *   | *   | *  | *   | *   | *    | *    | *   | *     | *    | *     | *  |
+| Cara  | 2 | NaN  | 1900-01-01 | *      | *    | *   | *  | *   | *   | *   | *  | *   | *   | *    | *    | *   | *     | *    | *     | *  |
+|       | 3 |      |            | *      | *    | *   | *  | *   | *   | *   | *  | *   | *   | *    | *    | *   | *     | *    | *     | *  |
+| a.b   | 2 | -Inf | 2000-06-01 | *      | *    | *   | *  | *   | *   | *   | *  | *   | *   | *    | *    | *   | *     | *    | *     | *  |
+
+Starts := Name.starts_with('A')
+Ends   := Name.ends_with('a')
+Has    := Name.contains('.')
+Re     := Name.matches('^[A-C]')
+AnyOf  := Name.contains_any(['li', 'ob'])
+Len    := Name.len_chars()
+Low    := Name.to_lowercase()
+Up     := Name.to_uppercase()
+Fin    := F.is_finite()
+Infin  := F.is_infinite()
+Leap   := Day.is_leap_year()
+Uniq   := N.is_unique()
+Dup    := N.is_duplicated()
+First  := N.is_first_distinct()
+Last   := N.is_last_distinct()
+Range  := Name.starts_with('A'..'C')
+Member := N.is_in([1, 3])
+";
+    for name in [
+        "Starts", "Ends", "Has", "Re", "AnyOf", "Len", "Low", "Up", "Fin", "Infin", "Leap",
+        "Range", "Member",
+    ] {
+        assert_eq!(attempt(file, name), Some(Attempt::Lowered), "{name}");
+    }
+    let expect = [
+        ("Starts", "[true, false, false, empty, false]"),
+        ("Ends", "[false, false, true, empty, false]"),
+        ("Has", "[false, false, false, empty, true]"),
+        ("Re", "[true, false, true, empty, false]"),
+        ("AnyOf", "[true, true, false, empty, false]"),
+        ("Len", "[5, 3, 4, empty, 3]"),
+        ("Low", "['alice', 'bob', 'cara', empty, 'a.b']"),
+        ("Up", "['ALICE', 'BOB', 'CARA', empty, 'A.B']"),
+        ("Fin", "[true, false, false, empty, false]"),
+        ("Infin", "[false, true, false, empty, true]"),
+        ("Leap", "[true, false, false, empty, true]"),
+        ("Uniq", "[true, false, false, true, false]"),
+        ("Dup", "[false, true, true, false, true]"),
+        ("First", "[true, true, false, true, false]"),
+        ("Last", "[true, false, false, true, true]"),
+        // `'a.b'` is lower case, after every capital.
+        ("Range", "[true, false, true, empty, false]"),
+        ("Member", "[true, false, false, true, false]"),
+    ];
+    for (name, answer) in expect {
+        let ran = both_ways(file, &format!("T.{name}"), None);
+        assert_eq!(ran.shown, answer, "{name}");
+    }
+}
+
+#[test]
+fn a_condition_written_with_a_polars_test_is_lowered() {
+    let dir = Some("../examples");
+    for (expr, answer) in [
+        ("Passengers[; Pclass in [1, 2]].Age.len()", "400"),
+        ("Passengers[; Pclass.is_in([1, 2])].Age.len()", "400"),
+        ("Passengers[; Pclass in 1..2].Age.len()", "400"),
+        ("Passengers[; Pclass in 2^..3].Age.len()", "487"),
+        ("Passengers[; 1 <= Pclass < 3].Age.len()", "400"),
+        ("Passengers[; Name.starts_with('Mr. ')].Age.len()", "513"),
+        (
+            "Passengers[; Name.contains('Mrs.') and Sex == 'female'].Age.len()",
+            "125",
+        ),
+        ("Passengers[; Name.matches('^Miss')].Age.len()", "182"),
+        ("Passengers[; Name.starts_with('A'..'C')].Age.len()", "3"),
+    ] {
+        let ran = both_ways(TABLE, expr, dir);
+        assert_eq!(ran.shown, answer, "{expr}");
+        assert_eq!(ran.filters, [Attempt::Lowered], "{expr}");
+    }
+}
+
+#[test]
+fn the_polars_tests_say_what_is_wrong_before_any_row_is_read() {
+    let said = |expr: &str| calc_err(None, expr);
+    assert!(said("'ab'.matches('(')").contains("this is not a regex"));
+    assert!(said("'ab'.starts_with('Aa'..'C')").contains("single letters"));
+    assert!(said("1.is_unique()").contains("takes a column"));
+    assert!(said("12.starts_with('1')").contains("`starts_with` needs text"));
+    assert!(said("'a'.contains(1)").contains("looks for text"));
+    assert!(said("'a'.contains_any('a')").contains("a vector of texts"));
+    assert!(said("'a'.is_leap_year()").contains("a Date or a Datetime"));
+    // A value alone is answered as one.
+    assert_eq!(calc("[1, 2, 2].is_unique()"), "[true, false, false]");
+    assert_eq!(calc("[1, 2, 2].is_first_distinct()"), "[true, true, false]");
+    assert_eq!(calc("'Bob'.starts_with('A'..'C')"), "true");
+    assert_eq!(calc("'Dan'.starts_with('A'..'C')"), "false");
+    assert_eq!(calc("'a.b'.contains('.')"), "true");
+    assert_eq!(calc("'ab'.contains('.')"), "false");
+    assert_eq!(calc("'ab'.matches('^a.$')"), "true");
+    assert_eq!(calc("0 < 5 <= 10"), "true");
+    assert_eq!(calc("0 < 5 <= 4"), "false");
+}
+
+#[test]
+fn a_column_declares_its_zone() {
+    let file = "sheet Log\n\nLogged : Datetime(\"Europe/London\")\n\n\
+                Logged | N\n2025-03-01T09:30 | 1\n2025-07-01T09:30 | 2\n";
+    // Shown with the offset of the zone's own daylight saving.
+    assert_eq!(ask(file, "Log[Logged; 0]"), "2025-03-01T09:30+00:00");
+    assert_eq!(ask(file, "Log[Logged; 1]"), "2025-07-01T09:30+01:00");
+    // Subtracted on the instant: an hour short of 122 days, for the clocks
+    // going forward between the two.
+    assert_eq!(
+        ask(file, "Log.Logged.max() - Log.Logged.min()"),
+        "P121DT23H"
+    );
+    // Only a Datetime declares one, and the zone has to exist.
+    let bad = file.replace("Datetime(", "Date(");
+    assert!(lint_errors(&bad)[0].contains("does not take a zone"));
+    let bad = file.replace("Europe/London", "Mars/Base");
+    assert!(lint_errors(&bad)[0].contains("there is no time zone"));
+}
+
+#[test]
+fn a_constant_names_a_list_of_columns() {
+    let file = "const Keys = [Region, Month]\nconst Shown = [Region, Revenue]\n\n\
+        sheet Sales\n\n| Region | Month | Revenue |\n| - | - | - |\n\
+        | N | Jan | 10 |\n| N | Jan | 5 |\n| S | Jan | 3 |\n\n\
+        sheet ByKeys := Sales |> group_by(Keys) |> agg(Total := Revenue.sum())\n\n\
+        sheet Picked := Sales |> select(Shown)\n\n\
+        sheet Sorted := Sales |> sort(Keys, desc)\n";
+    let out = shown(file);
+    // The list is shown as it was written, and group_by, select and sort take it.
+    assert!(out.contains("const Keys = [Region, Month]"), "{out}");
+    assert!(out.contains("N      | Jan   |    15"), "{out}");
+    assert!(out.contains("Region | Revenue"), "{out}");
+    // The sheet the list is used on has to have the columns.
+    let bad = file.replace("select(Shown)", "select(Keys, Nope)");
+    assert!(
+        lint_errors(&bad)[0].contains("no column `Nope`"),
+        "{:?}",
+        lint_errors(&bad)
+    );
+    // It is not a value.
+    let bad = format!("{file}\nsheet X := Keys\n");
+    assert!(lint_errors(&bad)[0].contains("is a list of columns"));
+    // A list of constants is still an ordinary list.
+    let plain = "const A = 1\nconst B = 2\nconst Both = [A, B]\n";
+    assert!(
+        shown(plain).contains("const Both = [1, 2]"),
+        "{}",
+        shown(plain)
+    );
+}
+
+/// A cell may read a row of its own column by number, and is circular only
+/// if that cell reads itself, which names its row (D227).
+#[test]
+fn a_fixed_row_of_its_own_column_is_circular_only_through_itself() {
+    let head = "sheet T\n\n| A | B |\n| - | - |\n";
+    let seeded = format!("{head}| 1 | 100 |\n| 2 | =[B; 0]*A |\n| 3 | =[B; 0]*A |\n");
+    let out = view_with("t.omx", &seeded, as_printed(Lowering::Never));
+    assert!(out.errors.is_empty(), "{:?}", out.errors);
+    assert!(out.output.contains("300"), "{}", out.output);
+    let itself = format!("{head}| 1 | 100 |\n| 2 | 5 |\n| 3 | =[B; 2]+1 |\n");
+    let out = view_with("t.omx", &itself, as_printed(Lowering::Never));
+    let said = format!("{:?}", out.errors);
+    assert!(
+        said.contains("circular reference in column `B` at row 2"),
+        "{said}"
+    );
 }

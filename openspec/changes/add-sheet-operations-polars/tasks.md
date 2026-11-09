@@ -353,7 +353,7 @@ stage already gives a sheet and a file has nowhere to put one (D90).
       each being a kind of their own, taken by `run_group` and `run_join`
       and counted in `filters` and `aggregates` instead — and the one new
       computed column, `ToDate`, reads another row and is never offered
-- [ ] 7.4 The titanic questions answered by hand, from the CLI and in the app:
+- [x] 7.4 The titanic questions answered by hand, from the CLI and in the app:
       fares by class, passengers by fare, and a join, each checked against
       what a dataframe tool gives for the same file
 
@@ -365,4 +365,4 @@ stage already gives a sheet and a file has nowhere to put one (D90).
       order, the three at 512.3292 in the file's order as a stable sort
       keeps them. `ClassNames`, over the join `Named`, gives the six rows
       Polars' own `join` does, their counts, shares and mean ages the same
-      once rounded. The app is still to be looked at.
+      once rounded. Looked at in the app by hand, 2026-11-04: good.

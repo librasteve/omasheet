@@ -29,11 +29,15 @@ pub enum S {
     /// holds whatever a `Decimal` does.
     Percent,
     Float,
+    /// A real and an imaginary part, each a `Float`: `3+4i`. Above `Float`
+    /// in the lattice, with no order; stored in Parquet as a struct of two
+    /// `Float64`s, `re` and `im`.
+    Complex,
     String,
     Boolean,
     Date,
     Time,
-    DateTime,
+    Datetime,
     /// A length of time, in microseconds: `PT1H30M`.
     Duration,
     /// Text that reads as a web address: a scheme, then the rest of the
@@ -62,10 +66,11 @@ impl S {
             "Fraction" => S::Fraction,
             "Percent" => S::Percent,
             "Float" => S::Float,
+            "Complex" => S::Complex,
             "String" => S::String,
             "Date" => S::Date,
             "Time" => S::Time,
-            "Datetime" => S::DateTime,
+            "Datetime" => S::Datetime,
             "Duration" => S::Duration,
             "Boolean" => S::Boolean,
             "Url" => S::Url,
@@ -87,6 +92,7 @@ impl S {
                 | S::Fraction
                 | S::Percent
                 | S::Float
+                | S::Complex
         )
     }
 
@@ -102,7 +108,7 @@ impl S {
 
     /// A date, a time of day, or both.
     pub fn is_temporal(self) -> bool {
-        matches!(self, S::Date | S::Time | S::DateTime)
+        matches!(self, S::Date | S::Time | S::Datetime)
     }
 
     /// Text, or one of the kinds of text that read as something narrower.
@@ -121,7 +127,7 @@ impl S {
             (S::Any, t) | (t, S::Any) if timed(t) => S::Any,
             (t, i) if t.is_temporal() && i.is_int() => t,
             (i, t) if t.is_temporal() && i.is_int() && !minus => t,
-            (S::Date, S::Time) | (S::Time, S::Date) if !minus => S::DateTime,
+            (S::Date, S::Time) | (S::Time, S::Date) if !minus => S::Datetime,
             (a, b) if a == b && a.is_temporal() && minus => S::Duration,
             (t, S::Duration) if timed(t) => t,
             (S::Duration, t) if t.is_temporal() && !minus => t,
@@ -131,24 +137,25 @@ impl S {
 
     fn rank(self) -> u8 {
         match self {
-            S::Int | S::Hex | S::Octal | S::Binary => 0,
-            S::Decimal => 1,
-            S::Fraction | S::Percent => 2,
-            S::Float => 3,
-            _ => 4,
+            S::Int | S::Hex | S::Octal | S::Binary | S::Decimal | S::Fraction | S::Percent => 0,
+            S::Float => 1,
+            S::Complex => 2,
+            _ => 3,
         }
     }
 
-    /// The wider of two numeric types. A `Percent` next to another kind of
-    /// exact number is a `Decimal`, or a `Fraction` next to one. Whole
-    /// numbers shown in two different bases are an `Int`.
+    /// The wider of two numeric types. `Hex`, `Octal` and `Binary` are
+    /// `Integer`s, and `Fraction` and `Percent` are `Decimal`s, shown another
+    /// way: two of one type stay it, and two different members of a family
+    /// are the family's own type. An `Integer` and a `Decimal` are a
+    /// `Decimal`, a `Float` beside either is a `Float`, and a `Complex` beside
+    /// any number is a `Complex`.
     pub fn wider(self, other: S) -> S {
-        let either = self == S::Percent || other == S::Percent;
-        if self != other && self.is_int() && other.is_int() {
-            S::Int
-        } else if self != other && either && self.is_exact() && other.is_exact() {
-            if self == S::Fraction || other == S::Fraction {
-                S::Fraction
+        if self == other {
+            self
+        } else if self.is_exact() && other.is_exact() {
+            if self.is_int() && other.is_int() {
+                S::Int
             } else {
                 S::Decimal
             }
@@ -178,7 +185,7 @@ impl S {
     /// Whether the conversion named `to` takes a value of type `self`. Text
     /// is read as whatever is asked for, and anything can be written as text.
     pub fn converts_to(self, to: S) -> bool {
-        let number = self.is_exact() || self == S::Float;
+        let number = self.is_exact() || matches!(self, S::Float | S::Complex);
         self == to
             || self == S::Any
             || self.is_text()
@@ -186,12 +193,17 @@ impl S {
                 S::Any | S::String => true,
                 // Only text reads as one of these, and text is taken above.
                 S::Url | S::Email | S::Uuid => false,
-                S::Int | S::Hex | S::Octal | S::Binary | S::Decimal | S::Fraction | S::Float => {
-                    number || self == S::Boolean
-                }
+                S::Int
+                | S::Hex
+                | S::Octal
+                | S::Binary
+                | S::Decimal
+                | S::Fraction
+                | S::Float
+                | S::Complex => number || self == S::Boolean,
                 S::Percent | S::Boolean => number,
-                S::Date | S::Time => self == S::DateTime,
-                S::DateTime => self == S::Date,
+                S::Date | S::Time => self == S::Datetime,
+                S::Datetime => self == S::Date,
                 S::Duration => false,
             }
     }
@@ -223,11 +235,12 @@ impl fmt::Display for S {
             S::Fraction => "Fraction",
             S::Percent => "Percent",
             S::Float => "Float",
+            S::Complex => "Complex",
             S::String => "String",
             S::Boolean => "Boolean",
             S::Date => "Date",
             S::Time => "Time",
-            S::DateTime => "Datetime",
+            S::Datetime => "Datetime",
             S::Duration => "Duration",
             S::Url => "Url",
             S::Email => "Email",
@@ -326,6 +339,10 @@ pub enum DepKind {
     Back,
     /// Only rows strictly after the current row.
     Fwd,
+    /// One row fixed by number, such as `[B; 0]`. It can only be a cycle
+    /// through that cell reading itself, which is found when it is
+    /// calculated and is then named by its row.
+    Fixed,
     /// Any rows.
     Whole,
 }
@@ -371,5 +388,63 @@ impl Ty {
             Ty::Sheet(_) => "a sheet".into(),
             Ty::Row(_) => "a row".into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::S::*;
+
+    /// The tables of the type lattice: the number types, then each family.
+    #[test]
+    fn the_number_types_join_by_family() {
+        // Integer, Decimal, Float: the more infectious wins.
+        assert_eq!(Int.join(Decimal), Some(Decimal));
+        assert_eq!(Int.join(Float), Some(Float));
+        assert_eq!(Decimal.join(Float), Some(Float));
+        // The radix types are Integers shown another way.
+        assert_eq!(Hex.join(Hex), Some(Hex));
+        for (a, b) in [
+            (Hex, Octal),
+            (Octal, Binary),
+            (Binary, Hex),
+            (Hex, Int),
+            (Int, Octal),
+        ] {
+            assert_eq!(a.join(b), Some(Int), "{a} with {b}");
+            assert_eq!(b.join(a), Some(Int), "{b} with {a}");
+        }
+        // Fraction and Percent are Decimals shown another way.
+        assert_eq!(Fraction.join(Fraction), Some(Fraction));
+        assert_eq!(Percent.join(Percent), Some(Percent));
+        for (a, b) in [
+            (Fraction, Percent),
+            (Fraction, Decimal),
+            (Percent, Decimal),
+            (Fraction, Int),
+            (Percent, Int),
+            (Fraction, Hex),
+        ] {
+            assert_eq!(a.join(b), Some(Decimal), "{a} with {b}");
+            assert_eq!(b.join(a), Some(Decimal), "{b} with {a}");
+        }
+        // A Float beside any of them is a Float.
+        for a in [Fraction, Percent, Hex, Int, Decimal] {
+            assert_eq!(a.join(Float), Some(Float), "{a} with Float");
+        }
+        // A Complex beside any number is a Complex, and a family member
+        // joins as its parent would.
+        for a in [
+            Int, Hex, Octal, Binary, Decimal, Fraction, Percent, Float, Complex,
+        ] {
+            assert_eq!(a.join(Complex), Some(Complex), "{a} with Complex");
+            assert_eq!(Complex.join(a), Some(Complex), "Complex with {a}");
+        }
+        assert_eq!(Complex.join(String), None);
+        assert_eq!(Complex.join(Any), Some(Any));
+        // A number with text is not a type of either: `Any` for a column.
+        assert_eq!(Int.join(String), None);
+        assert_eq!(String.join(String), Some(String));
+        assert_eq!(Any.join(Fraction), Some(Any));
     }
 }

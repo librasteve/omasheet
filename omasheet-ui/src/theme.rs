@@ -131,6 +131,61 @@ pub fn base_font_size() -> Option<u32> {
     found
 }
 
+/// A file of the user's own settings, `omasheet/<name>` under their config
+/// directory.
+fn config_path(name: &str) -> Option<PathBuf> {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+    Some(config.join("omasheet").join(name))
+}
+
+/// What a settings file holds, empty if it is not there.
+pub fn read_config(name: &str) -> String {
+    config_path(name)
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .unwrap_or_default()
+}
+
+/// Keep `text` as a settings file; empty text forgets it.
+pub fn write_config(name: &str, text: &str) {
+    let Some(path) = config_path(name) else {
+        return;
+    };
+    if text.is_empty() {
+        let _ = std::fs::remove_file(path);
+    } else {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(path, text);
+    }
+}
+
+/// The text size the user last zoomed to, in pixels; `None` if they never
+/// have, or have since reset it.
+pub fn saved_font_size() -> Option<u32> {
+    read_config("font-size")
+        .trim()
+        .parse()
+        .ok()
+        .filter(|size| *size > 0)
+}
+
+/// Keep the zoomed text size for the next launch; zero forgets it, so the
+/// size goes back to following the desktop.
+pub fn save_font_size(size: u32) {
+    write_config(
+        "font-size",
+        &if size == 0 {
+            String::new()
+        } else {
+            size.to_string()
+        },
+    );
+}
+
 /// `base-size` under `[font]` in a `shell.toml`, past every other table.
 fn font_base_size(text: &str) -> Option<u32> {
     let mut in_font = false;

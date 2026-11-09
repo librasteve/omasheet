@@ -45,13 +45,13 @@ sheet Labels
 | *   | *    | *    |
 
 # String counts up the way letters and digits do, carrying at `Z`.
-Col  := "A", "B" ... Inf
+Col  := 'A', 'B' ... Inf
 
 # Which is how a workbook's columns are named after the twenty-sixth.
-Pair := "AY" ... "BC"
+Pair := 'AY' ... 'BC'
 
 # Digits carry too, and only the last run of them moves.
-Code := "job-A8" ... "job-B2"
+Code := 'job-A8' ... 'job-B2'
 
 sheet Names
 
@@ -68,15 +68,15 @@ sheet Names
 
 # The days of the week and the months of the year are known by name, in
 # full or in three letters, and they go round: Sunday to Monday.
-Day     := "Monday", "Tuesday" ... Inf
-Short   := "Sat", "Sun" ... Inf
-Month   := "January", "February" ... Inf
+Day     := 'Monday', 'Tuesday' ... Inf
+Short   := 'Sat', 'Sun' ... Inf
+Month   := 'January', 'February' ... Inf
 
 # A month written with its year carries into the year.
-Period  := "Nov-2026", "Dec-2026" ... Inf
+Period  := 'Nov-2026', 'Dec-2026' ... Inf
 
 # The step is taken from the terms here too, so these are quarters.
-Quarter := "Jan-2026", "Apr-2026" ... Inf
+Quarter := 'Jan-2026', 'Apr-2026' ... Inf
 
 sheet Dates
 

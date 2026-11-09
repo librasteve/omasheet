@@ -2,7 +2,7 @@
 
 //! The document snapshot as JSON, for the QML side to parse.
 
-use omasheet_engine::doc::{FuncSnap, Snapshot};
+use omasheet_engine::doc::{CellSnap, FuncSnap, Snapshot, read_only_why};
 use omasheet_engine::omx::funcs::FuncDoc;
 
 fn string(out: &mut String, s: &str) {
@@ -38,18 +38,40 @@ fn list<T>(out: &mut String, items: &[T], mut each: impl FnMut(&mut String, &T))
     out.push(']');
 }
 
-/// Row numbers, as a list.
-pub fn numbers(items: &[usize]) -> String {
+/// Some rows of a paged sheet, as [`snapshot`] writes a sheet's rows.
+pub fn rows(rows: &[Vec<CellSnap>]) -> String {
     let mut out = String::new();
-    list(&mut out, items, |out, n| out.push_str(&n.to_string()));
+    cell_rows(&mut out, rows);
     out
 }
 
-/// Texts, as a list.
-pub fn texts(items: &[String]) -> String {
-    let mut out = String::new();
-    list(&mut out, items, |out, t| string(out, t));
-    out
+fn cell_rows(out: &mut String, rows: &[Vec<CellSnap>]) {
+    list(out, rows, |out, row| {
+        list(out, row, |out, cell| {
+            out.push('{');
+            field(out, "d", &cell.display);
+            out.push(',');
+            field(out, "s", &cell.source);
+            out.push(',');
+            field(out, "e", cell.error.as_deref().unwrap_or(""));
+            out.push(',');
+            // A decimal that does not end is given to more places.
+            let long = omasheet_engine::value::long_decimal(&cell.value);
+            let full = long
+                .as_deref()
+                .or(cell.exact.as_deref().filter(|_| cell.shortened));
+            field(out, "x", full.unwrap_or(""));
+            if cell.value.is_markdown() {
+                out.push(',');
+                // The grid draws `<i>`, and has no `<em>`.
+                let html = omasheet_md::inline_html(&cell.display)
+                    .replace("<em>", "<i>")
+                    .replace("</em>", "</i>");
+                field(out, "h", &html);
+            }
+            out.push_str(&format!(",\"n\":{},\"f\":{}}}", cell.numeric, cell.formula));
+        });
+    });
 }
 
 /// Cells are `{d: display, s: source, n: numeric, f: formula, e: error,
@@ -66,6 +88,10 @@ pub fn snapshot(snap: &Snapshot) -> String {
         field(out, "view", t.view.as_deref().unwrap_or(""));
         out.push(',');
         field(out, "from", t.source.as_deref().unwrap_or(""));
+        out.push(',');
+        // Why its data cells take no edit, where they take none; a formula
+        // column on a view still does (D207).
+        field(out, "why", &read_only_why(t).unwrap_or_default());
         out.push_str(",\"columns\":");
         list(out, &t.columns, |out, c| {
             out.push('{');
@@ -82,33 +108,12 @@ pub fn snapshot(snap: &Snapshot) -> String {
                 c.declared
             ));
         });
+        out.push_str(&format!(
+            ",\"nrows\":{},\"paged\":{},\"sampled\":{}",
+            t.nrows, t.paged, t.sampled
+        ));
         out.push_str(",\"rows\":");
-        list(out, &t.rows, |out, row| {
-            list(out, row, |out, cell| {
-                out.push('{');
-                field(out, "d", &cell.display);
-                out.push(',');
-                field(out, "s", &cell.source);
-                out.push(',');
-                field(out, "e", cell.error.as_deref().unwrap_or(""));
-                out.push(',');
-                // A decimal that does not end is given to more places.
-                let long = omasheet_engine::value::long_decimal(&cell.value);
-                let full = long
-                    .as_deref()
-                    .or(cell.exact.as_deref().filter(|_| cell.shortened));
-                field(out, "x", full.unwrap_or(""));
-                if cell.value.is_markdown() {
-                    out.push(',');
-                    // The grid draws `<i>`, and has no `<em>`.
-                    let html = omasheet_md::inline_html(&cell.display)
-                        .replace("<em>", "<i>")
-                        .replace("</em>", "</i>");
-                    field(out, "h", &html);
-                }
-                out.push_str(&format!(",\"n\":{},\"f\":{}}}", cell.numeric, cell.formula));
-            });
-        });
+        cell_rows(out, &t.rows);
         out.push('}');
     });
     out.push_str(",\"consts\":");
@@ -198,9 +203,10 @@ mod tests {
         let json = super::snapshot(doc.snapshot());
         // A sheet says what its rows come from before its columns: the
         // expression of one calculated from an expression, or a table's
-        // file. Both empty for a sheet whose rows are its own.
+        // file, then why its data takes no edit. All empty for a sheet whose
+        // rows are its own.
         assert!(json.starts_with(
-            "{\"sheets\":[{\"name\":\"T\",\"view\":\"\",\"from\":\"\",\"columns\":[{\"name\":\"A\""
+            "{\"sheets\":[{\"name\":\"T\",\"view\":\"\",\"from\":\"\",\"why\":\"\",\"columns\":[{\"name\":\"A\""
         ));
         assert!(json.contains("\"d\":\"say \\\"hi\\\"\""), "{json}");
         assert!(json.contains(
@@ -243,5 +249,49 @@ mod tests {
         ));
         assert!(json.contains("\"name\":\"sum\",\"category\":\"Aggregate\",\"about\":\"Object:"));
         assert!(json.ends_with("\"code\":\"\"}]"));
+    }
+}
+
+#[cfg(test)]
+mod big_table_tests {
+    use omasheet_engine::Document;
+    use omasheet_engine::datefmt::Names;
+    use omasheet_engine::omx::date::Style;
+
+    /// A formula that fails in every row of a table of millions listed a
+    /// problem for each, a snapshot of hundreds of megabytes that the app's
+    /// JSON parser could not hold: the list stops at a few hundred.
+    #[test]
+    fn a_formula_failing_in_every_row_leaves_a_small_snapshot() {
+        let dir = std::env::temp_dir().join(format!("omasheet-json-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // SAFETY: this test is the only one in the binary that reads it.
+        unsafe { std::env::set_var("OMASHEET_CACHE", dir.join("cache")) };
+        let csv = dir.join("t.csv");
+        let mut text = String::from("a,b\n");
+        for i in 0..5000 {
+            text.push_str(&format!("{i},{}.5\n", i));
+        }
+        std::fs::write(&csv, text).unwrap();
+        let source = format!(
+            "view T := dataframe[{}]\n",
+            omasheet_engine::omx::lexer::quoted(&csv.to_string_lossy())
+        );
+        let mut doc = Document::on_screen(&source, Style::ISO, Names::default());
+        omasheet_engine::table::convert(&csv).unwrap();
+        assert!(doc.converted(&csv));
+        doc.insert_computed(0, 2, "Twice", "b * 2e0").unwrap();
+        assert!(doc.set_column_types(0, &[2], Some("Decimal")));
+        let problems = &doc.snapshot().problems;
+        assert_eq!(problems.len(), 201, "{}", problems.len());
+        assert!(
+            problems[200].message.contains("more like these"),
+            "{}",
+            problems[200].message
+        );
+        let json = super::snapshot(doc.snapshot());
+        assert_eq!(json.matches("\"problems\"").count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

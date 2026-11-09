@@ -1,4 +1,5 @@
 const Skipped = 2025-03-09T03:30
+const LogGap = P121DT23H
 
 sheet Calls
 
@@ -15,3 +16,10 @@ Night   | From             | To               | Wall | Elapsed
 Plain   | 2025-06-01T12:00 | 2025-06-02T12:00 |   24 |      24
 Forward | 2025-03-08T12:00 | 2025-03-09T12:00 |   24 |      23
 Back    | 2025-11-01T12:00 | 2025-11-02T12:00 |   24 |      25
+
+sheet Logs
+
+Logged                 | Event  | Offset | NewYork          | Same
+-----------------------|--------|--------|------------------|-----
+2025-03-01T09:30+00:00 | winter |      0 | 2025-03-01T04:30 | true
+2025-07-01T09:30+01:00 | summer |      1 | 2025-07-01T04:30 | true

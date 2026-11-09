@@ -75,6 +75,7 @@ omasheet print examples/budget.omx      # print the calculated file
 omasheet eval '1/3 + 1/6'               # 0.5, exactly
 omasheet export examples/budget.omx --xlsx [or --csv | --json | --parquet]
 omasheet render examples/report.md --html
+omasheet render examples/showcase/short-report.md --html   # no .omx file, the sheet is in the Markdown
 ```
 
 ## AI Skill
@@ -85,6 +86,10 @@ Prompt your favorite AI with:
 Please load the Omasheet skill from https://raw.githubusercontent.com/librasteve/omasheet/main/.claude/skills/omasheet/SKILL.md and follow its instructions when creating, checking, or converting spreadsheets.
 ```
 
+## OmaStore
+
+Omasheet is listed in OmaStore for Omarchy: [omastore://librasteve/omasheet](omastore://librasteve/omasheet)
+
 ## Docs
 
 - [The file format](docs/format.md)
@@ -93,6 +98,8 @@ Please load the Omasheet skill from https://raw.githubusercontent.com/librasteve
 - [XLSX, CSV, JSON and Markdown](docs/interop.md)
 - [`examples/`](examples) — worked files, each with its expected output
 - [`openspec/`](openspec) — the design and the specs
+
+**Breaking change in 0.1.6.** Numbers are now the Polars dtypes, so exactness narrows from rational to a 38-digit decimal: `Int` is 64-bit rather than arbitrary-precision, and a result that does not fit is reported. `Complex` was dropped and has since returned (the most infectious number type, stored in Parquet as a struct of `re` and `im`), and the type names follow Polars: `Bool` is `Boolean`, `Text` is `String`, `Num` is `Float`, and an empty cell is `Null`. Files written for 0.1.5 and earlier may need their schema lines renamed.
 
 Early and changing. MAY CONTAIN ERRORS.
 

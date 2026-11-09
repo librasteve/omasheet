@@ -7,6 +7,7 @@
 //! unary `-`, `**`, then postfix `[ ]`, `.Name` and calls.
 
 use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp, reads_back};
+use crate::decimal::Dec;
 use crate::diag::{Diagnostic, Span};
 use crate::lexer::{Tok, Token, lex};
 
@@ -19,11 +20,38 @@ pub fn parse_expr(text: &str, src: u32, base: usize) -> R<Expr> {
     if p.peek() == &Tok::Eof {
         return Err(Diagnostic::new(p.span(), "expected an expression"));
     }
-    let e = p.seq()?;
-    if p.peek() != &Tok::Eof {
-        return Err(p.unexpected("an operator or the end of the expression"));
+    let parsed = p.seq().and_then(|e| {
+        if p.peek() == &Tok::Eof {
+            Ok(e)
+        } else {
+            Err(p.unexpected("an operator or the end of the expression"))
+        }
+    });
+    parsed.map_err(|d| shift_or_fraction(&p.toks, text, base, d))
+}
+
+/// `a+<1/10>` reads as a shift, `+<`, and a `>` with nothing to compare. A
+/// `+<` run straight into a number, with a `>` somewhere after it, is most
+/// likely a sum with a fraction, so the error says how to write one.
+fn shift_or_fraction(toks: &[Token], text: &str, base: usize, d: Diagnostic) -> Diagnostic {
+    if d.help.is_some() {
+        return d;
     }
-    Ok(e)
+    let touching = |t: &Token| {
+        let at = (t.span.end as usize).saturating_sub(base);
+        t.tok == Tok::PlusLt
+            && text
+                .as_bytes()
+                .get(at)
+                .is_some_and(|b| b.is_ascii_digit() || *b == b'-')
+    };
+    let Some(i) = toks.iter().position(touching) else {
+        return d;
+    };
+    if !toks[i..].iter().any(|t| t.tok == Tok::Gt) {
+        return d;
+    }
+    d.with_help("`+<` is a shift; to add a fraction put a space after the `+`, as in `a + <1/10>`")
 }
 
 struct Parser {
@@ -253,7 +281,30 @@ impl Parser {
         };
         self.bump();
         let rhs = self.range()?;
-        Ok(Self::binary(lhs, op, rhs))
+        if op == BinOp::In {
+            return Ok(Self::binary(lhs, op, rhs));
+        }
+        // Comparisons chain, as in Raku (D166): `0 < x <= 10` is
+        // `0 < x and x <= 10`. An expression has no effects, so the middle
+        // one is written twice rather than held.
+        let mut out = Self::binary(lhs, op, rhs.clone());
+        let mut middle = rhs;
+        while let Some(op) = match self.peek() {
+            Tok::EqEq => Some(BinOp::Eq),
+            Tok::NotEq => Some(BinOp::Ne),
+            Tok::Lt => Some(BinOp::Lt),
+            Tok::Gt => Some(BinOp::Gt),
+            Tok::Le => Some(BinOp::Le),
+            Tok::Ge => Some(BinOp::Ge),
+            _ => None,
+        } {
+            self.bump();
+            let next = self.range()?;
+            let link = Self::binary(middle, op, next.clone());
+            out = Self::binary(out, BinOp::And, link);
+            middle = next;
+        }
+        Ok(out)
     }
 
     fn range(&mut self) -> R<Expr> {
@@ -303,6 +354,7 @@ impl Parser {
             let op = match self.peek() {
                 Tok::Star => BinOp::Mul,
                 Tok::Slash => BinOp::Div,
+                Tok::Rem => BinOp::Rem,
                 // And the bitwise and and the shifts as a product does.
                 Tok::PlusAmp => BinOp::BitAnd,
                 Tok::PlusLt => BinOp::Shl,
@@ -386,6 +438,82 @@ impl Parser {
         }
     }
 
+    /// A fraction written out: `<1/10>`, `<-3/4>`, `<2 3/4>` or `<3>`. It is
+    /// a `Fraction` literal, as `1/10` is in a cell, where in a formula a bare
+    /// `1/10` is a quotient.
+    fn fraction(&mut self) -> R<Expr> {
+        let start = self.span();
+        self.bump();
+        let negative = self.eat(&Tok::Minus);
+        let whole = |t: &Tok| match t {
+            Tok::Int(n, crate::types::Base::Dec) => Some(*n),
+            _ => None,
+        };
+        let bad =
+            |p: &Self| Err(p.unexpected("a fraction such as `<1/10>` or `<2 3/4>`, closed by `>`"));
+        let Some(first) = whole(self.peek()) else {
+            // A decimal on its own, `<0.5>`, is the fraction it is.
+            if let Tok::Decimal(r) = self.peek().clone() {
+                self.bump();
+                return self.fraction_of(start, negative, Some(r));
+            }
+            return bad(self);
+        };
+        self.bump();
+        // `<3>`, `<1/10>` or `<2 3/4>`.
+        let value = if let Some(n) = whole(self.peek()) {
+            self.bump();
+            if !self.eat(&Tok::Slash) {
+                return bad(self);
+            }
+            let Some(d) = whole(self.peek()) else {
+                return bad(self);
+            };
+            let d_span = self.bump().span;
+            let part = self.quotient(n, d, d_span)?;
+            Dec::from_i64(first).checked_add(part)
+        } else if self.eat(&Tok::Slash) {
+            let Some(d) = whole(self.peek()) else {
+                return bad(self);
+            };
+            let d_span = self.bump().span;
+            Some(self.quotient(first, d, d_span)?)
+        } else {
+            Some(Dec::from_i64(first))
+        };
+        self.fraction_of(start, negative, value)
+    }
+
+    /// `n/d` as an exact number, or the error of a zero denominator.
+    fn quotient(&self, n: i64, d: i64, span: Span) -> R<Dec> {
+        if d == 0 {
+            return Err(Diagnostic::new(
+                span,
+                "a fraction has a denominator that is not zero",
+            ));
+        }
+        Dec::from_i64(n)
+            .checked_div(Dec::from_i64(d))
+            .ok_or_else(|| Diagnostic::new(span, "this fraction is too large"))
+    }
+
+    /// Close a fraction at `>`, as the `Fraction` of `value`.
+    fn fraction_of(&mut self, start: Span, negative: bool, value: Option<Dec>) -> R<Expr> {
+        if self.peek() != &Tok::Gt {
+            return Err(self.unexpected("`>` to close the fraction"));
+        }
+        let end = self.bump().span;
+        let span = start.to(end);
+        let Some(value) = value.and_then(|v| if negative { v.checked_neg() } else { Some(v) })
+        else {
+            return Err(Diagnostic::new(span, "this fraction is too large"));
+        };
+        Ok(Expr {
+            kind: ExprKind::Lit(Lit::Fraction(value)),
+            span,
+        })
+    }
+
     fn primary(&mut self) -> R<Expr> {
         let span = self.span();
         let lit = |kind: Lit| ExprKind::Lit(kind);
@@ -394,14 +522,23 @@ impl Parser {
             Tok::Decimal(r) => lit(Lit::Decimal(r)),
             Tok::Percent(r) => lit(Lit::Percent(r)),
             Tok::Float(f) => lit(Lit::Float(f)),
+            Tok::Imag(f) => lit(Lit::Complex(0.0, f)),
             Tok::Str(s) => lit(Lit::String(s)),
+            Tok::Text(s) => {
+                return Err(Diagnostic::new(span, "strings in OMX are in single quotes")
+                    .with_help(format!(
+                        "write {}; double quotes are for text in a table cell",
+                        crate::lexer::quoted(&s)
+                    )));
+            }
             Tok::Date(d) => lit(Lit::Date(d)),
             Tok::Time(t) => lit(Lit::Time(t)),
-            Tok::DateTime(t) => lit(Lit::DateTime(t)),
+            Tok::Datetime(t) => lit(Lit::Datetime(t)),
             Tok::Duration(t) => lit(Lit::Duration(t)),
             Tok::True => lit(Lit::Boolean(true)),
             Tok::False => lit(Lit::Boolean(false)),
             Tok::Star => ExprKind::Cursor,
+            Tok::Lt => return self.fraction(),
             Tok::Dollar => {
                 self.bump();
                 if !self.eat(&Tok::Minus) {
@@ -540,6 +677,41 @@ mod tests {
     }
 
     #[test]
+    fn comparisons_chain() {
+        // The shape without the spans, which differ between the two.
+        let shown = |s: &str| {
+            let text = format!("{:?}", parse(s).unwrap().kind);
+            let mut out = String::new();
+            let mut rest = text.as_str();
+            while let Some(at) = rest.find("Span {") {
+                out.push_str(&rest[..at]);
+                rest = &rest[at + rest[at..].find('}').unwrap() + 1..];
+            }
+            out + rest
+        };
+        // `0 < x <= 10` is `0 < x and x <= 10`.
+        let chained = shown("0 < x <= 10");
+        assert_eq!(chained, shown("0 < x and x <= 10"));
+        assert_eq!(shown("a < b < c < d"), shown("a < b and b < c and c < d"));
+        assert_eq!(shown("a == b != c"), shown("a == b and b != c"));
+        // `in` takes one side each.
+        assert!(parse("a in b in c").is_err());
+        assert!(parse("a < b in c").is_err());
+    }
+
+    #[test]
+    fn code_takes_single_quotes() {
+        assert!(matches!(
+            parse("Name // 'Unknown'").unwrap().kind,
+            ExprKind::Binary(BinOp::Fallback, ..)
+        ));
+        let err = parse("Name // \"Unknown\"").unwrap_err();
+        assert_eq!(err.message, "strings in OMX are in single quotes");
+        assert!(err.help.as_deref().unwrap().contains("'Unknown'"));
+        assert_eq!((err.span.start, err.span.end), (8, 17));
+    }
+
+    #[test]
     fn shapes() {
         assert!(matches!(
             parse("Sales[Revenue; *-1] // 0").unwrap().kind,
@@ -550,7 +722,7 @@ mod tests {
             ExprKind::Index(_, slots) if slots.len() == 2 && slots[0].is_none()
         ));
         assert!(matches!(
-            parse("Sales |> filter(Region == \"UK\") |> sum()").unwrap().kind,
+            parse("Sales |> filter(Region == 'UK') |> sum()").unwrap().kind,
             ExprKind::Call(name, _, args) if name == "sum" && args.len() == 1
         ));
         assert!(matches!(
@@ -583,7 +755,7 @@ mod tests {
 
     #[test]
     fn single_equals_suggests_double() {
-        let err = parse("Sales[; Region = \"UK\"]").unwrap_err();
+        let err = parse("Sales[; Region = 'UK']").unwrap_err();
         assert!(err.help.unwrap().contains("=="));
     }
 }

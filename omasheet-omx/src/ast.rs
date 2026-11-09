@@ -12,9 +12,14 @@ pub enum Lit {
     Int(i64, Base),
     /// Written with a decimal point: `19.99`.
     Decimal(Dec),
+    /// Written as a fraction: `1/7`, `2 3/4`. It is the exact number it
+    /// stands for, shown as a fraction.
+    Fraction(Dec),
     /// Written with a `%`: `20%`, held as `0.2`.
     Percent(Dec),
     Float(f64),
+    /// Real and imaginary parts: `3+4i`.
+    Complex(f64, f64),
     String(String),
     Boolean(bool),
     /// Days since 1970-01-01.
@@ -23,7 +28,7 @@ pub enum Lit {
     Time(i64),
     /// Microseconds since the start of 1970-01-01, on the clocks of the
     /// file's own zone, as Polars holds a `Datetime`.
-    DateTime(i64),
+    Datetime(i64),
     /// Microseconds, as Polars holds a `Duration`: `PT1H30M`.
     Duration(i64),
 }
@@ -108,6 +113,9 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    /// `%`: what is left over from a division, taking the sign of the
+    /// divisor, as a spreadsheet's `MOD` does.
+    Rem,
     Pow,
     /// `+&`, `+|`, `+^`, `+<` and `+>`, on whole numbers.
     BitAnd,
@@ -138,6 +146,7 @@ impl BinOp {
             BinOp::Sub => "-",
             BinOp::Mul => "*",
             BinOp::Div => "/",
+            BinOp::Rem => "%",
             BinOp::Pow => "**",
             BinOp::BitAnd => "+&",
             BinOp::BitOr => "+|",
@@ -175,7 +184,7 @@ impl BinOp {
     pub fn is_arithmetic(self) -> bool {
         matches!(
             self,
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Pow
         )
     }
 

@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/librasteve/omasheet"
@@ -36,11 +36,45 @@ polars = { version = "0.51", default-features = false, features = [
     "lazy",
     "propagate_nans",
     "parquet",
+    # A big CSV is read through a Parquet copy (open-a-big-csv D153).
+    "csv",
     "dtype-decimal",
     "dtype-date",
     "dtype-datetime",
     "dtype-time",
     "dtype-duration",
+    # A zoned Datetime is kept through Parquet (add-dataframe-interop 2.9).
+    "timezones",
+    # The narrow whole numbers a Parquet file may hold, read and written
+    # back at their own width and sign (add-polars-dtypes 5.4).
+    "dtype-i8",
+    "dtype-i16",
+    "dtype-u8",
+    "dtype-u16",
+    # The tests a filter is written with (filter-by-expression D177).
+    "strings",
+    "regex",
+    "find_many",
+    "is_in",
+    "is_between",
+    "is_unique",
+    "is_first_distinct",
+    "is_last_distinct",
 ] }
+regex = "1"
+serde = "1"
 serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+
+# Dependencies (Polars above all) are built without debug info: with it, a
+# debug build and its test binaries outgrow a small disk. The workspace's own
+# crates keep theirs, so a backtrace through omasheet still has line numbers.
+[profile.dev.package."*"]
+debug = false
+
+# A release binary: stripped, and linked as one unit so the unused part of
+# Polars is dropped.
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

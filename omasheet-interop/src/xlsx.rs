@@ -20,6 +20,7 @@ use omasheet_engine::{Engine, Options, Value};
 use rust_xlsxwriter::{Format, Workbook, Worksheet, XlsxError};
 use std::io::Cursor;
 
+pub(crate) mod table;
 mod write;
 
 /// Days from the day a workbook counts from, 1899-12-30, to 1970-01-01.
@@ -60,7 +61,7 @@ fn moment(serial: f64) -> Datum {
     } else {
         Datum::Lit(
             date::format_datetime((secs - EPOCH * DAY) * date::MICROS),
-            S::DateTime,
+            S::Datetime,
         )
     }
 }
@@ -252,11 +253,11 @@ pub fn import(bytes: &[u8], options: Options) -> Result<Imported, String> {
         for c in 0..width {
             let is =
                 |row: &Vec<Datum>, ty| matches!(row.get(c), Some(Datum::Lit(_, t)) if *t == ty);
-            if rows[1..].iter().any(|row| is(row, S::DateTime)) {
+            if rows[1..].iter().any(|row| is(row, S::Datetime)) {
                 for row in rows[1..].iter_mut().filter(|row| is(row, S::Date)) {
                     if let Datum::Lit(text, ty) = &mut row[c] {
                         text.push_str("T00:00");
-                        *ty = S::DateTime;
+                        *ty = S::Datetime;
                     }
                 }
             }
@@ -485,7 +486,7 @@ fn shown<'f>(
         Value::Time(t) => {
             Shown::Number(*t as f64 / (day * date::NANOS as f64), Some(&formats.time))
         }
-        Value::DateTime(t) => {
+        Value::Datetime(t, None) => {
             let days = *t as f64 / (day * date::MICROS as f64);
             Shown::Number(days + EPOCH as f64, Some(&formats.datetime))
         }
@@ -493,7 +494,7 @@ fn shown<'f>(
             *t as f64 / (day * date::MICROS as f64),
             Some(&formats.duration),
         ),
-        Value::Zoned(z) => {
+        Value::Datetime(_, Some(z)) => {
             lose(ZONES);
             let serial = z.home_wall() as f64 / (day * date::MICROS as f64) + EPOCH as f64;
             Shown::Number(serial, Some(&formats.datetime))

@@ -12,8 +12,8 @@
 - [x] 3.1 `package.yml`: build for x86_64 and aarch64 on a release, attach the packages and `SHA256SUMS`
 - [x] 3.2 `install.sh`: fetch the package of the latest release, check it, install it with `pacman`
 - [x] 3.3 Run `package.yml` by hand on GitHub, and put right what the first run finds
-- [ ] 3.4 Tag `v0.1.0` and publish the first release; install from it on a clean machine
+- [x] 3.4 Publish a release and install from it on a clean machine: releases run to v0.1.6; `install.sh` installed it in an Omarchy VM, and the CLI, launcher entry, `.omx` association, reinstall and uninstall all worked (2026-11-04)
 
 ## 4. Omarchy repository (goal)
-- [ ] 4.1 Recipe for `omacom-io/omarchy-pkgs` from the tagged source archive, with a `package.json` that watches the releases
-- [ ] 4.2 Build it with their `bin/build`, and open the PR
+- [x] 4.1 Recipe for `omacom-io/omarchy-pkgs` from the tagged source archive, with a `package.json` that watches the releases. Written 2026-11-04 in `pkgbuild/omarchy-pkgs/omasheet/` against the v0.1.6 archive, whose checksum it carries. Checked so far by `bash -n` and by reading it against their `omacalc` recipe; not yet built, and their `helpers/upstream-watch.py check` and `tests/pinned-sources.sh` are not yet run, which 4.2 does
+- [x] 4.2 Build it with their `bin/build`, and open the PR

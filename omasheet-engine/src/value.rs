@@ -38,6 +38,8 @@ pub enum Value {
     /// whole, `100%`.
     Percent(Dec),
     Float(f64),
+    /// A real and an imaginary part, each a `Float`: `3+4i`.
+    Complex(f64, f64),
     /// Text, and whether it was written bare in a cell, to be read as
     /// Markdown where a file is shown as a document. Text written in quotes,
     /// or made by a formula, is as it is.
@@ -46,12 +48,11 @@ pub enum Value {
     Date(i32),
     /// Nanoseconds since midnight, as Polars holds a `Time`.
     Time(i64),
-    /// What the clocks of the file's time zone show.
-    /// Microseconds since the start of 1970-01-01, on the clocks of the
-    /// file's own zone, as Polars holds a `Datetime`.
-    DateTime(i64),
-    /// A date-time moved to another time zone.
-    Zoned(Rc<Zoned>),
+    /// Microseconds since the start of 1970-01-01 on the clocks it is
+    /// shown on, as Polars holds a `Datetime`. With no zone, those are the
+    /// clocks of the file's own zone; with one, the clocks of that zone,
+    /// and the instant it is is in the [`Zoned`].
+    Datetime(i64, Option<Rc<Zoned>>),
     /// Microseconds, as Polars holds a `Duration`: `PT1H30M`.
     Duration(i64),
     Range {
@@ -83,6 +84,11 @@ pub struct RowRef {
 }
 
 impl Value {
+    /// A date-time on the clocks of a zone other than the file's own.
+    pub fn zoned(z: Zoned) -> Value {
+        Value::Datetime(z.wall, Some(Rc::new(z)))
+    }
+
     /// Whether this is text to be read as Markdown: see [`Value::String`].
     pub fn is_markdown(&self) -> bool {
         matches!(self, Value::String(_, true))
@@ -146,13 +152,15 @@ impl Value {
         match l {
             Lit::Int(n, b) => Value::Int(*n, *b),
             Lit::Decimal(r) => Value::exact(*r),
+            Lit::Fraction(r) => Value::Fraction(*r),
             Lit::Percent(r) => Value::Percent(*r),
             Lit::Float(f) => Value::Float(*f),
+            Lit::Complex(re, im) => Value::Complex(*re, *im),
             Lit::String(s) => Value::text(s),
             Lit::Boolean(b) => Value::Boolean(*b),
             Lit::Date(d) => Value::Date(*d),
             Lit::Time(t) => Value::Time(*t),
-            Lit::DateTime(t) => Value::DateTime(*t),
+            Lit::Datetime(t) => Value::Datetime(*t, None),
             Lit::Duration(t) => Value::Duration(*t),
         }
     }
@@ -172,11 +180,12 @@ impl Value {
             Value::Fraction(_) => "Fraction",
             Value::Percent(_) => "Percent",
             Value::Float(_) => "Float",
+            Value::Complex(..) => "Complex",
             Value::String(..) => "String",
             Value::Boolean(_) => "Boolean",
             Value::Date(_) => "Date",
             Value::Time(_) => "Time",
-            Value::DateTime(_) | Value::Zoned(_) => "Datetime",
+            Value::Datetime(_, None) | Value::Datetime(_, Some(_)) => "Datetime",
             Value::Duration(_) => "Duration",
             Value::Range { .. } => "a range",
             Value::Vector(_) => "a vector",
@@ -193,6 +202,7 @@ impl Value {
                 | Value::Fraction(_)
                 | Value::Percent(_)
                 | Value::Float(_)
+                | Value::Complex(..)
         )
     }
 
@@ -201,17 +211,17 @@ impl Value {
     fn to_lit(&self) -> Option<Lit> {
         Some(match self {
             Value::Int(n, b) => Lit::Int(*n, *b),
-            // A `Fraction` is a `Decimal` shown another way; there is no
-            // fraction literal to be had.
-            Value::Decimal(r) | Value::Fraction(r) => Lit::Decimal(*r),
+            Value::Decimal(r) => Lit::Decimal(*r),
+            Value::Fraction(r) => Lit::Fraction(*r),
             Value::Percent(r) => Lit::Percent(*r),
             Value::Float(f) => Lit::Float(*f),
+            Value::Complex(re, im) => Lit::Complex(*re, *im),
             Value::String(s, _) => Lit::String(s.to_string()),
             Value::Boolean(b) => Lit::Boolean(*b),
             Value::Date(d) => Lit::Date(*d),
             Value::Time(t) => Lit::Time(*t),
-            Value::DateTime(t) => Lit::DateTime(*t),
-            Value::Zoned(z) => Lit::DateTime(z.wall),
+            Value::Datetime(t, None) => Lit::Datetime(*t),
+            Value::Datetime(_, Some(z)) => Lit::Datetime(z.wall),
             Value::Duration(t) => Lit::Duration(*t),
             _ => return None,
         })
@@ -222,7 +232,7 @@ impl Value {
     pub fn converted(&self, to: S) -> Result<Value, String> {
         let fits = match (self, to) {
             (Value::Null, _) | (_, S::Any) => true,
-            (Value::Zoned(_), S::DateTime) | (Value::String(..), S::String) => true,
+            (Value::Datetime(_, Some(_)), S::Datetime) | (Value::String(..), S::String) => true,
             // A whole `Decimal` is held as an `Int`.
             (Value::Int(_, b), to) if to.is_int() => *b == Base::of(to),
             (Value::Int(_, Base::Dec), S::Decimal) => true,
@@ -259,6 +269,7 @@ impl Value {
 enum N {
     Exact(Dec),
     Float(f64),
+    Complex(f64, f64),
 }
 
 fn number(v: &Value) -> Option<N> {
@@ -266,6 +277,7 @@ fn number(v: &Value) -> Option<N> {
         Value::Int(n, _) => N::Exact(Dec::from_i64(*n)),
         Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => N::Exact(*r),
         Value::Float(f) => N::Float(*f),
+        Value::Complex(re, im) => N::Complex(*re, *im),
         _ => return None,
     })
 }
@@ -278,6 +290,14 @@ fn real(n: &N) -> f64 {
     match n {
         N::Exact(r) => r.to_f64(),
         N::Float(f) => *f,
+        N::Complex(re, _) => *re,
+    }
+}
+
+fn complex(n: &N) -> (f64, f64) {
+    match n {
+        N::Complex(re, im) => (*re, *im),
+        other => (real(other), 0.0),
     }
 }
 
@@ -342,19 +362,6 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     if let Some(scaled) = scale(op, a, b) {
         return scaled;
     }
-    // Percentages add up to a percentage; anything else done with one gives
-    // the plain number.
-    if let (Value::Percent(x), Value::Percent(y), BinOp::Add | BinOp::Sub) = (a, b, op) {
-        let sum = if op == BinOp::Add {
-            x.checked_add(*y)
-        } else {
-            x.checked_sub(*y)
-        };
-        return match sum {
-            Some(d) => Ok(Value::Percent(d)),
-            None => Err(TOO_LARGE.to_string()),
-        };
-    }
     let (Some(x), Some(y)) = (number(a), number(b)) else {
         return Err(format!(
             "cannot apply `{}` to {} and {}",
@@ -369,17 +376,65 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         (Value::Int(_, p), Value::Int(_, q)) if p == q && op != BinOp::Div => *p,
         _ => Base::Dec,
     };
+    // A power is exact only for a whole exponent: any other is worked out
+    // in floating point, as the type checker says.
+    let floating = op == BinOp::Pow && !matches!(b, Value::Int(..));
     match (&x, &y) {
-        // Anything done with a fraction gives a fraction.
-        (N::Exact(x), N::Exact(y)) => exact_arith(op, x, y).map(|v| {
-            if matches!(a, Value::Fraction(_)) || matches!(b, Value::Fraction(_)) {
-                v.fraction()
-            } else if let Value::Int(n, _) = v {
-                Value::Int(n, base)
-            } else {
-                v
-            }
+        // Two of one kind give that kind, so two fractions give a fraction and
+        // two percentages a percentage; any other mix is the plain number.
+        (N::Exact(x), N::Exact(y)) if !floating => exact_arith(op, x, y).map(|v| match (a, b) {
+            (Value::Fraction(_), Value::Fraction(_)) => v.fraction(),
+            (Value::Percent(_), Value::Percent(_)) => v.percent(),
+            _ => match v {
+                Value::Int(n, _) => Value::Int(n, base),
+                v => v,
+            },
         }),
+        (N::Complex(..), _) | (_, N::Complex(..)) => {
+            let ((a, b), (c, d)) = (complex(&x), complex(&y));
+            let (re, im) = match op {
+                BinOp::Add => (a + c, b + d),
+                BinOp::Sub => (a - c, b - d),
+                BinOp::Mul => (a * c - b * d, a * d + b * c),
+                BinOp::Div => {
+                    let m = c * c + d * d;
+                    ((a * c + b * d) / m, (b * c - a * d) / m)
+                }
+                // A whole exponent is repeated multiplication, as in Raku, so
+                // that `(1+1i) ** 2` is `0+2i` and not a rounding of it.
+                _ if d == 0.0 && c.fract() == 0.0 && c.abs() <= 1024.0 => {
+                    let (mut base, mut n) = ((a, b), c.abs() as u32);
+                    let mut out = (1.0, 0.0);
+                    let times = |p: (f64, f64), q: (f64, f64)| {
+                        (p.0 * q.0 - p.1 * q.1, p.0 * q.1 + p.1 * q.0)
+                    };
+                    while n > 0 {
+                        if n & 1 == 1 {
+                            out = times(out, base);
+                        }
+                        base = times(base, base);
+                        n >>= 1;
+                    }
+                    if c < 0.0 {
+                        let m = out.0 * out.0 + out.1 * out.1;
+                        (out.0 / m, -out.1 / m)
+                    } else {
+                        out
+                    }
+                }
+                _ => {
+                    // z ** w = exp(w * ln z)
+                    if a == 0.0 && b == 0.0 {
+                        (0.0, 0.0)
+                    } else {
+                        let (ln_r, theta) = ((a * a + b * b).sqrt().ln(), b.atan2(a));
+                        let (re, im) = (c * ln_r - d * theta, d * ln_r + c * theta);
+                        (re.exp() * im.cos(), re.exp() * im.sin())
+                    }
+                }
+            };
+            Ok(Value::Complex(re, im))
+        }
         _ => {
             let (x, y) = (real(&x), real(&y));
             Ok(Value::Float(match op {
@@ -387,6 +442,7 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
                 BinOp::Sub => x - y,
                 BinOp::Mul => x * y,
                 BinOp::Div => x / y,
+                BinOp::Rem => x - (x / y).floor() * y,
                 _ => x.powf(y),
             }))
         }
@@ -420,13 +476,13 @@ fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
         match moved {
             // Every date-time must have a day that is a valid date.
             Some(t) if i32::try_from(t.div_euclid(date::DAY_MICROS)).is_ok() => {
-                Ok(Value::DateTime(t))
+                Ok(Value::Datetime(t, None))
             }
             _ => Err("the date-time is out of range".to_string()),
         }
     };
     let zoned = |z: &Zoned, n: &i64| match signed(*n).and_then(|n| z.shifted(n)) {
-        Some(z) => Ok(Value::Zoned(Rc::new(z))),
+        Some(z) => Ok(Value::zoned(z)),
         None => Err("the date-time is out of range".to_string()),
     };
     // A time of day wraps round midnight, and a whole number beside one is
@@ -447,11 +503,13 @@ fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
         }
     };
     let on_datetime = |t: i64, n: &i64| match t.checked_add(by(n)?) {
-        Some(t) if i32::try_from(t.div_euclid(date::DAY_MICROS)).is_ok() => Ok(Value::DateTime(t)),
+        Some(t) if i32::try_from(t.div_euclid(date::DAY_MICROS)).is_ok() => {
+            Ok(Value::Datetime(t, None))
+        }
         _ => Err("the date-time is out of range".to_string()),
     };
     let on_zoned = |z: &Zoned, n: &i64| match z.moved(by(n)?) {
-        Some(z) => Ok(Value::Zoned(Rc::new(z))),
+        Some(z) => Ok(Value::zoned(z)),
         None => Err("the date-time is out of range".to_string()),
     };
     let on_time = |t: i64, n: &i64| {
@@ -464,23 +522,26 @@ fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
     };
     Some(match (a, b) {
         (Value::Date(d), Value::Int(n, _)) => date(*d, n),
-        (Value::DateTime(t), Value::Int(n, _)) => datetime(*t, n),
-        (Value::Zoned(z), Value::Int(n, _)) => zoned(z, n),
+        (Value::Datetime(t, None), Value::Int(n, _)) => datetime(*t, n),
+        (Value::Datetime(_, Some(z)), Value::Int(n, _)) => zoned(z, n),
         (Value::Time(t), Value::Int(n, _)) => time(*t, n),
         (Value::Int(n, _), Value::Date(d)) if !minus => date(*d, n),
-        (Value::Int(n, _), Value::DateTime(t)) if !minus => datetime(*t, n),
-        (Value::Int(n, _), Value::Zoned(z)) if !minus => zoned(z, n),
+        (Value::Int(n, _), Value::Datetime(t, None)) if !minus => datetime(*t, n),
+        (Value::Int(n, _), Value::Datetime(_, Some(z))) if !minus => zoned(z, n),
         (Value::Int(n, _), Value::Time(t)) if !minus => time(*t, n),
-        (Value::Date(d), Value::Time(t)) | (Value::Time(t), Value::Date(d)) if !minus => Ok(
-            Value::DateTime(*d as i64 * date::DAY_MICROS + t / date::NANOS_PER_MICRO),
-        ),
+        (Value::Date(d), Value::Time(t)) | (Value::Time(t), Value::Date(d)) if !minus => {
+            Ok(Value::Datetime(
+                *d as i64 * date::DAY_MICROS + t / date::NANOS_PER_MICRO,
+                None,
+            ))
+        }
         (Value::Date(d), Value::Duration(n)) => on_date(*d, n),
-        (Value::DateTime(t), Value::Duration(n)) => on_datetime(*t, n),
-        (Value::Zoned(z), Value::Duration(n)) => on_zoned(z, n),
+        (Value::Datetime(t, None), Value::Duration(n)) => on_datetime(*t, n),
+        (Value::Datetime(_, Some(z)), Value::Duration(n)) => on_zoned(z, n),
         (Value::Time(t), Value::Duration(n)) => on_time(*t, n),
         (Value::Duration(n), Value::Date(d)) if !minus => on_date(*d, n),
-        (Value::Duration(n), Value::DateTime(t)) if !minus => on_datetime(*t, n),
-        (Value::Duration(n), Value::Zoned(z)) if !minus => on_zoned(z, n),
+        (Value::Duration(n), Value::Datetime(t, None)) if !minus => on_datetime(*t, n),
+        (Value::Duration(n), Value::Datetime(_, Some(z))) if !minus => on_zoned(z, n),
         (Value::Duration(n), Value::Time(t)) if !minus => on_time(*t, n),
         (Value::Duration(x), Value::Duration(y)) => span(signed(*y).and_then(|y| x.checked_add(y))),
         // A difference is a `Duration`, in microseconds whatever the two are
@@ -489,10 +550,16 @@ fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
             span((*x as i64 - *y as i64).checked_mul(date::DAY_MICROS))
         }
         (Value::Time(x), Value::Time(y)) if minus => span(Some((x - y) / date::NANOS_PER_MICRO)),
-        (Value::DateTime(x), Value::DateTime(y)) if minus => span(x.checked_sub(*y)),
-        (Value::Zoned(x), Value::Zoned(y)) if minus => span(x.utc.checked_sub(y.utc)),
-        (Value::DateTime(x), Value::Zoned(y)) if minus => span(x.checked_sub(y.home_wall())),
-        (Value::Zoned(x), Value::DateTime(y)) if minus => span(x.home_wall().checked_sub(*y)),
+        (Value::Datetime(x, None), Value::Datetime(y, None)) if minus => span(x.checked_sub(*y)),
+        (Value::Datetime(_, Some(x)), Value::Datetime(_, Some(y))) if minus => {
+            span(x.utc.checked_sub(y.utc))
+        }
+        (Value::Datetime(x, None), Value::Datetime(_, Some(y))) if minus => {
+            span(x.checked_sub(y.home_wall()))
+        }
+        (Value::Datetime(_, Some(x)), Value::Datetime(y, None)) if minus => {
+            span(x.home_wall().checked_sub(*y))
+        }
         _ => return None,
     })
 }
@@ -526,6 +593,7 @@ fn scale(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
             let fits = out.is_finite() && out.abs() < i64::MAX as f64;
             fits.then(|| out.round() as i64)
         }
+        N::Complex(..) => return Some(Err("a duration cannot be scaled by a Complex".to_string())),
     };
     Some(
         out.map(Value::Duration)
@@ -559,6 +627,18 @@ fn exact_arith(op: BinOp, x: &Dec, y: &Dec) -> Result<Value, String> {
                 return Ok(Value::Float(over_zero(&x)));
             }
             x.checked_div(y)
+        }
+        // What is left of a division that goes by whole steps down, so that
+        // the result has the sign of the divisor: no exact number is a
+        // remainder by zero, which is `NaN`.
+        BinOp::Rem => {
+            if y.is_zero() {
+                return Ok(Value::Float(f64::NAN));
+            }
+            x.checked_div(y)
+                .map(Dec::floor)
+                .and_then(|q| q.checked_mul(y))
+                .and_then(|m| x.checked_sub(m))
         }
         _ => {
             if !y.is_integer() {
@@ -597,7 +677,15 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
                 .map(Value::Percent)
                 .ok_or_else(|| TOO_LARGE.to_string());
         }
+        (Value::Percent(_), MathFn::Re | MathFn::Conj) => return Ok(v.clone()),
         (Value::Percent(_), _) => return math(m, &v.clone().plain()),
+        (Value::Int(..) | Value::Decimal(_) | Value::Fraction(_), MathFn::Im) => {
+            return Ok(Value::int(0));
+        }
+        (Value::Decimal(_) | Value::Fraction(_), MathFn::Re | MathFn::Conj) => {
+            return Ok(v.clone());
+        }
+        (Value::Complex(re, im), _) => return complex_math(m, *re, *im),
         (Value::Int(n, b), MathFn::Abs) => {
             return n
                 .checked_abs()
@@ -640,6 +728,25 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
     Ok(Value::Float(m.apply(x)))
 }
 
+fn complex_math(m: MathFn, re: f64, im: f64) -> Result<Value, String> {
+    let r = re.hypot(im);
+    Ok(match m {
+        MathFn::Abs => Value::Float(r),
+        MathFn::Re => Value::Float(re),
+        MathFn::Im => Value::Float(im),
+        MathFn::Arg => Value::Float(im.atan2(re)),
+        MathFn::Conj => Value::Complex(re, -im),
+        // The root with a real part that is not negative.
+        MathFn::Sqrt => {
+            let half = ((r - re) / 2.0).sqrt();
+            Value::Complex(((r + re) / 2.0).sqrt(), if im < 0.0 { -half } else { half })
+        }
+        MathFn::Exp => Value::Complex(re.exp() * im.cos(), re.exp() * im.sin()),
+        MathFn::Ln => Value::Complex(r.ln(), im.atan2(re)),
+        _ => return Err(format!("`{}` is not defined for Complex", m.name())),
+    })
+}
+
 /// The nearest multiple of `scale`, which is what `round(x, 0.01)` means:
 /// `round(x / scale) * scale`.
 ///
@@ -678,15 +785,18 @@ pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
         (Value::String(x, _), Value::String(y, _)) => x.cmp(y),
         (Value::Date(x), Value::Date(y)) => x.cmp(y),
         (Value::Time(x), Value::Time(y)) => x.cmp(y),
-        (Value::DateTime(x), Value::DateTime(y)) => x.cmp(y),
+        (Value::Datetime(x, None), Value::Datetime(y, None)) => x.cmp(y),
         (Value::Duration(x), Value::Duration(y)) => x.cmp(y),
         // Across time zones it is the instant that counts.
-        (Value::Zoned(x), Value::Zoned(y)) => x.utc.cmp(&y.utc),
-        (Value::DateTime(x), Value::Zoned(y)) => x.cmp(&y.home_wall()),
-        (Value::Zoned(x), Value::DateTime(y)) => x.home_wall().cmp(y),
+        (Value::Datetime(_, Some(x)), Value::Datetime(_, Some(y))) => x.utc.cmp(&y.utc),
+        (Value::Datetime(x, None), Value::Datetime(_, Some(y))) => x.cmp(&y.home_wall()),
+        (Value::Datetime(_, Some(x)), Value::Datetime(y, None)) => x.home_wall().cmp(y),
         (Value::Boolean(x), Value::Boolean(y)) => x.cmp(y),
         _ => match (number(a), number(b)) {
             (Some(N::Exact(x)), Some(N::Exact(y))) => x.cmp(&y),
+            (Some(N::Complex(..)), _) | (_, Some(N::Complex(..))) => {
+                return Err("Complex values have no order".into());
+            }
             (Some(x), Some(y)) => {
                 let (x, y) = (real(&x), real(&y));
                 // A `NaN` is greatest and equal to itself, as Polars orders
@@ -720,6 +830,13 @@ pub fn sort_order(a: &Value, b: &Value) -> Result<Ordering, String> {
 
 /// Equality of two single values. `None` if either is empty.
 pub fn equal(a: &Value, b: &Value) -> Result<Option<bool>, String> {
+    // A `Complex` has no order but is equal to another when both of its
+    // parts are, exactly (D202).
+    if let (Some(x), Some(y)) = (number(a), number(b))
+        && (matches!(x, N::Complex(..)) || matches!(y, N::Complex(..)))
+    {
+        return Ok(Some(complex(&x) == complex(&y)));
+    }
     Ok(compare(a, b)?.map(|o| o == Ordering::Equal))
 }
 
@@ -954,6 +1071,53 @@ fn shown_float(f: f64, exact: bool, sep: Option<char>) -> String {
     format!("{mantissa}{}", exponent(e.parse().unwrap_or(0)))
 }
 
+/// Shortened to `room` characters and marked with [`MORE`]: a number in e
+/// notation in its mantissa, and any other at its end.
+fn cut(text: String, room: usize) -> String {
+    if width(&text) <= room {
+        return text;
+    }
+    let first = |text: &str, n: usize| text.chars().take(n).collect::<String>();
+    match text.split_once('e') {
+        Some((mantissa, exp)) => {
+            let keep = room.saturating_sub(exp.len() + 2).max(1);
+            format!("{}{MORE}e{exp}", first(mantissa, keep))
+        }
+        None => format!("{}{MORE}", first(&text, room - 1)),
+    }
+}
+
+/// A `Complex` as its parts are written: `3+4i`, `1.5-2i`. Shown, where that
+/// is wider than [`WIDTH`], both parts are cut alike until it fits; as for
+/// any number, a sign is not counted, and that of the imaginary part is
+/// what joins the two.
+fn format_complex(re: f64, im: f64, exact: bool, sep: Option<char>) -> String {
+    let unsigned = |text: String| match text.strip_prefix('-') {
+        Some(size) => ("-", size.to_string()),
+        None => ("", text),
+    };
+    let (re_sign, mut re_text) = unsigned(shown_float(re, exact, sep));
+    let (minus, mut im_text) = unsigned(shown_float(im, exact, sep));
+    let plus = if minus.is_empty() { "+" } else { minus };
+    // As Raku does, to keep the `i` apart from `Inf` and `NaN`.
+    let i = if im.is_finite() { "i" } else { "\\i" };
+    let room = WIDTH - 1 - i.len();
+    let (re_size, im_size) = (width(&re_text), width(&im_text));
+    if !exact && re_size + im_size > room {
+        let half = room / 2;
+        let (re_width, im_width) = if re_size <= half {
+            (re_size, room - re_size)
+        } else if im_size <= half {
+            (room - im_size, im_size)
+        } else {
+            (half, half)
+        };
+        re_text = cut(re_text, re_width);
+        im_text = cut(im_text, im_width);
+    }
+    format!("{re_sign}{re_text}{plus}{im_text}{i}")
+}
+
 /// A single value as text, the way a file shows it. `quoted` puts text in
 /// quotes, as inside a vector.
 pub fn format_scalar(v: &Value, quoted: bool) -> String {
@@ -1051,15 +1215,17 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         Value::Percent(r) => localised(shown_percent(r, false, group(style)), style),
         Value::Float(f) if exact => format_float(*f, true),
         Value::Float(f) => localised(shown_float(*f, false, group(style)), style),
-        Value::String(s, _) if quoted => format!("{s:?}"),
+        Value::Complex(re, im) if exact => format_complex(*re, *im, true, None),
+        Value::Complex(re, im) => localised(format_complex(*re, *im, false, group(style)), style),
+        Value::String(s, _) if quoted => omasheet_omx::lexer::quoted(s),
         Value::String(s, _) => s.to_string(),
         Value::Boolean(b) => b.to_string(),
         Value::Date(d) => style.date(*d),
         Value::Time(t) => style.time(*t),
-        Value::DateTime(t) => style.datetime(*t),
+        Value::Datetime(t, None) => style.datetime(*t),
         Value::Duration(t) => duration::format(*t),
         // `2025-01-31T09:30+09:00`, to tell it from the file's own zone.
-        Value::Zoned(z) => format!(
+        Value::Datetime(_, Some(z)) => format!(
             "{}{}{}",
             style.datetime(z.wall),
             if style.is_iso() { "" } else { " " },
@@ -1204,14 +1370,21 @@ mod tests {
         );
         // One with no fraction of a small enough denominator is a decimal.
         assert_eq!(shown(1, 10_001), "0.00009999000099990000…");
-        // Anything done with a fraction gives a fraction.
+        // Two fractions give a fraction; a fraction with a decimal, a decimal.
         let sum = arith(
+            BinOp::Add,
+            &Value::Fraction(rat(1, 3)),
+            &Value::Fraction(rat(1, 6)),
+        )
+        .expect("adds");
+        assert_eq!(format_scalar(&sum, false), "1/2");
+        let mixed = arith(
             BinOp::Add,
             &Value::Fraction(rat(1, 3)),
             &Value::Decimal(rat(1, 6)),
         )
         .expect("adds");
-        assert_eq!(format_scalar(&sum, false), "1/2");
+        assert_eq!(format_scalar(&mixed, false), "0.5");
     }
 
     #[test]
@@ -1269,6 +1442,7 @@ mod tests {
             shown(Value::Percent(rat(12_345_678, 100_000))),
             "12,345.68%"
         );
+        assert_eq!(shown(Value::Complex(12345.0, -1.0)), "12,345-1i");
         assert_eq!(shown(Value::Float(1_234_567.5)), "1,234,567.5");
         assert_eq!(shown(Value::Float(-0.000123)), "-0.000123");
         // Only the app groups them: a file, and `print`, do not.
@@ -1359,6 +1533,18 @@ mod tests {
                 "NaN",
             ]
         );
+        let complex = |re, im| format_scalar(&Value::Complex(re, im), false);
+        assert_eq!(complex(3.0, 4.0), "3+4i");
+        assert_eq!(complex(1.5, -2.0), "1.5-2i");
+        assert_eq!(complex(1e20, 1e-7), "1e+20+0.0000001i");
+        assert_eq!(complex(1e20, 1e-20), "1e+20+1e-20i");
+        assert_eq!(complex(0.0, f64::INFINITY), "0+Inf\\i");
+        assert_eq!(complex(1.0 / 3.0, 1.0), "0.3333333333333333+1i");
+        assert_eq!(complex(1.0 / 3.0, -1.0 / 3.0), "0.3333333…-0.3333333…i");
+        assert_eq!(
+            complex(1.7976931348623157e308, 1.7976931348623157e308),
+            "1.79…e+308+1.79…e+308i"
+        );
         // Shown, a `Num` is never rounded: plain from `1e-15` to `1e15`
         // where that fits in 23 characters, and in e notation otherwise.
         let shown = |f| format_float(f, false);
@@ -1380,12 +1566,12 @@ mod tests {
         assert_eq!(shown(third.converted(S::Int)), "-2");
         assert_eq!(
             shown(third.converted(S::String)),
-            "\"-2.33333333333333333333333333333\""
+            "'-2.33333333333333333333333333333'"
         );
         assert_eq!(shown(Value::Float(0.1).converted(S::Decimal)), "0.1");
         assert_eq!(shown(Value::text("1/8").converted(S::Decimal)), "0.125");
         assert_eq!(
-            shown(Value::Date(1).converted(S::DateTime)),
+            shown(Value::Date(1).converted(S::Datetime)),
             "1970-01-02T00:00"
         );
         assert_eq!(shown(Value::Null.converted(S::Int)), "");
@@ -1440,7 +1626,7 @@ mod tests {
         let longer = Value::Duration(36 * 3_600 * date::MICROS);
         assert_eq!(shown(BinOp::Add, &ymd(2025, 1, 31), &longer), "2025-02-01");
         assert_eq!(shown(BinOp::Sub, &ymd(2025, 1, 31), &longer), "2025-01-29");
-        let noon = Value::DateTime(date::datetime_from(0, 12, 0, 0).unwrap());
+        let noon = Value::Datetime(date::datetime_from(0, 12, 0, 0).unwrap(), None);
         assert_eq!(shown(BinOp::Add, &noon, &longer), "1970-01-03T00:00");
         assert_eq!(shown(BinOp::Sub, &longer, &half), "P1DT10H30M");
         assert_eq!(compare(&half, &longer).unwrap(), Some(Ordering::Less));

@@ -3,6 +3,8 @@
 //! The functions of OMX: what each is called, and what a person browsing
 //! them is told. The checker and the function directory both read this.
 
+use crate::types::S;
+
 /// A function of one number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MathFn {
@@ -27,6 +29,14 @@ pub enum MathFn {
     Tanh,
     Radians,
     Degrees,
+    /// The real part of a complex number.
+    Re,
+    /// The imaginary part.
+    Im,
+    /// The complex conjugate.
+    Conj,
+    /// The angle of a complex number, in radians.
+    Arg,
 }
 
 impl MathFn {
@@ -47,13 +57,30 @@ impl MathFn {
     pub fn is_exact(self) -> bool {
         matches!(
             self,
-            MathFn::Abs | MathFn::Sign | MathFn::Round | MathFn::Floor | MathFn::Ceil
+            MathFn::Abs
+                | MathFn::Sign
+                | MathFn::Round
+                | MathFn::Floor
+                | MathFn::Ceil
+                | MathFn::Re
+                | MathFn::Im
+                | MathFn::Conj
         )
     }
 
     /// Whether the result is always a whole number, given an exact one.
     pub fn is_whole(self) -> bool {
-        self.is_exact() && !matches!(self, MathFn::Abs)
+        self.is_exact() && !matches!(self, MathFn::Abs | MathFn::Re | MathFn::Conj)
+    }
+
+    /// The type of the result for a complex number, or `None` if the
+    /// function does not take one.
+    pub fn of_complex(self) -> Option<S> {
+        match self {
+            MathFn::Abs | MathFn::Re | MathFn::Im | MathFn::Arg => Some(S::Float),
+            MathFn::Conj | MathFn::Sqrt | MathFn::Exp | MathFn::Ln => Some(S::Complex),
+            _ => None,
+        }
     }
 
     pub fn apply(self, x: f64) -> f64 {
@@ -80,6 +107,10 @@ impl MathFn {
             MathFn::Tanh => x.tanh(),
             MathFn::Radians => x.to_radians(),
             MathFn::Degrees => x.to_degrees(),
+            MathFn::Re | MathFn::Conj => x,
+            MathFn::Im => 0.0,
+            MathFn::Arg if x < 0.0 => std::f64::consts::PI,
+            MathFn::Arg => 0.0,
         }
     }
 }
@@ -135,8 +166,10 @@ const CONVERT: &str = "Convert";
 const MATH: &str = "Math";
 const LOG: &str = "Log & Exp";
 const TRIG: &str = "Trigonometry";
+const COMPLEX: &str = "Complex";
 const TIME: &str = "Time & Date";
 const BITWISE: &str = "Bitwise";
+const TEXT: &str = "Text";
 
 /// What the function directory says first: how a function is written.
 pub const INTRO: &str = "Functions are written =sum(x), many can also be used a method applied to an object e.g. \
@@ -159,8 +192,16 @@ pub const ABOUT: &[(&str, &str)] = &[
          a number.",
     ),
     (CONVERT, "Object: a Value."),
+    (
+        TEXT,
+        "Object: text, a single cell or a Column. Strings in a formula are in 'single quotes'.",
+    ),
     (LOG, "Takes: a number."),
     (TRIG, "Takes: a number as an angle in radians."),
+    (
+        COMPLEX,
+        "Takes: a complex number such as 3+4i, or a real one, which has no imaginary part.",
+    ),
     (TIME, "Object: Date, Time, Datetime or Duration."),
     (
         BITWISE,
@@ -318,6 +359,42 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     ),
     doc(
         MATH,
+        "is_finite",
+        ".is_finite()",
+        "Whether a number is neither infinite nor NaN. An exact number always is.",
+    ),
+    doc(
+        MATH,
+        "is_infinite",
+        ".is_infinite()",
+        "Whether a number is Inf or -Inf.",
+    ),
+    doc(
+        MATH,
+        "is_unique",
+        "Name.is_unique()",
+        "Whether a value is the only one of its kind in its column.",
+    ),
+    doc(
+        MATH,
+        "is_duplicated",
+        "Name.is_duplicated()",
+        "Whether a value is in its column more than once.",
+    ),
+    doc(
+        MATH,
+        "is_first_distinct",
+        "Name.is_first_distinct()",
+        "Whether a value is the first of its kind in its column, going down.",
+    ),
+    doc(
+        MATH,
+        "is_last_distinct",
+        "Name.is_last_distinct()",
+        "Whether a value is the last of its kind in its column, going down.",
+    ),
+    doc(
+        MATH,
         "succ",
         "succ(x)",
         "The next value: a number plus one, or the text in alphabetical order, AZ to BA.",
@@ -417,19 +494,19 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         CONVERT,
         "Date",
         ".Date",
-        "The Date of a Datetime, or of text such as \"2025-01-31\".",
+        "The Date of a Datetime, or of text such as '2025-01-31'.",
     ),
     doc(
         CONVERT,
         "Time",
         ".Time",
-        "The Time of a Datetime, or of text such as \"09:30\".",
+        "The Time of a Datetime, or of text such as '09:30'.",
     ),
     doc(
         CONVERT,
         "Datetime",
         ".Datetime",
-        "A Date at midnight, or text such as \"2025-01-31T09:30\".",
+        "A Date at midnight, or text such as '2025-01-31T09:30'.",
     ),
     doc(
         CONVERT,
@@ -549,6 +626,90 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "The ratio of a circle's circumference to its diameter, 3.14159...",
     ),
     doc(
+        COMPLEX,
+        "Complex",
+        "Complex(re, im)",
+        "A complex number from its real and imaginary parts, or from a real number: x.Complex. \
+         Also written 3+4i.",
+    ),
+    math_doc(
+        COMPLEX,
+        "re",
+        "re(z)",
+        "The real part of a complex number.",
+        MathFn::Re,
+    ),
+    math_doc(
+        COMPLEX,
+        "im",
+        "im(z)",
+        "The imaginary part of a complex number.",
+        MathFn::Im,
+    ),
+    math_doc(
+        COMPLEX,
+        "conj",
+        "conj(z)",
+        "The complex conjugate: the imaginary part with its sign changed.",
+        MathFn::Conj,
+    ),
+    math_doc(
+        COMPLEX,
+        "arg",
+        "arg(z)",
+        "The angle of a complex number, in radians from -pi to pi.",
+        MathFn::Arg,
+    ),
+    doc(
+        TEXT,
+        "starts_with",
+        "Name.starts_with('A')",
+        "Whether text starts with another. Name.starts_with('A'..'C') takes a range of first \
+         letters.",
+    ),
+    doc(
+        TEXT,
+        "ends_with",
+        "Name.ends_with('son')",
+        "Whether text ends with another.",
+    ),
+    doc(
+        TEXT,
+        "contains",
+        "Name.contains('an')",
+        "Whether text holds another anywhere in it, exactly as written.",
+    ),
+    doc(
+        TEXT,
+        "matches",
+        "Name.matches('^A.*n$')",
+        "Whether text matches a regular expression anywhere in it.",
+    ),
+    doc(
+        TEXT,
+        "contains_any",
+        "Name.contains_any(['an', 'en'])",
+        "Whether text holds any of several others.",
+    ),
+    doc(
+        TEXT,
+        "len_chars",
+        "Name.len_chars()",
+        "The number of characters in text.",
+    ),
+    doc(
+        TEXT,
+        "to_lowercase",
+        "Name.to_lowercase()",
+        "Text in lower case: Name.to_lowercase().starts_with('a') ignores case.",
+    ),
+    doc(
+        TEXT,
+        "to_uppercase",
+        "Name.to_uppercase()",
+        "Text in upper case.",
+    ),
+    doc(
         TIME,
         "today",
         "today()",
@@ -561,6 +722,12 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "The date and time now, in the file's time zone.",
     ),
     doc(TIME, "year", ".year()", "The year of a Date or Datetime."),
+    doc(
+        TIME,
+        "is_leap_year",
+        ".is_leap_year()",
+        "Whether a Date or Datetime falls in a leap year.",
+    ),
     doc(TIME, "month", ".month()", "The month, 1 to 12."),
     doc(TIME, "day", ".day()", "The day."),
     doc(
@@ -657,7 +824,7 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     doc(
         TIME,
         "convert_time_zone",
-        ".convert_time_zone(\"Australia/Adelaide\")",
+        ".convert_time_zone('Australia/Adelaide')",
         "The same instant on the clocks of a named time zone.",
     ),
     doc(

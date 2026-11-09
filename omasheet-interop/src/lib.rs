@@ -83,6 +83,10 @@ pub struct Grid {
     pub rows: Vec<Vec<Datum>>,
     /// Keep every row, so that a row stays where a formula looks for it.
     pub fixed: bool,
+    /// The zone a `Datetime` column declares, by column: `Datetime("Europe/London")`.
+    /// Its cells are then the wall clock of that zone. Empty for a source
+    /// with no zones.
+    pub zones: Vec<Option<String>>,
 }
 
 impl Grid {
@@ -101,6 +105,7 @@ impl Grid {
             headers,
             rows,
             fixed: false,
+            zones: Vec::new(),
         }
     }
 }
@@ -112,7 +117,7 @@ const RESERVED: &[&str] = &[
 
 /// `raw` as an OMX identifier: the letters, digits and `_` of it, with a
 /// capital after each gap. Empty if it has none of them.
-fn identifier(raw: &str) -> String {
+pub fn identifier(raw: &str) -> String {
     let mut out = String::new();
     let mut gap = false;
     for c in raw.chars() {
@@ -162,6 +167,71 @@ fn name_for(
     }
     taken.push(name.clone());
     name
+}
+
+/// The `view` lines that read the file at `path` where it is, as tables, ready
+/// to paste into an `.omx` file (open-a-big-csv D146): one for a file that is
+/// one table, and one for each sheet of a JSON object of lists or of a workbook,
+/// which a source names as `file.json#Sheet`. A workbook with formulas is
+/// read as tables only where each is one filled down a column and holds up
+/// (D154), and is an error otherwise.
+pub fn table_source(path: &std::path::Path) -> Result<String, String> {
+    let full = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let full = full.to_string_lossy().to_string();
+    let stem = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let extension = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    let json = extension == "json";
+    let tables: Vec<(String, String)> = if matches!(extension.as_str(), "xlsx" | "xlsm") {
+        let sheets = omasheet_engine::xlsxcopy::sheets(path)?;
+        // A table is values only. A workbook with a formula in it is read as
+        // tables only where every formula is one filled down a column, which
+        // is written as a calculated column and held to what the workbook has
+        // (D154); otherwise it is imported, which keeps them.
+        for sheet in &sheets {
+            if omasheet_engine::xlsxcopy::has_formulas(path, sheet)? {
+                return xlsx::table::plan(path);
+            }
+        }
+        sheets
+            .into_iter()
+            .map(|sheet| {
+                let source = format!("{full}#{sheet}");
+                (sheet, source)
+            })
+            .collect()
+    } else if json {
+        let book = omasheet_engine::jsoncopy::sheets(path)?;
+        if book.bare {
+            vec![(stem, full)]
+        } else {
+            book.sheets
+                .into_iter()
+                .map(|sheet| {
+                    let source = format!("{full}#{sheet}");
+                    (sheet, source)
+                })
+                .collect()
+        }
+    } else {
+        vec![(stem, full)]
+    };
+    let (mut taken, mut notices) = (Vec::new(), Vec::new());
+    let mut out = String::new();
+    for (raw, source) in tables {
+        let name = name_for(&raw, "Table", &mut taken, &mut notices);
+        out.push_str(&format!(
+            "view {name} := dataframe[{}]\n",
+            omasheet_engine::omx::lexer::quoted(&source)
+        ));
+    }
+    Ok(out)
 }
 
 /// Text as a cell holds it: bare where a cell would read it back as the
@@ -328,16 +398,22 @@ pub(crate) fn write_named(
         let types: Vec<(Option<S>, bool)> = (0..width)
             .map(|c| column_type(&rows.iter().map(|row| &row[c]).collect::<Vec<_>>()))
             .collect();
-        let declared: Vec<(&str, S)> = (0..width)
-            .filter_map(|c| Some((columns[c].as_str(), types[c].0?)))
+        let declared: Vec<(&str, S, Option<&str>)> = (0..width)
+            .filter_map(|c| {
+                let zone = grid.zones.get(c).and_then(|z| z.as_deref());
+                Some((columns[c].as_str(), types[c].0?, zone))
+            })
             .collect();
         let longest = declared
             .iter()
-            .map(|(name, _)| name.len())
+            .map(|(name, _, _)| name.len())
             .max()
             .unwrap_or(0);
-        for (name, ty) in &declared {
-            out.push_str(&format!("{name:longest$} : {ty}\n"));
+        for (name, ty, zone) in &declared {
+            match zone.filter(|_| *ty == S::Datetime) {
+                Some(zone) => out.push_str(&format!("{name:longest$} : {ty}(\"{zone}\")\n")),
+                None => out.push_str(&format!("{name:longest$} : {ty}\n")),
+            }
         }
         if !declared.is_empty() {
             out.push('\n');
@@ -488,7 +564,7 @@ pub(crate) fn with_file<T>(
     let mut sources = Sources::new();
     let src = sources.add(name, text);
     let (mut program, mut diags) = compile(text, src);
-    // A `table` holds its rows in a file of its own, which has to be read
+    // A `view` holds its rows in a file of its own, which has to be read
     // before anything can be written out of it (D62).
     let mut tables = table::Tables::default();
     if diags.is_empty() {

@@ -19,7 +19,7 @@
 - [x] 2.8 Follow the Omarchy theme colours
 
 ## 3. Not yet done
-- [ ] 3.1 Try every keyboard shortcut and mouse gesture by hand (only the functions behind them were exercised headlessly)
+- [x] 3.1 Try every keyboard shortcut and mouse gesture by hand (only the functions behind them were exercised headlessly): done by hand, 2026-11-04
 - [x] 3.2 Build the window in CI (needs Qt 6 on the runner): `ci.yml`
       runs on `archlinux:base-devel` with `qt6-base` and
       `qt6-declarative`, and builds and tests the whole workspace, the
@@ -29,4 +29,13 @@
 - [x] 3.3 Desktop entry, icon and package: `pkgbuild/omasheet.desktop`,
       `omasheet.svg` and the MIME type `omasheet.xml`, installed by
       `pkgbuild/PKGBUILD` (`add-packaging`)
-- [ ] 3.4 A sheet model that does not send the whole file to the window on every edit
+- [x] 3.4 Edits stay linear on a big inline sheet
+      Measured 2026-11-04 (debug build, 4 columns, one cell edited): the
+      whole-file JSON was not the cost. At 50,000 rows `set_cell` took
+      10.1 s, of which `Grid::write` was 9.2 s, quadratic in two places
+      (a `contains` scan per row, and `replace_range` once per edit on the
+      whole text). Fixed, it is 1.07 s at 50,000 rows and 4.3 s at 200,000,
+      linear, most of it the engine re-reading the file (`rebuild`, 0.9 s at
+      50,000). The JSON is 0.4 s at 50,000 rows. A sheet model that sends
+      only changed rows would save that and the window's parse; left until
+      an incremental `rebuild` makes it the larger share

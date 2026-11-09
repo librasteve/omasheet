@@ -25,7 +25,7 @@ sheet Summary
 | -------------- | ------------------------------------------------------- |
 | Revenue        | = Sales.Revenue.sum()                                   |
 | Profit         | = Sales.Profit.sum()                                    |
-| Best month     | = Sales[; Profit == Sales.Profit.max()].Month // "none" |
+| Best month     | = Sales[; Profit == Sales.Profit.max()].Month // 'none' |
 | Average margin | = Sales.Margin.mean()                                    |
 | Books closed   | = Sales.Closed.max()                                    |
 

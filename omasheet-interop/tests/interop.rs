@@ -34,7 +34,7 @@ fn options() -> Options {
     }
 }
 
-/// The options for a file read from `dir`, where a `table` finds the
+/// The options for a file read from `dir`, where a `view` finds the
 /// Parquet it reads beside it. Exporting one without this cannot find its
 /// rows, and says so rather than writing a sheet with none.
 fn options_beside(dir: &str) -> Options {
@@ -708,7 +708,7 @@ sheet YearEnd
 | Best      | = Sales.Profit.max()                           |
 | First two | = Sales[Profit; 0] + Sales[Profit; 1]          |
 | Share     | = [Value; *-3] / [Value; *-4]                  |
-| Good      | = if [Value; *-4] > 10000 then \"yes\" else \"no\" |
+| Good      | = if [Value; *-4] > 10000 then 'yes' else 'no' |
 | Looked up | 5000                                           |
 | Wrong     | 1                                              |
 "
@@ -736,6 +736,15 @@ sheet YearEnd
         "0.417613636363636363636363636364"
     );
     assert_eq!(eval(&out.source, "YearEnd[Value; 5]"), "yes");
+}
+
+#[test]
+fn xlsx_writes_a_complex_as_text_and_says_so() {
+    let text = "sheet T\n\nZ : Complex\n\nZ\n3+4i\n2\n";
+    let out = xlsx::export("t.omx", text, None, options()).unwrap();
+    assert!(!out.notices.is_empty(), "a workbook has no complex cell");
+    let back = xlsx::import(&out.files[0].bytes, options()).unwrap();
+    assert!(back.source.contains("3+4i"), "{}", back.source);
 }
 
 #[test]
@@ -822,8 +831,8 @@ fn json_comes_back_as_the_values_it_was_written_from() {
     assert_eq!(eval(&back.source, "T[Day; 1] - T[Day; 0]"), "P1D");
     assert_eq!(eval(&back.source, "T.At"), "[09:30, 17:05]");
     // A number in quotes is text, and null is empty.
-    assert_eq!(eval(&back.source, "T.Name"), "[\"a\", \"42\"]");
-    assert_eq!(eval(&back.source, "T.Gap"), "[empty, \"x\"]");
+    assert_eq!(eval(&back.source, "T.Name"), "['a', '42']");
+    assert_eq!(eval(&back.source, "T.Gap"), "[empty, 'x']");
 }
 
 #[test]
@@ -849,10 +858,7 @@ fn json_reads_a_list_of_rows_as_one_sheet() {
         eval(&back.source, "orders[Qty; 1] + 1"),
         "10000000000000000000001"
     );
-    assert_eq!(
-        eval(&back.source, "orders.Tags"),
-        "[empty, \"[\\\"a\\\",1]\"]"
-    );
+    assert_eq!(eval(&back.source, "orders.Tags"), "[empty, '[\"a\",1]']");
     assert_eq!(
         back.notices,
         [
@@ -889,6 +895,23 @@ fn parquet_writes_a_file_for_each_sheet() {
         assert_eq!(&file.bytes[..4], b"PAR1", "not a Parquet file");
         assert_eq!(&file.bytes[file.bytes.len() - 4..], b"PAR1");
     }
+}
+
+#[test]
+fn parquet_keeps_a_division_by_zero_in_a_column_left_to_its_cells() {
+    // A column with no type line is as wide as its cells: `1/0` is `Inf`, a
+    // `Float`, so the column is one, and every value comes back.
+    let file = "sheet T\n\n| U | V |\n| --- | --- |\n\
+                | =1/0 | 1.5 |\n| 2.5 | =0/0 |\n| 3 | =-1/0 |\n";
+    let out = parquet_of(file, None);
+    assert!(out.notices.is_empty(), "{:?}", out.notices);
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    assert!(back.source.contains("U : Float"), "{}", back.source);
+    assert_eq!(eval(&back.source, "t[U; 0]"), "Inf");
+    assert_eq!(eval(&back.source, "t[U; 1]"), "2.5");
+    assert_eq!(eval(&back.source, "t[V; 1]"), "NaN");
+    assert_eq!(eval(&back.source, "t[V; 2]"), "-Inf");
 }
 
 #[test]
@@ -1115,7 +1138,7 @@ Feb   | 12000   | 7000
 
 /// A table over those three columns, with a formula over two of them.
 const TABLE: &str = "\
-table Sales := dataframe[\"sales.parquet\"]
+view Sales := dataframe['sales.parquet']
 
 Month   : String
 Revenue : Int
@@ -1272,7 +1295,7 @@ fn a_table_with_rows_of_its_own_is_reported() {
 #[test]
 fn a_source_that_is_not_a_dataframe_is_reported() {
     let dir = scratch("table-source");
-    let out = with_tables(&dir, "table Sales := 1 + 1\n");
+    let out = with_tables(&dir, "view Sales := 1 + 1\n");
     assert!(!out.ok());
     assert!(
         out.errors
@@ -1305,24 +1328,44 @@ fn a_document_shows_a_table_and_takes_no_edit() {
 
     // Nothing of it can be edited, and the text is left as it was.
     let before = doc.text().to_string();
-    let why =
-        "table `Sales` is a read-only view of `sales.parquet`: import that file to make edits";
+    let why = "`Sales` is read-only: import to edit";
     assert!(!doc.set_cell(0, 0, 0, "Mar"));
     assert!(!doc.insert_rows(0, 0, 1));
     assert!(!doc.delete_rows(0, 0, 1));
     assert!(!doc.set_column_types(0, &[1], Some("Float")));
-    assert!(!doc.set_column_formula(0, 3, "Revenue"));
     assert_eq!(doc.add_column(0, "Extra").unwrap_err(), why);
     assert_eq!(doc.insert_column(0, 0, "Extra").unwrap_err(), why);
     assert_eq!(doc.rename_column(0, 0, "When").unwrap_err(), why);
-    assert_eq!(doc.delete_columns(0, 0, 1).unwrap_err(), why);
-    assert_eq!(doc.move_rows(0, 0, 1, 1).unwrap_err(), why);
-    assert_eq!(doc.move_columns(0, 0, 1, 1).unwrap_err(), why);
+    // A formula column of a view can be deleted and moved, so these two say
+    // that it is only those.
     assert_eq!(
-        doc.add_computed(0, "Twice", "Revenue * 2").unwrap_err(),
-        why
+        doc.delete_columns(0, 0, 1).unwrap_err(),
+        "view `Sales` is read-only: only its formula columns can be deleted"
+    );
+    assert_eq!(doc.move_rows(0, 0, 1, 1).unwrap_err(), why);
+    assert_eq!(
+        doc.move_columns(0, 0, 1, 1).unwrap_err(),
+        "view `Sales` is read-only: only its formula columns can be moved"
     );
     assert_eq!(doc.text(), before);
+
+    // A formula column is the one thing it takes: a decorator, a line after
+    // the file's columns.
+    doc.add_computed(0, "Twice", "Revenue * 2").unwrap();
+    assert!(
+        doc.text().contains("Twice := Revenue * 2\n"),
+        "{}",
+        doc.text()
+    );
+    assert!(doc.undo());
+
+    // A formula column appended to the view, a decorator, is the file's own
+    // text and takes a formula; the columns of the Parquet file do not
+    // (paste-as-reference D207).
+    assert_eq!(doc.read_only_cell(0, 0).as_deref(), Some(why));
+    assert_eq!(doc.read_only_cell(0, 3), None);
+    assert!(doc.set_column_formula(0, 3, "Revenue"));
+    assert!(doc.text().contains("Profit := Revenue\n"), "{}", doc.text());
 }
 
 #[test]
@@ -1353,10 +1396,10 @@ fn a_column_is_read_under_the_name_the_file_holds_it_by() {
     let dir = scratch("table-from");
     odd_named_file(&dir);
     let text = "\
-table Sales := dataframe[\"odd.parquet\"]
+view Sales := dataframe['odd.parquet']
 
 Month : String
-Units : Int from \"Units/Boxes Sold\"
+Units : Int from 'Units/Boxes Sold'
 
 Double := Units * 2
 
@@ -1378,7 +1421,7 @@ const Total = Sales.Units.sum()
 fn a_column_the_schema_does_not_name_says_how_to_name_it() {
     let dir = scratch("table-from-missing");
     odd_named_file(&dir);
-    let text = "table Sales := dataframe[\"odd.parquet\"]\n\nMonth : String\n";
+    let text = "view Sales := dataframe['odd.parquet']\n\nMonth : String\n";
     let out = with_tables(&dir, text);
     assert!(!out.ok());
     // The help offers the one form that can name it, under a name made
@@ -1386,7 +1429,7 @@ fn a_column_the_schema_does_not_name_says_how_to_name_it() {
     assert!(
         out.errors
             .iter()
-            .any(|e| e.contains("UnitsBoxesSold : Integer from \"Units/Boxes Sold\"")),
+            .any(|e| e.contains("UnitsBoxesSold : Integer from 'Units/Boxes Sold'")),
         "{:?}",
         out.errors
     );
@@ -1395,7 +1438,7 @@ fn a_column_the_schema_does_not_name_says_how_to_name_it() {
 #[test]
 fn a_from_on_a_sheet_of_its_own_rows_is_reported() {
     let dir = scratch("table-from-sheet");
-    let text = "sheet Sales\n\nUnits : Int from \"Units/Boxes Sold\"\n\nUnits\n3\n";
+    let text = "sheet Sales\n\nUnits : Int from 'Units/Boxes Sold'\n\nUnits\n3\n";
     let out = with_tables(&dir, text);
     assert!(!out.ok());
     assert!(
@@ -1444,7 +1487,7 @@ fn a_column_of_nulls_fits_the_declared_type() {
     // The file holds nothing in `Note`, so it contradicts no declaration:
     // the type is the text's to say.
     let text = "\
-table Sales := dataframe[\"null.parquet\"]
+view Sales := dataframe['null.parquet']
 
 Month : String
 Note  : String
@@ -1459,7 +1502,7 @@ Note  : String
 fn a_column_of_nulls_the_schema_does_not_name_is_said_without_a_type() {
     let dir = scratch("table-null-missing");
     null_column_file(&dir);
-    let text = "table Sales := dataframe[\"null.parquet\"]\n\nMonth : String\n";
+    let text = "view Sales := dataframe['null.parquet']\n\nMonth : String\n";
     let out = with_tables(&dir, text);
     assert!(!out.ok());
     // There is no type to offer, and `Any` is not one that can be written.
@@ -1500,7 +1543,7 @@ fn a_declared_type_narrower_than_the_file_is_reported() {
     );
     std::fs::write(dir.join("price.parquet"), &exported.files[0].bytes).unwrap();
     let text = "\
-table Prices := dataframe[\"price.parquet\"]
+view Prices := dataframe['price.parquet']
 
 Month : String
 Price : Int
@@ -1514,4 +1557,670 @@ Price : Int
         "{:?}",
         out.errors
     );
+}
+
+#[test]
+fn parquet_says_when_a_uint64_is_past_an_int() {
+    use polars::prelude::*;
+    let write = |values: [u64; 2]| {
+        let mut df = DataFrame::new(vec![Series::new("Big".into(), values).into_column()]).unwrap();
+        let mut bytes = Cursor::new(Vec::new());
+        ParquetWriter::new(&mut bytes).finish(&mut df).unwrap();
+        bytes.into_inner()
+    };
+    // Past an `i64` the values are read as exact decimals, and it is said.
+    let wide = parquet::import("t", &write([1, u64::MAX])).expect("imports");
+    assert!(
+        wide.source.contains("18446744073709551615"),
+        "{}",
+        wide.source
+    );
+    assert!(
+        wide.notices
+            .iter()
+            .any(|n| n.contains("`Big`") && n.contains("UInt64")),
+        "{:?}",
+        wide.notices
+    );
+    // Within an `i64` there is nothing to say.
+    let small = parquet::import("t", &write([1, 2])).expect("imports");
+    assert!(small.notices.is_empty(), "{:?}", small.notices);
+}
+
+#[test]
+fn parquet_round_trips_a_complex_column_as_a_struct() {
+    use polars::prelude::*;
+    let text = "sheet T\n\nZ : Complex\n\nZ\n3+4i\n-1.5-2i\n5\n\n";
+    let out = parquet_of(text, None);
+    // The column is a struct of two `Float64`s, `re` then `im` (D195).
+    let df = ParquetReader::new(Cursor::new(out.files[0].bytes.clone()))
+        .finish()
+        .expect("reads");
+    let dtype = df.column("Z").unwrap().dtype().clone();
+    assert!(omasheet_engine::dtype::is_complex(&dtype), "{dtype:?}");
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    assert!(back.source.contains(" : Complex"), "{}", back.source);
+    assert_eq!(eval(&back.source, "t.Z"), "[3+4i, -1.5-2i, 5+0i]");
+    assert_eq!(eval(&back.source, "t.Z.sum()"), "6.5+2i");
+}
+
+#[test]
+fn parquet_drops_a_struct_that_is_not_a_complex() {
+    use polars::prelude::*;
+    let pair = |a: &str, b: &str| {
+        StructChunked::from_series(
+            "S".into(),
+            2,
+            [
+                Series::new(a.into(), [1.0, 2.0]),
+                Series::new(b.into(), [3.0, 4.0]),
+            ]
+            .iter(),
+        )
+        .unwrap()
+        .into_series()
+    };
+    for (a, b, kept) in [("re", "im", true), ("x", "y", false), ("im", "re", false)] {
+        let mut df = DataFrame::new(vec![
+            Series::new("N".into(), [1i64, 2]).into_column(),
+            pair(a, b).into_column(),
+        ])
+        .unwrap();
+        let mut bytes = Vec::new();
+        ParquetWriter::new(&mut bytes).finish(&mut df).unwrap();
+        let back = parquet::import("t", &bytes).expect("imports");
+        assert_eq!(
+            back.source.contains(": Complex"),
+            kept,
+            "{a},{b}:\n{}",
+            back.source
+        );
+        assert_eq!(back.notices.is_empty(), kept, "{a},{b}: {:?}", back.notices);
+    }
+}
+
+#[test]
+fn json_writes_a_complex_as_text_and_reads_it_back() {
+    let text = "sheet T\n\nZ : Complex\n\nZ\n3+4i\n2\n";
+    let out = json_of(text, None);
+    assert!(
+        text_of(&out, 0).contains("\"3+4i\""),
+        "{}",
+        text_of(&out, 0)
+    );
+    let back = json::import("t", &out.files[0].bytes).expect("imports");
+    assert_eq!(eval(&back.source, "T.Z"), "[3+4i, 2+0i]");
+}
+
+#[test]
+fn parquet_round_trips_a_duration() {
+    let text = "sheet T\n\nLen : Duration\n\nLen\nPT1H30M\nP1DT6H\n-PT30M\n\n";
+    let out = parquet_of(text, None);
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    assert!(back.source.contains(" : Duration"), "{}", back.source);
+    for d in ["PT1H30M", "P1DT6H", "-PT30M"] {
+        assert!(back.source.contains(d), "{d} missing:\n{}", back.source);
+    }
+}
+
+#[test]
+fn parquet_writes_a_tables_integers_at_their_width_and_sign() {
+    use polars::prelude::*;
+    let dir = scratch("widths");
+    let mut df = DataFrame::new(vec![
+        Series::new("Small".into(), [1i64, 200])
+            .cast(&DataType::UInt8)
+            .unwrap()
+            .into_column(),
+        Series::new("Mid".into(), [-5i64, 70_000])
+            .cast(&DataType::Int32)
+            .unwrap()
+            .into_column(),
+        Series::new("Big".into(), [1i64, 2]).into_column(),
+    ])
+    .unwrap();
+    let mut file = std::fs::File::create(dir.join("w.parquet")).unwrap();
+    ParquetWriter::new(&mut file).finish(&mut df).unwrap();
+    let options = omasheet_engine::Options {
+        base: Some(dir.clone()),
+        ..options()
+    };
+    let text = "view T := dataframe['w.parquet']\n";
+    let out = parquet::export("file.omx", text, None, options).expect("exports");
+    let back = ParquetReader::new(Cursor::new(out.files[0].bytes.clone()))
+        .finish()
+        .unwrap();
+    let dtype = |n: &str| back.column(n).unwrap().dtype().clone();
+    assert_eq!(dtype("Small"), DataType::UInt8);
+    assert_eq!(dtype("Mid"), DataType::Int32);
+    assert_eq!(dtype("Big"), DataType::Int64);
+    assert_eq!(
+        back.column("Small").unwrap().u8().unwrap().get(1),
+        Some(200)
+    );
+}
+
+#[test]
+fn parquet_keeps_a_datetimes_zone() {
+    use polars::prelude::*;
+    let text = "sheet T\n\nLogged : Datetime(\"Europe/London\")\n\n\
+                Logged\n2025-03-01T09:30\n2025-07-01T09:30\n";
+    let out = parquet_of(text, None);
+    // Written as instants in the zone: 09:30 in July in London is 08:30 UTC.
+    let df = ParquetReader::new(Cursor::new(out.files[0].bytes.clone()))
+        .finish()
+        .unwrap();
+    let col = df.column("Logged").unwrap();
+    assert!(
+        matches!(col.dtype(), DataType::Datetime(TimeUnit::Microseconds, Some(tz)) if tz.as_str() == "Europe/London"),
+        "{:?}",
+        col.dtype()
+    );
+    let us = col.datetime().unwrap().phys.get(1).unwrap();
+    assert_eq!(us, 1_751_358_600_000_000); // 2025-07-01T08:30:00Z
+    // Read back, the zone is declared again and the cells are the wall clock.
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    assert!(
+        back.source.contains("Datetime(\"Europe/London\")"),
+        "{}",
+        back.source
+    );
+    assert!(back.source.contains("2025-07-01T09:30"), "{}", back.source);
+    assert!(back.source.contains("2025-03-01T09:30"), "{}", back.source);
+}
+
+#[test]
+fn a_table_shows_a_zoned_column_on_its_own_clocks() {
+    let dir = scratch("table-zoned");
+    let text = "sheet T\n\nLogged : Datetime(\"Europe/London\")\n\n\
+                Logged\n2025-03-01T09:30\n2025-07-01T09:30\n";
+    let out = parquet_of(text, None);
+    std::fs::write(dir.join("z.parquet"), &out.files[0].bytes).unwrap();
+    let table = "view Logs := dataframe['z.parquet']\n\nLogged : Datetime\n";
+    let shown = with_tables(&dir, table);
+    assert!(shown.ok(), "{:?}", shown.errors);
+    // The file holds the instants; the sheet shows them on the zone's clocks,
+    // with the offset that zone had on each day.
+    assert!(
+        shown.output.contains("2025-03-01T09:30+00:00"),
+        "{}",
+        shown.output
+    );
+    assert!(
+        shown.output.contains("2025-07-01T09:30+01:00"),
+        "{}",
+        shown.output
+    );
+    // The same instant is one on another zone's clocks, and compares equal.
+    let eq = format!(
+        "{table}\nsheet C := Logs |> select(Logged)\n\nconst Gap = Logs.Logged.max() - Logs.Logged.min()\n"
+    );
+    let shown = with_tables(&dir, &eq);
+    assert!(shown.ok(), "{:?}", shown.errors);
+    assert!(shown.output.contains("P121DT23H"), "{}", shown.output);
+    // Written again, the zone is kept.
+    let again = parquet::export(
+        "file.omx",
+        table,
+        None,
+        omasheet_engine::Options {
+            base: Some(dir.clone()),
+            ..options()
+        },
+    )
+    .expect("exports");
+    let back = parquet::import("t", &again.files[0].bytes).expect("imports");
+    assert!(
+        back.source.contains("Datetime(\"Europe/London\")"),
+        "{}",
+        back.source
+    );
+}
+
+#[test]
+fn table_source_names_each_sheet_of_a_json_object_and_the_file_alone_for_a_list() {
+    let dir = std::env::temp_dir().join(format!("omasheet-table-source-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let book = dir.join("book.json");
+    std::fs::write(
+        &book,
+        r#"{"Sales": [{"n": 1}], "Q1 costs": [{"n": 2}], "q1_costs": [{"n": 3}], "skip": 4}"#,
+    )
+    .unwrap();
+    let full = std::fs::canonicalize(&book).unwrap();
+    // One line for each list, named as an identifier, and kept apart when
+    // two come to the same name.
+    assert_eq!(
+        omasheet_interop::table_source(&book).unwrap(),
+        format!(
+            "view Sales := dataframe['{0}#Sales']\nview Q1Costs := dataframe['{0}#Q1 costs']\n\
+             view q1_costs := dataframe['{0}#q1_costs']\n",
+            full.display()
+        )
+    );
+    let list = dir.join("my rows.json");
+    std::fs::write(&list, r#"[{"n": 1}]"#).unwrap();
+    let full = std::fs::canonicalize(&list).unwrap();
+    assert_eq!(
+        omasheet_interop::table_source(&list).unwrap(),
+        format!("view myRows := dataframe['{}']\n", full.display())
+    );
+    // Another kind of file is one table, named by the file.
+    let csv = dir.join("data.csv");
+    std::fs::write(&csv, "a\n1\n").unwrap();
+    let full = std::fs::canonicalize(&csv).unwrap();
+    assert_eq!(
+        omasheet_interop::table_source(&csv).unwrap(),
+        format!("view data := dataframe['{}']\n", full.display())
+    );
+    // A JSON file that is not rows is said so.
+    let bad = dir.join("bad.json");
+    std::fs::write(&bad, "42").unwrap();
+    assert!(omasheet_interop::table_source(&bad).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+fn xlsx_cache() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let dir = std::env::temp_dir().join(format!("omasheet-xlsx-copies-{}", std::process::id()));
+        // SAFETY: once, before any workbook is read as a table.
+        unsafe { std::env::set_var("OMASHEET_CACHE", dir) };
+    });
+}
+
+/// The rows of a sheet of a document as the grid shows them.
+fn shown_rows(doc: &omasheet_engine::Document, sheet: usize) -> Vec<Vec<String>> {
+    let n = doc.row_count(sheet);
+    doc.rows(sheet, 0, n)
+        .into_iter()
+        .map(|row| row.into_iter().map(|c| c.display).collect())
+        .collect()
+}
+
+#[test]
+fn a_workbook_sheet_as_a_table_shows_what_an_import_of_it_shows() {
+    xlsx_cache();
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples");
+    for (file, sheet) in [
+        ("budget.xlsx", "Sales"),
+        ("budget.xlsx", "Summary"),
+        ("financial-sample.xlsx", "Sheet1"),
+    ] {
+        let bytes = std::fs::read(format!("{dir}/{file}")).unwrap();
+        let imported = xlsx::import(&bytes, Options::default()).unwrap();
+        let mut imp = omasheet_engine::Document::from_text(&imported.source);
+        imp.set_base(dir);
+        let mut table = omasheet_engine::Document::from_text(&format!(
+            "view T := dataframe['{file}#{sheet}']\n"
+        ));
+        table.set_base(dir);
+        assert!(table.snapshot().problems.is_empty(), "{file}#{sheet}");
+        let at = imp
+            .snapshot()
+            .sheets
+            .iter()
+            .position(|s| s.name.eq_ignore_ascii_case(sheet))
+            .expect("the sheet");
+        assert_eq!(
+            imp.row_count(at),
+            table.row_count(0),
+            "{file}#{sheet}: rows"
+        );
+        assert_eq!(
+            imp.snapshot().sheets[at].columns.len(),
+            table.snapshot().sheets[0].columns.len(),
+            "{file}#{sheet}: columns"
+        );
+        // Every cell of every row, as it is shown.
+        assert_eq!(
+            shown_rows(&imp, at),
+            shown_rows(&table, 0),
+            "{file}#{sheet}"
+        );
+    }
+}
+
+#[test]
+fn a_workbook_sheet_with_offsets_gaps_and_every_kind_of_cell_reads_as_an_import_does() {
+    use rust_xlsxwriter::ExcelDateTime;
+    xlsx_cache();
+    let dir = std::env::temp_dir().join(format!("omasheet-xlsx-mix-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut book = Workbook::new();
+    // Nothing in the first sheet, which is not a table.
+    book.add_worksheet().set_name("Empty").unwrap();
+    let sheet = book.add_worksheet();
+    sheet.set_name("Mix").unwrap();
+    let date = Format::new().set_num_format("yyyy-mm-dd");
+    let stamp = Format::new().set_num_format("yyyy-mm-dd hh:mm");
+    let clock = Format::new().set_num_format("hh:mm");
+    let span = Format::new().set_num_format("[h]:mm:ss");
+    // The names start at C3, with two empty rows and two empty columns
+    // before them.
+    for (c, name) in ["Name", "When", "Clock", "Span", "Flag", "N"]
+        .iter()
+        .enumerate()
+    {
+        sheet.write_string(2, 2 + c as u16, *name).unwrap();
+    }
+    let day = |d: u8, h: u8, m: u8| {
+        ExcelDateTime::from_ymd(2024, 3, d)
+            .unwrap()
+            .and_hms(u16::from(h), m, 0)
+            .unwrap()
+    };
+    // A row of a date, a time, a duration, a flag and a whole number
+    // written as a float.
+    sheet.write_string(3, 2, "a").unwrap();
+    sheet
+        .write_datetime_with_format(3, 3, ExcelDateTime::from_ymd(2024, 3, 5).unwrap(), &date)
+        .unwrap();
+    sheet
+        .write_datetime_with_format(3, 4, ExcelDateTime::from_hms(10, 30, 0).unwrap(), &clock)
+        .unwrap();
+    sheet.write_number_with_format(3, 5, 0.0625, &span).unwrap();
+    sheet.write_boolean(3, 6, true).unwrap();
+    sheet.write_number(3, 7, 3.0).unwrap();
+    // Row 5 (index 4) is left empty.
+    sheet.write_string(5, 2, "b").unwrap();
+    sheet
+        .write_datetime_with_format(5, 3, day(6, 12, 0), &stamp)
+        .unwrap();
+    sheet
+        .write_datetime_with_format(5, 4, ExcelDateTime::from_hms(0, 15, 0).unwrap(), &clock)
+        .unwrap();
+    sheet.write_number_with_format(5, 5, 0.5, &span).unwrap();
+    sheet.write_boolean(5, 6, false).unwrap();
+    sheet.write_number(5, 7, 2.5).unwrap();
+    // Whitespace is nothing, and cells can be missing.
+    sheet.write_string(6, 2, "   ").unwrap();
+    sheet
+        .write_datetime_with_format(6, 3, ExcelDateTime::from_ymd(2024, 3, 7).unwrap(), &date)
+        .unwrap();
+    sheet.write_number(6, 7, 4.0).unwrap();
+    let file = dir.join("mix.xlsx");
+    book.save(&file).unwrap();
+
+    let bytes = std::fs::read(&file).unwrap();
+    let imported = xlsx::import(&bytes, Options::default()).unwrap();
+    let mut imp = omasheet_engine::Document::from_text(&imported.source);
+    imp.set_base(&dir);
+    let mut table = omasheet_engine::Document::from_text("view T := dataframe['mix.xlsx#Mix']\n");
+    table.set_base(&dir);
+    assert!(
+        table.snapshot().problems.is_empty(),
+        "{:?}",
+        table.snapshot().problems
+    );
+    // The empty sheet is not one.
+    assert_eq!(omasheet_engine::xlsxcopy::sheets(&file).unwrap(), ["Mix"]);
+    // Bare, the first with anything in it.
+    let mut bare = omasheet_engine::Document::from_text("view T := dataframe['mix.xlsx']\n");
+    bare.set_base(&dir);
+    assert_eq!(shown_rows(&bare, 0), shown_rows(&table, 0));
+
+    let at = imp
+        .snapshot()
+        .sheets
+        .iter()
+        .position(|s| s.name == "Mix")
+        .expect("the sheet");
+    let types: Vec<String> = table.snapshot().sheets[0]
+        .columns
+        .iter()
+        .map(|c| c.ty.clone())
+        .collect();
+    // A column with a time on one of its dates is a column of date-times; a
+    // 2.5 among whole numbers makes the column a decimal, as it does an
+    // import.
+    assert_eq!(
+        types,
+        [
+            "String", "Datetime", "Time", "Duration", "Boolean", "Decimal"
+        ]
+    );
+    let rows = shown_rows(&table, 0);
+    assert_eq!(rows.len(), 4, "the empty row between is a row");
+    assert_eq!(
+        rows[0],
+        ["a", "2024-03-05T00:00", "10:30", "PT1H30M", "true", "3"]
+    );
+    assert_eq!(rows[1], ["", "", "", "", "", ""]);
+    assert_eq!(
+        rows[2],
+        ["b", "2024-03-06T12:00", "00:15", "PT12H", "false", "2.5"]
+    );
+    assert_eq!(rows[3], ["", "2024-03-07T00:00", "", "", "", "4"]);
+    // And an import of it is the same, cell for cell.
+    assert_eq!(shown_rows(&imp, at), rows);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn table_source_names_each_sheet_of_a_workbook_that_has_something_in_it_and_no_formula() {
+    let dir = std::env::temp_dir().join(format!("omasheet-book-source-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut book = Workbook::new();
+    book.add_worksheet().set_name("Empty").unwrap();
+    for name in ["Sales", "Costs"] {
+        let sheet = book.add_worksheet();
+        sheet.set_name(name).unwrap();
+        sheet.write_string(0, 0, "n").unwrap();
+        sheet.write_number(1, 0, 1.0).unwrap();
+    }
+    let file = dir.join("values.xlsx");
+    book.save(&file).unwrap();
+    let full = std::fs::canonicalize(&file).unwrap();
+    assert_eq!(
+        omasheet_interop::table_source(&file).unwrap(),
+        format!(
+            "view Sales := dataframe['{0}#Sales']\nview Costs := dataframe['{0}#Costs']\n",
+            full.display()
+        )
+    );
+    // One formula, in one cell of a sheet, is not one filled down a column,
+    // and a table has values and no formulas.
+    let mut book = Workbook::new();
+    let data = book.add_worksheet();
+    data.set_name("Data").unwrap();
+    data.write_string(0, 0, "n").unwrap();
+    for r in 1..=50 {
+        data.write_number(r, 0, f64::from(r)).unwrap();
+    }
+    let sums = book.add_worksheet();
+    sums.set_name("Sums").unwrap();
+    sums.write_string(0, 0, "total").unwrap();
+    sums.write_formula(1, 0, Formula::new("=SUM(Data!A2:A51)"))
+        .unwrap();
+    let with = dir.join("formula.xlsx");
+    book.save(&with).unwrap();
+    let why = omasheet_interop::table_source(&with).unwrap_err();
+    assert!(why.contains("`Sums.total`"), "{why}");
+    // The examples' workbooks hold values only, and are tables.
+    let budget = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../examples/budget.xlsx"
+    ));
+    assert!(omasheet_interop::table_source(budget).is_ok());
+    // A formula only in the last row of a long sheet is found as well as one
+    // in the first: a total at the foot of a column is a formula.
+    let mut book = Workbook::new();
+    let long = book.add_worksheet();
+    long.set_name("Long").unwrap();
+    long.write_string(0, 0, "n").unwrap();
+    for r in 1..=5_000 {
+        long.write_number(r, 0, f64::from(r)).unwrap();
+    }
+    long.write_formula(5_001, 0, Formula::new("=SUM(A2:A5001)"))
+        .unwrap();
+    let foot = dir.join("foot.xlsx");
+    book.save(&foot).unwrap();
+    assert!(omasheet_engine::xlsxcopy::has_formulas(&foot, "Long").unwrap());
+    assert!(omasheet_interop::table_source(&foot).is_err());
+    // Not a workbook is said so.
+    let bad = dir.join("bad.xlsx");
+    std::fs::write(&bad, "not a zip").unwrap();
+    assert!(omasheet_interop::table_source(&bad).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A workbook of `rows` rows of Month, Revenue and Cost, and a Profit and a
+/// Double that are formulas filled down, with what Excel would hold for
+/// each. `tweak` may change a cell afterwards.
+fn sales_workbook(
+    file: &std::path::Path,
+    rows: u32,
+    tweak: impl FnOnce(&mut rust_xlsxwriter::Worksheet, u32),
+) {
+    let mut book = Workbook::new();
+    let sheet = book.add_worksheet();
+    sheet.set_name("Sales").unwrap();
+    for (c, name) in ["Month", "Revenue", "Cost", "Profit", "Double"]
+        .iter()
+        .enumerate()
+    {
+        sheet.write_string(0, c as u16, *name).unwrap();
+    }
+    for i in 0..rows {
+        let r = i + 1;
+        let (revenue, cost) = (1000.0 + 100.0 * f64::from(i), 600.0 + 50.0 * f64::from(i));
+        let profit = revenue - cost;
+        sheet.write_string(r, 0, format!("m{i}")).unwrap();
+        sheet.write_number(r, 1, revenue).unwrap();
+        sheet.write_number(r, 2, cost).unwrap();
+        sheet
+            .write_formula(
+                r,
+                3,
+                Formula::new(format!("=B{0}-C{0}", r + 1)).set_result(profit.to_string()),
+            )
+            .unwrap();
+        sheet
+            .write_formula(
+                r,
+                4,
+                Formula::new(format!("=D{0}*2", r + 1)).set_result((profit * 2.0).to_string()),
+            )
+            .unwrap();
+    }
+    tweak(sheet, rows);
+    book.save(file).unwrap();
+}
+
+#[test]
+fn a_workbook_whose_formulas_are_filled_down_its_columns_is_tables_with_calculated_columns() {
+    xlsx_cache();
+    let dir = std::env::temp_dir().join(format!("omasheet-fills-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("sales.xlsx");
+    sales_workbook(&file, 30, |_, _| {});
+    let full = std::fs::canonicalize(&file).unwrap();
+
+    let text = omasheet_interop::table_source(&file).unwrap();
+    assert_eq!(
+        text,
+        format!(
+            "view Sales := dataframe['{}#Sales']\n\n\
+             Month   : String\n\
+             Revenue : Integer\n\
+             Cost    : Integer\n\
+             Profit  := Revenue - Cost\n\
+             Double  := Profit * 2\n",
+            full.display()
+        )
+    );
+
+    // It is a document that shows what the workbook shows: the columns it
+    // declares and calculates, and no more, and every row.
+    let mut doc = omasheet_engine::Document::from_text(&text);
+    doc.set_base(&dir);
+    assert!(
+        doc.snapshot().problems.is_empty(),
+        "{:?}",
+        doc.snapshot().problems
+    );
+    let columns: Vec<_> = doc.snapshot().sheets[0]
+        .columns
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
+    assert_eq!(columns, ["Month", "Revenue", "Cost", "Profit", "Double"]);
+    let rows = shown_rows(&doc, 0);
+    assert_eq!(rows.len(), 30);
+    assert_eq!(rows[0], ["m0", "1000", "600", "400", "800"]);
+    assert_eq!(rows[29], ["m29", "3900", "2050", "1850", "3700"]);
+    // A formula in one cell, held to nothing, is not that.
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_workbook_with_a_formula_that_is_not_filled_down_a_column_is_imported_not_read_as_tables() {
+    xlsx_cache();
+    let dir = std::env::temp_dir().join(format!("omasheet-not-fills-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let why = |name: &str, rows, tweak: &dyn Fn(&mut rust_xlsxwriter::Worksheet, u32)| {
+        let file = dir.join(name);
+        sales_workbook(&file, rows, |sheet, n| tweak(sheet, n));
+        omasheet_interop::table_source(&file).unwrap_err()
+    };
+    // A total at the foot of a column: a formula in one row of it.
+    let e = why("total.xlsx", 30, &|sheet, n| {
+        sheet
+            .write_formula(
+                n + 1,
+                1,
+                Formula::new(format!("=SUM(B2:B{})", n + 1)).set_result("0"),
+            )
+            .unwrap();
+    });
+    assert!(e.contains("not one formula down every row"), "{e}");
+    // A column that changes its formula part way down.
+    let e = why("changes.xlsx", 30, &|sheet, _| {
+        sheet
+            .write_formula(15, 3, Formula::new("=B16+C16").set_result("0"))
+            .unwrap();
+    });
+    assert!(e.contains("not one formula down every row"), "{e}");
+    // A formula a table cannot hold to what the workbook has: Excel says
+    // 400 for the first row and the translation gives 400, but this row it
+    // holds something else.
+    let e = why("differs.xlsx", 30, &|sheet, _| {
+        sheet
+            .write_formula(10, 3, Formula::new("=B11-C11").set_result("12345"))
+            .unwrap();
+    });
+    assert!(e.contains("does not give what the workbook holds"), "{e}");
+    // A formula with no translation, the same on every row.
+    let e = why("untranslated.xlsx", 30, &|sheet, _| {
+        for r in 1..=30 {
+            sheet
+                .write_formula(
+                    r,
+                    4,
+                    Formula::new(format!("=ISFORMULA(B{})", r + 1)).set_result("FALSE"),
+                )
+                .unwrap();
+        }
+    });
+    assert!(e.contains("no translation"), "{e}");
+    // A formula that is one down the column but that Polars will not
+    // calculate whole (a whole number divided by another is an exact
+    // fraction), which it cannot be held to the workbook by.
+    let e = why("fraction.xlsx", 30, &|sheet, _| {
+        for r in 1..=30 {
+            sheet
+                .write_formula(
+                    r,
+                    4,
+                    Formula::new(format!("=D{0}/B{0}", r + 1)).set_result("0.4"),
+                )
+                .unwrap();
+        }
+    });
+    assert!(e.contains("not one Polars calculates"), "{e}");
+    std::fs::remove_dir_all(&dir).unwrap();
 }

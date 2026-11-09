@@ -20,6 +20,7 @@ use crate::{
     write_omx,
 };
 use omasheet_engine::dtype::type_of;
+use omasheet_engine::omx::check::ColKind;
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::omx::decimal::{Dec, MAX_PRECISION};
 use omasheet_engine::omx::file::{SheetDecl, parse_file};
@@ -77,8 +78,21 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
             })
             .collect();
 
+        // A column left to its cells takes the widest of what they hold, and
+        // a division by zero is a `Float`: `Inf`, `-Inf` or `NaN`. So an
+        // exact column with one in it is written as a `Float`, which holds
+        // them, where a decimal has no room (the exact cells keep their
+        // value, as a `Float` has it).
+        let ty = if !col.declared
+            && col.ty.is_exact()
+            && cells.iter().any(|v| matches!(v, Value::Float(_)))
+        {
+            S::Float
+        } else {
+            col.ty
+        };
         // A whole column of nulls has no type of its own to write.
-        let series = match col.ty {
+        let series = match ty {
             S::Int | S::Hex | S::Octal | S::Binary => {
                 let v: Vec<Option<i64>> = cells
                     .iter()
@@ -159,6 +173,24 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
                     .collect();
                 Series::new(name, v)
             }
+            // A struct of two `Float64`s, `re` and `im` (D195). A null cell
+            // has both parts null.
+            S::Complex => {
+                let part = |pick: fn((f64, f64)) -> f64, name: &str| {
+                    let v: Vec<Option<f64>> = cells
+                        .iter()
+                        .map(|v| match v {
+                            Value::Complex(re, im) => Some(pick((*re, *im))),
+                            other => exact(other).map(|d| pick((d.to_f64(), 0.0))),
+                        })
+                        .collect();
+                    Series::new(name.into(), v)
+                };
+                let (re, im) = (part(|z| z.0, "re"), part(|z| z.1, "im"));
+                StructChunked::from_series(name, cells.len(), [re, im].iter())
+                    .map_err(|e| e.to_string())?
+                    .into_series()
+            }
             S::Boolean => {
                 let v: Vec<Option<bool>> = cells
                     .iter()
@@ -195,12 +227,42 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
                     .cast(&DataType::Time)
                     .map_err(|e| e.to_string())?
             }
-            S::DateTime => {
+            S::Duration => {
                 let v: Vec<Option<i64>> = cells
                     .iter()
                     .map(|v| match v {
-                        Value::DateTime(us) => Some(*us),
-                        Value::Zoned(z) => Some(z.wall),
+                        Value::Duration(us) => Some(*us),
+                        _ => None,
+                    })
+                    .collect();
+                Series::new(name, v)
+                    .cast(&DataType::Duration(TimeUnit::Microseconds))
+                    .map_err(|e| e.to_string())?
+            }
+            // A column that declares a zone is written as the instants its
+            // cells are, in that zone, as Polars holds a zoned `Datetime`.
+            S::Datetime if col.zone.is_some() => {
+                let zone = col.zone.as_ref().map(|(z, _)| z.as_str());
+                let v: Vec<Option<i64>> = cells
+                    .iter()
+                    .map(|v| match v {
+                        Value::Datetime(_, Some(z)) => Some(z.utc),
+                        _ => None,
+                    })
+                    .collect();
+                Series::new(name, v)
+                    .cast(&DataType::Datetime(
+                        TimeUnit::Microseconds,
+                        TimeZone::opt_try_new(zone).map_err(|e| e.to_string())?,
+                    ))
+                    .map_err(|e| e.to_string())?
+            }
+            S::Datetime => {
+                let v: Vec<Option<i64>> = cells
+                    .iter()
+                    .map(|v| match v {
+                        Value::Datetime(us, None) => Some(*us),
+                        Value::Datetime(_, Some(z)) => Some(z.wall),
                         _ => None,
                     })
                     .collect();
@@ -225,6 +287,20 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
                     .collect();
                 Series::new(name, v)
             }
+        };
+        // A `table`'s whole numbers go back at the width and sign the file
+        // held them in, which an `Int` has no name for. A value that will
+        // not fit it, because the sheet was edited, keeps the `Int64`.
+        let series = match col.kind {
+            ColKind::Frame if *series.dtype() == DataType::Int64 => file
+                .engine
+                .frame_values(t, c)
+                .map(|held| held.dtype().clone())
+                .filter(|dtype| dtype.is_integer())
+                .and_then(|dtype| series.cast(&dtype).ok())
+                .filter(|narrow| narrow.null_count() == series.null_count())
+                .unwrap_or(series),
+            _ => series,
         };
         columns.push(series.into_column());
     }
@@ -355,6 +431,29 @@ fn skeleton(text: &str, name: &str, file: &crate::File) -> String {
     out
 }
 
+/// A `Datetime` of a Parquet file as the wall clock it is written as. One in
+/// a zone is held as the instant, so it is put on that zone's clocks, which
+/// is what a column that declares the zone holds.
+fn datetime_cell(n: i64, unit: TimeUnit, zone: Option<&str>) -> Datum {
+    use omasheet_engine::omx::date;
+    let micros = match unit {
+        TimeUnit::Nanoseconds => n.div_euclid(NANOS / MICROS),
+        TimeUnit::Microseconds => n,
+        TimeUnit::Milliseconds => n.saturating_mul(1_000),
+    };
+    let wall = match zone {
+        None => Some(micros),
+        Some(name) => omasheet_engine::zone::Zone::named(name).and_then(|z| z.from_utc(micros)),
+    };
+    let Some(secs) = wall.map(|w| w.div_euclid(MICROS)) else {
+        return Datum::Empty;
+    };
+    match i32::try_from(secs.div_euclid(DAY)) {
+        Ok(_) => Datum::Lit(date::format_datetime(secs * MICROS), S::Datetime),
+        Err(_) => Datum::Empty,
+    }
+}
+
 /// One cell of a Parquet column, as the type its schema gives.
 fn cell(value: AnyValue<'_>, ty: S) -> Datum {
     use omasheet_engine::omx::date;
@@ -386,18 +485,44 @@ fn cell(value: AnyValue<'_>, ty: S) -> Datum {
             None => Datum::Empty,
         },
         AnyValue::Date(days) => Datum::Lit(date::format(days), S::Date),
-        AnyValue::Datetime(n, unit, _) | AnyValue::DatetimeOwned(n, unit, _) => {
-            let secs = match unit {
-                TimeUnit::Nanoseconds => n.div_euclid(NANOS),
-                TimeUnit::Microseconds => n.div_euclid(MICROS),
-                TimeUnit::Milliseconds => n.div_euclid(1_000),
-            };
-            match i32::try_from(secs.div_euclid(DAY)) {
-                Ok(_) => Datum::Lit(date::format_datetime(secs * MICROS), S::DateTime),
-                Err(_) => Datum::Empty,
-            }
+        AnyValue::Datetime(n, unit, tz) => datetime_cell(n, unit, tz.map(|z| z.as_str())),
+        AnyValue::DatetimeOwned(n, unit, tz) => {
+            datetime_cell(n, unit, tz.as_ref().map(|z| z.as_str()))
         }
         AnyValue::Time(ns) => Datum::Lit(date::format_time(ns.div_euclid(NANOS) * NANOS), S::Time),
+        // A duration is held to the microsecond, and written in ISO 8601.
+        AnyValue::Duration(n, unit) => {
+            let micros = match unit {
+                TimeUnit::Nanoseconds => Some(n / (NANOS / MICROS)),
+                TimeUnit::Microseconds => Some(n),
+                TimeUnit::Milliseconds => n.checked_mul(MICROS / 1_000),
+            };
+            match micros {
+                Some(m) => Datum::Lit(omasheet_engine::omx::duration::format(m), S::Duration),
+                None => Datum::Empty,
+            }
+        }
+        // A `Complex`: a struct of `re` and `im`, written as `3+4i`.
+        value @ (AnyValue::Struct(..) | AnyValue::StructOwned(_)) if ty == S::Complex => {
+            match omasheet_engine::dtype::complex_parts(value) {
+                Some((Some(re), Some(im))) => {
+                    // Each part as a `Float` is written, so that a very
+                    // large or small one is in e notation, not in digits.
+                    let sign = if im.is_sign_negative() && !im.is_nan() {
+                        '-'
+                    } else {
+                        '+'
+                    };
+                    let i = if im.is_finite() { "i" } else { "\\i" };
+                    Datum::Lit(
+                        format!("{}{sign}{}{i}", float_text(re), float_text(im.abs())),
+                        S::Complex,
+                    )
+                }
+                Some((None, None)) => Datum::Empty,
+                _ => Datum::Empty,
+            }
+        }
         // Anything else is written the way Polars shows it, as text.
         other => Datum::Lit(other.to_string(), ty),
     }
@@ -528,6 +653,35 @@ pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
         ));
     }
 
+    // A `UInt64` has values an `Int` cannot hold. They are read as exact
+    // decimals, so nothing is lost, but the column is no longer all `Int`.
+    for (name, _) in &kept {
+        let column = df.column(name).map_err(|e| e.to_string())?;
+        if *column.dtype() == DataType::UInt64
+            && column
+                .u64()
+                .ok()
+                .and_then(|ca| ca.max())
+                .is_some_and(|m| m > i64::MAX as u64)
+        {
+            notices.push(format!(
+                "`{name}` is a UInt64 with values above {}: those were read as Decimals",
+                i64::MAX
+            ));
+        }
+    }
+
+    // A `Datetime` in a zone keeps it, as a declared zone.
+    let zones: Vec<Option<String>> = kept
+        .iter()
+        .map(
+            |(name, _)| match df.column(name).map(|c| c.dtype().clone()) {
+                Ok(DataType::Datetime(_, Some(tz))) => Some(tz.to_string()),
+                _ => None,
+            },
+        )
+        .collect();
+
     let mut rows: Vec<Vec<Datum>> = Vec::with_capacity(df.height() + 1);
     rows.push(
         kept.iter()
@@ -548,6 +702,7 @@ pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
     // lines written come from the file and not from reading the values.
     let mut grid = Grid::from_rows(name, rows);
     grid.fixed = true;
+    grid.zones = zones;
     let source = write_omx(vec![grid], &mut notices);
     Ok(Imported { source, notices })
 }

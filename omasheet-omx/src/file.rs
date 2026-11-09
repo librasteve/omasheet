@@ -60,7 +60,7 @@ pub struct FuncDecl {
     pub doc: String,
 }
 
-/// `table <Name> := dataframe["<path>"]`: where a sheet's rows come from,
+/// `view <Name> := dataframe["<path>"]`: where a sheet's rows come from,
 /// when they are not in the file.
 #[derive(Debug)]
 pub struct SourceDecl {
@@ -98,7 +98,7 @@ pub struct SchemaLine {
     pub span: Span,
     pub ty: S,
     /// The name the file holds this column under, when it is not the name
-    /// used here: `Siblings : Int from "Siblings/Spouses Aboard"`. Only a
+    /// used here: `Siblings : Int from 'Siblings/Spouses Aboard'`. Only a
     /// table's column is read from a file, so only a table's line has one.
     pub from: Option<String>,
     /// The quoted name, for a diagnostic about it; default without one.
@@ -106,6 +106,11 @@ pub struct SchemaLine {
     /// How the column's values are shown: `Price : Decimal['.2f]`,
     /// `Due : Date[%d %b %Y]`.
     pub format: Option<Format>,
+    /// The time zone a `Datetime` column declares: `Logged :
+    /// Datetime("Europe/London")`. Its cells are the wall clock of that
+    /// zone. The name is as written; whether there is such a zone is for
+    /// the engine.
+    pub zone: Option<(String, Span)>,
 }
 
 #[derive(Debug)]
@@ -138,19 +143,20 @@ pub fn ident_len(s: &str) -> usize {
         .count()
 }
 
-/// The text of a double-quoted string at the start of `s`, and the length
-/// of the string as written. `\\"` and `\\\\` stand for what they quote, as in
-/// an expression. `None` if `s` does not open with a quote or does not close.
+/// The text of a single-quoted string at the start of `s`, and the length
+/// of the string as written: code, as `from 'Siblings/Spouses Aboard'` is
+/// (D168). `\\'` and `\\\\` stand for what they quote, as in an expression.
+/// `None` if `s` does not open with a quote or does not close.
 fn quoted(s: &str) -> Option<(String, usize)> {
     let b = s.as_bytes();
-    if b.first() != Some(&b'"') {
+    if b.first() != Some(&b'\'') {
         return None;
     }
     let mut out = String::new();
     let mut i = 1;
     while i < b.len() {
         match b[i] {
-            b'"' => return Some((out, i + 1)),
+            b'\'' => return Some((out, i + 1)),
             b'\\' if i + 1 < b.len() => {
                 out.push(b[i + 1] as char);
                 i += 2;
@@ -171,17 +177,22 @@ fn after_keyword<'a>(s: &'a str, keyword: &str) -> Option<&'a str> {
     rest.starts_with([' ', '\t']).then(|| rest.trim_start())
 }
 
-/// Net count of unclosed `(` and `[` outside strings and comments.
+/// Net count of unclosed `(` and `[` outside strings and comments. Code
+/// quotes with `'`; a `"` is counted too, so that a string written the old
+/// way is reported where it is rather than taking the lines after it.
 fn open_brackets(s: &str) -> i32 {
     let mut depth = 0;
-    let mut in_string = false;
+    let mut quote: Option<char> = None;
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
+        let in_string = quote.is_some();
         match c {
             '\\' if in_string => {
                 chars.next();
             }
-            '"' => in_string = !in_string,
+            '\'' | '"' if quote.is_none_or(|q| q == c) => {
+                quote = if in_string { None } else { Some(c) };
+            }
             '#' if !in_string => {
                 for c in chars.by_ref() {
                     if c == '\n' {
@@ -202,7 +213,10 @@ pub fn split_cells(line: &str, start: usize, src: u32) -> Vec<CellSrc> {
     let b = line.as_bytes();
     let mut cells = Vec::new();
     let mut from = 0;
-    let mut in_string = false;
+    // The quote a string was opened with: `"` in a cell, and `'` as well
+    // in a formula cell, `= …`, which is code (D168). A bare cell is text,
+    // and its apostrophes are its own.
+    let mut quote: Option<u8> = None;
     let mut i = 0;
     let mut push = |from: usize, to: usize| {
         let raw = &line[from..to];
@@ -214,9 +228,15 @@ pub fn split_cells(line: &str, start: usize, src: u32) -> Vec<CellSrc> {
         });
     };
     while i < b.len() {
+        let in_string = quote.is_some();
         match b[i] {
             b'\\' if in_string => i += 1,
-            b'"' => in_string = !in_string,
+            q @ (b'"' | b'\'')
+                if quote.is_none_or(|open| open == q)
+                    && (q == b'"' || in_string || line[from..i].trim_start().starts_with('=')) =>
+            {
+                quote = if in_string { None } else { Some(q) };
+            }
             // `|>` is the pipe, and `+|` in a formula a bitwise or (D140).
             b'|' if !in_string
                 && b.get(i + 1) != Some(&b'>')
@@ -439,8 +459,8 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             }
         }
 
-        // table <Name> := <expr>
-        if let Some(rest) = after_keyword(trimmed, "table") {
+        // view <Name> := <expr>
+        if let Some(rest) = after_keyword(trimmed, "view") {
             let n = ident_len(rest);
             let tail = rest[n..].trim_start();
             if n > 0 && tail.starts_with(":=") {
@@ -559,7 +579,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             diags.push(
                 Diagnostic::new(
                     Span::new(src, at, at + trimmed.len()),
-                    "expected `sheet <Name>`, `table <Name> := dataframe[\"<path>\"]`, \
+                    "expected `sheet <Name>`, `view <Name> := dataframe['<path>']`, \
                      `const <Name> = <expression>`, \
                      `fn <Name>(<parameters>) = <expression>` or `zone <Area/City>`",
                 )
@@ -594,7 +614,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                 + (trimmed.len() - tail.len())
                 + 1
                 + (tail[1..].len() - tail[1..].trim_start().len());
-            // `Int from "Siblings/Spouses Aboard"`: the type, and the name
+            // `Int from 'Siblings/Spouses Aboard'`: the type, and the name
             // the file holds the column under. A name Polars allows and
             // omasheet does not is reached this way and no other.
             let k = ident_len(body);
@@ -602,6 +622,42 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             // format is read once the type says which kind it is.
             let mut format_text = None;
             let mut after_ty = &body[k..];
+            // `Datetime("Europe/London")`: the zone its cells are the wall
+            // clock of, before any format.
+            let mut zone = None;
+            if k > 0 && after_ty.starts_with('(') {
+                let open = ty_at + k + 1;
+                let inner = &after_ty[1..];
+                match inner.find(')') {
+                    Some(close) => {
+                        let text = inner[..close].trim();
+                        let name = text
+                            .strip_prefix('"')
+                            .and_then(|t| t.strip_suffix('"'))
+                            .or_else(|| text.strip_prefix('\'').and_then(|t| t.strip_suffix('\'')));
+                        match name {
+                            Some(name) if is_zone_name(name) => {
+                                zone = Some((name.to_string(), Span::new(src, open, open + close)));
+                            }
+                            _ => diags.push(
+                                Diagnostic::new(
+                                    Span::new(src, open, open + close),
+                                    "a zone is the name of a time zone in quotes".to_string(),
+                                )
+                                .with_help("as `Datetime(\"Europe/London\")`"),
+                            ),
+                        }
+                        after_ty = &after_ty[close + 2..];
+                    }
+                    None => {
+                        diags.push(Diagnostic::new(
+                            Span::new(src, open - 1, ty_at + body.len()),
+                            "a zone is closed with `)`".to_string(),
+                        ));
+                        after_ty = "";
+                    }
+                }
+            }
             if k > 0 && after_ty.starts_with('[') {
                 let open = ty_at + k + 1;
                 match closing(&after_ty[1..]) {
@@ -646,7 +702,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                             Span::new(src, rest_at, rest_at + rest.trim_end().len()),
                             "a `from` names the column in the file".to_string(),
                         )
-                        .with_help("the name is in quotes, as `from \"Siblings/Spouses Aboard\"`"),
+                        .with_help("the name is in quotes, as `from 'Siblings/Spouses Aboard'`"),
                     ),
                 }
             }
@@ -662,6 +718,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                         from,
                         from_span,
                         format,
+                        zone,
                     })
                 }
                 None => diags.push(
@@ -755,6 +812,11 @@ mod tests {
         let texts: Vec<_> = cells.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(texts, ["a", "\"x | y\"", "= T |> sum()"]);
         assert_eq!(cells[1].span.start, 4);
+        // A formula's string is in single quotes; a bare cell's apostrophe
+        // is only a character (D168).
+        let cells = split_cells("don't | = A // 'x | y' | it's", 0, 0);
+        let texts: Vec<_> = cells.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(texts, ["don't", "= A // 'x | y'", "it's"]);
         // A bitwise or stays in a formula, and divides any other cell.
         let cells = split_cells("a | = 0x10 +| 0x01 | A+|B", 0, 0);
         let texts: Vec<_> = cells.iter().map(|c| c.text.as_str()).collect();
@@ -802,7 +864,7 @@ mod tests {
     #[test]
     fn parses_a_number_format() {
         let mut diags = Vec::new();
-        let src = "table T := dataframe[\"x.parquet\"]\n\nPrice : Decimal['.2f]\nCount : Integer[#x] from \"Count of\"\nAge : Float\n";
+        let src = "view T := dataframe['x.parquet']\n\nPrice : Decimal['.2f]\nCount : Integer[#x] from 'Count of'\nAge : Float\n";
         let ast = parse_file(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         let schema = &ast.sheets[0].schema;
@@ -873,13 +935,13 @@ mod tests {
             .map(|l| l.format.as_ref().unwrap().to_string())
             .collect();
         assert_eq!(shown, ["%d %b %Y", "%]%H%] %z", "%I:%M %p"]);
-        assert_eq!(schema[1].ty, S::DateTime);
+        assert_eq!(schema[1].ty, S::Datetime);
     }
 
     #[test]
     fn parses_a_from_clause() {
         let mut diags = Vec::new();
-        let src = "table T := dataframe[\"x.parquet\"]\n\nSiblings : Int from \"Siblings/Spouses Aboard\"\nAge : Float\n";
+        let src = "view T := dataframe['x.parquet']\n\nSiblings : Int from 'Siblings/Spouses Aboard'\nAge : Float\n";
         let ast = parse_file(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         let schema = &ast.sheets[0].schema;
@@ -889,7 +951,7 @@ mod tests {
         let span = schema[0].from_span;
         assert_eq!(
             &src[span.start as usize..span.end as usize],
-            "\"Siblings/Spouses Aboard\""
+            "'Siblings/Spouses Aboard'"
         );
         // A column of its own name has none.
         assert_eq!(schema[1].from, None);
@@ -897,7 +959,7 @@ mod tests {
         // A `from` with no name in quotes says so, and the type still reads.
         let mut diags = Vec::new();
         let ast = parse_file(
-            "table T := dataframe[\"x\"]\n\nA : Int from B\n",
+            "view T := dataframe['x']\n\nA : Int from B\n",
             0,
             &mut diags,
         );

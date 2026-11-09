@@ -7,7 +7,7 @@
 # clause gives each a name that one can, keeping every word of the file's
 # own: a shorter name would say something the column does not.
 
-table Passengers := dataframe["titanic.parquet"]
+view Passengers := dataframe['titanic.parquet']
 
 Survived              : Integer
 Pclass                : Integer
@@ -15,8 +15,8 @@ Name                  : String
 Sex                   : String
 Age                   : Float
 Fare                  : Float
-SiblingsSpousesAboard : Integer from "Siblings/Spouses Aboard"
-ParentsChildrenAboard : Integer from "Parents/Children Aboard"
+SiblingsSpousesAboard : Integer from 'Siblings/Spouses Aboard'
+ParentsChildrenAboard : Integer from 'Parents/Children Aboard'
 
 Family := SiblingsSpousesAboard + ParentsChildrenAboard
 
@@ -39,8 +39,8 @@ sheet Dearest := Passengers |> sort(Fare, desc) |> select(Name, Fare) |> head(5)
 # the mean of a column of 0s and 1s is the share of 1s.
 
 const SurvivalRate  = (Lived / Aboard).Percent
-const WomenLived    = Passengers[; Sex == "female"].Survived.mean().Percent
-const MenLived      = Passengers[; Sex == "male"].Survived.mean().Percent
+const WomenLived    = Passengers[; Sex == 'female'].Survived.mean().Percent
+const MenLived      = Passengers[; Sex == 'male'].Survived.mean().Percent
 const ChildrenLived = Passengers[; Age < 16].Survived.mean().Percent
 
 # The three classes down, and the two sexes across: a cross tabulation
@@ -60,8 +60,8 @@ All   : Percent
 | 3     | *      | *     | *   | *   | *        | *         |
 
 Aboard    := Passengers[; Pclass == Class].Survived.count()
-Women     := Passengers[; Pclass == Class and Sex == "female"].Survived.mean()
-Men       := Passengers[; Pclass == Class and Sex == "male"].Survived.mean()
+Women     := Passengers[; Pclass == Class and Sex == 'female'].Survived.mean()
+Men       := Passengers[; Pclass == Class and Sex == 'male'].Survived.mean()
 All       := Passengers[; Pclass == Class].Survived.mean()
 MeanFare  := Passengers[; Pclass == Class].Fare.mean().round(2)
 MedianAge := Passengers[; Pclass == Class].Age.median()
@@ -96,7 +96,7 @@ sheet EldestLost := Passengers |> filter(Survived == 0) |> sort(Age, desc) |> se
 sheet Families := Passengers |> sort(Family, desc) |> select(Name, Family, Pclass, Survived) |> head(10)
 
 # The first-class women who were lost, the rarest of the class-and-sex slices.
-sheet FirstClassWomenLost := Passengers |> filter(Pclass == 1 and Sex == "female" and Survived == 0) |> select(Name, Age, Fare)
+sheet FirstClassWomenLost := Passengers |> filter(Pclass == 1 and Sex == 'female' and Survived == 0) |> select(Name, Age, Fare)
 
 # Those who paid nothing at all.
 sheet Free := Passengers |> filter(Fare == 0) |> select(Name, Pclass, Survived)

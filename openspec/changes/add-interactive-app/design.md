@@ -32,8 +32,10 @@ each edit `File` bumps a revision number and the window re-reads the snapshot.
 ## Limitations
 
 - **Whole-file snapshot.** Every edit re-evaluates the file and sends all of it
-  to the window as JSON. Fine for files of thousands of cells; a large file
-  needs a real sheet model (task 3.4).
+  to the window as JSON. Measured at 50,000 inline rows, the JSON is 0.4 s of
+  an edit that takes about 1 s, most of it the engine re-reading the file; a
+  sheet model that sends only changed rows would pay once `rebuild` is
+  incremental (task 3.4).
 - **Normalised layout.** Editing a sheet re-aligns its header and rows with
   single-space padding and ` | ` separators. A row whose cells do not change
   width stays a one-line diff; a hand-formatted sheet is normalised on first edit.

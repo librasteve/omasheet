@@ -9,8 +9,8 @@ use crate::lexer::{Tok, lex};
 use crate::types::{Base, S};
 
 /// A whole number and a part written on their own, `2 3/4` or `-2 3/4`, as
-/// the exact number they come to, `2.75`. The part is less than one. `None`
-/// if the text is anything else.
+/// the exact number they come to, `2.75`. The part may be more than one:
+/// `5 7/3` is `7 1/3`. `None` if the text is anything else.
 pub fn parse_mixed(text: &str) -> Option<Dec> {
     let toks = lex(text, 0, 0).ok()?;
     let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
@@ -28,18 +28,32 @@ pub fn parse_mixed(text: &str) -> Option<Dec> {
     else {
         return None;
     };
-    let part = (n < d)
-        .then(|| Dec::from_i64(*n).checked_div(Dec::from_i64(*d)))
-        .flatten()?;
+    let part = Dec::from_i64(*n).checked_div(Dec::from_i64(*d))?;
     let r = Dec::from_i64(*whole).checked_add(part)?;
     if negative { r.checked_neg() } else { Some(r) }
+}
+
+/// How near zero the imaginary part of a `Complex` must be for it to be
+/// made a real number: Raku's `$*TOLERANCE`, and an absolute test. Nothing
+/// else in the language uses a tolerance (D201, D202).
+pub const IMAG_TOLERANCE: f64 = 1e-15;
+
+/// A `Complex` as it is written, `3+4i`, for a message.
+pub fn complex_text(re: f64, im: f64) -> String {
+    let sign = if im.is_sign_negative() && !im.is_nan() {
+        '-'
+    } else {
+        '+'
+    };
+    let i = if im.is_finite() { "i" } else { "\\i" };
+    format!("{re}{sign}{}{i}", im.abs())
 }
 
 /// A value written on its own, such as `42`, `-1/7`, `2 3/4`, `3+4i` or
 /// `2025-01-31`. `None` if the text is anything else.
 pub fn parse_literal(text: &str) -> Option<Lit> {
     if let Some(r) = parse_mixed(text) {
-        return Some(Lit::Decimal(r));
+        return Some(Lit::Fraction(r));
     }
     let toks = lex(text, 0, 0).ok()?;
     let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
@@ -47,8 +61,30 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
     let fraction = |n: i64, d: i64| {
         Dec::from_i64(n)
             .checked_div(Dec::from_i64(d))
-            .map(Lit::Decimal)
+            .map(Lit::Fraction)
     };
+    // A complex number: `4i`, `3+4i`, `-1.5-2i`.
+    let real = |t: &Tok| match t {
+        Tok::Int(n, _) => Some(*n as f64),
+        // Read as the nearest `f64`, as the imaginary part is, so that a
+        // part written from a `Float` reads back as that `Float`.
+        Tok::Decimal(r) | Tok::Percent(r) => r.to_plain_string().parse().ok(),
+        Tok::Float(f) => Some(*f),
+        _ => None,
+    };
+    let (negative, rest) = match toks.as_slice() {
+        [Tok::Minus, rest @ ..] => (true, rest),
+        rest => (false, rest),
+    };
+    let sign = if negative { -1.0 } else { 1.0 };
+    match rest {
+        [Tok::Imag(im), Tok::Eof] => return Some(Lit::Complex(0.0, sign * im)),
+        [re, op @ (Tok::Plus | Tok::Minus), Tok::Imag(im), Tok::Eof] => {
+            let im = if **op == Tok::Minus { -im } else { *im };
+            return Some(Lit::Complex(sign * real(re)?, im));
+        }
+        _ => {}
+    }
     Some(match toks.as_slice() {
         [
             Tok::Int(n, Base::Dec),
@@ -71,10 +107,12 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
         [Tok::Minus, Tok::Decimal(r), Tok::Eof] => Lit::Decimal(r.checked_neg()?),
         [Tok::Minus, Tok::Percent(r), Tok::Eof] => Lit::Percent(r.checked_neg()?),
         [Tok::Minus, Tok::Float(f), Tok::Eof] => Lit::Float(-*f),
-        [Tok::Str(s), Tok::Eof] => Lit::String(s.clone()),
+        // A cell quotes its text with `"`; `'x'` in a cell is the text
+        // with its apostrophes, as it is written (D168).
+        [Tok::Text(s), Tok::Eof] => Lit::String(s.clone()),
         [Tok::Date(d), Tok::Eof] => Lit::Date(*d),
         [Tok::Time(t), Tok::Eof] => Lit::Time(*t),
-        [Tok::DateTime(t), Tok::Eof] => Lit::DateTime(*t),
+        [Tok::Datetime(t), Tok::Eof] => Lit::Datetime(*t),
         [Tok::Duration(t), Tok::Eof] => Lit::Duration(*t),
         [Tok::Minus, Tok::Duration(t), Tok::Eof] => Lit::Duration(t.checked_neg()?),
         [Tok::True, Tok::Eof] => Lit::Boolean(true),
@@ -87,13 +125,15 @@ pub fn lit_type(l: &Lit) -> S {
     match l {
         Lit::Int(_, b) => b.ty(),
         Lit::Decimal(_) => S::Decimal,
+        Lit::Fraction(_) => S::Fraction,
         Lit::Percent(_) => S::Percent,
         Lit::Float(_) => S::Float,
+        Lit::Complex(..) => S::Complex,
         Lit::String(_) => S::String,
         Lit::Boolean(_) => S::Boolean,
         Lit::Date(_) => S::Date,
         Lit::Time(_) => S::Time,
-        Lit::DateTime(_) => S::DateTime,
+        Lit::Datetime(_) => S::Datetime,
         Lit::Duration(_) => S::Duration,
     }
 }
@@ -117,13 +157,55 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     let no = || Err(format!("{from} cannot be made {}", a(to)));
     let real = |l: &Lit| match l {
         Lit::Int(n, _) => Some(*n as f64),
-        Lit::Decimal(r) | Lit::Percent(r) => Some(r.to_f64()),
+        Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) => Some(r.to_f64()),
         Lit::Float(f) => Some(*f),
         Lit::Boolean(b) => Some(*b as u8 as f64),
         _ => None,
     };
     if from == to || to == S::Any {
         return Ok(lit.clone());
+    }
+    // A `Complex` is a real number when its imaginary part is zero, to
+    // within Raku's tolerance, and is otherwise refused (D201).
+    if let Lit::Complex(re, im) = lit {
+        if to == S::Boolean {
+            return Ok(Lit::Boolean(*re != 0.0 || *im != 0.0));
+        }
+        if to.is_exact() || to == S::Float {
+            return if im.abs() < IMAG_TOLERANCE {
+                if to == S::Float {
+                    Ok(Lit::Float(*re))
+                } else {
+                    // An exact number is made from the real part's value.
+                    convert(&Lit::Float(*re), S::Decimal).and_then(|d| convert(&d, to))
+                }
+            } else {
+                Err(format!(
+                    "Cannot convert {} to {to}: imaginary part not zero",
+                    complex_text(*re, *im)
+                ))
+            };
+        }
+    }
+    // A fraction is the exact number it stands for, shown as a fraction, so it
+    // is converted as that number is; and any exact number may be one.
+    if to == S::Fraction {
+        return match lit {
+            Lit::Int(n, _) => Ok(Lit::Fraction(Dec::from_i64(*n))),
+            Lit::Decimal(r) | Lit::Percent(r) => Ok(Lit::Fraction(*r)),
+            Lit::String(s) => parse_literal(s.trim())
+                .filter(|l| !matches!(l, Lit::String(_)))
+                .and_then(|l| convert(&l, to).ok())
+                .ok_or_else(|| format!("`{s}` is not {}", a(to))),
+            _ => no(),
+        };
+    }
+    if let Lit::Fraction(r) = lit {
+        let plain = match r.to_i64() {
+            Some(n) => Lit::Int(n, Base::Dec),
+            None => Lit::Decimal(*r),
+        };
+        return convert(&plain, to);
     }
     // The bases hold the same whole numbers, so a number goes through
     // decimal to be shown in another one.
@@ -201,12 +283,19 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
                 None => return no(),
             }
         }
+        (
+            Lit::Int(..) | Lit::Decimal(_) | Lit::Percent(_) | Lit::Boolean(_) | Lit::Float(_),
+            S::Complex,
+        ) => match real(lit) {
+            Some(f) => Lit::Complex(f, 0.0),
+            None => return no(),
+        },
         (Lit::Int(n, _), S::Boolean) => Lit::Boolean(*n != 0),
         (Lit::Decimal(r), S::Boolean) => Lit::Boolean(!r.is_zero()),
         (Lit::Float(f), S::Boolean) => Lit::Boolean(*f != 0.0),
-        (Lit::DateTime(t), S::Date) => Lit::Date(crate::date::split_datetime(*t).0),
-        (Lit::DateTime(t), S::Time) => Lit::Time(crate::date::split_datetime(*t).1),
-        (Lit::Date(d), S::DateTime) => Lit::DateTime(*d as i64 * crate::date::DAY_MICROS),
+        (Lit::Datetime(t), S::Date) => Lit::Date(crate::date::split_datetime(*t).0),
+        (Lit::Datetime(t), S::Time) => Lit::Time(crate::date::split_datetime(*t).1),
+        (Lit::Date(d), S::Datetime) => Lit::Datetime(*d as i64 * crate::date::DAY_MICROS),
         _ => return no(),
     })
 }
@@ -215,7 +304,17 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
 mod tests {
     use super::*;
 
-    const TYPES: [S; 15] = [
+    #[test]
+    fn a_cell_quotes_its_text_with_double_quotes() {
+        assert_eq!(
+            parse_literal("\"2 * 3\""),
+            Some(Lit::String("2 * 3".into()))
+        );
+        // A cell in single quotes is that text, apostrophes and all (D168).
+        assert_eq!(parse_literal("'x'"), None);
+    }
+
+    const TYPES: [S; 16] = [
         S::Int,
         S::Hex,
         S::Octal,
@@ -223,11 +322,12 @@ mod tests {
         S::Decimal,
         S::Percent,
         S::Float,
+        S::Complex,
         S::String,
         S::Boolean,
         S::Date,
         S::Time,
-        S::DateTime,
+        S::Datetime,
         S::Url,
         S::Email,
         S::Uuid,
@@ -243,11 +343,23 @@ mod tests {
         assert_eq!(convert(&lit("-19.99"), S::Int), Ok(lit("-19")));
         assert_eq!(convert(&lit("1e-1"), S::Decimal), Ok(lit("0.1")));
         assert_eq!(convert(&lit("1/8"), S::Decimal), Ok(lit("0.125")));
-        assert_eq!(convert(&lit("1/3"), S::Decimal), Ok(lit("1/3")));
-        // A fraction of whole numbers is an exact `Decimal`.
+        // A fraction is the number it stands for, as a `Decimal` or a `Fraction`.
+        assert_eq!(
+            convert(&lit("1/3"), S::Decimal),
+            Ok(Lit::Decimal(
+                Dec::from_i64(1).checked_div(Dec::from_i64(3)).unwrap()
+            ))
+        );
+        assert_eq!(convert(&lit("0.125"), S::Fraction), Ok(lit("1/8")));
+        assert_eq!(
+            convert(&lit("3"), S::Fraction),
+            Ok(Lit::Fraction(Dec::from_i64(3)))
+        );
+        // A fraction of whole numbers is the exact number it stands for,
+        // written as a fraction.
         assert_eq!(
             lit("7/3"),
-            Lit::Decimal(Dec::from_i64(7).checked_div(Dec::from_i64(3)).unwrap())
+            Lit::Fraction(Dec::from_i64(7).checked_div(Dec::from_i64(3)).unwrap())
         );
         assert_eq!(convert(&lit("-22/7"), S::Int), Ok(lit("-3")));
         // A whole number and a part is the fraction they come to.
@@ -255,12 +367,24 @@ mod tests {
         assert_eq!(lit("-2 3/4"), lit("-11/4"));
         assert_eq!(lit("0 1/3"), lit("1/3"));
         assert_eq!(lit("1_000 1/3"), lit("3001/3"));
-        assert_eq!(parse_literal("2 7/4"), None);
+        assert_eq!(lit("2 7/4"), lit("15/4"));
+        assert_eq!(lit("5 7/3"), lit("22/3"));
+        assert_eq!(lit("-5 7/3"), lit("-22/3"));
         assert_eq!(parse_literal("2 3/0"), None);
         assert_eq!(parse_literal("2 3"), None);
         assert_eq!(parse_literal("1 2 3/4"), None);
         assert_eq!(convert(&lit("1.5e3"), S::Int), Ok(lit("1500")));
         assert_eq!(convert(&lit("1/4"), S::Float), Ok(Lit::Float(0.25)));
+        assert_eq!(convert(&lit("3"), S::Complex), Ok(Lit::Complex(3.0, 0.0)));
+        // A Complex is a real number only when its imaginary part is zero.
+        assert_eq!(convert(&lit("3+0i"), S::Int), Ok(lit("3")));
+        assert_eq!(convert(&lit("3+1e-16i"), S::Float), Ok(Lit::Float(3.0)));
+        assert!(convert(&lit("3+1e-15i"), S::Float).is_err());
+        assert_eq!(
+            convert(&lit("3+4i"), S::Float),
+            Err("Cannot convert 3+4i to Float: imaginary part not zero".to_string())
+        );
+        assert_eq!(convert(&lit("3+4i"), S::Boolean), Ok(lit("true")));
         assert_eq!(convert(&lit("true"), S::Int), Ok(lit("1")));
         assert_eq!(convert(&lit("0.5"), S::Boolean), Ok(lit("true")));
         assert!(convert(&Lit::Float(f64::NAN), S::Int).is_err());
@@ -278,7 +402,8 @@ mod tests {
         let text = |s: &str| Lit::String(s.to_string());
         assert_eq!(convert(&text(" 42 "), S::Int), Ok(lit("42")));
         assert_eq!(convert(&text("19.99"), S::Int), Ok(lit("19")));
-        assert_eq!(convert(&text("20%"), S::Decimal), Ok(lit("1/5")));
+        assert_eq!(convert(&text("20%"), S::Decimal), Ok(lit("0.2")));
+        assert_eq!(convert(&text("20%"), S::Fraction), Ok(lit("1/5")));
         assert_eq!(convert(&text("16:10"), S::Time), Ok(lit("16:10")));
         assert_eq!(convert(&text("2025-01-31"), S::Date), Ok(lit("2025-01-31")));
         assert_eq!(
@@ -324,7 +449,7 @@ mod tests {
         assert_eq!(convert(&moment, S::Date), Ok(lit("2025-01-31")));
         assert_eq!(convert(&moment, S::Time), Ok(lit("09:30")));
         assert_eq!(
-            convert(&lit("2025-01-31"), S::DateTime),
+            convert(&lit("2025-01-31"), S::Datetime),
             Ok(lit("2025-01-31T00:00"))
         );
         assert_eq!(

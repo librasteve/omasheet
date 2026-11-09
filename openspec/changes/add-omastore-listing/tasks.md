@@ -9,11 +9,11 @@
 ## 2. Provenance
 - [x] 2.1 `package.yml`: attest the attached packages in the `attach` job, with `id-token: write` and `attestations: write`
 - [x] 2.2 Narrow the workflow's top-level permission to `contents: read`
-- [ ] 2.3 Publish a release with the workflow and confirm `omastore check` no longer warns about provenance
+- [x] 2.3 Publish a release with the workflow and confirm `omastore check` no longer warns about provenance: done, 2026-11-04
 
 ## 3. Discovery
 - [x] 3.1 Add the `omarchy` topic, so the store finds the repository without a GitHub token
-- [ ] 3.2 `README.md`: link `omastore://librasteve/omasheet`
+- [x] 3.2 `README.md`: link `omastore://librasteve/omasheet`
 
 ## 4. Verify
-- [ ] 4.1 Install Omasheet from OmaStore on a clean machine and open an `.omx` file from the launcher
+- [x] 4.1 Install Omasheet from OmaStore on a clean machine and open an `.omx` file from the launcher: done, 2026-11-04

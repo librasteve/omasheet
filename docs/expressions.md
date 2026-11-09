@@ -11,7 +11,7 @@ No exact number is a division by zero, so that gives a `Float`: `1/0` is `Inf`,
 `-1/0` is `-Inf` and `0/0` is `NaN`. So does a function outside its
 domain: `sqrt(-1)` is `NaN` and `ln(0)` is `-Inf`. They are written as they are shown,
 `Inf`, `-Inf` and `NaN`, in a formula or a cell; the text is in quotes,
-`"Inf"`. A `NaN` is ordered greatest and equal to itself, so `NaN == NaN` is
+`'Inf'` in a formula and `"Inf"` in a cell. A `NaN` is ordered greatest and equal to itself, so `NaN == NaN` is
 true, a `NaN` sorts last, and the largest of a column holding one is the
 `NaN`. That is a dataframe's rule rather than IEEE's, where a `NaN` equals
 nothing at all: it is kept so that a column of floats gives the same answer
@@ -69,6 +69,7 @@ Numbers are shown the way Raku shows them:
 | `Fraction` | `1/7`, `3/4`, `2 3/4`, `333 1/3`; `3` when it is whole |
 | `Percent` | `20%`, `12.5%`, `41.67%` |
 | `Float` | `100`, `1.5`, `1.4142135623730951`; `1e+21` or `1.5e-16` when very large or small; `Inf`, `-Inf`, `NaN` |
+| `Complex` | each part as a `Float`: `3+4i`, `1.5-2i`, `0+1.4142135623730951i`; both parts cut alike when too wide; `0+Inf\i` for an infinite imaginary part |
 
 A `Float` that is a whole number looks like an `Integer`, but it is still a `Float`.
 
@@ -82,17 +83,54 @@ whole part where there is one: `x.Fraction` gives `1/8` for `0.125` and
 `2 3/4` for `2.75`. The fraction is worked out from the number, not
 remembered from where it was written, so `(2/7 + 3/7).Fraction` is `5/7`.
 Only a denominator of 10000 or less is looked for; past that the number is
-shown as a decimal. Anything done with a fraction gives a fraction, and
-`--exact` writes it as `n/d`, which is how a file carries one.
+shown as a decimal. Two fractions give a fraction, and a fraction with any
+other number gives a `Decimal`: in a `Fraction` column, `Yield + Yield` is
+still a fraction, where `Yield * 2` is a `Decimal`.
+`--exact` writes a fraction as `n/d`, which is how a file carries one.
 
-Percentages add up to a percentage:
-`20% + 5%` is `25%`, and so are their sum, average, least and greatest.
-Anything else done with one gives the plain number: `100 * 20%` is `20`,
-`1 + 20%` is `1.2`, and `20% == 0.2` is true. To show a result as a
-percentage, declare its column `Percent` or write `x.Percent`.
+In a formula `1/10` is a quotient, a `Decimal`. A fraction is written in angle
+brackets, `<1/10>`, `<-3/4>` or `<2 3/4>`, and is a `Fraction` as `1/10` is in a
+cell, so `<1/10> + <1/10>` is `1/5`. It is the same as `Fraction(1/10)`. A
+fraction with a whole number is a `Decimal`, `<1/10> + 1` being `1.1`, so
+where the result should stay a fraction use `<1/1>` for one: `<1/10> + <1/1>`
+is `1 1/10`. A space goes before a fraction that follows a `+`, since `+<` is
+a shift; the error for `1+<1/10>` says so.
+
+Two percentages give a percentage: `20% + 5%` is `25%`, and so are their
+sum, average, least and greatest. A percentage with any other number gives
+the plain number: `100 * 20%` is `20`, `1 + 20%` is `1.2`, and `20% == 0.2`
+is true. To show a result as a percentage, declare its column `Percent` or
+write `x.Percent`.
+
+`a % b` is what is left over when `a` is divided by `b` in whole steps down,
+so it has the sign of `b`, as a workbook's `MOD(a, b)` does: `7 % 3` is `1`,
+`-7 % 3` is `2`, `7 % -3` is `-2` and `7.5 % 2` is `1.5`. It binds as `*`
+and `/` do. A `%` straight after a number is a percentage (`20%`), so a
+remainder is written with spaces round it. A number is divisible by another
+when the remainder is zero: `x % 3 == 0`. Exact numbers stay exact, and
+`x % 0` is `NaN`, as `0/0` is. A workbook export writes `MOD(a, b)`.
+
+A quotient of whole numbers is a `Decimal`, though `4/2` written out is an
+`Integer`. A quotient is taken where a whole number is wanted, `[1, 2, 3][4/2]`,
+and reported there if it is not whole, `5/2`.
+
+A power with a whole exponent is exact; with any other, `2 ** 0.5`, it is a
+`Float`, as `sqrt(2)` is.
 
 `+ - * / **`, `== != < > <= >=`, `and or not`, `in`, and `a // b` (b when a
 is empty). `if c then a else b`.
+
+Comparisons chain, as in Raku: `0 < x <= 10` is `0 < x and x <= 10`, and
+`a < b < c < d` tests each pair in turn. `in` takes one side each.
+
+A string in a formula is in single quotes: `Name // 'Unknown'`, with `\'`,
+`\\`, `\n` and `\t` as its escapes. Double quotes are for text in a table
+cell, `"2 * 3 * 4"`, so code and text are told apart at a glance; a formula
+with a double-quoted string is an error that shows the single-quoted one.
+Everything outside a table cell is code: a column's formula, a `const`, a
+cell's `= …`, `dataframe['sales.parquet']`, `from 'Units/Boxes Sold'`, and
+`{{ }}` and `omx` blocks in Markdown. In a number format, the `'` that
+groups digits is escaped: `'%\'.2f'`.
 
 An empty cell in a comparison or a sum gives an empty answer: anything done
 with a missing value is missing. `and` and `or` are the exception, and they
@@ -134,17 +172,46 @@ vector is converted value by value.
 | `x.Integer` | a whole number: `19.99` gives `19`, `-19.99` gives `-19` |
 | `x.Decimal` | the same number as a decimal: `(1/8).Decimal` is `0.125`, `(1/3).Decimal` is `0.333…` |
 | `x.Percent` | the same number as a percentage: `0.4` gives `40%`, `5/12` gives `41.67%` |
-| `x.Float` | a floating-point number |
+| `x.Float` | a floating-point number; of a `Complex`, its real part, where its imaginary part is zero to within `1e-15`, and otherwise an error |
+| `x.Complex`, `Complex(re, im)` | a complex number from a real one, or from two |
 | `x.String` | any value as text, written the way a file writes it |
 | `x.Boolean` | `false` for zero, `true` for any other number |
 | `x.Date`, `x.Time` | that half of a `Datetime` |
 | `x.Datetime` | a `Date` at midnight |
 
-Text is read the way a cell is: `"42".Integer` is `42`, `"20%".Decimal` is `1/5`,
-`"2025-01-31".Date` is that date, and `"abc".Integer` is an error. `true.Integer` is
+Text is read the way a cell is: `'42'.Integer` is `42`, `'20%'.Decimal` is `1/5`,
+`'2025-01-31'.Date` is that date, and `'abc'.Integer` is an error. `true.Integer` is
 `1`. To round rather than drop the fraction, use `round(x)`; `round(x, 2)`
 rounds to two decimal places. For the nearest hundred, divide, round and
 multiply back: `round(x / 100) * 100`.
+
+## Complex numbers
+
+An imaginary number is written with an `i`, `4i`, and `3+4i` is the sum of
+`3` and `4i`. `Inf\i` and `NaN\i` are an infinite and a not-a-number imaginary
+part. A `Complex` is the most infectious number type, so any number beside
+one gives a `Complex`:
+
+```
+(1+2i) * (3-1i)        5+5i
+abs(3+4i)              5
+sqrt(-4+0i)            0+2i
+conj(3+4i)             3-4i
+degrees(arg(2i))       90
+(1+1i) ** 2            0+2i
+```
+
+`+ - * /` and `**` follow the rules of complex numbers; a whole exponent is
+repeated multiplication, as in Raku. `re(z)` and `im(z)` are the parts,
+`conj(z)` the conjugate and `arg(z)` the angle in radians. `abs`, `sqrt`,
+`exp` and `ln` take a `Complex`; the other functions do not. A real number
+has the same parts, with no imaginary part: `im(7)` is `0`.
+
+A `Complex` has no order: `1i < 2i` is an error. `=` and `!=` compare both
+parts exactly. To get a real number out, use `re(z)` or `abs(z)`, or `z.Float`,
+which works only where the imaginary part is zero to within `1e-15`, Raku's
+tolerance, and is otherwise an error. That tolerance is used nowhere else:
+`im(z) = 0` is the exact test.
 
 ## Names
 
@@ -237,11 +304,11 @@ given start the column and the rest follow a rule.
 | `5 ... Inf` | 5, 6, 7, … — one term alone steps by one |
 | `0, 1, $-1 + $-2 ... Inf` | 0, 1, 1, 2, 3, 5, … — a rule of its own |
 | `1, 3 ... 9` | 1, 3, 5, 7, 9, then empty |
-| `"A", "B" ... Inf` | A, B, … Z, AA, AB, … |
-| `"Monday", "Tuesday" ... Inf` | the days of the week, round and round |
-| `"Jan", "Feb" ... Inf` | the months of the year |
-| `"Jan-2026", "Apr-2026" ... Inf` | quarters, carrying into the year |
-| `"AY" ... "BA"` | AY, AZ, BA, then empty |
+| `'A', 'B' ... Inf` | A, B, … Z, AA, AB, … |
+| `'Monday', 'Tuesday' ... Inf` | the days of the week, round and round |
+| `'Jan', 'Feb' ... Inf` | the months of the year |
+| `'Jan-2026', 'Apr-2026' ... Inf` | quarters, carrying into the year |
+| `'AY' ... 'BA'` | AY, AZ, BA, then empty |
 | `2025-01-01, 2025-01-08 ... Inf` | every seventh day |
 | `2025-01-01, 2025-02-01 ... Inf` | the first of each month |
 | `2025-01-31, 2025-02-28 ... Inf` | the last day of each month |
@@ -259,7 +326,7 @@ given start the column and the rest follow a rule.
   written in full or in three letters, in any case: they go round, so
   Sunday is followed by Monday and December by January. A month written
   with its year, `Jan-2026` or `January 2026`, carries into the year
-  instead. Every term must be written the same way, so `"Mon", "Tuesday"`
+  instead. Every term must be written the same way, so `'Mon', 'Tuesday'`
   is not one of these.
 - Any other text counts up the way letters and digits do, carrying at `Z`
   and `9`, and only its last run of letters and digits moves: `job-A9` to
@@ -308,21 +375,38 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 - A `NaN` or not: `is_nan(x)` and `is_not_nan(x)`. A `NaN` is a Float and an
   empty cell is a missing value, so they are different absences:
   `is_nan(0/0)` is true, `is_null(0/0)` is false, and `is_nan` of an empty
-  cell is empty
+  cell is empty. `is_finite(x)` and `is_infinite(x)` likewise; an exact
+  number is always finite
+- Text: `starts_with('A')`, `ends_with('son')`, `contains('an')` — exactly
+  as written — `matches('^A.*n$')`, a regular expression anywhere in the
+  text, and `contains_any(['an', 'en'])`. `starts_with('A'..'C')` takes a
+  range of first letters, which is `x >= 'A' and x < 'D'`. `len_chars()`
+  counts characters, and `to_lowercase()` and `to_uppercase()` change case,
+  so `Name.to_lowercase().starts_with('a')` ignores it. Each is empty of an
+  empty cell
+- Among a column's values: `is_unique()`, `is_duplicated()`,
+  `is_first_distinct()` and `is_last_distinct()`, of a column or a vector,
+  or of this row's cell, `Name.is_duplicated()`, which is answered among the
+  column's. An empty cell is a value of its own here
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
+- Complex: `re im conj arg`, with `abs sqrt exp ln` for a `Complex` too
 - Counting up: `succ` — a number plus one, or the next text, `AZ` to `BA`
 - Converting: `Integer Decimal Percent Float String Boolean Date Time Datetime
   Duration`,
   each also written `cast(x, Integer)`
 - Dates: `today() now() year month day weekday quarter week ordinal_day
-  hour minute second millisecond microsecond nanosecond date time`
+  hour minute second millisecond microsecond nanosecond date time
+  is_leap_year`
 - Durations: `total_days total_hours total_minutes total_seconds`, each an
   exact number: `PT1H30M.total_hours()` is `1.5`
 - Months: `add_months(x, n)` — what `x + n.month` is — `month_end(x)` and
   `month_start(x)`
-- Time zones: `convert_time_zone("Asia/Tokyo") utc() local()
+- Time zones: `convert_time_zone('Asia/Tokyo') utc() local()
   base_utc_offset() time_zone()`
 - Your own: `fn` in the file
+
+The tests are those Polars has, under Polars' names, so a view's column is
+tested by Polars in one pass rather than a row at a time.
 
 The app lists them all under `fn()` (F1).
 
