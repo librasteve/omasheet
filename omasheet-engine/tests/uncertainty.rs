@@ -52,7 +52,8 @@ fn near(got: (f64, f64), want: (f64, f64)) {
 #[test]
 fn the_plus_minus_literal() {
     assert_eq!(full("10 ± 0.1"), "10 ± 0.1");
-    assert_eq!(full("10 +- 0.1"), "10 ± 0.1");
+    // `+-` is a sum and a negation, not an operator of its own.
+    assert_eq!(full("10 +- 0.1"), "9.9");
     // The uncertainty is an expression, and `±` binds more loosely than `*`.
     assert_eq!(full("10 ± 0.1 * 2"), "10 ± 0.2");
 }

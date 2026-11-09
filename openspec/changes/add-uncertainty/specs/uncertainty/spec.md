@@ -12,15 +12,15 @@ A real number SHALL be able to carry a measurement uncertainty: a non-negative s
 - **THEN** the result is `20` with uncertainty `0.2`
 
 ### Requirement: The ± literal
-`<value> ± <uncertainty>` SHALL make an uncertain value, and `+-` SHALL be accepted as an ASCII spelling of `±`. Both sides SHALL be real numbers with no uncertainty of their own, and the uncertainty SHALL be non-negative. `±` SHALL bind more loosely than `+` and `-` and more tightly than a comparison, so a result is combined further by putting it in brackets.
+`<value> ± <uncertainty>` SHALL make an uncertain value. Both sides SHALL be real numbers with no uncertainty of their own, and the uncertainty SHALL be non-negative. `±` SHALL bind more loosely than `+` and `-` and more tightly than a comparison, so a result is combined further by putting it in brackets.
 
 #### Scenario: Literal
 - **WHEN** `10 ± 0.1` is evaluated
 - **THEN** the result has value `10` and uncertainty `0.1`
 
-#### Scenario: ASCII spelling
+#### Scenario: No ASCII spelling
 - **WHEN** `10 +- 0.1` is evaluated
-- **THEN** the result is identical to `10 ± 0.1`
+- **THEN** it is a sum and a negation, `9.9`, as it always was
 
 #### Scenario: Uncertainty is an expression
 - **WHEN** `10 ± 0.1 * 2` is evaluated

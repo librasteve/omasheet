@@ -3,7 +3,6 @@ sheet Literals
 Name           | Value
 ---------------|--------------------
 plus-minus     |           10.00(10)
-ascii          |           10.00(10)
 expression     |           10.00(20)
 concise        |           10.50(30)
 whole          |            10.0(30)

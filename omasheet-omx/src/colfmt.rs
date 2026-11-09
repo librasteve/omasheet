@@ -14,7 +14,7 @@ use crate::types::S;
 pub enum Format {
     Number(NumFormat),
     Date(DateFormat),
-    /// `±` (or `+-`): an uncertain value as `11.000 ± 0.082`, where it is
+    /// `±`: an uncertain value as `11.000 ± 0.082`, where it is
     /// otherwise shown in the concise form, `11.000(82)`.
     PlusMinus,
 }
@@ -24,7 +24,7 @@ impl Format {
     /// `Date`, `Time` or `Datetime`, and a number format for any other.
     pub fn parse(text: &str, ty: S) -> Result<Format, FormatError> {
         match ty {
-            S::Uncertain if matches!(text.trim(), "±" | "+-") => Ok(Format::PlusMinus),
+            S::Uncertain if text.trim() == "±" => Ok(Format::PlusMinus),
             S::Uncertain => Err(FormatError {
                 at: 0,
                 len: text.chars().count(),

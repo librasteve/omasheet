@@ -1,4 +1,4 @@
-# A number with its measurement uncertainty. `10 ± 0.1` (or `10 +- 0.1`) and
+# A number with its measurement uncertainty. `10 ± 0.1` and
 # the concise `10.5(3)` of the physical tables, where the digits in brackets
 # are the uncertainty in the last places, make the same kind of value. It
 # propagates through arithmetic, powers and the math functions to first
@@ -10,7 +10,6 @@ sheet Literals
 | Name        | Value               |
 | ----------- | ------------------- |
 | plus-minus  | = 10 ± 0.1          |
-| ascii       | = 10 +- 0.1         |
 | expression  | = 10 ± 0.1 * 2      |
 | concise     | = 10.5(3)           |
 | whole       | = 10(3)             |

@@ -7,7 +7,7 @@
 - [x] 1.2 `Value::Uncertain(f64, f64)` and its place in the type lattice, above `Float` (D91)
 
 ## 2. Literals (`uncertainty`)
-- [x] 2.1 `±` / `+-` operator, and the concise `10.5(3)e-3` literal in the lexer
+- [x] 2.1 `±` operator, and the concise `10.5(3)e-3` literal in the lexer
 
 ## 3. Propagation (`uncertainty`)
 - [x] 3.1 `+ - * /` in quadrature

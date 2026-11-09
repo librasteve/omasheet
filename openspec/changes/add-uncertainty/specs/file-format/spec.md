@@ -5,7 +5,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Column schema
-A sheet SHALL be able to declare the type of each column with lines of the form `<Column> : <Type>` placed between the `sheet` line and the header row. A type SHALL be a base type (`Int`, `Fraction`, `Num`, `Complex`, `Text`, `Date`, `Time`, `Datetime`, `Bool`) or `Uncertain`. A column with no declaration SHALL have its type inferred from its cells. An `Uncertain` column MAY be declared with a display format after its type, in brackets: `<Column> : Uncertain[±]`. `+-` SHALL be accepted as an ASCII spelling of `±`. With no format, the column displays in the concise form.
+A sheet SHALL be able to declare the type of each column with lines of the form `<Column> : <Type>` placed between the `sheet` line and the header row. A type SHALL be a base type (`Int`, `Fraction`, `Num`, `Complex`, `Text`, `Date`, `Time`, `Datetime`, `Bool`) or `Uncertain`. A column with no declaration SHALL have its type inferred from its cells. An `Uncertain` column MAY be declared with a display format after its type, in brackets: `<Column> : Uncertain[±]`. With no format, the column displays in the concise form.
 
 #### Scenario: Uncertain column
 - **GIVEN** a schema line `Length : Uncertain` and the cells `10`, `10 ± 0.1` and `10.5(3)`

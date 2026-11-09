@@ -119,7 +119,7 @@ pub enum BinOp {
     /// divisor, as a spreadsheet's `MOD` does.
     Rem,
     Pow,
-    /// `±` or `+-`: a value and its uncertainty.
+    /// `±`: a value and its uncertainty.
     PlusMinus,
     /// `+&`, `+|`, `+^`, `+<` and `+>`, on whole numbers.
     BitAnd,

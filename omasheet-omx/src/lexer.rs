@@ -46,7 +46,7 @@ pub enum Tok {
     False,
     Plus,
     Minus,
-    /// `±` or `+-`: a value and its uncertainty.
+    /// `±`: a value and its uncertainty.
     PlusMinus,
     /// `+&`, `+|` and `+^`: bitwise and, or and xor, as Raku writes them;
     /// `+^` before a number is its complement.
@@ -338,7 +338,6 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
             Some(b'^') => Some(Tok::PlusCaret),
             Some(b'<') => Some(Tok::PlusLt),
             Some(b'>') => Some(Tok::PlusGt),
-            Some(b'-') => Some(Tok::PlusMinus),
             _ => None,
         };
         let (tok, len) = if let Some(tok) = bitwise {
@@ -765,10 +764,9 @@ mod tests {
             lex("10.5(3.2)", 0, 0)
                 .is_ok_and(|t| t[0].tok == Tok::Decimal(Dec::new(105, 1).unwrap()))
         );
-        // Both spellings of the operator.
         assert_eq!(toks("1 ± 2")[1], Tok::PlusMinus);
-        assert_eq!(toks("1 +- 2")[1], Tok::PlusMinus);
-        assert_eq!(toks("1 + -2")[1], Tok::Plus);
+        // `+-` is a sum and a negation, as it always was.
+        assert_eq!(toks("1+-2")[1..3], [Tok::Plus, Tok::Minus]);
     }
 
     #[test]

@@ -188,8 +188,8 @@ multiply back: `round(x / 100) * 100`.
 
 ## Uncertain numbers
 
-A measurement carries an uncertainty, a standard deviation. `10 ± 0.1` (or
-`10 +- 0.1`) is `10` with an uncertainty of `0.1`, and `10.5(3)` is the
+A measurement carries an uncertainty, a standard deviation. `10 ± 0.1` is `10`
+with an uncertainty of `0.1`, and `10.5(3)` is the
 concise form physics and chemistry tables use, where the digits in brackets
 are the uncertainty in the last places shown: `10.5 ± 0.3`. An exponent after
 the brackets scales both, so `7.297_352_5643(11)e-3` is the fine-structure
