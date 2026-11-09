@@ -1801,6 +1801,28 @@ ApplicationWindow {
     // `{first, count, gap}`, `gap` being the place between columns it would
     // land in, 0 to the number of columns; or null.
     property var colDrag: null
+    // Where the pointer is in the grid's window, along its width, while a
+    // column is dragged: the grid scrolls when it comes near either edge.
+    property real colDragViewX: 0
+    Timer {
+        interval: 30
+        repeat: true
+        running: win.colDrag !== null
+        onTriggered: {
+            var edge = Math.min(56, hflick.width / 4);
+            var vx = win.colDragViewX;
+            var by = vx < edge ? -(edge - vx) / 3 : vx > hflick.width - edge ? (vx - (hflick.width - edge)) / 3 : 0;
+            if (by === 0)
+                return;
+            var max = Math.max(0, hflick.contentWidth - hflick.width);
+            var to = Math.max(0, Math.min(max, hflick.contentX + by));
+            if (to === hflick.contentX)
+                return;
+            hflick.contentX = to;
+            // The pointer is still, but the columns under it are not.
+            win.hoverColumnDrag(vx + to);
+        }
+    }
     function beginColumnDrag(i) {
         var several = selKind === "column" && i >= selLeft && i <= selRight;
         var first = several ? selLeft : i;
@@ -1813,6 +1835,7 @@ ApplicationWindow {
     function hoverColumnDrag(x) {
         if (!colDrag)
             return;
+        colDragViewX = x - hflick.contentX;
         var edge = gutterWidth, gap = sheet.columns.length;
         for (var c = 0; c < sheet.columns.length; c++) {
             var w = colWidths[c] || 0;
@@ -4257,6 +4280,29 @@ ApplicationWindow {
                         // is after the last.
                         property int dragFrom: -1
                         property int gap: -1
+                        // Where the pointer is along the visible part of the bar
+                        // while a tab is dragged: the tabs scroll when it comes
+                        // near either end (gui-tab-drag-scroll).
+                        property real dragViewX: 0
+                        Timer {
+                            interval: 30
+                            repeat: true
+                            running: tabRow.dragFrom >= 0 && tabStrip.scrolls
+                            onTriggered: {
+                                var edge = Math.min(48, tabStrip.width / 4);
+                                var vx = tabRow.dragViewX;
+                                var by = vx < edge ? -(edge - vx) / 3
+                                    : vx > tabStrip.width - edge ? (vx - (tabStrip.width - edge)) / 3 : 0;
+                                if (by === 0)
+                                    return;
+                                var to = Math.max(0, Math.min(tabStrip.furthest, tabStrip.contentX + by));
+                                if (to === tabStrip.contentX)
+                                    return;
+                                tabStrip.contentX = to;
+                                // The pointer is still, but the tabs under it are not.
+                                tabRow.gap = tabRow.gapAt(vx + to);
+                            }
+                        }
                         readonly property int sheets: {
                             var n = 0;
                             while (n < win.tabs.length && !win.tabs[n].isConsts)
@@ -4358,8 +4404,11 @@ ApplicationWindow {
                                         }
                                     }
                                     onCentroidChanged: {
-                                        if (active)
-                                            tabRow.gap = tabRow.gapAt(tabButton.mapToItem(tabRow, centroid.position.x, 0).x);
+                                        if (!active)
+                                            return;
+                                        var x = tabButton.mapToItem(tabRow, centroid.position.x, 0).x;
+                                        tabRow.dragViewX = x - tabStrip.contentX;
+                                        tabRow.gap = tabRow.gapAt(x);
                                     }
                                 }
                                 // Double-clicked, a sheet's name is typed over in place,

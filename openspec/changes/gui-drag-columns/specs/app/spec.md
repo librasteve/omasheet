@@ -23,3 +23,9 @@ A column SHALL be dragged by its header to a new place, with a mark where it wil
 - **GIVEN** a sheet whose columns cannot be reordered
 - **WHEN** a header is dragged and dropped
 - **THEN** nothing moves and a notice says why
+
+#### Scenario: A place off screen
+
+- **GIVEN** more columns than fit the window
+- **WHEN** a column is dragged and held near the right edge
+- **THEN** the grid scrolls right, faster the nearer the pointer is to the edge, and the landing mark stays on the gap under the pointer
