@@ -73,6 +73,28 @@ impl MathFn {
         self.is_exact() && !matches!(self, MathFn::Abs | MathFn::Re | MathFn::Conj)
     }
 
+    /// Whether the argument is cast to `Float` first, as `x.Float` does:
+    /// the exponential, logarithmic and trigonometric functions, which
+    /// give a `Float` whatever they are given.
+    pub fn casts_to_float(self) -> bool {
+        matches!(
+            self,
+            MathFn::Exp
+                | MathFn::Ln
+                | MathFn::Log10
+                | MathFn::Log2
+                | MathFn::Sin
+                | MathFn::Cos
+                | MathFn::Tan
+                | MathFn::Arcsin
+                | MathFn::Arccos
+                | MathFn::Arctan
+                | MathFn::Sinh
+                | MathFn::Cosh
+                | MathFn::Tanh
+        )
+    }
+
     /// The type of the result for a complex number, or `None` if the
     /// function does not take one.
     pub fn of_complex(self) -> Option<S> {

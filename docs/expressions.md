@@ -389,6 +389,11 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
   or of this row's cell, `Name.is_duplicated()`, which is answered among the
   column's. An empty cell is a value of its own here
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
+  `exp`, `ln`, `log10`, `log2` and the trigonometric functions cast their
+  argument to a `Float` as `x.Float` does, so `sin(true)` is `sin(1)`,
+  `ln('20')` is `ln(20)` and `sin(3+0i)` is `sin(3)`; a date or a duration,
+  or a `Complex` with an imaginary part, is an error. `exp` and `ln` of a
+  `Complex` stay `Complex`
 - Complex: `re im conj arg`, with `abs sqrt exp ln` for a `Complex` too
 - Counting up: `succ` — a number plus one, or the next text, `AZ` to `BA`
 - Converting: `Integer Decimal Percent Float String Boolean Date Time Datetime

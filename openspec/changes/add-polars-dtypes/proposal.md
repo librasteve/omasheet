@@ -42,7 +42,7 @@ bump and a note in the README.
 
 - Every `examples/*.omx` that declares a type, and every `.expected` beside one
 - `docs/format.md`, `docs/expressions.md`, `docs/interop.md`, `README.md` and
-  `.claude/skills/omasheet/SKILL.md`
+  `skill/omasheet/SKILL.md`
 - Supersedes **D11** in `add-sheet-operations` and the Tech Stack and Design
   Principle 3 of `openspec/project.md`
 - Unblocks `add-dataframe-interop`, which can then map a column to a Parquet

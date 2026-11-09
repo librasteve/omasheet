@@ -21,7 +21,7 @@ The first design was a general `Struct` dtype with `Complex` as a named case of 
 - `omasheet-omx`: `S::Complex` in `types.rs` and its place in `wider` and `rank`; `Lit::Complex` in `ast.rs`; imaginary literals in `lexer.rs`; `MathFn::{Re, Im, Conj, Arg}` and `of_complex` in `funcs.rs`; the result types in `check.rs`; `convert.rs`
 - `omasheet-engine`: `Value::Complex` and its arithmetic, comparison, equality and display in `value.rs`; `dtype.rs` maps `S::Complex` to `Struct{re, im}` both ways; `eval.rs`, `doc.rs`
 - `omasheet-interop`: `json.rs` (a `Complex` is `{"re": …, "im": …}`), `xlsx/write.rs` (a `Complex` is written as its text, which Excel's `IMSUM` and friends read), `parquet.rs`
-- `docs/format.md`, `docs/expressions.md`, `docs/interop.md`, `README.md`, `.claude/skills/omasheet/SKILL.md`
+- `docs/format.md`, `docs/expressions.md`, `docs/interop.md`, `README.md`, `skill/omasheet/SKILL.md`
 - `examples/display.omx` (the `Complexes` sheet), `examples/types.omx` (the `Wave`, `Size`, `Turned` and `AsComplex` columns), `examples/showcase/undeclared.omx` (a `Complex` pair of columns in `CoreTypes`, and a `Joins` sheet for the lattice and declared columns), and `examples/functions.omx`, with `.expected` files regenerated
 - Most of this is a restoration of `4f85389^`, rebased onto the type lattice (`Integer`, `Decimal`, `Float`) and the `Float` name for `Num`. The 4f85389 diff is the starting point, not a patch to apply
 - Supersedes D18 of `add-polars-dtypes`, and the `Complex` entry of its Out of Scope

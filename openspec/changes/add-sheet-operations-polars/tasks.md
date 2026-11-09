@@ -327,7 +327,7 @@ stage already gives a sheet and a file has nowhere to put one (D90).
       in the Sheets section beside `filter` and `select`
 - [x] 6.2 `docs/format.md`: that a grouped or joined sheet is a view and is
       not written back, beside what it says of a filtered one
-- [x] 6.3 `.claude/skills/omasheet/SKILL.md`: the stages, so a sheet written
+- [x] 6.3 `skill/omasheet/SKILL.md`: the stages, so a sheet written
       by the skill can use them
 - [x] 6.4 `openspec/project.md`: the Phase 3 row marked done, and the
       Dependencies paragraph for what Phase 4 then builds on

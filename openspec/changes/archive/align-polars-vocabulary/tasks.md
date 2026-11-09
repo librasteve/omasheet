@@ -137,7 +137,7 @@ Elementwise:
       aggregation methods, the NaN sentence
 - [x] 8.2 `docs/interop.md`: the Excel mapping tables in both directions
 - [x] 8.3 `docs/format.md`: the computed-column examples
-- [x] 8.4 `.claude/skills/omasheet/SKILL.md`: the function list in prose and
+- [x] 8.4 `skill/omasheet/SKILL.md`: the function list in prose and
       the worked examples
 - [x] 8.5 The 16 `.omx` and `.md` files under `examples/`, including
       `showcase/`, and their regenerated `.expected`

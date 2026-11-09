@@ -153,7 +153,7 @@ there is no plan here.
 - [x] 7.2 `docs/format.md`: the `table` statement
 - [x] 7.3 `docs/expressions.md`: `.head(n)`, among the stages of a sheet
       with `tail(n)`
-- [x] 7.4 `.claude/skills/omasheet/SKILL.md`: the statement, the command and
+- [x] 7.4 `skill/omasheet/SKILL.md`: the statement, the command and
       the types
 - [x] 7.5 `openspec/project.md`: the Roadmap line and the Tech Stack, both
       of which name this change and what it brings in

@@ -2043,6 +2043,12 @@ ApplicationWindow {
         return false;
     }
 
+    // Ctrl+Shift+F: the filter box of the column the cursor is in.
+    function openFilter() {
+        var head = headCells.itemAt(curCol);
+        if (head)
+            columnPopup.openFor(curCol, head);
+    }
     function anyFiltered() {
         for (var c = selLeft; c <= selRight; c++) {
             if (sheet.columns[c] && filtered(c))
@@ -2569,6 +2575,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Alt+Shift+Left"; enabled: !win.typing; onActivated: win.moveShownSheet(-1) }
     Shortcut { sequence: "Ctrl+Alt+Shift+Right"; enabled: !win.typing; onActivated: win.moveShownSheet(1) }
     Shortcut { sequence: "Ctrl+K"; enabled: !win.typing; onActivated: promptDialog.ask("const") }
+    Shortcut { sequence: "Ctrl+Shift+F"; enabled: !win.typing && win.hasCursor; onActivated: win.openFilter() }
     Shortcut { sequence: "Ctrl+Shift+N"; onActivated: win.newWindow(win.tab) }
     Shortcut { sequence: "Ctrl+Alt+N"; onActivated: win.guard("new") }
     // Cmd+W on a Mac (Qt reads Cmd as Ctrl there); the unsaved-changes check
@@ -4346,11 +4353,15 @@ ApplicationWindow {
         implicitWidth: Math.max(label.implicitWidth + 16, Math.round(win.captionSize * 4.2))
         implicitHeight: Math.round(win.captionSize * 2)
         radius: 3
+        activeFocusOnTab: true
+        Keys.onReturnPressed: if (enabled) popupButton.clicked()
+        Keys.onEnterPressed: if (enabled) popupButton.clicked()
+        Keys.onSpacePressed: if (enabled) popupButton.clicked()
         color: primary
             ? (press.containsMouse ? Qt.lighter(win.accentColor, 1.15) : win.accentColor)
             : (press.containsMouse ? win.lineColor : "transparent")
-        border.width: primary ? 0 : 1
-        border.color: win.lineColor
+        border.width: primary && !activeFocus ? 0 : 1
+        border.color: activeFocus ? win.accentColor : win.lineColor
         Text {
             id: label
             anchors.centerIn: parent
@@ -4459,9 +4470,10 @@ ApplicationWindow {
     // table, whose rows are its file's, is sorted in the grid alone. The
     // filter is an expression in which `*` is the cell (filter-by-expression
     // D160, D171): checked as it is typed, with no row read. Apply applies
-    // it and stays open, to try another; OK or Enter applies it and closes.
-    // Sorting stays open too. Esc, or a click elsewhere, leaves what was last
-    // applied.
+    // it and stays open, to try another; Enter does the same, and Enter again,
+    // with nothing left to apply, closes. Close, Esc, or a click elsewhere,
+    // leaves what was last applied. Sorting stays open too. The arrow keys
+    // move between the entries, the field and the buttons (filter-box-keys).
     Popup {
         id: columnPopup
         property int col: 0
@@ -4537,10 +4549,33 @@ ApplicationWindow {
             }
             return true;
         }
-        // Apply it and close: OK, and Enter.
-        function accept() {
-            if (apply())
+        // Enter: apply what is typed and stay open; with nothing left to
+        // apply, close. An expression with an error is left alone.
+        function submit() {
+            check();
+            if (fault.length > 0)
+                return;
+            if (changed)
+                apply();
+            else
                 close();
+        }
+        // The controls the arrow keys visit, top to bottom.
+        function order() {
+            return [sortAscending, sortDescending, filterField, clearEntry, applyButton, closeButton]
+                .filter(function(it) { return it.visible && it.enabled; });
+        }
+        // Move focus `by` places along the controls, stopping at the ends.
+        function go(by) {
+            var items = order(), at = -1;
+            for (var i = 0; i < items.length; i++) {
+                if (items[i].activeFocus) {
+                    at = i;
+                    break;
+                }
+            }
+            var to = Math.max(0, Math.min(items.length - 1, (at < 0 ? 2 : at) + by));
+            items[to].forceActiveFocus();
         }
 
         background: Rectangle {
@@ -4550,8 +4585,22 @@ ApplicationWindow {
         }
         contentItem: ColumnLayout {
             spacing: 4
+            Keys.onUpPressed: columnPopup.go(-1)
+            Keys.onDownPressed: columnPopup.go(1)
+            Keys.onLeftPressed: function(event) {
+                if (applyButton.activeFocus || closeButton.activeFocus) columnPopup.go(-1);
+                else event.accepted = false;
+            }
+            Keys.onRightPressed: function(event) {
+                if (applyButton.activeFocus || closeButton.activeFocus) columnPopup.go(1);
+                else event.accepted = false;
+            }
             MenuEntry {
+                id: sortAscending
                 visible: columnPopup.sortable
+                highlighted: activeFocus
+                Keys.onReturnPressed: clicked()
+                Keys.onEnterPressed: clicked()
                 Layout.fillWidth: true
                 text: "Sort Ascending"
                 implicitHeight: columnPopup.lineHeight
@@ -4559,7 +4608,11 @@ ApplicationWindow {
                 onClicked: columnPopup.sortBy(false)
             }
             MenuEntry {
+                id: sortDescending
                 visible: columnPopup.sortable
+                highlighted: activeFocus
+                Keys.onReturnPressed: clicked()
+                Keys.onEnterPressed: clicked()
                 Layout.fillWidth: true
                 text: "Sort Descending"
                 implicitHeight: columnPopup.lineHeight
@@ -4621,13 +4674,28 @@ ApplicationWindow {
                             if (columnPopup.multiline && !(event.modifiers & Qt.ControlModifier))
                                 event.accepted = false;
                             else
-                                columnPopup.accept();
+                                columnPopup.submit();
                         }
                         Keys.onEnterPressed: function(event) {
                             if (columnPopup.multiline && !(event.modifiers & Qt.ControlModifier))
                                 event.accepted = false;
                             else
-                                columnPopup.accept();
+                                columnPopup.submit();
+                        }
+                        // The arrows move the caret, and leave the box only
+                        // from its first line going up or its last going down.
+                        Keys.onUpPressed: function(event) {
+                            if (!columnPopup.multiline || cursorRectangle.y < 1)
+                                columnPopup.go(-1);
+                            else
+                                event.accepted = false;
+                        }
+                        Keys.onDownPressed: function(event) {
+                            if (!columnPopup.multiline
+                                    || cursorRectangle.y + cursorRectangle.height >= contentHeight - 1)
+                                columnPopup.go(1);
+                            else
+                                event.accepted = false;
                         }
                         // Keeps the caret in view as a long filter is typed.
                         onCursorRectangleChanged: {
@@ -4679,6 +4747,10 @@ ApplicationWindow {
                 color: win.lineColor
             }
             MenuEntry {
+                id: clearEntry
+                highlighted: activeFocus
+                Keys.onReturnPressed: clicked()
+                Keys.onEnterPressed: clicked()
                 Layout.fillWidth: true
                 text: "Clear filter"
                 implicitHeight: columnPopup.lineHeight
@@ -4698,9 +4770,10 @@ ApplicationWindow {
                 Layout.topMargin: 4
                 spacing: 6
                 Item { Layout.fillWidth: true }
-                // Lit while there is a passing expression to apply; OK is
+                // Lit while there is a passing expression to apply; Close is
                 // the filled one otherwise.
                 PopupButton {
+                    id: applyButton
                     text: "Apply"
                     primary: columnPopup.changed
                     enabled: columnPopup.changed
@@ -4708,14 +4781,9 @@ ApplicationWindow {
                     onClicked: columnPopup.apply()
                 }
                 PopupButton {
-                    text: "OK"
+                    id: closeButton
+                    text: "Close"
                     primary: !columnPopup.changed
-                    enabled: columnPopup.fault.length === 0
-                    opacity: enabled ? 1 : 0.4
-                    onClicked: columnPopup.accept()
-                }
-                PopupButton {
-                    text: "Cancel"
                     onClicked: columnPopup.close()
                 }
             }

@@ -4334,10 +4334,12 @@ impl<'a> Checker<'a> {
                 // An exact number stays exact where the function allows it.
                 let out = |s: S| match s {
                     S::Any => Some(S::Any),
-                    S::Complex => m.of_complex(),
+                    S::Complex => m.of_complex().or(m.casts_to_float().then_some(S::Float)),
                     s if s.is_exact() && m.is_whole() => Some(S::Int),
                     s if s.is_exact() && m.is_exact() => Some(s),
                     s if s.is_exact() || s == S::Float => Some(S::Float),
+                    // Whatever `.Float` takes: a Boolean, text, a real Complex.
+                    s if m.casts_to_float() && s.converts_to(S::Float) => Some(S::Float),
                     _ => None,
                 };
                 let (arg, aty) = self.lower(&args[0], sc);

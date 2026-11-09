@@ -1036,6 +1036,14 @@ fn math_functions() {
     // Outside the domain, and on the wrong kind of value.
     assert_eq!(calc("[sqrt(-1), ln(0), arcsin(2)]"), "[NaN, -Inf, NaN]");
     assert!(calc_err(None, "sin('x')").contains("`sin` cannot be applied to String"));
+    // Whatever `.Float` takes is cast first.
+    assert_eq!(calc("sin(true)"), calc("sin(1)"));
+    assert_eq!(calc("ln('20')"), calc("ln(20)"));
+    assert_eq!(calc("sin(3+0i)"), calc("sin(3)"));
+    assert_eq!(calc("exp(3+0i)"), "20.085536923187668+0i");
+    assert!(calc_err(None, "sin(3+4i)").contains("`sin` cannot be applied to Complex"));
+    assert!(calc_err(None, "sin(2025-01-01)").contains("`sin` cannot be applied to Date"));
+    assert!(calc_err(None, "ln(PT1H)").contains("`ln` cannot be applied to Duration"));
     assert!(calc_err(None, "sqr(4)").contains("did you mean `sqrt`?"));
     // Every function in the directory is one the checker knows. The
     // operators are listed there too, by their symbols, and are not called.

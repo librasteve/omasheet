@@ -17,6 +17,7 @@ Ctrl+Shift+S         Save as
 Ctrl+E               Export
 
 Ctrl+K               New constant
+Ctrl+Shift+F         Filter this column
 Ctrl+D               Duplicate sheet
 Ctrl+N               New sheet
 Ctrl+Shift+N         New window

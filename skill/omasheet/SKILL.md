@@ -19,9 +19,10 @@ The command is `omasheet`. If it is not on the PATH:
 
 - in the omasheet repository, use `cargo run -q --` in its
   place (or `target/debug/omasheet` once built);
-- anywhere else, it is not installed. Tell the user, and offer
-  `cargo install --git https://github.com/librasteve/omasheet omasheet-ui`
-  (it needs Qt 6 to build and to run).
+- anywhere else, it is not installed. Tell the user, and offer the package on
+  Arch and Omarchy (`curl -fsSL https://raw.githubusercontent.com/librasteve/omasheet/main/install.sh | bash`),
+  or `cargo install --git https://github.com/librasteve/omasheet --locked omasheet-ui`
+  elsewhere (it needs Qt 6 to build and to run).
   Without it a file can be written but not checked, so say that it was not.
 
 ```sh

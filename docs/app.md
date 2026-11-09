@@ -71,6 +71,7 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+Shift+S | Save as |
 | Ctrl+E | Export as an XLSX Workbook, CSV or JSON |
 | Ctrl+K | New constant |
+| Ctrl+Shift+F | Filter this column |
 | Ctrl+D | Duplicate sheet |
 | Ctrl+N | New sheet |
 | Ctrl+Alt+Shift+Left/Right | Move sheet left / right |
@@ -115,13 +116,18 @@ The circle at the right of a column's header opens its popup: **Sort
 Ascending**, **Sort Descending**, and the column's filter. A filter is an
 expression in which `*` is the cell, such as `* >= 3`; the rows it is not
 true of are hidden. **Apply**, lit while the expression is valid and not
-yet applied, applies it and leaves the popup open, to try another; **OK** or
-Enter applies it and closes. **Clear filter** removes it and leaves the popup
-open. It is checked as it is
-typed, before anything is read: the box turns red while it is wrong, and
-holding the pointer over it says why. So the popup opens at once on a view
-of millions of rows. The circle is solid
-while the column is filtered, and filters on several columns all apply.
+yet applied, applies it and leaves the popup open, to try another. Enter
+does the same, and Enter again, with nothing left to apply, closes the
+popup. **Close**, Esc or a click outside closes it and leaves the filter as
+last applied. **Clear filter** removes it and leaves the popup open. The arrow
+keys move between the sort entries, the box, Clear filter and the buttons
+(Left and Right between the buttons); in the box they move the caret, and
+leave it from the first line going up or the last going down. It is checked
+as it is typed, before anything is read: the box turns red while it is
+wrong, and holding the pointer over it says why. So the popup opens at once
+on a view of millions of rows. The circle is solid while the column is
+filtered, and filters on several columns all apply. Ctrl+Shift+F opens the
+popup of the column the cursor is in.
 
 | Filter | Shows the rows where the cell |
 |---|---|

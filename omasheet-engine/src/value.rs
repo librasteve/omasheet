@@ -669,6 +669,21 @@ fn exact_arith(op: BinOp, x: &Dec, y: &Dec) -> Result<Value, String> {
 /// function allows it; otherwise the result is a `Num`.
 pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
     let whole = |r: Dec| Value::exact(r);
+    // These cast to a `Float` as `x.Float` does. A `Complex` is kept by
+    // those that take one.
+    if m.casts_to_float() {
+        let cast = match v {
+            Value::Boolean(_) | Value::String(..) => true,
+            Value::Complex(..) => m.of_complex().is_none(),
+            _ => false,
+        };
+        if cast {
+            let x = v
+                .converted(S::Float)
+                .map_err(|_| format!("`{}` cannot be applied to {}", m.name(), v.kind()))?;
+            return math(m, &x);
+        }
+    }
     let x = match (v, m) {
         (Value::Null, _) => return Ok(Value::Null),
         (Value::Percent(r), MathFn::Abs) => {
