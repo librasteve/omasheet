@@ -194,9 +194,10 @@ concise form physics and chemistry tables use, where the digits in brackets
 are the uncertainty in the last places shown: `10.5 ± 0.3`. An exponent after
 the brackets scales both, so `7.297_352_5643(11)e-3` is the fine-structure
 constant with its uncertainty. The digits in brackets are digits only, with no
-space before them. `±` binds more loosely than `+` and `-`, so `10 ± 0.1 * 2`
-is `10 ± 0.2`; both sides are plain numbers, and the uncertainty is not
-negative.
+space before them. `±` binds more tightly than any other operator, a power
+included, so `10 ± 0.1 ** 2` is `(10 ± 0.1) ** 2` and `10 ± 0.1 * 2` is
+`20 ± 0.2`; each side is a single plain number, name or bracketed
+expression, and the uncertainty is not negative.
 
 An uncertain value carries its uncertainty through `+ - * /`, `**` and the
 math functions, to first order and treating the operands as independent: a

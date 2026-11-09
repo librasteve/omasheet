@@ -311,14 +311,14 @@ impl Parser {
         // `^5`: the first five, 0 to 4.
         if self.peek() == &Tok::Caret {
             let start = self.bump().span;
-            let operand = self.plus_minus()?;
+            let operand = self.additive()?;
             let span = start.to(operand.span);
             return Ok(Expr {
                 kind: ExprKind::Unary(UnOp::UpTo, Box::new(operand)),
                 span,
             });
         }
-        let lhs = self.plus_minus()?;
+        let lhs = self.additive()?;
         let op = match self.peek() {
             Tok::DotDot => BinOp::Range,
             Tok::DotDotCaret => BinOp::RangeEx,
@@ -327,16 +327,17 @@ impl Parser {
             _ => return Ok(lhs),
         };
         self.bump();
-        let rhs = self.plus_minus()?;
+        let rhs = self.additive()?;
         Ok(Self::binary(lhs, op, rhs))
     }
 
-    /// `value ± uncertainty`: looser than a sum and tighter than a
-    /// comparison, so `10 ± 0.1 * 2` is `10 ± 0.2`.
+    /// `value ± uncertainty`: tighter than a power, as it is the tightest
+    /// of the operators, so `10 ± 0.1 ** 2` is `(10 ± 0.1) ** 2` and
+    /// `2 * 3 ± 0.1` is `2 * (3 ± 0.1)`.
     fn plus_minus(&mut self) -> R<Expr> {
-        let lhs = self.additive()?;
+        let lhs = self.postfix()?;
         if self.eat(&Tok::PlusMinus) {
-            let rhs = self.additive()?;
+            let rhs = self.postfix()?;
             return Ok(Self::binary(lhs, BinOp::PlusMinus, rhs));
         }
         Ok(lhs)
@@ -394,7 +395,7 @@ impl Parser {
     }
 
     fn power(&mut self) -> R<Expr> {
-        let base = self.postfix()?;
+        let base = self.plus_minus()?;
         if self.eat(&Tok::Pow) {
             let exponent = self.unary()?;
             return Ok(Self::binary(base, BinOp::Pow, exponent));

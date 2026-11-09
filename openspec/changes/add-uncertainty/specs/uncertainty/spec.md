@@ -12,7 +12,7 @@ A real number SHALL be able to carry a measurement uncertainty: a non-negative s
 - **THEN** the result is `20` with uncertainty `0.2`
 
 ### Requirement: The ± literal
-`<value> ± <uncertainty>` SHALL make an uncertain value. Both sides SHALL be real numbers with no uncertainty of their own, and the uncertainty SHALL be non-negative. `±` SHALL bind more loosely than `+` and `-` and more tightly than a comparison, so a result is combined further by putting it in brackets.
+`<value> ± <uncertainty>` SHALL make an uncertain value. Both sides SHALL be real numbers with no uncertainty of their own, and the uncertainty SHALL be non-negative. `±` SHALL bind more tightly than any other operator, a power included, and each side SHALL be a single term: a number, a name, a call or a bracketed expression. So `10 ± 0.1 ** 2` is `(10 ± 0.1) ** 2`, and a sum of two uncertain values needs its brackets.
 
 #### Scenario: Literal
 - **WHEN** `10 ± 0.1` is evaluated
@@ -22,12 +22,16 @@ A real number SHALL be able to carry a measurement uncertainty: a non-negative s
 - **WHEN** `10 +- 0.1` is evaluated
 - **THEN** it is a sum and a negation, `9.9`, as it always was
 
-#### Scenario: Uncertainty is an expression
+#### Scenario: Tighter than a product
 - **WHEN** `10 ± 0.1 * 2` is evaluated
-- **THEN** the result has value `10` and uncertainty `0.2`
+- **THEN** the result is `(10 ± 0.1) * 2`, with value `20` and uncertainty `0.2`
+
+#### Scenario: Tighter than a power
+- **WHEN** `10 ± 0.1 ** 2` is evaluated
+- **THEN** the result is `(10 ± 0.1) ** 2`, with value `100` and uncertainty `2`
 
 #### Scenario: Negative uncertainty
-- **WHEN** `10 ± -1` is checked
+- **WHEN** `10 ± (0 - 1)` is evaluated
 - **THEN** an error is reported
 
 #### Scenario: Uncertain operand of ±

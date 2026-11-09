@@ -3,7 +3,6 @@ sheet Literals
 Name           | Value
 ---------------|--------------------
 plus-minus     |           10.00(10)
-expression     |           10.00(20)
 concise        |           10.50(30)
 whole          |            10.0(30)
 long digits    |             1.5(11)
@@ -19,6 +18,8 @@ product               |          20.0(11)
 quotient              |         2.000(57)
 exact operand         |         20.00(20)
 power                 |          9.00(60)
+± before **           |         100.0(20)
+± before *            |         20.00(20)
 independent           |           0.0(14)
 sine                  |        0.4794(88)
 logarithm             |         4.605(10)

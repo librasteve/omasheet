@@ -18,6 +18,7 @@ Source: `coinvent-omasheet-format-chatgpt.md`, cut down with the owner (2026-11-
 | D96 | Decided | The default display is the concise `(nn)` form, with σ to two significant digits, always; a column format option selects `±` | No fallback to `±` for a large σ. Display never changes the stored value |
 | D97 | Decided | `sum`, `mean`, `product` and an even `median` propagate, being arithmetic; `min`, `max`, `first`, `last` and `quantile` return the chosen element with its σ; `std` and `var` work on the values and are `Float` | Aggregation is the arithmetic that already propagates, with no code of its own. Comparison and sorting use the values only |
 | D98 | Decided | The degrade message is a warning in the bottom bar, in amber, while the cell is selected | The cell still has a value, so red (error) is wrong. The theme gains a warning colour, next to `error`. Diagnostics have only the error shape, so the engine records the cell and the snapshot carries `w` for it |
+| D99 | Decided | `±` binds more tightly than every other operator, `**` included; each side is a single term | `10 ± 0.1 ** 2` is `(10 ± 0.1) ** 2`. A negative uncertainty is written in brackets and is an error at evaluation |
 
 ## Open Questions
 

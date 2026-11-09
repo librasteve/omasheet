@@ -3,19 +3,19 @@
 # are the uncertainty in the last places, make the same kind of value. It
 # propagates through arithmetic, powers and the math functions to first
 # order, treating its operands as independent, and is shown in the concise
-# form with the uncertainty to two digits.
+# form with the uncertainty to two digits. `±` binds more tightly than any
+# other operator, `**` included: `10 ± 0.1 ** 2` is `(10 ± 0.1) ** 2`.
 
 sheet Literals
 
-| Name        | Value               |
-| ----------- | ------------------- |
-| plus-minus  | = 10 ± 0.1          |
-| expression  | = 10 ± 0.1 * 2      |
-| concise     | = 10.5(3)           |
-| whole       | = 10(3)             |
-| long digits | = 1.5(11)           |
-| exact       | = 10.5(0)           |
-| fine-structure | = 7.297_352_5643(11)e-3 |
+| Name           | Value                |
+| -------------- | -------------------- |
+| plus-minus     | 10 ± 0.1             |
+| concise        | 10.5(3)              |
+| whole          | 10(3)                |
+| long digits    | 1.5(11)              |
+| exact          | 10.5(0)              |
+| fine-structure | 7.297_352_5643(11)e-3 |
 
 sheet Arithmetic
 
@@ -26,6 +26,8 @@ sheet Arithmetic
 | quotient       | = (100 ± 2) / (50 ± 1)          |
 | exact operand  | = (10 ± 0.1) * 2                |
 | power          | = (3 ± 0.1) ** 2                |
+| ± before **    | = 10 ± 0.1 ** 2                 |
+| ± before *     | = 10 ± 0.1 * 2                  |
 | independent    | = (10 ± 1) - (10 ± 1)           |
 | sine           | = sin(0.5 ± 0.01)               |
 | logarithm      | = ln(100 ± 1)                   |

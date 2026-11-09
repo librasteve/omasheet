@@ -54,13 +54,16 @@ fn the_plus_minus_literal() {
     assert_eq!(full("10 ± 0.1"), "10 ± 0.1");
     // `+-` is a sum and a negation, not an operator of its own.
     assert_eq!(full("10 +- 0.1"), "9.9");
-    // The uncertainty is an expression, and `±` binds more loosely than `*`.
-    assert_eq!(full("10 ± 0.1 * 2"), "10 ± 0.2");
+    // `±` binds more tightly than anything, a power included.
+    assert_eq!(full("10 ± 0.1 * 2"), "20 ± 0.2");
+    assert_eq!(full("2 * 3 ± 0.1"), "6 ± 0.2");
+    near(parts("10 ± 0.1 ** 2"), (100.0, 2.0));
+    near(parts("2 ** 3 ± 0.1"), (8.0, 8.0 * 2f64.ln() * 0.1));
 }
 
 #[test]
 fn a_negative_or_uncertain_uncertainty_is_refused() {
-    assert!(fails("10 ± -1").contains("negative"));
+    assert!(fails("10 ± (0 - 1)").contains("negative"));
     assert!(fails("(10 ± 1) ± 1").contains("real numbers"));
 }
 
