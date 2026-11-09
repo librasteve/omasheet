@@ -73,4 +73,5 @@ package() {
   install -Dm644 pkgbuild/omasheet.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/omasheet.svg"
   install -Dm644 pkgbuild/omasheet.desktop "$pkgdir/usr/share/applications/omasheet.desktop"
   install -Dm644 pkgbuild/omasheet.xml "$pkgdir/usr/share/mime/packages/omasheet.xml"
+  install -Dm644 skill/omasheet/SKILL.md "$pkgdir/usr/share/omasheet/agent-skill/omasheet/SKILL.md"
 }

@@ -83,7 +83,13 @@ omasheet render examples/showcase/short-report.md --html   # no .omx file, the s
 Prompt your favorite AI with:
 
 ```text
-Please load the Omasheet skill from https://raw.githubusercontent.com/librasteve/omasheet/main/.claude/skills/omasheet/SKILL.md and follow its instructions when creating, checking, or converting spreadsheets.
+Please load the Omasheet skill from https://raw.githubusercontent.com/librasteve/omasheet/main/skill/omasheet/SKILL.md and follow its instructions when creating, checking, or converting spreadsheets.
+```
+
+The Arch package also installs the skill to `/usr/share/omasheet/agent-skill/omasheet`. To give it to Claude Code:
+
+```sh
+ln -sfn /usr/share/omasheet/agent-skill/omasheet ~/.claude/skills/omasheet
 ```
 
 ## OmaStore
