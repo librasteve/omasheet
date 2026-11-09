@@ -9,6 +9,7 @@
 
 use crate::zone::{Zoned, format_offset};
 use omasheet_omx::ast::{BinOp, Lit};
+use omasheet_omx::colfmt::SciFormat;
 use omasheet_omx::convert;
 use omasheet_omx::date;
 use omasheet_omx::date::Style;
@@ -1263,24 +1264,20 @@ fn format_complex(re: f64, im: f64, exact: bool, sep: Option<char>) -> String {
     format!("{re_sign}{re_text}{plus}{im_text}{i}")
 }
 
-/// `x` rounded to a multiple of `10^place`, and the same for `s`.
-fn round_to(x: f64, place: i32) -> f64 {
-    if place <= 0 {
-        let k = 10f64.powi(-place);
-        (x * k).round() / k
-    } else {
-        let k = 10f64.powi(place);
-        (x / k).round() * k
-    }
-}
-
-/// An uncertain value in the concise form of the physical tables,
+/// A scientific value in the concise form of the physical tables,
 /// `7.2973525643(11)e-3`: the uncertainty to two significant digits, in
-/// brackets after the value cut at the same place. With `plus_minus`, as
-/// `11.000 ± 0.082`. A value with no uncertainty is a plain number, and a
-/// value or uncertainty that is not finite is shown as it is (D96).
-pub fn format_uncertain(v: f64, s: f64, plus_minus: bool, sep: Option<char>) -> String {
-    if s == 0.0 {
+/// brackets after the value cut at the same place. A value with no
+/// uncertainty is a plain number, and a value or uncertainty that is not
+/// finite is shown as it is (D96).
+///
+/// A column's format may ask for more (D100): `±` for `11.000 ± 0.082`, a
+/// fixed number of places, which puts the uncertainty at that place whatever
+/// it is, so that a column's brackets stand in line, and a fixed exponent,
+/// so that its numbers are all of one size. Asked for either, a value with
+/// no uncertainty is shown in the same form, as `11.0000(0)`.
+pub fn format_uncertain(v: f64, s: f64, f: &SciFormat, sep: Option<char>) -> String {
+    let fixed = f.places.is_some() || f.exponent.is_some();
+    if s == 0.0 && !fixed {
         return shown_float(v, false, sep);
     }
     if !v.is_finite() || !s.is_finite() {
@@ -1292,41 +1289,72 @@ pub fn format_uncertain(v: f64, s: f64, plus_minus: bool, sep: Option<char>) -> 
     }
     let s = s.abs();
     // Two significant digits of the uncertainty, and the place of the last.
-    let mut place = s.log10().floor() as i32 - 1;
-    let mut digits = (s / 10f64.powi(place)).round();
-    if digits >= 100.0 {
-        digits /= 10.0;
-        place += 1;
-    }
-    let digits = digits as i64;
-    let magnitude = if v == 0.0 {
+    let (place, digits) = if s == 0.0 {
+        (0, 0)
+    } else {
+        let mut place = s.log10().floor() as i32 - 1;
+        let mut digits = (s / 10f64.powi(place)).round();
+        if digits >= 100.0 {
+            digits /= 10.0;
+            place += 1;
+        }
+        (place, digits as i64)
+    };
+    let magnitude = if v != 0.0 {
+        v.abs().log10().floor() as i32
+    } else if s != 0.0 {
         s.log10().floor() as i32
     } else {
-        v.abs().log10().floor() as i32
+        0
     };
     // Plain where the last digit is a decimal place and the number is of a
-    // size to read; otherwise a mantissa and an exponent.
-    let plain = place <= 0 && (-2..15).contains(&magnitude);
-    let exponent = if plain { 0 } else { magnitude };
+    // size to read; otherwise a mantissa and an exponent. A number of places
+    // asked for with no exponent is plain.
+    let exponent = match (f.exponent, f.places) {
+        (Some(e), _) => e,
+        (None, Some(_)) => 0,
+        (None, None) if place <= 0 && (-2..15).contains(&magnitude) => 0,
+        (None, None) => magnitude,
+    };
     let unit = 10f64.powi(exponent);
     let (mantissa, error) = (v / unit, s / unit);
-    let decimals = (exponent - place).max(0) as usize;
-    let mantissa = round_to(mantissa, place - exponent);
-    let e = if plain {
+    let derived = exponent - place;
+    let decimals = match f.places {
+        Some(n) => n as usize,
+        // With no uncertainty to set the place, every digit the number has.
+        None if s == 0.0 => format!("{mantissa}")
+            .split_once('.')
+            .map_or(0, |(_, fraction)| fraction.len().min(17)),
+        None => derived.max(0) as usize,
+    };
+    let k = 10f64.powi(decimals as i32);
+    let mantissa = (mantissa * k).round() / k;
+    let tail = if exponent == 0 {
         String::new()
     } else {
         format!("e{exponent}")
     };
-    if plus_minus {
-        let error = round_to(error, place - exponent);
-        if plain {
+    if f.plus_minus {
+        let error = (error * k).round() / k;
+        return if exponent == 0 {
             format!("{mantissa:.decimals$} ± {error:.decimals$}")
         } else {
-            format!("({mantissa:.decimals$} ± {error:.decimals$}){e}")
-        }
-    } else {
-        format!("{mantissa:.decimals$}({digits}){e}")
+            format!("({mantissa:.decimals$} ± {error:.decimals$}){tail}")
+        };
     }
+    // The two digits where the place is the uncertainty's own, and the
+    // uncertainty at the place asked for where it is not.
+    let digits = if f.places.is_none() && derived >= 0 {
+        digits
+    } else {
+        (error * k).round() as i64
+    };
+    format!("{mantissa:.decimals$}({digits}){tail}")
+}
+
+/// A scientific value as `style` shows a number: its point the style's own.
+pub fn format_scientific(v: f64, s: f64, f: &SciFormat, style: &Style) -> String {
+    localised(format_uncertain(v, s, f, group(style)), style)
 }
 
 /// A single value as text, the way a file shows it. `quoted` puts text in
@@ -1430,7 +1458,7 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         Value::Scientific(v, s) if exact => {
             format!("{} ± {}", format_float(*v, true), format_float(*s, true))
         }
-        Value::Scientific(v, s) => localised(format_uncertain(*v, *s, false, group(style)), style),
+        Value::Scientific(v, s) => format_scientific(*v, *s, &SciFormat::default(), style),
         Value::Complex(re, im) if exact => format_complex(*re, *im, true, None),
         Value::Complex(re, im) => localised(format_complex(*re, *im, false, group(style)), style),
         Value::String(s, _) if quoted => omasheet_omx::lexer::quoted(s),

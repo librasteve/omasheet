@@ -6989,6 +6989,42 @@ mod tests {
     }
 
     #[test]
+    fn a_scientific_column_takes_the_plus_minus_format() {
+        let src = "sheet T\n\nLength\n11 ± 0.0816\n10.5(3)\n";
+        let mut doc = Document::from_text(src);
+        // Undeclared, its cells give it the type.
+        assert_eq!(col(&doc, 0, 0), ["11.000(82)", "10.50(30)"]);
+        assert_eq!(
+            doc.set_column_format(0, &[0], Some("x")),
+            Err(
+                "Not a format: x\nScientific takes ±, places as .4, an exponent as e-3, or together as ±.4e-3"
+                    .to_string()
+            )
+        );
+        assert!(doc.set_column_format(0, &[0], Some("±")).is_ok());
+        assert!(
+            doc.text().contains("Length : Scientific[±]\n"),
+            "{}",
+            doc.text()
+        );
+        assert_eq!(col(&doc, 0, 0), ["11.000 ± 0.082", "10.50 ± 0.30"]);
+        assert_eq!(
+            doc.snapshot().sheets[0].columns[0].format.as_deref(),
+            Some("±")
+        );
+        // An edit in the column is read as a scientific value.
+        assert!(doc.set_cell(0, 0, 0, "12.0(4)"));
+        assert_eq!(col(&doc, 0, 0), ["12.00 ± 0.40", "10.50 ± 0.30"]);
+        assert!(doc.set_column_format(0, &[0], None).is_ok());
+        assert!(
+            doc.text().contains("Length : Scientific\n"),
+            "{}",
+            doc.text()
+        );
+        assert_eq!(col(&doc, 0, 0), ["12.00(40)", "10.50(30)"]);
+    }
+
+    #[test]
     fn editing_a_cell_changes_one_line() {
         let mut doc = Document::from_text(SALES);
         assert!(doc.set_cell(0, 1, 1, "130"));

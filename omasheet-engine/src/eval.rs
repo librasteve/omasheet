@@ -2411,6 +2411,7 @@ impl<'p> Engine<'p> {
                     | (Value::Percent(_), S::Percent)
                     | (Value::Float(_), S::Float)
                     | (Value::Complex(..), S::Complex)
+                    | (Value::Scientific(..), S::Scientific)
                     | (Value::String(..), S::String | S::Url | S::Email | S::Uuid)
                     | (Value::Boolean(_), S::Boolean)
                     | (Value::Date(_), S::Date)
@@ -4435,8 +4436,8 @@ impl<'p> Engine<'p> {
         };
         let shown = match format.filter(|_| !self.options.exact) {
             Some(Format::Number(f)) => format_number(v, f, &style),
-            Some(Format::PlusMinus) => match v {
-                Value::Scientific(x, s) => Some(crate::value::format_uncertain(*x, *s, true, None)),
+            Some(Format::Scientific(f)) => match v {
+                Value::Scientific(x, s) => Some(crate::value::format_scientific(*x, *s, f, &style)),
                 _ => None,
             },
             Some(Format::Date(f)) => self
@@ -4703,6 +4704,16 @@ fn dressed(v: Value, col: &Column) -> Value {
         // always has, which is the column saying what it is for.
         S::Float if !col.declared => match v {
             Value::Percent(r) | Value::Fraction(r) => Value::Float(r.to_f64()),
+            v => v,
+        },
+        // A plain number in a column of scientific values has an
+        // uncertainty of nothing.
+        S::Scientific => match v {
+            Value::Int(n, _) => Value::Scientific(n as f64, 0.0),
+            Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => {
+                Value::Scientific(r.to_f64(), 0.0)
+            }
+            Value::Float(f) => Value::Scientific(f, 0.0),
             v => v,
         },
         _ => v,

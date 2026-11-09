@@ -115,7 +115,7 @@ calculated value, so it reads the same before anything works it out again.
 CSV and JSON hold the calculated values alone. Constants are not exported: a
 formula that reads one is written with what the constant is.
 
-A workbook has no uncertainty: a `Scientific` value is written as its value, a plain number, and a note says the uncertainties were dropped. A Parquet file writes a `Scientific` column as text, `10.5 ± 0.3`.
+A workbook has no uncertainty: a `Scientific` value is written as its value, a plain number, and a note says the uncertainties were dropped.
 
 A sheet becomes a worksheet whose first row is the header, so a column and a
 row become a cell. Each formula is written for the row it is on:
@@ -227,6 +227,7 @@ type its own name stands for rather than converted into something near it.
 | `Integer` | `int64` |
 | `Decimal`, `Percent` | `decimal(38, s)`, at the widest scale the column needs |
 | `Float` | `double` |
+| `Scientific` | a `struct` of two `double`s, `value` and `sigma` |
 | `Complex` | a `struct` of two `double`s, `re` and `im` |
 | `Boolean` | `boolean` |
 | `String` | UTF-8 `byte_array` |
@@ -244,8 +245,9 @@ would not read back as it: a `double` column becomes `Age : Float`, while an
 there is still the schema's type, not a guess. A column that is all nulls,
 or whose values do not go together, has no line to hold it and reads as its
 cells do. A column Parquet holds in a shape a sheet cannot render — a list,
-a struct, a map — is left out and named in a notice. The one struct a sheet
-does render is a `Complex`: exactly two `double` fields, `re` then `im`. A
+a struct, a map — is left out and named in a notice. The two structs a sheet
+does render are a `Complex`, exactly two `double` fields, `re` then `im`, and
+a `Scientific`, exactly two, `value` then `sigma`. A
 null struct is an empty cell; one with only one of its parts null is not a
 number, and is left empty.
 

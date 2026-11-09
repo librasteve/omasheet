@@ -191,6 +191,24 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
                     .map_err(|e| e.to_string())?
                     .into_series()
             }
+            // A struct of two `Float64`s, `value` and `sigma`. A null cell
+            // has both parts null.
+            S::Scientific => {
+                let part = |pick: fn((f64, f64)) -> f64, name: &str| {
+                    let v: Vec<Option<f64>> = cells
+                        .iter()
+                        .map(|v| match v {
+                            Value::Scientific(x, s) => Some(pick((*x, *s))),
+                            other => exact(other).map(|d| pick((d.to_f64(), 0.0))),
+                        })
+                        .collect();
+                    Series::new(name.into(), v)
+                };
+                let (x, s) = (part(|p| p.0, "value"), part(|p| p.1, "sigma"));
+                StructChunked::from_series(name, cells.len(), [x, s].iter())
+                    .map_err(|e| e.to_string())?
+                    .into_series()
+            }
             S::Boolean => {
                 let v: Vec<Option<bool>> = cells
                     .iter()
@@ -520,6 +538,18 @@ fn cell(value: AnyValue<'_>, ty: S) -> Datum {
                     )
                 }
                 Some((None, None)) => Datum::Empty,
+                _ => Datum::Empty,
+            }
+        }
+        // A `Scientific`: a struct of `value` and `sigma`, written as
+        // `10.5 ± 0.3`, or as the number where there is no uncertainty.
+        value @ (AnyValue::Struct(..) | AnyValue::StructOwned(_)) if ty == S::Scientific => {
+            match omasheet_engine::dtype::complex_parts(value) {
+                Some((Some(x), Some(0.0))) => Datum::Lit(float_text(x), S::Scientific),
+                Some((Some(x), Some(s))) => Datum::Lit(
+                    format!("{} ± {}", float_text(x), float_text(s)),
+                    S::Scientific,
+                ),
                 _ => Datum::Empty,
             }
         }

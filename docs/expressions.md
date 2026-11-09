@@ -69,7 +69,7 @@ Numbers are shown the way Raku shows them:
 | `Fraction` | `1/7`, `3/4`, `2 3/4`, `333 1/3`; `3` when it is whole |
 | `Percent` | `20%`, `12.5%`, `41.67%` |
 | `Float` | `100`, `1.5`, `1.4142135623730951`; `1e+21` or `1.5e-16` when very large or small; `Inf`, `-Inf`, `NaN` |
-| `Scientific` | the concise form of the physical tables, the uncertainty to two digits in brackets after the value cut at the same place: `7.2973525643(11)e-3`, `11.000(82)`, `1.00(20)e3`; a column declared `Scientific[±]` shows `11.000 ± 0.082`; no uncertainty is a plain number |
+| `Scientific` | the concise form of the physical tables, the uncertainty to two digits in brackets after the value cut at the same place: `7.2973525643(11)e-3`, `11.000(82)`, `1.00(20)e3`; a column format changes it, see below; no uncertainty is a plain number |
 | `Complex` | each part as a `Float`: `3+4i`, `1.5-2i`, `0+1.4142135623730951i`; both parts cut alike when too wide; `0+Inf\i` for an infinite imaginary part |
 
 A `Float` that is a whole number looks like an `Integer`, but it is still a `Float`.
@@ -218,6 +218,16 @@ chose with its own; `std`, `var` and the other spreads work on the values
 alone. A comparison and a sort use the values. A first-order answer is poor
 where the uncertainty is large beside the distance to the edge of a
 function's domain, as `ln(0.1 ± 0.5)`.
+
+A column's format, in brackets after its type, says how its values are
+shown: `±` for `value ± uncertainty`, a number of places as `.4`, an
+exponent as `e-3`, or those together in that order, `±.4e-3`. `Length :
+Scientific[e-3]` puts every value of the column at one exponent,
+`Scientific[.4]` gives them all four places, so that the brackets stand in
+line, and `Scientific[±]` shows each as `11.000 ± 0.082`. What a format does
+not name is worked out for each value from its own uncertainty. A value with
+no uncertainty keeps every digit it has under a format, with `(0)` for an
+uncertainty. `examples/uncertainty.omx` shows them side by side.
 
 There are no uncertain complex numbers. A `Scientific` beside a `Complex`
 becomes a `Float` and the calculation goes on with a `Complex`; the app

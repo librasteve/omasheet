@@ -19,6 +19,7 @@ Source: `coinvent-omasheet-format-chatgpt.md`, cut down with the owner (2026-11-
 | D97 | Decided | `sum`, `mean`, `product` and an even `median` propagate, being arithmetic; `min`, `max`, `first`, `last` and `quantile` return the chosen element with its σ; `std` and `var` work on the values and are `Float` | Aggregation is the arithmetic that already propagates, with no code of its own. Comparison and sorting use the values only |
 | D98 | Decided | The degrade message is a warning in the bottom bar, in amber, while the cell is selected | The cell still has a value, so red (error) is wrong. The theme gains a warning colour, next to `error`. Diagnostics have only the error shape, so the engine records the cell and the snapshot carries `w` for it |
 | D99 | Decided | `±` binds more tightly than every other operator, `**` included; each side is a single term | `10 ± 0.1 ** 2` is `(10 ± 0.1) ** 2`. A negative uncertainty is written in brackets and is an error at evaluation |
+| D100 | Decided | A `Scientific` column's format is `[±][.N][eK]`: plus-minus, a fixed number of places, a fixed exponent | `.N` puts the uncertainty at that place for every cell so the brackets stand in line, `eK` gives every cell one exponent. What is not named is worked out per cell. Nothing is worked out across a column |
 
 ## Open Questions
 

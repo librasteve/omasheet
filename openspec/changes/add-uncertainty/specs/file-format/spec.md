@@ -5,7 +5,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Column schema
-A sheet SHALL be able to declare the type of each column with lines of the form `<Column> : <Type>` placed between the `sheet` line and the header row. A type SHALL be a base type (`Int`, `Fraction`, `Num`, `Complex`, `Text`, `Date`, `Time`, `Datetime`, `Bool`) or `Scientific`. A column with no declaration SHALL have its type inferred from its cells. A `Scientific` column MAY be declared with a display format after its type, in brackets: `<Column> : Scientific[±]`. With no format, the column displays in the concise form.
+A sheet SHALL be able to declare the type of each column with lines of the form `<Column> : <Type>` placed between the `sheet` line and the header row. A type SHALL be a base type (`Int`, `Fraction`, `Num`, `Complex`, `Text`, `Date`, `Time`, `Datetime`, `Bool`) or `Scientific`. A column with no declaration SHALL have its type inferred from its cells. A `Scientific` column MAY be declared with a display format after its type, in brackets: `<Column> : Scientific[±]`, `Scientific[.4]`, `Scientific[e-3]` or those together in that order, `Scientific[±.4e-3]`. With no format, the column displays in the concise form.
 
 #### Scenario: Scientific column
 - **GIVEN** a schema line `Length : Scientific` and the cells `10`, `10 ± 0.1` and `10.5(3)`

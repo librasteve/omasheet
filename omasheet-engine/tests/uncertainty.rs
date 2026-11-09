@@ -327,6 +327,47 @@ fn the_plus_minus_format_shows_value_plus_or_minus_uncertainty() {
 }
 
 #[test]
+fn a_format_fixes_places_and_exponent() {
+    let file = "\
+sheet S
+
+Same  : Scientific[e-3]
+Align : Scientific[.4]
+Both  : Scientific[.3e-3]
+All   : Scientific[±.3e-3]
+
+| Plain      | Same | Align | Both | All |
+| ---------- | ---- | ----- | ---- | --- |
+| 0.0121(3)  | *    | *     | *    | *   |
+| 0.0007(12) | *    | *     | *    | *   |
+| 0.0155     | *    | *     | *    | *   |
+
+Same  := Plain
+Align := Plain
+Both  := Plain
+All   := Plain
+";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    for shown in [
+        "12.10(30)e-3",
+        "0.0121(3)",
+        "12.100(300)e-3",
+        "(12.100 ± 0.300)e-3",
+        // Larger than the number: no fallback, as ever.
+        "0.7(12)e-3",
+        "0.0007(12)",
+        "0.700(1200)e-3",
+        // No uncertainty: every digit, and an uncertainty of nothing.
+        "15.5(0)e-3",
+        "0.0155(0)",
+        "15.500(0)e-3",
+    ] {
+        assert!(out.output.contains(shown), "{shown} in\n{}", out.output);
+    }
+}
+
+#[test]
 fn an_unknown_format_is_refused() {
     let errors = lint(
         "test.omx",
@@ -337,6 +378,38 @@ fn an_unknown_format_is_refused() {
 }
 
 // ---- columns ---------------------------------------------------------------
+
+#[test]
+fn a_formula_in_a_declared_column_is_held_to_the_type() {
+    let file = "\
+sheet S
+
+Length : Scientific
+
+| Length          | Double          |
+| --------------- | --------------- |
+| = 10 ± 0.1      | *               |
+| = sin(0.5 ± 0.01) | *             |
+| 5               | *               |
+
+Double := Length * 2
+";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    assert!(out.output.contains("10.00(10)"), "{}", out.output);
+    assert!(out.output.contains("0.4794(88)"), "{}", out.output);
+    assert!(out.output.contains("20.00(20)"), "{}", out.output);
+    // A plain number from a formula is not one: it is said how to make it so.
+    let errors = lint(
+        "test.omx",
+        "sheet S\n\nLength : Scientific\n\n| Length |\n| --- |\n| = 1.5 |\n",
+    )
+    .errors;
+    assert!(
+        errors.iter().any(|e| e.contains("`.Scientific`")),
+        "{errors:?}"
+    );
+}
 
 #[test]
 fn an_uncertain_column_takes_the_three_spellings_and_exact_numbers() {

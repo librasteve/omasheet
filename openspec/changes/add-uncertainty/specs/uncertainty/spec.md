@@ -153,7 +153,7 @@ A value with an uncertainty SHALL denote a best estimate with an error model, an
 - **THEN** it is not treated as `10 ± 0.1`
 
 ### Requirement: Display of uncertain values
-An uncertain value SHALL display by default in the concise form: the uncertainty rounded to two significant digits, written as those digits in brackets after the value rounded to the same decimal place, with any exponent written once after the brackets. An uncertain value whose uncertainty is not zero SHALL always display this way, however large the uncertainty is beside the value. A value whose uncertainty is zero SHALL display as the plain number. A column format of `±` SHALL display the value as `<value> ± <uncertainty>`, rounded in the same way. Display SHALL NOT alter the stored value or uncertainty.
+An uncertain value SHALL display by default in the concise form: the uncertainty rounded to two significant digits, written as those digits in brackets after the value rounded to the same decimal place, with any exponent written once after the brackets. An uncertain value whose uncertainty is not zero SHALL always display this way, however large the uncertainty is beside the value. A value whose uncertainty is zero SHALL display as the plain number. A column format MAY ask for plus-minus, `±`, which displays the value as `<value> ± <uncertainty>`, rounded in the same way; for a number of places, `.4`, which sets the places of the value of every cell and gives the uncertainty at that place; and for an exponent, `e-3`, which sets the exponent of every cell. They MAY be given together, `±.4e-3`. What a format does not name SHALL be worked out for each value from its own uncertainty. A value with no uncertainty, under a format that names places or an exponent, SHALL show every digit it has and an uncertainty of `(0)`. Display SHALL NOT alter the stored value or uncertainty.
 
 #### Scenario: Default display
 - **GIVEN** a stored value of `11` with uncertainty `0.0816…`
@@ -179,6 +179,26 @@ An uncertain value SHALL display by default in the concise form: the uncertainty
 - **GIVEN** a stored value of `10` with uncertainty zero
 - **WHEN** it is displayed
 - **THEN** it shows as `10`
+
+#### Scenario: Same exponent
+- **GIVEN** a column declared `Scientific[e-3]` and a stored value of `0.0121` with uncertainty `0.0003`
+- **WHEN** it is displayed
+- **THEN** it shows as `12.10(30)e-3`
+
+#### Scenario: Same places
+- **GIVEN** a column declared `Scientific[.4]` and stored values of `0.0121 ± 0.0003` and `0.00873 ± 0.00041`
+- **WHEN** they are displayed
+- **THEN** they show as `0.0121(3)` and `0.0087(4)`
+
+#### Scenario: Same places and exponent, as plus-minus
+- **GIVEN** a column declared `Scientific[±.3e-3]` and a stored value of `0.0121` with uncertainty `0.0003`
+- **WHEN** it is displayed
+- **THEN** it shows as `(12.100 ± 0.300)e-3`
+
+#### Scenario: No uncertainty under a format
+- **GIVEN** a column declared `Scientific[.3e-3]` and a stored value of `0.0155` with no uncertainty
+- **WHEN** it is displayed
+- **THEN** it shows as `15.500(0)e-3`
 
 #### Scenario: Plus-minus format
 - **GIVEN** a column declared `Scientific[±]` and a stored value of `11` with uncertainty `0.0816…`

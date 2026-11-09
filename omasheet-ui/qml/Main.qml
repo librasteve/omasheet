@@ -2247,6 +2247,7 @@ ApplicationWindow {
         return type === "Date" ? "%d %b %Y"
              : type === "Time" ? "%H:%M"
              : type === "Datetime" ? "%d %b %Y %H:%M"
+             : type === "Scientific" ? "\u00b1"
              : "'.2f";
     }
 
@@ -2254,7 +2255,7 @@ ApplicationWindow {
     function allFormattable() {
         for (var c = selLeft; c <= selRight; c++) {
             var column = sheet.columns[c];
-            if (!column || ["Integer", "Hex", "Octal", "Binary", "Decimal", "Float", "Date", "Time", "Datetime"].indexOf(column.type) < 0)
+            if (!column || ["Integer", "Hex", "Octal", "Binary", "Decimal", "Float", "Scientific", "Date", "Time", "Datetime"].indexOf(column.type) < 0)
                 return false;
         }
         return true;

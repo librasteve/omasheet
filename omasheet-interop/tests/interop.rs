@@ -1014,6 +1014,37 @@ fn parquet_meta_brings_the_formulas_back() {
 }
 
 #[test]
+fn parquet_holds_a_scientific_column_as_a_struct() {
+    let file = "sheet T\n\nLength : Scientific\n\n| Length |\n| --- |\n\
+                | 10 ± 0.1 |\n| 7.297_352_5643(11)e-3 |\n| 5 |\n|  |\n";
+    let out = parquet_of(file, None);
+    // A struct of two, so nothing is written as text and nothing is lost.
+    assert!(
+        !out.notices.iter().any(|n| n.contains("no one type")),
+        "{:?}",
+        out.notices
+    );
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    assert!(
+        back.source.contains("Length : Scientific"),
+        "{}",
+        back.source
+    );
+    // The value and its uncertainty, exactly, and what has none and what
+    // is empty as they were.
+    assert_eq!(eval(&back.source, "t[Length; 0]"), "10 ± 0.1");
+    assert_eq!(
+        eval(&back.source, "t[Length; 1]"),
+        "0.0072973525643 ± 1.1e-12"
+    );
+    assert_eq!(eval(&back.source, "t[Length; 2]"), "5 ± 0");
+    assert_eq!(eval(&back.source, "t[Length; 0] * 2"), "20 ± 0.2");
+    let again = parquet::import("t", &parquet_of(&back.source, None).files[0].bytes).unwrap();
+    assert_eq!(back.source, again.source);
+}
+
+#[test]
 fn parquet_keeps_a_decimal_exact() {
     // A decimal column is written as a Parquet decimal, so every digit of it
     // survives the trip: this is what CSV cannot do.

@@ -2646,7 +2646,11 @@ fn how_much_of_the_corpus_lowers() {
         // `Complex` came back with `examples/complex.omx` and its columns in
         // `types.omx`: 19 more, all refused, since a struct has no Polars
         // arithmetic (restore-complex D200). Nothing else moved.
-        (102, 27, 74, 1),
+        //
+        // `Scientific` is the same: `examples/uncertainty.omx` has five
+        // columns that copy one to show it in a format of their own, and a
+        // struct has no Polars arithmetic, so all five are refused.
+        (107, 27, 79, 1),
         "the corpus lowers differently than task 8.3 records"
     );
 }
