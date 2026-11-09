@@ -13,11 +13,11 @@ Selection, sorting, grouping, joining and aggregation SHALL preserve the exact n
 - **THEN** the result is exactly `3/10`
 
 #### Scenario: Group sum propagates uncertainty
-- **GIVEN** an `Uncertain` column with values `10 ± 0.3`, `20 ± 0.4` in one group
+- **GIVEN** a `Scientific` column with values `10 ± 0.3`, `20 ± 0.4` in one group
 - **WHEN** the group is summed
 - **THEN** the result is `30 ± 0.5`
 
 #### Scenario: Selection keeps uncertainty
-- **GIVEN** an `Uncertain` column with values `10 ± 0.3`, `20 ± 0.4`
+- **GIVEN** a `Scientific` column with values `10 ± 0.3`, `20 ± 0.4`
 - **WHEN** the rows with a value above 15 are selected
 - **THEN** the row holds `20 ± 0.4`

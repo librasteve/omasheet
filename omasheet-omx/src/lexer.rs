@@ -19,7 +19,7 @@ pub enum Tok {
     /// An imaginary number, `4i`.
     Imag(f64),
     /// A value and its uncertainty written together: `10.5(3)`, `7.297(11)e-3`.
-    Uncertain(f64, f64),
+    Scientific(f64, f64),
     /// `'…'`, a string in code (D168).
     Str(String),
     /// `"…"`, text as a table cell writes it. Code does not take it: the
@@ -99,7 +99,7 @@ impl Tok {
             | Tok::Percent(_)
             | Tok::Float(_)
             | Tok::Imag(_)
-            | Tok::Uncertain(..) => "a number".into(),
+            | Tok::Scientific(..) => "a number".into(),
             Tok::Str(_) | Tok::Text(_) => "a string".into(),
             Tok::Date(_) => "a date".into(),
             Tok::Time(_) => "a time".into(),
@@ -652,7 +652,7 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
             }
             return Err((format!("`{}` is not a number", &text[i..k]), i, k));
         }
-        return Ok((Tok::Uncertain(value, sigma), j));
+        return Ok((Tok::Scientific(value, sigma), j));
     }
     let percent = j < b.len() && b[j] == b'%';
     let end = if percent { j + 1 } else { j };
@@ -741,13 +741,13 @@ mod tests {
     #[test]
     fn an_uncertainty_in_brackets_or_after_a_plus_minus() {
         // The digits in brackets are the uncertainty in the last places.
-        assert_eq!(toks("10.5(3)")[0], Tok::Uncertain(10.5, 0.3));
-        assert_eq!(toks("10(3)")[0], Tok::Uncertain(10.0, 3.0));
-        assert_eq!(toks("1.5(11)")[0], Tok::Uncertain(1.5, 1.1));
+        assert_eq!(toks("10.5(3)")[0], Tok::Scientific(10.5, 0.3));
+        assert_eq!(toks("10(3)")[0], Tok::Scientific(10.0, 3.0));
+        assert_eq!(toks("1.5(11)")[0], Tok::Scientific(1.5, 1.1));
         // An exponent after the brackets scales both.
         assert_eq!(
             toks("7.297_352_5643(11)e-3")[0],
-            Tok::Uncertain(7.2973525643e-3, 1.1e-12)
+            Tok::Scientific(7.2973525643e-3, 1.1e-12)
         );
         // A space, or anything but digits, makes it no such literal.
         assert_eq!(

@@ -69,7 +69,7 @@ Numbers are shown the way Raku shows them:
 | `Fraction` | `1/7`, `3/4`, `2 3/4`, `333 1/3`; `3` when it is whole |
 | `Percent` | `20%`, `12.5%`, `41.67%` |
 | `Float` | `100`, `1.5`, `1.4142135623730951`; `1e+21` or `1.5e-16` when very large or small; `Inf`, `-Inf`, `NaN` |
-| `Uncertain` | the concise form of the physical tables, the uncertainty to two digits in brackets after the value cut at the same place: `7.2973525643(11)e-3`, `11.000(82)`, `1.00(20)e3`; a column declared `Uncertain[±]` shows `11.000 ± 0.082`; no uncertainty is a plain number |
+| `Scientific` | the concise form of the physical tables, the uncertainty to two digits in brackets after the value cut at the same place: `7.2973525643(11)e-3`, `11.000(82)`, `1.00(20)e3`; a column declared `Scientific[±]` shows `11.000 ± 0.082`; no uncertainty is a plain number |
 | `Complex` | each part as a `Float`: `3+4i`, `1.5-2i`, `0+1.4142135623730951i`; both parts cut alike when too wide; `0+Inf\i` for an infinite imaginary part |
 
 A `Float` that is a whole number looks like an `Integer`, but it is still a `Float`.
@@ -186,7 +186,7 @@ Text is read the way a cell is: `'42'.Integer` is `42`, `'20%'.Decimal` is `1/5`
 rounds to two decimal places. For the nearest hundred, divide, round and
 multiply back: `round(x / 100) * 100`.
 
-## Uncertain numbers
+## Scientific numbers
 
 A measurement carries an uncertainty, a standard deviation. `10 ± 0.1` is `10`
 with an uncertainty of `0.1`, and `10.5(3)` is the
@@ -219,10 +219,10 @@ alone. A comparison and a sort use the values. A first-order answer is poor
 where the uncertainty is large beside the distance to the edge of a
 function's domain, as `ln(0.1 ± 0.5)`.
 
-There are no uncertain complex numbers. An `Uncertain` beside a `Complex`
+There are no uncertain complex numbers. A `Scientific` beside a `Complex`
 becomes a `Float` and the calculation goes on with a `Complex`; the app
 says `uncertain complex not supported` in amber in its bottom bar while the
-cell is selected. An `Uncertain` goes to a `Float` with `x.Float`, which keeps
+cell is selected. A `Scientific` goes to a `Float` with `x.Float`, which keeps
 the value alone.
 
 ## Complex numbers

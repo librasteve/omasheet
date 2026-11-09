@@ -4,7 +4,7 @@
 
 ## 1. Storage
 - [x] 1.1 Decide how uncertainty magnitudes are stored: an `f64` standard deviation (D90)
-- [x] 1.2 `Value::Uncertain(f64, f64)` and its place in the type lattice, above `Float` (D91)
+- [x] 1.2 `Value::Scientific(f64, f64)` and its place in the type lattice, above `Float` (D91)
 
 ## 2. Literals (`uncertainty`)
 - [x] 2.1 `±` operator, and the concise `10.5(3)e-3` literal in the lexer
@@ -17,7 +17,7 @@
 - [x] 3.5 `uncertain complex not supported` shown as an amber warning in the bottom bar; a warning colour in the theme
 
 ## 4. Existing capabilities
-- [x] 4.1 `Uncertain` column type, and its `[±]` display format (`file-format`)
+- [x] 4.1 `Scientific` column type, and its `[±]` display format (`file-format`)
 - [x] 4.2 Uncertainty preserved through group, join and aggregation (`evaluation`)
 - [x] 4.3 Display: `(nn)` by default, `±` by format option
 - [x] 4.4 XLSX export writes the value and drops the uncertainty, with a note (`xlsx-interop`)

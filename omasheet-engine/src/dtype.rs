@@ -36,8 +36,8 @@ pub fn type_of(dtype: &DataType) -> Option<S> {
         DataType::Null => S::Any,
         // The one struct a sheet can render: a `Complex` (D199).
         d if is_complex(d) => S::Complex,
-        // And the other: an `Uncertain`, a value and its uncertainty.
-        d if is_uncertain(d) => S::Uncertain,
+        // And the other: a `Scientific`, a value and its uncertainty.
+        d if is_uncertain(d) => S::Scientific,
         _ => return None,
     })
 }
@@ -117,12 +117,12 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
                 _ => Cell::Invalid,
             }
         }
-        // An `Uncertain` is a struct of `value` and `sigma`. Both null is a
+        // A `Scientific` is a struct of `value` and `sigma`. Both null is a
         // null; one is not a number.
-        value @ (AnyValue::Struct(..) | AnyValue::StructOwned(_)) if ty == S::Uncertain => {
+        value @ (AnyValue::Struct(..) | AnyValue::StructOwned(_)) if ty == S::Scientific => {
             match complex_parts(value) {
                 Some((Some(v), Some(s))) if s >= 0.0 || s.is_nan() => {
-                    Cell::Lit(Lit::Uncertain(v, s))
+                    Cell::Lit(Lit::Scientific(v, s))
                 }
                 Some((None, None)) => Cell::Empty,
                 _ => Cell::Invalid,
@@ -147,7 +147,7 @@ pub fn dtype(ty: S, scale: u32) -> Option<DataType> {
         S::Decimal | S::Fraction | S::Percent => decimal(scale),
         S::Float => DataType::Float64,
         S::Complex => complex_dtype(),
-        S::Uncertain => uncertain_dtype(),
+        S::Scientific => uncertain_dtype(),
         S::String | S::Url | S::Email | S::Uuid => DataType::String,
         S::Boolean => DataType::Boolean,
         S::Date => DataType::Date,
@@ -167,7 +167,7 @@ pub fn complex_dtype() -> DataType {
     ])
 }
 
-/// The dtype an `Uncertain` is stored as: a struct of two `Float64`s, `value`
+/// The dtype a `Scientific` is stored as: a struct of two `Float64`s, `value`
 /// and `sigma`.
 pub fn uncertain_dtype() -> DataType {
     DataType::Struct(vec![
@@ -176,7 +176,7 @@ pub fn uncertain_dtype() -> DataType {
     ])
 }
 
-/// Whether a dtype is exactly the struct an `Uncertain` is stored as.
+/// Whether a dtype is exactly the struct a `Scientific` is stored as.
 pub fn is_uncertain(dtype: &DataType) -> bool {
     *dtype == uncertain_dtype()
 }
@@ -378,8 +378,8 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
         // Polars has no arithmetic for a struct, so a `Complex` column is
         // the engine's to calculate and is never handed over (D200).
         S::Complex => return None,
-        // Nor for an `Uncertain`.
-        S::Uncertain => return None,
+        // Nor for a `Scientific`.
+        S::Scientific => return None,
         // A column of anything: there is no one dtype to hold it as.
         S::Any => return None,
     };

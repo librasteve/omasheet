@@ -2437,10 +2437,10 @@ impl<'a> Checker<'a> {
                 (S::Int | S::Decimal | S::Fraction | S::Percent, S::Float) => {
                     "use `.Float` to convert to Float"
                 }
-                (S::Int | S::Decimal | S::Fraction | S::Percent | S::Float, S::Uncertain) => {
-                    "use `.Uncertain` to convert to Uncertain, or write `value ± uncertainty`"
+                (S::Int | S::Decimal | S::Fraction | S::Percent | S::Float, S::Scientific) => {
+                    "use `.Scientific` to convert to Scientific, or write `value ± uncertainty`"
                 }
-                (S::Uncertain, S::Float) => {
+                (S::Scientific, S::Float) => {
                     "use `.Float` for the value alone, without its uncertainty"
                 }
                 (S::Int | S::Decimal | S::Fraction | S::Percent | S::Float, S::Complex) => {
@@ -2509,7 +2509,7 @@ impl<'a> Checker<'a> {
                 Some(Lit::Float(r.to_f64()))
             }
             (Some(l @ Lit::Float(_)), S::Float) => Some(l),
-            // A number with no uncertainty in an `Uncertain` column has an
+            // A number with no uncertainty in a `Scientific` column has an
             // uncertainty of zero.
             (
                 Some(
@@ -2519,9 +2519,9 @@ impl<'a> Checker<'a> {
                     | Lit::Percent(_)
                     | Lit::Float(_)),
                 ),
-                S::Uncertain,
-            ) => crate::convert::convert(&l, S::Uncertain).ok(),
-            (Some(l @ Lit::Uncertain(..)), S::Uncertain) => Some(l),
+                S::Scientific,
+            ) => crate::convert::convert(&l, S::Scientific).ok(),
+            (Some(l @ Lit::Scientific(..)), S::Scientific) => Some(l),
             // A real number in a `Complex` column has no imaginary part.
             (
                 Some(
@@ -2592,7 +2592,7 @@ impl<'a> Checker<'a> {
                     S::Fraction => "enter a number such as `1/7`, `2 3/4` or `19.99`, or start the cell with `=` for a formula",
                     S::Percent => "enter a percentage such as `20%`, or start the cell with `=` for a formula",
                     S::Float => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
-                    S::Uncertain => "enter a number with its uncertainty such as `10.5(3)` or `10 ± 0.3`, or start the cell with `=` for a formula",
+                    S::Scientific => "enter a number with its uncertainty such as `10.5(3)` or `10 ± 0.3`, or start the cell with `=` for a formula",
                     S::Complex => "enter a complex number such as `3+4i`, or start the cell with `=` for a formula",
                     S::Boolean => "enter `true` or `false`, or start the cell with `=` for a formula",
                     S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
@@ -3158,7 +3158,7 @@ impl<'a> Checker<'a> {
                 );
                 return fail;
             }
-            S::Uncertain
+            S::Scientific
         } else if op.is_arithmetic() {
             if !(a.is_numeric() && b.is_numeric()) {
                 self.err(span, format!("cannot apply `{sym}` to {a} and {b}"));
@@ -3175,7 +3175,7 @@ impl<'a> Checker<'a> {
                     // A power is exact only for a whole exponent; any other
                     // is worked out in floating point.
                     (BinOp::Pow, w)
-                        if !matches!(w, S::Float | S::Uncertain | S::Complex)
+                        if !matches!(w, S::Float | S::Scientific | S::Complex)
                             && !b.is_int()
                             && b != S::Any =>
                     {
@@ -3859,7 +3859,7 @@ impl<'a> Checker<'a> {
                 let ty = match func {
                     _ if s == S::Any => Ty::Any,
                     Func::Std => Ty::Scalar(S::Float),
-                    Func::Var if s == S::Uncertain => Ty::Scalar(S::Float),
+                    Func::Var if s == S::Scientific => Ty::Scalar(S::Float),
                     Func::Var if s.is_int() || s == S::Decimal => Ty::Scalar(S::Decimal),
                     _ => Ty::Scalar(s),
                 };
@@ -4278,7 +4278,7 @@ impl<'a> Checker<'a> {
                                     | S::Fraction
                                     | S::Percent
                                     | S::Float
-                                    | S::Uncertain
+                                    | S::Scientific
                             )
                     ) {
                         self.err(
@@ -4372,7 +4372,7 @@ impl<'a> Checker<'a> {
                 let out = |s: S| match s {
                     S::Any => Some(S::Any),
                     S::Complex => m.of_complex().or(m.casts_to_float().then_some(S::Float)),
-                    S::Uncertain => Some(S::Uncertain),
+                    S::Scientific => Some(S::Scientific),
                     s if s.is_exact() && m.is_whole() => Some(S::Int),
                     s if s.is_exact() && m.is_exact() => Some(s),
                     s if s.is_exact() || s == S::Float => Some(S::Float),

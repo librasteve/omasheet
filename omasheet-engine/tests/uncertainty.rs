@@ -141,6 +141,41 @@ fn functions_propagate_to_first_order() {
     assert!(!full("sin(0.5)").contains('±'));
 }
 
+/// Every function of one number, whatever the directory holds, carries the
+/// uncertainty by its own slope: checked against the slope found by
+/// differences of the function itself.
+#[test]
+fn every_math_function_carries_its_slope() {
+    use omasheet_engine::omx::funcs::FUNCTIONS;
+    let (x, s, h) = (0.3_f64, 1e-3_f64, 1e-6_f64);
+    let mut seen = 0;
+    for doc in FUNCTIONS.iter().filter(|f| f.math.is_some()) {
+        let at = |t: f64| -> f64 { full(&format!("{}({t:?})", doc.name)).parse().unwrap() };
+        let slope = (at(x + h) - at(x - h)) / (2.0 * h);
+        let got = full(&format!("{}({x:?} ± {s:?})", doc.name));
+        let (value, sigma) = match got.split_once(" ± ") {
+            Some((v, e)) => (v.parse::<f64>().unwrap(), e.parse::<f64>().unwrap()),
+            // No uncertainty left, as for a step or a part of a real number.
+            None => (got.parse::<f64>().unwrap(), 0.0),
+        };
+        let want = slope.abs() * s;
+        assert!(
+            (value - at(x)).abs() <= 1e-12 * at(x).abs().max(1.0),
+            "{}: the value is {value}, not {}",
+            doc.name,
+            at(x)
+        );
+        assert!(
+            (sigma - want).abs() <= 1e-5 * want.max(1e-12),
+            "{}: the uncertainty is {sigma}, not {want}",
+            doc.name
+        );
+        seen += 1;
+    }
+    // All of them: the directory is the one list.
+    assert!(seen >= 25, "only {seen} functions were checked");
+}
+
 #[test]
 fn a_comparison_uses_the_values() {
     assert_eq!(shown("(10 ± 1) > 9"), "true");
@@ -152,7 +187,7 @@ fn a_comparison_uses_the_values() {
 const LENGTHS: &str = "\
 sheet Lengths
 
-Length : Uncertain
+Length : Scientific
 
 Length
 -----------
@@ -199,7 +234,7 @@ fn a_group_sum_propagates() {
     let file = "\
 sheet Items
 
-Mass : Uncertain
+Mass : Scientific
 
 Group | Mass
 ------|-----
@@ -285,7 +320,7 @@ fn the_default_display_is_the_concise_form() {
 
 #[test]
 fn the_plus_minus_format_shows_value_plus_or_minus_uncertainty() {
-    let file = "sheet S\n\nLength : Uncertain[±]\n\nLength\n------\n11 ± 0.0816\n";
+    let file = "sheet S\n\nLength : Scientific[±]\n\nLength\n------\n11 ± 0.0816\n";
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
     assert!(out.output.contains("11.000 ± 0.082"), "{}", out.output);
@@ -295,7 +330,7 @@ fn the_plus_minus_format_shows_value_plus_or_minus_uncertainty() {
 fn an_unknown_format_is_refused() {
     let errors = lint(
         "test.omx",
-        "sheet S\n\nLength : Uncertain[x]\n\nLength\n------\n1\n",
+        "sheet S\n\nLength : Scientific[x]\n\nLength\n------\n1\n",
     )
     .errors;
     assert!(errors.iter().any(|e| e.contains("`±`")), "{errors:?}");
@@ -308,7 +343,7 @@ fn an_uncertain_column_takes_the_three_spellings_and_exact_numbers() {
     let file = "\
 sheet S
 
-Length : Uncertain
+Length : Scientific
 
 Length
 ----------

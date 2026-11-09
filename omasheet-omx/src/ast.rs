@@ -19,7 +19,7 @@ pub enum Lit {
     Percent(Dec),
     Float(f64),
     /// A value and its standard deviation: `10 ± 0.1`, `10.5(3)`.
-    Uncertain(f64, f64),
+    Scientific(f64, f64),
     /// Real and imaginary parts: `3+4i`.
     Complex(f64, f64),
     String(String),

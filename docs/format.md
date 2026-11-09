@@ -220,7 +220,7 @@ read as one; `Integer` is what is written.
 | `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction |
 | `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
 | `Float` | `1.5e3`, `Inf`, `-Inf`, `NaN` — floating point |
-| `Uncertain` | `10.5(3)`, `10 ± 0.3`, `10 +- 0.3` — a value with its measurement uncertainty, each a `Float`; a number with no uncertainty in an `Uncertain` column has an uncertainty of zero. Declared `Uncertain[±]`, a column is shown as `value ± uncertainty` |
+| `Scientific` | `10.5(3)`, `10 ± 0.3`, `10 +- 0.3` — a value with its measurement uncertainty, each a `Float`; a number with no uncertainty in a `Scientific` column has an uncertainty of zero. Declared `Scientific[±]`, a column is shown as `value ± uncertainty` |
 | `Complex` | `3+4i`, `-1.5-2i`, `2i` — a real and an imaginary part, each a `Float`; a real number in a `Complex` column is that number with no imaginary part |
 | `String` | `hi` or `"hi"`  (escape \|) |
 | `Boolean` | `true`, `false` |
@@ -319,7 +319,7 @@ The numeric types form a hierarchy of increasingly expressive number systems, **
 - **`Integer` (ℤ)**: whole numbers
 - **`Decimal` (ℚ)**: exact numbers with a fractional part, held to 38 digits
 - **`Float` (ℝ)**: real numbers, approximately represented
-- **`Uncertain`**: real numbers with a measurement uncertainty, between `Float` and `Complex`
+- **`Scientific`**: real numbers with a measurement uncertainty, between `Float` and `Complex`
 - **`Complex` (ℂ)**: complex numbers
 
 For any operation, and for the cells of a column, the result is the **more infectious** of the types it is made from, the least number system that holds them both: `Integer` + `Decimal` is a `Decimal`, `Decimal` * `Float` is a `Float`, and `Float` + `Complex` is a `Complex`. This is a model, not the machine's: an integer is an `i64`, a `Decimal` a 38-digit fixed point and a `Float` an `f64`, each of finite precision.
@@ -331,7 +331,7 @@ Each type may be shown more than one way:
 | `Integer` | `1` | `Hex` `0xff`, `Octal` `0o17`, `Binary` `0b101` |
 | `Decimal` | `1.0` | `Fraction` `1/7`, `2 3/4`; `Percent` `14.29%` |
 | `Float` | `1e0` | none |
-| `Uncertain` | `10.5(3)` | `±` |
+| `Scientific` | `10.5(3)` | `±` |
 | `Complex` | `3+4i` | none |
 
 - Two values shown the same way keep it: `Hex` + `Hex` is a `Hex`, and `Fraction` + `Fraction` a `Fraction`.
@@ -350,7 +350,7 @@ The joins, written out:
 | `3+4i` | `Complex` | `Complex` | `Complex` | `Complex` | any |
 | text | any | any | any | any | `String` |
 
-An `Uncertain` beside a `Complex` is a `Complex`, but the uncertainty is dropped: there are no uncertain complex numbers, and the app says `uncertain complex not supported`.
+A `Scientific` beside a `Complex` is a `Complex`, but the uncertainty is dropped: there are no uncertain complex numbers, and the app says `uncertain complex not supported`.
 
 A way of showing a type joins with a `Complex` as the type would: `0x10 + 1i`
 is `16+1i`. A `Complex` has no order, so it cannot be compared with `<` or

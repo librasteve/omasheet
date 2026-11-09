@@ -40,7 +40,7 @@ pub enum Value {
     Float(f64),
     /// A value and its standard deviation, each a `Float`: `10.5(3)`,
     /// `10.5 ± 0.3`.
-    Uncertain(f64, f64),
+    Scientific(f64, f64),
     /// A real and an imaginary part, each a `Float`: `3+4i`.
     Complex(f64, f64),
     /// Text, and whether it was written bare in a cell, to be read as
@@ -158,7 +158,7 @@ impl Value {
             Lit::Fraction(r) => Value::Fraction(*r),
             Lit::Percent(r) => Value::Percent(*r),
             Lit::Float(f) => Value::Float(*f),
-            Lit::Uncertain(v, s) => Value::Uncertain(*v, *s),
+            Lit::Scientific(v, s) => Value::Scientific(*v, *s),
             Lit::Complex(re, im) => Value::Complex(*re, *im),
             Lit::String(s) => Value::text(s),
             Lit::Boolean(b) => Value::Boolean(*b),
@@ -184,7 +184,7 @@ impl Value {
             Value::Fraction(_) => "Fraction",
             Value::Percent(_) => "Percent",
             Value::Float(_) => "Float",
-            Value::Uncertain(..) => "Uncertain",
+            Value::Scientific(..) => "Scientific",
             Value::Complex(..) => "Complex",
             Value::String(..) => "String",
             Value::Boolean(_) => "Boolean",
@@ -207,7 +207,7 @@ impl Value {
                 | Value::Fraction(_)
                 | Value::Percent(_)
                 | Value::Float(_)
-                | Value::Uncertain(..)
+                | Value::Scientific(..)
                 | Value::Complex(..)
         )
     }
@@ -221,7 +221,7 @@ impl Value {
             Value::Fraction(r) => Lit::Fraction(*r),
             Value::Percent(r) => Lit::Percent(*r),
             Value::Float(f) => Lit::Float(*f),
-            Value::Uncertain(v, s) => Lit::Uncertain(*v, *s),
+            Value::Scientific(v, s) => Lit::Scientific(*v, *s),
             Value::Complex(re, im) => Lit::Complex(*re, *im),
             Value::String(s, _) => Lit::String(s.to_string()),
             Value::Boolean(b) => Lit::Boolean(*b),
@@ -257,7 +257,7 @@ impl Value {
             return Ok(self.converted(S::Decimal)?.fraction());
         }
         // There is no uncertain complex number: it is the value alone.
-        if let (Value::Uncertain(v, _), S::Complex) = (self, to) {
+        if let (Value::Scientific(v, _), S::Complex) = (self, to) {
             mark_degraded();
             return Ok(Value::Complex(*v, 0.0));
         }
@@ -281,7 +281,7 @@ impl Value {
 enum N {
     Exact(Dec),
     Float(f64),
-    Uncertain(f64, f64),
+    Scientific(f64, f64),
     Complex(f64, f64),
 }
 
@@ -310,7 +310,7 @@ fn number(v: &Value) -> Option<N> {
         Value::Int(n, _) => N::Exact(Dec::from_i64(*n)),
         Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => N::Exact(*r),
         Value::Float(f) => N::Float(*f),
-        Value::Uncertain(v, s) => N::Uncertain(*v, *s),
+        Value::Scientific(v, s) => N::Scientific(*v, *s),
         Value::Complex(re, im) => N::Complex(*re, *im),
         _ => return None,
     })
@@ -320,7 +320,7 @@ fn number(v: &Value) -> Option<N> {
 /// none; `None` for a `Complex`.
 fn with_sigma(n: &N) -> Option<(f64, f64)> {
     Some(match n {
-        N::Uncertain(v, s) => (*v, *s),
+        N::Scientific(v, s) => (*v, *s),
         N::Complex(..) => return None,
         other => (real(other), 0.0),
     })
@@ -347,7 +347,7 @@ fn uncertain_arith(op: BinOp, (x, sx): (f64, f64), (y, sy): (f64, f64)) -> Value
             (value, wrt_x.hypot(wrt_y))
         }
     };
-    Value::Uncertain(value, sigma)
+    Value::Scientific(value, sigma)
 }
 
 /// `value ± uncertainty`. Both sides are real numbers, and the uncertainty
@@ -370,7 +370,7 @@ pub fn plus_minus(a: &Value, b: &Value) -> Result<Value, String> {
     if sigma < 0.0 {
         return Err("the uncertainty after `±` cannot be negative".to_string());
     }
-    Ok(Value::Uncertain(value, sigma))
+    Ok(Value::Scientific(value, sigma))
 }
 
 /// A function of an uncertain value, to first order (D94).
@@ -380,7 +380,7 @@ fn uncertain_math(m: MathFn, v: f64, s: f64) -> Value {
     } else {
         (m.slope(v) * s).abs()
     };
-    Value::Uncertain(m.apply(v), sigma)
+    Value::Scientific(m.apply(v), sigma)
 }
 
 pub fn to_f64(r: &Dec) -> f64 {
@@ -391,7 +391,7 @@ fn real(n: &N) -> f64 {
     match n {
         N::Exact(r) => r.to_f64(),
         N::Float(f) => *f,
-        N::Uncertain(v, _) => *v,
+        N::Scientific(v, _) => *v,
         N::Complex(re, _) => *re,
     }
 }
@@ -476,7 +476,7 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     // uncertain complex number, and the bottom bar says so.
     if matches!(x, N::Complex(..)) || matches!(y, N::Complex(..)) {
         for n in [&mut x, &mut y] {
-            if let N::Uncertain(v, _) = *n {
+            if let N::Scientific(v, _) = *n {
                 *n = N::Float(v);
                 mark_degraded();
             }
@@ -502,7 +502,7 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
                 v => v,
             },
         }),
-        (N::Uncertain(..), _) | (_, N::Uncertain(..)) => match (with_sigma(&x), with_sigma(&y)) {
+        (N::Scientific(..), _) | (_, N::Scientific(..)) => match (with_sigma(&x), with_sigma(&y)) {
             (Some(p), Some(q)) => Ok(uncertain_arith(op, p, q)),
             _ => Err("uncertain complex not supported".to_string()),
         },
@@ -709,7 +709,7 @@ fn scale(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
             let fits = out.is_finite() && out.abs() < i64::MAX as f64;
             fits.then(|| out.round() as i64)
         }
-        N::Uncertain(f, _) => {
+        N::Scientific(f, _) => {
             let out = if op == BinOp::Div {
                 us as f64 / f
             } else {
@@ -825,7 +825,7 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
         (Value::Decimal(_) | Value::Fraction(_), MathFn::Re | MathFn::Conj) => {
             return Ok(v.clone());
         }
-        (Value::Uncertain(v, s), _) => return Ok(uncertain_math(m, *v, *s)),
+        (Value::Scientific(v, s), _) => return Ok(uncertain_math(m, *v, *s)),
         (Value::Complex(re, im), _) => return complex_math(m, *re, *im),
         (Value::Int(n, b), MathFn::Abs) => {
             return n
@@ -910,9 +910,9 @@ pub fn round_digits(x: &Value, places: i64) -> Result<Value, String> {
             let factor = 10f64.powi(places.min(17));
             Value::Float((f * factor).round() / factor)
         }
-        Value::Uncertain(v, s) => {
+        Value::Scientific(v, s) => {
             let factor = 10f64.powi(places.min(17));
-            Value::Uncertain((v * factor).round() / factor, *s)
+            Value::Scientific((v * factor).round() / factor, *s)
         }
         other => return Err(format!("cannot round {}", other.kind())),
     })
@@ -1427,10 +1427,10 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         Value::Float(f) if exact => format_float(*f, true),
         Value::Float(f) => localised(shown_float(*f, false, group(style)), style),
         // In full, a file writes both parts: `10.5 ± 0.3`.
-        Value::Uncertain(v, s) if exact => {
+        Value::Scientific(v, s) if exact => {
             format!("{} ± {}", format_float(*v, true), format_float(*s, true))
         }
-        Value::Uncertain(v, s) => localised(format_uncertain(*v, *s, false, group(style)), style),
+        Value::Scientific(v, s) => localised(format_uncertain(*v, *s, false, group(style)), style),
         Value::Complex(re, im) if exact => format_complex(*re, *im, true, None),
         Value::Complex(re, im) => localised(format_complex(*re, *im, false, group(style)), style),
         Value::String(s, _) if quoted => omasheet_omx::lexer::quoted(s),

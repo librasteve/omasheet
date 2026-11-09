@@ -330,7 +330,7 @@ fn exact_text(v: &Value, quoted: bool, shown: &str, style: &Style) -> Option<Str
         | Value::Decimal(_)
         | Value::Percent(_)
         | Value::Float(_)
-        | Value::Uncertain(..)
+        | Value::Scientific(..)
         | Value::Complex(..)
         | Value::Vector(_) => format_exact(v, quoted, style),
         _ => return None,
@@ -412,8 +412,8 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
         "Decimal" => "Decimal: an exact decimal number, e.g. 19.99 or 20%".into(),
         "Percent" => "Percent: an exact number shown as a percentage, e.g. 20%".into(),
         "Float" => "Float: a floating-point number, e.g. 1.5, 2e-3 or Inf".into(),
-        "Uncertain" => {
-            "Uncertain: a value and its measurement uncertainty, e.g. 10.5(3) or 10 ± 0.3".into()
+        "Scientific" => {
+            "Scientific: a value and its measurement uncertainty, e.g. 10.5(3) or 10 ± 0.3".into()
         }
         "Complex" => "Complex: a real and an imaginary part, e.g. 3+4i or 2i".into(),
         "Boolean" => "Boolean: true or false".into(),

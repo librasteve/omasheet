@@ -2,7 +2,7 @@
 
 //! A column's format, after its type in brackets: a number format,
 //! `Price : Decimal['.2f]`, a date and time format, `Due : Date[%d %b %Y]`,
-//! or `Length : Uncertain[±]`, which shows an uncertainty as `value ± σ`.
+//! or `Length : Scientific[±]`, which shows an uncertainty as `value ± σ`.
 
 use std::fmt;
 
@@ -24,11 +24,11 @@ impl Format {
     /// `Date`, `Time` or `Datetime`, and a number format for any other.
     pub fn parse(text: &str, ty: S) -> Result<Format, FormatError> {
         match ty {
-            S::Uncertain if text.trim() == "±" => Ok(Format::PlusMinus),
-            S::Uncertain => Err(FormatError {
+            S::Scientific if text.trim() == "±" => Ok(Format::PlusMinus),
+            S::Scientific => Err(FormatError {
                 at: 0,
                 len: text.chars().count(),
-                message: "an `Uncertain` column takes the format `±`".to_string(),
+                message: "a `Scientific` column takes the format `±`".to_string(),
             }),
             S::Date | S::Time | S::Datetime => DateFormat::parse(text).map(Format::Date),
             _ => NumFormat::parse(text).map(Format::Number),
@@ -40,7 +40,7 @@ impl Format {
         match self {
             Format::Number(f) => f.takes(ty),
             Format::Date(f) => f.takes(ty),
-            Format::PlusMinus => ty == S::Uncertain,
+            Format::PlusMinus => ty == S::Scientific,
         }
     }
 
@@ -48,7 +48,7 @@ impl Format {
     /// type that takes no format.
     pub fn conversions_of(ty: S) -> Option<&'static str> {
         match ty {
-            S::Uncertain => Some("`±`"),
+            S::Scientific => Some("`±`"),
             S::Date => Some("the conversions of a date, as `%d %b %Y`"),
             S::Time => Some("the conversions of a time, as `%H:%M`"),
             S::Datetime => Some("the conversions of a date and a time, as `%d %b %Y %H:%M`"),
@@ -59,7 +59,7 @@ impl Format {
     /// What a format is, for a diagnostic about one that does not read.
     pub fn help(ty: S) -> &'static str {
         match ty {
-            S::Uncertain => "an `Uncertain` column takes the format `±`",
+            S::Scientific => "a `Scientific` column takes the format `±`",
             S::Date | S::Time | S::Datetime => {
                 "a date or time format is a C `strftime` format, as `%d %b %Y`"
             }

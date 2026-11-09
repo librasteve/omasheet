@@ -3576,7 +3576,7 @@ impl<'p> Engine<'p> {
                         Value::Decimal(d) | Value::Fraction(d) | Value::Percent(d) => d.to_f64(),
                         Value::Float(f) => f,
                         // There is no uncertain complex number.
-                        Value::Uncertain(v, _) => {
+                        Value::Scientific(v, _) => {
                             mark_degraded();
                             v
                         }
@@ -3799,12 +3799,12 @@ impl<'p> Engine<'p> {
                 // uncertainty (D97).
                 let stripped: Vec<Value>;
                 let values = if func != Func::Quantile
-                    && values.iter().any(|v| matches!(v, Value::Uncertain(..)))
+                    && values.iter().any(|v| matches!(v, Value::Scientific(..)))
                 {
                     stripped = values
                         .iter()
                         .map(|v| match v {
-                            Value::Uncertain(x, _) => Value::Float(*x),
+                            Value::Scientific(x, _) => Value::Float(*x),
                             v => v.clone(),
                         })
                         .collect();
@@ -3819,7 +3819,7 @@ impl<'p> Engine<'p> {
                 let real = |v: &Value| -> Option<f64> {
                     match v {
                         Value::Int(i, _) => Some(*i as f64),
-                        Value::Uncertain(x, _) => Some(*x),
+                        Value::Scientific(x, _) => Some(*x),
                         Value::Decimal(d) | Value::Fraction(d) | Value::Percent(d) => {
                             Some(d.to_f64())
                         }
@@ -4436,7 +4436,7 @@ impl<'p> Engine<'p> {
         let shown = match format.filter(|_| !self.options.exact) {
             Some(Format::Number(f)) => format_number(v, f, &style),
             Some(Format::PlusMinus) => match v {
-                Value::Uncertain(x, s) => Some(crate::value::format_uncertain(*x, *s, true, None)),
+                Value::Scientific(x, s) => Some(crate::value::format_uncertain(*x, *s, true, None)),
                 _ => None,
             },
             Some(Format::Date(f)) => self

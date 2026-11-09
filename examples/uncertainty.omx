@@ -29,17 +29,60 @@ sheet Arithmetic
 | ± before **    | = 10 ± 0.1 ** 2                 |
 | ± before *     | = 10 ± 0.1 * 2                  |
 | independent    | = (10 ± 1) - (10 ± 1)           |
-| sine           | = sin(0.5 ± 0.01)               |
-| logarithm      | = ln(100 ± 1)                   |
-| root           | = sqrt(4 ± 0.4)                 |
-| exact function | = sin(0.5)                      |
-| beside Complex | = (10 ± 1) + 3i                 |
 | larger than the value | = 0.5 ± 0.8              |
 | coarse         | = 1000 ± 200                    |
 
+# Every math function carries the uncertainty to first order: the value is
+# f(x) and the uncertainty is |f'(x)| times that of x. `round`, `floor`,
+# `ceil` and `sign` have no slope, so they leave none; `re` and `conj` leave
+# it as it was and `im` and `arg` of a real number are exact.
+sheet Functions
+
+| Function | Value                  |
+| -------- | ---------------------- |
+| abs      | = abs(-3 ± 0.1)        |
+| sign     | = sign(-3 ± 0.1)       |
+| round    | = round(2.6 ± 0.1)     |
+| floor    | = floor(2.6 ± 0.1)     |
+| ceil     | = ceil(2.6 ± 0.1)      |
+| sqrt     | = sqrt(4 ± 0.4)        |
+| exp      | = exp(1 ± 0.1)         |
+| ln       | = ln(100 ± 1)          |
+| log10    | = log10(100 ± 1)       |
+| log2     | = log2(8 ± 0.1)        |
+| sin      | = sin(0.5 ± 0.01)      |
+| cos      | = cos(0.5 ± 0.01)      |
+| tan      | = tan(0.5 ± 0.01)      |
+| arcsin   | = arcsin(0.5 ± 0.01)   |
+| arccos   | = arccos(0.5 ± 0.01)   |
+| arctan   | = arctan(0.5 ± 0.01)   |
+| sinh     | = sinh(1 ± 0.1)        |
+| cosh     | = cosh(1 ± 0.1)        |
+| tanh     | = tanh(1 ± 0.1)        |
+| radians  | = radians(180 ± 1)     |
+| degrees  | = degrees(1 ± 0.1)     |
+| re       | = re(3 ± 0.1)          |
+| im       | = im(3 ± 0.1)          |
+| conj     | = conj(3 ± 0.1)        |
+| arg      | = arg(-3 ± 0.1)        |
+| exact    | = sin(0.5)             |
+
+# There are no uncertain complex numbers. Where a calculation gives a
+# Complex from a scientific value, the value becomes a Float, and the app
+# says `uncertain complex not supported` in its bottom bar. Each of these is
+# a Complex in a column of its own sheet, so that none changes the type of the
+# columns above.
+sheet Degraded
+
+| Name              | Value                   |
+| ----------------- | ----------------------- |
+| beside Complex    | = (10 ± 1) + 3i         |
+| Complex of parts  | = Complex(1 ± 0.1, 2)   |
+| made a Complex    | = (1 ± 0.1).Complex     |
+
 sheet Lengths
 
-Length : Uncertain
+Length : Scientific
 
 | Length      |
 | ----------- |
@@ -52,7 +95,7 @@ Length : Uncertain
 # A column can show its values as `value ± uncertainty` instead.
 sheet PlusMinus
 
-Length : Uncertain[±]
+Length : Scientific[±]
 
 | Length    |
 | --------- |

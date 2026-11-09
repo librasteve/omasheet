@@ -164,7 +164,7 @@ fn kind_of(s: S) -> Kind {
         | S::Fraction
         | S::Percent
         | S::Float
-        | S::Uncertain => Kind::Number,
+        | S::Scientific => Kind::Number,
         S::String | S::Url | S::Email | S::Uuid => Kind::Text,
         S::Boolean => Kind::Bool,
         S::Date => Kind::Date,
@@ -256,7 +256,7 @@ impl Writer<'_> {
             | Value::Fraction(_)
             | Value::Percent(_)
             | Value::Float(_)
-            | Value::Uncertain(..) => Kind::Number,
+            | Value::Scientific(..) => Kind::Number,
             Value::String(..) => Kind::Text,
             Value::Boolean(_) => Kind::Bool,
             Value::Date(_) => Kind::Date,
@@ -542,7 +542,7 @@ impl Writer<'_> {
             }
             Lit::Float(_) => return Err(LITERAL),
             Lit::Complex(..) => return Err(COMPLEX),
-            Lit::Uncertain(..) => return Err(UNCERTAIN),
+            Lit::Scientific(..) => return Err(UNCERTAIN),
             Lit::String(s) if s.chars().count() <= LONGEST_TEXT => {
                 Expr::atom(format!("\"{}\"", s.replace('"', "\"\"")), Kind::Text)
             }

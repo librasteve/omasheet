@@ -10,7 +10,7 @@ Source: `coinvent-omasheet-format-chatgpt.md`, cut down with the owner (2026-11-
 |---|--------|----------|-------|
 | D8 | Decided | Uncertainty is in scope | Raised by owner |
 | D90 | Decided | An uncertainty is stored as a non-negative `f64` standard deviation (1σ), beside an `f64` value | Settles Q5. Quadrature needs a square root, which leaves the rationals; uncertainties are estimates, so exactness is not kept. Variance is not stored |
-| D91 | Decided | `Uncertain` is more infectious than `Float`; any operation with an uncertain operand gives an `Uncertain`, and an exact operand counts as σ = 0 | The type lattice gains one rung |
+| D91 | Decided | `Scientific` is more infectious than `Float`; any operation with an uncertain operand gives a `Scientific`, and an exact operand counts as σ = 0 | The type lattice gains one rung |
 | D92 | Decided | Literals are `10 ± 0.1` and the concise `10.5(3)` | Both give the same value. The digits in brackets align with the last digit of the number, and an exponent scales both |
 | D93 | Decided | Independent uncertainties combine in quadrature; operands are always treated as independent | Alternative seen: linear (worst-case) sum. `x - x` is therefore `0 ± √2σ`, a known limitation |
 | D94 | Decided | A function of an uncertain value is propagated to first order: `f(x ± σ) = f(x) ± |f′(x)|·σ`; `x ** y` and two-argument functions use the partial derivatives | Covers every `MathFn`. Close to a domain edge (`ln(0.1 ± 0.5)`) the linear answer is poor; this is documented, not warned about |

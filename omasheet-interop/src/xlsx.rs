@@ -482,7 +482,7 @@ fn shown<'f>(
         }
         Value::Float(f) if f.is_finite() => Shown::Number(*f, None),
         // A workbook has no uncertainty: the value is a plain number.
-        Value::Uncertain(v, s) if v.is_finite() => {
+        Value::Scientific(v, s) if v.is_finite() => {
             if *s != 0.0 {
                 lose(UNCERTAINTY);
             }

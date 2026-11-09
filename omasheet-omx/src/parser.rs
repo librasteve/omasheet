@@ -535,7 +535,7 @@ impl Parser {
             Tok::Percent(r) => lit(Lit::Percent(r)),
             Tok::Float(f) => lit(Lit::Float(f)),
             Tok::Imag(f) => lit(Lit::Complex(0.0, f)),
-            Tok::Uncertain(v, s) => lit(Lit::Uncertain(v, s)),
+            Tok::Scientific(v, s) => lit(Lit::Scientific(v, s)),
             Tok::Str(s) => lit(Lit::String(s)),
             Tok::Text(s) => {
                 return Err(Diagnostic::new(span, "strings in OMX are in single quotes")

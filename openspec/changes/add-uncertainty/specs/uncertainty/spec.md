@@ -181,6 +181,6 @@ An uncertain value SHALL display by default in the concise form: the uncertainty
 - **THEN** it shows as `10`
 
 #### Scenario: Plus-minus format
-- **GIVEN** a column declared `Uncertain[±]` and a stored value of `11` with uncertainty `0.0816…`
+- **GIVEN** a column declared `Scientific[±]` and a stored value of `11` with uncertainty `0.0816…`
 - **WHEN** it is displayed
 - **THEN** it shows as `11.000 ± 0.082`

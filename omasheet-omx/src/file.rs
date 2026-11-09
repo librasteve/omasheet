@@ -300,7 +300,7 @@ fn read_format(text: &str, ty: S, span: Span, diags: &mut Vec<Diagnostic>) -> Op
     let Some(takes) = Format::conversions_of(ty) else {
         diags.push(
             Diagnostic::new(span, format!("{ty} does not take a format")).with_help(
-                "only Integer, Decimal, Float, Uncertain, Date, Time and Datetime take a format",
+                "only Integer, Decimal, Float, Scientific, Date, Time and Datetime take a format",
             ),
         );
         return None;

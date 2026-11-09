@@ -132,7 +132,7 @@ fn xlsx_writes_a_percentage_as_its_number() {
 
 #[test]
 fn xlsx_writes_an_uncertain_value_as_its_value() {
-    let file = "sheet T\n\nLength : Uncertain\n\nLength\n10 ± 0.1\n11.2(4)\n";
+    let file = "sheet T\n\nLength : Scientific\n\nLength\n10 ± 0.1\n11.2(4)\n";
     let out = xlsx::export("t.omx", file, None, options()).unwrap();
     let rows = cells(&out.files[0].bytes, "T");
     // One column, and the values alone.
