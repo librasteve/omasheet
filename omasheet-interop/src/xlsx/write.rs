@@ -163,14 +163,15 @@ fn kind_of(s: S) -> Kind {
         | S::Decimal
         | S::Fraction
         | S::Percent
-        | S::Float => Kind::Number,
+        | S::Float
+        | S::Uncertain => Kind::Number,
         S::String | S::Url | S::Email | S::Uuid => Kind::Text,
         S::Boolean => Kind::Bool,
         S::Date => Kind::Date,
         S::Time => Kind::Time,
         S::Datetime => Kind::Datetime,
         S::Duration => Kind::Duration,
-        S::Uncertain | S::Complex | S::Any => Kind::Unknown,
+        S::Complex | S::Any => Kind::Unknown,
     }
 }
 
@@ -254,7 +255,8 @@ impl Writer<'_> {
             | Value::Decimal(_)
             | Value::Fraction(_)
             | Value::Percent(_)
-            | Value::Float(_) => Kind::Number,
+            | Value::Float(_)
+            | Value::Uncertain(..) => Kind::Number,
             Value::String(..) => Kind::Text,
             Value::Boolean(_) => Kind::Bool,
             Value::Date(_) => Kind::Date,

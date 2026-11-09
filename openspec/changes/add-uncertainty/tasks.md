@@ -20,4 +20,4 @@
 - [x] 4.1 `Uncertain` column type, and its `[±]` display format (`file-format`)
 - [x] 4.2 Uncertainty preserved through group, join and aggregation (`evaluation`)
 - [x] 4.3 Display: `(nn)` by default, `±` by format option
-- [x] 4.4 Value and uncertainty columns on XLSX export (`xlsx-interop`)
+- [x] 4.4 XLSX export writes the value and drops the uncertainty, with a note (`xlsx-interop`)

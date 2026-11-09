@@ -115,7 +115,7 @@ calculated value, so it reads the same before anything works it out again.
 CSV and JSON hold the calculated values alone. Constants are not exported: a
 formula that reads one is written with what the constant is.
 
-A column of `Uncertain` values is written as its values, with a formula for none of them, and a column of its own after the sheet's last for the uncertainties, headed `Length ±` for a column `Length`. Reading the workbook back does not join the pair into one column. A Parquet file writes an `Uncertain` column as text, `10.5 ± 0.3`.
+A workbook has no uncertainty: an `Uncertain` value is written as its value, a plain number, and a note says the uncertainties were dropped. A Parquet file writes an `Uncertain` column as text, `10.5 ± 0.3`.
 
 A sheet becomes a worksheet whose first row is the header, so a column and a
 row become a cell. Each formula is written for the row it is on:

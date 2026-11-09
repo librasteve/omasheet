@@ -9,7 +9,7 @@ Measured values carry an uncertainty, and spreadsheets force users to track it i
 - **uncertainty** — ADDED: the `Uncertain` value, the `±` and `(nn)` literals, first-order propagation through arithmetic, `**` and the math functions, `sum` and `avg`, the `Uncertain` column type, display
 - **file-format** — MODIFIED: a column type may be `Uncertain`, with an optional display format
 - **evaluation** — MODIFIED: sheet operations preserve uncertainties
-- **xlsx-interop** — ADDED: lossy mapping of uncertainty on export
+- **xlsx-interop** — ADDED: an uncertain value is exported as its value, the uncertainty dropped
 
 ## Impact
 

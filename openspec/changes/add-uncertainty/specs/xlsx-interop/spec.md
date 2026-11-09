@@ -4,9 +4,9 @@ How uncertain values are exported to XLSX.
 
 ## ADDED Requirements
 
-### Requirement: Lossy mapping of uncertainty
-A column of uncertain values SHALL be exported as two columns: the values, in place, with no formulas, and the uncertainties in a column of its own after the last column of the sheet, headed with the column's name and ` ±`, so that no formula's reference moves. Import SHALL NOT read the pair back as one uncertain column.
+### Requirement: Uncertainty is dropped
+An uncertain value SHALL be exported as its value, a plain number, and its uncertainty SHALL be dropped, with a note naming the column. Import has no uncertain values to read.
 
 #### Scenario: Uncertain column
 - **WHEN** a column `Length : Uncertain` with a cell `10 ± 0.1` is exported
-- **THEN** the worksheet has a column `Length` containing `10` and, after its last column, `Length ±` containing `0.1`
+- **THEN** the worksheet has the one column `Length` containing `10`, and the notes say that uncertainties were dropped
