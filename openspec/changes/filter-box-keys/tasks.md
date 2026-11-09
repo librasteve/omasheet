@@ -19,4 +19,4 @@
 
 ## 4. Docs and verify
 - [x] 4.1 `docs/app.md`: the Sorting and filtering section and the Keys table
-- [ ] 4.2 Run the app by hand: open with the shortcut, type, Enter, look, Enter, and the popup is closed with the filter in force (the QML loads clean offscreen; the keys are not yet exercised)
+- [x] 4.2 Run the app by hand: open with the shortcut, type, Enter, look, Enter, and the popup is closed with the filter in force (the QML loads clean offscreen; the keys are not yet exercised)

@@ -154,6 +154,14 @@ lists the functions.
 A filter is a view and nothing more: the file, a save and an export still
 hold every row. It is forgotten with the file.
 
+### Seeing what a formula reads
+
+Press F2 on a cell holding a formula, or type one, and each thing it reads is lit: the reference in the text, `[Revenue; *-1]`, `Sales.Cost`, or a column's name alone, is marked in a colour, and the cell or column it names is outlined in the same colour on the grid. Press on a lit cell and drag to move that reference: it keeps its shape, one cell or a range, and is rewritten in the formula where it stands, so the cells it left are no longer lit. Ctrl or Alt on the press adds another reference instead, as before. Clicking another cell with the caret inside a written reference replaces it. The colours go in the order the references are written, and follow the text as it is changed; they go when the edit ends, and nothing is written to the file. A column's formula, written in the box at the top, is lit too, for the row the cursor is in. A reference to another sheet is lit in the text, and that sheet's tab is marked in the same colour.
+
+### Moving columns
+
+Click a column's header to select it, then drag the header to move it: a mark shows where it will land, and the drop is one step to undo. Select several columns first (drag along the headers, or Shift-click) and drag one of them to move them together. Dragging from a header that is not selected selects along the headers instead. The circle at the right of a header opens its popup instead, and does not drag.
+
 ### Two sheets side by side
 
 1. Open the file and go to the first sheet.

@@ -909,17 +909,26 @@ ApplicationWindow {
         stopPicking();
     }
 
+    // The colours of the references in a formula being edited, in the order
+    // they are written, one each and then round again (gui-precedents).
+    readonly property var refPalette: ["#e5484d", "#3e63dd", "#30a46c", "#f76b15", "#8e4ec6", "#12a594"]
+
     // The cells the formula being typed refers to, highlighted until the
     // reference is taken out of the text or the edit is done:
-    // `[{top, left, bottom, right}]`.
+    // `[{top, left, bottom, right, start, end, color}]`, `start` and `end`
+    // being where the reference is in the text.
     readonly property var refBoxes: (editing || formulaField.activeFocus) && !sheet.isConsts
-        ? refsIn(formulaField.text, curRow, curCol) : []
+        ? refsIn(formulaField.text, curRow, curCol, formulaIsColumn) : []
+    // The box holds a column's formula, or a calculated sheet's, which is
+    // written with no `=`, and is read for references all the same.
+    readonly property bool formulaIsColumn: !editing && formulaField.activeFocus
+        && (!!sheet.view || (!!sheet.columns[curCol] && !!sheet.columns[curCol].computed))
 
     // The blocks of this sheet that `[cols; rows]` references in `text`
     // name, as seen from the cell at `(row, col)`.
-    function refsIn(text, row, col) {
+    function refsIn(text, row, col, bare) {
         var boxes = [];
-        if (text.trim().charAt(0) !== "=")
+        if (!bare && text.trim().charAt(0) !== "=")
             return boxes;
         var nRows = sheet.nrows, nCols = sheet.columns.length;
         // One end of a span: `*`, `*+n`, `*-n`, a position, `-n` from the
@@ -957,28 +966,152 @@ ApplicationWindow {
                 return null;
             return [Math.max(0, Math.min(a, b)), Math.min(n - 1, Math.max(a, b))];
         };
+        // Quoted text is not a reference: blank it, keeping the places.
+        var code = text.replace(/'(?:\\.|[^'\\])*'/g, function(q) { return " ".repeat(q.length); });
+        var add = function(top, left, bottom, right, m, grab) {
+            boxes.push({ top: top, left: left, bottom: bottom, right: right,
+                start: m.index, end: m.index + m[0].length, grab: !!grab,
+                absolute: !!grab && !/\*/.test(m[3]),
+                color: refPalette[boxes.length % refPalette.length] });
+        };
         var re = /([A-Za-z_][A-Za-z0-9_]*)?\[([^\[\];]*);([^\[\]]*)\]/g;
         var m;
-        while ((m = re.exec(text)) !== null) {
+        while ((m = re.exec(code)) !== null) {
             // Another sheet's cells are not on this one.
             if (m[1] && m[1] !== sheet.name)
                 continue;
             var c = span(m[2], col, nCols, sheet.columns);
             var r = span(m[3], row, nRows, null);
             if (c && r && c[0] <= c[1] && r[0] <= r[1])
-                boxes.push({ top: r[0], left: c[0], bottom: r[1], right: c[1] });
+                add(r[0], c[0], r[1], c[1], m, true);
         }
+        // This sheet's whole column, `Sales.Revenue`, and a column's name
+        // alone, which is this row's cell in it.
+        for (var i = 0; i < sheet.columns.length; i++) {
+            var name = sheet.columns[i].name;
+            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+                continue;
+            var whole = new RegExp("(?:^|[^A-Za-z0-9_.])" + sheet.name + "\\." + name + "(?![A-Za-z0-9_(\\[])", "g");
+            while ((m = whole.exec(code)) !== null) {
+                var lead = m[0].length - (sheet.name.length + 1 + name.length);
+                add(0, i, nRows - 1, i, { index: m.index + lead, 0: m[0].slice(lead) });
+            }
+            var bare = new RegExp("(?:^|[^A-Za-z0-9_.\\[])" + name + "(?![A-Za-z0-9_.(\\[])", "g");
+            while ((m = bare.exec(code)) !== null) {
+                var at = m.index + m[0].length - name.length;
+                add(row, i, row, i, { index: at, 0: name });
+            }
+        }
+        // Another sheet's cells are not on this grid: its tab is marked in
+        // the reference's colour instead.
+        for (var t = 0; t < tabs.length; t++) {
+            var other = tabs[t].name;
+            if (tabs[t].isConsts || other === sheet.name || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(other))
+                continue;
+            var there = new RegExp("(?:^|[^A-Za-z0-9_.])(" + other + "(?:\\.[A-Za-z_][A-Za-z0-9_]*(?![A-Za-z0-9_(\\[])|\\[[^\\[\\];]*;[^\\[\\]]*\\]))", "g");
+            while ((m = there.exec(code)) !== null) {
+                var from = m.index + m[0].length - m[1].length;
+                boxes.push({ sheet: other, top: -1, left: -1, bottom: -1, right: -1,
+                    start: from, end: from + m[1].length, color: "" });
+            }
+        }
+        boxes.sort(function(a, b) { return a.start - b.start; });
+        for (var k = 0; k < boxes.length; k++)
+            boxes[k].color = refPalette[k % refPalette.length];
         return boxes;
     }
 
-    function inRefs(row, col) {
+    // The reference, written `[cols; rows]`, that the cell is in, if the
+    // formula being edited has one: the one to grab and move.
+    function refBoxAt(row, col) {
         var boxes = refBoxes;
         for (var i = 0; i < boxes.length; i++) {
             var b = boxes[i];
-            if (row >= b.top && row <= b.bottom && col >= b.left && col <= b.right)
-                return true;
+            if (b.grab && row >= b.top && row <= b.bottom && col >= b.left && col <= b.right)
+                return b;
         }
-        return false;
+        return null;
+    }
+    // A reference taken hold of by its cells, to be moved by the mouse:
+    // `{box, row, col}`, the cell it was taken at; or null.
+    property var refGrab: null
+    function grabRef(row, col, box) {
+        refGrab = { box: box, row: row, col: col };
+        pickAbsolute = box.absolute;
+        pickAt = box.start;
+        pickLen = box.end - box.start;
+        pickRow = row;
+        pickCol = col;
+        editor.forceActiveFocus();
+    }
+    // Move the grabbed reference so that it keeps its shape and the cell
+    // it was taken at is now at `(row, col)`. The old cells are not kept: the
+    // reference is rewritten where it stands, and so is the colour.
+    function moveRef(row, col) {
+        var g = refGrab, b = g.box;
+        var dr = row - g.row, dc = col - g.col;
+        if (b.top + dr < 0 || b.bottom + dr > sheet.nrows - 1
+                || b.left + dc < 0 || b.right + dc > sheet.columns.length - 1)
+            return;
+        editor.remove(pickAt, pickAt + pickLen);
+        var ref = refForRange(b.top + dr, b.left + dc, b.bottom + dr, b.right + dc, pickAbsolute);
+        editor.insert(pickAt, ref);
+        pickLen = ref.length;
+        editor.cursorPosition = pickAt + ref.length;
+        pickRow = row;
+        pickCol = col;
+    }
+
+    // The colour of the first reference to the cell, or "".
+    function refColorAt(row, col) {
+        var boxes = refBoxes;
+        for (var i = 0; i < boxes.length; i++) {
+            var b = boxes[i];
+            if (!b.sheet && row >= b.top && row <= b.bottom && col >= b.left && col <= b.right)
+                return b.color;
+        }
+        return "";
+    }
+    // The colour of the first reference to the sheet called `name`, or "".
+    function refColorOfSheet(name) {
+        var boxes = refBoxes;
+        for (var i = 0; i < boxes.length; i++) {
+            if (boxes[i].sheet === name)
+                return boxes[i].color;
+        }
+        return "";
+    }
+
+    // Marks under the references in a formula's text, each in the colour
+    // its cells have on the grid. Put in a text control as a child.
+    component RefMarks: Item {
+        id: marks
+        required property var edit
+        anchors.fill: parent
+        Repeater {
+            model: win.refBoxes
+            Item {
+                required property var modelData
+                readonly property rect a: marks.edit.positionToRectangle(modelData.start)
+                readonly property rect b: marks.edit.positionToRectangle(modelData.end)
+                visible: a.y === b.y && b.x > a.x
+                x: a.x
+                y: a.y
+                width: b.x - a.x
+                height: a.height
+                Rectangle {
+                    anchors.fill: parent
+                    color: modelData.color
+                    opacity: 0.22
+                }
+                Rectangle {
+                    anchors.bottom: parent.bottom
+                    width: parent.width
+                    height: 2
+                    color: modelData.color
+                }
+            }
+        }
     }
 
     // The box at the top shows what is typed in a cell as it is typed, and
@@ -1096,6 +1229,18 @@ ApplicationWindow {
     function pickPress(row, col, absolute, more) {
         if (!canPick() || !sheet.columns[col])
             return;
+        // The caret inside a reference written already: the cell clicked
+        // takes its place, and the old one is gone.
+        if (!more && editor.selectionStart === editor.selectionEnd) {
+            var pos = editor.selectionStart, boxes = refBoxes;
+            for (var i = 0; i < boxes.length; i++) {
+                if (boxes[i].grab && pos > boxes[i].start && pos < boxes[i].end) {
+                    editor.remove(boxes[i].start, boxes[i].end);
+                    editor.cursorPosition = boxes[i].start;
+                    break;
+                }
+            }
+        }
         var at = editor.selectionStart;
         editor.remove(at, editor.selectionEnd);
         // Straight after another reference, it is one more in a list too.
@@ -1117,6 +1262,11 @@ ApplicationWindow {
     function pickDrag(row, col) {
         if (pickAt < 0 || !editor)
             return;
+        if (refGrab) {
+            moveRef(Math.max(0, Math.min(sheet.nrows - 1, row)),
+                    Math.max(0, Math.min(sheet.columns.length - 1, col)));
+            return;
+        }
         row = Math.max(0, Math.min(sheet.nrows - 1, row));
         col = Math.max(0, Math.min(sheet.columns.length - 1, col));
         editor.remove(pickAt, pickAt + pickLen);
@@ -1182,6 +1332,7 @@ ApplicationWindow {
     // End a keyboard pick under way, so that the next arrow pressed starts
     // a fresh one from the edited cell rather than carrying on from here.
     function stopPicking() {
+        refGrab = null;
         pickRow = -1;
         pickCol = -1;
         pickFromRow = -1;
@@ -1644,6 +1795,59 @@ ApplicationWindow {
         else
             clearSelection();
         cutHold.grab = grabbed;
+    }
+
+    // A column dragged by its header (gui-precedents): the columns taken,
+    // `{first, count, gap}`, `gap` being the place between columns it would
+    // land in, 0 to the number of columns; or null.
+    property var colDrag: null
+    function beginColumnDrag(i) {
+        var several = selKind === "column" && i >= selLeft && i <= selRight;
+        var first = several ? selLeft : i;
+        var count = several ? selRight - selLeft + 1 : 1;
+        commitEditing();
+        colDrag = { first: first, count: count, gap: first };
+    }
+    // `x` is the pointer's place along the header row, gutter included: the
+    // gap is the one nearest, the middle of a column being where it changes.
+    function hoverColumnDrag(x) {
+        if (!colDrag)
+            return;
+        var edge = gutterWidth, gap = sheet.columns.length;
+        for (var c = 0; c < sheet.columns.length; c++) {
+            var w = colWidths[c] || 0;
+            if (x < edge + w / 2) {
+                gap = c;
+                break;
+            }
+            edge += w;
+        }
+        colDrag = { first: colDrag.first, count: colDrag.count, gap: gap };
+    }
+    // Where the landing mark stands: the left edge of the gap.
+    function gapX(gap) {
+        var x = gutterWidth;
+        for (var c = 0; c < gap; c++)
+            x += colWidths[c] || 0;
+        return x;
+    }
+    function dropColumns() {
+        var d = colDrag;
+        colDrag = null;
+        if (!d || (d.gap >= d.first && d.gap <= d.first + d.count))
+            return;
+        var to = d.gap < d.first ? d.gap : d.gap - d.count;
+        var problem = file.moveColumns(tab, d.first, d.count, to);
+        if (problem.length > 0) {
+            notice = problem;
+            return;
+        }
+        anchorRow = Math.max(0, sheet.nrows - 1);
+        anchorCol = to + d.count - 1;
+        curRow = 0;
+        curCol = to;
+        byRow = false;
+        byCol = true;
     }
 
     // Put what was cut down where the selection is. It lands on the selected
@@ -2770,6 +2974,7 @@ ApplicationWindow {
                             readOnly: locked || (!cell && !win.sheet.view)
                             // Shown too while a cell is edited, where its cursor is there.
                             cursorVisible: activeFocus || win.editing
+                            RefMarks { edit: formulaField }
                             placeholderText: cell || win.sheet.view || win.selKind !== "cells"
                                 ? "" : "No cell selected"
                             background: Item {}
@@ -2988,9 +3193,21 @@ ApplicationWindow {
                 visible: win.tabs.length > 0
                 ScrollBar.horizontal: hbar
 
+                // Where a dragged column would land.
+                Rectangle {
+                    parent: hflick.contentItem
+                    visible: win.colDrag !== null
+                    x: win.colDrag ? win.gapX(win.colDrag.gap) - 1 : 0
+                    y: 0
+                    width: 2
+                    height: win.headerHeight
+                    color: win.accentColor
+                    z: 5
+                }
                 Column {
                     // Column headers: name over type.
                     Row {
+                        id: headRow
                         height: win.headerHeight
                         // The corner: the whole sheet.
                         Rectangle {
@@ -3170,11 +3387,14 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                    onPressed: function(mouse) {
-                                        if (mouse.button === Qt.RightButton) {
-                                            win.openMenu(-1, headCell.index);
-                                            return;
-                                        }
+                                    // A press on a header that is already selected takes the
+                                    // selected columns up to be moved, if it goes on to a
+                                    // drag; a click on it selects that column alone, as
+                                    // anywhere else. A press elsewhere selects, and a drag
+                                    // from it selects along the headers.
+                                    property bool moving: false
+                                    property real pressX: 0
+                                    function selectHere(mouse) {
                                         // Select the whole column.
                                         win.commitEditing();
                                         win.byRow = false;
@@ -3185,11 +3405,44 @@ ApplicationWindow {
                                         win.curRow = 0;
                                         win.curCol = headCell.index;
                                     }
+                                    onPressed: function(mouse) {
+                                        if (mouse.button === Qt.RightButton) {
+                                            win.openMenu(-1, headCell.index);
+                                            return;
+                                        }
+                                        pressX = mouse.x;
+                                        moving = win.selKind === "column" && !(mouse.modifiers & Qt.ShiftModifier)
+                                            && headCell.index >= win.selLeft && headCell.index <= win.selRight
+                                            && !win.sheet.isConsts && win.sheet.columns.length > 1;
+                                        if (!moving)
+                                            selectHere(mouse);
+                                    }
+                                    onReleased: function(mouse) {
+                                        if (win.colDrag)
+                                            win.dropColumns();
+                                        else if (moving)
+                                            selectHere(mouse);
+                                        moving = false;
+                                    }
+                                    onCanceled: {
+                                        win.colDrag = null;
+                                        moving = false;
+                                    }
                                     preventStealing: true
-                                    // Drag along the headers for several columns.
+                                    // Drag along the headers for several columns, or move
+                                    // the selected ones.
                                     onPositionChanged: function(mouse) {
                                         if (!(pressedButtons & Qt.LeftButton))
                                             return;
+                                        if (moving) {
+                                            if (!win.colDrag) {
+                                                if (Math.abs(mouse.x - pressX) < 5)
+                                                    return;
+                                                win.beginColumnDrag(headCell.index);
+                                            }
+                                            win.hoverColumnDrag(mapToItem(headRow, mouse.x, 0).x);
+                                            return;
+                                        }
                                         var x = mapToItem(rowsView, mouse.x, mouse.y).x - win.gutterWidth;
                                         var c = 0;
                                         while (c < win.colWidths.length - 1 && x > win.colWidths[c]) {
@@ -3398,7 +3651,8 @@ ApplicationWindow {
                                     // Where the arrows are pointing a formula reference.
                                     readonly property bool picked: row === win.pickRow && index === win.pickCol
                                     // Referred to by the formula being typed.
-                                    readonly property bool inPick: win.refBoxes.length > 0 && win.inRefs(row, index)
+                                    readonly property color pickColor: (win.refBoxes.length > 0 && win.refColorAt(row, index)) || "transparent"
+                                    readonly property bool inPick: win.refBoxes.length > 0 && win.refColorAt(row, index) !== ""
                                     width: win.colWidths[index] || 0
                                     height: win.rowHeight
                                     // A cell opened out to its lines is drawn
@@ -3515,7 +3769,9 @@ ApplicationWindow {
                                     Rectangle {
                                         anchors.fill: parent
                                         visible: cellItem.inPick
-                                        color: Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.16)
+                                        color: Qt.rgba(cellItem.pickColor.r, cellItem.pickColor.g, cellItem.pickColor.b, 0.22)
+                                        border.width: 2
+                                        border.color: cellItem.pickColor
                                     }
                                     Rectangle {
                                         anchors.fill: parent
@@ -3562,6 +3818,15 @@ ApplicationWindow {
                                             // a drag a range, and Ctrl adds one more to a list.
                                             picking = win.canPick();
                                             if (picking) {
+                                                // On a cell a reference already reads, the press
+                                                // takes hold of that reference to move it; Ctrl
+                                                // or Alt asks for another one.
+                                                var held = (mouse.modifiers & (Qt.ControlModifier | Qt.AltModifier)) === 0
+                                                    ? win.refBoxAt(cellItem.row, cellItem.index) : null;
+                                                if (held) {
+                                                    win.grabRef(cellItem.row, cellItem.index, held);
+                                                    return;
+                                                }
                                                 win.pickPress(cellItem.row, cellItem.index,
                                                     (mouse.modifiers & Qt.AltModifier) !== 0,
                                                     (mouse.modifiers & Qt.ControlModifier) !== 0);
@@ -3627,6 +3892,8 @@ ApplicationWindow {
                                             verticalAlignment: TextEdit.AlignVCenter
                                             wrapMode: TextEdit.NoWrap
                                             selectByMouse: true
+                                            id: cellEdit
+                                            RefMarks { edit: cellEdit }
                                             background: Rectangle {
                                                 color: win.pageColor
                                                 border.width: 2
@@ -4026,6 +4293,17 @@ ApplicationWindow {
                                 MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; anchors.bottom: parent.bottom; width: parent.width; height: 1 }
                                 MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; width: 1; height: parent.height }
                                 MarkEdge { visible: tabButton.marked; dashed: win.sheetMark !== null && win.sheetMark.cut; anchors.right: parent.right; width: 1; height: parent.height }
+                                // Read by the formula being edited, in its colour.
+                                readonly property string readColor: win.refBoxes.length > 0
+                                    ? win.refColorOfSheet(win.tabs[index].name) : ""
+                                Rectangle {
+                                    visible: tabButton.readColor !== ""
+                                    anchors.bottom: parent.bottom
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    height: 3
+                                    color: tabButton.readColor || "transparent"
+                                }
                                 onClicked: {
                                     win.viewSource(false);
                                     win.switchTab(index);
