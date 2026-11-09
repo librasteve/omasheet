@@ -29,6 +29,10 @@ pub enum S {
     /// holds whatever a `Decimal` does.
     Percent,
     Float,
+    /// A number with a measurement uncertainty, `10.5(3)` or `10.5 ± 0.3`: a
+    /// value and a standard deviation, each a `Float`. Above `Float` in the
+    /// lattice.
+    Uncertain,
     /// A real and an imaginary part, each a `Float`: `3+4i`. Above `Float`
     /// in the lattice, with no order; stored in Parquet as a struct of two
     /// `Float64`s, `re` and `im`.
@@ -66,6 +70,7 @@ impl S {
             "Fraction" => S::Fraction,
             "Percent" => S::Percent,
             "Float" => S::Float,
+            "Uncertain" => S::Uncertain,
             "Complex" => S::Complex,
             "String" => S::String,
             "Date" => S::Date,
@@ -92,6 +97,7 @@ impl S {
                 | S::Fraction
                 | S::Percent
                 | S::Float
+                | S::Uncertain
                 | S::Complex
         )
     }
@@ -139,8 +145,9 @@ impl S {
         match self {
             S::Int | S::Hex | S::Octal | S::Binary | S::Decimal | S::Fraction | S::Percent => 0,
             S::Float => 1,
-            S::Complex => 2,
-            _ => 3,
+            S::Uncertain => 2,
+            S::Complex => 3,
+            _ => 4,
         }
     }
 
@@ -185,7 +192,7 @@ impl S {
     /// Whether the conversion named `to` takes a value of type `self`. Text
     /// is read as whatever is asked for, and anything can be written as text.
     pub fn converts_to(self, to: S) -> bool {
-        let number = self.is_exact() || matches!(self, S::Float | S::Complex);
+        let number = self.is_exact() || matches!(self, S::Float | S::Uncertain | S::Complex);
         self == to
             || self == S::Any
             || self.is_text()
@@ -200,6 +207,7 @@ impl S {
                 | S::Decimal
                 | S::Fraction
                 | S::Float
+                | S::Uncertain
                 | S::Complex => number || self == S::Boolean,
                 S::Percent | S::Boolean => number,
                 S::Date | S::Time => self == S::Datetime,
@@ -235,6 +243,7 @@ impl fmt::Display for S {
             S::Fraction => "Fraction",
             S::Percent => "Percent",
             S::Float => "Float",
+            S::Uncertain => "Uncertain",
             S::Complex => "Complex",
             S::String => "String",
             S::Boolean => "Boolean",

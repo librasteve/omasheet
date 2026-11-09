@@ -38,6 +38,9 @@ pub enum Value {
     /// whole, `100%`.
     Percent(Dec),
     Float(f64),
+    /// A value and its standard deviation, each a `Float`: `10.5(3)`,
+    /// `10.5 ± 0.3`.
+    Uncertain(f64, f64),
     /// A real and an imaginary part, each a `Float`: `3+4i`.
     Complex(f64, f64),
     /// Text, and whether it was written bare in a cell, to be read as
@@ -155,6 +158,7 @@ impl Value {
             Lit::Fraction(r) => Value::Fraction(*r),
             Lit::Percent(r) => Value::Percent(*r),
             Lit::Float(f) => Value::Float(*f),
+            Lit::Uncertain(v, s) => Value::Uncertain(*v, *s),
             Lit::Complex(re, im) => Value::Complex(*re, *im),
             Lit::String(s) => Value::text(s),
             Lit::Boolean(b) => Value::Boolean(*b),
@@ -180,6 +184,7 @@ impl Value {
             Value::Fraction(_) => "Fraction",
             Value::Percent(_) => "Percent",
             Value::Float(_) => "Float",
+            Value::Uncertain(..) => "Uncertain",
             Value::Complex(..) => "Complex",
             Value::String(..) => "String",
             Value::Boolean(_) => "Boolean",
@@ -202,6 +207,7 @@ impl Value {
                 | Value::Fraction(_)
                 | Value::Percent(_)
                 | Value::Float(_)
+                | Value::Uncertain(..)
                 | Value::Complex(..)
         )
     }
@@ -215,6 +221,7 @@ impl Value {
             Value::Fraction(r) => Lit::Fraction(*r),
             Value::Percent(r) => Lit::Percent(*r),
             Value::Float(f) => Lit::Float(*f),
+            Value::Uncertain(v, s) => Lit::Uncertain(*v, *s),
             Value::Complex(re, im) => Lit::Complex(*re, *im),
             Value::String(s, _) => Lit::String(s.to_string()),
             Value::Boolean(b) => Lit::Boolean(*b),
@@ -249,6 +256,11 @@ impl Value {
         if to == S::Fraction {
             return Ok(self.converted(S::Decimal)?.fraction());
         }
+        // There is no uncertain complex number: it is the value alone.
+        if let (Value::Uncertain(v, _), S::Complex) = (self, to) {
+            mark_degraded();
+            return Ok(Value::Complex(*v, 0.0));
+        }
         let Some(lit) = self.to_lit() else {
             return Err(format!("{} cannot be made a `{to}`", self.kind()));
         };
@@ -269,7 +281,28 @@ impl Value {
 enum N {
     Exact(Dec),
     Float(f64),
+    Uncertain(f64, f64),
     Complex(f64, f64),
+}
+
+/// What an uncertain value degrades from, when a calculation may give a
+/// `Complex`: the message shown in the bottom bar.
+pub const UNCERTAIN_COMPLEX: &str = "uncertain complex not supported";
+
+thread_local! {
+    static DEGRADED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether an uncertain value degraded to a `Float` since this was last
+/// asked, and so the message [`UNCERTAIN_COMPLEX`] is to be shown. Asking
+/// clears it.
+pub fn take_degraded() -> bool {
+    DEGRADED.with(|d| d.replace(false))
+}
+
+/// Note that an uncertain value degraded to a `Float`; see [`take_degraded`].
+pub fn mark_degraded() {
+    DEGRADED.with(|d| d.set(true));
 }
 
 fn number(v: &Value) -> Option<N> {
@@ -277,9 +310,77 @@ fn number(v: &Value) -> Option<N> {
         Value::Int(n, _) => N::Exact(Dec::from_i64(*n)),
         Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => N::Exact(*r),
         Value::Float(f) => N::Float(*f),
+        Value::Uncertain(v, s) => N::Uncertain(*v, *s),
         Value::Complex(re, im) => N::Complex(*re, *im),
         _ => return None,
     })
+}
+
+/// A number's value and its uncertainty, which is zero for one that has
+/// none; `None` for a `Complex`.
+fn with_sigma(n: &N) -> Option<(f64, f64)> {
+    Some(match n {
+        N::Uncertain(v, s) => (*v, *s),
+        N::Complex(..) => return None,
+        other => (real(other), 0.0),
+    })
+}
+
+/// `+ - * / % **` of two values that carry an uncertainty, to first order
+/// and with the two independent (D93, D94).
+fn uncertain_arith(op: BinOp, (x, sx): (f64, f64), (y, sy): (f64, f64)) -> Value {
+    // A term that is zero because its uncertainty is, whatever the slope.
+    let term = |slope: f64, s: f64| if s == 0.0 { 0.0 } else { slope * s };
+    let (value, sigma) = match op {
+        BinOp::Add => (x + y, sx.hypot(sy)),
+        BinOp::Sub => (x - y, sx.hypot(sy)),
+        BinOp::Mul => (x * y, term(y, sx).hypot(term(x, sy))),
+        BinOp::Div => (x / y, term(1.0 / y, sx).hypot(term(-x / (y * y), sy))),
+        BinOp::Rem => {
+            let q = (x / y).floor();
+            (x - q * y, sx.hypot(term(q, sy)))
+        }
+        _ => {
+            let value = x.powf(y);
+            let wrt_x = term(y * x.powf(y - 1.0), sx);
+            let wrt_y = term(value * x.ln(), sy);
+            (value, wrt_x.hypot(wrt_y))
+        }
+    };
+    Value::Uncertain(value, sigma)
+}
+
+/// `value ± uncertainty`. Both sides are real numbers, and the uncertainty
+/// is not negative.
+pub fn plus_minus(a: &Value, b: &Value) -> Result<Value, String> {
+    if matches!(a, Value::Null) || matches!(b, Value::Null) {
+        return Ok(Value::Null);
+    }
+    let real_of = |v: &Value| match number(v) {
+        Some(n @ (N::Exact(_) | N::Float(_))) => Some(real(&n)),
+        _ => None,
+    };
+    let (Some(value), Some(sigma)) = (real_of(a), real_of(b)) else {
+        return Err(format!(
+            "`±` needs real numbers on both sides, found {} and {}",
+            a.kind(),
+            b.kind()
+        ));
+    };
+    if sigma < 0.0 {
+        return Err("the uncertainty after `±` cannot be negative".to_string());
+    }
+    Ok(Value::Uncertain(value, sigma))
+}
+
+/// A function of an uncertain value, to first order (D94).
+fn uncertain_math(m: MathFn, v: f64, s: f64) -> Value {
+    let sigma = if s == 0.0 {
+        0.0
+    } else {
+        (m.slope(v) * s).abs()
+    };
+    Value::Uncertain(m.apply(v), sigma)
 }
 
 pub fn to_f64(r: &Dec) -> f64 {
@@ -290,6 +391,7 @@ fn real(n: &N) -> f64 {
     match n {
         N::Exact(r) => r.to_f64(),
         N::Float(f) => *f,
+        N::Uncertain(v, _) => *v,
         N::Complex(re, _) => *re,
     }
 }
@@ -362,7 +464,7 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     if let Some(scaled) = scale(op, a, b) {
         return scaled;
     }
-    let (Some(x), Some(y)) = (number(a), number(b)) else {
+    let (Some(mut x), Some(mut y)) = (number(a), number(b)) else {
         return Err(format!(
             "cannot apply `{}` to {} and {}",
             op.symbol(),
@@ -370,6 +472,16 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
             b.kind()
         ));
     };
+    // An uncertain value beside a `Complex` is a `Float`: there is no
+    // uncertain complex number, and the bottom bar says so.
+    if matches!(x, N::Complex(..)) || matches!(y, N::Complex(..)) {
+        for n in [&mut x, &mut y] {
+            if let N::Uncertain(v, _) = *n {
+                *n = N::Float(v);
+                mark_degraded();
+            }
+        }
+    }
     // Whole numbers of one base give that base, but for a quotient, which
     // need not be whole; any other mix gives a decimal `Int`.
     let base = match (a, b) {
@@ -390,6 +502,10 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
                 v => v,
             },
         }),
+        (N::Uncertain(..), _) | (_, N::Uncertain(..)) => match (with_sigma(&x), with_sigma(&y)) {
+            (Some(p), Some(q)) => Ok(uncertain_arith(op, p, q)),
+            _ => Err("uncertain complex not supported".to_string()),
+        },
         (N::Complex(..), _) | (_, N::Complex(..)) => {
             let ((a, b), (c, d)) = (complex(&x), complex(&y));
             let (re, im) = match op {
@@ -593,6 +709,15 @@ fn scale(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
             let fits = out.is_finite() && out.abs() < i64::MAX as f64;
             fits.then(|| out.round() as i64)
         }
+        N::Uncertain(f, _) => {
+            let out = if op == BinOp::Div {
+                us as f64 / f
+            } else {
+                us as f64 * f
+            };
+            let fits = out.is_finite() && out.abs() < i64::MAX as f64;
+            fits.then(|| out.round() as i64)
+        }
         N::Complex(..) => return Some(Err("a duration cannot be scaled by a Complex".to_string())),
     };
     Some(
@@ -700,6 +825,7 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
         (Value::Decimal(_) | Value::Fraction(_), MathFn::Re | MathFn::Conj) => {
             return Ok(v.clone());
         }
+        (Value::Uncertain(v, s), _) => return Ok(uncertain_math(m, *v, *s)),
         (Value::Complex(re, im), _) => return complex_math(m, *re, *im),
         (Value::Int(n, b), MathFn::Abs) => {
             return n
@@ -783,6 +909,10 @@ pub fn round_digits(x: &Value, places: i64) -> Result<Value, String> {
         Value::Float(f) => {
             let factor = 10f64.powi(places.min(17));
             Value::Float((f * factor).round() / factor)
+        }
+        Value::Uncertain(v, s) => {
+            let factor = 10f64.powi(places.min(17));
+            Value::Uncertain((v * factor).round() / factor, *s)
         }
         other => return Err(format!("cannot round {}", other.kind())),
     })
@@ -1133,6 +1263,72 @@ fn format_complex(re: f64, im: f64, exact: bool, sep: Option<char>) -> String {
     format!("{re_sign}{re_text}{plus}{im_text}{i}")
 }
 
+/// `x` rounded to a multiple of `10^place`, and the same for `s`.
+fn round_to(x: f64, place: i32) -> f64 {
+    if place <= 0 {
+        let k = 10f64.powi(-place);
+        (x * k).round() / k
+    } else {
+        let k = 10f64.powi(place);
+        (x / k).round() * k
+    }
+}
+
+/// An uncertain value in the concise form of the physical tables,
+/// `7.2973525643(11)e-3`: the uncertainty to two significant digits, in
+/// brackets after the value cut at the same place. With `plus_minus`, as
+/// `11.000 ± 0.082`. A value with no uncertainty is a plain number, and a
+/// value or uncertainty that is not finite is shown as it is (D96).
+pub fn format_uncertain(v: f64, s: f64, plus_minus: bool, sep: Option<char>) -> String {
+    if s == 0.0 {
+        return shown_float(v, false, sep);
+    }
+    if !v.is_finite() || !s.is_finite() {
+        return format!(
+            "{} ± {}",
+            shown_float(v, false, sep),
+            shown_float(s, false, sep)
+        );
+    }
+    let s = s.abs();
+    // Two significant digits of the uncertainty, and the place of the last.
+    let mut place = s.log10().floor() as i32 - 1;
+    let mut digits = (s / 10f64.powi(place)).round();
+    if digits >= 100.0 {
+        digits /= 10.0;
+        place += 1;
+    }
+    let digits = digits as i64;
+    let magnitude = if v == 0.0 {
+        s.log10().floor() as i32
+    } else {
+        v.abs().log10().floor() as i32
+    };
+    // Plain where the last digit is a decimal place and the number is of a
+    // size to read; otherwise a mantissa and an exponent.
+    let plain = place <= 0 && (-2..15).contains(&magnitude);
+    let exponent = if plain { 0 } else { magnitude };
+    let unit = 10f64.powi(exponent);
+    let (mantissa, error) = (v / unit, s / unit);
+    let decimals = (exponent - place).max(0) as usize;
+    let mantissa = round_to(mantissa, place - exponent);
+    let e = if plain {
+        String::new()
+    } else {
+        format!("e{exponent}")
+    };
+    if plus_minus {
+        let error = round_to(error, place - exponent);
+        if plain {
+            format!("{mantissa:.decimals$} ± {error:.decimals$}")
+        } else {
+            format!("({mantissa:.decimals$} ± {error:.decimals$}){e}")
+        }
+    } else {
+        format!("{mantissa:.decimals$}({digits}){e}")
+    }
+}
+
 /// A single value as text, the way a file shows it. `quoted` puts text in
 /// quotes, as inside a vector.
 pub fn format_scalar(v: &Value, quoted: bool) -> String {
@@ -1230,6 +1426,11 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
         Value::Percent(r) => localised(shown_percent(r, false, group(style)), style),
         Value::Float(f) if exact => format_float(*f, true),
         Value::Float(f) => localised(shown_float(*f, false, group(style)), style),
+        // In full, a file writes both parts: `10.5 ± 0.3`.
+        Value::Uncertain(v, s) if exact => {
+            format!("{} ± {}", format_float(*v, true), format_float(*s, true))
+        }
+        Value::Uncertain(v, s) => localised(format_uncertain(*v, *s, false, group(style)), style),
         Value::Complex(re, im) if exact => format_complex(*re, *im, true, None),
         Value::Complex(re, im) => localised(format_complex(*re, *im, false, group(style)), style),
         Value::String(s, _) if quoted => omasheet_omx::lexer::quoted(s),

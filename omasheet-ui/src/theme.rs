@@ -16,6 +16,8 @@ pub struct Theme {
     pub selection: String,
     pub muted: String,
     pub error: String,
+    /// A warning: something done that was not quite what was asked.
+    pub warning: String,
 }
 
 impl Default for Theme {
@@ -28,6 +30,7 @@ impl Default for Theme {
             selection: "#186a9a".into(),
             muted: "#808080".into(),
             error: "#e06c75".into(),
+            warning: "#e5c07b".into(),
         }
     }
 }
@@ -43,6 +46,7 @@ impl Theme {
             selection: "#b5d5ee".into(),
             muted: "#757575".into(),
             error: "#c0392b".into(),
+            warning: "#b9770e".into(),
         }
     }
 }
@@ -77,6 +81,7 @@ pub fn parse(text: &str) -> Theme {
             "selection" => theme.selection = value,
             "muted" => theme.muted = value,
             "red" => theme.error = value,
+            "yellow" => theme.warning = value,
             _ => {}
         }
     }

@@ -41,6 +41,7 @@ const OPERATOR: Why = "values were written in place of formulas that use `in` or
 const BITWISE: Why = "values were written in place of formulas that use a bitwise operator";
 const FUNCTION: Why =
     "values were written in place of formulas that use a function a workbook has not got";
+const UNCERTAIN: Why = "values were written in place of formulas with uncertain values";
 const COMPLEX: Why = "values were written in place of formulas with complex numbers";
 const LITERAL: Why =
     "values were written in place of formulas with a number or text a workbook cannot hold";
@@ -169,7 +170,7 @@ fn kind_of(s: S) -> Kind {
         S::Time => Kind::Time,
         S::Datetime => Kind::Datetime,
         S::Duration => Kind::Duration,
-        S::Complex | S::Any => Kind::Unknown,
+        S::Uncertain | S::Complex | S::Any => Kind::Unknown,
     }
 }
 
@@ -539,6 +540,7 @@ impl Writer<'_> {
             }
             Lit::Float(_) => return Err(LITERAL),
             Lit::Complex(..) => return Err(COMPLEX),
+            Lit::Uncertain(..) => return Err(UNCERTAIN),
             Lit::String(s) if s.chars().count() <= LONGEST_TEXT => {
                 Expr::atom(format!("\"{}\"", s.replace('"', "\"\"")), Kind::Text)
             }

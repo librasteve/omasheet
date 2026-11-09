@@ -18,6 +18,8 @@ pub enum Lit {
     /// Written with a `%`: `20%`, held as `0.2`.
     Percent(Dec),
     Float(f64),
+    /// A value and its standard deviation: `10 ± 0.1`, `10.5(3)`.
+    Uncertain(f64, f64),
     /// Real and imaginary parts: `3+4i`.
     Complex(f64, f64),
     String(String),
@@ -117,6 +119,8 @@ pub enum BinOp {
     /// divisor, as a spreadsheet's `MOD` does.
     Rem,
     Pow,
+    /// `±` or `+-`: a value and its uncertainty.
+    PlusMinus,
     /// `+&`, `+|`, `+^`, `+<` and `+>`, on whole numbers.
     BitAnd,
     BitOr,
@@ -148,6 +152,7 @@ impl BinOp {
             BinOp::Div => "/",
             BinOp::Rem => "%",
             BinOp::Pow => "**",
+            BinOp::PlusMinus => "±",
             BinOp::BitAnd => "+&",
             BinOp::BitOr => "+|",
             BinOp::BitXor => "+^",

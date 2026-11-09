@@ -115,6 +115,8 @@ calculated value, so it reads the same before anything works it out again.
 CSV and JSON hold the calculated values alone. Constants are not exported: a
 formula that reads one is written with what the constant is.
 
+A column of `Uncertain` values is written as its values, with a formula for none of them, and a column of its own after the sheet's last for the uncertainties, headed `Length ±` for a column `Length`. Reading the workbook back does not join the pair into one column. A Parquet file writes an `Uncertain` column as text, `10.5 ± 0.3`.
+
 A sheet becomes a worksheet whose first row is the header, so a column and a
 row become a cell. Each formula is written for the row it is on:
 
@@ -175,6 +177,7 @@ name. With `--sheet` it is the rows of that sheet alone.
 | `Integer`, `Decimal`, `Fraction` | a number, in full; one that does not end, such as `1/3`, as `0.333333333333333333333333333333` |
 | `Percent` | the number it stands for: `20%` is `0.2` |
 | `Float` | a number; `Inf`, `-Inf` and `NaN` as strings |
+| `Uncertain` | a string, as a file writes it: `"10.5 ± 0.3"` |
 | `Complex` | a string, as a file writes it: `"3+4i"` |
 | `String`, `Boolean` | a string; `true` or `false` |
 | `Date`, `Time`, `Datetime` | a string, as a file writes it: `"2025-01-31"` |

@@ -311,14 +311,14 @@ impl Parser {
         // `^5`: the first five, 0 to 4.
         if self.peek() == &Tok::Caret {
             let start = self.bump().span;
-            let operand = self.additive()?;
+            let operand = self.plus_minus()?;
             let span = start.to(operand.span);
             return Ok(Expr {
                 kind: ExprKind::Unary(UnOp::UpTo, Box::new(operand)),
                 span,
             });
         }
-        let lhs = self.additive()?;
+        let lhs = self.plus_minus()?;
         let op = match self.peek() {
             Tok::DotDot => BinOp::Range,
             Tok::DotDotCaret => BinOp::RangeEx,
@@ -327,8 +327,19 @@ impl Parser {
             _ => return Ok(lhs),
         };
         self.bump();
-        let rhs = self.additive()?;
+        let rhs = self.plus_minus()?;
         Ok(Self::binary(lhs, op, rhs))
+    }
+
+    /// `value ± uncertainty`: looser than a sum and tighter than a
+    /// comparison, so `10 ± 0.1 * 2` is `10 ± 0.2`.
+    fn plus_minus(&mut self) -> R<Expr> {
+        let lhs = self.additive()?;
+        if self.eat(&Tok::PlusMinus) {
+            let rhs = self.additive()?;
+            return Ok(Self::binary(lhs, BinOp::PlusMinus, rhs));
+        }
+        Ok(lhs)
     }
 
     fn additive(&mut self) -> R<Expr> {
@@ -523,6 +534,7 @@ impl Parser {
             Tok::Percent(r) => lit(Lit::Percent(r)),
             Tok::Float(f) => lit(Lit::Float(f)),
             Tok::Imag(f) => lit(Lit::Complex(0.0, f)),
+            Tok::Uncertain(v, s) => lit(Lit::Uncertain(v, s)),
             Tok::Str(s) => lit(Lit::String(s)),
             Tok::Text(s) => {
                 return Err(Diagnostic::new(span, "strings in OMX are in single quotes")

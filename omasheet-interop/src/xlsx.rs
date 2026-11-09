@@ -480,6 +480,8 @@ fn shown<'f>(
             Shown::Number(f, Some(&formats.percent))
         }
         Value::Float(f) if f.is_finite() => Shown::Number(*f, None),
+        // The value; its uncertainty goes in a column of its own.
+        Value::Uncertain(v, _) if v.is_finite() => Shown::Number(*v, None),
         Value::String(s, _) => Shown::Text(s.to_string()),
         Value::Boolean(b) => Shown::Bool(*b),
         Value::Date(d) => Shown::Number((*d as i64 + EPOCH) as f64, Some(&formats.date)),
@@ -592,9 +594,26 @@ pub fn export(
             for (c, col) in sheet.cols.iter().enumerate() {
                 page.write_string(0, c as u16, &col.name).map_err(fail)?;
             }
+            // The uncertainty of an `Uncertain` column is a column of its own
+            // after the sheet's last, so that no formula's reference moves.
+            let mut sigma_at: Vec<Option<u16>> = vec![None; sheet.cols.len()];
+            let mut next = sheet.cols.len() as u16;
+            for (c, col) in sheet.cols.iter().enumerate() {
+                if col.ty == S::Uncertain {
+                    sigma_at[c] = Some(next);
+                    page.write_string(0, next, format!("{} ±", col.name))
+                        .map_err(fail)?;
+                    next += 1;
+                }
+            }
             for r in 0..sheet.nrows {
-                for c in 0..sheet.cols.len() {
+                for (c, sigma) in sigma_at.iter().enumerate() {
                     let value = file.engine.cell_shown(t, c, r);
+                    if let (Value::Uncertain(_, s), Some(at)) = (&value, *sigma)
+                        && s.is_finite()
+                    {
+                        page.write_number(r as u32 + 1, at, *s).map_err(fail)?;
+                    }
                     if is_failure(&value) {
                         losses.add(FAILED, file.column(t, c));
                         continue;
@@ -621,7 +640,10 @@ pub fn export(
                         | ColKind::Joined(_) => None,
                     };
                     // A value with no type in a workbook has no formula there.
-                    let node = node.filter(|_| !matches!(shown, Shown::Written(_)));
+                    let node = node
+                        .filter(|_| !matches!(shown, Shown::Written(_)))
+                        // A formula would write the value alone.
+                        .filter(|_| sheet.cols[c].ty != S::Uncertain);
                     let formula = match node.map(|node| writer.formula(node, t, r)) {
                         Some(Ok(formula)) => formula,
                         Some(Err(why)) => {

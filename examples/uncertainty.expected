@@ -1,0 +1,57 @@
+sheet Literals
+
+Name           | Value
+---------------|--------------------
+plus-minus     |           10.00(10)
+ascii          |           10.00(10)
+expression     |           10.00(20)
+concise        |           10.50(30)
+whole          |            10.0(30)
+long digits    |             1.5(11)
+exact          |                10.5
+fine-structure | 7.2973525643(11)e-3
+
+sheet Arithmetic
+
+Name                  | Value
+----------------------|------------------
+sum                   |          30.0(22)
+product               |          20.0(11)
+quotient              |         2.000(57)
+exact operand         |         20.00(20)
+power                 |          9.00(60)
+independent           |           0.0(14)
+sine                  |        0.4794(88)
+logarithm             |         4.605(10)
+root                  |          2.00(10)
+exact function        | 0.479425538604203
+beside Complex        |             10+3i
+larger than the value |          0.50(80)
+coarse                |        1.00(20)e3
+
+sheet Lengths
+
+Length
+---------
+10.00(10)
+11.00(20)
+12.00(10)
+10.50(30)
+       10
+
+sheet PlusMinus
+
+Length
+------------
+10.00 ± 0.10
+11.20 ± 0.40
+ 0.50 ± 0.80
+
+sheet Summary
+
+Name    | Value
+--------|-------------------
+mean    |         10.700(77)
+total   |          53.50(39)
+longest |          12.00(10)
+spread  | 0.8366600265340756

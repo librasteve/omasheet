@@ -54,6 +54,10 @@ fn cell_rows(out: &mut String, rows: &[Vec<CellSnap>]) {
             field(out, "s", &cell.source);
             out.push(',');
             field(out, "e", cell.error.as_deref().unwrap_or(""));
+            if let Some(warning) = &cell.warning {
+                out.push(',');
+                field(out, "w", warning);
+            }
             out.push(',');
             // A decimal that does not end is given to more places.
             let long = omasheet_engine::value::long_decimal(&cell.value);
@@ -75,7 +79,7 @@ fn cell_rows(out: &mut String, rows: &[Vec<CellSnap>]) {
 }
 
 /// Cells are `{d: display, s: source, n: numeric, f: formula, e: error,
-/// x: the value in full when the display is shortened, h: text that is
+/// w: a warning, where the value is not quite what was asked for, x: the value in full when the display is shortened, h: text that is
 /// Markdown as HTML}`.
 pub fn snapshot(snap: &Snapshot) -> String {
     let mut out = String::from("{\"sheets\":");

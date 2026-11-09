@@ -46,6 +46,7 @@ pub mod qobject {
         #[qproperty(QString, theme_selection)]
         #[qproperty(QString, theme_muted)]
         #[qproperty(QString, theme_error)]
+        #[qproperty(QString, theme_warning)]
         #[qproperty(QString, export_warning)]
         #[qproperty(QString, snapshot_path)]
         /// Whether something is being read in the background, for the
@@ -462,6 +463,7 @@ pub struct FileRust {
     theme_selection: QString,
     theme_muted: QString,
     theme_error: QString,
+    theme_warning: QString,
     /// Whether the system's colour scheme is dark, for where Omarchy has no say.
     system_dark: bool,
     /// Whether the Omarchy theme is being watched.
@@ -520,6 +522,7 @@ impl Default for FileRust {
             theme_selection: QString::from(&theme.selection),
             theme_muted: QString::from(&theme.muted),
             theme_error: QString::from(&theme.error),
+            theme_warning: QString::from(&theme.warning),
             system_dark: true,
             watching: false,
             snapshot_path: QString::from(std::env::var("OMASHEET_UI_SNAPSHOT").unwrap_or_default()),
@@ -1784,6 +1787,8 @@ impl qobject::File {
             .set_theme_selection(QString::from(&theme.selection));
         self.as_mut().set_theme_muted(QString::from(&theme.muted));
         self.as_mut().set_theme_error(QString::from(&theme.error));
+        self.as_mut()
+            .set_theme_warning(QString::from(&theme.warning));
     }
 }
 

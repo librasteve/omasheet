@@ -1,0 +1,69 @@
+# A number with its measurement uncertainty. `10 ± 0.1` (or `10 +- 0.1`) and
+# the concise `10.5(3)` of the physical tables, where the digits in brackets
+# are the uncertainty in the last places, make the same kind of value. It
+# propagates through arithmetic, powers and the math functions to first
+# order, treating its operands as independent, and is shown in the concise
+# form with the uncertainty to two digits.
+
+sheet Literals
+
+| Name        | Value               |
+| ----------- | ------------------- |
+| plus-minus  | = 10 ± 0.1          |
+| ascii       | = 10 +- 0.1         |
+| expression  | = 10 ± 0.1 * 2      |
+| concise     | = 10.5(3)           |
+| whole       | = 10(3)             |
+| long digits | = 1.5(11)           |
+| exact       | = 10.5(0)           |
+| fine-structure | = 7.297_352_5643(11)e-3 |
+
+sheet Arithmetic
+
+| Name           | Value                           |
+| -------------- | ------------------------------- |
+| sum            | = (10 ± 1) + (20 ± 2)           |
+| product        | = (100 ± 2) * (0.2 ± 0.01)      |
+| quotient       | = (100 ± 2) / (50 ± 1)          |
+| exact operand  | = (10 ± 0.1) * 2                |
+| power          | = (3 ± 0.1) ** 2                |
+| independent    | = (10 ± 1) - (10 ± 1)           |
+| sine           | = sin(0.5 ± 0.01)               |
+| logarithm      | = ln(100 ± 1)                   |
+| root           | = sqrt(4 ± 0.4)                 |
+| exact function | = sin(0.5)                      |
+| beside Complex | = (10 ± 1) + 3i                 |
+| larger than the value | = 0.5 ± 0.8              |
+| coarse         | = 1000 ± 200                    |
+
+sheet Lengths
+
+Length : Uncertain
+
+| Length      |
+| ----------- |
+| 10 ± 0.1    |
+| 11 ± 0.2    |
+| 12 ± 0.1    |
+| 10.5(3)     |
+| 10          |
+
+# A column can show its values as `value ± uncertainty` instead.
+sheet PlusMinus
+
+Length : Uncertain[±]
+
+| Length    |
+| --------- |
+| 10 ± 0.1  |
+| 11.2(4)   |
+| 0.5 ± 0.8 |
+
+sheet Summary
+
+| Name    | Value                     |
+| ------- | ------------------------- |
+| mean    | = Lengths.Length.mean()   |
+| total   | = Lengths.Length.sum()    |
+| longest | = Lengths.Length.max()    |
+| spread  | = Lengths.Length.std()    |

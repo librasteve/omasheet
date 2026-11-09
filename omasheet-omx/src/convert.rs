@@ -78,6 +78,13 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
     };
     let sign = if negative { -1.0 } else { 1.0 };
     match rest {
+        [Tok::Uncertain(v, s), Tok::Eof] => return Some(Lit::Uncertain(sign * v, *s)),
+        [v, Tok::PlusMinus, s, Tok::Eof] => {
+            let s = real(s)?;
+            return (s >= 0.0)
+                .then(|| Lit::Uncertain(sign * real(v).unwrap_or(f64::NAN), s))
+                .filter(|l| matches!(l, Lit::Uncertain(v, _) if !v.is_nan()));
+        }
         [Tok::Imag(im), Tok::Eof] => return Some(Lit::Complex(0.0, sign * im)),
         [re, op @ (Tok::Plus | Tok::Minus), Tok::Imag(im), Tok::Eof] => {
             let im = if **op == Tok::Minus { -im } else { *im };
@@ -128,6 +135,7 @@ pub fn lit_type(l: &Lit) -> S {
         Lit::Fraction(_) => S::Fraction,
         Lit::Percent(_) => S::Percent,
         Lit::Float(_) => S::Float,
+        Lit::Uncertain(..) => S::Uncertain,
         Lit::Complex(..) => S::Complex,
         Lit::String(_) => S::String,
         Lit::Boolean(_) => S::Boolean,
@@ -164,6 +172,11 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     };
     if from == to || to == S::Any {
         return Ok(lit.clone());
+    }
+    // An uncertain value made a `Float` keeps its value and loses its
+    // uncertainty.
+    if let (Lit::Uncertain(v, _), S::Float) = (lit, to) {
+        return Ok(Lit::Float(*v));
     }
     // A `Complex` is a real number when its imaginary part is zero, to
     // within Raku's tolerance, and is otherwise refused (D201).
@@ -283,6 +296,13 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
                 None => return no(),
             }
         }
+        (
+            Lit::Int(..) | Lit::Decimal(_) | Lit::Percent(_) | Lit::Boolean(_) | Lit::Float(_),
+            S::Uncertain,
+        ) => match real(lit) {
+            Some(f) => Lit::Uncertain(f, 0.0),
+            None => return no(),
+        },
         (
             Lit::Int(..) | Lit::Decimal(_) | Lit::Percent(_) | Lit::Boolean(_) | Lit::Float(_),
             S::Complex,

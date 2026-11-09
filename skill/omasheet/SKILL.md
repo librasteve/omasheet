@@ -141,7 +141,7 @@ sheet Summary
 
 ## Types
 
-`Integer`, `Decimal`, `Fraction`, `Percent`, `Float`, `Complex`, `String`, `Boolean`,
+`Integer`, `Decimal`, `Fraction`, `Percent`, `Float`, `Uncertain`, `Complex`, `String`, `Boolean`,
 `Date`, `Time`, `Datetime`, `Duration`, `Url`, `Email`, `Uuid`.
 A column with no type line takes its type from its cells, which is usually
 what you want; declare one when the cells could be read another way.
@@ -153,6 +153,7 @@ what you want; declare one when the cells could be read another way.
 | `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction, `1/7` and `2 3/4` |
 | `Percent` | `20%` — exact, shown as a percentage |
 | `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `'Inf'` in code, `"Inf"` in a cell), which is what a division by zero gives |
+| `Uncertain` | `10.5(3)` or `10 ± 0.3` (`+-` also) — a value with its measurement uncertainty; digits in brackets are the uncertainty in the last places, an exponent after them scales both: `7.297_352_5643(11)e-3`. It carries through `+ - * / **` and the math functions to first order (independent, in quadrature), `sum` and `mean`; shown as `11.000(82)`, or `11.000 ± 0.082` in a column declared `Uncertain[±]`. No uncertain complex: beside a `Complex` it becomes a `Float`, with a warning |
 | `Complex` | `3+4i`, `-1.5-2i`, `2i` — two `Float` parts, the most infectious number type; no order, so no `<` or sort. `re im conj arg` and `abs sqrt exp ln` take one; `z.Float` works only where the imaginary part is zero (to within `1e-15`) |
 | `Boolean` | `true`, `false` |
 | `Date`, `Time`, `Datetime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO. A fraction of a second goes after the seconds, `09:30:15.5`: nine digits for a `Time`, six for a `Datetime` |

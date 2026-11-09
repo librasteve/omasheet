@@ -115,6 +115,10 @@ pub struct CellSnap {
     pub formula: bool,
     /// Why the cell could not be calculated, if it could not.
     pub error: Option<String>,
+    /// What the calculation did to give a value it was not asked for: an
+    /// uncertain value made a `Float` beside a `Complex`. The cell has its
+    /// value, so this is not an error.
+    pub warning: Option<String>,
 }
 
 /// What a block of cells adds up to.
@@ -326,6 +330,7 @@ fn exact_text(v: &Value, quoted: bool, shown: &str, style: &Style) -> Option<Str
         | Value::Decimal(_)
         | Value::Percent(_)
         | Value::Float(_)
+        | Value::Uncertain(..)
         | Value::Complex(..)
         | Value::Vector(_) => format_exact(v, quoted, style),
         _ => return None,
@@ -341,6 +346,7 @@ fn cell_snap(
     value: Value,
     source: String,
     error: Option<String>,
+    warning: Option<&str>,
 ) -> CellSnap {
     let failed = matches!(value, Value::Error);
     // A column's format shows its numbers as it says, so one it rounds is
@@ -361,6 +367,7 @@ fn cell_snap(
         value,
         formula: source.starts_with('='),
         error: error.or_else(|| failed.then(|| "this cell could not be calculated".to_string())),
+        warning: warning.map(str::to_string),
         source,
     }
 }
@@ -405,6 +412,9 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
         "Decimal" => "Decimal: an exact decimal number, e.g. 19.99 or 20%".into(),
         "Percent" => "Percent: an exact number shown as a percentage, e.g. 20%".into(),
         "Float" => "Float: a floating-point number, e.g. 1.5, 2e-3 or Inf".into(),
+        "Uncertain" => {
+            "Uncertain: a value and its measurement uncertainty, e.g. 10.5(3) or 10 ± 0.3".into()
+        }
         "Complex" => "Complex: a real and an imaginary part, e.g. 3+4i or 2i".into(),
         "Boolean" => "Boolean: true or false".into(),
         "String" => "String".into(),
@@ -2681,7 +2691,8 @@ impl Document {
             .map(|c| engine.rows_shown(sheet, c, &file_rows).into_iter())
             .collect();
         (from..end)
-            .map(|_| {
+            .zip(&file_rows)
+            .map(|(_, &file_row)| {
                 t.columns
                     .iter()
                     .zip(&mut columns)
@@ -2699,7 +2710,8 @@ impl Document {
                             .and_then(|errors| errors.get(c).cloned().flatten())
                             .filter(|_| failed);
                         let format = program.sheets[sheet].cols[c].format.as_ref();
-                        cell_snap(engine, &self.style, format, value, source, error)
+                        let warning = engine.warning(sheet, c, file_row);
+                        cell_snap(engine, &self.style, format, value, source, error, warning)
                     })
                     .collect()
             })
@@ -4841,6 +4853,7 @@ impl Document {
                         value,
                         source,
                         error,
+                        engine.warning(t, c, r),
                     ));
                 }
                 rows.push(row);

@@ -18,6 +18,8 @@ pub enum Tok {
     Float(f64),
     /// An imaginary number, `4i`.
     Imag(f64),
+    /// A value and its uncertainty written together: `10.5(3)`, `7.297(11)e-3`.
+    Uncertain(f64, f64),
     /// `'…'`, a string in code (D168).
     Str(String),
     /// `"…"`, text as a table cell writes it. Code does not take it: the
@@ -44,6 +46,8 @@ pub enum Tok {
     False,
     Plus,
     Minus,
+    /// `±` or `+-`: a value and its uncertainty.
+    PlusMinus,
     /// `+&`, `+|` and `+^`: bitwise and, or and xor, as Raku writes them;
     /// `+^` before a number is its complement.
     PlusAmp,
@@ -90,9 +94,12 @@ pub enum Tok {
 impl Tok {
     pub fn describe(&self) -> String {
         match self {
-            Tok::Int(..) | Tok::Decimal(_) | Tok::Percent(_) | Tok::Float(_) | Tok::Imag(_) => {
-                "a number".into()
-            }
+            Tok::Int(..)
+            | Tok::Decimal(_)
+            | Tok::Percent(_)
+            | Tok::Float(_)
+            | Tok::Imag(_)
+            | Tok::Uncertain(..) => "a number".into(),
             Tok::Str(_) | Tok::Text(_) => "a string".into(),
             Tok::Date(_) => "a date".into(),
             Tok::Time(_) => "a time".into(),
@@ -117,6 +124,7 @@ impl Tok {
             Tok::False => "false",
             Tok::Plus => "+",
             Tok::Minus => "-",
+            Tok::PlusMinus => "±",
             Tok::PlusAmp => "+&",
             Tok::PlusPipe => "+|",
             Tok::PlusCaret => "+^",
@@ -330,10 +338,13 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
             Some(b'^') => Some(Tok::PlusCaret),
             Some(b'<') => Some(Tok::PlusLt),
             Some(b'>') => Some(Tok::PlusGt),
+            Some(b'-') => Some(Tok::PlusMinus),
             _ => None,
         };
         let (tok, len) = if let Some(tok) = bitwise {
             (tok, 2)
+        } else if rest.starts_with('±') {
+            (Tok::PlusMinus, '±'.len_utf8())
         } else if rest.starts_with("^..^") {
             (Tok::CaretDotDotCaret, 4)
         } else if rest.starts_with("^..") {
@@ -590,6 +601,21 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
             j += 1;
         }
     }
+    let mant_end = j;
+    // The uncertainty in the last digits, `10.5(3)`: digits in brackets
+    // with nothing between them and the number.
+    let mut concise: Option<&str> = None;
+    if j < b.len() && b[j] == b'(' {
+        let mut k = j + 1;
+        while digit(k) {
+            k += 1;
+        }
+        if k > j + 1 && k < b.len() && b[k] == b')' {
+            concise = Some(&text[j + 1..k]);
+            j = k + 1;
+        }
+    }
+    let exp_start = j;
     let mut is_float = false;
     if j < b.len() && (b[j] == b'e' || b[j] == b'E') {
         let mut k = j + 1;
@@ -604,7 +630,31 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
             j = k;
         }
     }
-    let raw: String = text[i..j].chars().filter(|&c| c != '_').collect();
+    let raw: String = text[i..mant_end]
+        .chars()
+        .chain(text[exp_start..j].chars())
+        .filter(|&c| c != '_')
+        .collect();
+    if let Some(digits) = concise {
+        let exponent: i32 = match text[exp_start..j].get(1..) {
+            Some(e) if is_float => e.parse().unwrap_or(0),
+            _ => 0,
+        };
+        let value: f64 = raw
+            .parse()
+            .map_err(|_| (format!("`{raw}` is not a number"), i, j))?;
+        let sigma: f64 = format!("{digits}e{}", exponent - frac_digits)
+            .parse()
+            .map_err(|_| (format!("`{raw}({digits})` is not a number"), i, j))?;
+        if word(j) {
+            let mut k = j;
+            while word(k) {
+                k += 1;
+            }
+            return Err((format!("`{}` is not a number", &text[i..k]), i, k));
+        }
+        return Ok((Tok::Uncertain(value, sigma), j));
+    }
     let percent = j < b.len() && b[j] == b'%';
     let end = if percent { j + 1 } else { j };
     // An imaginary number: `4i`, `2.5i`.
@@ -687,6 +737,38 @@ mod tests {
         for s in ["plain", "it's", "a\\b", "two\nlines", "say \"hi\""] {
             assert_eq!(toks(&quoted(s))[0], Tok::Str(s.into()), "{s}");
         }
+    }
+
+    #[test]
+    fn an_uncertainty_in_brackets_or_after_a_plus_minus() {
+        // The digits in brackets are the uncertainty in the last places.
+        assert_eq!(toks("10.5(3)")[0], Tok::Uncertain(10.5, 0.3));
+        assert_eq!(toks("10(3)")[0], Tok::Uncertain(10.0, 3.0));
+        assert_eq!(toks("1.5(11)")[0], Tok::Uncertain(1.5, 1.1));
+        // An exponent after the brackets scales both.
+        assert_eq!(
+            toks("7.297_352_5643(11)e-3")[0],
+            Tok::Uncertain(7.2973525643e-3, 1.1e-12)
+        );
+        // A space, or anything but digits, makes it no such literal.
+        assert_eq!(
+            toks("10 (3)"),
+            vec![
+                Tok::Int(10, Base::Dec),
+                Tok::LParen,
+                Tok::Int(3, Base::Dec),
+                Tok::RParen,
+                Tok::Eof
+            ]
+        );
+        assert!(
+            lex("10.5(3.2)", 0, 0)
+                .is_ok_and(|t| t[0].tok == Tok::Decimal(Dec::new(105, 1).unwrap()))
+        );
+        // Both spellings of the operator.
+        assert_eq!(toks("1 ± 2")[1], Tok::PlusMinus);
+        assert_eq!(toks("1 +- 2")[1], Tok::PlusMinus);
+        assert_eq!(toks("1 + -2")[1], Tok::Plus);
     }
 
     #[test]

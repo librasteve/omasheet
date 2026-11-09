@@ -12,8 +12,9 @@ use crate::dtype::{cell_of, column_of};
 use crate::numfmt::format_number;
 use crate::table::{ColumnCache, Held, Identity, Tables};
 use crate::value::{
-    RowRef, Value, View, arith, bitwise, compare, complement, equal, format_exact, format_styled,
-    math, round_digits, sort_order,
+    RowRef, UNCERTAIN_COMPLEX, Value, View, arith, bitwise, compare, complement, equal,
+    format_exact, format_styled, mark_degraded, math, plus_minus, round_digits, sort_order,
+    take_degraded,
 };
 use crate::zone::{Zone, Zoned, utc_now};
 use crate::{Lowering, Options, ROW_THRESHOLD, lower};
@@ -35,7 +36,7 @@ use polars::prelude::{
 };
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -186,6 +187,9 @@ pub struct Engine<'p> {
     /// How many sums and means of a column of floats were taken as a loop
     /// over the floats and not by a walk of values.
     float_totals: std::cell::Cell<usize>,
+    /// The cells where an uncertain value degraded to a `Float` for want of
+    /// an uncertain complex number: sheet, column and row.
+    degraded: RefCell<HashSet<(usize, usize, usize)>>,
     /// A memoisation slot per cell, by sheet, column and row. A column's
     /// slots are made when a cell of it is first asked for: a sheet of a
     /// million rows whose columns all come from a file needs none of them,
@@ -517,6 +521,7 @@ impl<'p> Engine<'p> {
             reads: RefCell::new(Vec::new()),
             rows_read: RefCell::new(0),
             float_totals: std::cell::Cell::new(0),
+            degraded: RefCell::new(HashSet::new()),
             cells: RefCell::new(
                 prog.sheets
                     .iter()
@@ -1963,6 +1968,9 @@ impl<'p> Engine<'p> {
                 Slot::Pending => slots[r] = Slot::Busy,
             }
         }
+        // What an operation in this cell notes is this cell's, and not that
+        // of the cell whose calculation asked for it.
+        let outer = take_degraded();
         let formula = |node: &Node| {
             let v = self.eval(node, &mut vec![(t, r)])?;
             self.fit(v, col, node.span)
@@ -2063,6 +2071,12 @@ impl<'p> Engine<'p> {
             }
             Err(Fail::Poison) => Value::Error,
         };
+        if take_degraded() {
+            self.degraded.borrow_mut().insert((t, c, r));
+        }
+        if outer {
+            mark_degraded();
+        }
         if let Some(slots) = self.cells.borrow_mut()[t][c].as_mut() {
             slots[r] = Slot::Done(value.clone());
         }
@@ -2199,6 +2213,15 @@ impl<'p> Engine<'p> {
         let (start, window) = windows[t][c].as_ref()?;
         let i = r.checked_sub(*start).filter(|&i| i < window.len())?;
         Some(held_cell(window, i, self.prog.sheets[t].cols[c].ty))
+    }
+
+    /// The warning for a cell where an uncertain value degraded to a
+    /// `Float`, if it did.
+    pub fn warning(&self, t: usize, c: usize, r: usize) -> Option<&'static str> {
+        self.degraded
+            .borrow()
+            .contains(&(t, c, r))
+            .then_some(UNCERTAIN_COMPLEX)
     }
 
     /// A cell for display: failures show as an error value.
@@ -3552,6 +3575,11 @@ impl<'p> Engine<'p> {
                         Value::Int(n, _) => n as f64,
                         Value::Decimal(d) | Value::Fraction(d) | Value::Percent(d) => d.to_f64(),
                         Value::Float(f) => f,
+                        // There is no uncertain complex number.
+                        Value::Uncertain(v, _) => {
+                            mark_degraded();
+                            v
+                        }
                         other => {
                             return fail(
                                 arg.span,
@@ -3767,6 +3795,23 @@ impl<'p> Engine<'p> {
                         );
                     }
                 };
+                // A spread works on the values alone: it carries no
+                // uncertainty (D97).
+                let stripped: Vec<Value>;
+                let values = if func != Func::Quantile
+                    && values.iter().any(|v| matches!(v, Value::Uncertain(..)))
+                {
+                    stripped = values
+                        .iter()
+                        .map(|v| match v {
+                            Value::Uncertain(x, _) => Value::Float(*x),
+                            v => v.clone(),
+                        })
+                        .collect();
+                    &stripped
+                } else {
+                    &values[..]
+                };
                 let present: Vec<&Value> = values
                     .iter()
                     .filter(|v| !matches!(v, Value::Null))
@@ -3774,6 +3819,7 @@ impl<'p> Engine<'p> {
                 let real = |v: &Value| -> Option<f64> {
                     match v {
                         Value::Int(i, _) => Some(*i as f64),
+                        Value::Uncertain(x, _) => Some(*x),
                         Value::Decimal(d) | Value::Fraction(d) | Value::Percent(d) => {
                             Some(d.to_f64())
                         }
@@ -4389,6 +4435,10 @@ impl<'p> Engine<'p> {
         };
         let shown = match format.filter(|_| !self.options.exact) {
             Some(Format::Number(f)) => format_number(v, f, &style),
+            Some(Format::PlusMinus) => match v {
+                Value::Uncertain(x, s) => Some(crate::value::format_uncertain(*x, *s, true, None)),
+                _ => None,
+            },
             Some(Format::Date(f)) => self
                 .moment(v)
                 .and_then(|m| format_date(&m, f, &self.options.names)),
@@ -4663,6 +4713,7 @@ fn scalar_op(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     let empty = matches!(a, Value::Null) || matches!(b, Value::Null);
     Ok(match op {
         _ if op.is_arithmetic() => arith(op, a, b)?,
+        BinOp::PlusMinus => plus_minus(a, b)?,
         _ if op.is_bitwise() => bitwise(op, a, b)?,
         BinOp::Eq => equal(a, b)?.map_or(Value::Null, Value::Boolean),
         BinOp::Ne => equal(a, b)?.map_or(Value::Null, |e| Value::Boolean(!e)),

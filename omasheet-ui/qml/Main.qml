@@ -24,6 +24,7 @@ ApplicationWindow {
     readonly property color selectionFill: file.themeSelection
     readonly property color mutedColor: file.themeMuted
     readonly property color errorColor: file.themeError
+    readonly property color warningColor: file.themeWarning
     readonly property color lineColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.14)
     readonly property color panelColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.05)
     readonly property color computedTint: Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.07)
@@ -1414,6 +1415,12 @@ ApplicationWindow {
     // cleared by the same one, the last to speak being the one heard.
     property string hint: ""
     property bool hintBad: false
+    // What the selected cell's calculation warns of: its value is there, but
+    // not quite what was asked for (an uncertain value beside a Complex).
+    readonly property string cellWarning: {
+        var c = cellAt(curRow, curCol);
+        return c && c.w ? c.w : "";
+    }
     property var hintFrom: null
     function hover(from, text, bad) {
         if (text.length > 0) {
@@ -4549,7 +4556,7 @@ ApplicationWindow {
                     && !moving && !win.formulaCell && win.sheet.sampled !== true
                     && (win.notice.length > 0 || file.status.length > 0)
                 property bool faded: false
-                opacity: faded && win.hint.length === 0 ? 0 : 1
+                opacity: faded && win.hint.length === 0 && win.cellWarning.length === 0 ? 0 : 1
                 Behavior on opacity { NumberAnimation { duration: 700 } }
                 onTextChanged: {
                     faded = false;
@@ -4568,6 +4575,7 @@ ApplicationWindow {
                     : win.filterPending ? "Filtering\u2026"
                     : win.hint.length > 0 ? win.hint
                     : win.notice.length > 0 ? win.notice
+                    : win.cellWarning.length > 0 ? win.cellWarning
                     : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
                     : win.formulaCell ? "This is a formula column, this change will apply to the entire column"
                     : file.status.length > 0 ? file.status
@@ -4578,7 +4586,8 @@ ApplicationWindow {
                     : win.sheet.view ? win.sheet.name + " := " + win.sheet.view.replace(/\s+/g, " ")
                     : ""
                 color: win.hint.length > 0 ? (win.hintBad ? win.errorColor : win.mutedColor)
-                    : win.notice.length > 0 ? win.errorColor : win.mutedColor
+                    : win.notice.length > 0 ? win.errorColor
+                    : win.cellWarning.length > 0 ? win.warningColor : win.mutedColor
                 elide: Text.ElideRight
                 font.family: win.font.family
                 font.features: win.font.features

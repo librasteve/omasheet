@@ -105,6 +105,39 @@ impl MathFn {
         }
     }
 
+    /// The slope of the function at `x`, which is how far an uncertainty in
+    /// `x` carries to the result, to first order.
+    pub fn slope(self, x: f64) -> f64 {
+        use std::f64::consts::{LN_2, LN_10, PI};
+        match self {
+            MathFn::Abs if x == 0.0 => 0.0,
+            MathFn::Abs => x.signum(),
+            MathFn::Sign
+            | MathFn::Round
+            | MathFn::Floor
+            | MathFn::Ceil
+            | MathFn::Im
+            | MathFn::Arg => 0.0,
+            MathFn::Re | MathFn::Conj => 1.0,
+            MathFn::Sqrt => 0.5 / x.sqrt(),
+            MathFn::Exp => x.exp(),
+            MathFn::Ln => 1.0 / x,
+            MathFn::Log10 => 1.0 / (x * LN_10),
+            MathFn::Log2 => 1.0 / (x * LN_2),
+            MathFn::Sin => x.cos(),
+            MathFn::Cos => -x.sin(),
+            MathFn::Tan => 1.0 / (x.cos() * x.cos()),
+            MathFn::Arcsin => 1.0 / (1.0 - x * x).sqrt(),
+            MathFn::Arccos => -1.0 / (1.0 - x * x).sqrt(),
+            MathFn::Arctan => 1.0 / (1.0 + x * x),
+            MathFn::Sinh => x.cosh(),
+            MathFn::Cosh => x.sinh(),
+            MathFn::Tanh => 1.0 - x.tanh() * x.tanh(),
+            MathFn::Radians => PI / 180.0,
+            MathFn::Degrees => 180.0 / PI,
+        }
+    }
+
     pub fn apply(self, x: f64) -> f64 {
         match self {
             MathFn::Abs => x.abs(),

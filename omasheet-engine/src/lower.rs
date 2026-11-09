@@ -275,6 +275,8 @@ fn literal(l: &Lit) -> Option<Out> {
         // Polars has no arithmetic for a struct, so a `Complex` stays on
         // the engine (D200).
         Lit::Complex(..) => None,
+        // Nor for one with an uncertainty.
+        Lit::Uncertain(..) => None,
         Lit::String(s) => Out::new(lit(s.clone()), DataType::String),
         Lit::Boolean(b) => Out::new(lit(*b), DataType::Boolean),
         Lit::Date(d) => Out::new(

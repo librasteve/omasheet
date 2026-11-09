@@ -69,6 +69,7 @@ Numbers are shown the way Raku shows them:
 | `Fraction` | `1/7`, `3/4`, `2 3/4`, `333 1/3`; `3` when it is whole |
 | `Percent` | `20%`, `12.5%`, `41.67%` |
 | `Float` | `100`, `1.5`, `1.4142135623730951`; `1e+21` or `1.5e-16` when very large or small; `Inf`, `-Inf`, `NaN` |
+| `Uncertain` | the concise form of the physical tables, the uncertainty to two digits in brackets after the value cut at the same place: `7.2973525643(11)e-3`, `11.000(82)`, `1.00(20)e3`; a column declared `Uncertain[±]` shows `11.000 ± 0.082`; no uncertainty is a plain number |
 | `Complex` | each part as a `Float`: `3+4i`, `1.5-2i`, `0+1.4142135623730951i`; both parts cut alike when too wide; `0+Inf\i` for an infinite imaginary part |
 
 A `Float` that is a whole number looks like an `Integer`, but it is still a `Float`.
@@ -184,6 +185,44 @@ Text is read the way a cell is: `'42'.Integer` is `42`, `'20%'.Decimal` is `1/5`
 `1`. To round rather than drop the fraction, use `round(x)`; `round(x, 2)`
 rounds to two decimal places. For the nearest hundred, divide, round and
 multiply back: `round(x / 100) * 100`.
+
+## Uncertain numbers
+
+A measurement carries an uncertainty, a standard deviation. `10 ± 0.1` (or
+`10 +- 0.1`) is `10` with an uncertainty of `0.1`, and `10.5(3)` is the
+concise form physics and chemistry tables use, where the digits in brackets
+are the uncertainty in the last places shown: `10.5 ± 0.3`. An exponent after
+the brackets scales both, so `7.297_352_5643(11)e-3` is the fine-structure
+constant with its uncertainty. The digits in brackets are digits only, with no
+space before them. `±` binds more loosely than `+` and `-`, so `10 ± 0.1 * 2`
+is `10 ± 0.2`; both sides are plain numbers, and the uncertainty is not
+negative.
+
+An uncertain value carries its uncertainty through `+ - * /`, `**` and the
+math functions, to first order and treating the operands as independent: a
+sum combines the absolute uncertainties, and a product or quotient the
+relative ones, in quadrature. A number with no uncertainty has an uncertainty
+of zero.
+
+```
+(10 ± 1) + (20 ± 2)        30.0(22)       the uncertainty is √5, not 3
+(10 ± 0.1) * 2             20.00(20)
+sin(0.5 ± 0.01)            0.4794(88)
+ln(100 ± 1)                4.605(10)
+(10 ± 1) - (10 ± 1)        0.0(14)        independent, even when they are the same cell
+```
+
+`sum` and `mean` carry the uncertainty; `min` and `max` give the value they
+chose with its own; `std`, `var` and the other spreads work on the values
+alone. A comparison and a sort use the values. A first-order answer is poor
+where the uncertainty is large beside the distance to the edge of a
+function's domain, as `ln(0.1 ± 0.5)`.
+
+There are no uncertain complex numbers. An `Uncertain` beside a `Complex`
+becomes a `Float` and the calculation goes on with a `Complex`; the app
+says `uncertain complex not supported` in amber in its bottom bar while the
+cell is selected. An `Uncertain` goes to a `Float` with `x.Float`, which keeps
+the value alone.
 
 ## Complex numbers
 
