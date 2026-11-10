@@ -213,6 +213,8 @@ ln(100 ± 1)                4.605(10)
 (10 ± 1) - (10 ± 1)        0.0(14)        independent, even when they are the same cell
 ```
 
+Operands are independent even when they are the same value: `x - x` is `0 ± √2σ`, not exactly `0`, and `x / x` is `1 ± √2σ/x`, because Omasheet does not track which measurements a value came from. A cell reference is read as another measurement of the same quantity. To cancel an identity, write it out before the uncertainty is added, as `0 ± 0` or `1`, or use the same value once, as `2 * x` rather than `x + x` (`2 * x` is `2σ`; `x + x` is `√2σ`).
+
 `sum` and `mean` carry the uncertainty; `min` and `max` give the value they
 chose with its own; `std`, `var` and the other spreads work on the values
 alone. A comparison and a sort use the values. A first-order answer is poor
