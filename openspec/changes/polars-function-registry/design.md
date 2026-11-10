@@ -16,6 +16,26 @@ Deferred until `add-units` is archived. D numbers are assigned when the change s
 | N8 | Proposed | Where Polars expresses a function as an argument of another (`fill_null(strategy="forward")`), OMX uses the separate name the Polars docs list for it, if it still lists one; otherwise the bare word | `forward_fill` pending the check in N9 |
 | N9 | Proposed | The registry entry carries the Polars method name as a field, and a test asserts that every entry's OMX name equals it, apart from an exceptions list in which each line gives the reason | The mapping is data, not a convention to be remembered |
 
+## Stages in the registry
+
+The registry has two kinds of entry: a **function** (a method on a column, above) and a **stage** (a step after `|>`, a function of a sheet that gives a sheet). A stage entry has the same fields, with `args` also naming the second sheet, its keys and the clauses it takes. The existing stages (`filter select head tail sort group_by agg join`) stay as they are and move onto the registry later (out of scope here); the new ones start on it.
+
+| # | Status | Rule | Example |
+|---|--------|------|---------|
+| N10 | Proposed | A stage is named as the Polars `DataFrame` method is (N1), takes the other sheet first, then the keys, the way `join(Other, keys)` does (D84) | `join_asof`, `join_where` |
+| N11 | Proposed | `join_asof(Other, left_key, right_key)` takes the two keys as bare columns, or one when both sheets name it alike; `strategy` is a bare word (`backward`, `forward`, `nearest`), `backward` by default; `by Key` partitions both sheets (N6); `tolerance` is the next positional | `Sales |> join_asof(Rates, Sales_Amount, Sales_Target)`, `... , forward`, `... by Region` |
+| N12 | Proposed | `join_where(Other, condition)` reads the condition with the left sheet's columns bare and the other's under its sheet name | `Orders |> join_where(Bands, Amount >= Bands.Low and Amount < Bands.High)` |
+| N13 | Proposed | `join`'s `how` takes Polars' words `inner` (default), `left`, `full`, `semi`, `anti`, `cross` | `Orders |> join(Customers, ID, anti)` |
+| N14 | Proposed | Both sheets of an as-of join must be sorted by their key; OMX sorts them first, as Polars' `check_sortedness` would otherwise refuse, so the file's row order does not matter | the commission table need not be kept in order |
+
+The commission example, as a stage and as a column:
+
+```omx
+sheet Paid := Sales |> join_asof(Commission_Rates, Sales_Amount, Sales_Target)
+```
+
+and, once the registry has the clauses, on a column: `Rate := Sales_Amount.lookup_asof(Commission_Rates, Sales_Target, Commission_Rate)`, a column spelling of the same join that gives one value per row. Whether to add that spelling is open (below).
+
 ## Registry entry
 
 ```
@@ -32,6 +52,9 @@ features    the Cargo feature the Polars function needs
 - **N8**: Polars may deprecate `forward_fill` and `backward_fill` in favour of `fill_null(strategy=…)`. Check the pinned version's docs before choosing; if deprecated, N2 says the name is `fill_null(forward)`, which clashes with the `//` meaning of `fill_null` (D58). Decide at the start of the change.
 - Whether `by` inside a call needs a parser change or can reuse the cursor `by` parser.
 - `Decimal` support per function: some Polars windowed functions are not defined for decimals and would need a cast, as `sqrt` casts to `Float`.
+
+- Whether to add `lookup_asof` as a column function over an as-of stage, since a column of a sheet cannot be added to by a stage (a stage's sheet is read-only). Recommended: yes, as the spreadsheet user's form of N11, backed by the same entry.
+- `join_where` needs an expression language over two sheets' columns at once; how a name clash is spelled (N12) is to be settled with the checker.
 
 ## Risks
 

@@ -14,6 +14,11 @@ The owner's rule (2026-11-10): these functions are implemented as their Polars v
 - **omx-expressions**: ADDED. Where it runs: on a table, in the lazy plan; on a plain sheet, on a temporary one-column frame built from the column and read back. The Polars version is the only implementation, so the two paths agree by construction.
 - **omx-expressions**: ADDED. An order key and a partition for the functions that have a window: `Amount.cum_sum(Date by Account)`, lowering to `.over(partition_by=Account, order_by=Date)`.
 - **omx-expressions**: ADDED, as the first users: `cum_sum cum_min cum_max cum_prod cum_count`, `diff`, `pct_change`, `rank`, `forward_fill`, `backward_fill`, `rolling_sum rolling_mean rolling_min rolling_max rolling_std`, then `n_unique`, `clip`, `is_between`, `any`, `all`.
+- **omx-expressions**: ADDED. The registry covers **sheet stages** as well as column functions, and the first stages in it are the join family that `join(Other, keys)` lacks:
+  - `join_asof(Other, key)`: each row takes the row of `Other` with the nearest key at or below it (`backward`, the default), at or above it (`forward`) or the closest (`nearest`); `by` partitions both sheets; a tolerance is an optional last argument. This is the commission-rate lookup (`Sales |> join_asof(Commission_Rates, Sales_Amount, Sales_Target)`), done in one pass and without a filter per row
+  - `join_where(Other, condition)`: the rows of the pair where an inequality condition is true (Polars' inequality join), for ranges the as-of join does not cover
+  - `join(Other, keys, how)`: `how` widened to Polars' `semi`, `anti`, `full` and `cross`, next to the `left` that exists
+- **omx-expressions**: Later candidates, one line each in the design's list, not part of the first build: `group_by_dynamic` and `rolling` (time windows), `upsample`, `unique`, `top_k`/`bottom_k`, `explode`, `pivot`/`unpivot`, `with_row_index`.
 - **omx-expressions**: A type Polars cannot hold (`Complex`, `Scientific`) is refused with an error naming the function, not passed to Polars.
 - The Cargo features each family needs are switched on one family at a time.
 
@@ -21,7 +26,7 @@ The owner's rule (2026-11-10): these functions are implemented as their Polars v
 
 - `omasheet-omx`: `funcs.rs`, `check.rs` (the registry replaces per-function arms)
 - `omasheet-engine`: `lower.rs`, `eval.rs`, `dtype.rs`/`copyframe.rs` (the temporary frame)
-- `Cargo.toml`: Polars features
+- `Cargo.toml`: Polars features (`join_asof` is behind the `asof_join` feature; `join_where` behind `iejoin`, to be checked against the pinned version)
 - `docs/expressions.md`, `skill/omasheet/SKILL.md`, examples
 
 ## Out of Scope

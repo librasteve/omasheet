@@ -20,6 +20,14 @@ Deferred until `add-units` is archived.
 - [ ] 2.4 `n_unique clip is_between any all`
 - [ ] 2.5 Cargo features, family by family
 
+## 2b. The join family
+- [ ] 2b.1 Stage entries in the registry (N10)
+- [ ] 2b.2 `join_asof` with `backward forward nearest`, `by` and a tolerance (N11, N14)
+- [ ] 2b.3 `join_where` (N12)
+- [ ] 2b.4 `join` gains `full semi anti cross` (N13)
+- [ ] 2b.5 Decide and build `lookup_asof` as a column function, if kept
+- [ ] 2b.6 Tests: the commission table unsorted, a rep below every target (empty), `forward`, `nearest`, a tolerance, `by Region`; the table path and sheet path agree
+
 ## 3. Checks
 - [ ] 3.1 Table path and sheet path agree on every function and every dtype they take
 - [ ] 3.2 Docs, skill, an example, `.expected` regenerated

@@ -18,6 +18,12 @@ A function with a Polars version SHALL be named as that Polars method is, take i
 - **WHEN** `Running := Amount.cum_sum(Date by Account)` is calculated
 - **THEN** each account has its own running total
 
+#### Scenario: An as-of join
+
+- **GIVEN** `Commission_Rates` with `Sales_Target` and `Commission_Rate`, its rows in any order, and `Sales` with `Sales_Amount`
+- **WHEN** `Sales |> join_asof(Commission_Rates, Sales_Amount, Sales_Target)` is calculated
+- **THEN** each sale carries the `Commission_Rate` of the row with the highest `Sales_Target` at or below its `Sales_Amount`, and a sale below every target has empty rate columns
+
 #### Scenario: A complex column
 
 - **GIVEN** a column of `Complex` values
