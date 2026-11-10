@@ -130,6 +130,25 @@ Aligned      := Concise
 Both         := Concise
 AllPlusMinus := Concise
 
+# Two numbers are equal when they differ by no more than their uncertainties
+# together (in quadrature): `10 ± 0.3` is the same as `10.2`, since 0.2 is
+# inside 0.3, but not `11`. `<=` and `>=` hold for numbers within that
+# distance, `<` and `>` only for ones clear of it. A number with no
+# uncertainty counts as exact. Sorting still goes by the values alone.
+sheet Comparison
+
+| Name             | Value                      |
+| ---------------- | -------------------------- |
+| within sigma     | = 10 ± 0.3 == 10.2         |
+| outside sigma    | = 10 ± 0.3 == 11           |
+| not equal        | = 10 ± 0.3 != 10.2         |
+| both uncertain   | = 10 ± 0.3 == 10.3 ± 0.1   |
+| less, overlapped | = 10 ± 0.3 < 10.2          |
+| at most          | = 10 ± 0.3 <= 10.2         |
+| less, clear      | = 10 ± 0.3 < 11            |
+| greater, clear   | = 12 ± 0.3 > 11            |
+| exact operands   | = 10 == 10                 |
+
 sheet Summary
 
 | Name    | Value                     |

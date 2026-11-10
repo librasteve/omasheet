@@ -91,3 +91,17 @@ mean    |         10.700(77)
 total   |          53.50(39)
 longest |          12.00(10)
 spread  | 0.8366600265340756
+
+sheet Comparison
+
+Name             | Value
+-----------------|------
+within sigma     | true
+outside sigma    | false
+not equal        | false
+both uncertain   | true
+less, overlapped | false
+at most          | true
+less, clear      | true
+greater, clear   | true
+exact operands   | true
