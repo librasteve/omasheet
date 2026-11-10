@@ -9,7 +9,7 @@
 
 use crate::zone::{Zoned, format_offset};
 use omasheet_omx::ast::{BinOp, Lit};
-use omasheet_omx::colfmt::SciFormat;
+use omasheet_omx::colfmt::{SciConv, SciFormat};
 use omasheet_omx::convert;
 use omasheet_omx::date;
 use omasheet_omx::date::Style;
@@ -1270,22 +1270,25 @@ fn format_complex(re: f64, im: f64, exact: bool, sep: Option<char>) -> String {
 /// uncertainty is a plain number, and a value or uncertainty that is not
 /// finite is shown as it is (D96).
 ///
-/// A column's format may ask for more (D100): `±` for `11.000 ± 0.082`, a
-/// fixed number of places, which puts the uncertainty at that place whatever
-/// it is, so that a column's brackets stand in line, and a fixed exponent,
-/// so that its numbers are all of one size. Asked for either, a value with
-/// no uncertainty is shown in the same form, as `11.0000(0)`.
+/// A column's format may ask for more (D100), in the terms of a number
+/// format: `±` for `11.000 ± 0.082`; `.4f`, a fixed number of places, which
+/// puts the uncertainty at that place whatever it is, so that a column's
+/// brackets stand in line; `e`, an exponent of its own, or `e-3`, one for
+/// every number, so that they are all of one size; and a sign, a width and
+/// grouping, as for a `Float`. Asked for a conversion, a value with no
+/// uncertainty is shown in the same form, as `11.0000(0)`.
 pub fn format_uncertain(v: f64, s: f64, f: &SciFormat, sep: Option<char>) -> String {
-    let fixed = f.places.is_some() || f.exponent.is_some();
+    let fixed = f.places.is_some() || f.exponent.is_some() || f.conv != SciConv::General;
     if s == 0.0 && !fixed {
-        return shown_float(v, false, sep);
+        return padded_to(f, String::new(), shown_float(v, false, sep), String::new());
     }
     if !v.is_finite() || !s.is_finite() {
-        return format!(
+        let text = format!(
             "{} ± {}",
             shown_float(v, false, sep),
             shown_float(s, false, sep)
         );
+        return padded_to(f, String::new(), text, String::new());
     }
     let s = s.abs();
     // Two significant digits of the uncertainty, and the place of the last.
@@ -1307,14 +1310,14 @@ pub fn format_uncertain(v: f64, s: f64, f: &SciFormat, sep: Option<char>) -> Str
     } else {
         0
     };
-    // Plain where the last digit is a decimal place and the number is of a
-    // size to read; otherwise a mantissa and an exponent. A number of places
-    // asked for with no exponent is plain.
-    let exponent = match (f.exponent, f.places) {
-        (Some(e), _) => e,
-        (None, Some(_)) => 0,
-        (None, None) if place <= 0 && (-2..15).contains(&magnitude) => 0,
-        (None, None) => magnitude,
+    // `f` is plain; `e` has an exponent, its own unless one is asked for;
+    // and `g` is plain where the last digit is a decimal place and the number
+    // is of a size to read, and otherwise a mantissa and an exponent.
+    let exponent = match f.conv {
+        SciConv::Fixed => 0,
+        SciConv::Exp => f.exponent.unwrap_or(magnitude),
+        SciConv::General if place <= 0 && (-2..15).contains(&magnitude) => 0,
+        SciConv::General => magnitude,
     };
     let unit = 10f64.powi(exponent);
     let (mantissa, error) = (v / unit, s / unit);
@@ -1328,18 +1331,35 @@ pub fn format_uncertain(v: f64, s: f64, f: &SciFormat, sep: Option<char>) -> Str
         None => derived.max(0) as usize,
     };
     let k = 10f64.powi(decimals as i32);
-    let mantissa = (mantissa * k).round() / k;
-    let tail = if exponent == 0 {
+    let mantissa = ((mantissa * k).round() / k).abs();
+    let tail = if exponent == 0 && f.conv != SciConv::Exp {
         String::new()
+    } else if f.upper {
+        format!("E{exponent}")
     } else {
         format!("e{exponent}")
     };
+    let thousands = |text: String| match sep.filter(|_| f.group) {
+        Some(sep) => grouped_whole(&text, sep),
+        None => text,
+    };
+    let sign = if v < 0.0 {
+        "-"
+    } else if f.plus {
+        "+"
+    } else if f.space {
+        " "
+    } else {
+        ""
+    };
+    let number = thousands(format!("{mantissa:.decimals$}"));
     if f.plus_minus {
-        let error = (error * k).round() / k;
-        return if exponent == 0 {
-            format!("{mantissa:.decimals$} ± {error:.decimals$}")
+        let error = thousands(format!("{:.decimals$}", (error * k).round() / k));
+        return if tail.is_empty() {
+            padded_to(f, sign.into(), format!("{number} ± {error}"), String::new())
         } else {
-            format!("({mantissa:.decimals$} ± {error:.decimals$}){tail}")
+            let head = format!("({sign}");
+            padded_to(f, head, number, format!(" ± {error}){tail}"))
         };
     }
     // The two digits where the place is the uncertainty's own, and the
@@ -1349,7 +1369,42 @@ pub fn format_uncertain(v: f64, s: f64, f: &SciFormat, sep: Option<char>) -> Str
     } else {
         (error * k).round() as i64
     };
-    format!("{mantissa:.decimals$}({digits}){tail}")
+    padded_to(f, sign.into(), number, format!("({digits}){tail}"))
+}
+
+/// A number's `head` (its sign), its `number` and the `rest` after it, made
+/// up to the format's width: with noughts between the sign and the number
+/// under `0`, and otherwise with spaces, before it or, under `-`, after it.
+fn padded_to(f: &SciFormat, head: String, number: String, rest: String) -> String {
+    let len = head.chars().count() + number.chars().count() + rest.chars().count();
+    let width = f.width.unwrap_or(0);
+    if len >= width {
+        return head + &number + &rest;
+    }
+    let fill = width - len;
+    if f.zero && !f.left {
+        format!("{head}{}{number}{rest}", "0".repeat(fill))
+    } else if f.left {
+        format!("{head}{number}{rest}{}", " ".repeat(fill))
+    } else {
+        format!("{}{head}{number}{rest}", " ".repeat(fill))
+    }
+}
+
+/// The digits before the point of `text` grouped in threes by `sep`.
+fn grouped_whole(text: &str, sep: char) -> String {
+    let end = text
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(text.len());
+    let (whole, rest) = text.split_at(end);
+    let mut out = String::new();
+    for (k, digit) in whole.chars().enumerate() {
+        if k > 0 && (whole.len() - k) % 3 == 0 {
+            out.push(sep);
+        }
+        out.push(digit);
+    }
+    out + rest
 }
 
 /// A scientific value as `style` shows a number: its point the style's own.

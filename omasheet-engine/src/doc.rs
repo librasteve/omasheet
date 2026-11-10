@@ -6997,7 +6997,7 @@ mod tests {
         assert_eq!(
             doc.set_column_format(0, &[0], Some("x")),
             Err(
-                "Not a format: x\nScientific takes ±, places as .4, an exponent as e-3, or together as ±.4e-3"
+                "Not a format: x\nScientific takes f, e or g, with ± before them for value ± uncertainty"
                     .to_string()
             )
         );

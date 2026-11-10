@@ -92,15 +92,17 @@ Length : Scientific
 | 10.5(3)     |
 | 10          |
 
-# A column's format, in brackets after its type, says how its values are
-# shown, `±`, a number of places `.4`, an exponent `e-3`, or those together
-# in that order. With none a value is shown in the concise form, the
+# A column's format, in brackets after its type, is a number format as for a
+# Float, `f` for places, `e` for an exponent, `g` for whichever reads better,
+# with the sign, width and grouping flags, and `±` before it for
+# value ± uncertainty: `±+10.3e-3`. `e-3` sets one exponent for the whole
+# column. With no format a value is shown in the concise form, the
 # uncertainty to two digits at the place it sets. The same five values in
 # each column:
 #   Concise       each cell sets its own places and exponent
 #   PlusMinus     `±`: every value as value ± uncertainty
 #   SameExponent  `e-3`: one exponent for the column
-#   Aligned       `.4`: one number of places, so the brackets stand in line
+#   Aligned       `.4f`: one number of places, so the brackets stand in line
 #   Both          `.3e-3`: the same exponent and places, the brackets in line
 #   AllPlusMinus  `±.3e-3`: plus-minus, with the same exponent and places
 # A value with no uncertainty keeps every digit it has under a format, and
@@ -110,7 +112,7 @@ sheet Formats
 Concise      : Scientific
 PlusMinus    : Scientific[±]
 SameExponent : Scientific[e-3]
-Aligned      : Scientific[.4]
+Aligned      : Scientific[.4f]
 Both         : Scientific[.3e-3]
 AllPlusMinus : Scientific[±.3e-3]
 

@@ -186,7 +186,7 @@ An uncertain value SHALL display by default in the concise form: the uncertainty
 - **THEN** it shows as `12.10(30)e-3`
 
 #### Scenario: Same places
-- **GIVEN** a column declared `Scientific[.4]` and stored values of `0.0121 ± 0.0003` and `0.00873 ± 0.00041`
+- **GIVEN** a column declared `Scientific[.4f]` and stored values of `0.0121 ± 0.0003` and `0.00873 ± 0.00041`
 - **WHEN** they are displayed
 - **THEN** they show as `0.0121(3)` and `0.0087(4)`
 
@@ -204,3 +204,18 @@ An uncertain value SHALL display by default in the concise form: the uncertainty
 - **GIVEN** a column declared `Scientific[±]` and a stored value of `11` with uncertainty `0.0816…`
 - **WHEN** it is displayed
 - **THEN** it shows as `11.000 ± 0.082`
+
+#### Scenario: Sign, width and grouping
+- **GIVEN** a column declared `Scientific[+014.3f]` and a stored value of `0.01213` with uncertainty `0.00034`
+- **WHEN** it is displayed
+- **THEN** it shows as `+000000.012(0)`, and with `Scientific['.1f]` a value of `12345.678 ± 0.5` shows as `12,345.7(5)`
+
+#### Scenario: An exponent of its own
+- **GIVEN** a column declared `Scientific[.2e]` and a stored value of `0.01213` with uncertainty `0.00034`
+- **WHEN** it is displayed
+- **THEN** it shows as `1.21(3)e-2`, and with `Scientific[±.2e]` as `(1.21 ± 0.03)e-2`
+
+#### Scenario: A conversion of a whole number
+- **GIVEN** a column declared `Scientific[.2d]`
+- **WHEN** the file is parsed
+- **THEN** an error is reported, saying that a `Scientific` takes `f`, `e` or `g`

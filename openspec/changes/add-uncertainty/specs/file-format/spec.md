@@ -5,7 +5,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Column schema
-A sheet SHALL be able to declare the type of each column with lines of the form `<Column> : <Type>` placed between the `sheet` line and the header row. A type SHALL be a base type (`Int`, `Fraction`, `Num`, `Complex`, `Text`, `Date`, `Time`, `Datetime`, `Bool`) or `Scientific`. A column with no declaration SHALL have its type inferred from its cells. A `Scientific` column MAY be declared with a display format after its type, in brackets: `<Column> : Scientific[±]`, `Scientific[.4]`, `Scientific[e-3]` or those together in that order, `Scientific[±.4e-3]`. With no format, the column displays in the concise form.
+A sheet SHALL be able to declare the type of each column with lines of the form `<Column> : <Type>` placed between the `sheet` line and the header row. A type SHALL be a base type (`Int`, `Fraction`, `Num`, `Complex`, `Text`, `Date`, `Time`, `Datetime`, `Bool`) or `Scientific`. A column with no declaration SHALL have its type inferred from its cells. A `Scientific` column MAY be declared with a display format after its type, in brackets, which SHALL be a number format as a `Float` takes, `f`, `e` or `g` with flags, a width and places, and `±` before it for `value ± uncertainty`: `<Column> : Scientific[±]`, `Scientific[.4f]`, `Scientific[e-3]`, `Scientific[±+10.3e-3]`. With no format, the column displays in the concise form.
 
 #### Scenario: Scientific column
 - **GIVEN** a schema line `Length : Scientific` and the cells `10`, `10 ± 0.1` and `10.5(3)`
@@ -20,7 +20,7 @@ A sheet SHALL be able to declare the type of each column with lines of the form 
 #### Scenario: Unknown format
 - **GIVEN** a schema line `Length : Scientific[x]`
 - **WHEN** the file is parsed
-- **THEN** an error is reported, naming the formats a `Scientific` column takes
+- **THEN** an error is reported, naming the conversions a `Scientific` column takes, `f`, `e` and `g`
 
 #### Scenario: Schema names a column not in the header
 - **WHEN** a schema line declares a column that does not appear in the header and is not a computed column

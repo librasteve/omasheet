@@ -2244,11 +2244,12 @@ ApplicationWindow {
     // A format a column of its type takes, to show what one looks like.
     function formatExample(c) {
         var type = sheet.columns[c] ? sheet.columns[c].type : "";
-        return type === "Date" ? "%d %b %Y"
-             : type === "Time" ? "%H:%M"
-             : type === "Datetime" ? "%d %b %Y %H:%M"
-             : type === "Scientific" ? "\u00b1"
-             : "'.2f";
+        var examples = {
+            "Integer": "'d", "Hex": "#08x", "Octal": "#o", "Binary": "08b",
+            "Decimal": "'.2f", "Float": ".3g", "Scientific": "\u00b1.3e-3",
+            "Date": "%d %b %Y", "Time": "%H:%M", "Datetime": "%d %b %Y %H:%M"
+        };
+        return examples[type] || "'.2f";
     }
 
     // Whether every selected column is of a type that takes a format.

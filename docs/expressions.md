@@ -219,12 +219,7 @@ alone. A comparison and a sort use the values. A first-order answer is poor
 where the uncertainty is large beside the distance to the edge of a
 function's domain, as `ln(0.1 ± 0.5)`.
 
-A column's format, in brackets after its type, says how its values are
-shown: `±` for `value ± uncertainty`, a number of places as `.4`, an
-exponent as `e-3`, or those together in that order, `±.4e-3`. `Length :
-Scientific[e-3]` puts every value of the column at one exponent,
-`Scientific[.4]` gives them all four places, so that the brackets stand in
-line, and `Scientific[±]` shows each as `11.000 ± 0.082`. What a format does
+A column's format, in brackets after its type, is a number format as a `Float` takes (see [the file format](format.md)), with `±` before it for `value ± uncertainty`: `f` for a number of places, `e` for an exponent, `g` for whichever reads better, and the flags `+`, space, `0`, `-`, `'` and a width. `Length : Scientific[e-3]` puts every value of the column at one exponent, `Scientific[.4f]` gives them all four places, so that the brackets stand in line, `Scientific[±]` shows each as `11.000 ± 0.082`, and `Scientific[±.2e]` as `(1.21 ± 0.03)e-2`. What a format does
 not name is worked out for each value from its own uncertainty. A value with
 no uncertainty keeps every digit it has under a format, with `(0)` for an
 uncertainty. `examples/uncertainty.omx` shows them side by side.

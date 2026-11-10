@@ -220,7 +220,7 @@ read as one; `Integer` is what is written.
 | `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction |
 | `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
 | `Float` | `1.5e3`, `Inf`, `-Inf`, `NaN` — floating point |
-| `Scientific` | `10.5(3)`, `10 ± 0.3` — a value with its measurement uncertainty, each a `Float`; a number with no uncertainty in a `Scientific` column has an uncertainty of zero. Its format, in brackets, is `±` for `value ± uncertainty`, a number of places as `.4`, an exponent as `e-3`, or those together as `±.4e-3`: `Length : Scientific[.4e-3]` |
+| `Scientific` | `10.5(3)`, `10 ± 0.3` — a value with its measurement uncertainty, each a `Float`; a number with no uncertainty in a `Scientific` column has an uncertainty of zero. Its format, in brackets, is a number format as for a `Float` with `±` before it for `value ± uncertainty`: `Length : Scientific[.4f]`, `Scientific[±.3e-3]` |
 | `Complex` | `3+4i`, `-1.5-2i`, `2i` — a real and an imaginary part, each a `Float`; a real number in a `Complex` column is that number with no imaginary part |
 | `String` | `hi` or `"hi"`  (escape \|) |
 | `Boolean` | `true`, `false` |

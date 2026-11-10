@@ -332,7 +332,7 @@ fn a_format_fixes_places_and_exponent() {
 sheet S
 
 Same  : Scientific[e-3]
-Align : Scientific[.4]
+Align : Scientific[.4f]
 Both  : Scientific[.3e-3]
 All   : Scientific[±.3e-3]
 
@@ -374,7 +374,7 @@ fn an_unknown_format_is_refused() {
         "sheet S\n\nLength : Scientific[x]\n\nLength\n------\n1\n",
     )
     .errors;
-    assert!(errors.iter().any(|e| e.contains("`±`")), "{errors:?}");
+    assert!(errors.iter().any(|e| e.contains("`f`")), "{errors:?}");
 }
 
 // ---- columns ---------------------------------------------------------------
@@ -428,4 +428,34 @@ Length
     assert!(out.ok(), "{:?}", out.errors);
     assert!(out.output.contains("10.00(10)"), "{}", out.output);
     assert!(out.output.contains("10.50(30)"), "{}", out.output);
+}
+
+#[test]
+fn a_format_is_a_number_format_with_plus_minus() {
+    // 0.01213 ± 0.00034, and 12345.678 ± 0.5, by each format.
+    let table = |format: &str| {
+        let file = format!(
+            "sheet S\n\nL : Scientific[{format}]\n\n| L |\n| - |\n| 0.01213 ± 0.00034 |\n| 12345.678 ± 0.5 |\n| -0.01213 ± 0.00034 |\n| 7 |\n"
+        );
+        let out = view("test.omx", &file);
+        assert!(out.ok(), "{format}: {:?}", out.errors);
+        out.output
+    };
+    for (format, shown) in [
+        ("±", vec!["0.01213 ± 0.00034", "12345.68 ± 0.50"]),
+        (".4f", vec!["0.0121(3)", "12345.6780(5000)", "7.0000(0)"]),
+        ("+.5f", vec!["+0.01213(34)", "-0.01213(34)"]),
+        ("e", vec!["1.213(34)e-2", "1.234568(50)e4", "-1.213(34)e-2"]),
+        (".2e", vec!["1.21(3)e-2", "-1.21(3)e-2"]),
+        ("±.2e", vec!["(1.21 ± 0.03)e-2", "(-1.21 ± 0.03)e-2"]),
+        ("E-3", vec!["12.13(34)E-3"]),
+        ("g", vec!["0.01213(34)", "12345.68(50)"]),
+        ("14.2f", vec!["  12345.68(50)"]),
+        ("+014.3f", vec!["+000000.012(0)", "-000000.012(0)"]),
+    ] {
+        let out = table(format);
+        for shown in shown {
+            assert!(out.contains(shown), "[{format}] {shown} in\n{out}");
+        }
+    }
 }
