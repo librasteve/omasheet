@@ -5377,6 +5377,7 @@ ApplicationWindow {
         TypeEntry { typeName: "Decimal" }
         TypeEntry { typeName: "Fraction"; narrower: true }
         TypeEntry { typeName: "Percent"; narrower: true }
+        TypeEntry { typeName: "Scientific" }
         TypeEntry { typeName: "Float" }
         TypeEntry { typeName: "Complex" }
         TypeEntry { typeName: "String" }
