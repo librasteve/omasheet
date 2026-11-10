@@ -704,6 +704,9 @@ impl Writer<'_> {
                     MathFn::Sinh => "SINH",
                     MathFn::Cosh => "COSH",
                     MathFn::Tanh => "TANH",
+                    MathFn::Arcsinh => "ASINH",
+                    MathFn::Arccosh => "ACOSH",
+                    MathFn::Arctanh => "ATANH",
                     MathFn::Radians => "RADIANS",
                     MathFn::Degrees => "DEGREES",
                     // A half goes away from zero, as in a file.

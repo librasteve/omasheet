@@ -554,6 +554,10 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         }
         _ => {
             let (x, y) = (real(&x), real(&y));
+            // A negative base to a fractional power is complex (D212).
+            if op == BinOp::Pow && x < 0.0 && y.is_finite() && y.fract() != 0.0 {
+                return arith(op, &Value::Complex(x, 0.0), &Value::Complex(y, 0.0));
+            }
             Ok(Value::Float(match op {
                 BinOp::Add => x + y,
                 BinOp::Sub => x - y,
@@ -865,28 +869,130 @@ pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
             ));
         }
     };
-    // Outside the function's domain it is as Raku has it: `sqrt(-1)` is
-    // `NaN` and `ln(0)` is `-Inf`.
+    // Outside the function's real domain the value is the principal complex
+    // one: `sqrt(-4)` is `0+2i`. On its edge it is real, as `ln(0)` is `-Inf`.
+    if m.leaves_domain(x) {
+        return complex_math(m, x, 0.0);
+    }
     Ok(Value::Float(m.apply(x)))
 }
 
+type C = (f64, f64);
+
+fn c_mul(p: C, q: C) -> C {
+    (p.0 * q.0 - p.1 * q.1, p.0 * q.1 + p.1 * q.0)
+}
+
+fn c_ln(z: C) -> C {
+    (z.0.hypot(z.1).ln(), z.1.atan2(z.0))
+}
+
+/// The root with a real part that is not negative, the cut on the negative
+/// real axis taken from the sign of the imaginary part, `-0` included.
+fn c_sqrt(z: C) -> C {
+    let r = z.0.hypot(z.1);
+    let half = ((r - z.0) / 2.0).sqrt();
+    (
+        ((r + z.0) / 2.0).sqrt(),
+        if z.1.is_sign_negative() { -half } else { half },
+    )
+}
+
+/// `asinh z = ln(z + sqrt(z + i) sqrt(z - i))`. It is odd, so a negative real
+/// part is worked on as its negation, which keeps the sum from cancelling.
+fn c_asinh(z: C) -> C {
+    if z.0.is_sign_negative() {
+        let (re, im) = c_asinh((-z.0, -z.1));
+        return (-re, -im);
+    }
+    let root = c_mul(c_sqrt((z.0, z.1 + 1.0)), c_sqrt((z.0, z.1 - 1.0)));
+    c_ln((z.0 + root.0, z.1 + root.1))
+}
+
+/// `acosh z = ln(z + sqrt(z + 1) sqrt(z - 1))`.
+fn c_acosh(z: C) -> C {
+    let root = c_mul(c_sqrt((z.0 + 1.0, z.1)), c_sqrt((z.0 - 1.0, z.1)));
+    c_ln((z.0 + root.0, z.1 + root.1))
+}
+
+/// `atanh z = (ln(1 + z) - ln(1 - z)) / 2`.
+fn c_atanh(z: C) -> C {
+    let (a, b) = (c_ln((1.0 + z.0, z.1)), c_ln((1.0 - z.0, -z.1)));
+    ((a.0 - b.0) / 2.0, (a.1 - b.1) / 2.0)
+}
+
+fn c_tan(z: C) -> C {
+    let (x, y) = (2.0 * z.0, 2.0 * z.1);
+    // `sinh y / cosh y` is `+-1` long before `cosh` overflows.
+    let im = if y.abs() > 40.0 {
+        y.signum()
+    } else {
+        y.sinh() / (x.cos() + y.cosh())
+    };
+    (x.sin() / (x.cos() + y.cosh()), im)
+}
+
 fn complex_math(m: MathFn, re: f64, im: f64) -> Result<Value, String> {
+    let z = (re, im);
     let r = re.hypot(im);
-    Ok(match m {
-        MathFn::Abs => Value::Float(r),
-        MathFn::Re => Value::Float(re),
-        MathFn::Im => Value::Float(im),
-        MathFn::Arg => Value::Float(im.atan2(re)),
-        MathFn::Conj => Value::Complex(re, -im),
-        // The root with a real part that is not negative.
-        MathFn::Sqrt => {
-            let half = ((r - re) / 2.0).sqrt();
-            Value::Complex(((r + re) / 2.0).sqrt(), if im < 0.0 { -half } else { half })
+    let ln10 = std::f64::consts::LN_10;
+    let ln2 = std::f64::consts::LN_2;
+    let half_pi = std::f64::consts::FRAC_PI_2;
+    // `asin z = -i asinh(i z)`.
+    let asin = |z: C| {
+        let (a, b) = c_asinh((-z.1, z.0));
+        (b, -a)
+    };
+    let c = match m {
+        MathFn::Abs => return Ok(Value::Float(r)),
+        MathFn::Re => return Ok(Value::Float(re)),
+        MathFn::Im => return Ok(Value::Float(im)),
+        MathFn::Arg => return Ok(Value::Float(im.atan2(re))),
+        MathFn::Conj => (re, -im),
+        MathFn::Sign if r == 0.0 => (0.0, 0.0),
+        MathFn::Sign => (re / r, im / r),
+        MathFn::Sqrt => c_sqrt(z),
+        MathFn::Exp => {
+            let e = re.exp();
+            (e * im.cos(), e * im.sin())
         }
-        MathFn::Exp => Value::Complex(re.exp() * im.cos(), re.exp() * im.sin()),
-        MathFn::Ln => Value::Complex(r.ln(), im.atan2(re)),
-        _ => return Err(format!("`{}` is not defined for Complex", m.name())),
-    })
+        MathFn::Ln => c_ln(z),
+        MathFn::Log10 => {
+            let l = c_ln(z);
+            (l.0 / ln10, l.1 / ln10)
+        }
+        MathFn::Log2 => {
+            let l = c_ln(z);
+            (l.0 / ln2, l.1 / ln2)
+        }
+        MathFn::Sin => (re.sin() * im.cosh(), re.cos() * im.sinh()),
+        MathFn::Cos => (re.cos() * im.cosh(), -(re.sin() * im.sinh())),
+        MathFn::Tan => c_tan(z),
+        MathFn::Sinh => (re.sinh() * im.cos(), re.cosh() * im.sin()),
+        MathFn::Cosh => (re.cosh() * im.cos(), re.sinh() * im.sin()),
+        // `tanh z = -i tan(i z)`.
+        MathFn::Tanh => {
+            let (a, b) = c_tan((-im, re));
+            (b, -a)
+        }
+        MathFn::Arcsin => asin(z),
+        MathFn::Arccos => {
+            let s = asin(z);
+            (half_pi - s.0, -s.1)
+        }
+        // `atan z = -i atanh(i z)`.
+        MathFn::Arctan => {
+            let (a, b) = c_atanh((-im, re));
+            (b, -a)
+        }
+        MathFn::Arcsinh => c_asinh(z),
+        MathFn::Arccosh => c_acosh(z),
+        MathFn::Arctanh => c_atanh(z),
+        MathFn::Round | MathFn::Floor | MathFn::Ceil | MathFn::Radians | MathFn::Degrees => {
+            return Err(format!("`{}` is not defined for Complex", m.name()));
+        }
+    };
+    Ok(Value::Complex(c.0, c.1))
 }
 
 /// The nearest multiple of `scale`, which is what `round(x, 0.01)` means:

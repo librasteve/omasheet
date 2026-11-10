@@ -27,6 +27,9 @@ pub enum MathFn {
     Sinh,
     Cosh,
     Tanh,
+    Arcsinh,
+    Arccosh,
+    Arctanh,
     Radians,
     Degrees,
     /// The real part of a complex number.
@@ -92,7 +95,22 @@ impl MathFn {
                 | MathFn::Sinh
                 | MathFn::Cosh
                 | MathFn::Tanh
+                | MathFn::Arcsinh
+                | MathFn::Arccosh
+                | MathFn::Arctanh
         )
+    }
+
+    /// Whether a real argument is outside the function's real domain, where
+    /// the principal value is a complex number. The boundary is inside (`ln(0)`
+    /// is `-Inf`), and a `NaN` is outside nothing.
+    pub fn leaves_domain(self, x: f64) -> bool {
+        match self {
+            MathFn::Sqrt | MathFn::Ln | MathFn::Log10 | MathFn::Log2 => x < 0.0,
+            MathFn::Arcsin | MathFn::Arccos | MathFn::Arctanh => x.abs() > 1.0,
+            MathFn::Arccosh => x < 1.0,
+            _ => false,
+        }
     }
 
     /// The type of the result for a complex number, or `None` if the
@@ -100,8 +118,10 @@ impl MathFn {
     pub fn of_complex(self) -> Option<S> {
         match self {
             MathFn::Abs | MathFn::Re | MathFn::Im | MathFn::Arg => Some(S::Float),
-            MathFn::Conj | MathFn::Sqrt | MathFn::Exp | MathFn::Ln => Some(S::Complex),
-            _ => None,
+            MathFn::Round | MathFn::Floor | MathFn::Ceil | MathFn::Radians | MathFn::Degrees => {
+                None
+            }
+            _ => Some(S::Complex),
         }
     }
 
@@ -133,6 +153,9 @@ impl MathFn {
             MathFn::Sinh => x.cosh(),
             MathFn::Cosh => x.sinh(),
             MathFn::Tanh => 1.0 - x.tanh() * x.tanh(),
+            MathFn::Arcsinh => 1.0 / (x * x + 1.0).sqrt(),
+            MathFn::Arccosh => 1.0 / (x * x - 1.0).sqrt(),
+            MathFn::Arctanh => 1.0 / (1.0 - x * x),
             MathFn::Radians => PI / 180.0,
             MathFn::Degrees => 180.0 / PI,
         }
@@ -160,6 +183,9 @@ impl MathFn {
             MathFn::Sinh => x.sinh(),
             MathFn::Cosh => x.cosh(),
             MathFn::Tanh => x.tanh(),
+            MathFn::Arcsinh => x.asinh(),
+            MathFn::Arccosh => x.acosh(),
+            MathFn::Arctanh => x.atanh(),
             MathFn::Radians => x.to_radians(),
             MathFn::Degrees => x.to_degrees(),
             MathFn::Re | MathFn::Conj => x,
@@ -494,7 +520,7 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         MATH,
         "sqrt",
         "sqrt(x)",
-        "The square root, as a Float. A negative x needs a complex number: sqrt(-4+0i).",
+        "The square root, as a Float. A negative x gives a complex number: sqrt(-4) is 0+2i.",
         MathFn::Sqrt,
     ),
     doc(CONVERT, "Integer", ".Integer", "A whole number: truncates."),
@@ -586,21 +612,21 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         LOG,
         "ln",
         "ln(x)",
-        "The natural logarithm. x must be positive.",
+        "The natural logarithm. A negative x gives a complex number.",
         MathFn::Ln,
     ),
     math_doc(
         LOG,
         "log10",
         "log10(x)",
-        "The logarithm to base 10. x must be positive.",
+        "The logarithm to base 10. A negative x gives a complex number.",
         MathFn::Log10,
     ),
     math_doc(
         LOG,
         "log2",
         "log2(x)",
-        "The logarithm to base 2. x must be positive.",
+        "The logarithm to base 2. A negative x gives a complex number.",
         MathFn::Log2,
     ),
     math_doc(TRIG, "sin", "sin(x)", "The sine.", MathFn::Sin),
@@ -622,14 +648,14 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         TRIG,
         "arcsin",
         "arcsin(x)",
-        "The angle in radians whose sine is x, for x from -1 to 1.",
+        "The angle in radians whose sine is x. A real x beyond -1 to 1 gives a complex number.",
         MathFn::Arcsin,
     ),
     math_doc(
         TRIG,
         "arccos",
         "arccos(x)",
-        "The angle in radians whose cosine is x, for x from -1 to 1.",
+        "The angle in radians whose cosine is x. A real x beyond -1 to 1 gives a complex number.",
         MathFn::Arccos,
     ),
     math_doc(
@@ -659,6 +685,27 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "tanh(x)",
         "The hyperbolic tangent.",
         MathFn::Tanh,
+    ),
+    math_doc(
+        TRIG,
+        "arcsinh",
+        "arcsinh(x)",
+        "The inverse hyperbolic sine.",
+        MathFn::Arcsinh,
+    ),
+    math_doc(
+        TRIG,
+        "arccosh",
+        "arccosh(x)",
+        "The inverse hyperbolic cosine. A real x below 1 gives a complex number.",
+        MathFn::Arccosh,
+    ),
+    math_doc(
+        TRIG,
+        "arctanh",
+        "arctanh(x)",
+        "The inverse hyperbolic tangent. A real x beyond -1 to 1 gives a complex number.",
+        MathFn::Arctanh,
     ),
     math_doc(
         TRIG,

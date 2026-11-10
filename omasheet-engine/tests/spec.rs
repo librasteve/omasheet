@@ -953,7 +953,8 @@ fn complex_numbers() {
     assert_eq!(calc("[Inf\\i, 1+NaN\\i]"), "[0+Inf\\i, 1+NaN\\i]");
     // Real numbers have the same parts.
     assert_eq!(calc("[re(5/2), im(7), conj(3)]"), "[2.5, 0, 3]");
-    assert!(calc_err(None, "sin(1i)").contains("`sin` cannot be applied to Complex"));
+    assert_eq!(calc("sin(0+0i)"), "0+0i");
+    assert!(calc_err(None, "round(1i)").contains("cannot be applied to Complex"));
     // No order, but equality, exactly (D198, D202).
     let e = calc_err(None, "1i < 2i");
     assert!(e.contains("no order"), "{e}");
@@ -1034,7 +1035,37 @@ fn math_functions() {
     // Over a column, and as a method.
     assert_eq!(ask(SALES, "Sales.Revenue.sqrt().floor()"), "[10, 10, 12]");
     // Outside the domain, and on the wrong kind of value.
-    assert_eq!(calc("[sqrt(-1), ln(0), arcsin(2)]"), "[NaN, -Inf, NaN]");
+    // A real argument outside the domain gives the principal complex value
+    // (D207); its edge stays real (D209).
+    assert_eq!(calc("sqrt(-4)"), "0+2i");
+    assert_eq!(calc("ln(-1)"), "0+3.141592653589793i");
+    assert_eq!(calc("[ln(0), arctanh(1), sqrt(0)]"), "[-Inf, Inf, 0]");
+    assert_eq!(calc("arccos(2)"), "0-1.3169578969248166i");
+    assert_eq!(calc("arctanh(2)"), "0.5493061443340549+1.5707963267948966i");
+    assert_eq!(calc("arccosh(0)"), "0+1.5707963267948966i");
+    assert_eq!(calc("arcsinh(0)"), "0");
+    assert_eq!(calc("sign(3+4i)"), "0.6+0.8i");
+    assert_eq!(calc("sqrt(Complex(-4, 0)) == sqrt(-4)"), "true");
+    assert!(calc_err(None, "(-8) ** 0.5 < 1").contains("no order"));
+    assert!(calc_err(None, "floor(sqrt(-4))").contains("not defined for Complex"));
+    assert!(calc_err(None, "sqrt(-4).Float").contains("imaginary part not zero"));
+    assert_eq!(calc("sqrt(NaN)"), "NaN");
+    // A `Complex` result in a declared `Float` column is refused, and in an
+    // undeclared one the column is `Complex`.
+    let refused = lint_errors("sheet Z\n\nV : Float\n\nV\n= sqrt(-4)\n");
+    assert!(
+        refused
+            .iter()
+            .any(|e| e.contains("declared `Float` but this is Complex")),
+        "{refused:?}"
+    );
+    assert_eq!(
+        shown("sheet Z\n\nV\n= sqrt(4)\n= sqrt(-4)\n")
+            .lines()
+            .skip(3)
+            .collect::<Vec<_>>(),
+        ["   2", "0+2i"]
+    );
     assert!(calc_err(None, "sin('x')").contains("`sin` cannot be applied to String"));
     // Whatever `.Float` takes is cast first.
     assert_eq!(calc("sin(true)"), calc("sin(1)"));

@@ -8,8 +8,9 @@ Arithmetic is exact: `1/3 + 1/6` is `0.5`, `0.1 + 0.2` is `0.3`, and integers
 do not overflow. `x.Float` gives a floating-point `Float`.
 
 No exact number is a division by zero, so that gives a `Float`: `1/0` is `Inf`,
-`-1/0` is `-Inf` and `0/0` is `NaN`. So does a function outside its
-domain: `sqrt(-1)` is `NaN` and `ln(0)` is `-Inf`. They are written as they are shown,
+`-1/0` is `-Inf` and `0/0` is `NaN`. So does a function at the
+edge of its domain: `ln(0)` is `-Inf`. Past the edge a real argument gives the principal
+`Complex` (see Complex numbers): `sqrt(-1)` is `0+1i`. They are written as they are shown,
 `Inf`, `-Inf` and `NaN`, in a formula or a cell; the text is in quotes,
 `'Inf'` in a formula and `"Inf"` in a cell. A `NaN` is ordered greatest and equal to itself, so `NaN == NaN` is
 true, a `NaN` sorts last, and the largest of a column holding one is the
@@ -250,9 +251,23 @@ degrees(arg(2i))       90
 
 `+ - * /` and `**` follow the rules of complex numbers; a whole exponent is
 repeated multiplication, as in Raku. `re(z)` and `im(z)` are the parts,
-`conj(z)` the conjugate and `arg(z)` the angle in radians. `abs`, `sqrt`,
-`exp` and `ln` take a `Complex`; the other functions do not. A real number
-has the same parts, with no imaginary part: `im(7)` is `0`.
+`conj(z)` the conjugate and `arg(z)` the angle in radians. `abs sqrt exp ln
+log10 log2 sin cos tan sinh cosh tanh arcsin arccos arctan arcsinh arccosh
+arctanh sign` take a `Complex` and give the principal value (the branch cuts are
+C99's, so `arcsin(2+0i)` is `1.5707963267948966+1.3169578969248166i`).
+`round floor ceil radians degrees` do not. A real number has the same parts,
+with no imaginary part: `im(7)` is `0`.
+
+A real argument outside the function's real domain gives the principal
+`Complex` too, not `NaN`: `sqrt(-4)` is `0+2i`, `ln(-1)` is `0+3.14…i`,
+`arccos(2)` is `0-1.317…i`, `arccosh(0)` is `0+1.5707963267948966i`,
+`arctanh(2)` is `0.549…+1.5707963267948966i`, `(-2) ** 0.5` is `1.414…i`. The
+edge of the domain stays real (`ln(0)` is `-Inf`, `arctanh(1)` is `Inf`), and a
+`NaN` stays `NaN`. The type checker still calls the result a `Float`, so the
+`Complex` shows in the value: an undeclared column holding one is `Complex`, a
+column declared `Float` rejects the cell (`declared Float but this is Complex`),
+and `sqrt(-4).Float` is an error. A `Scientific` stays real: `sqrt(-4 ± 0.4)` is
+`NaN ± NaN`.
 
 A `Complex` has no order: `1i < 2i` is an error. `=` and `!=` compare both
 parts exactly. To get a real number out, use `re(z)` or `abs(z)`, or `z.Float`,
@@ -435,13 +450,13 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
   `is_first_distinct()` and `is_last_distinct()`, of a column or a vector,
   or of this row's cell, `Name.is_duplicated()`, which is answered among the
   column's. An empty cell is a value of its own here
-- Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan pi() e()` and more
+- Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan arcsinh arccosh arctanh pi() e()` and more
   `exp`, `ln`, `log10`, `log2` and the trigonometric functions cast their
   argument to a `Float` as `x.Float` does, so `sin(true)` is `sin(1)`,
   `ln('20')` is `ln(20)` and `sin(3+0i)` is `sin(3)`; a date or a duration,
-  or a `Complex` with an imaginary part, is an error. `exp` and `ln` of a
-  `Complex` stay `Complex`
-- Complex: `re im conj arg`, with `abs sqrt exp ln` for a `Complex` too
+  or a `Complex` with an imaginary part, is an error. These take a `Complex`
+  and stay `Complex`; a real argument past the domain gives one (`sqrt(-4)`)
+- Complex: `re im conj arg sign`, with `abs` and every function above except `round floor ceil radians degrees` for a `Complex` too
 - Counting up: `succ` — a number plus one, or the next text, `AZ` to `BA`
 - Converting: `Integer Decimal Percent Float String Boolean Date Time Datetime
   Duration`,
