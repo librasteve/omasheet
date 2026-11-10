@@ -4883,6 +4883,21 @@ impl Document {
                     column.ty = S::Float.to_string();
                 }
             }
+            // The same for a number column holding a `Complex`, as a function
+            // of a real number past its domain gives (`sqrt(-4)`): the checker
+            // cannot see the data, so the cells widen the column to `Complex`.
+            for (c, column) in columns.iter_mut().enumerate() {
+                let number = sheet.cols[c].ty.is_exact() || sheet.cols[c].ty == S::Float;
+                if column.declared || !number {
+                    continue;
+                }
+                if rows
+                    .iter()
+                    .any(|row| matches!(row[c].value, Value::Complex(..)))
+                {
+                    column.ty = S::Complex.to_string();
+                }
+            }
             // A table sorted in the grid is shown in that order, while its
             // file still has as many rows as the order numbers. A paged
             // sheet takes the order as its rows are asked for.
@@ -6830,6 +6845,14 @@ mod tests {
         let mut doc = Document::from_text(SALES);
         assert!(doc.set_cell(0, 0, 1, "0x10"));
         assert!(!doc.text().contains(": Hex"), "{}", doc.text());
+    }
+
+    #[test]
+    fn a_formula_past_its_domain_makes_the_column_complex() {
+        let doc = Document::from_text("sheet T\n\nX | R\n--|--\n-4 | *\n4 | *\n\nR := sqrt(X)\n");
+        assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Complex");
+        let doc = Document::from_text("sheet T\n\nX | R\n--|--\n4 | *\n9 | *\n\nR := sqrt(X)\n");
+        assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Float");
     }
 
     #[test]
