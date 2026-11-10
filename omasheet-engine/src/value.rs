@@ -1043,8 +1043,24 @@ pub fn is_nan(v: &Value) -> bool {
     matches!(v, Value::Float(f) if f.is_nan())
 }
 
-/// Order two single values. `None` if either is empty.
+/// Order two single values. `None` if either is empty. Two numbers, one of
+/// them uncertain, are equal when they differ by no more than their
+/// uncertainties together (in quadrature), so `==` and `<=` hold for them.
 pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
+    if let (Some(x), Some(y)) = (number(a), number(b))
+        && (matches!(x, N::Scientific(..)) || matches!(y, N::Scientific(..)))
+        && let (Some((vx, sx)), Some((vy, sy))) = (with_sigma(&x), with_sigma(&y))
+        && !vx.is_nan()
+        && !vy.is_nan()
+        && (vx - vy).abs() <= sx.hypot(sy)
+    {
+        return Ok(Some(Ordering::Equal));
+    }
+    compare_exact(a, b)
+}
+
+/// Order two single values by their values alone, ignoring any uncertainty.
+fn compare_exact(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
     Ok(Some(match (a, b) {
         (Value::Null, _) | (_, Value::Null) => return Ok(None),
         (Value::String(x, _), Value::String(y, _)) => x.cmp(y),
@@ -1089,7 +1105,7 @@ pub fn sort_order(a: &Value, b: &Value) -> Result<Ordering, String> {
         (Value::Null, Value::Null) => Ordering::Equal,
         (Value::Null, _) => Ordering::Less,
         (_, Value::Null) => Ordering::Greater,
-        _ => compare(a, b)?.unwrap_or(Ordering::Equal),
+        _ => compare_exact(a, b)?.unwrap_or(Ordering::Equal),
     })
 }
 
