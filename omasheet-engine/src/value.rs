@@ -911,6 +911,12 @@ fn c_asinh(z: C) -> C {
 
 /// `acosh z = ln(z + sqrt(z + 1) sqrt(z - 1))`.
 fn c_acosh(z: C) -> C {
+    // On the real segment inside (-1, 1) the real part is exactly zero, which
+    // the logarithm of a modulus that is only nearly 1 would not give.
+    if z.1 == 0.0 && z.0.abs() <= 1.0 {
+        let angle = z.0.acos();
+        return (0.0, if z.1.is_sign_negative() { -angle } else { angle });
+    }
     let root = c_mul(c_sqrt((z.0 + 1.0, z.1)), c_sqrt((z.0 - 1.0, z.1)));
     c_ln((z.0 + root.0, z.1 + root.1))
 }

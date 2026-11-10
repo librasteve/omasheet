@@ -1,0 +1,58 @@
+# The maths functions with complex results. A real argument past the edge of
+# a function's real domain gives the principal complex value, not NaN, and the
+# edge itself stays real. A column that holds one is Complex; a column declared
+# Float would reject the cell, and `sqrt(-4).Float` is an error.
+# `round floor ceil radians degrees` do not take a complex number.
+
+sheet Beyond
+
+| X    | Sqrt | Ln | Log10 | Arcsin | Arccos | Arccosh | Arctanh | Power |
+| ---- | ---- | -- | ----- | ------ | ------ | ------- | ------- | ----- |
+| -4   | *    | *  | *     | *      | *      | *       | *       | *     |
+| -1   | *    | *  | *     | *      | *      | *       | *       | *     |
+| 0    | *    | *  | *     | *      | *      | *       | *       | *     |
+| 0.5  | *    | *  | *     | *      | *      | *       | *       | *     |
+| 1    | *    | *  | *     | *      | *      | *       | *       | *     |
+| 2    | *    | *  | *     | *      | *      | *       | *       | *     |
+
+Sqrt    := sqrt(X)
+Ln      := ln(X)
+Log10   := log10(X)
+Arcsin  := arcsin(X)
+Arccos  := arccos(X)
+Arccosh := arccosh(X)
+Arctanh := arctanh(X)
+Power   := X ** 0.5
+
+sheet Complex
+
+| Z     | Sign | Exp | Ln | Sin | Cos | Tan | Sinh | Cosh | Tanh |
+| ----- | ---- | --- | -- | --- | --- | --- | ---- | ---- | ---- |
+| 1+2i  | *    | *   | *  | *   | *   | *   | *    | *    | *    |
+| -1-2i | *    | *   | *  | *   | *   | *   | *    | *    | *    |
+| 3+4i  | *    | *   | *  | *   | *   | *   | *    | *    | *    |
+
+Sign := sign(Z)
+Exp  := exp(Z)
+Ln   := ln(Z)
+Sin  := sin(Z)
+Cos  := cos(Z)
+Tan  := tan(Z)
+Sinh := sinh(Z)
+Cosh := cosh(Z)
+Tanh := tanh(Z)
+
+sheet Inverse
+
+| Z     | Arcsin | Arccos | Arctan | Arcsinh | Arccosh | Arctanh |
+| ----- | ------ | ------ | ------ | ------- | ------- | ------- |
+| 1+2i  | *      | *      | *      | *       | *       | *       |
+| 0.5+0.5i | *   | *      | *      | *       | *       | *       |
+| 2i    | *      | *      | *      | *       | *       | *       |
+
+Arcsin  := arcsin(Z)
+Arccos  := arccos(Z)
+Arctan  := arctan(Z)
+Arcsinh := arcsinh(Z)
+Arccosh := arccosh(Z)
+Arctanh := arctanh(Z)
