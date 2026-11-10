@@ -453,8 +453,7 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 - Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan arcsinh arccosh arctanh pi() e()` and more
   `exp`, `ln`, `log10`, `log2` and the trigonometric functions cast their
   argument to a `Float` as `x.Float` does, so `sin(true)` is `sin(1)`,
-  `ln('20')` is `ln(20)` and `sin(3+0i)` is `sin(3)`; a date or a duration,
-  or a `Complex` with an imaginary part, is an error. These take a `Complex`
+  and `ln('20')` is `ln(20)`; a date or a duration is an error. These take a `Complex`
   and stay `Complex`; a real argument past the domain gives one (`sqrt(-4)`)
 - Complex: `re im conj arg sign`, with `abs` and every function above except `round floor ceil radians degrees` for a `Complex` too
 - Counting up: `succ` — a number plus one, or the next text, `AZ` to `BA`

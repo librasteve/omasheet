@@ -1076,9 +1076,10 @@ fn math_functions() {
     // Whatever `.Float` takes is cast first.
     assert_eq!(calc("sin(true)"), calc("sin(1)"));
     assert_eq!(calc("ln('20')"), calc("ln(20)"));
-    assert_eq!(calc("sin(3+0i)"), calc("sin(3)"));
+    // A `Complex` is kept by the functions that take one, even a real-valued one.
+    assert_eq!(calc("re(sin(3+0i))"), calc("sin(3)"));
     assert_eq!(calc("exp(3+0i)"), "20.085536923187668+0i");
-    assert!(calc_err(None, "sin(3+4i)").contains("`sin` cannot be applied to Complex"));
+    assert!(calc("sin(3+4i)").starts_with("3.853738037919377-27.0168132580039"));
     assert!(calc_err(None, "sin(2025-01-01)").contains("`sin` cannot be applied to Date"));
     assert!(calc_err(None, "ln(PT1H)").contains("`ln` cannot be applied to Duration"));
     assert!(calc_err(None, "sqr(4)").contains("did you mean `sqrt`?"));
