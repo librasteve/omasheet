@@ -1,6 +1,6 @@
 # Expressions (OMX)
 
-Try any of these with `omasheet eval [file.omx] '<expression>'`.
+See [OMX in brief](omx.md) for the grammar. Try any of these with `omasheet eval [file.omx] '<expression>'`.
 
 ## Numbers
 

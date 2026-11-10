@@ -99,6 +99,7 @@ Omasheet is listed in OmaStore for Omarchy: [omastore://librasteve/omasheet](oma
 ## Docs
 
 - [The file format](docs/format.md)
+- [OMX in brief](docs/omx.md) — the language's grammar on one page
 - [Expressions](docs/expressions.md)
 - [The app and the command line](docs/app.md)
 - [XLSX, CSV, JSON and Markdown](docs/interop.md)
