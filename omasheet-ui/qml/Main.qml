@@ -2785,21 +2785,23 @@ ApplicationWindow {
         id: clipboard
         visible: false
         textFormat: TextEdit.PlainText
+        // What another program is given, for cells, is their values; a paste
+        // here takes them back as they were written, formulas and all.
         function put(text) {
-            clipboard.text = text;
+            clipboard.text = file.clipOut(text);
             clipboard.selectAll();
             clipboard.copy();
         }
         function take() {
             clipboard.text = "";
             clipboard.paste();
-            return clipboard.text;
+            return file.clipIn(clipboard.text);
         }
     }
 
     // ---- shortcuts ---------------------------------------------------------
 
-    readonly property bool typing: editing || formulaField.activeFocus || sourceText.activeFocus || promptDialog.opened
+    readonly property bool typing: editing || formulaField.activeFocus || barMessage.activeFocus || sourceText.activeFocus || promptDialog.opened
         || renamingTab >= 0
 
     Shortcut { sequence: "Ctrl+S"; onActivated: win.save() }
@@ -4545,13 +4547,33 @@ ApplicationWindow {
 
             // What the app has to say, centred in the bar whatever else
             // sits beside it, so it reads as the answer to what was done.
-            Text {
+            // Selectable, to be copied word for word, an error to a prompt
+            // say: Ctrl+C copies what is selected, or all of it, and Esc
+            // goes back to the cells.
+            TextEdit {
                 id: barMessage
                 anchors.centerIn: parent
                 width: Math.max(0, Math.min(implicitWidth,
                     parent.width - 2 * barRight.width - 48))
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
+                clip: true
+                readOnly: true
+                selectByMouse: true
+                selectByKeyboard: true
+                textFormat: TextEdit.PlainText
+                wrapMode: TextEdit.NoWrap
+                selectionColor: win.accentColor
+                onActiveFocusChanged: if (!activeFocus) deselect()
+                Keys.onEscapePressed: grid.forceActiveFocus()
+                Keys.onPressed: function(event) {
+                    if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_C) {
+                        if (selectedText.length === 0)
+                            selectAll();
+                        copy();
+                        event.accepted = true;
+                    }
+                }
+                horizontalAlignment: TextEdit.AlignHCenter
+                verticalAlignment: TextEdit.AlignVCenter
                 readonly property bool moving: win.grabbedHere
                 // Said once, as against a state that holds.
                 readonly property bool passing: win.busyText.length === 0 && !win.filterPending
@@ -4590,7 +4612,6 @@ ApplicationWindow {
                 color: win.hint.length > 0 ? (win.hintBad ? win.errorColor : win.mutedColor)
                     : win.notice.length > 0 ? win.errorColor
                     : win.cellWarning.length > 0 ? win.warningColor : win.mutedColor
-                elide: Text.ElideRight
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.captionSize
@@ -5635,9 +5656,12 @@ ApplicationWindow {
         standardButtons: Dialog.Ok | Dialog.Cancel
         onClosed: grid.forceActiveFocus()
         onAccepted: exportDialog.write(true)
-        contentItem: Text {
+        contentItem: TextEdit {
             text: file.exportWarning
-            wrapMode: Text.WordWrap
+            readOnly: true
+            selectByMouse: true
+            wrapMode: TextEdit.WordWrap
+            selectionColor: win.accentColor
             color: win.textColor
             font.family: win.font.family
             font.features: win.font.features
@@ -6170,12 +6194,16 @@ ApplicationWindow {
                 font.pixelSize: win.dialogSize
                 onAccepted: promptDialog.tryAccept()
             }
-            Label {
+            // Selectable, to be copied.
+            TextEdit {
                 id: problem
                 Layout.fillWidth: true
                 visible: text.length > 0
+                readOnly: true
+                selectByMouse: true
+                selectionColor: win.accentColor
                 color: win.errorColor
-                wrapMode: Text.Wrap
+                wrapMode: TextEdit.Wrap
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.noteSize

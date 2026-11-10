@@ -141,6 +141,14 @@ pub mod qobject {
             row1: i32,
             col1: i32,
         ) -> QString;
+        /// Cells as they are written, as they go to the clipboard: what they
+        /// showed, for another program to paste.
+        #[qinvokable]
+        fn clip_out(self: Pin<&mut File>, text: &QString) -> QString;
+        /// The clipboard's text as a paste here takes it: the cells last
+        /// cut or copied here with their formulas, and other text as it is.
+        #[qinvokable]
+        fn clip_in(self: Pin<&mut File>, text: &QString) -> QString;
         /// Paste as `paste_cells` does, but what the copied cells showed and
         /// not their formulas.
         #[qinvokable]
@@ -1016,6 +1024,16 @@ impl qobject::File {
     fn copy_cells(&self, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
         QString::from(&Clip::text(&self.rust().doc, index(sheet), from, to))
+    }
+
+    fn clip_out(self: Pin<&mut Self>, text: &QString) -> QString {
+        let text = text.to_string();
+        QString::from(&self.clip(|clip, _| clip.clipboard_out(&text)))
+    }
+
+    fn clip_in(self: Pin<&mut Self>, text: &QString) -> QString {
+        let text = text.to_string();
+        QString::from(&self.clip(|clip, _| clip.clipboard_in(&text)))
     }
 
     fn copy_block(

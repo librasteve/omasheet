@@ -70,6 +70,10 @@ pub struct Clip {
     copied: Option<Copied>,
     /// Where the cells last cut or copied came from.
     refer: Option<Referent>,
+    /// The cells last cut or copied as they are written, and as they
+    /// were shown: the second is what goes to the clipboard, for another
+    /// program to paste, and the first is what a paste here takes it for.
+    outward: Option<(String, String)>,
 }
 
 /// What a formula pasted from another sheet needs to be carried over to
@@ -429,6 +433,7 @@ impl Clip {
         let values = block_text(doc, sheet, from, to, true);
         self.refer = referent(doc, sheet, from, to, &text);
         self.cut = None;
+        self.outward = Some((text.clone(), values.clone()));
         self.copied = Some(Copied {
             sheet,
             at: from,
@@ -443,6 +448,7 @@ impl Clip {
     pub fn cut(&mut self, doc: &Document, sheet: usize, from: Cell, to: Cell) -> String {
         let text = Self::text(doc, sheet, from, to);
         self.refer = referent(doc, sheet, from, to, &text);
+        self.outward = Some((text.clone(), block_text(doc, sheet, from, to, true)));
         self.cut = Some(Cut {
             sheet,
             at: from,
@@ -475,6 +481,7 @@ impl Clip {
                 );
                 self.refer = referent_rows(doc, sheet, rows, (left, right), &text);
                 self.cut = None;
+                self.outward = Some((text.clone(), values.clone()));
                 self.copied = Some(Copied {
                     sheet,
                     at: (first, left),
@@ -503,6 +510,10 @@ impl Clip {
             (Some(&first), Some(_)) => {
                 let text = rows_text(doc, sheet, rows, (left, right), false);
                 self.refer = referent_rows(doc, sheet, rows, (left, right), &text);
+                self.outward = Some((
+                    text.clone(),
+                    rows_text(doc, sheet, rows, (left, right), true),
+                ));
                 let blanks = rows
                     .iter()
                     .flat_map(|&r| blanks(doc, sheet, (r, left), (r, right)))
@@ -518,6 +529,27 @@ impl Clip {
                 text
             }
             _ => String::new(),
+        }
+    }
+
+    /// `text`, cells as they are written, as it goes to the clipboard: what
+    /// they showed, if it is the cells last cut or copied, so that another
+    /// program pastes their values and not their formulas. Anything else,
+    /// text that is not cells, goes as it is.
+    pub fn clipboard_out(&self, text: &str) -> String {
+        match &self.outward {
+            Some((written, shown)) if written == text => shown.clone(),
+            _ => text.to_string(),
+        }
+    }
+
+    /// The clipboard's `text` as a paste here takes it: the cells as they
+    /// are written, if it is what the last cut or copy showed, with their
+    /// formulas. Anything else, from another program, as it is.
+    pub fn clipboard_in(&self, text: &str) -> String {
+        match &self.outward {
+            Some((written, shown)) if parse_block(shown) == parse_block(text) => written.clone(),
+            _ => text.to_string(),
         }
     }
 
@@ -1180,6 +1212,22 @@ mod tests {
             clip.paste_transposed(&mut doc, 0, (0, 3), (0, 3), "5\t6"),
             why
         );
+    }
+
+    #[test]
+    fn another_program_is_given_the_values_and_this_one_takes_the_formulas() {
+        let mut doc = Document::from_text("sheet T\n\n| A | B |\n| - | - |\n| 1 | = A + 1 |\n");
+        let mut clip = Clip::default();
+        let written = clip.copy(&doc, 0, (0, 0), (0, 1));
+        assert!(written.contains("= A + 1"), "{written}");
+        let out = clip.clipboard_out(&written);
+        assert_eq!(out, "1\t2");
+        // What comes back from the clipboard is the formulas again.
+        assert_eq!(clip.clipboard_in(&out), written);
+        // Text from elsewhere, or that is not cells, is left alone.
+        assert_eq!(clip.clipboard_in("x\ty"), "x\ty");
+        assert_eq!(clip.clipboard_out("not cells"), "not cells");
+        let _ = &mut doc;
     }
 
     #[test]
