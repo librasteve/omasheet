@@ -4954,6 +4954,40 @@ ApplicationWindow {
                 if (applyButton.activeFocus || closeButton.activeFocus) columnPopup.go(1);
                 else event.accepted = false;
             }
+            // A handle to drag the box by, out of the way of the cells
+            // it is being used on.
+            Item {
+                Layout.fillWidth: true
+                implicitHeight: Math.round(columnPopup.textSize * 1.1)
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: Math.round(columnPopup.textSize * 3)
+                    height: 3
+                    radius: 1.5
+                    color: win.mutedColor
+                    opacity: grip.containsMouse || grip.pressed ? 1 : 0.5
+                }
+                MouseArea {
+                    id: grip
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                    property real fromX: 0
+                    property real fromY: 0
+                    onPressed: function(mouse) {
+                        fromX = mouse.x;
+                        fromY = mouse.y;
+                    }
+                    // The handle moves with the box, so its own coordinates
+                    // say how far the pointer has gone from where it took hold.
+                    onPositionChanged: function(mouse) {
+                        if (!pressed)
+                            return;
+                        columnPopup.x += mouse.x - fromX;
+                        columnPopup.y += mouse.y - fromY;
+                    }
+                }
+            }
             MenuEntry {
                 id: sortAscending
                 visible: columnPopup.sortable
