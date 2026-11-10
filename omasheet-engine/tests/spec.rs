@@ -1052,19 +1052,25 @@ fn math_functions() {
     assert_eq!(calc("sqrt(NaN)"), "NaN");
     // A `Complex` result in a declared `Float` column is refused, and in an
     // undeclared one the column is `Complex`.
-    let refused = lint_errors("sheet Z\n\nV : Float\n\nV\n= sqrt(-4)\n");
+    let refused = view_with(
+        "test.omx",
+        "sheet Z\n\nV : Float\n\nV\n= sqrt(-4)\n",
+        exact(),
+    );
     assert!(
         refused
+            .errors
             .iter()
             .any(|e| e.contains("declared `Float` but this is Complex")),
-        "{refused:?}"
+        "{:?}",
+        refused.errors
     );
     assert_eq!(
         shown("sheet Z\n\nV\n= sqrt(4)\n= sqrt(-4)\n")
             .lines()
             .skip(3)
             .collect::<Vec<_>>(),
-        ["   2", "0+2i"]
+        ["----", "   2", "0+2i"]
     );
     assert!(calc_err(None, "sin('x')").contains("`sin` cannot be applied to String"));
     // Whatever `.Float` takes is cast first.
