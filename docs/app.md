@@ -20,6 +20,20 @@ rewrites the text, and saving writes exactly that.
   Right-click a column's header to **Set type…**, which starts on the type
   the column has now, or **Clear type**; a cell that does not fit a
   declared type is an error.
+- The same menu has **Set format…** for a column of numbers, dates or
+  times, which shows its cells in a format without changing them, and **Clear
+  format**. The prompt suggests one that fits the type: `'.2f` for a
+  `Decimal`, `.3g` for a `Float`, `±.3e-3` for a `Scientific`. A
+  `Scientific` shows `10.5(3)` by default, and `±` in its format asks for
+  `10.5 ± 0.3`; see [Expressions](expressions.md#scientific-numbers).
+- The bar at the foot says what was done, and its text, like the error
+  dialogs, can be selected and copied with Ctrl+C. Where a calculation
+  would give an uncertain complex number, which Omasheet does not have, the
+  value becomes a `Float` and the bar says `uncertain complex not supported`
+  in amber while that cell is selected.
+- Copying cells puts their values on the clipboard, so another program
+  pastes the results; pasting into Omasheet again brings back the formulas.
+  To copy a formula as text, select it in the box at the top.
 - F3 shows the source of the whole file, to read or to edit. An edit is
   taken when the source is left, saved or closed, and undone as one step.
 - Selecting several cells shows their count, sum and average in the footer.

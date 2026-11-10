@@ -17,7 +17,7 @@
 - [x] 3.5 `uncertain complex not supported` shown as an amber warning in the bottom bar; a warning colour in the theme
 
 ## 4. Existing capabilities
-- [x] 4.1 `Scientific` column type, and its display format `[±][.N][eK]` (`file-format`)
+- [x] 4.1 `Scientific` column type, and its display format, a number format with `±` (`file-format`)
 - [x] 4.2 Uncertainty preserved through group, join and aggregation (`evaluation`)
 - [x] 4.3 Display: `(nn)` by default, `±` by format option
 - [x] 4.4 XLSX export writes the value and drops the uncertainty, with a note (`xlsx-interop`)
