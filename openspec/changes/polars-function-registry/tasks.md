@@ -28,6 +28,15 @@ Deferred until `add-units` is archived.
 - [ ] 2b.5 Decide and build `lookup_asof` as a column function, if kept
 - [ ] 2b.6 Tests: the commission table unsorted, a rep below every target (empty), `forward`, `nearest`, a tolerance, `by Region`; the table path and sheet path agree
 
+## 2c. Order for the positional reference
+- [ ] 2c.1 `shift(n)` with the order key and `by` (N15)
+- [ ] 2c.2 Parse and check the `order Key` clause on `[...]` (N16); no clause leaves every existing file unchanged
+- [ ] 2c.3 Lower a `by`/`order` reference to a window; the sheet and table paths agree
+- [ ] 2c.4 One-pass prefix aggregates for `0..*` (N17), the per-row evaluation kept as the oracle in tests; a 20,000-row benchmark under 1 s in release
+- [ ] 2c.5 Lint: both sides of a selection comparison are the same bare column
+- [ ] 2c.6 `lookup_asof` on a column (unsorted `Rates`, a date before every start, `by`)
+- [ ] 2c.7 Tests: a row inserted out of date order, per-member balances, the Grist examples (`PREVIOUS`, `RANK`, `find.le`, latest-per-group) as an example file with `.expected`
+
 ## 3. Checks
 - [ ] 3.1 Table path and sheet path agree on every function and every dtype they take
 - [ ] 3.2 Docs, skill, an example, `.expected` regenerated

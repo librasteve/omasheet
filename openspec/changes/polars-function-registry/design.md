@@ -28,13 +28,23 @@ The registry has two kinds of entry: a **function** (a method on a column, above
 | N13 | Proposed | `join`'s `how` takes Polars' words `inner` (default), `left`, `full`, `semi`, `anti`, `cross` | `Orders |> join(Customers, ID, anti)` |
 | N14 | Proposed | Both sheets of an as-of join must be sorted by their key; OMX sorts them first, as Polars' `check_sortedness` would otherwise refuse, so the file's row order does not matter | the commission table need not be kept in order |
 
+## Order for the positional reference
+
+| # | Status | Rule | Example |
+|---|--------|------|---------|
+| N15 | Proposed | `shift(n)` is Polars' `shift`: positive `n` looks back, negative forward, the rows with nothing there empty (so `// 0` as now); it takes the order key and `by` as N6 does | `Balance.shift(1, Date by Member) // 0` |
+| N16 | Proposed | The positional reference takes an `order Key` clause after `by`; it sorts the (partitioned) rows by `Key`, stable, applies the offset or range there and puts the result back on the row it came from. No clause means file order, so every existing file reads as it did | `[Balance; *-1 by Member order Date]`, `[Amount; 0..* order Date]` |
+| N17 | Proposed | A prefix range (`0..*`) under `sum min max count mean` is one running pass over the ordered rows, the same value as the per-row evaluation, which stays as the definition and the test oracle | `[Amount; 0..*].sum()` |
+
+N16 is the same thing as N6 spelled for the reference form (`cum_sum(Date by Account)` and `[Amount; 0..* order Date by Account]`); both lower to one window, and the registry test asserts the two agree.
+
 The commission example, as a stage and as a column:
 
 ```omx
 sheet Paid := Sales |> join_asof(Commission_Rates, Sales_Amount, Sales_Target)
 ```
 
-and, once the registry has the clauses, on a column: `Rate := Sales_Amount.lookup_asof(Commission_Rates, Sales_Target, Commission_Rate)`, a column spelling of the same join that gives one value per row. Whether to add that spelling is open (below).
+and, once the registry has the clauses, on a column: `Rate := Sales_Amount.lookup_asof(Commission_Rates, Sales_Target, Commission_Rate)`, a column spelling of the same join that gives one value per row. Decided yes (below).
 
 ## Registry entry
 
@@ -53,10 +63,13 @@ features    the Cargo feature the Polars function needs
 - Whether `by` inside a call needs a parser change or can reuse the cursor `by` parser.
 - `Decimal` support per function: some Polars windowed functions are not defined for decimals and would need a cast, as `sqrt` casts to `Float`.
 
-- Whether to add `lookup_asof` as a column function over an as-of stage, since a column of a sheet cannot be added to by a stage (a stage's sheet is read-only). Recommended: yes, as the spreadsheet user's form of N11, backed by the same entry.
+- `lookup_asof` as a column function over an as-of stage: **decided yes** (a column of a sheet cannot be added to by a stage, whose sheet is read-only), as the spreadsheet user's form of N11, backed by the same entry. It replaces `Rates[Rate; Start <= Date].last()`, which is right only for a `Rates` already in order.
+- The spelling of `order` in a selection (N16) against the cursor and `by` parsers, and whether `*-1` with `order` counts rows or key values (rows, as `*-1` does now).
+- N17's one-pass evaluation for `Decimal` (exact) against Polars' `cum_sum`, which may not take every decimal scale; the exact pass is the fallback.
 - `join_where` needs an expression language over two sheets' columns at once; how a name clash is spelled (N12) is to be settled with the checker.
 
 ## Risks
 
 - Polars changes its names between versions; N1 pins them to the version in `Cargo.toml`, and N9's test fails on a drift.
+- The lint of `Tx[Amount; Date <= Date]` cannot tell a deliberate whole-column comparison from a slip; it warns, never errors.
 - A scalar-path call on a temporary frame costs a conversion; a cell-at-a-time caller would be quadratic, so the registry functions are whole-column only and are computed once per column.
