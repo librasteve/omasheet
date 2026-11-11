@@ -5579,6 +5579,30 @@ ApplicationWindow {
             listView.currentIndex = at;
             fault = list.length === 0 && want.length > 0 ? problem : "";
         }
+        // The groups of the list, in order.
+        function groups() {
+            var names = [];
+            for (var i = 0; i < entries.length; i++) {
+                var g = entries[i].group;
+                if (g && names.indexOf(g) < 0)
+                    names.push(g);
+            }
+            return names;
+        }
+        // Is every group closed?
+        readonly property bool allClosed: {
+            var names = groups();
+            return names.length > 0 && names.every(function(g) { return !!closed[g]; });
+        }
+        // The caret beside the search box: close every group, or, where all
+        // are closed, open every one.
+        function toggleAll() {
+            var shut = !allClosed;
+            var c = {};
+            groups().forEach(function(g) { c[g] = shut; });
+            closed = c;
+            refresh();
+        }
         // The heading of a group of the list, or the entry marked, is taken.
         function take(index) {
             if (index < 0 || index >= rows.length)
@@ -5700,7 +5724,35 @@ ApplicationWindow {
                     }
                 }
             }
-            Rectangle {
+            RowLayout {
+              Layout.fillWidth: true
+              spacing: 4
+              // The master caret: closes all the groups, or opens them all.
+              Rectangle {
+                visible: picker.groups().length > 0
+                implicitWidth: Math.round(win.fontSize * 1.9)
+                implicitHeight: Math.round(win.fontSize * 1.9)
+                radius: 2
+                color: caretArea.containsMouse ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.08) : "transparent"
+                border.color: win.lineColor
+                Text {
+                    anchors.centerIn: parent
+                    text: picker.allClosed ? "\u25b8" : "\u25be"
+                    color: win.textColor
+                    font.family: win.font.family
+                    font.pixelSize: win.smallSize
+                }
+                MouseArea {
+                    id: caretArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: {
+                        picker.toggleAll();
+                        search.forceActiveFocus();
+                    }
+                }
+              }
+              Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: Math.round(win.fontSize * 1.9)
                 color: "transparent"
@@ -5736,6 +5788,7 @@ ApplicationWindow {
                         font: search.font
                     }
                 }
+              }
             }
             ListView {
                 id: listView

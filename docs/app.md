@@ -23,9 +23,11 @@ rewrites the text, and saving writes exactly that.
   cell that does not fit a declared type is an error. Typing in the box
   narrows the list, Tab completes what is typed, Up and Down move along it,
   Enter takes the one marked and Esc closes it. The kinds of quantity are
-  filed under SI Base, Dimensions, Mechanics, Electromagnetic,
+  filed under SI Base, Dimensional, Mechanical, Electromagnetic,
   Thermodynamic, Radiation and Other, each heading opening and
-  closing its group, with the unit each is held in beside it.
+  closing its group, with the unit each is held in beside it. The caret
+  beside the search box closes every group, or opens them all where all
+  are closed.
 - **Set unit…** is the same kind of box for the units, `kg`, `N`, `m^2`, or
   any unit typed, `mg` or `kN.m`. It is there for every column: the column
   becomes a column of the kind of quantity the unit is of (`mg` makes it

@@ -1686,25 +1686,37 @@ impl qobject::File {
         let mut seen = std::collections::HashSet::new();
         let mut lines = Vec::new();
         for group in siquant::GROUPS {
-            // The units a kind of this group is held in come first, `kg`,
-            // `m^2`, `m.s^-1`, named for the unit where the registry has
-            // one and for the kind where it has not; then the other units
-            // of the group.
+            // The units of the group in the order of the resource file, and
+            // those a kind of the group is held in, `kg`, `m^2`, `m.s^-1`,
+            // named for the unit where the registry has one and for the kind
+            // where it has not. The base units take the kinds' first, which
+            // gives the kilogram, not the gram.
+            let mut own: Vec<(String, String)> = reg
+                .units()
+                .filter(|u| u.live && u.group == group)
+                .map(|u| (u.symbol.to_string(), u.name.to_string()))
+                .collect();
+            let mut kinds: Vec<(String, String)> = Vec::new();
             for t in reg.quantity_types().filter(|t| t.group() == group) {
-                if let Some(u) = t.preferred_unit()
-                    && seen.insert(u.to_string())
-                {
+                if let Some(u) = t.preferred_unit() {
                     let symbol = u.to_string();
                     let name = reg
                         .units()
                         .find(|r| r.symbol == symbol)
                         .map_or_else(|| t.name().to_string(), |r| r.name.to_string());
-                    lines.push(format!("{group}\t{symbol}\t{name}"));
+                    kinds.push((symbol, name));
                 }
             }
-            for u in reg.units().filter(|u| u.live && u.group == group) {
-                if seen.insert(u.symbol.to_string()) {
-                    lines.push(format!("{group}\t{}\t{}", u.symbol, u.name));
+            let both = if group == "SI Base" {
+                kinds.append(&mut own);
+                kinds
+            } else {
+                own.append(&mut kinds);
+                own
+            };
+            for (symbol, name) in both {
+                if seen.insert(symbol.clone()) {
+                    lines.push(format!("{group}\t{symbol}\t{name}"));
                 }
             }
         }
