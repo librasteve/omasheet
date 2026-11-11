@@ -55,8 +55,9 @@ rewrites the text, and saving writes exactly that.
   they are, highlighted, until they are pasted.
 - A number is shown in at most 23 characters: plain from `1e-15` to `1e15`,
   `19.99` or `1/3`, and in e notation otherwise, `1e+60`. One with more
-  digits than fit is cut and marked, `1.8446744073709551…e+19`, and a
-  `Percent` is rounded, `41.67%`; pointing at it shows the value in full, as
+  digits than fit is cut and marked, `1.8446744073709551·e+19`. A `Decimal`,
+  a `Float` and the parts of a `Complex` are shown to three places after the
+  point, `0.333·` and `1.414·`, and a `Percent` is rounded, `41.67%`; pointing at it shows the value in full, as
   does pointing at any text cut off at the cell's edge. A plain number of
   five digits or more is grouped in threes, and numbers follow your locale:
   `12,345.678` in Britain, `12.345,678` in Germany. The file does not: a
@@ -210,7 +211,7 @@ omasheet lint file.omx                # check without calculating
 | `--locale` | show dates and times as this machine's locale writes them |
 | `--now 2025-01-31T09:30` | fix what `today()` and `now()` give |
 | `--zone Europe/London` | stand in for this machine's time zone |
-| `--exact` | show every number in full: `18446744073709551616`, not `1.8446744073709551…e+19`, and `125/3%`, not `41.67%` |
+| `--exact` | show every number in full: `18446744073709551616`, not `1.8446744073709551·e+19`, and `125/3%`, not `41.67%` |
 
 From the source tree, `omasheet` is `cargo run --`.
 

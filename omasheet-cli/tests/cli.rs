@@ -92,15 +92,15 @@ fn examples_match_their_expected_output() {
 fn eval_pure_arithmetic() {
     let out = omasheet(&["eval", "1/3 + 1/3"]);
     assert!(out.status.success());
-    assert_eq!(stdout(&out), "0.66666666666666666666…\n");
+    assert_eq!(stdout(&out), "0.667·\n");
     let out = omasheet(&["eval", "0.1 + 0.2"]);
     assert_eq!(stdout(&out), "0.3\n");
-    // A Num is never rounded to show it; a large Integer is shown in e
+    // A Num is cut to three places and marked; a large Integer is shown in e
     // notation, unless it is asked for in full.
     let out = omasheet(&["eval", "sqrt(2)"]);
-    assert_eq!(stdout(&out), "1.4142135623730951\n");
+    assert_eq!(stdout(&out), "1.414·\n");
     let out = omasheet(&["eval", "2 ** 64"]);
-    assert_eq!(stdout(&out), "1.8446744073709551…e+19\n");
+    assert_eq!(stdout(&out), "1.8446744073709551·e+19\n");
     let out = omasheet(&["eval", "--exact", "2 ** 64"]);
     assert_eq!(stdout(&out), "18446744073709551616\n");
 }
@@ -130,7 +130,7 @@ fn eval_from_standard_input() {
         .write_all(b"Sales.Revenue.mean()\n")
         .unwrap();
     let out = child.wait_with_output().unwrap();
-    assert_eq!(stdout(&out), "11733.3333333333333333…\n");
+    assert_eq!(stdout(&out), "11733.333·\n");
 }
 
 #[test]

@@ -174,6 +174,8 @@ type Orders = std::collections::HashMap<String, Arc<Vec<usize>>>;
 struct Step {
     text: String,
     orders: Orders,
+    /// The filters in force, as the app wrote them down: opaque here.
+    filters: String,
 }
 
 /// A table's file the document could hold whole, and what that would take
@@ -206,6 +208,10 @@ pub struct Document {
     /// and the grid, a copy and the summary of a selection all read the
     /// snapshot it orders. A sort is a step to undo, as an edit is.
     orders: Orders,
+    /// The filters in force, as the app wrote them down, which are the
+    /// grid's alone like a table's order: a change of them is a step to
+    /// undo, and so is kept here, not read.
+    filters: String,
     /// The tables' files held whole in memory, by path (D157). Kept across
     /// rebuilds, and dropped when the text no longer names the file or the
     /// file has changed. See [`Document::to_hold`] and [`Document::hold`].
@@ -2121,6 +2127,7 @@ impl Document {
             local,
             base: None,
             orders: Default::default(),
+            filters: String::new(),
             whole: Default::default(),
             edits: 0,
             engine: None,
@@ -2340,6 +2347,7 @@ impl Document {
         Step {
             text: std::mem::replace(&mut self.text, step.text),
             orders: std::mem::replace(&mut self.orders, step.orders),
+            filters: std::mem::replace(&mut self.filters, step.filters),
         }
     }
 
@@ -2351,6 +2359,41 @@ impl Document {
         }
         self.redo.clear();
         self.edits += 1;
+    }
+
+    /// The filters in force, as the app last wrote them down.
+    pub fn filters(&self) -> &str {
+        &self.filters
+    }
+
+    /// Put the filters in force as `filters`, in one undoable step, as a
+    /// sort of a table is. Whether they changed.
+    pub fn set_filters(&mut self, filters: &str) -> bool {
+        let same =
+            |a: &str, b: &str| a == b || (a.is_empty() && b == "{}") || (a == "{}" && b.is_empty());
+        if same(&self.filters, filters) {
+            return false;
+        }
+        let previous = Step {
+            text: self.text.clone(),
+            orders: self.orders.clone(),
+            filters: std::mem::replace(&mut self.filters, filters.to_string()),
+        };
+        self.push_step(previous);
+        true
+    }
+
+    /// Take back the step [`Document::set_filters`] just made, where a filter
+    /// failed: the filters go back as they were and there is nothing to undo.
+    pub fn retract_filters(&mut self) -> bool {
+        match self.undo.last() {
+            Some(step) if step.text == self.text => {
+                self.filters = self.undo.pop().map(|s| s.filters).unwrap_or_default();
+                self.edits = self.edits.saturating_sub(1);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// How many steps there are to undo: a mark for [`Document::join_since`].
@@ -2379,6 +2422,7 @@ impl Document {
         let previous = Step {
             text: std::mem::replace(&mut self.text, text),
             orders: self.orders.clone(),
+            filters: self.filters.clone(),
         };
         self.push_step(previous);
         self.rebuild();
@@ -3717,6 +3761,7 @@ impl Document {
         let previous = Step {
             text: self.text.clone(),
             orders: self.orders.clone(),
+            filters: self.filters.clone(),
         };
         self.push_step(previous);
         let rows = std::mem::take(&mut self.snapshot.sheets[sheet].rows);
@@ -5135,14 +5180,29 @@ mod tests {
     }
 
     #[test]
+    fn filters_are_steps_to_undo_and_redo() {
+        let mut doc = Document::from_text("sheet S\n\nA : Integer\n\n| A |\n| - |\n| 1 |\n| 2 |\n");
+        assert!(doc.set_filters("{\"S\":{\"A\":\"* > 1\"}}"));
+        assert!(!doc.set_filters("{\"S\":{\"A\":\"* > 1\"}}"));
+        assert!(doc.set_filters("{}"));
+        assert!(doc.undo());
+        assert_eq!(doc.filters(), "{\"S\":{\"A\":\"* > 1\"}}");
+        assert!(doc.undo());
+        assert_eq!(doc.filters(), "");
+        assert!(doc.redo());
+        assert_eq!(doc.filters(), "{\"S\":{\"A\":\"* > 1\"}}");
+        // A filter that failed is taken back, leaving nothing to undo.
+        assert!(doc.set_filters("{\"S\":{\"A\":\"nonsense\"}}"));
+        assert!(doc.retract_filters());
+        assert_eq!(doc.filters(), "{\"S\":{\"A\":\"* > 1\"}}");
+    }
+
+    #[test]
     fn a_sequence_takes_an_arithmetic_or_geometric_step_from_its_terms() {
         assert_eq!(seq("1, 3 ... Inf", 4), ["1", "3", "5", "7"]);
         assert_eq!(seq("1, 2, 4 ... Inf", 4), ["1", "2", "4", "8"]);
         // Two terms are a difference, so a constant ratio needs three.
-        assert_eq!(
-            seq("1, 1/3 ... Inf", 3),
-            ["1", "0.33333333333333333333…", "-0.33333333333333333333…"]
-        );
+        assert_eq!(seq("1, 1/3 ... Inf", 3), ["1", "0.333·", "-0.333·"]);
         // A ratio of thirds cannot be inferred: `1/3` is rounded at the
         // widest scale, and multiplying it out does not give `1/9` back,
         // so the terms read as neither arithmetic nor geometric. Ratios of
@@ -5490,7 +5550,7 @@ mod tests {
         doc.sort_rows(0, 1, true).expect("sorts");
         assert_ne!(doc.source_row(0, 0), 0);
         let at = doc.source_row(0, 0);
-        assert_eq!(doc.snapshot().sheets[0].rows[0][1].display, "512.3292");
+        assert_eq!(doc.snapshot().sheets[0].rows[0][1].display, "512.329·");
         // A sheet that does not exist is left as it was.
         assert_eq!(doc.source_row(9, 4), 4);
         let _ = at;
@@ -5523,7 +5583,7 @@ mod tests {
         doc.sort_rows(0, 5, true).expect("sorts");
         let rows = &doc.snapshot().sheets[0].rows;
         assert_eq!(rows.len(), 887);
-        assert_eq!(rows[0][5].display, "512.3292");
+        assert_eq!(rows[0][5].display, "512.329·");
         assert_eq!(rows[0][2].display, "Miss. Anna Ward");
         // Nothing is written, so there is nothing to save; but the sort is
         // a step, so there is something to undo.
@@ -7126,7 +7186,7 @@ mod tests {
             ]
         );
         // A column of no declared type takes the type of its values.
-        assert_eq!(col(&doc, 0, 6), ["0.4", "0.41666666666666666666…"]);
+        assert_eq!(col(&doc, 0, 6), ["0.4", "0.417·"]);
         assert_eq!(doc.snapshot().sheets[0].columns[6].ty, "Decimal");
         // One that does not end is shown cut and marked, so there is more
         // of it to show.
@@ -7136,10 +7196,7 @@ mod tests {
             Some("0.416666666666666666666666666667")
         );
         doc.set_cell(0, 0, 6, "Profit / Cost");
-        assert_eq!(
-            col(&doc, 0, 6),
-            ["0.66666666666666666666…", "0.71428571428571428571…"]
-        );
+        assert_eq!(col(&doc, 0, 6), ["0.667·", "0.714·"]);
         doc.set_const(0, "50%");
         assert_eq!(col(&doc, 0, 4), ["20", "25"]);
         doc.add_const("Extra", "Sales.Revenue.sum()").unwrap();

@@ -24,12 +24,19 @@ A number is shown in at most 23 characters, and a `-` before it. From
 `1e-15` up to `1e15` it is plain, `0.015625`; smaller or larger it is in e
 notation, `1e-43` and `1e+60`, and so is one too wide to be plain. An exact
 number in e notation keeps every digit it can, and where they do not all fit
-they are cut and marked: `2 ** 64` is shown as `1.8446744073709551…e+19`.
+they are cut and marked: `2 ** 64` is shown as `1.8446744073709551·e+19`.
 Only the display is cut, and `omasheet eval --exact` gives it in full.
+
+A `Decimal`, a `Float` and the parts of a `Complex` are shown to three places
+after the point, and where they have more the rest is cut and marked with
+`·`: `1/3` is `0.333·` and `sqrt(2)` is `1.414·`. One with no more than three
+places is whole, `19.99`, and one below a thousandth keeps its digits, so as
+not to show as nought. A `Float` in e notation has its mantissa cut the same way, `1.225·e-16`. A `Scientific` is not cut: the uncertainty in brackets
+sets the digits it shows.
 
 A `Decimal` holds 38 digits, so one that does not end within them is
 rounded there: `1/3` is held as 38 threes and shown cut and marked,
-`0.33333333333333333333…`. Pointing at it in the app shows the rest, and
+`0.333·`. Pointing at it in the app shows the rest, and
 `--exact` gives every digit of it.
 
 The 38 digits are significant digits, not a size: the point sits where it
@@ -58,27 +65,27 @@ It is rounded to two digits after the point, `41.67%`, and `--exact` gives
 every digit it holds.
 
 Whole numbers and decimals divided give a `Decimal`, whether or not it
-ends: `7 / 4` is `1.75` and `7 / 3` is `2.33333333333333333333…`, held
+ends: `7 / 4` is `1.75` and `7 / 3` is `2.333·`, held
 exactly.
 
 Numbers are shown the way Raku shows them:
 
 | Type | Shown |
 |---|---|
-| `Integer` | `101`; `1e+15` and `1.8446744073709551…e+19` from `1e15` |
+| `Integer` | `101`; `1e+15` and `1.8446744073709551·e+19` from `1e15` |
 | `Decimal` | `1.01`; `1e-43` below `1e-15` |
 | `Fraction` | `1/7`, `3/4`, `2 3/4`, `333 1/3`; `3` when it is whole |
 | `Percent` | `20%`, `12.5%`, `41.67%` |
-| `Float` | `100`, `1.5`, `1.4142135623730951`; `1e+21` or `1.5e-16` when very large or small; `Inf`, `-Inf`, `NaN` |
+| `Float` | `100`, `1.5`, `1.414·`; `1e+21` or `1.5e-16` when very large or small; `Inf`, `-Inf`, `NaN` |
 | `Scientific` | the concise form of the physical tables, the uncertainty to two digits in brackets after the value cut at the same place: `7.2973525643(11)e-3`, `11.000(82)`, `1.00(20)e3`; a column format changes it, see below; no uncertainty is a plain number |
-| `Complex` | each part as a `Float`: `3+4i`, `1.5-2i`, `0+1.4142135623730951i`; both parts cut alike when too wide; `0+Inf\i` for an infinite imaginary part |
+| `Complex` | each part as a `Float`: `3+4i`, `1.5-2i`, `0+1.414i·`; both parts cut alike when too wide, and marked once after the `i`; `0+Inf\i` for an infinite imaginary part |
 
 A `Float` that is a whole number looks like an `Integer`, but it is still a `Float`.
 
 A `Decimal`, a `Fraction` and a `Percent` are the same exact numbers shown in
 different ways: `19.99`, `1/7` and `20%`. Adding, subtracting, multiplying
 and dividing decimals gives a `Decimal`, and so does an average. Each goes
-anywhere the others do: a `Decimal` column shows `1/3` as `0.333…`.
+anywhere the others do: a `Decimal` column shows `1/3` as `0.333·`.
 
 A `Fraction` is an exact number shown as a fraction of whole numbers, with a
 whole part where there is one: `x.Fraction` gives `1/8` for `0.125` and
@@ -172,7 +179,7 @@ vector is converted value by value.
 | Written | Gives |
 |---|---|
 | `x.Integer` | a whole number: `19.99` gives `19`, `-19.99` gives `-19` |
-| `x.Decimal` | the same number as a decimal: `(1/8).Decimal` is `0.125`, `(1/3).Decimal` is `0.333…` |
+| `x.Decimal` | the same number as a decimal: `(1/8).Decimal` is `0.125`, `(1/3).Decimal` is `0.333·` |
 | `x.Percent` | the same number as a percentage: `0.4` gives `40%`, `5/12` gives `41.67%` |
 | `x.Float` | a floating-point number; of a `Complex`, its real part, where its imaginary part is zero to within `1e-15`, and otherwise an error |
 | `x.Complex`, `Complex(re, im)` | a complex number from a real one, or from two |
@@ -259,9 +266,9 @@ C99's, so `arcsin(2+0i)` is `1.5707963267948966+1.3169578969248166i`).
 with no imaginary part: `im(7)` is `0`.
 
 A real argument outside the function's real domain gives the principal
-`Complex` too, not `NaN`: `sqrt(-4)` is `0+2i`, `ln(-1)` is `0+3.14…i`,
-`arccos(2)` is `0-1.317…i`, `arccosh(0)` is `0+1.5707963267948966i`,
-`arctanh(2)` is `0.549…+1.5707963267948966i`, `(-2) ** 0.5` is `1.414…i`. The
+`Complex` too, not `NaN`: `sqrt(-4)` is `0+2i`, `ln(-1)` is `0+3.141i·`,
+`arccos(2)` is `0-1.316i·`, `arccosh(0)` is `0+1.571i·`,
+`arctanh(2)` is `0.549+1.571i·`, `(-2) ** 0.5` is `1.414i·` (to a rounding error). The
 edge of the domain stays real (`ln(0)` is `-Inf`, `arctanh(1)` is `Inf`), and a
 `NaN` stays `NaN`. The type checker still calls the result a `Float`, so the
 `Complex` shows in the value: an undeclared column holding one is `Complex`, a

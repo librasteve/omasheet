@@ -30,7 +30,7 @@ omasheet print file.omx                   # calculate and print every sheet
 omasheet lint file.omx                    # check without calculating
 omasheet eval file.omx 'Orders.Net.sum()' # one expression against a file
 omasheet eval '1/3 + 1/6'                  # or on its own
-omasheet eval --exact file.omx '...'      # every number in full, not 1.8446744073709551…e+19
+omasheet eval --exact file.omx '...'      # every number in full, not 1.8446744073709551·e+19
 ```
 
 Errors come as `file:line:col: error: message` with the line and a marker,
@@ -193,7 +193,7 @@ digits are shown. A long decimal shown cut and marked is correct, not a
 fault: do not "fix" it with `.Float`, and use `round(x)` only when the user
 wants a rounded number. A number is shown in at most 23 characters:
 from `1e15` up, or below `1e-15`, it is in e notation, `1e+60`, and digits
-that do not fit are cut and marked `…`. Only the display is cut, and
+that do not fit are cut and marked `·`. A `Decimal`, `Float` or `Complex` is shown to three places after the point and marked `·` where it has more, `0.333·`; a `Scientific` is not cut. Only the display is cut, and
 `--exact` shows it in full.
 
 ## Expressions

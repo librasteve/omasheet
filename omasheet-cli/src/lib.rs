@@ -45,8 +45,8 @@ struct Env {
     zone: Option<String>,
 
     /// Show every floating-point number in full (1.4142135623730951),
-    /// rather than rounded to five digits after the decimal point
-    /// (1.41421…); exact numbers are always in full (19.99, 1/3)
+    /// rather than cut to three digits after the decimal point
+    /// (1.414·); exact numbers are always in full (19.99, 1/3)
     #[arg(long)]
     exact: bool,
 }

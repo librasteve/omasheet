@@ -1124,8 +1124,54 @@ pub fn equal(a: &Value, b: &Value) -> Result<Option<bool>, String> {
 /// The most characters a number is shown in, its sign aside.
 pub const WIDTH: usize = 23;
 
-/// What marks a number shown with fewer digits than it has.
-pub const MORE: char = '…';
+/// What marks a number shown with fewer digits than it has: a middle dot,
+/// which is quieter on the page than the three dots of an ellipsis.
+pub const MORE: char = '·';
+
+/// How many digits after the point a `Decimal`, a `Float` or the parts of a
+/// `Complex` are shown to: `0.333·`. A number with fewer has them all, and one
+/// below a thousandth keeps the digits it has, so as not to show as nought.
+pub const SHOWN_DIGITS: usize = 3;
+
+/// A plain positive number rounded to [`SHOWN_DIGITS`] places after its point and
+/// marked with [`MORE`]; `None` where it has no more than that, or is too small
+/// for them to say anything.
+fn cut_places(plain: &str) -> Option<String> {
+    let (whole, fraction) = plain.split_once('.')?;
+    let small = whole == "0" && fraction.chars().take(SHOWN_DIGITS).all(|c| c == '0');
+    if fraction.len() <= SHOWN_DIGITS || small {
+        return None;
+    }
+    // Rounded to the nearest, a half upwards, on the digits themselves: a
+    // trip that comes back as 0.9999999999999999 reads as `1.000·`.
+    let mut digits: Vec<u8> = whole
+        .bytes()
+        .chain(fraction.bytes().take(SHOWN_DIGITS))
+        .collect();
+    if fraction.as_bytes()[SHOWN_DIGITS] >= b'5' {
+        let mut k = digits.len();
+        loop {
+            if k == 0 {
+                digits.insert(0, b'1');
+                break;
+            }
+            k -= 1;
+            if digits[k] == b'9' {
+                digits[k] = b'0';
+            } else {
+                digits[k] += 1;
+                break;
+            }
+        }
+    }
+    let point = digits.len() - SHOWN_DIGITS;
+    // A carry into a sixteenth digit is a number for e notation, not for this.
+    if point > 15 {
+        return None;
+    }
+    let text = String::from_utf8(digits).ok()?;
+    Some(format!("{}.{}{MORE}", &text[..point], &text[point..]))
+}
 
 /// A number below this, other than zero, is small, and is shown in e notation.
 const SMALL: f64 = 1e-15;
@@ -1227,12 +1273,16 @@ fn shown_decimal(r: &Dec, sep: Option<char>) -> String {
     }
     let e = r.magnitude();
     let medium = (-15..15).contains(&e);
-    let plain = grouped(r.to_plain_string(), sep);
+    let full = r.to_plain_string();
+    if medium && let Some(cut) = cut_places(&full) {
+        return grouped(cut, sep);
+    }
+    let plain = grouped(full, sep);
     if medium && width(&plain) <= WIDTH {
         return plain;
     }
     // A number of ordinary size that will not fit reads better cut and
-    // marked, `0.33333333333333333333…`, than in e notation. Only the
+    // marked, `0.33333333333333333333·`, than in e notation. Only the
     // genuinely small or large go to e notation.
     if medium {
         let digits: String = plain.chars().take(WIDTH - 1).collect();
@@ -1266,7 +1316,7 @@ pub fn long_decimal(v: &Value) -> Option<String> {
     let r = r.guarded();
     let plain = r.to_plain_string();
     let medium = (-15..15).contains(&r.magnitude());
-    (medium && width(&plain) > WIDTH).then_some(plain)
+    (medium && (width(&plain) > WIDTH || cut_places(&plain).is_some())).then_some(plain)
 }
 
 /// A rounded decimal without the zeros, or the point, it ends with.
@@ -1333,6 +1383,11 @@ pub fn format_float(f: f64, exact: bool) -> String {
 
 /// As [`format_float`], with the digits grouped by `sep`.
 fn shown_float(f: f64, exact: bool, sep: Option<char>) -> String {
+    float_to(f, exact, sep, true)
+}
+
+/// As [`shown_float`], to [`SHOWN_DIGITS`] places where `cut`.
+fn float_to(f: f64, exact: bool, sep: Option<char>, cut: bool) -> String {
     if f.is_nan() {
         return "NaN".into();
     }
@@ -1343,13 +1398,32 @@ fn shown_float(f: f64, exact: bool, sep: Option<char>) -> String {
     if exact && (size == 0.0 || (1e-4..LARGE).contains(&size)) {
         return format!("{f}");
     }
-    let plain = grouped(format!("{size}"), sep);
+    let full = format!("{size}");
+    let plain = match cut.then(|| cut_places(&full)).flatten() {
+        Some(short) => grouped(short, sep),
+        None => grouped(full, sep),
+    };
     if !exact && (size == 0.0 || ((SMALL..LARGE).contains(&size) && width(&plain) <= WIDTH)) {
         return signed(f < 0.0, plain);
     }
     let scientific = format!("{f:e}");
     let (mantissa, e) = scientific.split_once('e').unwrap_or((&scientific, "0"));
-    format!("{mantissa}{}", exponent(e.parse().unwrap_or(0)))
+    let mut e: i64 = e.parse().unwrap_or(0);
+    let (sign, size) = match mantissa.strip_prefix('-') {
+        Some(size) => ("-", size),
+        None => ("", mantissa),
+    };
+    // The mantissa is cut like any other number, to three places; where
+    // rounding carries it to ten it is one of the next power.
+    let mantissa = match (cut && !exact).then(|| cut_places(size)).flatten() {
+        Some(short) if short.starts_with("10.") => {
+            e += 1;
+            format!("1.{}{MORE}", "0".repeat(SHOWN_DIGITS))
+        }
+        Some(short) => short,
+        None => size.to_string(),
+    };
+    format!("{sign}{mantissa}{}", exponent(e))
 }
 
 /// Shortened to `room` characters and marked with [`MORE`]: a number in e
@@ -1396,7 +1470,11 @@ fn format_complex(re: f64, im: f64, exact: bool, sep: Option<char>) -> String {
         re_text = cut(re_text, re_width);
         im_text = cut(im_text, im_width);
     }
-    format!("{re_sign}{re_text}{plus}{im_text}{i}")
+    // One mark for the whole number, after its `i`, where either part is cut.
+    let cut = re_text.contains(MORE) || im_text.contains(MORE);
+    let (re_text, im_text) = (re_text.replace(MORE, ""), im_text.replace(MORE, ""));
+    let more = if cut { MORE.to_string() } else { String::new() };
+    format!("{re_sign}{re_text}{plus}{im_text}{i}{more}")
 }
 
 /// A scientific value in the concise form of the physical tables,
@@ -1415,13 +1493,18 @@ fn format_complex(re: f64, im: f64, exact: bool, sep: Option<char>) -> String {
 pub fn format_uncertain(v: f64, s: f64, f: &SciFormat, sep: Option<char>) -> String {
     let fixed = f.places.is_some() || f.exponent.is_some() || f.conv != SciConv::General;
     if s == 0.0 && !fixed {
-        return padded_to(f, String::new(), shown_float(v, false, sep), String::new());
+        return padded_to(
+            f,
+            String::new(),
+            float_to(v, false, sep, false),
+            String::new(),
+        );
     }
     if !v.is_finite() || !s.is_finite() {
         let text = format!(
             "{} ± {}",
-            shown_float(v, false, sep),
-            shown_float(s, false, sep)
+            float_to(v, false, sep, false),
+            float_to(s, false, sep, false)
         );
         return padded_to(f, String::new(), text, String::new());
     }
@@ -1559,7 +1642,7 @@ pub fn format_styled(v: &Value, quoted: bool, style: &Style) -> String {
 }
 
 /// As [`format_styled`], with every `Num` in full: `1.4142135623730951`,
-/// where it is shown as `1.41421…`. An exact number is always in full.
+/// where it is shown as `1.41421·`. An exact number is always in full.
 pub fn format_exact(v: &Value, quoted: bool, style: &Style) -> String {
     format_value(v, quoted, style, true)
 }
@@ -1803,7 +1886,7 @@ mod tests {
             "-11/4"
         );
         // One with no fraction of a small enough denominator is a decimal.
-        assert_eq!(shown(1, 10_001), "0.00009999000099990000…");
+        assert_eq!(shown(1, 10_001), "0.00009999000099990000·");
         // Two fractions give a fraction; a fraction with a decimal, a decimal.
         let sum = arith(
             BinOp::Add,
@@ -1835,21 +1918,18 @@ mod tests {
         // Past an `i64` a whole number is still exact, as a decimal.
         assert_eq!(
             shown(dec("18446744073709551616")),
-            "1.8446744073709551…e+19"
+            "1.8446744073709551·e+19"
         );
         assert_eq!(
             shown(dec("-18446744073709551616")),
-            "-1.8446744073709551…e+19"
+            "-1.8446744073709551·e+19"
         );
         assert_eq!(shown(dec("0.125")), "0.125");
         assert_eq!(shown(dec("0.000000000000001")), "0.000000000000001");
         // The widest and the narrowest a 38-digit decimal reaches.
         assert_eq!(shown(dec("1e-38")), "1e-38");
-        assert_eq!(shown(dec(&"9".repeat(38))), "9.9999999999999999…e+37");
-        assert_eq!(
-            shown(dec("0.12345678901234567890123")),
-            "0.12345678901234567890…"
-        );
+        assert_eq!(shown(dec(&"9".repeat(38))), "9.9999999999999999·e+37");
+        assert_eq!(shown(dec("0.12345678901234567890123")), "0.123·");
     }
 
     #[test]
@@ -1864,13 +1944,13 @@ mod tests {
         assert_eq!(shown(int(1_000_000_000_000_000)), "1e+15");
         assert_eq!(
             shown(Value::Decimal(rat(123_456_789, 10_000))),
-            "12,345.6789"
+            "12,345.679·"
         );
         assert_eq!(
             shown(Value::Decimal(
                 Dec::parse("999999999999999.9999999").expect("parses")
             )),
-            "999,999,999,999,999.99…"
+            "999,999,999,999,999.99·"
         );
         assert_eq!(
             shown(Value::Percent(rat(12_345_678, 100_000))),
@@ -1973,24 +2053,33 @@ mod tests {
         assert_eq!(complex(1e20, 1e-7), "1e+20+0.0000001i");
         assert_eq!(complex(1e20, 1e-20), "1e+20+1e-20i");
         assert_eq!(complex(0.0, f64::INFINITY), "0+Inf\\i");
-        assert_eq!(complex(1.0 / 3.0, 1.0), "0.3333333333333333+1i");
-        assert_eq!(complex(1.0 / 3.0, -1.0 / 3.0), "0.3333333…-0.3333333…i");
+        assert_eq!(complex(1.0 / 3.0, 1.0), "0.333+1i·");
+        assert_eq!(complex(1.0 / 3.0, -1.0 / 3.0), "0.333-0.333i·");
         assert_eq!(
             complex(1.7976931348623157e308, 1.7976931348623157e308),
-            "1.79…e+308+1.79…e+308i"
+            "1.79e+308+1.79e+308i·"
         );
-        // Shown, a `Num` is never rounded: plain from `1e-15` to `1e15`
+        // Shown, a `Num` is cut to three places and marked: plain from `1e-15` to `1e15`
         // where that fits in 23 characters, and in e notation otherwise.
         let shown = |f| format_float(f, false);
+        // In e notation the mantissa is cut to three places too, and a carry
+        // to ten is one of the next power.
+        assert_eq!(shown(1.2246467991473532e-16), "1.225·e-16");
+        assert_eq!(shown(-9.9996e-20), "-1.000·e-19");
+        assert_eq!(shown(1.5e30), "1.5e+30");
+        assert_eq!(
+            format_scalar(&Value::Complex(1.2246467991473532e-16, 2.0), false),
+            "1.225e-16+2i·"
+        );
         assert_eq!(shown(1.5), "1.5");
-        assert_eq!(shown(0.1 + 0.2), "0.30000000000000004");
-        assert_eq!(shown(-2.0 / 3.0), "-0.6666666666666666");
+        assert_eq!(shown(0.1 + 0.2), "0.300·");
+        assert_eq!(shown(-2.0 / 3.0), "-0.667·");
         assert_eq!(shown(1e-15), "0.000000000000001");
-        assert_eq!(shown(9.999999999999999e-16), "9.999999999999999e-16");
-        assert_eq!(shown(1.2345678e-15), "1.2345678e-15");
+        assert_eq!(shown(9.999999999999999e-16), "1.000·e-15");
+        assert_eq!(shown(1.2345678e-15), "1.235·e-15");
         assert_eq!(shown(999_999_999_999_999.9), "999999999999999.9");
         assert_eq!(shown(1e15), "1e+15");
-        assert_eq!(shown(f64::MAX), "1.7976931348623157e+308");
+        assert_eq!(shown(f64::MAX), "1.798·e+308");
     }
 
     #[test]

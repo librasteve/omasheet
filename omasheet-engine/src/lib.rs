@@ -58,7 +58,7 @@ pub struct Options {
     /// file's zone.
     pub local: bool,
     /// Show every `Num` in full, `1.4142135623730951`, rather than as the
-    /// decimal it is rounded to for display, `1.41421…`. An exact number
+    /// decimal it is rounded to for display, `1.41421·`. An exact number
     /// is always shown in full: `19.99`, `1/3`.
     pub exact: bool,
     /// Whether a column that can be calculated in one step over the whole

@@ -306,7 +306,7 @@ fn decimals() {
         assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
         out.output.trim_end().to_string()
     };
-    assert_eq!(shown("(1/3).Decimal"), "0.33333333333333333333…");
+    assert_eq!(shown("(1/3).Decimal"), "0.333·");
     assert_eq!(shown("(1/3).Decimal * 3"), "1");
     let file =
         "sheet P\n\nHalf : Decimal\n\nN | Half\n8 | = (1 / N).Decimal\n3 | = (1 / N).Decimal\n";
@@ -473,7 +473,7 @@ fn fractions() {
     assert_eq!(show("(1/3 + 1/6).Fraction"), "1/2");
     // Past the denominator it looks to, it is shown as a decimal.
     assert_eq!(show("(1/10000).Fraction"), "1/10000");
-    assert_eq!(show("(1/10001).Fraction"), "0.00009999000099990000…");
+    assert_eq!(show("(1/10001).Fraction"), "0.00009999000099990000·");
     // A Fraction column shows its cells as fractions, whichever way they
     // were written, and two fractions give a fraction; a fraction with any
     // other number is a Decimal, declared a Fraction here to be shown as one.
@@ -559,23 +559,20 @@ fn display_of_rationals() {
     // A Decimal that ends is shown as that decimal in full.
     assert_eq!(show("175/4"), "43.75");
     assert_eq!(show("1/100000"), "0.00001");
-    assert_eq!(show("-1/64"), "-0.015625");
+    assert_eq!(show("-1/64"), "-0.016·");
     assert_eq!(show("19.99 * 3"), "59.97");
     assert_eq!(show("100/3 * 3"), "100");
     // One that was rounded at the widest scale is cut and marked.
-    assert_eq!(
-        show("0.333333333333333333333333333333"),
-        "0.33333333333333333333…"
-    );
-    assert_eq!(show("2/6 + 1/3"), "0.66666666666666666666…");
-    assert_eq!(show("-7/3"), "-2.33333333333333333333…");
-    assert_eq!(show("[1/3, 0.5]"), "[0.33333333333333333333…, 0.5]");
+    assert_eq!(show("0.333333333333333333333333333333"), "0.333·");
+    assert_eq!(show("2/6 + 1/3"), "0.667·");
+    assert_eq!(show("-7/3"), "-2.333·");
+    assert_eq!(show("[1/3, 0.5]"), "[0.333·, 0.5]");
     // A Num is never rounded: shown with the fewest digits that give the
     // same Num back.
     assert_eq!(show("4.Float"), "4");
-    assert_eq!(show("(1/3).Float"), "0.3333333333333333");
-    assert_eq!(show("sqrt(2)"), "1.4142135623730951");
-    assert_eq!(show("sqrt(2) * 1e20"), "1.4142135623730951e+20");
+    assert_eq!(show("(1/3).Float"), "0.333·");
+    assert_eq!(show("sqrt(2)"), "1.414·");
+    assert_eq!(show("sqrt(2) * 1e20"), "1.414·e+20");
     assert_eq!(show("sqrt(2).String"), "1.4142135623730951");
     // Only the display: the value is exact still.
     assert_eq!(show("1/3 * 3 == 1"), "true");

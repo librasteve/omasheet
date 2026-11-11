@@ -7,6 +7,18 @@
 # where the imaginary part is zero (to within Raku's 1e-15, and nowhere else
 # does omasheet use a tolerance).
 # In a Parquet file a Complex column is a struct of two doubles, `re` and `im`.
+#
+# The maths functions are here too. A real argument past the edge of a
+# function's real domain gives the principal complex value, not NaN, and the
+# edge itself stays real; a column that holds one is Complex, where a column
+# declared Float would reject the cell, and `sqrt(-4).Float` is an error.
+# `round floor ceil radians degrees` do not take a complex number.
+#
+# Each function is set beside its inverse, and the inverse of the result is
+# set beside the argument, so a round trip reads across a row. A Match is
+# true where every trip comes back to within 1e-12: a function and its
+# inverse meet only on the principal branch, so the arguments are chosen
+# inside it.
 
 sheet Parts
 
@@ -35,18 +47,18 @@ sheet Arithmetic
 A : Complex
 B : Complex
 
-| A    | B    | Sum | Difference | Product | Quotient | Squared | Real  | Same |
-| ---- | ---- | --- | ---------- | ------- | -------- | ------- | ----- | ---- |
-| 1+2i | 3-1i | *   | *          | *       | *        | *       | *     | *    |
-| 2i   | 2i   | *   | *          | *       | *        | *       | *     | *    |
-| 1+1i | 1-1i | *   | *          | *       | *        | *       | *     | *    |
+| A    | B    | Sum | Difference | Product | Quotient | Squared | Doubled | Same |
+| ---- | ---- | --- | ---------- | ------- | -------- | ------- | ------- | ---- |
+| 1+2i | 3-1i | *   | *          | *       | *        | *       | *       | *    |
+| 2i   | 2i   | *   | *          | *       | *        | *       | *       | *    |
+| 1+1i | 1-1i | *   | *          | *       | *        | *       | *       | *    |
 
 Sum        := A + B
 Difference := A - B
 Product    := A * B
 Quotient   := A / B
 Squared    := A ** 2
-Real       := A * 2
+Doubled       := A * 2
 Same       := A == A
 
 # A real number in a Complex column has no imaginary part, and a Complex is
@@ -64,3 +76,86 @@ Z : Complex
 IsReal    := im(Z) == 0
 AsFloat   := Z.Float
 AsInteger := re(Z).Integer
+
+sheet Beyond
+
+| X    | Sqrt | Ln | Log10 | Arcsin | Arccos | Arccosh | Arctanh | Power |
+| ---- | ---- | -- | ----- | ------ | ------ | ------- | ------- | ----- |
+| -4   | *    | *  | *     | *      | *      | *       | *       | *     |
+| -1   | *    | *  | *     | *      | *      | *       | *       | *     |
+| 0    | *    | *  | *     | *      | *      | *       | *       | *     |
+| 0.5  | *    | *  | *     | *      | *      | *       | *       | *     |
+| 1    | *    | *  | *     | *      | *      | *       | *       | *     |
+| 2    | *    | *  | *     | *      | *      | *       | *       | *     |
+
+Sqrt    := sqrt(X)
+Ln      := ln(X)
+Log10   := log10(X)
+Arcsin  := arcsin(X)
+Arccos  := arccos(X)
+Arccosh := arccosh(X)
+Arctanh := arctanh(X)
+Power   := X ** 0.5
+
+# exp and ln, and a root and its square. The imaginary part of the argument
+# is within (-pi, pi], which is where ln undoes exp.
+sheet LogExp
+
+Z : Complex
+
+| Z     | Exp | LnExp | Ln | ExpLn | Root | Squared | Match |
+| ----- | --- | ----- | -- | ----- | ---- | ------- | ----- |
+| 1+2i  | *   | *     | *  | *     | *    | *       | *     |
+| -1-2i | *   | *     | *  | *     | *    | *       | *     |
+| 0.5+3i | *  | *     | *  | *     | *    | *       | *     |
+| 2-1.5i | *  | *     | *  | *     | *    | *       | *     |
+
+Exp     := exp(Z)
+LnExp   := ln(Exp)
+Ln      := ln(Z)
+ExpLn   := exp(Ln)
+Root    := sqrt(Z)
+Squared := Root ** 2
+Match   := abs(LnExp - Z) < 1e-12 and abs(ExpLn - Z) < 1e-12 and abs(Squared - Z) < 1e-12
+
+# sin, cos and tan against arcsin, arccos and arctan. The real part of the
+# argument is within (0, pi/2), where all three come back.
+sheet Trig
+
+Z : Complex
+
+| Z        | Sin | ArcSin | Cos | ArcCos | Tan | ArcTan | Match |
+| -------- | --- | ------ | --- | ------ | --- | ------ | ----- |
+| 1+2i     | *   | *      | *   | *      | *   | *      | *     |
+| 0.5+0.5i | *   | *      | *   | *      | *   | *      | *     |
+| 1.2-0.7i | *   | *      | *   | *      | *   | *      | *     |
+| 0.3+1i   | *   | *      | *   | *      | *   | *      | *     |
+
+Sin    := sin(Z)
+ArcSin := arcsin(Sin)
+Cos    := cos(Z)
+ArcCos := arccos(Cos)
+Tan    := tan(Z)
+ArcTan := arctan(Tan)
+Match  := abs(ArcSin - Z) < 1e-12 and abs(ArcCos - Z) < 1e-12 and abs(ArcTan - Z) < 1e-12
+
+# sinh, cosh and tanh against arcsinh, arccosh and arctanh. The real part is
+# positive and the imaginary part within [0, pi/2), where all three come back.
+sheet Hyper
+
+Z : Complex
+
+| Z        | Sinh | ArcSinh | Cosh | ArcCosh | Tanh | ArcTanh | Match |
+| -------- | ---- | ------- | ---- | ------- | ---- | ------- | ----- |
+| 1+1i     | *    | *       | *    | *       | *    | *       | *     |
+| 0.5+0.5i | *    | *       | *    | *       | *    | *       | *     |
+| 1.2+0.7i | *    | *       | *    | *       | *    | *       | *     |
+| 0.3+1i   | *    | *       | *    | *       | *    | *       | *     |
+
+Sinh    := sinh(Z)
+ArcSinh := arcsinh(Sinh)
+Cosh    := cosh(Z)
+ArcCosh := arccosh(Cosh)
+Tanh    := tanh(Z)
+ArcTanh := arctanh(Tanh)
+Match   := abs(ArcSinh - Z) < 1e-12 and abs(ArcCosh - Z) < 1e-12 and abs(ArcTanh - Z) < 1e-12

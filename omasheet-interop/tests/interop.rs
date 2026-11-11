@@ -1925,11 +1925,18 @@ fn a_workbook_sheet_as_a_table_shows_what_an_import_of_it_shows() {
             "{file}#{sheet}: columns"
         );
         // Every cell of every row, as it is shown.
-        assert_eq!(
-            shown_rows(&imp, at),
-            shown_rows(&table, 0),
-            "{file}#{sheet}"
-        );
+        // A number in a column of mixed types is text in the table, so it is
+        // whole there, where the import holds a number and shows it cut and
+        // marked: the same digits as far as it goes.
+        let (imported, tabled) = (shown_rows(&imp, at), shown_rows(&table, 0));
+        assert_eq!(imported.len(), tabled.len(), "{file}#{sheet}");
+        for (a, b) in imported.iter().flatten().zip(tabled.iter().flatten()) {
+            let same = match a.strip_suffix(omasheet_engine::value::MORE) {
+                Some(head) => b.starts_with(head),
+                None => a == b,
+            };
+            assert!(same, "{file}#{sheet}: {a} is not {b}");
+        }
     }
 }
 

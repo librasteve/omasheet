@@ -516,6 +516,7 @@ ApplicationWindow {
             notice = file.filterProblem();
             filters = JSON.parse(JSON.stringify(goodFilters));
             filterRev++;
+            file.retractFilters();
         } else {
             goodFilters = JSON.parse(JSON.stringify(filters));
         }
@@ -555,6 +556,7 @@ ApplicationWindow {
         busy("Filtering\u2026", function() {
             filters = all;
             filterRev++;
+            file.setFilters(JSON.stringify(all));
         });
     }
     // What each sheet has been sorted by: every column, whose telltale
@@ -621,6 +623,13 @@ ApplicationWindow {
         undoDepth = depth;
         editCount = edits;
         sortRev++;
+        // An undo or a redo brings the filters of its step back with it.
+        var kept = file.filtersState();
+        if ((kept === "" ? "{}" : kept) !== JSON.stringify(filters)) {
+            filters = kept === "" ? ({}) : JSON.parse(kept);
+            goodFilters = JSON.parse(JSON.stringify(filters));
+            filterRev++;
+        }
     }
 
     // The nearest row that is shown, going `dir` from `row` and then the
@@ -1420,6 +1429,18 @@ ApplicationWindow {
     readonly property string cellWarning: {
         var c = cellAt(curRow, curCol);
         return c && c.w ? c.w : "";
+    }
+    // The selected cell's value in full where the grid shows it cut or
+    // rounded, so that moving onto it with the arrow keys says what pointing
+    // at it does.
+    // A cell that failed to calculate says why instead.
+    readonly property string cellFull: {
+        var c = cellAt(curRow, curCol);
+        return c ? (c.e || c.x || "") : "";
+    }
+    readonly property bool cellFailed: {
+        var c = cellAt(curRow, curCol);
+        return !!c && !!c.e;
     }
     property var hintFrom: null
     function hover(from, text, bad) {
@@ -2312,6 +2333,7 @@ ApplicationWindow {
         busy("Filtering\u2026", function() {
             filters = all;
             filterRev++;
+            file.setFilters(JSON.stringify(all));
         });
     }
 
@@ -3724,9 +3746,16 @@ ApplicationWindow {
                                             && win.openCell.col === cellItem.index
                                         // Text written bare is Markdown; in quotes it is as it is.
                                         readonly property bool marked: !!cellItem.cell && cellItem.cell.h !== undefined
+                                        // A number shown cut ends in a mark;
+                                        // it is drawn apart, in the cell's
+                                        // margin, so the digits stay in line.
+                                        readonly property bool cut: !marked && !!cellItem.cell && !!cellItem.cell.n
+                                            && cellItem.cell.d.length > 1
+                                            && cellItem.cell.d.charAt(cellItem.cell.d.length - 1) === "\u00b7"
                                         text: marked ? cellItem.cell.h
                                             : !cellItem.cell ? ""
                                             : lines && !opened ? cellItem.cell.d.split("\n")[0]
+                                            : cut ? cellItem.cell.d.slice(0, -1)
                                             : cellItem.cell.d
                                         textFormat: marked ? Text.StyledText : Text.PlainText
                                         // Opened, it is drawn over the rows
@@ -3744,6 +3773,21 @@ ApplicationWindow {
                                         // Opened, every line is shown whole;
                                         // closed, the one line is cut to fit.
                                         elide: opened ? Text.ElideNone : Text.ElideRight
+                                    }
+
+                                    // The mark of a number shown cut: faint, and in the
+                                    // margin beside the digits rather than among them.
+                                    Text {
+                                        visible: cellText.cut && cellText.visible
+                                        anchors.right: parent.right
+                                        anchors.rightMargin: 1
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "\u00b7"
+                                        color: win.mutedColor
+                                        opacity: 0.7
+                                        font.family: win.font.family
+                                        font.features: win.font.features
+                                        font.pixelSize: win.fontSize
                                     }
 
                                     // Behind an opened cell, so the rows it
@@ -4600,6 +4644,7 @@ ApplicationWindow {
                     : win.hint.length > 0 ? win.hint
                     : win.notice.length > 0 ? win.notice
                     : win.cellWarning.length > 0 ? win.cellWarning
+                    : win.cellFull.length > 0 ? win.cellFull
                     : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
                     : win.formulaCell ? "This is a formula column, this change will apply to the entire column"
                     : file.status.length > 0 ? file.status
@@ -4611,10 +4656,11 @@ ApplicationWindow {
                     : ""
                 color: win.hint.length > 0 ? (win.hintBad ? win.errorColor : win.mutedColor)
                     : win.notice.length > 0 ? win.errorColor
-                    : win.cellWarning.length > 0 ? win.warningColor : win.mutedColor
+                    : win.cellWarning.length > 0 ? win.warningColor
+                    : win.cellFailed ? win.errorColor : win.mutedColor
                 font.family: win.font.family
                 font.features: win.font.features
-                font.pixelSize: win.captionSize
+                font.pixelSize: win.hint.length > 0 ? win.smallSize : win.captionSize
             }
 
             // Turning while something takes a while: work in hand, or a

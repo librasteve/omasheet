@@ -206,7 +206,7 @@ impl Dec {
     }
 
     /// The simplest fraction that comes to this number, with a denominator of
-    /// at most `max_den`: `0.142857…` gives `(1, 7)` and `0.125` gives
+    /// at most `max_den`: `0.142857·` gives `(1, 7)` and `0.125` gives
     /// `(1, 8)`. `None` when no such fraction comes to it.
     ///
     /// The convergents of the continued fraction of the number are the
@@ -636,7 +636,7 @@ fn digits(n: i128) -> u32 {
 /// A value too wide to hold, rounded back by giving up decimal places: the
 /// point moves left, below zero where it must, so that a sum past 38 digits
 /// keeps its significant ones and loses only its last. A second step is
-/// there for the rounding that carries into a new digit, `999…9` to `100…0`.
+/// there for the rounding that carries into a new digit, `999·9` to `100·0`.
 fn narrow(wide: Dec) -> Option<Dec> {
     let excess = digits(wide.unscaled).saturating_sub(MAX_PRECISION).max(1);
     for back in excess..=excess + 1 {

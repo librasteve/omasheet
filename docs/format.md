@@ -311,7 +311,7 @@ XLSX Workbook, JSON or Parquet the text goes out and comes back as text.
 
 A `Decimal`, a `Fraction` and a `Percent` hold the same exact numbers, and a
 column of one takes the others, showing what it holds its own way: `1/7` is
-`0.14285714285714285714…` in a `Decimal` column, `1/7` in a `Fraction`
+`0.143·` in a `Decimal` column, `1/7` in a `Fraction`
 column, and `14.29%` in a `Percent` column.
 
 The numeric types form a hierarchy of increasingly expressive number systems, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
@@ -391,7 +391,7 @@ added to a seventh shows as `2/7`. Only a fraction whose denominator is
 10000 or less is looked for; past that the number is shown as a decimal.
 Two fractions give a fraction, so a `:=` column of `Yield + Yield` over a
 `Fraction` column shows fractions without being declared; a fraction with
-any other number gives a `Decimal`, so `Yield * 2` shows `4.666…`.
+any other number gives a `Decimal`, so `Yield * 2` shows `4.667·`.
 
 A fraction of two whole numbers is an exact `Decimal`: `1/7` and `22/7` are
 both read that way, and one may be written with a space, `2 3/4` for `11/4`.

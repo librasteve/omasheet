@@ -83,15 +83,6 @@ Concise     | PlusMinus         | SameExponent | Aligned    | Both           | A
    7(12)e-4 |       (7 ± 12)e-4 |   0.7(12)e-3 | 0.0007(12) | 0.700(1200)e-3 |  (0.700 ± 1.200)e-3
      0.0155 |            0.0155 |   15.5(0)e-3 |  0.0155(0) |   15.500(0)e-3 | (15.500 ± 0.000)e-3
 
-sheet Summary
-
-Name    | Value
---------|-------------------
-mean    |         10.700(77)
-total   |          53.50(39)
-longest |          12.00(10)
-spread  | 0.8366600265340756
-
 sheet Comparison
 
 Name             | Value
@@ -105,3 +96,12 @@ at most          | true
 less, clear      | true
 greater, clear   | true
 exact operands   | true
+
+sheet Summary
+
+Name    | Value
+--------|-------------------
+mean    |         10.700(77)
+total   |          53.50(39)
+longest |          12.00(10)
+spread  | 0.8366600265340756

@@ -125,7 +125,7 @@ AsText    := Value.String
 
 # A Fraction column shows what it holds as a fraction. Two fractions give a
 # fraction; a fraction with any other number gives a Decimal, so Yield * 2
-# would be 4.666… and not 4 2/3.
+# would be 4.667· and not 4 2/3.
 sheet Mixes
 
 Yield : Fraction

@@ -123,7 +123,11 @@ impl SciFormat {
             i += 1;
             let n = digits(&mut i);
             // `.` alone is a precision of nought, as C has it.
-            match if n.is_empty() { Ok(0) } else { n.parse::<u32>() } {
+            match if n.is_empty() {
+                Ok(0)
+            } else {
+                n.parse::<u32>()
+            } {
                 Ok(n) if n <= MOST_PLACES => f.places = Some(n),
                 _ => {
                     return Err(error(
@@ -165,7 +169,9 @@ impl SciFormat {
                 return Err(error(
                     i,
                     1,
-                    &format!("`{c}` is not a conversion of a `Scientific`, which takes `f`, `e` or `g`"),
+                    &format!(
+                        "`{c}` is not a conversion of a `Scientific`, which takes `f`, `e` or `g`"
+                    ),
                 ));
             }
         }
@@ -196,7 +202,11 @@ impl SciFormat {
             ));
         }
         if f.group && f.conv == SciConv::Exp {
-            return Err(error(flags, i - flags, "`'` groups only `f` and `g`, not `e`"));
+            return Err(error(
+                flags,
+                i - flags,
+                "`'` groups only `f` and `g`, not `e`",
+            ));
         }
         Ok(f)
     }
@@ -374,11 +384,19 @@ mod tests {
                 ..Default::default()
             })
         );
-        assert_eq!(read("e").map(|f| (f.conv, f.exponent)), Ok((SciConv::Exp, None)));
-        assert_eq!(read("E3").map(|f| (f.upper, f.exponent)), Ok((true, Some(3))));
+        assert_eq!(
+            read("e").map(|f| (f.conv, f.exponent)),
+            Ok((SciConv::Exp, None))
+        );
+        assert_eq!(
+            read("E3").map(|f| (f.upper, f.exponent)),
+            Ok((true, Some(3)))
+        );
         assert_eq!(read("'.2f").map(|f| f.group), Ok(true));
         // It is written back the same, the flags in their order.
-        for text in ["±", "e", ".4f", "e-3", "±.3e-3", "e3", "±+8.2f", "-08.1g", ".2E-4", "'.2f"] {
+        for text in [
+            "±", "e", ".4f", "e-3", "±.3e-3", "e3", "±+8.2f", "-08.1g", ".2E-4", "'.2f",
+        ] {
             assert_eq!(read(text).unwrap().to_string(), text);
         }
         // Nothing, or anything else, is refused.

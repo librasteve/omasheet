@@ -384,6 +384,16 @@ pub mod qobject {
         fn join_since(self: Pin<&mut File>, mark: i32);
         #[qinvokable]
         fn redo(self: Pin<&mut File>);
+        /// The filters in force, as written down by `set_filters`; undo and
+        /// redo bring them back with the steps.
+        #[qinvokable]
+        fn filters_state(self: &File) -> QString;
+        /// Put the filters in force as these, as a step to undo.
+        #[qinvokable]
+        fn set_filters(self: Pin<&mut File>, filters: &QString);
+        /// Take back the step `set_filters` just made, as its filter failed.
+        #[qinvokable]
+        fn retract_filters(self: Pin<&mut File>);
         #[qinvokable]
         fn reload_theme(self: Pin<&mut File>);
         /// Take the theme from now on: Omarchy's as it changes, and without
@@ -1519,6 +1529,19 @@ impl qobject::File {
 
     fn redo(self: Pin<&mut Self>) {
         self.edit(|doc| doc.redo());
+    }
+
+    fn filters_state(&self) -> QString {
+        QString::from(self.rust().doc.filters())
+    }
+
+    fn set_filters(self: Pin<&mut Self>, filters: &QString) {
+        let filters = filters.to_string();
+        self.edit(|doc| doc.set_filters(&filters));
+    }
+
+    fn retract_filters(self: Pin<&mut Self>) {
+        self.edit(|doc| doc.retract_filters());
     }
 
     fn undo_mark(&self) -> i32 {
