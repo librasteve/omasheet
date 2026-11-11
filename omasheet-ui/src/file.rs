@@ -432,6 +432,11 @@ pub mod qobject {
         /// The units for a menu, one to a line: group, tab, unit, tab, a name.
         #[qinvokable]
         fn unit_choices(self: &File) -> QString;
+        /// The prefixes for a help box, one to a line: symbol, name, base and
+        /// exponent, tab-separated, the SI ones from large to small and then
+        /// the binary ones.
+        #[qinvokable]
+        fn prefix_table(self: &File) -> QString;
         /// The column type for quantities in this unit, `Mass[g]`, or empty
         /// where it is not a unit; see `unit_problem`.
         #[qinvokable]
@@ -1695,6 +1700,14 @@ impl qobject::File {
 
     fn unit_choices(&self) -> QString {
         QString::from(&unit_lines())
+    }
+
+    fn prefix_table(&self) -> QString {
+        let lines: Vec<String> = siquant::Registry::builtin()
+            .prefixes()
+            .map(|p| format!("{}\t{}\t{}\t{}", p.symbol, p.name, p.base, p.exp))
+            .collect();
+        QString::from(&lines.join("\n"))
     }
 
     fn unit_spec(&self, unit: &QString) -> QString {

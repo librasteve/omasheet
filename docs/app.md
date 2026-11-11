@@ -34,7 +34,10 @@ rewrites the text, and saving writes exactly that.
 - **Set unit…** is the same kind of box for the units, filed under SI Base, Data,
   Size, Mechanical, Electromagnetic, Thermodynamic, Radiation and Other, each heading opening and closing its group, with a caret beside the
   search box that closes every group or opens them all. It lists `kg`, `N`, `m^2`, or any unit typed,
-  `mg` or `kN.m`. It is there for every column: the column
+  `mg` or `kN.m`. The box shows what the column has set, `Mass[mg]`, and ticks that unit, with an
+  entry of its own at the top where the list has not got it. **Prefixes** opens a
+  table of the prefix names and sizes (`k` kilo 10^3, `Ki` kibi 2^10, and the
+  rest). It is there for every column: the column
   becomes a column of the kind of quantity the unit is of (`mg` makes it
   `Mass[mg]`), and a type it had before goes.
 - The same menu has **Set format…** for a column of numbers, dates, times

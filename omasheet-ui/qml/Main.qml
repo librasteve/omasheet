@@ -5542,6 +5542,12 @@ ApplicationWindow {
         // What is wrong with what is typed, for the provider to say; shown
         // where nothing in the list matches.
         property string problem: ""
+        // A line of what is set now, under the search box, where there is
+        // something to say: `Mass[mg]`.
+        property string note: ""
+        // A box with its own help, from a button beside Apply: the prefixes.
+        property bool helpable: false
+        signal helpAsked()
         // What the last Apply was refused for, where it can be: shown under
         // the list until something else is typed or taken.
         property string error: ""
@@ -5653,6 +5659,9 @@ ApplicationWindow {
                         listView.contentHeight - listView.height));
                 });
             fault = list.length === 0 && want.length > 0 ? problem : "";
+        }
+        function focusSearch() {
+            search.forceActiveFocus();
         }
         // The groups of the list, in order.
         function groups() {
@@ -5927,6 +5936,16 @@ ApplicationWindow {
                 }
               }
             }
+            Text {
+                visible: picker.note.length > 0
+                Layout.fillWidth: true
+                Layout.maximumWidth: picker.availableWidth
+                elide: Text.ElideRight
+                text: "Set: " + picker.note
+                color: win.mutedColor
+                font.family: win.font.family
+                font.pixelSize: win.smallSize
+            }
             ListView {
                 id: listView
                 Layout.fillWidth: true
@@ -6014,6 +6033,11 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.topMargin: 2
                 spacing: 6
+                PopupButton {
+                    text: "Prefixes"
+                    visible: picker.helpable
+                    onClicked: picker.helpAsked()
+                }
                 Item { Layout.fillWidth: true }
                 // Lit while the entry marked is not what the columns have;
                 // Close is the filled one otherwise.
@@ -6125,6 +6149,12 @@ ApplicationWindow {
         id: unitPopup
         wider: 1.4
         taller: 1.8
+        helpable: true
+        onHelpAsked: prefixHelp.openBeside(unitPopup)
+        // A click in the prefixes beside it is outside this box, and must not
+        // close it.
+        closePolicy: prefixHelp.visible ? Popup.CloseOnEscape
+            : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
         placeholder: "Search or type e.g. Mass[kg]..."
         provider: function(text) {
             var out = [];
@@ -6138,6 +6168,11 @@ ApplicationWindow {
             // `Mass[kg]` or `kg`: the unit is what is taken.
             var open = text.indexOf("[");
             var typed = open > 0 && text.endsWith("]") ? text.substring(open + 1, text.length - 1) : text;
+            // The unit the column has now, where the list has not got it (`mg`):
+            // an entry of its own at the top, ticked.
+            var now = unitPopup.current;
+            if (now.length > 0 && !out.some(function(e) { return e.spec === now; }))
+                out.unshift({spec: now, label: now, hint: "set", complete: now});
             if (text.length > 0 && !out.some(function(e) { return e.spec === typed; })) {
                 var problem = file.unitProblem(typed);
                 if (problem.length === 0)
@@ -6156,7 +6191,140 @@ ApplicationWindow {
         function show(c, item) {
             var spec = win.sharedSpec(true);
             var at = spec.indexOf("[");
+            // The column's own type and unit, as its head shows them.
+            note = at < 0 ? "" : spec;
             openFor(c, item, at < 0 ? "" : spec.substring(at + 1, spec.length - 1), ["SI Base"]);
+        }
+    }
+
+    // The prefixes, from `Set unit…`: what each is called and how big it is.
+    // The SI ones are powers of ten, and the binary ones, for bits and bytes
+    // alone, powers of two.
+    Popup {
+        id: prefixHelp
+        padding: 8
+        width: Math.min(Math.round(win.fontSize * 24), win.width - 16)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        property var table: []
+        onOpened: {
+            var rows = file.prefixTable().split("\n");
+            var out = [];
+            for (var i = 0; i < rows.length; i++) {
+                var f = rows[i].split("\t");
+                if (f.length < 4)
+                    continue;
+                out.push({symbol: f[0], name: f[1], base: parseInt(f[2]), exp: parseInt(f[3])});
+            }
+            table = out;
+            prefixList.positionViewAtBeginning();
+        }
+        onClosed: unitPopup.visible ? unitPopup.focusSearch() : grid.forceActiveFocus()
+        // Beside the box it came from, to its right where there is room.
+        function openBeside(box) {
+            parent = box.parent;
+            var right = box.x + box.width + 6;
+            var here = box.parent.mapToItem(null, right, 0).x;
+            x = here + width <= win.width - 8 ? right : Math.max(-box.parent.mapToItem(null, 0, 0).x + 8, box.x - width - 6);
+            y = box.y;
+            open();
+        }
+        // `10^3`, `2^10`.
+        function power(p) {
+            return p.base + "^" + p.exp;
+        }
+        // The size in figures: `1000`, `0.001`, `1024`, and `1e30` past what
+        // reads.
+        function value(p) {
+            if (p.base === 2)
+                return p.exp <= 60 ? String(BigInt(2) ** BigInt(p.exp)) : Math.pow(2, p.exp).toExponential(3).replace("e+", "e");
+            if (p.exp >= 0 && p.exp <= 12)
+                return "1" + "0".repeat(p.exp);
+            if (p.exp < 0 && p.exp >= -12)
+                return "0." + "0".repeat(-p.exp - 1) + "1";
+            return "1e" + p.exp;
+        }
+        background: Rectangle {
+            color: win.overColor
+            border.color: win.lineColor
+            radius: 3
+        }
+        contentItem: ColumnLayout {
+            spacing: 4
+            Text {
+                Layout.fillWidth: true
+                text: "Prefixes"
+                color: win.textColor
+                font.family: win.font.family
+                font.pixelSize: win.fontSize
+                font.bold: true
+            }
+            Text {
+                Layout.fillWidth: true
+                Layout.maximumWidth: prefixHelp.availableWidth
+                wrapMode: Text.Wrap
+                text: "A prefix goes before a unit: km is 1000 m. The binary ones, Ki Mi Gi and the rest, are for bits and bytes (b, B): KiB is 1024 B. A prefix and a dot alone is a number: 1k. is 1000, 1Ki. is 1024."
+                color: win.mutedColor
+                font.family: win.font.family
+                font.pixelSize: win.smallSize
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                Repeater {
+                    model: [["Symbol", 3], ["Name", 6], ["Power", 4], ["Size", 8]]
+                    Text {
+                        required property var modelData
+                        Layout.preferredWidth: Math.round(win.fontSize * modelData[1] * 0.8)
+                        text: modelData[0]
+                        color: win.mutedColor
+                        font.family: win.font.family
+                        font.pixelSize: win.smallSize
+                        font.bold: true
+                    }
+                }
+            }
+            ListView {
+                id: prefixList
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(contentHeight, Math.round(win.fontSize * 22), Math.round(win.height * 0.7))
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                model: prefixHelp.table
+                ScrollBar.vertical: ScrollBar {}
+                delegate: RowLayout {
+                    id: prefixRow
+                    required property var modelData
+                    width: ListView.view.width
+                    height: Math.round(win.fontSize * 1.6)
+                    spacing: 8
+                    Repeater {
+                        model: [
+                            [prefixRow.modelData.symbol, 3, true],
+                            [prefixRow.modelData.name, 6, false],
+                            [prefixHelp.power(prefixRow.modelData), 4, false],
+                            [prefixHelp.value(prefixRow.modelData), 8, false]
+                        ]
+                        Text {
+                            required property var modelData
+                            Layout.preferredWidth: Math.round(win.fontSize * modelData[1] * 0.8)
+                            elide: Text.ElideRight
+                            text: modelData[0]
+                            color: win.textColor
+                            font.family: modelData[2] ? win.monoFamily : win.font.family
+                            font.pixelSize: win.smallSize
+                        }
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                PopupButton {
+                    text: "Close"
+                    primary: true
+                    onClicked: prefixHelp.close()
+                }
+            }
         }
     }
 
