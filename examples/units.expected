@@ -43,6 +43,14 @@ sugar | 0.3kg
 salt  | 5kg
 yeast | 7.50(20)e-3kg
 
+sheet Display
+
+Item  | Kilos | Grams | Metres
+------|-------|-------|----------
+flour | 5kg   | 5000g | 200cm
+sugar | 0.3kg | 300g  | 150cm
+salt  | 5kg   | 5g    | 350(20)cm
+
 sheet Totals
 
 Name     | Value

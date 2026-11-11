@@ -322,6 +322,13 @@ pub fn dress(v: Value, id: QId, column: Option<&Unit>) -> Result<Value, String> 
     }
 }
 
+/// A quantity as its column's format shows it: in the format's unit, if it
+/// can be, and its number as the format says.
+pub fn show_in(q: &Quantity, f: &omasheet_omx::colfmt::QuantityFormat, style: &Style) -> String {
+    let converted = q.convert(&f.unit).unwrap_or_else(|_| q.clone());
+    format(&converted, &f.number.unwrap_or_default(), style, false)
+}
+
 /// A quantity as it is shown: the number as a `Scientific` is, then the
 /// unit with no space. In full, as a file writes it: `5kg`, and `10.5 ±
 /// 0.3kg` with an uncertainty.

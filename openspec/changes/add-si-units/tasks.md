@@ -20,9 +20,9 @@
 - Demo: `omasheet print examples/units.omx` (done)
 
 ## 3. Display unit and ± (`units`, `file-format`)
-- [ ] 3.1 `Mass[g]` as the column display unit
-- [ ] 3.2 `±` on quantities
-- Demo: a `Mass[g]` column shows `5000g`
+- [x] 3.1 `Mass[g]` as the column display unit
+- [x] 3.2 `±` on quantities
+- Demo: a `Mass[g]` column shows `5000g` (done)
 
 ## 4. Interop (`xlsx-interop`)
 - [ ] 4.1 CSV and JSON text, import never reads a quantity (D236)

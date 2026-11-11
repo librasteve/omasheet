@@ -65,6 +65,22 @@ Weight : Mass
 | salt  | 5       |
 | yeast | 7.5(2)g |
 
+# The unit in brackets after the type is the unit the column is shown and held
+# in, whichever the cells were written in: a bare number is read in it. After
+# a `;` a number format as a Scientific takes may follow, `Mass[mg; .1f]`.
+sheet Display
+
+Item   : String
+Kilos  : Mass
+Grams  : Mass[g]
+Metres : Length[cm]
+
+| Item  | Kilos | Grams | Metres  |
+| ----- | ----- | ----- | ------- |
+| flour | 5kg   | 5kg   | 2m      |
+| sugar | 300g  | 300g  | 150     |
+| salt  | 5     | 5     | 3.5(2)m |
+
 sheet Totals
 
 | Name     | Value                      |

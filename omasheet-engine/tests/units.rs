@@ -461,3 +461,80 @@ fn the_names_of_the_types() {
         );
     }
 }
+
+// ---- the display unit ---------------------------------------------------------
+
+#[test]
+fn a_column_is_shown_in_the_unit_of_its_format() {
+    let file = "\
+sheet S
+
+Grams  : Mass[g]
+Metres : Length[cm]
+
+| Grams | Metres  |
+| ----- | ------- |
+| 5kg   | 2m      |
+| 300g  | 150     |
+| 5     | 3.5(2)m |
+";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    // Converted on entry, and a bare number is read in the column's unit.
+    for shown in ["5000g", "300g", "5g", "200cm", "150cm", "350(20)cm"] {
+        assert!(out.output.contains(shown), "{shown} in\n{}", out.output);
+    }
+}
+
+#[test]
+fn the_unit_of_a_format_is_of_the_columns_dimension() {
+    let e = errors("sheet S\n\nA : Mass[m]\n\n| A |\n| --- |\n| 1 |\n");
+    assert!(
+        e.iter()
+            .any(|m| m.contains("`m` is a unit of Length, but the column holds Mass")),
+        "{e:?}"
+    );
+    let e = errors("sheet S\n\nA : Mass[foo]\n\n| A |\n| --- |\n| 1 |\n");
+    assert!(e.iter().any(|m| m.contains("`foo` is not a unit")), "{e:?}");
+    let e = errors("sheet S\n\nA : Mass[]\n\n| A |\n| --- |\n| 1 |\n");
+    assert!(e.iter().any(|m| m.contains("a unit is expected")), "{e:?}");
+    let e = errors("sheet S\n\nA : Mass[g;x]\n\n| A |\n| --- |\n| 1 |\n");
+    assert!(e.iter().any(|m| m.contains("`f`, `e` or `g`")), "{e:?}");
+    // A unit of a `Quantity` column may be any.
+    let e = errors("sheet S\n\nA : Quantity[g]\n\n| A |\n| --- |\n| 1 |\n");
+    assert!(e.is_empty(), "{e:?}");
+}
+
+#[test]
+fn a_number_format_follows_the_unit() {
+    let file = "\
+sheet S
+
+Weight : Mass[g; .1f]
+
+| Weight |
+| ------ |
+| 5kg    |
+| 7.5(2)g |
+";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    assert!(out.output.contains("5000.0(0)g"), "{}", out.output);
+    assert!(out.output.contains("7.5(2)g"), "{}", out.output);
+}
+
+#[test]
+fn a_display_unit_applies_to_a_formula_too() {
+    let file = "\
+sheet S
+
+Weight : Mass[g]
+
+| Weight   |
+| -------- |
+| = 2kg + 500g |
+";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    assert!(out.output.contains("2500g"), "{}", out.output);
+}

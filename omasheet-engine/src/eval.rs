@@ -2386,8 +2386,11 @@ impl<'p> Engine<'p> {
         // formulas holds each as it is.
         let v = match col.ty {
             S::Quantity(id) if col.declared => {
-                crate::quantity::dress(v, id, crate::quantity::column_unit(id).as_ref())
-                    .or_else(|m| fail(span, m))?
+                let unit = match &col.format {
+                    Some(Format::Quantity(q)) => Some(q.unit.clone()),
+                    _ => crate::quantity::column_unit(id),
+                };
+                crate::quantity::dress(v, id, unit.as_ref()).or_else(|m| fail(span, m))?
             }
             _ => v,
         };
@@ -4474,6 +4477,10 @@ impl<'p> Engine<'p> {
             Some(Format::Number(f)) => format_number(v, f, &style),
             Some(Format::Scientific(f)) => match v {
                 Value::Scientific(x, s) => Some(crate::value::format_scientific(*x, *s, f, &style)),
+                _ => None,
+            },
+            Some(Format::Quantity(f)) => match v {
+                Value::Quantity(q) => Some(crate::quantity::show_in(q, f, &style)),
                 _ => None,
             },
             Some(Format::Date(f)) => self

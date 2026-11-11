@@ -1845,6 +1845,20 @@ impl<'a> Checker<'a> {
                 (ColKind::Frame, declared.unwrap_or(S::Any))
             }
             ColSrc::Data(h) => {
+                // A column of quantities holds them in its unit: the one its
+                // format names, or the preferred unit of its type (D233).
+                let column_unit = match declared {
+                    Some(S::Quantity(id)) => decl
+                        .schema
+                        .iter()
+                        .find(|l| l.name == self.sheets[t].cols[c].name)
+                        .and_then(|l| match &l.format {
+                            Some(Format::Quantity(q)) => Some(q.unit.clone()),
+                            _ => None,
+                        })
+                        .or_else(|| crate::units::preferred(id)),
+                    _ => None,
+                };
                 // Literal cells first, so that formulas in the column that
                 // read the column see its literal type.
                 let mut cells = Vec::with_capacity(decl.rows.len());
@@ -1864,10 +1878,6 @@ impl<'a> Checker<'a> {
                         formulas.push(r);
                         cells.push(Cell::Invalid);
                     } else {
-                        let column_unit = match declared {
-                            Some(S::Quantity(id)) => crate::units::preferred(id),
-                            _ => None,
-                        };
                         match self.literal_cell(
                             &cell.text,
                             cell.span,

@@ -9,13 +9,84 @@ use std::fmt;
 
 use crate::datefmt::DateFormat;
 use crate::numfmt::{FormatError, MAX_WIDTH, NumFormat};
-use crate::types::S;
+use crate::types::{QId, S};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Format {
     Number(NumFormat),
     Date(DateFormat),
     Scientific(SciFormat),
+    Quantity(QuantityFormat),
+}
+
+/// How a column of quantities is shown: in a unit of its dimension,
+/// `Weight : Mass[g]`, and optionally by a number format as a `Scientific`
+/// takes, after a `;`: `Mass[g; ±.3e-3]` (add-si-units D233). The unit is also
+/// the unit the column holds its values in, so a bare number in it is read in
+/// that unit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuantityFormat {
+    pub unit: siquant::Unit,
+    pub number: Option<SciFormat>,
+}
+
+impl QuantityFormat {
+    /// Read `text`, a unit and perhaps `;` and a number format, for a column
+    /// of the quantity type `id`.
+    pub fn parse(text: &str, id: QId) -> Result<QuantityFormat, FormatError> {
+        let (unit_part, number_part) = match text.split_once(';') {
+            Some((u, n)) => (u, Some(n)),
+            None => (text, None),
+        };
+        let lead = |s: &str| s.chars().count() - s.trim_start().chars().count();
+        let at = lead(unit_part);
+        let unit_text = unit_part.trim();
+        let error = |at: usize, len: usize, message: String| FormatError {
+            at,
+            len: len.max(1),
+            message,
+        };
+        if unit_text.is_empty() {
+            return Err(error(0, 1, "a unit is expected".to_string()));
+        }
+        let len = unit_text.chars().count();
+        let unit = siquant::Unit::parse(unit_text, siquant::Scope::Any)
+            .map_err(|e| error(at, len, format!("`{unit_text}` is not a unit: {e}")))?;
+        if let Some(t) = id.named()
+            && !t.admits(&unit)
+        {
+            return Err(error(
+                at,
+                len,
+                format!(
+                    "`{unit_text}` is a unit of {}, but the column holds {}",
+                    crate::units::kind_of(unit.dims()),
+                    crate::units::kind_of(t.dims())
+                ),
+            ));
+        }
+        let number = match number_part {
+            None => None,
+            Some(n) => {
+                let start = unit_part.chars().count() + 1 + lead(n);
+                Some(SciFormat::parse(n).map_err(|mut e| {
+                    e.at += start;
+                    e
+                })?)
+            }
+        };
+        Ok(QuantityFormat { unit, number })
+    }
+}
+
+impl fmt::Display for QuantityFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.unit)?;
+        if let Some(n) = &self.number {
+            write!(f, "; {n}")?;
+        }
+        Ok(())
+    }
 }
 
 /// How a `Scientific` column shows its values, as a `Float` column is given
@@ -265,6 +336,7 @@ impl Format {
     pub fn parse(text: &str, ty: S) -> Result<Format, FormatError> {
         match ty {
             S::Scientific => SciFormat::parse(text).map(Format::Scientific),
+            S::Quantity(id) => QuantityFormat::parse(text, id).map(Format::Quantity),
             S::Date | S::Time | S::Datetime => DateFormat::parse(text).map(Format::Date),
             _ => NumFormat::parse(text).map(Format::Number),
         }
@@ -276,6 +348,10 @@ impl Format {
             Format::Number(f) => f.takes(ty),
             Format::Date(f) => f.takes(ty),
             Format::Scientific(_) => ty == S::Scientific,
+            Format::Quantity(q) => match ty {
+                S::Quantity(id) => id.named().is_none_or(|t| t.admits(&q.unit)),
+                _ => false,
+            },
         }
     }
 
@@ -286,6 +362,9 @@ impl Format {
             S::Scientific => {
                 Some("`f`, `e` or `g`, with `±` before them for `value ± uncertainty`")
             }
+            S::Quantity(_) => Some(
+                "a unit of its dimension, as `g` or `m.s^-1`, and after a `;` a number format as a `Scientific` takes",
+            ),
             S::Date => Some("the conversions of a date, as `%d %b %Y`"),
             S::Time => Some("the conversions of a time, as `%H:%M`"),
             S::Datetime => Some("the conversions of a date and a time, as `%d %b %Y %H:%M`"),
@@ -298,6 +377,9 @@ impl Format {
         match ty {
             S::Scientific => {
                 "a `Scientific` format is a C `printf` conversion without its `%`, with `±` before it, as `±.3e-3`"
+            }
+            S::Quantity(_) => {
+                "a quantity format is a unit, as `g`, which may be followed by `;` and a number format, as `g; ±.3e-3`"
             }
             S::Date | S::Time | S::Datetime => {
                 "a date or time format is a C `strftime` format, as `%d %b %Y`"
@@ -330,6 +412,7 @@ impl fmt::Display for Format {
             Format::Number(n) => n.fmt(f),
             Format::Date(d) => d.fmt(f),
             Format::Scientific(s) => s.fmt(f),
+            Format::Quantity(q) => q.fmt(f),
         }
     }
 }
@@ -421,5 +504,34 @@ mod tests {
         assert!(matches!(Format::parse("d", S::Int), Ok(Format::Number(_))));
         assert!(Format::parse("%d", S::Int).is_err());
         assert!(!Format::parse("%d", S::Date).unwrap().takes(S::Int));
+    }
+
+    #[test]
+    fn a_quantity_format_is_a_unit_and_perhaps_a_number_format() {
+        let id = QId::from_name("Mass").unwrap();
+        let ty = S::Quantity(id);
+        for text in ["g", "kg", "mg; .1f", "g; ±.3e-3", "kg.m^2.s^-2"] {
+            // Kinds that are not mass are refused for a Mass column.
+            let read = Format::parse(text, ty);
+            if text == "kg.m^2.s^-2" {
+                assert!(read.is_err(), "{text}");
+                continue;
+            }
+            let f = read.unwrap_or_else(|e| panic!("{text}: {e:?}"));
+            assert!(f.takes(ty), "{text}");
+            // What is written is what is read.
+            assert_eq!(Format::parse(&f.to_string(), ty).unwrap(), f, "{text}");
+        }
+        let f = Format::parse("g", ty).unwrap();
+        // It follows its column to a type that still takes it, and no further.
+        assert!(f.takes(S::Quantity(QId::ANY)));
+        assert!(!f.takes(S::Quantity(QId::from_name("Length").unwrap())));
+        assert!(!f.takes(S::Float));
+        let e = Format::parse("m", ty).unwrap_err();
+        assert!(e.message.contains("unit of Length"), "{}", e.message);
+        assert_eq!(e.at, 0);
+        // A number format's error is placed after the unit and the `;`.
+        let e = Format::parse("g; x", ty).unwrap_err();
+        assert_eq!(e.at, 3, "{e:?}");
     }
 }
