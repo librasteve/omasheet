@@ -23,20 +23,7 @@ fn said(e: siquant::Error) -> String {
     e.to_string()
 }
 
-/// What a dimension is called: the names of the quantity types that have it
-/// (`Mass`, `Energy/Torque`), or its symbols where none does.
-fn kind_of(dims: siquant::Dim) -> String {
-    let names: Vec<String> = Registry::builtin()
-        .quantity_types_for(dims)
-        .iter()
-        .map(|t| t.name().to_string())
-        .collect();
-    if names.is_empty() {
-        dims.to_string()
-    } else {
-        names.join("/")
-    }
-}
+use omasheet_omx::units::kind_of;
 
 /// An error of `x` and `y`, `verb`ed, said with the units where it is that
 /// their dimensions differ: `cannot add kg and m: Mass and Length`.
@@ -299,6 +286,40 @@ pub fn to_unit(v: &Value, unit: &Value) -> Result<Value, String> {
 /// a `Quantity` column, and in a named one a quantity of that dimension.
 pub fn admitted(q: &Quantity, id: QId) -> bool {
     id.named().is_none_or(|t| t.admits_quantity(q))
+}
+
+/// The unit a column of this type holds its values in, unless it says
+/// another: the preferred unit of a named type, none for a `Quantity`.
+pub fn column_unit(id: QId) -> Option<Unit> {
+    omasheet_omx::units::preferred(id)
+}
+
+/// A value as a column of type `id` holds it, in the column's `unit`: a
+/// quantity is converted to it, and a bare number is read in it (D233). A
+/// quantity of the wrong dimension is an error. Anything else is left to be
+/// refused by the column.
+pub fn dress(v: Value, id: QId, column: Option<&Unit>) -> Result<Value, String> {
+    let (value, sigma, unit) = match &v {
+        Value::Quantity(q) => (q.value(), q.sigma(), Some(q.unit().clone())),
+        number => match number {
+            Value::Int(..)
+            | Value::Decimal(_)
+            | Value::Fraction(_)
+            | Value::Percent(_)
+            | Value::Float(_)
+            | Value::Scientific(..) => match lift(number) {
+                Some(n) => (n.value(), n.sigma(), None),
+                None => return Ok(v),
+            },
+            _ => return Ok(v),
+        },
+    };
+    match omasheet_omx::units::dress(value, sigma, unit.as_ref(), id, column)? {
+        Some((value, sigma, unit)) => Quantity::new(value, sigma, unit)
+            .map(|q| Value::Quantity(Rc::new(q)))
+            .map_err(said),
+        None => Ok(v),
+    }
 }
 
 /// A quantity as it is shown: the number as a `Scientific` is, then the

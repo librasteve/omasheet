@@ -3,7 +3,7 @@
 //! The scenarios of `openspec/changes/add-si-units`: a number with an SI unit,
 //! written `5kg`, `10.5(3)e-3kg` or `9.81m.s^-2`, and a scale, `1k.`.
 
-use omasheet_engine::{Options, eval, eval_with};
+use omasheet_engine::{Options, eval, eval_with, lint, view};
 
 /// Evaluate an expression as the grid shows it.
 fn shown(expr: &str) -> String {
@@ -31,10 +31,25 @@ fn fails(expr: &str) -> String {
 
 /// The value, the uncertainty and the unit of a quantity, from its full text.
 fn parts(expr: &str) -> (f64, f64, String) {
-    let text = full(expr);
-    let split = text
-        .find(|c: char| c.is_alphabetic() || c == '°')
-        .unwrap_or_else(|| panic!("`{expr}` is {text}, not a quantity"));
+    quantity_parts(&full(expr))
+}
+
+/// The same from the full text of a quantity: `10.5 ± 0.3kg`.
+fn quantity_parts(text: &str) -> (f64, f64, String) {
+    // The unit starts at the first letter that is not an exponent's `e`.
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let split = chars
+        .iter()
+        .enumerate()
+        .find(|(i, (_, c))| {
+            let exponent = matches!(c, 'e' | 'E')
+                && chars
+                    .get(i + 1)
+                    .is_some_and(|(_, n)| n.is_ascii_digit() || matches!(n, '-' | '+'));
+            (c.is_alphabetic() && !exponent) || *c == '°'
+        })
+        .map(|(_, (at, _))| *at)
+        .unwrap_or_else(|| panic!("`{text}` is not a quantity"));
     let (number, unit) = text.split_at(split);
     let (v, s) = match number.split_once(" ± ") {
         Some((v, s)) => (v.parse().unwrap(), s.parse().unwrap()),
@@ -262,4 +277,187 @@ fn a_quantity_as_text_and_number() {
 fn math_that_needs_a_number_refuses_a_unit() {
     assert!(fails("sin(5m)").contains("no unit"));
     assert_eq!(full("abs(-5m)"), "5m");
+}
+
+// ---- columns -----------------------------------------------------------------
+
+const PANTRY: &str = "\
+sheet Pantry
+
+Item   : String
+Weight : Mass
+
+| Item  | Weight  |
+| ----- | ------- |
+| flour | 5kg     |
+| sugar | 300g    |
+| salt  | 5       |
+| yeast | 7.5(2)g |
+";
+
+/// An expression against the pantry, in full.
+fn pantry(expr: &str) -> String {
+    let options = Options {
+        exact: true,
+        ..Options::default()
+    };
+    let out = eval_with(Some(("test.omx", PANTRY)), "<expression>", expr, options);
+    assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
+    out.output.trim_end().to_string()
+}
+
+fn errors(file: &str) -> Vec<String> {
+    lint("test.omx", file).errors
+}
+
+#[test]
+fn a_cell_is_held_in_the_columns_unit() {
+    let out = view("test.omx", PANTRY);
+    assert!(out.ok(), "{:?}", out.errors);
+    // 300g is 0.3kg, and a bare 5 is 5kg.
+    for shown in ["5kg", "0.3kg", "7.50(20)e-3kg"] {
+        assert!(out.output.contains(shown), "{shown} in\n{}", out.output);
+    }
+    assert!(!out.output.contains("300g"), "{}", out.output);
+    assert_eq!(pantry("Pantry.Weight[1]"), "0.3kg");
+    assert_eq!(pantry("Pantry.Weight[2]"), "5kg");
+}
+
+#[test]
+fn a_cell_of_another_dimension_is_an_error() {
+    let e = errors("sheet S\n\nWeight : Mass\n\n| Weight |\n| --- |\n| 3m |\n");
+    assert!(
+        e.iter()
+            .any(|m| m.contains("not a `Mass`") && m.contains("Length")),
+        "{e:?}"
+    );
+    // So is a formula that gives one, once it is worked out.
+    let out = view(
+        "test.omx",
+        "sheet S\n\nWeight : Mass\n\n| Weight |\n| --- |\n| = 3m |\n",
+    );
+    assert!(!out.ok());
+    let e = out.errors.join("\n");
+    assert!(e.contains("Length") && e.contains("Mass"), "{e}");
+    // A number from a formula is read in the column's unit, as a cell is.
+    let out = view(
+        "test.omx",
+        "sheet S\n\nWeight : Mass\n\n| Weight |\n| --- |\n| = 2 + 3 |\n",
+    );
+    assert!(out.ok(), "{:?}", out.errors);
+    assert!(out.output.contains("5kg"), "{}", out.output);
+}
+
+#[test]
+fn a_column_adds_up_and_orders() {
+    let (v, s, u) = quantity_parts(&pantry("Pantry.Weight.sum()"));
+    near(v, 10.3075);
+    near(s, 0.0002);
+    assert_eq!(u, "kg");
+    let (v, _, u) = quantity_parts(&pantry("Pantry.Weight.mean()"));
+    near(v, 10.3075 / 4.0);
+    assert_eq!(u, "kg");
+    assert_eq!(pantry("Pantry.Weight.max()"), "5kg");
+    let (v, s, _) = quantity_parts(&pantry("Pantry.Weight.min()"));
+    near(v, 0.0075);
+    near(s, 0.0002);
+    assert_eq!(pantry("Pantry.Weight.median()"), "2.65kg");
+    let (v, _, u) = quantity_parts(&pantry("Pantry.Weight.sum().to('g')"));
+    near(v, 10307.5);
+    assert_eq!(u, "g");
+}
+
+#[test]
+fn a_spread_of_quantities_is_not_taken() {
+    for f in ["std", "var"] {
+        let e = fails_in(PANTRY, &format!("Pantry.Weight.{f}()"));
+        assert!(e.contains(f) && e.contains("Mass"), "{e}");
+    }
+}
+
+fn fails_in(file: &str, expr: &str) -> String {
+    let out = eval_with(
+        Some(("test.omx", file)),
+        "<expression>",
+        expr,
+        Options::default(),
+    );
+    assert!(!out.ok(), "`{expr}` should fail but gave {}", out.output);
+    out.errors.join("\n")
+}
+
+#[test]
+fn a_computed_column_of_a_named_type_is_held_in_its_unit() {
+    let file = "\
+sheet Boxes
+
+Width  : Length
+Height : Length
+Area   : Area
+
+| Width | Height | Area |
+| ----- | ------ | ---- |
+| 20cm  | 30cm   | *    |
+| 2m    | 150cm  | *    |
+
+Area := Width * Height
+";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    assert!(out.output.contains("0.06m^2"), "{}", out.output);
+    assert!(out.output.contains("3m^2"), "{}", out.output);
+}
+
+#[test]
+fn a_quantity_column_holds_what_it_is_given() {
+    let file = "\
+sheet S
+
+Reading : Quantity
+
+| Reading |
+| ------- |
+| 5kg     |
+| 300cm   |
+| 9.81m.s^-2 |
+";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    for shown in ["5kg", "300cm", "9.81m.s^-2"] {
+        assert!(out.output.contains(shown), "{shown} in\n{}", out.output);
+    }
+}
+
+#[test]
+fn a_column_without_a_type_keeps_its_units() {
+    let file = "\
+sheet S
+
+| Reading |
+| ------- |
+| 5kg     |
+| 300g    |
+";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    assert!(out.output.contains("300g"), "{}", out.output);
+}
+
+#[test]
+fn the_names_of_the_types() {
+    for name in [
+        "Quantity", "Length", "Mass", "Force", "Energy", "Torque", "Pressure",
+    ] {
+        let file = format!("sheet S\n\nX : {name}\n\n| X |\n| --- |\n| |\n");
+        assert!(errors(&file).is_empty(), "{name}: {:?}", errors(&file));
+    }
+    // A number with no dimension is a number, and a typo is not a type.
+    for name in ["Dimensionless", "Mess", "quantity"] {
+        let file = format!("sheet S\n\nX : {name}\n\n| X |\n| --- |\n| 1 |\n");
+        assert!(
+            errors(&file).iter().any(|e| e.contains("unknown type")),
+            "{name}: {:?}",
+            errors(&file)
+        );
+    }
 }

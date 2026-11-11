@@ -14,10 +14,10 @@
 - Demo: `omasheet eval '5kg + 300g'` is `5.3kg` (done)
 
 ## 2. Named column types (`units`, `file-format`)
-- [ ] 2.1 `Weight : Mass` and the other named types; a mismatch is an error
-- [ ] 2.2 A bare number takes the column unit; `sum`, `mean`, `min`, `max`, `median` (D233, D238)
-- [ ] 2.3 `examples/units.omx` and its expected output
-- Demo: `omasheet print examples/units.omx`
+- [x] 2.1 `Weight : Mass` and the other named types; a mismatch is an error
+- [x] 2.2 A bare number takes the column unit; `sum`, `mean`, `min`, `max`, `median` (D233, D238)
+- [x] 2.3 `examples/units.omx` and its expected output
+- Demo: `omasheet print examples/units.omx` (done)
 
 ## 3. Display unit and ± (`units`, `file-format`)
 - [ ] 3.1 `Mass[g]` as the column display unit

@@ -1,0 +1,61 @@
+sheet Literals
+
+Name         | Value
+-------------|--------------
+mass         | 5kg
+length       | 300cm
+acceleration | 9.81m.s^-2
+energy       | 5kg.m^2.s^-2
+force        | 2kN
+temperature  | 20°C
+uncertain    | 0.01050(30)kg
+kilo         | 1500
+milli        | 0.005
+
+sheet Arithmetic
+
+Name          | Value
+--------------|-----------
+sum           | 5.3kg
+other way     | 5300g
+difference    | 4.7kg
+product       | 6m^2
+quotient      | 2.5m.s^-1
+scaled        | 10kg
+power         | 8m^3
+root          | 9m
+no dimension  | 200
+in grams      | 5000g
+in kelvin     | 293.15K
+warmer by     | 10K
+equal         | true
+ordered       | true
+uncertain sum | 7.00(50)m
+plus-minus    | 5.00(10)kg
+kilo of a sum | 2000
+
+sheet Pantry
+
+Item  | Weight
+------|--------------
+flour | 5kg
+sugar | 0.3kg
+salt  | 5kg
+yeast | 7.50(20)e-3kg
+
+sheet Totals
+
+Name     | Value
+---------|---------------
+total    | 10.30750(20)kg
+mean     | 2.576875(50)kg
+largest  | 5kg
+smallest | 7.50(20)e-3kg
+in grams | 10307.50(20)g
+
+sheet Boxes
+
+Box   | Width | Height | Area    | Perimeter
+------|-------|--------|---------|----------
+small | 0.2m  | 0.3m   | 0.06m^2 | 1m
+big   | 2m    | 1.5m   | 3m^2    | 7m

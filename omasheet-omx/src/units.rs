@@ -9,6 +9,7 @@
 //! as a number: 1000. This module finds where the unit or the scale ends; the
 //! lexer makes the token.
 
+use crate::types::QId;
 use siquant::{Registry, Scope, Unit};
 
 /// What was written after a number.
@@ -110,6 +111,65 @@ pub fn tail(text: &str, at: usize) -> Option<(Tail, usize)> {
         }
     }
     None
+}
+
+/// What a dimension is called: the names of the quantity types that have it
+/// (`Mass`, `Energy/Torque`), or its symbols where none does.
+pub fn kind_of(dims: siquant::Dim) -> String {
+    let names: Vec<String> = Registry::builtin()
+        .quantity_types_for(dims)
+        .iter()
+        .map(|t| t.name().to_string())
+        .collect();
+    if names.is_empty() {
+        dims.to_string()
+    } else {
+        names.join("/")
+    }
+}
+
+/// The unit a column of this type holds its values in, unless it says
+/// another: the preferred unit of a named type, none for a `Quantity`.
+pub fn preferred(id: QId) -> Option<Unit> {
+    id.named()?.preferred_unit()
+}
+
+/// A value as a column of type `id` holds it, in the column's unit (D233).
+/// `unit` is the unit the value was written in, `None` for a bare number,
+/// which is read in the column's unit. Gives the value, uncertainty and unit
+/// to hold, or `None` where it is held as it is; an error where a quantity
+/// has the wrong dimension for a named type.
+pub fn dress(
+    value: f64,
+    sigma: f64,
+    unit: Option<&Unit>,
+    id: QId,
+    column: Option<&Unit>,
+) -> Result<Option<(f64, f64, Unit)>, String> {
+    match (unit, column) {
+        (Some(u), column) => {
+            if let Some(t) = id.named()
+                && u.dims() != t.dims()
+            {
+                return Err(format!(
+                    "a quantity in {u} is a {}, not a {}",
+                    kind_of(u.dims()),
+                    id.name()
+                ));
+            }
+            match column {
+                Some(c) if c != u => {
+                    let q = siquant::Quantity::new(value, sigma, u.clone())
+                        .and_then(|q| q.convert(c))
+                        .map_err(|e| e.to_string())?;
+                    Ok(Some((q.value(), q.sigma(), c.clone())))
+                }
+                _ => Ok(None),
+            }
+        }
+        (None, Some(c)) => Ok(Some((value, sigma, c.clone()))),
+        (None, None) => Ok(None),
+    }
 }
 
 /// `base` to the power `exp` as a float.

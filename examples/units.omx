@@ -1,0 +1,94 @@
+# Numbers with SI units. A unit is written right after the number, in SI,
+# with no space: `5kg`, `300cm`, `20°C`. A unit of more than one term is
+# joined with `.` and takes `^` and a whole exponent, `kg.m^2.s^-2`, and
+# there is no `/`. The number is any number a Scientific is, so
+# `10.5(3)e-3kg` has its uncertainty, and it propagates through arithmetic
+# as it does for a Scientific.
+#
+# A sum and a comparison convert the right side to the unit of the left; a
+# product and a quotient combine the units; a result with no dimension is a
+# plain number. Two quantities of different dimensions are an error.
+#
+# A prefix and a `.` on their own is a scale: `1k.` is 1000, `5m.` is 0.005,
+# and the number it makes is exact. `m` alone is the metre and `m.` is milli.
+
+sheet Literals
+
+| Name         | Value        |
+| ------------ | ------------ |
+| mass         | 5kg          |
+| length       | 300cm        |
+| acceleration | 9.81m.s^-2   |
+| energy       | 5kg.m^2.s^-2 |
+| force        | 2kN          |
+| temperature  | 20°C         |
+| uncertain    | 10.5(3)e-3kg |
+| kilo         | 1.5k.        |
+| milli        | 5m.          |
+
+sheet Arithmetic
+
+| Name          | Value                     |
+| ------------- | ------------------------- |
+| sum           | = 5kg + 300g              |
+| other way     | = 300g + 5kg              |
+| difference    | = 5kg - 300g              |
+| product       | = 2m * 3m                 |
+| quotient      | = 10m / 4s                |
+| scaled        | = 5kg * 2                 |
+| power         | = 2m ** 3                 |
+| root          | = sqrt(9m ** 2)           |
+| no dimension  | = 6m / 3cm                |
+| in grams      | = 5kg.to('g')             |
+| in kelvin     | = 20°C.to('K')            |
+| warmer by     | = 20°C - 10°C             |
+| equal         | = 100cm == 1m             |
+| ordered       | = 5kg < 6000g             |
+| uncertain sum | = 3.0(3)m + 4.0(4)m      |
+| plus-minus    | = 5kg ± 100g              |
+| kilo of a sum | = 1.5k. + 500             |
+
+# A column can be of a quantity type, here `Mass`: a `Quantity` of that
+# dimension. A cell in another unit of it is converted to the column's unit, a
+# bare number is read in that unit, and a cell of another dimension is an
+# error. A column with no declared type, or `Quantity`, holds whatever it is
+# given.
+sheet Pantry
+
+Item   : String
+Weight : Mass
+
+| Item  | Weight  |
+| ----- | ------- |
+| flour | 5kg     |
+| sugar | 300g    |
+| salt  | 5       |
+| yeast | 7.5(2)g |
+
+sheet Totals
+
+| Name     | Value                      |
+| -------- | -------------------------- |
+| total    | = Pantry.Weight.sum()      |
+| mean     | = Pantry.Weight.mean()     |
+| largest  | = Pantry.Weight.max()      |
+| smallest | = Pantry.Weight.min()      |
+| in grams | = Pantry.Weight.sum().to('g') |
+
+# A computed column of quantities may be declared too: it is held in the unit
+# of its type, so the product of two lengths is an area in square metres
+# whatever units the lengths were written in.
+sheet Boxes
+
+Width     : Length
+Height    : Length
+Area      : Area
+Perimeter : Length
+
+| Box   | Width | Height | Area | Perimeter |
+| ----- | ----- | ------ | ---- | --------- |
+| small | 20cm  | 30cm   | *    | *         |
+| big   | 2m    | 150cm  | *    | *         |
+
+Area      := Width * Height
+Perimeter := 2 * (Width + Height)

@@ -2381,6 +2381,16 @@ impl<'p> Engine<'p> {
         // own type — gave one or the other throughout. A column has one
         // type, so it has one dress, and both paths put it on.
         let v = dressed(v, col);
+        // A column declared as a quantity type holds its values in that
+        // type's unit (add-si-units D233); one that only has the type of its
+        // formulas holds each as it is.
+        let v = match col.ty {
+            S::Quantity(id) if col.declared => {
+                crate::quantity::dress(v, id, crate::quantity::column_unit(id).as_ref())
+                    .or_else(|m| fail(span, m))?
+            }
+            _ => v,
+        };
         // A column with a zone shows an instant on that zone's clocks.
         let v = match (&col.zone, &v) {
             (Some((name, zspan)), Value::Datetime(_, None) | Value::Datetime(_, Some(_))) => {
@@ -4061,6 +4071,9 @@ impl<'p> Engine<'p> {
                 // is not one.
                 let mut by_int: Result<Value, String> = Ok(Value::int(0));
                 let mut by_time: Option<Result<Value, String>> = Some(Ok(Value::Duration(0)));
+                // The first value of a sum of quantities starts it, since a
+                // plain zero is not a quantity to add to (add-si-units D238).
+                let mut started = false;
                 let mut summing = |v: Value| {
                     if matches!(v, Value::Null) {
                         return;
@@ -4070,6 +4083,13 @@ impl<'p> Engine<'p> {
                     }
                     if let Some(total) = &mut by_time {
                         fold(total, BinOp::Add, &v);
+                    }
+                    if !started {
+                        started = true;
+                        if v.is_quantity() {
+                            by_int = Ok(v);
+                            return;
+                        }
                     }
                     fold(&mut by_int, BinOp::Add, &v);
                 };

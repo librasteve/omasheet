@@ -1864,7 +1864,16 @@ impl<'a> Checker<'a> {
                         formulas.push(r);
                         cells.push(Cell::Invalid);
                     } else {
-                        match self.literal_cell(&cell.text, cell.span, declared) {
+                        let column_unit = match declared {
+                            Some(S::Quantity(id)) => crate::units::preferred(id),
+                            _ => None,
+                        };
+                        match self.literal_cell(
+                            &cell.text,
+                            cell.span,
+                            declared,
+                            column_unit.as_ref(),
+                        ) {
                             Some(lit) => {
                                 widen(lit_type(&lit));
                                 cells.push(match lit {
@@ -2474,7 +2483,13 @@ impl<'a> Checker<'a> {
     }
 
     /// A cell without a leading `=`: a literal, never an expression.
-    fn literal_cell(&mut self, text: &str, span: Span, declared: Option<S>) -> Option<Lit> {
+    fn literal_cell(
+        &mut self,
+        text: &str,
+        span: Span,
+        declared: Option<S>,
+        column: Option<&siquant::Unit>,
+    ) -> Option<Lit> {
         // A cell of an `.omx` file may hold a quantity or a scale (D229).
         let parsed = parse_literal_with(text, true);
         let Some(want) = declared else {
@@ -2542,25 +2557,20 @@ impl<'a> Checker<'a> {
             // dimension, if it names one. It is converted to the column's
             // unit when it is stored.
             (Some(Lit::Quantity(v, s, u)), S::Quantity(q)) => {
-                if let Some(named) = q.named()
-                    && !named.admits(&u)
-                {
-                    self.err_help(
-                        span,
-                        format!(
-                            "`{text}` is not a `{}`: its unit measures {} and a `{}` measures {}",
-                            q.name(),
-                            u.dims(),
-                            q.name(),
-                            named.dims()
-                        ),
-                        "use a unit of the column's dimension, or change the column's type",
-                    );
-                    return None;
+                match crate::units::dress(v, s, Some(&u), q, column) {
+                    Ok(Some((v, s, u))) => Some(Lit::Quantity(v, s, u)),
+                    Ok(None) => Some(Lit::Quantity(v, s, u)),
+                    Err(said) => {
+                        self.err_help(
+                            span,
+                            format!("`{text}` is not a `{}`: {said}", q.name()),
+                            "use a unit of the column's dimension, or change the column's type",
+                        );
+                        return None;
+                    }
                 }
-                Some(Lit::Quantity(v, s, u))
             }
-            // A number is read in the column's unit when it is stored.
+            // A number is read in the column's unit.
             (
                 Some(
                     l @ (Lit::Int(..)
@@ -2570,8 +2580,14 @@ impl<'a> Checker<'a> {
                     | Lit::Float(_)
                     | Lit::Scientific(..)),
                 ),
-                S::Quantity(_),
-            ) => Some(l),
+                S::Quantity(q),
+            ) => match crate::convert::convert(&l, S::Scientific) {
+                Ok(Lit::Scientific(v, s)) => match crate::units::dress(v, s, None, q, column) {
+                    Ok(Some((v, s, u))) => Some(Lit::Quantity(v, s, u)),
+                    _ => Some(l),
+                },
+                _ => Some(l),
+            },
             // A `Complex` is a real number when its imaginary part is zero
             // (D203); the conversion says when it is not.
             (
@@ -3716,6 +3732,10 @@ impl<'a> Checker<'a> {
                     Func::Count | Func::Len => S::Int,
                     // A length of time adds up, and has an average.
                     Func::Sum | Func::Mean | Func::Median if s == S::Duration => s,
+                    // Quantities add up, and have a mean and a middle, in a
+                    // unit (add-si-units); their product has another.
+                    Func::Sum | Func::Mean | Func::Median if s.is_quantity() => s,
+                    Func::Product if s.is_quantity() => S::Any,
                     Func::Sum | Func::Mean | Func::Median | Func::Product if !s.is_numeric() => {
                         self.err(span, format!("cannot take the `{name}` of {s} values"));
                         return fail;
@@ -3931,6 +3951,15 @@ impl<'a> Checker<'a> {
                     Ty::Vector(s, _) => s,
                     _ => S::Any,
                 };
+                if s.is_quantity() && matches!(func, Func::Std | Func::Var) {
+                    self.err_help(
+                        span,
+                        format!("`{name}` of quantities is not supported"),
+                        "take the values of the quantities with `.Float` after converting them \
+                         to one unit, or use `min`, `max`, `mean` and `median`",
+                    );
+                    return fail;
+                }
                 let ty = match func {
                     _ if s == S::Any => Ty::Any,
                     Func::Std => Ty::Scalar(S::Float),
