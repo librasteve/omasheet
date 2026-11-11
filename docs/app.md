@@ -36,12 +36,22 @@ rewrites the text, and saving writes exactly that.
   `mg` or `kN.m`. It is there for every column: the column
   becomes a column of the kind of quantity the unit is of (`mg` makes it
   `Mass[mg]`), and a type it had before goes.
-- The same menu has **Set format…** for a column of numbers, dates or
-  times, which shows its cells in a format without changing them, and **Clear
-  format**. The prompt suggests one that fits the type: `'.2f` for a
-  `Decimal`, `.3g` for a `Float`, `±.3e-3` for a `Scientific`. A
-  `Scientific` shows `10.5(3)` by default, and `±` in its format asks for
-  `10.5 ± 0.3`; see [Expressions](expressions.md#scientific-numbers).
+- The same menu has **Set format…** for a column of numbers, dates, times
+  or quantities, which shows its cells in a format without changing them, and
+  **Clear format**. It is a box like the others, listing formats the column's
+  type takes, `'.2f` for a `Decimal`, `.3g` for a `Float`, `±.3e-3` for a
+  `Scientific`, `%d %b %Y` for a `Date`, each with what it shows; a format
+  typed is taken as typed, and one that does not read, or that the type does
+  not take, is refused under the list, with what to write instead. **No format**
+  is first in the list. A `Scientific` shows `10.5(3)` by default, and `±` in
+  its format asks for `10.5 ± 0.3`; see
+  [Expressions](expressions.md#scientific-numbers).
+- The boxes of **Set type…**, **Set unit…** and **Set format…** are kept
+  as the filter box is: Down past the last entry goes on to **Apply**, then
+  **Close**, Left and Right move between them and Up goes back to the list.
+  Drag the handle at the top to move a box and the one at the bottom edge to
+  stretch it down. Where a column has a unit set, **Set type…** ticks
+  `Quantity`.
 - The bar at the foot says what was done, and its text, like the error
   dialogs, can be selected and copied with Ctrl+C. Where a calculation
   would give an uncertain complex number, which Omasheet does not have, the

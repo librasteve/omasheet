@@ -8,7 +8,7 @@ use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QUrl};
 use omasheet_engine::datefmt::Names;
-use omasheet_engine::doc::{BLANK, PAGED_ROWS, entry_hint, unit_spec};
+use omasheet_engine::doc::{BLANK, PAGED_ROWS, entry_hint, format_suggestions, unit_spec};
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::{Document, Options, locale};
 use omasheet_interop::parquet;
@@ -417,6 +417,10 @@ pub mod qobject {
         /// What can be typed into a column of the named type.
         #[qinvokable]
         fn entry_hint(self: &File, ty: &QString) -> QString;
+        /// The formats to offer a column of this type and unit, a line each:
+        /// the format, a tab, what it shows.
+        #[qinvokable]
+        fn format_choices(self: &File, ty: &QString, unit: &QString) -> QString;
         /// The names of the kinds of quantity a column may be declared as,
         /// `Quantity` first, one to a line.
         #[qinvokable]
@@ -1660,6 +1664,14 @@ impl qobject::File {
         let hint = entry_hint(&style(), &ty);
         let hint = hint.strip_prefix(&format!("{ty}: ")).unwrap_or(&hint);
         QString::from(hint)
+    }
+
+    fn format_choices(&self, ty: &QString, unit: &QString) -> QString {
+        let lines: Vec<String> = format_suggestions(&ty.to_string(), &unit.to_string())
+            .into_iter()
+            .map(|(f, what)| format!("{f}\t{what}"))
+            .collect();
+        QString::from(&lines.join("\n"))
     }
 
     fn quantity_types(&self) -> QString {

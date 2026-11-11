@@ -2273,20 +2273,6 @@ ApplicationWindow {
         return found;
     }
 
-    // A format a column of its type takes, to show what one looks like.
-    function formatExample(c) {
-        var type = sheet.columns[c] ? sheet.columns[c].type : "";
-        var examples = {
-            "Integer": "'d", "Hex": "#08x", "Octal": "#o", "Binary": "08b",
-            "Decimal": "'.2f", "Float": ".3g", "Scientific": "\u00b1.3e-3",
-            "Date": "%d %b %Y", "Time": "%H:%M", "Datetime": "%d %b %Y %H:%M"
-        };
-        // A column of quantities takes a unit of its dimension.
-        if (sheet.columns[c] && sheet.columns[c].unit)
-            return sheet.columns[c].unit;
-        return examples[type] || "'.2f";
-    }
-
     // Whether a column type is a quantity: `Quantity`, or a kind of one.
     property var quantityNames: file.quantityTypes().split("\n")
     function isQuantityType(type) {
@@ -3332,7 +3318,7 @@ ApplicationWindow {
                                 height: win.headerHeight
                                 // Stronger while the sort and filter box beside it is open.
                                 color: (columnPopup.visible && columnPopup.col === index)
-                                    || ((typePopup.visible || unitPopup.visible)
+                                    || ((typePopup.visible || unitPopup.visible || formatPopup.visible)
                                         && index >= win.selLeft && index <= win.selRight)
                                     ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.4)
                                     : index >= win.selLeft && index <= win.selRight
@@ -5304,7 +5290,7 @@ ApplicationWindow {
         onClosed: {
             if (promptDialog.visible)
                 promptDialog.takeFocus();
-            else if (!typePopup.visible && !unitPopup.visible && !columnPopup.visible)
+            else if (!typePopup.visible && !unitPopup.visible && !formatPopup.visible && !columnPopup.visible)
                 grid.forceActiveFocus();
         }
         // Close set, to fit a long menu on a small window.
@@ -5466,7 +5452,7 @@ ApplicationWindow {
             text: "Set format\u2026"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.sheet.columns.length > 0 && win.allFormattable()
-            onTriggered: promptDialog.ask("format")
+            onTriggered: win.pickFor(formatPopup)
         }
         // The filter box from the column's header, for the one column.
         MenuEntry {
@@ -5524,6 +5510,12 @@ ApplicationWindow {
         // What is wrong with what is typed, for the provider to say; shown
         // where nothing in the list matches.
         property string problem: ""
+        // What the last Apply was refused for, where it can be: shown under
+        // the list until something else is typed or taken.
+        property string error: ""
+        // How much taller than usual the list has been stretched, by the handle
+        // at the bottom edge.
+        property real stretch: 0
         property var entries: []
         // Headings that are closed.
         property var closed: ({})
@@ -5571,6 +5563,8 @@ ApplicationWindow {
             var scrolled = listView.contentY;
             var want = search.text.trim().toLowerCase();
             problem = "";
+            if (!keep)
+                error = "";
             var all = provider(search.text.trim());
             var shown = all.filter(function(e) {
                 return want.length === 0 || e.keep
@@ -5808,7 +5802,7 @@ ApplicationWindow {
                     text: picker.allClosed ? "\u25b8" : "\u25be"
                     color: win.textColor
                     font.family: win.font.family
-                    font.pixelSize: win.smallSize
+                    font.pixelSize: win.fontSize
                 }
                 MouseArea {
                     id: caretArea
@@ -5822,7 +5816,7 @@ ApplicationWindow {
               }
               Rectangle {
                 Layout.fillWidth: true
-                implicitHeight: Math.round(win.fontSize * 1.9)
+                implicitHeight: Math.round(win.fontSize * 2.1)
                 color: "transparent"
                 radius: 2
                 border.color: search.activeFocus ? win.accentColor : win.lineColor
@@ -5838,7 +5832,7 @@ ApplicationWindow {
                     selectByMouse: true
                     font.family: win.font.family
                     font.features: win.font.features
-                    font.pixelSize: win.smallSize
+                    font.pixelSize: win.fontSize
                     onTextChanged: picker.refresh()
                     // Undo and redo are the document's, for what was just
                     // applied, without waiting for the box to close: while
@@ -5869,7 +5863,16 @@ ApplicationWindow {
                     }
                     // Up and Down pass over the headings of closed groups only
                     // by opening them: they are entries of the list too.
-                    Keys.onDownPressed: listView.currentIndex = Math.min(listView.count - 1, listView.currentIndex + 1)
+                    // Down past the last entry goes on to the buttons, as in the
+                    // filter box: Apply where there is something to apply, then Close.
+                    Keys.onDownPressed: {
+                        if (listView.currentIndex < listView.count - 1)
+                            listView.currentIndex++;
+                        else if (pickApply.enabled)
+                            pickApply.forceActiveFocus();
+                        else
+                            pickClose.forceActiveFocus();
+                    }
                     Keys.onUpPressed: listView.currentIndex = Math.max(0, listView.currentIndex - 1)
                     Keys.onReturnPressed: picker.submit()
                     Keys.onEnterPressed: picker.submit()
@@ -5888,8 +5891,9 @@ ApplicationWindow {
             ListView {
                 id: listView
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(contentHeight, Math.round(win.fontSize * 22 * picker.taller),
-                    Math.round(win.height * 0.7))
+                Layout.preferredHeight: Math.max(Math.round(win.fontSize * 5), Math.min(contentHeight,
+                    Math.round(win.fontSize * 22 * picker.taller) + picker.stretch,
+                    Math.round(win.height * 0.9)))
                 clip: true
                 model: picker.rows
                 boundsBehavior: Flickable.StopAtBounds
@@ -5901,7 +5905,7 @@ ApplicationWindow {
                     readonly property bool head: !!modelData.header
                     readonly property bool ticked: !head && picker.current === modelData.spec
                     width: ListView.view.width
-                    height: Math.round(win.fontSize * 1.7)
+                    height: Math.round(win.fontSize * 1.9)
                     radius: 3
                     color: ListView.isCurrentItem
                         ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.22)
@@ -5919,7 +5923,7 @@ ApplicationWindow {
                         color: row.head ? win.mutedColor : win.textColor
                         font.family: win.font.family
                         font.features: win.font.features
-                        font.pixelSize: win.smallSize
+                        font.pixelSize: win.fontSize
                         font.bold: row.head
                     }
                     Text {
@@ -5931,7 +5935,7 @@ ApplicationWindow {
                         text: modelData.hint || ""
                         color: win.mutedColor
                         font.family: win.font.family
-                        font.pixelSize: win.captionSize
+                        font.pixelSize: win.smallSize
                     }
                     MouseArea {
                         id: rowArea
@@ -5948,6 +5952,16 @@ ApplicationWindow {
                 ScrollBar.vertical: ScrollBar {}
             }
             Text {
+                visible: picker.error.length > 0
+                Layout.fillWidth: true
+                Layout.maximumWidth: picker.availableWidth
+                wrapMode: Text.Wrap
+                text: picker.error
+                color: win.errorColor
+                font.family: win.font.family
+                font.pixelSize: win.smallSize
+            }
+            Text {
                 visible: picker.rows.length === 0
                 Layout.fillWidth: true
                 Layout.maximumWidth: picker.availableWidth
@@ -5955,7 +5969,7 @@ ApplicationWindow {
                 text: picker.fault.length > 0 ? picker.fault : "Nothing matches"
                 color: picker.fault.length > 0 ? win.errorColor : win.mutedColor
                 font.family: win.font.family
-                font.pixelSize: win.captionSize
+                font.pixelSize: win.smallSize
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -5964,17 +5978,60 @@ ApplicationWindow {
                 Item { Layout.fillWidth: true }
                 // Lit while the entry marked is not what the columns have;
                 // Close is the filled one otherwise.
+                // The arrow keys visit the buttons as they do in the filter box:
+                // Left and Right between them, Up back to the list.
                 PopupButton {
+                    id: pickApply
                     text: "Apply"
                     primary: picker.changed
                     enabled: picker.changed
                     opacity: enabled ? 1 : 0.4
-                    onClicked: picker.apply()
+                    onClicked: {
+                        picker.apply();
+                        search.forceActiveFocus();
+                    }
+                    Keys.onRightPressed: pickClose.forceActiveFocus()
+                    Keys.onUpPressed: search.forceActiveFocus()
                 }
                 PopupButton {
+                    id: pickClose
                     text: "Close"
                     primary: !picker.changed
                     onClicked: picker.close()
+                    Keys.onLeftPressed: if (pickApply.enabled) pickApply.forceActiveFocus()
+                    Keys.onUpPressed: search.forceActiveFocus()
+                }
+            }
+            // A handle on the bottom edge to stretch the box down by, as the
+            // one at the top moves it.
+            Item {
+                Layout.fillWidth: true
+                implicitHeight: Math.round(win.smallSize * 1.1)
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: Math.round(win.smallSize * 3)
+                    height: 3
+                    radius: 1.5
+                    color: win.mutedColor
+                    opacity: stretchGrip.containsMouse || stretchGrip.pressed ? 1 : 0.5
+                }
+                MouseArea {
+                    id: stretchGrip
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.SizeVerCursor
+                    property real fromY: 0
+                    property real was: 0
+                    onPressed: function(mouse) {
+                        fromY = mapToItem(null, mouse.x, mouse.y).y;
+                        was = picker.stretch;
+                    }
+                    onPositionChanged: function(mouse) {
+                        if (!pressed)
+                            return;
+                        picker.stretch = Math.max(-Math.round(win.fontSize * 12),
+                            was + mapToItem(null, mouse.x, mouse.y).y - fromY);
+                    }
                 }
             }
         }
@@ -6008,16 +6065,16 @@ ApplicationWindow {
             return out;
         }
         onPicked: function(spec) { win.setColumnTypes(spec); }
+        // A kind of quantity, `Mass` or `Force`, is a `Quantity` here: its kind is
+        // the unit's.
         now: function() {
             var spec = win.sharedSpec(true);
             var at = spec.indexOf("[");
-            return at < 0 ? spec : spec.substring(0, at);
+            var type = at < 0 ? spec : spec.substring(0, at);
+            return win.isQuantityType(type) ? "Quantity" : type;
         }
         function show(c, item) {
-            // A type has no bracket: the kind, `Mass`, of `Mass[g]`.
-            var type = win.sharedSpec(true);
-            var at = type.indexOf("[");
-            openFor(c, item, at < 0 ? type : type.substring(0, at), ["Numbers", "Text", "Dates and times", "Other"]);
+            openFor(c, item, now(), ["Numbers", "Text", "Dates and times", "Other"]);
         }
     }
 
@@ -6061,6 +6118,46 @@ ApplicationWindow {
             var spec = win.sharedSpec(true);
             var at = spec.indexOf("[");
             openFor(c, item, at < 0 ? "" : spec.substring(at + 1, spec.length - 1), ["SI Base"]);
+        }
+    }
+
+    // The format a column shows its values in, from `Set format…`: some that
+    // the column's type takes, and any other typed, taken as typed once Apply
+    // finds it reads; what is wrong with one says so under the list. The first
+    // entry shows the column as its type does, with no format.
+    PickerPopup {
+        id: formatPopup
+        placeholder: "Search or type a format"
+        property string type: ""
+        property string unit: ""
+        provider: function(text) {
+            var out = [{spec: "", label: "No format", hint: "as the type shows it", complete: ""}];
+            var lines = file.formatChoices(type, unit).split("\n");
+            for (var i = 0; i < lines.length; i++) {
+                var f = lines[i].split("\t");
+                if (f.length < 2 || f[0] === "")
+                    continue;
+                out.push({spec: f[0], label: f[0], hint: f[1], complete: f[0]});
+            }
+            if (text.length > 0 && !out.some(function(e) { return e.spec === text; }))
+                out.unshift({spec: text, label: text, hint: "use as typed", keep: true});
+            return out;
+        }
+        onPicked: function(format) {
+            var problem = file.setColumnFormat(win.tab, win.selLeft, win.selRight - win.selLeft + 1, format);
+            error = problem;
+            if (problem.length > 0)
+                current = now();
+        }
+        now: function() {
+            var column = win.sheet.columns[win.selLeft];
+            return column && column.format ? column.format : "";
+        }
+        function show(c, item) {
+            var column = win.sheet.columns[c];
+            type = column ? column.type : "";
+            unit = column && column.unit ? column.unit : "";
+            openFor(c, item, now(), []);
         }
     }
 
@@ -6561,7 +6658,6 @@ ApplicationWindow {
              : kind === "columns" ? "Insert columns in " + win.sheet.name
              : kind === "renameSheet" ? "Rename sheet " + win.sheet.name
              : kind === "rename" ? "Rename column " + (win.sheet.columns[column] ? win.sheet.columns[column].name : "")
-             : kind === "format" ? "Format of column " + (win.sheet.columns[column] ? win.sheet.columns[column].name : "")
              : kind === "column" ? "New column in " + win.sheet.name
              : kind === "computed" ? "New formula column in " + win.sheet.name
              : kind === "setFormula" ? "Set column " + (win.sheet.columns[column] ? win.sheet.columns[column].name : "") + " as formula"
@@ -6599,7 +6695,7 @@ ApplicationWindow {
                 : what === "sheet" ? freeSheetName()
                 : what === "renameSheet" ? win.sheet.name
                 : what === "column" ? win.suggestedColumnName(at)
-                : what === "format" && win.sheet.columns[column] ? win.sheet.columns[column].format : "";
+                : "";
             exprField.text = "";
             if (what === "column" && !win.sheet.isConsts && !win.sheet.view && (win.sheet.why || "").length > 0)
                 kind = "computed";
@@ -6696,7 +6792,6 @@ ApplicationWindow {
                 // New rows go at the end, and new columns at `at` or the end.
                 win.keeping(win.sheet.nrows, at < 0 ? win.sheet.columns.length : at, function() {
                     message = kind === "rename" ? file.renameColumn(win.tab, column, nameField.text)
-                        : kind === "format" ? file.setColumnFormat(win.tab, win.selLeft, win.selRight - win.selLeft + 1, nameField.text)
                         : kind === "renameSheet" ? file.renameSheet(win.tab, nameField.text)
                         : kind === "setFormula" ? file.setColumnAsFormula(win.tab, column, nameField.text, exprField.text)
                         : kind === "column" ? (at < 0 ? file.addColumn(win.tab, nameField.text)
@@ -6767,7 +6862,7 @@ ApplicationWindow {
                 visible: !promptDialog.counted
                 focus: true
                 Layout.fillWidth: true
-                placeholderText: promptDialog.kind === "format" ? win.formatExample(promptDialog.column) : "Name"
+                placeholderText: "Name"
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.dialogSize

@@ -449,6 +449,77 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
         .replace("{unit}", &unit)
 }
 
+/// Formats to offer a column of type `ty`, `(format, what it shows)`, for the
+/// picker of `Set format…`. `unit` is the unit of a column of quantities, which
+/// the formats of one are written after. Only those that read, and that the
+/// type takes, are offered, so what is listed is what Apply will accept.
+pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
+    let Some(s) = S::from_name(ty) else {
+        return Vec::new();
+    };
+    let list: Vec<(String, &str)> = match s {
+        S::Int | S::Binary | S::Octal | S::Hex => vec![
+            ("'d".into(), "grouped in threes"),
+            ("x".into(), "hex"),
+            ("#x".into(), "hex with 0x"),
+            ("#08x".into(), "hex, eight digits"),
+            ("o".into(), "octal"),
+            ("#o".into(), "octal with a leading 0"),
+            ("b".into(), "binary"),
+            ("08b".into(), "binary, eight digits"),
+        ],
+        S::Decimal | S::Float | S::Percent | S::Fraction => vec![
+            ("'.2f".into(), "grouped, two places"),
+            (".2f".into(), "two places"),
+            (".0f".into(), "no places"),
+            ("+.1f".into(), "a sign, one place"),
+            (".3g".into(), "three significant digits"),
+            (".3e".into(), "e notation, three places"),
+        ],
+        S::Scientific => vec![
+            ("±.3e-3".into(), "value ± uncertainty, in e notation"),
+            ("±.2f".into(), "value ± uncertainty, two places"),
+            (".3g".into(), "three significant digits"),
+            (".4f".into(), "four places"),
+        ],
+        S::Date => vec![
+            ("%d %b %Y".into(), "31 Jan 2025"),
+            ("%a %-d %b %Y".into(), "Fri 31 Jan 2025"),
+            ("%A %d %B %Y".into(), "Friday 31 January 2025"),
+            ("%Y-%m-%d".into(), "2025-01-31"),
+            ("%d/%m/%Y".into(), "31/01/2025"),
+            ("%x".into(), "as the locale writes it"),
+        ],
+        S::Time => vec![
+            ("%H:%M".into(), "17:05"),
+            ("%H:%M:%S".into(), "17:05:00"),
+            ("%-I:%M %p".into(), "5:05 PM"),
+            ("%X".into(), "as the locale writes it"),
+        ],
+        S::Datetime => vec![
+            ("%d %b %Y %H:%M".into(), "31 Jan 2025 17:05"),
+            ("%Y-%m-%d %H:%M:%S".into(), "2025-01-31 17:05:00"),
+            ("%d/%m/%Y %H:%M %Z".into(), "31/01/2025 17:05 BST"),
+            ("%a %-d %b %H:%M".into(), "Fri 31 Jan 17:05"),
+            ("%c".into(), "as the locale writes it"),
+        ],
+        S::Quantity(_) if !unit.is_empty() => vec![
+            (unit.to_string(), "the unit alone"),
+            (format!("{unit}; .1f"), "one place"),
+            (format!("{unit}; .3g"), "three significant digits"),
+            (
+                format!("{unit}; ±.3e-3"),
+                "with its uncertainty, in e notation",
+            ),
+        ],
+        _ => Vec::new(),
+    };
+    list.into_iter()
+        .filter(|(f, _)| Format::parse(f, s).is_ok_and(|parsed| parsed.takes(s)))
+        .map(|(f, what)| (f, what.to_string()))
+        .collect()
+}
+
 /// A row or column picked by counting, as a formula writes it.
 #[derive(Clone, Copy, PartialEq)]
 enum Pick {
@@ -7112,6 +7183,35 @@ mod tests {
         assert!(doc.text().contains("Dose : Mass[mg]"), "{}", doc.text());
         assert!(doc.set_column_types(0, &[0], Some(&unit_spec("m").unwrap())));
         assert!(doc.text().contains("Dose : Length\n"), "{}", doc.text());
+    }
+
+    #[test]
+    fn every_format_offered_is_one_the_column_takes() {
+        for (ty, unit, at_least) in [
+            ("Integer", "", 4),
+            ("Hex", "", 2),
+            ("Decimal", "", 4),
+            ("Float", "", 4),
+            ("Scientific", "", 3),
+            ("Date", "", 5),
+            ("Time", "", 3),
+            ("Datetime", "", 4),
+            ("Mass", "kg", 4),
+        ] {
+            let offered = format_suggestions(ty, unit);
+            assert!(offered.len() >= at_least, "{ty}: only {offered:?}");
+        }
+        assert!(format_suggestions("String", "").is_empty());
+        assert!(format_suggestions("Quantity", "").is_empty());
+        // And Apply takes every one of them.
+        let src = "sheet S\n\nDue : Date\n\n| Due |\n| --- |\n| 2025-01-31 |\n";
+        let mut doc = Document::from_text(src);
+        for (format, _) in format_suggestions("Date", "") {
+            assert!(
+                doc.set_column_format(0, &[0], Some(&format)).is_ok(),
+                "{format}"
+            );
+        }
     }
 
     #[test]
