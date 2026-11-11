@@ -6,7 +6,7 @@
 use crate::ast::Lit;
 use crate::decimal::Dec;
 use crate::lexer::{Tok, lex};
-use crate::types::{Base, S};
+use crate::types::{Base, QId, S};
 
 /// A whole number and a part written on their own, `2 3/4` or `-2 3/4`, as
 /// the exact number they come to, `2.75`. The part may be more than one:
@@ -51,11 +51,21 @@ pub fn complex_text(re: f64, im: f64) -> String {
 
 /// A value written on its own, such as `42`, `-1/7`, `2 3/4`, `3+4i` or
 /// `2025-01-31`. `None` if the text is anything else.
+///
+/// A number is not read with a unit or a scale after it (`5kg`, `1k.`): what
+/// is imported stays text (add-si-units D236). A cell of an `.omx` file reads
+/// them with [`parse_literal_with`].
 pub fn parse_literal(text: &str) -> Option<Lit> {
+    parse_literal_with(text, false)
+}
+
+/// As [`parse_literal`]; where `units` is true a number may be followed by an
+/// SI unit or a scale: `5kg` is a quantity and `1k.` is 1000.
+pub fn parse_literal_with(text: &str, units: bool) -> Option<Lit> {
     if let Some(r) = parse_mixed(text) {
         return Some(Lit::Fraction(r));
     }
-    let toks = lex(text, 0, 0).ok()?;
+    let toks = crate::lexer::lex_with(text, 0, 0, units).ok()?;
     let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
     // A fraction of two whole numbers, `1/7`, is an exact number.
     let fraction = |n: i64, d: i64| {
@@ -79,6 +89,9 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
     let sign = if negative { -1.0 } else { 1.0 };
     match rest {
         [Tok::Scientific(v, s), Tok::Eof] => return Some(Lit::Scientific(sign * v, *s)),
+        [Tok::Quantity(v, s, u), Tok::Eof] => {
+            return Some(Lit::Quantity(sign * v, *s, u.clone()));
+        }
         [v, Tok::PlusMinus, s, Tok::Eof] => {
             let s = real(s)?;
             return (s >= 0.0)
@@ -137,6 +150,7 @@ pub fn lit_type(l: &Lit) -> S {
         Lit::Float(_) => S::Float,
         Lit::Scientific(..) => S::Scientific,
         Lit::Complex(..) => S::Complex,
+        Lit::Quantity(..) => S::Quantity(QId::ANY),
         Lit::String(_) => S::String,
         Lit::Boolean(_) => S::Boolean,
         Lit::Date(_) => S::Date,

@@ -25,6 +25,7 @@ pub mod numfmt;
 pub mod parser;
 pub mod text;
 pub mod types;
+pub mod units;
 
 pub use check::{
     Cell, ColKind, Column, Const, Group, Program, Sheet, UserFn, compile, compile_expr,

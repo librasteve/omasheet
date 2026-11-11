@@ -5,6 +5,52 @@
 use std::fmt;
 use std::rc::Rc;
 
+/// Which quantity type a column or an expression has (add-si-units D232).
+/// `QId::ANY` is a `Quantity`, of any dimension; any other id is one of
+/// siquant's named types, `Length`, `Mass`, `Force`, ..., a `Quantity` whose
+/// unit has that dimension.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct QId(pub u16);
+
+impl QId {
+    /// A quantity of any dimension.
+    pub const ANY: QId = QId(0);
+
+    /// The quantity type called `name`: `Quantity`, or a named dimension.
+    pub fn from_name(name: &str) -> Option<QId> {
+        if name == "Quantity" {
+            return Some(QId::ANY);
+        }
+        let t = siquant::Registry::builtin().quantity_type(name)?;
+        // A column of no dimension is a number, not a `Quantity`.
+        (t.name() != "Dimensionless").then(|| QId(t.id() + 1))
+    }
+
+    /// The named type, `None` for `QId::ANY`.
+    pub fn named(self) -> Option<siquant::QuantityType> {
+        let index = self.0.checked_sub(1)?;
+        siquant::Registry::builtin().quantity_type_by_id(index)
+    }
+
+    /// The name a column declares it by.
+    pub fn name(self) -> String {
+        self.named()
+            .map_or_else(|| "Quantity".to_string(), |t| t.name().to_string())
+    }
+
+    /// Every name a column can be declared with, `Quantity` first.
+    pub fn names() -> Vec<String> {
+        let mut out = vec!["Quantity".to_string()];
+        out.extend(
+            siquant::Registry::builtin()
+                .quantity_types()
+                .map(|t| t.name().to_string())
+                .filter(|n| n != "Dimensionless"),
+        );
+        out
+    }
+}
+
 /// The type of a single value. `Any` is "not known until evaluation".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum S {
@@ -37,6 +83,10 @@ pub enum S {
     /// in the lattice, with no order; stored in Parquet as a struct of two
     /// `Float64`s, `re` and `im`.
     Complex,
+    /// A number with an SI unit, `5kg`: a value and an uncertainty, each a
+    /// `Float`, and a unit. The id says which dimension a column holds; see
+    /// [`QId`].
+    Quantity(QId),
     String,
     Boolean,
     Date,
@@ -81,7 +131,7 @@ impl S {
             "Url" => S::Url,
             "Email" => S::Email,
             "Uuid" => S::Uuid,
-            _ => return None,
+            _ => return QId::from_name(name).map(S::Quantity),
         })
     }
 
@@ -100,6 +150,11 @@ impl S {
                 | S::Scientific
                 | S::Complex
         )
+    }
+
+    /// A number with a unit, of whichever dimension.
+    pub fn is_quantity(self) -> bool {
+        matches!(self, S::Quantity(_))
     }
 
     /// A whole number, in whichever base it is shown.
@@ -181,6 +236,10 @@ impl S {
             Some(S::Any)
         } else if self.is_numeric() && other.is_numeric() {
             Some(self.wider(other))
+        } else if self.is_quantity() && other.is_quantity() {
+            // Two named types, or a named one and a `Quantity`: the dimension
+            // is checked when the values are.
+            Some(S::Quantity(QId::ANY))
         } else if self.is_text() && other.is_text() {
             // Two kinds of text together are text, which both of them are.
             Some(S::String)
@@ -193,6 +252,7 @@ impl S {
     /// is read as whatever is asked for, and anything can be written as text.
     pub fn converts_to(self, to: S) -> bool {
         let number = self.is_exact() || matches!(self, S::Float | S::Scientific | S::Complex);
+        let quantity = self.is_quantity();
         self == to
             || self == S::Any
             || self.is_text()
@@ -208,7 +268,14 @@ impl S {
                 | S::Fraction
                 | S::Float
                 | S::Scientific
-                | S::Complex => number || self == S::Boolean,
+                | S::Complex => {
+                    // A quantity with no dimension is a number, which the
+                    // value says when it is converted.
+                    number
+                        || self == S::Boolean
+                        || (quantity && matches!(to, S::Float | S::Scientific))
+                }
+                S::Quantity(_) => quantity,
                 S::Percent | S::Boolean => number,
                 S::Date | S::Time => self == S::Datetime,
                 S::Datetime => self == S::Date,
@@ -228,11 +295,17 @@ impl S {
             // A web address, an email address and a UUID are all text. Text
             // is not one of them until it has been read as one.
             || (self.is_text() && to == S::String)
+            // A `Length` is a `Quantity`, and a `Quantity` may be a `Length`:
+            // the dimension is checked when the value is.
+            || (self.is_quantity() && to.is_quantity())
     }
 }
 
 impl fmt::Display for S {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let S::Quantity(q) = self {
+            return f.write_str(&q.name());
+        }
         f.write_str(match self {
             S::Any => "Any",
             S::Int => "Integer",
@@ -245,6 +318,7 @@ impl fmt::Display for S {
             S::Float => "Float",
             S::Scientific => "Scientific",
             S::Complex => "Complex",
+            S::Quantity(_) => unreachable!("written above"),
             S::String => "String",
             S::Boolean => "Boolean",
             S::Date => "Date",

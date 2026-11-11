@@ -235,6 +235,9 @@ pub enum Func {
     /// A `Duration` as an exact number of days, hours, minutes or seconds:
     /// `total_hours` of `PT1H30M` is 1.5. The unit, in microseconds.
     Total(i64),
+    /// A quantity in another unit of its dimension: `5kg.to('g')`. The unit
+    /// is the second argument, as text (add-si-units D234).
+    ToUnit,
     /// The same instant on the clocks of a named time zone.
     ToZone,
     Utc,

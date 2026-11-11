@@ -7,6 +7,7 @@ use crate::decimal::Dec;
 use crate::diag::{Diagnostic, Span};
 use crate::duration::{self, NotDuration};
 use crate::types::Base;
+use crate::units::{self, Tail};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
@@ -20,6 +21,10 @@ pub enum Tok {
     Imag(f64),
     /// A value and its uncertainty written together: `10.5(3)`, `7.297(11)e-3`.
     Scientific(f64, f64),
+    /// A number and an SI unit written together: `5kg`, `10.5(3)e-3kg`,
+    /// `9.81m.s^-2`, `20°C` (add-si-units D229). The uncertainty is zero
+    /// where none was written.
+    Quantity(f64, f64, siquant::Unit),
     /// `'…'`, a string in code (D168).
     Str(String),
     /// `"…"`, text as a table cell writes it. Code does not take it: the
@@ -100,6 +105,7 @@ impl Tok {
             | Tok::Float(_)
             | Tok::Imag(_)
             | Tok::Scientific(..) => "a number".into(),
+            Tok::Quantity(..) => "a quantity".into(),
             Tok::Str(_) | Tok::Text(_) => "a string".into(),
             Tok::Date(_) => "a date".into(),
             Tok::Time(_) => "a time".into(),
@@ -187,8 +193,16 @@ pub struct Token {
     pub span: Span,
 }
 
-/// Lex `text`, which starts at byte `base` of source `src`.
+/// Lex `text`, which starts at byte `base` of source `src`. A number may be
+/// followed by an SI unit or a scale (`5kg`, `1k.`).
 pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> {
+    lex_with(text, src, base, true)
+}
+
+/// Lex as [`lex`], but where `units` is false a number is never followed by
+/// a unit or a scale: `5kg` is not a number, as before. What is imported is
+/// read this way, so `12g` or `10m` in a CSV stays text (add-si-units D236).
+pub fn lex_with(text: &str, src: u32, base: usize, units: bool) -> Result<Vec<Token>, Diagnostic> {
     let b = text.as_bytes();
     let span = |s: usize, e: usize| Span::new(src, base + s, base + e);
     let mut out = Vec::new();
@@ -207,6 +221,15 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
         }
         let start = i;
         if let Some(found) = based(text, i) {
+            // `0Bq` is zero becquerel, not a bad binary number: where what
+            // follows a zero reads as a unit, that is read before the error.
+            let found = match found {
+                Err(e) if units => match number(text, i, units) {
+                    Ok(quantity @ (Tok::Quantity(..), _)) => Ok(quantity),
+                    _ => Err(e),
+                },
+                other => other,
+            };
             let (tok, end) = found.map_err(|(msg, s, e)| Diagnostic::new(span(s, e), msg))?;
             out.push(Token {
                 tok,
@@ -216,10 +239,12 @@ pub fn lex(text: &str, src: u32, base: usize) -> Result<Vec<Token>, Diagnostic> 
             continue;
         }
         if c.is_ascii_digit() {
-            let (tok, end) = number(text, i).map_err(|(msg, s, e)| {
+            let (tok, end) = number(text, i, units).map_err(|(msg, s, e)| {
                 let d = Diagnostic::new(span(s, e), msg);
                 if text[s..e].chars().any(|ch| ch.is_ascii_alphabetic()) {
-                    d.with_help("units arrive in a later phase of Omasheet")
+                    d.with_help(
+                        "a unit is written right after the number, in SI, as `5kg` or `9.81m.s^-2`",
+                    )
                 } else {
                     d
                 }
@@ -483,7 +508,7 @@ fn iso_duration(text: &str, i: usize) -> Option<Result<(Tok, usize), NumErr>> {
 
 /// Lex a number, date, time or date-time starting at `i`. Returns the token and its
 /// end.
-fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
+fn number(text: &str, i: usize, units: bool) -> Result<(Tok, usize), NumErr> {
     let b = text.as_bytes();
     let digit = |k: usize| k < b.len() && b[k].is_ascii_digit();
     let word = |k: usize| k < b.len() && (b[k].is_ascii_alphanumeric() || b[k] == b'_');
@@ -645,6 +670,21 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
         let sigma: f64 = format!("{digits}e{}", exponent - frac_digits)
             .parse()
             .map_err(|_| (format!("`{raw}({digits})` is not a number"), i, j))?;
+        if units
+            && units::starts_one(text, j)
+            && let Some((tail, end)) = units::tail(text, j)
+        {
+            return Ok((
+                match tail {
+                    Tail::Unit(unit) => Tok::Quantity(value, sigma, unit),
+                    Tail::Scale { base, exp } => {
+                        let m = units::power(base, exp);
+                        Tok::Scientific(value * m, sigma * m)
+                    }
+                },
+                end,
+            ));
+        }
         if word(j) {
             let mut k = j;
             while word(k) {
@@ -662,6 +702,23 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
             .parse()
             .map_err(|_| (format!("`{raw}i` is not a number"), i, j + 1))?;
         return Ok((Tok::Imag(f), j + 1));
+    }
+    if units
+        && !percent
+        && units::starts_one(text, j)
+        && let Some((tail, uend)) = units::tail(text, j)
+    {
+        return match tail {
+            Tail::Unit(unit) => {
+                let v: f64 = raw
+                    .parse()
+                    .map_err(|_| (format!("`{raw}` is not a number"), i, j))?;
+                Ok((Tok::Quantity(v, 0.0, unit), uend))
+            }
+            Tail::Scale { base, exp } => scaled(&raw, is_float, frac_digits, base, exp)
+                .map(|tok| (tok, uend))
+                .map_err(|said| (said, i, uend)),
+        };
     }
     if word(end) {
         let mut k = end;
@@ -712,6 +769,41 @@ fn number(text: &str, i: usize) -> Result<(Tok, usize), NumErr> {
         }
     };
     Ok((tok, end))
+}
+
+/// A number written with a scale, `1.5k.`, as the number it stands for: exact
+/// for a whole number or a decimal (`1k.` is the integer 1000, `5m.` is the
+/// decimal 0.005), a float for a float (add-si-units D231).
+fn scaled(raw: &str, is_float: bool, frac_digits: i32, base: u8, exp: i16) -> Result<Tok, String> {
+    let too_large = || format!("`{raw}` is too large a number with that scale");
+    if is_float {
+        let f: f64 = raw
+            .parse()
+            .map_err(|_| format!("`{raw}` is not a number"))?;
+        return Ok(Tok::Float(f * units::power(base, exp)));
+    }
+    let digits: String = raw.chars().filter(|&c| c != '.').collect();
+    let mut unscaled: i128 = digits.parse().map_err(|_| too_large())?;
+    let mut scale = frac_digits;
+    if base == 2 {
+        let shift = u32::try_from(exp).map_err(|_| too_large())?;
+        let factor = 2i128.checked_pow(shift).ok_or_else(too_large)?;
+        unscaled = unscaled.checked_mul(factor).ok_or_else(too_large)?;
+    } else {
+        scale -= i32::from(exp);
+        if scale < 0 {
+            let factor = 10i128
+                .checked_pow(scale.unsigned_abs())
+                .ok_or_else(too_large)?;
+            unscaled = unscaled.checked_mul(factor).ok_or_else(too_large)?;
+            scale = 0;
+        }
+    }
+    let d = Dec::new(unscaled, scale).ok_or_else(too_large)?;
+    Ok(match d.to_i64() {
+        Some(n) if scale == 0 => Tok::Int(n, Base::Dec),
+        _ => Tok::Decimal(d),
+    })
 }
 
 #[cfg(test)]
@@ -816,7 +908,6 @@ mod tests {
                 Tok::Eof
             ]
         );
-        assert!(lex("10m", 0, 0).is_err());
         assert_eq!(toks("4i")[0], Tok::Imag(4.0));
         assert_eq!(
             toks("3+2.5i"),
@@ -909,5 +1000,191 @@ mod tests {
         assert!(lex("9:30", 0, 0).is_err());
         assert!(lex("09:30:1", 0, 0).is_err());
         assert_eq!(toks("a // b |> c ..^ d # note").len(), 8);
+    }
+
+    // ---- units and scales (add-si-units) ----
+
+    fn quantity(s: &str) -> (f64, f64, String) {
+        match toks(s).into_iter().next().unwrap() {
+            Tok::Quantity(v, sigma, u) => (v, sigma, u.to_string()),
+            other => panic!("`{s}` is {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_unit_after_a_number() {
+        assert_eq!(quantity("5kg"), (5.0, 0.0, "kg".into()));
+        assert_eq!(quantity("300cm"), (300.0, 0.0, "cm".into()));
+        assert_eq!(quantity("9.81m.s^-2"), (9.81, 0.0, "m.s^-2".into()));
+        assert_eq!(quantity("5kg.m^2.s^-2"), (5.0, 0.0, "kg.m^2.s^-2".into()));
+        assert_eq!(quantity("1_000.5g"), (1000.5, 0.0, "g".into()));
+        assert_eq!(quantity("20°C"), (20.0, 0.0, "°C".into()));
+        assert_eq!(quantity("20\u{ba}C"), (20.0, 0.0, "°C".into()));
+        assert_eq!(quantity("5\u{b5}m"), (5.0, 0.0, "μm".into()));
+        assert_eq!(quantity("2.5Ω"), (2.5, 0.0, "Ω".into()));
+        // An exponent, then a unit; and `E` is exa when no digit follows.
+        assert_eq!(quantity("1e3m"), (1000.0, 0.0, "m".into()));
+        assert_eq!(quantity("1Em"), (1.0, 0.0, "Em".into()));
+        assert_eq!(quantity("1E3m"), (1000.0, 0.0, "m".into()));
+        // The uncertainty in brackets comes before the unit.
+        let (v, s, u) = quantity("10.5(3)e-3kg");
+        assert!((v - 0.0105).abs() < 1e-15 && (s - 0.0003).abs() < 1e-15 && u == "kg");
+        let (v, s, u) = quantity("10.5(3)g");
+        assert_eq!((v, s, u.as_str()), (10.5, 0.3, "g"));
+    }
+
+    #[test]
+    fn a_unit_after_zero_is_not_a_bad_based_number() {
+        assert_eq!(quantity("0Bq"), (0.0, 0.0, "Bq".into()));
+        assert_eq!(quantity("0.5Bq"), (0.5, 0.0, "Bq".into()));
+        // Real ones are still the based numbers they were.
+        assert_eq!(toks("0b101")[0], Tok::Int(5, Base::Bin));
+        assert_eq!(toks("0xff")[0], Tok::Int(255, Base::Hex));
+        assert!(lex("0b2", 0, 0).is_err());
+    }
+
+    #[test]
+    fn what_is_not_a_quantity() {
+        // None of these lexes to a quantity token. (`5km/s` is the quantity
+        // `5km`, a `/` and a name; that is not one literal, see convert.rs.)
+        for bad in [
+            "5 kg", "5m2", "5ft", "5L", "5min", "5kgx", "5k", "5m^", "10 m", "5Kg", "5°",
+        ] {
+            let ok = lex(bad, 0, 0)
+                .map(|t| t.iter().any(|t| matches!(t.tok, Tok::Quantity(..))))
+                .unwrap_or(false);
+            assert!(!ok, "`{bad}` should not lex as a quantity");
+        }
+        assert!(lex("5m2", 0, 0).is_err());
+        assert!(lex("5ft", 0, 0).is_err());
+        assert!(lex("5 kg", 0, 0).is_ok()); // a number, then a name
+        assert!(lex("2in", 0, 0).is_err());
+        let e = lex("5ft", 0, 0).unwrap_err();
+        assert!(e.help.as_deref().is_some_and(|h| h.contains("SI")), "{e:?}");
+    }
+
+    #[test]
+    fn a_method_after_a_unit_stays_a_method() {
+        assert_eq!(
+            toks("5kg.abs()"),
+            vec![
+                Tok::Quantity(
+                    5.0,
+                    0.0,
+                    siquant::Unit::parse("kg", siquant::Scope::Live).unwrap()
+                ),
+                Tok::Dot,
+                Tok::Ident("abs".into()),
+                Tok::LParen,
+                Tok::RParen,
+                Tok::Eof
+            ]
+        );
+        let t = toks("5m.Float");
+        assert!(matches!(t[0], Tok::Quantity(..)));
+        assert_eq!(t[1], Tok::Dot);
+        assert_eq!(t[2], Tok::Ident("Float".into()));
+        // And a unit across a dot is one unit.
+        assert_eq!(quantity("5N.m"), (5.0, 0.0, "N.m".into()));
+        // A minus after a unit is a minus.
+        let t = toks("5m-3m");
+        assert!(matches!(t[0], Tok::Quantity(..)) && t[1] == Tok::Minus);
+        assert!(matches!(t[2], Tok::Quantity(..)));
+    }
+
+    #[test]
+    fn a_scale_reads_as_the_number() {
+        assert_eq!(toks("1k.")[0], Tok::Int(1000, Base::Dec));
+        assert_eq!(toks("5M.")[0], Tok::Int(5_000_000, Base::Dec));
+        assert_eq!(toks("1.5k.")[0], Tok::Int(1500, Base::Dec));
+        assert_eq!(toks("0.001k.")[0], Tok::Int(1, Base::Dec));
+        assert_eq!(toks("5m.")[0], Tok::Decimal(Dec::parse("0.005").unwrap()));
+        assert_eq!(
+            toks("2.5u.".replace('u', "\u{3bc}").as_str())[0],
+            Tok::Decimal(Dec::parse("0.0000025").unwrap())
+        );
+        assert_eq!(toks("1T.")[0], Tok::Int(1_000_000_000_000, Base::Dec));
+        assert_eq!(toks("1da.")[0], Tok::Int(10, Base::Dec));
+        assert_eq!(toks("1e3k.")[0], Tok::Float(1e6));
+        // The uncertainty scales with it.
+        assert_eq!(toks("2.5(3)k.")[0], Tok::Scientific(2500.0, 300.0));
+        // A scale ends where the dot ends: what follows is the next token.
+        assert_eq!(
+            toks("1k.+2"),
+            vec![
+                Tok::Int(1000, Base::Dec),
+                Tok::Plus,
+                Tok::Int(2, Base::Dec),
+                Tok::Eof
+            ]
+        );
+        assert_eq!(
+            toks("(1k.)"),
+            vec![
+                Tok::LParen,
+                Tok::Int(1000, Base::Dec),
+                Tok::RParen,
+                Tok::Eof
+            ]
+        );
+        // `m` is the metre, and `m.` is milli.
+        assert!(matches!(toks("5m")[0], Tok::Quantity(..)));
+        assert_eq!(toks("5m.")[0], Tok::Decimal(Dec::parse("0.005").unwrap()));
+        // A scale that is not a prefix is no scale.
+        assert!(lex("5x.", 0, 0).is_err());
+        assert!(lex("5kg.", 0, 0).is_err() || !matches!(toks("5kg.")[0], Tok::Int(..)));
+    }
+
+    #[test]
+    fn units_can_be_left_off() {
+        // What is imported is lexed without units: `12g` stays text.
+        assert!(lex_with("12g", 0, 0, false).is_err());
+        assert!(lex_with("1k.", 0, 0, false).is_err());
+        assert!(lex_with("12", 0, 0, false).is_ok());
+        assert!(lex_with("0Bq", 0, 0, false).is_err());
+        assert!(lex_with("12g", 0, 0, true).is_ok());
+    }
+
+    #[test]
+    fn no_function_name_is_a_unit_symbol() {
+        // `x.name` without brackets is a conversion; a name that was also a
+        // unit would be read as part of the unit (add-si-units D237).
+        use crate::funcs::FUNCTIONS;
+        use siquant::{Scope, Unit};
+        for f in FUNCTIONS {
+            assert!(
+                Unit::parse(f.name, Scope::Live).is_err(),
+                "the function `{}` is also a unit symbol",
+                f.name
+            );
+        }
+        for t in [
+            "Integer",
+            "Int",
+            "Hex",
+            "Octal",
+            "Binary",
+            "Decimal",
+            "Fraction",
+            "Percent",
+            "Float",
+            "Scientific",
+            "Complex",
+            "String",
+            "Date",
+            "Time",
+            "Datetime",
+            "Duration",
+            "Boolean",
+            "Url",
+            "Email",
+            "Uuid",
+            "Quantity",
+        ] {
+            assert!(
+                Unit::parse(t, Scope::Live).is_err(),
+                "the type `{t}` is a unit"
+            );
+        }
     }
 }

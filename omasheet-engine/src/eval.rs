@@ -2412,6 +2412,7 @@ impl<'p> Engine<'p> {
                     | (Value::Float(_), S::Float)
                     | (Value::Complex(..), S::Complex)
                     | (Value::Scientific(..), S::Scientific)
+                    | (Value::Quantity(_), S::Quantity(_))
                     | (Value::String(..), S::String | S::Url | S::Email | S::Uuid)
                     | (Value::Boolean(_), S::Boolean)
                     | (Value::Date(_), S::Date)
@@ -2945,6 +2946,9 @@ impl<'p> Engine<'p> {
                                 || fail(span, "the duration is out of range".to_string()),
                                 Ok,
                             )
+                        }
+                        (UnOp::Neg, Value::Quantity(q)) => {
+                            crate::quantity::negate(q).or_else(|m| fail(span, m))
                         }
                         (UnOp::Neg, v) if v.is_numeric() => {
                             let zero = match v {
@@ -3676,6 +3680,18 @@ impl<'p> Engine<'p> {
                         }
                         (None, _) => Ok(Value::text(zone.name())),
                     }
+                };
+                match self.eval(&args[0], fr)? {
+                    Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                        items.iter().map(one).collect::<R<Vec<_>>>()?,
+                    ))),
+                    single => one(&single),
+                }
+            }
+            Func::ToUnit => {
+                let unit = self.eval(&args[1], fr)?;
+                let one = |v: &Value| -> R {
+                    crate::quantity::to_unit(v, &unit).or_else(|m| fail(args[0].span, m))
                 };
                 match self.eval(&args[0], fr)? {
                     Value::Vector(items) => Ok(Value::Vector(Rc::new(

@@ -8,7 +8,7 @@
 
 use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use crate::colfmt::Format;
-use crate::convert::{lit_type, parse_literal};
+use crate::convert::{lit_type, parse_literal_with};
 use crate::cycle::{self, Cyc};
 use crate::date;
 use crate::decimal::Dec;
@@ -18,7 +18,7 @@ use crate::file::{FileAst, SourceDecl, parse_file};
 use crate::funcs::{FUNCTIONS, MathFn};
 use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use crate::parser::parse_expr;
-use crate::types::{Base, DepKind, S, SheetTy, Ty};
+use crate::types::{Base, DepKind, QId, S, SheetTy, Ty};
 use std::mem;
 use std::rc::Rc;
 
@@ -2432,7 +2432,10 @@ impl<'a> Checker<'a> {
 
     fn fit_declared(&mut self, found: S, declared: Option<S>, span: Span, column: &str) -> S {
         let Some(want) = declared else { return found };
-        if !found.assignable_to(want) {
+        // A number in a column of quantities is read in the column's unit
+        // when the value is stored (D233).
+        let bare = found.is_numeric() && found != S::Complex && want.is_quantity();
+        if !found.assignable_to(want) && !bare {
             let help = match (found, want) {
                 (S::Int | S::Decimal | S::Fraction | S::Percent, S::Float) => {
                     "use `.Float` to convert to Float"
@@ -2472,7 +2475,8 @@ impl<'a> Checker<'a> {
 
     /// A cell without a leading `=`: a literal, never an expression.
     fn literal_cell(&mut self, text: &str, span: Span, declared: Option<S>) -> Option<Lit> {
-        let parsed = parse_literal(text);
+        // A cell of an `.omx` file may hold a quantity or a scale (D229).
+        let parsed = parse_literal_with(text, true);
         let Some(want) = declared else {
             return Some(parsed.unwrap_or_else(|| Lit::String(text.to_string())));
         };
@@ -2534,6 +2538,40 @@ impl<'a> Checker<'a> {
                 S::Complex,
             ) => crate::convert::convert(&l, S::Complex).ok(),
             (Some(l @ Lit::Complex(..)), S::Complex) => Some(l),
+            // A quantity in a column of quantities: of the column's
+            // dimension, if it names one. It is converted to the column's
+            // unit when it is stored.
+            (Some(Lit::Quantity(v, s, u)), S::Quantity(q)) => {
+                if let Some(named) = q.named()
+                    && !named.admits(&u)
+                {
+                    self.err_help(
+                        span,
+                        format!(
+                            "`{text}` is not a `{}`: its unit measures {} and a `{}` measures {}",
+                            q.name(),
+                            u.dims(),
+                            q.name(),
+                            named.dims()
+                        ),
+                        "use a unit of the column's dimension, or change the column's type",
+                    );
+                    return None;
+                }
+                Some(Lit::Quantity(v, s, u))
+            }
+            // A number is read in the column's unit when it is stored.
+            (
+                Some(
+                    l @ (Lit::Int(..)
+                    | Lit::Decimal(_)
+                    | Lit::Fraction(_)
+                    | Lit::Percent(_)
+                    | Lit::Float(_)
+                    | Lit::Scientific(..)),
+                ),
+                S::Quantity(_),
+            ) => Some(l),
             // A `Complex` is a real number when its imaginary part is zero
             // (D203); the conversion says when it is not.
             (
@@ -2594,6 +2632,7 @@ impl<'a> Checker<'a> {
                     S::Float => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
                     S::Scientific => "enter a number with its uncertainty such as `10.5(3)` or `10 ± 0.3`, or start the cell with `=` for a formula",
                     S::Complex => "enter a complex number such as `3+4i`, or start the cell with `=` for a formula",
+                    S::Quantity(_) => "enter a number with an SI unit such as `5kg` or `9.81m.s^-2`, or start the cell with `=` for a formula",
                     S::Boolean => "enter `true` or `false`, or start the cell with `=` for a formula",
                     S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
                     S::Time => "enter a time such as `09:30` or `09:30:15`, or start the cell with `=` for a formula",
@@ -2695,7 +2734,7 @@ impl<'a> Checker<'a> {
                     }
                 };
                 let ok = match op {
-                    UnOp::Neg => s.is_numeric() || s == S::Duration,
+                    UnOp::Neg => s.is_numeric() || s == S::Duration || s.is_quantity(),
                     UnOp::Not => matches!(s, S::Boolean | S::Any),
                     UnOp::BitNot => s.is_int() || s == S::Any,
                     UnOp::UpTo => false,
@@ -3142,6 +3181,42 @@ impl<'a> Checker<'a> {
                     "add or subtract a Duration, whole days with a Date, or whole seconds with a \
                      Time or Datetime; subtract two of the same kind; add a Date and a Time; \
                      multiply or divide a Duration by a number",
+                );
+                return fail;
+            };
+            s
+        } else if (a.is_quantity() || b.is_quantity())
+            && (op.is_arithmetic() || op == BinOp::PlusMinus)
+        {
+            // Quantities (add-si-units). The dimensions are checked when the
+            // values are, so where a result may have none (`6m / 3m` is a
+            // number) the type is not known until then.
+            let (qa, qb) = (a.is_quantity(), b.is_quantity());
+            let plain = |s: S| s.is_numeric() && s != S::Any && s != S::Complex;
+            let found = if unknown {
+                Some(S::Any)
+            } else {
+                match op {
+                    BinOp::Add | BinOp::Sub if qa && qb => {
+                        Some(if a == b { a } else { S::Quantity(QId::ANY) })
+                    }
+                    BinOp::Mul if qa && qb => Some(S::Any),
+                    BinOp::Mul if qa && plain(b) => Some(a),
+                    BinOp::Mul if plain(a) && qb => Some(b),
+                    BinOp::Div if qa && qb => Some(S::Any),
+                    BinOp::Div if qa && plain(b) => Some(a),
+                    BinOp::Div if plain(a) && qb => Some(S::Quantity(QId::ANY)),
+                    BinOp::Pow if qa && plain(b) => Some(S::Any),
+                    BinOp::PlusMinus if qa && (qb || plain(b)) => Some(a),
+                    _ => None,
+                }
+            };
+            let Some(s) = found else {
+                self.err_help(
+                    span,
+                    format!("cannot apply `{sym}` to {a} and {b}"),
+                    "add or subtract quantities with units, as `5kg + 300g`; multiply or divide \
+                     them by a number or another quantity; a power takes a whole number",
                 );
                 return fail;
             };
@@ -4016,6 +4091,47 @@ impl<'a> Checker<'a> {
                 };
                 (Node::new(Ir::Call(Func::Total(unit), vec![arg]), span), ty)
             }
+            "to" => {
+                if !arity(self, 2, "Weight.to('g')") {
+                    return fail;
+                }
+                let (arg, aty) = self.lower(&args[0], sc);
+                let ty = match aty {
+                    Ty::Any | Ty::Scalar(S::Any) => Ty::Any,
+                    Ty::Scalar(q @ S::Quantity(_)) => Ty::Scalar(q),
+                    Ty::Vector(q @ S::Quantity(_), n) => Ty::Vector(q, n),
+                    other => {
+                        if !matches!(arg.kind, Ir::Error) {
+                            self.err_help(
+                                args[0].span,
+                                format!("`to` needs a quantity, but this is {}", other.describe()),
+                                "a quantity is a number with an SI unit, `5kg`",
+                            );
+                        }
+                        return fail;
+                    }
+                };
+                let (unit, uty) = self.lower(&args[1], sc);
+                if !matches!(uty, Ty::Any | Ty::Scalar(S::Any | S::String)) {
+                    self.err_help(
+                        args[1].span,
+                        format!(
+                            "`to` needs the name of a unit, but this is {}",
+                            uty.describe()
+                        ),
+                        "for example `'g'` or `'m.s^-1'`",
+                    );
+                    return fail;
+                }
+                // A unit written out is checked now, so its error has a place.
+                if let ExprKind::Lit(Lit::String(text)) = &args[1].kind
+                    && let Err(e) = siquant::Unit::parse(text, siquant::Scope::Any)
+                {
+                    self.err(args[1].span, format!("`{text}` is not a unit: {e}"));
+                    return fail;
+                }
+                (Node::new(Ir::Call(Func::ToUnit, vec![arg, unit]), span), ty)
+            }
             "convert_time_zone" | "utc" | "local" | "base_utc_offset" | "time_zone" => {
                 let takes_zone = name == "convert_time_zone";
                 let usage = if takes_zone {
@@ -4373,6 +4489,9 @@ impl<'a> Checker<'a> {
                     S::Any => Some(S::Any),
                     S::Complex => m.of_complex().or(m.casts_to_float().then_some(S::Float)),
                     S::Scientific => Some(S::Scientific),
+                    // `sqrt` of a quantity has half its unit, and `abs` the
+                    // same; the engine says which functions a unit allows.
+                    S::Quantity(_) => Some(S::Any),
                     s if s.is_exact() && m.is_whole() => Some(S::Int),
                     s if s.is_exact() && m.is_exact() => Some(s),
                     s if s.is_exact() || s == S::Float => Some(S::Float),
@@ -5153,7 +5272,7 @@ fn unop_text(op: UnOp) -> &'static str {
 
 /// Whether the text of a cell is text written in quotes.
 fn quoted(cell: &str) -> bool {
-    matches!(parse_literal(cell), Some(Lit::String(_)))
+    matches!(crate::convert::parse_literal(cell), Some(Lit::String(_)))
 }
 
 #[cfg(test)]

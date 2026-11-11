@@ -249,6 +249,7 @@ const LOG: &str = "Log & Exp";
 const TRIG: &str = "Trigonometry";
 const COMPLEX: &str = "Complex";
 const TIME: &str = "Time & Date";
+const UNITS: &str = "Units";
 const BITWISE: &str = "Bitwise";
 const TEXT: &str = "Text";
 
@@ -928,6 +929,12 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "convert_time_zone",
         ".convert_time_zone('Australia/Adelaide')",
         "The same instant on the clocks of a named time zone.",
+    ),
+    doc(
+        UNITS,
+        "to",
+        ".to('g')",
+        "A quantity in another unit of its dimension: 5kg.to('g') gives 5000g.",
     ),
     doc(
         TIME,

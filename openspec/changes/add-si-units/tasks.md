@@ -6,12 +6,12 @@
 - [x] 0.1 Type ids, the list of quantity types and the scale lookup that a host needs (siquant 0.1.1)
 
 ## 1. Literals and arithmetic (`units`)
-- [ ] 1.1 The unit suffix and the scale literal in the lexer; the `.` rule (D229, D231, D237)
-- [ ] 1.2 `Lit::Quantity`, `S::Quantity(QId)` and `Value::Quantity`
-- [ ] 1.3 `+ - * /`, `**`, comparison and `sqrt` and `abs` by siquant; uncertainty propagates
-- [ ] 1.4 `to` (D234); a dimensionless result is a number (D235)
-- [ ] 1.5 Display with the unit after the number
-- Demo: `omasheet eval '5kg + 300g'` is `5.3kg`
+- [x] 1.1 The unit suffix and the scale literal in the lexer; the `.` rule (D229, D231, D237)
+- [x] 1.2 `Lit::Quantity`, `S::Quantity(QId)` and `Value::Quantity`
+- [x] 1.3 `+ - * /`, `**`, comparison and `sqrt` and `abs` by siquant; uncertainty propagates
+- [x] 1.4 `to` (D234); a dimensionless result is a number (D235)
+- [x] 1.5 Display with the unit after the number
+- Demo: `omasheet eval '5kg + 300g'` is `5.3kg` (done)
 
 ## 2. Named column types (`units`, `file-format`)
 - [ ] 2.1 `Weight : Mass` and the other named types; a mismatch is an error

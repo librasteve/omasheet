@@ -42,6 +42,9 @@ pub enum Value {
     /// A value and its standard deviation, each a `Float`: `10.5(3)`,
     /// `10.5 ± 0.3`.
     Scientific(f64, f64),
+    /// A number with an SI unit and, optionally, an uncertainty: `5kg`,
+    /// `10.5(3)e-3kg` (add-si-units). Shared, since a unit is a list of terms.
+    Quantity(Rc<siquant::Quantity>),
     /// A real and an imaginary part, each a `Float`: `3+4i`.
     Complex(f64, f64),
     /// Text, and whether it was written bare in a cell, to be read as
@@ -160,6 +163,7 @@ impl Value {
             Lit::Percent(r) => Value::Percent(*r),
             Lit::Float(f) => Value::Float(*f),
             Lit::Scientific(v, s) => Value::Scientific(*v, *s),
+            Lit::Quantity(v, s, u) => crate::quantity::from_lit(*v, *s, u),
             Lit::Complex(re, im) => Value::Complex(*re, *im),
             Lit::String(s) => Value::text(s),
             Lit::Boolean(b) => Value::Boolean(*b),
@@ -186,6 +190,7 @@ impl Value {
             Value::Percent(_) => "Percent",
             Value::Float(_) => "Float",
             Value::Scientific(..) => "Scientific",
+            Value::Quantity(_) => "Quantity",
             Value::Complex(..) => "Complex",
             Value::String(..) => "String",
             Value::Boolean(_) => "Boolean",
@@ -198,6 +203,11 @@ impl Value {
             Value::Sheet(_) => "a sheet",
             Value::Row(_) => "a row",
         }
+    }
+
+    /// A number with an SI unit.
+    pub fn is_quantity(&self) -> bool {
+        matches!(self, Value::Quantity(_))
     }
 
     pub fn is_numeric(&self) -> bool {
@@ -223,6 +233,7 @@ impl Value {
             Value::Percent(r) => Lit::Percent(*r),
             Value::Float(f) => Lit::Float(*f),
             Value::Scientific(v, s) => Lit::Scientific(*v, *s),
+            Value::Quantity(q) => crate::quantity::to_lit(q),
             Value::Complex(re, im) => Lit::Complex(*re, *im),
             Value::String(s, _) => Lit::String(s.to_string()),
             Value::Boolean(b) => Lit::Boolean(*b),
@@ -247,10 +258,30 @@ impl Value {
             (Value::Decimal(_), S::Decimal) => true,
             (Value::Fraction(_), S::Fraction) => true,
             (Value::Percent(_), S::Percent) => true,
+            (Value::Quantity(q), S::Quantity(id)) => crate::quantity::admitted(q, id),
             _ => false,
         };
         if fits {
             return Ok(self.clone());
+        }
+        // A quantity with no dimension is a number; one with a unit is not.
+        if let (Value::Quantity(q), S::Float | S::Scientific) = (self, to) {
+            let (v, s) = q.to_number().map_err(|_| {
+                format!(
+                    "a quantity in {} is not a number; convert it with `to` to a unit \
+                     with no dimension, or take its value in a unit",
+                    q.unit()
+                )
+            })?;
+            return Ok(if to == S::Scientific || s != 0.0 {
+                Value::Scientific(v, s)
+            } else {
+                Value::Float(v)
+            });
+        }
+        if let (Value::Quantity(q), S::Quantity(id)) = (self, to) {
+            let name = id.name();
+            return Err(format!("a quantity in {} is not a `{name}`", q.unit()));
         }
         // A `Fraction` is a `Decimal` shown as a fraction, so asking for one
         // is a change of display and not of value.
@@ -357,6 +388,9 @@ pub fn plus_minus(a: &Value, b: &Value) -> Result<Value, String> {
     if matches!(a, Value::Null) || matches!(b, Value::Null) {
         return Ok(Value::Null);
     }
+    if let Some(done) = crate::quantity::plus_minus(a, b) {
+        return done;
+    }
     let real_of = |v: &Value| match number(v) {
         Some(n @ (N::Exact(_) | N::Float(_))) => Some(real(&n)),
         _ => None,
@@ -458,6 +492,9 @@ pub fn complement(v: &Value) -> Result<Value, String> {
 pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     if matches!(a, Value::Null) || matches!(b, Value::Null) {
         return Ok(Value::Null);
+    }
+    if let Some(done) = crate::quantity::arith(op, a, b) {
+        return done;
     }
     if let Some(shifted) = shift(op, a, b) {
         return shifted;
@@ -798,6 +835,9 @@ fn exact_arith(op: BinOp, x: &Dec, y: &Dec) -> Result<Value, String> {
 /// A function of one real number. An exact number stays exact where the
 /// function allows it; otherwise the result is a `Num`.
 pub fn math(m: MathFn, v: &Value) -> Result<Value, String> {
+    if let Value::Quantity(q) = v {
+        return crate::quantity::math(m, q);
+    }
     let whole = |r: Dec| Value::exact(r);
     // These cast to a `Float` as `x.Float` does. A `Complex` is kept by
     // those that take one.
@@ -1047,6 +1087,9 @@ pub fn is_nan(v: &Value) -> bool {
 /// them uncertain, are equal when they differ by no more than their
 /// uncertainties together (in quadrature), so `==` and `<=` hold for them.
 pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
+    if let Some(done) = crate::quantity::compare(a, b, true) {
+        return done;
+    }
     if let (Some(x), Some(y)) = (number(a), number(b))
         && (matches!(x, N::Scientific(..)) || matches!(y, N::Scientific(..)))
         && let (Some((vx, sx)), Some((vy, sy))) = (with_sigma(&x), with_sigma(&y))
@@ -1061,6 +1104,9 @@ pub fn compare(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
 
 /// Order two single values by their values alone, ignoring any uncertainty.
 fn compare_exact(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
+    if let Some(done) = crate::quantity::compare(a, b, false) {
+        return done;
+    }
     Ok(Some(match (a, b) {
         (Value::Null, _) | (_, Value::Null) => return Ok(None),
         (Value::String(x, _), Value::String(y, _)) => x.cmp(y),
@@ -1732,6 +1778,7 @@ fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
             format!("{} ± {}", format_float(*v, true), format_float(*s, true))
         }
         Value::Scientific(v, s) => format_scientific(*v, *s, &SciFormat::default(), style),
+        Value::Quantity(q) => crate::quantity::format(q, &SciFormat::default(), style, exact),
         Value::Complex(re, im) if exact => format_complex(*re, *im, true, None),
         Value::Complex(re, im) => localised(format_complex(*re, *im, false, group(style)), style),
         Value::String(s, _) if quoted => omasheet_omx::lexer::quoted(s),

@@ -43,6 +43,7 @@ const FUNCTION: Why =
     "values were written in place of formulas that use a function a workbook has not got";
 const UNCERTAIN: Why = "values were written in place of formulas with uncertain values";
 const COMPLEX: Why = "values were written in place of formulas with complex numbers";
+const UNITS: Why = "values were written in place of formulas with units";
 const LITERAL: Why =
     "values were written in place of formulas with a number or text a workbook cannot hold";
 const OTHER_SHEET: Why =
@@ -171,7 +172,7 @@ fn kind_of(s: S) -> Kind {
         S::Time => Kind::Time,
         S::Datetime => Kind::Datetime,
         S::Duration => Kind::Duration,
-        S::Complex | S::Any => Kind::Unknown,
+        S::Complex | S::Any | S::Quantity(_) => Kind::Unknown,
     }
 }
 
@@ -543,6 +544,7 @@ impl Writer<'_> {
             Lit::Float(_) => return Err(LITERAL),
             Lit::Complex(..) => return Err(COMPLEX),
             Lit::Scientific(..) => return Err(UNCERTAIN),
+            Lit::Quantity(..) => return Err(UNITS),
             Lit::String(s) if s.chars().count() <= LONGEST_TEXT => {
                 Expr::atom(format!("\"{}\"", s.replace('"', "\"\"")), Kind::Text)
             }

@@ -12,6 +12,7 @@ jiff.workspace = true
 calamine.workspace = true
 polars.workspace = true
 regex.workspace = true
+siquant.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

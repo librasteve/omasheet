@@ -154,6 +154,8 @@ pub fn dtype(ty: S, scale: u32) -> Option<DataType> {
         S::Time => DataType::Time,
         S::Datetime => DataType::Datetime(TimeUnit::Microseconds, None),
         S::Duration => DataType::Duration(TimeUnit::Microseconds),
+        // A quantity has no dtype of its own yet.
+        S::Quantity(_) => return None,
         S::Any => return None,
     })
 }
@@ -378,8 +380,8 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
         // Polars has no arithmetic for a struct, so a `Complex` column is
         // the engine's to calculate and is never handed over (D200).
         S::Complex => return None,
-        // Nor for a `Scientific`.
-        S::Scientific => return None,
+        // Nor for a `Scientific`, nor for a quantity.
+        S::Scientific | S::Quantity(_) => return None,
         // A column of anything: there is no one dtype to hold it as.
         S::Any => return None,
     };

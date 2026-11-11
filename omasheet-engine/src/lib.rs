@@ -10,6 +10,7 @@ pub mod doc;
 pub mod eval;
 pub mod locale;
 pub mod numfmt;
+pub mod quantity;
 pub mod value;
 pub mod zone;
 

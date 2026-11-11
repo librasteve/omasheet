@@ -1885,6 +1885,7 @@ dependencies = [
  "rust_xlsxwriter",
  "serde",
  "serde_json",
+ "siquant",
 ]
 
 [[package]]
@@ -1914,6 +1915,7 @@ name = "omasheet-omx"
 version = "0.1.7"
 dependencies = [
  "regex",
+ "siquant",
 ]
 
 [[package]]
@@ -3205,6 +3207,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3275,6 +3290,14 @@ name = "siphasher"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
+
+[[package]]
+name = "siquant"
+version = "0.1.1"
+dependencies = [
+ "serde",
+ "serde_yaml_ng",
+]
 
 [[package]]
 name = "skiplist"
@@ -3701,6 +3724,12 @@ name = "unicode-width"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

@@ -277,6 +277,8 @@ fn literal(l: &Lit) -> Option<Out> {
         Lit::Complex(..) => None,
         // Nor for one with an uncertainty.
         Lit::Scientific(..) => None,
+        // Nor for a quantity, which has a unit (add-si-units).
+        Lit::Quantity(..) => None,
         Lit::String(s) => Out::new(lit(s.clone()), DataType::String),
         Lit::Boolean(b) => Out::new(lit(*b), DataType::Boolean),
         Lit::Date(d) => Out::new(
