@@ -21,6 +21,8 @@ sheet Clocks
 | date-time      | = 2025-01-31T17:05:00 + 3600s |
 | two lengths    | = PT1H + 30s                  |
 | mixed          | = 17:05:00 + PT1H30M - 600s   |
+| as seconds     | = PT90M.Quantity              |
+| and back      | = 5400s.Duration              |
 
 # A plane flies from London or Munich to San Francisco. It leaves at the time
 # shown on London's clocks, is in the air for its `Airtime`, and lands after a

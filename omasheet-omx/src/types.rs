@@ -275,11 +275,14 @@ impl S {
                         || self == S::Boolean
                         || (quantity && matches!(to, S::Float | S::Scientific))
                 }
-                S::Quantity(_) => quantity,
+                // A `Duration` is a quantity of seconds, and a quantity of
+                // time, as `10s`, is a `Duration`; the dimension is checked
+                // when it is worked out.
+                S::Quantity(_) => quantity || self == S::Duration,
                 S::Percent | S::Boolean => number,
                 S::Date | S::Time => self == S::Datetime,
                 S::Datetime => self == S::Date,
-                S::Duration => false,
+                S::Duration => quantity,
             }
     }
 

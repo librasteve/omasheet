@@ -13,6 +13,8 @@ less than a day | 2025-01-31
 date-time       | 2025-01-31T18:05
 two lengths     | PT1H30S
 mixed           | 18:25
+as seconds      | 5400s
+and back        | PT1H30M
 
 sheet Flight
 

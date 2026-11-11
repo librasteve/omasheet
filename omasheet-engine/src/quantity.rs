@@ -90,14 +90,22 @@ pub fn to_lit(q: &Quantity) -> Lit {
     Lit::Quantity(q.value(), q.sigma(), q.unit().clone())
 }
 
+/// A `Duration` as the quantity of seconds it stands for: `PT90M` is `5400s`.
+pub fn from_duration(us: i64) -> Value {
+    match Unit::parse("s", Scope::Live) {
+        Ok(unit) => Value::Quantity(Rc::new(Quantity::exact(us as f64 / 1e6, unit))),
+        Err(_) => Value::Error,
+    }
+}
+
 /// A quantity of time, `10s`, as a `Duration` in microseconds. An error says
 /// what else it measures.
-fn as_duration(q: &Quantity) -> Result<Value, String> {
+pub fn as_duration(q: &Quantity) -> Result<Value, String> {
     let time = siquant::Dim::of(siquant::Base::Time);
     if q.unit().dims() != time {
         return Err(format!(
             "a {} is not a length of time: only a quantity of time, as `10s`, \
-             can be added to a date or a time",
+             can be one",
             kind_of(q.unit().dims())
         ));
     }

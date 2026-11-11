@@ -612,3 +612,25 @@ fn a_distance_over_a_duration_is_a_speed() {
     assert_eq!(shown("(7200km / PT2H).to('m.s^-1')"), "1000m.s^-1");
     assert_eq!(shown("36km / PT1H"), "0.01km.s^-1");
 }
+
+#[test]
+fn a_duration_and_a_quantity_of_time_convert_either_way() {
+    assert_eq!(shown("PT10S.Quantity"), "10s");
+    assert_eq!(shown("PT90M.Quantity"), "5400s");
+    assert_eq!(shown("PT90M.Quantity + 5s"), "5405s");
+    assert_eq!(shown("PT10S.Quantity.to('ms')"), "10000ms");
+    assert_eq!(shown("5400s.Duration"), "PT1H30M");
+    assert_eq!(shown("PT1H.Quantity.Duration"), "PT1H");
+    assert_eq!(shown("1ks.Duration"), "PT16M40S");
+    assert!(fails("5kg.Duration").contains("not a length of time"));
+    assert!(fails("2025-01-31.Quantity").contains("cannot be applied"));
+    // In a column.
+    let file = "sheet S\n\nAir : Duration\nSecs : Quantity\n\n| Air | Secs |\n| --- | ---- |\n| PT1H | * |\n| PT90S | * |\n\nSecs := Air.Quantity\n";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    assert!(
+        out.output.contains("3600s") && out.output.contains("90s"),
+        "{}",
+        out.output
+    );
+}

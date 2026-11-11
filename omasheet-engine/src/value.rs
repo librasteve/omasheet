@@ -16,7 +16,7 @@ use omasheet_omx::date::Style;
 use omasheet_omx::decimal::{Dec, MAX_DENOMINATOR, SHOWN_PRECISION};
 use omasheet_omx::duration;
 use omasheet_omx::funcs::MathFn;
-use omasheet_omx::types::{Base, S};
+use omasheet_omx::types::{Base, QId, S};
 use std::cmp::Ordering;
 use std::rc::Rc;
 
@@ -263,6 +263,19 @@ impl Value {
         };
         if fits {
             return Ok(self.clone());
+        }
+        // A `Duration` is a quantity of seconds, `PT90M.Quantity` is `5400s`,
+        // and a quantity of time is a `Duration`, `5400s.Duration` is `PT1H30M`.
+        match (self, to) {
+            (Value::Duration(us), S::Quantity(id)) => {
+                return if id == QId::ANY {
+                    Ok(crate::quantity::from_duration(*us))
+                } else {
+                    Err(format!("a duration is not a `{}`", id.name()))
+                };
+            }
+            (Value::Quantity(q), S::Duration) => return crate::quantity::as_duration(q),
+            _ => {}
         }
         // A quantity with no dimension is a number; one with a unit is not.
         if let (Value::Quantity(q), S::Float | S::Scientific) = (self, to) {
