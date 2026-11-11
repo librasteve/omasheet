@@ -1,13 +1,13 @@
 sheet Literals
 
 Name     | Value
----------|-----------
+---------|------------
 byte     | 5B
 bit      | 40b
 kilobyte | 1kB
 kibibyte | 1KiB
 memory   | 16GiB
-speed    | 100Mb.s^-1
+speed    | 100Mib.s^-1
 scale    | 1024
 mebi     | 1572864
 
@@ -19,8 +19,8 @@ sum         | 4.5GiB
 decimal     | 2.024kB
 in bytes    | 1024B
 in bits     | 8000b
-megabits    | 1Mb
-downloaded  | 30MB
+mebibits    | 1Mib
+downloaded  | 30MiB
 time to get | 20.48s
 ordered     | true
 equal       | true

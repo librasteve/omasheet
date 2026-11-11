@@ -111,41 +111,41 @@ Area      := Width * Height
 Perimeter := 2 * (Width + Height)
 
 # Data over an area, as a disk drive's: `InformationDensity` holds `b.m^-2`, here
-# shown in `Tb.m^-2`. A drive's capacity over its platter area gives it, and
+# shown in `Tib.m^-2`. A drive's capacity over its platter area gives it, and
 # data units take the binary and SI prefixes alike (see `data.omx`).
 sheet Drives
 
 Drive    : String
-Capacity : Information[GB]
+Capacity : Information[GiB]
 Platter  : Area[cm^2]
-Density  : InformationDensity[Tb.m^-2]
+Density  : InformationDensity[Tib.m^-2]
 
 | Drive | Capacity | Platter | Density |
 | ----- | -------- | ------- | ------- |
-| old   | 500GB    | 100cm^2  | *       |
-| new   | 4TB      | 100cm^2  | *       |
-| tiny  | 128MB    | 5cm^2   | *       |
+| old   | 500GiB   | 100cm^2  | *       |
+| new   | 4TiB     | 100cm^2  | *       |
+| tiny  | 128MiB   | 5cm^2   | *       |
 
 Density := Capacity / Platter
 
-# Information: data in bytes and bits, with SI (`kB`, 1000 B) and binary
-# (`KiB`, 1024 B) prefixes. A column of `Information` shows its cells in the
-# unit it names, `Information[GB]`, whichever they were written in, and a
-# `DataRate[Mb.s^-1]` column holds megabits a second. Dividing a size in
-# megabits by such a rate leaves seconds.
+# Information: data in bytes and bits, with the binary prefixes (`KiB` is 1024 B)
+# and the SI ones (`kB` is 1000 B). A column of `Information` shows its cells in
+# the unit it names, `Information[MiB]`, whichever they were written in, and a
+# `DataRate[Mib.s^-1]` column holds mebibits a second. Dividing a size in
+# mebibits by such a rate leaves seconds.
 sheet Information
 
 File     : String
-Size     : Information[GB]
-Rate     : DataRate[Mb.s^-1]
+Size     : Information[MiB]
+Rate     : DataRate[Mib.s^-1]
 Seconds  : Quantity
 
-| File   | Size   | Rate       | Seconds |
-| ------ | ------ | ---------- | ------- |
-| photo  | 4MB    | 100Mb.s^-1 | *       |
-| film   | 1.5GB  | 50Mb.s^-1  | *       |
-| backup | 2TB    | 1Gb.s^-1   | *       |
-| log    | 640kB  | 8Mb.s^-1   | *       |
-| dump   | 1MiB   | 100Mb.s^-1 | *       |
+| File   | Size   | Rate        | Seconds |
+| ------ | ------ | ----------- | ------- |
+| photo  | 4MiB   | 100Mib.s^-1 | *       |
+| film   | 1.5GiB | 50Mib.s^-1  | *       |
+| backup | 8GiB   | 1Gib.s^-1   | *       |
+| log    | 640KiB | 8Mib.s^-1   | *       |
+| dump   | 1MiB   | 100Mib.s^-1 | *       |
 
-Seconds := Size.to('Mb') / Rate
+Seconds := Size.to('Mib') / Rate

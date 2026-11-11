@@ -5538,6 +5538,13 @@ ApplicationWindow {
         // uses this, so that an undo or redo, made while the box is open,
         // moves the tick to what it brought back.
         property var now: function() { return ""; }
+        // The entry that stands for what the columns have, where it is not
+        // itself an entry: `B` for `GiB`. It is ticked, the list opens at it,
+        // and it is not a change to take it.
+        property var tickFor: function(spec) { return spec; }
+        readonly property string tick: tickFor(current)
+        // Has something been marked, or typed, since the box opened?
+        property bool touched: false
         property string fault: ""
         // What is wrong with what is typed, for the provider to say; shown
         // where nothing in the list matches.
@@ -5638,7 +5645,7 @@ ApplicationWindow {
                     }
                 }
             for (var j = 0; at < 0 && j < list.length; j++) {
-                if (!list[j].header && list[j].spec === current) {
+                if (!list[j].header && list[j].spec === tick) {
                     at = j;
                     break;
                 }
@@ -5705,6 +5712,7 @@ ApplicationWindow {
                 return;
             }
             // An entry is only marked: Apply takes it.
+            touched = true;
             listView.currentIndex = index;
             search.forceActiveFocus();
         }
@@ -5712,12 +5720,14 @@ ApplicationWindow {
         readonly property var marked: listView.currentIndex >= 0 && listView.currentIndex < rows.length
             && !rows[listView.currentIndex].header ? rows[listView.currentIndex] : null
         readonly property bool changed: marked !== null && marked.spec !== current
+            && (touched || marked.spec !== tick)
         // Take the entry marked, and stay open to try another.
         function apply() {
             if (!changed)
                 return;
             var spec = marked.spec;
             current = spec;
+            touched = false;
             picked(spec);
             refresh(true);
         }
@@ -5780,7 +5790,7 @@ ApplicationWindow {
             closed = c0;
             search.text = "";
             refresh();
-            var g = groupOf(current);
+            var g = groupOf(tick);
             if (g) {
                 c0[g] = false;
                 closed = c0;
@@ -5791,6 +5801,7 @@ ApplicationWindow {
             x = right + width <= win.width - 8 ? item.width - lap
                 : Math.max(-item.mapToItem(null, 0, 0).x + 8, lap - width);
             y = 0;
+            touched = false;
             open();
             search.forceActiveFocus();
             listView.positionViewAtIndex(Math.max(0, listView.currentIndex), ListView.Center);
@@ -5881,7 +5892,10 @@ ApplicationWindow {
                     font.family: win.font.family
                     font.features: win.font.features
                     font.pixelSize: win.fontSize
-                    onTextChanged: picker.refresh()
+                    onTextChanged: {
+                        picker.touched = true;
+                        picker.refresh();
+                    }
                     // Undo and redo are the document's, for what was just
                     // applied, without waiting for the box to close: while
                     // nothing is typed there is no typing of its own to undo.
@@ -5914,6 +5928,7 @@ ApplicationWindow {
                     // Down past the last entry goes on to the buttons, as in the
                     // filter box: Apply where there is something to apply, then Close.
                     Keys.onDownPressed: {
+                        picker.touched = true;
                         if (listView.currentIndex < listView.count - 1)
                             listView.currentIndex++;
                         else if (pickApply.enabled)
@@ -5921,7 +5936,10 @@ ApplicationWindow {
                         else
                             pickClose.forceActiveFocus();
                     }
-                    Keys.onUpPressed: listView.currentIndex = Math.max(0, listView.currentIndex - 1)
+                    Keys.onUpPressed: {
+                        picker.touched = true;
+                        listView.currentIndex = Math.max(0, listView.currentIndex - 1);
+                    }
                     Keys.onReturnPressed: picker.submit()
                     Keys.onEnterPressed: picker.submit()
                     Keys.onTabPressed: picker.complete()
@@ -5961,7 +5979,7 @@ ApplicationWindow {
                     required property int index
                     required property var modelData
                     readonly property bool head: !!modelData.header
-                    readonly property bool ticked: !head && picker.current === modelData.spec
+                    readonly property bool ticked: !head && picker.tick === modelData.spec
                     width: ListView.view.width
                     height: Math.round(win.fontSize * 1.9)
                     radius: 3
@@ -6151,6 +6169,25 @@ ApplicationWindow {
         taller: 1.8
         helpable: true
         onHelpAsked: prefixHelp.openBeside(unitPopup)
+        // The units in the list, for what stands for a prefixed one.
+        property var known: ({})
+        Component.onCompleted: {
+            var lines = file.unitChoices().split("\n"), set = {};
+            for (var i = 0; i < lines.length; i++) {
+                var f = lines[i].split("\t");
+                if (f.length >= 3)
+                    set[f[1]] = true;
+            }
+            known = set;
+        }
+        // `GiB` is not in the list, `B` is: it is the one ticked, under its
+        // heading, whichever prefix the column has.
+        tickFor: function(unit) {
+            if (unit.length === 0 || known[unit])
+                return unit;
+            var parts = file.unitParts(unit).split("\t");
+            return parts.length >= 4 && known[parts[2]] ? parts[2] : unit;
+        }
         // A click in the prefixes beside it is outside this box, and must not
         // close it.
         closePolicy: prefixHelp.visible ? Popup.CloseOnEscape
@@ -6170,7 +6207,7 @@ ApplicationWindow {
             var typed = open > 0 && text.endsWith("]") ? text.substring(open + 1, text.length - 1) : text;
             // The unit the column has now, where the list has not got it (`mg`):
             // an entry of its own at the top, ticked.
-            var now = unitPopup.current;
+            var now = unitPopup.tick;
             if (now.length > 0 && !out.some(function(e) { return e.spec === now; }))
                 out.unshift({spec: now, label: now, hint: "set", complete: now});
             if (text.length > 0 && !out.some(function(e) { return e.spec === typed; })) {
@@ -6191,8 +6228,20 @@ ApplicationWindow {
         function show(c, item) {
             var spec = win.sharedSpec(true);
             var at = spec.indexOf("[");
-            // The column's own type and unit, as its head shows them.
-            note = at < 0 ? "" : spec;
+            // What the column has, taken apart: `type=Information; prefix=Gi
+            // (gibi); unit=B (byte)`.
+            note = "";
+            if (at >= 0) {
+                var unit = spec.substring(at + 1, spec.length - 1);
+                var parts = file.unitParts(unit).split("\t");
+                note = "type=" + spec.substring(0, at);
+                if (parts.length >= 4) {
+                    if (parts[0].length > 0)
+                        note += "; prefix=" + parts[0] + " (" + parts[1] + ")";
+                    note += "; unit=" + parts[2] + " (" + parts[3] + ")";
+                } else
+                    note += "; unit=" + unit;
+            }
             openFor(c, item, at < 0 ? "" : spec.substring(at + 1, spec.length - 1), ["SI Base"]);
         }
     }

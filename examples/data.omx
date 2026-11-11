@@ -12,7 +12,7 @@ sheet Literals
 | kilobyte | 1kB       |
 | kibibyte | 1KiB      |
 | memory   | 16GiB     |
-| speed    | 100Mb.s^-1 |
+| speed    | 100Mib.s^-1 |
 | scale    | 1Ki.      |
 | mebi     | 1.5Mi.    |
 
@@ -24,8 +24,8 @@ sheet Arithmetic
 | decimal     | = 1kB + 1KiB           |
 | in bytes    | = 1KiB.to('B')         |
 | in bits     | = 1kB.to('b')          |
-| megabits    | = 125kB.to('Mb')       |
-| downloaded  | = 10MB.s^-1 * 3s       |
+| mebibits    | = 128KiB.to('Mib')     |
+| downloaded  | = 10MiB.s^-1 * 3s      |
 | time to get | = 1GiB.to('MiB') / 50MiB.s^-1 |
 | ordered     | = 1kB < 1KiB           |
 | equal       | = 8b == 1B             |

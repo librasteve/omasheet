@@ -437,6 +437,11 @@ pub mod qobject {
         /// the binary ones.
         #[qinvokable]
         fn prefix_table(self: &File) -> QString;
+        /// A unit of one term taken apart: the prefix symbol and name, a tab,
+        /// the unit symbol and name, `GiB` as `Gi gibi B byte`. The prefix is
+        /// empty for `B`; the whole is empty for a compound unit (`m.s^-1`).
+        #[qinvokable]
+        fn unit_parts(self: &File, unit: &QString) -> QString;
         /// The column type for quantities in this unit, `Mass[g]`, or empty
         /// where it is not a unit; see `unit_problem`.
         #[qinvokable]
@@ -1708,6 +1713,45 @@ impl qobject::File {
             .map(|p| format!("{}\t{}\t{}\t{}", p.symbol, p.name, p.base, p.exp))
             .collect();
         QString::from(&lines.join("\n"))
+    }
+
+    fn unit_parts(&self, unit: &QString) -> QString {
+        let reg = siquant::Registry::builtin();
+        let text = unit.to_string();
+        let text = text.trim();
+        let Ok(u) = siquant::Unit::parse(text, siquant::Scope::Live) else {
+            return QString::default();
+        };
+        if u.terms().len() != 1 || u.terms()[0].exp != 1 {
+            return QString::default();
+        }
+        let shown = u.to_string();
+        // A unit of its own name, `Pa` or `cd`, has no prefix.
+        if let Some(r) = reg.units().find(|r| r.symbol == shown) {
+            return QString::from(&format!("\t\t{}\t{}", r.symbol, r.name));
+        }
+        // Otherwise a prefix and a unit: the longest prefix that leaves one.
+        let mut best: Option<(String, String, String, String)> = None;
+        for p in reg.prefixes() {
+            let Some(rest) = shown.strip_prefix(p.symbol) else {
+                continue;
+            };
+            let Some(r) = reg.units().find(|r| r.symbol == rest) else {
+                continue;
+            };
+            if best.as_ref().is_none_or(|b| p.symbol.len() > b.0.len()) {
+                best = Some((
+                    p.symbol.to_string(),
+                    p.name.to_string(),
+                    r.symbol.to_string(),
+                    r.name.to_string(),
+                ));
+            }
+        }
+        match best {
+            Some((ps, pn, us, un)) => QString::from(&format!("{ps}\t{pn}\t{us}\t{un}")),
+            None => QString::default(),
+        }
     }
 
     fn unit_spec(&self, unit: &QString) -> QString {

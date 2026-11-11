@@ -72,17 +72,17 @@ big   | 2m    | 1.5m   | 3m^2    | 7m
 sheet Drives
 
 Drive | Capacity | Platter | Density
-------|----------|---------|-------------
-old   | 500GB    | 100cm^2 | 400Tb.m^-2
-new   | 4000GB   | 100cm^2 | 3200Tb.m^-2
-tiny  | 0.128GB  | 5cm^2   | 2.048Tb.m^-2
+------|----------|---------|-----------------
+old   | 500GiB   | 100cm^2 | 390.625Tib.m^-2
+new   | 4096GiB  | 100cm^2 | 3200Tib.m^-2
+tiny  | 0.125GiB | 5cm^2   | 1.953125Tib.m^-2
 
 sheet Information
 
-File   | Size          | Rate        | Seconds
--------|---------------|-------------|------------
-photo  | 0.004GB       | 100Mb.s^-1  | 0.32s
-film   | 1.5GB         | 50Mb.s^-1   | 240s
-backup | 2000GB        | 1000Mb.s^-1 | 16000s
-log    | 0.00064GB     | 8Mb.s^-1    | 0.64s
-dump   | 0.001048576GB | 100Mb.s^-1  | 0.08388608s
+File   | Size     | Rate         | Seconds
+-------|----------|--------------|--------
+photo  | 4MiB     | 100Mib.s^-1  | 0.32s
+film   | 1536MiB  | 50Mib.s^-1   | 245.76s
+backup | 8192MiB  | 1024Mib.s^-1 | 64s
+log    | 0.625MiB | 8Mib.s^-1    | 0.625s
+dump   | 1MiB     | 100Mib.s^-1  | 0.08s
