@@ -1,0 +1,50 @@
+# A length of time added to or taken from a time or a date. It may be a
+# `Duration`, `PT10S`, or a quantity of time, `10s`: either way `17:05:00 +
+# 10s` is `17:05:10`. A time of day wraps round midnight, a date moves by whole
+# days of it (`2025-01-31 + 10s` is the same date), and a date-time moves by
+# the instant, so it follows the clocks of its zone.
+
+zone Europe/London
+
+sheet Clocks
+
+| Name           | Value                         |
+| -------------- | ----------------------------- |
+| time plus      | = 17:05:00 + 10s              |
+| time minus     | = 17:05:00 - 10s              |
+| as a Duration  | = 17:05:00 + PT10S            |
+| the other way  | = 10s + 17:05:00              |
+| past midnight  | = 23:59:55 + 10s              |
+| fractions      | = 17:05:00 + 1.5s             |
+| a date         | = 2025-01-31 + 86400s         |
+| less than a day | = 2025-01-31 + 10s           |
+| date-time      | = 2025-01-31T17:05:00 + 3600s |
+| two lengths    | = PT1H + 30s                  |
+| mixed          | = 17:05:00 + PT1H30M - 600s   |
+
+# A plane flies from London to Tokyo. It leaves at the time shown on London's
+# clocks, is in the air for its `Airtime`, and lands at that instant plus a
+# taxi of ten minutes, shown on Tokyo's clocks. The speed is the distance over
+# the time in the air: a quantity over a `Duration`.
+sheet Flight
+
+Flight   : String
+Leaves   : Datetime
+Airtime  : Duration
+Distance : Length[km]
+Speed    : Speed[m.s^-1; .1f]
+Mach     : Float[.2f]
+
+| Flight   | Leaves           | Airtime  | Distance | Gate | Lands | Tokyo | Speed | Mach |
+| -------- | ---------------- | -------- | -------- | ---- | ----- | ----- | ----- | ---- |
+| LHR-HND  | 2025-03-10T11:50 | PT12H10M | 9560km   | *    | *     | *     | *     | *    |
+| LHR-NRT  | 2025-03-10T21:15 | PT12H35M | 9590km   | *    | *     | *     | *     | *    |
+| HND-LHR  | 2025-07-01T13:00 | PT14H05M | 9560km   | *    | *     | *     | *     | *    |
+
+# At the gate forty minutes before leaving, and on the ground ten after landing.
+Gate  := Leaves - 2400s
+Lands := Leaves + Airtime + 600s
+Tokyo := Lands.convert_time_zone('Asia/Tokyo')
+Speed := (Distance / Airtime).to('m.s^-1')
+# The speed of sound is about 343 m/s at sea level.
+Mach  := Speed / 343m.s^-1

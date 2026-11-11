@@ -3190,7 +3190,26 @@ impl<'a> Checker<'a> {
         let ((a, av), (b, bv)) = (parts[0], parts[1]);
         let unknown = a == S::Any || b == S::Any;
         let timed = |s: S| s.is_temporal() || s == S::Duration;
-        let elem = if op.is_arithmetic() && (timed(a) || timed(b)) {
+        // A quantity of time, `10s`, beside a date, a time or a duration in a
+        // sum or a difference is the `Duration` it stands for; whether it
+        // measures time is found when it is worked out.
+        let (a, b) = if matches!(op, BinOp::Add | BinOp::Sub) {
+            let span = |s: S, other: S| {
+                if s.is_quantity() && timed(other) {
+                    S::Duration
+                } else {
+                    s
+                }
+            };
+            (span(a, b), span(b, a))
+        } else {
+            (a, b)
+        };
+        // A quantity times or over a duration is a quantity, of what the
+        // product or quotient measures.
+        let quantity_and_span = matches!(op, BinOp::Mul | BinOp::Div)
+            && ((a.is_quantity() && b == S::Duration) || (a == S::Duration && b.is_quantity()));
+        let elem = if op.is_arithmetic() && (timed(a) || timed(b)) && !quantity_and_span {
             // A duration is scaled by a number: `PT1H * 3`, `P1D / 2`.
             let scaled = |d: S, n: S| d == S::Duration && n.is_numeric();
             let shifted = match op {
@@ -3226,6 +3245,7 @@ impl<'a> Checker<'a> {
                     BinOp::Add | BinOp::Sub if qa && qb => {
                         Some(if a == b { a } else { S::Quantity(QId::ANY) })
                     }
+                    BinOp::Mul | BinOp::Div if quantity_and_span => Some(S::Any),
                     BinOp::Mul if qa && qb => Some(S::Any),
                     BinOp::Mul if qa && plain(b) => Some(a),
                     BinOp::Mul if plain(a) && qb => Some(b),

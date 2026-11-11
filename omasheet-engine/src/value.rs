@@ -493,6 +493,13 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     if matches!(a, Value::Null) || matches!(b, Value::Null) {
         return Ok(Value::Null);
     }
+    // A quantity of time beside a date, a time or a duration is a duration.
+    let spanned = crate::quantity::as_span(op, a, b);
+    let (a, b) = match &spanned {
+        Some(Ok((x, y))) => (x, y),
+        Some(Err(e)) => return Err(e.clone()),
+        None => (a, b),
+    };
     if let Some(done) = crate::quantity::arith(op, a, b) {
         return done;
     }

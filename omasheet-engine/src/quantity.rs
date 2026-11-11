@@ -56,6 +56,10 @@ fn lift(v: &Value) -> Option<Quantity> {
         }
         Value::Float(f) => Quantity::exact(*f, one()),
         Value::Scientific(v, s) => Quantity::new(*v, *s, one()).ok()?,
+        // A duration beside a quantity is so many seconds: `9560km / PT13H`.
+        Value::Duration(us) => {
+            Quantity::exact(*us as f64 / 1e6, Unit::parse("s", Scope::Live).ok()?)
+        }
         _ => return None,
     })
 }
@@ -84,6 +88,50 @@ pub fn from_lit(v: f64, s: f64, unit: &Unit) -> Value {
 /// A quantity as a literal.
 pub fn to_lit(q: &Quantity) -> Lit {
     Lit::Quantity(q.value(), q.sigma(), q.unit().clone())
+}
+
+/// A quantity of time, `10s`, as a `Duration` in microseconds. An error says
+/// what else it measures.
+fn as_duration(q: &Quantity) -> Result<Value, String> {
+    let time = siquant::Dim::of(siquant::Base::Time);
+    if q.unit().dims() != time {
+        return Err(format!(
+            "a {} is not a length of time: only a quantity of time, as `10s`, \
+             can be added to a date or a time",
+            kind_of(q.unit().dims())
+        ));
+    }
+    let seconds = q.value() * q.unit().factor();
+    let micros = (seconds * 1e6).round();
+    if !micros.is_finite() || micros.abs() >= 9.0e18 {
+        return Err("the duration is out of range".to_string());
+    }
+    Ok(Value::Duration(micros as i64))
+}
+
+/// `+` and `-` of a quantity of time and a date, a time, a date-time or a
+/// `Duration`: the quantity is taken as the `Duration` it stands for, so
+/// `17:05:00 + 10s` is `17:05:10`. `None` where that is not what is asked.
+pub fn as_span(op: BinOp, a: &Value, b: &Value) -> Option<Result<(Value, Value), String>> {
+    if !matches!(op, BinOp::Add | BinOp::Sub) {
+        return None;
+    }
+    let timed = |v: &Value| {
+        matches!(
+            v,
+            Value::Date(_) | Value::Time(_) | Value::Datetime(..) | Value::Duration(_)
+        )
+    };
+    let side = |v: &Value| match v {
+        Value::Quantity(q) => as_duration(q),
+        other => Ok(other.clone()),
+    };
+    match (a, b) {
+        (Value::Quantity(_), t) | (t, Value::Quantity(_)) if timed(t) => {
+            Some(side(a).and_then(|x| side(b).map(|y| (x, y))))
+        }
+        _ => None,
+    }
 }
 
 /// `a op b` where one side is a quantity; `None` where neither is, so the
@@ -346,8 +394,12 @@ pub fn format(q: &Quantity, f: &SciFormat, style: &Style, exact: bool) -> String
             format!("{} ± {}{unit}", n(q.value()), n(q.sigma()))
         };
     }
-    format!(
-        "{}{unit}",
-        crate::value::format_scientific(q.value(), q.sigma(), f, style)
-    )
+    let mut number = crate::value::format_scientific(q.value(), q.sigma(), f, style);
+    // A quantity that has no uncertainty is not shown with `(0)` after the
+    // number because a format asked for places: `218.3m.s^-1`, not
+    // `218.3(0)m.s^-1`. `±` asks for it, as `218.3 ± 0.0`.
+    if q.sigma() == 0.0 && !f.plus_minus {
+        number = number.replacen("(0)", "", 1);
+    }
+    format!("{number}{unit}")
 }

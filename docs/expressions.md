@@ -551,6 +551,11 @@ The app lists them all under `fn()` (F1).
   is `10:30`; beside a `Date` only its whole days count. Two add up, and one
   is multiplied or divided by a number, `PT1H * 3` is `PT3H`. `sum`, `mean`
   and `median` of them are durations.
+- A quantity of time is a `Duration` beside a date, a time or a `Duration`:
+  `17:05:00 + 10s` is `17:05:10`, `10s + 17:05:00` is the same, and `PT1H + 30s`
+  is `PT1H30S`. Any other unit is an error, `17:05:00 + 5kg`. A distance over a
+  `Duration` is a speed, `9560km / PT12H10M`, in `km.s^-1` until it is `.to('m.s^-1')`.
+  See `examples/durations.omx`.
 - `Date + Time` is a `Datetime`.
 - Across time zones, comparison and subtraction use the instant.
 

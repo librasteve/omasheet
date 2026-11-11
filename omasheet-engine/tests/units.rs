@@ -523,7 +523,7 @@ Weight : Mass[g; .1f]
 ";
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
-    assert!(out.output.contains("5000.0(0)g"), "{}", out.output);
+    assert!(out.output.contains("5000.0g"), "{}", out.output);
     assert!(out.output.contains("7.5(2)g"), "{}", out.output);
 }
 
@@ -586,4 +586,29 @@ fn a_column_of_data_is_held_in_its_unit() {
     for shown in ["2048GiB", "0.5GiB", "4GiB"] {
         assert!(out.output.contains(shown), "{shown} in\n{}", out.output);
     }
+}
+
+#[test]
+fn a_quantity_of_time_is_a_duration_beside_a_date_or_a_time() {
+    assert_eq!(shown("17:05:00 + 10s"), "17:05:10");
+    assert_eq!(shown("17:05:00 - 10s"), "17:04:50");
+    assert_eq!(shown("10s + 17:05:00"), "17:05:10");
+    assert_eq!(shown("23:59:55 + 10s"), "00:00:05");
+    assert_eq!(shown("17:05:00 + 1.5s"), "17:05:01.5");
+    assert_eq!(shown("17:05:00 + 1ms"), "17:05:00.001");
+    // A date moves by whole days of it.
+    assert_eq!(shown("2025-01-31 + 86400s"), "2025-02-01");
+    assert_eq!(shown("2025-01-31 + 10s"), "2025-01-31");
+    assert_eq!(shown("2025-01-31T17:05:00 + 3600s"), "2025-01-31T18:05");
+    // Beside a Duration it is a Duration.
+    assert_eq!(shown("PT1H + 30s"), "PT1H30S");
+    assert_eq!(shown("17:05:00 + PT1H30M - 600s"), "18:25");
+    // Only time can be added: a mass is not a length of time.
+    assert!(fails("17:05:00 + 5kg").contains("not a length of time"));
+}
+
+#[test]
+fn a_distance_over_a_duration_is_a_speed() {
+    assert_eq!(shown("(7200km / PT2H).to('m.s^-1')"), "1000m.s^-1");
+    assert_eq!(shown("36km / PT1H"), "0.01km.s^-1");
 }
