@@ -22,10 +22,10 @@ sheet Clocks
 | two lengths    | = PT1H + 30s                  |
 | mixed          | = 17:05:00 + PT1H30M - 600s   |
 
-# A plane flies from London to Tokyo. It leaves at the time shown on London's
-# clocks, is in the air for its `Airtime`, and lands at that instant plus a
-# taxi of ten minutes, shown on Tokyo's clocks. The speed is the distance over
-# the time in the air: a quantity over a `Duration`.
+# A plane flies from London or Munich to San Francisco. It leaves at the time
+# shown on London's clocks, is in the air for its `Airtime`, and lands after a
+# taxi of ten minutes, shown on San Francisco's clocks. The speed is the
+# distance over the time in the air: a quantity over a `Duration`.
 sheet Flight
 
 Flight   : String
@@ -35,16 +35,16 @@ Distance : Length[km]
 Speed    : Speed[m.s^-1; .1f]
 Mach     : Float[.2f]
 
-| Flight   | Leaves           | Airtime  | Distance | Gate | Lands | Tokyo | Speed | Mach |
-| -------- | ---------------- | -------- | -------- | ---- | ----- | ----- | ----- | ---- |
-| LHR-HND  | 2025-03-10T11:50 | PT12H10M | 9560km   | *    | *     | *     | *     | *    |
-| LHR-NRT  | 2025-03-10T21:15 | PT12H35M | 9590km   | *    | *     | *     | *     | *    |
-| HND-LHR  | 2025-07-01T13:00 | PT14H05M | 9560km   | *    | *     | *     | *     | *    |
+| Flight  | Leaves           | Airtime  | Distance | Gate | Lands | SFO | Speed | Mach |
+| ------- | ---------------- | -------- | -------- | ---- | ----- | --- | ----- | ---- |
+| LHR-SFO | 2025-03-10T11:05 | PT11H10M | 8610km   | *    | *     | *   | *     | *    |
+| MUC-SFO | 2025-03-10T12:30 | PT11H35M | 9120km   | *    | *     | *   | *     | *    |
+| SFO-LHR | 2025-03-10T21:30 | PT10H20M | 8610km   | *    | *     | *   | *     | *    |
 
 # At the gate forty minutes before leaving, and on the ground ten after landing.
 Gate  := Leaves - 2400s
 Lands := Leaves + Airtime + 600s
-Tokyo := Lands.convert_time_zone('Asia/Tokyo')
+SFO   := Lands.convert_time_zone('America/Los_Angeles')
 Speed := (Distance / Airtime).to('m.s^-1')
 # The speed of sound is about 343 m/s at sea level.
 Mach  := Speed / 343m.s^-1

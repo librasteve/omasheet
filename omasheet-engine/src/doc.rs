@@ -7241,7 +7241,7 @@ mod tests {
         let doc = Document::from_text(src);
         assert!(doc.check_column_format(0, &[0], Some("%d %b %Y")).is_ok());
         assert!(doc.check_column_format(0, &[0], None).is_ok());
-        let bad = doc.check_column_format(0, &[0], Some("zzz")).unwrap_err();
+        let bad = doc.check_column_format(0, &[1], Some("zzz")).unwrap_err();
         assert!(bad.contains("Not a format"), "{bad}");
         assert!(doc.check_column_format(0, &[1], Some("g; .1f")).is_ok());
         let wrong = doc.check_column_format(0, &[1], Some("m")).unwrap_err();
