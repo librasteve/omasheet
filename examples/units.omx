@@ -127,3 +127,25 @@ Density  : InformationDensity[Tb.m^-2]
 | tiny  | 128MB    | 5cm^2   | *       |
 
 Density := Capacity / Platter
+
+# Information: data in bytes and bits, with SI (`kB`, 1000 B) and binary
+# (`KiB`, 1024 B) prefixes. A column of `Information` shows its cells in the
+# unit it names, `Information[GB]`, whichever they were written in, and a
+# `DataRate[Mb.s^-1]` column holds megabits a second. Dividing a size in
+# megabits by such a rate leaves seconds.
+sheet Information
+
+File     : String
+Size     : Information[GB]
+Rate     : DataRate[Mb.s^-1]
+Seconds  : Quantity
+
+| File   | Size   | Rate       | Seconds |
+| ------ | ------ | ---------- | ------- |
+| photo  | 4MB    | 100Mb.s^-1 | *       |
+| film   | 1.5GB  | 50Mb.s^-1  | *       |
+| backup | 2TB    | 1Gb.s^-1   | *       |
+| log    | 640kB  | 8Mb.s^-1   | *       |
+| dump   | 1MiB   | 100Mb.s^-1 | *       |
+
+Seconds := Size.to('Mb') / Rate

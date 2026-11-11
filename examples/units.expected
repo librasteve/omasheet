@@ -76,3 +76,13 @@ Drive | Capacity | Platter | Density
 old   | 500GB    | 100cm^2 | 400Tb.m^-2
 new   | 4000GB   | 100cm^2 | 3200Tb.m^-2
 tiny  | 0.128GB  | 5cm^2   | 2.048Tb.m^-2
+
+sheet Information
+
+File   | Size          | Rate        | Seconds
+-------|---------------|-------------|------------
+photo  | 0.004GB       | 100Mb.s^-1  | 0.32s
+film   | 1.5GB         | 50Mb.s^-1   | 240s
+backup | 2000GB        | 1000Mb.s^-1 | 16000s
+log    | 0.00064GB     | 8Mb.s^-1    | 0.64s
+dump   | 0.001048576GB | 100Mb.s^-1  | 0.08388608s
