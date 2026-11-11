@@ -8001,7 +8001,7 @@ mod tests {
         );
         assert_eq!(
             entry_hint(&us, "Duration"),
-            "Duration: PnDTnHnMnS, e.g. PT1H30M"
+            "Duration: a length of time, e.g. P2DT1H30M (2d 1h 30min)"
         );
         assert_eq!(entry_hint(&us, ""), "");
         // A cell that does not fit says what would.
