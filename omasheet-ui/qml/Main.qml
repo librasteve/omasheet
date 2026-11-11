@@ -4278,19 +4278,34 @@ ApplicationWindow {
 
         // Footer: sheet tabs on the left, actions and status on the right.
         Rectangle {
+            id: footerBar
             Layout.fillWidth: true
             Layout.preferredHeight: win.fontSize * 2 + 10
             color: win.panelColor
+            // Too narrow for the tabs and every button: the four that add
+            // something are tucked in at the right end of the tabs, which
+            // scroll, and the bar keeps `fn()`, `</>` and `?`. Worked out from
+            // what each takes by itself, so that moving the buttons does not
+            // change the answer.
+            readonly property real needed: tabRow.tabsWidth + 18
+                + 2 * (arrowLeft.implicitWidth + footerRow.spacing)
+                + addSheetButton.implicitWidth + addRowButton.implicitWidth
+                + addColumnButton.implicitWidth + addConstantButton.implicitWidth
+                + fnButton.implicitWidth + sourceButton.implicitWidth + helpButton.implicitWidth
+                + 8 * footerRow.spacing
+            readonly property bool narrow: needed > width
 
             Rectangle { width: parent.width; height: 1; color: win.lineColor }
 
             RowLayout {
+                id: footerRow
                 anchors.fill: parent
                 anchors.leftMargin: 6
                 anchors.rightMargin: 12
                 spacing: 2
 
                 FooterButton {
+                    id: arrowLeft
                     label: "\u2039"
                     quiet: true
                     visible: tabStrip.scrolls
@@ -4344,6 +4359,17 @@ ApplicationWindow {
                         // is after the last.
                         property int dragFrom: -1
                         property int gap: -1
+                        // What the tabs take by themselves, without the buttons
+                        // that may be tucked in after them.
+                        readonly property real tabsWidth: {
+                            var w = 0;
+                            for (var i = 0; i < tabRepeater.count; i++) {
+                                var item = tabRepeater.itemAt(i);
+                                if (item)
+                                    w += item.width + spacing;
+                            }
+                            return w;
+                        }
                         // Where the pointer is along the visible part of the bar
                         // while a tab is dragged: the tabs scroll when it comes
                         // near either end (gui-tab-drag-scroll).
@@ -4542,6 +4568,12 @@ ApplicationWindow {
                                 }
                             }
                         }
+                        // Tucked in at the right end of the tabs where the bar is
+                        // too narrow for them to stand apart.
+                        FooterButton { label: "+ Sheet"; quiet: true; visible: footerBar.narrow; onClicked: promptDialog.ask("sheet") }
+                        FooterButton { label: "+ Row"; quiet: true; visible: footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.appendRow() }
+                        FooterButton { label: "+ Column"; quiet: true; visible: footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
+                        FooterButton { label: "+ Constant"; quiet: true; visible: footerBar.narrow; onClicked: promptDialog.ask("const") }
                     }
                 }
                 FooterButton {
@@ -4551,16 +4583,16 @@ ApplicationWindow {
                     enabled: tabStrip.contentX < tabStrip.furthest
                     onClicked: tabStrip.step(1)
                 }
-                FooterButton { label: "+ Sheet"; quiet: true; onClicked: promptDialog.ask("sheet") }
+                FooterButton { id: addSheetButton; label: "+ Sheet"; quiet: true; visible: !footerBar.narrow; onClicked: promptDialog.ask("sheet") }
 
                 Item { Layout.fillWidth: true }
 
-                FooterButton { label: "+ Row"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.appendRow() }
-                FooterButton { label: "+ Column"; quiet: true; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
-                FooterButton { label: "+ Constant"; quiet: true; onClicked: promptDialog.ask("const") }
-                FooterButton { label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
-                FooterButton { label: "</>"; quiet: true; active: win.showSource; onClicked: win.viewSource(!win.showSource) }
-                FooterButton { label: "?"; quiet: true; onClicked: helpDialog.open() }
+                FooterButton { id: addRowButton; label: "+ Row"; quiet: true; visible: !footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.appendRow() }
+                FooterButton { id: addColumnButton; label: "+ Column"; quiet: true; visible: !footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
+                FooterButton { id: addConstantButton; label: "+ Constant"; quiet: true; visible: !footerBar.narrow; onClicked: promptDialog.ask("const") }
+                FooterButton { id: fnButton; label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
+                FooterButton { id: sourceButton; label: "</>"; quiet: true; active: win.showSource; onClicked: win.viewSource(!win.showSource) }
+                FooterButton { id: helpButton; label: "?"; quiet: true; onClicked: helpDialog.open() }
             }
         }
 

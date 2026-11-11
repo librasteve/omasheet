@@ -10,7 +10,9 @@ omasheet file.omx       # open a file, an XLSX Workbook, a CSV file or Parquet
 `omasheet` with no command opens the app. Needs Qt 6 (`qt6-base`, `qt6-declarative`). The text is the file: every edit
 rewrites the text, and saving writes exactly that.
 
-- One tab per sheet, plus the constants.
+- One tab per sheet, plus the constants. **+ Sheet**, **+ Row**, **+ Column** and
+  **+ Constant** are at the foot; where the window is too narrow for them and the
+  tabs together, they move to the right end of the tabs, which scroll.
 - Two sheets can be shown [side by side](#two-sheets-side-by-side), each in
   a window of its own.
 - The box at the top shows the source of the current cell; the grid shows
