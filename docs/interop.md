@@ -117,6 +117,8 @@ formula that reads one is written with what the constant is.
 
 A workbook has no uncertainty: a `Scientific` value is written as its value, a plain number, and a note says the uncertainties were dropped.
 
+A workbook has no units either: a quantity is written as text, `5kg`, and a note says so. CSV and JSON write the same text, `5kg` or `10.5 ± 0.3kg`, and Parquet writes a column of quantities as text with a note. Nothing that is imported is read as a quantity, so `12g` or `10m` in a CSV stays text: the type is set by declaring a column `Quantity` or `Mass` in the `.omx` file.
+
 A sheet becomes a worksheet whose first row is the header, so a column and a
 row become a cell. Each formula is written for the row it is on:
 

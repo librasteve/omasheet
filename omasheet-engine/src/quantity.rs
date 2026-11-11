@@ -240,10 +240,9 @@ pub fn math(m: MathFn, q: &Quantity) -> Result<Value, String> {
             .map(|q| Value::Quantity(Rc::new(q)))
             .map_err(said),
         "sqrt" => q.root(2).map(value).map_err(said),
-        "cbrt" => q.root(3).map(value).map_err(said),
         name => Err(format!(
             "`{name}` needs a number with no unit, but this is a quantity in {}; \
-             `abs`, `sqrt` and `cbrt` take one",
+             `abs` and `sqrt` take one",
             q.unit()
         )),
     }

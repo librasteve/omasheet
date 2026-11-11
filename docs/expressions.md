@@ -240,6 +240,55 @@ says `uncertain complex not supported` in amber in its bottom bar while the
 cell is selected. A `Scientific` goes to a `Float` with `x.Float`, which keeps
 the value alone.
 
+## Units
+
+A number followed at once by an SI unit is a quantity: `5kg`, `300cm`,
+`9.81m.s^-2`, `20°C`. The number is any number a `Scientific` is, so
+`10.5(3)e-3kg` has its uncertainty, and `5kg ± 100g` is a quantity with one.
+A unit of more than one term is joined with `.`, each term with an optional
+`^` and a whole exponent: `kg.m^2.s^-2`. There is no space and no `/`; a
+negative exponent is `m.s^-1`. Only SI is written in a cell: the symbols
+`g m s A K mol cd`, the named units `Hz N Pa J W C V F Ω S Wb T H Bq Gy Sv kat`
+and `°C`, each with an SI prefix from `q` to `Q`, `kg`, `mm`, `μs`, `GHz`. A
+symbol is case-sensitive, and `ºC`, `µ` and the ohm sign are read as `°C`,
+`μ` and `Ω`. A unit other than these is not a unit: `5ft`, `5L` and `5min` are
+errors, and `5 kg` is a number and a name.
+
+```
+5kg + 300g           5.3kg          the right side is converted to the left's unit
+300g + 5kg           5300g
+2m * 3m              6m^2           a product or a quotient combines the units
+10m / 4s             2.5m.s^-1
+2m ** 3              8m^3           a power takes a whole number
+sqrt(9m ** 2)        9m             a root, where the units allow it
+6m / 3cm             200            no dimension is a plain number
+5kg.to('g')          5000g          to another unit of the dimension
+20°C - 10°C          10K            a temperature goes through kelvin
+5kg + 3m             an error: they measure Mass and Length
+```
+
+A sum, a difference and a comparison need the same dimension. The uncertainty
+propagates as for a `Scientific`; two quantities are equal when they differ by
+no more than their uncertainties together. `abs` and `sqrt` take a
+quantity and the other math functions need a number with no unit. `sum`, `mean`,
+`median`, `min` and `max` of a column of quantities give one, in the unit of
+the first; `std` and `var` do not. `x.to('g')` and `to(x, 'g')` give a
+quantity in another unit, and `x.Float` gives the number of a quantity with no
+dimension.
+
+A `.` after a unit continues it if what follows is a unit, so `5N.m` is a
+newton metre, and ends it if it is a call or a name, so `5kg.abs()` and
+`5m.Float` are the methods.
+
+A prefix and a `.` on their own is a scale, and reads as the number it stands
+for: `1k.` is 1000, `1.5M.` is 1500000 and `5m.` is 0.005. A scale on an exact
+number is exact, so `1.5k.` is the integer 1500. The dot makes it a prefix and
+nothing else, which is why `m.` is milli while `5m` is five metres. Mind a
+stray dot after `m` or `T`: `5m.` is 0.005, not five metres.
+
+A column may be of a quantity type, which is covered under the types in the
+file format.
+
 ## Complex numbers
 
 An imaginary number is written with an `i`, `4i`, and `3+4i` is the sum of

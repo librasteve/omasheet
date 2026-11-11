@@ -29,6 +29,8 @@ OMX is the expression language of Omasheet. An expression has no effects: it rea
 | fraction | `<1/10>` `<2 3/4>` | `Fraction` |
 | imaginary | `4i` | `Complex` |
 | uncertain | `10 ± 0.1` `10.5(3)` `7.297(11)e-3` | `Scientific` |
+| quantity | `5kg` `300cm` `9.81m.s^-2` `10.5(3)e-3kg` `20°C` | `Quantity` |
+| scale | `1k.` `1.5M.` `5m.` | a number: 1000, 1500000, 0.005 |
 | date, time | `2025-01-31` `09:30` `09:30:15.5` | `Date`, `Time` |
 | date and time | `2025-01-31T09:30` `2025-03-01T09:30+01:00` | `Datetime` |
 | duration | `PT1H30M` | `Duration` |

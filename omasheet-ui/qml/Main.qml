@@ -2270,14 +2270,24 @@ ApplicationWindow {
             "Decimal": "'.2f", "Float": ".3g", "Scientific": "\u00b1.3e-3",
             "Date": "%d %b %Y", "Time": "%H:%M", "Datetime": "%d %b %Y %H:%M"
         };
+        // A column of quantities takes a unit of its dimension.
+        if (sheet.columns[c] && sheet.columns[c].unit)
+            return sheet.columns[c].unit;
         return examples[type] || "'.2f";
+    }
+
+    // Whether a column type is a quantity: `Quantity`, or a kind of one.
+    property var quantityNames: file.quantityTypes().split("\n")
+    function isQuantityType(type) {
+        return quantityNames.indexOf(type) >= 0;
     }
 
     // Whether every selected column is of a type that takes a format.
     function allFormattable() {
         for (var c = selLeft; c <= selRight; c++) {
             var column = sheet.columns[c];
-            if (!column || ["Integer", "Hex", "Octal", "Binary", "Decimal", "Float", "Scientific", "Date", "Time", "Datetime"].indexOf(column.type) < 0)
+            if (!column || (["Integer", "Hex", "Octal", "Binary", "Decimal", "Float", "Scientific", "Date", "Time", "Datetime"].indexOf(column.type) < 0
+                            && !win.isQuantityType(column.type)))
                 return false;
         }
         return true;
@@ -5512,6 +5522,15 @@ ApplicationWindow {
         TypeEntry { typeName: "Fraction"; narrower: true }
         TypeEntry { typeName: "Percent"; narrower: true }
         TypeEntry { typeName: "Scientific" }
+        TypeEntry { typeName: "Quantity" }
+        // The kinds of quantity, each a dimension: `Length`, `Mass`, `Force`.
+        Menu {
+            title: "  Kind of quantity"
+            Repeater {
+                model: win.quantityNames.slice(1)
+                TypeEntry { required property string modelData; typeName: modelData; narrower: true }
+            }
+        }
         TypeEntry { typeName: "Float" }
         TypeEntry { typeName: "Complex" }
         TypeEntry { typeName: "String" }

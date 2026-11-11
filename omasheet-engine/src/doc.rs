@@ -95,6 +95,10 @@ pub struct ColumnSnap {
     /// How its values are shown, as its type line writes it: `'.2f`,
     /// `%d %b %Y`.
     pub format: Option<String>,
+    /// The unit a column of quantities is held and shown in: the one its
+    /// format names, or the preferred unit of its type. Empty for any other
+    /// column, and for a `Quantity` that has none.
+    pub unit: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -438,7 +442,15 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
             style.datetime(day as i64 * date::DAY_MICROS + time / date::NANOS_PER_MICRO)
         ),
         "Duration" => "Duration: PnDTnHnMnS, e.g. PT1H30M".into(),
-        _ => String::new(),
+        other => match S::from_name(other) {
+            Some(S::Quantity(id)) => match omasheet_omx::units::preferred(id) {
+                Some(unit) => {
+                    format!("{other}: a number and an SI unit of it, e.g. 5{unit} or 10.5(3){unit}")
+                }
+                None => "Quantity: a number and an SI unit, e.g. 5kg or 9.81m.s^-2".into(),
+            },
+            _ => String::new(),
+        },
     }
 }
 
@@ -3053,9 +3065,13 @@ impl Document {
                 return Err(format!("{} takes no format", column.name));
             };
             let found = match format {
-                Some(text) => match Format::parse(text, ty).ok().filter(|f| f.takes(ty)) {
-                    Some(f) => Some(f),
-                    None => {
+                Some(text) => match Format::parse(text, ty) {
+                    Ok(f) if f.takes(ty) => Some(f),
+                    // A unit that is not one, or of another dimension, says so.
+                    Err(e) if ty.is_quantity() => {
+                        return Err(format!("Not a format: {text}\n{}", e.message));
+                    }
+                    _ => {
                         let takes = takes.replace('`', "");
                         return Err(format!("Not a format: {text}\n{ty} takes {takes}"));
                     }
@@ -4823,6 +4839,15 @@ impl Document {
                         self.text[c.expr_span.start as usize..c.expr_span.end as usize].to_string()
                     }),
                     format: col.format.as_ref().map(|f| f.to_string()),
+                    unit: match (col.ty, &col.format) {
+                        (S::Quantity(_), Some(omasheet_omx::colfmt::Format::Quantity(q))) => {
+                            q.unit.to_string()
+                        }
+                        (S::Quantity(id), _) => omasheet_omx::units::preferred(id)
+                            .map(|u| u.to_string())
+                            .unwrap_or_default(),
+                        _ => String::new(),
+                    },
                 });
                 column_spans.push(computed.map(|ce| ce.expr_span));
                 column_errors_here.push(computed.and_then(|ce| within(ce.expr_span)));
@@ -6951,6 +6976,37 @@ mod tests {
         assert!(!doc.set_column_types(0, &[2], None));
         assert!(doc.undo() && doc.undo());
         assert!(doc.text().contains("Profit : Decimal\n"));
+    }
+
+    #[test]
+    fn a_column_of_quantities_is_set_formatted_and_says_its_unit() {
+        // add-si-units: a kind of quantity is a column type, its format a unit.
+        let src = "sheet S\n\n| Weight |\n| ------ |\n| 5kg |\n| 300g |\n";
+        let mut doc = Document::from_text(src);
+        assert_eq!(doc.snapshot().sheets[0].columns[0].unit, "");
+        assert!(doc.set_column_types(0, &[0], Some("Mass")));
+        let column = &doc.snapshot().sheets[0].columns[0];
+        assert!(column.declared && column.ty == "Mass");
+        // The unit it is held in, until it is told another.
+        assert_eq!(column.unit, "kg");
+        assert!(doc.text().contains("Weight : Mass\n"), "{}", doc.text());
+        assert!(doc.set_column_format(0, &[0], Some("g")).is_ok());
+        assert!(doc.text().contains("Weight : Mass[g]"), "{}", doc.text());
+        let snap = doc.snapshot();
+        let column = &snap.sheets[0].columns[0];
+        assert_eq!(column.unit, "g");
+        assert_eq!(snap.sheets[0].rows[0][0].display, "5000g");
+        assert_eq!(snap.sheets[0].rows[1][0].display, "300g");
+        // A unit of another dimension is refused, and the format kept.
+        let why = doc.set_column_format(0, &[0], Some("m")).unwrap_err();
+        assert!(why.contains("is a unit of Length"), "{why}");
+        assert!(doc.text().contains("Mass[g]"));
+        // A column that is retyped to another kind drops a unit it cannot keep.
+        assert!(doc.set_column_types(0, &[0], Some("Length")));
+        assert!(!doc.text().contains("Mass"), "{}", doc.text());
+        // And one that has no unit says none.
+        assert!(doc.set_column_types(0, &[0], Some("Quantity")));
+        assert_eq!(doc.snapshot().sheets[0].columns[0].unit, "");
     }
 
     #[test]

@@ -25,11 +25,11 @@
 - Demo: a `Mass[g]` column shows `5000g` (done)
 
 ## 4. Interop (`xlsx-interop`)
-- [ ] 4.1 CSV and JSON text, import never reads a quantity (D236)
-- [ ] 4.2 Parquet struct of value, uncertainty and unit
-- [ ] 4.3 XLSX writes text, with a note
-- Demo: export and import a units file
+- [x] 4.1 CSV and JSON text, import never reads a quantity (D236)
+- [ ] 4.2 Parquet struct of value, uncertainty and unit (not done: a column of quantities is written as text, with a note)
+- [x] 4.3 XLSX writes text, with a note
+- Demo: `omasheet export examples/units.omx --csv` writes `5kg` (done)
 
 ## 5. App and docs
-- [ ] 5.1 Type menu and unit picker
-- [ ] 5.2 `docs/`, `skill/omasheet/SKILL.md`
+- [x] 5.1 Type menu and unit picker
+- [x] 5.2 `docs/`, `skill/omasheet/SKILL.md`

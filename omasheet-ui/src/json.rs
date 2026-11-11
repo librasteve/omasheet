@@ -106,6 +106,8 @@ pub fn snapshot(snap: &Snapshot) -> String {
             field(out, "formula", c.formula.as_deref().unwrap_or(""));
             out.push(',');
             field(out, "format", c.format.as_deref().unwrap_or(""));
+            out.push(',');
+            field(out, "unit", &c.unit);
             out.push_str(&format!(
                 ",\"computed\":{},\"declared\":{}}}",
                 c.formula.is_some(),
@@ -214,7 +216,7 @@ mod tests {
         ));
         assert!(json.contains("\"d\":\"say \\\"hi\\\"\""), "{json}");
         assert!(json.contains(
-            "\"formula\":\"B * 2\",\"format\":\"\",\"computed\":true,\"declared\":false"
+            "\"formula\":\"B * 2\",\"format\":\"\",\"unit\":\"\",\"computed\":true,\"declared\":false"
         ));
         assert!(json.contains("\"d\":\"4\""));
         assert!(json.ends_with("\"consts\":[],\"problems\":[]}"));

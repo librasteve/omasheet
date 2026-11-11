@@ -417,6 +417,10 @@ pub mod qobject {
         /// What can be typed into a column of the named type.
         #[qinvokable]
         fn entry_hint(self: &File, ty: &QString) -> QString;
+        /// The names of the kinds of quantity a column may be declared as,
+        /// `Quantity` first, one to a line.
+        #[qinvokable]
+        fn quantity_types(self: &File) -> QString;
         /// The text size the desktop is set to, in pixels; 0 where the
         /// desktop does not say.
         #[qinvokable]
@@ -1629,16 +1633,23 @@ impl qobject::File {
     fn entry_hint(&self, ty: &QString) -> QString {
         // Only where the way to write a value is not plain from its type.
         let ty = ty.to_string();
-        if !matches!(
-            ty.as_str(),
-            "Date" | "Time" | "Datetime" | "Duration" | "Boolean" | "Url" | "Email" | "Uuid"
-        ) {
+        let quantity = omasheet_engine::omx::S::from_name(&ty).is_some_and(|s| s.is_quantity());
+        if !quantity
+            && !matches!(
+                ty.as_str(),
+                "Date" | "Time" | "Datetime" | "Duration" | "Boolean" | "Url" | "Email" | "Uuid"
+            )
+        {
             return QString::default();
         }
         // The header shows the type already.
         let hint = entry_hint(&style(), &ty);
         let hint = hint.strip_prefix(&format!("{ty}: ")).unwrap_or(&hint);
         QString::from(hint)
+    }
+
+    fn quantity_types(&self) -> QString {
+        QString::from(&omasheet_engine::omx::types::QId::names().join("\n"))
     }
 
     fn selection_summary(&self, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {
