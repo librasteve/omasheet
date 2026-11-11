@@ -22,7 +22,9 @@ rewrites the text, and saving writes exactly that.
   handle. The list starts on the type the column has now, or **Clear type**; a
   cell that does not fit a declared type is an error. Typing in the box
   narrows the list, Tab completes what is typed, Up and Down move along it,
-  Enter takes the one marked and Esc closes it. The kinds of quantity are
+  a click marks an entry, and **Apply**, Enter or a double click takes it
+  and leaves the box open to try another; **Close**, Esc or a click
+  elsewhere closes it. The kinds of quantity are
   filed under SI Base, Dimensional, Mechanical, Electromagnetic,
   Thermodynamic, Radiation and Other, each heading opening and
   closing its group, with the unit each is held in beside it. The caret

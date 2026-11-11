@@ -5503,7 +5503,9 @@ ApplicationWindow {
     // A list to pick from, in a box beside the column's head, as the filter box
     // is: a handle to drag it by, a search field that narrows the list as it is
     // typed into and that Tab completes, Up and Down to move, Enter to take
-    // the one marked, Esc to close. Entries may be filed in groups, each with a
+    // the one marked, Esc to close. A click marks an entry, and Apply, Enter or
+    // a double click takes it and stays open, to try another; Close, Esc, or a
+    // click elsewhere, leaves what was last applied. Entries may be filed in groups, each with a
     // heading that opens and closes it; a search shows every group's matches.
     // `provider(text)` gives the entries for what is typed, `{spec, label,
     // hint, group, complete}` in order, and `fault` a message to show;
@@ -5619,8 +5621,32 @@ ApplicationWindow {
                 listView.currentIndex = Math.min(keep, rows.length - 1);
                 return;
             }
-            close();
-            picked(row.spec);
+            // An entry is only marked: Apply takes it.
+            listView.currentIndex = index;
+        }
+        // The entry marked, if it is one and is not what the columns have.
+        readonly property var marked: listView.currentIndex >= 0 && listView.currentIndex < rows.length
+            && !rows[listView.currentIndex].header ? rows[listView.currentIndex] : null
+        readonly property bool changed: marked !== null && marked.spec !== current
+        // Take the entry marked, and stay open to try another.
+        function apply() {
+            if (!changed)
+                return;
+            var spec = marked.spec;
+            current = spec;
+            picked(spec);
+            refresh();
+        }
+        // Enter: a heading opens or closes; an entry is applied; with the
+        // one the columns have marked already, close.
+        function submit() {
+            var index = listView.currentIndex;
+            if (index >= 0 && index < rows.length && rows[index].header)
+                take(index);
+            else if (changed)
+                apply();
+            else
+                close();
         }
         // Complete what is typed: as far as the entries that begin with it
         // agree, then to the one marked.
@@ -5776,8 +5802,8 @@ ApplicationWindow {
                     // by opening them: they are entries of the list too.
                     Keys.onDownPressed: listView.currentIndex = Math.min(listView.count - 1, listView.currentIndex + 1)
                     Keys.onUpPressed: listView.currentIndex = Math.max(0, listView.currentIndex - 1)
-                    Keys.onReturnPressed: picker.take(listView.currentIndex)
-                    Keys.onEnterPressed: picker.take(listView.currentIndex)
+                    Keys.onReturnPressed: picker.submit()
+                    Keys.onEnterPressed: picker.submit()
                     Keys.onTabPressed: picker.complete()
                     Text {
                         anchors.fill: parent
@@ -5843,6 +5869,11 @@ ApplicationWindow {
                         anchors.fill: parent
                         hoverEnabled: true
                         onClicked: picker.take(row.index)
+                        onDoubleClicked: {
+                            picker.take(row.index);
+                            if (!row.head)
+                                picker.apply();
+                        }
                     }
                 }
                 ScrollBar.vertical: ScrollBar {}
@@ -5856,6 +5887,26 @@ ApplicationWindow {
                 color: picker.fault.length > 0 ? win.errorColor : win.mutedColor
                 font.family: win.font.family
                 font.pixelSize: win.captionSize
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 2
+                spacing: 6
+                Item { Layout.fillWidth: true }
+                // Lit while the entry marked is not what the columns have;
+                // Close is the filled one otherwise.
+                PopupButton {
+                    text: "Apply"
+                    primary: picker.changed
+                    enabled: picker.changed
+                    opacity: enabled ? 1 : 0.4
+                    onClicked: picker.apply()
+                }
+                PopupButton {
+                    text: "Close"
+                    primary: !picker.changed
+                    onClicked: picker.close()
+                }
             }
         }
     }
