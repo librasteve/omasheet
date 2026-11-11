@@ -5525,8 +5525,11 @@ ApplicationWindow {
         // The column whose head is marked while the box is open.
         property int col: 0
         signal picked(string spec)
+        // How much wider and taller than usual the box is.
+        property real wider: 1
+        property real taller: 1
         padding: 6
-        width: Math.round(win.fontSize * 17)
+        width: Math.min(Math.round(win.fontSize * 17 * wider), win.width - 16)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: grid.forceActiveFocus()
 
@@ -5737,7 +5740,8 @@ ApplicationWindow {
             ListView {
                 id: listView
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(contentHeight, Math.round(win.fontSize * 22))
+                Layout.preferredHeight: Math.min(contentHeight, Math.round(win.fontSize * 22 * picker.taller),
+                    Math.round(win.height * 0.7))
                 clip: true
                 model: picker.rows
                 boundsBehavior: Flickable.StopAtBounds
@@ -5850,7 +5854,9 @@ ApplicationWindow {
     // it is typed once it is one.
     PickerPopup {
         id: unitPopup
-        placeholder: "Search units, or type one: mg"
+        wider: 1.4
+        taller: 1.8
+        placeholder: "Search or type e.g. Mass[kg]..."
         provider: function(text) {
             var out = [];
             var lines = file.unitChoices().split("\n");
@@ -5860,10 +5866,13 @@ ApplicationWindow {
                     continue;
                 out.push({spec: f[1], label: f[1], complete: f[1], hint: f[2], group: f[0]});
             }
-            if (text.length > 0 && !out.some(function(e) { return e.spec === text; })) {
-                var problem = file.unitProblem(text);
+            // `Mass[kg]` or `kg`: the unit is what is taken.
+            var open = text.indexOf("[");
+            var typed = open > 0 && text.endsWith("]") ? text.substring(open + 1, text.length - 1) : text;
+            if (text.length > 0 && !out.some(function(e) { return e.spec === typed; })) {
+                var problem = file.unitProblem(typed);
                 if (problem.length === 0)
-                    out.unshift({spec: text, label: text, hint: "use as typed", keep: true});
+                    out.unshift({spec: typed, label: typed, hint: "use as typed", keep: true});
                 else
                     unitPopup.problem = problem;
             }
