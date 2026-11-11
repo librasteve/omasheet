@@ -5912,8 +5912,8 @@ ApplicationWindow {
     }
 
     // The types a column may be declared as, from `Set type…`: the one it has
-    // is ticked. The kinds of quantity are filed as the SI files them, with the
-    // unit each is held in beside it; the unit itself is `Set unit…`'s.
+    // is ticked. A quantity is just `Quantity` here: its kind, `Mass` or
+    // `Force`, comes from the unit chosen in `Set unit…`.
     PickerPopup {
         id: typePopup
         placeholder: "Search types"
@@ -5932,14 +5932,8 @@ ApplicationWindow {
                 out.push({spec: pair[0], label: (pair[1] ? "   " : "") + pair[0], complete: pair[0]});
             };
             plainTypes.forEach(add);
-            var kinds = file.quantityKinds().split("\n");
-            out.push({spec: "Quantity", label: "Quantity", complete: "Quantity", hint: "any unit"});
-            for (var i = 0; i < kinds.length; i++) {
-                var f = kinds[i].split("\t");
-                if (f.length < 2 || f[1] === "Quantity")
-                    continue;
-                out.push({spec: f[1], label: f[1], complete: f[1], hint: f[2], group: f[0]});
-            }
+            // The kinds of quantity, `Mass` and the rest, are `Set unit…`'s.
+            out.push({spec: "Quantity", label: "Quantity", complete: "Quantity"});
             laterTypes.forEach(add);
             return out;
         }

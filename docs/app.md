@@ -24,14 +24,13 @@ rewrites the text, and saving writes exactly that.
   narrows the list, Tab completes what is typed, Up and Down move along it,
   a click marks an entry, and **Apply**, Enter or a double click takes it
   and leaves the box open to try another; **Close**, Esc or a click
-  elsewhere closes it. The kinds of quantity are
-  filed under SI Base, Dimensional, Mechanical, Electromagnetic,
-  Thermodynamic, Radiation and Other, each heading opening and
-  closing its group, with the unit each is held in beside it. The caret
-  beside the search box closes every group, or opens them all where all
-  are closed.
-- **Set unit…** is the same kind of box for the units, `kg`, `N`, `m^2`, or
-  any unit typed, `mg` or `kN.m`. It is there for every column: the column
+  elsewhere closes it. A quantity is just
+  `Quantity` here: its kind comes from **Set unit…**.
+- **Set unit…** is the same kind of box for the units, filed under SI Base,
+  Dimensional, Mechanical, Electromagnetic, Thermodynamic, Radiation and
+  Other, each heading opening and closing its group, with a caret beside the
+  search box that closes every group or opens them all. It lists `kg`, `N`, `m^2`, or any unit typed,
+  `mg` or `kN.m`. It is there for every column: the column
   becomes a column of the kind of quantity the unit is of (`mg` makes it
   `Mass[mg]`), and a type it had before goes.
 - The same menu has **Set format…** for a column of numbers, dates or
