@@ -2249,15 +2249,19 @@ ApplicationWindow {
             selectCell(curRow, col, false);
     }
 
-    // The type the selected columns all have, if there is one: with
-    // `declared`, only if each is declared as it.
-    function sharedType(declared) {
+    // The type the selected columns all have, if there is one, and for
+    // quantities their unit, `Mass[g]`: with `declared`, only if each is
+    // declared as it.
+    function sharedSpec(declared) {
         var found = "";
         for (var c = selLeft; c <= selRight; c++) {
             var column = sheet.columns[c];
-            if (!column || (declared && !column.declared) || (c > selLeft && column.type !== found))
+            if (!column || (declared && !column.declared))
                 return "";
-            found = column.type;
+            var spec = column.type + (isQuantityType(column.type) && column.unit ? "[" + column.unit + "]" : "");
+            if (c > selLeft && spec !== found)
+                return "";
+            found = spec;
         }
         return found;
     }
@@ -4808,15 +4812,6 @@ ApplicationWindow {
         font.features: win.font.features
         font.pixelSize: win.smallSize
     }
-    // A type to declare the selected columns as: ticked if they are.
-    component TypeEntry: MenuEntry {
-        required property string typeName
-        /// A narrower kind of the type above it, shown indented under it.
-        property bool narrower: false
-        text: (typeMenu.current === typeName ? "\u2713 " : "  ")
-              + (narrower ? "   " : "") + typeName
-        onTriggered: win.setColumnTypes(typeName)
-    }
     component MenuRule: MenuSeparator {
         height: visible ? implicitHeight : 0
         topPadding: 3
@@ -5300,7 +5295,7 @@ ApplicationWindow {
         onClosed: {
             if (promptDialog.visible)
                 promptDialog.takeFocus();
-            else if (!typeMenu.visible && !columnPopup.visible)
+            else if (!typePopup.visible && !columnPopup.visible)
                 grid.forceActiveFocus();
         }
         // Close set, to fit a long menu on a small window.
@@ -5451,10 +5446,8 @@ ApplicationWindow {
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.sheet.columns.length > 0
             onTriggered: {
-                typeMenu.current = win.sharedType(true);
-                typeMenu.suggested = win.sharedType(false);
                 // Where this menu was.
-                typeMenu.popup(cellMenu.parent, cellMenu.x, cellMenu.y);
+                typePopup.openAt(cellMenu.parent, cellMenu.x, cellMenu.y);
             }
         }
         MenuEntry {
@@ -5496,52 +5489,197 @@ ApplicationWindow {
     }
 
     // The types a column may be declared as, from `Set type`: the one it
-    // has is ticked.
-    Menu {
-        id: typeMenu
+    // has is ticked. Typing narrows the list to the types with that in their
+    // name; `Mass[mg]`, a kind of quantity and the unit its column holds, is
+    // offered when it is typed whole. Up and Down move, Enter takes the one
+    // marked, Esc closes.
+    Popup {
+        id: typePopup
         property string current: ""
         // The type the columns have now, declared or taken from their
-        // cells: the arrow keys start from it.
+        // cells: the list starts at it.
         property string suggested: ""
-        onOpened: {
-            for (var i = 0; i < count; i++) {
-                if (itemAt(i).typeName === suggested)
-                    currentIndex = i;
-            }
-        }
+        // The entries shown, `{spec, label, narrower}`, and what is wrong with
+        // a type written in brackets, if it is.
+        property var entries: []
+        property string fault: ""
+        padding: 6
+        width: Math.round(win.fontSize * 15)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: grid.forceActiveFocus()
-        topPadding: 4
-        bottomPadding: 4
-        width: Math.round(win.fontSize * 11)
 
-        TypeEntry { typeName: "Integer" }
-        TypeEntry { typeName: "Binary"; narrower: true }
-        TypeEntry { typeName: "Octal"; narrower: true }
-        TypeEntry { typeName: "Hex"; narrower: true }
-        TypeEntry { typeName: "Decimal" }
-        TypeEntry { typeName: "Fraction"; narrower: true }
-        TypeEntry { typeName: "Percent"; narrower: true }
-        TypeEntry { typeName: "Scientific" }
-        TypeEntry { typeName: "Quantity" }
-        // The kinds of quantity, each a dimension: `Length`, `Mass`, `Force`.
-        Menu {
-            title: "  Kind of quantity"
-            Repeater {
-                model: win.quantityNames.slice(1)
-                TypeEntry { required property string modelData; typeName: modelData; narrower: true }
+        readonly property var plain: [
+            {spec: "Integer"}, {spec: "Binary", narrower: true}, {spec: "Octal", narrower: true},
+            {spec: "Hex", narrower: true}, {spec: "Decimal"}, {spec: "Fraction", narrower: true},
+            {spec: "Percent", narrower: true}, {spec: "Scientific"}, {spec: "@quantities"},
+            {spec: "Float"}, {spec: "Complex"}, {spec: "String"}, {spec: "Email", narrower: true},
+            {spec: "Url", narrower: true}, {spec: "Uuid", narrower: true}, {spec: "Boolean"},
+            {spec: "Datetime"}, {spec: "Date", narrower: true}, {spec: "Duration", narrower: true},
+            {spec: "Time", narrower: true}
+        ]
+        // The name of a type, as the column's own says it, from `Mass[kg]`.
+        function nameOf(spec) {
+            var at = spec.indexOf("[");
+            return at < 0 ? spec : spec.substring(0, at);
+        }
+        // `mass[mg]` as `Mass[mg]`: the name's case is the type's.
+        function exact(text) {
+            var name = nameOf(text);
+            var all = win.quantityNames;
+            for (var i = 0; i < all.length; i++) {
+                if (all[i].toLowerCase() === name.trim().toLowerCase())
+                    return all[i] + text.substring(name.length);
+            }
+            return text;
+        }
+        function refresh() {
+            var want = search.text.trim().toLowerCase();
+            var list = [];
+            var specs = file.quantitySpecs().split("\n");
+            for (var i = 0; i < plain.length; i++) {
+                if (plain[i].spec !== "@quantities") {
+                    list.push({spec: plain[i].spec, label: plain[i].spec, narrower: !!plain[i].narrower});
+                    continue;
+                }
+                for (var k = 0; k < specs.length; k++)
+                    list.push({spec: specs[k], label: specs[k], narrower: k > 0});
+            }
+            var shown = list.filter(function(e) {
+                return want.length === 0 || e.label.toLowerCase().indexOf(want) >= 0;
+            });
+            fault = "";
+            // A unit typed after a kind of quantity: offered as it is, once
+            // it is one.
+            if (want.indexOf("[") > 0) {
+                var typed = exact(search.text.trim());
+                var problem = file.typeProblem(typed);
+                if (problem.length === 0) {
+                    if (!shown.some(function(e) { return e.spec === typed; }))
+                        shown.unshift({spec: typed, label: typed, narrower: false});
+                } else if (want.endsWith("]"))
+                    fault = problem;
+            }
+            entries = shown;
+            var at = 0;
+            for (var j = 0; j < shown.length; j++) {
+                if (shown[j].spec === suggested) {
+                    at = j;
+                    break;
+                }
+            }
+            listView.currentIndex = shown.length > 0 ? at : -1;
+        }
+        function openAt(item, atX, atY) {
+            current = win.sharedSpec(true);
+            suggested = win.sharedSpec(false);
+            parent = item;
+            x = atX;
+            y = atY;
+            search.text = "";
+            refresh();
+            open();
+            search.forceActiveFocus();
+            listView.positionViewAtIndex(Math.max(0, listView.currentIndex), ListView.Center);
+        }
+        function choose(index) {
+            if (index < 0 || index >= entries.length)
+                return;
+            var spec = entries[index].spec;
+            close();
+            win.setColumnTypes(spec);
+        }
+
+        background: Rectangle {
+            color: win.overColor
+            border.color: win.lineColor
+            radius: 3
+        }
+        contentItem: ColumnLayout {
+            spacing: 4
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: Math.round(win.fontSize * 1.9)
+                color: "transparent"
+                radius: 2
+                border.color: typePopup.fault.length > 0 ? win.errorColor
+                    : search.activeFocus ? win.accentColor : win.lineColor
+                TextInput {
+                    id: search
+                    anchors.fill: parent
+                    anchors.leftMargin: 6
+                    anchors.rightMargin: 6
+                    verticalAlignment: TextInput.AlignVCenter
+                    clip: true
+                    color: win.textColor
+                    selectionColor: win.selectionFill
+                    selectByMouse: true
+                    font.family: win.font.family
+                    font.features: win.font.features
+                    font.pixelSize: win.smallSize
+                    onTextChanged: typePopup.refresh()
+                    Keys.onDownPressed: listView.currentIndex = Math.min(listView.count - 1, listView.currentIndex + 1)
+                    Keys.onUpPressed: listView.currentIndex = Math.max(0, listView.currentIndex - 1)
+                    Keys.onReturnPressed: typePopup.choose(listView.currentIndex)
+                    Keys.onEnterPressed: typePopup.choose(listView.currentIndex)
+                    Text {
+                        anchors.fill: parent
+                        verticalAlignment: Text.AlignVCenter
+                        visible: search.text.length === 0
+                        text: "Search, or Mass[mg]"
+                        color: win.mutedColor
+                        font: search.font
+                    }
+                }
+            }
+            ListView {
+                id: listView
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(contentHeight, Math.round(win.fontSize * 22))
+                clip: true
+                model: typePopup.entries
+                boundsBehavior: Flickable.StopAtBounds
+                currentIndex: -1
+                delegate: Rectangle {
+                    id: row
+                    required property int index
+                    required property var modelData
+                    readonly property bool ticked: typePopup.current === modelData.spec
+                    width: ListView.view.width
+                    height: Math.round(win.fontSize * 1.7)
+                    radius: 3
+                    color: ListView.isCurrentItem
+                        ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.22)
+                        : rowArea.containsMouse ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.08)
+                        : "transparent"
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: 8 + (row.modelData.narrower ? Math.round(win.fontSize * 1.2) : 0)
+                        text: (row.ticked ? "\u2713 " : "") + row.modelData.label
+                        color: win.textColor
+                        font.family: win.font.family
+                        font.features: win.font.features
+                        font.pixelSize: win.smallSize
+                    }
+                    MouseArea {
+                        id: rowArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: typePopup.choose(row.index)
+                    }
+                }
+                ScrollBar.vertical: ScrollBar {}
+            }
+            Text {
+                visible: typePopup.entries.length === 0 || typePopup.fault.length > 0
+                Layout.fillWidth: true
+                Layout.maximumWidth: typePopup.availableWidth
+                wrapMode: Text.Wrap
+                text: typePopup.fault.length > 0 ? typePopup.fault : "No type matches"
+                color: typePopup.fault.length > 0 ? win.errorColor : win.mutedColor
+                font.family: win.font.family
+                font.pixelSize: win.captionSize
             }
         }
-        TypeEntry { typeName: "Float" }
-        TypeEntry { typeName: "Complex" }
-        TypeEntry { typeName: "String" }
-        TypeEntry { typeName: "Email"; narrower: true }
-        TypeEntry { typeName: "Url"; narrower: true }
-        TypeEntry { typeName: "Uuid"; narrower: true }
-        TypeEntry { typeName: "Boolean" }
-        TypeEntry { typeName: "Datetime" }
-        TypeEntry { typeName: "Date"; narrower: true }
-        TypeEntry { typeName: "Duration"; narrower: true }
-        TypeEntry { typeName: "Time"; narrower: true }
     }
 
     // Right-click on a sheet's tab.

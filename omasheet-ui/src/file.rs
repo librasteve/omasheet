@@ -8,7 +8,7 @@ use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QUrl};
 use omasheet_engine::datefmt::Names;
-use omasheet_engine::doc::{BLANK, PAGED_ROWS, entry_hint};
+use omasheet_engine::doc::{BLANK, PAGED_ROWS, entry_hint, type_spec_problem};
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::{Document, Options, locale};
 use omasheet_interop::parquet;
@@ -421,6 +421,13 @@ pub mod qobject {
         /// `Quantity` first, one to a line.
         #[qinvokable]
         fn quantity_types(self: &File) -> QString;
+        /// The same, each as the picker offers it with the unit it holds:
+        /// `Mass[kg]`, one to a line, `Quantity` first and bare.
+        #[qinvokable]
+        fn quantity_specs(self: &File) -> QString;
+        /// What is wrong with `spec` as a column type, `Mass[g]`, or empty.
+        #[qinvokable]
+        fn type_problem(self: &File, spec: &QString) -> QString;
         /// The text size the desktop is set to, in pixels; 0 where the
         /// desktop does not say.
         #[qinvokable]
@@ -1650,6 +1657,22 @@ impl qobject::File {
 
     fn quantity_types(&self) -> QString {
         QString::from(&omasheet_engine::omx::types::QId::names().join("\n"))
+    }
+
+    fn quantity_specs(&self) -> QString {
+        use omasheet_engine::omx::{types::QId, units::preferred};
+        let specs: Vec<String> = QId::names()
+            .into_iter()
+            .map(|name| match QId::from_name(&name).and_then(preferred) {
+                Some(unit) => format!("{name}[{unit}]"),
+                None => name,
+            })
+            .collect();
+        QString::from(&specs.join("\n"))
+    }
+
+    fn type_problem(&self, spec: &QString) -> QString {
+        QString::from(&type_spec_problem(&spec.to_string()))
     }
 
     fn selection_summary(&self, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {

@@ -1811,6 +1811,41 @@ fn reformatted(text: &str, l: &SchemaLine, format: Option<&Format>) -> String {
     out
 }
 
+/// A type as the picker names it: `Decimal`, or `Mass[g]`, a quantity with
+/// the unit its column holds. The unit the type holds anyway is no format
+/// (`Mass[kg]` is `Mass`), and the second of the pair is `Some(None)` for
+/// it, so that a unit set before goes. `Err` says what is wrong.
+pub fn type_spec(spec: &str) -> Result<(S, Option<Option<Format>>), String> {
+    let (name, unit) = match spec.split_once('[') {
+        Some((name, rest)) => match rest.strip_suffix(']') {
+            Some(unit) => (name, Some(unit)),
+            None => return Err(format!("`{spec}` has no closing `]`")),
+        },
+        None => (spec, None),
+    };
+    let ty = S::from_name(name.trim()).ok_or_else(|| format!("`{name}` is not a type"))?;
+    let Some(unit) = unit else {
+        return Ok((ty, None));
+    };
+    let format = Format::parse(unit, ty).map_err(|e| e.message)?;
+    if !format.takes(ty) {
+        return Err(format!("{ty} takes no unit"));
+    }
+    // The type's own unit is written as the type alone.
+    if let (S::Quantity(id), Format::Quantity(q)) = (ty, &format)
+        && q.number.is_none()
+        && omasheet_omx::units::preferred(id).as_ref() == Some(&q.unit)
+    {
+        return Ok((ty, Some(None)));
+    }
+    Ok((ty, Some(Some(format))))
+}
+
+/// What is wrong with `spec` as a type, or `""`.
+pub fn type_spec_problem(spec: &str) -> String {
+    type_spec(spec).err().unwrap_or_default()
+}
+
 /// `text` with the type line of column `name` of a sheet set to `ty`, or
 /// taken out. Type lines whose colons are in line stay so.
 fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
@@ -3016,10 +3051,12 @@ impl Document {
         if self.no_cells(sheet).is_some() && !self.decorators_only(sheet, cols) {
             return false;
         }
-        let ty = match ty.map(S::from_name) {
-            Some(None) => return false,
-            Some(found) => found,
-            None => None,
+        // `Mass[g]`: a type and the format, for a quantity its unit, that the
+        // column is declared with in the one step.
+        let (ty, format) = match ty.map(type_spec) {
+            Some(Err(_)) => return false,
+            Some(Ok((ty, format))) => (Some(ty), format),
+            None => (None, None),
         };
         let Some(snap) = self.snapshot.sheets.get(sheet) else {
             return false;
@@ -3036,6 +3073,18 @@ impl Document {
                 return false;
             };
             text = retyped(&text, decl, name, ty);
+            if ty.is_some()
+                && let Some(format) = &format
+            {
+                let ast = parse_file(&text, 0, &mut Vec::new());
+                let Some(line) = self
+                    .sheet_decl(&ast, sheet)
+                    .and_then(|d| d.schema.iter().find(|l| &l.name == name))
+                else {
+                    return false;
+                };
+                text = reformatted(&text, line, format.as_ref());
+            }
         }
         self.commit(text)
     }
@@ -7009,6 +7058,30 @@ mod tests {
         // And one that has no unit says none.
         assert!(doc.set_column_types(0, &[0], Some("Quantity")));
         assert_eq!(doc.snapshot().sheets[0].columns[0].unit, "");
+    }
+
+    #[test]
+    fn a_type_and_its_unit_are_set_in_one_step() {
+        let src = "sheet S\n\n| Dose |\n| ---- |\n| 5mg |\n| 2g |\n";
+        let mut doc = Document::from_text(src);
+        assert!(doc.set_column_types(0, &[0], Some("Mass[mg]")));
+        assert!(doc.text().contains("Dose : Mass[mg]"), "{}", doc.text());
+        assert_eq!(doc.snapshot().sheets[0].rows[1][0].display, "2000mg");
+        // One step to undo.
+        assert!(doc.undo());
+        assert!(!doc.text().contains("Mass"), "{}", doc.text());
+        // The unit the type holds anyway is the type alone, and takes a unit
+        // set before away.
+        assert!(doc.set_column_types(0, &[0], Some("Mass[mg]")));
+        assert!(doc.set_column_types(0, &[0], Some("Mass[kg]")));
+        assert!(doc.text().contains("Dose : Mass\n"), "{}", doc.text());
+        // Not a unit of it, or not a type, changes nothing.
+        let before = doc.text().to_string();
+        assert!(!doc.set_column_types(0, &[0], Some("Mass[m]")));
+        assert!(!doc.set_column_types(0, &[0], Some("Mass[")));
+        assert_eq!(doc.text(), before);
+        assert!(type_spec_problem("Mass[m]").contains("Length"));
+        assert_eq!(type_spec_problem("Length[cm]"), "");
     }
 
     #[test]

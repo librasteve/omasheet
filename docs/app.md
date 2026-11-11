@@ -17,9 +17,14 @@ rewrites the text, and saving writes exactly that.
   the value.
 - Under its name a column shows its type: muted if it comes from the
   cells, plain if it is declared, and after `:=` in a formula column.
-  Right-click a column's header to **Set type…**, which starts on the type
-  the column has now, or **Clear type**; a cell that does not fit a
-  declared type is an error.
+  Right-click a column's header to **Set type…**, a list that starts on the
+  type the column has now, or **Clear type**; a cell that does not fit a
+  declared type is an error. Typing in the box above the list narrows it
+  to the types with that in their name. A kind of quantity is listed with
+  the unit its column holds, `Mass[kg]`, and a unit typed after one,
+  `Mass[mg]`, is offered once it is a unit of that kind, so the type and
+  the unit are set in one step. Up and Down move along the list, Enter
+  takes the one marked and Esc closes it.
 - The same menu has **Set format…** for a column of numbers, dates or
   times, which shows its cells in a format without changing them, and **Clear
   format**. The prompt suggests one that fits the type: `'.2f` for a
