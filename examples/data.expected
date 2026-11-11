@@ -39,3 +39,11 @@ Name | Value
 -----|--------
 size | 6560GiB
 free | 5156GiB
+
+sheet Drives
+
+Drive | Density
+------|------------
+old   | 100Gb.m^-2
+new   | 8000Gb.m^-2
+bare  | 500Gb.m^-2

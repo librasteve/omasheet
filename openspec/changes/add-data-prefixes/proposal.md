@@ -6,7 +6,7 @@ Sizes and rates of data are written in two families of prefix, the SI ones (`kB`
 
 ## What Changes
 
-- **units** — ADDED: the bit `b` and the byte `B` (eight bits), each taking the SI prefixes and the binary prefixes `Ki Mi Gi Ti Pi Ei Zi Yi Ri Qi`; rates by combination (`MiB.s^-1`, `kb.s^-1`) with no unit of their own; the scale literal with a binary prefix (`1Ki.` is 1024); the quantity types `Information` and `DataRate`
+- **units** — ADDED: the bit `b` and the byte `B` (eight bits), each taking the SI prefixes and the binary prefixes `Ki Mi Gi Ti Pi Ei Zi Yi Ri Qi`; rates by combination (`MiB.s^-1`, `kb.s^-1`) with no unit of their own; the scale literal with a binary prefix (`1Ki.` is 1024); the quantity types `Information`, `DataRate` and `InformationDensity`
 
 ## Impact
 

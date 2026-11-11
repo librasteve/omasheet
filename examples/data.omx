@@ -51,3 +51,16 @@ sheet Totals
 | ----- | --------------------- |
 | size  | = Disks.Size.sum()    |
 | free  | = Disks.Free.sum()    |
+
+# Data over an area, as a disk drive's: `InformationDensity` holds `b.m^-2`.
+sheet Drives
+
+Drive   : String
+Density : InformationDensity[Gb.m^-2]
+
+| Drive | Density     |
+| ----- | ----------- |
+| old   | 100Gb.m^-2  |
+| new   | 1TB.m^-2    |
+| bare  | 500         |
+
