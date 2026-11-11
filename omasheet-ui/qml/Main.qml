@@ -5516,6 +5516,10 @@ ApplicationWindow {
         // What the columns have now: ticked, and the list starts at it.
         property string current: ""
         property var provider: function(text) { return []; }
+        // What the columns have now, as `current` is: given by the picker that
+        // uses this, so that an undo or redo, made while the box is open,
+        // moves the tick to what it brought back.
+        property var now: function() { return ""; }
         property string fault: ""
         // What is wrong with what is typed, for the provider to say; shown
         // where nothing in the list matches.
@@ -5534,6 +5538,19 @@ ApplicationWindow {
         width: Math.min(Math.round(win.fontSize * 17 * wider), win.width - 16)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: grid.forceActiveFocus()
+
+        Connections {
+            target: win
+            function onSnapChanged() {
+                if (!picker.visible)
+                    return;
+                var n = picker.now();
+                if (n !== picker.current) {
+                    picker.current = n;
+                    picker.refresh();
+                }
+            }
+        }
 
         function groupOf(spec) {
             for (var i = 0; i < entries.length; i++) {
@@ -5798,6 +5815,33 @@ ApplicationWindow {
                     font.features: win.font.features
                     font.pixelSize: win.smallSize
                     onTextChanged: picker.refresh()
+                    // Undo and redo are the document's, for what was just
+                    // applied, without waiting for the box to close: while
+                    // nothing is typed there is no typing of its own to undo.
+                    function historyKey(event) {
+                        if (search.text !== "")
+                            return "";
+                        if (event.matches(StandardKey.Undo))
+                            return "undo";
+                        if (event.matches(StandardKey.Redo)
+                                || ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_Y))
+                            return "redo";
+                        return "";
+                    }
+                    Keys.onShortcutOverride: function(event) {
+                        if (historyKey(event).length > 0)
+                            event.accepted = true;
+                    }
+                    Keys.onPressed: function(event) {
+                        var which = historyKey(event);
+                        if (which.length === 0)
+                            return;
+                        event.accepted = true;
+                        if (which === "undo")
+                            file.undo();
+                        else
+                            file.redo();
+                    }
                     // Up and Down pass over the headings of closed groups only
                     // by opening them: they are entries of the list too.
                     Keys.onDownPressed: listView.currentIndex = Math.min(listView.count - 1, listView.currentIndex + 1)
@@ -5917,32 +5961,38 @@ ApplicationWindow {
     PickerPopup {
         id: typePopup
         placeholder: "Search types"
-        readonly property var plainTypes: [
-            ["Integer", false], ["Binary", true], ["Octal", true], ["Hex", true],
-            ["Decimal", false], ["Fraction", true], ["Percent", true], ["Scientific", false]
-        ]
-        readonly property var laterTypes: [
-            ["Float", false], ["Complex", false], ["String", false], ["Email", true],
-            ["Url", true], ["Uuid", true], ["Boolean", false], ["Datetime", false],
-            ["Date", true], ["Duration", true], ["Time", true]
+        // Filed by what they hold; a type in the second place of a pair is a
+        // narrower kind of the one above it. `Quantity` is just that here: its
+        // kind, `Mass` or `Force`, is `Set unit…`'s.
+        readonly property var typeGroups: [
+            ["Numbers", [["Integer", false], ["Binary", true], ["Octal", true], ["Hex", true],
+                ["Decimal", false], ["Fraction", true], ["Percent", true], ["Float", false],
+                ["Scientific", false], ["Complex", false], ["Quantity", false]]],
+            ["Text", [["String", false], ["Email", true], ["Url", true], ["Uuid", true]]],
+            ["Dates and times", [["Datetime", false], ["Date", true], ["Time", true], ["Duration", true]]],
+            ["Other", [["Boolean", false]]]
         ]
         provider: function(text) {
             var out = [];
-            var add = function(pair) {
-                out.push({spec: pair[0], label: (pair[1] ? "   " : "") + pair[0], complete: pair[0]});
-            };
-            plainTypes.forEach(add);
-            // The kinds of quantity, `Mass` and the rest, are `Set unit…`'s.
-            out.push({spec: "Quantity", label: "Quantity", complete: "Quantity"});
-            laterTypes.forEach(add);
+            typeGroups.forEach(function(g) {
+                g[1].forEach(function(pair) {
+                    out.push({spec: pair[0], label: (pair[1] ? "   " : "") + pair[0],
+                        complete: pair[0], group: g[0]});
+                });
+            });
             return out;
         }
         onPicked: function(spec) { win.setColumnTypes(spec); }
+        now: function() {
+            var spec = win.sharedSpec(true);
+            var at = spec.indexOf("[");
+            return at < 0 ? spec : spec.substring(0, at);
+        }
         function show(c, item) {
             // A type has no bracket: the kind, `Mass`, of `Mass[g]`.
             var type = win.sharedSpec(true);
             var at = type.indexOf("[");
-            openFor(c, item, at < 0 ? type : type.substring(0, at), ["SI Base"]);
+            openFor(c, item, at < 0 ? type : type.substring(0, at), ["Numbers", "Text", "Dates and times", "Other"]);
         }
     }
 
@@ -5977,6 +6027,11 @@ ApplicationWindow {
             return out;
         }
         onPicked: function(unit) { win.setColumnTypes(file.unitSpec(unit)); }
+        now: function() {
+            var spec = win.sharedSpec(true);
+            var at = spec.indexOf("[");
+            return at < 0 ? "" : spec.substring(at + 1, spec.length - 1);
+        }
         function show(c, item) {
             var spec = win.sharedSpec(true);
             var at = spec.indexOf("[");

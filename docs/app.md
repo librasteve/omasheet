@@ -24,8 +24,11 @@ rewrites the text, and saving writes exactly that.
   narrows the list, Tab completes what is typed, Up and Down move along it,
   a click marks an entry, and **Apply**, Enter or a double click takes it
   and leaves the box open to try another; **Close**, Esc or a click
-  elsewhere closes it. A quantity is just
-  `Quantity` here: its kind comes from **Set unit…**.
+  elsewhere closes it. The types are filed under Numbers, Text, Dates and times and Other, each
+  heading opening and closing its group, with a caret beside the search box for
+  all of them. A quantity is just `Quantity` here: its kind comes from
+  **Set unit…**. Undo and redo (Ctrl+Z, Ctrl+Y) work on what was applied while
+  either box is still open, when nothing is typed in its search box.
 - **Set unit…** is the same kind of box for the units, filed under SI Base,
   Dimensional, Mechanical, Electromagnetic, Thermodynamic, Radiation and
   Other, each heading opening and closing its group, with a caret beside the
