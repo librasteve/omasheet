@@ -6884,6 +6884,40 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
+                // The master caret, as the pickers have it: a box before the
+                // search that closes every category, or opens them all where
+                // all are closed. A search shows every category, so it does
+                // nothing while one is typed.
+                Rectangle {
+                    id: fnMasterCaret
+                    readonly property bool active: searchField.text.trim() === ""
+                    implicitWidth: searchField.implicitHeight
+                    implicitHeight: searchField.implicitHeight
+                    Layout.alignment: Qt.AlignVCenter
+                    radius: 2
+                    opacity: active ? 1 : 0.4
+                    color: fnCaretMouse.containsMouse && active
+                        ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.08) : "transparent"
+                    border.color: win.lineColor
+                    Text {
+                        anchors.centerIn: parent
+                        text: functionsDialog.allClosed && fnMasterCaret.active ? "\u25B8" : "\u25BE"
+                        color: win.textColor
+                        font.family: win.font.family
+                        font.features: win.font.features
+                        font.pixelSize: win.smallSize
+                    }
+                    MouseArea {
+                        id: fnCaretMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        enabled: fnMasterCaret.active
+                        onClicked: {
+                            functionsDialog.toggleAll();
+                            searchField.forceActiveFocus();
+                        }
+                    }
+                }
                 TextField {
                     id: searchField
                     Layout.fillWidth: true
@@ -6893,27 +6927,6 @@ ApplicationWindow {
                     font.pixelSize: win.dialogSize
                     onTextChanged: functionsDialog.refresh()
                     Keys.onEscapePressed: functionsDialog.close()
-                }
-                // One caret for every category, as each heading has its own.
-                // A search shows every category, so it does nothing while
-                // one is typed.
-                Text {
-                    readonly property bool active: searchField.text.trim() === ""
-                    text: functionsDialog.allClosed && active ? "\u25B8" : "\u25BE"
-                    Layout.alignment: Qt.AlignVCenter
-                    color: active ? win.accentColor : win.mutedColor
-                    font.family: win.font.family
-                    font.features: win.font.features
-                    // As tall as the search box beside it.
-                    font.pixelSize: Math.round(searchField.height * 0.8)
-                    font.bold: true
-                    MouseArea {
-                        anchors.fill: parent
-                        anchors.margins: -6
-                        enabled: parent.active
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: functionsDialog.toggleAll()
-                    }
                 }
             }
             ListView {
