@@ -17,11 +17,11 @@
 # `Quantity` is the line for the generic one, which has no unit of its own.
 
 Integer       | Integer: a whole number, e.g. 42
-Decimal       | Decimal: an exact decimal number, e.g. 19.99 or 20%
-Percent       | Percent: an exact number shown as a percentage, e.g. 20%
-Float         | Float: a floating-point number, e.g. 1.5, 2e-3 or Inf
-Scientific    | Scientific: a value and its measurement uncertainty, e.g. 10.5(3) or 10 ± 0.3
-Complex       | Complex: a real and an imaginary part, e.g. 3+4i or 2i
+Decimal       | Decimal: a decimal number, e.g. 19.99
+Percent       | Percent: a percentage, e.g. 20%
+Float         | Float: a floating-point number, e.g. 2e-3
+Scientific    | Scientific: a value with uncertainty, e.g. 10.5(3)
+Complex       | Complex: a complex number, e.g. 3+4i or 2i
 Boolean       | Boolean: true or false
 String        | String
 Url           | Url: a web address, e.g. https://example.com
@@ -31,5 +31,5 @@ Date          | Date: {date_pattern}, e.g. {date}{or_iso}
 Time          | Time: e.g. {time}
 Datetime      | Datetime: e.g. {datetime}{or_iso}
 Duration      | Duration: PnDTnHnMnS, e.g. PT1H30M
-Quantity      | Quantity: a number and an SI unit, e.g. 5kg or 9.81m.s^-2
-Quantity kind | {name}: a number and an SI unit of it, e.g. 5{unit} or 10.5(3){unit}
+Quantity      | Quantity: a value with a unit, e.g. 5kg or 9.81m.s^-2
+Quantity kind | {name}: a value with a unit, e.g. 5{unit} or 10.5(3){unit}
