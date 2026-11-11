@@ -17,14 +17,18 @@ rewrites the text, and saving writes exactly that.
   the value.
 - Under its name a column shows its type: muted if it comes from the
   cells, plain if it is declared, and after `:=` in a formula column.
-  Right-click a column's header to **Set type…**, a list that starts on the
-  type the column has now, or **Clear type**; a cell that does not fit a
-  declared type is an error. Typing in the box above the list narrows it
-  to the types with that in their name. A kind of quantity is listed with
-  the unit its column holds, `Mass[kg]`, and a unit typed after one,
-  `Mass[mg]`, is offered once it is a unit of that kind, so the type and
-  the unit are set in one step. Up and Down move along the list, Enter
-  takes the one marked and Esc closes it.
+  Right-click a column's header to **Set type…**, a list in a box beside the
+  column's head, which is marked while the box is open; drag the box by its
+  handle. The list starts on the type the column has now, or **Clear type**; a
+  cell that does not fit a declared type is an error. Typing in the box
+  narrows the list, Tab completes what is typed, Up and Down move along it,
+  Enter takes the one marked and Esc closes it. The kinds of quantity are
+  filed under SI base, SI derived and Other, each heading opening and
+  closing its group, with the unit each is held in beside it.
+- **Set unit…** is the same kind of box for the units, `kg`, `N`, `m^2`, or
+  any unit typed, `mg` or `kN.m`. It is there for every column: the column
+  becomes a column of the kind of quantity the unit is of (`mg` makes it
+  `Mass[mg]`), and a type it had before goes.
 - The same menu has **Set format…** for a column of numbers, dates or
   times, which shows its cells in a format without changing them, and **Clear
   format**. The prompt suggests one that fits the type: `'.2f` for a

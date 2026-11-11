@@ -24,10 +24,9 @@ omasheet-engine = { path = "omasheet-engine" }
 omasheet-interop = { path = "omasheet-interop" }
 omasheet-md = { path = "omasheet-md" }
 omasheet-cli = { path = "omasheet-cli" }
-# SI units (add-si-units D228). A path while the work is on `dev`: switch to a
-# crates.io or git version before anything reaches `main`, because CI checks
-# out only this repository.
-siquant = { git = "https://github.com/librasteve/siquant", rev = "feebf9524383ec1ca4e79e90914ee49968ee0f92" }
+# SI units (add-si-units D228), from its public repository at a fixed commit:
+# move to a crates.io version when it is published.
+siquant = { git = "https://github.com/librasteve/siquant", rev = "77e7a38e87ec3faa775cc71dd55e0bbfed00109b" }
 calamine = "0.36"
 rust_xlsxwriter = "0.99"
 csv = "1"

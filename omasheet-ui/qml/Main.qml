@@ -2249,6 +2249,13 @@ ApplicationWindow {
             selectCell(curRow, col, false);
     }
 
+    // Open a picker beside the head of the first selected column.
+    function pickFor(popup) {
+        var head = headCells.itemAt(selLeft);
+        if (head)
+            popup.show(selLeft, head);
+    }
+
     // The type the selected columns all have, if there is one, and for
     // quantities their unit, `Mass[g]`: with `declared`, only if each is
     // declared as it.
@@ -3324,7 +3331,9 @@ ApplicationWindow {
                                 width: win.colWidths[index] || 0
                                 height: win.headerHeight
                                 // Stronger while the sort and filter box beside it is open.
-                                color: columnPopup.visible && columnPopup.col === index
+                                color: (columnPopup.visible && columnPopup.col === index)
+                                    || ((typePopup.visible || unitPopup.visible)
+                                        && index >= win.selLeft && index <= win.selRight)
                                     ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.4)
                                     : index >= win.selLeft && index <= win.selRight
                                     ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.16)
@@ -5295,7 +5304,7 @@ ApplicationWindow {
         onClosed: {
             if (promptDialog.visible)
                 promptDialog.takeFocus();
-            else if (!typePopup.visible && !columnPopup.visible)
+            else if (!typePopup.visible && !unitPopup.visible && !columnPopup.visible)
                 grid.forceActiveFocus();
         }
         // Close set, to fit a long menu on a small window.
@@ -5445,10 +5454,13 @@ ApplicationWindow {
             text: "Set type\u2026"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.sheet.columns.length > 0
-            onTriggered: {
-                // Where this menu was.
-                typePopup.openAt(cellMenu.parent, cellMenu.x, cellMenu.y);
-            }
+            onTriggered: win.pickFor(typePopup)
+        }
+        MenuEntry {
+            text: "Set unit\u2026"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.sheet.columns.length > 0
+            onTriggered: win.pickFor(unitPopup)
         }
         MenuEntry {
             text: "Set format\u2026"
@@ -5488,105 +5500,163 @@ ApplicationWindow {
         }
     }
 
-    // The types a column may be declared as, from `Set type`: the one it
-    // has is ticked. Typing narrows the list to the types with that in their
-    // name; `Mass[mg]`, a kind of quantity and the unit its column holds, is
-    // offered when it is typed whole. Up and Down move, Enter takes the one
-    // marked, Esc closes.
-    Popup {
-        id: typePopup
+    // A list to pick from, in a box beside the column's head, as the filter box
+    // is: a handle to drag it by, a search field that narrows the list as it is
+    // typed into and that Tab completes, Up and Down to move, Enter to take
+    // the one marked, Esc to close. Entries may be filed in groups, each with a
+    // heading that opens and closes it; a search shows every group's matches.
+    // `provider(text)` gives the entries for what is typed, `{spec, label,
+    // hint, group, complete}` in order, and `fault` a message to show;
+    // `picked(spec)` says which was taken.
+    component PickerPopup: Popup {
+        id: picker
+        property string placeholder: ""
+        // What the columns have now: ticked, and the list starts at it.
         property string current: ""
-        // The type the columns have now, declared or taken from their
-        // cells: the list starts at it.
-        property string suggested: ""
-        // The entries shown, `{spec, label, narrower}`, and what is wrong with
-        // a type written in brackets, if it is.
-        property var entries: []
+        property var provider: function(text) { return []; }
         property string fault: ""
+        // What is wrong with what is typed, for the provider to say; shown
+        // where nothing in the list matches.
+        property string problem: ""
+        property var entries: []
+        // Headings that are closed.
+        property var closed: ({})
+        property var rows: []
+        // The column whose head is marked while the box is open.
+        property int col: 0
+        signal picked(string spec)
         padding: 6
-        width: Math.round(win.fontSize * 15)
+        width: Math.round(win.fontSize * 17)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: grid.forceActiveFocus()
 
-        readonly property var plain: [
-            {spec: "Integer"}, {spec: "Binary", narrower: true}, {spec: "Octal", narrower: true},
-            {spec: "Hex", narrower: true}, {spec: "Decimal"}, {spec: "Fraction", narrower: true},
-            {spec: "Percent", narrower: true}, {spec: "Scientific"}, {spec: "@quantities"},
-            {spec: "Float"}, {spec: "Complex"}, {spec: "String"}, {spec: "Email", narrower: true},
-            {spec: "Url", narrower: true}, {spec: "Uuid", narrower: true}, {spec: "Boolean"},
-            {spec: "Datetime"}, {spec: "Date", narrower: true}, {spec: "Duration", narrower: true},
-            {spec: "Time", narrower: true}
-        ]
-        // The name of a type, as the column's own says it, from `Mass[kg]`.
-        function nameOf(spec) {
-            var at = spec.indexOf("[");
-            return at < 0 ? spec : spec.substring(0, at);
-        }
-        // `mass[mg]` as `Mass[mg]`: the name's case is the type's.
-        function exact(text) {
-            var name = nameOf(text);
-            var all = win.quantityNames;
-            for (var i = 0; i < all.length; i++) {
-                if (all[i].toLowerCase() === name.trim().toLowerCase())
-                    return all[i] + text.substring(name.length);
+        function groupOf(spec) {
+            for (var i = 0; i < entries.length; i++) {
+                if (entries[i].spec === spec)
+                    return entries[i].group || "";
             }
-            return text;
+            return "";
         }
         function refresh() {
             var want = search.text.trim().toLowerCase();
-            var list = [];
-            var specs = file.quantitySpecs().split("\n");
-            for (var i = 0; i < plain.length; i++) {
-                if (plain[i].spec !== "@quantities") {
-                    list.push({spec: plain[i].spec, label: plain[i].spec, narrower: !!plain[i].narrower});
-                    continue;
-                }
-                for (var k = 0; k < specs.length; k++)
-                    list.push({spec: specs[k], label: specs[k], narrower: k > 0});
-            }
-            var shown = list.filter(function(e) {
-                return want.length === 0 || e.label.toLowerCase().indexOf(want) >= 0;
+            problem = "";
+            var all = provider(search.text.trim());
+            var shown = all.filter(function(e) {
+                return want.length === 0 || e.keep
+                    || e.label.toLowerCase().indexOf(want) >= 0
+                    || (e.hint || "").toLowerCase().indexOf(want) >= 0;
             });
-            fault = "";
-            // A unit typed after a kind of quantity: offered as it is, once
-            // it is one.
-            if (want.indexOf("[") > 0) {
-                var typed = exact(search.text.trim());
-                var problem = file.typeProblem(typed);
-                if (problem.length === 0) {
-                    if (!shown.some(function(e) { return e.spec === typed; }))
-                        shown.unshift({spec: typed, label: typed, narrower: false});
-                } else if (want.endsWith("]"))
-                    fault = problem;
-            }
             entries = shown;
-            var at = 0;
-            for (var j = 0; j < shown.length; j++) {
-                if (shown[j].spec === suggested) {
+            var list = [], last = null;
+            for (var i = 0; i < shown.length; i++) {
+                var e = shown[i];
+                if (e.group && e.group !== last) {
+                    var n = shown.filter(function(x) { return x.group === e.group; }).length;
+                    list.push({header: true, group: e.group, count: n});
+                }
+                last = e.group || null;
+                if (!e.group || want.length > 0 || !closed[e.group])
+                    list.push(e);
+            }
+            rows = list;
+            var at = -1;
+            for (var j = 0; j < list.length; j++) {
+                if (!list[j].header && list[j].spec === current) {
                     at = j;
                     break;
                 }
             }
-            listView.currentIndex = shown.length > 0 ? at : -1;
+            if (at < 0)
+                for (var k = 0; k < list.length; k++) {
+                    if (!list[k].header) {
+                        at = k;
+                        break;
+                    }
+                }
+            listView.currentIndex = at;
+            fault = list.length === 0 && want.length > 0 ? problem : "";
         }
-        function openAt(item, atX, atY) {
-            current = win.sharedSpec(true);
-            suggested = win.sharedSpec(false);
+        // The heading of a group of the list, or the entry marked, is taken.
+        function take(index) {
+            if (index < 0 || index >= rows.length)
+                return;
+            var row = rows[index];
+            if (row.header) {
+                var c = {};
+                for (var name in closed)
+                    c[name] = closed[name];
+                c[row.group] = !closed[row.group];
+                closed = c;
+                var keep = listView.currentIndex;
+                refresh();
+                listView.currentIndex = Math.min(keep, rows.length - 1);
+                return;
+            }
+            close();
+            picked(row.spec);
+        }
+        // Complete what is typed: as far as the entries that begin with it
+        // agree, then to the one marked.
+        function complete() {
+            var typed = search.text.trim();
+            var items = entries.filter(function(e) { return !e.keep; });
+            var begins = items.filter(function(e) {
+                return (e.complete || e.label).toLowerCase().indexOf(typed.toLowerCase()) === 0;
+            });
+            var pool = begins.length > 0 ? begins : [];
+            if (pool.length > 0) {
+                var base = pool[0].complete || pool[0].label;
+                var common = base.length;
+                for (var i = 1; i < pool.length; i++) {
+                    var other = pool[i].complete || pool[i].label;
+                    var k = 0;
+                    while (k < common && k < other.length
+                           && other[k].toLowerCase() === base[k].toLowerCase())
+                        k++;
+                    common = k;
+                }
+                if (common > typed.length) {
+                    search.text = base.substring(0, common);
+                    search.cursorPosition = search.text.length;
+                    return;
+                }
+            }
+            var row = listView.currentIndex >= 0 ? rows[listView.currentIndex] : null;
+            if (row && !row.header) {
+                search.text = row.complete || row.label;
+                search.cursorPosition = search.text.length;
+            }
+        }
+        // Beside the column's head, as the filter box is, lapping a little over
+        // its right edge, or to its left where there is no room on the right.
+        function openFor(c, item, haveCurrent, open0) {
+            col = c;
             parent = item;
-            x = atX;
-            y = atY;
+            current = haveCurrent;
+            // Closed, but for the group that has the one the columns have.
+            var c0 = {};
+            var groups = provider("").map(function(e) { return e.group || ""; });
+            for (var i = 0; i < groups.length; i++) {
+                if (groups[i])
+                    c0[groups[i]] = open0.indexOf(groups[i]) < 0;
+            }
+            closed = c0;
             search.text = "";
             refresh();
+            var g = groupOf(current);
+            if (g) {
+                c0[g] = false;
+                closed = c0;
+                refresh();
+            }
+            var lap = Math.round(win.fontSize * 0.8);
+            var right = item.mapToItem(null, item.width - lap, 0).x;
+            x = right + width <= win.width - 8 ? item.width - lap
+                : Math.max(-item.mapToItem(null, 0, 0).x + 8, lap - width);
+            y = 0;
             open();
             search.forceActiveFocus();
             listView.positionViewAtIndex(Math.max(0, listView.currentIndex), ListView.Center);
-        }
-        function choose(index) {
-            if (index < 0 || index >= entries.length)
-                return;
-            var spec = entries[index].spec;
-            close();
-            win.setColumnTypes(spec);
         }
 
         background: Rectangle {
@@ -5596,13 +5666,43 @@ ApplicationWindow {
         }
         contentItem: ColumnLayout {
             spacing: 4
+            // A handle to drag the box by, out of the way of the cells.
+            Item {
+                Layout.fillWidth: true
+                implicitHeight: Math.round(win.captionSize * 1.1)
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: Math.round(win.captionSize * 3)
+                    height: 3
+                    radius: 1.5
+                    color: win.mutedColor
+                    opacity: grip.containsMouse || grip.pressed ? 1 : 0.5
+                }
+                MouseArea {
+                    id: grip
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                    property real fromX: 0
+                    property real fromY: 0
+                    onPressed: function(mouse) {
+                        fromX = mouse.x;
+                        fromY = mouse.y;
+                    }
+                    onPositionChanged: function(mouse) {
+                        if (!pressed)
+                            return;
+                        picker.x += mouse.x - fromX;
+                        picker.y += mouse.y - fromY;
+                    }
+                }
+            }
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: Math.round(win.fontSize * 1.9)
                 color: "transparent"
                 radius: 2
-                border.color: typePopup.fault.length > 0 ? win.errorColor
-                    : search.activeFocus ? win.accentColor : win.lineColor
+                border.color: search.activeFocus ? win.accentColor : win.lineColor
                 TextInput {
                     id: search
                     anchors.fill: parent
@@ -5616,16 +5716,19 @@ ApplicationWindow {
                     font.family: win.font.family
                     font.features: win.font.features
                     font.pixelSize: win.smallSize
-                    onTextChanged: typePopup.refresh()
+                    onTextChanged: picker.refresh()
+                    // Up and Down pass over the headings of closed groups only
+                    // by opening them: they are entries of the list too.
                     Keys.onDownPressed: listView.currentIndex = Math.min(listView.count - 1, listView.currentIndex + 1)
                     Keys.onUpPressed: listView.currentIndex = Math.max(0, listView.currentIndex - 1)
-                    Keys.onReturnPressed: typePopup.choose(listView.currentIndex)
-                    Keys.onEnterPressed: typePopup.choose(listView.currentIndex)
+                    Keys.onReturnPressed: picker.take(listView.currentIndex)
+                    Keys.onEnterPressed: picker.take(listView.currentIndex)
+                    Keys.onTabPressed: picker.complete()
                     Text {
                         anchors.fill: parent
                         verticalAlignment: Text.AlignVCenter
                         visible: search.text.length === 0
-                        text: "Search, or Mass[mg]"
+                        text: picker.placeholder
                         color: win.mutedColor
                         font: search.font
                     }
@@ -5636,14 +5739,15 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.min(contentHeight, Math.round(win.fontSize * 22))
                 clip: true
-                model: typePopup.entries
+                model: picker.rows
                 boundsBehavior: Flickable.StopAtBounds
                 currentIndex: -1
                 delegate: Rectangle {
                     id: row
                     required property int index
                     required property var modelData
-                    readonly property bool ticked: typePopup.current === modelData.spec
+                    readonly property bool head: !!modelData.header
+                    readonly property bool ticked: !head && picker.current === modelData.spec
                     width: ListView.view.width
                     height: Math.round(win.fontSize * 1.7)
                     radius: 3
@@ -5653,32 +5757,123 @@ ApplicationWindow {
                         : "transparent"
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
-                        x: 8 + (row.modelData.narrower ? Math.round(win.fontSize * 1.2) : 0)
-                        text: (row.ticked ? "\u2713 " : "") + row.modelData.label
-                        color: win.textColor
+                        x: row.head ? 4 : 8 + (modelData.group ? Math.round(win.fontSize * 1.2) : 0)
+                        width: row.width - x - (hint.visible ? hint.implicitWidth + 12 : 8)
+                        elide: Text.ElideRight
+                        text: row.head
+                            ? (picker.closed[modelData.group] && search.text.trim().length === 0 ? "▸ " : "▾ ")
+                                + modelData.group + "  (" + modelData.count + ")"
+                            : (row.ticked ? "✓ " : "") + modelData.label
+                        color: row.head ? win.mutedColor : win.textColor
                         font.family: win.font.family
                         font.features: win.font.features
                         font.pixelSize: win.smallSize
+                        font.bold: row.head
+                    }
+                    Text {
+                        id: hint
+                        visible: !row.head && !!modelData.hint
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        text: modelData.hint || ""
+                        color: win.mutedColor
+                        font.family: win.font.family
+                        font.pixelSize: win.captionSize
                     }
                     MouseArea {
                         id: rowArea
                         anchors.fill: parent
                         hoverEnabled: true
-                        onClicked: typePopup.choose(row.index)
+                        onClicked: picker.take(row.index)
                     }
                 }
                 ScrollBar.vertical: ScrollBar {}
             }
             Text {
-                visible: typePopup.entries.length === 0 || typePopup.fault.length > 0
+                visible: picker.rows.length === 0
                 Layout.fillWidth: true
-                Layout.maximumWidth: typePopup.availableWidth
+                Layout.maximumWidth: picker.availableWidth
                 wrapMode: Text.Wrap
-                text: typePopup.fault.length > 0 ? typePopup.fault : "No type matches"
-                color: typePopup.fault.length > 0 ? win.errorColor : win.mutedColor
+                text: picker.fault.length > 0 ? picker.fault : "Nothing matches"
+                color: picker.fault.length > 0 ? win.errorColor : win.mutedColor
                 font.family: win.font.family
                 font.pixelSize: win.captionSize
             }
+        }
+    }
+
+    // The types a column may be declared as, from `Set type…`: the one it has
+    // is ticked. The kinds of quantity are filed as the SI files them, with the
+    // unit each is held in beside it; the unit itself is `Set unit…`'s.
+    PickerPopup {
+        id: typePopup
+        placeholder: "Search types"
+        readonly property var plainTypes: [
+            ["Integer", false], ["Binary", true], ["Octal", true], ["Hex", true],
+            ["Decimal", false], ["Fraction", true], ["Percent", true], ["Scientific", false]
+        ]
+        readonly property var laterTypes: [
+            ["Float", false], ["Complex", false], ["String", false], ["Email", true],
+            ["Url", true], ["Uuid", true], ["Boolean", false], ["Datetime", false],
+            ["Date", true], ["Duration", true], ["Time", true]
+        ]
+        provider: function(text) {
+            var out = [];
+            var add = function(pair) {
+                out.push({spec: pair[0], label: (pair[1] ? "   " : "") + pair[0], complete: pair[0]});
+            };
+            plainTypes.forEach(add);
+            var kinds = file.quantityKinds().split("\n");
+            out.push({spec: "Quantity", label: "Quantity", complete: "Quantity", hint: "any unit"});
+            for (var i = 0; i < kinds.length; i++) {
+                var f = kinds[i].split("\t");
+                if (f.length < 2 || f[1] === "Quantity")
+                    continue;
+                out.push({spec: f[1], label: f[1], complete: f[1], hint: f[2], group: f[0]});
+            }
+            laterTypes.forEach(add);
+            return out;
+        }
+        onPicked: function(spec) { win.setColumnTypes(spec); }
+        function show(c, item) {
+            // A type has no bracket: the kind, `Mass`, of `Mass[g]`.
+            var type = win.sharedSpec(true);
+            var at = type.indexOf("[");
+            openFor(c, item, at < 0 ? type : type.substring(0, at), ["SI base"]);
+        }
+    }
+
+    // The units, from `Set unit…`: any of them, for any column, whatever its
+    // type, which then becomes the kind of quantity the unit is of (so a
+    // type set before goes). A unit not listed, `mg` or `kN.m`, is taken as
+    // it is typed once it is one.
+    PickerPopup {
+        id: unitPopup
+        placeholder: "Search units, or type one: mg"
+        provider: function(text) {
+            var out = [];
+            var lines = file.unitChoices().split("\n");
+            for (var i = 0; i < lines.length; i++) {
+                var f = lines[i].split("\t");
+                if (f.length < 3)
+                    continue;
+                out.push({spec: f[1], label: f[1], complete: f[1], hint: f[2], group: f[0]});
+            }
+            if (text.length > 0 && !out.some(function(e) { return e.spec === text; })) {
+                var problem = file.unitProblem(text);
+                if (problem.length === 0)
+                    out.unshift({spec: text, label: text, hint: "use as typed", keep: true});
+                else
+                    unitPopup.problem = problem;
+            }
+            return out;
+        }
+        onPicked: function(unit) { win.setColumnTypes(file.unitSpec(unit)); }
+        function show(c, item) {
+            var spec = win.sharedSpec(true);
+            var at = spec.indexOf("[");
+            openFor(c, item, at < 0 ? "" : spec.substring(at + 1, spec.length - 1), ["SI base"]);
         }
     }
 

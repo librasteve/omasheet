@@ -8,7 +8,7 @@ use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QUrl};
 use omasheet_engine::datefmt::Names;
-use omasheet_engine::doc::{BLANK, PAGED_ROWS, entry_hint, type_spec_problem};
+use omasheet_engine::doc::{BLANK, PAGED_ROWS, entry_hint, unit_spec};
 use omasheet_engine::omx::date::Style;
 use omasheet_engine::{Document, Options, locale};
 use omasheet_interop::parquet;
@@ -421,13 +421,20 @@ pub mod qobject {
         /// `Quantity` first, one to a line.
         #[qinvokable]
         fn quantity_types(self: &File) -> QString;
-        /// The same, each as the picker offers it with the unit it holds:
-        /// `Mass[kg]`, one to a line, `Quantity` first and bare.
+        /// The kinds of quantity for a menu, one to a line: the group they
+        /// are filed in, a tab, the name, a tab and the unit they hold.
         #[qinvokable]
-        fn quantity_specs(self: &File) -> QString;
-        /// What is wrong with `spec` as a column type, `Mass[g]`, or empty.
+        fn quantity_kinds(self: &File) -> QString;
+        /// The units for a menu, one to a line: group, tab, unit, tab, a name.
         #[qinvokable]
-        fn type_problem(self: &File, spec: &QString) -> QString;
+        fn unit_choices(self: &File) -> QString;
+        /// The column type for quantities in this unit, `Mass[g]`, or empty
+        /// where it is not a unit; see `unit_problem`.
+        #[qinvokable]
+        fn unit_spec(self: &File, unit: &QString) -> QString;
+        /// What is wrong with this text as a unit, or empty.
+        #[qinvokable]
+        fn unit_problem(self: &File, unit: &QString) -> QString;
         /// The text size the desktop is set to, in pixels; 0 where the
         /// desktop does not say.
         #[qinvokable]
@@ -1659,20 +1666,58 @@ impl qobject::File {
         QString::from(&omasheet_engine::omx::types::QId::names().join("\n"))
     }
 
-    fn quantity_specs(&self) -> QString {
-        use omasheet_engine::omx::{types::QId, units::preferred};
-        let specs: Vec<String> = QId::names()
-            .into_iter()
-            .map(|name| match QId::from_name(&name).and_then(preferred) {
-                Some(unit) => format!("{name}[{unit}]"),
-                None => name,
-            })
-            .collect();
-        QString::from(&specs.join("\n"))
+    fn quantity_kinds(&self) -> QString {
+        let reg = siquant::Registry::builtin();
+        let mut lines = Vec::new();
+        for group in [
+            siquant::Group::Base,
+            siquant::Group::Derived,
+            siquant::Group::Other,
+        ] {
+            for t in reg.quantity_types().filter(|t| t.group() == group) {
+                let unit = t
+                    .preferred_unit()
+                    .map(|u| u.to_string())
+                    .unwrap_or_default();
+                lines.push(format!("{}\t{}\t{unit}", group.title(), t.name()));
+            }
+        }
+        QString::from(&lines.join("\n"))
     }
 
-    fn type_problem(&self, spec: &QString) -> QString {
-        QString::from(&type_spec_problem(&spec.to_string()))
+    fn unit_choices(&self) -> QString {
+        let reg = siquant::Registry::builtin();
+        let mut seen = std::collections::HashSet::new();
+        let mut lines = Vec::new();
+        for group in [
+            siquant::Group::Base,
+            siquant::Group::Derived,
+            siquant::Group::Other,
+        ] {
+            // The units of the registry, then those a kind of this group is
+            // held in that are not one of them: `kg`, `m^2`, `m.s^-1`.
+            for u in reg.units().filter(|u| u.live && u.group == group) {
+                if seen.insert(u.symbol.to_string()) {
+                    lines.push(format!("{}\t{}\t{}", group.title(), u.symbol, u.name));
+                }
+            }
+            for t in reg.quantity_types().filter(|t| t.group() == group) {
+                if let Some(u) = t.preferred_unit()
+                    && seen.insert(u.to_string())
+                {
+                    lines.push(format!("{}\t{u}\t{}", group.title(), t.name()));
+                }
+            }
+        }
+        QString::from(&lines.join("\n"))
+    }
+
+    fn unit_spec(&self, unit: &QString) -> QString {
+        QString::from(&unit_spec(&unit.to_string()).unwrap_or_default())
+    }
+
+    fn unit_problem(&self, unit: &QString) -> QString {
+        QString::from(&unit_spec(&unit.to_string()).err().unwrap_or_default())
     }
 
     fn selection_summary(&self, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {

@@ -11,6 +11,7 @@ name = "omasheet"
 path = "src/main.rs"
 
 [dependencies]
+siquant.workspace = true
 omasheet-engine.workspace = true
 omasheet-interop.workspace = true
 omasheet-md.workspace = true

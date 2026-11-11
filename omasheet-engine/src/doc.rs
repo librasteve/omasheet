@@ -1834,6 +1834,26 @@ pub fn type_spec(spec: &str) -> Result<(S, Option<Option<Format>>), String> {
     Ok((ty, Some(Some(format))))
 }
 
+/// The column type that holds quantities in `unit`, written as the picker
+/// writes one: the kind of quantity the unit is of, `Mass[g]`, or `Quantity`
+/// with the unit where no kind is named for its dimension. Where several
+/// kinds share the dimension, the one that holds the unit anyway
+/// (`J` is `Energy`, `N.m` is `Torque`), else the first.
+pub fn unit_spec(unit: &str) -> Result<String, String> {
+    let reg = siquant::Registry::builtin();
+    let u = siquant::Unit::parse(unit.trim(), siquant::Scope::Live)
+        .map_err(|e| format!("`{}` is not a unit: {e}", unit.trim()))?;
+    let kinds = reg.quantity_types_for(u.dims());
+    let kind = kinds
+        .iter()
+        .find(|k| k.preferred_unit().as_ref() == Some(&u))
+        .or_else(|| kinds.first());
+    Ok(match kind {
+        Some(k) => format!("{}[{u}]", k.name()),
+        None => format!("Quantity[{u}]"),
+    })
+}
+
 /// What is wrong with `spec` as a type, or `""`.
 pub fn type_spec_problem(spec: &str) -> String {
     type_spec(spec).err().unwrap_or_default()
@@ -7075,6 +7095,23 @@ mod tests {
         assert_eq!(doc.text(), before);
         assert!(type_spec_problem("Mass[m]").contains("Length"));
         assert_eq!(type_spec_problem("Length[cm]"), "");
+    }
+
+    #[test]
+    fn a_unit_picks_the_kind_of_quantity_and_replaces_any_type() {
+        assert_eq!(unit_spec("kg").unwrap(), "Mass[kg]");
+        assert_eq!(unit_spec("mg").unwrap(), "Mass[mg]");
+        assert_eq!(unit_spec("J").unwrap(), "Energy[J]");
+        assert_eq!(unit_spec("N.m").unwrap(), "Torque[N.m]");
+        assert_eq!(unit_spec("kN").unwrap(), "Force[kN]");
+        assert!(unit_spec("furlong").unwrap_err().contains("not a unit"));
+        // A column of text becomes a column of the kind, whatever it was.
+        let src = "sheet S\n\nDose : String\n\n| Dose |\n| ---- |\n| 5mg |\n";
+        let mut doc = Document::from_text(src);
+        assert!(doc.set_column_types(0, &[0], Some(&unit_spec("mg").unwrap())));
+        assert!(doc.text().contains("Dose : Mass[mg]"), "{}", doc.text());
+        assert!(doc.set_column_types(0, &[0], Some(&unit_spec("m").unwrap())));
+        assert!(doc.text().contains("Dose : Length\n"), "{}", doc.text());
     }
 
     #[test]
