@@ -1682,46 +1682,7 @@ impl qobject::File {
     }
 
     fn unit_choices(&self) -> QString {
-        let reg = siquant::Registry::builtin();
-        let mut seen = std::collections::HashSet::new();
-        let mut lines = Vec::new();
-        for group in siquant::GROUPS {
-            // The units of the group in the order of the resource file, and
-            // those a kind of the group is held in, `kg`, `m^2`, `m.s^-1`,
-            // named for the unit where the registry has one and for the kind
-            // where it has not. The kinds' come first, which gives the
-            // kilogram, not the gram, and the katal last of its group; only
-            // the Dimensional group lists its own units first.
-            let mut own: Vec<(String, String)> = reg
-                .units()
-                .filter(|u| u.live && u.group == group)
-                .map(|u| (u.symbol.to_string(), u.name.to_string()))
-                .collect();
-            let mut kinds: Vec<(String, String)> = Vec::new();
-            for t in reg.quantity_types().filter(|t| t.group() == group) {
-                if let Some(u) = t.preferred_unit() {
-                    let symbol = u.to_string();
-                    let name = reg
-                        .units()
-                        .find(|r| r.symbol == symbol)
-                        .map_or_else(|| t.name().to_string(), |r| r.name.to_string());
-                    kinds.push((symbol, name));
-                }
-            }
-            let both = if group != "Dimensional" {
-                kinds.append(&mut own);
-                kinds
-            } else {
-                own.append(&mut kinds);
-                own
-            };
-            for (symbol, name) in both {
-                if seen.insert(symbol.clone()) {
-                    lines.push(format!("{group}\t{symbol}\t{name}"));
-                }
-            }
-        }
-        QString::from(&lines.join("\n"))
+        QString::from(&unit_lines())
     }
 
     fn unit_spec(&self, unit: &QString) -> QString {
@@ -2026,4 +1987,93 @@ mod relative_tests {
         assert_eq!(rel("/a/data/x.csv", "/a/b"), Path::new("../data/x.csv"));
         assert_eq!(rel("/a/b/x.csv", "/a/b"), Path::new("x.csv"));
     }
+}
+
+/// The units of `Set unit…`, a line each: group, symbol, hint.
+fn unit_lines() -> String {
+    let reg = siquant::Registry::builtin();
+    let mut seen = std::collections::HashSet::new();
+    let mut lines = Vec::new();
+    for group in siquant::GROUPS {
+        // The units of the group in the order of the resource file, and
+        // those a kind of the group is held in, `kg`, `m^2`, `m.s^-1`,
+        // named for the unit where the registry has one and for the kind
+        // where it has not. The kinds' come first, which gives the
+        // kilogram, not the gram, and the katal last of its group; only
+        // the Dimensional group lists its own units first.
+        let mut own: Vec<(String, String)> = reg
+            .units()
+            .filter(|u| u.live && u.group == group)
+            .map(|u| (u.symbol.to_string(), u.name.to_string()))
+            .collect();
+        let mut kinds: Vec<(String, String)> = Vec::new();
+        for t in reg.quantity_types().filter(|t| t.group() == group) {
+            if let Some(u) = t.preferred_unit() {
+                let symbol = u.to_string();
+                // A prefixed unit is named for its prefix and its unit:
+                // `kg` is the kilogram.
+                let prefixed = || {
+                    const PREFIXES: [(&str, &str); 8] = [
+                        ("k", "kilo"),
+                        ("M", "mega"),
+                        ("G", "giga"),
+                        ("m", "milli"),
+                        ("u", "micro"),
+                        ("\u{b5}", "micro"),
+                        ("n", "nano"),
+                        ("c", "centi"),
+                    ];
+                    PREFIXES.iter().find_map(|(p, word)| {
+                        let rest = symbol.strip_prefix(p)?;
+                        let r = reg.units().find(|r| r.symbol == rest)?;
+                        Some(format!("{word}{}", r.name))
+                    })
+                };
+                let name = reg
+                    .units()
+                    .find(|r| r.symbol == symbol)
+                    .map(|r| r.name.to_string())
+                    .or_else(prefixed)
+                    .unwrap_or_else(|| t.name().to_string());
+                kinds.push((symbol, name));
+            }
+        }
+        let both = if group != "Dimensional" {
+            kinds.append(&mut own);
+            kinds
+        } else {
+            own.append(&mut kinds);
+            own
+        };
+        // The shorter symbols first, the order otherwise kept; each named
+        // by its kind and, where the registry has one, its unit: `Energy
+        // (joule)`.
+        let mut both = both;
+        both.sort_by_key(|(symbol, _)| (symbol == "kat", symbol.chars().count()));
+        for (symbol, name) in both {
+            if !seen.insert(symbol.clone()) {
+                continue;
+            }
+            // The kind the unit is held in, else the first of its dimension
+            // (the registry has none for time, so it is a duration).
+            let kind = reg
+                .quantity_types()
+                .find(|t| t.preferred_unit().is_some_and(|u| u.to_string() == symbol))
+                .map(|t| t.name().to_string())
+                .or_else(|| {
+                    let u = siquant::Unit::parse(&symbol, siquant::Scope::Live).ok()?;
+                    reg.quantity_types_for(u.dims())
+                        .first()
+                        .map(|t| t.name().to_string())
+                })
+                .or_else(|| (symbol == "s").then(|| "Duration".to_string()));
+            let name = name.replace("degree ", "");
+            let hint = match kind {
+                Some(k) if k != name => format!("{k} ({name})"),
+                _ => name,
+            };
+            lines.push(format!("{group}\t{symbol}\t{hint}"));
+        }
+    }
+    lines.join("\n")
 }
