@@ -1975,20 +1975,6 @@ fn table_as_sheet(doc: &Document, sheet: usize, name: &str) -> Result<String, St
     Ok(format!("sheet {name}\n{rest}"))
 }
 
-#[cfg(test)]
-mod relative_tests {
-    use super::relative_path;
-    use std::path::Path;
-
-    #[test]
-    fn a_path_is_made_relative_to_a_folder() {
-        let rel = |f, d| relative_path(Path::new(f), Path::new(d));
-        assert_eq!(rel("/a/b/data/x.csv", "/a/b"), Path::new("data/x.csv"));
-        assert_eq!(rel("/a/data/x.csv", "/a/b"), Path::new("../data/x.csv"));
-        assert_eq!(rel("/a/b/x.csv", "/a/b"), Path::new("x.csv"));
-    }
-}
-
 /// The units of `Set unit…`, a line each: group, symbol, hint.
 fn unit_lines() -> String {
     let reg = siquant::Registry::builtin();
@@ -2076,4 +2062,18 @@ fn unit_lines() -> String {
         }
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod relative_tests {
+    use super::relative_path;
+    use std::path::Path;
+
+    #[test]
+    fn a_path_is_made_relative_to_a_folder() {
+        let rel = |f, d| relative_path(Path::new(f), Path::new(d));
+        assert_eq!(rel("/a/b/data/x.csv", "/a/b"), Path::new("data/x.csv"));
+        assert_eq!(rel("/a/data/x.csv", "/a/b"), Path::new("../data/x.csv"));
+        assert_eq!(rel("/a/b/x.csv", "/a/b"), Path::new("x.csv"));
+    }
 }
