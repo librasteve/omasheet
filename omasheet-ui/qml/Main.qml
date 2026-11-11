@@ -5547,7 +5547,7 @@ ApplicationWindow {
                 var n = picker.now();
                 if (n !== picker.current) {
                     picker.current = n;
-                    picker.refresh();
+                    picker.refresh(true);
                 }
             }
         }
@@ -5559,7 +5559,16 @@ ApplicationWindow {
             }
             return "";
         }
-        function refresh() {
+        // Rebuild the list. With `keep`, as when a group opens or closes or
+        // something is applied, the entry or heading marked stays marked and the
+        // list stays where it is scrolled to; otherwise, as when something is
+        // typed, the mark goes to the entry the columns have, or the first.
+        function refresh(keep) {
+            var marked = null;
+            var at0 = listView.currentIndex;
+            if (keep && at0 >= 0 && at0 < rows.length)
+                marked = rows[at0].header ? "h:" + rows[at0].group : "s:" + rows[at0].spec;
+            var scrolled = listView.contentY;
             var want = search.text.trim().toLowerCase();
             problem = "";
             var all = provider(search.text.trim());
@@ -5582,7 +5591,14 @@ ApplicationWindow {
             }
             rows = list;
             var at = -1;
-            for (var j = 0; j < list.length; j++) {
+            if (marked !== null)
+                for (var m = 0; m < list.length; m++) {
+                    if ((list[m].header ? "h:" + list[m].group : "s:" + list[m].spec) === marked) {
+                        at = m;
+                        break;
+                    }
+                }
+            for (var j = 0; at < 0 && j < list.length; j++) {
                 if (!list[j].header && list[j].spec === current) {
                     at = j;
                     break;
@@ -5596,6 +5612,13 @@ ApplicationWindow {
                     }
                 }
             listView.currentIndex = at;
+            // The list is laid out afresh a moment later; where it was
+            // scrolled to is put back then, not left to jump to the mark.
+            if (keep)
+                Qt.callLater(function() {
+                    listView.contentY = Math.max(0, Math.min(scrolled,
+                        listView.contentHeight - listView.height));
+                });
             fault = list.length === 0 && want.length > 0 ? problem : "";
         }
         // The groups of the list, in order.
@@ -5620,7 +5643,7 @@ ApplicationWindow {
             var c = {};
             groups().forEach(function(g) { c[g] = shut; });
             closed = c;
-            refresh();
+            refresh(true);
         }
         // The heading of a group of the list, or the entry marked, is taken.
         function take(index) {
@@ -5633,13 +5656,15 @@ ApplicationWindow {
                     c[name] = closed[name];
                 c[row.group] = !closed[row.group];
                 closed = c;
-                var keep = listView.currentIndex;
-                refresh();
-                listView.currentIndex = Math.min(keep, rows.length - 1);
+                // The heading taken is the one marked, wherever the mark was.
+                listView.currentIndex = index;
+                refresh(true);
+                search.forceActiveFocus();
                 return;
             }
             // An entry is only marked: Apply takes it.
             listView.currentIndex = index;
+            search.forceActiveFocus();
         }
         // The entry marked, if it is one and is not what the columns have.
         readonly property var marked: listView.currentIndex >= 0 && listView.currentIndex < rows.length
@@ -5652,7 +5677,7 @@ ApplicationWindow {
             var spec = marked.spec;
             current = spec;
             picked(spec);
-            refresh();
+            refresh(true);
         }
         // Enter: a heading opens or closes; an entry is applied; with the
         // one the columns have marked already, close.
