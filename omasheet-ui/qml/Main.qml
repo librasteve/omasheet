@@ -5107,6 +5107,38 @@ ApplicationWindow {
                         font.family: win.monoFamily
                         font.pixelSize: columnPopup.textSize
                         onTextChanged: columnPopup.check()
+                        // Undo and redo are the document's, for a filter or a
+                        // sort just applied, without waiting for the popup to
+                        // close: while the box holds what was applied it has no
+                        // typing of its own to undo. Typed over, they are the
+                        // box's until it is back as it was applied.
+                        function historyKey(event) {
+                            if (filterField.text.trim() !== columnPopup.applied)
+                                return "";
+                            if (event.matches(StandardKey.Undo))
+                                return "undo";
+                            if (event.matches(StandardKey.Redo)
+                                    || ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_Y))
+                                return "redo";
+                            return "";
+                        }
+                        Keys.onShortcutOverride: function(event) {
+                            if (historyKey(event).length > 0)
+                                event.accepted = true;
+                        }
+                        Keys.onPressed: function(event) {
+                            var which = historyKey(event);
+                            if (which.length === 0)
+                                return;
+                            event.accepted = true;
+                            if (which === "undo")
+                                file.undo();
+                            else
+                                file.redo();
+                            // The filter in force now, which the step brought back.
+                            columnPopup.applied = win.filterOf(columnPopup.col);
+                            filterField.text = columnPopup.applied;
+                        }
                         // One line: a newline is not typed, Enter applies.
                         // Many: Enter starts a line, Ctrl+Enter applies.
                         Keys.onReturnPressed: function(event) {
