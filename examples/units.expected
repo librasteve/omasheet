@@ -11,6 +11,7 @@ temperature  | 20°C
 uncertain    | 0.01050(30)kg
 kilo         | 1500
 milli        | 0.005
+micro        | 10μF
 
 sheet Arithmetic
 
@@ -47,9 +48,9 @@ sheet Display
 
 Item  | Kilos | Grams | Metres
 ------|-------|-------|----------
-flour | 5kg   | 5000g | 200cm
-sugar | 0.3kg | 300g  | 150cm
-salt  | 5kg   | 5g    | 350(20)cm
+flour | 5kg   | 5000g | 2m
+sugar | 0.3kg | 300g  | 150m
+salt  | 5kg   | 5g    | 3.50(20)m
 
 sheet Totals
 

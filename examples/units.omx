@@ -25,6 +25,7 @@ sheet Literals
 | uncertain    | 10.5(3)e-3kg |
 | kilo         | 1.5k.        |
 | milli        | 5m.          |
+| micro        | 10μF         |
 
 sheet Arithmetic
 
@@ -73,7 +74,7 @@ sheet Display
 Item   : String
 Kilos  : Mass
 Grams  : Mass[g]
-Metres : Length[cm]
+Metres : Length
 
 | Item  | Kilos | Grams | Metres  |
 | ----- | ----- | ----- | ------- |
