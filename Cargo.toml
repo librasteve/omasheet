@@ -27,7 +27,7 @@ omasheet-cli = { path = "omasheet-cli" }
 # SI units (add-si-units D228). A path while the work is on `dev`: switch to a
 # crates.io or git version before anything reaches `main`, because CI checks
 # out only this repository.
-siquant = { git = "https://github.com/librasteve/siquant", rev = "128683fd98a1792c7785f3b893e62b4d53f042dd" }
+siquant = { git = "https://github.com/librasteve/siquant", rev = "5fb777c078e21fb61a3976bd5a6f2e6a92a2c1db" }
 calamine = "0.36"
 rust_xlsxwriter = "0.99"
 csv = "1"

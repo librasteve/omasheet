@@ -177,11 +177,15 @@ fn no_dimension_is_a_plain_number() {
 }
 
 #[test]
-fn temperatures_go_through_kelvin() {
-    assert_eq!(full("20°C - 10°C"), "10K");
-    let (v, s, u) = parts("20°C + 5K");
-    near(v, 298.15);
-    assert_eq!((s, u.as_str()), (0.0, "K"));
+fn a_temperature_keeps_its_unit_in_a_sum() {
+    assert_eq!(full("20°C - 10°C"), "10°C");
+    assert_eq!(full("10ºC - 5ºC"), "5°C");
+    assert_eq!(full("10°C + 5K"), "15°C");
+    assert_eq!(full("10°C - 5K"), "5°C");
+    // A product goes through kelvin.
+    let (v, _, u) = parts("20°C * 2m");
+    near(v, 586.3);
+    assert_eq!(u, "m.K");
 }
 
 #[test]

@@ -63,7 +63,7 @@ Addition, subtraction and comparison of two quantities SHALL need the same dimen
 
 #### Scenario: Temperature
 - **WHEN** `20°C - 10°C` is evaluated
-- **THEN** the result is `10K`
+- **THEN** the result is `10°C`
 
 ### Requirement: Conversion
 `to(quantity, 'unit')` SHALL give the quantity in another unit of its dimension.

@@ -19,7 +19,7 @@ Raised by the owner (2026-11-11) with the `siquant` crate (`librasteve/siquant`)
 | D236 | Decided | A unit is read from text only in an `.omx` file; CSV, XLSX and JSON import never read a quantity, so `12g` or `10m` in imported data stays text | A switch on `parse_literal` |
 | D237 | Decided | After a number, `.` continues a unit only if the next term is not followed by `(` and the whole text reads as an SI unit; otherwise it is a method call or field: `5kg.abs()`, `5m.Float` | The lexer backs off one term at a time. A test checks no function name is also a unit symbol |
 | D238 | Decided | `sum`, `mean`, `min`, `max` and `median` of quantities fold from the first element, not from an integer zero. `std` and `var` refuse a quantity | |
-| D239 | Decided | An affine unit (`°C`) is read only on its own; arithmetic on it goes through kelvin, so `20°C - 10°C` is `10K` | Delta-temperature units are not modelled |
+| D239 | Decided | An affine unit (`°C`) is read only on its own; arithmetic on it goes through kelvin, so `20°C - 10°C` is `10°C` (an interval), `10°C + 5K` is `15°C`; a product still goes through kelvin | Delta-temperature units are not modelled |
 
 ## Open Questions
 

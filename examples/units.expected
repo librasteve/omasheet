@@ -27,7 +27,7 @@ root          | 9m
 no dimension  | 200
 in grams      | 5000g
 in kelvin     | 293.15K
-warmer by     | 10K
+warmer by     | 10°C
 equal         | true
 ordered       | true
 uncertain sum | 7.00(50)m

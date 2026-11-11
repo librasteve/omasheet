@@ -263,7 +263,7 @@ errors, and `5 kg` is a number and a name.
 sqrt(9m ** 2)        9m             a root, where the units allow it
 6m / 3cm             200            no dimension is a plain number
 5kg.to('g')          5000g          to another unit of the dimension
-20°C - 10°C          10K            a temperature goes through kelvin
+20°C - 10°C          10°C           an interval of two temperatures keeps the unit
 5kg + 3m             an error: they measure Mass and Length
 ```
 
