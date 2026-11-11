@@ -373,7 +373,9 @@ fn cell_snap(
                 .is_some_and(|f| *f != delocalised(&display, style)),
         exact: full,
         display,
-        numeric: value.is_numeric(),
+        // A quantity is a number with a unit: the grid sets it right, as a
+        // number, not left as text.
+        numeric: value.is_numeric() || matches!(value, Value::Quantity(_)),
         value,
         formula: source.starts_with('='),
         error: error.or_else(|| failed.then(|| "this cell could not be calculated".to_string())),
@@ -7007,6 +7009,19 @@ mod tests {
         // And one that has no unit says none.
         assert!(doc.set_column_types(0, &[0], Some("Quantity")));
         assert_eq!(doc.snapshot().sheets[0].columns[0].unit, "");
+    }
+
+    #[test]
+    fn a_quantity_among_text_stays_a_quantity_set_as_a_number() {
+        // A column of mixed kinds takes no type, and a cell keeps its own.
+        let src = "sheet S\n\n| V |\n| ------ |\n| 5m |\n| hello |\n| 3kg |\n";
+        let doc = Document::from_text(src);
+        let snap = doc.snapshot();
+        assert_eq!(snap.sheets[0].columns[0].ty, "");
+        let rows = &snap.sheets[0].rows;
+        assert_eq!(rows[0][0].value.kind(), "Quantity");
+        assert!(rows[0][0].numeric && rows[2][0].numeric && !rows[1][0].numeric);
+        assert_eq!(rows[1][0].value.kind(), "String");
     }
 
     #[test]
