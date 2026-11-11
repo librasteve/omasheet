@@ -1,0 +1,35 @@
+# The hint at the top right of the window, beside the formula bar, for the
+# column the cursor is in: what can be typed into its cells.
+#
+# One line to a type: `Type | hint`. Blank lines and lines starting with `#`
+# are ignored. A line for a type that is not here gives no hint.
+#
+# In a hint, these are filled in:
+#   {date_pattern}  how the locale writes a date, e.g. dd/mm/yyyy
+#   {date}          31 January 2025 in the locale's style
+#   {time}          17:05 in the locale's style
+#   {datetime}      31 January 2025 17:05 in the locale's style
+#   {or_iso}        " or ISO" unless the locale already is ISO, else nothing
+#   {name}          the name of the type (for `Quantity kind`)
+#   {unit}          the unit a kind of quantity is held in: kg for Mass
+#
+# `Quantity kind` is the line for every kind of quantity (Mass, Length, Force…).
+# `Quantity` is the line for the generic one, which has no unit of its own.
+
+Integer       | Integer: a whole number, e.g. 42
+Decimal       | Decimal: an exact decimal number, e.g. 19.99 or 20%
+Percent       | Percent: an exact number shown as a percentage, e.g. 20%
+Float         | Float: a floating-point number, e.g. 1.5, 2e-3 or Inf
+Scientific    | Scientific: a value and its measurement uncertainty, e.g. 10.5(3) or 10 ± 0.3
+Complex       | Complex: a real and an imaginary part, e.g. 3+4i or 2i
+Boolean       | Boolean: true or false
+String        | String
+Url           | Url: a web address, e.g. https://example.com
+Email         | Email: an email address, e.g. name@example.com
+Uuid          | Uuid: a UUID, e.g. 7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f
+Date          | Date: {date_pattern}, e.g. {date}{or_iso}
+Time          | Time: e.g. {time}
+Datetime      | Datetime: e.g. {datetime}{or_iso}
+Duration      | Duration: PnDTnHnMnS, e.g. PT1H30M
+Quantity      | Quantity: a number and an SI unit, e.g. 5kg or 9.81m.s^-2
+Quantity kind | {name}: a number and an SI unit of it, e.g. 5{unit} or 10.5(3){unit}

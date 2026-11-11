@@ -418,42 +418,35 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
     // A day past the twelfth, so the order of day and month is plain.
     let day = date::from_ymd(2025, 1, 31).unwrap_or(0);
     let time = date::time_from(17, 5, 0).unwrap_or(0);
-    let also_iso = if style.is_iso() { "" } else { " or ISO" };
-    match ty {
-        "Integer" => "Integer: a whole number, e.g. 42".into(),
-        "Decimal" => "Decimal: an exact decimal number, e.g. 19.99 or 20%".into(),
-        "Percent" => "Percent: an exact number shown as a percentage, e.g. 20%".into(),
-        "Float" => "Float: a floating-point number, e.g. 1.5, 2e-3 or Inf".into(),
-        "Scientific" => {
-            "Scientific: a value and its measurement uncertainty, e.g. 10.5(3) or 10 ± 0.3".into()
-        }
-        "Complex" => "Complex: a real and an imaginary part, e.g. 3+4i or 2i".into(),
-        "Boolean" => "Boolean: true or false".into(),
-        "String" => "String".into(),
-        "Url" => "Url: a web address, e.g. https://example.com".into(),
-        "Email" => "Email: an email address, e.g. name@example.com".into(),
-        "Uuid" => "Uuid: a UUID, e.g. 7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f".into(),
-        "Date" => format!(
-            "Date: {}, e.g. {}{also_iso}",
-            style.date_pattern(),
-            style.date(day)
-        ),
-        "Time" => format!("Time: e.g. {}", style.time(time)),
-        "Datetime" => format!(
-            "Datetime: e.g. {}{also_iso}",
-            style.datetime(day as i64 * date::DAY_MICROS + time / date::NANOS_PER_MICRO)
-        ),
-        "Duration" => "Duration: PnDTnHnMnS, e.g. PT1H30M".into(),
-        other => match S::from_name(other) {
-            Some(S::Quantity(id)) => match omasheet_omx::units::preferred(id) {
-                Some(unit) => {
-                    format!("{other}: a number and an SI unit of it, e.g. 5{unit} or 10.5(3){unit}")
-                }
-                None => "Quantity: a number and an SI unit, e.g. 5kg or 9.81m.s^-2".into(),
-            },
-            _ => String::new(),
+    let or_iso = if style.is_iso() { "" } else { " or ISO" };
+    // The hints are in `resources/entry_hints.txt`, one line to a type.
+    let hints = include_str!("../resources/entry_hints.txt");
+    let find = |key: &str| {
+        hints.lines().find_map(|line| {
+            let (name, hint) = line.split_once('|')?;
+            (!line.starts_with('#') && name.trim() == key).then(|| hint.trim().to_string())
+        })
+    };
+    let (key, unit) = match S::from_name(ty) {
+        Some(S::Quantity(id)) => match omasheet_omx::units::preferred(id) {
+            Some(unit) => ("Quantity kind", unit.to_string()),
+            None => ("Quantity", String::new()),
         },
-    }
+        _ => (ty, String::new()),
+    };
+    let Some(hint) = find(key) else {
+        return String::new();
+    };
+    hint.replace("{date_pattern}", &style.date_pattern())
+        .replace(
+            "{datetime}",
+            &style.datetime(day as i64 * date::DAY_MICROS + time / date::NANOS_PER_MICRO),
+        )
+        .replace("{date}", &style.date(day))
+        .replace("{time}", &style.time(time))
+        .replace("{or_iso}", or_iso)
+        .replace("{name}", ty)
+        .replace("{unit}", &unit)
 }
 
 /// A row or column picked by counting, as a formula writes it.
