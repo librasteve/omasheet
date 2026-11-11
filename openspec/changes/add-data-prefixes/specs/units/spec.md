@@ -33,7 +33,7 @@ A binary prefix and a `.` on their own SHALL be a scale, a power of two: `1Ki.` 
 - **THEN** the result is `1572864`
 
 ### Requirement: Data quantity types
-`Information`, `DataRate` and `InformationDensity` (data over an area, `b.m^-2`, as of a disk drive) SHALL be quantity types; a column of `Information` holds `B` unless it names another unit, `Information[GiB]`.
+`Information`, `DataRate` and `InformationDensity` (data over an area, `b.m^-2`, as of a disk drive) SHALL be quantity types; a column of `Information` holds `B` unless it names another unit, `Information[GiB]`; a `DataRate` holds `b.s^-1`.
 
 #### Scenario: A column in gibibytes
 - **WHEN** a cell `512MiB` is in a column `Information[GiB]`

@@ -29,9 +29,8 @@ rewrites the text, and saving writes exactly that.
   all of them. A quantity is just `Quantity` here: its kind comes from
   **Set unit…**. Undo and redo (Ctrl+Z, Ctrl+Y) work on what was applied while
   either box is still open, when nothing is typed in its search box.
-- **Set unit…** is the same kind of box for the units, filed under SI Base,
-  Dimensional, Mechanical, Electromagnetic, Thermodynamic, Radiation and
-  Other, each heading opening and closing its group, with a caret beside the
+- **Set unit…** is the same kind of box for the units, filed under SI Base, Data,
+  Size, Mechanical, Electromagnetic, Thermodynamic, Radiation and Other, each heading opening and closing its group, with a caret beside the
   search box that closes every group or opens them all. It lists `kg`, `N`, `m^2`, or any unit typed,
   `mg` or `kN.m`. It is there for every column: the column
   becomes a column of the kind of quantity the unit is of (`mg` makes it

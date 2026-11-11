@@ -1998,7 +1998,7 @@ fn unit_lines() -> String {
         // named for the unit where the registry has one and for the kind
         // where it has not. The kinds' come first, which gives the
         // kilogram, not the gram, and the katal last of its group; only
-        // the Dimensional group lists its own units first.
+        // the Size group lists its own units first.
         let mut own: Vec<(String, String)> = reg
             .units()
             .filter(|u| u.live && u.group == group)
@@ -2036,7 +2036,7 @@ fn unit_lines() -> String {
                 kinds.push((symbol, name));
             }
         }
-        let both = if group != "Dimensional" {
+        let both = if group != "Size" {
             kinds.append(&mut own);
             kinds
         } else {
