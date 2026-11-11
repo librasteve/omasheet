@@ -1,5 +1,7 @@
 # Proposal: Units (Phase 4)
 
+> **Superseded**, and nothing of it was built. The decision of 2026-11-11 replaces its literal grammar (`5 m/s`, `unit Day = 24h`), its exact `Fraction` magnitudes and its unit-as-column-type with `add-si-units`: strict SI cell text (`5kg`, `9.81m.s^-2`), `Scientific` magnitudes, and named quantity types as column types, from the `siquant` crate. Currencies and `%` as units are not carried over. What replaces it: `add-si-units`, then `add-data-prefixes`, `add-angles` and `add-durations-as-time`.
+
 ## Why
 
 A spreadsheet number has no meaning attached, so `Revenue + Weight` is legal and
