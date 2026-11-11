@@ -1669,17 +1669,13 @@ impl qobject::File {
     fn quantity_kinds(&self) -> QString {
         let reg = siquant::Registry::builtin();
         let mut lines = Vec::new();
-        for group in [
-            siquant::Group::Base,
-            siquant::Group::Derived,
-            siquant::Group::Other,
-        ] {
+        for group in siquant::GROUPS {
             for t in reg.quantity_types().filter(|t| t.group() == group) {
                 let unit = t
                     .preferred_unit()
                     .map(|u| u.to_string())
                     .unwrap_or_default();
-                lines.push(format!("{}\t{}\t{unit}", group.title(), t.name()));
+                lines.push(format!("{group}\t{}\t{unit}", t.name()));
             }
         }
         QString::from(&lines.join("\n"))
@@ -1689,23 +1685,26 @@ impl qobject::File {
         let reg = siquant::Registry::builtin();
         let mut seen = std::collections::HashSet::new();
         let mut lines = Vec::new();
-        for group in [
-            siquant::Group::Base,
-            siquant::Group::Derived,
-            siquant::Group::Other,
-        ] {
-            // The units of the registry, then those a kind of this group is
-            // held in that are not one of them: `kg`, `m^2`, `m.s^-1`.
-            for u in reg.units().filter(|u| u.live && u.group == group) {
-                if seen.insert(u.symbol.to_string()) {
-                    lines.push(format!("{}\t{}\t{}", group.title(), u.symbol, u.name));
-                }
-            }
+        for group in siquant::GROUPS {
+            // The units a kind of this group is held in come first, `kg`,
+            // `m^2`, `m.s^-1`, named for the unit where the registry has
+            // one and for the kind where it has not; then the other units
+            // of the group.
             for t in reg.quantity_types().filter(|t| t.group() == group) {
                 if let Some(u) = t.preferred_unit()
                     && seen.insert(u.to_string())
                 {
-                    lines.push(format!("{}\t{u}\t{}", group.title(), t.name()));
+                    let symbol = u.to_string();
+                    let name = reg
+                        .units()
+                        .find(|r| r.symbol == symbol)
+                        .map_or_else(|| t.name().to_string(), |r| r.name.to_string());
+                    lines.push(format!("{group}\t{symbol}\t{name}"));
+                }
+            }
+            for u in reg.units().filter(|u| u.live && u.group == group) {
+                if seen.insert(u.symbol.to_string()) {
+                    lines.push(format!("{group}\t{}\t{}", u.symbol, u.name));
                 }
             }
         }

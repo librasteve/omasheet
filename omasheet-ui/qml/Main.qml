@@ -5844,7 +5844,7 @@ ApplicationWindow {
             // A type has no bracket: the kind, `Mass`, of `Mass[g]`.
             var type = win.sharedSpec(true);
             var at = type.indexOf("[");
-            openFor(c, item, at < 0 ? type : type.substring(0, at), ["SI base"]);
+            openFor(c, item, at < 0 ? type : type.substring(0, at), ["SI Base"]);
         }
     }
 
@@ -5882,7 +5882,7 @@ ApplicationWindow {
         function show(c, item) {
             var spec = win.sharedSpec(true);
             var at = spec.indexOf("[");
-            openFor(c, item, at < 0 ? "" : spec.substring(at + 1, spec.length - 1), ["SI base"]);
+            openFor(c, item, at < 0 ? "" : spec.substring(at + 1, spec.length - 1), ["SI Base"]);
         }
     }
 

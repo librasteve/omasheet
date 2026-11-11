@@ -3295,7 +3295,7 @@ checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 [[package]]
 name = "siquant"
 version = "0.1.1"
-source = "git+https://github.com/librasteve/siquant?rev=77e7a38e87ec3faa775cc71dd55e0bbfed00109b#77e7a38e87ec3faa775cc71dd55e0bbfed00109b"
+source = "git+https://github.com/librasteve/siquant?rev=6ac0c3bf9fd3accc8dd0bd8e5d4d9ca73b4331bd#6ac0c3bf9fd3accc8dd0bd8e5d4d9ca73b4331bd"
 dependencies = [
  "serde",
  "serde_yaml_ng",
