@@ -1689,8 +1689,9 @@ impl qobject::File {
             // The units of the group in the order of the resource file, and
             // those a kind of the group is held in, `kg`, `m^2`, `m.s^-1`,
             // named for the unit where the registry has one and for the kind
-            // where it has not. The base units take the kinds' first, which
-            // gives the kilogram, not the gram.
+            // where it has not. The kinds' come first, which gives the
+            // kilogram, not the gram, and the katal last of its group; only
+            // the Dimensional group lists its own units first.
             let mut own: Vec<(String, String)> = reg
                 .units()
                 .filter(|u| u.live && u.group == group)
@@ -1707,7 +1708,7 @@ impl qobject::File {
                     kinds.push((symbol, name));
                 }
             }
-            let both = if group == "SI Base" {
+            let both = if group != "Dimensional" {
                 kinds.append(&mut own);
                 kinds
             } else {
