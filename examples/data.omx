@@ -1,0 +1,53 @@
+# Data units. The bit `b` and the byte `B` (eight bits) take the SI prefixes,
+# where `kB` is 1000 B, and the binary ones, where `KiB` is 1024 B. A rate
+# needs no unit of its own: `MiB.s^-1`, `kb.s^-1`. A binary prefix and a `.` on
+# its own is a scale, as `k.` is: `1Ki.` is 1024.
+
+sheet Literals
+
+| Name     | Value     |
+| -------- | --------- |
+| byte     | 5B        |
+| bit      | 40b       |
+| kilobyte | 1kB       |
+| kibibyte | 1KiB      |
+| memory   | 16GiB     |
+| speed    | 100Mb.s^-1 |
+| scale    | 1Ki.      |
+| mebi     | 1.5Mi.    |
+
+sheet Arithmetic
+
+| Name        | Value                  |
+| ----------- | ---------------------- |
+| sum         | = 4GiB + 512MiB        |
+| decimal     | = 1kB + 1KiB           |
+| in bytes    | = 1KiB.to('B')         |
+| in bits     | = 1kB.to('b')          |
+| megabits    | = 125kB.to('Mb')       |
+| downloaded  | = 10MB.s^-1 * 3s       |
+| time to get | = 1GiB.to('MiB') / 50MiB.s^-1 |
+| ordered     | = 1kB < 1KiB           |
+| equal       | = 8b == 1B             |
+
+# A column of data. `Information` is held in bytes unless it says another, as
+# `Information[GiB]`, in which a cell written in any unit is shown, and a bare
+# number is read.
+sheet Disks
+
+Disk : String
+Size : Information[GiB]
+Free : Information[GiB]
+
+| Disk   | Size  | Free   |
+| ------ | ----- | ------ |
+| system | 512GiB | 120GiB |
+| data   | 2TiB   | 1.5TiB |
+| backup | 4000   | 3500   |
+
+sheet Totals
+
+| Name  | Value                 |
+| ----- | --------------------- |
+| size  | = Disks.Size.sum()    |
+| free  | = Disks.Free.sum()    |

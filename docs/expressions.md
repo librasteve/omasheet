@@ -254,12 +254,21 @@ symbol is case-sensitive, and `ºC`, `µ` and the ohm sign are read as `°C`,
 `μ` and `Ω`. A unit other than these is not a unit: `5ft`, `5L` and `5min` are
 errors, and `5 kg` is a number and a name.
 
+Data has two units, the bit `b` and the byte `B` (eight bits). Each takes the SI
+prefixes, where `kB` is 1000 B, and the binary ones `Ki Mi Gi Ti Pi Ei Zi Yi Ri
+Qi`, where `KiB` is 1024 B: `4GiB`, `100Mb`. A rate needs no unit of its own,
+`MiB.s^-1` or `kb.s^-1`. A binary prefix and a dot on its own is a scale, as
+`k.` is: `1Ki.` is 1024 and `1.5Mi.` is 1572864.
+
 ```
 5kg + 300g           5.3kg          the right side is converted to the left's unit
 300g + 5kg           5300g
 2m * 3m              6m^2           a product or a quotient combines the units
 10m / 4s             2.5m.s^-1
 2m ** 3              8m^3           a power takes a whole number
+4GiB + 512MiB        4.5GiB         data takes the binary prefixes
+10MB.s^-1 * 3s       30MB           a rate over a time is an amount
+1KiB.to('B')         1024B
 sqrt(9m ** 2)        9m             a root, where the units allow it
 6m / 3cm             200            no dimension is a plain number
 5kg.to('g')          5000g          to another unit of the dimension

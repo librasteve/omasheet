@@ -542,3 +542,48 @@ Weight : Mass[g]
     assert!(out.ok(), "{:?}", out.errors);
     assert!(out.output.contains("2500g"), "{}", out.output);
 }
+
+#[test]
+fn data_units_take_the_binary_and_si_prefixes() {
+    assert_eq!(shown("4GiB + 512MiB"), "4.5GiB");
+    assert_eq!(shown("1kB + 1KiB"), "2.024kB");
+    assert_eq!(shown("1KiB.to('B')"), "1024B");
+    assert_eq!(shown("1kB.to('b')"), "8000b");
+    assert_eq!(shown("8b == 1B"), "true");
+    assert_eq!(shown("1kB < 1KiB"), "true");
+    // A rate over a time.
+    assert_eq!(shown("10MB.s^-1 * 3s"), "30MB");
+    assert_eq!(shown("1GiB.to('MiB') / 50MiB.s^-1"), "20.48s");
+    assert!(fails("5B + 3m").contains("Information"));
+}
+
+#[test]
+fn a_binary_scale_is_a_power_of_two() {
+    assert_eq!(full("1Ki."), "1024");
+    assert_eq!(full("1.5Mi."), "1572864");
+    assert_eq!(full("2Gi. / 1Ki."), "2097152");
+    // The decimal prefixes are as before.
+    assert_eq!(full("1k."), "1000");
+    // A byte is not a scale, and a scale is not a unit.
+    assert_eq!(full("5B"), "5B");
+}
+
+#[test]
+fn a_byte_or_a_bit_does_not_clash_with_a_base_prefix() {
+    // `0b101` is a binary number; `0B` is no bytes; `5b` is five bits.
+    assert_eq!(shown("0b101"), "0b101");
+    assert_eq!(shown("0B"), "0B");
+    assert_eq!(shown("5b"), "5b");
+    assert_eq!(shown("0xB"), "0xb");
+}
+
+#[test]
+fn a_column_of_data_is_held_in_its_unit() {
+    let src =
+        "sheet D\n\nSize : Information[GiB]\n\n| Size |\n| ---- |\n| 2TiB |\n| 512MiB |\n| 4 |\n";
+    let out = view("test.omx", src);
+    assert!(out.ok(), "{:?}", out.errors);
+    for shown in ["2048GiB", "0.5GiB", "4GiB"] {
+        assert!(out.output.contains(shown), "{shown} in\n{}", out.output);
+    }
+}
