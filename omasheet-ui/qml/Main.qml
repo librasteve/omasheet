@@ -5533,14 +5533,21 @@ ApplicationWindow {
 
         Connections {
             target: win
+            // Not read at once: what the sheet is made of is worked out from the
+            // snapshot as it changes, and reading it in the middle of that is
+            // a loop and a stale answer. A moment later it is what it became.
             function onSnapChanged() {
                 if (!picker.visible)
                     return;
-                var n = picker.now();
-                if (n !== picker.current) {
-                    picker.current = n;
-                    picker.refresh(true);
-                }
+                Qt.callLater(function() {
+                    if (!picker.visible)
+                        return;
+                    var n = picker.now();
+                    if (n !== picker.current) {
+                        picker.current = n;
+                        picker.refresh(true);
+                    }
+                });
             }
         }
 
