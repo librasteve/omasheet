@@ -1875,6 +1875,26 @@ fn reformatted(text: &str, l: &SchemaLine, format: Option<&Format>) -> String {
     out
 }
 
+/// `format` read for a column of type `ty`: `None` for no format; an error
+/// says what the type takes where it does not read.
+fn read_column_format(name: &str, ty: S, format: Option<&str>) -> Result<Option<Format>, String> {
+    let Some(takes) = Format::conversions_of(ty) else {
+        return Err(format!("{name} takes no format"));
+    };
+    match format {
+        Some(text) => match Format::parse(text, ty) {
+            Ok(f) if f.takes(ty) => Ok(Some(f)),
+            // A unit that is not one, or of another dimension, says so.
+            Err(e) if ty.is_quantity() => Err(format!("Not a format: {text}\n{}", e.message)),
+            _ => {
+                let takes = takes.replace('`', "");
+                Err(format!("Not a format: {text}\n{ty} takes {takes}"))
+            }
+        },
+        None => Ok(None),
+    }
+}
+
 /// A type as the picker names it: `Decimal`, or `Mass[g]`, a quantity with
 /// the unit its column holds. The unit the type holds anyway is no format
 /// (`Mass[kg]` is `Mass`), and the second of the pair is `Some(None)` for
@@ -3196,23 +3216,7 @@ impl Document {
         let mut columns = Vec::new();
         for column in cols.iter().filter_map(|&c| snap.columns.get(c)) {
             let ty = S::from_name(&column.ty).unwrap_or(S::Any);
-            let Some(takes) = Format::conversions_of(ty) else {
-                return Err(format!("{} takes no format", column.name));
-            };
-            let found = match format {
-                Some(text) => match Format::parse(text, ty) {
-                    Ok(f) if f.takes(ty) => Some(f),
-                    // A unit that is not one, or of another dimension, says so.
-                    Err(e) if ty.is_quantity() => {
-                        return Err(format!("Not a format: {text}\n{}", e.message));
-                    }
-                    _ => {
-                        let takes = takes.replace('`', "");
-                        return Err(format!("Not a format: {text}\n{ty} takes {takes}"));
-                    }
-                },
-                None => None,
-            };
+            let found = read_column_format(&column.name, ty, format)?;
             columns.push((column.name.clone(), ty, found));
         }
         let mut text = self.text.clone();
@@ -3230,6 +3234,23 @@ impl Document {
             text = reformatted(&text, line, format.as_ref());
         }
         self.commit(text);
+        Ok(())
+    }
+
+    /// Whether `format` would be taken by columns `cols` of a sheet, as
+    /// `set_column_format` would take it, with nothing changed: `Ok` for one
+    /// that reads (or none), and what to write instead for one that does not.
+    pub fn check_column_format(
+        &self,
+        sheet: usize,
+        cols: &[usize],
+        format: Option<&str>,
+    ) -> Result<(), String> {
+        let snap = self.snapshot.sheets.get(sheet).ok_or_else(String::new)?;
+        for column in cols.iter().filter_map(|&c| snap.columns.get(c)) {
+            let ty = S::from_name(&column.ty).unwrap_or(S::Any);
+            read_column_format(&column.name, ty, format)?;
+        }
         Ok(())
     }
 
@@ -7212,6 +7233,21 @@ mod tests {
                 "{format}"
             );
         }
+    }
+
+    #[test]
+    fn a_format_is_checked_without_being_set() {
+        let src = "sheet S\n\nDue : Date\nMass : Mass\n\n| Due | Mass |\n| --- | ---- |\n| 2025-01-31 | 5kg |\n";
+        let doc = Document::from_text(src);
+        assert!(doc.check_column_format(0, &[0], Some("%d %b %Y")).is_ok());
+        assert!(doc.check_column_format(0, &[0], None).is_ok());
+        let bad = doc.check_column_format(0, &[0], Some("zzz")).unwrap_err();
+        assert!(bad.contains("Not a format"), "{bad}");
+        assert!(doc.check_column_format(0, &[1], Some("g; .1f")).is_ok());
+        let wrong = doc.check_column_format(0, &[1], Some("m")).unwrap_err();
+        assert!(wrong.contains("Length"), "{wrong}");
+        // Nothing was changed.
+        assert!(!doc.text().contains("["), "{}", doc.text());
     }
 
     #[test]

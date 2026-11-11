@@ -6377,43 +6377,372 @@ ApplicationWindow {
         }
     }
 
-    // The format a column shows its values in, from `Set format…`: some that
-    // the column's type takes, and any other typed, taken as typed once Apply
-    // finds it reads; what is wrong with one says so under the list. The first
-    // entry shows the column as its type does, with no format.
-    PickerPopup {
+    // The format a column shows its values in, from `Set format…`, as the
+    // filter box takes an expression: a field seeded with the format in use,
+    // or an example of one where there is none, checked as it is typed, with
+    // what is wrong with it said under it. Apply applies it and stays open, to
+    // try another; Enter does the same, and Enter again, with nothing left to
+    // apply, closes. Under the field are formats the column's type takes, each
+    // with what it shows: one taken goes into the field. An empty field is no
+    // format. Close, Esc, or a click elsewhere, leaves what was last applied.
+    Popup {
         id: formatPopup
-        placeholder: "Search or type a format"
+        property int col: 0
         property string type: ""
         property string unit: ""
-        provider: function(text) {
-            var out = [{spec: "", label: "No format", hint: "as the type shows it", complete: ""}];
-            var lines = file.formatChoices(type, unit).split("\n");
-            for (var i = 0; i < lines.length; i++) {
-                var f = lines[i].split("\t");
-                if (f.length < 2 || f[0] === "")
-                    continue;
-                out.push({spec: f[0], label: f[0], hint: f[1], complete: f[0]});
-            }
-            if (text.length > 0 && !out.some(function(e) { return e.spec === text; }))
-                out.unshift({spec: text, label: text, hint: "use as typed", keep: true});
-            return out;
-        }
-        onPicked: function(format) {
-            var problem = file.setColumnFormat(win.tab, win.selLeft, win.selRight - win.selLeft + 1, format);
-            error = problem;
-            if (problem.length > 0)
-                current = now();
-        }
-        now: function() {
+        // The format in force, and what is wrong with the field, or "".
+        property string applied: ""
+        property string fault: ""
+        property var choices: []
+        // How much taller than usual the list has been stretched.
+        property real stretch: 0
+        readonly property bool changed: fault.length === 0 && field.text.trim() !== applied
+        padding: 8
+        width: Math.min(Math.round(win.fontSize * 28), win.width - 16)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onClosed: grid.forceActiveFocus()
+
+        function now() {
             var column = win.sheet.columns[win.selLeft];
             return column && column.format ? column.format : "";
         }
         function show(c, item) {
+            col = c;
+            parent = item;
             var column = win.sheet.columns[c];
             type = column ? column.type : "";
             unit = column && column.unit ? column.unit : "";
-            openFor(c, item, now(), []);
+            var lines = file.formatChoices(type, unit).split("\n"), list = [];
+            for (var i = 0; i < lines.length; i++) {
+                var f = lines[i].split("\t");
+                if (f.length >= 2 && f[0] !== "")
+                    list.push({format: f[0], shows: f[1]});
+            }
+            choices = list;
+            applied = now();
+            // What is in force, or the first of those the type takes.
+            field.text = applied.length > 0 ? applied : (list.length > 0 ? list[0].format : "");
+            marked = -1;
+            check();
+            var lap = Math.round(win.fontSize * 0.8);
+            var right = item.mapToItem(null, item.width - lap, 0).x;
+            x = right + width <= win.width - 8 ? item.width - lap
+                : Math.max(-item.mapToItem(null, 0, 0).x + 8, lap - width);
+            y = 0;
+            open();
+            field.forceActiveFocus();
+            field.selectAll();
+        }
+        function check() {
+            fault = file.checkColumnFormat(win.tab, win.selLeft, win.selRight - win.selLeft + 1, field.text);
+        }
+        // Apply what is in the field and stay open.
+        function apply() {
+            check();
+            if (fault.length > 0 || !changed)
+                return;
+            var problem = file.setColumnFormat(win.tab, win.selLeft, win.selRight - win.selLeft + 1, field.text);
+            if (problem.length > 0) {
+                fault = problem;
+                return;
+            }
+            applied = field.text.trim();
+        }
+        function submit() {
+            check();
+            if (fault.length > 0)
+                return;
+            if (changed)
+                apply();
+            else
+                close();
+        }
+        // The choice marked, which is in the field.
+        property int marked: -1
+        function take(i) {
+            if (i < 0 || i >= choices.length)
+                return;
+            marked = i;
+            field.text = choices[i].format;
+            field.cursorPosition = field.text.length;
+            field.forceActiveFocus();
+        }
+        Connections {
+            target: win
+            // Not read at once, as for the pickers: an undo or a redo brings
+            // back the format that was in force.
+            function onSnapChanged() {
+                if (!formatPopup.visible)
+                    return;
+                Qt.callLater(function() {
+                    if (!formatPopup.visible)
+                        return;
+                    var n = formatPopup.now();
+                    if (n !== formatPopup.applied) {
+                        formatPopup.applied = n;
+                        field.text = n;
+                    }
+                });
+            }
+        }
+
+        background: Rectangle {
+            color: win.overColor
+            border.color: win.lineColor
+            radius: 3
+        }
+        contentItem: ColumnLayout {
+            spacing: 4
+            // A handle to drag the box by, out of the way of the cells.
+            Item {
+                Layout.fillWidth: true
+                implicitHeight: Math.round(win.captionSize * 1.1)
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: Math.round(win.captionSize * 3)
+                    height: 3
+                    radius: 1.5
+                    color: win.mutedColor
+                    opacity: formatGrip.containsMouse || formatGrip.pressed ? 1 : 0.5
+                }
+                MouseArea {
+                    id: formatGrip
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                    property real fromX: 0
+                    property real fromY: 0
+                    onPressed: function(mouse) {
+                        fromX = mouse.x;
+                        fromY = mouse.y;
+                    }
+                    onPositionChanged: function(mouse) {
+                        if (!pressed)
+                            return;
+                        formatPopup.x += mouse.x - fromX;
+                        formatPopup.y += mouse.y - fromY;
+                    }
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                Layout.maximumWidth: formatPopup.availableWidth
+                elide: Text.ElideRight
+                text: "Format of " + (win.sheet.columns[formatPopup.col] ? win.sheet.columns[formatPopup.col].name : "")
+                    + " (" + formatPopup.type + (formatPopup.unit ? ", " + formatPopup.unit : "") + ")"
+                color: win.mutedColor
+                font.family: win.font.family
+                font.pixelSize: win.smallSize
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: Math.round(win.fontSize * 2.1)
+                color: "transparent"
+                radius: 2
+                border.color: formatPopup.fault.length > 0 ? win.errorColor
+                    : field.activeFocus ? win.accentColor : win.lineColor
+                TextInput {
+                    id: field
+                    anchors.fill: parent
+                    anchors.leftMargin: 6
+                    anchors.rightMargin: 6
+                    verticalAlignment: TextInput.AlignVCenter
+                    clip: true
+                    color: win.textColor
+                    selectionColor: win.selectionFill
+                    selectByMouse: true
+                    font.family: win.monoFamily
+                    font.pixelSize: win.fontSize
+                    onTextChanged: {
+                        formatPopup.marked = -1;
+                        formatPopup.check();
+                    }
+                    // Undo and redo are the document's, for a format just
+                    // applied, while the field holds what was applied.
+                    function historyKey(event) {
+                        if (field.text.trim() !== formatPopup.applied)
+                            return "";
+                        if (event.matches(StandardKey.Undo))
+                            return "undo";
+                        if (event.matches(StandardKey.Redo)
+                                || ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_Y))
+                            return "redo";
+                        return "";
+                    }
+                    Keys.onShortcutOverride: function(event) {
+                        if (historyKey(event).length > 0)
+                            event.accepted = true;
+                    }
+                    Keys.onPressed: function(event) {
+                        var which = historyKey(event);
+                        if (which.length === 0)
+                            return;
+                        event.accepted = true;
+                        if (which === "undo")
+                            file.undo();
+                        else
+                            file.redo();
+                    }
+                    Keys.onReturnPressed: formatPopup.submit()
+                    Keys.onEnterPressed: formatPopup.submit()
+                    // Up and Down try the formats under it one by one; past the
+                    // last, Down goes on to the buttons.
+                    Keys.onDownPressed: {
+                        if (formatPopup.marked < formatPopup.choices.length - 1)
+                            formatPopup.take(formatPopup.marked + 1);
+                        else if (formatApply.enabled)
+                            formatApply.forceActiveFocus();
+                        else
+                            formatClose.forceActiveFocus();
+                    }
+                    Keys.onUpPressed: formatPopup.take(Math.max(0, formatPopup.marked - 1))
+                }
+            }
+            // What is wrong with it, or what reads.
+            Text {
+                visible: formatPopup.fault.length > 0
+                Layout.fillWidth: true
+                Layout.maximumWidth: formatPopup.availableWidth
+                wrapMode: Text.Wrap
+                text: formatPopup.fault
+                color: win.errorColor
+                font.family: win.font.family
+                font.pixelSize: win.smallSize
+            }
+            Text {
+                visible: formatPopup.choices.length > 0
+                Layout.topMargin: 2
+                text: "Formats " + formatPopup.type + " takes"
+                color: win.mutedColor
+                font.family: win.font.family
+                font.pixelSize: win.smallSize
+            }
+            ListView {
+                id: choiceList
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.max(Math.round(win.fontSize * 4), Math.min(contentHeight,
+                    Math.round(win.fontSize * 12) + formatPopup.stretch, Math.round(win.height * 0.7)))
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                model: formatPopup.choices
+                ScrollBar.vertical: ScrollBar {}
+                delegate: Rectangle {
+                    id: choice
+                    required property int index
+                    required property var modelData
+                    width: ListView.view.width
+                    height: Math.round(win.fontSize * 1.9)
+                    radius: 3
+                    color: formatPopup.marked === index
+                        ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.22)
+                        : choiceArea.containsMouse ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.08)
+                        : "transparent"
+                    // The format in a column of its own, and what it shows beside
+                    // it, cut short rather than past the edge.
+                    Text {
+                        id: formatText
+                        x: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.round(parent.width * 0.42)
+                        elide: Text.ElideRight
+                        text: choice.modelData.format
+                        color: win.textColor
+                        font.family: win.monoFamily
+                        font.pixelSize: win.smallSize
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: formatText.right
+                        anchors.leftMargin: 8
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        elide: Text.ElideRight
+                        text: choice.modelData.shows
+                        color: win.mutedColor
+                        font.family: win.font.family
+                        font.pixelSize: win.smallSize
+                    }
+                    MouseArea {
+                        id: choiceArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: formatPopup.take(choice.index)
+                        onDoubleClicked: {
+                            formatPopup.take(choice.index);
+                            formatPopup.apply();
+                        }
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 2
+                spacing: 6
+                PopupButton {
+                    text: "No format"
+                    enabled: formatPopup.applied.length > 0 || field.text.length > 0
+                    opacity: enabled ? 1 : 0.4
+                    onClicked: {
+                        field.text = "";
+                        formatPopup.apply();
+                        field.forceActiveFocus();
+                    }
+                }
+                Item { Layout.fillWidth: true }
+                // Lit while there is a format that reads and is not in force.
+                PopupButton {
+                    id: formatApply
+                    text: "Apply"
+                    primary: formatPopup.changed
+                    enabled: formatPopup.changed
+                    opacity: enabled ? 1 : 0.4
+                    onClicked: {
+                        formatPopup.apply();
+                        field.forceActiveFocus();
+                    }
+                    Keys.onRightPressed: formatClose.forceActiveFocus()
+                    Keys.onUpPressed: field.forceActiveFocus()
+                }
+                PopupButton {
+                    id: formatClose
+                    text: "Close"
+                    primary: !formatPopup.changed
+                    onClicked: formatPopup.close()
+                    Keys.onLeftPressed: if (formatApply.enabled) formatApply.forceActiveFocus()
+                    Keys.onUpPressed: field.forceActiveFocus()
+                }
+            }
+            // A handle on the bottom edge to stretch the list down by.
+            Item {
+                Layout.fillWidth: true
+                implicitHeight: Math.round(win.smallSize * 1.1)
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: Math.round(win.smallSize * 3)
+                    height: 3
+                    radius: 1.5
+                    color: win.mutedColor
+                    opacity: formatStretch.containsMouse || formatStretch.pressed ? 1 : 0.5
+                }
+                MouseArea {
+                    id: formatStretch
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.SizeVerCursor
+                    property real fromY: 0
+                    property real was: 0
+                    onPressed: function(mouse) {
+                        fromY = mapToItem(null, mouse.x, mouse.y).y;
+                        was = formatPopup.stretch;
+                    }
+                    onPositionChanged: function(mouse) {
+                        if (!pressed)
+                            return;
+                        formatPopup.stretch = Math.max(-Math.round(win.fontSize * 6),
+                            was + mapToItem(null, mouse.x, mouse.y).y - fromY);
+                    }
+                }
+            }
         }
     }
 

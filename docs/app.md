@@ -41,14 +41,15 @@ rewrites the text, and saving writes exactly that.
   becomes a column of the kind of quantity the unit is of (`mg` makes it
   `Mass[mg]`), and a type it had before goes.
 - The same menu has **Set format…** for a column of numbers, dates, times
-  or quantities, which shows its cells in a format without changing them, and
-  **Clear format**. It is a box like the others, listing formats the column's
-  type takes, `'.2f` for a `Decimal`, `.3g` for a `Float`, `±.3e-3` for a
-  `Scientific`, `%d %b %Y` for a `Date`, each with what it shows; a format
-  typed is taken as typed, and one that does not read, or that the type does
-  not take, is refused under the list, with what to write instead. **No format**
-  is first in the list. A `Scientific` shows `10.5(3)` by default, and `±` in
-  its format asks for `10.5 ± 0.3`; see
+  or quantities, which shows its cells in a format without changing them. Its
+  box is the filter box's kind: a field holding the format in use, or an
+  example where there is none, that is checked as you type, with what is wrong
+  with it said under the field in red. **Apply** (or Enter) applies it and
+  leaves the box open, and **No format** clears it. Under the field are the
+  formats the column's type takes, `'.2f` for a `Decimal`, `.3g` for a `Float`,
+  `±.3e-3` for a `Scientific`, `%d %b %Y` for a `Date`, each with what it
+  shows: a click puts one in the field, and so do Up and Down. A `Scientific`
+  shows `10.5(3)` by default, and `±` in its format asks for `10.5 ± 0.3`; see
   [Expressions](expressions.md#scientific-numbers).
 - The boxes of **Set type…**, **Set unit…** and **Set format…** are kept
   as the filter box is: Down past the last entry goes on to **Apply**, then

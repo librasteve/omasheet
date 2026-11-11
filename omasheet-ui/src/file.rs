@@ -421,6 +421,16 @@ pub mod qobject {
         /// the format, a tab, what it shows.
         #[qinvokable]
         fn format_choices(self: &File, ty: &QString, unit: &QString) -> QString;
+        /// What is wrong with this as the format of these columns, or empty if
+        /// it reads (or is empty, for none); nothing is changed.
+        #[qinvokable]
+        fn check_column_format(
+            self: &File,
+            sheet: i32,
+            first: i32,
+            count: i32,
+            format: &QString,
+        ) -> QString;
         /// The names of the kinds of quantity a column may be declared as,
         /// `Quantity` first, one to a line.
         #[qinvokable]
@@ -1674,6 +1684,18 @@ impl qobject::File {
         let hint = entry_hint(&style(), &ty);
         let hint = hint.strip_prefix(&format!("{ty}: ")).unwrap_or(&hint);
         QString::from(hint)
+    }
+
+    fn check_column_format(&self, sheet: i32, first: i32, count: i32, format: &QString) -> QString {
+        let format = format.to_string();
+        let format = format.trim();
+        let cols: Vec<usize> = (index(first)..index(first) + index(count)).collect();
+        let found = self.rust().doc.check_column_format(
+            index(sheet),
+            &cols,
+            Some(format).filter(|f| !f.is_empty()),
+        );
+        QString::from(&found.err().unwrap_or_default())
     }
 
     fn format_choices(&self, ty: &QString, unit: &QString) -> QString {
