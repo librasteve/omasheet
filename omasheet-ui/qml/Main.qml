@@ -4940,6 +4940,7 @@ ApplicationWindow {
         readonly property int lineHeight: Math.round(textSize * 1.9)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: grid.forceActiveFocus()
+        onOpened: Qt.callLater(function() { filterField.forceActiveFocus(); filterField.selectAll(); })
 
         function openFor(c, item) {
             col = c;
@@ -5596,6 +5597,8 @@ ApplicationWindow {
         width: Math.min(Math.round(win.fontSize * 17 * wider), win.width - 16)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: grid.forceActiveFocus()
+        // The cursor is in the text box once the box is up.
+        onOpened: Qt.callLater(function() { search.forceActiveFocus(); })
 
         Connections {
             target: win
@@ -6499,6 +6502,7 @@ ApplicationWindow {
         width: Math.min(Math.round(win.fontSize * 28), win.width - 16)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: grid.forceActiveFocus()
+        onOpened: Qt.callLater(function() { field.forceActiveFocus(); field.selectAll(); })
 
         function now() {
             var column = win.sheet.columns[win.selLeft];
