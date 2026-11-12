@@ -451,7 +451,8 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
 
 /// The legend of the Formats panel for a column of type `ty`, from
 /// `resources/format_help.txt`: a line `#<TAB>Title` for each section that
-/// applies, and under it a line `symbol<TAB>meaning<TAB>example` for each row.
+/// applies, and under it a line `symbol<TAB>meaning<TAB>example` for each row,
+/// or `:<TAB>note` for a note.
 pub fn format_help(ty: &str) -> String {
     let family = match S::from_name(ty) {
         Some(S::Scientific) => "Scientific",
@@ -474,8 +475,12 @@ pub fn format_help(ty: &str) -> String {
                 out.push(format!("#\t{}", title.trim()));
             }
         } else if shown {
-            let cells: Vec<&str> = line.splitn(3, " | ").collect();
-            out.push(cells.join("\t"));
+            if let Some(note) = line.strip_prefix(": ") {
+                out.push(format!(":\t{note}"));
+            } else {
+                let cells: Vec<&str> = line.splitn(3, " | ").collect();
+                out.push(cells.join("\t"));
+            }
         }
     }
     out.join("\n")
@@ -8179,7 +8184,8 @@ mod tests {
         // Every row has its three cells.
         for ty in ["Integer", "Float", "Scientific", "Mass", "Date"] {
             for line in format_help(ty).lines().filter(|l| !l.starts_with("#\t")) {
-                assert_eq!(line.split('\t').count(), 3, "{ty}: {line}");
+                let cells = if line.starts_with(":\t") { 2 } else { 3 };
+                assert_eq!(line.split('\t').count(), cells, "{ty}: {line}");
             }
         }
     }

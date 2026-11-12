@@ -4,11 +4,13 @@
 # for: Number (Integer, Decimal, Float, Percent, Fraction, Hex, Octal, Binary),
 # Scientific, Quantity, Date (Date, Time and Datetime). The lines under it are
 # `what you write | what it does | an example`, the example being a format and
-# then, after `→`, what it shows. Blank lines and lines starting with `#` are
-# ignored. Keep a line short: it has to fit the panel.
+# then, after `→`, what it shows. A line starting `: ` is a note, shown across
+# the panel and wrapped. Blank lines and lines starting with `#` are ignored.
+# A row is two lines in the panel, the symbol and example above and the meaning
+# below, so the meaning may be long; keep the symbol and the example short.
 
 == Shape of a format | Number Scientific Quantity
-flags width .places conversion | in that order, all but the conversion optional | 08.2f → 00012.50
+: A format is flags, a width, .places and a conversion, in that order. Only the conversion is needed. `08.2f` is zero fill, width 8, 2 places, fixed: 00012.50.
 
 == Flags | Number Scientific Quantity
 ' | group the digits in threes | '.0f → 1,234
@@ -34,7 +36,7 @@ b | binary | b → 101
 == Conversions | Scientific Quantity
 f | fixed places | .2f → 10.50
 e | a mantissa and an exponent | .3e → 1.050e1
-e-3 | the same exponent for every cell | .3e-3 → 10500.000e-3
+e-3 | the same exponent for every cell, here 10^-3 | .1e-3 → 10500.0e-3
 g | whichever of f and e reads better | .3g → 10.5
 
 == Uncertainty | Scientific Quantity

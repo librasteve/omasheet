@@ -6425,15 +6425,6 @@ ApplicationWindow {
         focus: true
         // The lines of the legend: `{title}` for a heading, else `{symbol, meaning, example}`.
         property var lines: []
-        // The columns, in ems of the text, as the prefixes' are.
-        readonly property var widths: [6.5, 12, 9]
-        function colW(i) { return Math.round(win.fontSize * widths[i]); }
-        function colX(i) {
-            var x = 0;
-            for (var k = 0; k < i; k++)
-                x += colW(k) + 8;
-            return x;
-        }
         onOpened: {
             var rows = file.formatHelp(formatPopup.type).split("\n");
             var out = [];
@@ -6441,6 +6432,8 @@ ApplicationWindow {
                 var f = rows[i].split("\t");
                 if (f[0] === "#")
                     out.push({title: f[1]});
+                else if (f[0] === ":")
+                    out.push({note: f[1]});
                 else if (f.length >= 3)
                     out.push({symbol: f[0], meaning: f[1], example: f[2]});
             }
@@ -6486,12 +6479,19 @@ ApplicationWindow {
                 boundsBehavior: Flickable.StopAtBounds
                 model: formatHelp.lines
                 ScrollBar.vertical: ScrollBar {}
+                // A heading; a note, wrapped across the panel; or a row of two lines:
+                // the symbol and, at the right, its example, and under them what it
+                // does, wrapped. So no column has to be wide enough for the longest.
                 delegate: Item {
                     id: legendRow
                     required property var modelData
                     readonly property bool head: modelData.title !== undefined
+                    readonly property bool note: modelData.note !== undefined
+                    readonly property real room: width - 14
                     width: ListView.view.width
-                    height: head ? Math.round(win.fontSize * 2.1) : Math.round(win.fontSize * 1.6)
+                    height: head ? Math.round(win.fontSize * 2.1)
+                        : note ? noteText.implicitHeight + 8
+                        : symbolText.implicitHeight + meaningText.implicitHeight + 8
                     Text {
                         visible: legendRow.head
                         anchors.left: parent.left
@@ -6503,25 +6503,57 @@ ApplicationWindow {
                         font.pixelSize: win.smallSize
                         font.bold: true
                     }
-                    Repeater {
-                        model: legendRow.head ? [] : [
-                            [legendRow.modelData.symbol, true],
-                            [legendRow.modelData.meaning, false],
-                            [legendRow.modelData.example, true]
-                        ]
-                        Text {
-                            required property int index
-                            required property var modelData
-                            x: formatHelp.colX(index)
-                            width: index === 2 ? legendRow.width - x : formatHelp.colW(index)
-                            anchors.verticalCenter: parent.verticalCenter
-                            horizontalAlignment: Text.AlignLeft
-                            elide: Text.ElideRight
-                            text: modelData[0]
-                            color: index === 2 ? win.mutedColor : win.textColor
-                            font.family: modelData[1] ? win.monoFamily : win.font.family
-                            font.pixelSize: win.smallSize
-                        }
+                    Text {
+                        id: noteText
+                        visible: legendRow.note
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        anchors.topMargin: 2
+                        width: legendRow.room
+                        wrapMode: Text.Wrap
+                        text: legendRow.note ? legendRow.modelData.note : ""
+                        color: win.textColor
+                        font.family: win.font.family
+                        font.pixelSize: win.smallSize
+                    }
+                    Text {
+                        id: symbolText
+                        visible: !legendRow.head && !legendRow.note
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        anchors.topMargin: 2
+                        width: Math.min(implicitWidth, legendRow.room)
+                        elide: Text.ElideRight
+                        text: visible ? legendRow.modelData.symbol : ""
+                        color: win.textColor
+                        font.family: win.monoFamily
+                        font.pixelSize: win.smallSize
+                    }
+                    Text {
+                        visible: symbolText.visible
+                        anchors.right: parent.right
+                        anchors.rightMargin: 14
+                        anchors.top: parent.top
+                        anchors.topMargin: 2
+                        width: Math.min(implicitWidth, legendRow.room - symbolText.width - 12)
+                        elide: Text.ElideRight
+                        horizontalAlignment: Text.AlignRight
+                        text: visible ? legendRow.modelData.example : ""
+                        color: win.mutedColor
+                        font.family: win.monoFamily
+                        font.pixelSize: win.smallSize
+                    }
+                    Text {
+                        id: meaningText
+                        visible: symbolText.visible
+                        anchors.left: parent.left
+                        anchors.top: symbolText.bottom
+                        width: legendRow.room
+                        wrapMode: Text.Wrap
+                        text: visible ? legendRow.modelData.meaning : ""
+                        color: win.mutedColor
+                        font.family: win.font.family
+                        font.pixelSize: win.smallSize
                     }
                 }
             }
