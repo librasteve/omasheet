@@ -121,7 +121,6 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+E | Export as an XLSX Workbook, CSV or JSON |
 | Ctrl+K | New constant |
 | Ctrl+Shift+F | Filter this column |
-| F4 | Cycle column settings: the filter, type, unit and format boxes in turn (Shift+F4 goes back) |
 | Ctrl+D | Duplicate sheet |
 | Ctrl+N | New sheet |
 | Ctrl+Alt+Shift+Left/Right | Move sheet left / right |
@@ -130,6 +129,7 @@ rewrites the text, and saving writes exactly that.
 | F1 | View functions |
 | F2 | Edit |
 | F3 | View source |
+| F4 | Cycle column settings: the filter, type, unit and format boxes in turn (Shift+F4 goes back) |
 | F11 | Fullscreen |
 
 ### Read-only views, and pasting a reference

@@ -18,7 +18,6 @@ Ctrl+E               Export
 
 Ctrl+K               New constant
 Ctrl+Shift+F         Filter this column
-F4                   Cycle column settings
 Ctrl+D               Duplicate sheet
 Ctrl+N               New sheet
 Ctrl+Shift+N         New window
@@ -36,6 +35,7 @@ Ctrl+click           Open link
 F1                   View functions
 F2                   Edit
 F3                   View source
+F4                   Cycle column settings
 F11                  Fullscreen
 
 A cell starting with = is a formula
