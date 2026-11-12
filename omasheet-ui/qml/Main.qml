@@ -5361,35 +5361,25 @@ ApplicationWindow {
                     }
                 }
             }
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.topMargin: 4
-                height: 1
-                color: win.lineColor
-            }
-            MenuEntry {
-                id: clearEntry
-                highlighted: activeFocus
-                Keys.onReturnPressed: clicked()
-                Keys.onEnterPressed: clicked()
-                Layout.fillWidth: true
-                text: "Clear filter"
-                implicitHeight: columnPopup.lineHeight
-                font.pixelSize: columnPopup.textSize
-                enabled: columnPopup.applied.length > 0
-                // The filter goes, and the popup stays, to write another.
-                onClicked: {
-                    columnPopup.applied = "";
-                    filterField.text = "";
-                    win.setFilter(columnPopup.col, "");
-                    filterField.forceActiveFocus();
-                }
-            }
             RowLayout {
                 Layout.fillWidth: true
                 Layout.maximumWidth: columnPopup.availableWidth
-                Layout.topMargin: 4
+                // Room above, where the old rule and the Clear entry were.
+                Layout.topMargin: Math.round(columnPopup.textSize * 0.9)
                 spacing: 6
+                PopupButton {
+                    id: clearEntry
+                    text: "Clear filter"
+                    enabled: columnPopup.applied.length > 0
+                    opacity: enabled ? 1 : 0.4
+                    // The filter goes, and the popup stays, to write another.
+                    onClicked: {
+                        columnPopup.applied = "";
+                        filterField.text = "";
+                        win.setFilter(columnPopup.col, "");
+                        filterField.forceActiveFocus();
+                    }
+                }
                 PopupButton {
                     id: operatorsButton
                     text: "Operators"
