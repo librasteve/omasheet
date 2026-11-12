@@ -51,7 +51,7 @@ impl QuantityFormat {
         }
         let len = unit_text.chars().count();
         let unit = siquant::Unit::parse(unit_text, siquant::Scope::Any)
-            .map_err(|e| error(at, len, format!("`{unit_text}` is not a unit")))?;
+            .map_err(|_| error(at, len, format!("`{unit_text}` is not a unit")))?;
         if let Some(t) = id.named()
             && !t.admits(&unit)
         {
