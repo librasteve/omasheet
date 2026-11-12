@@ -68,6 +68,17 @@ ApplicationWindow {
     // so they keep their proportions at any size: a fixed `- 3` is a tenth
     // off at 30 and a third off at 9. The shares are Omarchy's own type
     // scale, and 8px is the floor, as it is there.
+    // The top of the bottom bar, in the window: no popup's list goes below it.
+    readonly property real barTop: height - footerBar.height
+    // How tall a list can be where it is, given the room from its top to the bar
+    // less `below`, what is under it in its box (its handle and its buttons).
+    function roomFor(list, anchor, below) {
+        // `anchor` is read for its position, so that this is worked out again
+        // when the box is moved.
+        var top = list.mapToItem(null, 0, anchor * 0).y;
+        var room = barTop - top - below;
+        return isFinite(room) ? Math.max(Math.round(fontSize * 5), room) : 100000;
+    }
     readonly property int smallSize: Math.max(8, Math.round(fontSize * 0.917))
     readonly property int captionSize: Math.max(8, Math.round(fontSize * 0.833))
     readonly property int noteSize: Math.max(8, Math.round(fontSize * 0.786))
@@ -6049,7 +6060,7 @@ ApplicationWindow {
                 // stretches the box past that, to room beyond what it holds.
                 Layout.preferredHeight: Math.max(Math.round(win.fontSize * 5), Math.min(
                     Math.min(contentHeight, Math.round(win.fontSize * 22 * picker.taller)) + picker.stretch,
-                    Math.round(win.height * 0.9)))
+                    Math.round(win.height * 0.9), win.roomFor(listView, picker.y, Math.round(win.fontSize * 7))))
                 clip: true
                 model: picker.rows
                 boundsBehavior: Flickable.StopAtBounds
@@ -6205,8 +6216,11 @@ ApplicationWindow {
                     onPositionChanged: function(mouse) {
                         if (!pressed)
                             return;
-                        picker.stretch = Math.max(-Math.round(win.fontSize * 12),
-                            was + mapToItem(null, mouse.x, mouse.y).y - fromY);
+                        // Not past the bottom bar: what the list may be, less what it is.
+                        var most = win.roomFor(listView, picker.y, Math.round(win.fontSize * 7))
+                            - Math.min(listView.contentHeight, Math.round(win.fontSize * 22 * picker.taller));
+                        picker.stretch = Math.min(Math.max(0, most), Math.max(-Math.round(win.fontSize * 12),
+                            was + mapToItem(null, mouse.x, mouse.y).y - fromY));
                     }
                 }
             }
@@ -6491,7 +6505,8 @@ ApplicationWindow {
             ListView {
                 id: prefixList
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(contentHeight, Math.round(win.fontSize * 22), Math.round(win.height * 0.7))
+                Layout.preferredHeight: Math.min(contentHeight, Math.round(win.fontSize * 22), Math.round(win.height * 0.7),
+                    win.roomFor(prefixList, prefixHelp.y, Math.round(win.fontSize * 4)))
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 model: prefixHelp.table
@@ -6794,7 +6809,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.max(Math.round(win.fontSize * 4), Math.min(
                     Math.min(contentHeight, Math.round(win.fontSize * 12)) + formatPopup.stretch,
-                    Math.round(win.height * 0.7)))
+                    Math.round(win.height * 0.7), win.roomFor(choiceList, formatPopup.y, Math.round(win.fontSize * 7))))
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 model: formatPopup.choices
@@ -6911,8 +6926,10 @@ ApplicationWindow {
                     onPositionChanged: function(mouse) {
                         if (!pressed)
                             return;
-                        formatPopup.stretch = Math.max(-Math.round(win.fontSize * 6),
-                            was + mapToItem(null, mouse.x, mouse.y).y - fromY);
+                        var most = win.roomFor(choiceList, formatPopup.y, Math.round(win.fontSize * 7))
+                            - Math.min(choiceList.contentHeight, Math.round(win.fontSize * 12));
+                        formatPopup.stretch = Math.min(Math.max(0, most), Math.max(-Math.round(win.fontSize * 6),
+                            was + mapToItem(null, mouse.x, mouse.y).y - fromY));
                     }
                 }
             }
