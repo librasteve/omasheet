@@ -87,7 +87,8 @@ impl fmt::Display for QuantityFormat {
 
 /// How a `Scientific` column shows its values, as a `Float` column is given
 /// its, by a C `printf` conversion without its `%` (D100), with `±` before it
-/// for `value ± uncertainty` in place of the concise `value(nn)`:
+/// for `value ± uncertainty` in place of the concise `value(nn)`, or `~` for
+/// the value alone:
 /// `±+10.3e-3` is `±`, the flag `+`, a width of 10, 3 places, the
 /// conversion `e` and an exponent of -3.
 ///
@@ -100,6 +101,8 @@ impl fmt::Display for QuantityFormat {
 pub struct SciFormat {
     /// `±`: written as `value ± uncertainty`.
     pub plus_minus: bool,
+    /// `~`: the value alone, with no uncertainty shown.
+    pub value_only: bool,
     /// `-`: on the left of its width, rather than the right.
     pub left: bool,
     /// `+`: a sign on every number, `+` on one that is not negative.
@@ -148,9 +151,16 @@ impl SciFormat {
         if chars.is_empty() {
             return Err(error(0, 0, "empty"));
         }
-        if chars.first() == Some(&'±') {
-            f.plus_minus = true;
-            i += 1;
+        match chars.first() {
+            Some('±') => {
+                f.plus_minus = true;
+                i += 1;
+            }
+            Some('~') => {
+                f.value_only = true;
+                i += 1;
+            }
+            _ => {}
         }
         let flags = i;
         while let Some(c) = chars.get(i) {
@@ -255,6 +265,9 @@ impl fmt::Display for SciFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.plus_minus {
             f.write_str("±")?;
+        }
+        if self.value_only {
+            f.write_str("~")?;
         }
         for (on, c) in [
             (self.left, '-'),

@@ -477,10 +477,12 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             (".3e".into(), "e notation, three places"),
         ],
         S::Scientific => vec![
-            ("±.3e-3".into(), "± uncertainty, e notation"),
+            (".2f".into(), "(nn) style, 2 places"),
+            (".3e-3".into(), "(nn) style, e notation"),
             ("±.2f".into(), "± uncertainty, 2 places"),
-            (".3g".into(), "three significant digits"),
-            (".4f".into(), "four places"),
+            ("±.3e-3".into(), "± uncertainty, e notation"),
+            ("~.2f".into(), "value only, 2 places"),
+            ("~.3e-3".into(), "value only, e notation"),
         ],
         S::Date => vec![
             ("%d %b %Y".into(), "31 Jan 2025"),
@@ -505,9 +507,10 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
         ],
         S::Quantity(_) if !unit.is_empty() => vec![
             (unit.to_string(), "the unit alone"),
-            (format!("{unit}; .1f"), "one place"),
-            (format!("{unit}; .3g"), "three significant digits"),
-            (format!("{unit}; ±.3e-3"), "± uncertainty, e notation"),
+            (format!("{unit}; .1f"), "(nn) style, 1 place"),
+            (format!("{unit}; ±.1f"), "± uncertainty, 1 place"),
+            (format!("{unit}; ~.1f"), "value only, 1 place"),
+            (format!("{unit}; ~.3e-3"), "value only, e notation"),
         ],
         _ => Vec::new(),
     };
@@ -7463,6 +7466,15 @@ mod tests {
             doc.snapshot().sheets[0].columns[0].format.as_deref(),
             Some("±")
         );
+        // `~` shows the value alone, at the places the uncertainty gives, and a
+        // format with neither mark is the concise `(nn)`.
+        assert!(doc.set_column_format(0, &[0], Some("~")).is_ok());
+        assert_eq!(col(&doc, 0, 0), ["11.000", "10.50"]);
+        assert!(doc.set_column_format(0, &[0], Some("~.1f")).is_ok());
+        assert_eq!(col(&doc, 0, 0), ["11.0", "10.5"]);
+        assert!(doc.set_column_format(0, &[0], Some(".1f")).is_ok());
+        assert_eq!(col(&doc, 0, 0), ["11.0(1)", "10.5(3)"]);
+        assert!(doc.set_column_format(0, &[0], Some("±")).is_ok());
         // An edit in the column is read as a scientific value.
         assert!(doc.set_cell(0, 0, 0, "12.0(4)"));
         assert_eq!(col(&doc, 0, 0), ["12.00 ± 0.40", "10.50 ± 0.30"]);

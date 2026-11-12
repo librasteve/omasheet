@@ -1637,6 +1637,10 @@ pub fn format_uncertain(v: f64, s: f64, f: &SciFormat, sep: Option<char>) -> Str
         ""
     };
     let number = thousands(format!("{mantissa:.decimals$}"));
+    // The value alone: the places are the uncertainty's, which is not shown.
+    if f.value_only {
+        return padded_to(f, sign.into(), number, tail);
+    }
     if f.plus_minus {
         let error = thousands(format!("{:.decimals$}", (error * k).round() / k));
         return if tail.is_empty() {
