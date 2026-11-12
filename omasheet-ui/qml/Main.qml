@@ -5127,6 +5127,15 @@ ApplicationWindow {
         contentItem: ColumnLayout {
             // Tab goes round these, the controls of the box in order.
             function ring() { return columnPopup.order(); }
+            // F4 goes on to the next Set panel. The window's shortcut does not reach
+            // here while a box has the keyboard, so the key is taken as it comes up
+            // from the control that has it.
+            Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_F4) {
+                    event.accepted = true;
+                    win.cycleMeta((event.modifiers & Qt.ShiftModifier) ? -1 : 1);
+                }
+            }
             spacing: 4
             Keys.onUpPressed: columnPopup.go(-1)
             Keys.onDownPressed: columnPopup.go(1)
@@ -5957,6 +5966,15 @@ ApplicationWindow {
         contentItem: ColumnLayout {
             // Tab goes round these, the text box and then the buttons.
             function ring() { return [search, pickClear, pickHelp, pickApply, pickClose]; }
+            // F4 goes on to the next Set panel. The window's shortcut does not reach
+            // here while a box has the keyboard, so the key is taken as it comes up
+            // from the control that has it.
+            Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_F4) {
+                    event.accepted = true;
+                    win.cycleMeta((event.modifiers & Qt.ShiftModifier) ? -1 : 1);
+                }
+            }
             spacing: 4
             // A handle to drag the box by, out of the way of the cells.
             Item {
@@ -6938,6 +6956,15 @@ ApplicationWindow {
         contentItem: ColumnLayout {
             // Tab goes round these, the text box and then the buttons.
             function ring() { return [field, formatClear, formatLegend, formatApply, formatClose]; }
+            // F4 goes on to the next Set panel. The window's shortcut does not reach
+            // here while a box has the keyboard, so the key is taken as it comes up
+            // from the control that has it.
+            Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_F4) {
+                    event.accepted = true;
+                    win.cycleMeta((event.modifiers & Qt.ShiftModifier) ? -1 : 1);
+                }
+            }
             spacing: 4
             // A handle to drag the box by, out of the way of the cells.
             Item {
