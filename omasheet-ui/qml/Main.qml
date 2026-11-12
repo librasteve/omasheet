@@ -227,6 +227,10 @@ ApplicationWindow {
     readonly property string selKey: [tab, selTop, selLeft, selBottom, selRight].join(",")
     onSelKeyChanged: summarize()
     onSnapChanged: summarize()
+    Connections {
+        target: win
+        function onFilterShownChanged() { win.summarize(); }
+    }
     function summarize() {
         summaryAsked++;
         selSummary = "";

@@ -3042,6 +3042,69 @@ impl Document {
         Some(Summary { count, numbers })
     }
 
+    /// [`Document::summary`] of only the listed `rows` of the block, the ones
+    /// a filter leaves showing, added one value at a time.
+    pub fn summary_of_rows(
+        &self,
+        sheet: usize,
+        rows: &[usize],
+        (left, right): (usize, usize),
+    ) -> Option<Summary> {
+        let t = self.snapshot.sheets.get(sheet)?;
+        let (mut count, mut numbers) = (0, 0);
+        let mut sum = Value::int(0.into());
+        let mut add = |value: &Value| {
+            if !matches!(value, Value::Null | Value::Error) {
+                count += 1;
+            }
+            if value.is_numeric() {
+                numbers += 1;
+                sum = arith(BinOp::Add, &sum, value).ok()?;
+            }
+            Some(())
+        };
+        let cols = left..(right + 1).min(t.columns.len());
+        let rows: Vec<usize> = rows.iter().copied().filter(|&r| r < t.nrows).collect();
+        if !t.paged {
+            for &r in &rows {
+                for cell in t.rows.get(r)?.get(cols.clone()).unwrap_or_default() {
+                    add(&cell.value)?;
+                }
+            }
+        } else if let Some(engine) = &self.engine {
+            for block in rows.chunks(SUMMARY_ROWS) {
+                let file_rows: Vec<usize> =
+                    block.iter().map(|&r| self.file_row(sheet, r)).collect();
+                let columns: Vec<Vec<Value>> = cols
+                    .clone()
+                    .map(|c| engine.rows_shown(sheet, c, &file_rows))
+                    .collect();
+                for i in 0..file_rows.len() {
+                    for column in &columns {
+                        add(column.get(i).unwrap_or(&Value::Error))?;
+                    }
+                }
+            }
+        }
+        self.glance(count, numbers, sum)
+    }
+
+    /// A [`Summary`] of a count, how many of them were numbers, and their sum.
+    fn glance(&self, count: usize, numbers: usize, sum: Value) -> Option<Summary> {
+        let numbers = if numbers == 0 {
+            None
+        } else {
+            let mean = arith(BinOp::Div, &sum, &Value::int(numbers as i64)).ok()?;
+            // To two places: it is a glance, not the figure.
+            let show = |v: &Value| {
+                let v = crate::value::round_digits(v, 2).unwrap_or_else(|_| v.clone());
+                format_styled(&v, false, &self.style)
+            };
+            Some((show(&sum), show(&mean)))
+        };
+        Some(Summary { count, numbers })
+    }
+
     /// [`Document::summary`] of a big selection of a paged sheet, added up
     /// over the Polars arrays: the count, how many numbers, and their sum.
     /// See [`SummaryJob`].
@@ -8078,6 +8141,17 @@ mod tests {
         // A block that runs off the sheet is cut to it.
         assert_eq!(sum((2, 1), (9, 9)).count, 2);
         assert!(doc.summary(5, (0, 0), (1, 1)).is_none());
+    }
+
+    #[test]
+    fn a_filtered_block_is_summed_over_the_rows_shown() {
+        let text = "sheet T\n\nName | A\nx | 1\ny | 2\nz | 4\n";
+        let doc = Document::from_text(text);
+        let s = doc.summary_of_rows(0, &[0, 2], (1, 1)).unwrap();
+        assert_eq!(
+            (s.count, s.numbers),
+            (2, Some(("5".to_string(), "2.5".to_string())))
+        );
     }
 
     #[test]

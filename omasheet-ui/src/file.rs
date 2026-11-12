@@ -1787,6 +1787,15 @@ impl qobject::File {
     fn selection_summary(&self, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {
         let doc = &self.rust().doc;
         let from = (index(row0), index(col0));
+        // Under a filter, only the rows it shows are added up.
+        if let Some(rows) = self.rows_shown(from.0, index(row1)) {
+            let cols = (from.1.min(index(col1)), from.1.max(index(col1)));
+            return QString::from(&summary_text(doc.summary_of_rows(
+                index(sheet),
+                &rows,
+                cols,
+            )));
+        }
         QString::from(&summary_text(doc.summary(
             index(sheet),
             from,
@@ -1803,6 +1812,10 @@ impl qobject::File {
         row1: i32,
         col1: i32,
     ) -> QString {
+        // Under a filter the rows hidden are left out, one value at a time.
+        if self.rows_shown(index(row0), index(row1)).is_some() {
+            return self.selection_summary(sheet, row0, col0, row1, col1);
+        }
         let rows = index(row0)..index(row1) + 1;
         let cols = index(col0)..index(col1) + 1;
         let job = self.rust().doc.summary_job(index(sheet), rows, cols);
