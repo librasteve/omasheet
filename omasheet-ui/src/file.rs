@@ -1781,7 +1781,13 @@ impl qobject::File {
     }
 
     fn unit_problem(&self, unit: &QString) -> QString {
-        QString::from(&unit_spec(&unit.to_string()).err().unwrap_or_default())
+        let text = unit.to_string();
+        // `Mass[kg]` is checked whole, so that a kind and a unit that do not
+        // go together are caught; a unit alone is checked as one.
+        if text.contains('[') {
+            return QString::from(&omasheet_engine::doc::type_spec_problem(&text));
+        }
+        QString::from(&unit_spec(&text).err().unwrap_or_default())
     }
 
     fn selection_summary(&self, sheet: i32, row0: i32, col0: i32, row1: i32, col1: i32) -> QString {

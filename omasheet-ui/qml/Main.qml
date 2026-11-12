@@ -5977,8 +5977,10 @@ ApplicationWindow {
             ListView {
                 id: listView
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.max(Math.round(win.fontSize * 5), Math.min(contentHeight,
-                    Math.round(win.fontSize * 22 * picker.taller) + picker.stretch,
+                // The list as tall as it is, up to the usual height; the handle then
+                // stretches the box past that, to room beyond what it holds.
+                Layout.preferredHeight: Math.max(Math.round(win.fontSize * 5), Math.min(
+                    Math.min(contentHeight, Math.round(win.fontSize * 22 * picker.taller)) + picker.stretch,
                     Math.round(win.height * 0.9)))
                 clip: true
                 model: picker.rows
@@ -6243,10 +6245,17 @@ ApplicationWindow {
             // list is searched for.
             if (typed !== text)
                 out.forEach(function(e) { if (e.spec === typed) e.keep = true; });
+            // A kind that does not go with its unit, `Temperature[kV]`, is a fault
+            // even where the unit is in the list.
+            if (typed !== text && file.unitProblem(text).length > 0) {
+                unitPopup.problem = file.unitProblem(text);
+                return [];
+            }
             if (text.length > 0 && !out.some(function(e) { return e.spec === typed; })) {
-                var problem = file.unitProblem(typed);
+                var problem = file.unitProblem(text);
+                // Offered as the type it makes, `Voltage[MV]`.
                 if (problem.length === 0)
-                    out.unshift({spec: typed, label: typed, hint: "use as typed", keep: true});
+                    out.unshift({spec: typed, label: file.unitSpec(typed), keep: true});
                 else
                     unitPopup.problem = problem;
             }
@@ -6671,8 +6680,9 @@ ApplicationWindow {
             ListView {
                 id: choiceList
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.max(Math.round(win.fontSize * 4), Math.min(contentHeight,
-                    Math.round(win.fontSize * 12) + formatPopup.stretch, Math.round(win.height * 0.7)))
+                Layout.preferredHeight: Math.max(Math.round(win.fontSize * 4), Math.min(
+                    Math.min(contentHeight, Math.round(win.fontSize * 12)) + formatPopup.stretch,
+                    Math.round(win.height * 0.7)))
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 model: formatPopup.choices

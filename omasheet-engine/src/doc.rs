@@ -7250,6 +7250,10 @@ mod tests {
         assert_eq!(doc.text(), before);
         assert!(type_spec_problem("Mass[m]").contains("Length"));
         assert_eq!(type_spec_problem("Length[cm]"), "");
+        assert!(!type_spec_problem("Temperature[kV]").is_empty());
+        assert_eq!(type_spec_problem("Potential[MV]"), "");
+        assert_eq!(unit_spec("MV").unwrap(), "Potential[MV]");
+        assert!(unit_spec("KV").is_err());
     }
 
     #[test]
