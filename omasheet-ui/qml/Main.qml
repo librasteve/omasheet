@@ -5568,22 +5568,10 @@ ApplicationWindow {
             }
         }
         MenuEntry {
-            text: "Clear type"
-            visible: cellMenu.columns
-            enabled: visible && cellMenu.editable && win.anyDeclared()
-            onTriggered: win.setColumnTypes("")
-        }
-        MenuEntry {
             text: "Clear format"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.anyFormatted()
             onTriggered: win.clearFormats()
-        }
-        MenuEntry {
-            text: "Clear filter"
-            visible: cellMenu.columns
-            enabled: visible && win.anyFiltered()
-            onTriggered: win.clearFilters()
         }
     }
 
@@ -5621,6 +5609,11 @@ ApplicationWindow {
         // A line of what is set now, under the search box, where there is
         // something to say: `Mass[mg]`.
         property string note: ""
+        // A button to take back what the box sets, `Clear type`: its label, and
+        // whether there is anything to clear. It stays open, as Apply does.
+        property string clearText: ""
+        property bool clearable: false
+        signal cleared()
         // A box with its own help, from a button beside Apply: the prefixes.
         property bool helpable: false
         signal helpAsked()
@@ -5917,7 +5910,7 @@ ApplicationWindow {
         }
         contentItem: ColumnLayout {
             // Tab goes round these, the text box and then the buttons.
-            function ring() { return [search, pickHelp, pickApply, pickClose]; }
+            function ring() { return [search, pickClear, pickHelp, pickApply, pickClose]; }
             spacing: 4
             // A handle to drag the box by, out of the way of the cells.
             Item {
@@ -6185,6 +6178,17 @@ ApplicationWindow {
                 Layout.topMargin: 2
                 spacing: 6
                 PopupButton {
+                    id: pickClear
+                    text: picker.clearText
+                    visible: picker.clearText.length > 0
+                    enabled: picker.clearable
+                    opacity: enabled ? 1 : 0.4
+                    onClicked: {
+                        picker.cleared();
+                        search.forceActiveFocus();
+                    }
+                }
+                PopupButton {
                     id: pickHelp
                     text: "Prefixes"
                     visible: picker.helpable
@@ -6262,6 +6266,9 @@ ApplicationWindow {
     PickerPopup {
         id: typePopup
         placeholder: "e.g. Decimal"
+        clearText: "Clear type"
+        clearable: win.anyDeclared()
+        onCleared: win.setColumnTypes("")
         // Filed by what they hold; a type in the second place of a pair is a
         // narrower kind of the one above it. `Quantity` is just that here: its
         // kind, `Mass` or `Force`, is `Set unit…`'s.
@@ -6307,6 +6314,10 @@ ApplicationWindow {
     // it is typed once it is one.
     PickerPopup {
         id: unitPopup
+        clearText: "Clear unit"
+        clearable: current.length > 0
+        // A column of quantities with no unit: the type alone.
+        onCleared: win.setColumnTypes("Quantity")
         wider: 1.4
         taller: 1.8
         helpable: true
