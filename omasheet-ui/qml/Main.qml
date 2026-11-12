@@ -4801,6 +4801,8 @@ ApplicationWindow {
         id: popupButton
         property string text: ""
         property bool primary: false
+        // Quieter text, for a button off to the side of the main ones.
+        property bool muted: false
         signal clicked()
         implicitWidth: Math.max(label.implicitWidth + 16, Math.round(win.captionSize * 4.2))
         implicitHeight: Math.round(win.captionSize * 2)
@@ -4818,7 +4820,8 @@ ApplicationWindow {
             id: label
             anchors.centerIn: parent
             text: popupButton.text
-            color: popupButton.primary ? win.pageColor : win.textColor
+            color: popupButton.primary ? win.pageColor
+                : popupButton.muted ? win.mutedColor : win.textColor
             font.family: win.font.family
             font.pixelSize: win.captionSize
             font.bold: popupButton.primary
@@ -6075,6 +6078,7 @@ ApplicationWindow {
                 PopupButton {
                     text: "Prefixes"
                     visible: picker.helpable
+                    muted: true
                     onClicked: picker.helpAsked()
                 }
                 Item { Layout.fillWidth: true }
@@ -6325,14 +6329,14 @@ ApplicationWindow {
             }
             return d.reverse().join("");
         }
-        // The size in figures: `1000`, `0.001`, `1024`, and `1e30` past what
-        // reads.
+        // The size in figures up to mega, mebi and down to nano: `1000`,
+        // `0.001`, `1048576`; past those in e notation, `1e12`, `1.074e9`.
         function value(p) {
             if (p.base === 2)
-                return p.exp <= 60 ? exactPower(p.exp) : Math.pow(2, p.exp).toExponential(3).replace("e+", "e");
-            if (p.exp >= 0 && p.exp <= 12)
+                return p.exp <= 20 ? exactPower(p.exp) : Math.pow(2, p.exp).toExponential(3).replace("e+", "e");
+            if (p.exp >= 0 && p.exp <= 6)
                 return "1" + "0".repeat(p.exp);
-            if (p.exp < 0 && p.exp >= -12)
+            if (p.exp < 0 && p.exp >= -9)
                 return "0." + "0".repeat(-p.exp - 1) + "1";
             return "1e" + p.exp;
         }
@@ -6355,7 +6359,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.maximumWidth: prefixHelp.availableWidth
                 wrapMode: Text.Wrap
-                text: "A prefix goes before a unit: km is 1000 m. The binary ones, Ki Mi Gi and the rest, are for bits and bytes (b, B): KiB is 1024 B. A prefix and a dot alone is a number: 1k. is 1000, 1Ki. is 1024."
+                text: "Put before a unit: 1km is 1000m. Use binary ones for data: 1Kib is 1024b. Use with a dot for numbers: 1M. is 1,000,000."
                 color: win.mutedColor
                 font.family: win.font.family
                 font.pixelSize: win.smallSize
@@ -6368,6 +6372,7 @@ ApplicationWindow {
                     Text {
                         required property var modelData
                         Layout.preferredWidth: Math.round(win.fontSize * modelData[1] * 0.8)
+                        Layout.alignment: Qt.AlignVCenter
                         text: modelData[0]
                         color: win.mutedColor
                         font.family: win.font.family
@@ -6400,6 +6405,8 @@ ApplicationWindow {
                         Text {
                             required property var modelData
                             Layout.preferredWidth: Math.round(win.fontSize * modelData[1] * 0.8)
+                            Layout.alignment: Qt.AlignVCenter
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: modelData[0]
                             color: win.textColor
