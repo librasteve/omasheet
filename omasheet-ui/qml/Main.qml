@@ -4950,7 +4950,7 @@ ApplicationWindow {
         // Ctrl+Enter to apply.
         property bool multiline: false
         // Smaller than the grid: the controls of Material are made for touch.
-        readonly property int textSize: win.captionSize
+        readonly property int textSize: win.fontSize
         readonly property int lineHeight: Math.round(textSize * 1.9)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: grid.forceActiveFocus()
@@ -5960,8 +5960,7 @@ ApplicationWindow {
                     color: win.textColor
                     selectionColor: win.selectionFill
                     selectByMouse: true
-                    font.family: win.font.family
-                    font.features: win.font.features
+                    font.family: win.monoFamily
                     font.pixelSize: win.fontSize
                     onTextChanged: {
                         picker.touched = true;
