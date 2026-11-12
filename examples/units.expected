@@ -77,7 +77,7 @@ old   | 500GiB   | 100cm^2 | 390.625Tib.m^-2
 new   | 4096GiB  | 100cm^2 | 3200Tib.m^-2
 tiny  | 0.125GiB | 5cm^2   | 1.953125Tib.m^-2
 
-sheet Information
+sheet Data
 
 File   | Size     | Rate         | Seconds
 -------|----------|--------------|--------

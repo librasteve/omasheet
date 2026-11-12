@@ -23,7 +23,7 @@ The bit `b` and the byte `B` SHALL be units of a dimension of their own, with `1
 
 #### Scenario: Not a length
 - **WHEN** `5B + 3m` is evaluated
-- **THEN** an error is reported: they measure Information and Length
+- **THEN** an error is reported: they measure Data and Length
 
 ### Requirement: Binary scales
 A binary prefix and a `.` on their own SHALL be a scale, a power of two: `1Ki.` is 1024.
@@ -33,8 +33,8 @@ A binary prefix and a `.` on their own SHALL be a scale, a power of two: `1Ki.` 
 - **THEN** the result is `1572864`
 
 ### Requirement: Data quantity types
-`Information`, `DataRate` and `InformationDensity` (data over an area, `b.m^-2`, as of a disk drive) SHALL be quantity types; a column of `Information` holds `B` unless it names another unit, `Information[GiB]`; a `DataRate` holds `b.s^-1`.
+`Data`, `DataRate` and `DataDensity` (data over an area, `b.m^-2`, as of a disk drive) SHALL be quantity types; a column of `Data` holds `B` unless it names another unit, `Data[GiB]`; a `DataRate` holds `b.s^-1`.
 
 #### Scenario: A column in gibibytes
-- **WHEN** a cell `512MiB` is in a column `Information[GiB]`
+- **WHEN** a cell `512MiB` is in a column `Data[GiB]`
 - **THEN** it is shown as `0.5GiB`

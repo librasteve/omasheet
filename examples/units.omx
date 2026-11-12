@@ -110,15 +110,15 @@ Perimeter : Length
 Area      := Width * Height
 Perimeter := 2 * (Width + Height)
 
-# Data over an area, as a disk drive's: `InformationDensity` holds `b.m^-2`, here
+# Data over an area, as a disk drive's: `DataDensity` holds `b.m^-2`, here
 # shown in `Tib.m^-2`. A drive's capacity over its platter area gives it, and
 # data units take the binary and SI prefixes alike (see `data.omx`).
 sheet Drives
 
 Drive    : String
-Capacity : Information[GiB]
+Capacity : Data[GiB]
 Platter  : Area[cm^2]
-Density  : InformationDensity[Tib.m^-2]
+Density  : DataDensity[Tib.m^-2]
 
 | Drive | Capacity | Platter | Density |
 | ----- | -------- | ------- | ------- |
@@ -128,15 +128,15 @@ Density  : InformationDensity[Tib.m^-2]
 
 Density := Capacity / Platter
 
-# Information: data in bytes and bits, with the binary prefixes (`KiB` is 1024 B)
-# and the SI ones (`kB` is 1000 B). A column of `Information` shows its cells in
-# the unit it names, `Information[MiB]`, whichever they were written in, and a
+# Data: data in bytes and bits, with the binary prefixes (`KiB` is 1024 B)
+# and the SI ones (`kB` is 1000 B). A column of `Data` shows its cells in
+# the unit it names, `Data[MiB]`, whichever they were written in, and a
 # `DataRate[Mib.s^-1]` column holds mebibits a second. Dividing a size in
 # mebibits by such a rate leaves seconds.
-sheet Information
+sheet Data
 
 File     : String
-Size     : Information[MiB]
+Size     : Data[MiB]
 Rate     : DataRate[Mib.s^-1]
 Seconds  : Quantity
 

@@ -6221,7 +6221,9 @@ ApplicationWindow {
         }
         // A click in the prefixes beside it is outside this box, and must not
         // close it.
-        closePolicy: prefixHelp.visible ? Popup.CloseOnEscape
+        // Escape and Enter, with the prefixes open, are theirs: they close it,
+        // and this one stays.
+        closePolicy: prefixHelp.visible ? Popup.NoAutoClose
             : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
         placeholder: "e.g. Data[MiB]"
         provider: function(text) {
@@ -6297,6 +6299,12 @@ ApplicationWindow {
         width: Math.min(Math.round(win.fontSize * 24), win.width - 16)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         property var table: []
+        // The widths of the columns, in ems of the text, for the head and the rows alike.
+        readonly property var widths: [4.2, 6, 4, 8]
+        focus: true
+        Keys.onEscapePressed: close()
+        Keys.onReturnPressed: close()
+        Keys.onEnterPressed: close()
         onOpened: {
             var rows = file.prefixTable().split("\n");
             var out = [];
@@ -6377,11 +6385,13 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 spacing: 8
                 Repeater {
-                    model: [["Symbol", 3], ["Name", 6], ["Power", 4], ["Size", 8]]
+                    model: [["Symbol", 0], ["Name", 1], ["Power", 2], ["Size", 3]]
                     Text {
                         required property var modelData
-                        Layout.preferredWidth: Math.round(win.fontSize * modelData[1] * 0.8)
+                        Layout.preferredWidth: Math.round(win.fontSize * prefixHelp.widths[modelData[1]] * 0.8)
                         Layout.alignment: Qt.AlignVCenter
+                        horizontalAlignment: Text.AlignLeft
+                        elide: Text.ElideRight
                         text: modelData[0]
                         color: win.mutedColor
                         font.family: win.font.family
@@ -6406,15 +6416,16 @@ ApplicationWindow {
                     spacing: 8
                     Repeater {
                         model: [
-                            [prefixRow.modelData.symbol, 3, true],
-                            [prefixRow.modelData.name, 6, false],
-                            [prefixHelp.power(prefixRow.modelData), 4, false],
-                            [prefixHelp.value(prefixRow.modelData), 8, false]
+                            [prefixRow.modelData.symbol, 0, true],
+                            [prefixRow.modelData.name, 1, false],
+                            [prefixHelp.power(prefixRow.modelData), 2, false],
+                            [prefixHelp.value(prefixRow.modelData), 3, false]
                         ]
                         Text {
                             required property var modelData
-                            Layout.preferredWidth: Math.round(win.fontSize * modelData[1] * 0.8)
+                            Layout.preferredWidth: Math.round(win.fontSize * prefixHelp.widths[modelData[1]] * 0.8)
                             Layout.alignment: Qt.AlignVCenter
+                            horizontalAlignment: Text.AlignLeft
                             verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: modelData[0]
@@ -6743,7 +6754,7 @@ ApplicationWindow {
                 Layout.topMargin: 2
                 spacing: 6
                 PopupButton {
-                    text: "No format"
+                    text: "Clear format"
                     enabled: formatPopup.applied.length > 0 || field.text.length > 0
                     opacity: enabled ? 1 : 0.4
                     onClicked: {

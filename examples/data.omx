@@ -30,14 +30,14 @@ sheet Arithmetic
 | ordered     | = 1kB < 1KiB           |
 | equal       | = 8b == 1B             |
 
-# A column of data. `Information` is held in bytes unless it says another, as
-# `Information[GiB]`, in which a cell written in any unit is shown, and a bare
+# A column of data. `Data` is held in bytes unless it says another, as
+# `Data[GiB]`, in which a cell written in any unit is shown, and a bare
 # number is read.
 sheet Disks
 
 Disk : String
-Size : Information[GiB]
-Free : Information[GiB]
+Size : Data[GiB]
+Free : Data[GiB]
 
 | Disk   | Size  | Free   |
 | ------ | ----- | ------ |

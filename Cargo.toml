@@ -26,7 +26,7 @@ omasheet-md = { path = "omasheet-md" }
 omasheet-cli = { path = "omasheet-cli" }
 # SI units (add-si-units D228), from its public repository at a fixed commit:
 # move to a crates.io version when it is published.
-siquant = { git = "https://github.com/librasteve/siquant", rev = "ff11f67a891149c10dd82a0461c5dc4a9f823592" }
+siquant = { git = "https://github.com/librasteve/siquant", rev = "4ae000275daeea698f013f00888bc64af5147b5d" }
 calamine = "0.36"
 rust_xlsxwriter = "0.99"
 csv = "1"

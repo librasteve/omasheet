@@ -554,7 +554,7 @@ fn data_units_take_the_binary_and_si_prefixes() {
     // A rate over a time.
     assert_eq!(shown("10MB.s^-1 * 3s"), "30MB");
     assert_eq!(shown("1GiB.to('MiB') / 50MiB.s^-1"), "20.48s");
-    assert!(fails("5B + 3m").contains("Information"));
+    assert!(fails("5B + 3m").contains("Data"));
 }
 
 #[test]
@@ -579,8 +579,7 @@ fn a_byte_or_a_bit_does_not_clash_with_a_base_prefix() {
 
 #[test]
 fn a_column_of_data_is_held_in_its_unit() {
-    let src =
-        "sheet D\n\nSize : Information[GiB]\n\n| Size |\n| ---- |\n| 2TiB |\n| 512MiB |\n| 4 |\n";
+    let src = "sheet D\n\nSize : Data[GiB]\n\n| Size |\n| ---- |\n| 2TiB |\n| 512MiB |\n| 4 |\n";
     let out = view("test.omx", src);
     assert!(out.ok(), "{:?}", out.errors);
     for shown in ["2048GiB", "0.5GiB", "4GiB"] {

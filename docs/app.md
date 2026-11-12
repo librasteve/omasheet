@@ -45,7 +45,7 @@ rewrites the text, and saving writes exactly that.
   box is the filter box's kind: a field holding the format in use, or an
   example where there is none, that is checked as you type, with what is wrong
   with it said under the field in red. **Apply** (or Enter) applies it and
-  leaves the box open, and **No format** clears it. Under the field are the
+  leaves the box open, and **Clear format** clears it. Under the field are the
   formats the column's type takes, `'.2f` for a `Decimal`, `.3g` for a `Float`,
   `±.3e-3` for a `Scientific`, `%d %b %Y` for a `Date`, each with what it
   shows: a click puts one in the field, and so do Up and Down. A `Scientific`
