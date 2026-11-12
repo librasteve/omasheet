@@ -37,16 +37,17 @@ Distance : Length[km]
 Speed    : Speed[m.s^-1; .1f]
 Mach     : Float[.2f]
 
-| Flight  | Leaves           | Airtime  | Distance | Gate | Lands | SFO | Speed | Mach |
-| ------- | ---------------- | -------- | -------- | ---- | ----- | --- | ----- | ---- |
-| LHR-SFO | 2025-03-10T11:05 | PT11H10M | 8610km   | *    | *     | *   | *     | *    |
-| MUC-SFO | 2025-03-10T12:30 | PT11H35M | 9120km   | *    | *     | *   | *     | *    |
-| SFO-LHR | 2025-03-10T21:30 | PT10H20M | 8610km   | *    | *     | *   | *     | *    |
+| Flight  | Leaves           | Airtime  | Distance | Gate | Lands | SFO | Speed | Mach | Elapsed |
+| ------- | ---------------- | -------- | -------- | ---- | ----- | --- | ----- | ---- | ------- |
+| LHR-SFO | 2025-03-10T11:05 | PT11H10M | 8610km   | *    | *     | *   | *     | *    | *       |
+| MUC-SFO | 2025-03-10T12:30 | PT11H35M | 9120km   | *    | *     | *   | *     | *    | *       |
+| SFO-LHR | 2025-03-10T21:30 | PT10H20M | 8610km   | *    | *     | *   | *     | *    | *       |
 
 # At the gate forty minutes before leaving, and on the ground ten after landing.
-Gate  := Leaves - 2400s
-Lands := Leaves + Airtime + 600s
+Gate  := Leaves - PT4H
+Lands := Leaves + Airtime + PT10M
 SFO   := Lands.convert_time_zone('America/Los_Angeles')
 Speed := (Distance / Airtime).to('m.s^-1')
 # The speed of sound is about 343 m/s at sea level.
 Mach  := Speed / 343m.s^-1
+Elapsed := Airtime.Quantity()
