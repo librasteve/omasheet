@@ -2311,13 +2311,31 @@ ApplicationWindow {
         return quantityNames.indexOf(type) >= 0;
     }
 
-    // Whether every selected column is of a type that takes a format.
+    // The steps of setting a column go in order: its type, then for a quantity
+    // its unit, then its format. `Set unit…` waits for a declared quantity type,
+    // `Quantity` or a kind of one.
+    function allQuantities() {
+        for (var c = selLeft; c <= selRight; c++) {
+            var column = sheet.columns[c];
+            if (!column || !column.declared || !win.isQuantityType(column.type))
+                return false;
+        }
+        return true;
+    }
+
+    // `Set format…` waits for a declared type that takes a format, and for a
+    // quantity, its unit.
     function allFormattable() {
         for (var c = selLeft; c <= selRight; c++) {
             var column = sheet.columns[c];
-            if (!column || (["Integer", "Hex", "Octal", "Binary", "Decimal", "Float", "Scientific", "Date", "Time", "Datetime"].indexOf(column.type) < 0
-                            && !win.isQuantityType(column.type)))
+            if (!column || !column.declared)
                 return false;
+            if (win.isQuantityType(column.type)) {
+                if (!column.unit)
+                    return false;
+            } else if (["Integer", "Hex", "Octal", "Binary", "Decimal", "Float", "Scientific", "Date", "Time", "Datetime"].indexOf(column.type) < 0) {
+                return false;
+            }
         }
         return true;
     }
@@ -5528,7 +5546,7 @@ ApplicationWindow {
         MenuEntry {
             text: "Set unit\u2026"
             visible: cellMenu.columns
-            enabled: visible && cellMenu.editable && win.sheet.columns.length > 0
+            enabled: visible && cellMenu.editable && win.sheet.columns.length > 0 && win.allQuantities()
             onTriggered: win.pickFor(unitPopup)
         }
         MenuEntry {
