@@ -6012,14 +6012,10 @@ ApplicationWindow {
                     Keys.onReturnPressed: picker.submit()
                     Keys.onEnterPressed: picker.submit()
                     activeFocusOnTab: true
-                    // Tab completes what is typed while that adds anything,
-                    // and then goes round the box: the buttons and back.
+                    // Tab goes round the box: the buttons and back.
                     Keys.onTabPressed: function(event) {
                         event.accepted = true;
-                        var before = search.text;
-                        picker.complete();
-                        if (search.text === before)
-                            nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocusReason);
+                        nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocusReason);
                     }
                     Keys.onBacktabPressed: function(event) {
                         event.accepted = true;
