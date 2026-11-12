@@ -2139,7 +2139,16 @@ fn unit_lines() -> String {
         // by its kind and, where the registry has one, its unit: `Energy
         // (joule)`.
         let mut both = both;
-        both.sort_by_key(|(symbol, _)| (symbol == "kat", symbol.chars().count()));
+        // The base units, though, in the order of the SI's own list.
+        const BASE: [&str; 7] = ["m", "kg", "s", "K", "A", "mol", "cd"];
+        both.sort_by_key(|(symbol, _)| {
+            let base = BASE.iter().position(|b| b == symbol).unwrap_or(BASE.len());
+            (
+                if group == "SI Base" { base } else { 0 },
+                symbol == "kat",
+                symbol.chars().count(),
+            )
+        });
         for (symbol, name) in both {
             if !seen.insert(symbol.clone()) {
                 continue;
