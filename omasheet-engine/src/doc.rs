@@ -477,8 +477,8 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             (".3e".into(), "e notation, three places"),
         ],
         S::Scientific => vec![
-            ("±.3e-3".into(), "value ± uncertainty, in e notation"),
-            ("±.2f".into(), "value ± uncertainty, two places"),
+            ("±.3e-3".into(), "± uncertainty, e notation"),
+            ("±.2f".into(), "± uncertainty, 2 places"),
             (".3g".into(), "three significant digits"),
             (".4f".into(), "four places"),
         ],
@@ -507,10 +507,7 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             (unit.to_string(), "the unit alone"),
             (format!("{unit}; .1f"), "one place"),
             (format!("{unit}; .3g"), "three significant digits"),
-            (
-                format!("{unit}; ±.3e-3"),
-                "with its uncertainty, in e notation",
-            ),
+            (format!("{unit}; ±.3e-3"), "± uncertainty, e notation"),
         ],
         _ => Vec::new(),
     };
@@ -1884,11 +1881,11 @@ fn read_column_format(name: &str, ty: S, format: Option<&str>) -> Result<Option<
     match format {
         Some(text) => match Format::parse(text, ty) {
             Ok(f) if f.takes(ty) => Ok(Some(f)),
-            // A unit that is not one, or of another dimension, says so.
-            Err(e) if ty.is_quantity() => Err(format!("Not a format: {text}\n{}", e.message)),
-            _ => {
+            // Why, in a few words.
+            Err(e) => Err(e.message),
+            Ok(_) => {
                 let takes = takes.replace('`', "");
-                Err(format!("Not a format: {text}\n{ty} takes {takes}"))
+                Err(format!("{ty} takes {takes}"))
             }
         },
         None => Ok(None),
@@ -7218,7 +7215,7 @@ mod tests {
         assert_eq!(snap.sheets[0].rows[1][0].display, "300g");
         // A unit of another dimension is refused, and the format kept.
         let why = doc.set_column_format(0, &[0], Some("m")).unwrap_err();
-        assert!(why.contains("is a unit of Length"), "{why}");
+        assert!(why.contains("unit of Mass"), "{why}");
         assert!(doc.text().contains("Mass[g]"));
         // A column that is retyped to another kind drops a unit it cannot keep.
         assert!(doc.set_column_types(0, &[0], Some("Length")));
@@ -7248,7 +7245,7 @@ mod tests {
         assert!(!doc.set_column_types(0, &[0], Some("Mass[m]")));
         assert!(!doc.set_column_types(0, &[0], Some("Mass[")));
         assert_eq!(doc.text(), before);
-        assert!(type_spec_problem("Mass[m]").contains("Length"));
+        assert!(type_spec_problem("Mass[m]").contains("unit of Mass"));
         assert_eq!(type_spec_problem("Length[cm]"), "");
         assert!(!type_spec_problem("Temperature[kV]").is_empty());
         assert_eq!(type_spec_problem("Potential[MV]"), "");
@@ -7309,10 +7306,10 @@ mod tests {
         assert!(doc.check_column_format(0, &[0], Some("%d %b %Y")).is_ok());
         assert!(doc.check_column_format(0, &[0], None).is_ok());
         let bad = doc.check_column_format(0, &[1], Some("zzz")).unwrap_err();
-        assert!(bad.contains("Not a format"), "{bad}");
+        assert!(bad.contains("not a unit"), "{bad}");
         assert!(doc.check_column_format(0, &[1], Some("g; .1f")).is_ok());
         let wrong = doc.check_column_format(0, &[1], Some("m")).unwrap_err();
-        assert!(wrong.contains("Length"), "{wrong}");
+        assert!(wrong.contains("Mass"), "{wrong}");
         // Nothing was changed.
         assert!(!doc.text().contains("["), "{}", doc.text());
     }
@@ -7392,10 +7389,7 @@ mod tests {
         let mut doc = Document::from_text(src);
         assert_eq!(
             doc.set_column_format(0, &[0], Some("%d %H")),
-            Err(
-                "Not a format: %d %H\nDate takes the conversions of a date, as %d %b %Y"
-                    .to_string()
-            )
+            Err("Date takes the conversions of a date, as %d %b %Y".to_string())
         );
         assert!(doc.set_column_format(0, &[0], Some("%d %b %Y %]")).is_ok());
         assert!(
@@ -7421,7 +7415,7 @@ mod tests {
         // `f` is not a conversion of a whole number, and nothing is set.
         assert_eq!(
             doc.set_column_format(0, &[1], Some("'.2f")),
-            Err("Not a format: '.2f\nInteger takes d, i, x, X, o, b or B".to_string())
+            Err("Integer takes d, i, x, X, o, b or B".to_string())
         );
         assert!(doc.set_column_format(0, &[1], Some("q")).is_err());
         assert_eq!(
@@ -7456,10 +7450,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 0), ["11.000(82)", "10.50(30)"]);
         assert_eq!(
             doc.set_column_format(0, &[0], Some("x")),
-            Err(
-                "Not a format: x\nScientific takes f, e or g, with ± before them for value ± uncertainty"
-                    .to_string()
-            )
+            Err("`x` is for whole numbers: use 'e', 'f' or 'g'".to_string())
         );
         assert!(doc.set_column_format(0, &[0], Some("±")).is_ok());
         assert!(

@@ -6150,7 +6150,7 @@ ApplicationWindow {
     // `Force`, comes from the unit chosen in `Set unit…`.
     PickerPopup {
         id: typePopup
-        placeholder: "Search types"
+        placeholder: "e.g. Decimal"
         // Filed by what they hold; a type in the second place of a pair is a
         // narrower kind of the one above it. `Quantity` is just that here: its
         // kind, `Mass` or `Force`, is `Set unit…`'s.
@@ -6223,7 +6223,7 @@ ApplicationWindow {
         // close it.
         closePolicy: prefixHelp.visible ? Popup.CloseOnEscape
             : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
-        placeholder: "Search or type e.g. Mass[kg]..."
+        placeholder: "e.g. Data[MiB]"
         provider: function(text) {
             var out = [];
             var lines = file.unitChoices().split("\n");
@@ -6270,7 +6270,7 @@ ApplicationWindow {
         function show(c, item) {
             var spec = win.sharedSpec(true);
             var at = spec.indexOf("[");
-            // What the column has, taken apart: `type=Information; prefix=Gi
+            // What the column has, taken apart: `type=Data; prefix=Gi
             // (gibi); unit=B (byte)`.
             note = "";
             if (at >= 0) {
@@ -6522,9 +6522,10 @@ ApplicationWindow {
         function take(i) {
             if (i < 0 || i >= choices.length)
                 return;
-            marked = i;
             field.text = choices[i].format;
+            marked = i;
             field.cursorPosition = field.text.length;
+            choiceList.positionViewAtIndex(i, ListView.Contain);
             field.forceActiveFocus();
         }
         Connections {
@@ -6663,7 +6664,9 @@ ApplicationWindow {
                 visible: formatPopup.fault.length > 0
                 Layout.fillWidth: true
                 Layout.maximumWidth: formatPopup.availableWidth
-                wrapMode: Text.Wrap
+                // One line: a fault is a few words, and past the width of the
+                // pane it is cut short.
+                elide: Text.ElideRight
                 text: formatPopup.fault
                 color: win.errorColor
                 font.family: win.font.family

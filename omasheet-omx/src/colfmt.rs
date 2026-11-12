@@ -47,22 +47,18 @@ impl QuantityFormat {
             message,
         };
         if unit_text.is_empty() {
-            return Err(error(0, 1, "a unit is expected".to_string()));
+            return Err(error(0, 1, "needs a unit".to_string()));
         }
         let len = unit_text.chars().count();
         let unit = siquant::Unit::parse(unit_text, siquant::Scope::Any)
-            .map_err(|e| error(at, len, format!("`{unit_text}` is not a unit: {e}")))?;
+            .map_err(|e| error(at, len, format!("`{unit_text}` is not a unit")))?;
         if let Some(t) = id.named()
             && !t.admits(&unit)
         {
             return Err(error(
                 at,
                 len,
-                format!(
-                    "`{unit_text}` is a unit of {}, but the column holds {}",
-                    crate::units::kind_of(unit.dims()),
-                    crate::units::kind_of(t.dims())
-                ),
+                format!("must be a unit of {}", crate::units::kind_of(t.dims())),
             ));
         }
         let number = match number_part {
@@ -150,7 +146,7 @@ impl SciFormat {
         let mut f = SciFormat::default();
         let mut i = 0;
         if chars.is_empty() {
-            return Err(error(0, 0, "a format is empty"));
+            return Err(error(0, 0, "empty"));
         }
         if chars.first() == Some(&'±') {
             f.plus_minus = true;
@@ -181,11 +177,7 @@ impl SciFormat {
             match n.parse::<usize>() {
                 Ok(n) if n <= MAX_WIDTH => f.width = Some(n),
                 _ => {
-                    return Err(error(
-                        start,
-                        n.len(),
-                        &format!("a width is at most {MAX_WIDTH}"),
-                    ));
+                    return Err(error(start, n.len(), &format!("width at most {MAX_WIDTH}")));
                 }
             }
         }
@@ -204,7 +196,7 @@ impl SciFormat {
                     return Err(error(
                         start,
                         i - start,
-                        &format!("a `Scientific` has at most {MOST_PLACES} places"),
+                        &format!("at most {MOST_PLACES} places"),
                     ));
                 }
             }
@@ -213,11 +205,7 @@ impl SciFormat {
         match chars.get(i) {
             None if !named => return Ok(f),
             None => {
-                return Err(error(
-                    i,
-                    0,
-                    "a format ends with its conversion, as `f`, `e` or `g`",
-                ));
+                return Err(error(i, 0, "must end in 'e', 'f' or 'g'"));
             }
             Some(c @ ('f' | 'F' | 'e' | 'E' | 'g' | 'G')) => {
                 f.conv = match c.to_ascii_lowercase() {
@@ -231,19 +219,11 @@ impl SciFormat {
                 return Err(error(
                     i,
                     1,
-                    &format!(
-                        "`{c}` is a conversion of a whole number: a `Scientific` takes `f`, `e` or `g`"
-                    ),
+                    &format!("`{c}` is for whole numbers: use 'e', 'f' or 'g'"),
                 ));
             }
             Some(c) => {
-                return Err(error(
-                    i,
-                    1,
-                    &format!(
-                        "`{c}` is not a conversion of a `Scientific`, which takes `f`, `e` or `g`"
-                    ),
-                ));
+                return Err(error(i, 1, &format!("`{c}` is not 'e', 'f' or 'g'")));
             }
         }
         i += 1;
@@ -257,27 +237,15 @@ impl SciFormat {
             match n.parse::<i32>() {
                 Ok(n) if n <= 300 => f.exponent = Some(if negative { -n } else { n }),
                 _ => {
-                    return Err(error(
-                        start,
-                        i - start,
-                        "an exponent is a whole number, at most 300",
-                    ));
+                    return Err(error(start, i - start, "exponent at most 300"));
                 }
             }
         }
         if i != chars.len() {
-            return Err(error(
-                i,
-                chars.len() - i,
-                "a format ends at its conversion, or at the exponent of `e`",
-            ));
+            return Err(error(i, chars.len() - i, "nothing after the conversion"));
         }
         if f.group && f.conv == SciConv::Exp {
-            return Err(error(
-                flags,
-                i - flags,
-                "`'` groups only `f` and `g`, not `e`",
-            ));
+            return Err(error(flags, i - flags, "'  groups only 'f' and 'g'"));
         }
         Ok(f)
     }
@@ -359,12 +327,8 @@ impl Format {
     /// type that takes no format.
     pub fn conversions_of(ty: S) -> Option<&'static str> {
         match ty {
-            S::Scientific => {
-                Some("`f`, `e` or `g`, with `±` before them for `value ± uncertainty`")
-            }
-            S::Quantity(_) => Some(
-                "a unit of its dimension, as `g` or `m.s^-1`, and after a `;` a number format as a `Scientific` takes",
-            ),
+            S::Scientific => Some("`e`, `f` or `g`, with `±` first"),
+            S::Quantity(_) => Some("a unit of its dimension, as `g`, then `;` and a number format"),
             S::Date => Some("the conversions of a date, as `%d %b %Y`"),
             S::Time => Some("the conversions of a time, as `%H:%M`"),
             S::Datetime => Some("the conversions of a date and a time, as `%d %b %Y %H:%M`"),
@@ -528,7 +492,7 @@ mod tests {
         assert!(!f.takes(S::Quantity(QId::from_name("Length").unwrap())));
         assert!(!f.takes(S::Float));
         let e = Format::parse("m", ty).unwrap_err();
-        assert!(e.message.contains("unit of Length"), "{}", e.message);
+        assert!(e.message.contains("unit of Mass"), "{}", e.message);
         assert_eq!(e.at, 0);
         // A number format's error is placed after the unit and the `;`.
         let e = Format::parse("g; x", ty).unwrap_err();

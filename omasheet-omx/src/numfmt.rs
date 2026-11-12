@@ -126,7 +126,7 @@ impl NumFormat {
             text: text.to_string(),
         };
         if text.is_empty() {
-            return Err(error(0, 0, "a format is empty"));
+            return Err(error(0, 0, "empty"));
         }
         while let Some(&b) = bytes.get(k) {
             match b {
@@ -153,17 +153,13 @@ impl NumFormat {
                 _ => Err(error(
                     start,
                     *k - start,
-                    format!("a width or precision is at most {MAX_WIDTH}"),
+                    format!("width or precision at most {MAX_WIDTH}"),
                 )),
             }
         };
         f.width = number(&mut k)?;
         if bytes.get(k) == Some(&b'$') {
-            return Err(error(
-                k,
-                1,
-                "a format takes no position: there is one number",
-            ));
+            return Err(error(k, 1, "no position: there is one number"));
         }
         if bytes.get(k) == Some(&b'.') {
             k += 1;
@@ -171,48 +167,31 @@ impl NumFormat {
             f.precision = Some(number(&mut k)?.unwrap_or(0));
         }
         let Some(c) = text[k..].chars().next() else {
-            return Err(error(
-                k,
-                0,
-                "a format ends with its conversion, as `d` or `f`",
-            ));
+            return Err(error(k, 0, "must end in a conversion, as 'd' or 'f'"));
         };
         let rest = k + c.len_utf8();
         match c {
-            '*' => return Err(error(k, 1, "a width is written as a number, not `*`")),
+            '*' => return Err(error(k, 1, "a width is a number, not `*`")),
             'h' | 'l' | 'L' | 'j' | 'z' | 't' => {
-                return Err(error(
-                    k,
-                    1,
-                    "a format takes no length: the type is the column's",
-                ));
+                return Err(error(k, 1, "no length: the type is the column's"));
             }
             _ => {}
         }
-        f.conv = Conv::from_letter(c).ok_or_else(|| {
-            error(
-                k,
-                c.len_utf8(),
-                format!("`{c}` is not a conversion of a number"),
-            )
-        })?;
+        f.conv = Conv::from_letter(c)
+            .ok_or_else(|| error(k, c.len_utf8(), format!("`{c}` is not a conversion")))?;
         if rest < text.len() {
             return Err(error(
                 rest,
                 text.len() - rest,
-                "a format ends at its conversion",
+                "nothing after the conversion",
             ));
         }
         // Undefined in C, and so refused rather than given a meaning.
         if f.alt && f.conv == Conv::Dec {
-            return Err(error(0, k, "`#` has no meaning for `d` or `i`"));
+            return Err(error(0, k, "`#` means nothing for `d` or `i`"));
         }
         if f.group && (f.conv.is_radix() || matches!(f.conv, Conv::Exp { .. })) {
-            return Err(error(
-                0,
-                k,
-                format!("`'` groups only `d`, `i`, `f`, `F`, `g` and `G`, not `{c}`"),
-            ));
+            return Err(error(0, k, format!("`'` does not group `{c}`")));
         }
         Ok(f)
     }
@@ -286,7 +265,7 @@ mod tests {
         assert!(refused("*d").contains("`*`"));
         assert!(refused("ld").contains("length"));
         assert!(refused("1$d").contains("position"));
-        assert!(refused("dd").contains("ends"));
+        assert!(refused("dd").contains("nothing after"));
         assert!(refused("1000d").contains("999"));
         assert!(refused("#d").contains("`#`"));
         assert!(refused("'x").contains("`'`"));

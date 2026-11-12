@@ -91,7 +91,7 @@ impl DateFormat {
     /// written, a `%` before a letter that is no conversion, is refused.
     pub fn parse(text: &str) -> Result<DateFormat, FormatError> {
         if text.is_empty() {
-            return Err(error(0, 0, "a format is empty"));
+            return Err(error(0, 0, "empty"));
         }
         let mut items = Vec::new();
         let mut spans = Vec::new();
@@ -127,7 +127,7 @@ impl DateFormat {
                         return Err(error(
                             start,
                             end - start,
-                            format!("a width is at most {MAX_WIDTH}"),
+                            format!("width at most {MAX_WIDTH}"),
                         ));
                     }
                 }
@@ -141,7 +141,7 @@ impl DateFormat {
                 return Err(error(
                     at,
                     text.len() - at,
-                    "a `%` ends with a conversion, as `%d`",
+                    "a `%` needs a conversion, as `%d`",
                 ));
             };
             let plain_too = pad.is_none() && !upper && !swap && width.is_none();
@@ -155,11 +155,7 @@ impl DateFormat {
                     None => None,
                     Some(n @ (3 | 6 | 9)) => Some(n),
                     Some(_) => {
-                        return Err(error(
-                            start,
-                            end - start,
-                            "a fraction of a second is `%f`, `%3f`, `%6f` or `%9f`",
-                        ));
+                        return Err(error(start, end - start, "use `%f`, `%3f`, `%6f` or `%9f`"));
                     }
                 },
                 _ => None,
@@ -168,7 +164,7 @@ impl DateFormat {
                 return Err(error(
                     k,
                     conv.len_utf8(),
-                    format!("`{conv}` is not a conversion of a date or time"),
+                    format!("`{conv}` is not a conversion"),
                 ));
             }
             if !plain.is_empty() {
@@ -307,7 +303,7 @@ mod tests {
         let e = refused("%d %q");
         assert_eq!((e.at, e.len), (4, 1));
         assert!(e.message.contains("`q`"));
-        assert!(refused("%Y-%").message.contains("ends"));
+        assert!(refused("%Y-%").message.contains("needs"));
         assert!(refused("%4f").message.contains("`%3f`"));
         assert!(refused("%1000Y").message.contains("999"));
     }
