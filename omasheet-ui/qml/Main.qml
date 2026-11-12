@@ -6322,6 +6322,9 @@ ApplicationWindow {
                 unitPopup.problem = file.unitProblem(text);
                 return [];
             }
+            // `Mass[k` is not yet anything to fault: red waits for the `]`.
+            if (open > 0 && !text.endsWith("]"))
+                return out;
             if (text.length > 0 && !out.some(function(e) { return e.spec === typed; })) {
                 var problem = file.unitProblem(text);
                 // Offered as the type it makes, `Voltage[MV]`.
