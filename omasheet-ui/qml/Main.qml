@@ -3118,7 +3118,10 @@ ApplicationWindow {
                         ? file.entryHint(column.type) : ""
                     visible: hint.length > 0
                     text: hint
-                    color: win.mutedColor
+                    // Between the muted colour and the text's: quiet, but read.
+                    color: Qt.rgba((win.mutedColor.r + win.textColor.r) / 2,
+                        (win.mutedColor.g + win.textColor.g) / 2,
+                        (win.mutedColor.b + win.textColor.b) / 2, 1)
                     font: win.font
                     Layout.alignment: Qt.AlignVCenter
                     Layout.maximumWidth: win.width * 0.45
