@@ -2311,18 +2311,9 @@ ApplicationWindow {
         return quantityNames.indexOf(type) >= 0;
     }
 
-    // The steps of setting a column go in order: its type, then for a quantity
-    // its unit, then its format. `Set unit…` waits for a declared quantity type,
-    // `Quantity` or a kind of one.
-    function allQuantities() {
-        for (var c = selLeft; c <= selRight; c++) {
-            var column = sheet.columns[c];
-            if (!column || !column.declared || !win.isQuantityType(column.type))
-                return false;
-        }
-        return true;
-    }
-
+    // The steps of setting a column go in order, its type and then its format.
+    // `Set unit…` is always open: a unit makes the column a kind of quantity,
+    // whatever it was.
     // `Set format…` waits for a declared type that takes a format, and for a
     // quantity, its unit.
     function allFormattable() {
@@ -5553,7 +5544,7 @@ ApplicationWindow {
         MenuEntry {
             text: "Set unit\u2026"
             visible: cellMenu.columns
-            enabled: visible && cellMenu.editable && win.sheet.columns.length > 0 && win.allQuantities()
+            enabled: visible && cellMenu.editable && win.sheet.columns.length > 0
             onTriggered: win.pickFor(unitPopup)
         }
         MenuEntry {
