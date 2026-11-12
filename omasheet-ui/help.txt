@@ -18,6 +18,7 @@ Ctrl+E               Export
 
 Ctrl+K               New constant
 Ctrl+Shift+F         Filter this column
+F4                   Cycle column settings
 Ctrl+D               Duplicate sheet
 Ctrl+N               New sheet
 Ctrl+Shift+N         New window
