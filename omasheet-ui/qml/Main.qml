@@ -2288,6 +2288,48 @@ ApplicationWindow {
             popup.show(selLeft, head);
     }
 
+    // F4: open the Set panels of the selected columns in turn, type, unit,
+    // format, then filter, and round again; Shift+F4 goes the other way. The
+    // one open is closed as the next opens, and a panel that is not open to this
+    // selection (format before there is a type, filter for several columns) is
+    // passed by.
+    readonly property var metaPanels: ["type", "unit", "format", "filter"]
+    function metaPanel(kind) {
+        return kind === "type" ? typePopup : kind === "unit" ? unitPopup
+            : kind === "format" ? formatPopup : columnPopup;
+    }
+    function metaAvailable(kind) {
+        if (sheet.columns.length === 0 || !headCells.itemAt(selLeft))
+            return false;
+        if (kind === "filter")
+            return selLeft === selRight;
+        if (sheet.isConsts)
+            return false;
+        return kind === "format" ? allFormattable() : true;
+    }
+    function cycleMeta(dir) {
+        var at = -1;
+        for (var i = 0; i < metaPanels.length; i++) {
+            if (metaPanel(metaPanels[i]).visible)
+                at = i;
+        }
+        var n = metaPanels.length;
+        for (var step = 1; step <= n; step++) {
+            var k = at < 0 ? (dir > 0 ? step - 1 : n - step) : ((at + dir * step) % n + n) % n;
+            var kind = metaPanels[k];
+            if (!metaAvailable(kind))
+                continue;
+            for (var j = 0; j < n; j++)
+                if (metaPanel(metaPanels[j]).visible)
+                    metaPanel(metaPanels[j]).close();
+            if (kind === "filter")
+                columnPopup.openFor(selLeft, headCells.itemAt(selLeft));
+            else
+                pickFor(metaPanel(kind));
+            return;
+        }
+    }
+
     // The type the selected columns all have, if there is one, and for
     // quantities their unit, `Mass[g]`: with `declared`, only if each is
     // declared as it.
@@ -2903,6 +2945,8 @@ ApplicationWindow {
     Shortcut { sequence: "F1"; onActivated: functionsDialog.open() }
     Shortcut { sequence: "F2"; enabled: !win.showSource; onActivated: win.editInBox() }
     Shortcut { sequence: "F3"; onActivated: win.viewSource(!win.showSource) }
+    Shortcut { sequence: "F4"; enabled: !win.editing; onActivated: win.cycleMeta(1) }
+    Shortcut { sequence: "Shift+F4"; enabled: !win.editing; onActivated: win.cycleMeta(-1) }
     Shortcut { sequences: ["Meta+F", "F11"]
         onActivated: win.visibility = win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen }
 
