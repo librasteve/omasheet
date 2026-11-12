@@ -6425,14 +6425,14 @@ ApplicationWindow {
             }
             return d.reverse().join("");
         }
-        // The size in figures up to mega, mebi and down to nano: `1000`,
+        // The size in figures up to mega, mebi and down to micro: `1000`,
         // `0.001`, `1048576`; past those in e notation, `1e12`, `1.074e9`.
         function value(p) {
             if (p.base === 2)
                 return p.exp <= 20 ? exactPower(p.exp) : Math.pow(2, p.exp).toExponential(3).replace("e+", "e");
             if (p.exp >= 0 && p.exp <= 6)
                 return "1" + "0".repeat(p.exp);
-            if (p.exp < 0 && p.exp >= -9)
+            if (p.exp < 0 && p.exp >= -6)
                 return "0." + "0".repeat(-p.exp - 1) + "1";
             return "1e" + p.exp;
         }
