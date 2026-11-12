@@ -4865,11 +4865,14 @@ ApplicationWindow {
         Keys.onSpacePressed: if (enabled) popupButton.clicked()
         Keys.onTabPressed: function(event) { event.accepted = win.cycle(popupButton, 1); }
         Keys.onBacktabPressed: function(event) { event.accepted = win.cycle(popupButton, -1); }
+        // With the keyboard on it, a thick accent border and a tint, so that
+        // Tab shows where it has got to.
         color: primary
             ? (press.containsMouse ? Qt.lighter(win.accentColor, 1.15) : win.accentColor)
+            : activeFocus ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.22)
             : (press.containsMouse ? win.lineColor : "transparent")
-        border.width: primary && !activeFocus ? 0 : 1
-        border.color: activeFocus ? win.accentColor : win.lineColor
+        border.width: activeFocus ? 2 : primary ? 0 : 1
+        border.color: activeFocus ? (primary ? win.textColor : win.accentColor) : win.lineColor
         Text {
             id: label
             anchors.centerIn: parent
@@ -5522,13 +5525,13 @@ ApplicationWindow {
             enabled: visible && cellMenu.editable && win.sheet.columns.length < win.maxLetterColumns
             onTriggered: promptDialog.ask("columns")
         }
-        MenuRule { visible: cellMenu.columns }
         MenuEntry {
             text: "Rename column"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.selLeft === win.selRight && win.sheet.columns.length > 0
             onTriggered: promptDialog.ask("rename")
         }
+        MenuRule { visible: cellMenu.columns }
         MenuEntry {
             text: "Set as formula\u2026"
             visible: cellMenu.columns
@@ -5566,12 +5569,6 @@ ApplicationWindow {
                 if (head)
                     columnPopup.openFor(win.selLeft, head);
             }
-        }
-        MenuEntry {
-            text: "Clear format"
-            visible: cellMenu.columns
-            enabled: visible && cellMenu.editable && win.anyFormatted()
-            onTriggered: win.clearFormats()
         }
     }
 
@@ -5815,8 +5812,12 @@ ApplicationWindow {
         // The entry marked, if it is one and is not what the columns have.
         readonly property var marked: listView.currentIndex >= 0 && listView.currentIndex < rows.length
             && !rows[listView.currentIndex].header ? rows[listView.currentIndex] : null
+        // Just cleared: what is marked is not a change to take until something is
+        // touched, so that Apply stays dark and Enter closes.
+        property bool settled: false
+        onTouchedChanged: if (touched) settled = false
         readonly property bool changed: marked !== null && marked.spec !== current
-            && (touched || marked.spec !== tick)
+            && (touched || marked.spec !== tick) && !settled
         // Take the entry marked, and stay open to try another.
         function apply() {
             if (!changed)
@@ -5898,6 +5899,7 @@ ApplicationWindow {
                 : Math.max(-item.mapToItem(null, 0, 0).x + 8, lap - width);
             y = 0;
             touched = false;
+            settled = false;
             open();
             search.forceActiveFocus();
             listView.positionViewAtIndex(Math.max(0, listView.currentIndex), ListView.Center);
@@ -6185,6 +6187,8 @@ ApplicationWindow {
                     opacity: enabled ? 1 : 0.4
                     onClicked: {
                         picker.cleared();
+                        picker.touched = false;
+                        picker.settled = true;
                         search.forceActiveFocus();
                     }
                 }
