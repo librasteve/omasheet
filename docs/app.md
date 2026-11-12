@@ -177,7 +177,10 @@ as it is typed, before anything is read: the box turns red while it is
 wrong, and holding the pointer over it says why. So the popup opens at once
 on a view of millions of rows. The circle is solid while the column is
 filtered, and filters on several columns all apply. Ctrl+Shift+F opens the
-popup of the column the cursor is in.
+popup of the column the cursor is in. **Operators** opens a legend of what a filter can say for the
+column's type: the comparisons, `in`, the text and date functions, `and`, `or`
+and `not`, each with an example (the text is
+`omasheet-engine/resources/filter_help.txt`).
 
 | Filter | Shows the rows where the cell |
 |---|---|

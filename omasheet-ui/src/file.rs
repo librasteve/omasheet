@@ -452,6 +452,10 @@ pub mod qobject {
         /// tab-separated, one to a line.
         #[qinvokable]
         fn format_help(self: &File, ty: &QString) -> QString;
+        /// The legend of the Operators panel of the filter box for a column
+        /// type, in the same form as `format_help`.
+        #[qinvokable]
+        fn filter_help(self: &File, ty: &QString) -> QString;
         /// A unit of one term taken apart: the prefix symbol and name, a tab,
         /// the unit symbol and name, `GiB` as `Gi gibi B byte`. The prefix is
         /// empty for `B`; the whole is empty for a compound unit (`m.s^-1`).
@@ -1732,6 +1736,10 @@ impl qobject::File {
 
     fn unit_choices(&self) -> QString {
         QString::from(&unit_lines())
+    }
+
+    fn filter_help(&self, ty: &QString) -> QString {
+        QString::from(&omasheet_engine::doc::filter_help(&ty.to_string()))
     }
 
     fn format_help(&self, ty: &QString) -> QString {

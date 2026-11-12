@@ -1,0 +1,67 @@
+# The legend in the Operators panel, opened from the Set filter… box.
+#
+# A section starts `== Title | Families`, and says which columns it is shown
+# for: Any, Number (numbers, quantities), Text (String, Email, Url, Uuid), Date
+# (Date, Datetime), Time (Time, Datetime), Span (Duration). The lines under it are `what you write |
+# what it does | an example`. A line starting `: ` is a note, shown across the
+# panel and wrapped. In an example, `{v}` and `{w}` are two sample values of the
+# column's own kind: 1 and 10, 'a' and 'm', or two dates. Blank lines and lines starting with `#` are ignored. A row
+# is two lines in the panel, the symbol and example above and the meaning
+# below, so the meaning may be long; keep the symbol and the example short.
+
+== The cell | Any
+: `*` stands for the cell tested, and the filter keeps the rows where it is true. It compares values, not what is shown: `* == 3` finds a cell shown as 3.00. An empty cell fails every comparison, so `* != 3` hides it too.
+
+== Compare | Any
+== | is equal to | * == {v}
+!= | is not equal to | * != {w}
+< | is less than, or before | * < {w}
+<= | is less than or equal to | * <= {w}
+> | is greater than, or after | * > {v}
+>= | is greater than or equal to | * >= {v}
+
+== Range | Number Date Time Span
+a < * <= b | comparisons chain, for a range | {v} < * <= {w}
+
+== One of | Any
+in [ ] | is one of a list | * in [{v}, {w}]
+.is_in([ ]) | the same, as a call | *.is_in([{v}, {w}])
+
+== A range of values | Number
+in a..b | is in a range of values | * in 1..5
+
+== Text | Text
+.starts_with(s) | starts with s, exactly as written | *.starts_with('A')
+.starts_with(a..b) | starts with a letter from a to b | *.starts_with('A'..'C')
+.ends_with(s) | ends with s | *.ends_with('son')
+.contains(s) | has s in it | *.contains('an')
+.matches(re) | matches a regular expression | *.matches('^A.*n$')
+.to_lowercase() | lower case first, to ignore case | *.to_lowercase().contains('an')
+.to_uppercase() | upper case first | *.to_uppercase() == 'UK'
+.len_chars() | the number of characters | *.len_chars() > 3
+
+== Empty and repeated | Any
+.is_null() | is empty | *.is_null()
+.is_duplicated() | is in the column more than once | *.is_duplicated()
+.is_first_distinct() | is the first of its value in the column | *.is_first_distinct()
+
+== Empty text | Text
+== '' | is empty text | * == ''
+!= '' | is not empty | * != ''
+
+== Not a number | Number
+.is_nan() | holds NaN, not a number | *.is_nan()
+.is_finite() | holds a finite number | *.is_finite()
+
+== Parts of a date | Date
+.year .month .day | the parts of a date | *.year == 2025
+.weekday | the day of the week, 1 Monday to 7 Sunday | *.weekday >= 6
+
+== Parts of a time | Time
+.hour .minute .second | the parts of a time | *.minute == 0
+
+== Join | Any
+and | both are true | * > {v} and * != {w}
+or | either is true | * < {v} or * > {w}
+not | the opposite | not * == {v}
+( ) | group, to say which goes first | (* < {v} or * > {w}) and * != {v}

@@ -449,28 +449,30 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
         .replace("{unit}", &unit)
 }
 
-/// The legend of the Formats panel for a column of type `ty`, from
-/// `resources/format_help.txt`: a line `#<TAB>Title` for each section that
-/// applies, and under it a line `symbol<TAB>meaning<TAB>example` for each row,
-/// or `:<TAB>note` for a note.
-pub fn format_help(ty: &str) -> String {
-    let family = match S::from_name(ty) {
-        Some(S::Scientific) => "Scientific",
-        Some(S::Quantity(_)) => "Quantity",
-        Some(S::Date | S::Time | S::Datetime) => "Date",
-        Some(_) => "Number",
-        None => return String::new(),
-    };
+/// The legend of a help panel from a resource `text` of sections, for a column
+/// of the given `family`: a line `#<TAB>Title` for each section that applies,
+/// and under it a line `symbol<TAB>meaning<TAB>example` for each row, or
+/// `:<TAB>note` for a note. A section starts `== Title | Families`.
+fn legend(text: &str, families_of_column: &[&str], samples: (&str, &str)) -> String {
     let mut out = Vec::new();
     let mut shown = false;
-    for line in include_str!("../resources/format_help.txt").lines() {
+    for line in text.lines() {
         let line = line.trim_end();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if let Some(head) = line.strip_prefix("==") {
-            let (title, families) = head.split_once(" | ").unwrap_or((head, ""));
-            shown = families.split_whitespace().any(|f| f == family);
+        // A heading is `== Title | Families`, the families being capitalised
+        // words; a row that starts with the operator `==` is not one.
+        let heading = line.strip_prefix("== ").and_then(|head| {
+            let (title, families) = head.split_once(" | ")?;
+            let named = |w: &str| w.chars().next().is_some_and(char::is_uppercase);
+            (!families.is_empty() && families.split_whitespace().all(named))
+                .then_some((title, families))
+        });
+        if let Some((title, families)) = heading {
+            shown = families
+                .split_whitespace()
+                .any(|f| f == "Any" || families_of_column.contains(&f));
             if shown {
                 out.push(format!("#\t{}", title.trim()));
             }
@@ -484,6 +486,46 @@ pub fn format_help(ty: &str) -> String {
         }
     }
     out.join("\n")
+        .replace("{v}", samples.0)
+        .replace("{w}", samples.1)
+}
+
+/// The legend of the Formats panel for a column of type `ty`, from
+/// `resources/format_help.txt`.
+pub fn format_help(ty: &str) -> String {
+    let family = match S::from_name(ty) {
+        Some(S::Scientific) => "Scientific",
+        Some(S::Quantity(_)) => "Quantity",
+        Some(S::Date | S::Time | S::Datetime) => "Date",
+        Some(_) => "Number",
+        None => return String::new(),
+    };
+    legend(
+        include_str!("../resources/format_help.txt"),
+        &[family],
+        ("", ""),
+    )
+}
+
+/// The legend of the Operators panel of the filter box for a column of type
+/// `ty`, from `resources/filter_help.txt`: sections for every column and
+/// those for its kind of values. An unknown or empty type gets the sections
+/// for every column.
+pub fn filter_help(ty: &str) -> String {
+    let (families, samples): (&[&str], _) = match S::from_name(ty) {
+        Some(S::String | S::Email | S::Url | S::Uuid) => (&["Text"], ("'a'", "'m'")),
+        Some(S::Date) => (&["Date"], ("2025-01-01", "2025-12-31")),
+        Some(S::Time) => (&["Time"], ("08:00", "17:30")),
+        Some(S::Datetime) => (&["Date", "Time"], ("2025-01-01T08:00", "2025-12-31T17:30")),
+        Some(S::Duration) => (&["Span"], ("PT1H", "P1D")),
+        Some(S::Boolean) | None => (&[], ("1", "10")),
+        Some(_) => (&["Number"], ("1", "10")),
+    };
+    legend(
+        include_str!("../resources/filter_help.txt"),
+        families,
+        samples,
+    )
 }
 
 /// Formats to offer a column of type `ty`, `(format, what it shows)`, for the
@@ -8163,6 +8205,61 @@ mod tests {
         let bad = Document::from_text("zone Mars/Base\n\nsheet T\n\nA\n1\n");
         assert!(bad.snapshot().problems[0].message.contains("no time zone"));
         assert_eq!(bad.snapshot().sheets[0].rows[0][0].display, "1");
+    }
+
+    #[test]
+    fn the_filter_legend_is_for_the_column_type() {
+        let text = filter_help("String");
+        assert!(text.contains("#\tText"), "{text}");
+        assert!(text.contains(".starts_with(s)\tstarts with s"), "{text}");
+        assert!(text.contains("==\tis equal to\t* == 'a'"), "{text}");
+        assert!(text.contains("== ''\tis empty text\t* == ''"), "{text}");
+        assert!(!text.contains("#\tParts of a date"));
+        let number = filter_help("Float");
+        assert!(number.contains(".is_nan()"));
+        assert!(!number.contains(".starts_with"));
+        assert!(filter_help("Date").contains(".weekday"));
+        // No type: only what holds for every column.
+        let any = filter_help("");
+        assert!(any.contains("#\tCompare") && any.contains("#\tJoin"));
+        assert!(!any.contains(".starts_with"));
+        // Every row has its cells, and no heading stands twice in a row.
+        for ty in ["String", "Float", "Date", ""] {
+            let lines: Vec<String> = filter_help(ty).lines().map(String::from).collect();
+            for (i, line) in lines.iter().enumerate() {
+                if line.starts_with("#\t") {
+                    assert!(
+                        lines.get(i + 1).is_some_and(|n| !n.starts_with("#\t")),
+                        "{ty}: {line}"
+                    );
+                } else {
+                    let cells = if line.starts_with(":\t") { 2 } else { 3 };
+                    assert_eq!(line.split('\t').count(), cells, "{ty}: {line}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_filter_example_is_a_filter_the_column_takes() {
+        let text = "sheet T\n\nS : String\nF : Float\nD : Date\nT : Time\nDT : Datetime\nU : Duration\n\n| S | F | D | T | DT | U |\n| - | - | - | - | - | - |\n| a | 1 | 2025-01-31 | 08:00 | 2025-01-31T08:00 | PT1H |\n";
+        let doc = Document::from_text(text);
+        for (col, ty) in [
+            (0, "String"),
+            (1, "Float"),
+            (2, "Date"),
+            (3, "Time"),
+            (4, "Datetime"),
+            (5, "Duration"),
+        ] {
+            for line in filter_help(ty)
+                .lines()
+                .filter(|l| !l.starts_with("#\t") && !l.starts_with(":\t"))
+            {
+                let example = line.split('\t').nth(2).unwrap();
+                assert_eq!(doc.check_filter(0, col, example), Ok(()), "{ty}: {example}");
+            }
+        }
     }
 
     #[test]

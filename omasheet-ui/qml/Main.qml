@@ -5027,7 +5027,9 @@ ApplicationWindow {
         // Smaller than the grid: the controls of Material are made for touch.
         readonly property int textSize: win.fontSize
         readonly property int lineHeight: Math.round(textSize * 1.9)
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        // The operators beside it, open, take Escape, Enter and clicks themselves.
+        closePolicy: filterHelp.visible ? Popup.NoAutoClose
+            : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
         onClosed: grid.forceActiveFocus()
         onOpened: Qt.callLater(function() { filterField.forceActiveFocus(); filterField.selectAll(); })
 
@@ -5101,7 +5103,7 @@ ApplicationWindow {
         }
         // The controls the arrow keys visit, top to bottom.
         function order() {
-            return [sortAscending, sortDescending, filterField, clearEntry, applyButton, closeButton]
+            return [sortAscending, sortDescending, filterField, clearEntry, operatorsButton, applyButton, closeButton]
                 .filter(function(it) { return it.visible && it.enabled; });
         }
         // Move focus `by` places along the controls, stopping at the ends.
@@ -5379,6 +5381,12 @@ ApplicationWindow {
                 Layout.maximumWidth: columnPopup.availableWidth
                 Layout.topMargin: 4
                 spacing: 6
+                PopupButton {
+                    id: operatorsButton
+                    text: "Operators"
+                    muted: true
+                    onClicked: filterHelp.openBeside(columnPopup)
+                }
                 Item { Layout.fillWidth: true }
                 // Lit while there is a passing expression to apply; Close is
                 // the filled one otherwise.
@@ -5482,13 +5490,6 @@ ApplicationWindow {
             enabled: visible && cellMenu.hasRows
             onTriggered: win.deleteRows()
         }
-        MenuRule { visible: cellMenu.columns }
-        MenuEntry {
-            text: cellMenu.columnCount > 1 ? "Delete " + cellMenu.columnCount + " columns" : "Delete column"
-            visible: cellMenu.columns
-            enabled: visible && cellMenu.editable && win.sheet.columns.length > 1
-            onTriggered: win.deleteColumns()
-        }
         MenuEntry {
             text: "Delete sheet"
             visible: cellMenu.whole
@@ -5538,34 +5539,6 @@ ApplicationWindow {
         }
         // Columns, when whole columns are selected. A column added
         // from the footer goes at the end.
-        MenuEntry {
-            text: win.colsOnHand !== null ? "Insert cells before"
-                : cellMenu.columnCount > 1 ? "Insert " + cellMenu.columnCount + " columns before" : "Insert column before"
-            visible: cellMenu.columns
-            enabled: visible && cellMenu.editable
-            onTriggered: win.insertColumnsHere(false)
-        }
-        MenuEntry {
-            text: win.colsOnHand !== null ? "Insert cells after"
-                : cellMenu.columnCount > 1 ? "Insert " + cellMenu.columnCount + " columns after" : "Insert column after"
-            visible: cellMenu.columns
-            enabled: visible && cellMenu.editable
-            onTriggered: win.insertColumnsHere(true)
-        }
-        // A sheet still in letters: a number of columns, named on from the
-        // last, at the end so that the letters stay in order.
-        MenuEntry {
-            text: "Insert columns\u2026"
-            visible: cellMenu.columns && win.letterSheet
-            enabled: visible && cellMenu.editable && win.sheet.columns.length < win.maxLetterColumns
-            onTriggered: promptDialog.ask("columns")
-        }
-        MenuEntry {
-            text: "Rename column"
-            visible: cellMenu.columns
-            enabled: visible && cellMenu.editable && win.selLeft === win.selRight && win.sheet.columns.length > 0
-            onTriggered: promptDialog.ask("rename")
-        }
         MenuRule { visible: cellMenu.columns }
         // The filter box from the column's header, for the one column.
         MenuEntry {
@@ -5596,6 +5569,42 @@ ApplicationWindow {
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.sheet.columns.length > 0 && win.allFormattable()
             onTriggered: win.pickFor(formatPopup)
+        }
+        // The columns' own entries, below the Set ones; Change to formula is last.
+        MenuRule { visible: cellMenu.columns }
+        MenuEntry {
+            text: win.colsOnHand !== null ? "Insert cells before"
+                : cellMenu.columnCount > 1 ? "Insert " + cellMenu.columnCount + " columns before" : "Insert column before"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable
+            onTriggered: win.insertColumnsHere(false)
+        }
+        MenuEntry {
+            text: win.colsOnHand !== null ? "Insert cells after"
+                : cellMenu.columnCount > 1 ? "Insert " + cellMenu.columnCount + " columns after" : "Insert column after"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable
+            onTriggered: win.insertColumnsHere(true)
+        }
+        // A sheet still in letters: a number of columns, named on from the
+        // last, at the end so that the letters stay in order.
+        MenuEntry {
+            text: "Insert columns\u2026"
+            visible: cellMenu.columns && win.letterSheet
+            enabled: visible && cellMenu.editable && win.sheet.columns.length < win.maxLetterColumns
+            onTriggered: promptDialog.ask("columns")
+        }
+        MenuEntry {
+            text: "Rename column"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.selLeft === win.selRight && win.sheet.columns.length > 0
+            onTriggered: promptDialog.ask("rename")
+        }
+        MenuEntry {
+            text: cellMenu.columnCount > 1 ? "Delete " + cellMenu.columnCount + " columns" : "Delete column"
+            visible: cellMenu.columns
+            enabled: visible && cellMenu.editable && win.sheet.columns.length > 1
+            onTriggered: win.deleteColumns()
         }
         MenuEntry {
             text: "Change to formula\u2026"
@@ -6458,11 +6467,15 @@ ApplicationWindow {
         }
     }
 
-    // The legend of formats, from `Set format…`: what each part of a format
-    // writes, for the type of the column. It is `resources/format_help.txt` in the
-    // engine, in sections that apply to some types and not others.
-    Popup {
-        id: formatHelp
+    // A legend, beside the box it was opened from: what each part of a format
+    // or of a filter writes, for the type of the column, in sections that apply to
+    // some types and not others. `source()` gives its lines, `back()` says where the
+    // keyboard goes when it closes.
+    component LegendPopup: Popup {
+        id: legend
+        property string title: ""
+        property var source: function() { return ""; }
+        property var back: function() { grid.forceActiveFocus(); }
         padding: 8
         width: Math.min(Math.round(win.fontSize * 32), win.width - 16)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -6470,7 +6483,7 @@ ApplicationWindow {
         // The lines of the legend: `{title}` for a heading, else `{symbol, meaning, example}`.
         property var lines: []
         onOpened: {
-            var rows = file.formatHelp(formatPopup.type).split("\n");
+            var rows = legend.source().split("\n");
             var out = [];
             for (var i = 0; i < rows.length; i++) {
                 var f = rows[i].split("\t");
@@ -6484,7 +6497,7 @@ ApplicationWindow {
             lines = out;
             legendList.positionViewAtBeginning();
         }
-        onClosed: formatPopup.visible ? field.forceActiveFocus() : grid.forceActiveFocus()
+        onClosed: legend.back()
         // Beside the box it came from, to its right where there is room.
         function openBeside(box) {
             parent = box.parent;
@@ -6503,12 +6516,12 @@ ApplicationWindow {
             spacing: 4
             // Escape and Enter close it, and not the box it came from.
             focus: true
-            Keys.onEscapePressed: formatHelp.close()
-            Keys.onReturnPressed: formatHelp.close()
-            Keys.onEnterPressed: formatHelp.close()
+            Keys.onEscapePressed: legend.close()
+            Keys.onReturnPressed: legend.close()
+            Keys.onEnterPressed: legend.close()
             Text {
                 Layout.fillWidth: true
-                text: "Formats for " + formatPopup.type
+                text: legend.title
                 color: win.textColor
                 font.family: win.font.family
                 font.pixelSize: win.fontSize
@@ -6518,10 +6531,10 @@ ApplicationWindow {
                 id: legendList
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.min(contentHeight, Math.round(win.fontSize * 26), Math.round(win.height * 0.7),
-                    win.roomFor(legendList, formatHelp.y, Math.round(win.fontSize * 4)))
+                    win.roomFor(legendList, legend.y, Math.round(win.fontSize * 4)))
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                model: formatHelp.lines
+                model: legend.lines
                 ScrollBar.vertical: ScrollBar {}
                 // A heading; a note, wrapped across the panel; or a row of two lines:
                 // the symbol and, at the right, its example, and under them what it
@@ -6607,10 +6620,28 @@ ApplicationWindow {
                 PopupButton {
                     text: "Close"
                     primary: true
-                    onClicked: formatHelp.close()
+                    onClicked: legend.close()
                 }
             }
         }
+    }
+
+    // The formats, from `Set format…`: `resources/format_help.txt` in the engine.
+    LegendPopup {
+        id: formatHelp
+        title: "Formats for " + formatPopup.type
+        source: function() { return file.formatHelp(formatPopup.type); }
+        back: function() { formatPopup.visible ? field.forceActiveFocus() : grid.forceActiveFocus(); }
+    }
+
+    // The operators, from `Set filter…`: `resources/filter_help.txt`.
+    LegendPopup {
+        id: filterHelp
+        readonly property string kind: columnPopup.col >= 0 && win.sheet.columns[columnPopup.col]
+            ? win.sheet.columns[columnPopup.col].type : ""
+        title: "Operators" + (kind.length > 0 ? " for " + kind : "")
+        source: function() { return file.filterHelp(kind); }
+        back: function() { columnPopup.visible ? filterField.forceActiveFocus() : grid.forceActiveFocus(); }
     }
 
     // The prefixes, from `Set unit…`: what each is called and how big it is.
