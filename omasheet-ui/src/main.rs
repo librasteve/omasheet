@@ -11,6 +11,9 @@
 // A Qt invokable takes its arguments one by one, and the paste of a reference
 // takes eight; the bridge's own code will not take an attribute for it.
 #![allow(clippy::too_many_arguments)]
+// The linker's own notes (a duplicate rpath, a large unwind table) come from
+// Qt and the build setup, and there is nothing in this crate to fix.
+#![allow(linker_messages)]
 
 mod clip;
 mod file;
