@@ -5996,24 +5996,36 @@ ApplicationWindow {
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
                         x: row.head ? 4 : 8 + (modelData.group ? Math.round(win.fontSize * 1.2) : 0)
-                        width: row.width - x - (hint.visible ? hint.implicitWidth + 12 : 8)
+                        width: row.width - x - (hint.visible ? hint.implicitWidth + 12 : 8) - (row.ticked ? tickMark.width + 4 : 0)
                         elide: Text.ElideRight
                         text: row.head
                             ? (picker.closed[modelData.group] && search.text.trim().length === 0 ? "▸ " : "▾ ")
                                 + modelData.group + "  (" + modelData.count + ")"
-                            : (row.ticked ? "✓ " : "") + modelData.label
+                            : modelData.label
                         color: row.head ? win.mutedColor : win.textColor
                         font.family: win.font.family
                         font.features: win.font.features
                         font.pixelSize: win.fontSize
                         font.bold: row.head
                     }
+                    // The tick sits at the right edge, so the name stays where it is.
+                    Text {
+                        id: tickMark
+                        visible: row.ticked
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        text: "✓"
+                        color: win.textColor
+                        font.family: win.font.family
+                        font.pixelSize: win.fontSize
+                    }
                     Text {
                         id: hint
                         visible: !row.head && !!modelData.hint
                         anchors.verticalCenter: parent.verticalCenter
-                        anchors.right: parent.right
-                        anchors.rightMargin: 8
+                        anchors.right: row.ticked ? tickMark.left : parent.right
+                        anchors.rightMargin: row.ticked ? 4 : 8
                         text: modelData.hint || ""
                         color: win.mutedColor
                         font.family: win.font.family
