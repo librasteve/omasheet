@@ -6806,7 +6806,7 @@ ApplicationWindow {
             Text {
                 visible: formatPopup.choices.length > 0
                 Layout.topMargin: 2
-                text: "Formats " + formatPopup.type + " takes"
+                text: "Format examples for " + formatPopup.type + ":"
                 color: win.mutedColor
                 font.family: win.font.family
                 font.pixelSize: win.smallSize
