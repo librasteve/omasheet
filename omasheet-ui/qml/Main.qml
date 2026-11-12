@@ -5141,6 +5141,15 @@ ApplicationWindow {
                     boundsBehavior: Flickable.StopAtBounds
                     TextEdit {
                         id: filterField
+                        activeFocusOnTab: true
+                        Keys.onTabPressed: function(event) {
+                            event.accepted = true;
+                            nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocusReason);
+                        }
+                        Keys.onBacktabPressed: function(event) {
+                            event.accepted = true;
+                            nextItemInFocusChain(false).forceActiveFocus(Qt.BacktabFocusReason);
+                        }
                         width: filterScroll.width
                         height: columnPopup.multiline ? Math.max(contentHeight, filterScroll.height) : filterScroll.height
                         verticalAlignment: columnPopup.multiline ? TextEdit.AlignTop : TextEdit.AlignVCenter
@@ -5955,7 +5964,20 @@ ApplicationWindow {
                     }
                     Keys.onReturnPressed: picker.submit()
                     Keys.onEnterPressed: picker.submit()
-                    Keys.onTabPressed: picker.complete()
+                    activeFocusOnTab: true
+                    // Tab completes what is typed while that adds anything,
+                    // and then goes round the box: the buttons and back.
+                    Keys.onTabPressed: function(event) {
+                        event.accepted = true;
+                        var before = search.text;
+                        picker.complete();
+                        if (search.text === before)
+                            nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocusReason);
+                    }
+                    Keys.onBacktabPressed: function(event) {
+                        event.accepted = true;
+                        nextItemInFocusChain(false).forceActiveFocus(Qt.BacktabFocusReason);
+                    }
                     Text {
                         anchors.fill: parent
                         verticalAlignment: Text.AlignVCenter
@@ -6305,9 +6327,6 @@ ApplicationWindow {
         // The widths of the columns, in ems of the text, for the head and the rows alike.
         readonly property var widths: [4.2, 6, 4, 8]
         focus: true
-        Keys.onEscapePressed: close()
-        Keys.onReturnPressed: close()
-        Keys.onEnterPressed: close()
         onOpened: {
             var rows = file.prefixTable().split("\n");
             var out = [];
@@ -6367,6 +6386,11 @@ ApplicationWindow {
         }
         contentItem: ColumnLayout {
             spacing: 4
+            // Escape and Enter close it, and not the box it came from.
+            focus: true
+            Keys.onEscapePressed: prefixHelp.close()
+            Keys.onReturnPressed: prefixHelp.close()
+            Keys.onEnterPressed: prefixHelp.close()
             Text {
                 Layout.fillWidth: true
                 text: "Prefixes"
@@ -6619,6 +6643,15 @@ ApplicationWindow {
                 TextInput {
                     id: field
                     anchors.fill: parent
+                    activeFocusOnTab: true
+                    Keys.onTabPressed: function(event) {
+                        event.accepted = true;
+                        nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocusReason);
+                    }
+                    Keys.onBacktabPressed: function(event) {
+                        event.accepted = true;
+                        nextItemInFocusChain(false).forceActiveFocus(Qt.BacktabFocusReason);
+                    }
                     anchors.leftMargin: 6
                     anchors.rightMargin: 6
                     verticalAlignment: TextInput.AlignVCenter
