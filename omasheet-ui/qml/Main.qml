@@ -3113,7 +3113,10 @@ ApplicationWindow {
                 // What the column accepts, in the locale's way of writing it:
                 // nothing for a formula column, whose cells are not typed in.
                 Text {
-                    readonly property var column: win.hasCursor ? win.sheet.columns[win.curCol] : undefined
+                    // The column of the cursor, or the one whole column selected.
+                    readonly property var column: win.hasCursor ? win.sheet.columns[win.curCol]
+                        : win.selKind === "column" && win.selLeft === win.selRight
+                        ? win.sheet.columns[win.selLeft] : undefined
                     readonly property string hint: column && column.type && !column.computed && !win.sheet.isConsts
                         ? file.entryHint(column.type) : ""
                     visible: hint.length > 0
