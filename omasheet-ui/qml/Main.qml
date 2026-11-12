@@ -6369,7 +6369,14 @@ ApplicationWindow {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         property var table: []
         // The widths of the columns, in ems of the text, for the head and the rows alike.
-        readonly property var widths: [4.2, 6, 4, 8]
+        readonly property var widths: [3.6, 5, 3.2, 7]
+        function colW(i) { return Math.round(win.fontSize * widths[i]); }
+        function colX(i) {
+            var x = 0;
+            for (var k = 0; k < i; k++)
+                x += colW(k) + 8;
+            return x;
+        }
         focus: true
         onOpened: {
             var rows = file.prefixTable().split("\n");
@@ -6452,18 +6459,22 @@ ApplicationWindow {
                 font.family: win.font.family
                 font.pixelSize: win.smallSize
             }
-            RowLayout {
+            // The head and the rows are laid out by the same fixed columns, so
+            // that they line up whatever the text in them.
+            Item {
                 Layout.fillWidth: true
-                spacing: 8
+                implicitHeight: Math.round(win.smallSize * 1.8)
                 Repeater {
-                    model: [["Symbol", 0], ["Name", 1], ["Power", 2], ["Size", 3]]
+                    model: ["Symbol", "Name", "Power", "Size"]
                     Text {
-                        required property var modelData
-                        Layout.preferredWidth: Math.round(win.fontSize * prefixHelp.widths[modelData[1]] * 0.8)
-                        Layout.alignment: Qt.AlignVCenter
+                        required property int index
+                        required property string modelData
+                        x: prefixHelp.colX(index)
+                        width: prefixHelp.colW(index)
+                        anchors.verticalCenter: parent.verticalCenter
                         horizontalAlignment: Text.AlignLeft
                         elide: Text.ElideRight
-                        text: modelData[0]
+                        text: modelData
                         color: win.mutedColor
                         font.family: win.font.family
                         font.pixelSize: win.smallSize
@@ -6479,29 +6490,29 @@ ApplicationWindow {
                 boundsBehavior: Flickable.StopAtBounds
                 model: prefixHelp.table
                 ScrollBar.vertical: ScrollBar {}
-                delegate: RowLayout {
+                delegate: Item {
                     id: prefixRow
                     required property var modelData
                     width: ListView.view.width
                     height: Math.round(win.fontSize * 1.6)
-                    spacing: 8
                     Repeater {
                         model: [
-                            [prefixRow.modelData.symbol, 0, true],
-                            [prefixRow.modelData.name, 1, false],
-                            [prefixHelp.power(prefixRow.modelData), 2, false],
-                            [prefixHelp.value(prefixRow.modelData), 3, false]
+                            [prefixRow.modelData.symbol, true],
+                            [prefixRow.modelData.name, false],
+                            [prefixHelp.power(prefixRow.modelData), false],
+                            [prefixHelp.value(prefixRow.modelData), false]
                         ]
                         Text {
+                            required property int index
                             required property var modelData
-                            Layout.preferredWidth: Math.round(win.fontSize * prefixHelp.widths[modelData[1]] * 0.8)
-                            Layout.alignment: Qt.AlignVCenter
+                            x: prefixHelp.colX(index)
+                            width: prefixHelp.colW(index)
+                            anchors.verticalCenter: parent.verticalCenter
                             horizontalAlignment: Text.AlignLeft
-                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: modelData[0]
                             color: win.textColor
-                            font.family: modelData[2] ? win.monoFamily : win.font.family
+                            font.family: modelData[1] ? win.monoFamily : win.font.family
                             font.pixelSize: win.smallSize
                         }
                     }
