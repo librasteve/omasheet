@@ -1,0 +1,66 @@
+# The legend in the Formats panel, opened from the Set format… box.
+#
+# A section starts `== Title | Families`, and says which columns it is shown
+# for: Number (Integer, Decimal, Float, Percent, Fraction, Hex, Octal, Binary),
+# Scientific, Quantity, Date (Date, Time and Datetime). The lines under it are
+# `what you write | what it does | an example`, the example being a format and
+# then, after `→`, what it shows. Blank lines and lines starting with `#` are
+# ignored. Keep a line short: it has to fit the panel.
+
+== Shape of a format | Number Scientific Quantity
+flags width .places conversion | in that order, all but the conversion optional | 08.2f → 00012.50
+
+== Flags | Number Scientific Quantity
+' | group the digits in threes | '.0f → 1,234
++ | always show the sign | +.1f → +2.5
+(space) | a space where a + would go | " .1f" → " 2.5"
+0 | fill the width with zeros | 08.2f → 00012.50
+- | align left in the width | -8.1f → 2.5
+
+== Width and places | Number Scientific Quantity
+8 | at least 8 characters wide | 8.1f → "     2.5"
+.2 | 2 places after the point | .2f → 3.14
+
+== Conversions | Number
+d | a whole number | d → 42
+f | fixed places | .2f → 3.14
+e | a mantissa and an exponent | .3e → 3.142e0
+g | whichever of f and e reads better | .3g → 3.14
+x X | hexadecimal, in lower or upper case | x → ff
+o | octal | o → 17
+b | binary | b → 101
+# | a prefix: 0x, 0o, 0b | #x → 0xff
+
+== Conversions | Scientific Quantity
+f | fixed places | .2f → 10.50
+e | a mantissa and an exponent | .3e → 1.050e1
+e-3 | the same exponent for every cell | .3e-3 → 10500.000e-3
+g | whichever of f and e reads better | .3g → 10.5
+
+== Uncertainty | Scientific Quantity
+(nothing) | the value with its uncertainty in brackets | .2f → 10.50(30)
+± | value ± uncertainty | ±.2f → 10.50 ± 0.30
+~ | the value alone | ~.2f → 10.50
+
+== Quantities | Quantity
+unit | the unit the column shows and holds | Mass[g]
+; | then a number format | g; ±.1f → 10.5 ± 0.3g
+
+== Date | Date
+%Y %y | year: 2025 or 25 | %Y → 2025
+%m %b %B | month: 01, Jan or January | %b → Jan
+%d %-d | day: 05, or 5 with no padding | %-d → 5
+%a %A | weekday: Fri or Friday | %a → Fri
+%j | day of the year | %j → 031
+
+== Time | Date
+%H %I | hour: 24 hour or 12 hour | %H → 17
+%M %S | minute and second | %M → 05
+%f %3f | fraction of a second, or 3 digits of it | %3f → 250
+%p | AM or PM | %p → PM
+%Z %z | the zone: BST, or +0100 | %Z → BST
+
+== As the locale writes it | Date
+%x | a date | %x → 31/01/2025
+%X | a time | %X → 17:05:00
+%c | a date and a time | %c → 31/01/2025 17:05

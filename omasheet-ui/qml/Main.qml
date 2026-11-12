@@ -6419,6 +6419,129 @@ ApplicationWindow {
         }
     }
 
+    // The legend of formats, from `Set format…`: what each part of a format
+    // writes, for the type of the column. It is `resources/format_help.txt` in the
+    // engine, in sections that apply to some types and not others.
+    Popup {
+        id: formatHelp
+        padding: 8
+        width: Math.min(Math.round(win.fontSize * 32), win.width - 16)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        focus: true
+        // The lines of the legend: `{title}` for a heading, else `{symbol, meaning, example}`.
+        property var lines: []
+        // The columns, in ems of the text, as the prefixes' are.
+        readonly property var widths: [6.5, 12, 9]
+        function colW(i) { return Math.round(win.fontSize * widths[i]); }
+        function colX(i) {
+            var x = 0;
+            for (var k = 0; k < i; k++)
+                x += colW(k) + 8;
+            return x;
+        }
+        onOpened: {
+            var rows = file.formatHelp(formatPopup.type).split("\n");
+            var out = [];
+            for (var i = 0; i < rows.length; i++) {
+                var f = rows[i].split("\t");
+                if (f[0] === "#")
+                    out.push({title: f[1]});
+                else if (f.length >= 3)
+                    out.push({symbol: f[0], meaning: f[1], example: f[2]});
+            }
+            lines = out;
+            legendList.positionViewAtBeginning();
+        }
+        onClosed: formatPopup.visible ? field.forceActiveFocus() : grid.forceActiveFocus()
+        // Beside the box it came from, to its right where there is room.
+        function openBeside(box) {
+            parent = box.parent;
+            var right = box.x + box.width + 6;
+            var here = box.parent.mapToItem(null, right, 0).x;
+            x = here + width <= win.width - 8 ? right : Math.max(-box.parent.mapToItem(null, 0, 0).x + 8, box.x - width - 6);
+            y = box.y;
+            open();
+        }
+        background: Rectangle {
+            color: win.overColor
+            border.color: win.lineColor
+            radius: 3
+        }
+        contentItem: ColumnLayout {
+            spacing: 4
+            // Escape and Enter close it, and not the box it came from.
+            focus: true
+            Keys.onEscapePressed: formatHelp.close()
+            Keys.onReturnPressed: formatHelp.close()
+            Keys.onEnterPressed: formatHelp.close()
+            Text {
+                Layout.fillWidth: true
+                text: "Formats for " + formatPopup.type
+                color: win.textColor
+                font.family: win.font.family
+                font.pixelSize: win.fontSize
+                font.bold: true
+            }
+            ListView {
+                id: legendList
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(contentHeight, Math.round(win.fontSize * 26), Math.round(win.height * 0.7),
+                    win.roomFor(legendList, formatHelp.y, Math.round(win.fontSize * 4)))
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                model: formatHelp.lines
+                ScrollBar.vertical: ScrollBar {}
+                delegate: Item {
+                    id: legendRow
+                    required property var modelData
+                    readonly property bool head: modelData.title !== undefined
+                    width: ListView.view.width
+                    height: head ? Math.round(win.fontSize * 2.1) : Math.round(win.fontSize * 1.6)
+                    Text {
+                        visible: legendRow.head
+                        anchors.left: parent.left
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 2
+                        text: legendRow.head ? legendRow.modelData.title : ""
+                        color: win.mutedColor
+                        font.family: win.font.family
+                        font.pixelSize: win.smallSize
+                        font.bold: true
+                    }
+                    Repeater {
+                        model: legendRow.head ? [] : [
+                            [legendRow.modelData.symbol, true],
+                            [legendRow.modelData.meaning, false],
+                            [legendRow.modelData.example, true]
+                        ]
+                        Text {
+                            required property int index
+                            required property var modelData
+                            x: formatHelp.colX(index)
+                            width: index === 2 ? legendRow.width - x : formatHelp.colW(index)
+                            anchors.verticalCenter: parent.verticalCenter
+                            horizontalAlignment: Text.AlignLeft
+                            elide: Text.ElideRight
+                            text: modelData[0]
+                            color: index === 2 ? win.mutedColor : win.textColor
+                            font.family: modelData[1] ? win.monoFamily : win.font.family
+                            font.pixelSize: win.smallSize
+                        }
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                PopupButton {
+                    text: "Close"
+                    primary: true
+                    onClicked: formatHelp.close()
+                }
+            }
+        }
+    }
+
     // The prefixes, from `Set unit…`: what each is called and how big it is.
     // The SI ones are powers of ten, and the binary ones, for bits and bytes
     // alone, powers of two.
@@ -6613,7 +6736,10 @@ ApplicationWindow {
         readonly property bool changed: fault.length === 0 && field.text.trim() !== applied
         padding: 8
         width: Math.min(Math.round(win.fontSize * 28), win.width - 16)
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        // Escape and Enter, and a click in the legend beside it, are the
+        // legend's, with it open.
+        closePolicy: formatHelp.visible ? Popup.NoAutoClose
+            : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
         onClosed: grid.forceActiveFocus()
         onOpened: Qt.callLater(function() { field.forceActiveFocus(); field.selectAll(); })
 
@@ -6709,7 +6835,7 @@ ApplicationWindow {
         }
         contentItem: ColumnLayout {
             // Tab goes round these, the text box and then the buttons.
-            function ring() { return [field, formatClear, formatApply, formatClose]; }
+            function ring() { return [field, formatClear, formatLegend, formatApply, formatClose]; }
             spacing: 4
             // A handle to drag the box by, out of the way of the cells.
             Item {
@@ -6912,6 +7038,12 @@ ApplicationWindow {
                         formatPopup.apply();
                         field.forceActiveFocus();
                     }
+                }
+                PopupButton {
+                    id: formatLegend
+                    text: "Formats"
+                    muted: true
+                    onClicked: formatHelp.openBeside(formatPopup)
                 }
                 Item { Layout.fillWidth: true }
                 // Lit while there is a format that reads and is not in force.

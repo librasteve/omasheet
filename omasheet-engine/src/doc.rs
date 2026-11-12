@@ -449,6 +449,38 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
         .replace("{unit}", &unit)
 }
 
+/// The legend of the Formats panel for a column of type `ty`, from
+/// `resources/format_help.txt`: a line `#<TAB>Title` for each section that
+/// applies, and under it a line `symbol<TAB>meaning<TAB>example` for each row.
+pub fn format_help(ty: &str) -> String {
+    let family = match S::from_name(ty) {
+        Some(S::Scientific) => "Scientific",
+        Some(S::Quantity(_)) => "Quantity",
+        Some(S::Date | S::Time | S::Datetime) => "Date",
+        Some(_) => "Number",
+        None => return String::new(),
+    };
+    let mut out = Vec::new();
+    let mut shown = false;
+    for line in include_str!("../resources/format_help.txt").lines() {
+        let line = line.trim_end();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(head) = line.strip_prefix("==") {
+            let (title, families) = head.split_once(" | ").unwrap_or((head, ""));
+            shown = families.split_whitespace().any(|f| f == family);
+            if shown {
+                out.push(format!("#\t{}", title.trim()));
+            }
+        } else if shown {
+            let cells: Vec<&str> = line.splitn(3, " | ").collect();
+            out.push(cells.join("\t"));
+        }
+    }
+    out.join("\n")
+}
+
 /// Formats to offer a column of type `ty`, `(format, what it shows)`, for the
 /// picker of `Set format…`. `unit` is the unit of a column of quantities, which
 /// the formats of one are written after. Only those that read, and that the
@@ -8126,6 +8158,30 @@ mod tests {
         let bad = Document::from_text("zone Mars/Base\n\nsheet T\n\nA\n1\n");
         assert!(bad.snapshot().problems[0].message.contains("no time zone"));
         assert_eq!(bad.snapshot().sheets[0].rows[0][0].display, "1");
+    }
+
+    #[test]
+    fn the_format_legend_is_for_the_column_type() {
+        let mass = format_help("Mass");
+        assert!(mass.contains("#\tUncertainty"), "{mass}");
+        assert!(mass.contains("#\tQuantities"));
+        assert!(!mass.contains("#\tDate"));
+        let date = format_help("Date");
+        assert!(
+            date.contains("%Y %y\tyear: 2025 or 25\t%Y → 2025"),
+            "{date}"
+        );
+        assert!(!date.contains("Uncertainty"));
+        let int = format_help("Integer");
+        assert!(int.contains("#\tConversions"));
+        assert!(int.contains("d\ta whole number"));
+        assert_eq!(format_help("Nonesuch"), "");
+        // Every row has its three cells.
+        for ty in ["Integer", "Float", "Scientific", "Mass", "Date"] {
+            for line in format_help(ty).lines().filter(|l| !l.starts_with("#\t")) {
+                assert_eq!(line.split('\t').count(), 3, "{ty}: {line}");
+            }
+        }
     }
 
     #[test]

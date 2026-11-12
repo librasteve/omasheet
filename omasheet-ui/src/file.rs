@@ -447,6 +447,11 @@ pub mod qobject {
         /// the binary ones.
         #[qinvokable]
         fn prefix_table(self: &File) -> QString;
+        /// The legend of the Formats panel for a column type: `#`, a tab and a
+        /// title for each section, and under it `symbol`, `meaning`, `example`
+        /// tab-separated, one to a line.
+        #[qinvokable]
+        fn format_help(self: &File, ty: &QString) -> QString;
         /// A unit of one term taken apart: the prefix symbol and name, a tab,
         /// the unit symbol and name, `GiB` as `Gi gibi B byte`. The prefix is
         /// empty for `B`; the whole is empty for a compound unit (`m.s^-1`).
@@ -1727,6 +1732,10 @@ impl qobject::File {
 
     fn unit_choices(&self) -> QString {
         QString::from(&unit_lines())
+    }
+
+    fn format_help(&self, ty: &QString) -> QString {
+        QString::from(&omasheet_engine::doc::format_help(&ty.to_string()))
     }
 
     fn prefix_table(&self) -> QString {

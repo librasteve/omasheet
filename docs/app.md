@@ -48,8 +48,11 @@ rewrites the text, and saving writes exactly that.
   leaves the box open, and **Clear format** clears it. Under the field are the
   formats the column's type takes, `'.2f` for a `Decimal`, `.3g` for a `Float`,
   `±.3e-3` for a `Scientific`, `%d %b %Y` for a `Date`, each with what it
-  shows: a click puts one in the field, and so do Up and Down. A `Scientific`
-  shows `10.5(3)` by default, and `±` in its format asks for `10.5 ± 0.3`; see
+  shows: a click puts one in the field, and so do Up and Down. **Formats**
+  opens a legend of what each part of a format writes, for the column's type
+  (the text is `omasheet-engine/resources/format_help.txt`). A `Scientific`
+  shows `10.5(3)` by default, `±` in its format asks for `10.5 ± 0.3`, and `~`
+  for the value alone `10.5`; see
   [Expressions](expressions.md#scientific-numbers).
 - The boxes of **Set type…**, **Set unit…** and **Set format…** are kept
   as the filter box is: Down past the last entry goes on to **Apply**, then
