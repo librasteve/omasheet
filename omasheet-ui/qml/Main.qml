@@ -2288,12 +2288,12 @@ ApplicationWindow {
             popup.show(selLeft, head);
     }
 
-    // F4: open the Set panels of the selected columns in turn, type, unit,
-    // format, then filter, and round again; Shift+F4 goes the other way. The
+    // F4: open the Set panels of the selected columns in turn, filter, type, unit,
+    // then format, and round again; Shift+F4 goes the other way. The
     // one open is closed as the next opens, and a panel that is not open to this
     // selection (format before there is a type, filter for several columns) is
     // passed by.
-    readonly property var metaPanels: ["type", "unit", "format", "filter"]
+    readonly property var metaPanels: ["filter", "type", "unit", "format"]
     function metaPanel(kind) {
         return kind === "type" ? typePopup : kind === "unit" ? unitPopup
             : kind === "format" ? formatPopup : columnPopup;

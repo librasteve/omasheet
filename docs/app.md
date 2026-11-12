@@ -121,7 +121,7 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+E | Export as an XLSX Workbook, CSV or JSON |
 | Ctrl+K | New constant |
 | Ctrl+Shift+F | Filter this column |
-| F4 | Open the Set panels of the column in turn: type, unit, format, filter (Shift+F4 goes back) |
+| F4 | Open the Set panels of the column in turn: filter, type, unit, format (Shift+F4 goes back) |
 | Ctrl+D | Duplicate sheet |
 | Ctrl+N | New sheet |
 | Ctrl+Alt+Shift+Left/Right | Move sheet left / right |
