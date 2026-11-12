@@ -2382,51 +2382,12 @@ ApplicationWindow {
         return false;
     }
 
-    function anyFormatted() {
-        for (var c = selLeft; c <= selRight; c++) {
-            if (sheet.columns[c] && sheet.columns[c].format)
-                return true;
-        }
-        return false;
-    }
-
     // Ctrl+Shift+F: the filter box of the column the cursor is in.
     function openFilter() {
         var head = headCells.itemAt(curCol);
         if (head)
             columnPopup.openFor(curCol, head);
     }
-    function anyFiltered() {
-        for (var c = selLeft; c <= selRight; c++) {
-            if (sheet.columns[c] && filtered(c))
-                return true;
-        }
-        return false;
-    }
-
-    // Take the format off the selected columns, or the filter.
-    function clearFormats() {
-        if (sheet.isConsts)
-            return;
-        var problem = file.setColumnFormat(tab, selLeft, selRight - selLeft + 1, "");
-        if (problem.length > 0)
-            errorDialog.say(problem);
-    }
-    function clearFilters() {
-        var all = JSON.parse(JSON.stringify(filters));
-        var f = all[sheet.name] || {};
-        for (var c = selLeft; c <= selRight; c++) {
-            if (sheet.columns[c])
-                f[sheet.columns[c].name] = "";
-        }
-        all[sheet.name] = f;
-        busy("Filtering\u2026", function() {
-            filters = all;
-            filterRev++;
-            file.setFilters(JSON.stringify(all));
-        });
-    }
-
     function anyDeclared() {
         for (var c = selLeft; c <= selRight; c++) {
             if (sheet.columns[c] && sheet.columns[c].declared)

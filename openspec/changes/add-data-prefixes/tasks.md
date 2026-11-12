@@ -2,6 +2,7 @@
 
 ## 1. siquant
 - [x] 1.1 Binary prefixes in `prefixes.yaml`; the bit and the byte (`prefixable: both`); `Data` and `DataRate`; a `Data` menu group
+- [x] 1.3 The kind of data is `Data` (not `Information`), with `DataRate` and `DataDensity` (`b.m^-2`)
 - [x] 1.2 Tests: kB/KiB/Mb/MiB, rates, the validator stays clean, the binary scale
 
 ## 2. omasheet
