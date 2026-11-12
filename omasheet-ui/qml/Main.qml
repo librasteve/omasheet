@@ -79,6 +79,23 @@ ApplicationWindow {
         var room = barTop - top - below;
         return isFinite(room) ? Math.max(Math.round(fontSize * 5), room) : 100000;
     }
+    // Tab and Shift+Tab round the controls of a box: `item` is the one with the
+    // keyboard, and the box it is in says, in a `ring()` on its contents, which
+    // controls there are. False where it is in none, and the key goes its way.
+    function cycle(item, dir) {
+        var p = item.parent;
+        while (p && typeof p.ring !== "function")
+            p = p.parent;
+        if (!p)
+            return false;
+        var items = p.ring().filter(function(i) { return i.visible && i.enabled; });
+        if (items.length === 0)
+            return false;
+        var at = items.indexOf(item);
+        var next = at < 0 ? (dir > 0 ? 0 : items.length - 1) : (at + dir + items.length) % items.length;
+        items[next].forceActiveFocus(dir > 0 ? Qt.TabFocusReason : Qt.BacktabFocusReason);
+        return true;
+    }
     readonly property int smallSize: Math.max(8, Math.round(fontSize * 0.917))
     readonly property int captionSize: Math.max(8, Math.round(fontSize * 0.833))
     readonly property int noteSize: Math.max(8, Math.round(fontSize * 0.786))
@@ -4828,6 +4845,8 @@ ApplicationWindow {
         Keys.onReturnPressed: if (enabled) popupButton.clicked()
         Keys.onEnterPressed: if (enabled) popupButton.clicked()
         Keys.onSpacePressed: if (enabled) popupButton.clicked()
+        Keys.onTabPressed: function(event) { event.accepted = win.cycle(popupButton, 1); }
+        Keys.onBacktabPressed: function(event) { event.accepted = win.cycle(popupButton, -1); }
         color: primary
             ? (press.containsMouse ? Qt.lighter(win.accentColor, 1.15) : win.accentColor)
             : (press.containsMouse ? win.lineColor : "transparent")
@@ -5048,6 +5067,8 @@ ApplicationWindow {
             radius: 3
         }
         contentItem: ColumnLayout {
+            // Tab goes round these, the controls of the box in order.
+            function ring() { return columnPopup.order(); }
             spacing: 4
             Keys.onUpPressed: columnPopup.go(-1)
             Keys.onDownPressed: columnPopup.go(1)
@@ -5157,14 +5178,8 @@ ApplicationWindow {
                     TextEdit {
                         id: filterField
                         activeFocusOnTab: true
-                        Keys.onTabPressed: function(event) {
-                            event.accepted = true;
-                            nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocusReason);
-                        }
-                        Keys.onBacktabPressed: function(event) {
-                            event.accepted = true;
-                            nextItemInFocusChain(false).forceActiveFocus(Qt.BacktabFocusReason);
-                        }
+                        Keys.onTabPressed: function(event) { event.accepted = win.cycle(filterField, 1); }
+                        Keys.onBacktabPressed: function(event) { event.accepted = win.cycle(filterField, -1); }
                         width: filterScroll.width
                         height: columnPopup.multiline ? Math.max(contentHeight, filterScroll.height) : filterScroll.height
                         verticalAlignment: columnPopup.multiline ? TextEdit.AlignTop : TextEdit.AlignVCenter
@@ -5883,6 +5898,8 @@ ApplicationWindow {
             radius: 3
         }
         contentItem: ColumnLayout {
+            // Tab goes round these, the text box and then the buttons.
+            function ring() { return [search, pickHelp, pickApply, pickClose]; }
             spacing: 4
             // A handle to drag the box by, out of the way of the cells.
             Item {
@@ -6023,14 +6040,8 @@ ApplicationWindow {
                     Keys.onEnterPressed: picker.submit()
                     activeFocusOnTab: true
                     // Tab goes round the box: the buttons and back.
-                    Keys.onTabPressed: function(event) {
-                        event.accepted = true;
-                        nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocusReason);
-                    }
-                    Keys.onBacktabPressed: function(event) {
-                        event.accepted = true;
-                        nextItemInFocusChain(false).forceActiveFocus(Qt.BacktabFocusReason);
-                    }
+                    Keys.onTabPressed: function(event) { event.accepted = win.cycle(search, 1); }
+                    Keys.onBacktabPressed: function(event) { event.accepted = win.cycle(search, -1); }
                     Text {
                         anchors.fill: parent
                         verticalAlignment: Text.AlignVCenter
@@ -6156,6 +6167,7 @@ ApplicationWindow {
                 Layout.topMargin: 2
                 spacing: 6
                 PopupButton {
+                    id: pickHelp
                     text: "Prefixes"
                     visible: picker.helpable
                     muted: true
@@ -6667,6 +6679,8 @@ ApplicationWindow {
             radius: 3
         }
         contentItem: ColumnLayout {
+            // Tab goes round these, the text box and then the buttons.
+            function ring() { return [field, formatClear, formatApply, formatClose]; }
             spacing: 4
             // A handle to drag the box by, out of the way of the cells.
             Item {
@@ -6720,14 +6734,8 @@ ApplicationWindow {
                     id: field
                     anchors.fill: parent
                     activeFocusOnTab: true
-                    Keys.onTabPressed: function(event) {
-                        event.accepted = true;
-                        nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocusReason);
-                    }
-                    Keys.onBacktabPressed: function(event) {
-                        event.accepted = true;
-                        nextItemInFocusChain(false).forceActiveFocus(Qt.BacktabFocusReason);
-                    }
+                    Keys.onTabPressed: function(event) { event.accepted = win.cycle(field, 1); }
+                    Keys.onBacktabPressed: function(event) { event.accepted = win.cycle(field, -1); }
                     anchors.leftMargin: 6
                     anchors.rightMargin: 6
                     verticalAlignment: TextInput.AlignVCenter
@@ -6866,6 +6874,7 @@ ApplicationWindow {
                 Layout.topMargin: 2
                 spacing: 6
                 PopupButton {
+                    id: formatClear
                     text: "Clear format"
                     enabled: formatPopup.applied.length > 0 || field.text.length > 0
                     opacity: enabled ? 1 : 0.4
