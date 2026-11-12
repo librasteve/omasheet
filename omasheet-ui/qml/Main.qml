@@ -6321,9 +6321,13 @@ ApplicationWindow {
                 unitPopup.problem = file.unitProblem(text);
                 return [];
             }
-            // `Mass[k` is not yet anything to fault: red waits for the `]`.
-            if (open > 0 && !text.endsWith("]"))
+            // `Mass[k` is not yet anything to fault: red waits for the `]`,
+            // unless what is before the `[` is already not a kind, `Dat[`.
+            if (open > 0 && !text.endsWith("]")) {
+                if (file.unitProblem(text.substring(0, open) + "[]").indexOf("is not a type") >= 0)
+                    unitPopup.problem = "not a type";
                 return out;
+            }
             if (text.length > 0 && !out.some(function(e) { return e.spec === typed; })) {
                 var problem = file.unitProblem(text);
                 // Offered as the type it makes, `Voltage[MV]`.
