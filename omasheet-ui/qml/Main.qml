@@ -2936,6 +2936,7 @@ ApplicationWindow {
                     color: win.mutedColor
                     font: win.font
                     Layout.minimumWidth: 150
+                    Layout.alignment: Qt.AlignVCenter
                     elide: Text.ElideRight
                 }
 
@@ -3113,8 +3114,9 @@ ApplicationWindow {
                         ? file.entryHint(column.type) : ""
                     visible: hint.length > 0
                     text: hint
-                    color: win.textColor
+                    color: win.mutedColor
                     font: win.font
+                    Layout.alignment: Qt.AlignVCenter
                     Layout.maximumWidth: win.width * 0.45
                     elide: Text.ElideRight
                 }
@@ -6281,11 +6283,26 @@ ApplicationWindow {
         function power(p) {
             return p.base + "^" + p.exp;
         }
+        // 2^n in full, by doubling a digit string (QML has no BigInt).
+        function exactPower(n) {
+            var d = [1];
+            for (var i = 0; i < n; i++) {
+                var carry = 0;
+                for (var j = 0; j < d.length; j++) {
+                    var v = d[j] * 2 + carry;
+                    d[j] = v % 10;
+                    carry = v >= 10 ? 1 : 0;
+                }
+                if (carry)
+                    d.push(1);
+            }
+            return d.reverse().join("");
+        }
         // The size in figures: `1000`, `0.001`, `1024`, and `1e30` past what
         // reads.
         function value(p) {
             if (p.base === 2)
-                return p.exp <= 60 ? String(BigInt(2) ** BigInt(p.exp)) : Math.pow(2, p.exp).toExponential(3).replace("e+", "e");
+                return p.exp <= 60 ? exactPower(p.exp) : Math.pow(2, p.exp).toExponential(3).replace("e+", "e");
             if (p.exp >= 0 && p.exp <= 12)
                 return "1" + "0".repeat(p.exp);
             if (p.exp < 0 && p.exp >= -12)
