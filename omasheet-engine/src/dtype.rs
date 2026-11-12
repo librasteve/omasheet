@@ -9,7 +9,7 @@ use omasheet_omx::ast::Lit;
 use omasheet_omx::check::Cell;
 use omasheet_omx::date::{DAY, MICROS, NANOS};
 use omasheet_omx::decimal::{Dec, MAX_PRECISION};
-use omasheet_omx::types::{Base, S};
+use omasheet_omx::types::{Base, QId, S};
 use polars::prelude::Column as PlColumn;
 use polars::prelude::*;
 
@@ -38,6 +38,8 @@ pub fn type_of(dtype: &DataType) -> Option<S> {
         d if is_complex(d) => S::Complex,
         // And the other: a `Scientific`, a value and its uncertainty.
         d if is_uncertain(d) => S::Scientific,
+        // And a `Quantity`: a value, its uncertainty and its unit.
+        d if is_quantity(d) => S::Quantity(QId::ANY),
         _ => return None,
     })
 }
@@ -128,6 +130,22 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
                 _ => Cell::Invalid,
             }
         }
+        // A `Quantity` is a struct of `value`, `sigma` and `unit`. All
+        // three null is a null; a unit that is not one is not a quantity.
+        value @ (AnyValue::Struct(..) | AnyValue::StructOwned(_))
+            if matches!(ty, S::Quantity(_)) =>
+        {
+            match quantity_parts(value) {
+                Some((None, None, None)) => Cell::Empty,
+                Some((Some(v), Some(s), Some(unit))) if s >= 0.0 || s.is_nan() => {
+                    match siquant::Unit::parse(&unit, siquant::Scope::Any) {
+                        Ok(u) => Cell::Lit(Lit::Quantity(v, s, u)),
+                        Err(_) => Cell::Invalid,
+                    }
+                }
+                _ => Cell::Invalid,
+            }
+        }
         // Anything else is held as Polars shows it.
         other => Cell::Lit(Lit::String(other.to_string())),
     }
@@ -154,8 +172,7 @@ pub fn dtype(ty: S, scale: u32) -> Option<DataType> {
         S::Time => DataType::Time,
         S::Datetime => DataType::Datetime(TimeUnit::Microseconds, None),
         S::Duration => DataType::Duration(TimeUnit::Microseconds),
-        // A quantity has no dtype of its own yet.
-        S::Quantity(_) => return None,
+        S::Quantity(_) => quantity_dtype(),
         S::Any => return None,
     })
 }
@@ -181,6 +198,75 @@ pub fn uncertain_dtype() -> DataType {
 /// Whether a dtype is exactly the struct a `Scientific` is stored as.
 pub fn is_uncertain(dtype: &DataType) -> bool {
     *dtype == uncertain_dtype()
+}
+
+/// The dtype a `Quantity` is stored as: a struct of `value` and `sigma`
+/// (`Float64`) and `unit` (text, in the strict SI form a cell is written in).
+pub fn quantity_dtype() -> DataType {
+    DataType::Struct(vec![
+        Field::new("value".into(), DataType::Float64),
+        Field::new("sigma".into(), DataType::Float64),
+        Field::new("unit".into(), DataType::String),
+    ])
+}
+
+/// Whether a dtype is exactly the struct a `Quantity` is stored as.
+pub fn is_quantity(dtype: &DataType) -> bool {
+    *dtype == quantity_dtype()
+}
+
+/// The three parts of one value of a [`quantity_dtype`] column, each `None`
+/// where it is null. `None` if the value is not such a struct.
+#[allow(clippy::type_complexity)]
+pub fn quantity_parts(value: AnyValue<'_>) -> Option<(Option<f64>, Option<f64>, Option<String>)> {
+    let AnyValue::StructOwned(parts) = value.into_static() else {
+        return None;
+    };
+    let num = |v: &AnyValue<'_>| match v {
+        AnyValue::Float64(f) => Some(Some(*f)),
+        AnyValue::Null => Some(None),
+        _ => None,
+    };
+    let text = |v: &AnyValue<'_>| match v {
+        AnyValue::String(s) => Some(Some(s.to_string())),
+        AnyValue::StringOwned(s) => Some(Some(s.to_string())),
+        AnyValue::Null => Some(None),
+        _ => None,
+    };
+    match parts.0.as_slice() {
+        [v, s, u] => Some((num(v)?, num(s)?, text(u)?)),
+        _ => None,
+    }
+}
+
+/// A column of values as a [`quantity_dtype`] series. A quantity is its
+/// parts; a plain number has the unit `1`; anything else is a null.
+pub fn quantity_series(name: PlSmallStr, cells: &[Value]) -> Result<Series, String> {
+    let mut value = Vec::with_capacity(cells.len());
+    let mut sigma = Vec::with_capacity(cells.len());
+    let mut unit: Vec<Option<String>> = Vec::with_capacity(cells.len());
+    for cell in cells {
+        let one = |x: f64, s: f64| (Some(x), Some(s), Some("1".to_string()));
+        let (x, s, u) = match cell {
+            Value::Quantity(q) => (Some(q.value()), Some(q.sigma()), Some(q.unit().to_string())),
+            Value::Int(n, _) => one(*n as f64, 0.0),
+            Value::Float(f) => one(*f, 0.0),
+            Value::Scientific(x, s) => one(*x, *s),
+            Value::Decimal(d) | Value::Percent(d) | Value::Fraction(d) => one(d.to_f64(), 0.0),
+            _ => (None, None, None),
+        };
+        value.push(x);
+        sigma.push(s);
+        unit.push(u);
+    }
+    let parts = [
+        Series::new("value".into(), value),
+        Series::new("sigma".into(), sigma),
+        Series::new("unit".into(), unit),
+    ];
+    StructChunked::from_series(name, cells.len(), parts.iter())
+        .map(|c| c.into_series())
+        .map_err(|e| e.to_string())
 }
 
 /// The two parts of one value of a [`complex_dtype`] column (`re` and `im`)

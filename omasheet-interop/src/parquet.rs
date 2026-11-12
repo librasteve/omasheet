@@ -209,6 +209,9 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
                     .map_err(|e| e.to_string())?
                     .into_series()
             }
+            // A struct of `value`, `sigma` and `unit`: each cell keeps its
+            // own unit. A null cell has all three null.
+            S::Quantity(_) => omasheet_engine::dtype::quantity_series(name, &cells)?,
             S::Boolean => {
                 let v: Vec<Option<bool>> = cells
                     .iter()
@@ -550,6 +553,31 @@ fn cell(value: AnyValue<'_>, ty: S) -> Datum {
                     format!("{} ± {}", float_text(x), float_text(s)),
                     S::Scientific,
                 ),
+                _ => Datum::Empty,
+            }
+        }
+        // A `Quantity`: a struct of `value`, `sigma` and `unit`, written as
+        // a cell is, `5kg`, or as the formula `10.5kg ± 0.3kg` where it has
+        // an uncertainty, which a cell has no literal for.
+        value @ (AnyValue::Struct(..) | AnyValue::StructOwned(_))
+            if matches!(ty, S::Quantity(_)) =>
+        {
+            match omasheet_engine::dtype::cell_of(value, ty) {
+                omasheet_engine::omx::check::Cell::Lit(
+                    omasheet_engine::omx::ast::Lit::Quantity(v, s, unit),
+                ) => {
+                    let unit = if unit.is_dimensionless() {
+                        String::new()
+                    } else {
+                        unit.to_string()
+                    };
+                    let n = |x: f64| format_float(x, true);
+                    if s == 0.0 {
+                        Datum::Lit(format!("{}{unit}", n(v)), ty)
+                    } else {
+                        Datum::Formula(format!("{}{unit} ± {}{unit}", n(v), n(s)))
+                    }
+                }
                 _ => Datum::Empty,
             }
         }

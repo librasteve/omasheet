@@ -1045,6 +1045,31 @@ fn parquet_holds_a_scientific_column_as_a_struct() {
 }
 
 #[test]
+fn parquet_holds_a_quantity_column_as_a_struct() {
+    let file = "sheet T\n\nWeight : Mass\nAny : Quantity\n\n| Weight | Any |\n| --- | --- |\n\
+                | 5kg | 3m |\n| 300g | 10.5(3)e-3kg |\n| 5 | 20°C |\n|  |  |\n";
+    let out = parquet_of(file, None);
+    // A struct of three, so nothing is written as text and nothing is lost.
+    assert!(
+        !out.notices.iter().any(|n| n.contains("no one type")),
+        "{:?}",
+        out.notices
+    );
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    // Each cell keeps its value, uncertainty and unit.
+    assert_eq!(eval(&back.source, "t[Any; 0]"), "3m");
+    assert_eq!(eval(&back.source, "t[Any; 1]"), "0.0105 ± 0.0003kg");
+    assert_eq!(eval(&back.source, "t[Any; 2]"), "20°C");
+    assert_eq!(eval(&back.source, "t[Any; 0] * 2"), "6m");
+    // The named type is kept with `--meta`, and the cells in its unit.
+    let meta = parquet::export_meta("file.omx", file, None, options()).expect("exports");
+    let kept = parquet::import("t", &meta.files[0].bytes).expect("imports");
+    assert!(kept.source.contains("Weight : Mass"), "{}", kept.source);
+    assert_eq!(eval(&kept.source, "T[Weight; 1]"), "0.3kg");
+}
+
+#[test]
 fn parquet_keeps_a_decimal_exact() {
     // A decimal column is written as a Parquet decimal, so every digit of it
     // survives the trip: this is what CSV cannot do.
