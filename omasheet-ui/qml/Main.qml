@@ -5532,13 +5532,17 @@ ApplicationWindow {
             onTriggered: promptDialog.ask("rename")
         }
         MenuRule { visible: cellMenu.columns }
+        // The filter box from the column's header, for the one column.
         MenuEntry {
-            text: "Set as formula\u2026"
+            text: "Set filter\u2026"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.selLeft === win.selRight
-                && !!win.sheet.columns[win.selLeft] && !win.sheet.columns[win.selLeft].computed
-                && !win.sheet.view && (win.sheet.why || "").length === 0
-            onTriggered: promptDialog.ask("setFormula")
+                && win.sheet.columns.length > 0
+            onTriggered: {
+                var head = headCells.itemAt(win.selLeft);
+                if (head)
+                    columnPopup.openFor(win.selLeft, head);
+            }
         }
         MenuEntry {
             text: "Set type\u2026"
@@ -5558,17 +5562,13 @@ ApplicationWindow {
             enabled: visible && cellMenu.editable && win.sheet.columns.length > 0 && win.allFormattable()
             onTriggered: win.pickFor(formatPopup)
         }
-        // The filter box from the column's header, for the one column.
         MenuEntry {
-            text: "Set filter\u2026"
+            text: "Change to formula\u2026"
             visible: cellMenu.columns
             enabled: visible && cellMenu.editable && win.selLeft === win.selRight
-                && win.sheet.columns.length > 0
-            onTriggered: {
-                var head = headCells.itemAt(win.selLeft);
-                if (head)
-                    columnPopup.openFor(win.selLeft, head);
-            }
+                && !!win.sheet.columns[win.selLeft] && !win.sheet.columns[win.selLeft].computed
+                && !win.sheet.view && (win.sheet.why || "").length === 0
+            onTriggered: promptDialog.ask("setFormula")
         }
     }
 
