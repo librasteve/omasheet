@@ -5884,7 +5884,8 @@ ApplicationWindow {
                 implicitHeight: Math.round(win.fontSize * 2.1)
                 color: "transparent"
                 radius: 2
-                border.color: search.activeFocus ? win.accentColor : win.lineColor
+                border.color: picker.fault.length > 0 ? win.errorColor
+                    : search.activeFocus ? win.accentColor : win.lineColor
                 TextInput {
                     id: search
                     anchors.fill: parent
@@ -6056,12 +6057,14 @@ ApplicationWindow {
                 font.pixelSize: win.smallSize
             }
             Text {
-                visible: picker.rows.length === 0
+                // A fault shows as the box turning red, not as words while
+                // it is typed, as in the filter box.
+                visible: picker.rows.length === 0 && picker.fault.length === 0
                 Layout.fillWidth: true
                 Layout.maximumWidth: picker.availableWidth
                 wrapMode: Text.Wrap
-                text: picker.fault.length > 0 ? picker.fault : "Nothing matches"
-                color: picker.fault.length > 0 ? win.errorColor : win.mutedColor
+                text: "Nothing matches"
+                color: win.mutedColor
                 font.family: win.font.family
                 font.pixelSize: win.smallSize
             }
@@ -6161,6 +6164,10 @@ ApplicationWindow {
                         complete: pair[0], group: g[0]});
                 });
             });
+            // Text that matches no type turns the box red.
+            var want = text.toLowerCase();
+            if (want.length > 0 && !out.some(function(e) { return e.label.toLowerCase().indexOf(want) >= 0; }))
+                typePopup.problem = "no such type";
             return out;
         }
         onPicked: function(spec) { win.setColumnTypes(spec); }
@@ -6228,6 +6235,10 @@ ApplicationWindow {
             var now = unitPopup.tick;
             if (now.length > 0 && !out.some(function(e) { return e.spec === now; }))
                 out.unshift({spec: now, label: now, hint: "set", complete: now});
+            // `Mass[kg]` is the entry for `kg`, though that is not what the
+            // list is searched for.
+            if (typed !== text)
+                out.forEach(function(e) { if (e.spec === typed) e.keep = true; });
             if (text.length > 0 && !out.some(function(e) { return e.spec === typed; })) {
                 var problem = file.unitProblem(typed);
                 if (problem.length === 0)
