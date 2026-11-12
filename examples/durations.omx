@@ -44,7 +44,7 @@ Mach     : Float[.2f]
 | SFO-LHR | 2025-03-10T21:30 | PT10H20M | 8610km   | *    | *     | *   | *     | *    | *       |
 
 # At the gate forty minutes before leaving, and on the ground ten after landing.
-Gate  := Leaves - PT4H
+Gate  := Leaves - PT40M
 Lands := Leaves + Airtime + PT10M
 SFO   := Lands.convert_time_zone('America/Los_Angeles')
 Speed := (Distance / Airtime).to('m.s^-1')

@@ -5718,6 +5718,38 @@ ApplicationWindow {
             closed = c;
             refresh(true);
         }
+        // Open (`shut` false) or close the group the mark is on, from the
+        // keyboard: Right opens a heading, Left closes it, and Left on an entry
+        // goes up to its heading. Only while nothing is typed, as the carets
+        // are not shown while searching. False where it did nothing, and the
+        // key is then the text box's own.
+        function fold(shut) {
+            var i = listView.currentIndex;
+            if (search.text.trim().length > 0 || i < 0 || i >= rows.length)
+                return false;
+            if (!rows[i].header) {
+                if (!shut)
+                    return false;
+                for (var j = i - 1; j >= 0; j--) {
+                    if (rows[j].header) {
+                        listView.currentIndex = j;
+                        return true;
+                    }
+                }
+                return false;
+            }
+            if (!!closed[rows[i].group] === shut)
+                return false;
+            take(i);
+            return true;
+        }
+        // Close every group, or open every one.
+        function setAll(shut) {
+            var c = {};
+            groups().forEach(function(g) { c[g] = shut; });
+            closed = c;
+            refresh(true);
+        }
         // The heading of a group of the list, or the entry marked, is taken.
         function take(index) {
             if (index < 0 || index >= rows.length)
@@ -5939,6 +5971,13 @@ ApplicationWindow {
                             event.accepted = true;
                     }
                     Keys.onPressed: function(event) {
+                        // Ctrl+Up closes every group, Ctrl+Down opens them all.
+                        if ((event.modifiers & Qt.ControlModifier) && search.text.trim().length === 0
+                                && (event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
+                            event.accepted = true;
+                            picker.setAll(event.key === Qt.Key_Up);
+                            return;
+                        }
                         var which = historyKey(event);
                         if (which.length === 0)
                             return;
@@ -5948,6 +5987,8 @@ ApplicationWindow {
                         else
                             file.redo();
                     }
+                    Keys.onRightPressed: function(event) { event.accepted = picker.fold(false); }
+                    Keys.onLeftPressed: function(event) { event.accepted = picker.fold(true); }
                     // Up and Down pass over the headings of closed groups only
                     // by opening them: they are entries of the list too.
                     // Down past the last entry goes on to the buttons, as in the
