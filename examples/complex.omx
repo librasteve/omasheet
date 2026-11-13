@@ -19,6 +19,9 @@
 # true where every trip comes back to within 1e-12: a function and its
 # inverse meet only on the principal branch, so the arguments are chosen
 # inside it.
+# The trips are rounded to 12 places before they are shown, because the last
+# digit of a trip is the maths library's to say: it differs between machines,
+# and the display marks a number whose noise it rounds away.
 
 sheet Parts
 
@@ -111,11 +114,11 @@ Z : Complex
 | 2-1.5i | *  | *     | *  | *     | *    | *       | *     |
 
 Exp     := exp(Z)
-LnExp   := ln(Exp)
+LnExp   := round(re(ln(Exp)), 12) + round(im(ln(Exp)), 12) * 1i
 Ln      := ln(Z)
-ExpLn   := exp(Ln)
+ExpLn   := round(re(exp(Ln)), 12) + round(im(exp(Ln)), 12) * 1i
 Root    := sqrt(Z)
-Squared := Root ** 2
+Squared := round(re(Root ** 2), 12) + round(im(Root ** 2), 12) * 1i
 Match   := abs(LnExp - Z) < 1e-12 and abs(ExpLn - Z) < 1e-12 and abs(Squared - Z) < 1e-12
 
 # sin, cos and tan against arcsin, arccos and arctan. The real part of the
@@ -132,11 +135,11 @@ Z : Complex
 | 0.3+1i   | *   | *      | *   | *      | *   | *      | *     |
 
 Sin    := sin(Z)
-ArcSin := arcsin(Sin)
+ArcSin := round(re(arcsin(Sin)), 12) + round(im(arcsin(Sin)), 12) * 1i
 Cos    := cos(Z)
-ArcCos := arccos(Cos)
+ArcCos := round(re(arccos(Cos)), 12) + round(im(arccos(Cos)), 12) * 1i
 Tan    := tan(Z)
-ArcTan := arctan(Tan)
+ArcTan := round(re(arctan(Tan)), 12) + round(im(arctan(Tan)), 12) * 1i
 Match  := abs(ArcSin - Z) < 1e-12 and abs(ArcCos - Z) < 1e-12 and abs(ArcTan - Z) < 1e-12
 
 # sinh, cosh and tanh against arcsinh, arccosh and arctanh. The real part is
@@ -153,9 +156,9 @@ Z : Complex
 | 0.3+1i   | *    | *       | *    | *       | *    | *       | *     |
 
 Sinh    := sinh(Z)
-ArcSinh := arcsinh(Sinh)
+ArcSinh := round(re(arcsinh(Sinh)), 12) + round(im(arcsinh(Sinh)), 12) * 1i
 Cosh    := cosh(Z)
-ArcCosh := arccosh(Cosh)
+ArcCosh := round(re(arccosh(Cosh)), 12) + round(im(arccosh(Cosh)), 12) * 1i
 Tanh    := tanh(Z)
-ArcTanh := arctanh(Tanh)
+ArcTanh := round(re(arctanh(Tanh)), 12) + round(im(arctanh(Tanh)), 12) * 1i
 Match   := abs(ArcSinh - Z) < 1e-12 and abs(ArcCosh - Z) < 1e-12 and abs(ArcTanh - Z) < 1e-12
