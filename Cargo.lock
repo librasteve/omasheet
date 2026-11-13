@@ -3294,8 +3294,9 @@ checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 
 [[package]]
 name = "siquant"
-version = "0.1.1"
-source = "git+https://github.com/librasteve/siquant?rev=b9951d046ce1ce491ac1efb9ab109c0fcfc065fc#b9951d046ce1ce491ac1efb9ab109c0fcfc065fc"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ba842aa1926dfe6188cbc711156d5141d00db8c0b1ac825c30a569caa788c3e"
 dependencies = [
  "serde",
  "serde_yaml_ng",
