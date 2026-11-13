@@ -2198,13 +2198,12 @@ ApplicationWindow {
 
     // What whole columns are declared as, to go with them when they are
     // pasted: for each, its type with its unit and format as the type line
-    // writes them, `Mass[g; .1f]`, or empty where it takes its type from its
-    // cells.
+    // writes them, `Mass[g; .1f]`, or empty where it has no type.
     function columnSpecs(t, left, right) {
         var out = [];
         for (var c = left; c <= right; c++) {
             var col = t < tabs.length ? tabs[t].columns[c] : null;
-            out.push(col && col.declared && !col.computed && col.type.length > 0
+            out.push(col && !col.computed && col.type.length > 0
                 ? col.type + (col.format ? "[" + col.format + "]" : "") : "");
         }
         return out;
@@ -2213,11 +2212,13 @@ ApplicationWindow {
     // Declare `count` columns from `at` as `specs` say, in turn over again
     // if there are more columns than specs. A calculated column is its
     // formula, and keeps its own type; `columns` ones just put in are new.
-    function applySpecs(specs, at, count, existing) {
+    // An empty spec leaves a column as it is, or with `clear` makes it take
+    // its type from its cells again.
+    function applySpecs(specs, at, count, existing, clear) {
         for (var i = 0; i < count && specs.length > 0; i++) {
             var col = existing ? sheet.columns[at + i] : null;
             var spec = specs[i % specs.length];
-            if ((existing && (!col || col.computed)) || spec.length === 0)
+            if ((existing && (!col || col.computed)) || (spec.length === 0 && !clear))
                 continue;
             file.setColumnTypes(tab, at + i, 1, spec);
         }
@@ -2226,8 +2227,8 @@ ApplicationWindow {
     // The columns copied or cut here, to have their type, unit and format
     // pasted without their values.
     readonly property var specsOnHand: marked !== null && marked.columns && !sheet.isConsts
-        && marked.tab < tabs.length && marked.specs !== undefined
-        && marked.specs.some(function(s) { return s.length > 0; }) ? marked.specs : null
+        && marked.tab < tabs.length && marked.specs !== undefined && marked.specs.length > 0
+        ? marked.specs : null
     readonly property bool canPasteFormat: selKind === "column" && specsOnHand !== null
 
     // Paste the type, unit and format of the columns copied onto those selected.
@@ -2240,7 +2241,7 @@ ApplicationWindow {
         var count = selLeft === selRight ? specs.length : selRight - selLeft + 1;
         count = Math.min(count, sheet.columns.length - selLeft);
         var mark = file.undoMark();
-        keeping(sheet.nrows, sheet.columns.length, function() { applySpecs(specs, selLeft, count, true); });
+        keeping(sheet.nrows, sheet.columns.length, function() { applySpecs(specs, selLeft, count, true, true); });
         file.joinSince(mark);
     }
 
