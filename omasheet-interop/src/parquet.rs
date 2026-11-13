@@ -8,6 +8,13 @@
 //! `date32`. On the way in, a column's type is taken from the file's schema
 //! and never guessed from its values.
 //!
+//! A `Quantity` is not one dtype. A column of a named kind, `Mass` or
+//! `Mass[g]`, is the numbers in its unit, a `double` where no cell has an
+//! uncertainty and a `value`, `sigma` struct where one does, and the kind is
+//! kept as a string in the key-value metadata, under [`KIND`]. A plain
+//! `Quantity` column holds different units cell by cell, so it is text, `5kg`,
+//! with `Quantity` as its kind.
+//!
 //! With `--meta` (P34), what no format carries goes along in the file's
 //! key-value metadata, under [`META`]: the file's zone, its constants and
 //! functions, and the sheet's column types and formulas. It is written as
@@ -59,10 +66,15 @@ fn exact(v: &Value) -> Option<Dec> {
 
 /// One sheet of a file as a Polars frame: a series for each column, of the
 /// dtype the column's own type names.
-fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame, String> {
+fn frame(
+    file: &crate::File,
+    t: usize,
+    losses: &mut Losses,
+) -> Result<(DataFrame, Vec<(String, String)>), String> {
     let sheet = &file.program.sheets[t];
     let rows = sheet.nrows;
     let mut columns: Vec<Column> = Vec::with_capacity(sheet.cols.len());
+    let mut kinds: Vec<(String, String)> = Vec::new();
 
     for (c, col) in sheet.cols.iter().enumerate() {
         let name: PlSmallStr = col.name.as_str().into();
@@ -209,9 +221,13 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
                     .map_err(|e| e.to_string())?
                     .into_series()
             }
-            // A struct of `value`, `sigma` and `unit`: each cell keeps its
-            // own unit. A null cell has all three null.
-            S::Quantity(_) => omasheet_engine::dtype::quantity_series(name, &cells)?,
+            // Numbers in the column's unit, or text where a cell has its
+            // own; the kind goes in the metadata.
+            S::Quantity(id) => {
+                let (series, kind) = quantity_series(name, col, id, &cells)?;
+                kinds.push((col.name.clone(), kind));
+                series
+            }
             S::Boolean => {
                 let v: Vec<Option<bool>> = cells
                     .iter()
@@ -326,7 +342,77 @@ fn frame(file: &crate::File, t: usize, losses: &mut Losses) -> Result<DataFrame,
         columns.push(series.into_column());
     }
 
-    DataFrame::new(columns).map_err(|e| e.to_string())
+    let df = DataFrame::new(columns).map_err(|e| e.to_string())?;
+    Ok((df, kinds))
+}
+
+/// The key prefix under which the kind of a `Quantity` column is kept, by
+/// column: `omasheet.kind.Weight` is `Mass[g]`.
+pub const KIND: &str = "omasheet.kind.";
+
+/// A column of quantities as a series, and the kind it is read back as.
+/// A named kind is `value` in the column's unit, and a struct of `value` and
+/// `sigma` where any cell has an uncertainty; `Quantity` is each cell's text.
+fn quantity_series(
+    name: PlSmallStr,
+    col: &omasheet_engine::omx::check::Column,
+    id: omasheet_engine::omx::types::QId,
+    cells: &[Value],
+) -> Result<(Series, String), String> {
+    use omasheet_engine::omx::colfmt::Format;
+    let unit = match &col.format {
+        Some(Format::Quantity(f)) => Some(f.unit.clone()),
+        _ => omasheet_engine::omx::units::preferred(id),
+    };
+    let Some(unit) = unit.filter(|_| id.named().is_some()) else {
+        let text: Vec<Option<String>> = cells
+            .iter()
+            .map(|v| match v {
+                Value::Null => None,
+                v => Some(format_exact(v, false, &Style::ISO)),
+            })
+            .collect();
+        return Ok((Series::new(name, text), "Quantity".to_string()));
+    };
+    let kind = match &col.format {
+        Some(Format::Quantity(f)) => format!("{}[{f}]", id.name()),
+        _ => id.name(),
+    };
+    let parts: Vec<Option<(f64, f64)>> = cells
+        .iter()
+        .map(|v| match v {
+            Value::Quantity(q) => q.convert(&unit).ok().map(|q| (q.value(), q.sigma())),
+            Value::Int(n, _) => Some((*n as f64, 0.0)),
+            Value::Float(f) => Some((*f, 0.0)),
+            Value::Scientific(x, s) => Some((*x, *s)),
+            Value::Decimal(d) | Value::Percent(d) | Value::Fraction(d) => Some((d.to_f64(), 0.0)),
+            _ => None,
+        })
+        .collect();
+    let value: Vec<Option<f64>> = parts.iter().map(|p| p.map(|p| p.0)).collect();
+    if parts.iter().flatten().all(|p| p.1 == 0.0) {
+        return Ok((Series::new(name, value), kind));
+    }
+    let sigma: Vec<Option<f64>> = parts.iter().map(|p| p.map(|p| p.1)).collect();
+    let fields = [
+        Series::new("value".into(), value),
+        Series::new("sigma".into(), sigma),
+    ];
+    let series = StructChunked::from_series(name, cells.len(), fields.iter())
+        .map_err(|e| e.to_string())?
+        .into_series();
+    Ok((series, kind))
+}
+
+/// The cell for a `Quantity` column's text: `5kg` is a literal, and
+/// `10.5kg ± 0.3kg` a formula, which a cell has no literal for.
+fn quantity_text(text: &str, ty: S) -> Datum {
+    if let Some((value, rest)) = text.split_once('±') {
+        // `10.5 ± 0.3kg` is the formula `10.5kg ± 0.3kg`.
+        let (value, number, unit) = omasheet_engine::dtype::split_uncertain(value, rest);
+        return Datum::Formula(format!("{value}{unit} ± {number}{unit}"));
+    }
+    Datum::Lit(text.to_string(), ty)
 }
 
 /// One Parquet file for each sheet of a file, or for the one named.
@@ -365,14 +451,16 @@ fn write(
         let mut losses = Losses::default();
         let several = file.sheets.len() > 1;
         for &t in &file.sheets {
-            let mut df = frame(file, t, &mut losses)?;
+            let (mut df, kinds) = frame(file, t, &mut losses)?;
             let mut bytes = Cursor::new(Vec::new());
-            let kept = meta.then(|| {
-                KeyValueMetadata::from_static(vec![(
-                    META.to_string(),
-                    skeleton(text, file.name(t), file),
-                )])
-            });
+            let mut pairs: Vec<(String, String)> = kinds
+                .into_iter()
+                .map(|(column, kind)| (format!("{KIND}{column}"), kind))
+                .collect();
+            if meta {
+                pairs.push((META.to_string(), skeleton(text, file.name(t), file)));
+            }
+            let kept = (!pairs.is_empty()).then(|| KeyValueMetadata::from_static(pairs));
             ParquetWriter::new(&mut bytes)
                 .with_key_value_metadata(kept)
                 .finish(&mut df)
@@ -556,31 +644,6 @@ fn cell(value: AnyValue<'_>, ty: S) -> Datum {
                 _ => Datum::Empty,
             }
         }
-        // A `Quantity`: a struct of `value`, `sigma` and `unit`, written as
-        // a cell is, `5kg`, or as the formula `10.5kg ± 0.3kg` where it has
-        // an uncertainty, which a cell has no literal for.
-        value @ (AnyValue::Struct(..) | AnyValue::StructOwned(_))
-            if matches!(ty, S::Quantity(_)) =>
-        {
-            match omasheet_engine::dtype::cell_of(value, ty) {
-                omasheet_engine::omx::check::Cell::Lit(
-                    omasheet_engine::omx::ast::Lit::Quantity(v, s, unit),
-                ) => {
-                    let unit = if unit.is_dimensionless() {
-                        String::new()
-                    } else {
-                        unit.to_string()
-                    };
-                    let n = |x: f64| format_float(x, true);
-                    if s == 0.0 {
-                        Datum::Lit(format!("{}{unit}", n(v)), ty)
-                    } else {
-                        Datum::Formula(format!("{}{unit} ± {}{unit}", n(v), n(s)))
-                    }
-                }
-                _ => Datum::Empty,
-            }
-        }
         // Anything else is written the way Polars shows it, as text.
         other => Datum::Lit(other.to_string(), ty),
     }
@@ -614,7 +677,15 @@ fn restored(kept: &str, df: &DataFrame) -> Result<Imported, String> {
                 _ if computed(name) => "*".to_string(),
                 Ok(column) => {
                     let ty = type_of(column.dtype()).unwrap_or(S::String);
-                    match cell(column.get(r).map_err(|e| e.to_string())?, ty) {
+                    let declared = decl.schema.iter().find(|l| l.name == *name).map(|l| l.ty);
+                    let datum = match cell(column.get(r).map_err(|e| e.to_string())?, ty) {
+                        // A plain `Quantity` is each cell's text.
+                        Datum::Text(text) if matches!(declared, Some(S::Quantity(_))) => {
+                            quantity_text(&text, declared.unwrap_or(S::String))
+                        }
+                        datum => datum,
+                    };
+                    match datum {
                         Datum::Empty => String::new(),
                         Datum::Lit(text, S::Int) if base(name) != Base::Dec => {
                             match text.parse::<i64>() {
@@ -681,14 +752,18 @@ fn float_text(f: f64) -> String {
 /// in it.
 pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
     let mut reader = ParquetReader::new(Cursor::new(bytes.to_vec()));
-    let kept = reader
+    let pairs: Vec<(String, String)> = reader
         .get_metadata()
         .map_err(|e| e.to_string())?
         .key_value_metadata()
         .iter()
         .flatten()
-        .find(|kv| kv.key == META)
-        .and_then(|kv| kv.value.clone());
+        .filter_map(|kv| Some((kv.key.clone(), kv.value.clone()?)))
+        .collect();
+    let kept = pairs
+        .iter()
+        .find(|(k, _)| k == META)
+        .map(|(_, v)| v.clone());
     let df = reader.finish().map_err(|e| e.to_string())?;
     if let Some(kept) = kept {
         return restored(&kept, &df);
@@ -740,6 +815,26 @@ pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
         )
         .collect();
 
+    // The kind a column was written with, where its dtype is one that kind
+    // is written as: numbers for a named kind, text for `Quantity`.
+    let kinds: Vec<Option<String>> = kept
+        .iter()
+        .map(|(name, ty)| {
+            let kind = pairs
+                .iter()
+                .find(|(k, _)| *k == format!("{KIND}{name}"))?
+                .1
+                .clone();
+            let base = kind.split('[').next().unwrap_or(&kind);
+            let id = omasheet_engine::omx::types::QId::from_name(base)?;
+            let fits = match (id.named(), ty) {
+                (None, _) => *ty == S::String,
+                (Some(_), ty) => matches!(ty, S::Float | S::Scientific),
+            };
+            fits.then_some(kind)
+        })
+        .collect();
+
     let mut rows: Vec<Vec<Datum>> = Vec::with_capacity(df.height() + 1);
     rows.push(
         kept.iter()
@@ -751,7 +846,14 @@ pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
         for (name, ty) in &kept {
             let column = df.column(name).map_err(|e| e.to_string())?;
             let value = column.get(r).map_err(|e| e.to_string())?;
-            row.push(cell(value, *ty));
+            let datum = cell(value, *ty);
+            let general = kinds[row.len()].as_deref() == Some("Quantity");
+            row.push(match datum {
+                Datum::Text(text) | Datum::Lit(text, _) if general => {
+                    quantity_text(&text, S::Quantity(omasheet_engine::omx::types::QId::ANY))
+                }
+                datum => datum,
+            });
         }
         rows.push(row);
     }
@@ -761,6 +863,7 @@ pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
     let mut grid = Grid::from_rows(name, rows);
     grid.fixed = true;
     grid.zones = zones;
+    grid.kinds = kinds;
     let source = write_omx(vec![grid], &mut notices);
     Ok(Imported { source, notices })
 }

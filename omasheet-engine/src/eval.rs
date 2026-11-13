@@ -1828,6 +1828,17 @@ impl<'p> Engine<'p> {
         {
             return Value::zoned(z);
         }
+        // A number in a column of quantities is read in the column's unit.
+        if let S::Quantity(id) = col.ty
+            && matches!(l, Lit::Float(_) | Lit::Scientific(..))
+        {
+            let unit = match &col.format {
+                Some(Format::Quantity(f)) => Some(f.unit.clone()),
+                _ => crate::quantity::column_unit(id),
+            };
+            return crate::quantity::dress(lit_value(l, col.ty), id, unit.as_ref())
+                .unwrap_or(Value::Error);
+        }
         lit_value(l, col.ty)
     }
 
@@ -1849,6 +1860,11 @@ impl<'p> Engine<'p> {
     /// back out of the copy.
     fn plan_column(&self, t: usize, c: usize) -> Option<PlColumn> {
         let col = &self.prog.sheets[t].cols[c];
+        // A column of quantities is numbers in a dataframe, and the unit is
+        // the engine's own; a plan over it would work on the numbers alone.
+        if col.ty.is_quantity() && matches!(col.kind, ColKind::Frame) {
+            return None;
+        }
         let (Some((zone, _)), false) = (&col.zone, matches!(col.kind, ColKind::Frame)) else {
             return self.pl_column(t, c);
         };

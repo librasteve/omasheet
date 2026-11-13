@@ -117,7 +117,7 @@ formula that reads one is written with what the constant is.
 
 A workbook has no uncertainty: a `Scientific` value is written as its value, a plain number, and a note says the uncertainties were dropped.
 
-A workbook has no units either: a quantity is written as text, `5kg`, and a note says so. CSV and JSON write the same text, `5kg` or `10.5 ± 0.3kg`, and Parquet writes a column of quantities as a struct of `value` and `sigma` (`Float64`) and `unit` (text, as `kg.m^2.s^-2`), so each cell keeps its own unit and nothing is lost. A Parquet file read back is a `Quantity` column; the named type, `Mass` or `Potential`, is kept with `--meta`, and a cell with an uncertainty is read as the formula `10.5kg ± 0.3kg`. Nothing that is imported is read as a quantity, so `12g` or `10m` in a CSV stays text: the type is set by declaring a column `Quantity` or `Mass` in the `.omx` file.
+A workbook has no units either: a quantity is written as text, `5kg`, and a note says so. CSV and JSON write the same text, `5kg` or `10.5 ± 0.3kg`, and Parquet writes a column of a named kind, `Mass` or `Mass[g]`, as the numbers in the column's unit: a `double`, or a `struct` of `value` and `sigma` (`double`) where a cell has an uncertainty. A plain `Quantity` column has a unit in each cell, so it is text, `5kg`. The kind is kept as a string in the file's key-value metadata, under `omasheet.kind.<column>`, with no need of `--meta`, and a Parquet file read back with one is a column of that kind, whether it is imported or opened as a view in place; without it, a `double` is a `Float`. Nothing that is imported is read as a quantity, so `12g` or `10m` in a CSV stays text: the type is set by declaring a column `Quantity` or `Mass` in the `.omx` file.
 
 A sheet becomes a worksheet whose first row is the header, so a column and a
 row become a cell. Each formula is written for the row it is on:
@@ -231,6 +231,8 @@ type its own name stands for rather than converted into something near it.
 | `Float` | `double` |
 | `Scientific` | a `struct` of two `double`s, `value` and `sigma` |
 | `Complex` | a `struct` of two `double`s, `re` and `im` |
+| `Mass`, `Length`, ... | a `double` in the column's unit, or a `struct` of `value` and `sigma` where a cell has an uncertainty; the kind (`Mass[g]`) is in the metadata |
+| `Quantity` | UTF-8 `byte_array`, each cell as `5kg`; `Quantity` is in the metadata |
 | `Boolean` | `boolean` |
 | `String` | UTF-8 `byte_array` |
 | `Date` | `date32` |

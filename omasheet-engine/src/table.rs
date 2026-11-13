@@ -279,12 +279,19 @@ fn fill(
     };
     // A copy marks the columns that are percentages: decimals, shown as such.
     let percents = percent_columns(path);
+    // And the kind of each column of quantities, `Mass[g]`.
+    let kinds = quantity_kinds(path);
     let held: Vec<(String, S)> = schema
         .iter()
         .filter_map(|(name, dtype)| {
             type_of(dtype).map(|ty| {
                 let ty = if percents.iter().any(|p| p == name.as_str()) {
                     S::Percent
+                } else if let Some(q) = kinds
+                    .get(name.as_str())
+                    .and_then(|k| crate::dtype::quantity_kind(dtype, k))
+                {
+                    q
                 } else {
                     ty
                 };
@@ -374,7 +381,20 @@ fn fill(
         {
             col.zone = Some((tz.clone(), col.span));
         }
-        match type_of(dtype) {
+        let kind = kinds.get(names[c].as_str());
+        // A column of quantities has the unit its kind gives it.
+        if let (Some(kind), S::Quantity(id)) = (kind, col.ty)
+            && col.format.is_none()
+            && crate::dtype::quantity_kind(dtype, kind).is_some()
+            && let Some(unit) = crate::dtype::kind_unit(kind)
+            && let Ok(f) = omasheet_omx::colfmt::QuantityFormat::parse(unit, id)
+        {
+            col.format = Some(omasheet_omx::colfmt::Format::Quantity(f));
+        }
+        let found = kind
+            .and_then(|k| crate::dtype::quantity_kind(dtype, k))
+            .or_else(|| type_of(dtype));
+        match found {
             Some(ty) if col.declared && !ty.assignable_to(col.ty) => diags.push(
                 Diagnostic::new(
                     col.span,
@@ -1200,6 +1220,26 @@ fn percent_columns(path: &Path) -> Vec<String> {
         .and_then(|kv| kv.value.clone())
         .map(|v| v.lines().map(str::to_string).collect())
         .unwrap_or_default()
+}
+
+/// The key prefix of the file-level metadata that gives the kind of a column
+/// of quantities, by column: `omasheet.kind.Weight` is `Mass[g]`.
+const KIND_PREFIX: &str = "omasheet.kind.";
+
+/// The kind of each column of the file at `path` that has one.
+fn quantity_kinds(path: &Path) -> std::collections::HashMap<String, String> {
+    let Ok(file) = open(path) else {
+        return Default::default();
+    };
+    let mut reader = ParquetReader::new(file);
+    let Ok(meta) = reader.get_metadata() else {
+        return Default::default();
+    };
+    meta.key_value_metadata
+        .iter()
+        .flatten()
+        .filter_map(|kv| Some((kv.key.strip_prefix(KIND_PREFIX)?.to_string(), kv.value.clone()?)))
+        .collect()
 }
 
 /// The metadata that marks `percents` as percentages, for the writer.

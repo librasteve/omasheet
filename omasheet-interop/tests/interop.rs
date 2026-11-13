@@ -1045,28 +1045,75 @@ fn parquet_holds_a_scientific_column_as_a_struct() {
 }
 
 #[test]
-fn parquet_holds_a_quantity_column_as_a_struct() {
-    let file = "sheet T\n\nWeight : Mass\nAny : Quantity\n\n| Weight | Any |\n| --- | --- |\n\
-                | 5kg | 3m |\n| 300g | 10.5(3)e-3kg |\n| 5 | 20°C |\n|  |  |\n";
+fn parquet_holds_a_named_quantity_as_numbers_and_a_plain_one_as_text() {
+    use polars::prelude::*;
+    let file = "sheet T\n\nWeight : Mass[g]\nPlain : Mass\nAny : Quantity\n\n\
+                | Weight | Plain | Any |\n| --- | --- | --- |\n\
+                | 5kg | 2kg | 3m |\n| 300g | 4kg | = 10.5kg ± 0.3kg |\n| 5 | 6kg | 20°C |\n|  |  |  |\n";
     let out = parquet_of(file, None);
-    // A struct of three, so nothing is written as text and nothing is lost.
-    assert!(
-        !out.notices.iter().any(|n| n.contains("no one type")),
-        "{:?}",
-        out.notices
+    let bytes = &out.files[0].bytes;
+    let df = ParquetReader::new(std::io::Cursor::new(bytes.clone()))
+        .finish()
+        .expect("reads");
+    // A named kind is the numbers in the column's unit, a `double` where no
+    // cell has an uncertainty; a plain `Quantity` is text.
+    assert_eq!(df.column("Weight").unwrap().dtype(), &DataType::Float64);
+    assert_eq!(df.column("Plain").unwrap().dtype(), &DataType::Float64);
+    assert_eq!(df.column("Any").unwrap().dtype(), &DataType::String);
+    let weight = df.column("Weight").unwrap().f64().unwrap();
+    assert_eq!(weight.get(0), Some(5000.0));
+    assert_eq!(weight.get(1), Some(300.0));
+    // And the kind of each is in the file's metadata, with no `--meta`.
+    let mut reader = ParquetReader::new(std::io::Cursor::new(bytes.clone()));
+    let md = reader.get_metadata().expect("metadata");
+    let kv = |key: &str| {
+        md.key_value_metadata()
+            .iter()
+            .flatten()
+            .find(|kv| kv.key == key)
+            .and_then(|kv| kv.value.clone())
+    };
+    assert_eq!(kv("omasheet.kind.Weight").as_deref(), Some("Mass[g]"));
+    assert_eq!(kv("omasheet.kind.Plain").as_deref(), Some("Mass"));
+    assert_eq!(kv("omasheet.kind.Any").as_deref(), Some("Quantity"));
+    assert!(kv("omasheet").is_none());
+
+    let back = parquet::import("t", bytes).expect("imports");
+    lints(&back.source);
+    assert!(back.source.contains("Weight : Mass[g]"), "{}", back.source);
+    assert!(back.source.contains("Any    : Quantity"), "{}", back.source);
+    assert_eq!(eval(&back.source, "t[Weight; 0]"), "5000g");
+    assert_eq!(eval(&back.source, "t[Plain; 1]"), "4kg");
+    assert_eq!(eval(&back.source, "t[Any; 0]"), "3m");
+    assert_eq!(eval(&back.source, "t[Any; 1]"), "10.5 ± 0.3kg");
+    assert_eq!(eval(&back.source, "t[Any; 2]"), "20°C");
+    assert_eq!(eval(&back.source, "t[Any; 0] * 2"), "6m");
+    // The same with `--meta`.
+    let meta = parquet::export_meta("file.omx", file, None, options()).expect("exports");
+    let kept = parquet::import("t", &meta.files[0].bytes).expect("imports");
+    assert!(kept.source.contains("Weight : Mass[g]"), "{}", kept.source);
+    assert_eq!(eval(&kept.source, "T[Any; 1]"), "10.5 ± 0.3kg");
+}
+
+#[test]
+fn parquet_holds_a_quantity_uncertainty_as_a_struct() {
+    use polars::prelude::*;
+    let file = "sheet T\n\nLength : Length\n\n| Length |\n| --- |\n| 5m |\n| 10.5(3)e-3m |\n|  |\n";
+    let out = parquet_of(file, None);
+    let df = ParquetReader::new(std::io::Cursor::new(out.files[0].bytes.clone()))
+        .finish()
+        .expect("reads");
+    assert_eq!(
+        df.column("Length").unwrap().dtype(),
+        &DataType::Struct(vec![
+            Field::new("value".into(), DataType::Float64),
+            Field::new("sigma".into(), DataType::Float64),
+        ])
     );
     let back = parquet::import("t", &out.files[0].bytes).expect("imports");
     lints(&back.source);
-    // Each cell keeps its value, uncertainty and unit.
-    assert_eq!(eval(&back.source, "t[Any; 0]"), "3m");
-    assert_eq!(eval(&back.source, "t[Any; 1]"), "0.0105 ± 0.0003kg");
-    assert_eq!(eval(&back.source, "t[Any; 2]"), "20°C");
-    assert_eq!(eval(&back.source, "t[Any; 0] * 2"), "6m");
-    // The named type is kept with `--meta`, and the cells in its unit.
-    let meta = parquet::export_meta("file.omx", file, None, options()).expect("exports");
-    let kept = parquet::import("t", &meta.files[0].bytes).expect("imports");
-    assert!(kept.source.contains("Weight : Mass"), "{}", kept.source);
-    assert_eq!(eval(&kept.source, "T[Weight; 1]"), "0.3kg");
+    assert!(back.source.contains("Length : Length"), "{}", back.source);
+    assert_eq!(eval(&back.source, "t[Length; 1]"), "0.0105 ± 0.0003m");
 }
 
 #[test]

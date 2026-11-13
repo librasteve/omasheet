@@ -87,6 +87,10 @@ pub struct Grid {
     /// Its cells are then the wall clock of that zone. Empty for a source
     /// with no zones.
     pub zones: Vec<Option<String>>,
+    /// The type a column declares as its type line writes it, by column,
+    /// where its cells do not say: `Mass[g]`, `Quantity`. Empty for a source
+    /// with none.
+    pub kinds: Vec<Option<String>>,
 }
 
 impl Grid {
@@ -106,6 +110,7 @@ impl Grid {
             rows,
             fixed: false,
             zones: Vec::new(),
+            kinds: Vec::new(),
         }
     }
 }
@@ -398,13 +403,22 @@ pub(crate) fn write_named(
             out.push('\n');
         }
         out.push_str(&format!("sheet {sheet}\n\n"));
+        let kind = |c: usize| grid.kinds.get(c).and_then(|k| k.as_deref());
+        // A column with a declared type has no need of one from its cells.
         let types: Vec<(Option<S>, bool)> = (0..width)
-            .map(|c| column_type(&rows.iter().map(|row| &row[c]).collect::<Vec<_>>()))
+            .map(|c| match kind(c) {
+                Some(_) => (None, false),
+                None => column_type(&rows.iter().map(|row| &row[c]).collect::<Vec<_>>()),
+            })
             .collect();
-        let declared: Vec<(&str, S, Option<&str>)> = (0..width)
+        let declared: Vec<(&str, String, Option<&str>)> = (0..width)
             .filter_map(|c| {
                 let zone = grid.zones.get(c).and_then(|z| z.as_deref());
-                Some((columns[c].as_str(), types[c].0?, zone))
+                let ty = match kind(c) {
+                    Some(k) => k.to_string(),
+                    None => types[c].0?.to_string(),
+                };
+                Some((columns[c].as_str(), ty, zone))
             })
             .collect();
         let longest = declared
@@ -413,7 +427,7 @@ pub(crate) fn write_named(
             .max()
             .unwrap_or(0);
         for (name, ty, zone) in &declared {
-            match zone.filter(|_| *ty == S::Datetime) {
+            match zone.filter(|_| *ty == S::Datetime.to_string()) {
                 Some(zone) => out.push_str(&format!("{name:longest$} : {ty}(\"{zone}\")\n")),
                 None => out.push_str(&format!("{name:longest$} : {ty}\n")),
             }

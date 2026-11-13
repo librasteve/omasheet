@@ -26,7 +26,7 @@
 
 ## 4. Interop (`xlsx-interop`)
 - [x] 4.1 CSV and JSON text, import never reads a quantity (D236)
-- [x] 4.2 Parquet struct of value, uncertainty and unit: each cell keeps its own unit, the named type is kept by `--meta`
+- [x] 4.2 Parquet: a named kind is a `double` (or `value`/`sigma` struct) in the column unit with the kind in the column metadata; a plain `Quantity` is text
 - [x] 4.3 XLSX writes text, with a note
 - Demo: `omasheet export examples/units.omx --csv` writes `5kg` (done)
 
