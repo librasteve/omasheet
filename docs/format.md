@@ -343,13 +343,14 @@ Each type may be shown more than one way:
 
 The joins, written out:
 
-| | `1` | `1.0` | `1e0` | `3+4i` | text |
-|---|---|---|---|---|---|
-| `1` | `Integer` | `Decimal` | `Float` | `Complex` | any |
-| `1.0` | `Decimal` | `Decimal` | `Float` | `Complex` | any |
-| `1e0` | `Float` | `Float` | `Float` | `Complex` | any |
-| `3+4i` | `Complex` | `Complex` | `Complex` | `Complex` | any |
-| text | any | any | any | any | `String` |
+| | `1` | `1.0` | `1e0` | `10.5(3)` | `3+4i` | text |
+|---|---|---|---|---|---|---|
+| `1` | `Integer` | `Decimal` | `Float` | `Scientific` | `Complex` | any |
+| `1.0` | `Decimal` | `Decimal` | `Float` | `Scientific` | `Complex` | any |
+| `1e0` | `Float` | `Float` | `Float` | `Scientific` | `Complex` | any |
+| `10.5(3)` | `Scientific` | `Scientific` | `Scientific` | `Scientific` | `Complex` | any |
+| `3+4i` | `Complex` | `Complex` | `Complex` | `Complex` | `Complex` | any |
+| text | any | any | any | any | any | `String` |
 
 A `Scientific` beside a `Complex` is a `Complex`, but the uncertainty is dropped: there are no uncertain complex numbers, and the app says `uncertain complex not supported`.
 
