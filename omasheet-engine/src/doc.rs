@@ -5754,6 +5754,18 @@ mod tests {
     }
 
     #[test]
+    fn clearing_a_unit_leaves_a_quantity_with_none() {
+        let text = "sheet T\n\nW : Mass[g]\n\n| W |\n| - |\n| 5 |\n";
+        let mut doc = Document::from_text(text);
+        // The type alone keeps the unit that is in its format; clearing it
+        // takes the format as well.
+        assert!(doc.set_column_types(0, &[0], Some("Quantity")));
+        assert!(doc.text().contains("W : Quantity[g]"), "{}", doc.text());
+        assert_eq!(doc.set_column_format(0, &[0], None), Ok(()));
+        assert!(doc.text().contains("W : Quantity\n"), "{}", doc.text());
+    }
+
+    #[test]
     fn a_formula_column_takes_a_type_and_a_format_even_on_a_view() {
         let text = "sheet T\n\nA | B\n1 | *\n2 | *\n\nB := A * 2\n";
         let mut doc = Document::from_text(text);

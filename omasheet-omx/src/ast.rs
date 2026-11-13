@@ -130,6 +130,7 @@ pub enum BinOp {
     Shl,
     Shr,
     Eq,
+    Approx,
     Ne,
     Lt,
     Gt,
@@ -161,6 +162,7 @@ impl BinOp {
             BinOp::Shl => "+<",
             BinOp::Shr => "+>",
             BinOp::Eq => "==",
+            BinOp::Approx => "=~=",
             BinOp::Ne => "!=",
             BinOp::Lt => "<",
             BinOp::Gt => ">",
@@ -205,7 +207,7 @@ impl BinOp {
     pub fn is_comparison(self) -> bool {
         matches!(
             self,
-            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
+            BinOp::Eq | BinOp::Approx | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
         )
     }
 }

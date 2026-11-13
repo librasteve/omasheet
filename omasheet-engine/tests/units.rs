@@ -279,7 +279,7 @@ fn a_quantity_as_text_and_number() {
 
 #[test]
 fn math_that_needs_a_number_refuses_a_unit() {
-    assert!(fails("sin(5m)").contains("no unit"));
+    assert!(fails("sin(5m)").contains("takes an angle"));
     assert_eq!(full("abs(-5m)"), "5m");
 }
 
@@ -494,16 +494,15 @@ Metres : Length[cm]
 fn the_unit_of_a_format_is_of_the_columns_dimension() {
     let e = errors("sheet S\n\nA : Mass[m]\n\n| A |\n| --- |\n| 1 |\n");
     assert!(
-        e.iter()
-            .any(|m| m.contains("`m` is a unit of Length, but the column holds Mass")),
+        e.iter().any(|m| m.contains("must be a unit of Mass")),
         "{e:?}"
     );
     let e = errors("sheet S\n\nA : Mass[foo]\n\n| A |\n| --- |\n| 1 |\n");
     assert!(e.iter().any(|m| m.contains("`foo` is not a unit")), "{e:?}");
     let e = errors("sheet S\n\nA : Mass[]\n\n| A |\n| --- |\n| 1 |\n");
-    assert!(e.iter().any(|m| m.contains("a unit is expected")), "{e:?}");
+    assert!(e.iter().any(|m| m.contains("needs a unit")), "{e:?}");
     let e = errors("sheet S\n\nA : Mass[g;x]\n\n| A |\n| --- |\n| 1 |\n");
-    assert!(e.iter().any(|m| m.contains("`f`, `e` or `g`")), "{e:?}");
+    assert!(e.iter().any(|m| m.contains("'f'")), "{e:?}");
     // A unit of a `Quantity` column may be any.
     let e = errors("sheet S\n\nA : Quantity[g]\n\n| A |\n| --- |\n| 1 |\n");
     assert!(e.is_empty(), "{e:?}");
@@ -632,4 +631,67 @@ fn a_duration_and_a_quantity_of_time_convert_either_way() {
         "{}",
         out.output
     );
+}
+
+// ---- angles (add-angles) ----
+
+#[test]
+fn an_angle_is_written_in_degrees_minutes_and_seconds() {
+    assert_eq!(shown("45°30′30″.to('″')"), "163830″");
+    assert_eq!(shown("45°30′ == 45.5°"), "true");
+    assert_eq!(shown("45º30'30\" == 45°30′30″"), "true");
+    assert_eq!(shown("-12°30′ + 12.5°"), "0°");
+    assert_eq!(shown("90° + 1°"), "91°");
+    assert_eq!(shown("1000mrad == 1rad"), "true");
+}
+
+#[test]
+fn a_degree_is_not_degrees_celsius() {
+    assert_eq!(shown("20°C"), "20°C");
+    assert_eq!(shown("20°"), "20°");
+    assert!(fails("20° + 20°C").contains("cannot add"));
+}
+
+#[test]
+fn trigonometry_takes_an_angle() {
+    assert_eq!(shown("sin(90°)"), "1");
+    assert_eq!(shown("cos(180°)"), "-1");
+    assert_eq!(shown("sin(30°30′) > 0.5"), "true");
+    // The uncertainty goes through the slope.
+    assert!(shown("cos(3.0(1)rad)").contains("-0.990(14)"));
+    assert!(fails("sin(5m)").contains("takes an angle"));
+}
+
+#[test]
+fn an_angle_is_shown_as_degrees_minutes_seconds() {
+    assert_eq!(shown("45.5°.dms()"), "45°30′0″");
+    assert_eq!(shown("dms(45°30′30.25″, 2)"), "45°30′30.25″");
+    assert_eq!(shown("dms(1rad)"), "57°17′45″");
+    assert_eq!(shown("(-0.5°).dms()"), "-0°30′0″");
+    assert!(fails("dms(5m)").contains("needs an angle"));
+    assert!(fails("dms(5)").contains("needs an angle"));
+}
+
+#[test]
+fn a_column_of_angles_keeps_its_unit() {
+    let file = "sheet Sights\n\nBearing : Angle[°]\nRadians : Angle\n\n| Bearing | Radians |\n| ------- | ------- |\n| 90° | * |\n| 45°30′ | * |\n| 0.5rad | * |\n\nRadians := Bearing.to('rad')\n";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    assert!(out.output.contains("45.5°"), "{}", out.output);
+    assert!(out.output.contains("28.6478897565412°"), "{}", out.output);
+}
+
+#[test]
+fn approximately_equal_has_a_tolerance_and_equal_has_none() {
+    assert_eq!(shown("pi() * 1rad == 180°"), "false");
+    assert_eq!(shown("pi() * 1rad =~= 180°"), "true");
+    assert_eq!(shown("sin(pi()) == 0"), "false");
+    assert_eq!(shown("sin(pi()) =~= 0"), "true");
+    assert_eq!(shown("5kg =~= 5000g"), "true");
+    assert_eq!(shown("5kg =~= 5001g"), "false");
+    assert_eq!(shown("0.1.Float + 0.2.Float =~= 0.3.Float"), "true");
+    assert_eq!(shown("1 =~= 1.0000001"), "false");
+    assert_eq!(shown("(1+2i) =~= (1+2i)"), "true");
+    assert!(fails("'a' =~= 'b'").contains("needs numbers"));
+    assert!(fails("5kg =~= 5m").contains("cannot compare"));
 }

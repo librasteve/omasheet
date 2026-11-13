@@ -3338,7 +3338,7 @@ impl<'a> Checker<'a> {
                 _ => S::Int,
             }
         } else if op.is_comparison() {
-            let equality = matches!(op, BinOp::Eq | BinOp::Ne);
+            let equality = matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Approx);
             let ok = unknown
                 || match a.join(b) {
                     Some(S::Boolean | S::Complex) => equality,
@@ -4190,6 +4190,48 @@ impl<'a> Checker<'a> {
                     return fail;
                 }
                 (Node::new(Ir::Call(Func::ToUnit, vec![arg, unit]), span), ty)
+            }
+            "dms" => {
+                if !(1..=2).contains(&args.len()) {
+                    self.err_help(
+                        span,
+                        format!("`dms` takes 1 or 2 arguments, found {}", args.len()),
+                        "usage: `Bearing.dms(2)`",
+                    );
+                    return fail;
+                }
+                let (arg, aty) = self.lower(&args[0], sc);
+                let ty = match aty {
+                    Ty::Any | Ty::Scalar(S::Any) => Ty::Any,
+                    Ty::Scalar(S::Quantity(_)) => Ty::Scalar(S::String),
+                    Ty::Vector(S::Quantity(_), n) => Ty::Vector(S::String, n),
+                    other => {
+                        if !matches!(arg.kind, Ir::Error) {
+                            self.err_help(
+                                args[0].span,
+                                format!("`dms` needs an angle, but this is {}", other.describe()),
+                                "an angle is a number with an angle unit, `45.5°`",
+                            );
+                        }
+                        return fail;
+                    }
+                };
+                let mut lowered = vec![arg];
+                if let Some(places) = args.get(1) {
+                    let (p, pty) = self.lower(places, sc);
+                    if !matches!(pty, Ty::Any | Ty::Scalar(S::Any | S::Int)) {
+                        self.err(
+                            places.span,
+                            format!(
+                                "`dms` needs a whole number of places, but this is {}",
+                                pty.describe()
+                            ),
+                        );
+                        return fail;
+                    }
+                    lowered.push(p);
+                }
+                (Node::new(Ir::Call(Func::Dms, lowered), span), ty)
             }
             "convert_time_zone" | "utc" | "local" | "base_utc_offset" | "time_zone" => {
                 let takes_zone = name == "convert_time_zone";

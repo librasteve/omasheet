@@ -29,7 +29,7 @@ OMX is the expression language of Omasheet. An expression has no effects: it rea
 | fraction | `<1/10>` `<2 3/4>` | `Fraction` |
 | imaginary | `4i` | `Complex` |
 | uncertain | `10 ± 0.1` `10.5(3)` `7.297(11)e-3` | `Scientific` |
-| quantity | `5kg` `300cm` `9.81m.s^-2` `10.5(3)e-3kg` `20°C` | `Quantity` |
+| quantity | `5kg` `300cm` `9.81m.s^-2` `10.5(3)e-3kg` `20°C` `45°30′30″` | `Quantity` |
 | scale | `1k.` `1.5M.` `5m.` | a number: 1000, 1500000, 0.005 |
 | date, time | `2025-01-31` `09:30` `09:30:15.5` | `Date`, `Time` |
 | date and time | `2025-01-31T09:30` `2025-03-01T09:30+01:00` | `Datetime` |
@@ -49,7 +49,7 @@ From the loosest to the tightest:
 | 3 | `and` | |
 | 4 | `not` | prefix |
 | 5 | `a // b` | `a`, or `b` where `a` is empty |
-| 6 | `== != < > <= >= in` | comparisons chain, as in Raku: `0 < x <= 10` |
+| 6 | `== != =~= < > <= >= in` | comparisons chain, as in Raku: `0 < x <= 10`; `=~=` is equal to within 1e-15 |
 | 7 | `a..b` `a..^b` `a^..b` `a^..^b` `^n` | ranges; `^n` is `0..^n` |
 | 8 | `+ - +\| +^` | `+\|` and `+^` are bitwise or and xor |
 | 9 | `* / % +& +< +>` | `+&` is bitwise and, `+<` and `+>` shift |

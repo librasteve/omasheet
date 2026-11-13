@@ -1,0 +1,62 @@
+# Angles. A degree is `45°`, and degrees, minutes and seconds of arc are
+# written together, `45°30′30″` (`º`, `'` and `"` do for `°`, `′` and `″`).
+# The radian `rad` is the unit of an angle, a steradian `sr` is a radian
+# squared, and a lumen `lm` and a lux `lx` need it. An angle is a dimension of
+# its own, so a frequency in `Hz` and a speed of turning in `rad.s^-1` are not
+# mixed up.
+#
+# `sin`, `cos` and `tan` take an angle in any unit and work in radians; `dms`
+# writes an angle out as degrees, minutes and seconds.
+
+sheet Literals
+
+| Name         | Value          |
+| ------------ | -------------- |
+| degrees      | 45°            |
+| minutes      | 45°30′         |
+| seconds      | 45°30′30″      |
+| ascii        | 45º30'30"      |
+| decimal      | 45°30.5′       |
+| radians      | 1.5707963rad   |
+| angular speed | 2rad.s^-1     |
+| solid angle  | 2sr            |
+| luminous flux | 800lm         |
+| illuminance  | 500lx          |
+| celsius      | 20°C           |
+
+sheet Arithmetic
+
+| Name           | Value                        |
+| -------------- | ---------------------------- |
+| sum            | = 45° + 0.5rad               |
+| difference     | = 90° - 30°30′               |
+| in radians     | = 180°.to('rad')             |
+| in seconds     | = 1°.to('″')                 |
+| equal          | = 45°30′ == 45.5°            |
+| sine           | = sin(30°)                   |
+| cosine         | = cos(60°)                   |
+| tangent        | = tan(45°)                   |
+| uncertain sine | = sin(30.0(5)°)              |
+| written out    | = 45.508333333°.dms(1)       |
+| a radian       | = dms(1rad)                  |
+| illuminance    | = (800lm / 2m^2).to('lx')    |
+
+# A column of angles is shown in the unit it names, `Angle[°]`, whatever the
+# cells were written in, and a bare number is read in it.
+sheet Bearings
+
+Place   : String
+Bearing : Angle[°]
+Radians : Angle
+Written : String
+
+| Place    | Bearing  | Radians | Written |
+| -------- | -------- | ------- | ------- |
+| north    | 0°       | *       | *       |
+| east     | 90°      | *       | *       |
+| south    | 3.14159rad | *     | *       |
+| lookout  | 120°30′  | *       | *       |
+| summit   | 45.5     | *       | *       |
+
+Radians := Bearing.to('rad')
+Written := Bearing.dms()

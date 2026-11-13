@@ -251,6 +251,7 @@ const COMPLEX: &str = "Complex";
 const TIME: &str = "Time & Date";
 const UNITS: &str = "Units";
 const BITWISE: &str = "Bitwise";
+const COMPARE: &str = "Compare";
 const TEXT: &str = "Text";
 
 /// What the function directory says first: how a function is written.
@@ -289,6 +290,10 @@ pub const ABOUT: &[(&str, &str)] = &[
         BITWISE,
         "Operators, not functions: written between two whole numbers, or before one. and, or \
          and not stay Boolean.",
+    ),
+    (
+        COMPARE,
+        "Operators, not functions: written between two numbers or two quantities.",
     ),
 ];
 
@@ -937,6 +942,12 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "A quantity in another unit of its dimension: 5kg.to('g') gives 5000g.",
     ),
     doc(
+        UNITS,
+        "dms",
+        ".dms(2)",
+        "An angle as text in degrees, minutes and seconds, the seconds to the places given (none if left off): 45.5°.dms() gives 45°30′0″.",
+    ),
+    doc(
         TIME,
         "utc",
         ".utc()",
@@ -991,6 +1002,12 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "+>",
         "a +> n",
         "Shift right by n bits, keeping the sign: -16 +> 2 gives -4.",
+    ),
+    doc(
+        COMPARE,
+        "=~=",
+        "a =~= b",
+        "Equal to within 1e-15 of the larger, or of 1 where one is zero, as Raku's =~= is: sin(pi()) =~= 0 is true where == is not. Uncertainties are ignored.",
     ),
 ];
 

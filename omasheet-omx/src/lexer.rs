@@ -67,6 +67,8 @@ pub enum Tok {
     Rem,
     Pow,
     EqEq,
+    /// `=~=`: equal to within a tolerance.
+    Approx,
     NotEq,
     Lt,
     Gt,
@@ -141,6 +143,7 @@ impl Tok {
             Tok::Rem => "%",
             Tok::Pow => "**",
             Tok::EqEq => "==",
+            Tok::Approx => "=~=",
             Tok::NotEq => "!=",
             Tok::Lt => "<",
             Tok::Gt => ">",
@@ -381,6 +384,8 @@ pub fn lex_with(text: &str, src: u32, base: usize, units: bool) -> Result<Vec<To
             (Tok::DotDot, 2)
         } else if rest.starts_with("**") {
             (Tok::Pow, 2)
+        } else if rest.starts_with("=~=") {
+            (Tok::Approx, 3)
         } else if rest.starts_with("==") {
             (Tok::EqEq, 2)
         } else if rest.starts_with("!=") {
@@ -703,6 +708,14 @@ fn number(text: &str, i: usize, units: bool) -> Result<(Tok, usize), NumErr> {
             .map_err(|_| (format!("`{raw}i` is not a number"), i, j + 1))?;
         return Ok((Tok::Imag(f), j + 1));
     }
+    // An angle in degrees, minutes and seconds: `45°30′30″`.
+    if units
+        && !percent
+        && !is_float_exp(&raw)
+        && let Some((unit, degrees, end)) = units::dms(text, i, j)
+    {
+        return Ok((Tok::Quantity(degrees, 0.0, unit), end));
+    }
     if units
         && !percent
         && units::starts_one(text, j)
@@ -804,6 +817,11 @@ fn scaled(raw: &str, is_float: bool, frac_digits: i32, base: u8, exp: i16) -> Re
         Some(n) if scale == 0 => Tok::Int(n, Base::Dec),
         _ => Tok::Decimal(d),
     })
+}
+
+/// Does a number's text have an exponent (`1e3`)?
+fn is_float_exp(raw: &str) -> bool {
+    raw.contains(['e', 'E'])
 }
 
 #[cfg(test)]
@@ -1031,6 +1049,29 @@ mod tests {
         assert!((v - 0.0105).abs() < 1e-15 && (s - 0.0003).abs() < 1e-15 && u == "kg");
         let (v, s, u) = quantity("10.5(3)g");
         assert_eq!((v, s, u.as_str()), (10.5, 0.3, "g"));
+    }
+
+    #[test]
+    fn an_angle_in_degrees_minutes_seconds() {
+        for (text, degrees) in [
+            ("45°30′30″", 45.0 + 30.0 / 60.0 + 30.0 / 3600.0),
+            ("45º30'30\"", 45.0 + 30.0 / 60.0 + 30.0 / 3600.0),
+            ("12°30′", 12.5),
+            ("0°0′1.5″", 1.5 / 3600.0),
+        ] {
+            let (v, s, u) = quantity(text);
+            assert!(
+                (v - degrees).abs() < 1e-12 && s == 0.0 && u == "°",
+                "{text}"
+            );
+        }
+        // A bare degree, and degrees Celsius, are as they were.
+        assert_eq!(quantity("45°"), (45.0, 0.0, "°".into()));
+        assert_eq!(quantity("20°C"), (20.0, 0.0, "°C".into()));
+        // A minute or a second on its own is a unit.
+        assert_eq!(quantity("30′"), (30.0, 0.0, "′".into()));
+        // Not an angle: minutes of 60, or parts out of order.
+        assert!(!matches!(toks("45°60′")[..], [Tok::Quantity(..)]));
     }
 
     #[test]

@@ -239,9 +239,12 @@ pub fn table_source(path: &std::path::Path) -> Result<String, String> {
 /// imported is not, so text that Markdown would read as markup is in quotes
 /// too.
 fn text_cell(text: &str) -> String {
-    use omasheet_engine::omx::convert::parse_literal;
+    use omasheet_engine::omx::convert::{parse_literal, parse_literal_with};
     let bare = Datum::read(text) == Datum::Text(text.to_string())
         && parse_literal(text.trim()).is_none()
+        // A cell of an `.omx` file reads a unit after a number, `12g` or
+        // `45°30′30″`, so such text is quoted to stay text.
+        && parse_literal_with(text.trim(), true).is_none()
         && text == text.trim()
         && omasheet_md::is_plain(text)
         && !text.starts_with(['=', '#', '*'])

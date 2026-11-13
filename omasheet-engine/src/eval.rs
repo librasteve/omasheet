@@ -12,7 +12,7 @@ use crate::dtype::{cell_of, column_of};
 use crate::numfmt::format_number;
 use crate::table::{ColumnCache, Held, Identity, Tables};
 use crate::value::{
-    RowRef, UNCERTAIN_COMPLEX, Value, View, arith, bitwise, compare, complement, equal,
+    RowRef, UNCERTAIN_COMPLEX, Value, View, approx, arith, bitwise, compare, complement, equal,
     format_exact, format_styled, mark_degraded, math, plus_minus, round_digits, sort_order,
     take_degraded,
 };
@@ -3701,6 +3701,24 @@ impl<'p> Engine<'p> {
                     single => one(&single),
                 }
             }
+            Func::Dms => {
+                let places = match args.get(1) {
+                    Some(a) => match self.eval(a, fr)? {
+                        Value::Int(n, _) if (0..=9).contains(&n) => n as usize,
+                        _ => return fail(a.span, "the places of the seconds are 0 to 9"),
+                    },
+                    None => 0,
+                };
+                let one = |v: &Value| -> R {
+                    crate::quantity::dms(v, places).or_else(|m| fail(args[0].span, m))
+                };
+                match self.eval(&args[0], fr)? {
+                    Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                        items.iter().map(one).collect::<R<Vec<_>>>()?,
+                    ))),
+                    single => one(&single),
+                }
+            }
             Func::ToUnit => {
                 let unit = self.eval(&args[1], fr)?;
                 let one = |v: &Value| -> R {
@@ -4771,6 +4789,7 @@ fn scalar_op(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         _ if op.is_bitwise() => bitwise(op, a, b)?,
         BinOp::Eq => equal(a, b)?.map_or(Value::Null, Value::Boolean),
         BinOp::Ne => equal(a, b)?.map_or(Value::Null, |e| Value::Boolean(!e)),
+        BinOp::Approx => approx(a, b)?.map_or(Value::Null, Value::Boolean),
         BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => match compare(a, b)? {
             None => Value::Null,
             Some(o) => Value::Boolean(match op {

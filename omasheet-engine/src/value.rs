@@ -1187,6 +1187,51 @@ pub fn equal(a: &Value, b: &Value) -> Result<Option<bool>, String> {
     Ok(compare(a, b)?.map(|o| o == Ordering::Equal))
 }
 
+/// How near two numbers must be for `=~=`: Raku's `$*TOLERANCE`, relative to
+/// the larger of them, or absolute where either is zero.
+pub const APPROX_TOLERANCE: f64 = 1e-15;
+
+/// Whether two values given as `distance` apart, each of `size`, are within
+/// [`APPROX_TOLERANCE`]: relative, and absolute where one of them is zero.
+pub fn within_tolerance(distance: f64, sizes: (f64, f64), zero: bool) -> bool {
+    let larger = sizes.0.max(sizes.1);
+    distance < APPROX_TOLERANCE * if zero { 1.0 } else { larger }
+}
+
+/// `a =~= b`: equal to within [`APPROX_TOLERANCE`], as Raku's `=~=` is.
+/// Uncertainties are ignored, and a quantity is compared in its left unit.
+/// `None` if either is empty.
+pub fn approx(a: &Value, b: &Value) -> Result<Option<bool>, String> {
+    if matches!(a, Value::Null) || matches!(b, Value::Null) {
+        return Ok(None);
+    }
+    if let Some(r) = crate::quantity::approx(a, b) {
+        return r;
+    }
+    let (Some(x), Some(y)) = (number(a), number(b)) else {
+        return Err(format!(
+            "`=~=` needs numbers, found {} and {}",
+            a.kind(),
+            b.kind()
+        ));
+    };
+    // Whole numbers and decimals are equal only if they are.
+    if let (N::Exact(p), N::Exact(q)) = (&x, &y) {
+        return Ok(Some(p == q));
+    }
+    let ((xr, xi), (yr, yi)) = (complex(&x), complex(&y));
+    if [xr, xi, yr, yi].iter().any(|v| v.is_nan()) {
+        return Ok(Some(false));
+    }
+    let distance = (xr - yr).hypot(xi - yi);
+    let zero = (xr == 0.0 && xi == 0.0) || (yr == 0.0 && yi == 0.0);
+    Ok(Some(within_tolerance(
+        distance,
+        (xr.hypot(xi), yr.hypot(yi)),
+        zero,
+    )))
+}
+
 /// The most characters a number is shown in, its sign aside.
 pub const WIDTH: usize = 23;
 

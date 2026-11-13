@@ -21,9 +21,10 @@ pub enum Tail {
     Scale { base: u8, exp: i16 },
 }
 
-/// Can `c` be part of a unit symbol? Letters, and the degree sign of `°C`.
+/// Can `c` be part of a unit symbol? Letters, and the degree, minute and
+/// second signs of an angle.
 fn symbol_char(c: char) -> bool {
-    c.is_alphabetic() || c == '°'
+    c.is_alphabetic() || matches!(c, '°' | '′' | '″')
 }
 
 /// The length in bytes of the run of symbol characters at the start of `s`.
@@ -36,6 +37,36 @@ fn run(s: &str) -> usize {
 /// The digits at the start of `s`, in bytes.
 fn digits(s: &str) -> usize {
     s.bytes().take_while(u8::is_ascii_digit).count()
+}
+
+/// An angle written in degrees, minutes and seconds, `45°30′30″`, that
+/// starts at `text[start..]` with a number whose degree sign is at `at`: the
+/// angle in degrees and the byte offset where it ends. `None` unless a
+/// number follows the degree sign (`45°` and `20°C` are units, as ever).
+pub fn dms(text: &str, start: usize, at: usize) -> Option<(Unit, f64, usize)> {
+    let rest = &text[at..];
+    let mark = rest.chars().next().filter(|c| matches!(c, '°' | 'º'))?;
+    if !rest[mark.len_utf8()..].starts_with(|c: char| c.is_ascii_digit()) {
+        return None;
+    }
+    let reach = text[start..]
+        .char_indices()
+        .find(|&(_, c)| {
+            !(c.is_ascii_digit() || matches!(c, '.' | '°' | 'º' | '′' | '\'' | '″' | '"'))
+        })
+        .map_or(text.len(), |(i, _)| start + i);
+    // The longest run that is an angle: a trailing point or mark that
+    // belongs to something else is left.
+    let mut ends: Vec<usize> = text[start..reach]
+        .char_indices()
+        .filter(|&(_, c)| matches!(c, '°' | 'º' | '′' | '\'' | '″' | '"'))
+        .map(|(i, c)| start + i + c.len_utf8())
+        .collect();
+    ends.reverse();
+    ends.into_iter().find_map(|end| {
+        let q = siquant::Quantity::from_dms(&text[start..end]).ok()?;
+        Some((q.unit().clone(), q.value(), end))
+    })
 }
 
 /// Is there something to read as a unit or a scale at `text[at..]`?

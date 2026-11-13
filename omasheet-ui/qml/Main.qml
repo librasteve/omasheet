@@ -6333,8 +6333,12 @@ ApplicationWindow {
         id: unitPopup
         clearText: "Clear unit"
         clearable: current.length > 0
-        // A column of quantities with no unit: the type alone.
-        onCleared: win.setColumnTypes("Quantity")
+        // A column of quantities with no unit: the type alone. The type
+        // keeps the format it had, and the unit is in it, so that goes too.
+        onCleared: {
+            win.setColumnTypes("Quantity");
+            file.setColumnFormat(win.tab, win.selLeft, win.selRight - win.selLeft + 1, "");
+        }
         wider: 1.4
         taller: 1.8
         helpable: true

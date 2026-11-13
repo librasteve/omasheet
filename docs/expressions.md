@@ -126,11 +126,13 @@ and reported there if it is not whole, `5/2`.
 A power with a whole exponent is exact; with any other, `2 ** 0.5`, it is a
 `Float`, as `sqrt(2)` is.
 
-`+ - * / **`, `== != < > <= >=`, `and or not`, `in`, and `a // b` (b when a
+`+ - * / **`, `== != =~= < > <= >=`, `and or not`, `in`, and `a // b` (b when a
 is empty). `if c then a else b`.
 
 Comparisons chain, as in Raku: `0 < x <= 10` is `0 < x and x <= 10`, and
 `a < b < c < d` tests each pair in turn. `in` takes one side each.
+
+`==` on two `Float` values is exact, so `sin(pi()) == 0` is false. `a =~= b` is Raku's approximate equality: true when `a` and `b` differ by less than 1e-15 of the larger of them (or by less than 1e-15 where one is zero), so `sin(pi()) =~= 0` and `pi() * 1rad =~= 180°` are true. It takes numbers, `Complex` values and quantities (the right side is read in the unit of the left), ignores any uncertainty, and leaves `==` exact: it is the one comparison that has a tolerance, beside the `Complex` to real test.
 
 A string in a formula is in single quotes: `Name // 'Unknown'`, with `\'`,
 `\\`, `\n` and `\t` as its escapes. Double quotes are for text in a table
@@ -254,6 +256,8 @@ symbol is case-sensitive, and `ºC`, `µ` and the ohm sign are read as `°C`,
 `μ` and `Ω`. A unit other than these is not a unit: `5ft`, `5L` and `5min` are
 errors, and `5 kg` is a number and a name.
 
+An angle has the radian `rad`, the steradian `sr` (a radian squared) and the degree `°`, the minute `′` and the second `″` of arc, and the lumen `lm` and the lux `lx` that need it. Degrees, minutes and seconds are written together, `45°30′30″` or `-12°30′`, and `º`, `'` and `"` do for the marks; minutes and seconds are under 60 and only the last part may have a point. `45°` is a degree and `20°C` is Celsius. `sin`, `cos` and `tan` take an angle in any unit, and `dms` writes one out: `45.5°.dms()` is `45°30′0″`, and `dms(x, 2)` keeps two places of seconds.
+
 Data has two units, the bit `b` and the byte `B` (eight bits). Each takes the SI
 prefixes, where `kB` is 1000 B, and the binary ones `Ki Mi Gi Ti Pi Ei Zi Yi Ri
 Qi`, where `KiB` is 1024 B: `4GiB`, `100Mb`. A rate needs no unit of its own,
@@ -272,6 +276,9 @@ Qi`, where `KiB` is 1024 B: `4GiB`, `100Mb`. A rate needs no unit of its own,
 sqrt(9m ** 2)        9m             a root, where the units allow it
 6m / 3cm             200            no dimension is a plain number
 5kg.to('g')          5000g          to another unit of the dimension
+sin(30°)             0.5            an angle in any unit
+45°30′ == 45.5°      true           degrees, minutes and seconds
+180°.to('rad')       3.14159rad
 20°C - 10°C          10°C           an interval of two temperatures keeps the unit
 5kg + 3m             an error: they measure Mass and Length
 ```

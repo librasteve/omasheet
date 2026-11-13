@@ -374,7 +374,7 @@ fn an_unknown_format_is_refused() {
         "sheet S\n\nLength : Scientific[x]\n\nLength\n------\n1\n",
     )
     .errors;
-    assert!(errors.iter().any(|e| e.contains("`f`")), "{errors:?}");
+    assert!(errors.iter().any(|e| e.contains("'f'")), "{errors:?}");
 }
 
 // ---- columns ---------------------------------------------------------------

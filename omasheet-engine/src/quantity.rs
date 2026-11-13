@@ -289,6 +289,29 @@ pub fn compare(a: &Value, b: &Value, tolerant: bool) -> Option<Result<Option<Ord
     })())
 }
 
+/// `a =~= b` where one is a quantity: both in the left unit, equal to within
+/// the tolerance of `=~=`, their uncertainties ignored. `None` where neither
+/// is a quantity.
+pub fn approx(a: &Value, b: &Value) -> Option<Result<Option<bool>, String>> {
+    if !matches!(a, Value::Quantity(_)) && !matches!(b, Value::Quantity(_)) {
+        return None;
+    }
+    let (Value::Quantity(x), Value::Quantity(y)) = (a, b) else {
+        return Some(Err(format!("cannot compare {} and {}", a.kind(), b.kind())));
+    };
+    Some(aligned(x, y).map(|((vx, _), (vy, _))| {
+        if vx.is_nan() || vy.is_nan() {
+            return Some(false);
+        }
+        let zero = vx == 0.0 || vy == 0.0;
+        Some(crate::value::within_tolerance(
+            (vx - vy).abs(),
+            (vx.abs(), vy.abs()),
+            zero,
+        ))
+    }))
+}
+
 /// A function of a quantity: those that keep or halve its unit.
 pub fn math(m: MathFn, q: &Quantity) -> Result<Value, String> {
     match m.name() {
@@ -296,11 +319,55 @@ pub fn math(m: MathFn, q: &Quantity) -> Result<Value, String> {
             .map(|q| Value::Quantity(Rc::new(q)))
             .map_err(said),
         "sqrt" => q.root(2).map(value).map_err(said),
+        // An angle is a quantity the trigonometric functions take: they
+        // work in radians, whatever the angle was written in, and the
+        // uncertainty goes through the slope of the function.
+        name @ ("sin" | "cos" | "tan")
+            if q.unit().dims() == siquant::Dim::of(siquant::Base::Angle) =>
+        {
+            let rad = Unit::parse("rad", Scope::Live).map_err(said)?;
+            let x = q.convert(&rad).map_err(said)?;
+            let (v, slope) = match name {
+                "sin" => (x.value().sin(), x.value().cos()),
+                "cos" => (x.value().cos(), -x.value().sin()),
+                _ => (x.value().tan(), 1.0 / x.value().cos().powi(2)),
+            };
+            let sigma = (slope * x.sigma()).abs();
+            Ok(if sigma == 0.0 {
+                Value::Float(v)
+            } else {
+                Value::Scientific(v, sigma)
+            })
+        }
+        name @ ("sin" | "cos" | "tan") => Err(format!(
+            "`{name}` takes an angle, such as `30°` or `1rad`, but this is a quantity in {} ({})",
+            q.unit(),
+            kind_of(q.unit().dims())
+        )),
         name => Err(format!(
             "`{name}` needs a number with no unit, but this is a quantity in {}; \
              `abs` and `sqrt` take one",
             q.unit()
         )),
+    }
+}
+
+/// `dms(x, places)`: an angle as text in degrees, minutes and seconds.
+pub fn dms(v: &Value, places: usize) -> Result<Value, String> {
+    match v {
+        Value::Null => Ok(Value::Null),
+        Value::Quantity(q) => q
+            .to_dms(places)
+            .map(|t| Value::text(&t))
+            .map_err(|e| match e {
+                siquant::Error::DimensionMismatch { .. } => format!(
+                    "`dms` needs an angle, but this is a quantity in {} ({})",
+                    q.unit(),
+                    kind_of(q.unit().dims())
+                ),
+                other => said(other),
+            }),
+        other => Err(format!("`dms` needs an angle, found {}", other.kind())),
     }
 }
 

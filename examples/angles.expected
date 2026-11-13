@@ -1,0 +1,42 @@
+sheet Literals
+
+Name          | Value
+--------------|-------------------
+degrees       | 45°
+minutes       | 45.5°
+seconds       | 45.50833333333333°
+ascii         | 45.50833333333333°
+decimal       | 45.50833333333333°
+radians       | 1.5707963rad
+angular speed | 2rad.s^-1
+solid angle   | 2sr
+luminous flux | 800lm
+illuminance   | 500lx
+celsius       | 20°C
+
+sheet Arithmetic
+
+Name           | Value
+---------------|--------------------
+sum            | 73.6478897565412°
+difference     | 59.5°
+in radians     | 3.14159265358979rad
+in seconds     | 3600″
+equal          | true
+sine           | 0.500·
+cosine         | 0.500·
+tangent        | 1.000·
+uncertain sine | 0.5000(76)
+written out    | 45°30′30.0″
+a radian       | 57°17′45″
+illuminance    | 400lx
+
+sheet Bearings
+
+Place   | Bearing           | Radians             | Written
+--------|-------------------|---------------------|-----------
+north   | 0°                | 0rad                | 0°0′0″
+east    | 90°               | 1.5707963267949rad  | 90°0′0″
+south   | 179.999847960504° | 3.14158999999999rad | 179°59′59″
+lookout | 120.5°            | 2.10312174865317rad | 120°30′0″
+summit  | 45.5°             | 0.79412480965742rad | 45°30′0″

@@ -238,6 +238,9 @@ pub enum Func {
     /// A quantity in another unit of its dimension: `5kg.to('g')`. The unit
     /// is the second argument, as text (add-si-units D234).
     ToUnit,
+    /// An angle as text in degrees, minutes and seconds: `45.5°.dms()` is
+    /// `45°30′0″`. An optional second argument is the places of the seconds.
+    Dms,
     /// The same instant on the clocks of a named time zone.
     ToZone,
     Utc,

@@ -270,6 +270,7 @@ impl Parser {
         let lhs = self.range()?;
         let op = match self.peek() {
             Tok::EqEq => BinOp::Eq,
+            Tok::Approx => BinOp::Approx,
             Tok::NotEq => BinOp::Ne,
             Tok::Lt => BinOp::Lt,
             Tok::Gt => BinOp::Gt,
@@ -291,6 +292,7 @@ impl Parser {
         let mut middle = rhs;
         while let Some(op) = match self.peek() {
             Tok::EqEq => Some(BinOp::Eq),
+            Tok::Approx => Some(BinOp::Approx),
             Tok::NotEq => Some(BinOp::Ne),
             Tok::Lt => Some(BinOp::Lt),
             Tok::Gt => Some(BinOp::Gt),
