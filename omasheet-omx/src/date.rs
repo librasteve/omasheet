@@ -190,8 +190,9 @@ pub struct Style {
     pub point: char,
     /// How many places after the point a `Float`, or each part of a
     /// `Complex`, is shown to: one nearer zero than the last of them, such as
-    /// the `6e-17` that is `cos(90°)`, is shown as `0`. `None` shows every
-    /// digit. A file always holds every digit.
+    /// the `6e-17` that is `cos(90°)`, is shown as `0·`, the `·` saying that
+    /// there was more. `None` shows every digit. A file always holds every
+    /// digit.
     pub float_places: Option<u32>,
 }
 
