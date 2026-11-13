@@ -1606,7 +1606,8 @@ ApplicationWindow {
     function mark(text, cut) {
         movedOnce = false;
         marked = { tab: tab, top: selTop, left: selLeft, bottom: selBottom, right: selRight, text: text, cut: !!cut, columns: selKind === "column", rows: selKind === "row",
-                   sheet: selKind === "all" };
+                   sheet: selKind === "all",
+                   specs: selKind === "column" ? columnSpecs(tab, selLeft, selRight) : [] };
         // For the other windows: whether what is on the clipboard is whole rows or columns.
         cutHold.copy = { rows: selKind === "row", columns: selKind === "column" };
     }
@@ -1638,7 +1639,7 @@ ApplicationWindow {
         var v = shifted(m.top, m.bottom, row, sheet.nrows - rows);
         var h = shifted(m.left, m.right, col, sheet.columns.length - cols);
         marked = v === null || h === null ? null
-            : { tab: m.tab, top: v[0], left: h[0], bottom: v[1], right: h[1], text: m.text, cut: m.cut, columns: m.columns, rows: m.rows, sheet: m.sheet };
+            : { tab: m.tab, top: v[0], left: h[0], bottom: v[1], right: h[1], text: m.text, cut: m.cut, columns: m.columns, rows: m.rows, sheet: m.sheet, specs: m.specs };
     }
 
     // Paste `text` with `put`, keeping the mark if it is what was copied.
@@ -1860,7 +1861,8 @@ ApplicationWindow {
         else if (kind === "column")
             grabbed = { tab: tab, rows: false, first: selLeft, count: selRight - selLeft + 1, text: picked,
                         names: sheet.columns.slice(selLeft, selRight + 1).map(function(c) { return c.name; }),
-                        formulas: sheet.columns.slice(selLeft, selRight + 1).map(function(c) { return c.computed ? c.formula : ""; }) };
+                        formulas: sheet.columns.slice(selLeft, selRight + 1).map(function(c) { return c.computed ? c.formula : ""; }),
+                        specs: columnSpecs(tab, selLeft, selRight) };
         else
             clearSelection();
         cutHold.grab = grabbed;
@@ -2117,14 +2119,24 @@ ApplicationWindow {
             selectAll();
             return;
         }
+        // Whole columns pasted onto whole columns take their type, unit and
+        // format with them.
+        var carried = m !== null && m.columns && m.text === text && selKind === "column"
+            && m.specs !== undefined ? m.specs : [];
+        var first = selLeft;
         if (pasteWith(text, function() {
             var t = pasteTarget(text);
             if (!sheet.isConsts)
                 return growColumns(text, t) || file.pasteCells(tab, t[0], t[1], t[2], t[3], text);
             if (curCol === 1)
                 file.setConst(curRow, text.split("\n")[0]);
-        }))
+        })) {
             selectPasted(text);
+            if (carried.length > 0)
+                keeping(sheet.nrows, sheet.columns.length, function() {
+                    applySpecs(carried, first, Math.min(carried.length, sheet.columns.length - first), true);
+                });
+        }
         file.joinSince(mark);
     }
 
@@ -2182,6 +2194,54 @@ ApplicationWindow {
             if (from.columns[c] && from.columns[c].computed)
                 return true;
         return false;
+    }
+
+    // What whole columns are declared as, to go with them when they are
+    // pasted: for each, its type with its unit and format as the type line
+    // writes them, `Mass[g; .1f]`, or empty where it takes its type from its
+    // cells.
+    function columnSpecs(t, left, right) {
+        var out = [];
+        for (var c = left; c <= right; c++) {
+            var col = t < tabs.length ? tabs[t].columns[c] : null;
+            out.push(col && col.declared && !col.computed && col.type.length > 0
+                ? col.type + (col.format ? "[" + col.format + "]" : "") : "");
+        }
+        return out;
+    }
+
+    // Declare `count` columns from `at` as `specs` say, in turn over again
+    // if there are more columns than specs. A calculated column is its
+    // formula, and keeps its own type; `columns` ones just put in are new.
+    function applySpecs(specs, at, count, existing) {
+        for (var i = 0; i < count && specs.length > 0; i++) {
+            var col = existing ? sheet.columns[at + i] : null;
+            var spec = specs[i % specs.length];
+            if ((existing && (!col || col.computed)) || spec.length === 0)
+                continue;
+            file.setColumnTypes(tab, at + i, 1, spec);
+        }
+    }
+
+    // The columns copied or cut here, to have their type, unit and format
+    // pasted without their values.
+    readonly property var specsOnHand: marked !== null && marked.columns && !sheet.isConsts
+        && marked.tab < tabs.length && marked.specs !== undefined
+        && marked.specs.some(function(s) { return s.length > 0; }) ? marked.specs : null
+    readonly property bool canPasteFormat: selKind === "column" && specsOnHand !== null
+
+    // Paste the type, unit and format of the columns copied onto those selected.
+    function pasteFormat() {
+        notice = "";
+        if (refusedEdit() || specsOnHand === null)
+            return;
+        grabbed = null;
+        var specs = specsOnHand;
+        var count = selLeft === selRight ? specs.length : selRight - selLeft + 1;
+        count = Math.min(count, sheet.columns.length - selLeft);
+        var mark = file.undoMark();
+        keeping(sheet.nrows, sheet.columns.length, function() { applySpecs(specs, selLeft, count, true); });
+        file.joinSince(mark);
     }
 
     function pasteTransposed() {
@@ -2676,6 +2736,8 @@ ApplicationWindow {
                         bad = file.insertColumn(tab, at + k, names2[k]);
                     if (bad.length === 0)
                         bad = file.pasteCells(tab, 0, at, 0, at, src.text);
+                    if (bad.length === 0 && src.specs !== undefined)
+                        applySpecs(src.specs, at, names2.length, false);
                 }
                 if (bad.length === 0)
                     bad = file.deleteColumns(src.tab, src.first, src.count);
@@ -2724,6 +2786,8 @@ ApplicationWindow {
                     problem = file.insertColumn(tab, at + k, names[k]);
                 if (problem.length === 0)
                     problem = file.pasteCells(tab, 0, at, 0, at, text);
+                if (problem.length === 0 && m.specs !== undefined)
+                    applySpecs(m.specs, at, names.length, false);
             });
             file.joinSince(mark);
             if (problem.length > 0) {
@@ -5444,7 +5508,10 @@ ApplicationWindow {
             onTriggered: win.pasteValues()
         }
         MenuEntry { text: "Paste references"; visible: !win.sheet.isConsts; enabled: cellMenu.hasRows && win.canPasteReference; onTriggered: win.pasteReference() }
-        MenuEntry { text: "Paste transposed"; visible: !win.sheet.isConsts; enabled: cellMenu.hasRows && win.canTranspose; onTriggered: win.pasteTransposed() }
+        MenuEntry { text: "Paste transposed"; visible: !win.sheet.isConsts && !cellMenu.columns; enabled: cellMenu.hasRows && win.canTranspose; onTriggered: win.pasteTransposed() }
+        // Whole columns take no transposed paste: they take the type, unit and
+        // format of the columns copied instead.
+        MenuEntry { text: "Paste format"; visible: !win.sheet.isConsts && cellMenu.columns; enabled: win.canPasteFormat; onTriggered: win.pasteFormat() }
         // A calculated column is its formula: there is nothing in it to clear.
         MenuEntry {
             text: "Clear"

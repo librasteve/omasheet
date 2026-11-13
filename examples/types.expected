@@ -74,18 +74,24 @@ Fractions | Percents | Mixed  | Whole | Root   | Written
 
 sheet Lattice
 
-Left     | Right    | Sum
----------|----------|---------------------------------
-Integer  | Decimal  | 1.33333333333333333333333333333
-Decimal  | Float    | 1.3333333333333333
-Hex      | Hex      | 0x2
-Hex      | Octal    | 2
-Hex      | Integer  | 2
-Fraction | Fraction | 1/2
-Fraction | Percent  | 0.583333333333333333333333333333
-Fraction | Decimal  | 0.5
-Percent  | Percent  | 50%
-Percent  | Integer  | 1.2
+Left       | Right      | Sum
+-----------|------------|---------------------------------
+Integer    | Decimal    | 1.33333333333333333333333333333
+Decimal    | Float      | 1.3333333333333333
+Hex        | Hex        | 0x2
+Hex        | Octal      | 2
+Hex        | Integer    | 2
+Fraction   | Fraction   | 1/2
+Fraction   | Percent    | 0.583333333333333333333333333333
+Fraction   | Decimal    | 0.5
+Percent    | Percent    | 50%
+Percent    | Integer    | 1.2
+Integer    | Scientific | 11 ± 1
+Float      | Scientific | 11 ± 1
+Scientific | Scientific | 30 ± 2.23606797749979
+Scientific | Complex    | 10+3i
+Float      | Complex    | 1+3i
+Integer    | Complex    | 1+3i
 
 sheet Free
 

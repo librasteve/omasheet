@@ -1,0 +1,314 @@
+# Starship Flight 15, worked in quantities: the launch of Booster 22 and
+# Ship 42, the methane and oxygen they burn, and the heat of the ship's
+# return after about 14 orbits. Units are SI in the cells and carry through
+# every formula: a product or quotient combines them, a sum converts them,
+# and a result with no dimension is a plain number.
+#
+# Every figure that comes from a published description of the flight is on
+# the Flight15 sheet with a link to where it was read. SpaceX's own pages
+# (spacex.com/launches) did not give their figures to a plain fetch, so the
+# links are to the pages that repeat them: check them against SpaceX before
+# relying on one. A figure that is NOT on Flight15 is an assumption, and is
+# marked `assumed` in the Source column beside it.
+
+# Standard gravity.
+const g0 = 9.80665m.s^-2
+
+# Stefan-Boltzmann constant.
+const Sigma = 5.670374e-8W.m^-2.K^-4
+
+# Earth's gravitational parameter, and its mean radius.
+const GM = 3.986004418e14m^3.s^-2
+const EarthRadius = 6371km
+
+# Molar mass of carbon dioxide.
+const MolarCO2 = 44.01g.mol^-1
+
+# The figures read from the flight's published description.
+const StackHeight = Flight15[Value; Item == 'StackHeight'].first()
+const ShipHeight = Flight15[Value; Item == 'ShipHeight'].first()
+const LaunchMass = Flight15[Value; Item == 'LaunchMass'].first()
+const LiftoffThrust = Flight15[Value; Item == 'LiftoffThrust'].first()
+const OrbitAltitude = Flight15[Value; Item == 'OrbitAltitude'].first()
+const EntryTime = Flight15[Value; Item == 'AtmosphericEntry'].first()
+const LandingBurnTime = Flight15[Value; Item == 'ShipLandingBurn'].first()
+
+# The number of Raptor 3 engines on the booster and on the ship, and the
+# Starlink V3 satellites carried (Flight15 sheet, Engines and Payload rows).
+const BoosterEngines = 33
+const ShipEngines = 6
+const Satellites = 26
+
+# Assumed: the mass of one Starlink V3 satellite, the ship's empty mass and
+# the booster's empty mass with its landing reserve. None is in the sources.
+const SatelliteMass = 2Mg
+const ShipDryMass = 120Mg
+const BoosterDryMass = 275Mg
+
+# Assumed: the heat transfer coefficient of the belly-first ship (tuned so
+# that the tiles end near their 1,400 °C rating), their emissivity, the
+# effective specific heat of air hot enough to dissociate, and the heat of
+# ablation and density of an ablative shield, for comparison with the tiles.
+const HeatCoeff = 0.003
+const Emissivity = 0.85
+const HotAirCp = 5kJ.kg^-1.K^-1
+const HeatOfAblation = 25MJ.kg^-1
+const AblatorDensity = 270kg.m^-3
+
+# The delta-v a rocket gets from its exhaust speed and mass ratio
+# (Tsiolkovsky): the exhaust speed times the natural log of full over empty.
+fn DeltaV(ve, start, end) = ve * ln(start / end)
+
+# The kinetic energy of a mass moving at a speed.
+fn Kinetic(m, v) = 0.5 * m * v ** 2
+
+# ---------------------------------------------------------------------------
+# What is read from the published description of Flight 15 (13 November 2026,
+# Starbase pad 2). Times are seconds after liftoff.
+
+sheet Flight15
+
+| Item             | Value    | What                                      | Source |
+| ---------------- | -------- | ----------------------------------------- | ------ |
+| StackHeight      | 124.4m   | Booster 22 and Ship 42 stacked            | [Space Launch Schedule](https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15), [Next Spaceflight](https://nextspaceflight.com/launches/details/8403/) |
+| ShipHeight       | 52.1m    | Ship 42                                   | [Space Launch Schedule](https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15) (171 ft in [Tech Insider](https://tech-insider.org/spacex-starship-flight-15-november-dual-catch-2026/)) |
+| LaunchMass       | 5250Mg   | Stack mass at liftoff                     | [Space Launch Schedule](https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15) |
+| LiftoffThrust    | 80807kN  | 33 Raptor 3 engines at liftoff            | [Space Launch Schedule](https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15), 80,800 kN in [Next Spaceflight](https://nextspaceflight.com/launches/details/8403/) |
+| LeoCapacity      | 100000kg | Payload to low Earth orbit                | [Next Spaceflight](https://nextspaceflight.com/launches/details/8403/) |
+| OrbitAltitude    | 275km    | Altitude of the ship's orbit              | [Next Spaceflight](https://nextspaceflight.com/launches/details/8403/) |
+| MaxQ             | 58s      | Maximum dynamic pressure                  | [Space Launch Schedule](https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15) |
+| MECO             | 139s     | Booster main engine cutoff                | [Space Launch Schedule](https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15) |
+| StageSeparation  | 141s     | Ship leaves the booster                   | [Space Launch Schedule](https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15) |
+| BoosterLanding   | 395s     | Booster caught at the tower (6.5 minutes) | [Space Launch Schedule](https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15), [Tech Insider](https://tech-insider.org/spacex-starship-flight-15-november-dual-catch-2026/) |
+| SECO1            | 489s     | Ship first engine cutoff                  | [Space Launch Schedule](https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15) |
+| AtmosphericEntry | 79846s   | Ship enters the atmosphere (T+22:10:46)   | [Space Launch Schedule](https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15) |
+| ShipLandingBurn  | 81136s   | Ship landing burn (T+22:32:16)            | [Space Launch Schedule](https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15) |
+| Engines          | 33       | Raptor 3 on Booster 22; the ship has 6    | [Tech Insider](https://tech-insider.org/spacex-starship-flight-15-november-dual-catch-2026/) |
+| Payload          | 26       | Starlink V3 satellites, mass not given    | [Tech Insider](https://tech-insider.org/spacex-starship-flight-15-november-dual-catch-2026/) |
+| Orbits           | 14       | About 14 orbits over more than 22 hours   | [Tech Insider](https://tech-insider.org/spacex-starship-flight-15-november-dual-catch-2026/) |
+| TileLimit        | 1400°C   | What the ship's heat-shield tiles withstand | [Starship wiki: Thermal Protection System](https://starship-spacex.fandom.com/wiki/Starship_Thermal_Protection_System_(TPS)) |
+
+# ---------------------------------------------------------------------------
+# Launch dynamics: mass, power, speed. Each stage burns from the time it
+# lights to the time it cuts off; the propellant it uses is its mass flow
+# times that, and the delta-v follows from the mass before and after.
+
+sheet Launch
+
+Stage      : String
+Engines    : Integer
+Throttle   : Float[.2f]
+Isp        : Quantity[s; .0f]
+BurnStart  : Quantity[s; .0f]
+BurnEnd    : Quantity[s; .0f]
+Dropped    : Mass[Mg; .0f]
+BurnTime   : Quantity[s; .0f]
+Thrust     : Force[kN; .0f]
+Exhaust    : Quantity[m.s^-1; .1f]
+MassFlow   : Quantity[kg.s^-1; .0f]
+Propellant : Mass[Mg; .0f]
+StartMass  : Mass[Mg; .0f]
+EndMass    : Mass[Mg; .0f]
+MassRatio  : Float[.4f]
+DeltaV     : Quantity[m.s^-1; .1f]
+LiftoffTWR : Float[.4f]
+JetPower   : Power[GW; .4f]
+
+| Stage      | Engines | Throttle | Isp  | BurnStart | BurnEnd | Dropped | BurnTime | Thrust | Exhaust | MassFlow | Propellant | StartMass | EndMass | MassRatio | DeltaV | LiftoffTWR | JetPower |
+| ---------- | ------- | -------- | ---- | --------- | ------- | ------- | -------- | ------ | ------- | -------- | ---------- | --------- | ------- | --------- | ------ | ---------- | -------- |
+| Booster 22 | 33      | 1        | 330s | 0s        | 139s    | 275Mg   | *        | *      | *       | *        | *          | *         | *       | *         | *      | *          | *        |
+| Ship 42    | 6       | 0.9      | 360s | 141s      | 489s    | 0Mg     | *        | *      | *       | *        | *          | *         | *       | *         | *      | *          | *        |
+
+# Raptor 3 thrust from the sourced liftoff thrust of 33 engines. Throttle and
+# Isp are assumed (a booster's Isp at sea level, a ship's in vacuum), and the
+# ship's throttle is assumed (0.9) so that the stages together come near the
+# speed of the orbit; Dropped is the booster's empty mass, left behind at
+# separation (assumed).
+BurnTime   := BurnEnd - BurnStart
+Thrust     := Engines * Throttle * LiftoffThrust / BoosterEngines
+Exhaust    := Isp * g0
+MassFlow   := Thrust / Exhaust
+Propellant := MassFlow * BurnTime
+# What each stage starts with: the liftoff mass, then what the booster left.
+StartMass  := ([EndMass; *-1] - [Dropped; *-1]) // LaunchMass
+EndMass    := StartMass - Propellant
+MassRatio  := StartMass / EndMass
+DeltaV     := DeltaV(Exhaust, StartMass, EndMass)
+LiftoffTWR := Thrust / (StartMass * g0)
+JetPower   := 0.5 * Thrust * Exhaust
+
+# The speed a circular orbit at the flight's altitude needs, and how long
+# the 14 orbits take, against the sourced "more than 22 hours".
+sheet Ascent
+
+TotalDeltaV  : Quantity[m.s^-1; .1f]
+OrbitSpeed   : Quantity[m.s^-1; .1f]
+Lost         : Quantity[m.s^-1; .1f]
+OrbitPeriod  : Quantity[s; .0f]
+FourteenOrbits : Float[.2f]
+PayloadMass  : Mass[Mg; .0f]
+PayloadKinetic : Energy[GJ; .1f]
+PayloadLift  : Energy[GJ; .2f]
+BoosterTWR   : Float[.4f]
+PeakJetPower : Power[GW; .4f]
+
+TotalDeltaV    := Launch.DeltaV.sum()
+# A circular orbit: v squared is GM over the radius.
+OrbitSpeed     := sqrt(GM / (EarthRadius + OrbitAltitude).to('m'))
+Lost           := TotalDeltaV - OrbitSpeed
+OrbitPeriod    := 2 * pi() * sqrt((EarthRadius + OrbitAltitude).to('m') ** 3 / GM)
+# Hours for 14 orbits, a plain number: seconds over 3600 seconds.
+FourteenOrbits := 14 * OrbitPeriod / 3600s
+PayloadMass    := Satellites * SatelliteMass
+PayloadKinetic := Kinetic(PayloadMass, OrbitSpeed)
+PayloadLift    := PayloadMass * g0 * OrbitAltitude
+BoosterTWR     := Launch[LiftoffTWR; 0]
+PeakJetPower   := Launch.JetPower.max()
+
+# ---------------------------------------------------------------------------
+# Fuel: chemical reactions, energy and time. Starship burns methane with
+# liquid oxygen; RP-1 (Falcon 9) and hydrogen are there to compare. Each
+# row is one balanced reaction to carbon dioxide and water, with the heat it
+# gives out (textbook heats of combustion, per reaction as written).
+
+sheet Propellants
+
+Fuel      : String
+Reaction  : String
+FuelMoles : Quantity
+OxMoles   : Quantity
+CO2Moles  : Quantity
+FuelMolar : Quantity[g.mol^-1; .3f]
+OxMolar   : Quantity[g.mol^-1; .3f]
+Heat      : Energy[kJ; .0f]
+MixRatio  : Float[.4f]
+SpecificEnergy : Quantity[MJ.kg^-1; .4f]
+CO2PerKg  : Float[.5f]
+
+| Fuel     | Reaction                            | FuelMoles | OxMoles | CO2Moles | FuelMolar      | OxMolar    | Heat    | MixRatio | SpecificEnergy | CO2PerKg | Source |
+| -------- | ----------------------------------- | --------- | ------- | -------- | -------------- | ---------- | ------- | -------- | -------------- | -------- | ------ |
+| Methane  | CH4 + 2 O2 -> CO2 + 2 H2O           | 1mol      | 2mol    | 1mol     | 16.04g.mol^-1  | 32g.mol^-1 | 890kJ   | *        | *              | *        | [NIST Chemistry WebBook](https://webbook.nist.gov/chemistry/): textbook value, assumed |
+| RP-1     | 2 C12H26 + 37 O2 -> 24 CO2 + 26 H2O | 2mol      | 37mol   | 24mol    | 170.34g.mol^-1 | 32g.mol^-1 | 15026kJ | *        | *              | *        | [NIST Chemistry WebBook](https://webbook.nist.gov/chemistry/): textbook value, assumed |
+| Hydrogen | 2 H2 + O2 -> 2 H2O                  | 2mol      | 1mol    | 0mol     | 2.016g.mol^-1  | 32g.mol^-1 | 572kJ   | *        | *              | *        | [NIST Chemistry WebBook](https://webbook.nist.gov/chemistry/): textbook value, assumed |
+
+# Oxidiser mass over fuel mass, the mixture ratio.
+MixRatio       := (OxMoles * OxMolar) / (FuelMoles * FuelMolar)
+# Heat per kilogram of propellant, fuel and oxidiser together.
+SpecificEnergy := (Heat / (FuelMoles * FuelMolar + OxMoles * OxMolar)).to('MJ.kg^-1')
+CO2PerKg       := (CO2Moles * MolarCO2 / (FuelMoles * FuelMolar + OxMoles * OxMolar))
+
+# Booster 22 burns methane and oxygen from liftoff to cutoff: how much, how
+# fast, and how much of the chemical energy turns into the motion of the
+# exhaust. Raptor does not burn it all as stoichiometric methane, so this is
+# the ideal.
+sheet Burn
+
+Propellant   : Mass[Mg; .0f]
+MassFlow     : Quantity[Mg.s^-1; .2f]
+PerEngine    : Quantity[kg.s^-1; .0f]
+BurnTime     : Quantity[s; .0f]
+Energy       : Energy[TJ; .3f]
+Power        : Power[GW; .2f]
+JetPower     : Power[GW; .4f]
+Efficiency   : Percent
+CO2          : Mass[Mg; .0f]
+HydrogenEnergy : Energy[TJ; .3f]
+RP1Energy    : Energy[TJ; .3f]
+
+Propellant     := Launch[Propellant; 0]
+MassFlow       := Launch[MassFlow; 0]
+PerEngine      := MassFlow / BoosterEngines
+BurnTime       := Launch[BurnTime; 0]
+Energy         := (Propellant * Propellants[SpecificEnergy; 0]).to('TJ')
+Power          := (MassFlow * Propellants[SpecificEnergy; 0]).to('GW')
+JetPower       := Launch[JetPower; 0]
+Efficiency     := (JetPower / Power).Percent
+CO2            := (Propellant * Propellants[CO2PerKg; 0]).to('Mg')
+# The same mass of the other two fuels, for comparison.
+HydrogenEnergy := (Propellant * Propellants[SpecificEnergy; 2]).to('TJ')
+RP1Energy      := (Propellant * Propellants[SpecificEnergy; 1]).to('TJ')
+
+# ---------------------------------------------------------------------------
+# Re-entry thermodynamics: temperature, speed, radiation, ablation. The ship
+# comes down belly first through the thickening air; each row is a band of
+# the descent, with the speed at its top and the seconds spent in it. The
+# speeds and dwell times are assumed (the bands total 15 minutes of the
+# ~21 between entry and the landing burn), and the densities are rounded
+# from the standard atmosphere.
+
+sheet Reentry
+
+Altitude   : Length[km; .0f]
+Speed      : Quantity[km.s^-1; .2f]
+Density    : Quantity[kg.m^-3]
+Dwell      : Quantity[s; .0f]
+Dynamic    : Pressure[kPa; .4f]
+StagTemp   : Quantity[K; .0f]
+HeatFlux   : Quantity[kW.m^-2; .2f]
+WallTemp   : Quantity[K; .1f]
+Radiated   : Quantity[kW.m^-2; .1f]
+Recession  : Length[mm; .3f]
+HeatLoad   : Quantity[MJ.m^-2; .3f]
+
+| Altitude | Speed         | Density        | Dwell | Dynamic | StagTemp | HeatFlux | WallTemp | Radiated | Recession | HeatLoad | Source |
+| -------- | ------------- | -------------- | ----- | ------- | -------- | -------- | -------- | -------- | --------- | -------- | ------ |
+| 80km     | = Ascent.OrbitSpeed.first() | 1.8e-5kg.m^-3 | 100s  | *       | *        | *        | *        | *        | *         | *        | speed from the orbit at 275 km (computed); density from the [1976 standard atmosphere](https://en.wikipedia.org/wiki/U.S._Standard_Atmosphere); dwell assumed |
+| 70km     | 7.6km.s^-1    | 8.3e-5kg.m^-3  | 150s  | *       | *        | *        | *        | *        | *         | *        | speed and dwell assumed; density from the [1976 standard atmosphere](https://en.wikipedia.org/wiki/U.S._Standard_Atmosphere) |
+| 60km     | 7.2km.s^-1    | 3.1e-4kg.m^-3  | 200s  | *       | *        | *        | *        | *        | *         | *        | speed and dwell assumed; density from the [1976 standard atmosphere](https://en.wikipedia.org/wiki/U.S._Standard_Atmosphere) |
+| 50km     | 6km.s^-1      | 1.0e-3kg.m^-3  | 200s  | *       | *        | *        | *        | *        | *         | *        | speed and dwell assumed; density from the [1976 standard atmosphere](https://en.wikipedia.org/wiki/U.S._Standard_Atmosphere) |
+| 40km     | 3.2km.s^-1    | 4.0e-3kg.m^-3  | 150s  | *       | *        | *        | *        | *        | *         | *        | speed and dwell assumed; density from the [1976 standard atmosphere](https://en.wikipedia.org/wiki/U.S._Standard_Atmosphere) |
+| 30km     | 1.2km.s^-1    | 1.8e-2kg.m^-3  | 100s  | *       | *        | *        | *        | *        | *         | *        | speed and dwell assumed; density from the [1976 standard atmosphere](https://en.wikipedia.org/wiki/U.S._Standard_Atmosphere) |
+
+# Dynamic pressure on the ship: half the density times speed squared.
+Dynamic   := 0.5 * Density * Speed ** 2
+# The air stopped dead gives up its kinetic energy as heat (about 273K up).
+StagTemp  := 273K + Speed ** 2 / (2 * HotAirCp)
+# Heat into each square metre of shield.
+HeatFlux  := (HeatCoeff * 0.5 * Density * Speed ** 3).to('kW.m^-2')
+# The tiles glow until what they radiate, emissivity times sigma T^4,
+# balances the heat arriving: solve for the temperature.
+WallTemp  := sqrt(sqrt(HeatFlux.to('W.m^-2') / (Emissivity * Sigma)))
+Radiated  := (Emissivity * Sigma * WallTemp ** 4).to('kW.m^-2')
+# Ablation, for comparison: Starship's tiles reradiate rather than burn
+# away, but an ablative shield taking this heat would lose this much.
+Recession := (HeatFlux / (HeatOfAblation * AblatorDensity) * Dwell).to('mm')
+HeatLoad  := (HeatFlux * Dwell).to('MJ.m^-2')
+
+sheet Peak
+
+AirTemp       : Quantity[K; .0f]
+AirCelsius    : Quantity[°C; .1f]
+HeatFlux      : Quantity[kW.m^-2; .1f]
+ShieldTemp    : Quantity[K; .1f]
+ShieldCelsius : Quantity[°C; .1f]
+TileMargin    : Quantity[°C; .1f]
+Dynamic       : Pressure[kPa; .3f]
+HeatLoad      : Quantity[MJ.m^-2; .2f]
+IfAblative    : Length[mm; .2f]
+RadiationOK   : Boolean
+EntryEnergy   : Energy[TJ; .3f]
+TNT           : Mass[Mg; .0f]
+EntryToBurn   : Quantity[s; .0f]
+Source        : String
+
+# The hottest air, and the same in Celsius.
+AirTemp       := Reentry.StagTemp.max()
+AirCelsius    := AirTemp.to('°C')
+HeatFlux      := Reentry.HeatFlux.max()
+ShieldTemp    := Reentry.WallTemp.max()
+ShieldCelsius := ShieldTemp.to('°C')
+# How far under the tiles' rating the hottest tile sits (negative: over).
+TileMargin    := Flight15[Value; Item == 'TileLimit'].first() - ShieldCelsius
+Dynamic       := Reentry.Dynamic.max()
+# Totals over the bands.
+HeatLoad      := Reentry.HeatLoad.sum()
+IfAblative    := Reentry.Recession.sum()
+# The tiles radiate what they receive.
+RadiationOK   := Reentry.Radiated.max() =~= Reentry.HeatFlux.max()
+# The ship's kinetic energy when it enters (empty, satellites deployed), and
+# the same as a mass of TNT at 4.184 MJ per kg.
+EntryEnergy   := Kinetic(ShipDryMass, Ascent.OrbitSpeed.first()).to('TJ')
+TNT           := (EntryEnergy / 4.184MJ.kg^-1).to('Mg')
+# From entry to the landing burn, from the sourced times.
+EntryToBurn   := LandingBurnTime - EntryTime
+Source        := 'tile limit: [Starship wiki](https://starship-spacex.fandom.com/wiki/Starship_Thermal_Protection_System_(TPS)); times: [Space Launch Schedule](https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15)'

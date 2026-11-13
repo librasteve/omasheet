@@ -204,20 +204,28 @@ Written := <2 3/4> + Fractions
 # Integer, Decimal and Float: a Float is shown in fewer digits than the
 # exact Decimal beside it. Hex, Octal and Binary join to an Integer unless
 # both are the same; Fraction and Percent join to a Decimal unless both are.
+# Above Float the order is a line: Float, Scientific, Complex. The higher
+# one wins, and a Scientific beside a Complex loses its uncertainty.
 sheet Lattice
 
-| Left     | Right    | Sum                                             |
-| -------- | -------- | ----------------------------------------------- |
-| Integer  | Decimal  | =(1 + 1/3).String                               |
-| Decimal  | Float    | =(1/3 + 1e0).String                             |
-| Hex      | Hex      | =(Hex(1) + Hex(1)).String                       |
-| Hex      | Octal    | =(Hex(1) + Octal(1)).String                     |
-| Hex      | Integer  | =(Hex(1) + 1).String                            |
-| Fraction | Fraction | =(Fraction(1/3) + Fraction(1/6)).String         |
-| Fraction | Percent  | =(Fraction(1/3) + Percent(25%)).String          |
-| Fraction | Decimal  | =(Fraction(1/3) + 1/6).String                   |
-| Percent  | Percent  | =(Percent(20%) + Percent(30%)).String           |
-| Percent  | Integer  | =(Percent(20%) + 1).String                      |
+| Left       | Right      | Sum                                     |
+| ---------- | ---------- | --------------------------------------- |
+| Integer    | Decimal    | =(1 + 1/3).String                       |
+| Decimal    | Float      | =(1/3 + 1e0).String                     |
+| Hex        | Hex        | =(Hex(1) + Hex(1)).String               |
+| Hex        | Octal      | =(Hex(1) + Octal(1)).String             |
+| Hex        | Integer    | =(Hex(1) + 1).String                    |
+| Fraction   | Fraction   | =(Fraction(1/3) + Fraction(1/6)).String |
+| Fraction   | Percent    | =(Fraction(1/3) + Percent(25%)).String  |
+| Fraction   | Decimal    | =(Fraction(1/3) + 1/6).String           |
+| Percent    | Percent    | =(Percent(20%) + Percent(30%)).String   |
+| Percent    | Integer    | =(Percent(20%) + 1).String              |
+| Integer    | Scientific | =(1 + (10 ± 1)).String                  |
+| Float      | Scientific | =(1e0 + (10 ± 1)).String                |
+| Scientific | Scientific | =((10 ± 1) + (20 ± 2)).String           |
+| Scientific | Complex    | =((10 ± 1) + 3i).String                 |
+| Float      | Complex    | =(1e0 + 3i).String                      |
+| Integer    | Complex    | =(1 + 3i).String                        |
 
 # A column with no type line takes its type from the cells it holds, as the
 # join of them, and a cell is shown as it was written: 1, 1.1, 1/2, 23% and

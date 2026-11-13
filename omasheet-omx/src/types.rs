@@ -518,15 +518,23 @@ mod tests {
         for a in [Fraction, Percent, Hex, Int, Decimal] {
             assert_eq!(a.join(Float), Some(Float), "{a} with Float");
         }
+        // A Scientific beside any real number is a Scientific.
+        for a in [
+            Int, Hex, Octal, Binary, Decimal, Fraction, Percent, Float, Scientific,
+        ] {
+            assert_eq!(a.join(Scientific), Some(Scientific), "{a} with Scientific");
+            assert_eq!(Scientific.join(a), Some(Scientific), "Scientific with {a}");
+        }
         // A Complex beside any number is a Complex, and a family member
         // joins as its parent would.
         for a in [
-            Int, Hex, Octal, Binary, Decimal, Fraction, Percent, Float, Complex,
+            Int, Hex, Octal, Binary, Decimal, Fraction, Percent, Float, Scientific, Complex,
         ] {
             assert_eq!(a.join(Complex), Some(Complex), "{a} with Complex");
             assert_eq!(Complex.join(a), Some(Complex), "Complex with {a}");
         }
         assert_eq!(Complex.join(String), None);
+        assert_eq!(Scientific.join(String), None);
         assert_eq!(Complex.join(Any), Some(Any));
         // A number with text is not a type of either: `Any` for a column.
         assert_eq!(Int.join(String), None);

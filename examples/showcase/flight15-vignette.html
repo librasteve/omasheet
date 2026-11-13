@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Starship Flight 15 Vignette</title>
+<style>
+:root { color-scheme: light dark; }
+body { font: 16px/1.6 system-ui, sans-serif; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
+sheet { border-collapse: collapse; margin: 1rem 0; font-variant-numeric: tabular-nums; }
+th, td { padding: 0.25rem 0.75rem; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
+th { border-bottom-width: 2px; }
+code, pre { font-family: ui-monospace, monospace; font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.75rem; border: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
+</style>
+</head>
+<body>
+<h1>Starship Flight 15: a vignette</h1>
+<p>Booster 22 and Ship 42 stand 124.4m tall and weigh 5250Mg at liftoff, with 26 Starlink V3
+satellites aboard. Every figure below is worked out from the sheets in <a href="flight15-vignette.omx"><code>flight15-vignette.omx</code></a>; the ones read from the published description of the flight are listed, with their links, at the end.</p>
+<p><em>Authored in <a href="https://omasheet.org">omasheet</a>.</em></p>
+<h2>1. Launch</h2>
+<p>The 33 Raptor 3 engines of the booster give 80807kN at liftoff, a thrust-to-weight of 1.5695. The booster burns for 139s and the ship, once it has separated, for 348s.</p>
+<table><thead><tr><th style="text-align: left">Stage</th><th style="text-align: right">Thrust</th><th style="text-align: right">Exhaust</th><th style="text-align: right">MassFlow</th><th style="text-align: right">Propellant</th><th style="text-align: right">StartMass</th><th style="text-align: right">EndMass</th><th style="text-align: right">DeltaV</th></tr></thead><tbody>
+<tr><td style="text-align: left">Booster 22</td><td style="text-align: right">80807kN</td><td style="text-align: right">3236.2m.s^-1</td><td style="text-align: right">24970kg.s^-1</td><td style="text-align: right">3471Mg</td><td style="text-align: right">5250Mg</td><td style="text-align: right">1779Mg</td><td style="text-align: right">3501.8m.s^-1</td></tr>
+<tr><td style="text-align: left">Ship 42</td><td style="text-align: right">13223kN</td><td style="text-align: right">3530.4m.s^-1</td><td style="text-align: right">3745kg.s^-1</td><td style="text-align: right">1303Mg</td><td style="text-align: right">1504Mg</td><td style="text-align: right">201Mg</td><td style="text-align: right">7109.5m.s^-1</td></tr>
+</tbody></table>
+<p>Together the two stages give 10611.3m.s^-1. A circular orbit at 275km needs 7744.4m.s^-1, so 2866.9m.s^-1 goes to gravity and drag. At that speed the 52Mg of satellites carry 1559.4GJ of kinetic energy, and lifting them to altitude takes another 140.24GJ. One orbit takes 5392s, so 14 of them are 20.97 hours.</p>
+<h2>2. Fuel</h2>
+<p>Starship burns methane with liquid oxygen. The reaction gives out 11.1194MJ.kg^-1 of propellant, against 9.8552MJ.kg^-1 for RP-1 and 15.8748MJ.kg^-1 for hydrogen.</p>
+<table><thead><tr><th style="text-align: left">Fuel</th><th style="text-align: left">Reaction</th><th style="text-align: right">MixRatio</th><th style="text-align: right">SpecificEnergy</th><th style="text-align: right">CO2PerKg</th></tr></thead><tbody>
+<tr><td style="text-align: left">Methane</td><td style="text-align: left">CH4 + 2 O2 -&gt; CO2 + 2 H2O</td><td style="text-align: right">3.9900</td><td style="text-align: right">11.1194MJ.kg^-1</td><td style="text-align: right">0.54985</td></tr>
+<tr><td style="text-align: left">RP-1</td><td style="text-align: left">2 C12H26 + 37 O2 -&gt; 24 CO2 + 26 H2O</td><td style="text-align: right">3.4754</td><td style="text-align: right">9.8552MJ.kg^-1</td><td style="text-align: right">0.69276</td></tr>
+<tr><td style="text-align: left">Hydrogen</td><td style="text-align: left">2 H2 + O2 -&gt; 2 H2O</td><td style="text-align: right">7.9365</td><td style="text-align: right">15.8748MJ.kg^-1</td><td style="text-align: right">0.00000</td></tr>
+</tbody></table>
+<p>The booster uses 3471Mg in 139s, 24.97Mg.s^-1 between 33 engines, or 757kg.s^-1 each. That releases 38.593TJ, a chemical power of 277.65GW, of which 130.7536GW ends up in the exhaust: an efficiency of 47.09%. Burning it makes 1908Mg of carbon dioxide. The same mass of RP-1 would give 34.205TJ and of hydrogen 55.098TJ.</p>
+<h2>3. Re-entry</h2>
+<p>The ship enters the atmosphere 1290s before its landing burn, carrying 3.599TJ of kinetic energy, as much as 860Mg of TNT. The air in front of it reaches 6271K (5997.4°C), but the tiles, which glow until they radiate what arrives, settle at 1610.2K (1337.0°C) under a peak heat flux of 324.0kW.m^-2. That is 63.0°C under their rating, and the peak dynamic pressure is 20.480kPa.</p>
+<table><thead><tr><th style="text-align: right">Altitude</th><th style="text-align: right">Speed</th><th style="text-align: right">Dynamic</th><th style="text-align: right">StagTemp</th><th style="text-align: right">HeatFlux</th><th style="text-align: right">WallTemp</th><th style="text-align: right">HeatLoad</th></tr></thead><tbody>
+<tr><td style="text-align: right">80km</td><td style="text-align: right">7.74km.s^-1</td><td style="text-align: right">0.5398kPa</td><td style="text-align: right">6271K</td><td style="text-align: right">12.54kW.m^-2</td><td style="text-align: right">714.2K</td><td style="text-align: right">1.254MJ.m^-2</td></tr>
+<tr><td style="text-align: right">70km</td><td style="text-align: right">7.60km.s^-1</td><td style="text-align: right">2.3970kPa</td><td style="text-align: right">6049K</td><td style="text-align: right">54.65kW.m^-2</td><td style="text-align: right">1031.9K</td><td style="text-align: right">8.198MJ.m^-2</td></tr>
+<tr><td style="text-align: right">60km</td><td style="text-align: right">7.20km.s^-1</td><td style="text-align: right">8.0352kPa</td><td style="text-align: right">5457K</td><td style="text-align: right">173.56kW.m^-2</td><td style="text-align: right">1377.5K</td><td style="text-align: right">34.712MJ.m^-2</td></tr>
+<tr><td style="text-align: right">50km</td><td style="text-align: right">6.00km.s^-1</td><td style="text-align: right">18.0000kPa</td><td style="text-align: right">3873K</td><td style="text-align: right">324.00kW.m^-2</td><td style="text-align: right">1610.2K</td><td style="text-align: right">64.800MJ.m^-2</td></tr>
+<tr><td style="text-align: right">40km</td><td style="text-align: right">3.20km.s^-1</td><td style="text-align: right">20.4800kPa</td><td style="text-align: right">1297K</td><td style="text-align: right">196.61kW.m^-2</td><td style="text-align: right">1421.2K</td><td style="text-align: right">29.491MJ.m^-2</td></tr>
+<tr><td style="text-align: right">30km</td><td style="text-align: right">1.20km.s^-1</td><td style="text-align: right">12.9600kPa</td><td style="text-align: right">417K</td><td style="text-align: right">46.66kW.m^-2</td><td style="text-align: right">991.9K</td><td style="text-align: right">4.666MJ.m^-2</td></tr>
+</tbody></table>
+<p>Over the whole descent each square metre takes 143.12MJ.m^-2. Tiles do not ablate, but a shield that did would lose 21.20mm of thickness.</p>
+<h2>Where the figures come from</h2>
+<table><thead><tr><th style="text-align: left">Item</th><th style="text-align: right">Value</th><th style="text-align: left">Source</th></tr></thead><tbody>
+<tr><td style="text-align: left">StackHeight</td><td style="text-align: right">124.4m</td><td style="text-align: left"><a href="https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15">Space Launch Schedule</a>, <a href="https://nextspaceflight.com/launches/details/8403/">Next Spaceflight</a></td></tr>
+<tr><td style="text-align: left">ShipHeight</td><td style="text-align: right">52.1m</td><td style="text-align: left"><a href="https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15">Space Launch Schedule</a> (171 ft in <a href="https://tech-insider.org/spacex-starship-flight-15-november-dual-catch-2026/">Tech Insider</a>)</td></tr>
+<tr><td style="text-align: left">LaunchMass</td><td style="text-align: right">5250Mg</td><td style="text-align: left"><a href="https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15">Space Launch Schedule</a></td></tr>
+<tr><td style="text-align: left">LiftoffThrust</td><td style="text-align: right">80807kN</td><td style="text-align: left"><a href="https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15">Space Launch Schedule</a>, 80,800 kN in <a href="https://nextspaceflight.com/launches/details/8403/">Next Spaceflight</a></td></tr>
+<tr><td style="text-align: left">LeoCapacity</td><td style="text-align: right">100000kg</td><td style="text-align: left"><a href="https://nextspaceflight.com/launches/details/8403/">Next Spaceflight</a></td></tr>
+<tr><td style="text-align: left">OrbitAltitude</td><td style="text-align: right">275km</td><td style="text-align: left"><a href="https://nextspaceflight.com/launches/details/8403/">Next Spaceflight</a></td></tr>
+<tr><td style="text-align: left">MaxQ</td><td style="text-align: right">58s</td><td style="text-align: left"><a href="https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15">Space Launch Schedule</a></td></tr>
+<tr><td style="text-align: left">MECO</td><td style="text-align: right">139s</td><td style="text-align: left"><a href="https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15">Space Launch Schedule</a></td></tr>
+<tr><td style="text-align: left">StageSeparation</td><td style="text-align: right">141s</td><td style="text-align: left"><a href="https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15">Space Launch Schedule</a></td></tr>
+<tr><td style="text-align: left">BoosterLanding</td><td style="text-align: right">395s</td><td style="text-align: left"><a href="https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15">Space Launch Schedule</a>, <a href="https://tech-insider.org/spacex-starship-flight-15-november-dual-catch-2026/">Tech Insider</a></td></tr>
+<tr><td style="text-align: left">SECO1</td><td style="text-align: right">489s</td><td style="text-align: left"><a href="https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15">Space Launch Schedule</a></td></tr>
+<tr><td style="text-align: left">AtmosphericEntry</td><td style="text-align: right">79846s</td><td style="text-align: left"><a href="https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15">Space Launch Schedule</a></td></tr>
+<tr><td style="text-align: left">ShipLandingBurn</td><td style="text-align: right">81136s</td><td style="text-align: left"><a href="https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15">Space Launch Schedule</a></td></tr>
+<tr><td style="text-align: left">Engines</td><td style="text-align: right">33</td><td style="text-align: left"><a href="https://tech-insider.org/spacex-starship-flight-15-november-dual-catch-2026/">Tech Insider</a></td></tr>
+<tr><td style="text-align: left">Payload</td><td style="text-align: right">26</td><td style="text-align: left"><a href="https://tech-insider.org/spacex-starship-flight-15-november-dual-catch-2026/">Tech Insider</a></td></tr>
+<tr><td style="text-align: left">Orbits</td><td style="text-align: right">14</td><td style="text-align: left"><a href="https://tech-insider.org/spacex-starship-flight-15-november-dual-catch-2026/">Tech Insider</a></td></tr>
+<tr><td style="text-align: left">TileLimit</td><td style="text-align: right">1400°C</td><td style="text-align: left"><a href="https://starship-spacex.fandom.com/wiki/Starship_Thermal_Protection_System_(TPS)">Starship wiki: Thermal Protection System</a></td></tr>
+</tbody></table>
+<p>Anything not in that table is an assumption: the Isp and throttle of each stage, the masses of a satellite and of the empty
+stages, and the speeds, dwell times and heat coefficient of the re-entry bands. They are marked where they are written in
+<code>flight15-vignette.omx</code>.</p>
+<p><em>This illustration is inspired by SpaceX Flight15 planned for Friday 13-Nov-2026 to show some of the cool features of
+Omasheet.</em>
+More info: https://omasheet.org</p>
+</body>
+</html>
