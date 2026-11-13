@@ -12,7 +12,7 @@ sheet Literals
 
 | Name          | Value             |
 | ------------- | ----------------- |
-|               | 45°               |
+| degrees       | 45°               |
 | minutes       | 45°30′            |
 | seconds       | 45°30′30″         |
 | ascii         | 45º30'30"         |

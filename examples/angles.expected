@@ -1,13 +1,13 @@
 sheet Literals
 
 Name          | Value
---------------|----------------------
-              | 45°
+--------------|----------
+degrees       | 45°
 minutes       | 45.5°
-seconds       | 45.50833333333333°
-ascii         | 45.50833333333333°
-decimal       | 45.50833333333333°
-radians       | 1.5707963267948966rad
+seconds       | 45.508°·
+ascii         | 45.508°·
+decimal       | 45.508°·
+radians       | 1.571rad·
 angular speed | 2rad.s^-1
 solid angle   | 2sr
 luminous flux | 800lm
@@ -17,32 +17,32 @@ celsius       | 20°C
 sheet Arithmetic
 
 Name             | Value
------------------|---------------------
-sum              | 73.64788975654116°
+-----------------|------------
+sum              | 73.648°·
 difference       | 59.5°
-in radians       | 3.141592653589793rad
+in radians       | 3.142rad·
 in seconds       | 3600″
 equal            | true
-sine             | 0.5
-cosine           | 0.5
+sine             | 0.5·
+cosine           | 0.5·
 tangent          | 1.000·
 uncertain sine   | 0.5000(76)
 written out      | 45°30′30.0″
 a radian         | 57°17′45″
 illuminance      | 400lx
-Euler's identity | -1+0i
+Euler's identity | -1+0i·
 
 sheet Trigonometry
 
 Name                           | Value
 -------------------------------|------
-sine of 30º                    | 0.5
-same in radians                | 0.5
+sine of 30º                    | 0.5·
+same in radians                | 0.5·
 they agree                     | true
 sine of 30º is a half          | true
 cosine of 60º                  | true
 tangent of 45º                 | true
-cos of a right angle           | 0
+cos of a right angle           | 0·
 cos of a right angle (rounded) | 0
 is it zero                     | false
 is it nearly zero              | true

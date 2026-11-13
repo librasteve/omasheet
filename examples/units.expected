@@ -72,10 +72,10 @@ big   | 2m    | 1.5m   | 3m^2    | 7m
 sheet Drives
 
 Drive | Capacity | Platter | Density
-------|----------|---------|-----------------
+------|----------|---------|----------------
 old   | 500GiB   | 100cm^2 | 390.625Tib.m^-2
 new   | 4096GiB  | 100cm^2 | 3200Tib.m^-2
-tiny  | 0.125GiB | 5cm^2   | 1.953125Tib.m^-2
+tiny  | 0.125GiB | 5cm^2   | 1.953Tib.m^-2·
 
 sheet Data
 

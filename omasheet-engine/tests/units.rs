@@ -678,7 +678,7 @@ fn a_column_of_angles_keeps_its_unit() {
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
     assert!(out.output.contains("45.5°"), "{}", out.output);
-    assert!(out.output.contains("28.64788975654116°"), "{}", out.output);
+    assert!(out.output.contains("28.648°·"), "{}", out.output);
 }
 
 #[test]
@@ -698,7 +698,7 @@ fn approximately_equal_has_a_tolerance_and_equal_has_none() {
 
 #[test]
 fn the_inverse_trig_functions_give_an_angle() {
-    assert_eq!(shown("arcsin(0.5)"), "0.5235987755982988rad");
+    assert_eq!(shown("arcsin(0.5)"), "0.524rad·");
     assert_eq!(shown("arcsin(0.5).to('°')"), "30°");
     assert_eq!(shown("arccos(0.5) =~= 60°"), "true");
     assert_eq!(shown("arctan(1) =~= pi() / 4 * 1rad"), "true");

@@ -1238,7 +1238,12 @@ fn quantity_kinds(path: &Path) -> std::collections::HashMap<String, String> {
     meta.key_value_metadata
         .iter()
         .flatten()
-        .filter_map(|kv| Some((kv.key.strip_prefix(KIND_PREFIX)?.to_string(), kv.value.clone()?)))
+        .filter_map(|kv| {
+            Some((
+                kv.key.strip_prefix(KIND_PREFIX)?.to_string(),
+                kv.value.clone()?,
+            ))
+        })
         .collect()
 }
 

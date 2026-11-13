@@ -388,7 +388,9 @@ fn sheet(
         let mut line = Vec::with_capacity(view.cols.len());
         for (k, &c) in view.cols.iter().enumerate() {
             let value = engine.cell_shown(view.sheet, c, r);
-            if !matches!(value, Value::Null | Value::Error) && !value.is_numeric() {
+            // A quantity is set right, as the grid sets it.
+            let number = value.is_numeric() || matches!(value, Value::Quantity(_));
+            if !matches!(value, Value::Null | Value::Error) && !number {
                 numeric[k] = false;
             }
             let shown = place(engine, &value, format, cols[c].format.as_ref());

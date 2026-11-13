@@ -491,6 +491,17 @@ pub fn format(q: &Quantity, f: &SciFormat, style: &Style, exact: bool) -> String
             format!("{} ± {}{unit}", n(q.value()), n(q.sigma()))
         };
     }
+    // With no uncertainty and no format, the number is shown as a `Float` is:
+    // to three places, cut and marked, `-1.571rad·`.
+    if q.sigma() == 0.0 && *f == SciFormat::default() {
+        let number = crate::value::format_value(&Value::Float(q.value()), false, style, false);
+        // The mark of a cut number goes last, after the unit, where a
+        // display can set it apart: `1.571rad·`.
+        return match number.strip_suffix(crate::value::MORE) {
+            Some(digits) => format!("{digits}{unit}{}", crate::value::MORE),
+            None => format!("{number}{unit}"),
+        };
+    }
     let mut number = crate::value::format_scientific(q.value(), q.sigma(), f, style);
     // A quantity that has no uncertainty is not shown with `(0)` after the
     // number because a format asked for places: `218.3m.s^-1`, not

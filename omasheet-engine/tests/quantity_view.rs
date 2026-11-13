@@ -61,7 +61,9 @@ fn shown(dir: &std::path::Path, text: &str, expr: &str, lowering: Lowering) -> S
     );
     engine.run();
     let (node, _) = compile_expr(&program, expr, 1).expect("the expression checks");
-    let value = engine.eval_top(&node).unwrap_or_else(|| panic!("no value for {expr} ({lowering:?}) over {text}"));
+    let value = engine
+        .eval_top(&node)
+        .unwrap_or_else(|| panic!("no value for {expr} ({lowering:?}) over {text}"));
     omasheet_engine::value::format_exact(&value, false, &omasheet_engine::omx::date::Style::ISO)
 }
 
@@ -70,7 +72,8 @@ fn a_view_reads_a_column_of_quantities_in_its_kind_and_unit() {
     let dir = scratch("quantity-view");
     file(&dir);
     let bare = "view Q := dataframe['q.parquet']\n";
-    let declared = "view Q := dataframe['q.parquet']\n\nWeight : Mass[g]\nLen : Length\nAny : Quantity\n";
+    let declared =
+        "view Q := dataframe['q.parquet']\n\nWeight : Mass[g]\nLen : Length\nAny : Quantity\n";
     for lowering in [Lowering::Never, Lowering::Always] {
         for text in [bare, declared] {
             let s = |expr: &str| shown(&dir, text, expr, lowering);

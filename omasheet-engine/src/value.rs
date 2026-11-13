@@ -1836,7 +1836,7 @@ fn signed(negative: bool, text: String) -> String {
     if negative { format!("-{text}") } else { text }
 }
 
-fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
+pub(crate) fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) -> String {
     match v {
         Value::Null => String::new(),
         Value::Error => "#ERROR".into(),

@@ -31,7 +31,7 @@ A `Decimal`, a `Float` and the parts of a `Complex` are shown to three places
 after the point, and where they have more the rest is cut and marked with
 `·`: `1/3` is `0.333·` and `sqrt(2)` is `1.414·`. One with no more than three
 places is whole, `19.99`, and one below a thousandth keeps its digits, so as
-not to show as nought. A `Float` in e notation has its mantissa cut the same way, `1.234·e-12`. Before that a `Float`, and each part of a `Complex`, is rounded to 15 places after the point, so that the noise of a calculation shows as nought, marked with `·` as a number with digits not shown is: `cos(90°)` is `0·` and not `6.123·e-17`, and `1e-20.Float` is `0·`. That is the `float_places` of the display style; the value itself, and a file, keep every digit. A `Scientific` is not cut: the uncertainty in brackets
+not to show as nought. A `Float` in e notation has its mantissa cut the same way, `1.234·e-12`. Before that a `Float`, and each part of a `Complex`, is rounded to 15 places after the point, so that the noise of a calculation shows as nought, marked with `·` as a number with digits not shown is: `cos(90°)` is `0·` and not `6.123·e-17`, and `1e-20.Float` is `0·`. That is the `float_places` of the display style; the value itself, and a file, keep every digit. A quantity with no uncertainty and no format has its number cut the same way, with the `·` after the unit: `arcsin(1)` is `1.571rad·`. A `Scientific`, and a quantity with an uncertainty, is not cut: the uncertainty in brackets
 sets the digits it shows.
 
 A `Decimal` holds 38 digits, so one that does not end within them is
