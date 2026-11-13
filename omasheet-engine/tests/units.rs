@@ -678,12 +678,12 @@ fn a_column_of_angles_keeps_its_unit() {
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
     assert!(out.output.contains("45.5°"), "{}", out.output);
-    assert!(out.output.contains("28.6478897565412°"), "{}", out.output);
+    assert!(out.output.contains("28.64788975654116°"), "{}", out.output);
 }
 
 #[test]
 fn approximately_equal_has_a_tolerance_and_equal_has_none() {
-    assert_eq!(shown("pi() * 1rad == 180°"), "false");
+    assert_eq!(shown("0.1.Float + 0.2.Float == 0.3.Float"), "false");
     assert_eq!(shown("pi() * 1rad =~= 180°"), "true");
     assert_eq!(shown("sin(pi()) == 0"), "false");
     assert_eq!(shown("sin(pi()) =~= 0"), "true");
@@ -694,4 +694,18 @@ fn approximately_equal_has_a_tolerance_and_equal_has_none() {
     assert_eq!(shown("(1+2i) =~= (1+2i)"), "true");
     assert!(fails("'a' =~= 'b'").contains("needs numbers"));
     assert!(fails("5kg =~= 5m").contains("cannot compare"));
+}
+
+#[test]
+fn the_inverse_trig_functions_give_an_angle() {
+    assert_eq!(shown("arcsin(0.5)"), "0.5235987755982988rad");
+    assert_eq!(shown("arcsin(0.5).to('°')"), "30°");
+    assert_eq!(shown("arccos(0.5) =~= 60°"), "true");
+    assert_eq!(shown("arctan(1) =~= pi() / 4 * 1rad"), "true");
+    assert_eq!(shown("sin(arcsin(0.5)) =~= 0.5"), "true");
+    assert_eq!(shown("degrees(arctan(1))"), "45");
+    assert_eq!(shown("arcsin(0.5 ± 0.01)"), "0.524(12)rad");
+    // Beyond its real domain it is a complex number, which has no unit.
+    assert_eq!(shown("arcsin(2)"), "1.571+1.317i·");
+    assert!(fails("arcsin(0.5rad)").contains("no unit"));
 }

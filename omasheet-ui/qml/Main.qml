@@ -170,6 +170,15 @@ ApplicationWindow {
     readonly property var emptySheet: ({ name: "", columns: [], rows: [], nrows: 0, paged: false, sampled: false, isConsts: false })
     property var colWidths: []
     property real totalWidth: 0
+    // How far the text of a cell being edited in the last column runs on past
+    // it, which the columns are widened by while it does so.
+    property real editSpill: 0
+    onEditSpillChanged: {
+        if (editSpill > 0)
+            Qt.callLater(function() {
+                hflick.contentX = Math.max(hflick.contentX, hflick.contentWidth - hflick.width);
+            });
+    }
 
     // A frame drawn alone can be shown late, when the next one comes: moving
     // up or down a row draws just the one. So each last frame is drawn twice.
@@ -3049,7 +3058,7 @@ ApplicationWindow {
                         width: Math.min(parent.width, Math.max(win.fontSize * 40, parent.width - win.width / 3))
                         anchors.top: parent.top
                         height: win.formulaOpen
-                            ? Math.round(win.fontSize * 4 * 1.45) + 8
+                            ? Math.round(win.fontSize * 4 * 1.45) + 12
                             : parent.height
                         clip: true
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
@@ -3061,7 +3070,10 @@ ApplicationWindow {
                             font: win.font
                             color: win.textColor
                             selectByMouse: true
-                            topPadding: 2
+                            // The text sits down from the border, open or
+                            // closed, so that it does not move when the box
+                            // opens.
+                            topPadding: 6
                             bottomPadding: 2
                             readonly property var cell: win.hasCursor || win.oneFormula ? win.cellAt(win.curRow, win.curCol) : null
                             // A calculated sheet has one formula, as a calculated
@@ -3302,7 +3314,7 @@ ApplicationWindow {
                 anchors.fill: parent
                 anchors.rightMargin: vbar.width
                 anchors.bottomMargin: hbar.needed ? hbar.height : 0
-                contentWidth: win.gutterWidth + win.totalWidth
+                contentWidth: win.gutterWidth + win.totalWidth + win.editSpill
                 contentHeight: height
                 flickableDirection: Flickable.HorizontalFlick
                 boundsBehavior: Flickable.StopAtBounds
@@ -4017,6 +4029,10 @@ ApplicationWindow {
                                         anchors.bottom: parent.bottom
                                         width: item ? Math.max(parent.width, item.contentWidth + item.leftPadding + item.rightPadding + 4) : parent.width
                                         active: win.editing && cellItem.current
+                                        readonly property real overhang: active && cellItem.index === win.colWidths.length - 1
+                                            ? Math.max(0, width - parent.width) : 0
+                                        onOverhangChanged: win.editSpill = overhang
+                                        Component.onDestruction: win.editSpill = 0
                                         // A `TextArea`, a cell being able to
                                         // hold a newline: the box at the top
                                         // echoes the text, so opening it shows

@@ -4,8 +4,8 @@
 #
 # A Complex has no order, so there is no `<`, `max` or sort; `=` and `!=` take
 # both parts, exactly. To get a real number out, use `re` or `abs`, or `.Float`
-# where the imaginary part is zero (to within Raku's 1e-15, and nowhere else
-# does omasheet use a tolerance).
+# where the imaginary part is exactly zero; `=~=` is the comparison that
+# allows for the noise of a calculation.
 # In a Parquet file a Complex column is a struct of two doubles, `re` and `im`.
 #
 # The maths functions are here too. A real argument past the edge of a

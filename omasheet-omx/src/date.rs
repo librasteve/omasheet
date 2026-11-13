@@ -188,7 +188,15 @@ pub struct Style {
     pub group: Option<char>,
     /// What a number's point is shown as: `.` as a file writes it, or `,`.
     pub point: char,
+    /// How many places after the point a `Float`, or each part of a
+    /// `Complex`, is shown to: one nearer zero than the last of them, such as
+    /// the `6e-17` that is `cos(90°)`, is shown as `0`. `None` shows every
+    /// digit. A file always holds every digit.
+    pub float_places: Option<u32>,
 }
+
+/// The places a `Float` is shown to unless the style says otherwise.
+pub const FLOAT_PLACES: u32 = 15;
 
 impl Default for Style {
     fn default() -> Self {
@@ -205,6 +213,7 @@ impl Style {
         iso: true,
         group: None,
         point: '.',
+        float_places: Some(FLOAT_PLACES),
     };
 
     pub fn new(order: Order, sep: char, hour12: bool) -> Style {
@@ -215,6 +224,16 @@ impl Style {
             iso: false,
             group: None,
             point: '.',
+            float_places: Some(FLOAT_PLACES),
+        }
+    }
+
+    /// This style, with a `Float` shown to `places` places after its point,
+    /// or in full for `None`.
+    pub fn with_float_places(self, places: Option<u32>) -> Style {
+        Style {
+            float_places: places,
+            ..self
         }
     }
 

@@ -1089,7 +1089,7 @@ mod tests {
         // None of these lexes to a quantity token. (`5km/s` is the quantity
         // `5km`, a `/` and a name; that is not one literal, see convert.rs.)
         for bad in [
-            "5 kg", "5m2", "5ft", "5L", "5min", "5kgx", "5k", "5m^", "10 m", "5Kg", "5°",
+            "5 kg", "5m2", "5ft", "5L", "5min", "5kgx", "5k", "5m^", "10 m", "5Kg",
         ] {
             let ok = lex(bad, 0, 0)
                 .map(|t| t.iter().any(|t| matches!(t.tok, Tok::Quantity(..))))

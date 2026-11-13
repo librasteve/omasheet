@@ -76,6 +76,13 @@ impl MathFn {
         self.is_exact() && !matches!(self, MathFn::Abs | MathFn::Re | MathFn::Conj)
     }
 
+    /// Whether the result of a real argument is an angle in radians: the
+    /// inverse trigonometric functions, which `sin`, `cos` and `tan` take
+    /// back.
+    pub fn gives_angle(self) -> bool {
+        matches!(self, MathFn::Arcsin | MathFn::Arccos | MathFn::Arctan)
+    }
+
     /// Whether the argument is cast to `Float` first, as `x.Float` does:
     /// the exponential, logarithmic and trigonometric functions, which
     /// give a `Float` whatever they are given.
@@ -654,21 +661,21 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         TRIG,
         "arcsin",
         "arcsin(x)",
-        "The angle in radians whose sine is x. A real x beyond -1 to 1 gives a complex number.",
+        "The angle in radians whose sine is x. A real x beyond -1 to 1 gives a complex number. It is a quantity in rad, so .to('°') gives degrees.",
         MathFn::Arcsin,
     ),
     math_doc(
         TRIG,
         "arccos",
         "arccos(x)",
-        "The angle in radians whose cosine is x. A real x beyond -1 to 1 gives a complex number.",
+        "The angle in radians whose cosine is x. A real x beyond -1 to 1 gives a complex number. It is a quantity in rad, so .to('°') gives degrees.",
         MathFn::Arccos,
     ),
     math_doc(
         TRIG,
         "arctan",
         "arctan(x)",
-        "The angle in radians whose tangent is x.",
+        "The angle whose tangent is x, a quantity in rad: arctan(1).to('°') gives 45°.",
         MathFn::Arctan,
     ),
     math_doc(

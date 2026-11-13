@@ -26,34 +26,34 @@ coarse                | 1.00(20)e3
 
 sheet Functions
 
-Function | Value
----------|------------------
-abs      |          3.00(10)
-sign     |                -1
-round    |                 3
-floor    |                 2
-ceil     |                 3
-sqrt     |          2.00(10)
-exp      |          2.72(27)
-ln       |         4.605(10)
-log10    |        2.0000(43)
-log2     |         3.000(18)
-sin      |        0.4794(88)
-cos      |        0.8776(48)
-tan      |         0.546(13)
-arcsin   |         0.524(12)
-arccos   |         1.047(12)
-arctan   |        0.4636(80)
-sinh     |          1.18(15)
-cosh     |          1.54(12)
-tanh     |         0.762(42)
-radians  |         3.142(17)
-degrees  |          57.3(57)
-re       |          3.00(10)
-im       |                 0
-conj     |          3.00(10)
-arg      | 3.141592653589793
-exact    | 0.479425538604203
+Function          | Value
+------------------|------------------
+abs               |          3.00(10)
+sign              |                -1
+round             |                 3
+floor             |                 2
+ceil              |                 3
+sqrt              |          2.00(10)
+exp               |          2.72(27)
+ln                |         4.605(10)
+log10             |        2.0000(43)
+log2              |         3.000(18)
+sin               |        0.4794(88)
+cos               |        0.8776(48)
+tan               |         0.546(13)
+arcsin in degrees |         30.00(66)
+arccos in degrees |         60.00(66)
+arctan in degrees |         26.57(46)
+sinh              |          1.18(15)
+cosh              |          1.54(12)
+tanh              |         0.762(42)
+radians           |         3.142(17)
+degrees           |          57.3(57)
+re                |          3.00(10)
+im                |                 0
+conj              |          3.00(10)
+arg               | 3.141592653589793
+exact             | 0.479425538604203
 
 sheet Degraded
 

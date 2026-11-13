@@ -10,53 +10,85 @@
 
 sheet Literals
 
-| Name         | Value          |
-| ------------ | -------------- |
-| degrees      | 45°            |
-| minutes      | 45°30′         |
-| seconds      | 45°30′30″      |
-| ascii        | 45º30'30"      |
-| decimal      | 45°30.5′       |
-| radians      | 1.5707963rad   |
-| angular speed | 2rad.s^-1     |
-| solid angle  | 2sr            |
-| luminous flux | 800lm         |
-| illuminance  | 500lx          |
-| celsius      | 20°C           |
+| Name          | Value             |
+| ------------- | ----------------- |
+|               | 45°               |
+| minutes       | 45°30′            |
+| seconds       | 45°30′30″         |
+| ascii         | 45º30'30"         |
+| decimal       | 45°30.5′          |
+| radians       | = pi() / 2 * 1rad |
+| angular speed | 2rad.s^-1         |
+| solid angle   | 2sr               |
+| luminous flux | 800lm             |
+| illuminance   | 500lx             |
+| celsius       | 20°C              |
 
 sheet Arithmetic
 
-| Name           | Value                        |
-| -------------- | ---------------------------- |
-| sum            | = 45° + 0.5rad               |
-| difference     | = 90° - 30°30′               |
-| in radians     | = 180°.to('rad')             |
-| in seconds     | = 1°.to('″')                 |
-| equal          | = 45°30′ == 45.5°            |
-| sine           | = sin(30°)                   |
-| cosine         | = cos(60°)                   |
-| tangent        | = tan(45°)                   |
-| uncertain sine | = sin(30.0(5)°)              |
-| written out    | = 45.508333333°.dms(1)       |
-| a radian       | = dms(1rad)                  |
-| illuminance    | = (800lm / 2m^2).to('lx')    |
+| Name             | Value                     |
+| ---------------- | ------------------------- |
+| sum              | = 45° + 0.5rad            |
+| difference       | = 90° - 30°30′            |
+| in radians       | = 180°.to('rad')          |
+| in seconds       | = 1°.to('″')              |
+| equal            | = 45°30′ == 45.5°         |
+| sine             | = sin(30°)                |
+| cosine           | = cos(60°)                |
+| tangent          | = tan(45°)                |
+| uncertain sine   | = sin(30.0(5)°)           |
+| written out      | = 45.508333333°.dms(1)    |
+| a radian         | = dms(1rad)               |
+| illuminance      | = (800lm / 2m^2).to('lx') |
+| Euler's identity | =e()**(1i*pi())           |
+
+# Trigonometry in degrees and radians, with `pi()` for the radians. A `Float`
+# is not exactly equal to anything it is nearly (`cos(90º)` is 6e-17, not 0),
+# so `==` is false where `=~=`, which allows a difference of 1e-15 of the
+# larger side, is true. Converting to radians and back comes home too.
+sheet Trigonometry
+
+
+| Name                           | Value                                 |
+| ------------------------------ | ------------------------------------- |
+| sine of 30º                    | = sin(30º)                            |
+| same in radians                | = sin(pi() / 6 * 1rad)                |
+| they agree                     | = sin(30º) =~= sin(pi() / 6 * 1rad)   |
+| sine of 30º is a half          | = sin(30º) =~= 0.5                    |
+| cosine of 60º                  | = cos(60º) =~= cos(pi() / 3 * 1rad)   |
+| tangent of 45º                 | = tan(45º) =~= tan(pi() / 4 * 1rad)   |
+| cos of a right angle           | = cos(90º)                            |
+| cos of a right angle (rounded) | =cos(90º).round(-16)                  |
+| is it zero                     | = cos(90º) == 0                       |
+| is it nearly zero              | = cos(90º) =~= 0                      |
+| sin of a half turn             | = sin(pi() * 1rad) =~= sin(180º)      |
+| half turn                      | = 180º =~= pi() * 1rad                |
+| full turn                      | = 360º =~= 2 * pi() * 1rad            |
+| a turn is not half             | = 180º =~= 2 * pi() * 1rad            |
+| round trip                     | = 90º.to('rad').to('º') =~= 90º       |
+| round trip, written            | = (pi() / 2 * 1rad).to('º')           |
+| back from seconds              | = 1°.to('″').to('°') =~= 1°           |
+| sin² + cos²                    | = sin(40º) ** 2 + cos(40º) ** 2 =~= 1 |
 
 # A column of angles is shown in the unit it names, `Angle[°]`, whatever the
 # cells were written in, and a bare number is read in it.
 sheet Bearings
 
-Place   : String
-Bearing : Angle[°]
-Radians : Angle
-Written : String
+Place    : String
+Bearing  : Angle[°]
+Radians  : Angle[rad; .3f]
+Written  : String
+Quadrant : Angle[rad; .3f]
 
-| Place    | Bearing  | Radians | Written |
-| -------- | -------- | ------- | ------- |
-| north    | 0°       | *       | *       |
-| east     | 90°      | *       | *       |
-| south    | 3.14159rad | *     | *       |
-| lookout  | 120°30′  | *       | *       |
-| summit   | 45.5     | *       | *       |
+| Place   | Bearing       | Radians | Written | Fraction | Quadrant | Check |
+| ------- | ------------- | ------- | ------- | -------- | -------- | ----- |
+| ,       | 0°            | *       | *       | 0/1      | *        | *     |
+| east    | 90°           | *       | *       | 1/4      | *        | *     |
+| south   | = pi() * 1rad | *       | *       | 1/2      | *        | *     |
+| lookout | 120°30′       | *       | *       | 1/3      | *        | *     |
+| summit  | 45.5          | *       | *       | 1/4      | *        | *     |
 
 Radians := Bearing.to('rad')
 Written := Bearing.dms()
+Quadrant := 2*pi()*1rad*Fraction
+Check := Bearing==Quadrant

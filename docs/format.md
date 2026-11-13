@@ -373,8 +373,7 @@ sorted, but `=` and `!=` compare both parts exactly.
 A cell in a column with a declared type is accepted when it converts to that
 type, and is then shown in the type's own format: `0b1` in an `Integer` column
 is shown `1`, and `3+0i` in a `Float` column is `3`. A `Complex` converts to a
-real number only when its imaginary part is zero, to within `1e-15`, as in
-Raku, so `3+4i` in a `Float` column is an error.
+real number only when its imaginary part is zero, so `3+4i` in a `Float` column is an error.
 
 A column of numbers and text is of any type, and each cell is as it was
 written. What a file keeps of a cell is the text that was entered: a number

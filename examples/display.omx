@@ -6,7 +6,9 @@
 # its mantissa cut and marked · where even that is too wide. The Spec column
 # is how the spec shows the value in the app, in a locale that writes
 # 12,345.5, to compare with how it is shown there; `print` does not group
-# digits.
+# digits. A Float is first rounded to 15 places after its point, the noise
+# of a calculation shown as nought, so 5e-324 is shown 0 where the Spec
+# column, which is the table as first written, has it in e notation.
 
 sheet Ints
 

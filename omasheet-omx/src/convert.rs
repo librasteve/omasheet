@@ -33,11 +33,6 @@ pub fn parse_mixed(text: &str) -> Option<Dec> {
     if negative { r.checked_neg() } else { Some(r) }
 }
 
-/// How near zero the imaginary part of a `Complex` must be for it to be
-/// made a real number: Raku's `$*TOLERANCE`, and an absolute test. Nothing
-/// else in the language uses a tolerance (D201, D202).
-pub const IMAG_TOLERANCE: f64 = 1e-15;
-
 /// A `Complex` as it is written, `3+4i`, for a message.
 pub fn complex_text(re: f64, im: f64) -> String {
     let sign = if im.is_sign_negative() && !im.is_nan() {
@@ -192,14 +187,14 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     if let (Lit::Scientific(v, _), S::Float) = (lit, to) {
         return Ok(Lit::Float(*v));
     }
-    // A `Complex` is a real number when its imaginary part is zero, to
-    // within Raku's tolerance, and is otherwise refused (D201).
+    // A `Complex` is a real number when its imaginary part is zero, and is
+    // otherwise refused.
     if let Lit::Complex(re, im) = lit {
         if to == S::Boolean {
             return Ok(Lit::Boolean(*re != 0.0 || *im != 0.0));
         }
         if to.is_exact() || to == S::Float {
-            return if im.abs() < IMAG_TOLERANCE {
+            return if *im == 0.0 {
                 if to == S::Float {
                     Ok(Lit::Float(*re))
                 } else {
@@ -412,8 +407,7 @@ mod tests {
         assert_eq!(convert(&lit("3"), S::Complex), Ok(Lit::Complex(3.0, 0.0)));
         // A Complex is a real number only when its imaginary part is zero.
         assert_eq!(convert(&lit("3+0i"), S::Int), Ok(lit("3")));
-        assert_eq!(convert(&lit("3+1e-16i"), S::Float), Ok(Lit::Float(3.0)));
-        assert!(convert(&lit("3+1e-15i"), S::Float).is_err());
+        assert!(convert(&lit("3+1e-16i"), S::Float).is_err());
         assert_eq!(
             convert(&lit("3+4i"), S::Float),
             Err("Cannot convert 3+4i to Float: imaginary part not zero".to_string())

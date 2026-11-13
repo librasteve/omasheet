@@ -4600,6 +4600,14 @@ impl<'a> Checker<'a> {
                     s if m.casts_to_float() && s.converts_to(S::Float) => Some(S::Float),
                     _ => None,
                 };
+                // The inverse trigonometric functions give an angle, in
+                // radians, where they give a real number.
+                let out = |s: S| match out(s) {
+                    Some(S::Float | S::Scientific) if m.gives_angle() => {
+                        QId::from_name("Angle").map(S::Quantity)
+                    }
+                    other => other,
+                };
                 let (arg, aty) = self.lower(&args[0], sc);
                 let ty = match aty {
                     Ty::Any => Ty::Any,

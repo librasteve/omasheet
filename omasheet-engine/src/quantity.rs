@@ -312,6 +312,17 @@ pub fn approx(a: &Value, b: &Value) -> Option<Result<Option<bool>, String>> {
     }))
 }
 
+/// An angle of `value` radians, `sigma` uncertain.
+pub fn radians(value: f64, sigma: f64) -> Value {
+    match Unit::parse("rad", Scope::Live)
+        .map_err(said)
+        .and_then(|u| Quantity::new(value, sigma, u).map_err(said))
+    {
+        Ok(q) => Value::Quantity(Rc::new(q)),
+        Err(_) => Value::Float(value),
+    }
+}
+
 /// A function of a quantity: those that keep or halve its unit.
 pub fn math(m: MathFn, q: &Quantity) -> Result<Value, String> {
     match m.name() {
@@ -337,6 +348,17 @@ pub fn math(m: MathFn, q: &Quantity) -> Result<Value, String> {
                 Value::Float(v)
             } else {
                 Value::Scientific(v, sigma)
+            })
+        }
+        // The degrees of an angle, as a number: `degrees(arctan(1))` is 45.
+        "degrees" if q.unit().dims() == siquant::Dim::of(siquant::Base::Angle) => {
+            let rad = Unit::parse("rad", Scope::Live).map_err(said)?;
+            let x = q.convert(&rad).map_err(said)?;
+            let (v, s) = (x.value().to_degrees(), x.sigma().to_degrees());
+            Ok(if s == 0.0 {
+                Value::Float(v)
+            } else {
+                Value::Scientific(v, s)
             })
         }
         name @ ("sin" | "cos" | "tan") => Err(format!(

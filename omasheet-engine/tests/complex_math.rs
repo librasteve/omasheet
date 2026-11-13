@@ -241,11 +241,12 @@ fn a_real_beyond_the_domain_is_complex_and_the_edge_is_real() {
         (MathFn::Ln, 0.0),
         (MathFn::Sqrt, 0.0),
         (MathFn::Arctanh, 1.0),
-        (MathFn::Arcsin, 1.0),
         (MathFn::Arccosh, 1.0),
     ] {
         assert!(matches!(at(m, x), Value::Float(_)), "{} at {x}", m.name());
     }
+    // `arcsin` is real there too, and an angle.
+    assert!(matches!(at(MathFn::Arcsin, 1.0), Value::Quantity(_)));
     assert!(matches!(at(MathFn::Sqrt, f64::NAN), Value::Float(f) if f.is_nan()));
     // The inside of the domain is real.
     assert!(matches!(at(MathFn::Arcsinh, -3.0), Value::Float(_)));

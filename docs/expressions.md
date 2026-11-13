@@ -31,7 +31,7 @@ A `Decimal`, a `Float` and the parts of a `Complex` are shown to three places
 after the point, and where they have more the rest is cut and marked with
 `·`: `1/3` is `0.333·` and `sqrt(2)` is `1.414·`. One with no more than three
 places is whole, `19.99`, and one below a thousandth keeps its digits, so as
-not to show as nought. A `Float` in e notation has its mantissa cut the same way, `1.225·e-16`. A `Scientific` is not cut: the uncertainty in brackets
+not to show as nought. A `Float` in e notation has its mantissa cut the same way, `1.234·e-12`. Before that a `Float`, and each part of a `Complex`, is rounded to 15 places after the point, so that the noise of a calculation shows as nought: `cos(90°)` is `0` and not `6.123·e-17`, and `1e-20.Float` is `0`. That is the `float_places` of the display style; the value itself, and a file, keep every digit. A `Scientific` is not cut: the uncertainty in brackets
 sets the digits it shows.
 
 A `Decimal` holds 38 digits, so one that does not end within them is
@@ -132,7 +132,7 @@ is empty). `if c then a else b`.
 Comparisons chain, as in Raku: `0 < x <= 10` is `0 < x and x <= 10`, and
 `a < b < c < d` tests each pair in turn. `in` takes one side each.
 
-`==` on two `Float` values is exact, so `sin(pi()) == 0` is false. `a =~= b` is Raku's approximate equality: true when `a` and `b` differ by less than 1e-15 of the larger of them (or by less than 1e-15 where one is zero), so `sin(pi()) =~= 0` and `pi() * 1rad =~= 180°` are true. It takes numbers, `Complex` values and quantities (the right side is read in the unit of the left), ignores any uncertainty, and leaves `==` exact: it is the one comparison that has a tolerance, beside the `Complex` to real test.
+`==` on two `Float` values is exact, so `sin(pi()) == 0` is false. `a =~= b` is Raku's approximate equality: true when `a` and `b` differ by less than 1e-15 of the larger of them (or by less than 1e-15 where one is zero), so `sin(pi()) =~= 0` and `pi() * 1rad =~= 180°` are true. It takes numbers, `Complex` values and quantities (the right side is read in the unit of the left), ignores any uncertainty, and leaves `==` exact: it is the one comparison that has a tolerance.
 
 A string in a formula is in single quotes: `Name // 'Unknown'`, with `\'`,
 `\\`, `\n` and `\t` as its escapes. Double quotes are for text in a table
@@ -183,7 +183,7 @@ vector is converted value by value.
 | `x.Integer` | a whole number: `19.99` gives `19`, `-19.99` gives `-19` |
 | `x.Decimal` | the same number as a decimal: `(1/8).Decimal` is `0.125`, `(1/3).Decimal` is `0.333·` |
 | `x.Percent` | the same number as a percentage: `0.4` gives `40%`, `5/12` gives `41.67%` |
-| `x.Float` | a floating-point number; of a `Complex`, its real part, where its imaginary part is zero to within `1e-15`, and otherwise an error |
+| `x.Float` | a floating-point number; of a `Complex`, its real part, where its imaginary part is zero, and otherwise an error |
 | `x.Complex`, `Complex(re, im)` | a complex number from a real one, or from two |
 | `x.String` | any value as text, written the way a file writes it |
 | `x.Boolean` | `false` for zero, `true` for any other number |
@@ -256,7 +256,7 @@ symbol is case-sensitive, and `ºC`, `µ` and the ohm sign are read as `°C`,
 `μ` and `Ω`. A unit other than these is not a unit: `5ft`, `5L` and `5min` are
 errors, and `5 kg` is a number and a name.
 
-An angle has the radian `rad`, the steradian `sr` (a radian squared) and the degree `°`, the minute `′` and the second `″` of arc, and the lumen `lm` and the lux `lx` that need it. Degrees, minutes and seconds are written together, `45°30′30″` or `-12°30′`, and `º`, `'` and `"` do for the marks; minutes and seconds are under 60 and only the last part may have a point. `45°` is a degree and `20°C` is Celsius. `sin`, `cos` and `tan` take an angle in any unit, and `dms` writes one out: `45.5°.dms()` is `45°30′0″`, and `dms(x, 2)` keeps two places of seconds.
+An angle has the radian `rad`, the steradian `sr` (a radian squared) and the degree `°`, the minute `′` and the second `″` of arc, and the lumen `lm` and the lux `lx` that need it. Degrees, minutes and seconds are written together, `45°30′30″` or `-12°30′`, and `º`, `'` and `"` do for the marks; minutes and seconds are under 60 and only the last part may have a point. `45°` is a degree and `20°C` is Celsius. `sin`, `cos` and `tan` take an angle in any unit (a plain number is in radians), and `arcsin`, `arccos` and `arctan` give one back in `rad`, so `arcsin(0.5).to('°')` is `30°` and `sin(arcsin(0.5)) =~= 0.5` is true; `degrees(x)` takes such an angle too, and gives the number of degrees. An `arcsin` of a number beyond -1 to 1 is a `Complex`, with no unit. `dms` writes an angle out: `45.5°.dms()` is `45°30′0″`, and `dms(x, 2)` keeps two places of seconds.
 
 Data has two units, the bit `b` and the byte `B` (eight bits). Each takes the SI
 prefixes, where `kB` is 1000 B, and the binary ones `Ki Mi Gi Ti Pi Ei Zi Yi Ri
@@ -278,7 +278,7 @@ sqrt(9m ** 2)        9m             a root, where the units allow it
 5kg.to('g')          5000g          to another unit of the dimension
 sin(30°)             0.5            an angle in any unit
 45°30′ == 45.5°      true           degrees, minutes and seconds
-180°.to('rad')       3.14159rad
+(pi() * 1rad).to('°') 180°          pi() in radians, back to degrees
 20°C - 10°C          10°C           an interval of two temperatures keeps the unit
 5kg + 3m             an error: they measure Mass and Length
 ```
@@ -343,9 +343,9 @@ and `sqrt(-4).Float` is an error. A `Scientific` stays real: `sqrt(-4 ± 0.4)` i
 
 A `Complex` has no order: `1i < 2i` is an error. `=` and `!=` compare both
 parts exactly. To get a real number out, use `re(z)` or `abs(z)`, or `z.Float`,
-which works only where the imaginary part is zero to within `1e-15`, Raku's
-tolerance, and is otherwise an error. That tolerance is used nowhere else:
-`im(z) = 0` is the exact test.
+which works only where the imaginary part is exactly zero, and is otherwise
+an error: `im(z) = 0` is the test, and `z =~= w` allows for the noise of a
+calculation.
 
 ## Names
 

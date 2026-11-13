@@ -959,7 +959,8 @@ fn complex_numbers() {
     assert_eq!(calc("3+4i != 3+5i"), "true");
     // Made a real number only where its imaginary part is zero (D201).
     assert_eq!(calc("(3+0i).Integer"), "3");
-    assert_eq!(calc("(3+1e-16i).Float"), "3");
+    assert!(calc_err(None, "(3+1e-16i).Float").contains("imaginary part not zero"));
+    assert_eq!(calc("(3+0i).Float"), "3");
     assert!(calc_err(None, "(3+4i).Float").contains("imaginary part not zero"));
     assert!(calc_err(None, "(3+1e-15i).Float").contains("imaginary part not zero"));
     // A column of them: literal cells, a real number, and a formula.

@@ -53,9 +53,9 @@ sheet Functions
 | sin      | = sin(0.5 ± 0.01)      |
 | cos      | = cos(0.5 ± 0.01)      |
 | tan      | = tan(0.5 ± 0.01)      |
-| arcsin   | = arcsin(0.5 ± 0.01)   |
-| arccos   | = arccos(0.5 ± 0.01)   |
-| arctan   | = arctan(0.5 ± 0.01)   |
+| arcsin in degrees | = degrees(arcsin(0.5 ± 0.01)) |
+| arccos in degrees | = degrees(arccos(0.5 ± 0.01)) |
+| arctan in degrees | = degrees(arctan(0.5 ± 0.01)) |
 | sinh     | = sinh(1 ± 0.1)        |
 | cosh     | = cosh(1 ± 0.1)        |
 | tanh     | = tanh(1 ± 0.1)        |
