@@ -147,12 +147,24 @@ fn functions_propagate_to_first_order() {
 #[test]
 fn every_math_function_carries_its_slope() {
     use omasheet_engine::omx::funcs::FUNCTIONS;
-    let (x, s, h) = (0.3_f64, 1e-3_f64, 1e-6_f64);
+    let (s, h) = (1e-3_f64, 1e-6_f64);
     let mut seen = 0;
     for doc in FUNCTIONS.iter().filter(|f| f.math.is_some()) {
-        let at = |t: f64| -> f64 { full(&format!("{}({t:?})", doc.name)).parse().unwrap() };
+        // Real only from 1 up: below it the result is a complex number.
+        let x = if doc.name == "arccosh" {
+            1.3_f64
+        } else {
+            0.3_f64
+        };
+        // The inverse trigonometric functions give an angle, `0.3047rad`.
+        let bare = |text: String| text.trim_end_matches("rad").to_string();
+        let at = |t: f64| -> f64 {
+            let text = bare(full(&format!("{}({t:?})", doc.name)));
+            text.parse()
+                .unwrap_or_else(|_| panic!("{}({t:?}) gave `{text}`", doc.name))
+        };
         let slope = (at(x + h) - at(x - h)) / (2.0 * h);
-        let got = full(&format!("{}({x:?} ± {s:?})", doc.name));
+        let got = bare(full(&format!("{}({x:?} ± {s:?})", doc.name)));
         let (value, sigma) = match got.split_once(" ± ") {
             Some((v, e)) => (v.parse::<f64>().unwrap(), e.parse::<f64>().unwrap()),
             // No uncertainty left, as for a step or a part of a real number.
@@ -178,8 +190,12 @@ fn every_math_function_carries_its_slope() {
 
 #[test]
 fn a_comparison_uses_the_values() {
-    assert_eq!(shown("(10 ± 1) > 9"), "true");
+    assert_eq!(shown("(10 ± 1) > 8"), "true");
     assert_eq!(shown("(10 ± 1) == 10"), "true");
+    // Equal when they differ by no more than their uncertainties together,
+    // so 9 is as far from `10 ± 1` as it is uncertain, and is not below it.
+    assert_eq!(shown("(10 ± 1) > 9"), "false");
+    assert_eq!(shown("(10 ± 1) >= 9"), "true");
 }
 
 // ---- aggregation -----------------------------------------------------------
