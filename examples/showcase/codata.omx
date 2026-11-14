@@ -9,7 +9,7 @@
 
 sheet Constants
 
-Value : Quantity[; .10s]
+Value : Quantity[; _.10s]
 
 | Name                                       | Symbol  | Value                          | Kind     |
 | ------------------------------------------ | ------- | ------------------------------ | -------- |
