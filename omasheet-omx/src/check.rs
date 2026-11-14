@@ -114,6 +114,12 @@ pub struct Column {
     /// whoever evaluates the column. False for a column whose values are
     /// not a formula at all, which has nothing to be lowered.
     pub elementwise: bool,
+    /// Not elementwise, but reads the other columns of its own sheet only
+    /// the way a window function does (`cum_sum`, `rank`...), or the same
+    /// row: the whole column is one expression over a frame of the sheet's
+    /// columns, as an elementwise one is. It is never calculated for a
+    /// window of the rows, which would restart the running total.
+    pub framewise: bool,
 }
 
 #[derive(Debug)]
@@ -319,6 +325,8 @@ struct Checker<'a> {
     /// same row: [`Column::elementwise`]. Worked out in [`Checker::order`],
     /// which is where the dependencies are still to hand.
     elementwise: Vec<Vec<bool>>,
+    /// And [`Column::framewise`].
+    framewise: Vec<Vec<bool>>,
     /// Per sheet, the other sheets its formulas pick a row of with the
     /// cursor, each once. A sheet that holds no rows is as long as these.
     row_reads: Vec<Vec<usize>>,
@@ -936,6 +944,7 @@ impl<'a> Checker<'a> {
             col_out: Vec::new(),
             col_deps: Vec::new(),
             elementwise: Vec::new(),
+            framewise: Vec::new(),
             row_reads: Vec::new(),
             view_state: Vec::new(),
             view_out: Vec::new(),
@@ -3438,9 +3447,19 @@ impl<'a> Checker<'a> {
         let usage = match name {
             _ if rolling => format!("Amount.{name}(3), or Amount.{name}(3, Date by Account)"),
             "diff" | "pct_change" => format!("Amount.{name}(), Amount.{name}(2, Date by Account)"),
-            "rank" => "Score.rank(), Score.rank(min, desc by Region)".to_string(),
+            "rank" => {
+                "Score.rank(), Score.rank(min, desc by Region), Score.rank(by Region)".to_string()
+            }
             _ => format!("Amount.{name}(), or Amount.{name}(Date by Account)"),
         };
+        if args.is_empty() {
+            self.err_help(
+                span,
+                format!("`{name}` runs down a column, which it is called on"),
+                format!("usage: `{usage}`"),
+            );
+            return fail;
+        }
         let mut rest: Vec<&Expr> = args[1..].iter().collect();
         // The partition: `by Key` on the last argument.
         let mut by: Vec<(String, Span)> = Vec::new();
@@ -3449,7 +3468,12 @@ impl<'a> Checker<'a> {
         {
             by = keys.clone();
             let n = rest.len();
-            rest[n - 1] = inner;
+            // `by Key` alone has nothing before it.
+            if matches!(inner.kind, ExprKind::Own) {
+                rest.pop();
+            } else {
+                rest[n - 1] = inner;
+            }
         }
         if rest.iter().any(|e| matches!(e.kind, ExprKind::By(..))) {
             self.err_help(
@@ -3516,7 +3540,7 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        if rest.len() > 1 || (rest.is_empty() && !by.is_empty() && !ranking) {
+        if rest.len() > 1 {
             self.err_help(
                 span,
                 format!("`{name}` takes at most one order key, then `by` its partition"),
@@ -3619,11 +3643,18 @@ impl<'a> Checker<'a> {
             _ => Win::RollingStd,
         };
         let row = row_depth.is_some();
+        // A window over the formula's own sheet is one a frame of its
+        // columns can answer whole.
+        let window_dep = if row_depth == Some(0) {
+            DepKind::Frame
+        } else {
+            DepKind::Whole
+        };
         let mut call: Vec<Node> = Vec::new();
         // The column itself, whole.
         match (&recv.kind, row_depth, home) {
             (Ir::RowCol { col, .. }, Some(_), Some(t)) => {
-                self.deps.push((DepNode::Col(t, *col), DepKind::Whole));
+                self.deps.push((DepNode::Col(t, *col), window_dep));
                 call.push(Node::new(
                     Ir::Column {
                         sheet: t,
@@ -3647,7 +3678,7 @@ impl<'a> Checker<'a> {
                 (Ir::RowCol { depth, col }, Ty::Scalar(_), Some(t))
                     if Some(*depth) == row_depth =>
                 {
-                    self.deps.push((DepNode::Col(t, *col), DepKind::Whole));
+                    self.deps.push((DepNode::Col(t, *col), window_dep));
                     call.push(Node::new(
                         Ir::Column {
                             sheet: t,
@@ -3685,7 +3716,7 @@ impl<'a> Checker<'a> {
                 return fail;
             };
             self.col_refs.push((*at, t, c));
-            self.deps.push((DepNode::Col(t, c), DepKind::Whole));
+            self.deps.push((DepNode::Col(t, c), window_dep));
             call.push(Node::new(Ir::Column { sheet: t, col: c }, span));
             parts += 1;
         }
@@ -5571,6 +5602,21 @@ impl<'a> Checker<'a> {
                     .collect()
             })
             .collect();
+        self.framewise = self
+            .col_deps
+            .iter()
+            .map(|cols| {
+                cols.iter()
+                    .map(|deps| {
+                        deps.iter().any(|&(_, kind)| kind == DepKind::Frame)
+                            && deps.iter().all(|&(to, kind)| match to {
+                                DepNode::Col(..) => matches!(kind, DepKind::Same | DepKind::Frame),
+                                DepNode::Const(_) => true,
+                            })
+                    })
+                    .collect()
+            })
+            .collect();
         let nconsts = self.consts.len();
         let mut nodes: Vec<DepNode> = (0..nconsts).map(DepNode::Const).collect();
         for (t, sheet) in self.sheets.iter().enumerate() {
@@ -5671,6 +5717,7 @@ impl<'a> Checker<'a> {
                     // formula, so there is nothing of it to lower, whatever
                     // the cells' own formulas read.
                     elementwise: matches!(kind, ColKind::Computed(_)) && self.elementwise[t][c],
+                    framewise: matches!(kind, ColKind::Computed(_)) && self.framewise[t][c],
                     kind,
                 });
             }

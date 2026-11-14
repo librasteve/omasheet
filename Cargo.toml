@@ -63,6 +63,13 @@ polars = { version = "0.51", default-features = false, features = [
     "is_unique",
     "is_first_distinct",
     "is_last_distinct",
+    # The window functions: cum_sum, diff, rank and rolling_* down a column
+    # (polars-function-registry).
+    "cum_agg",
+    "diff",
+    "rank",
+    "rolling_window",
+    "abs",
 ] }
 regex = "1"
 serde = "1"

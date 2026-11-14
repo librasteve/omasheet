@@ -14,11 +14,11 @@ Deferred until `add-units` is archived.
 - [ ] 1.5 Refusal of `Complex` and `Scientific` by name
 
 ## 2. The first functions
-- [ ] 2.1 `cum_sum cum_min cum_max cum_prod cum_count` with the order key and `by`
-- [ ] 2.2 `diff pct_change rank forward_fill backward_fill`
-- [ ] 2.3 `rolling_sum rolling_mean rolling_min rolling_max rolling_std`
+- [x] 2.1 `cum_sum cum_min cum_max cum_prod cum_count` with the order key and `by`
+- [x] 2.2 `diff pct_change rank forward_fill backward_fill`
+- [x] 2.3 `rolling_sum rolling_mean rolling_min rolling_max rolling_std` (mean, std and the float sum are the engine's alone)
 - [ ] 2.4 `n_unique clip is_between any all`
-- [ ] 2.5 Cargo features, family by family
+- [x] 2.5 Cargo features (`cum_agg diff rank rolling_window abs`)
 
 ## 2b. The join family
 - [ ] 2b.1 Stage entries in the registry (N10)
@@ -38,6 +38,6 @@ Deferred until `add-units` is archived.
 - [ ] 2c.7 Tests: a row inserted out of date order, per-member balances, the Grist examples (`PREVIOUS`, `RANK`, `find.le`, latest-per-group) as an example file with `.expected`
 
 ## 3. Checks
-- [ ] 3.1 Table path and sheet path agree on every function and every dtype they take
+- [x] 3.1 Table path and sheet path agree on every function and every dtype they take (`tests/window_lowered.rs`)
 - [ ] 3.2 Docs, skill, an example, `.expected` regenerated
 - [ ] 3.3 fmt, clippy -D warnings, workspace tests

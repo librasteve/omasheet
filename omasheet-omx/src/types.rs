@@ -431,6 +431,11 @@ pub enum DepKind {
     Fixed,
     /// Any rows.
     Whole,
+    /// Any rows of a column of the same sheet, read by a window function
+    /// (`cum_sum`, `diff`, `rank`...). It orders and finds cycles as `Whole`
+    /// does; it differs in that a column that reads nothing else is still
+    /// one Polars can calculate whole, in a frame of the sheet's columns.
+    Frame,
 }
 
 /// A selection of rows and columns from one sheet of the file.

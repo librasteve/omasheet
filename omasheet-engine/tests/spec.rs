@@ -3702,8 +3702,9 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // in `ccp.omx`, and those are taken at once whichever way the rest is
     // calculated, which is 32 of the 64. The other thirty-two are the
     // columns lowering forced calculates in one step, and 8.3 is where that
-    // number is read.
-    assert_eq!(taken, 64, "the columns taken at once");
+    // number is read. `windows.omx` adds five: the window functions of whole
+    // numbers, which Polars runs down the column.
+    assert_eq!(taken, 69, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read

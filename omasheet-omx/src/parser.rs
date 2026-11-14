@@ -190,7 +190,21 @@ impl Parser {
                 });
             } else {
                 // `cum_sum(Date by Account)`: an order key and its partition.
-                let e = self.expr()?;
+                // `rank(by Region)` is the partition alone: `by` with no
+                // key before it, which `Own` stands in for.
+                let alone = matches!(self.peek(), Tok::Ident(w) if w == "by")
+                    && matches!(
+                        self.toks.get(self.pos + 1).map(|t| &t.tok),
+                        Some(Tok::Ident(_))
+                    );
+                let e = if alone {
+                    Expr {
+                        kind: ExprKind::Own,
+                        span: self.toks[self.pos].span,
+                    }
+                } else {
+                    self.expr()?
+                };
                 args.push(self.by(e)?);
             }
             if self.eat(&Tok::Comma) {

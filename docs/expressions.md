@@ -468,9 +468,25 @@ Recent  := Amount.rolling_mean(3, Date)
 default, a Float), `min`, `max`, `dense` or `ordinal`, and `desc` to rank
 from the largest. `by` partitions it: `Score.rank(min, desc by Region)`.
 
+`by` can stand alone, `Amount.cum_sum(by Account)` and `Score.rank(by
+Region)`, for a partition in the order of the file.
+
 Over a whole column, `Sales.Amount.cum_sum(Sales.Date)`, the answer is a
-column. A column of a Parquet table is read in full to be worked, once. A
-calculation down a column is written to an XLSX Workbook as its values.
+column. A calculation down a column is written to an XLSX Workbook as its
+values.
+
+**Speed.** Over whole numbers and floats a column of these is calculated by
+Polars, in one step over the whole table, and the answer is the one the
+engine would give. That is `cum_sum cum_min cum_max cum_count diff
+pct_change rank forward_fill backward_fill rolling_min rolling_max`, with
+`cum_prod` for floats and `rolling_sum` for whole numbers; the temporal types
+and text have `cum_min`, `cum_max`, `cum_count` and the fills. Anything else
+is the engine's, which works every type exactly but a row at a time: an exact
+Decimal, a Percent, a Fraction, a number with units, a rolling mean or
+deviation, a float rolling sum (Polars slides a window along and the last
+digit differs), a column with a `NaN`, and a total that might pass the
+largest whole number. A table of 3.7 million rows takes a couple of seconds
+for a running total by group, against more than a minute.
 
 ## Sequences with `...`
 

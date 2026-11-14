@@ -656,13 +656,13 @@ impl<'p> Engine<'p> {
         // A plan, an optimiser pass and a collect are slower than the row
         // loop for a sheet of ten rows (D73). An empty sheet has nothing to
         // calculate either way.
-        if !col.elementwise
+        if !(col.elementwise || col.framewise)
             || nrows == 0
             || (self.options.lowering == Lowering::Auto && nrows < ROW_THRESHOLD)
         {
             return false;
         }
-        let Some((frame, expr)) = self.plan(t, c, node) else {
+        let Some((frame, expr, windowed)) = self.plan(t, c, node) else {
             self.attempts.borrow_mut().push((t, c, Attempt::Refused));
             return false;
         };
@@ -670,7 +670,7 @@ impl<'p> Engine<'p> {
         // discarded, no diagnostic is filed for the attempt, and the group
         // is calculated again row by row, which is what produces a per-cell
         // error with the row in it (D67).
-        let Some(column) = self.lowered_column(frame, expr, nrows) else {
+        let Some(column) = self.lowered_column(frame, expr, nrows, windowed) else {
             self.attempts.borrow_mut().push((t, c, Attempt::Failed));
             return false;
         };
@@ -695,7 +695,13 @@ impl<'p> Engine<'p> {
     /// Nothing of the frame is borrowed from here on: the plan is built and
     /// the columns owned before the collect, which Polars runs on a pool of
     /// its own threads (D67's `RefCell` discipline).
-    fn lowered_column(&self, frame: DataFrame, expr: Expr, len: usize) -> Option<PlColumn> {
+    fn lowered_column(
+        &self,
+        frame: DataFrame,
+        expr: Expr,
+        len: usize,
+        windowed: bool,
+    ) -> Option<PlColumn> {
         let unaccounted = frame
             .get_column_names()
             .into_iter()
@@ -708,7 +714,7 @@ impl<'p> Engine<'p> {
             .select([expr, unaccounted])
             .collect()
             .ok()
-            .filter(accounted_for)
+            .filter(|df| windowed || accounted_for(df))
             .and_then(|df| df.get_columns().first().cloned())
             .filter(|column| column.len() == len)?;
         // Polars gives arithmetic a dtype of precision `None`; the full 38
@@ -794,8 +800,8 @@ impl<'p> Engine<'p> {
             return None;
         }
         let column = |cc: usize| self.window_column(t, cc, from, to);
-        let (frame, expr) = self.plan_with(t, c, node, &column)?;
-        let window = self.lowered_column(frame, expr, to - from)?;
+        let (frame, expr, windowed) = self.plan_with(t, c, node, &column)?;
+        let window = self.lowered_column(frame, expr, to - from, windowed)?;
         self.windows.borrow_mut()[t][c] = Some((from, window.clone()));
         Some(window)
     }
@@ -1751,7 +1757,7 @@ impl<'p> Engine<'p> {
     /// The frame a column's formula is evaluated over and the one
     /// expression that calculates it, or `None` where Polars has no answer
     /// of its own for some part of it.
-    fn plan(&self, t: usize, c: usize, node: &Node) -> Option<(DataFrame, Expr)> {
+    fn plan(&self, t: usize, c: usize, node: &Node) -> Option<(DataFrame, Expr, bool)> {
         let column = |cc| self.plan_column(t, cc);
         self.plan_with(t, c, node, &column)
     }
@@ -1764,7 +1770,7 @@ impl<'p> Engine<'p> {
         c: usize,
         node: &Node,
         column: &dyn Fn(usize) -> Option<PlColumn>,
-    ) -> Option<(DataFrame, Expr)> {
+    ) -> Option<(DataFrame, Expr, bool)> {
         let col = &self.prog.sheets[t].cols[c];
         let constant = |i| self.const_value(i).ok();
         let cx = lower::Cx::new(column, &constant);
@@ -1779,6 +1785,7 @@ impl<'p> Engine<'p> {
         // with every column present is the one `run_lowered` does not
         // believe: the column is then the engine's, whole.
         let risk = cx.at_risk();
+        let windowed = cx.windowed();
         let columns = cx.taken();
         // An expression reading no column at all is one value repeated, and
         // the row loop has already memoised it by the second row.
@@ -1787,12 +1794,21 @@ impl<'p> Engine<'p> {
         }
         let frame = DataFrame::new(columns).ok()?;
         let expr = match risk {
+            // A window function has empty cells of its own, so the empty
+            // cell that stands for a result that might not fit cannot be
+            // told from them: where one might not fit, the engine has it.
+            Some(risk) if windowed => {
+                if any_at_risk(&frame, risk) {
+                    return None;
+                }
+                out.expr
+            }
             Some(risk) => polars::prelude::when(risk)
                 .then(polars::prelude::lit(polars::prelude::NULL).cast(out.dtype.clone()))
                 .otherwise(out.expr),
             None => out.expr,
         };
-        Some((frame, expr.alias(col.name.as_str())))
+        Some((frame, expr.alias(col.name.as_str()), windowed))
     }
 
     /// Column `c` of sheet `t` as a Polars column, in the order of its rows:
