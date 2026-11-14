@@ -298,7 +298,20 @@ fn column_type(cells: &[&Datum]) -> (Option<S>, bool) {
     let exact = |s: &S| s.is_exact();
     match seen.as_slice() {
         [] | [S::String] => (None, false),
-        all if all.iter().all(exact) => (None, false),
+        // Exact numbers are read back from their cells, but a decimal of more
+        // places than a column infers would be read back as a fraction, so
+        // the places it keeps are said.
+        all if all.iter().all(exact) => {
+            let long = all.iter().filter_map(|s| match s {
+                S::Decimal(n)
+                    if i32::from(*n) > omasheet_engine::omx::convert::MAX_INFERRED_SCALE =>
+                {
+                    Some(*n)
+                }
+                _ => None,
+            });
+            (long.max().map(S::Decimal), false)
+        }
         [one] => (Some(*one), false),
         all if all.iter().all(|s| exact(s) || *s == S::Float) => (Some(S::Float), false),
         _ => (None, true),

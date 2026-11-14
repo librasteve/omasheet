@@ -319,7 +319,15 @@ fn window(spec: Spec, args: &[Node], cx: &Cx) -> Option<Out> {
     }
     let whole = value.dtype == DataType::Int64;
     let float = value.dtype == DataType::Float64;
-    let number = whole || float;
+    // A decimal, at the scale its column keeps. Polars cumulates, differs,
+    // ranks and fills it, but has no rolling window, no cumulative product
+    // and no ratio of one that is the engine's.
+    let places = match value.dtype {
+        DataType::Decimal(_, Some(s)) => Some(s as i32),
+        _ => None,
+    };
+    let decimal = places.is_some();
+    let number = whole || float || decimal;
     let x = value.expr.clone();
     // A float with a `NaN` in it is the engine's: where the functions put
     // it in an order differs.
@@ -331,12 +339,17 @@ fn window(spec: Spec, args: &[Node], cx: &Cx) -> Option<Out> {
     // A whole number total or difference that might pass an `i64`, which
     // Polars wraps and the engine moves its point for.
     let may_overflow = |cx: &Cx, by: f64| {
-        if whole {
-            let size = x.clone().cast(DataType::Float64).abs().sum();
-            cx.risks
-                .borrow_mut()
-                .push(size.gt_eq(lit(9.0e18 / by)).fill_null(lit(false)));
-        }
+        let limit = match (whole, places) {
+            (true, _) => 9.0e18,
+            // The digits a decimal holds are 38 of them, a scale of which
+            // are after the point.
+            (_, Some(s)) => 9.9e37 / 10f64.powi(s),
+            _ => return,
+        };
+        let size = x.clone().cast(DataType::Float64).abs().sum();
+        cx.risks
+            .borrow_mut()
+            .push(size.gt_eq(lit(limit / by)).fill_null(lit(false)));
     };
     let window_size = usize::try_from(n).ok().filter(|w| *w >= 1);
     let rolling = |window_size: usize| RollingOptionsFixedWindow {
@@ -350,6 +363,11 @@ fn window(spec: Spec, args: &[Node], cx: &Cx) -> Option<Out> {
             (x.cum_sum(false), value.dtype.clone())
         }
         Win::CumProd if float => (x.cum_prod(false), value.dtype.clone()),
+        // A ratio of two decimals is not the engine's to give as a float
+        // the way Polars casts them, nor is a rolling window of one.
+        Win::PctChange | Win::RollingSum | Win::RollingMin | Win::RollingMax if decimal => {
+            return None;
+        }
         Win::CumMin | Win::CumMax if number || temporal(&value.dtype) => {
             nan_free(cx);
             let e = if spec.win == Win::CumMin {

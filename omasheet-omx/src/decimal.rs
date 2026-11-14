@@ -500,6 +500,18 @@ impl Dec {
         None
     }
 
+    /// The sum, exactly: both brought to the finer scale and added, with no
+    /// digit given up. `None` where the result needs more than 38 digits.
+    pub fn exact_add(self, other: Dec) -> Option<Dec> {
+        let (a, b) = (self.trimmed(), other.trimmed());
+        let scale = a.scale.max(b.scale);
+        let lift = |d: Dec| -> Option<i128> {
+            d.unscaled
+                .checked_mul(pow10(u32::try_from(scale - d.scale).ok()?)?)
+        };
+        Dec::new(lift(a)?.checked_add(lift(b)?)?, scale)
+    }
+
     /// The product, exactly: the digits multiplied and the scales added,
     /// with no digit given up. `None` where the digits do not fit an `i128`.
     pub fn exact_mul(self, other: Dec) -> Option<Dec> {

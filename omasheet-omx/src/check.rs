@@ -8,7 +8,7 @@
 
 use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use crate::colfmt::Format;
-use crate::convert::{formula_lit_type, lit_type, parse_literal_with};
+use crate::convert::{formula_lit_type, inferred, lit_type, parse_literal_with};
 use crate::cycle::{self, Cyc};
 use crate::date;
 use crate::decimal::Dec;
@@ -2530,7 +2530,11 @@ impl<'a> Checker<'a> {
         // A cell of an `.omx` file may hold a quantity or a scale (D229).
         let parsed = parse_literal_with(text, true);
         let Some(want) = declared else {
-            return Some(parsed.unwrap_or_else(|| Lit::String(text.to_string())));
+            return Some(
+                parsed
+                    .map(inferred)
+                    .unwrap_or_else(|| Lit::String(text.to_string())),
+            );
         };
         if want == S::String {
             return Some(match parsed {
@@ -2733,10 +2737,11 @@ impl<'a> Checker<'a> {
         let span = e.span;
         let fail = (Node::error(span), Ty::Any);
         match &e.kind {
-            ExprKind::Lit(l) => (
-                Node::new(Ir::Lit(l.clone()), span),
-                Ty::Scalar(formula_lit_type(l)),
-            ),
+            ExprKind::Lit(l) => {
+                let l = inferred(l.clone());
+                let ty = formula_lit_type(&l);
+                (Node::new(Ir::Lit(l), span), Ty::Scalar(ty))
+            }
             ExprKind::Name(name) => self.lower_name(name, span, sc),
             // A row slot reads `by` itself, and nowhere else has one.
             ExprKind::By(..) => {

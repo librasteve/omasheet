@@ -193,8 +193,8 @@ fn csv_imports_a_sheet_named_after_the_file() {
 #[test]
 fn csv_reads_every_digit() {
     let out = csv::import("t", b"A\n0.12345678901234567890123\n").unwrap();
-    // Every digit is read and kept; multiplying out brings them back, as
-    // far as the thirty-eight a decimal holds.
+    // Every digit is read and kept, and the places it needs are declared:
+    // 23 of them are a `Decimal(23)`, and multiplying out brings them back.
     assert_eq!(
         eval(&out.source, "t[A; 0] * 1000000000000000"),
         "123456789012345.67890123"

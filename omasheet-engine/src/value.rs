@@ -898,6 +898,10 @@ fn rational_arith(op: BinOp, x: &N, y: &N) -> Result<Value, String> {
     }
 }
 
+fn abs_f64(r: &Rat) -> f64 {
+    r.abs().to_f64()
+}
+
 /// A rational as it is shown: a fraction (`2 3/4`) where its denominator is
 /// small, a whole number in full, and the nearest decimal, cut and marked,
 /// otherwise.
@@ -905,13 +909,19 @@ fn shown_rational(r: &Rat, style: &Style) -> String {
     let text = if r.is_integer() {
         match r.to_dec(0) {
             Some(d) => shown_decimal(&d.checked_abs().unwrap_or(d), group(style)),
-            None => r.abs().fraction_text(),
+            // Past 38 digits: in e notation, as any large number is.
+            None => shown_float(abs_f64(r), false, group(style)),
         }
     } else if r.small_denominator(MAX_DENOMINATOR as u64) {
         r.abs().mixed_text()
     } else {
         let abs = r.abs();
-        match (0..=38).rev().find_map(|s| abs.to_dec(s)) {
+        // The widest decimal that holds it, unless that is nothing at all.
+        match (0..=38)
+            .rev()
+            .find_map(|s| abs.to_dec(s))
+            .filter(|d| !d.is_zero())
+        {
             Some(d) => shown_decimal(&d, group(style)),
             None => shown_float(abs.to_f64(), false, group(style)),
         }
@@ -919,17 +929,33 @@ fn shown_rational(r: &Rat, style: &Style) -> String {
     localised(signed(r.is_negative(), text), style)
 }
 
+/// `+ - * / % **` of two exact numbers, exactly: in a decimal where the
+/// digits fit 38, and where they do not, as the rational they are
+/// (decimal-and-fraction). Nothing is given up and nothing is an error for
+/// being large: a column that declares a `Decimal` refuses a `Fraction`, and
+/// one that declares nothing is a `Fraction`. A quotient is the one result
+/// that is rounded, to ten places or the finer scale of its two sides.
 fn exact_arith(op: BinOp, x: &Dec, y: &Dec) -> Result<Value, String> {
     let (x, y) = (*x, *y);
+    let fits = |d: &Dec| d.precision() <= 38;
+    let rational = || rational_arith(op, &N::Exact(x), &N::Exact(y));
     let out = match op {
-        BinOp::Add => x.checked_add(y),
-        BinOp::Sub => x.checked_sub(y),
-        BinOp::Mul => x.checked_mul(y),
+        BinOp::Add => x.exact_add(y),
+        BinOp::Sub => y.checked_neg().and_then(|n| x.exact_add(n)),
+        BinOp::Mul => x.exact_mul(y).filter(fits),
         BinOp::Div => {
             if y.is_zero() {
                 return Ok(Value::Float(over_zero(&x)));
             }
-            x.checked_div(y)
+            let places = x
+                .trimmed()
+                .scale()
+                .max(y.trimmed().scale())
+                .max(i32::from(DEFAULT_SCALE));
+            match x.div_at(y, places) {
+                Some(q) => Some(q),
+                None => return rational(),
+            }
         }
         // What is left of a division that goes by whole steps down, so that
         // the result has the sign of the divisor: no exact number is a
@@ -958,14 +984,23 @@ fn exact_arith(op: BinOp, x: &Dec, y: &Dec) -> Result<Value, String> {
             }
             match e {
                 0 => Some(Dec::ONE),
-                e if e > 0 => x.powi(e.unsigned_abs()),
-                e => x
-                    .powi(e.unsigned_abs())
-                    .and_then(|p| Dec::ONE.checked_div(p)),
+                e if e > 0 => x.exact_powi(e.unsigned_abs()).filter(fits),
+                e => x.exact_powi(e.unsigned_abs()).and_then(|p| {
+                    let places = x
+                        .trimmed()
+                        .scale()
+                        .max(i32::from(DEFAULT_SCALE))
+                        .max(p.trimmed().scale());
+                    Dec::ONE.div_at(p, places)
+                }),
             }
         }
     };
-    out.map(Value::exact).ok_or_else(|| TOO_LARGE.to_string())
+    match out {
+        Some(d) => Ok(Value::exact(d)),
+        // It does not fit 38 digits: it is the rational it comes to.
+        None => rational(),
+    }
 }
 
 /// A function of one real number. An exact number stays exact where the
@@ -2452,10 +2487,7 @@ mod tests {
         // back out again does not give one. This is the cost of a
         // fixed-point decimal in place of a rational, and is deliberate.
         let back = arith(BinOp::Mul, &third, &Value::int(3)).unwrap();
-        assert_eq!(
-            format_exact(&back, false, &Style::ISO),
-            "0.99999999999999999999999999999999999999"
-        );
+        assert_eq!(format_exact(&back, false, &Style::ISO), "0.9999999999");
         // One that ends comes back exactly.
         let eighth = arith(BinOp::Div, &Value::int(1), &Value::int(8)).unwrap();
         let one = arith(BinOp::Mul, &eighth, &Value::int(8)).unwrap();

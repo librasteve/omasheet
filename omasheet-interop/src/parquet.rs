@@ -591,7 +591,9 @@ fn cell(value: AnyValue<'_>, ty: S) -> Datum {
         AnyValue::Float32(f) => Datum::Lit(float_text(f as f64), S::Float),
         AnyValue::Float64(f) => Datum::Lit(float_text(f), S::Float),
         AnyValue::Decimal(unscaled, scale) => match Dec::new(unscaled, scale as i32) {
-            Some(d) => Datum::Lit(d.to_plain_string(), S::DECIMAL),
+            // The places the column keeps ride on the type, so that one with
+            // many is declared and not read back as a fraction.
+            Some(d) => Datum::Lit(d.to_plain_string(), S::Decimal(scale.min(38) as u8)),
             None => Datum::Empty,
         },
         AnyValue::Date(days) => Datum::Lit(date::format(days), S::Date),

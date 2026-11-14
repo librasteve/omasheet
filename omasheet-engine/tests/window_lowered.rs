@@ -155,12 +155,12 @@ fn fills_and_rolling() {
 }
 
 #[test]
-fn a_type_polars_does_not_hold_the_same_way_is_the_engines() {
-    // An exact decimal and a percentage are the engine's: refused, not
-    // approximated, and the answer is the same.
-    agree("I : Decimal\nF : Percent", "I.cum_sum(D by K)", false);
-    agree("I : Decimal\nF : Percent", "F.cum_sum(D)", false);
-    agree("I : Decimal\nF : Percent", "I.diff(1, D)", false);
+fn a_percentage_is_a_decimal_in_a_dress() {
+    // A percentage is held as the decimal it stands for, and the dress is
+    // put back from the column's own type, so its window is Polars' too and
+    // the answer is the same.
+    agree("I : Decimal\nF : Percent", "F.cum_sum(D)", true);
+    agree("I : Decimal\nF : Percent", "F.diff(1, D)", true);
 }
 
 #[test]
@@ -208,4 +208,32 @@ fn a_nan_and_an_overflow_are_left_to_the_engine() {
     let (polars, attempts) = run(&big, Lowering::Always);
     assert_eq!(polars, engine);
     assert_ne!(attempts.first(), Some(&Attempt::Lowered), "{attempts:?}");
+}
+
+const DECIMALS: &str = "I : Integer\nF : Decimal(2)";
+
+#[test]
+fn a_decimal_column_is_lowered_where_polars_has_the_window() {
+    // Polars cumulates, differs, ranks and fills a `Decimal(38, s)`; the
+    // answers are the engine's to the digit, empty cells and ties included.
+    for args in ["", "D", "D by K", "by K"] {
+        agree(DECIMALS, &format!("F.cum_sum({args})"), true);
+        agree(DECIMALS, &format!("F.cum_min({args})"), true);
+        agree(DECIMALS, &format!("F.cum_max({args})"), true);
+        agree(DECIMALS, &format!("F.cum_count({args})"), true);
+    }
+    agree(DECIMALS, "F.diff(1, D by K)", true);
+    agree(DECIMALS, "F.diff(2, D)", true);
+    agree(DECIMALS, "F.rank(min, desc by K)", true);
+    agree(DECIMALS, "F.rank(dense)", true);
+    agree(DECIMALS, "F.forward_fill(D by K)", true);
+    agree(DECIMALS, "F.backward_fill(D)", true);
+}
+
+#[test]
+fn what_polars_has_no_decimal_window_for_stays_on_the_engine() {
+    agree(DECIMALS, "F.pct_change(1, D)", false);
+    agree(DECIMALS, "F.rolling_min(2, D)", false);
+    agree(DECIMALS, "F.rolling_sum(2, D)", false);
+    agree(DECIMALS, "F.rolling_mean(2, D)", false);
 }

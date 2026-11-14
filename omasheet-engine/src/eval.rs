@@ -2490,6 +2490,9 @@ impl<'p> Engine<'p> {
             // A division by zero is a `Float` however exact the numbers
             // divided, which an exact column cannot hold.
             let hint = match &v {
+                Value::Fraction(_) if col.ty.is_decimal() => {
+                    "; the value does not fit its places, so declare a wider `Decimal(n)` or `Fraction`"
+                }
                 Value::Float(f) if !f.is_finite() && col.ty.is_exact() => {
                     "; a division by zero is Inf or NaN, so declare the column `Float` \
                      or leave out its type, or guard the division"
@@ -3406,16 +3409,14 @@ impl<'p> Engine<'p> {
     /// where it is a vector.
     fn settled(&self, v: Value, places: u8, span: Span) -> R {
         match v {
+            // Too large for the places it is to have: it is the exact
+            // rational it comes to. A column that declares a `Decimal`
+            // refuses that, and one that declares nothing is a `Fraction`.
             Value::Decimal(d) => match d.rescale(places as i32) {
                 Some(r) => Ok(Value::exact(r)),
-                None => fail(
-                    span,
-                    format!(
-                        "the result does not fit Decimal({places}), which holds {} digits \
-                         before the point; use Fraction",
-                        38 - places as i32
-                    ),
-                ),
+                None => Ok(Value::Fraction(Rc::new(
+                    omasheet_omx::rational::Rat::from_dec(d),
+                ))),
             },
             Value::Percent(d) => match d.rescale(places as i32) {
                 Some(r) => Ok(Value::Percent(r)),
@@ -4161,7 +4162,17 @@ impl<'p> Engine<'p> {
                 if func == Func::Var {
                     Ok(var)
                 } else {
-                    math(MathFn::Sqrt, &var).or_else(|m| fail(span, m))
+                    // The root is taken of the variance at thirty places, not
+                    // of the ten it is given as an answer, so that the
+                    // deviation is as good as a float can say it.
+                    let wide = match &squares {
+                        Value::Int(q, _) => Some(Dec::from_i64(*q)),
+                        Value::Decimal(d) => Some(*d),
+                        _ => None,
+                    }
+                    .and_then(|d| d.div_at(Dec::from_i64(n - ddof), 30))
+                    .map(Value::exact);
+                    math(MathFn::Sqrt, &wide.unwrap_or(var)).or_else(|m| fail(span, m))
                 }
             }
             Func::Sum

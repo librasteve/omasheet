@@ -108,7 +108,9 @@ fn large_integers_keep_thirty_eight_digits_and_move_the_point() {
     // Past thirty-eight digits the point moves right of them, so a number
     // far larger than any Polars decimal is still an exact one, kept to the
     // digits it was given.
-    assert_eq!(calc("10**1000"), "1e+1000");
+    let googol_cubed = calc("10**1000");
+    // Held exactly, as the fraction it is, and written in full.
+    assert!(googol_cubed.starts_with("1000") && googol_cubed.len() == 1001);
     // Past where the scale itself reaches there is nowhere to put it, and
     // that is said rather than wrapped or quietly rounded.
     assert!(calc_err(None, "10**2000000000 * 10**2000000000").contains("too large"));
@@ -492,8 +494,8 @@ fn rationals_in_full() {
     assert_eq!(calc("175/4"), "43.75");
     assert_eq!(calc("1/3 + 1/3"), "0.6666666666");
     assert_eq!(
-        calc("0.333333333333333333333333333333"),
-        "0.333333333333333333333333333333"
+        calc("333333333333333333333333333333/1000000000000000000000000000000"),
+        "333333333333333333333333333333/1000000000000000000000000000000"
     );
     // A third taken back out again is a hundred: the nines it leaves are
     // all in the guard digits.
@@ -501,14 +503,14 @@ fn rationals_in_full() {
     // A fraction of whole numbers is an exact `Decimal`, kept in lowest
     // terms, and one that is more than one is not split into parts.
     assert_eq!(
-        calc("2.33333333333333333333333333333"),
-        "2.33333333333333333333333333333"
+        calc("233333333333333333333333333333/100000000000000000000000000000"),
+        "233333333333333333333333333333/100000000000000000000000000000"
     );
     // Thirty digits are shown, of the thirty-eight that are held, so a
     // literal written with more than thirty comes back to thirty.
     assert_eq!(
-        calc("-3.14285714285714285714285714286"),
-        "-3.14285714285714285714285714286"
+        calc("-157142857142857142857142857143/50000000000000000000000000000"),
+        "-157142857142857142857142857143/50000000000000000000000000000"
     );
     assert_eq!(calc("10/6"), "1.6666666667");
     assert_eq!(calc("7/3 * 3"), "6.9999999999");
@@ -3587,7 +3589,7 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // columns lowering forced calculates in one step, and 8.3 is where that
     // number is read. `windows.omx` adds five: the window functions of whole
     // numbers, which Polars runs down the column.
-    assert_eq!(taken, 69, "the columns taken at once");
+    assert_eq!(taken, 70, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read

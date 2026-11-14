@@ -190,6 +190,22 @@ pub fn fits_scale(d: &Dec, scale: u8) -> Result<(), String> {
     }
 }
 
+/// The most places a decimal literal keeps as a `Decimal`: one with more is
+/// the exact `Fraction` it comes to (decimal-and-fraction T11).
+pub const MAX_INFERRED_SCALE: i32 = 18;
+
+/// A literal as the type it is inferred to be: a decimal with more places
+/// than [`MAX_INFERRED_SCALE`] is a `Fraction`, exactly; anything else is
+/// itself.
+pub fn inferred(l: Lit) -> Lit {
+    match l {
+        Lit::Decimal(d) if d.trimmed().scale() > MAX_INFERRED_SCALE => {
+            Lit::Fraction(Arc::new(Rat::from_dec(d)))
+        }
+        other => other,
+    }
+}
+
 /// The type of a literal written in a formula: a decimal has the default
 /// scale or its own places, whichever is more, so that `19.99 * 1.5` is not
 /// rounded to the two places of `19.99`.
