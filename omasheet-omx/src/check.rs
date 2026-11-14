@@ -8,7 +8,7 @@
 
 use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use crate::colfmt::Format;
-use crate::convert::{lit_type, parse_literal_with};
+use crate::convert::{formula_lit_type, lit_type, parse_literal_with};
 use crate::cycle::{self, Cyc};
 use crate::date;
 use crate::decimal::Dec;
@@ -18,7 +18,7 @@ use crate::file::{FileAst, SourceDecl, parse_file};
 use crate::funcs::{FUNCTIONS, MathFn};
 use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel, Spec, Ties, Win};
 use crate::parser::parse_expr;
-use crate::types::{Base, DepKind, QId, S, SheetTy, Ty};
+use crate::types::{Base, DEFAULT_SCALE, DepKind, QId, S, SheetTy, Ty};
 use std::mem;
 use std::rc::Rc;
 
@@ -2549,7 +2549,15 @@ impl<'a> Checker<'a> {
             (Some(Lit::Int(n, _)), S::Fraction) => Some(Lit::Fraction(Dec::from_i64(n))),
             (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Fraction) => Some(Lit::Fraction(r)),
             (Some(l @ Lit::Fraction(_)), S::Fraction) => Some(l),
-            (Some(l @ Lit::Decimal(_)), S::Decimal(_)) => Some(l),
+            (Some(l @ Lit::Decimal(r)), S::Decimal(places)) => {
+                // A column that says how many places it keeps holds a cell
+                // of that many or fewer; more is refused, not rounded.
+                if let Err(said) = crate::convert::fits_scale(&r, places) {
+                    self.err(span, said);
+                    return None;
+                }
+                Some(l)
+            }
             (Some(l @ Lit::Fraction(_) | l @ Lit::Percent(_)), S::Decimal(_)) => {
                 crate::convert::convert(&l, S::DECIMAL).ok()
             }
@@ -2717,7 +2725,10 @@ impl<'a> Checker<'a> {
         let span = e.span;
         let fail = (Node::error(span), Ty::Any);
         match &e.kind {
-            ExprKind::Lit(l) => (Node::new(Ir::Lit(l.clone()), span), Ty::Scalar(lit_type(l))),
+            ExprKind::Lit(l) => (
+                Node::new(Ir::Lit(l.clone()), span),
+                Ty::Scalar(formula_lit_type(l)),
+            ),
             ExprKind::Name(name) => self.lower_name(name, span, sc),
             // A row slot reads `by` itself, and nowhere else has one.
             ExprKind::By(..) => {
@@ -3348,7 +3359,12 @@ impl<'a> Checker<'a> {
                     (BinOp::Div, w) if w.is_int() && divides(l, r) => S::Int,
                     // A quotient or a power of decimals is a decimal, though
                     // it need not end.
-                    (BinOp::Div | BinOp::Pow, w) if w.is_int() || w.is_decimal() => S::DECIMAL,
+                    (BinOp::Div | BinOp::Pow, w) if w.is_int() || w.is_decimal() => {
+                        S::Decimal(match w {
+                            S::Decimal(n) => n.max(DEFAULT_SCALE),
+                            _ => DEFAULT_SCALE,
+                        })
+                    }
                     // Anything else is the wider of the two, so that two
                     // fractions give a fraction and two percentages a
                     // percentage.
@@ -3406,6 +3422,18 @@ impl<'a> Checker<'a> {
                 return fail;
             }
             S::Boolean
+        };
+        // A product, a quotient or a power of exact numbers is worked out
+        // exactly and rounded once, to the scale its type has.
+        let node = match elem {
+            S::Decimal(places)
+                if matches!(op, BinOp::Mul | BinOp::Div | BinOp::Pow)
+                    && a.is_exact()
+                    && b.is_exact() =>
+            {
+                Node::new(Ir::Call(Func::Settle(places), vec![node]), span)
+            }
+            _ => node,
         };
         let ty = match (av, bv) {
             (None, None) => Ty::Scalar(elem),
@@ -4118,7 +4146,12 @@ impl<'a> Checker<'a> {
                         self.err(span, format!("cannot take the `{name}` of {s} values"));
                         return fail;
                     }
-                    Func::Mean | Func::Median if s.is_int() || s.is_decimal() => S::DECIMAL,
+                    Func::Mean | Func::Median if s.is_int() || s.is_decimal() => {
+                        S::Decimal(match s {
+                            S::Decimal(n) => n.max(DEFAULT_SCALE),
+                            _ => DEFAULT_SCALE,
+                        })
+                    }
                     Func::Min | Func::Max if matches!(s, S::Boolean | S::Complex) => {
                         self.err(span, format!("{s} values have no order for `{name}`"));
                         return fail;

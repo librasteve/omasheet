@@ -500,6 +500,65 @@ impl Dec {
         None
     }
 
+    /// The product, exactly: the digits multiplied and the scales added,
+    /// with no digit given up. `None` where the digits do not fit an `i128`.
+    pub fn exact_mul(self, other: Dec) -> Option<Dec> {
+        let (a, b) = (self.trimmed(), other.trimmed());
+        let scale = a.scale.checked_add(b.scale)?;
+        // `Dec::new` refuses more than 38 digits; the product may be held at
+        // a wider scale than a decimal is, to be rounded by the caller.
+        Some(Dec {
+            unscaled: a.unscaled.checked_mul(b.unscaled)?,
+            scale,
+        })
+    }
+
+    /// `self / other` rounded half away from zero to exactly `scale` places,
+    /// in one step: no digit is rounded twice. `None` when dividing by zero
+    /// or when the quotient is too large for 38 digits at that scale.
+    pub fn div_at(self, other: Dec, scale: i32) -> Option<Dec> {
+        if other.is_zero() {
+            return None;
+        }
+        let (a, b) = (self.trimmed(), other.trimmed());
+        let lift = scale as i64 + b.scale as i64 - a.scale as i64;
+        let (num, den) = if lift >= 0 {
+            (
+                a.unscaled.checked_mul(pow10(u32::try_from(lift).ok()?)?)?,
+                b.unscaled,
+            )
+        } else {
+            (
+                a.unscaled,
+                b.unscaled.checked_mul(pow10(u32::try_from(-lift).ok()?)?)?,
+            )
+        };
+        let q = num / den;
+        let rest = num % den;
+        let bump = if rest.unsigned_abs() * 2 >= den.unsigned_abs() {
+            if (num < 0) != (den < 0) { -1 } else { 1 }
+        } else {
+            0
+        };
+        Dec::new(q + bump, scale)
+    }
+
+    /// Whole-number power, exactly: `None` where a digit would be given up.
+    pub fn exact_powi(self, mut n: u32) -> Option<Dec> {
+        let mut acc = Dec::ONE;
+        let mut base = self;
+        while n > 0 {
+            if n & 1 == 1 {
+                acc = acc.exact_mul(base)?;
+            }
+            n >>= 1;
+            if n > 0 {
+                base = base.exact_mul(base)?;
+            }
+        }
+        Some(acc)
+    }
+
     /// Whole-number power.
     pub fn powi(self, mut n: u32) -> Option<Dec> {
         let mut acc = Dec::ONE;

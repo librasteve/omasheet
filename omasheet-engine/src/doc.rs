@@ -5525,7 +5525,7 @@ mod tests {
             Document::from_text("sheet T\n\n| U | V |\n| - | - |\n| =1/0 | 1.5 |\n| 2.5 | 2 |\n");
         let columns = &doc.snapshot().sheets[0].columns;
         assert_eq!(columns[0].ty, "Float");
-        assert_eq!(columns[1].ty, "Decimal");
+        assert_eq!(columns[1].ty, "Decimal(1)");
         assert_eq!(col(&doc, 0, 0), ["Inf", "2.5"]);
         // A declared column keeps its type, and its cell is the error.
         let doc = Document::from_text("sheet T\n\nU : Decimal\n\n| U |\n| - |\n| =1/0 |\n");
@@ -5554,7 +5554,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 0), ["1 1/2", "7 1/3", "3 2/3"]);
         // A decimal alone is a `Decimal`, as is a fraction in a declared one.
         let doc = Document::from_text("sheet T\n\nA\n0.5\n0.25\n");
-        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal(2)");
         let doc = Document::from_text("sheet T\n\nA : Decimal\n\nA\n1/3\n");
         assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
         // The same for a percentage: the first cell gives the type that is
@@ -7055,7 +7055,7 @@ mod tests {
         assert!(screen.snapshot().sheets[0].sampled);
         assert_eq!(
             types(&screen),
-            ["String", "Integer", "Decimal", "Date", "Datetime"]
+            ["String", "Integer", "Decimal(1)", "Date", "Datetime"]
         );
         let csv_path = dir.join("x.csv");
         assert_eq!(screen.to_convert(), vec![csv_path.clone()]);
@@ -7073,7 +7073,7 @@ mod tests {
         assert!(!screen.snapshot().sheets[0].sampled);
         assert_eq!(
             types(&screen),
-            ["String", "Integer", "Decimal", "Date", "Datetime"]
+            ["String", "Integer", "Decimal(1)", "Date", "Datetime"]
         );
         assert_eq!(shown(&screen)[..sample.len()], sample[..]);
 
@@ -7148,7 +7148,10 @@ mod tests {
         );
         assert_eq!(screen.snapshot().sheets[0].nrows, crate::table::SAMPLE_ROWS);
         assert_eq!(screen.snapshot().sheets[1].nrows, 2);
-        assert_eq!(types(&screen, 0), ["String", "Integer", "Decimal", "Date"]);
+        assert_eq!(
+            types(&screen, 0),
+            ["String", "Integer", "Decimal(1)", "Date"]
+        );
         assert_eq!(types(&screen, 1), ["Integer"]);
         let rows_path = dir.join("book.json#Rows");
         let other_path = dir.join("book.json#Other");
@@ -7811,10 +7814,7 @@ mod tests {
         // One that does not end is shown cut and marked, so there is more
         // of it to show.
         let exact = |doc: &Document| doc.snapshot().sheets[0].rows[1][6].exact.clone();
-        assert_eq!(
-            exact(&doc).as_deref(),
-            Some("0.416666666666666666666666666667")
-        );
+        assert_eq!(exact(&doc).as_deref(), Some("0.4166666667"));
         doc.set_cell(0, 0, 6, "Profit / Cost");
         assert_eq!(col(&doc, 0, 6), ["0.667·", "0.714·"]);
         doc.set_const(0, "50%");

@@ -139,7 +139,8 @@ pub fn parse_literal_with(text: &str, units: bool) -> Option<Lit> {
 pub fn lit_type(l: &Lit) -> S {
     match l {
         Lit::Int(_, b) => b.ty(),
-        Lit::Decimal(_) => S::DECIMAL,
+        // A cell keeps the places it is written with.
+        Lit::Decimal(d) => S::Decimal(d.trimmed().scale().clamp(0, 38) as u8),
         Lit::Fraction(_) => S::Fraction,
         Lit::Percent(_) => S::Percent,
         Lit::Float(_) => S::Float,
@@ -152,6 +153,51 @@ pub fn lit_type(l: &Lit) -> S {
         Lit::Time(_) => S::Time,
         Lit::Datetime(_) => S::Datetime,
         Lit::Duration(_) => S::Duration,
+    }
+}
+
+fn scale_name(scale: u8) -> String {
+    if scale == crate::types::DEFAULT_SCALE {
+        "Decimal".to_string()
+    } else {
+        format!("Decimal({scale})")
+    }
+}
+
+fn too_large_for(d: &Dec, scale: u8) -> String {
+    format!(
+        "{} is too large for {}, which holds {} digits before the point; use Fraction",
+        d.to_plain_string(),
+        scale_name(scale),
+        38 - scale as i32
+    )
+}
+
+/// Whether the number `d` fits a column that keeps `scale` places of 38
+/// digits: it is held exactly or it is refused, with the type that would
+/// hold it. This is the gate for a cell; a conversion rounds instead.
+pub fn fits_scale(d: &Dec, scale: u8) -> Result<(), String> {
+    match d.rescale(scale as i32) {
+        None => Err(too_large_for(d, scale)),
+        Some(r) if r.cmp_dec(*d) != std::cmp::Ordering::Equal => {
+            let places = d.trimmed().scale().max(0);
+            Err(format!(
+                "{} has more places than {} keeps; use Decimal({places}) or Fraction",
+                d.to_plain_string(),
+                scale_name(scale)
+            ))
+        }
+        Some(_) => Ok(()),
+    }
+}
+
+/// The type of a literal written in a formula: a decimal has the default
+/// scale or its own places, whichever is more, so that `19.99 * 1.5` is not
+/// rounded to the two places of `19.99`.
+pub fn formula_lit_type(l: &Lit) -> S {
+    match lit_type(l) {
+        S::Decimal(n) => S::Decimal(n.max(crate::types::DEFAULT_SCALE)),
+        other => other,
     }
 }
 
@@ -179,6 +225,21 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
         Lit::Boolean(b) => Some(*b as u8 as f64),
         _ => None,
     };
+    // A conversion to a `Decimal` of `s` places rounds to them, half away
+    // from zero. (A cell of a column that declares `s` is refused more
+    // places instead: see [`fits_scale`].)
+    if let (Lit::Decimal(d), S::Decimal(s)) = (lit, to) {
+        return d
+            .rescale(s as i32)
+            .map(Lit::Decimal)
+            .ok_or_else(|| too_large_for(d, s));
+    }
+    if let (Lit::Int(n, _), S::Decimal(s)) = (lit, to) {
+        return Dec::from_i64(*n)
+            .rescale(s as i32)
+            .map(|_| lit.clone())
+            .ok_or_else(|| too_large_for(&Dec::from_i64(*n), s));
+    }
     if from == to || to == S::Any {
         return Ok(lit.clone());
     }
@@ -375,10 +436,15 @@ mod tests {
         // A fraction is the number it stands for, as a `Decimal` or a `Fraction`.
         assert_eq!(
             convert(&lit("1/3"), S::DECIMAL),
-            Ok(Lit::Decimal(
-                Dec::from_i64(1).checked_div(Dec::from_i64(3)).unwrap()
-            ))
+            Ok(Lit::Decimal(Dec::parse("0.3333333333").unwrap()))
         );
+        // To a scale it rounds half away from zero, and a cell would be refused.
+        assert_eq!(
+            convert(&lit("0.125"), S::Decimal(2)),
+            Ok(Lit::Decimal(Dec::parse("0.13").unwrap()))
+        );
+        assert!(fits_scale(&Dec::parse("0.125").unwrap(), 2).is_err());
+        assert!(fits_scale(&Dec::parse("0.12").unwrap(), 2).is_ok());
         assert_eq!(convert(&lit("0.125"), S::Fraction), Ok(lit("1/8")));
         assert_eq!(
             convert(&lit("3"), S::Fraction),

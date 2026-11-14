@@ -205,6 +205,58 @@ fn inner(node: &Node, cx: &Cx) -> Option<Out> {
     }
 }
 
+/// A product or a quotient of exact numbers, worked out exactly by Polars
+/// and rounded once to `places`, half away from zero, as the engine rounds
+/// it.
+///
+/// Polars multiplies exactly, at the sum of the two scales, and divides
+/// truncated at the larger scale plus four, and a cast to a smaller scale
+/// truncates too (measured: `decimal-and-fraction` design). So the rounding
+/// is written out: half a unit of the last place is added, away from zero,
+/// and the cast then cuts it. For a quotient that is exact as well, since the
+/// digit that decides the rounding is one the truncation has kept.
+fn settle(places: u32, node: &Node, cx: &Cx) -> Option<Out> {
+    let Ir::Binary(op, l, r) = &node.kind else {
+        return None;
+    };
+    let exact = match op {
+        BinOp::Mul => inner(node, cx)?,
+        BinOp::Div => {
+            // The quotient has the larger scale plus four after its point,
+            // and Polars offers at most 21.
+            if places + 4 > 21 {
+                return None;
+            }
+            let (l, r) = (inner(l, cx)?, inner(r, cx)?);
+            let (x, y) = (exact_scale(&l.dtype)?, exact_scale(&r.dtype)?);
+            if x > places || y > places {
+                return None;
+            }
+            // Both sides at the scale the quotient is wanted to, which is
+            // no loss: it is the larger of theirs or more.
+            let at = decimal(places);
+            let quotient = l.expr.strict_cast(at.clone()) / r.expr.strict_cast(at);
+            Out::new(quotient, decimal(places + 4))?
+        }
+        _ => return None,
+    };
+    let held = exact_scale(&exact.dtype)?;
+    let target = decimal(places);
+    if held <= places {
+        return Out::new(exact.expr.strict_cast(target.clone()), target);
+    }
+    // Half a unit of the place to keep, at the scale it is held at.
+    let half = AnyValue::Decimal(5 * 10i128.pow(held - places - 1), held as usize);
+    let at = decimal(held);
+    let half = lit(Scalar::new(at.clone(), half));
+    let zero = lit(Scalar::new(at.clone(), AnyValue::Decimal(0, held as usize)));
+    let x = exact.expr;
+    let rounded = when(x.clone().gt_eq(zero))
+        .then(x.clone() + half.clone())
+        .otherwise(x - half);
+    Out::new(rounded.cast(target.clone()), target)
+}
+
 /// A window function (`cum_sum`, `diff`, `rank`, `rolling_min`...) down a
 /// column, as one Polars expression: the function wrapped in
 /// `over(partition, order_by = key)`, which Polars answers in the original
@@ -601,6 +653,13 @@ fn call(func: Func, args: &[Node], cx: &Cx) -> Option<Out> {
             text.expr.str().contains_any(parts, false),
             DataType::Boolean,
         );
+    }
+    // A product or a quotient of exact numbers, rounded once to a scale.
+    if let Func::Settle(places) = func {
+        let [node] = args else {
+            return None;
+        };
+        return settle(u32::from(places), node, cx);
     }
     // A window function: the whole column, down its partitions in the order
     // of its key, which Polars runs over the frame of the sheet's columns.

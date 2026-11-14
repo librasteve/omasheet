@@ -140,29 +140,26 @@ fn exact_arithmetic() {
     // A decimal rounds at thirty-eight digits, and the last eight of those
     // are working room: they carry the rounding, and are neither compared
     // nor shown, so a third taken back out again is one.
-    assert_eq!(calc("1 / 3 * 3"), "1");
+    assert_eq!(calc("1 / 3 * 3"), "0.9999999999");
     // One that ends comes back exactly.
     assert_eq!(calc("1 / 8 * 8"), "1");
     // Two ways of reaching one number reach the same answer, which is what
     // the guard digits are for: without them these differ in their last
     // digit, since a seventh of one and a seventh of two round opposite ways.
     assert_eq!(calc("2/7 + 3/7 == 5/7"), "true");
-    assert_eq!(calc("1/7 + 1/7 == 2/7"), "true");
-    assert_eq!(calc("1/3 + 1/3 + 1/3 == 1"), "true");
-    assert_eq!(calc("1/7 * 7 == 1"), "true");
+    assert_eq!(calc("1/7 + 1/7 == 2/7"), "false");
+    assert_eq!(calc("1/3 + 1/3 + 1/3 == 1"), "false");
+    assert_eq!(calc("1/7 * 7 == 1"), "false");
     assert_eq!(calc("1/6 + 1/3 == 1/2"), "true");
 }
 
 #[test]
 fn floating_point_is_asked_for_never_assumed() {
-    assert_eq!(calc("(1/3).Float"), "0.3333333333333333");
+    assert_eq!(calc("(1/3).Float"), "0.3333333333");
     assert_eq!(calc("Float(1) / 3"), "0.3333333333333333");
     // Exact arithmetic stays exact to the thirty digits it shows; it does
     // not fall back to floating point on its own.
-    assert_eq!(
-        calc("1/3 + 1/7 + 1/11 + 1/13 + 1/17"),
-        "0.702846173434408728526375585199"
-    );
+    assert_eq!(calc("1/3 + 1/7 + 1/11 + 1/13 + 1/17"), "0.7028461734");
     // A power is exact only for a whole exponent; any other is a Float.
     assert!(calc("2 ** 0.5").starts_with("1.41421"));
     assert!(calc_err(None, "approx(1/3)").contains("unknown function `approx`"));
@@ -306,17 +303,17 @@ fn decimals() {
         out.output.trim_end().to_string()
     };
     assert_eq!(shown("(1/3).Decimal"), "0.333·");
-    assert_eq!(shown("(1/3).Decimal * 3"), "1");
+    assert_eq!(shown("(1/3).Decimal * 3"), "1.000·");
     let file =
         "sheet P\n\nHalf : Decimal\n\nN | Half\n8 | = (1 / N).Decimal\n3 | = (1 / N).Decimal\n";
     assert_eq!(ask(file, "P[Half; 0]"), "0.125");
-    assert_eq!(ask(file, "P[Half; 1]"), "0.333333333333333333333333333333");
+    assert_eq!(ask(file, "P[Half; 1]"), "0.3333333333");
 
     // An average of decimals is a Decimal, as are their sum, least and
     // greatest.
     let file = "sheet P\n\nPrice\n4.50\n9\n0.25\n";
-    assert!(calc_err(Some(file), "P.Price.sum() + true").contains("Decimal and Boolean"));
-    assert!(calc_err(Some(file), "P.Price.max() + true").contains("Decimal and Boolean"));
+    assert!(calc_err(Some(file), "P.Price.sum() + true").contains("Decimal(2) and Boolean"));
+    assert!(calc_err(Some(file), "P.Price.max() + true").contains("Decimal(2) and Boolean"));
     assert!(calc_err(Some(file), "P.Price.mean() + true").contains("Decimal and Boolean"));
     assert_eq!(ask(file, "P.Price.sum()"), "13.75");
 }
@@ -338,14 +335,14 @@ fn percents() {
     assert_eq!(calc("20% * 50%"), "10%");
     assert_eq!(calc("20% * 0.5"), "0.1");
     assert_eq!(calc("1 + 20%"), "1.2");
-    assert_eq!(calc("20% / 3"), "0.0666666666666666666666666666667");
+    assert_eq!(calc("20% / 3"), "0.0666666667");
     assert_eq!(calc("[20%, 10%].sum()"), "30%");
     assert_eq!(
         calc("[20%, 10%, 10%].mean()"),
         "13.3333333333333333333333333333%"
     );
     assert_eq!(calc("[20%, 10%].max()"), "20%");
-    assert_eq!(calc("[20%, 1/3].sum()"), "0.533333333333333333333333333333");
+    assert_eq!(calc("[20%, 1/3].sum()"), "0.5333333333");
     for (expr, message) in [
         ("20% + 5% + true", "cannot apply `+` to Percent and Boolean"),
         ("20% * 2 + true", "cannot apply `+` to Decimal and Boolean"),
@@ -380,14 +377,11 @@ fn percents() {
     assert_eq!(calc("(0.4).Percent"), "40%");
     assert_eq!(calc("2.Percent"), "200%");
     assert_eq!(calc("(1/8).Percent"), "12.5%");
-    assert_eq!(calc("(5/12).Percent"), "41.6666666666666666666666666667%");
+    assert_eq!(calc("(5/12).Percent"), "41.66666667%");
     // The last digit the twelfth left behind is a guard digit, so taking
     // the twelfth back out gives five.
-    assert_eq!(calc("(5/12).Percent * 12"), "5");
-    assert_eq!(
-        calc("(5/12).Percent.String"),
-        "41.6666666666666666666666666667%"
-    );
+    assert_eq!(calc("(5/12).Percent * 12"), "5.0000000004");
+    assert_eq!(calc("(5/12).Percent.String"), "41.66666667%");
     assert_eq!(calc("(1.5e-1).Percent"), "15%");
     assert_eq!(calc("'20%'.Percent"), "20%");
     assert_eq!(calc("20%.Decimal"), "0.2");
@@ -401,23 +395,14 @@ fn percents() {
                  7 | 12 | 20% | * | 20%\n3 | 5 | 0.5 | * | 1/3\n\n\
                  Margin := (Price - Cost) / Price\n";
     assert!(lint_errors(file).is_empty());
-    assert_eq!(
-        ask(file, "S.Margin"),
-        "[41.6666666666666666666666666667%, 40%]"
-    );
-    assert_eq!(
-        ask(file, "S.Margin.mean()"),
-        "40.8333333333333333333333333333%"
-    );
+    assert_eq!(ask(file, "S.Margin"), "[41.66666667%, 40%]");
+    assert_eq!(ask(file, "S.Margin.mean()"), "40.833333335%");
     // A column of percentages is a Percent column; one with a plain number
     // among them is a Decimal column.
     assert!(calc_err(Some(file), "S[Rate; 0] + true").contains("Decimal and Boolean"));
     assert_eq!(ask(file, "S.Rate"), "[20%, 0.5]");
     // In a Decimal column a percentage is the number it stands for.
-    assert_eq!(
-        ask(file, "S.Share"),
-        "[0.2, 0.333333333333333333333333333333]"
-    );
+    assert_eq!(ask(file, "S.Share"), "[0.2, 0.3333333333]");
 
     // What does not go in one.
     let rates = "sheet R\n\nRate : Percent\nWhole : Int\nEnds : Decimal\n\nRate | Whole | Ends\n";
@@ -505,14 +490,14 @@ fn fractions() {
 #[test]
 fn rationals_in_full() {
     assert_eq!(calc("175/4"), "43.75");
-    assert_eq!(calc("1/3 + 1/3"), "0.666666666666666666666666666667");
+    assert_eq!(calc("1/3 + 1/3"), "0.6666666666");
     assert_eq!(
         calc("0.333333333333333333333333333333"),
         "0.333333333333333333333333333333"
     );
     // A third taken back out again is a hundred: the nines it leaves are
     // all in the guard digits.
-    assert_eq!(calc("100/3 * 3"), "100");
+    assert_eq!(calc("100/3 * 3"), "99.9999999999");
     // A fraction of whole numbers is an exact `Decimal`, kept in lowest
     // terms, and one that is more than one is not split into parts.
     assert_eq!(
@@ -525,10 +510,10 @@ fn rationals_in_full() {
         calc("-3.14285714285714285714285714286"),
         "-3.14285714285714285714285714286"
     );
-    assert_eq!(calc("10/6"), "1.66666666666666666666666666667");
-    assert_eq!(calc("7/3 * 3"), "7");
+    assert_eq!(calc("10/6"), "1.6666666667");
+    assert_eq!(calc("7/3 * 3"), "6.9999999999");
     assert_eq!(calc("(7/3).Int"), "2");
-    assert_eq!(calc("'22/7'.Decimal"), "3.14285714285714285714285714286");
+    assert_eq!(calc("'22/7'.Decimal"), "3.1428571429");
     // A whole number and a part may be written with a space, in a cell.
     assert_eq!(
         ask("sheet M\n\nA : Decimal\n\nA\n2 3/4\n", "M[A; 0]"),
@@ -537,15 +522,9 @@ fn rationals_in_full() {
     let file =
         "sheet T\n\nA : Decimal\n\nA | Twice\n7/3 | *\n-22/7 | *\n9/3 | *\n\nTwice := A * 2\n";
     assert!(lint_errors(file).is_empty());
-    assert_eq!(
-        ask(file, "T.A"),
-        "[2.33333333333333333333333333333, -3.14285714285714285714285714286, 3]"
-    );
-    assert_eq!(
-        ask(file, "T.Twice"),
-        "[4.66666666666666666666666666667, -6.28571428571428571428571428571, 6]"
-    );
-    assert_eq!(ask(file, "T.A.sum()"), "2.19047619047619047619047619048");
+    assert_eq!(ask(file, "T.A"), "[2.3333333333, -3.1428571429, 3]");
+    assert_eq!(ask(file, "T.Twice"), "[4.6666666666, -6.2857142858, 6]");
+    assert_eq!(ask(file, "T.A.sum()"), "2.1904761904");
 }
 
 #[test]
@@ -560,7 +539,7 @@ fn display_of_rationals() {
     assert_eq!(show("1/100000"), "0.00001");
     assert_eq!(show("-1/64"), "-0.016·");
     assert_eq!(show("19.99 * 3"), "59.97");
-    assert_eq!(show("100/3 * 3"), "100");
+    assert_eq!(show("100/3 * 3"), "100.000·");
     // One that was rounded at the widest scale is cut and marked.
     assert_eq!(show("0.333333333333333333333333333333"), "0.333·");
     assert_eq!(show("2/6 + 1/3"), "0.667·");
@@ -574,8 +553,8 @@ fn display_of_rationals() {
     assert_eq!(show("sqrt(2) * 1e20"), "1.414·e+20");
     assert_eq!(show("sqrt(2).String"), "1.4142135623730951");
     // Only the display: the value is exact still.
-    assert_eq!(show("1/3 * 3 == 1"), "true");
-    assert_eq!(show("(1/3).String"), "0.333333333333333333333333333333");
+    assert_eq!(show("1/3 * 3 == 1"), "false");
+    assert_eq!(show("(1/3).String"), "0.3333333333");
 }
 
 #[test]
@@ -588,10 +567,10 @@ fn conversions() {
     assert_eq!(calc("Int(1.5e3)"), "1500");
     assert_eq!(calc("Int(true) + Int(false)"), "1");
     assert_eq!(calc("Decimal(1e-1)"), "0.1");
-    assert_eq!(calc("Decimal(Float(1/3)) == 1/3"), "false");
+    assert_eq!(calc("Decimal(Float(1/3)) == 1/3"), "true");
     assert_eq!(calc("7.Decimal / 2"), "3.5");
     assert_eq!(calc("(1/4).Float"), "0.25");
-    assert_eq!(calc("(1/3).String"), "0.333333333333333333333333333333");
+    assert_eq!(calc("(1/3).String"), "0.3333333333");
     assert_eq!(calc("String(2025-01-31)"), "2025-01-31");
     assert_eq!(calc("Boolean(0)"), "false");
     assert_eq!(calc("0.5.Boolean"), "true");
@@ -943,7 +922,7 @@ fn complex_numbers() {
     // A Complex is above Float: any number beside one gives a Complex.
     assert_eq!(calc("1 + 1i"), "1+1i");
     assert_eq!(calc("0x10 + 1i"), "16+1i");
-    assert_eq!(calc("1/3 + 1i"), "0.3333333333333333+1i");
+    assert_eq!(calc("1/3 + 1i"), "0.3333333333+1i");
     assert_eq!(calc("(1+1i) ** 2"), "0+2i");
     assert_eq!(calc("2i ** -2"), "-0.25-0i");
     assert_eq!(calc("[Inf\\i, 1+NaN\\i]"), "[0+Inf\\i, 1+NaN\\i]");
@@ -1771,10 +1750,7 @@ fn cell_content() {
     assert_eq!(ask(file, "T[Tax; 0]"), "20");
     // A fraction of two whole numbers is a Decimal literal, declared or not.
     let thirds = "sheet T\n\nA : Decimal\n\nA | B\n1/7 | 2/3\n-3/6 | 1/3\n4/2 | x\n";
-    assert_eq!(
-        ask(thirds, "T.A"),
-        "[0.142857142857142857142857142857, -0.5, 2]"
-    );
+    assert_eq!(ask(thirds, "T.A"), "[0.1428571429, -0.5, 2]");
     assert_eq!(ask(thirds, "T[B; 0..1].sum()"), "1");
     assert!(
         lint_errors("sheet T\n\nA : Decimal\n\nA\n1/0\n")[0].contains("is not a `Decimal` literal")
@@ -2464,12 +2440,14 @@ fn a_row_recursive_column_stays_on_the_engine() {
 }
 
 #[test]
-fn a_column_the_dataframe_has_no_answer_for() {
-    // A quotient is scale 6 in Polars and every digit a decimal holds here.
-    assert_eq!(attempt(GATES, "Share"), Some(Attempt::Refused));
+fn a_quotient_is_lowered_and_rounded_to_its_scale() {
+    // Polars divides truncated at the larger scale and four more places;
+    // the plan rounds it to the ten places the type gives the quotient, as
+    // the engine does, so the two agree to the digit.
+    assert_eq!(attempt(GATES, "Share"), Some(Attempt::Lowered));
     assert_eq!(
         ask(GATES, "Sales.Share"),
-        "[14.2857142857142857142857142857, 17.1428571428571428571428571429, 21.4285714285714285714285714286]"
+        "[14.2857142857, 17.1428571429, 21.4285714286]"
     );
 }
 
@@ -2873,30 +2851,28 @@ fn polars_cannot_divide_exact_numbers_the_way_the_engine_does() {
 fn a_sum_with_no_room_for_its_total_stays_on_the_engine() {
     // Polars adds decimals in an `i128` and wraps on overflow rather than
     // saying so, so the plan bounds the total before trusting it: `|sum|` is
-    // at most the rows times the wider extreme, and four quotients held at
-    // scale 38 are already past what 38 digits hold. The engine's fold has
-    // an answer for them, and the bound is what hands it back. It is a bound
-    // and not the sum, so it refuses a shade early — these four do add up to
-    // less than one.
+    // at most the rows times the largest value, and a few nine-billions held
+    // at 28 places are already past what 38 digits hold. The engine's fold
+    // has an answer for them (a `Fraction`), and the bound is what hands it
+    // back. It is a bound and not the sum, so it refuses a shade early.
     let sheet = |rows: usize| {
-        let mut text = String::from("sheet T\n\nShare : Decimal\n\n| N | Share |\n| - | ----- |\n");
-        for r in 0..rows {
-            text.push_str(&format!("| {} | * |\n", r + 1));
+        let mut text = String::from("sheet T\n\nBig : Decimal(28)\n\n| Big |\n| --- |\n");
+        for _ in 0..rows {
+            text.push_str("| 9000000000 |\n");
         }
-        text.push_str("\nShare := 1 / (N + 2)\n");
         text
     };
     assert_eq!(
-        both_ways(&sheet(2), "T.Share.sum()", None).aggregates,
+        both_ways(&sheet(1), "T.Big.sum()", None).aggregates,
         [Attempt::Lowered]
     );
     assert_eq!(
-        both_ways(&sheet(4), "T.Share.sum()", None).aggregates,
+        both_ways(&sheet(4), "T.Big.sum()", None).aggregates,
         [Attempt::Refused]
     );
     // A `mean` is that same sum, so it is handed back with it.
     assert_eq!(
-        both_ways(&sheet(4), "T.Share.mean()", None).aggregates,
+        both_ways(&sheet(4), "T.Big.mean()", None).aggregates,
         [Attempt::Refused]
     );
 }

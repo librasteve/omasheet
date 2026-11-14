@@ -2421,6 +2421,12 @@ impl<'p> Engine<'p> {
         // own type — gave one or the other throughout. A column has one
         // type, so it has one dress, and both paths put it on.
         let v = dressed(v, col);
+        // A column that declares the places it keeps holds a formula's result
+        // to them, rounded half away from zero.
+        let v = match col.ty {
+            S::Decimal(places) if col.declared => self.settled(v, places, span)?,
+            _ => v,
+        };
         // A column declared as a quantity type holds its values in that
         // type's unit (add-si-units D233); one that only has the type of its
         // formulas holds each as it is.
@@ -3328,6 +3334,75 @@ impl<'p> Engine<'p> {
         }
     }
 
+    /// A product, a quotient or a power of exact numbers, worked out exactly
+    /// and rounded once to `places`, half away from zero. A quotient goes
+    /// straight to the scale, so no digit is rounded twice. Anything that is
+    /// not two exact scalars is worked out as it always was and then
+    /// rounded.
+    fn settle(&self, places: u8, node: &Node, span: Span, fr: &mut Frames) -> R {
+        let scale = places as i32;
+        if let Ir::Binary(op @ (BinOp::Mul | BinOp::Div | BinOp::Pow), l, r) = &node.kind {
+            let (left, right) = (self.eval(l, fr)?, self.eval(r, fr)?);
+            let exact = |v: &Value| match v {
+                Value::Int(n, _) => Some(Dec::from_i64(*n)),
+                Value::Decimal(d) => Some(*d),
+                _ => None,
+            };
+            if let (Some(x), Some(y)) = (exact(&left), exact(&right)) {
+                let done = match op {
+                    BinOp::Mul => x.exact_mul(y).and_then(|p| p.rescale(scale)),
+                    // A division by zero is a `Float`, which the usual path says.
+                    BinOp::Div if y.is_zero() => None,
+                    BinOp::Div => x.div_at(y, scale),
+                    _ => y
+                        .to_i64()
+                        .filter(|_| y.is_integer())
+                        .and_then(|e| u32::try_from(e.unsigned_abs()).ok().map(|n| (e, n)))
+                        .and_then(|(e, n)| {
+                            if e >= 0 {
+                                x.exact_powi(n).and_then(|p| p.rescale(scale))
+                            } else {
+                                x.exact_powi(n).and_then(|p| Dec::ONE.div_at(p, scale))
+                            }
+                        }),
+                };
+                if let Some(d) = done {
+                    return Ok(Value::exact(d));
+                }
+            }
+            let v = self.broadcast(*op, &left, &right, span)?;
+            return self.settled(v, places, span);
+        }
+        let v = self.eval(node, fr)?;
+        self.settled(v, places, span)
+    }
+
+    /// A value rounded to `places` where it is a decimal, element by element
+    /// where it is a vector.
+    fn settled(&self, v: Value, places: u8, span: Span) -> R {
+        match v {
+            Value::Decimal(d) => match d.rescale(places as i32) {
+                Some(r) => Ok(Value::exact(r)),
+                None => fail(
+                    span,
+                    format!(
+                        "the result does not fit Decimal({places}), which holds {} digits \
+                         before the point; use Fraction",
+                        38 - places as i32
+                    ),
+                ),
+            },
+            Value::Vector(items) => {
+                let out: R<Vec<Value>> = items
+                    .iter()
+                    .map(|x| self.settled(x.clone(), places, span))
+                    .collect();
+                Ok(Value::Vector(Rc::new(out?)))
+            }
+            other => Ok(other),
+        }
+    }
+
     /// A window function. Over a vector, the answer for every element;
     /// over this row's cell, the checker gives the whole column and the
     /// row's place, and the row's answer is looked up in the column's,
@@ -3687,6 +3762,7 @@ impl<'p> Engine<'p> {
                 self.among(func, args, fr)
             }
             Func::Window(spec) => self.window(spec, args, span, fr),
+            Func::Settle(places) => self.settle(places, &args[0], span, fr),
             Func::IsNull | Func::IsNan => {
                 let absent = |v: &Value| -> R {
                     Ok(match (func, v) {

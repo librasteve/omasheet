@@ -858,6 +858,9 @@ impl Writer<'_> {
                     kind,
                 )))
             }
+            // A product or quotient settled to a scale is the product or
+            // quotient: a workbook works in doubles and has no scale.
+            Ir::Call(Func::Settle(_), args) if args.len() == 1 => self.scalar(&args[0], cx),
             Ir::Call(func, args) => self.call(*func, args, cx),
             Ir::Apply { args, body, .. } => {
                 let mut given = Vec::with_capacity(args.len());

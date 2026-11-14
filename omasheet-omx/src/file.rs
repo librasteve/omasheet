@@ -26,7 +26,7 @@ use crate::ast::Expr;
 use crate::colfmt::{Format, closing};
 use crate::diag::{Diagnostic, Span};
 use crate::parser::parse_expr;
-use crate::types::S;
+use crate::types::{MAX_DECIMAL_SCALE, S};
 
 #[derive(Debug, Default)]
 pub struct FileAst {
@@ -628,29 +628,51 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             // `Datetime("Europe/London")`: the zone its cells are the wall
             // clock of, before any format.
             let mut zone = None;
+            let mut scale: Option<u8> = None;
             if k > 0 && after_ty.starts_with('(') {
                 let open = ty_at + k + 1;
                 let inner = &after_ty[1..];
                 match inner.find(')') {
                     Some(close) => {
                         let text = inner[..close].trim();
-                        let name = text
-                            .strip_prefix('"')
-                            .and_then(|t| t.strip_suffix('"'))
-                            .or_else(|| text.strip_prefix('\'').and_then(|t| t.strip_suffix('\'')));
-                        match name {
-                            Some(name) if is_zone_name(name) => {
-                                zone = Some((name.to_string(), Span::new(src, open, open + close)));
+                        if &body[..k] == "Decimal" {
+                            // `Decimal(2)`: the places the column keeps.
+                            match text.parse::<u8>() {
+                                Ok(n) if n <= MAX_DECIMAL_SCALE => scale = Some(n),
+                                _ => diags.push(
+                                    Diagnostic::new(
+                                        Span::new(src, open, open + close),
+                                        "a scale is a whole number of places from 0 to 38"
+                                            .to_string(),
+                                    )
+                                    .with_help("as `Decimal(2)`"),
+                                ),
                             }
-                            _ => diags.push(
-                                Diagnostic::new(
-                                    Span::new(src, open, open + close),
-                                    "a zone is the name of a time zone in quotes".to_string(),
-                                )
-                                .with_help("as `Datetime(\"Europe/London\")`"),
-                            ),
+                            after_ty = &after_ty[close + 2..];
+                        } else {
+                            let name = text
+                                .strip_prefix('"')
+                                .and_then(|t| t.strip_suffix('"'))
+                                .or_else(|| {
+                                    text.strip_prefix('\'').and_then(|t| t.strip_suffix('\''))
+                                });
+                            match name {
+                                Some(name) if is_zone_name(name) => {
+                                    zone = Some((
+                                        name.to_string(),
+                                        Span::new(src, open, open + close),
+                                    ));
+                                }
+                                _ => diags.push(
+                                    Diagnostic::new(
+                                        Span::new(src, open, open + close),
+                                        "a zone is the name of a time zone in quotes".to_string(),
+                                    )
+                                    .with_help("as `Datetime(\"Europe/London\")`"),
+                                ),
+                            }
+                            after_ty = &after_ty[close + 2..];
                         }
-                        after_ty = &after_ty[close + 2..];
                     }
                     None => {
                         diags.push(Diagnostic::new(
@@ -711,6 +733,10 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             }
             match S::from_name(ty_text) {
                 Some(ty) => {
+                    let ty = match (ty, scale) {
+                        (S::Decimal(_), Some(n)) => S::Decimal(n),
+                        (ty, _) => ty,
+                    };
                     let format = format_text.and_then(|(text, open)| {
                         read_format(text, ty, Span::new(src, open, open + text.len()), diags)
                     });

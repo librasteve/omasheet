@@ -261,6 +261,11 @@ pub enum Func {
     /// A function down a column that reads the rows around each one: a
     /// running total, a difference, a rank, a rolling mean. See [`Spec`].
     Window(Spec),
+    /// A `Decimal` result rounded to `s` places, half away from zero: the
+    /// single rounding of a product, a quotient or a power, which are worked
+    /// out exactly first. Its argument is that operation, so that an engine
+    /// can divide straight to the scale rather than round twice.
+    Settle(u8),
 }
 
 /// What a [`Func::Window`] does down a column.

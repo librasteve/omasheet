@@ -234,7 +234,15 @@ impl S {
             if self.is_int() && other.is_int() {
                 S::Int
             } else {
-                S::DECIMAL
+                // Two decimals keep the places of the finer; a whole number
+                // adds none; a fraction or a percentage counts as a decimal
+                // of the default scale.
+                let places = |t: S| match t {
+                    S::Decimal(n) => n,
+                    t if t.is_int() => 0,
+                    _ => DEFAULT_SCALE,
+                };
+                S::Decimal(places(self).max(places(other)))
             }
         } else if self.rank() >= other.rank() {
             self
@@ -323,6 +331,12 @@ impl fmt::Display for S {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let S::Quantity(q) = self {
             return f.write_str(&q.name());
+        }
+        // A scale other than the default is part of the name.
+        if let S::Decimal(n) = self
+            && *n != DEFAULT_SCALE
+        {
+            return write!(f, "Decimal({n})");
         }
         f.write_str(match self {
             S::Any => "Any",
@@ -565,5 +579,26 @@ mod tests {
         assert_eq!(Int.join(String), None);
         assert_eq!(String.join(String), Some(String));
         assert_eq!(Any.join(Fraction), Some(Any));
+    }
+}
+
+#[cfg(test)]
+mod scale_tests {
+    use super::*;
+
+    #[test]
+    fn decimals_join_at_the_finer_scale() {
+        assert_eq!(S::Decimal(2).join(S::Decimal(4)), Some(S::Decimal(4)));
+        assert_eq!(S::Decimal(4).join(S::Decimal(2)), Some(S::Decimal(4)));
+        assert_eq!(S::Int.join(S::Decimal(2)), Some(S::Decimal(2)));
+        assert_eq!(S::Decimal(2).join(S::Float), Some(S::Float));
+        assert_eq!(S::Decimal(2).join(S::Decimal(2)), Some(S::Decimal(2)));
+    }
+
+    #[test]
+    fn a_scale_is_part_of_the_name_unless_it_is_the_default() {
+        assert_eq!(S::DECIMAL.to_string(), "Decimal");
+        assert_eq!(S::Decimal(2).to_string(), "Decimal(2)");
+        assert_eq!(S::from_name("Decimal"), Some(S::DECIMAL));
     }
 }
