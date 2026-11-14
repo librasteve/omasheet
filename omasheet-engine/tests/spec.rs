@@ -3700,10 +3700,10 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // Lest the whole thing pass by checking nothing. Sixteen of the
     // corpus's columns come from a file, eight in `analysis.omx` and eight
     // in `ccp.omx`, and those are taken at once whichever way the rest is
-    // calculated, which is 32 of the 59. The other twenty-seven are the
+    // calculated, which is 32 of the 64. The other thirty-two are the
     // columns lowering forced calculates in one step, and 8.3 is where that
     // number is read.
-    assert_eq!(taken, 59, "the columns taken at once");
+    assert_eq!(taken, 64, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read
@@ -3916,4 +3916,41 @@ fn a_fixed_row_of_its_own_column_is_circular_only_through_itself() {
         said.contains("circular reference in column `B` at row 2"),
         "{said}"
     );
+}
+
+const FLAGS: &str = "\
+sheet T
+
+A     | B     | C
+true  | false | true
+true  | true  | true
+false | false | true
+      | true  | true
+";
+
+#[test]
+fn boolean_gates_and_aggregates() {
+    // Each gate is written between two values, and out in `and`, `or` and `not`.
+    assert_eq!(ask(FLAGS, "true xor false"), "true");
+    assert_eq!(ask(FLAGS, "true xor true"), "false");
+    assert_eq!(ask(FLAGS, "true nand true"), "false");
+    assert_eq!(ask(FLAGS, "true nand false"), "true");
+    assert_eq!(ask(FLAGS, "false nor false"), "true");
+    assert_eq!(ask(FLAGS, "true nor false"), "false");
+    // They work down a column, and an empty value gives an empty one.
+    assert_eq!(ask(FLAGS, "T.A xor T.B"), "[true, false, false, empty]");
+    // And between two values: `or` and `nor` bind loosest, `and` and `nand`
+    // tightest.
+    assert_eq!(ask(FLAGS, "true xor false"), "true");
+    assert_eq!(ask(FLAGS, "true nand true"), "false");
+    assert_eq!(ask(FLAGS, "false nor false"), "true");
+        assert_eq!(ask(FLAGS, "true or true xor true"), "true");
+    assert_eq!(ask(FLAGS, "true xor true and true"), "false");
+    assert_eq!(ask(FLAGS, "true xor true nor true"), "false");
+    // `all`, `any` and `none` leave the empty ones out.
+    assert_eq!(ask(FLAGS, "T.A.all()"), "false");
+    assert_eq!(ask(FLAGS, "T.C.all()"), "true");
+    assert_eq!(ask(FLAGS, "T.A.any()"), "true");
+    assert_eq!(ask(FLAGS, "T.B.none()"), "false");
+    assert_eq!(ask(FLAGS, "T[; false].C.none()"), "true");
 }

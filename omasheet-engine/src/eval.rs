@@ -4517,6 +4517,10 @@ impl<'p> Engine<'p> {
                 Value::Quantity(q) => Some(crate::quantity::show_in(q, f, &style)),
                 _ => None,
             },
+            Some(Format::Boolean(f)) => match v {
+                Value::Boolean(b) => Some(f.show(*b)),
+                _ => None,
+            },
             Some(Format::Date(f)) => self
                 .moment(v)
                 .and_then(|m| format_date(&m, f, &self.options.names)),

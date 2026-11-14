@@ -17,6 +17,61 @@ pub enum Format {
     Date(DateFormat),
     Scientific(SciFormat),
     Quantity(QuantityFormat),
+    Boolean(BoolFormat),
+}
+
+/// How a column of booleans is shown: any two different characters, the one
+/// for true and then the one for false, as `10`, `xo`, `XO` or `✓✗`. Without
+/// one it shows `true` and `false`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BoolFormat {
+    pub yes: char,
+    pub no: char,
+}
+
+impl BoolFormat {
+    pub fn parse(text: &str) -> Result<BoolFormat, FormatError> {
+        let n = text.chars().count();
+        let mut chars = text.chars();
+        let (Some(yes), Some(no), None) = (chars.next(), chars.next(), chars.next()) else {
+            return Err(FormatError {
+                at: 0,
+                len: n.max(1),
+                message: format!("a `Boolean` format is two characters, and `{text}` is {n}"),
+            });
+        };
+        // A `]` would end the format and a `%` is a date's, and a space or a
+        // control character cannot be seen to be either.
+        if let Some((at, c)) = [yes, no]
+            .into_iter()
+            .enumerate()
+            .find(|&(_, c)| c == ']' || c == '%' || c.is_whitespace() || c.is_control())
+        {
+            return Err(FormatError {
+                at,
+                len: 1,
+                message: format!("`{}` cannot be a symbol of a `Boolean`", c.escape_debug()),
+            });
+        }
+        if yes == no {
+            return Err(FormatError {
+                at: 1,
+                len: 1,
+                message: format!("true and false are both `{yes}`"),
+            });
+        }
+        Ok(BoolFormat { yes, no })
+    }
+
+    pub fn show(&self, b: bool) -> String {
+        (if b { self.yes } else { self.no }).to_string()
+    }
+}
+
+impl fmt::Display for BoolFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}{}", self.yes, self.no)
+    }
 }
 
 /// How a column of quantities is shown: in a unit of its dimension,
@@ -319,6 +374,7 @@ impl Format {
             S::Scientific => SciFormat::parse(text).map(Format::Scientific),
             S::Quantity(id) => QuantityFormat::parse(text, id).map(Format::Quantity),
             S::Date | S::Time | S::Datetime => DateFormat::parse(text).map(Format::Date),
+            S::Boolean => BoolFormat::parse(text).map(Format::Boolean),
             _ => NumFormat::parse(text).map(Format::Number),
         }
     }
@@ -329,6 +385,7 @@ impl Format {
             Format::Number(f) => f.takes(ty),
             Format::Date(f) => f.takes(ty),
             Format::Scientific(_) => ty == S::Scientific,
+            Format::Boolean(_) => ty == S::Boolean,
             Format::Quantity(q) => match ty {
                 S::Quantity(id) => id.named().is_none_or(|t| t.admits(&q.unit)),
                 _ => false,
@@ -343,6 +400,7 @@ impl Format {
             S::Scientific => Some("`e`, `f` or `g`, with `±` first"),
             S::Quantity(_) => Some("a unit of its dimension, as `g`, then `;` and a number format"),
             S::Date => Some("the conversions of a date, as `%d %b %Y`"),
+            S::Boolean => Some("two different characters, as `10`, `xo` or `✓✗`"),
             S::Time => Some("the conversions of a time, as `%H:%M`"),
             S::Datetime => Some("the conversions of a date and a time, as `%d %b %Y %H:%M`"),
             _ => NumFormat::conversions_of(ty),
@@ -358,6 +416,7 @@ impl Format {
             S::Quantity(_) => {
                 "a quantity format is a unit, as `g`, which may be followed by `;` and a number format, as `g; ±.3e-3`"
             }
+            S::Boolean => "a `Boolean` format is two different characters: the symbol for true, then for false, as `xo` or `✓✗`",
             S::Date | S::Time | S::Datetime => {
                 "a date or time format is a C `strftime` format, as `%d %b %Y`"
             }
@@ -390,6 +449,7 @@ impl fmt::Display for Format {
             Format::Date(d) => d.fmt(f),
             Format::Scientific(s) => s.fmt(f),
             Format::Quantity(q) => q.fmt(f),
+            Format::Boolean(b) => b.fmt(f),
         }
     }
 }
@@ -397,6 +457,27 @@ impl fmt::Display for Format {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_boolean_format_is_a_pair_of_symbols() {
+        for (text, yes, no) in [("10", "1", "0"), ("xo", "x", "o"), ("XO", "X", "O")] {
+            let Ok(Format::Boolean(b)) = Format::parse(text, S::Boolean) else {
+                panic!("{text} should read");
+            };
+            assert_eq!((b.show(true), b.show(false)), (yes.into(), no.into()));
+            assert_eq!(b.to_string(), text);
+        }
+        // Any two characters, but not the same, nor a `]`, a `%` or a gap.
+        let Ok(Format::Boolean(b)) = Format::parse("✓✗", S::Boolean) else {
+            panic!("✓✗ should read");
+        };
+        assert_eq!((b.show(true), b.show(false)), ("✓".into(), "✗".into()));
+        assert_eq!(Format::parse("yn", S::Boolean).unwrap().to_string(), "yn");
+        for bad in ["", "x", "xxo", "xx", "x]", "%x", "x ", "\tx"] {
+            assert!(Format::parse(bad, S::Boolean).is_err(), "{bad:?}");
+        }
+        assert!(!Format::parse("xo", S::Boolean).unwrap().takes(S::Int));
+    }
 
     #[test]
     fn finds_the_closing_bracket() {

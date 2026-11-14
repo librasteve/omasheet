@@ -224,7 +224,7 @@ read as one; `Integer` is what is written.
 | `Quantity` and its kinds | `5kg`, `300cm`, `9.81m.s^-2`, `10.5(3)e-3kg`, `20°C` — a number and an SI unit, written with no space; a `Scientific` magnitude, so it carries an uncertainty. A column is declared `Quantity` for any dimension, or one of its kinds (`Length`, `Mass`, `Force`, `Energy`, `Pressure`, ...), which admits only a unit of that dimension: `Weight : Mass`. `Angle` holds `rad`, `°` or `45°30′`; `SolidAngle`, `AngularSpeed`, `LuminousFlux` and `Illuminance` hold `sr`, `rad.s^-1`, `lm` and `lx`. `Data`, `DataRate` and `DataDensity` hold `B`, `GiB`, `Mb`, `MiB.s^-1` and `Gb.m^-2`. A cell in another unit of it is converted to the column's unit, which is the preferred unit of the kind (`kg` for `Mass`) or the one in brackets, `Weight : Mass[g]`; a bare number is read in that unit. After a `;` a number format as a `Scientific` takes may follow: `Mass[mg; .1f]`. See *Units* in the expressions guide |
 | `Complex` | `3+4i`, `-1.5-2i`, `2i` — a real and an imaginary part, each a `Float`; a real number in a `Complex` column is that number with no imaginary part |
 | `String` | `hi` or `"hi"`  (escape \|) |
-| `Boolean` | `true`, `false` |
+| `Boolean` | `true`, `false`; a `Boolean` column also reads `1` and `0`, `x` and `o`, `X` and `O`. Its format, in brackets, is any two different characters, the symbol for true and then for false: `Boolean[10]`, `Boolean[xo]`, `Boolean[XO]`, `Boolean[✓✗]` (not a space, `]` or `%`), and the column reads its own two as well; with none it shows `true` and `false` |
 | `Date` | `2025-01-31` |
 | `Time` | `09:30`, `09:30:15`, `09:30:15.5` |
 | `Datetime` | `2025-01-31T09:30`, `2025-01-31T09:30:15.123456` |
@@ -315,25 +315,25 @@ column of one takes the others, showing what it holds its own way: `1/7` is
 `0.143·` in a `Decimal` column, `1/7` in a `Fraction`
 column, and `14.29%` in a `Percent` column.
 
-The numeric types form a hierarchy of increasingly expressive number systems, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
+The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
 
-- **`Integer` (ℤ)**: whole numbers
-- **`Decimal` (ℚ)**: exact numbers with a fractional part, held to 38 digits
-- **`Float` (ℝ)**: real numbers, approximately represented
-- **`Scientific`**: real numbers with a measurement uncertainty, between `Float` and `Complex`
-- **`Complex` (ℂ)**: complex numbers
+- **`Integer` (ℤ)**: whole numbers (i64)
+- **`Decimal` (ℚ)**: exact fractions (d128+ / 38 decimal places)
+- **`Float` (ℝ)**: real numbers (f64)
+- **`Scientific` (ℝ)**: real numbers with uncertainty (2x f64)
+- **`Complex` (ℂ)**: complex numbers (2x f64)
 
 For any operation, and for the cells of a column, the result is the **more infectious** of the types it is made from, the least number system that holds them both: `Integer` + `Decimal` is a `Decimal`, `Decimal` * `Float` is a `Float`, and `Float` + `Complex` is a `Complex`. This is a model, not the machine's: an integer is an `i64`, a `Decimal` a 38-digit fixed point and a `Float` an `f64`, each of finite precision.
 
 Each type may be shown more than one way:
 
-| Type | Literal | Shown as |
+| Type | Literal | Representations |
 |---|---|---|
 | `Integer` | `1` | `Hex` `0xff`, `Octal` `0o17`, `Binary` `0b101` |
 | `Decimal` | `1.0` | `Fraction` `1/7`, `2 3/4`; `Percent` `14.29%` |
-| `Float` | `1e0` | none |
-| `Scientific` | `10.5(3)` | `±` for `value ± uncertainty`, `~` for the value alone |
-| `Complex` | `3+4i` | none |
+| `Float` | `1e0` | - |
+| `Scientific` | `10.5(3)` | - |
+| `Complex` | `3+4i` | - |
 
 - Two values shown the same way keep it: `Hex` + `Hex` is a `Hex`, and `Fraction` + `Fraction` a `Fraction`.
 - Two different ways of showing one type give the plain type: `Hex` + `Binary` is an `Integer`, and `Fraction` + `Percent` a `Decimal`.
@@ -444,6 +444,8 @@ An `Integer` takes `d` or `i` (decimal), `x` or `X` (hex), `o` (octal) and
 (fixed places), `e` (e notation) and `g` (whichever is shorter), or the
 same in capitals. A format that does not read, or that the column's type
 does not take, is an error where it is written.
+
+A `Boolean` column takes two characters (see `examples/booleans.omx`). It reads `1`, `0`, `x`, `o`, `X`, `O` and the format's own two as well as `true` and `false`, in a declared column only: a bare `1` elsewhere is an `Integer`. The value is unchanged, and the file keeps the cell as it was entered.
 
 A `Date`, `Time` or `Datetime` column may say how it is shown too, after
 its type in brackets, as a C `strftime` format, `%` and all:
