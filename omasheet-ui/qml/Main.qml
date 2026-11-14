@@ -6420,7 +6420,7 @@ ApplicationWindow {
         // kind, `Mass` or `Force`, is `Set unit…`'s.
         readonly property var typeGroups: [
             ["Numbers", [["Integer", false], ["Binary", true], ["Octal", true], ["Hex", true],
-                ["Decimal", false], ["Fraction", true], ["Percent", true], ["Float", false],
+                ["Fraction", false], ["Decimal", false], ["Percent", true], ["Float", false],
                 ["Scientific", false], ["Complex", false]]],
             ["Text", [["String", false], ["Email", true], ["Url", true], ["Uuid", true]]],
             ["Dates and times", [["Datetime", false], ["Date", true], ["Time", true], ["Duration", true]]],
