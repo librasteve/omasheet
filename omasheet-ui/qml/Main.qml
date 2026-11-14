@@ -5628,7 +5628,7 @@ ApplicationWindow {
         }
         // Columns, when whole columns are selected. A column added
         // from the footer goes at the end.
-        MenuRule { visible: cellMenu.columns }
+        MenuRule { visible: cellMenu.columns || (win.sheet.isConsts && win.allFormattable()) }
         // The filter box from the column's header, for the one column.
         MenuEntry {
             text: "Set filter\u2026"
@@ -5655,12 +5655,14 @@ ApplicationWindow {
         }
         MenuEntry {
             text: "Set format\u2026"
-            visible: cellMenu.columns
+            // The constants have no whole columns to select, but their Value
+            // column takes a format: it is offered with a Value cell.
+            visible: cellMenu.columns || (win.sheet.isConsts && win.allFormattable())
             enabled: visible && (cellMenu.editable || win.sheet.isConsts) && win.sheet.columns.length > 0 && win.allFormattable()
             onTriggered: win.pickFor(formatPopup)
         }
         // The columns' own entries, below the Set ones; Change to formula is last.
-        MenuRule { visible: cellMenu.columns }
+        MenuRule { visible: cellMenu.columns || (win.sheet.isConsts && win.allFormattable()) }
         MenuEntry {
             text: win.colsOnHand !== null ? "Insert cells before"
                 : cellMenu.columnCount > 1 ? "Insert " + cellMenu.columnCount + " columns before" : "Insert column before"
