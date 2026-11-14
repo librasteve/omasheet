@@ -41,7 +41,7 @@ makedepends=(
   'qt6-declarative'
 )
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('c52f98eadbb4f339a1c250e0d42c675c5aaf33d010569695c7511ed7f14c2b9d')
+sha256sums=('04aadd25367bf93040ace8d694c73cd3b91fe90b6f70f895c591629fb9a80bc1')
 
 prepare() {
   cd "$srcdir/$pkgname-$pkgver"
