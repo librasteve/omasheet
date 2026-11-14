@@ -374,8 +374,9 @@ fn cell_snap(
         exact: full,
         display,
         // A quantity is a number with a unit: the grid sets it right, as a
-        // number, not left as text.
-        numeric: value.is_numeric() || matches!(value, Value::Quantity(_)),
+        // number, not left as text. A boolean is set right too, so that the
+        // `1` and `0` of a `Boolean[10]` column line up as digits do.
+        numeric: value.is_numeric() || matches!(value, Value::Quantity(_) | Value::Boolean(_)),
         value,
         formula: source.starts_with('='),
         error: error.or_else(|| failed.then(|| "this cell could not be calculated".to_string())),

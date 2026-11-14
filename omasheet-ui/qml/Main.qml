@@ -2213,14 +2213,30 @@ ApplicationWindow {
     // if there are more columns than specs. A calculated column is its
     // formula, and keeps its own type; `columns` ones just put in are new.
     // An empty spec leaves a column as it is, or with `clear` makes it take
-    // its type from its cells again.
-    function applySpecs(specs, at, count, existing, clear) {
-        for (var i = 0; i < count && specs.length > 0; i++) {
-            var col = existing ? sheet.columns[at + i] : null;
+    // its type from its cells again. `computedToo` is for a format alone, which
+    // a calculated column takes as any does: its formula is not touched.
+    function applySpecs(specs, at, count, existing, clear, computedToo) {
+        // Which columns are calculated is read before the first is changed:
+        // each change calculates the sheet again, and what `sheet.columns`
+        // holds after it is not to be relied on for the rest.
+        var skip = [];
+        for (var k = 0; k < count; k++) {
+            var col = existing ? sheet.columns[at + k] : null;
+            skip.push(existing && (!col || (col.computed && !computedToo)));
+        }
+        // Columns side by side that are to have the same spec go in one step.
+        var i = 0;
+        while (i < count && specs.length > 0) {
             var spec = specs[i % specs.length];
-            if ((existing && (!col || col.computed)) || (spec.length === 0 && !clear))
+            if (skip[i] || (spec.length === 0 && !clear)) {
+                i++;
                 continue;
-            file.setColumnTypes(tab, at + i, 1, spec);
+            }
+            var run = 1;
+            while (i + run < count && !skip[i + run] && specs[(i + run) % specs.length] === spec)
+                run++;
+            file.setColumnTypes(tab, at + i, run, spec);
+            i += run;
         }
     }
 
@@ -2241,7 +2257,7 @@ ApplicationWindow {
         var count = selLeft === selRight ? specs.length : selRight - selLeft + 1;
         count = Math.min(count, sheet.columns.length - selLeft);
         var mark = file.undoMark();
-        keeping(sheet.nrows, sheet.columns.length, function() { applySpecs(specs, selLeft, count, true, true); });
+        keeping(sheet.nrows, sheet.columns.length, function() { applySpecs(specs, selLeft, count, true, true, true); });
         file.joinSince(mark);
     }
 
@@ -6378,10 +6394,10 @@ ApplicationWindow {
         readonly property var typeGroups: [
             ["Numbers", [["Integer", false], ["Binary", true], ["Octal", true], ["Hex", true],
                 ["Decimal", false], ["Fraction", true], ["Percent", true], ["Float", false],
-                ["Scientific", false], ["Complex", false], ["Quantity", false]]],
+                ["Scientific", false], ["Complex", false]]],
             ["Text", [["String", false], ["Email", true], ["Url", true], ["Uuid", true]]],
             ["Dates and times", [["Datetime", false], ["Date", true], ["Time", true], ["Duration", true]]],
-            ["Other", [["Boolean", false]]]
+            ["Other", [["Boolean", false], ["Quantity", false]]]
         ]
         provider: function(text) {
             var out = [];
