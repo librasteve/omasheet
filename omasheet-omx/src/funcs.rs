@@ -258,6 +258,7 @@ const COMPLEX: &str = "Complex";
 const TIME: &str = "Time & Date";
 const UNITS: &str = "Units";
 const BITWISE: &str = "Bitwise";
+const LOGIC: &str = "Logic";
 const COMPARE: &str = "Compare";
 const TEXT: &str = "Text";
 
@@ -438,6 +439,42 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "is_not_nan",
         ".is_not_nan()",
         "Whether a cell is not a NaN.",
+    ),
+    doc(
+        LOGIC,
+        "xor",
+        "xor(A, B)",
+        "True when exactly one of two is true. Empty if either is.",
+    ),
+    doc(
+        LOGIC,
+        "nand",
+        "nand(A, B)",
+        "Not both: the same as not (A and B).",
+    ),
+    doc(
+        LOGIC,
+        "nor",
+        "nor(A, B)",
+        "Neither: the same as not (A or B).",
+    ),
+    doc(
+        LOGIC,
+        "all",
+        ".all()",
+        "True when every value in a column of Booleans is true. Empty values are left out, as for sum and count.",
+    ),
+    doc(
+        LOGIC,
+        "any",
+        ".any()",
+        "True when at least one value in a column of Booleans is true.",
+    ),
+    doc(
+        LOGIC,
+        "none",
+        ".none()",
+        "True when no value in a column of Booleans is true.",
     ),
     doc(
         MATH,

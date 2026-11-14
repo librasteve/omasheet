@@ -224,7 +224,7 @@ read as one; `Integer` is what is written.
 | `Quantity` and its kinds | `5kg`, `300cm`, `9.81m.s^-2`, `10.5(3)e-3kg`, `20°C` — a number and an SI unit, written with no space; a `Scientific` magnitude, so it carries an uncertainty. A column is declared `Quantity` for any dimension, or one of its kinds (`Length`, `Mass`, `Force`, `Energy`, `Pressure`, ...), which admits only a unit of that dimension: `Weight : Mass`. `Angle` holds `rad`, `°` or `45°30′`; `SolidAngle`, `AngularSpeed`, `LuminousFlux` and `Illuminance` hold `sr`, `rad.s^-1`, `lm` and `lx`. `Data`, `DataRate` and `DataDensity` hold `B`, `GiB`, `Mb`, `MiB.s^-1` and `Gb.m^-2`. A cell in another unit of it is converted to the column's unit, which is the preferred unit of the kind (`kg` for `Mass`) or the one in brackets, `Weight : Mass[g]`; a bare number is read in that unit. After a `;` a number format as a `Scientific` takes may follow: `Mass[mg; .1f]`. See *Units* in the expressions guide |
 | `Complex` | `3+4i`, `-1.5-2i`, `2i` — a real and an imaginary part, each a `Float`; a real number in a `Complex` column is that number with no imaginary part |
 | `String` | `hi` or `"hi"`  (escape \|) |
-| `Boolean` | `true`, `false` |
+| `Boolean` | `true`, `false`; a `Boolean` column also reads `1` and `0`, `x` and `o`, `X` and `O`. Its format, in brackets, is the symbol for true and then for false: `Boolean[10]`, `Boolean[xo]`, `Boolean[XO]`; with none it shows `true` and `false` |
 | `Date` | `2025-01-31` |
 | `Time` | `09:30`, `09:30:15`, `09:30:15.5` |
 | `Datetime` | `2025-01-31T09:30`, `2025-01-31T09:30:15.123456` |
@@ -444,6 +444,8 @@ An `Integer` takes `d` or `i` (decimal), `x` or `X` (hex), `o` (octal) and
 (fixed places), `e` (e notation) and `g` (whichever is shorter), or the
 same in capitals. A format that does not read, or that the column's type
 does not take, is an error where it is written.
+
+A `Boolean` column takes `10`, `xo` or `XO` (see `examples/booleans.omx`). It reads `1`, `0`, `x`, `o`, `X` and `O` as well as `true` and `false`, in a declared column only: a bare `1` elsewhere is an `Integer`. The value is unchanged, and the file keeps the cell as it was entered.
 
 A `Date`, `Time` or `Datetime` column may say how it is shown too, after
 its type in brackets, as a C `strftime` format, `%` and all:

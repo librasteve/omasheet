@@ -502,6 +502,13 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
   `sort(columns)`, `group_by(keys) |> agg(aggregates)` and `join(Other,
   keys)`, as [above](#sheets-from-sheets); `shift(n)` — the value `n` rows
   back
+- Booleans: `xor(a, b)`, `nand(a, b)` and `nor(a, b)` are the gates `and` and
+  `or` have no word for, worked out in them, so an empty value is treated as
+  there: `xor` and `nand` are empty if either is. `x.all()`, `x.any()` and
+  `x.none()` say whether every, some or no value of a column is true; as
+  `sum` and `count` do, they leave the empty ones out, so a column of three
+  squares with one empty is `all` true if the other two are. Test
+  `x.count() == 3` too where that matters
 - Empty or not: `is_null(x)` and `is_not_null(x)`, of a value or of every
   cell of a column; `fill_null(x, 0)`, which is `x // 0`, and
   `is_in(x, [1, 2])`, which is `x in [1, 2]` — these two take one value, as

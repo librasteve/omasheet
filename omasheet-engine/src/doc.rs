@@ -497,6 +497,7 @@ pub fn format_help(ty: &str) -> String {
         Some(S::Scientific) => "Scientific",
         Some(S::Quantity(_)) => "Quantity",
         Some(S::Date | S::Time | S::Datetime) => "Date",
+        Some(S::Boolean) => "Boolean",
         Some(_) => "Number",
         None => return String::new(),
     };
@@ -562,6 +563,11 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             ("±.3e-3".into(), "± uncertainty, e notation"),
             ("~.2f".into(), "value only, 2 places"),
             ("~.3e-3".into(), "value only, e notation"),
+        ],
+        S::Boolean => vec![
+            ("10".into(), "1 and 0"),
+            ("xo".into(), "x and o"),
+            ("XO".into(), "X and O"),
         ],
         S::Date => vec![
             ("%d %b %Y".into(), "31 Jan 2025"),
@@ -7372,6 +7378,7 @@ mod tests {
             ("Decimal", "", 4),
             ("Float", "", 4),
             ("Scientific", "", 3),
+            ("Boolean", "", 3),
             ("Date", "", 5),
             ("Time", "", 3),
             ("Datetime", "", 4),
@@ -7386,6 +7393,14 @@ mod tests {
         let src = "sheet S\n\nDue : Date\n\n| Due |\n| --- |\n| 2025-01-31 |\n";
         let mut doc = Document::from_text(src);
         for (format, _) in format_suggestions("Date", "") {
+            assert!(
+                doc.set_column_format(0, &[0], Some(&format)).is_ok(),
+                "{format}"
+            );
+        }
+        let src = "sheet S\n\nDone : Boolean\n\n| Done |\n| ---- |\n| true |\n";
+        let mut doc = Document::from_text(src);
+        for (format, _) in format_suggestions("Boolean", "") {
             assert!(
                 doc.set_column_format(0, &[0], Some(&format)).is_ok(),
                 "{format}"
@@ -8291,7 +8306,7 @@ mod tests {
         assert!(int.contains("d\ta whole number"));
         assert_eq!(format_help("Nonesuch"), "");
         // Every row has its three cells.
-        for ty in ["Integer", "Float", "Scientific", "Mass", "Date"] {
+        for ty in ["Integer", "Float", "Scientific", "Mass", "Date", "Boolean"] {
             for line in format_help(ty).lines().filter(|l| !l.starts_with("#\t")) {
                 let cells = if line.starts_with(":\t") { 2 } else { 3 };
                 assert_eq!(line.split('\t').count(), cells, "{ty}: {line}");

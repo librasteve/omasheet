@@ -2622,6 +2622,13 @@ impl<'a> Checker<'a> {
             (Some(l @ Lit::Datetime(_)), S::Datetime) => Some(l),
             (Some(l @ Lit::Duration(_)), S::Duration) => Some(l),
             (Some(l @ Lit::Boolean(_)), S::Boolean) => Some(l),
+            // A `Boolean` column also reads `1` and `0`, `x` and `o`, `X`
+            // and `O`; no other column or undeclared cell does.
+            (_, S::Boolean) => match text.trim() {
+                "1" | "x" | "X" => Some(Lit::Boolean(true)),
+                "0" | "o" | "O" => Some(Lit::Boolean(false)),
+                _ => None,
+            },
             // A narrower kind of text is the text itself, once it reads as
             // one. Quoted text is read as what it holds.
             (parsed, S::Url | S::Email | S::Uuid) => {
@@ -2659,7 +2666,7 @@ impl<'a> Checker<'a> {
                     S::Scientific => "enter a number with its uncertainty such as `10.5(3)` or `10 ± 0.3`, or start the cell with `=` for a formula",
                     S::Complex => "enter a complex number such as `3+4i`, or start the cell with `=` for a formula",
                     S::Quantity(_) => "enter a number with an SI unit such as `5kg` or `9.81m.s^-2`, or start the cell with `=` for a formula",
-                    S::Boolean => "enter `true` or `false`, or start the cell with `=` for a formula",
+                    S::Boolean => "enter `true`, `false`, `1`, `0`, `x` or `o`, or start the cell with `=` for a formula",
                     S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
                     S::Time => "enter a time such as `09:30` or `09:30:15`, or start the cell with `=` for a formula",
                     S::Datetime => "enter a date-time such as `2025-01-31T09:30`, or start the cell with `=` for a formula",
@@ -3785,6 +3792,52 @@ impl<'a> Checker<'a> {
             // equivalent to: no new IR and nothing new to evaluate.
             // The function spellings of `//` and `in`, which already mean
             // exactly this.
+            // The gates and the aggregates of `Boolean`s, each written out in
+            // what there already is: no new IR, and the same rule for an
+            // empty value as `and` and `or` have.
+            "xor" | "nand" | "nor" => {
+                if !arity(self, 2, &format!("{name}(A, B)")) {
+                    return fail;
+                }
+                let at = |kind| Expr { kind, span };
+                let bin = |op, a: Expr, b: Expr| {
+                    at(ExprKind::Binary(op, Box::new(a), Box::new(b)))
+                };
+                let not = |a: Expr| at(ExprKind::Unary(UnOp::Not, Box::new(a)));
+                let (a, b) = (args[0].clone(), args[1].clone());
+                let form = match name {
+                    "nand" => not(bin(BinOp::And, a, b)),
+                    "nor" => not(bin(BinOp::Or, a, b)),
+                    _ => bin(
+                        BinOp::And,
+                        bin(BinOp::Or, a.clone(), b.clone()),
+                        not(bin(BinOp::And, a, b)),
+                    ),
+                };
+                self.lower(&form, sc)
+            }
+            "all" | "any" | "none" => {
+                if !arity(self, 1, &format!("Board.A.{name}()")) {
+                    return fail;
+                }
+                let at = |kind| Expr { kind, span };
+                let call = |f: &str, x: &Expr| {
+                    at(ExprKind::Call(f.to_string(), name_span, vec![x.clone()]))
+                };
+                let bin = |op, a: Expr, b: Expr| {
+                    at(ExprKind::Binary(op, Box::new(a), Box::new(b)))
+                };
+                // Empty values are left out, as `sum` and `count` leave
+                // them: how many are true, against how many there are.
+                let x = &args[0];
+                let trues = call("sum", &call("Integer", x));
+                let form = match name {
+                    "all" => bin(BinOp::Eq, trues, call("count", x)),
+                    "any" => bin(BinOp::Gt, trues, at(ExprKind::Lit(Lit::Int(0, Base::Dec)))),
+                    _ => bin(BinOp::Eq, trues, at(ExprKind::Lit(Lit::Int(0, Base::Dec)))),
+                };
+                self.lower(&form, sc)
+            }
             "fill_null" | "is_in" => {
                 let op = if name == "fill_null" {
                     BinOp::Fallback

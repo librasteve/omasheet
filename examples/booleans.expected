@@ -1,0 +1,35 @@
+sheet Truth
+
+A | B | And | Or | Xor | Nand | Nor | Sum | Mul
+--|---|-----|----|-----|------|-----|-----|----
+0 | 0 | 0   | 0  | 0   | 1    | 1   |   0 |   0
+0 | 1 | 0   | 1  | 1   | 1    | 0   |   1 |   0
+1 | 0 | 0   | 1  | 1   | 1    | 0   |   1 |   0
+1 | 1 | 1   | 1  | 0   | 0    | 0   |   2 |   1
+
+sheet Board
+
+Row | A | B | C
+----|---|---|--
+  1 | X | O | X
+  2 | O | X | O
+  3 | O | X | X
+
+sheet Lines
+
+Line     | X | O
+---------|---|--
+Row 1    | 0 | 0
+Row 2    | 0 | 0
+Row 3    | 0 | 0
+Column A | 0 | 0
+Column B | 0 | 0
+Column C | 0 | 0
+Diagonal | 1 | 0
+Reverse  | 0 | 0
+
+sheet Result
+
+Winner
+------
+X

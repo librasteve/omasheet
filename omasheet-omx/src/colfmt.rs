@@ -17,6 +17,43 @@ pub enum Format {
     Date(DateFormat),
     Scientific(SciFormat),
     Quantity(QuantityFormat),
+    Boolean(BoolFormat),
+}
+
+/// How a column of booleans is shown: `10`, `xo` or `XO`, the symbol for
+/// true and then the one for false. Without one it shows `true` and `false`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BoolFormat {
+    pub yes: char,
+    pub no: char,
+}
+
+impl BoolFormat {
+    pub fn parse(text: &str) -> Result<BoolFormat, FormatError> {
+        let (yes, no) = match text {
+            "10" => ('1', '0'),
+            "xo" => ('x', 'o'),
+            "XO" => ('X', 'O'),
+            _ => {
+                return Err(FormatError {
+                    at: 0,
+                    len: text.chars().count(),
+                    message: format!("`{text}` is not a `Boolean` format"),
+                });
+            }
+        };
+        Ok(BoolFormat { yes, no })
+    }
+
+    pub fn show(&self, b: bool) -> String {
+        (if b { self.yes } else { self.no }).to_string()
+    }
+}
+
+impl fmt::Display for BoolFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}{}", self.yes, self.no)
+    }
 }
 
 /// How a column of quantities is shown: in a unit of its dimension,
@@ -319,6 +356,7 @@ impl Format {
             S::Scientific => SciFormat::parse(text).map(Format::Scientific),
             S::Quantity(id) => QuantityFormat::parse(text, id).map(Format::Quantity),
             S::Date | S::Time | S::Datetime => DateFormat::parse(text).map(Format::Date),
+            S::Boolean => BoolFormat::parse(text).map(Format::Boolean),
             _ => NumFormat::parse(text).map(Format::Number),
         }
     }
@@ -329,6 +367,7 @@ impl Format {
             Format::Number(f) => f.takes(ty),
             Format::Date(f) => f.takes(ty),
             Format::Scientific(_) => ty == S::Scientific,
+            Format::Boolean(_) => ty == S::Boolean,
             Format::Quantity(q) => match ty {
                 S::Quantity(id) => id.named().is_none_or(|t| t.admits(&q.unit)),
                 _ => false,
@@ -343,6 +382,7 @@ impl Format {
             S::Scientific => Some("`e`, `f` or `g`, with `±` first"),
             S::Quantity(_) => Some("a unit of its dimension, as `g`, then `;` and a number format"),
             S::Date => Some("the conversions of a date, as `%d %b %Y`"),
+            S::Boolean => Some("`10`, `xo` or `XO`"),
             S::Time => Some("the conversions of a time, as `%H:%M`"),
             S::Datetime => Some("the conversions of a date and a time, as `%d %b %Y %H:%M`"),
             _ => NumFormat::conversions_of(ty),
@@ -358,6 +398,7 @@ impl Format {
             S::Quantity(_) => {
                 "a quantity format is a unit, as `g`, which may be followed by `;` and a number format, as `g; ±.3e-3`"
             }
+            S::Boolean => "a `Boolean` format is `10`, `xo` or `XO`: the symbol for true, then for false",
             S::Date | S::Time | S::Datetime => {
                 "a date or time format is a C `strftime` format, as `%d %b %Y`"
             }
@@ -390,6 +431,7 @@ impl fmt::Display for Format {
             Format::Date(d) => d.fmt(f),
             Format::Scientific(s) => s.fmt(f),
             Format::Quantity(q) => q.fmt(f),
+            Format::Boolean(b) => b.fmt(f),
         }
     }
 }
@@ -397,6 +439,19 @@ impl fmt::Display for Format {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_boolean_format_is_a_pair_of_symbols() {
+        for (text, yes, no) in [("10", "1", "0"), ("xo", "x", "o"), ("XO", "X", "O")] {
+            let Ok(Format::Boolean(b)) = Format::parse(text, S::Boolean) else {
+                panic!("{text} should read");
+            };
+            assert_eq!((b.show(true), b.show(false)), (yes.into(), no.into()));
+            assert_eq!(b.to_string(), text);
+        }
+        assert!(Format::parse("yn", S::Boolean).is_err());
+        assert!(!Format::parse("xo", S::Boolean).unwrap().takes(S::Int));
+    }
 
     #[test]
     fn finds_the_closing_bracket() {

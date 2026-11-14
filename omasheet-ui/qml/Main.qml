@@ -2436,7 +2436,7 @@ ApplicationWindow {
             if (win.isQuantityType(column.type)) {
                 if (!column.unit)
                     return false;
-            } else if (["Integer", "Hex", "Octal", "Binary", "Decimal", "Float", "Scientific", "Date", "Time", "Datetime"].indexOf(column.type) < 0) {
+            } else if (["Integer", "Hex", "Octal", "Binary", "Decimal", "Float", "Scientific", "Boolean", "Date", "Time", "Datetime"].indexOf(column.type) < 0) {
                 return false;
             }
         }

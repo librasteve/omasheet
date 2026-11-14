@@ -1,0 +1,72 @@
+# Boolean formats: a `Boolean` column reads `true` and `false`, and also `1`
+# and `0`, `x` and `o`, `X` and `O`. Its format, in brackets, says how it is
+# shown: `10`, `xo` or `XO`, the symbol for true and then for false. The value
+# is unchanged; only how it is shown. An empty cell is neither.
+
+# The truth table of two inputs, with the gates `and`, `or`, `xor`, `nand` and
+# `nor`. `Sum` and `Mul` are the arithmetic on 0 and 1 that they come from:
+# AND is the product being 1 and XOR is the sum being 1.
+sheet Truth
+
+A    : Boolean[10]
+B    : Boolean[10]
+And  : Boolean[10]
+Or   : Boolean[10]
+Xor  : Boolean[10]
+Nand : Boolean[10]
+Nor  : Boolean[10]
+Sum  : Integer
+Mul  : Integer
+
+| A     | B     | And | Or | Xor | Nand | Nor | Sum | Mul |
+| ----- | ----- | --- | -- | --- | ---- | --- | --- | --- |
+| false | false | *   | *  | *   | *    | *   | *   | *   |
+| false | true  | *   | *  | *   | *    | *   | *   | *   |
+| true  | false | *   | *  | *   | *    | *   | *   | *   |
+| true  | true  | *   | *  | *   | *    | *   | *   | *   |
+
+And  := A and B
+Or   := A or B
+Xor  := xor(A, B)
+Nand := nand(A, B)
+Nor  := nor(A, B)
+Sum  := A.Integer + B.Integer
+Mul  := A.Integer * B.Integer
+
+# Noughts and crosses: `X` is true, `O` is false and an empty square is
+# neither, so a line of three is won by X when all three are true and by O
+# when none is.
+sheet Board
+
+A : Boolean[XO]
+B : Boolean[XO]
+C : Boolean[XO]
+
+| Row | A | B | C |
+| --- | - | - | - |
+| 1   | X | O | X |
+| 2   | O | X | O |
+| 3   | O | X | X |
+
+sheet Lines
+
+Line : String
+X    : Boolean[10]
+O    : Boolean[10]
+
+| Line     | X | O |
+| -------- | - | - |
+| Row 1    | = (Board[A; 0] and Board[B; 0] and Board[C; 0]) // false | = (not Board[A; 0] and not Board[B; 0] and not Board[C; 0]) // false |
+| Row 2    | = (Board[A; 1] and Board[B; 1] and Board[C; 1]) // false | = (not Board[A; 1] and not Board[B; 1] and not Board[C; 1]) // false |
+| Row 3    | = (Board[A; 2] and Board[B; 2] and Board[C; 2]) // false | = (not Board[A; 2] and not Board[B; 2] and not Board[C; 2]) // false |
+| Column A | = Board.A.count() == 3 and Board.A.all() | = Board.A.count() == 3 and Board.A.none() |
+| Column B | = Board.B.count() == 3 and Board.B.all() | = Board.B.count() == 3 and Board.B.none() |
+| Column C | = Board.C.count() == 3 and Board.C.all() | = Board.C.count() == 3 and Board.C.none() |
+| Diagonal | = (Board[A; 0] and Board[B; 1] and Board[C; 2]) // false | = (not Board[A; 0] and not Board[B; 1] and not Board[C; 2]) // false |
+| Reverse  | = (Board[C; 0] and Board[B; 1] and Board[A; 2]) // false | = (not Board[C; 0] and not Board[B; 1] and not Board[A; 2]) // false |
+
+sheet Result
+
+| Winner                                                                                    |
+| ----------------------------------------------------------------------------------------- |
+| = if Lines.X.Integer.sum() > 0 then 'X' else if Lines.O.Integer.sum() > 0 then 'O' else 'no one yet' |

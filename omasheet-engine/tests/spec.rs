@@ -3700,10 +3700,10 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // Lest the whole thing pass by checking nothing. Sixteen of the
     // corpus's columns come from a file, eight in `analysis.omx` and eight
     // in `ccp.omx`, and those are taken at once whichever way the rest is
-    // calculated, which is 32 of the 59. The other twenty-seven are the
+    // calculated, which is 32 of the 64. The other thirty-two are the
     // columns lowering forced calculates in one step, and 8.3 is where that
     // number is read.
-    assert_eq!(taken, 59, "the columns taken at once");
+    assert_eq!(taken, 64, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read
@@ -3916,4 +3916,33 @@ fn a_fixed_row_of_its_own_column_is_circular_only_through_itself() {
         said.contains("circular reference in column `B` at row 2"),
         "{said}"
     );
+}
+
+const FLAGS: &str = "\
+sheet T
+
+A     | B     | C
+true  | false | true
+true  | true  | true
+false | false | true
+      | true  | true
+";
+
+#[test]
+fn boolean_gates_and_aggregates() {
+    // Each gate is written out in `and`, `or` and `not`.
+    assert_eq!(ask(FLAGS, "xor(true, false)"), "true");
+    assert_eq!(ask(FLAGS, "xor(true, true)"), "false");
+    assert_eq!(ask(FLAGS, "nand(true, true)"), "false");
+    assert_eq!(ask(FLAGS, "nand(true, false)"), "true");
+    assert_eq!(ask(FLAGS, "nor(false, false)"), "true");
+    assert_eq!(ask(FLAGS, "nor(true, false)"), "false");
+    // They work down a column, and an empty value gives an empty one.
+    assert_eq!(ask(FLAGS, "xor(T.A, T.B)"), "[true, false, false, empty]");
+    // `all`, `any` and `none` leave the empty ones out.
+    assert_eq!(ask(FLAGS, "T.A.all()"), "false");
+    assert_eq!(ask(FLAGS, "T.C.all()"), "true");
+    assert_eq!(ask(FLAGS, "T.A.any()"), "true");
+    assert_eq!(ask(FLAGS, "T.B.none()"), "false");
+    assert_eq!(ask(FLAGS, "T[; false].C.none()"), "true");
 }

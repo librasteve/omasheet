@@ -2,7 +2,7 @@
 #
 # A section starts `== Title | Families`, and says which columns it is shown
 # for: Number (Integer, Decimal, Float, Percent, Fraction, Hex, Octal, Binary),
-# Scientific, Quantity, Date (Date, Time and Datetime). The lines under it are
+# Scientific, Quantity, Date (Date, Time and Datetime), Boolean. The lines under it are
 # `what you write | what it does | an example`, the example being a format and
 # then, after `→`, what it shows. A line starting `: ` is a note, shown across
 # the panel and wrapped. Blank lines and lines starting with `#` are ignored.
@@ -66,3 +66,9 @@ unit | the unit the column shows and holds | Mass[g]
 %x | a date | %x → 31/01/2025
 %X | a time | %X → 17:05:00
 %c | a date and a time | %c → 31/01/2025 17:05
+
+== Symbols | Boolean
+: A format is the symbol for true and then the one for false. A cell may be written as any of them, or as true or false; the format only says how it is shown.
+10 | 1 for true, 0 for false | 10 → 1
+xo | x for true, o for false | xo → x
+XO | X for true, O for false | XO → X
