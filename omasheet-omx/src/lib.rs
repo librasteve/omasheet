@@ -23,6 +23,7 @@ pub mod ir;
 pub mod lexer;
 pub mod numfmt;
 pub mod parser;
+pub mod rational;
 pub mod text;
 pub mod types;
 pub mod units;
