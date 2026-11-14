@@ -16,3 +16,5 @@ coinvent-omasheet-format-chatgpt.md
 !/demo_data/fetch.sh
 !/demo_data/*.omx
 *.swp
+/macos/dist
+/windows/dist

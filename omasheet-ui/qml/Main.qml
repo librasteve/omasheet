@@ -4132,8 +4132,10 @@ ApplicationWindow {
                                             }
                                             onCursorPositionChanged: {
                                                 nudged = 0;
+                                                // The text may not have reached the box yet:
+                                                // keep the caret inside what it holds.
                                                 if (!formulaField.activeFocus)
-                                                    formulaField.cursorPosition = cursorPosition;
+                                                    formulaField.cursorPosition = Math.min(cursorPosition, formulaField.length);
                                             }
                                             Component.onDestruction: if (win.editor === this) win.editor = null
                                             Component.onCompleted: {

@@ -1,6 +1,7 @@
-# Builds the Arch package for each architecture and attaches it to a GitHub
-# release, where install.sh fetches it.
-name: Arch package
+# Builds the Arch package for each architecture, and the macOS and Windows
+# ones, and attaches them to a GitHub release, where install.sh and
+# install.ps1 fetch them.
+name: Packages
 
 on:
   release:
@@ -76,8 +77,50 @@ jobs:
           path: ${{ runner.temp }}/dist/omasheet-*.pkg.tar.zst
           if-no-files-found: error
 
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG || github.sha }}
+      - run: brew install qt
+      - run: macos/build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: omasheet-macos-${{ matrix.arch }}
+          path: macos/dist/omasheet-macos-*.zip
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG || github.sha }}
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.8.*
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Build the package
+        shell: pwsh
+        run: windows/build.ps1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: omasheet-windows-x86_64
+          path: windows/dist/omasheet-windows-*.zip
+          if-no-files-found: error
+
   attach:
-    needs: build
+    needs: [build, macos, windows]
     if: ${{ github.event.release.tag_name || inputs.tag }}
     runs-on: ubuntu-latest
     permissions:
@@ -96,12 +139,14 @@ jobs:
       - name: Provenance (SLSA)
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: omasheet-*.pkg.tar.zst
+          subject-path: |
+            omasheet-*.pkg.tar.zst
+            omasheet-*.zip
 
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sha256sum omasheet-*.pkg.tar.zst > SHA256SUMS
+          sha256sum omasheet-*.pkg.tar.zst omasheet-*.zip > SHA256SUMS
           cat SHA256SUMS
-          gh release upload "$TAG" omasheet-*.pkg.tar.zst SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "$TAG" omasheet-*.pkg.tar.zst omasheet-*.zip SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"

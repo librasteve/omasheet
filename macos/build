@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Build Omasheet.app and zip it for install.sh, on a Mac with Qt 6 and Rust
+# (brew install qt rust). Leaves macos/dist/omasheet-macos-<arch>.zip, where
+# <arch> is arm64 or x86_64, the architecture of the Mac that builds it.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+VERSION=$(sed -n '/^\[workspace\.package\]/,/^\[workspace\.dependencies\]/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+ARCH=$(uname -m)
+DIST=macos/dist
+APP=$DIST/Omasheet.app
+
+command -v macdeployqt >/dev/null || { echo "macdeployqt not found: brew install qt" >&2; exit 1; }
+
+# --locked: see install.sh on the yanked crate.
+cargo build --release --locked --package omasheet-ui
+
+rm -rf "$DIST"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp target/release/omasheet "$APP/Contents/MacOS/omasheet"
+sed "s/@VERSION@/$VERSION/g" macos/Info.plist > "$APP/Contents/Info.plist"
+
+# The icon: the SVG drawn by Quick Look, then the sizes an .icns holds. The
+# app is still good without one, so a failure here is not the end.
+make_icon() {
+  local work="$DIST/icon" set="$DIST/omasheet.iconset"
+  mkdir -p "$work" "$set"
+  qlmanage -t -s 1024 -o "$work" pkgbuild/omasheet.svg >/dev/null 2>&1
+  local png="$work/omasheet.svg.png" size
+  [[ -f $png ]] || return 1
+  for size in 16 32 128 256 512; do
+    sips -z $size $size "$png" --out "$set/icon_${size}x${size}.png" >/dev/null
+    sips -z $((size * 2)) $((size * 2)) "$png" --out "$set/icon_${size}x${size}@2x.png" >/dev/null
+  done
+  iconutil -c icns "$set" -o "$APP/Contents/Resources/omasheet.icns"
+}
+make_icon || echo "No icon made: carrying on without one" >&2
+rm -rf "$DIST/icon" "$DIST/omasheet.iconset"
+
+# Copy in the Qt it was built with: frameworks, QML modules and plugins.
+macdeployqt "$APP" -qmldir=omasheet-ui/qml
+
+# macdeployqt also copies plugins for Qt modules that are not here (PDF
+# images, the virtual keyboard, Qt Quick extras), and those would load a
+# second Qt from wherever they find one. The app uses none of them.
+rm -f "$APP/Contents/PlugIns/imageformats/libqpdf.dylib"
+rm -rf "$APP/Contents/PlugIns/platforminputcontexts"
+rm -f "$APP"/Contents/PlugIns/quick/*{vkb,virtualkeyboard,pdfquick,scene2d,scene3d}*.dylib
+# The QML modules link to their plugins in PlugIns/quick: drop the dangling ones.
+find "$APP/Contents/Resources/qml" -type l ! -exec test -e {} \; -delete
+
+# Without the cocoa platform plugin Qt aborts at start-up, so never ship a
+# bundle that lacks it.
+[[ -f $APP/Contents/PlugIns/platforms/libqcocoa.dylib ]] \
+  || { echo "libqcocoa.dylib missing from the bundle: macdeployqt failed" >&2; exit 1; }
+
+# Cargo left the Homebrew lib directory in the binary's rpath: drop it, so the
+# bundle never quietly leans on a Qt installed on the build machine.
+while read -r rp; do
+  install_name_tool -delete_rpath "$rp" "$APP/Contents/MacOS/omasheet"
+done < <(otool -l "$APP/Contents/MacOS/omasheet" | awk '/LC_RPATH/{f=1} f&&/ path /{print $2; f=0}' | grep -E '^/(opt/homebrew|usr/local)')
+
+# Rewriting the binary broke its signature, and Apple silicon will not run an
+# unsigned one: sign it ad hoc (no developer identity).
+codesign --force --deep --sign - "$APP"
+
+ditto -c -k --keepParent "$APP" "$DIST/omasheet-macos-$ARCH.zip"
+ls -l "$DIST"/omasheet-macos-*.zip

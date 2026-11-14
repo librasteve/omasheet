@@ -48,16 +48,28 @@ Running := [Revenue; 0..*].sum()
 [OmaStore](https://github.com/KitsuneForgering/OmaStore), the community app
 store for Omarchy. Search for it there and click `install`.
 
-**With pacman:**
+**macOS** (Apple silicon or Intel) installs `Omasheet.app` into `/Applications` and the `omasheet` command into `/usr/local/bin`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/librasteve/omasheet/main/install.sh | bash
+```
+
+**Windows** (64-bit), in PowerShell: installs to `%LOCALAPPDATA%\Programs\Omasheet`, with a Start menu entry, `.omx` files opening in it, and `omasheet` on your PATH. No administrator needed.
+
+```powershell
+irm https://raw.githubusercontent.com/librasteve/omasheet/main/install.ps1 | iex
+```
+
+**Omarchy and Arch Linux, with pacman** (the same `install.sh` line as for macOS):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/librasteve/omasheet/main/install.sh | bash
 ```
 
 **Update:** run the same line again.
-**Uninstall:** `sudo pacman -R omasheet`.
+**Uninstall:** `sudo pacman -R omasheet` on Arch; on macOS delete `/Applications/Omasheet.app` and `/usr/local/bin/omasheet`; on Windows run `uninstall.ps1` in the install folder, or use Apps & features.
 
-**Build from source** (e.g. on macOS ARM and other Linux): install Qt 6 and Rust 
+**Build from source** (other Linux, or to hack on it): install Qt 6 and Rust 
 (`brew install qt rust`), then `cargo build --release --package omasheet-ui`; 
 the binary is at `target/release/omasheet`.
 
