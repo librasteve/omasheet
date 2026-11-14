@@ -51,6 +51,13 @@ impl QId {
     }
 }
 
+/// The scale of a bare `Decimal`: ten places. A `Decimal(38, 10)` holds up
+/// to about 10^28.
+pub const DEFAULT_SCALE: u8 = 10;
+
+/// The most places a `Decimal` can keep: a `Decimal128` holds 38 digits.
+pub const MAX_DECIMAL_SCALE: u8 = 38;
+
 /// The type of a single value. `Any` is "not known until evaluation".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum S {
@@ -67,7 +74,7 @@ pub enum S {
     Binary,
     /// An exact number that ends when written as a decimal: `19.99`. Every
     /// `Int` is one.
-    Decimal,
+    Decimal(u8),
     /// An exact number shown as a fraction of whole numbers: `1/7`, and
     /// `2 3/4` for `2.75`. It holds whatever a `Decimal` does.
     Fraction,
@@ -106,6 +113,14 @@ pub enum S {
 }
 
 impl S {
+    /// A `Decimal` of the default scale.
+    pub const DECIMAL: S = S::Decimal(DEFAULT_SCALE);
+
+    /// A `Decimal` of any scale.
+    pub fn is_decimal(self) -> bool {
+        matches!(self, S::Decimal(_))
+    }
+
     /// A type that can be written in a column schema.
     pub fn from_name(name: &str) -> Option<S> {
         Some(match name {
@@ -116,7 +131,7 @@ impl S {
             "Hex" => S::Hex,
             "Octal" => S::Octal,
             "Binary" => S::Binary,
-            "Decimal" => S::Decimal,
+            "Decimal" => S::DECIMAL,
             "Fraction" => S::Fraction,
             "Percent" => S::Percent,
             "Float" => S::Float,
@@ -143,7 +158,7 @@ impl S {
                 | S::Hex
                 | S::Octal
                 | S::Binary
-                | S::Decimal
+                | S::Decimal(_)
                 | S::Fraction
                 | S::Percent
                 | S::Float
@@ -164,7 +179,7 @@ impl S {
 
     /// An exact number: a whole number, `Decimal`, `Fraction` or `Percent`.
     pub fn is_exact(self) -> bool {
-        self.is_int() || matches!(self, S::Decimal | S::Fraction | S::Percent)
+        self.is_int() || matches!(self, S::Decimal(_) | S::Fraction | S::Percent)
     }
 
     /// A date, a time of day, or both.
@@ -198,7 +213,7 @@ impl S {
 
     fn rank(self) -> u8 {
         match self {
-            S::Int | S::Hex | S::Octal | S::Binary | S::Decimal | S::Fraction | S::Percent => 0,
+            S::Int | S::Hex | S::Octal | S::Binary | S::Decimal(_) | S::Fraction | S::Percent => 0,
             S::Float => 1,
             S::Scientific => 2,
             S::Complex => 3,
@@ -219,7 +234,7 @@ impl S {
             if self.is_int() && other.is_int() {
                 S::Int
             } else {
-                S::Decimal
+                S::DECIMAL
             }
         } else if self.rank() >= other.rank() {
             self
@@ -264,7 +279,7 @@ impl S {
                 | S::Hex
                 | S::Octal
                 | S::Binary
-                | S::Decimal
+                | S::Decimal(_)
                 | S::Fraction
                 | S::Float
                 | S::Scientific
@@ -315,7 +330,7 @@ impl fmt::Display for S {
             S::Hex => "Hex",
             S::Octal => "Octal",
             S::Binary => "Binary",
-            S::Decimal => "Decimal",
+            S::Decimal(_) => "Decimal",
             S::Fraction => "Fraction",
             S::Percent => "Percent",
             S::Float => "Float",
@@ -485,6 +500,11 @@ impl Ty {
 #[cfg(test)]
 mod tests {
     use super::S::*;
+    use super::{DEFAULT_SCALE, S};
+
+    /// A bare `Decimal`, which the glob above would make a constructor.
+    #[allow(non_upper_case_globals)]
+    const Decimal: S = S::Decimal(DEFAULT_SCALE);
 
     /// The tables of the type lattice: the number types, then each family.
     #[test]

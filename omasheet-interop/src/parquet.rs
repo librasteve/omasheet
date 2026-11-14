@@ -121,7 +121,7 @@ fn frame(
                     .collect();
                 Series::new(name, v)
             }
-            S::Decimal | S::Percent => {
+            S::Decimal(_) | S::Percent => {
                 // One scale for the whole column, as a Parquet decimal has:
                 // the widest scale any value needs, but no wider than the
                 // narrowest any of them can be written at: one long value
@@ -582,7 +582,7 @@ fn cell(value: AnyValue<'_>, ty: S) -> Datum {
         AnyValue::UInt64(n) => Datum::Lit(
             n.to_string(),
             if n > i64::MAX as u64 {
-                S::Decimal
+                S::DECIMAL
             } else {
                 S::Int
             },
@@ -590,7 +590,7 @@ fn cell(value: AnyValue<'_>, ty: S) -> Datum {
         AnyValue::Float32(f) => Datum::Lit(float_text(f as f64), S::Float),
         AnyValue::Float64(f) => Datum::Lit(float_text(f), S::Float),
         AnyValue::Decimal(unscaled, scale) => match Dec::new(unscaled, scale as i32) {
-            Some(d) => Datum::Lit(d.to_plain_string(), S::Decimal),
+            Some(d) => Datum::Lit(d.to_plain_string(), S::DECIMAL),
             None => Datum::Empty,
         },
         AnyValue::Date(days) => Datum::Lit(date::format(days), S::Date),

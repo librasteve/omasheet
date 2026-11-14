@@ -2460,9 +2460,9 @@ impl<'p> Engine<'p> {
                     | (_, S::Any)
                     | (
                         Value::Int(..),
-                        S::Int | S::Hex | S::Octal | S::Binary | S::Decimal
+                        S::Int | S::Hex | S::Octal | S::Binary | S::Decimal(_)
                     )
-                    | (Value::Decimal(_), S::Decimal)
+                    | (Value::Decimal(_), S::Decimal(_))
                     | (Value::Fraction(_), S::Fraction)
                     | (Value::Percent(_), S::Percent)
                     | (Value::Float(_), S::Float)
@@ -4879,7 +4879,7 @@ fn dressed(v: Value, col: &Column) -> Value {
         S::Fraction if matches!(v, Value::Int(_, _) | Value::Decimal(_)) => v.fraction(),
         // A whole number wears its column's base, whichever it was
         // written or worked out in.
-        t if t.is_int() || t == S::Decimal => match v {
+        t if t.is_int() || t.is_decimal() => match v {
             Value::Percent(r) | Value::Fraction(r) => Value::exact(r),
             v => v,
         }

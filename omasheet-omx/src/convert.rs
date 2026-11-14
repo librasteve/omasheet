@@ -139,7 +139,7 @@ pub fn parse_literal_with(text: &str, units: bool) -> Option<Lit> {
 pub fn lit_type(l: &Lit) -> S {
     match l {
         Lit::Int(_, b) => b.ty(),
-        Lit::Decimal(_) => S::Decimal,
+        Lit::Decimal(_) => S::DECIMAL,
         Lit::Fraction(_) => S::Fraction,
         Lit::Percent(_) => S::Percent,
         Lit::Float(_) => S::Float,
@@ -199,7 +199,7 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
                     Ok(Lit::Float(*re))
                 } else {
                     // An exact number is made from the real part's value.
-                    convert(&Lit::Float(*re), S::Decimal).and_then(|d| convert(&d, to))
+                    convert(&Lit::Float(*re), S::DECIMAL).and_then(|d| convert(&d, to))
                 }
             } else {
                 Err(format!(
@@ -265,7 +265,7 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
                 .ok_or_else(|| format!("`{s}` is not {}", a(to)));
         }
         // A `Percent` is the number it stands for: `20%` is `0.2`.
-        (Lit::Percent(r), S::Int | S::Decimal | S::Boolean) => {
+        (Lit::Percent(r), S::Int | S::Decimal(_) | S::Boolean) => {
             let plain = match r.to_i64() {
                 Some(n) => Lit::Int(n, Base::Dec),
                 None => Lit::Decimal(*r),
@@ -274,12 +274,12 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
         }
         (Lit::Int(n, _), S::Percent) => Lit::Percent(Dec::from_i64(*n)),
         (Lit::Decimal(r), S::Percent) => Lit::Percent(*r),
-        (Lit::Int(n, _), S::Decimal) => Lit::Int(*n, Base::Dec),
+        (Lit::Int(n, _), S::Decimal(_)) => Lit::Int(*n, Base::Dec),
         (Lit::Decimal(r), S::Int) => match r.trunc().to_i64() {
             Some(n) => Lit::Int(n, Base::Dec),
             None => return Err("the number is too large for an Integer".to_string()),
         },
-        (Lit::Float(f), S::Int | S::Decimal | S::Percent) => match Dec::from_f64(*f) {
+        (Lit::Float(f), S::Int | S::Decimal(_) | S::Percent) => match Dec::from_f64(*f) {
             Some(r) if to == S::Percent => Lit::Percent(r),
             Some(r) if to == S::Int => match r.trunc().to_i64() {
                 Some(n) => Lit::Int(n, Base::Dec),
@@ -298,7 +298,7 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
                 return Err(format!("{name} has no exact value"));
             }
         },
-        (Lit::Boolean(b), S::Int | S::Decimal) => Lit::Int(*b as i64, Base::Dec),
+        (Lit::Boolean(b), S::Int | S::Decimal(_)) => Lit::Int(*b as i64, Base::Dec),
         (Lit::Int(..) | Lit::Decimal(_) | Lit::Percent(_) | Lit::Boolean(_), S::Float) => {
             match real(lit) {
                 Some(f) => Lit::Float(f),
@@ -348,7 +348,7 @@ mod tests {
         S::Hex,
         S::Octal,
         S::Binary,
-        S::Decimal,
+        S::DECIMAL,
         S::Percent,
         S::Float,
         S::Complex,
@@ -370,11 +370,11 @@ mod tests {
     fn converts_numbers() {
         assert_eq!(convert(&lit("19.99"), S::Int), Ok(lit("19")));
         assert_eq!(convert(&lit("-19.99"), S::Int), Ok(lit("-19")));
-        assert_eq!(convert(&lit("1e-1"), S::Decimal), Ok(lit("0.1")));
-        assert_eq!(convert(&lit("1/8"), S::Decimal), Ok(lit("0.125")));
+        assert_eq!(convert(&lit("1e-1"), S::DECIMAL), Ok(lit("0.1")));
+        assert_eq!(convert(&lit("1/8"), S::DECIMAL), Ok(lit("0.125")));
         // A fraction is the number it stands for, as a `Decimal` or a `Fraction`.
         assert_eq!(
-            convert(&lit("1/3"), S::Decimal),
+            convert(&lit("1/3"), S::DECIMAL),
             Ok(Lit::Decimal(
                 Dec::from_i64(1).checked_div(Dec::from_i64(3)).unwrap()
             ))
@@ -430,7 +430,7 @@ mod tests {
         let text = |s: &str| Lit::String(s.to_string());
         assert_eq!(convert(&text(" 42 "), S::Int), Ok(lit("42")));
         assert_eq!(convert(&text("19.99"), S::Int), Ok(lit("19")));
-        assert_eq!(convert(&text("20%"), S::Decimal), Ok(lit("0.2")));
+        assert_eq!(convert(&text("20%"), S::DECIMAL), Ok(lit("0.2")));
         assert_eq!(convert(&text("20%"), S::Fraction), Ok(lit("1/5")));
         assert_eq!(convert(&text("16:10"), S::Time), Ok(lit("16:10")));
         assert_eq!(convert(&text("2025-01-31"), S::Date), Ok(lit("2025-01-31")));

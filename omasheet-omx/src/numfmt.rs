@@ -202,7 +202,7 @@ impl NumFormat {
     pub fn takes(&self, ty: S) -> bool {
         match ty {
             s if s.is_int() => self.conv.is_integer(),
-            S::Decimal | S::Float => !self.conv.is_integer(),
+            S::Decimal(_) | S::Float => !self.conv.is_integer(),
             _ => false,
         }
     }
@@ -212,7 +212,7 @@ impl NumFormat {
     pub fn conversions_of(ty: S) -> Option<&'static str> {
         match ty {
             s if s.is_int() => Some("`d`, `i`, `x`, `X`, `o`, `b` or `B`"),
-            S::Decimal | S::Float => Some("`f`, `F`, `e`, `E`, `g` or `G`"),
+            S::Decimal(_) | S::Float => Some("`f`, `F`, `e`, `E`, `g` or `G`"),
             _ => None,
         }
     }
@@ -279,7 +279,7 @@ mod tests {
         assert!(read("08X").takes(S::Hex));
         assert!(!read(".2f").takes(S::Binary));
         assert!(!read("x").takes(S::Float));
-        assert!(read(".2f").takes(S::Decimal));
+        assert!(read(".2f").takes(S::DECIMAL));
         assert!(read("g").takes(S::Float));
         assert!(!read(".2f").takes(S::Int));
         assert!(!read("d").takes(S::String));

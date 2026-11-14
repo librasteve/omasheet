@@ -161,7 +161,7 @@ fn kind_of(s: S) -> Kind {
         | S::Hex
         | S::Octal
         | S::Binary
-        | S::Decimal
+        | S::Decimal(_)
         | S::Fraction
         | S::Percent
         | S::Float
@@ -682,8 +682,8 @@ impl Writer<'_> {
                 ..x.clone()
             },
             Func::To(S::Int | S::Hex | S::Octal | S::Binary) if number => of("TRUNC", Kind::Number),
-            Func::To(S::Decimal | S::Percent | S::Float) if number => x.clone(),
-            Func::To(S::Int | S::Decimal | S::Float) if x.kind == Kind::Bool => {
+            Func::To(S::Decimal(_) | S::Percent | S::Float) if number => x.clone(),
+            Func::To(S::Int | S::Decimal(_) | S::Float) if x.kind == Kind::Bool => {
                 Expr::atom(format!("IF({},1,0)", x.text), Kind::Number)
             }
             Func::To(S::Boolean) if number => {

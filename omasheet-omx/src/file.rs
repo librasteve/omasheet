@@ -835,7 +835,7 @@ mod tests {
         assert_eq!(ast.consts.len(), 1);
         let t = &ast.sheets[0];
         assert_eq!((t.header.len(), t.rows.len(), t.computed.len()), (3, 2, 1));
-        assert_eq!(t.schema[0].ty, S::Decimal);
+        assert_eq!(t.schema[0].ty, S::DECIMAL);
     }
 
     #[test]
@@ -871,7 +871,7 @@ mod tests {
         let ast = parse_file(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         let schema = &ast.sheets[0].schema;
-        assert_eq!(schema[0].ty, S::Decimal);
+        assert_eq!(schema[0].ty, S::DECIMAL);
         assert_eq!(
             schema[0].format.as_ref().map(|f| f.to_string()).as_deref(),
             Some("'.2f")

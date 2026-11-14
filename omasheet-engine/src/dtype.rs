@@ -27,7 +27,7 @@ pub fn type_of(dtype: &DataType) -> Option<S> {
         | DataType::UInt32
         | DataType::UInt64 => S::Int,
         DataType::Float32 | DataType::Float64 => S::Float,
-        DataType::Decimal(..) => S::Decimal,
+        DataType::Decimal(..) => S::DECIMAL,
         DataType::String => S::String,
         DataType::Date => S::Date,
         DataType::Time => S::Time,
@@ -55,7 +55,7 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
         _ => Cell::Lit(Lit::Decimal(d)),
     };
     let whole = |n: i64| match ty {
-        S::Decimal | S::Fraction | S::Percent => exact(Dec::from_i64(n)),
+        S::Decimal(_) | S::Fraction | S::Percent => exact(Dec::from_i64(n)),
         _ => Cell::Lit(Lit::Int(n, Base::of(ty))),
     };
     match value {
@@ -218,7 +218,7 @@ pub fn dtype(ty: S, scale: u32) -> Option<DataType> {
         // A whole number in any base is the same `Int64`; the base is the
         // column's, from its type.
         S::Int | S::Hex | S::Octal | S::Binary => DataType::Int64,
-        S::Decimal | S::Fraction | S::Percent => decimal(scale),
+        S::Decimal(_) | S::Fraction | S::Percent => decimal(scale),
         S::Float => DataType::Float64,
         S::Complex => complex_dtype(),
         S::Scientific => uncertain_dtype(),
@@ -359,7 +359,7 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
                 _ => None,
             })?,
         ),
-        S::Decimal => decimals(name.clone(), &exact)?,
+        S::Decimal(_) => decimals(name.clone(), &exact)?,
         // A percentage and a fraction are an exact number in a dress, and
         // the dress is display (D69): `cell_of` puts it back on from the
         // column's own type, which is what a table's column declared as one

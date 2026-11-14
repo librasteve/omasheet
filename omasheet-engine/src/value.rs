@@ -254,8 +254,8 @@ impl Value {
             (Value::Datetime(_, Some(_)), S::Datetime) | (Value::String(..), S::String) => true,
             // A whole `Decimal` is held as an `Int`.
             (Value::Int(_, b), to) if to.is_int() => *b == Base::of(to),
-            (Value::Int(_, Base::Dec), S::Decimal) => true,
-            (Value::Decimal(_), S::Decimal) => true,
+            (Value::Int(_, Base::Dec), S::Decimal(_)) => true,
+            (Value::Decimal(_), S::Decimal(_)) => true,
             (Value::Fraction(_), S::Fraction) => true,
             (Value::Percent(_), S::Percent) => true,
             (Value::Quantity(q), S::Quantity(id)) => crate::quantity::admitted(q, id),
@@ -299,7 +299,7 @@ impl Value {
         // A `Fraction` is a `Decimal` shown as a fraction, so asking for one
         // is a change of display and not of value.
         if to == S::Fraction {
-            return Ok(self.converted(S::Decimal)?.fraction());
+            return Ok(self.converted(S::DECIMAL)?.fraction());
         }
         // There is no uncertain complex number: it is the value alone.
         if let (Value::Scientific(v, _), S::Complex) = (self, to) {
@@ -2321,8 +2321,8 @@ mod tests {
             shown(third.converted(S::String)),
             "'-2.33333333333333333333333333333'"
         );
-        assert_eq!(shown(Value::Float(0.1).converted(S::Decimal)), "0.1");
-        assert_eq!(shown(Value::text("1/8").converted(S::Decimal)), "0.125");
+        assert_eq!(shown(Value::Float(0.1).converted(S::DECIMAL)), "0.1");
+        assert_eq!(shown(Value::text("1/8").converted(S::DECIMAL)), "0.125");
         assert_eq!(
             shown(Value::Date(1).converted(S::Datetime)),
             "1970-01-02T00:00"

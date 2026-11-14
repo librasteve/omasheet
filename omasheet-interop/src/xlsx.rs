@@ -43,7 +43,7 @@ fn number(f: f64) -> Datum {
     match Dec::from_f64(f) {
         Some(r) => match r.to_i64() {
             Some(n) => Datum::Lit(n.to_string(), S::Int),
-            None => Datum::Lit(format_rat(&r), S::Decimal),
+            None => Datum::Lit(format_rat(&r), S::DECIMAL),
         },
         None => Datum::Empty,
     }

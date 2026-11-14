@@ -691,7 +691,7 @@ fn from_quotient(e: &Expr) -> bool {
 /// it is one, or it is a `Decimal` that a quotient made and whose value is
 /// read when it is used, a fraction of it being reported there.
 fn whole_enough(ty: &Ty, e: &Expr) -> bool {
-    ty.is_whole() || (matches!(ty, Ty::Scalar(S::Decimal)) && from_quotient(e))
+    ty.is_whole() || (matches!(ty, Ty::Scalar(S::Decimal(_))) && from_quotient(e))
 }
 
 fn static_of(e: &Expr) -> Option<Static> {
@@ -2478,16 +2478,16 @@ impl<'a> Checker<'a> {
         let bare = found.is_numeric() && found != S::Complex && want.is_quantity();
         if !found.assignable_to(want) && !bare {
             let help = match (found, want) {
-                (S::Int | S::Decimal | S::Fraction | S::Percent, S::Float) => {
+                (S::Int | S::Decimal(_) | S::Fraction | S::Percent, S::Float) => {
                     "use `.Float` to convert to Float"
                 }
-                (S::Int | S::Decimal | S::Fraction | S::Percent | S::Float, S::Scientific) => {
+                (S::Int | S::Decimal(_) | S::Fraction | S::Percent | S::Float, S::Scientific) => {
                     "use `.Scientific` to convert to Scientific, or write `value ± uncertainty`"
                 }
                 (S::Scientific, S::Float) => {
                     "use `.Float` for the value alone, without its uncertainty"
                 }
-                (S::Int | S::Decimal | S::Fraction | S::Percent | S::Float, S::Complex) => {
+                (S::Int | S::Decimal(_) | S::Fraction | S::Percent | S::Float, S::Complex) => {
                     "use `.Complex` to convert to Complex"
                 }
                 (S::Complex, S::Float) => {
@@ -2495,13 +2495,13 @@ impl<'a> Checker<'a> {
                 }
                 // A division by zero, `1/0`, is a `Float`, which no exact
                 // column holds.
-                (S::Float, S::Decimal | S::Fraction | S::Percent) => {
+                (S::Float, S::Decimal(_) | S::Fraction | S::Percent) => {
                     "declare the column `Float` or leave out its type, use `.Decimal`, or guard \
                      a division by zero"
                 }
                 (S::Percent, S::Int) => "declare the column as `Percent`, or use `.Integer`",
-                (S::Percent, S::Decimal) => "declare the column as `Percent`, or use `.Decimal`",
-                (S::Decimal, S::Int) => "declare the column as `Decimal`, or use `.Integer`",
+                (S::Percent, S::Decimal(_)) => "declare the column as `Percent`, or use `.Decimal`",
+                (S::Decimal(_), S::Int) => "declare the column as `Decimal`, or use `.Integer`",
                 (S::Fraction, S::Int) => "declare the column as `Fraction`, or use `.Integer`",
                 _ => "change the declared type or the formula",
             };
@@ -2549,9 +2549,9 @@ impl<'a> Checker<'a> {
             (Some(Lit::Int(n, _)), S::Fraction) => Some(Lit::Fraction(Dec::from_i64(n))),
             (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Fraction) => Some(Lit::Fraction(r)),
             (Some(l @ Lit::Fraction(_)), S::Fraction) => Some(l),
-            (Some(l @ Lit::Decimal(_)), S::Decimal) => Some(l),
-            (Some(l @ Lit::Fraction(_) | l @ Lit::Percent(_)), S::Decimal) => {
-                crate::convert::convert(&l, S::Decimal).ok()
+            (Some(l @ Lit::Decimal(_)), S::Decimal(_)) => Some(l),
+            (Some(l @ Lit::Fraction(_) | l @ Lit::Percent(_)), S::Decimal(_)) => {
+                crate::convert::convert(&l, S::DECIMAL).ok()
             }
             (Some(l @ Lit::Percent(_)), S::Percent) => Some(l),
             (Some(Lit::Int(n, _)), S::Percent) => Some(Lit::Percent(Dec::from_i64(n))),
@@ -2630,7 +2630,7 @@ impl<'a> Checker<'a> {
                 | S::Hex
                 | S::Octal
                 | S::Binary
-                | S::Decimal
+                | S::Decimal(_)
                 | S::Fraction
                 | S::Percent,
             ) => match crate::convert::convert(&l, want) {
@@ -2689,7 +2689,7 @@ impl<'a> Checker<'a> {
                     S::Hex => "enter a whole number such as `0xff`, or start the cell with `=` for a formula",
                     S::Octal => "enter a whole number such as `0o17`, or start the cell with `=` for a formula",
                     S::Binary => "enter a whole number such as `0b101`, or start the cell with `=` for a formula",
-                    S::Decimal => "enter a number such as `19.99`, `1/7` or `20%`, or start the cell with `=` for a formula",
+                    S::Decimal(_) => "enter a number such as `19.99`, `1/7` or `20%`, or start the cell with `=` for a formula",
                     S::Fraction => "enter a number such as `1/7`, `2 3/4` or `19.99`, or start the cell with `=` for a formula",
                     S::Percent => "enter a percentage such as `20%`, or start the cell with `=` for a formula",
                     S::Float => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
@@ -3329,7 +3329,7 @@ impl<'a> Checker<'a> {
                 // negative, so the power keeps the type of its base.
                 let whole = matches!(r.kind, ExprKind::Lit(Lit::Int(_, _)));
                 match (op, a.wider(b)) {
-                    (BinOp::Pow, w) if whole && (w.is_int() || w == S::Decimal) => w,
+                    (BinOp::Pow, w) if whole && (w.is_int() || w.is_decimal()) => w,
                     // A power is exact only for a whole exponent; any other
                     // is worked out in floating point.
                     (BinOp::Pow, w)
@@ -3348,7 +3348,7 @@ impl<'a> Checker<'a> {
                     (BinOp::Div, w) if w.is_int() && divides(l, r) => S::Int,
                     // A quotient or a power of decimals is a decimal, though
                     // it need not end.
-                    (BinOp::Div | BinOp::Pow, w) if w.is_int() || w == S::Decimal => S::Decimal,
+                    (BinOp::Div | BinOp::Pow, w) if w.is_int() || w.is_decimal() => S::DECIMAL,
                     // Anything else is the wider of the two, so that two
                     // fractions give a fraction and two percentages a
                     // percentage.
@@ -3357,7 +3357,7 @@ impl<'a> Checker<'a> {
             }
         } else if op.is_bitwise() {
             let whole =
-                |s: S, e: &Expr| s.is_int() || s == S::Any || (s == S::Decimal && from_quotient(e));
+                |s: S, e: &Expr| s.is_int() || s == S::Any || (s.is_decimal() && from_quotient(e));
             if !whole(a, l) || !whole(b, r) {
                 self.err(
                     span,
@@ -3607,8 +3607,8 @@ impl<'a> Checker<'a> {
             "forward_fill" | "backward_fill" => (true, s, "values"),
             "rolling_mean" => (
                 numeric || s == S::Duration || s.is_quantity(),
-                if s.is_int() || s == S::Decimal {
-                    S::Decimal
+                if s.is_int() || s.is_decimal() {
+                    S::DECIMAL
                 } else {
                     s
                 },
@@ -4118,7 +4118,7 @@ impl<'a> Checker<'a> {
                         self.err(span, format!("cannot take the `{name}` of {s} values"));
                         return fail;
                     }
-                    Func::Mean | Func::Median if s.is_int() || s == S::Decimal => S::Decimal,
+                    Func::Mean | Func::Median if s.is_int() || s.is_decimal() => S::DECIMAL,
                     Func::Min | Func::Max if matches!(s, S::Boolean | S::Complex) => {
                         self.err(span, format!("{s} values have no order for `{name}`"));
                         return fail;
@@ -4389,7 +4389,7 @@ impl<'a> Checker<'a> {
                     _ if s == S::Any => Ty::Any,
                     Func::Std => Ty::Scalar(S::Float),
                     Func::Var if s == S::Scientific => Ty::Scalar(S::Float),
-                    Func::Var if s.is_int() || s == S::Decimal => Ty::Scalar(S::Decimal),
+                    Func::Var if s.is_int() || s.is_decimal() => Ty::Scalar(S::DECIMAL),
                     _ => Ty::Scalar(s),
                 };
                 (Node::new(Ir::Call(func, nodes), span), ty)
@@ -4528,8 +4528,8 @@ impl<'a> Checker<'a> {
                 };
                 let (arg, aty) = self.lower(&args[0], sc);
                 let ty = match aty {
-                    Ty::Any | Ty::Scalar(S::Any | S::Duration) => Ty::Scalar(S::Decimal),
-                    Ty::Vector(S::Any | S::Duration, n) => Ty::Vector(S::Decimal, n),
+                    Ty::Any | Ty::Scalar(S::Any | S::Duration) => Ty::Scalar(S::DECIMAL),
+                    Ty::Vector(S::Any | S::Duration, n) => Ty::Vector(S::DECIMAL, n),
                     other => {
                         if !matches!(arg.kind, Ir::Error) {
                             self.err(
@@ -4886,7 +4886,7 @@ impl<'a> Checker<'a> {
                                     | S::Hex
                                     | S::Octal
                                     | S::Binary
-                                    | S::Decimal
+                                    | S::Decimal(_)
                                     | S::Fraction
                                     | S::Percent
                                     | S::Float

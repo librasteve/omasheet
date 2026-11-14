@@ -570,7 +570,7 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             ("b".into(), "binary"),
             ("08b".into(), "binary, eight digits"),
         ],
-        S::Decimal | S::Float | S::Percent | S::Fraction => vec![
+        S::Decimal(_) | S::Float | S::Percent | S::Fraction => vec![
             ("'.2f".into(), "grouped, two places"),
             (".2f".into(), "two places"),
             (".0f".into(), "no places"),
@@ -2650,7 +2650,14 @@ impl Document {
     pub fn check_const_format(format: Option<&str>) -> Result<(), String> {
         let Some(text) = format else { return Ok(()) };
         let reads = |ty: S| Format::parse(text, ty).is_ok_and(|f| f.takes(ty));
-        if [S::Quantity(omasheet_omx::types::QId::ANY), S::Scientific, S::Float].into_iter().any(reads) {
+        if [
+            S::Quantity(omasheet_omx::types::QId::ANY),
+            S::Scientific,
+            S::Float,
+        ]
+        .into_iter()
+        .any(reads)
+        {
             return Ok(());
         }
         Format::parse(text, S::Quantity(omasheet_omx::types::QId::ANY))
@@ -5772,11 +5779,18 @@ mod tests {
         // The pane can set the unit-less format on it and take it off.
         let mut doc = Document::from_text("sheet S\n\nV : Quantity\n\n| V |\n| --- |\n| 5kg |\n");
         assert_eq!(doc.set_column_format(0, &[0], Some("; .10s")), Ok(()));
-        assert!(doc.text().contains("V : Quantity[; .10s]"), "{}", doc.text());
+        assert!(
+            doc.text().contains("V : Quantity[; .10s]"),
+            "{}",
+            doc.text()
+        );
         // A quantity shown cut says its whole value in the footer.
         let mut cut = Document::from_text("sheet S\n\n| V |\n| --- |\n| = 1m / 3 |\n");
         let cell = &cut.snapshot().sheets[0].rows[0][0];
-        assert!(cell.display.ends_with('·') && cell.exact.is_some(), "{cell:?}");
+        assert!(
+            cell.display.ends_with('·') && cell.exact.is_some(),
+            "{cell:?}"
+        );
         let _ = &mut cut;
         assert_eq!(doc.set_column_format(0, &[0], None), Ok(()));
         assert!(doc.text().contains("V : Quantity\n"), "{}", doc.text());

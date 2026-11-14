@@ -1787,14 +1787,23 @@ mod tests {
         for sheet in 0..codata.snapshot().sheets.len() {
             let before = codata.snapshot().sheets[sheet].nrows;
             assert!(codata.insert_rows(sheet, before, 4));
-            assert_eq!(codata.snapshot().sheets[sheet].nrows, before + 4, "sheet {sheet}");
+            assert_eq!(
+                codata.snapshot().sheets[sheet].nrows,
+                before + 4,
+                "sheet {sheet}"
+            );
             assert!(codata.undo());
         }
         assert!(codata.insert_rows(1, last, 4));
-        assert_eq!(clip.paste(&mut codata, 1, (last, 0), (last, 0), &text), Ok(true));
+        assert_eq!(
+            clip.paste(&mut codata, 1, (last, 0), (last, 0), &text),
+            Ok(true)
+        );
         assert_eq!(codata.snapshot().sheets[1].nrows, last + 4, "rows {rows}");
         let pasted: Vec<String> = codata.snapshot().sheets[1].rows[last..]
-            .iter().map(|r| r[0].source.clone()).collect();
+            .iter()
+            .map(|r| r[0].source.clone())
+            .collect();
         assert_eq!(pasted.len(), 4);
         assert!(pasted.iter().all(|s| !s.is_empty()), "{pasted:?}");
         let mut clip = Clip::default();
