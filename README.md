@@ -12,15 +12,17 @@ The spreadsheet as a trackable and composable document, not just a binary file. 
 
 Named, typed columns and array expressions connect spreadsheet flexibility to structured dataframe querie and transformations.
 
-🔢 **Exact decimal arithmetic as a semantic guarantee**
+🔢 **Strong type system**
 
-Numeric values retain their exact decimal meaning instead of floating-point
-approximations: `0.1 + 0.2` is exactly `0.3`. Numbers are held the way Polars
-holds them — a 64-bit `Int` and a 38-digit `Decimal` — so a value too wide to
-hold is reported rather than quietly rounded. The last 8 of those 38 digits
-are working room: held but neither compared nor shown, so that two ways of
-reaching one number agree — `1/3 * 3` is `1` and `2/7 + 3/7 == 5/7` is true.
-A `Fraction` column shows what it holds as a fraction, `1/7` and `2 3/4`.
+The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
+
+- **`Integer` (ℤ)**: whole numbers (i64)
+- **`Decimal` (ℚ)**: exact fractions (d128+ / 38 decimal places)
+- **`Float` (ℝ)**: real numbers (f64)
+- **`Scientific` (ℝ)**: real numbers with uncertainty (2x f64)
+- **`Complex` (ℂ)**: complex numbers (2x f64)
+
+Representations (`Fraction`, `Percent`, `Hex`, `Octal`, `Binary`...); the `Quantity` type for SI units, prefixes, data; `String` types (`Email`, `Url`...) and `Boolean` round out a comprehensive set of tools from classroom to complex analytics.
 
 _Automatically follows system dark/light mode._
 
@@ -48,18 +50,6 @@ Running := [Revenue; 0..*].sum()
 [OmaStore](https://github.com/KitsuneForgering/OmaStore), the community app
 store for Omarchy. Search for it there and click `install`.
 
-**macOS** (Apple silicon or Intel) installs `Omasheet.app` into `/Applications` and the `omasheet` command into `/usr/local/bin`:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/librasteve/omasheet/main/install.sh | bash
-```
-
-**Windows** (64-bit), in PowerShell: installs to `%LOCALAPPDATA%\Programs\Omasheet`, with a Start menu entry, `.omx` files opening in it, and `omasheet` on your PATH. No administrator needed.
-
-```powershell
-irm https://raw.githubusercontent.com/librasteve/omasheet/main/install.ps1 | iex
-```
-
 **Omarchy and Arch Linux, with pacman** (the same `install.sh` line as for macOS):
 
 ```sh
@@ -69,14 +59,17 @@ curl -fsSL https://raw.githubusercontent.com/librasteve/omasheet/main/install.sh
 **Update:** run the same line again.
 **Uninstall:** `sudo pacman -R omasheet` on Arch; on macOS delete `/Applications/Omasheet.app` and `/usr/local/bin/omasheet`; on Windows run `uninstall.ps1` in the install folder, or use Apps & features.
 
+**macOS** (Apple silicon or Intel) open Terminal app and use the same `curl` line; installs `Omasheet.app` into `/Applications` and the `omasheet` command into `/usr/local/bin`.
+
+**Windows** (64-bit), in PowerShell: installs to `%LOCALAPPDATA%\Programs\Omasheet`, with a Start menu entry, `.omx` files opening in it, and `omasheet` on your PATH. No administrator needed.
+
+```powershell
+irm https://raw.githubusercontent.com/librasteve/omasheet/main/install.ps1 | iex
+```
+
 **Build from source** (other Linux, or to hack on it): install Qt 6 and Rust 
 (`brew install qt rust`), then `cargo build --release --package omasheet-ui`; 
 the binary is at `target/release/omasheet`.
-
-Building directly from the git repo instead of a local clone needs `--locked`
-(`cargo install --git https://github.com/librasteve/omasheet --locked omasheet-ui`),
-since omasheet depends on a crate whose compatible releases are all yanked, and
-only the version pinned in this repo's `Cargo.lock` can still be resolved.
 
 ## Run
 

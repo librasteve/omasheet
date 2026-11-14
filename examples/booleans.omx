@@ -78,6 +78,6 @@ Done : Boolean[✓✗]
 
 | Task  | Done |
 | ----- | ---- |
-| Write | ✓    |
-| Test  | ✓    |
-| Ship  | ✗    |
+| Write | 1    |
+| Test  | 1    |
+| Ship  | 0    |

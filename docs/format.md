@@ -315,25 +315,25 @@ column of one takes the others, showing what it holds its own way: `1/7` is
 `0.143·` in a `Decimal` column, `1/7` in a `Fraction`
 column, and `14.29%` in a `Percent` column.
 
-The numeric types form a hierarchy of increasingly expressive number systems, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
+The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
 
-- **`Integer` (ℤ)**: whole numbers
-- **`Decimal` (ℚ)**: exact numbers with a fractional part, held to 38 digits
-- **`Float` (ℝ)**: real numbers, approximately represented
-- **`Scientific`**: real numbers with a measurement uncertainty, between `Float` and `Complex`
-- **`Complex` (ℂ)**: complex numbers
+- **`Integer` (ℤ)**: whole numbers (i64)
+- **`Decimal` (ℚ)**: exact fractions (d128+ / 38 decimal places)
+- **`Float` (ℝ)**: real numbers (f64)
+- **`Scientific` (ℝ)**: real numbers with uncertainty (2x f64)
+- **`Complex` (ℂ)**: complex numbers (2x f64)
 
 For any operation, and for the cells of a column, the result is the **more infectious** of the types it is made from, the least number system that holds them both: `Integer` + `Decimal` is a `Decimal`, `Decimal` * `Float` is a `Float`, and `Float` + `Complex` is a `Complex`. This is a model, not the machine's: an integer is an `i64`, a `Decimal` a 38-digit fixed point and a `Float` an `f64`, each of finite precision.
 
 Each type may be shown more than one way:
 
-| Type | Literal | Shown as |
+| Type | Literal | Representations |
 |---|---|---|
 | `Integer` | `1` | `Hex` `0xff`, `Octal` `0o17`, `Binary` `0b101` |
 | `Decimal` | `1.0` | `Fraction` `1/7`, `2 3/4`; `Percent` `14.29%` |
-| `Float` | `1e0` | none |
-| `Scientific` | `10.5(3)` | `±` for `value ± uncertainty`, `~` for the value alone |
-| `Complex` | `3+4i` | none |
+| `Float` | `1e0` | - |
+| `Scientific` | `10.5(3)` | - |
+| `Complex` | `3+4i` | - |
 
 - Two values shown the same way keep it: `Hex` + `Hex` is a `Hex`, and `Fraction` + `Fraction` a `Fraction`.
 - Two different ways of showing one type give the plain type: `Hex` + `Binary` is an `Integer`, and `Fraction` + `Percent` a `Decimal`.
