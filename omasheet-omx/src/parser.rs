@@ -189,7 +189,9 @@ impl Parser {
                     span,
                 });
             } else {
-                args.push(self.expr()?);
+                // `cum_sum(Date by Account)`: an order key and its partition.
+                let e = self.expr()?;
+                args.push(self.by(e)?);
             }
             if self.eat(&Tok::Comma) {
                 continue;

@@ -426,6 +426,52 @@ sheet Best     := ByRegion |> sort(Revenue_sum, desc) |> head(1)
   matches nothing, and a name both sheets have takes `_right` on the other
   sheet's column. The rows come in the left sheet's order, then the other's
 
+## Down a column
+
+A window function gives each row a value read from the rows around it. It
+is a method on a column, and in a computed column it is worked out once for
+the whole column and each row takes its own:
+
+```omx
+Balance := Amount.cum_sum(Date by Account)
+```
+
+| Written | Gives |
+|---|---|
+| `cum_sum() cum_min() cum_max() cum_prod()` | the running total, smallest, largest or product so far |
+| `cum_count()` | how many values so far are not empty |
+| `diff()`, `diff(2)` | the change from the row 1 (or `n`) back, empty where there is none |
+| `pct_change()`, `pct_change(2)` | that change as a share of the row back, a Float |
+| `rank()` | each value's place in order; see below |
+| `forward_fill()`, `backward_fill()` | an empty cell takes the last value above it, or the next below |
+| `rolling_sum(3)` and `rolling_mean rolling_min rolling_max rolling_std` | over the last `n` rows; empty until `n` rows are there, or where one of them is empty |
+
+An empty cell stays empty in `cum_*` and is skipped by it, so the total goes
+on. `rolling_std` is the standard deviation of a sample, and the mean of
+whole numbers is a Decimal, as `mean` is.
+
+Without anything more, the rows are taken in the order of the file, which
+goes wrong without a word when a row was added out of date order. Name an
+**order key**, a column of the same sheet, after the number if there is
+one, and the rows go down it (rows with the same key keep the file's order),
+each answer going back on the row it came from. `by` after it names the
+**partition**: a window for each value of the columns, an empty key being a
+partition of its own, as in [`[x; *-1 by Region]`](#selecting-with-columns-rows).
+
+```omx
+Balance := Amount.cum_sum(Date by Account)
+Change  := Amount.diff(1, Date by Account)
+Recent  := Amount.rolling_mean(3, Date)
+```
+
+`rank` takes words, not a key: how ties are numbered, `average` (the
+default, a Float), `min`, `max`, `dense` or `ordinal`, and `desc` to rank
+from the largest. `by` partitions it: `Score.rank(min, desc by Region)`.
+
+Over a whole column, `Sales.Amount.cum_sum(Sales.Date)`, the answer is a
+column. A column of a Parquet table is read in full to be worked, once. A
+calculation down a column is written to an XLSX Workbook as its values.
+
 ## Sequences with `...`
 
 A computed column may be written as a sequence, `terms ... limit`. The terms
@@ -498,6 +544,10 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 - Spread: `std(x)` and `var(x)`, of a sample; `std(x, 0)` and `var(x, 0)` of
   a whole population; `quantile(x, 0.9)`, the value that far through the
   values in order
+- Down a column: `cum_sum cum_min cum_max cum_prod cum_count`, `diff`,
+  `pct_change`, `rank`, `forward_fill`, `backward_fill` and
+  `rolling_sum rolling_mean rolling_min rolling_max rolling_std`, as
+  [below](#down-a-column)
 - Sheets: `filter(condition)`, `select(columns)`, `head(n)`, `tail(n)`,
   `sort(columns)`, `group_by(keys) |> agg(aggregates)` and `join(Other,
   keys)`, as [above](#sheets-from-sheets); `shift(n)` — the value `n` rows

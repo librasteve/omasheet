@@ -1,0 +1,73 @@
+# CODATA 2022 recommended values of the fundamental physical constants,
+# from the NIST wall chart (NIST SP 961, May 2024):
+# https://physics.nist.gov/cuu/pdf/wall_2022.pdf
+#
+# Each value is a Quantity with its standard uncertainty in the last digits,
+# `6.674_30(15)e-11m^3.kg^-1.s^-2`. The seven constants that define the SI
+# are exact and carry none. The Checks sheet reproduces some of the derived
+# constants from the exact ones, to see that they agree with the chart.
+
+sheet Constants
+
+Value : Quantity[; .10s]
+
+| Name                                       | Symbol  | Value                          | Kind     |
+| ------------------------------------------ | ------- | ------------------------------ | -------- |
+| speed of light in vacuum                   | c       | 299_792_458m.s^-1              | exact    |
+| Planck constant                            | h       | 6.626_070_15e-34J.s            | exact    |
+| elementary charge                          | e       | 1.602_176_634e-19C             | exact    |
+| Boltzmann constant                         | k       | 1.380_649e-23J.K^-1            | exact    |
+| Avogadro constant                          | NA      | 6.022_140_76e23mol^-1          | exact    |
+| Newtonian constant of gravitation          | G       | 6.674_30(15)e-11m^3.kg^-1.s^-2 | measured |
+| vacuum magnetic permeability               | mu0     | 1.256_637_061_27(20)e-6N.A^-2  | measured |
+| vacuum electric permittivity               | eps0    | 8.854_187_8188(14)e-12F.m^-1   | measured |
+| Bohr magneton                              | muB     | 9.274_010_0657(29)e-24J.T^-1   | measured |
+| nuclear magneton                           | muN     | 5.050_783_7393(16)e-27J.T^-1   | measured |
+| Rydberg constant                           | Rinf    | 10_973_731.568_157(12)m^-1     | measured |
+| Bohr radius                                | a0      | 5.291_772_105_44(82)e-11m      | measured |
+| Hartree energy                             | Eh      | 4.359_744_722_2060(48)e-18J    | measured |
+| electron mass                              | me      | 9.109_383_7139(28)e-31kg       | measured |
+| proton mass                                | mp      | 1.672_621_925_95(52)e-27kg     | measured |
+| neutron mass                               | mn      | 1.674_927_500_56(85)e-27kg     | measured |
+| atomic mass constant                       | mu      | 1.660_539_068_92(52)e-27kg     | measured |
+| classical electron radius                  | re      | 2.817_940_3205(13)e-15m        | measured |
+| Compton wavelength                         | lamC    | 2.426_310_235_38(76)e-12m      | measured |
+| Thomson cross section                      | sigmae  | 6.652_458_7051(62)e-29m^2      | measured |
+| electron magnetic moment                   | mue     | -9.284_764_6917(29)e-24J.T^-1  | measured |
+| proton magnetic moment                     | mup     | 1.410_606_795_45(60)e-26J.T^-1 | measured |
+| proton gyromagnetic ratio                  | gammap  | 2.675_221_8708(11)e8s^-1.T^-1  | measured |
+| fine-structure constant                    | alpha   | 7.297_352_5643(11)e-3          | measured |
+| inverse fine-structure constant            | alpha⁻¹ | 137.035_999_177(21)            | measured |
+| proton-electron mass ratio                 | mp/me   | 1836.152_673_426(32)           | measured |
+| muon-electron mass ratio                   | mmu/me  | 206.768_2827(46)               | measured |
+| neutron-proton mass ratio                  | mn/mp   | 1.001_378_419_46(40)           | measured |
+| deuteron-proton mass ratio                 | md/mp   | 1.999_007_501_2699(84)         | measured |
+| electron g-factor                          | ge      | -2.002_319_304_360_92(36)      | measured |
+| electron magnetic moment anomaly           | ae      | 1.159_652_180_46(18)e-3        | measured |
+| muon magnetic moment anomaly               | amu     | 1.165_920_62(41)e-3            | measured |
+| proton magnetic moment to nuclear magneton | mup/muN | 2.792_847_344_63(82)           | measured |
+
+# Derived constants worked out from the exact ones, set beside the
+# published values, which the chart prints to ten digits or so. The format
+# `[; .9s]` names no unit, so each value keeps its own, and shows nine
+# significant digits since an exact value has no uncertainty to set them. `Agrees`
+# holds when the two differ by less than one part in 10^8.
+const c  = Constants[Value; Symbol == 'c'].first()
+const h  = Constants[Value; Symbol == 'h'].first()
+const e  = Constants[Value; Symbol == 'e'].first()
+const k  = Constants[Value; Symbol == 'k'].first()
+const NA = Constants[Value; Symbol == 'NA'].first()
+
+sheet Checks
+
+Derived   : Quantity[; .9s]
+Published : Quantity[; .9s]
+
+| Name                      | Derived                              | Published                 | Agrees |
+| ------------------------- | ------------------------------------ | ------------------------- | ------ |
+| Reduced Planck constant   | = h / (2 * pi())                     | 1.054_571_817e-34J.s      | *      |
+| Magnetic flux quantum     | = h / (2 * e)                        | 2.067_833_848e-15Wb       | *      |
+| Faraday constant          | = NA * e                             | 96_485.332_12C.mol^-1     | *      |
+| Molar gas constant        | = NA * k                             | 8.314_462_618J.mol^-1.K^-1 | *     |
+
+Agrees := abs(Derived / Published - 1) < 1e-8

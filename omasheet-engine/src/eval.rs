@@ -176,6 +176,10 @@ pub struct Engine<'p> {
     /// the function, the sheet and the column: worked out once for the
     /// column and looked up a row at a time.
     marks: RefCell<Vec<Marks>>,
+    /// What a window function (`cum_sum`, `diff`, `rank`...) gives down a
+    /// whole column, by the call and the columns it reads: worked out
+    /// once and looked up a row at a time.
+    shaped: RefCell<Vec<(String, Rc<Vec<Value>>)>>,
     /// Which of a `table`'s columns have been read from its file, by sheet
     /// and column, in the order they were read. What is not here was never
     /// read.
@@ -518,6 +522,7 @@ impl<'p> Engine<'p> {
             aggregates: RefCell::new(Vec::new()),
             filters: RefCell::new(Vec::new()),
             marks: RefCell::new(Vec::new()),
+            shaped: RefCell::new(Vec::new()),
             reads: RefCell::new(Vec::new()),
             rows_read: RefCell::new(0),
             float_totals: std::cell::Cell::new(0),
@@ -1833,7 +1838,10 @@ impl<'p> Engine<'p> {
             && matches!(l, Lit::Float(_) | Lit::Scientific(..))
         {
             let unit = match &col.format {
-                Some(Format::Quantity(f)) => Some(f.unit.clone()),
+                Some(Format::Quantity(omasheet_omx::colfmt::QuantityFormat {
+                    unit: Some(u),
+                    ..
+                })) => Some(u.clone()),
                 _ => crate::quantity::column_unit(id),
             };
             return crate::quantity::dress(lit_value(l, col.ty), id, unit.as_ref())
@@ -2403,7 +2411,10 @@ impl<'p> Engine<'p> {
         let v = match col.ty {
             S::Quantity(id) if col.declared => {
                 let unit = match &col.format {
-                    Some(Format::Quantity(q)) => Some(q.unit.clone()),
+                    Some(Format::Quantity(omasheet_omx::colfmt::QuantityFormat {
+                        unit: Some(u),
+                        ..
+                    })) => Some(u.clone()),
                     _ => crate::quantity::column_unit(id),
                 };
                 crate::quantity::dress(v, id, unit.as_ref()).or_else(|m| fail(span, m))?
@@ -3301,6 +3312,83 @@ impl<'p> Engine<'p> {
         }
     }
 
+    /// A window function. Over a vector, the answer for every element;
+    /// over this row's cell, the checker gives the whole column and the
+    /// row's place, and the row's answer is looked up in the column's,
+    /// which is worked out once.
+    fn window(
+        &self,
+        spec: omasheet_omx::ir::Spec,
+        args: &[Node],
+        span: Span,
+        fr: &mut Frames,
+    ) -> R {
+        let vector = |this: &Self, node: &Node, fr: &mut Frames| -> R<Rc<Vec<Value>>> {
+            Ok(match this.eval(node, fr)? {
+                Value::Vector(items) => items,
+                other => Rc::new(vec![other]),
+            })
+        };
+        let keys = args.len() - usize::from(spec.row);
+        let key: Option<String> = if spec.row {
+            let ids: Option<Vec<(usize, usize)>> = args[..keys]
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != 1)
+                .map(|(_, a)| match a.kind {
+                    Ir::Column { sheet, col } => Some((sheet, col)),
+                    _ => None,
+                })
+                .collect();
+            ids.map(|ids| format!("{spec:?}{ids:?}{:?}", args.get(1).map(|a| &a.kind)))
+        } else {
+            None
+        };
+        let held = key.as_ref().and_then(|k| {
+            self.shaped
+                .borrow()
+                .iter()
+                .find(|(held, _)| held == k)
+                .map(|(_, v)| v.clone())
+        });
+        let found = match held {
+            Some(found) => found,
+            None => {
+                let values = vector(self, &args[0], fr)?;
+                let n = self.eval(&args[1], fr)?.as_i64().unwrap_or(0);
+                let mut at = 2;
+                let order = if spec.order {
+                    at += 1;
+                    vector(self, &args[2], fr)?
+                } else {
+                    Rc::new(Vec::new())
+                };
+                let mut parts = Vec::new();
+                for a in &args[at..keys] {
+                    parts.push(vector(self, a, fr)?.to_vec());
+                }
+                let done = crate::window::run(spec, &values, n, &order, &parts)
+                    .or_else(|m| fail(span, m))?;
+                let found = Rc::new(done);
+                if let Some(k) = key {
+                    self.shaped.borrow_mut().push((k, found.clone()));
+                }
+                found
+            }
+        };
+        if !spec.row {
+            return Ok(Value::Vector(found));
+        }
+        let place = self
+            .eval(&args[args.len() - 1], fr)?
+            .as_i64()
+            .and_then(|r| usize::try_from(r).ok());
+        Ok(place
+            .and_then(|r| found.get(r))
+            .cloned()
+            .unwrap_or(Value::Null))
+    }
+
     /// `is_unique` and its kin: over a vector, each element's answer; over
     /// this row's cell, the row's answer out of its column's, which is
     /// worked out once.
@@ -3582,6 +3670,7 @@ impl<'p> Engine<'p> {
             Func::IsUnique | Func::IsDuplicated | Func::IsFirstDistinct | Func::IsLastDistinct => {
                 self.among(func, args, fr)
             }
+            Func::Window(spec) => self.window(spec, args, span, fr),
             Func::IsNull | Func::IsNan => {
                 let absent = |v: &Value| -> R {
                     Ok(match (func, v) {

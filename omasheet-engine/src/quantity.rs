@@ -469,7 +469,10 @@ pub fn dress(v: Value, id: QId, column: Option<&Unit>) -> Result<Value, String> 
 /// A quantity as its column's format shows it: in the format's unit, if it
 /// can be, and its number as the format says.
 pub fn show_in(q: &Quantity, f: &omasheet_omx::colfmt::QuantityFormat, style: &Style) -> String {
-    let converted = q.convert(&f.unit).unwrap_or_else(|_| q.clone());
+    let converted = match &f.unit {
+        Some(unit) => q.convert(unit).unwrap_or_else(|_| q.clone()),
+        None => q.clone(),
+    };
     format(&converted, &f.number.unwrap_or_default(), style, false)
 }
 
@@ -479,10 +482,14 @@ pub fn show_in(q: &Quantity, f: &omasheet_omx::colfmt::QuantityFormat, style: &S
 pub fn format(q: &Quantity, f: &SciFormat, style: &Style, exact: bool) -> String {
     let unit = q.unit().to_string();
     let unit = if q.unit().is_dimensionless() {
-        ""
+        String::new()
+    } else if f.gap {
+        // `_`: the unit set apart from its number, `6.022e+23 mol^-1`.
+        format!(" {unit}")
     } else {
-        &unit
+        unit
     };
+    let unit = unit.as_str();
     if exact {
         let n = |x: f64| crate::value::format_float(x, true);
         return if q.sigma() == 0.0 {
@@ -493,13 +500,17 @@ pub fn format(q: &Quantity, f: &SciFormat, style: &Style, exact: bool) -> String
     }
     // With no uncertainty and no format, the number is shown as a `Float` is:
     // to three places, cut and marked, `-1.571rad·`.
-    if q.sigma() == 0.0 && *f == SciFormat::default() {
+    if q.sigma() == 0.0 && (SciFormat { gap: false, ..*f }) == SciFormat::default() {
         let number = crate::value::format_value(&Value::Float(q.value()), false, style, false);
         // The mark of a cut number goes last, after the unit, where a
         // display can set it apart: `1.571rad·`.
-        return match number.strip_suffix(crate::value::MORE) {
-            Some(digits) => format!("{digits}{unit}{}", crate::value::MORE),
-            None => format!("{number}{unit}"),
+        // It may stand inside the number, before an exponent, `6.022·e+23`:
+        // it goes after the unit all the same, `6.022e+23mol^-1·`.
+        return if number.contains(crate::value::MORE) {
+            let digits = number.replace(crate::value::MORE, "");
+            format!("{digits}{unit}{}", crate::value::MORE)
+        } else {
+            format!("{number}{unit}")
         };
     }
     let mut number = crate::value::format_scientific(q.value(), q.sigma(), f, style);

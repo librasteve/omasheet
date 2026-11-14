@@ -16,7 +16,7 @@ use crate::deps;
 use crate::diag::{Diagnostic, Span};
 use crate::file::{FileAst, SourceDecl, parse_file};
 use crate::funcs::{FUNCTIONS, MathFn};
-use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
+use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel, Spec, Ties, Win};
 use crate::parser::parse_expr;
 use crate::types::{Base, DepKind, QId, S, SheetTy, Ty};
 use std::mem;
@@ -1853,7 +1853,7 @@ impl<'a> Checker<'a> {
                         .iter()
                         .find(|l| l.name == self.sheets[t].cols[c].name)
                         .and_then(|l| match &l.format {
-                            Some(Format::Quantity(q)) => Some(q.unit.clone()),
+                            Some(Format::Quantity(q)) => q.unit.clone(),
                             _ => None,
                         })
                         .or_else(|| crate::units::preferred(id)),
@@ -3418,6 +3418,295 @@ impl<'a> Checker<'a> {
     /// D174). Each is a function of one value, so a column formula or a
     /// filter answers it a row at a time and Polars a column at a time,
     /// except the four that ask about a value among its column's.
+    /// The window functions: `Amount.cum_sum(Date by Account)`, a value down
+    /// a column that reads the rows around it. The column is the receiver;
+    /// then come a lag or window length where there is one, then the order
+    /// key with the partition after it as `by Key`. Over this row's cell
+    /// the whole column is given to the call and the row's place, as
+    /// `is_unique` is; over a column, each element's answer.
+    fn lower_window(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        span: Span,
+        sc: &mut Scope,
+    ) -> (Node, Ty) {
+        let fail = (Node::error(span), Ty::Any);
+        let rolling = name.starts_with("rolling_");
+        let lagged = matches!(name, "diff" | "pct_change");
+        let ranking = name == "rank";
+        let usage = match name {
+            _ if rolling => format!("Amount.{name}(3), or Amount.{name}(3, Date by Account)"),
+            "diff" | "pct_change" => format!("Amount.{name}(), Amount.{name}(2, Date by Account)"),
+            "rank" => "Score.rank(), Score.rank(min, desc by Region)".to_string(),
+            _ => format!("Amount.{name}(), or Amount.{name}(Date by Account)"),
+        };
+        let mut rest: Vec<&Expr> = args[1..].iter().collect();
+        // The partition: `by Key` on the last argument.
+        let mut by: Vec<(String, Span)> = Vec::new();
+        if let Some(last) = rest.last()
+            && let ExprKind::By(inner, keys) = &last.kind
+        {
+            by = keys.clone();
+            let n = rest.len();
+            rest[n - 1] = inner;
+        }
+        if rest.iter().any(|e| matches!(e.kind, ExprKind::By(..))) {
+            self.err_help(
+                span,
+                "`by` goes after the last argument only",
+                format!("usage: `{usage}`"),
+            );
+            return fail;
+        }
+        // A lag or a window length, a whole number written out.
+        let mut n: i64 = if lagged { 1 } else { 0 };
+        if (lagged || rolling)
+            && let Some(first) = rest.first()
+            && let ExprKind::Lit(Lit::Int(k, _)) = &first.kind
+        {
+            if *k < 1 {
+                self.err(
+                    first.span,
+                    format!("`{name}` needs a whole number of 1 or more"),
+                );
+                return fail;
+            }
+            n = *k;
+            rest.remove(0);
+        }
+        if rolling && n == 0 {
+            self.err_help(
+                span,
+                format!("`{name}` needs the length of the window"),
+                format!("usage: `{usage}`"),
+            );
+            return fail;
+        }
+        // `rank` takes words: how ties are numbered, and `desc`.
+        let (mut ties, mut desc) = (Ties::Average, false);
+        if ranking {
+            for e in rest.drain(..) {
+                match &e.kind {
+                    ExprKind::Name(w) => match w.as_str() {
+                        "average" => ties = Ties::Average,
+                        "min" => ties = Ties::Min,
+                        "max" => ties = Ties::Max,
+                        "dense" => ties = Ties::Dense,
+                        "ordinal" => ties = Ties::Ordinal,
+                        "desc" => desc = true,
+                        "asc" => desc = false,
+                        other => {
+                            self.err_help(
+                                e.span,
+                                format!("`rank` does not take `{other}`"),
+                                "the words are average, min, max, dense, ordinal and desc",
+                            );
+                            return fail;
+                        }
+                    },
+                    _ => {
+                        self.err_help(
+                            e.span,
+                            "`rank` takes words, not a value",
+                            format!("usage: `{usage}`"),
+                        );
+                        return fail;
+                    }
+                }
+            }
+        }
+        if rest.len() > 1 || (rest.is_empty() && !by.is_empty() && !ranking) {
+            self.err_help(
+                span,
+                format!("`{name}` takes at most one order key, then `by` its partition"),
+                format!("usage: `{usage}`"),
+            );
+            return fail;
+        }
+        let (recv, rty) = self.lower(&args[0], sc);
+        if matches!(recv.kind, Ir::Error) {
+            return fail;
+        }
+        // Over this row's cell, or over a column.
+        let (s, row_depth, len) = match (&rty, &recv.kind) {
+            (Ty::Scalar(s), Ir::RowCol { depth, .. }) => (*s, Some(*depth), None),
+            (Ty::Vector(s, n), _) => (*s, None, *n),
+            _ => {
+                self.err_help(
+                    args[0].span,
+                    format!(
+                        "`{name}` runs down a column, but this is {}",
+                        rty.describe()
+                    ),
+                    "as `Name.{name}()` in a column's formula, or `Sales.Name.{name}()`"
+                        .replace("{name}", name),
+                );
+                return fail;
+            }
+        };
+        // The sheet the partition keys are columns of.
+        let home: Option<usize> = match (&recv.kind, row_depth) {
+            (Ir::RowCol { .. }, Some(d)) => Some(sc.frames[sc.frames.len() - 1 - d]),
+            (Ir::Column { sheet, .. }, None) => Some(*sheet),
+            _ => None,
+        };
+        let numeric = s.is_numeric() && s != S::Complex;
+        let ordered = numeric || s.is_temporal() || s == S::Duration || s.is_quantity();
+        let (fits, out, what): (bool, S, &str) = match name {
+            "cum_sum" => (numeric || s == S::Duration || s.is_quantity(), s, "numbers"),
+            "cum_prod" => (numeric, s, "numbers"),
+            "cum_min" | "cum_max" => (ordered, s, "numbers, dates or times"),
+            "cum_count" => (true, S::Int, "values"),
+            "diff" => {
+                let out = if s.is_temporal() {
+                    s.shift(true, s).unwrap_or(S::Any)
+                } else {
+                    s
+                };
+                (
+                    numeric || s.is_temporal() || s == S::Duration || s.is_quantity(),
+                    out,
+                    "numbers, dates or times",
+                )
+            }
+            "pct_change" => (numeric && s != S::Scientific, S::Float, "numbers"),
+            "rank" => (
+                ordered || s.is_text(),
+                if ties == Ties::Average {
+                    S::Float
+                } else {
+                    S::Int
+                },
+                "numbers, text, dates or times",
+            ),
+            "forward_fill" | "backward_fill" => (true, s, "values"),
+            "rolling_mean" => (
+                numeric || s == S::Duration || s.is_quantity(),
+                if s.is_int() || s == S::Decimal {
+                    S::Decimal
+                } else {
+                    s
+                },
+                "numbers",
+            ),
+            "rolling_sum" => (numeric || s == S::Duration || s.is_quantity(), s, "numbers"),
+            "rolling_min" | "rolling_max" => (ordered, s, "numbers, dates or times"),
+            _ => (numeric && s != S::Scientific, S::Float, "numbers"),
+        };
+        if !fits {
+            self.err(
+                args[0].span,
+                format!("`{name}` needs {what}, but this is {s}"),
+            );
+            return fail;
+        }
+        let win = match name {
+            "cum_sum" => Win::CumSum,
+            "cum_min" => Win::CumMin,
+            "cum_max" => Win::CumMax,
+            "cum_prod" => Win::CumProd,
+            "cum_count" => Win::CumCount,
+            "diff" => Win::Diff,
+            "pct_change" => Win::PctChange,
+            "rank" => Win::Rank(ties),
+            "forward_fill" => Win::ForwardFill,
+            "backward_fill" => Win::BackwardFill,
+            "rolling_sum" => Win::RollingSum,
+            "rolling_mean" => Win::RollingMean,
+            "rolling_min" => Win::RollingMin,
+            "rolling_max" => Win::RollingMax,
+            _ => Win::RollingStd,
+        };
+        let row = row_depth.is_some();
+        let mut call: Vec<Node> = Vec::new();
+        // The column itself, whole.
+        match (&recv.kind, row_depth, home) {
+            (Ir::RowCol { col, .. }, Some(_), Some(t)) => {
+                self.deps.push((DepNode::Col(t, *col), DepKind::Whole));
+                call.push(Node::new(
+                    Ir::Column {
+                        sheet: t,
+                        col: *col,
+                    },
+                    span,
+                ));
+            }
+            _ => call.push(recv),
+        }
+        call.push(Node::new(Ir::Lit(Lit::Int(n, Base::Dec)), span));
+        // The order key.
+        let mut order = false;
+        if !ranking && let Some(key) = rest.first() {
+            let (kn, kty) = self.lower(key, sc);
+            if matches!(kn.kind, Ir::Error) {
+                return fail;
+            }
+            order = true;
+            match (&kn.kind, &kty, home) {
+                (Ir::RowCol { depth, col }, Ty::Scalar(_), Some(t))
+                    if Some(*depth) == row_depth =>
+                {
+                    self.deps.push((DepNode::Col(t, *col), DepKind::Whole));
+                    call.push(Node::new(
+                        Ir::Column {
+                            sheet: t,
+                            col: *col,
+                        },
+                        span,
+                    ));
+                }
+                (_, Ty::Vector(..), _) if !row => call.push(kn),
+                _ => {
+                    self.err_help(
+                        key.span,
+                        "the order key must be a column of the same sheet",
+                        format!("usage: `{usage}`"),
+                    );
+                    return fail;
+                }
+            }
+        }
+        // The partition keys, columns of the same sheet.
+        let mut parts = 0u8;
+        for (key, at) in &by {
+            let Some(t) = home else {
+                self.err(*at, "`by` needs a column of a sheet to partition by");
+                return fail;
+            };
+            let Some(c) = self.find_col(t, key) else {
+                let tt = SheetTy {
+                    sheet: t,
+                    cols: self.all_cols(t),
+                    rows: None,
+                    kind: DepKind::Whole,
+                };
+                self.no_column(&tt, key, *at);
+                return fail;
+            };
+            self.col_refs.push((*at, t, c));
+            self.deps.push((DepNode::Col(t, c), DepKind::Whole));
+            call.push(Node::new(Ir::Column { sheet: t, col: c }, span));
+            parts += 1;
+        }
+        if let Some(depth) = row_depth {
+            call.push(Node::new(Ir::RowIndex { depth }, span));
+        }
+        let spec = Spec {
+            win,
+            desc,
+            order,
+            parts,
+            row,
+        };
+        let ty = if row {
+            Ty::Scalar(out)
+        } else {
+            Ty::Vector(out, len)
+        };
+        (Node::new(Ir::Call(Func::Window(spec), call), span), ty)
+    }
+
     fn lower_test(&mut self, name: &str, args: &[Expr], span: Span, sc: &mut Scope) -> (Node, Ty) {
         let fail = (Node::error(span), Ty::Any);
         let two = matches!(
@@ -3821,9 +4110,7 @@ impl<'a> Checker<'a> {
                     return fail;
                 }
                 let at = |kind| Expr { kind, span };
-                let bin = |op, a: Expr, b: Expr| {
-                    at(ExprKind::Binary(op, Box::new(a), Box::new(b)))
-                };
+                let bin = |op, a: Expr, b: Expr| at(ExprKind::Binary(op, Box::new(a), Box::new(b)));
                 let not = |a: Expr| at(ExprKind::Unary(UnOp::Not, Box::new(a)));
                 let (a, b) = (args[0].clone(), args[1].clone());
                 let form = match name {
@@ -3845,9 +4132,7 @@ impl<'a> Checker<'a> {
                 let call = |f: &str, x: &Expr| {
                     at(ExprKind::Call(f.to_string(), name_span, vec![x.clone()]))
                 };
-                let bin = |op, a: Expr, b: Expr| {
-                    at(ExprKind::Binary(op, Box::new(a), Box::new(b)))
-                };
+                let bin = |op, a: Expr, b: Expr| at(ExprKind::Binary(op, Box::new(a), Box::new(b)));
                 // Empty values are left out, as `sum` and `count` leave
                 // them: how many are true, against how many there are.
                 let x = &args[0];
@@ -3882,6 +4167,11 @@ impl<'a> Checker<'a> {
             | "to_uppercase" | "starts_with" | "ends_with" | "contains" | "matches"
             | "contains_any" | "is_unique" | "is_duplicated" | "is_first_distinct"
             | "is_last_distinct" => self.lower_test(name, args, span, sc),
+            "cum_sum" | "cum_min" | "cum_max" | "cum_prod" | "cum_count" | "diff"
+            | "pct_change" | "rank" | "forward_fill" | "backward_fill" | "rolling_sum"
+            | "rolling_mean" | "rolling_min" | "rolling_max" | "rolling_std" => {
+                self.lower_window(name, args, span, sc)
+            }
             "is_null" | "is_not_null" | "is_nan" | "is_not_nan" => {
                 if !arity(self, 1, &format!("Sheet.Column.{name}()")) {
                     return fail;

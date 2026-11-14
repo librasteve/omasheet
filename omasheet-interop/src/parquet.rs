@@ -361,7 +361,7 @@ fn quantity_series(
 ) -> Result<(Series, String), String> {
     use omasheet_engine::omx::colfmt::Format;
     let unit = match &col.format {
-        Some(Format::Quantity(f)) => Some(f.unit.clone()),
+        Some(Format::Quantity(f)) if f.unit.is_some() => f.unit.clone(),
         _ => omasheet_engine::omx::units::preferred(id),
     };
     let Some(unit) = unit.filter(|_| id.named().is_some()) else {

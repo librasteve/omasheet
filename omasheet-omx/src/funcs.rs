@@ -261,6 +261,7 @@ const BITWISE: &str = "Bitwise";
 const LOGIC: &str = "Logic";
 const COMPARE: &str = "Compare";
 const TEXT: &str = "Text";
+const WINDOW: &str = "Window";
 
 /// What the function directory says first: how a function is written.
 pub const INTRO: &str = "Functions are written =sum(x), many can also be used a method applied to an object e.g. \
@@ -294,6 +295,11 @@ pub const ABOUT: &[(&str, &str)] = &[
         "Takes: a complex number such as 3+4i, or a real one, which has no imaginary part.",
     ),
     (TIME, "Object: Date, Time, Datetime or Duration."),
+    (
+        WINDOW,
+        "Object: a Column. A value for every row, read from the rows around it: in file order, or \
+         in the order of a key, and within each partition: Amount.cum_sum(Date by Account).",
+    ),
     (
         BITWISE,
         "Operators, not functions: written between two whole numbers, or before one. and, or \
@@ -1052,6 +1058,96 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "=~=",
         "a =~= b",
         "Equal to within 1e-15 of the larger, or of 1 where one is zero, as Raku's =~= is: sin(pi()) =~= 0 is true where == is not. Uncertainties are ignored.",
+    ),
+    doc(
+        WINDOW,
+        "cum_sum",
+        "Amount.cum_sum(Date by Account)",
+        "The running total. An empty cell stays empty and is skipped.",
+    ),
+    doc(
+        WINDOW,
+        "cum_min",
+        "Amount.cum_min(Date)",
+        "The smallest so far.",
+    ),
+    doc(
+        WINDOW,
+        "cum_max",
+        "Amount.cum_max(Date)",
+        "The largest so far.",
+    ),
+    doc(
+        WINDOW,
+        "cum_prod",
+        "Amount.cum_prod(Date)",
+        "The running product.",
+    ),
+    doc(
+        WINDOW,
+        "cum_count",
+        "Amount.cum_count(Date)",
+        "How many values so far are not empty.",
+    ),
+    doc(
+        WINDOW,
+        "diff",
+        "Amount.diff(1, Date)",
+        "The change from the row n back (1 by default), empty where there is none.",
+    ),
+    doc(
+        WINDOW,
+        "pct_change",
+        "Amount.pct_change(1, Date)",
+        "The change from the row n back as a share of it, as a Float.",
+    ),
+    doc(
+        WINDOW,
+        "rank",
+        "Score.rank(min, desc by Region)",
+        "Each value's place in order. Ties: average (the default), min, max, dense or ordinal; desc ranks from the largest.",
+    ),
+    doc(
+        WINDOW,
+        "forward_fill",
+        "Price.forward_fill(Date)",
+        "Each empty cell takes the last value above it.",
+    ),
+    doc(
+        WINDOW,
+        "backward_fill",
+        "Price.backward_fill(Date)",
+        "Each empty cell takes the next value below it.",
+    ),
+    doc(
+        WINDOW,
+        "rolling_sum",
+        "Amount.rolling_sum(3, Date)",
+        "The total of the last n rows; empty until n rows are there.",
+    ),
+    doc(
+        WINDOW,
+        "rolling_mean",
+        "Amount.rolling_mean(3, Date)",
+        "The average of the last n rows.",
+    ),
+    doc(
+        WINDOW,
+        "rolling_min",
+        "Amount.rolling_min(3, Date)",
+        "The smallest of the last n rows.",
+    ),
+    doc(
+        WINDOW,
+        "rolling_max",
+        "Amount.rolling_max(3, Date)",
+        "The largest of the last n rows.",
+    ),
+    doc(
+        WINDOW,
+        "rolling_std",
+        "Amount.rolling_std(3, Date)",
+        "The standard deviation of the last n rows, of a sample.",
     ),
 ];
 

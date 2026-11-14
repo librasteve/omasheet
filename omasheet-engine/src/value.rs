@@ -435,6 +435,14 @@ pub fn to_f64(r: &Dec) -> f64 {
     r.to_f64()
 }
 
+/// A real number as a `Float`; `None` for anything else.
+pub fn to_float(v: &Value) -> Option<f64> {
+    match number(v)? {
+        N::Complex(..) => None,
+        n => Some(real(&n)),
+    }
+}
+
 fn real(n: &N) -> f64 {
     match n {
         N::Exact(r) => r.to_f64(),
@@ -1612,6 +1620,34 @@ fn format_complex(re: f64, im: f64, exact: bool, sep: Option<char>) -> String {
 /// grouping, as for a `Float`. Asked for a conversion, a value with no
 /// uncertainty is shown in the same form, as `11.0000(0)`.
 pub fn format_uncertain(v: f64, s: f64, f: &SciFormat, sep: Option<char>) -> String {
+    // `s`: the uncertainty leads (D-Q2). With one, the precision is not
+    // used; without, it is the significant digits, turned into the places
+    // of the mantissa that `g` would show.
+    if f.conv == SciConv::Auto {
+        let mut g = *f;
+        g.conv = SciConv::General;
+        g.places = match f.places {
+            Some(p) if s == 0.0 && v.is_finite() && v != 0.0 => {
+                let magnitude = v.abs().log10().floor() as i32;
+                let exponent = if (-2..15).contains(&magnitude) {
+                    0
+                } else {
+                    magnitude
+                };
+                let places = (p as i32 - 1 - (magnitude - exponent)).max(0) as usize;
+                // As `g`, with no noughts at the end of the mantissa.
+                let mantissa = format!("{:.places$}", v.abs() / 10f64.powi(exponent));
+                let places = match mantissa.split_once('.') {
+                    Some((_, fraction)) => fraction.trim_end_matches('0').len(),
+                    None => 0,
+                };
+                Some(places as u32)
+            }
+            Some(_) if s == 0.0 => Some(0),
+            _ => None,
+        };
+        return format_uncertain(v, s, &g, sep);
+    }
     let fixed = f.places.is_some() || f.exponent.is_some() || f.conv != SciConv::General;
     if s == 0.0 && !fixed {
         return padded_to(
@@ -1657,6 +1693,7 @@ pub fn format_uncertain(v: f64, s: f64, f: &SciFormat, sep: Option<char>) -> Str
         SciConv::Exp => f.exponent.unwrap_or(magnitude),
         SciConv::General if place <= 0 && (-2..15).contains(&magnitude) => 0,
         SciConv::General => magnitude,
+        SciConv::Auto => unreachable!("`s` is worked out as `g` above"),
     };
     let unit = 10f64.powi(exponent);
     let (mantissa, error) = (v / unit, s / unit);

@@ -402,6 +402,10 @@ fn call(func: Func, args: &[Node], cx: &Cx) -> Option<Out> {
             DataType::Boolean,
         );
     }
+    // A window function reads the rows around each: the engine's.
+    if let Func::Window(_) = func {
+        return None;
+    }
     // A value among its column's. Over this row's cell the checker gives
     // the column and the row's place as well, which Polars needs neither
     // of: its answer is a column's already.

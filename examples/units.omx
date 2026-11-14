@@ -82,6 +82,20 @@ Metres : Length
 | sugar | 300g  | 300g  | 150     |
 | salt  | 5     | 5     | 3.5(2)m |
 
+# With no unit before the `;`, each value is shown in its own unit. The
+# conversion `s` lets the uncertainty lead: a value that has one is shown by
+# it, and an exact value, which has none, in nine significant digits.
+sheet Constants
+
+Value : Quantity[; .9s]
+
+| Name                | Value             |
+| ------------------- | ----------------- |
+| Newton              | 6.674_30(15)e-11m |
+| reduced Planck      | 1.054571817e-34J.s |
+| Faraday             | 96485.33212331C   |
+| whole               | 5kg               |
+
 sheet Totals
 
 | Name     | Value                      |

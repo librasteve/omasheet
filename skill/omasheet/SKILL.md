@@ -250,6 +250,13 @@ that do not fit are cut and marked `·`. A `Decimal`, `Float` or `Complex` is sh
   usual maths, `today() now() year month day weekday`, `succ` for the next
   value, and the type names as conversions,
   `x.Integer`, `x.Float`, `x.Fraction`, `x.Percent`, `x.String`.
+- Down a column: `Amount.cum_sum()` is a running total, and `cum_min cum_max
+  cum_prod cum_count`, `diff`, `pct_change`, `rank`, `forward_fill`,
+  `backward_fill` and `rolling_sum(3)` (also `rolling_mean rolling_min
+  rolling_max rolling_std`) are like it. Rows go in file order unless an
+  order key is named, so give a ledger its date: `Amount.cum_sum(Date by
+  Account)` is a running total for each account in date order, wherever a
+  row sits in the file.
 - A date plus a whole number is days later; two dates subtract to days.
   `n.day`, `n.week`, `n.month` and `n.year` next to a date say which unit:
   `Placed + 1.month`, which keeps the day of the month or clamps it to the

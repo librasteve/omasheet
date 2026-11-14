@@ -258,4 +258,51 @@ pub enum Func {
     Pi,
     /// The base of the natural logarithm.
     E,
+    /// A function down a column that reads the rows around each one: a
+    /// running total, a difference, a rank, a rolling mean. See [`Spec`].
+    Window(Spec),
+}
+
+/// What a [`Func::Window`] does down a column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Win {
+    CumSum,
+    CumMin,
+    CumMax,
+    CumProd,
+    CumCount,
+    Diff,
+    PctChange,
+    Rank(Ties),
+    ForwardFill,
+    BackwardFill,
+    RollingSum,
+    RollingMean,
+    RollingMin,
+    RollingMax,
+    RollingStd,
+}
+
+/// How `rank` numbers values that are equal, as Polars' `method` does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ties {
+    Average,
+    Min,
+    Max,
+    Dense,
+    Ordinal,
+}
+
+/// A window function and the shape of its call. The arguments of the
+/// call are: the column, the number (a window length or a lag, or zero
+/// where there is none), the order key if `order`, one column for each of
+/// `parts` partition keys and, when `row`, the place of this row, the
+/// column being worked out once and this row's answer looked up in it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Spec {
+    pub win: Win,
+    pub desc: bool,
+    pub order: bool,
+    pub parts: u8,
+    pub row: bool,
 }

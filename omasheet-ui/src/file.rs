@@ -263,6 +263,16 @@ pub mod qobject {
             count: i32,
             format: &QString,
         ) -> QString;
+        /// How the constants' values are shown, or empty.
+        #[qinvokable]
+        fn const_format(self: &File) -> QString;
+        /// Show the constants' values by `format`, or as before with an empty
+        /// one. Empty, or why not.
+        #[qinvokable]
+        fn set_const_format(self: Pin<&mut File>, format: &QString) -> QString;
+        /// What is wrong with this as the format of the constants, or empty.
+        #[qinvokable]
+        fn check_const_format(self: &File, format: &QString) -> QString;
         /// Move `count` rows from `first` so the first becomes row `to`.
         #[qinvokable]
         fn move_rows(self: Pin<&mut File>, sheet: i32, first: i32, count: i32, to: i32) -> QString;
@@ -1292,6 +1302,23 @@ impl qobject::File {
         self.try_edit(|doc| {
             doc.set_column_format(index(sheet), &cols, Some(format).filter(|f| !f.is_empty()))
         })
+    }
+
+    fn const_format(&self) -> QString {
+        QString::from(self.rust().doc.const_format())
+    }
+
+    fn set_const_format(self: Pin<&mut Self>, format: &QString) -> QString {
+        let format = format.to_string();
+        let format = format.trim();
+        self.try_edit(|doc| doc.set_const_format(Some(format).filter(|f| !f.is_empty())))
+    }
+
+    fn check_const_format(&self, format: &QString) -> QString {
+        let format = format.to_string();
+        let format = format.trim();
+        let found = Document::check_const_format(Some(format).filter(|f| !f.is_empty()));
+        QString::from(&found.err().unwrap_or_default())
     }
 
     fn move_rows(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, to: i32) -> QString {

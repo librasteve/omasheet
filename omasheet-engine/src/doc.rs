@@ -155,6 +155,8 @@ pub struct ConstSnap {
     /// The value in full, when it is shown with fewer digits than it has.
     pub exact: Option<String>,
     pub error: Option<String>,
+    /// A number, a quantity or the like: set right in the grid.
+    pub numeric: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -216,6 +218,9 @@ pub struct Document {
     /// grid's alone like a table's order: a change of them is a step to
     /// undo, and so is kept here, not read.
     filters: String,
+    /// How the constants' values are shown, a number format as a column's,
+    /// by the app: the view's alone, like the filters, and not written.
+    const_format: String,
     /// The tables' files held whole in memory, by path (D157). Kept across
     /// rebuilds, and dropped when the text no longer names the file or the
     /// file has changed. See [`Document::to_hold`] and [`Document::hold`].
@@ -341,11 +346,27 @@ fn exact_text(v: &Value, quoted: bool, shown: &str, style: &Style) -> Option<Str
         | Value::Percent(_)
         | Value::Float(_)
         | Value::Scientific(..)
+        | Value::Quantity(_)
         | Value::Complex(..)
         | Value::Vector(_) => format_exact(v, quoted, style),
         _ => return None,
     };
     (full != shown).then_some(full)
+}
+
+/// The format `text` makes for `value`, where it is of a type that takes
+/// one: a quantity, a `Scientific` or a plain number.
+fn const_format_of(value: &Value, text: &str) -> Option<Format> {
+    if text.is_empty() {
+        return None;
+    }
+    let ty = match value {
+        Value::Quantity(_) => S::Quantity(omasheet_omx::types::QId::ANY),
+        Value::Scientific(..) => S::Scientific,
+        Value::Float(_) | Value::Decimal(_) => S::Float,
+        _ => return None,
+    };
+    Format::parse(text, ty).ok().filter(|f| f.takes(ty))
 }
 
 /// A cell as the grid shows it: its value formatted as its column says.
@@ -598,6 +619,15 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             (format!("{unit}; ±.1f"), "± uncertainty, 1 place"),
             (format!("{unit}; ~.1f"), "value only, 1 place"),
             (format!("{unit}; ~.3e-3"), "value only, e notation"),
+            (format!("{unit}; .9s"), "9 digits if exact"),
+            (format!("{unit}; _"), "a space before the unit"),
+        ],
+        // No unit: each value is shown in its own.
+        S::Quantity(_) => vec![
+            ("; .9s".into(), "own unit, 9 digits"),
+            ("; _.9s".into(), "as above, a space"),
+            ("; .3e".into(), "e notation"),
+            ("; ±.3e".into(), "± e notation"),
         ],
         _ => Vec::new(),
     };
@@ -2005,7 +2035,7 @@ pub fn type_spec(spec: &str) -> Result<(S, Option<Option<Format>>), String> {
     // The type's own unit is written as the type alone.
     if let (S::Quantity(id), Format::Quantity(q)) = (ty, &format)
         && q.number.is_none()
-        && omasheet_omx::units::preferred(id).as_ref() == Some(&q.unit)
+        && omasheet_omx::units::preferred(id).as_ref() == q.unit.as_ref()
     {
         return Ok((ty, Some(None)));
     }
@@ -2368,6 +2398,7 @@ impl Document {
             base: None,
             orders: Default::default(),
             filters: String::new(),
+            const_format: String::new(),
             whole: Default::default(),
             edits: 0,
             engine: None,
@@ -2608,6 +2639,37 @@ impl Document {
 
     /// Put the filters in force as `filters`, in one undoable step, as a
     /// sort of a table is. Whether they changed.
+    /// How the constants' values are shown, as written: a quantity's number
+    /// format such as `; .10s`, empty for none.
+    pub fn const_format(&self) -> &str {
+        &self.const_format
+    }
+
+    /// Whether `format` would read as the format of the constants' values:
+    /// a quantity's, or as a `Scientific` or a number takes it.
+    pub fn check_const_format(format: Option<&str>) -> Result<(), String> {
+        let Some(text) = format else { return Ok(()) };
+        let reads = |ty: S| Format::parse(text, ty).is_ok_and(|f| f.takes(ty));
+        if [S::Quantity(omasheet_omx::types::QId::ANY), S::Scientific, S::Float].into_iter().any(reads) {
+            return Ok(());
+        }
+        Format::parse(text, S::Quantity(omasheet_omx::types::QId::ANY))
+            .map(|_| ())
+            .map_err(|e| e.message)
+    }
+
+    /// Show the constants' values by `format`, where each can take it, and
+    /// as they were with none. The view's own, not the file's.
+    pub fn set_const_format(&mut self, format: Option<&str>) -> Result<(), String> {
+        Self::check_const_format(format)?;
+        let text = format.unwrap_or("").trim().to_string();
+        if text != self.const_format {
+            self.const_format = text;
+            self.rebuild();
+        }
+        Ok(())
+    }
+
     pub fn set_filters(&mut self, filters: &str) -> bool {
         let same =
             |a: &str, b: &str| a == b || (a.is_empty() && b == "{}") || (a == "{}" && b.is_empty());
@@ -5146,9 +5208,12 @@ impl Document {
                     }),
                     format: col.format.as_ref().map(|f| f.to_string()),
                     unit: match (col.ty, &col.format) {
-                        (S::Quantity(_), Some(omasheet_omx::colfmt::Format::Quantity(q))) => {
-                            q.unit.to_string()
-                        }
+                        (
+                            S::Quantity(_),
+                            Some(omasheet_omx::colfmt::Format::Quantity(
+                                omasheet_omx::colfmt::QuantityFormat { unit: Some(u), .. },
+                            )),
+                        ) => u.to_string(),
                         (S::Quantity(id), _) => omasheet_omx::units::preferred(id)
                             .map(|u| u.to_string())
                             .unwrap_or_default(),
@@ -5335,15 +5400,20 @@ impl Document {
                 }
                 Value::Null => "empty".to_string(),
                 Value::Vector(_) | Value::String(..) => engine.show(&value, true),
-                other => show(other),
+                other => match const_format_of(other, &self.const_format) {
+                    Some(f) => engine.show_in(other, false, Some(&f)),
+                    None => show(other),
+                },
             };
+            let formatted = const_format_of(&value, &self.const_format).is_some();
             snapshot.consts.push(ConstSnap {
+                numeric: value.is_numeric() || matches!(value, Value::Quantity(_)),
                 name: c.name.clone(),
                 source: decl.map_or(String::new(), |d| {
                     self.text[d.expr_span.start as usize..d.expr_span.end as usize].to_string()
                 }),
                 exact: exact(&value, true, &display)
-                    .filter(|f| *f != delocalised(&display, &self.style)),
+                    .filter(|f| !formatted && *f != delocalised(&display, &self.style)),
                 display,
                 error: decl.and_then(|d| within(d.expr_span)),
             });
@@ -5686,6 +5756,30 @@ mod tests {
         assert!(bad("1, 2, 5 ... Inf").contains("neither an arithmetic nor a geometric"));
         assert!(bad("2025-01-01, 2025-01-05, 2025-01-20 ... Inf").contains("evenly spaced"));
         assert!(bad("$-1 + 1 ... Inf").contains("term to start from"));
+    }
+
+    #[test]
+    fn a_quantity_column_is_set_right() {
+        let doc = Document::from_text(include_str!("../../examples/showcase/codata.omx"));
+        let t = &doc.snapshot().sheets[0];
+        assert_eq!(t.name, "Constants");
+        for (r, row) in t.rows.iter().enumerate() {
+            assert!(row[2].numeric, "row {r}: {:?}", row[2].display);
+        }
+        let c = &t.columns[2];
+        assert_eq!((c.ty.as_str(), c.declared), ("Quantity", true), "{c:?}");
+        assert_eq!(c.unit, "", "{c:?}");
+        // The pane can set the unit-less format on it and take it off.
+        let mut doc = Document::from_text("sheet S\n\nV : Quantity\n\n| V |\n| --- |\n| 5kg |\n");
+        assert_eq!(doc.set_column_format(0, &[0], Some("; .10s")), Ok(()));
+        assert!(doc.text().contains("V : Quantity[; .10s]"), "{}", doc.text());
+        // A quantity shown cut says its whole value in the footer.
+        let mut cut = Document::from_text("sheet S\n\n| V |\n| --- |\n| = 1m / 3 |\n");
+        let cell = &cut.snapshot().sheets[0].rows[0][0];
+        assert!(cell.display.ends_with('·') && cell.exact.is_some(), "{cell:?}");
+        let _ = &mut cut;
+        assert_eq!(doc.set_column_format(0, &[0], None), Ok(()));
+        assert!(doc.text().contains("V : Quantity\n"), "{}", doc.text());
     }
 
     #[test]
@@ -7328,6 +7422,30 @@ mod tests {
     }
 
     #[test]
+    fn the_constants_take_a_format_and_are_set_right() {
+        let mut doc = Document::from_text(include_str!("../../examples/showcase/codata.omx"));
+        let before = doc.snapshot().consts[1].display.clone();
+        assert_eq!(before, "0J.s·");
+        assert!(doc.snapshot().consts.iter().all(|c| c.numeric));
+        assert!(Document::check_const_format(Some("; .9s")).is_ok());
+        assert!(Document::check_const_format(Some("; q")).is_err());
+        assert_eq!(doc.set_const_format(Some("; .10s")), Ok(()));
+        assert_eq!(doc.const_format(), "; .10s");
+        assert_eq!(doc.snapshot().consts[1].display, "6.62607015e-34J.s");
+        assert_eq!(doc.snapshot().consts[0].display, "299792458m.s^-1");
+        assert_eq!(doc.set_const_format(None), Ok(()));
+        assert_eq!(doc.snapshot().consts[1].display, before);
+    }
+
+    #[test]
+    fn a_quantity_with_no_unit_is_offered_formats() {
+        let any = format_suggestions("Quantity", "");
+        assert!(any.iter().any(|(f, _)| f == "; .9s"), "{any:?}");
+        let mass = format_suggestions("Mass", "g");
+        assert!(mass.iter().any(|(f, _)| f == "g; .9s"), "{mass:?}");
+    }
+
+    #[test]
     fn a_type_and_its_unit_are_set_in_one_step() {
         let src = "sheet S\n\n| Dose |\n| ---- |\n| 5mg |\n| 2g |\n";
         let mut doc = Document::from_text(src);
@@ -7390,7 +7508,7 @@ mod tests {
             assert!(offered.len() >= at_least, "{ty}: only {offered:?}");
         }
         assert!(format_suggestions("String", "").is_empty());
-        assert!(format_suggestions("Quantity", "").is_empty());
+        assert!(!format_suggestions("Quantity", "").is_empty());
         // And Apply takes every one of them.
         let src = "sheet S\n\nDue : Date\n\n| Due |\n| --- |\n| 2025-01-31 |\n";
         let mut doc = Document::from_text(src);
@@ -7561,7 +7679,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 0), ["11.000(82)", "10.50(30)"]);
         assert_eq!(
             doc.set_column_format(0, &[0], Some("x")),
-            Err("`x` is for whole numbers: use 'e', 'f' or 'g'".to_string())
+            Err("`x` is for whole numbers: use 'e', 'f', 'g' or 's'".to_string())
         );
         assert!(doc.set_column_format(0, &[0], Some("±")).is_ok());
         assert!(

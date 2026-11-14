@@ -116,8 +116,8 @@ impl Grid {
 }
 
 const RESERVED: &[&str] = &[
-    "if", "then", "else", "and", "or", "xor", "nand", "nor", "not", "in", "true", "false", "Inf", "NaN", "sheet",
-    "const", "fn", "zone",
+    "if", "then", "else", "and", "or", "xor", "nand", "nor", "not", "in", "true", "false", "Inf",
+    "NaN", "sheet", "const", "fn", "zone",
 ];
 
 /// `raw` as an OMX identifier: the letters, digits and `_` of it, with a

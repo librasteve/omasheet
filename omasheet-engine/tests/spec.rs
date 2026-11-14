@@ -3944,7 +3944,7 @@ fn boolean_gates_and_aggregates() {
     assert_eq!(ask(FLAGS, "true xor false"), "true");
     assert_eq!(ask(FLAGS, "true nand true"), "false");
     assert_eq!(ask(FLAGS, "false nor false"), "true");
-        assert_eq!(ask(FLAGS, "true or true xor true"), "true");
+    assert_eq!(ask(FLAGS, "true or true xor true"), "true");
     assert_eq!(ask(FLAGS, "true xor true and true"), "false");
     assert_eq!(ask(FLAGS, "true xor true nor true"), "false");
     // `all`, `any` and `none` leave the empty ones out.
