@@ -17,7 +17,7 @@ Named, typed columns and array expressions connect spreadsheet flexibility to st
 The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
 
 - **`Integer` (ℤ)**: whole numbers (i64)
-- **`Decimal` (ℚ)**: exact fractions (d128+ / 38 decimal places)
+- **`Decimal`**: exact to the places its column keeps (`Decimal(38, s)`, ten by default); **`Fraction` (ℚ)**: the exact rational, of integers of any size
 - **`Float` (ℝ)**: real numbers (f64)
 - **`Scientific` (ℝ)**: real numbers with uncertainty (2x f64)
 - **`Complex` (ℂ)**: complex numbers (2x f64)

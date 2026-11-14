@@ -216,8 +216,8 @@ read as one; `Integer` is what is written.
 | `Hex` | `0xff`, `0xFF_FF` — an `Integer` shown in base 16 |
 | `Octal` | `0o17` — an `Integer` shown in base 8 |
 | `Binary` | `0b101` — an `Integer` shown in base 2 |
-| `Decimal` | `19.99`, `1/7`, `2 3/4` — exact |
-| `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction |
+| `Decimal` | `19.99`, `0.125` — exact to the places its column keeps: `Decimal(2)` keeps two, a bare `Decimal` ten (`Decimal(38, 10)`). A column that declares nothing keeps the least that holds its cells, and more than eighteen places make a `Fraction` |
+| `Fraction` | `1/7`, `2 3/4`, `0.125` — the exact rational, of integers of any size, shown as a fraction. It is never rounded and never lowered |
 | `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
 | `Float` | `1.5e3`, `Inf`, `-Inf`, `NaN` — floating point |
 | `Scientific` | `10.5(3)`, `10 ± 0.3` — a value with its measurement uncertainty, each a `Float`; a number with no uncertainty in a `Scientific` column has an uncertainty of zero. Its format, in brackets, is a number format as for a `Float`: with nothing before it the value is shown as `10.5(3)`, with `±` before it as `value ± uncertainty`, and with `~` before it as the value alone, at the places the uncertainty gives: `Length : Scientific[.4f]`, `Scientific[±.3e-3]`, `Scientific[~.2f]`. The conversion `s` lets the uncertainty lead: a value with one is shown by it, whatever the precision, and a value with none is shown to the precision as significant digits, in `g` form: `Scientific[.9s]` shows `1.0545718176e-34` as `1.05457182e-34` and `6.674 30(15)e-11` as it is |
@@ -310,34 +310,37 @@ form, `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f`, in either case. None of them
 may hold a space. Only `.omx` keeps which one a column is: through CSV, an
 XLSX Workbook, JSON or Parquet the text goes out and comes back as text.
 
-A `Decimal`, a `Fraction` and a `Percent` hold the same exact numbers, and a
-column of one takes the others, showing what it holds its own way: `1/7` is
-`0.143·` in a `Decimal` column, `1/7` in a `Fraction`
-column, and `14.29%` in a `Percent` column.
+A `Decimal` and a `Percent` hold the same exact numbers, and a column of one
+takes the other, showing what it holds its own way. A `Fraction` column
+takes any exact number, and a `Decimal` column given a `Fraction` rounds it
+to its places: `<1/7>` is `1/7` in a `Fraction` column, `0.1428571429` in a
+`Decimal` one.
 
-The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
+The numeric types form a hierarchy, **ℤ ⊂ Decimal ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
 
 - **`Integer` (ℤ)**: whole numbers (i64)
-- **`Decimal` (ℚ)**: exact fractions (d128+ / 38 decimal places)
+- **`Decimal`**: exact to its places (`Decimal(38, s)`, ten by default)
+- **`Fraction` (ℚ)**: the exact rational, of integers of any size
 - **`Float` (ℝ)**: real numbers (f64)
 - **`Scientific` (ℝ)**: real numbers with uncertainty (2x f64)
 - **`Complex` (ℂ)**: complex numbers (2x f64)
 
-For any operation, and for the cells of a column, the result is the **more infectious** of the types it is made from, the least number system that holds them both: `Integer` + `Decimal` is a `Decimal`, `Decimal` * `Float` is a `Float`, and `Float` + `Complex` is a `Complex`. This is a model, not the machine's: an integer is an `i64`, a `Decimal` a 38-digit fixed point and a `Float` an `f64`, each of finite precision.
+For any operation, and for the cells of a column, the result is the **more infectious** of the types it is made from, the least number system that holds them both: `Integer` + `Decimal` is a `Decimal`, `Decimal` * `Float` is a `Float`, and `Float` + `Complex` is a `Complex`. This is a model, not the machine's: an integer is an `i64`, a `Decimal` a 38-digit fixed point with the places its column keeps, a `Fraction` exact, and a `Float` an `f64`.
 
 Each type may be shown more than one way:
 
 | Type | Literal | Representations |
 |---|---|---|
 | `Integer` | `1` | `Hex` `0xff`, `Octal` `0o17`, `Binary` `0b101` |
-| `Decimal` | `1.0` | `Fraction` `1/7`, `2 3/4`; `Percent` `14.29%` |
+| `Decimal` | `1.0` | `Percent` `14.29%` |
+| `Fraction` | `<1/7>` | shown `1/7`, `2 3/4` |
 | `Float` | `1e0` | - |
 | `Scientific` | `10.5(3)` | - |
 | `Complex` | `3+4i` | - |
 
 - Two values shown the same way keep it: `Hex` + `Hex` is a `Hex`, and `Fraction` + `Fraction` a `Fraction`.
-- Two different ways of showing one type give the plain type: `Hex` + `Binary` is an `Integer`, and `Fraction` + `Percent` a `Decimal`.
-- Different types give the more infectious, shown plain: `Fraction` * `Integer` is a `Decimal`.
+- Two different ways of showing one type give the plain type: `Hex` + `Binary` is an `Integer`.
+- Different types give the more infectious, shown plain: `Decimal(2)` * `Decimal(4)` is a `Decimal(4)`, and `Fraction` * `Integer` or `Fraction` + `Percent` is a `Fraction`.
 - A power with a whole exponent is exact; with any other, such as `2 ** 0.5`, it is a `Float`, as are the trigonometric, exponential and logarithmic functions.
 - A number beside text gives `Any`.
 
@@ -386,28 +389,26 @@ A `20%` in a `Decimal` column is the number it stands for, `0.2`.
 
 A `Fraction` column takes any exact number and shows it as a fraction of
 whole numbers, with a whole part where there is one: `0.125` there is `1/8`
-and `2.75` is `2 3/4`. The fraction is worked out from the number rather
-than remembered from the cell, so one nobody wrote is found too — a seventh
-added to a seventh shows as `2/7`. Only a fraction whose denominator is
-10000 or less is looked for; past that the number is shown as a decimal.
-Two fractions give a fraction, so a `:=` column of `Yield + Yield` over a
-`Fraction` column shows fractions without being declared; a fraction with
-any other number gives a `Decimal`, so `Yield * 2` shows `4.667·`.
+and `2.75` is `2 3/4`. It holds the exact rational: a cell `1/7` is a
+seventh, to every digit, and a seventh added to a seventh is `2/7`, exactly.
+Only a fraction whose denominator is 10000 or less is shown as one; past that
+the number is shown as a decimal, cut and marked. Any exact number beside a
+fraction gives a fraction, so a `:=` column of `Yield * 2` over a `Fraction`
+column shows fractions.
 
-A fraction of two whole numbers is an exact `Decimal`: `1/7` and `22/7` are
-both read that way, and one may be written with a space, `2 3/4` for `11/4`.
+In a cell, `1/7` and `22/7` are fractions, and so is `2 3/4` for `11/4`.
 Neither part need be the smaller: `11/3` and `5 7/3` are fine, and a
 `Fraction` column shows them as `3 2/3` and `7 1/3`. A column with no type
 whose cells are all written with a `/` is a `Fraction` column; with any other
-number among them it is a `Decimal` one. A column declared `Decimal` takes the
-same cells and shows them as decimals.
+number among them it is a `Fraction` one too, a fraction beside a decimal
+being a fraction. A column declared `Decimal` takes the same cells and
+rounds them to its places.
 
 In a formula a fraction is written in angle brackets, `<1/10>`, `<-3/4>` or
-`<2 3/4>`, since a bare `1/10` there is a quotient, a `Decimal`. A fraction
-with a whole number is a `Decimal` too, so `<1/10> + 1` is `1.1`; to stay
-a fraction add `<1/1>`, the fraction that is one, and `<1/10> + <1/1>` is
-`1 1/10`. A space goes before a fraction that follows a `+`, since `+<` is a
-shift.
+`<2 3/4>`, since a bare `1/10` there is a quotient, a `Decimal` rounded to ten
+places. A fraction beside a whole number or a decimal is a fraction, so
+`<1/10> + 1` is `11/10`. A space goes before a fraction that follows a `+`,
+since `+<` is a shift.
 
 An `Integer`, `Decimal` or `Float` column may say how its numbers are shown,
 after its type in brackets, as a C `printf` conversion without its `%`:

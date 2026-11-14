@@ -164,9 +164,9 @@ row become a cell. Each formula is written for the row it is on:
 
 | | XLSX | CSV |
 |---|---|---|
-| `Integer`, `Decimal` | the nearest floating-point number | in full, to the 30 digits it shows; one that does not end, such as `1/3`, as `0.333333333333333333333333333333` |
-| `Fraction` | the nearest floating-point number | the decimal it holds, not `1/7`: a CSV is read by anything, and a fraction is not a number elsewhere |
-| `Percent` | that number, formatted as a percentage | `40%`; one that does not end as `33.3333333333333333333333333333%` |
+| `Integer`, `Decimal` | the nearest floating-point number | in full, to the places it keeps: `1/3` is `0.3333333333` |
+| `Fraction` | the nearest floating-point number | its text, `1/7`: exact, and read back as a fraction here |
+| `Percent` | that number, formatted as a percentage | `40%`; `33.33333333%` for a third |
 | `Date`, `Time`, `Datetime` | a date or time cell | `2025-01-31`, `09:30`, `2025-01-31T09:30` |
 | a cell that failed | empty | empty |
 
@@ -176,7 +176,8 @@ name. With `--sheet` it is the rows of that sheet alone.
 
 | | JSON |
 |---|---|
-| `Integer`, `Decimal`, `Fraction` | a number, in full; one that does not end, such as `1/3`, as `0.333333333333333333333333333333` |
+| `Integer`, `Decimal` | a number, in full, to the places a `Decimal` keeps |
+| `Fraction` | a string, `"1/3"`: JSON has no number for it |
 | `Percent` | the number it stands for: `20%` is `0.2` |
 | `Float` | a number; `Inf`, `-Inf` and `NaN` as strings |
 | `Scientific` | a string, as a file writes it: `"10.5 ± 0.3"` |
@@ -227,7 +228,8 @@ type its own name stands for rather than converted into something near it.
 | | Parquet |
 |---|---|
 | `Integer` | `int64` |
-| `Decimal`, `Percent` | `decimal(38, s)`, at the widest scale the column needs |
+| `Decimal(s)`, `Percent` | `decimal(38, s)`, at the column's own scale, which a `decimal(p, s)` of a file brings back as `Decimal(s)`; a `Decimal` of more than eighteen places is declared in the `.omx` written, or it would read back as a fraction |
+| `Fraction` | UTF-8 `byte_array`, each cell as `1/7`: exact, and read back as a fraction by an `.omx`. (A struct of `num` and `den` with the kind in the metadata is to come.) |
 | `Float` | `double` |
 | `Scientific` | a `struct` of two `double`s, `value` and `sigma` |
 | `Complex` | a `struct` of two `double`s, `re` and `im` |

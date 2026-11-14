@@ -3589,7 +3589,7 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // columns lowering forced calculates in one step, and 8.3 is where that
     // number is read. `windows.omx` adds five: the window functions of whole
     // numbers, which Polars runs down the column.
-    assert_eq!(taken, 70, "the columns taken at once");
+    assert_eq!(taken, 75, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read

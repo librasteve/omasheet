@@ -150,8 +150,8 @@ what you want; declare one when the cells could be read another way.
 | Type | Written |
 |---|---|
 | `Integer` | `42`, `1_000_000` |
-| `Decimal` | `19.99`, `1/7`, `2 3/4` — exact |
-| `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction, `1/7` and `2 3/4` |
+| `Decimal` | `19.99` — exact to the places its column keeps: `Decimal(2)` is two, a bare `Decimal` ten. A product or quotient is rounded to them (`1/3 * 3` is `0.9999999999`); a column that declares nothing keeps the least that holds its cells |
+| `Fraction` | `1/7`, `2 3/4` in a cell, `<1/7>` in a formula — the exact rational, shown as a fraction. Use it where `1/3 * 3` must be `1`, or a number needs more than 38 digits: `10**100` is a `Fraction` where nothing declares a `Decimal` |
 | `Percent` | `20%` — exact, shown as a percentage |
 | `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `'Inf'` in code, `"Inf"` in a cell), which is what a division by zero gives |
 | `Scientific` | `10.5(3)` or `10 ± 0.3` — a value with its measurement uncertainty; digits in brackets are the uncertainty in the last places, an exponent after them scales both: `7.297_352_5643(11)e-3`. It carries through `+ - * / **` and the math functions to first order (independent, in quadrature), `sum` and `mean`; shown as `11.000(82)`, or as a column format in brackets after the type says: `±`, places `.4`, an exponent `e-3`, or together `±.4e-3`. No uncertain complex: beside a `Complex` it becomes a `Float`, with a warning |
