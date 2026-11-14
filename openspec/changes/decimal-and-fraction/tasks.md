@@ -4,7 +4,7 @@ Draft; nothing is built.
 
 ## 0. Settle
 - [ ] 0.1 Ratify T1-T18 and decide the Open list in `design.md`
-- [ ] 0.2 A test of Polars 0.51's decimal `+ - * /`, `mean`, `cum_sum`, `diff`, `rank` and `rolling_*` near the limits (rounding or truncation of a product and a quotient; the scale of the result; the intermediate of a product at twice the scale); record the answer in T15 and T1
+- [x] 0.2 (measured; see `design.md`) A test of Polars 0.51's decimal `+ - * /`, `mean`, `cum_sum`, `diff`, `rank` and `rolling_*` near the limits (rounding or truncation of a product and a quotient; the scale of the result; the intermediate of a product at twice the scale); record the answer in T15 and T1
 - [ ] 0.3 Decide the dependency: `num-bigint` and `num-rational`, behind the `Fraction` type only
 
 ## 1. The type

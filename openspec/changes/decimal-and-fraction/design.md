@@ -22,7 +22,8 @@ A column holding a googol and `1e-30` has no scale. So the scale is the column's
 | T1 | Proposed | `Decimal` is `Decimal(38, s)`. The scale `s`, 0 to 38, belongs to the column and is written `Decimal(s)`; bare `Decimal` is `Decimal(10)` | Owner, 2026-11-14: `Decimal(38, 10)`. It holds ~10²⁸, so a million trillion (10¹⁸) fits, and ten places. The syntax follows `Datetime("Europe/London")`. Brackets stay for display formats |
 | T2 | Proposed | A `Decimal(s)` value has exactly the column's scale. The point does not move | Replaces D25's "past 38 digits it moves the point" |
 | T3 | Proposed | The result of an operation is rounded to the scale it is given by T5, half away from zero | The rule `round` already has (D54). Ties are away from zero, not to even |
-| T4 | Proposed | A result that needs more than 38 digits at its scale is an error cell: "does not fit Decimal(s); use Fraction or a smaller scale" | Like an integer overflow. It is never silently widened, so the type of a formula is static |
+| T4 | Amended | A result that needs more than 38 digits at its scale is a `Fraction`, exactly. Stored into a column that **declares** `Decimal(s)` it is an error cell: "does not fit Decimal(s); use Fraction or a smaller scale". Stored into an undeclared column it makes the column a `Fraction` | Owner, 2026-11-14: an undeclared `10 ** 100` is inferred a `Fraction`, not refused. The declaration is what says the cell must stay a decimal, as a declared `Float` refuses a `Complex` |
+| T20 | Proposed | A decimal literal in a formula has the scale `max(10, its own places)` (a literal with more than 18 places, or an exact quotient such as `1/3` written as a literal fraction, is a `Fraction`). A decimal cell of an undeclared column keeps T11's smallest scale | So `19.99 * 1.5` is `29.985`, not `29.99`; the rounding to a small scale happens where a column declares one |
 | T5 | Proposed | `Decimal(a) ± Decimal(b)` and `*` are `Decimal(max(a, b))`. `/` and `mean` take the left operand's scale. `Integer` counts as `Decimal(0)`; `Percent` is a `Decimal` | `Integer / Integer` is `Decimal(10)`, not `Fraction`, so ordinary formulas stay lowerable |
 | T6 | Proposed | `Fraction` is an exact rational of arbitrary-precision integers (`num-bigint`, `num-rational`): reduced, denominator positive, equality is structural | Raku's `FatRat`, with no degrade to a float. Backing is `BigRational` first |
 | T7 | Proposed | Lattice: `Integer` < `Decimal(s)` < `Fraction`; `Decimal(a)` join `Decimal(b)` is `Decimal(max)`; `Fraction` join `Float` is `Float`; `Scientific`, `Quantity`, `Complex` as now | The join of a `Fraction` with a `Decimal` is exact, with a `Float` it is the float |
@@ -38,6 +39,20 @@ A column holding a googol and `1e-30` has no scale. So the scale is the column's
 | T17 | Proposed | `Dec` stays as the engine's carrier of one `Decimal(s)` value (an `i128` and a scale) with no point-moving | Keeps the arithmetic code; removes the 30-digit quotient and the guard digits |
 | T19 | Proposed | `x ** n` of a `Decimal(s)` with a whole literal `n` of 2 or more and `n·s` at most 38 lowers: widen to `Decimal(38, n·s)`, multiply exactly, round once to `s`. A larger or negative `n` is the engine's; a fractional `n` is a `Float` | Rounding at each step would double-round and disagree with the engine, which rounds the exact power once. At `s = 10` this covers `**2` and `**3` |
 | T18 | Proposed | `Percent` stays a dress over `Decimal(s)`; `Quantity` and `Scientific` stay `Float`-based | Unaffected |
+
+## What Polars does (task 0.2, Polars 0.51, measured 2026-11-14)
+
+| Operation on `Decimal(38, s)` | Result |
+|---|---|
+| `a + b` | scale `max(sa, sb)`, exact; wraps silently past 38 digits |
+| `a * b` | scale `sa + sb`, **exact and unrounded**; wraps silently when the product at that scale passes `i128` (`10¹⁸ * 2` at scale 10 returns a negative number) |
+| `a / b` | scale `max(sa, sb) + 4`, **truncated** toward zero; **null** when the intermediate overflows |
+| cast to a lower scale | **truncates** toward zero (0.25 to 0.2, 0.35 to 0.3), neither half-even nor half-away |
+| `mean` | `Float64` |
+| `cum_sum cum_min cum_max diff rank shift forward_fill` and `over` | supported, scale kept |
+| `rolling_min rolling_sum` and `pow` | **not supported** on a decimal |
+
+So rounding is always explicit: `(x ± half-ulp).cast(Decimal(38, s))`, which is exact for a quotient too, since truncation leaves the digit that decides the rounding. `mean` is a sum over a count. A product of two `Decimal(10)` values lowers only below about `1.7·10¹⁸`, the rest through the guard (T16).
 
 ## Lowering
 
