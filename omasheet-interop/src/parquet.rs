@@ -385,7 +385,8 @@ fn quantity_series(
             Value::Int(n, _) => Some((*n as f64, 0.0)),
             Value::Float(f) => Some((*f, 0.0)),
             Value::Scientific(x, s) => Some((*x, *s)),
-            Value::Decimal(d) | Value::Percent(d) | Value::Fraction(d) => Some((d.to_f64(), 0.0)),
+            Value::Decimal(d) | Value::Percent(d) => Some((d.to_f64(), 0.0)),
+            Value::Fraction(r) => Some((r.to_f64(), 0.0)),
             _ => None,
         })
         .collect();

@@ -18,9 +18,11 @@ use crate::file::{FileAst, SourceDecl, parse_file};
 use crate::funcs::{FUNCTIONS, MathFn};
 use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel, Spec, Ties, Win};
 use crate::parser::parse_expr;
+use crate::rational::Rat;
 use crate::types::{Base, DEFAULT_SCALE, DepKind, QId, S, SheetTy, Ty};
 use std::mem;
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// A checked file, ready to evaluate.
 #[derive(Debug, Default)]
@@ -716,7 +718,9 @@ fn static_of(e: &Expr) -> Option<Static> {
 fn seed_num(e: &Expr) -> Option<Dec> {
     match &e.kind {
         ExprKind::Lit(Lit::Int(i, _)) => Some(Dec::from_i64(*i)),
-        ExprKind::Lit(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)) => Some(*r),
+        ExprKind::Lit(Lit::Decimal(r) | Lit::Percent(r)) => Some(*r),
+        // A fraction written out, as near a decimal as one holds.
+        ExprKind::Lit(Lit::Fraction(r)) => r.to_dec(crate::types::DEFAULT_SCALE as i32),
         ExprKind::Unary(UnOp::Neg, inner) => seed_num(inner).and_then(|r| r.checked_neg()),
         // `1/3` written out, where the lexer did not take it for one.
         ExprKind::Binary(BinOp::Div, a, b) => {
@@ -2546,8 +2550,10 @@ impl<'a> Checker<'a> {
             // in a `Fraction` column is a fraction, in a `Percent` column a
             // percentage (`0.4` is `40%`), and in a `Decimal` column the
             // number it stands for.
-            (Some(Lit::Int(n, _)), S::Fraction) => Some(Lit::Fraction(Dec::from_i64(n))),
-            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Fraction) => Some(Lit::Fraction(r)),
+            (Some(Lit::Int(n, _)), S::Fraction) => Some(Lit::Fraction(Arc::new(Rat::from_i64(n)))),
+            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Fraction) => {
+                Some(Lit::Fraction(Arc::new(Rat::from_dec(r))))
+            }
             (Some(l @ Lit::Fraction(_)), S::Fraction) => Some(l),
             (Some(l @ Lit::Decimal(r)), S::Decimal(places)) => {
                 // A column that says how many places it keeps holds a cell
@@ -2563,11 +2569,13 @@ impl<'a> Checker<'a> {
             }
             (Some(l @ Lit::Percent(_)), S::Percent) => Some(l),
             (Some(Lit::Int(n, _)), S::Percent) => Some(Lit::Percent(Dec::from_i64(n))),
-            (Some(Lit::Decimal(r) | Lit::Fraction(r)), S::Percent) => Some(Lit::Percent(r)),
+            (Some(Lit::Decimal(r)), S::Percent) => Some(Lit::Percent(r)),
+            (Some(Lit::Fraction(r)), S::Percent) => r
+                .to_dec(crate::types::DEFAULT_SCALE as i32)
+                .map(Lit::Percent),
             (Some(Lit::Int(n, _)), S::Float) => Some(Lit::Float(n as f64)),
-            (Some(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)), S::Float) => {
-                Some(Lit::Float(r.to_f64()))
-            }
+            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Float) => Some(Lit::Float(r.to_f64())),
+            (Some(Lit::Fraction(r)), S::Float) => Some(Lit::Float(r.to_f64())),
             (Some(l @ Lit::Float(_)), S::Float) => Some(l),
             // A number with no uncertainty in a `Scientific` column has an
             // uncertainty of zero.
@@ -4158,7 +4166,19 @@ impl<'a> Checker<'a> {
                     }
                     _ => s,
                 };
-                (Node::new(Ir::Call(func, nodes), span), Ty::Scalar(out))
+                let call = Node::new(Ir::Call(func, nodes), span);
+                // A mean or a middle of exact numbers is a quotient, and is
+                // rounded once to the places its type has.
+                let call = match (func, out) {
+                    (Func::Mean | Func::Median, S::Decimal(places)) => {
+                        Node::new(Ir::Call(Func::Settle(places), vec![call]), span)
+                    }
+                    (Func::Mean | Func::Median, S::Percent) => {
+                        Node::new(Ir::Call(Func::Settle(DEFAULT_SCALE), vec![call]), span)
+                    }
+                    _ => call,
+                };
+                (call, Ty::Scalar(out))
             }
             // One vector and a number: the degrees of freedom to subtract,
             // or the fraction of the way through.

@@ -46,7 +46,7 @@ pub const MIN_SCALE: i32 = -i32::MAX;
 /// neither compared nor shown, so that the rounding a long calculation
 /// collects in them does not reach the number anybody reads. See the module
 /// documentation.
-pub const GUARD_DIGITS: u32 = 8;
+pub const GUARD_DIGITS: u32 = 0;
 
 /// How many significant digits a number is compared and shown to.
 pub const SHOWN_PRECISION: u32 = MAX_PRECISION - GUARD_DIGITS;
@@ -823,47 +823,6 @@ mod tests {
     }
 
     #[test]
-    fn the_guard_digits_are_neither_compared_nor_shown() {
-        let seventh = |n: i64| Dec::from_i64(n).checked_div(d("7")).unwrap();
-        // Held, a seventh of one doubled and a seventh of two differ in
-        // their last digit, since the two round opposite ways.
-        assert_ne!(
-            seventh(1)
-                .checked_add(seventh(1))
-                .unwrap()
-                .to_plain_string(),
-            seventh(2).to_plain_string()
-        );
-        // Without their guard digits they are one number.
-        assert_eq!(seventh(1).checked_add(seventh(1)).unwrap(), seventh(2));
-        assert_eq!(
-            seventh(2).checked_add(seventh(3)).unwrap(),
-            seventh(5),
-            "2/7 + 3/7 == 5/7"
-        );
-        let third = d("1").checked_div(d("3")).unwrap();
-        assert_eq!(third.checked_mul(d("3")).unwrap(), Dec::ONE);
-        assert_eq!(
-            third
-                .checked_mul(d("3"))
-                .unwrap()
-                .guarded()
-                .to_plain_string(),
-            "1"
-        );
-        // Thirty significant digits are shown, of the thirty-eight held.
-        assert_eq!(third.precision(), MAX_PRECISION);
-        assert_eq!(third.guarded().precision(), SHOWN_PRECISION);
-        assert!(third.is_long());
-        // A number that ends is untouched, and so is the smallest there is,
-        // whose every digit is significant.
-        for text in ["19.99", "0.125", "0", "-7", "1e-38"] {
-            assert_eq!(d(text).guarded(), d(text), "{text}");
-            assert!(!d(text).is_long(), "{text}");
-        }
-    }
-
-    #[test]
     fn fractions_are_read_back_out() {
         let frac = |text: &str| d(text).to_fraction(MAX_DENOMINATOR);
         assert_eq!(frac("0.125"), Some((1, 8)));
@@ -961,11 +920,11 @@ mod tests {
     }
 
     #[test]
-    fn a_value_rounded_at_the_limit_reads_as_long() {
-        assert!(d("1").checked_div(d("3")).unwrap().is_long());
-        assert!(d("1").checked_div(d("7")).unwrap().is_long());
+    fn nothing_is_held_beyond_what_is_compared() {
+        // There is no working room: every one of the 38 digits is compared
+        // and shown (decimal-and-fraction).
+        assert_eq!(GUARD_DIGITS, 0);
         assert!(!d("0.125").is_long());
-        assert!(!d("1").checked_div(d("8")).unwrap().is_long());
     }
 
     #[test]

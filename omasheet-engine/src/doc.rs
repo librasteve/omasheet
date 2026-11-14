@@ -5542,12 +5542,12 @@ mod tests {
         // is kept as it was typed.
         assert!(!doc.text().contains("Fraction"), "{}", doc.text());
         assert!(doc.text().contains("1/3"), "{}", doc.text());
-        // A decimal typed beside it makes the column a decimal one, a
-        // fraction and a decimal being a decimal.
+        // A decimal typed beside it keeps the column a fraction one, a
+        // fraction and a decimal being a fraction.
         assert!(doc.set_cell(0, 1, 1, "0.25"));
-        assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Decimal");
-        // Each cell keeps the format its own contents give it (D192).
-        assert_eq!(col(&doc, 0, 1), ["1/3", "0.25"]);
+        assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Fraction");
+        // A column of fractions shows each as one, the quarter included.
+        assert_eq!(col(&doc, 0, 1), ["1/3", "1/4"]);
         // So does a whole number and a part, proper or not.
         let doc = Document::from_text("sheet T\n\nA\n1 1/2\n5 7/3\n11/3\n");
         assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Fraction");
@@ -5564,9 +5564,11 @@ mod tests {
         let column = &doc.snapshot().sheets[0].columns[0];
         assert!(!column.declared && column.ty == "Percent");
         assert!(doc.set_cell(0, 1, 0, "1/2"));
-        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
-        assert_eq!(col(&doc, 0, 0), ["23%", "1/2"]);
-        assert!(!doc.text().contains("Decimal"), "{}", doc.text());
+        // A percentage and a fraction together are fractions: the rational
+        // is what any exact number beside it becomes.
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Fraction");
+        assert_eq!(col(&doc, 0, 0), ["23/100", "1/2"]);
+        assert!(!doc.text().contains("Fraction"), "{}", doc.text());
         // A fraction among text is text.
         let mut doc = Document::from_text("sheet T\n\nA\nabc\n\n");
         assert!(doc.set_cell(0, 1, 0, "1/3"));

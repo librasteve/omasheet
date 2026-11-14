@@ -529,10 +529,10 @@ impl Writer<'_> {
                 number(n.to_string())
             }
             Lit::Int(_, _) => return Err(LITERAL),
-            Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) if !r.is_long() => {
-                number(format_rat(r))
-            }
-            Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) => number(r.to_plain_string()),
+            Lit::Decimal(r) | Lit::Percent(r) if !r.is_long() => number(format_rat(r)),
+            Lit::Decimal(r) | Lit::Percent(r) => number(r.to_plain_string()),
+            // A workbook has no rationals: a fraction is the nearest double.
+            Lit::Fraction(r) => return self.literal(&Lit::Float(r.to_f64())),
             Lit::Float(f) if f.is_finite() => {
                 let size = f.abs();
                 number(if size == 0.0 || (1e-5..1e15).contains(&size) {

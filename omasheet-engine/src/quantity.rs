@@ -51,9 +51,8 @@ fn lift(v: &Value) -> Option<Quantity> {
     Some(match v {
         Value::Quantity(q) => (**q).clone(),
         Value::Int(n, _) => Quantity::exact(*n as f64, one()),
-        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => {
-            Quantity::exact(r.to_f64(), one())
-        }
+        Value::Decimal(r) | Value::Percent(r) => Quantity::exact(r.to_f64(), one()),
+        Value::Fraction(r) => Quantity::exact(r.to_f64(), one()),
         Value::Float(f) => Quantity::exact(*f, one()),
         Value::Scientific(v, s) => Quantity::new(*v, *s, one()).ok()?,
         // A duration beside a quantity is so many seconds: `9560km / PT13H`.

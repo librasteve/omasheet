@@ -249,8 +249,10 @@ fn export_writes_beside_the_file_and_leaves_it_alone() {
     let out = omasheet(&["export", &file, "--xlsx"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(dir.join("budget.xlsx").exists());
+    // A margin is a quotient rounded to ten places now, which a workbook
+    // holds as it is: there is no note of rationals written as doubles.
     assert!(
-        stderr(&out).contains("note: exact rationals were written as floating point: Sales.Margin"),
+        !stderr(&out).contains("exact rationals"),
         "{}",
         stderr(&out)
     );

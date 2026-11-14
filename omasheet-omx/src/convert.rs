@@ -6,12 +6,14 @@
 use crate::ast::Lit;
 use crate::decimal::Dec;
 use crate::lexer::{Tok, lex};
+use crate::rational::Rat;
 use crate::types::{Base, QId, S};
+use std::sync::Arc;
 
 /// A whole number and a part written on their own, `2 3/4` or `-2 3/4`, as
 /// the exact number they come to, `2.75`. The part may be more than one:
 /// `5 7/3` is `7 1/3`. `None` if the text is anything else.
-pub fn parse_mixed(text: &str) -> Option<Dec> {
+pub fn parse_mixed(text: &str) -> Option<Rat> {
     let toks = lex(text, 0, 0).ok()?;
     let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
     let (negative, rest) = match toks.as_slice() {
@@ -28,9 +30,9 @@ pub fn parse_mixed(text: &str) -> Option<Dec> {
     else {
         return None;
     };
-    let part = Dec::from_i64(*n).checked_div(Dec::from_i64(*d))?;
-    let r = Dec::from_i64(*whole).checked_add(part)?;
-    if negative { r.checked_neg() } else { Some(r) }
+    let part = Rat::new(*n as i128, *d as i128)?;
+    let r = Rat::from_i64(*whole).add(&part);
+    Some(if negative { r.neg() } else { r })
 }
 
 /// A `Complex` as it is written, `3+4i`, for a message.
@@ -58,16 +60,13 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
 /// SI unit or a scale: `5kg` is a quantity and `1k.` is 1000.
 pub fn parse_literal_with(text: &str, units: bool) -> Option<Lit> {
     if let Some(r) = parse_mixed(text) {
-        return Some(Lit::Fraction(r));
+        return Some(Lit::Fraction(Arc::new(r)));
     }
     let toks = crate::lexer::lex_with(text, 0, 0, units).ok()?;
     let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
     // A fraction of two whole numbers, `1/7`, is an exact number.
-    let fraction = |n: i64, d: i64| {
-        Dec::from_i64(n)
-            .checked_div(Dec::from_i64(d))
-            .map(Lit::Fraction)
-    };
+    let fraction =
+        |n: i64, d: i64| Rat::new(n as i128, d as i128).map(|r| Lit::Fraction(Arc::new(r)));
     // A complex number: `4i`, `3+4i`, `-1.5-2i`.
     let real = |t: &Tok| match t {
         Tok::Int(n, _) => Some(*n as f64),
@@ -220,7 +219,8 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     let no = || Err(format!("{from} cannot be made {}", a(to)));
     let real = |l: &Lit| match l {
         Lit::Int(n, _) => Some(*n as f64),
-        Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) => Some(r.to_f64()),
+        Lit::Decimal(r) | Lit::Percent(r) => Some(r.to_f64()),
+        Lit::Fraction(r) => Some(r.to_f64()),
         Lit::Float(f) => Some(*f),
         Lit::Boolean(b) => Some(*b as u8 as f64),
         _ => None,
@@ -274,8 +274,8 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     // is converted as that number is; and any exact number may be one.
     if to == S::Fraction {
         return match lit {
-            Lit::Int(n, _) => Ok(Lit::Fraction(Dec::from_i64(*n))),
-            Lit::Decimal(r) | Lit::Percent(r) => Ok(Lit::Fraction(*r)),
+            Lit::Int(n, _) => Ok(Lit::Fraction(Arc::new(Rat::from_i64(*n)))),
+            Lit::Decimal(r) | Lit::Percent(r) => Ok(Lit::Fraction(Arc::new(Rat::from_dec(*r)))),
             Lit::String(s) => parse_literal(s.trim())
                 .filter(|l| !matches!(l, Lit::String(_)))
                 .and_then(|l| convert(&l, to).ok())
@@ -283,10 +283,29 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
             _ => no(),
         };
     }
+    // A fraction as another type: whole numbers drop the part, a `Decimal`
+    // rounds to its places, a `Float` is the nearest double, and anything
+    // else is made from the nearest decimal.
     if let Lit::Fraction(r) = lit {
-        let plain = match r.to_i64() {
-            Some(n) => Lit::Int(n, Base::Dec),
-            None => Lit::Decimal(*r),
+        let plain = match to {
+            S::Float => Lit::Float(r.to_f64()),
+            S::Int | S::Hex | S::Octal | S::Binary => match r.trunc().to_i64() {
+                Some(n) => Lit::Int(n, Base::Dec),
+                None => return Err("the number is too large for an Integer".to_string()),
+            },
+            S::Decimal(s) => {
+                return r.to_dec(i32::from(s)).map(Lit::Decimal).ok_or_else(|| {
+                    format!("{r} is too large for {}; use Fraction", scale_name(s))
+                });
+            }
+            S::Boolean => Lit::Boolean(!r.is_zero()),
+            _ => match r.to_i64() {
+                Some(n) => Lit::Int(n, Base::Dec),
+                None => match r.to_dec(i32::from(crate::types::DEFAULT_SCALE)) {
+                    Some(d) => Lit::Decimal(d),
+                    None => return Err(format!("{r} is too large for a Decimal; use Fraction")),
+                },
+            },
         };
         return convert(&plain, to);
     }
@@ -448,14 +467,11 @@ mod tests {
         assert_eq!(convert(&lit("0.125"), S::Fraction), Ok(lit("1/8")));
         assert_eq!(
             convert(&lit("3"), S::Fraction),
-            Ok(Lit::Fraction(Dec::from_i64(3)))
+            Ok(Lit::Fraction(Arc::new(Rat::from_i64(3))))
         );
         // A fraction of whole numbers is the exact number it stands for,
         // written as a fraction.
-        assert_eq!(
-            lit("7/3"),
-            Lit::Fraction(Dec::from_i64(7).checked_div(Dec::from_i64(3)).unwrap())
-        );
+        assert_eq!(lit("7/3"), Lit::Fraction(Arc::new(Rat::new(7, 3).unwrap())));
         assert_eq!(convert(&lit("-22/7"), S::Int), Ok(lit("-3")));
         // A whole number and a part is the fraction they come to.
         assert_eq!(lit("2 3/4"), lit("11/4"));

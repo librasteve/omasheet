@@ -300,7 +300,7 @@ pub(crate) enum Scalar {
     Null,
     Int(i64, Base),
     Decimal(Dec),
-    Fraction(Dec),
+    Fraction(omasheet_omx::rational::Rat),
     Percent(Dec),
     Float(f64),
     Boolean(bool),
@@ -318,7 +318,7 @@ impl Scalar {
             Value::Null => Scalar::Null,
             Value::Int(n, base) => Scalar::Int(*n, *base),
             Value::Decimal(d) => Scalar::Decimal(*d),
-            Value::Fraction(d) => Scalar::Fraction(*d),
+            Value::Fraction(r) => Scalar::Fraction((**r).clone()),
             Value::Percent(d) => Scalar::Percent(*d),
             Value::Float(f) => Scalar::Float(*f),
             Value::Boolean(b) => Scalar::Boolean(*b),
@@ -336,7 +336,7 @@ impl Scalar {
             Scalar::Null => Value::Null,
             Scalar::Int(n, base) => Value::Int(*n, *base),
             Scalar::Decimal(d) => Value::Decimal(*d),
-            Scalar::Fraction(d) => Value::Fraction(*d),
+            Scalar::Fraction(r) => Value::Fraction(Rc::new(r.clone())),
             Scalar::Percent(d) => Value::Percent(*d),
             Scalar::Float(f) => Value::Float(*f),
             Scalar::Boolean(b) => Value::Boolean(*b),
@@ -2604,29 +2604,57 @@ impl<'p> Engine<'p> {
         };
         // Each aggregate that is a function of one column, which is what
         // Polars may take for every group at once.
+        // A mean or a middle of decimals is wrapped in the rounding to the
+        // places of its type; Polars answers it unrounded and the engine
+        // rounds what comes back.
+        let mut settles: Vec<(usize, u8)> = Vec::new();
         let aggs: Vec<(usize, Func, usize)> = self.prog.sheets[t]
             .cols
             .iter()
             .enumerate()
-            .filter_map(|(at, col)| match &col.kind {
-                ColKind::Agg(Node {
-                    kind: Ir::Call(func, args),
-                    ..
-                }) => match args.as_slice() {
+            .filter_map(|(at, col)| {
+                let ColKind::Agg(node) = &col.kind else {
+                    return None;
+                };
+                let (node, places) = match &node.kind {
+                    Ir::Call(Func::Settle(p), inner) => match inner.as_slice() {
+                        [inner] => (inner, Some(*p)),
+                        _ => return None,
+                    },
+                    _ => (node, None),
+                };
+                let Ir::Call(func, args) = &node.kind else {
+                    return None;
+                };
+                match args.as_slice() {
                     [
                         Node {
                             kind: Ir::GroupCol(c),
                             ..
                         },
-                    ] => Some((at, *func, *c)),
+                    ] => {
+                        if let Some(p) = places {
+                            settles.push((at, p));
+                        }
+                        Some((at, *func, *c))
+                    }
                     _ => None,
-                },
-                _ => None,
+                }
             })
             .collect();
         if let Some((groups, held)) = self.run_group(view.sheet, &view.rows, keys, &aggs) {
             let mut slots = self.agg_held.borrow_mut();
             for (at, values) in held {
+                let values = match settles.iter().find(|(a, _)| *a == at) {
+                    Some(&(_, places)) => {
+                        let rounded: R<Vec<Value>> = values
+                            .iter()
+                            .map(|v| self.settled(v.clone(), places, span))
+                            .collect();
+                        Rc::new(rounded?)
+                    }
+                    None => values,
+                };
                 slots[t][at] = Some(values);
             }
             return Ok((firsts(&groups), groups));
@@ -2999,10 +3027,7 @@ impl<'p> Engine<'p> {
                             .checked_neg()
                             .map(Value::Percent)
                             .map_or_else(|| fail(span, "the number is too large".to_string()), Ok),
-                        (UnOp::Neg, Value::Fraction(r)) => r
-                            .checked_neg()
-                            .map(Value::Fraction)
-                            .map_or_else(|| fail(span, "the number is too large".to_string()), Ok),
+                        (UnOp::Neg, Value::Fraction(r)) => Ok(Value::Fraction(Rc::new(r.neg()))),
                         (UnOp::Neg, Value::Duration(t)) => {
                             t.checked_neg().map(Value::Duration).map_or_else(
                                 || fail(span, "the duration is out of range".to_string()),
@@ -3391,6 +3416,10 @@ impl<'p> Engine<'p> {
                         38 - places as i32
                     ),
                 ),
+            },
+            Value::Percent(d) => match d.rescale(places as i32) {
+                Some(r) => Ok(Value::Percent(r)),
+                None => fail(span, "the percentage does not fit its scale; use Fraction"),
             },
             Value::Vector(items) => {
                 let out: R<Vec<Value>> = items
@@ -3788,7 +3817,8 @@ impl<'p> Engine<'p> {
                     *part = match self.eval(arg, fr)? {
                         Value::Null => return Ok(Value::Null),
                         Value::Int(n, _) => n as f64,
-                        Value::Decimal(d) | Value::Fraction(d) | Value::Percent(d) => d.to_f64(),
+                        Value::Decimal(d) | Value::Percent(d) => d.to_f64(),
+                        Value::Fraction(r) => r.to_f64(),
                         Value::Float(f) => f,
                         // There is no uncertain complex number.
                         Value::Scientific(v, _) => {
@@ -4065,9 +4095,8 @@ impl<'p> Engine<'p> {
                     match v {
                         Value::Int(i, _) => Some(*i as f64),
                         Value::Scientific(x, _) => Some(*x),
-                        Value::Decimal(d) | Value::Fraction(d) | Value::Percent(d) => {
-                            Some(d.to_f64())
-                        }
+                        Value::Decimal(d) | Value::Percent(d) => Some(d.to_f64()),
+                        Value::Fraction(r) => Some(r.to_f64()),
                         Value::Float(f) => Some(*f),
                         _ => None,
                     }
@@ -4955,8 +4984,21 @@ fn dressed(v: Value, col: &Column) -> Value {
         S::Fraction if matches!(v, Value::Int(_, _) | Value::Decimal(_)) => v.fraction(),
         // A whole number wears its column's base, whichever it was
         // written or worked out in.
-        t if t.is_int() || t.is_decimal() => match v {
-            Value::Percent(r) | Value::Fraction(r) => Value::exact(r),
+        // A fraction in a column of decimals is rounded to the places it
+        // keeps.
+        S::Decimal(places) => match v {
+            Value::Percent(r) => Value::exact(r),
+            Value::Fraction(r) => match r.to_dec(i32::from(places)) {
+                Some(d) => Value::exact(d),
+                None => Value::Fraction(r),
+            },
+            v => v,
+        },
+        t if t.is_int() => match v {
+            Value::Percent(r) => Value::exact(r),
+            Value::Fraction(r) if r.is_integer() => {
+                r.to_i64().map_or(Value::Fraction(r), Value::int)
+            }
             v => v,
         }
         .rebased(Base::of(t)),
@@ -4965,16 +5007,16 @@ fn dressed(v: Value, col: &Column) -> Value {
         // plain number. A declared `Float` refuses a percentage as it
         // always has, which is the column saying what it is for.
         S::Float if !col.declared => match v {
-            Value::Percent(r) | Value::Fraction(r) => Value::Float(r.to_f64()),
+            Value::Percent(r) => Value::Float(r.to_f64()),
+            Value::Fraction(r) => Value::Float(r.to_f64()),
             v => v,
         },
         // A plain number in a column of scientific values has an
         // uncertainty of nothing.
         S::Scientific => match v {
             Value::Int(n, _) => Value::Scientific(n as f64, 0.0),
-            Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => {
-                Value::Scientific(r.to_f64(), 0.0)
-            }
+            Value::Decimal(r) | Value::Percent(r) => Value::Scientific(r.to_f64(), 0.0),
+            Value::Fraction(r) => Value::Scientific(r.to_f64(), 0.0),
             Value::Float(f) => Value::Scientific(f, 0.0),
             v => v,
         },

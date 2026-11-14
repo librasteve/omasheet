@@ -233,6 +233,9 @@ impl S {
         } else if self.is_exact() && other.is_exact() {
             if self.is_int() && other.is_int() {
                 S::Int
+            } else if self == S::Fraction || other == S::Fraction {
+                // A rational beside any exact number is a rational.
+                S::Fraction
             } else {
                 // Two decimals keep the places of the finer; a whole number
                 // adds none; a fraction or a percentage counts as a decimal
@@ -539,17 +542,20 @@ mod tests {
             assert_eq!(a.join(b), Some(Int), "{a} with {b}");
             assert_eq!(b.join(a), Some(Int), "{b} with {a}");
         }
-        // Fraction and Percent are Decimals shown another way.
+        // A Percent is a Decimal shown another way; a Fraction is the exact
+        // rational, which any exact number beside it becomes.
         assert_eq!(Fraction.join(Fraction), Some(Fraction));
         assert_eq!(Percent.join(Percent), Some(Percent));
         for (a, b) in [
             (Fraction, Percent),
             (Fraction, Decimal),
-            (Percent, Decimal),
             (Fraction, Int),
-            (Percent, Int),
             (Fraction, Hex),
         ] {
+            assert_eq!(a.join(b), Some(Fraction), "{a} with {b}");
+            assert_eq!(b.join(a), Some(Fraction), "{b} with {a}");
+        }
+        for (a, b) in [(Percent, Decimal), (Percent, Int)] {
             assert_eq!(a.join(b), Some(Decimal), "{a} with {b}");
             assert_eq!(b.join(a), Some(Decimal), "{b} with {a}");
         }

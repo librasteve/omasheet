@@ -51,7 +51,9 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
     // so a whole one in a column of a base comes back in that base.
     let exact = |d: Dec| match (ty, d.to_i64()) {
         (S::Percent, _) => Cell::Lit(Lit::Percent(d)),
-        (S::Fraction, _) => Cell::Lit(Lit::Fraction(d)),
+        (S::Fraction, _) => Cell::Lit(Lit::Fraction(std::sync::Arc::new(
+            omasheet_omx::rational::Rat::from_dec(d),
+        ))),
         (t, Some(n)) if t.is_int() => Cell::Lit(Lit::Int(n, Base::of(t))),
         _ => Cell::Lit(Lit::Decimal(d)),
     };
@@ -376,10 +378,9 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
             Value::Percent(d) => Some(*d),
             _ => None,
         })?,
-        S::Fraction => decimals(name.clone(), 0, &|v| match v {
-            Value::Fraction(d) => Some(*d),
-            _ => None,
-        })?,
+        // A rational is not a Polars dtype: a column of them is the
+        // engine's, never lowered.
+        S::Fraction => return None,
         S::Float => {
             let v: Vec<Option<f64>> = values
                 .iter()

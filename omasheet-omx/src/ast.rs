@@ -4,7 +4,9 @@
 
 use crate::decimal::Dec;
 use crate::diag::Span;
+use crate::rational::Rat;
 use crate::types::Base;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Lit {
@@ -12,9 +14,9 @@ pub enum Lit {
     Int(i64, Base),
     /// Written with a decimal point: `19.99`.
     Decimal(Dec),
-    /// Written as a fraction: `1/7`, `2 3/4`. It is the exact number it
-    /// stands for, shown as a fraction.
-    Fraction(Dec),
+    /// Written as a fraction: `1/7`, `2 3/4`, `<1/7>`. It is the exact
+    /// rational it stands for, never rounded.
+    Fraction(Arc<Rat>),
     /// Written with a `%`: `20%`, held as `0.2`.
     Percent(Dec),
     Float(f64),

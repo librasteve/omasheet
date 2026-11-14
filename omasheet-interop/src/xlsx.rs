@@ -86,7 +86,8 @@ struct Formula {
 fn real(v: &Value) -> Option<f64> {
     match v {
         Value::Int(n, _) => n.to_string().parse().ok(),
-        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => Some(to_f64(r)),
+        Value::Decimal(r) | Value::Percent(r) => Some(to_f64(r)),
+        Value::Fraction(r) => Some(r.to_f64()),
         Value::Float(f) => Some(*f),
         Value::Boolean(b) => Some(*b as u8 as f64),
         _ => None,
@@ -455,7 +456,19 @@ fn shown<'f>(
             }
             Shown::Number(f, None)
         }
-        Value::Decimal(r) | Value::Fraction(r) => {
+        // A fraction is the nearest double, and says so when it is not it.
+        Value::Fraction(r) => {
+            let f = r.to_f64();
+            if !f.is_finite() || (f == 0.0 && !r.is_zero()) {
+                lose(AS_TEXT);
+                return Some(Shown::Written(written(value)));
+            }
+            if omasheet_engine::omx::rational::Rat::from_f64(f).as_ref() != Some(&**r) {
+                lose(ROUNDED);
+            }
+            Shown::Number(f, None)
+        }
+        Value::Decimal(r) => {
             let (f, same) = double(r);
             // A number whose point sits past either end of what a double
             // reaches has no number cell to go in, so it is written out the
