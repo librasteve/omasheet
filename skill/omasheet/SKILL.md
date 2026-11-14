@@ -157,7 +157,7 @@ what you want; declare one when the cells could be read another way.
 | `Scientific` | `10.5(3)` or `10 ± 0.3` — a value with its measurement uncertainty; digits in brackets are the uncertainty in the last places, an exponent after them scales both: `7.297_352_5643(11)e-3`. It carries through `+ - * / **` and the math functions to first order (independent, in quadrature), `sum` and `mean`; shown as `11.000(82)`, or as a column format in brackets after the type says: `±`, places `.4`, an exponent `e-3`, or together `±.4e-3`. No uncertain complex: beside a `Complex` it becomes a `Float`, with a warning |
 | `Quantity` and its kinds | `5kg`, `300cm`, `9.81m.s^-2`, `10.5(3)e-3kg`, `20°C` — a number and an SI unit with no space, `.` between terms, `^` and a whole exponent, no `/`; only SI units in a cell (prefixes `q`..`Q`, and `g m s A K mol cd`, `Hz N Pa J W C V F Ω S Wb T H Bq Gy Sv kat`, `°C`). `5kg + 300g` is `5.3kg`; a sum needs one dimension and converts the right side to the left's unit; a product or quotient combines units; a result with no dimension is a plain number; `x.to('g')` converts; `1k.` is a scale, the number 1000, and `5m.` is 0.005 while `5m` is five metres. A column `Weight : Mass` holds a cell in the preferred unit, `kg`, or the one in brackets, `Mass[g]`, and reads a bare number in it; a cell of another dimension is an error; `std` and `var` are not taken |
 | `Complex` | `3+4i`, `-1.5-2i`, `2i` — two `Float` parts, the most infectious number type; no order, so no `<` or sort. `re im conj arg` and every math function but `round floor ceil radians degrees` take one; a real past a domain gives one (`sqrt(-4)` is `0+2i`, so a column declared `Float` holding it is an error); `z.Float` works only where the imaginary part is zero |
-| `Boolean` | `true`, `false`; a declared column also reads `1`, `0`, `x`, `o`, `X`, `O`, and shows them by `Boolean[10]`, `[xo]` or `[XO]` |
+| `Boolean` | `true`, `false`; a declared column also reads `1`, `0`, `x`, `o`, `X`, `O`, and shows them by a format of any two characters: `Boolean[10]`, `[xo]`, `[✓✗]` |
 | `Date`, `Time`, `Datetime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO. A fraction of a second goes after the seconds, `09:30:15.5`: nine digits for a `Time`, six for a `Datetime` |
 | `Duration` | `PT1H30M`, `P2D`, `-PT30M` — ISO 8601, weeks to seconds only (no `Y`, no calendar `M`). Two dates or times subtract to one; get a number with `.total_hours()` and the like |
 | `Url`, `Email`, `Uuid` | `https://example.com`, `name@example.com`, `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f` — text read as something narrower |
@@ -231,7 +231,7 @@ that do not fit are cut and marked `·`. A `Decimal`, `Float` or `Complex` is sh
   the first two.
 - Equality is `==`. A single `=` only starts a formula cell or binds a
   `const`.
-- `and`, `or`, `not`, `in`, and `if c then a else b`. There is no `IF()`.
+- `and`, `or`, `xor`, `nand`, `nor`, `not`, `in`, and `if c then a else b`. There is no `IF()`.
 - A computed column may be a sequence, `terms ... limit`: `1, 3 ... Inf`
   and `1, 2, 4 ... Inf` take their step from the terms, as a difference or
   as a ratio (two terms are read as a difference, so a ratio needs three);
@@ -260,7 +260,7 @@ that do not fit are cut and marked `·`. A `Decimal`, `Float` or `Complex` is sh
 - An empty cell and a `NaN` are different absences. `is_null(x)` asks whether
   a cell is empty and `is_nan(x)` whether it holds a `NaN`, which is what a
   division of zero by zero gives; `is_nan` of an empty cell is empty.
-- Booleans: `xor(a, b)`, `nand(a, b)`, `nor(a, b)`, and `x.all()`, `x.any()`, `x.none()` over a column (empty values left out).
+- Booleans: `a xor b`, `a nand b`, `a nor b` (operators, like `and`), and `x.all()`, `x.any()`, `x.none()` over a column (empty values left out).
 - Anything done with an empty cell is empty, except `and` and `or`, which
   read one as an unknown: `false and` is false and `true or` is true
   whatever is beside them, while `true and` and `false or` an empty cell are

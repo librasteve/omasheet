@@ -2,15 +2,15 @@
 
 <img src="header.png" alt="Omasheet">
 
-What Markdown is to text, Omasheet is to numbers.
+What Markdown is to words, Omasheet is to numbers.
 
-📄 **String as the source of truth**
+📄 **Text as the source of truth**
 
-The spreadsheet becomes a readable, diffable and composable document, not just a binary XLSX Workbook.
+The spreadsheet as a trackable and composable document, not just a binary file. Great for Git version control and LLM workflow automation.
 
 📊 **Columns as the computational model**
 
-Named, typed data and array expressions connect spreadsheet authoring to dataframe-style transformations.
+Named, typed columns and array expressions connect spreadsheet flexibility to structured dataframe querie and transformations.
 
 🔢 **Exact decimal arithmetic as a semantic guarantee**
 

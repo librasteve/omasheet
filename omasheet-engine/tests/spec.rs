@@ -3930,15 +3930,23 @@ false | false | true
 
 #[test]
 fn boolean_gates_and_aggregates() {
-    // Each gate is written out in `and`, `or` and `not`.
-    assert_eq!(ask(FLAGS, "xor(true, false)"), "true");
-    assert_eq!(ask(FLAGS, "xor(true, true)"), "false");
-    assert_eq!(ask(FLAGS, "nand(true, true)"), "false");
-    assert_eq!(ask(FLAGS, "nand(true, false)"), "true");
-    assert_eq!(ask(FLAGS, "nor(false, false)"), "true");
-    assert_eq!(ask(FLAGS, "nor(true, false)"), "false");
+    // Each gate is written between two values, and out in `and`, `or` and `not`.
+    assert_eq!(ask(FLAGS, "true xor false"), "true");
+    assert_eq!(ask(FLAGS, "true xor true"), "false");
+    assert_eq!(ask(FLAGS, "true nand true"), "false");
+    assert_eq!(ask(FLAGS, "true nand false"), "true");
+    assert_eq!(ask(FLAGS, "false nor false"), "true");
+    assert_eq!(ask(FLAGS, "true nor false"), "false");
     // They work down a column, and an empty value gives an empty one.
-    assert_eq!(ask(FLAGS, "xor(T.A, T.B)"), "[true, false, false, empty]");
+    assert_eq!(ask(FLAGS, "T.A xor T.B"), "[true, false, false, empty]");
+    // And between two values: `or` and `nor` bind loosest, `and` and `nand`
+    // tightest.
+    assert_eq!(ask(FLAGS, "true xor false"), "true");
+    assert_eq!(ask(FLAGS, "true nand true"), "false");
+    assert_eq!(ask(FLAGS, "false nor false"), "true");
+        assert_eq!(ask(FLAGS, "true or true xor true"), "true");
+    assert_eq!(ask(FLAGS, "true xor true and true"), "false");
+    assert_eq!(ask(FLAGS, "true xor true nor true"), "false");
     // `all`, `any` and `none` leave the empty ones out.
     assert_eq!(ask(FLAGS, "T.A.all()"), "false");
     assert_eq!(ask(FLAGS, "T.C.all()"), "true");

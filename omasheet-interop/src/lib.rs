@@ -116,7 +116,7 @@ impl Grid {
 }
 
 const RESERVED: &[&str] = &[
-    "if", "then", "else", "and", "or", "not", "in", "true", "false", "Inf", "NaN", "sheet",
+    "if", "then", "else", "and", "or", "xor", "nand", "nor", "not", "in", "true", "false", "Inf", "NaN", "sheet",
     "const", "fn", "zone",
 ];
 

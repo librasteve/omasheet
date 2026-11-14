@@ -68,7 +68,8 @@ unit | the unit the column shows and holds | Mass[g]
 %c | a date and a time | %c → 31/01/2025 17:05
 
 == Symbols | Boolean
-: A format is the symbol for true and then the one for false. A cell may be written as any of them, or as true or false; the format only says how it is shown.
+: A format is any two different characters: the symbol for true and then the one for false. A cell may be written as true or false, as 1 and 0, x and o, or as the column's own two symbols; the format only says how it is shown. Not a space, a ] or a %.
 10 | 1 for true, 0 for false | 10 → 1
 xo | x for true, o for false | xo → x
 XO | X for true, O for false | XO → X
+✓✗ | any two characters you like | ✓✗ → ✓

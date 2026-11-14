@@ -443,19 +443,19 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     doc(
         LOGIC,
         "xor",
-        "xor(A, B)",
+        "A xor B",
         "True when exactly one of two is true. Empty if either is.",
     ),
     doc(
         LOGIC,
         "nand",
-        "nand(A, B)",
+        "A nand B",
         "Not both: the same as not (A and B).",
     ),
     doc(
         LOGIC,
         "nor",
-        "nor(A, B)",
+        "A nor B",
         "Neither: the same as not (A or B).",
     ),
     doc(

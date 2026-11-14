@@ -33,3 +33,11 @@ sheet Result
 Winner
 ------
 X
+
+sheet Checklist
+
+Task  | Done
+------|-----
+Write | ✓
+Test  | ✓
+Ship  | ✗

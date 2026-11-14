@@ -16,7 +16,7 @@ OMX is the expression language of Omasheet. An expression has no effects: it rea
 ## Lexical
 
 - A comment is `#` to the end of the line. White space between tokens is free.
-- A name is letters, digits and `_`, not starting with a digit. The words `if then else and or not in by` are reserved. `true`, `false`, `Inf` and `NaN` are values.
+- A name is letters, digits and `_`, not starting with a digit. The words `if then else and or xor nand nor not in by` are reserved. `true`, `false`, `Inf` and `NaN` are values.
 - Text is `'single quoted'` in code. `"double quoted"` is for table cells only.
 - `_` may separate digits: `1_000_000`.
 
@@ -45,18 +45,19 @@ From the loosest to the tightest:
 | Level | Operators | Notes |
 |---|---|---|
 | 1 | `x \|> f(args)` | left to right; `x` becomes the first argument |
-| 2 | `or` | |
-| 3 | `and` | |
-| 4 | `not` | prefix |
-| 5 | `a // b` | `a`, or `b` where `a` is empty |
-| 6 | `== != =~= < > <= >= in` | comparisons chain, as in Raku: `0 < x <= 10`; `=~=` is equal to within 1e-15 |
-| 7 | `a..b` `a..^b` `a^..b` `a^..^b` `^n` | ranges; `^n` is `0..^n` |
-| 8 | `+ - +\| +^` | `+\|` and `+^` are bitwise or and xor |
-| 9 | `* / % +& +< +>` | `+&` is bitwise and, `+<` and `+>` shift |
-| 10 | `-x` `+^x` | prefix: negation, bitwise complement |
-| 11 | `a ** b` | right to left: `2 ** 3 ** 2` is `2 ** 9`, and `-2 ** 2` is `-4` |
-| 12 | `a ± b` | one value and one uncertainty, each a single term: `10 ± 0.1 ** 2` is `(10 ± 0.1) ** 2` |
-| 13 | `x[…]` `x.name` `x.f(args)` | postfix |
+| 2 | `or` `nor` | |
+| 3 | `xor` | |
+| 4 | `and` `nand` | |
+| 5 | `not` | prefix |
+| 6 | `a // b` | `a`, or `b` where `a` is empty |
+| 7 | `== != =~= < > <= >= in` | comparisons chain, as in Raku: `0 < x <= 10`; `=~=` is equal to within 1e-15 |
+| 8 | `a..b` `a..^b` `a^..b` `a^..^b` `^n` | ranges; `^n` is `0..^n` |
+| 9 | `+ - +\| +^` | `+\|` and `+^` are bitwise or and xor |
+| 10 | `* / % +& +< +>` | `+&` is bitwise and, `+<` and `+>` shift |
+| 11 | `-x` `+^x` | prefix: negation, bitwise complement |
+| 12 | `a ** b` | right to left: `2 ** 3 ** 2` is `2 ** 9`, and `-2 ** 2` is `-4` |
+| 13 | `a ± b` | one value and one uncertainty, each a single term: `10 ± 0.1 ** 2` is `(10 ± 0.1) ** 2` |
+| 14 | `x[…]` `x.name` `x.f(args)` | postfix |
 
 `if c then a else b` is an expression of its own, and `( … )` groups.
 

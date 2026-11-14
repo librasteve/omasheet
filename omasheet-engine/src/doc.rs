@@ -568,6 +568,7 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             ("10".into(), "1 and 0"),
             ("xo".into(), "x and o"),
             ("XO".into(), "X and O"),
+            ("✓✗".into(), "a tick and a cross"),
         ],
         S::Date => vec![
             ("%d %b %Y".into(), "31 Jan 2025"),
@@ -7378,7 +7379,7 @@ mod tests {
             ("Decimal", "", 4),
             ("Float", "", 4),
             ("Scientific", "", 3),
-            ("Boolean", "", 3),
+            ("Boolean", "", 4),
             ("Date", "", 5),
             ("Time", "", 3),
             ("Datetime", "", 4),

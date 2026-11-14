@@ -20,8 +20,9 @@ pub enum Format {
     Boolean(BoolFormat),
 }
 
-/// How a column of booleans is shown: `10`, `xo` or `XO`, the symbol for
-/// true and then the one for false. Without one it shows `true` and `false`.
+/// How a column of booleans is shown: any two different characters, the one
+/// for true and then the one for false, as `10`, `xo`, `XO` or `✓✗`. Without
+/// one it shows `true` and `false`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BoolFormat {
     pub yes: char,
@@ -30,18 +31,35 @@ pub struct BoolFormat {
 
 impl BoolFormat {
     pub fn parse(text: &str) -> Result<BoolFormat, FormatError> {
-        let (yes, no) = match text {
-            "10" => ('1', '0'),
-            "xo" => ('x', 'o'),
-            "XO" => ('X', 'O'),
-            _ => {
-                return Err(FormatError {
-                    at: 0,
-                    len: text.chars().count(),
-                    message: format!("`{text}` is not a `Boolean` format"),
-                });
-            }
+        let n = text.chars().count();
+        let mut chars = text.chars();
+        let (Some(yes), Some(no), None) = (chars.next(), chars.next(), chars.next()) else {
+            return Err(FormatError {
+                at: 0,
+                len: n.max(1),
+                message: format!("a `Boolean` format is two characters, and `{text}` is {n}"),
+            });
         };
+        // A `]` would end the format and a `%` is a date's, and a space or a
+        // control character cannot be seen to be either.
+        if let Some((at, c)) = [yes, no]
+            .into_iter()
+            .enumerate()
+            .find(|&(_, c)| c == ']' || c == '%' || c.is_whitespace() || c.is_control())
+        {
+            return Err(FormatError {
+                at,
+                len: 1,
+                message: format!("`{}` cannot be a symbol of a `Boolean`", c.escape_debug()),
+            });
+        }
+        if yes == no {
+            return Err(FormatError {
+                at: 1,
+                len: 1,
+                message: format!("true and false are both `{yes}`"),
+            });
+        }
         Ok(BoolFormat { yes, no })
     }
 
@@ -382,7 +400,7 @@ impl Format {
             S::Scientific => Some("`e`, `f` or `g`, with `±` first"),
             S::Quantity(_) => Some("a unit of its dimension, as `g`, then `;` and a number format"),
             S::Date => Some("the conversions of a date, as `%d %b %Y`"),
-            S::Boolean => Some("`10`, `xo` or `XO`"),
+            S::Boolean => Some("two different characters, as `10`, `xo` or `✓✗`"),
             S::Time => Some("the conversions of a time, as `%H:%M`"),
             S::Datetime => Some("the conversions of a date and a time, as `%d %b %Y %H:%M`"),
             _ => NumFormat::conversions_of(ty),
@@ -398,7 +416,7 @@ impl Format {
             S::Quantity(_) => {
                 "a quantity format is a unit, as `g`, which may be followed by `;` and a number format, as `g; ±.3e-3`"
             }
-            S::Boolean => "a `Boolean` format is `10`, `xo` or `XO`: the symbol for true, then for false",
+            S::Boolean => "a `Boolean` format is two different characters: the symbol for true, then for false, as `xo` or `✓✗`",
             S::Date | S::Time | S::Datetime => {
                 "a date or time format is a C `strftime` format, as `%d %b %Y`"
             }
@@ -449,7 +467,15 @@ mod tests {
             assert_eq!((b.show(true), b.show(false)), (yes.into(), no.into()));
             assert_eq!(b.to_string(), text);
         }
-        assert!(Format::parse("yn", S::Boolean).is_err());
+        // Any two characters, but not the same, nor a `]`, a `%` or a gap.
+        let Ok(Format::Boolean(b)) = Format::parse("✓✗", S::Boolean) else {
+            panic!("✓✗ should read");
+        };
+        assert_eq!((b.show(true), b.show(false)), ("✓".into(), "✗".into()));
+        assert_eq!(Format::parse("yn", S::Boolean).unwrap().to_string(), "yn");
+        for bad in ["", "x", "xxo", "xx", "x]", "%x", "x ", "\tx"] {
+            assert!(Format::parse(bad, S::Boolean).is_err(), "{bad:?}");
+        }
         assert!(!Format::parse("xo", S::Boolean).unwrap().takes(S::Int));
     }
 

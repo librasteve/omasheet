@@ -226,22 +226,56 @@ impl Parser {
         }
     }
 
+    /// `xor`, `nand` and `nor` are written between two values and mean the
+    /// call of the same name, which the checker writes out in `and`, `or`
+    /// and `not`.
+    fn gate(name: &str, lhs: Expr, rhs: Expr) -> Expr {
+        let span = lhs.span.to(rhs.span);
+        Expr {
+            kind: ExprKind::Call(name.to_string(), span, vec![lhs, rhs]),
+            span,
+        }
+    }
+
+    /// `or` and `nor`, the loosest of the gates.
     fn or(&mut self) -> R<Expr> {
+        let mut lhs = self.xor()?;
+        loop {
+            if self.eat(&Tok::Or) {
+                let rhs = self.xor()?;
+                lhs = Self::binary(lhs, BinOp::Or, rhs);
+            } else if self.eat(&Tok::Nor) {
+                let rhs = self.xor()?;
+                lhs = Self::gate("nor", lhs, rhs);
+            } else {
+                return Ok(lhs);
+            }
+        }
+    }
+
+    fn xor(&mut self) -> R<Expr> {
         let mut lhs = self.and()?;
-        while self.eat(&Tok::Or) {
+        while self.eat(&Tok::Xor) {
             let rhs = self.and()?;
-            lhs = Self::binary(lhs, BinOp::Or, rhs);
+            lhs = Self::gate("xor", lhs, rhs);
         }
         Ok(lhs)
     }
 
+    /// `and` and `nand`, the tightest of them.
     fn and(&mut self) -> R<Expr> {
         let mut lhs = self.not()?;
-        while self.eat(&Tok::And) {
-            let rhs = self.not()?;
-            lhs = Self::binary(lhs, BinOp::And, rhs);
+        loop {
+            if self.eat(&Tok::And) {
+                let rhs = self.not()?;
+                lhs = Self::binary(lhs, BinOp::And, rhs);
+            } else if self.eat(&Tok::Nand) {
+                let rhs = self.not()?;
+                lhs = Self::gate("nand", lhs, rhs);
+            } else {
+                return Ok(lhs);
+            }
         }
-        Ok(lhs)
     }
 
     fn not(&mut self) -> R<Expr> {

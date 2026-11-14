@@ -1859,6 +1859,18 @@ impl<'a> Checker<'a> {
                         .or_else(|| crate::units::preferred(id)),
                     _ => None,
                 };
+                // A column of booleans also reads its own two symbols.
+                let symbols = match declared {
+                    Some(S::Boolean) => decl
+                        .schema
+                        .iter()
+                        .find(|l| l.name == self.sheets[t].cols[c].name)
+                        .and_then(|l| match &l.format {
+                            Some(Format::Boolean(b)) => Some((b.yes, b.no)),
+                            _ => None,
+                        }),
+                    _ => None,
+                };
                 // Literal cells first, so that formulas in the column that
                 // read the column see its literal type.
                 let mut cells = Vec::with_capacity(decl.rows.len());
@@ -1883,6 +1895,7 @@ impl<'a> Checker<'a> {
                             cell.span,
                             declared,
                             column_unit.as_ref(),
+                            symbols,
                         ) {
                             Some(lit) => {
                                 widen(lit_type(&lit));
@@ -2499,6 +2512,7 @@ impl<'a> Checker<'a> {
         span: Span,
         declared: Option<S>,
         column: Option<&siquant::Unit>,
+        symbols: Option<(char, char)>,
     ) -> Option<Lit> {
         // A cell of an `.omx` file may hold a quantity or a scale (D229).
         let parsed = parse_literal_with(text, true);
@@ -2627,7 +2641,14 @@ impl<'a> Checker<'a> {
             (_, S::Boolean) => match text.trim() {
                 "1" | "x" | "X" => Some(Lit::Boolean(true)),
                 "0" | "o" | "O" => Some(Lit::Boolean(false)),
-                _ => None,
+                t => symbols.and_then(|(yes, no)| {
+                    let mut chars = t.chars();
+                    match (chars.next(), chars.next()) {
+                        (Some(c), None) if c == yes => Some(Lit::Boolean(true)),
+                        (Some(c), None) if c == no => Some(Lit::Boolean(false)),
+                        _ => None,
+                    }
+                }),
             },
             // A narrower kind of text is the text itself, once it reads as
             // one. Quoted text is read as what it holds.
@@ -2666,7 +2687,7 @@ impl<'a> Checker<'a> {
                     S::Scientific => "enter a number with its uncertainty such as `10.5(3)` or `10 ± 0.3`, or start the cell with `=` for a formula",
                     S::Complex => "enter a complex number such as `3+4i`, or start the cell with `=` for a formula",
                     S::Quantity(_) => "enter a number with an SI unit such as `5kg` or `9.81m.s^-2`, or start the cell with `=` for a formula",
-                    S::Boolean => "enter `true`, `false`, `1`, `0`, `x` or `o`, or start the cell with `=` for a formula",
+                    S::Boolean => "enter `true`, `false`, `1`, `0`, `x` or `o`, or the column's own symbols, or start the cell with `=` for a formula",
                     S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
                     S::Time => "enter a time such as `09:30` or `09:30:15`, or start the cell with `=` for a formula",
                     S::Datetime => "enter a date-time such as `2025-01-31T09:30`, or start the cell with `=` for a formula",
