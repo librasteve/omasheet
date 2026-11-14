@@ -5346,6 +5346,23 @@ impl Document {
                     column.ty = S::Complex.to_string();
                 }
             }
+            // And for a number column holding a `Fraction`: a result too big
+            // or too fine for a `Decimal` (`10**100`) is the exact rational
+            // it comes to, whatever the formula was typed as, so the cells
+            // make the column a `Fraction`. A column that declares its type
+            // refuses the value instead.
+            for (c, column) in columns.iter_mut().enumerate() {
+                let ty = sheet.cols[c].ty;
+                if column.declared || !ty.is_exact() || ty == S::Fraction {
+                    continue;
+                }
+                if rows
+                    .iter()
+                    .any(|row| matches!(row[c].value, Value::Fraction(_)))
+                {
+                    column.ty = S::Fraction.to_string();
+                }
+            }
             // A table sorted in the grid is shown in that order, while its
             // file still has as many rows as the order numbers. A paged
             // sheet takes the order as its rows are asked for.
@@ -5573,6 +5590,23 @@ mod tests {
         let mut doc = Document::from_text("sheet T\n\nA\nabc\n\n");
         assert!(doc.set_cell(0, 1, 0, "1/3"));
         assert!(!doc.text().contains("Fraction"), "{}", doc.text());
+    }
+
+    #[test]
+    fn a_number_too_big_for_a_decimal_makes_its_column_a_fraction() {
+        // `10**100` is typed an `Integer` before it is worked out, and is the
+        // exact fraction it comes to once it is: the column says so.
+        let doc = Document::from_text("sheet T\n\n| N |\n| - |\n| = 10**100 |\n| = 2 |\n");
+        let column = &doc.snapshot().sheets[0].columns[0];
+        assert_eq!(column.ty, "Fraction");
+        assert!(!column.declared);
+        // Small enough, it stays what it was.
+        let doc = Document::from_text("sheet T\n\n| N |\n| - |\n| = 10**3 |\n");
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Integer");
+        // A column that declares a Decimal is not widened: it refuses.
+        let doc = Document::from_text("sheet T\n\nN : Decimal\n\n| N |\n| - |\n| = 10**100 |\n");
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
+        assert!(!doc.snapshot().problems.is_empty());
     }
 
     /// A sheet of `rows` empty computed cells in one column, filled by
