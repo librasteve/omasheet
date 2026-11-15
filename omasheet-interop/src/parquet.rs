@@ -43,6 +43,25 @@ use std::io::Cursor;
 /// run an export, see this coming and ask before it writes the file.
 pub const WIDE: &str = "values too wide for the column's type were written as null";
 
+/// Said of a `Fraction` column written with `--decimal`.
+const FRACTION_CUT: &str = "fractions were written as the nearest Float64 (--decimal)";
+
+/// Whether a dtype is the struct a `Fraction` is written as: `num` and
+/// `den`, both text.
+fn is_fraction(dtype: &DataType) -> bool {
+    *dtype
+        == DataType::Struct(vec![
+            Field::new("num".into(), DataType::String),
+            Field::new("den".into(), DataType::String),
+        ])
+}
+
+/// A digit string, with a sign for the numerator.
+fn whole_text(s: &str, signed: bool) -> bool {
+    let digits = s.strip_prefix('-').filter(|_| signed).unwrap_or(s);
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// Said of a column Parquet has no type for, written as text instead.
 const AS_TEXT: &str = "columns of no one type were written as text";
 
@@ -70,6 +89,7 @@ fn frame(
     file: &crate::File,
     t: usize,
     losses: &mut Losses,
+    decimal: bool,
 ) -> Result<(DataFrame, Vec<(String, String)>), String> {
     let sheet = &file.program.sheets[t];
     let rows = sheet.nrows;
@@ -227,6 +247,40 @@ fn frame(
                 let (series, kind) = quantity_series(name, col, id, &cells)?;
                 kinds.push((col.name.clone(), kind));
                 series
+            }
+            // The exact `Fraction`: a struct of two strings, `num` and
+            // `den`, which need no fixed-width integer, with the kind in the
+            // metadata (T13). With `--decimal` it is the nearest `Float64`,
+            // and said to be cut.
+            S::Fraction if decimal => {
+                losses.add(FRACTION_CUT, file.column(t, c));
+                let v: Vec<Option<f64>> = cells
+                    .iter()
+                    .map(|v| match v {
+                        Value::Float(f) => Some(*f),
+                        Value::Fraction(r) => Some(r.to_f64()),
+                        other => exact(other).map(|d| d.to_f64()),
+                    })
+                    .collect();
+                Series::new(name, v)
+            }
+            S::Fraction => {
+                let parts = |v: &Value| match v {
+                    Value::Fraction(r) => Some((r.numer().to_string(), r.denom().to_string())),
+                    other => exact(other).map(|d| {
+                        let r = omasheet_engine::omx::rational::Rat::from_dec(d);
+                        (r.numer().to_string(), r.denom().to_string())
+                    }),
+                };
+                let part = |pick: fn((String, String)) -> String, name: &str| {
+                    let v: Vec<Option<String>> = cells.iter().map(|v| parts(v).map(pick)).collect();
+                    Series::new(name.into(), v)
+                };
+                let (num, den) = (part(|p| p.0, "num"), part(|p| p.1, "den"));
+                kinds.push((col.name.clone(), "Fraction".to_string()));
+                StructChunked::from_series(name, cells.len(), [num, den].iter())
+                    .map_err(|e| e.to_string())?
+                    .into_series()
             }
             S::Boolean => {
                 let v: Vec<Option<bool>> = cells
@@ -426,7 +480,7 @@ pub fn export(
     sheet: Option<&str>,
     options: Options,
 ) -> Result<Exported, Vec<String>> {
-    write(name, text, sheet, options, false)
+    write(name, text, sheet, options, false, false)
 }
 
 /// As [`export`], with what no format carries in the key-value metadata of
@@ -437,7 +491,22 @@ pub fn export_meta(
     sheet: Option<&str>,
     options: Options,
 ) -> Result<Exported, Vec<String>> {
-    write(name, text, sheet, options, true)
+    write(name, text, sheet, options, true, false)
+}
+
+/// As [`export`] or [`export_meta`], with `--decimal` (T13): a `Fraction`
+/// column is written as the nearest `Float64` rather than as the exact
+/// `{num, den}` struct, for a reader that has no use for the struct, and the
+/// columns it cut are said.
+pub fn export_with(
+    name: &str,
+    text: &str,
+    sheet: Option<&str>,
+    options: Options,
+    meta: bool,
+    decimal: bool,
+) -> Result<Exported, Vec<String>> {
+    write(name, text, sheet, options, meta, decimal)
 }
 
 fn write(
@@ -446,13 +515,14 @@ fn write(
     sheet: Option<&str>,
     options: Options,
     meta: bool,
+    decimal: bool,
 ) -> Result<Exported, Vec<String>> {
     with_file(name, text, sheet, options, |file| {
         let mut exported = Exported::default();
         let mut losses = Losses::default();
         let several = file.sheets.len() > 1;
         for &t in &file.sheets {
-            let (mut df, kinds) = frame(file, t, &mut losses)?;
+            let (mut df, kinds) = frame(file, t, &mut losses, decimal)?;
             let mut bytes = Cursor::new(Vec::new());
             let mut pairs: Vec<(String, String)> = kinds
                 .into_iter()
@@ -635,6 +705,29 @@ fn cell(value: AnyValue<'_>, ty: S) -> Datum {
                 _ => Datum::Empty,
             }
         }
+        // A `Fraction`: a struct of `num` and `den`, written as `n/d`.
+        value @ (AnyValue::Struct(..) | AnyValue::StructOwned(_)) if ty == S::Fraction => {
+            let AnyValue::StructOwned(parts) = value.into_static() else {
+                return Datum::Empty;
+            };
+            match parts.0.as_slice() {
+                [AnyValue::StringOwned(n), AnyValue::StringOwned(d)]
+                    if whole_text(n, true)
+                        && whole_text(d, false)
+                        && d.bytes().any(|b| b != b'0') =>
+                {
+                    // `n` alone where the part is a whole, unless that is too
+                    // long a whole number to read as a fraction: `n/1`.
+                    let text = if &**d == "1" && n.parse::<i64>().is_ok() {
+                        n.to_string()
+                    } else {
+                        format!("{n}/{d}")
+                    };
+                    Datum::Lit(text, S::Fraction)
+                }
+                _ => Datum::Empty,
+            }
+        }
         // A `Scientific`: a struct of `value` and `sigma`, written as
         // `10.5 ± 0.3`, or as the number where there is no uncertainty.
         value @ (AnyValue::Struct(..) | AnyValue::StructOwned(_)) if ty == S::Scientific => {
@@ -779,6 +872,9 @@ pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
     for column in df.get_columns() {
         match type_of(column.dtype()) {
             Some(ty) => kept.push((column.name().to_string(), ty)),
+            None if is_fraction(column.dtype()) => {
+                kept.push((column.name().to_string(), S::Fraction));
+            }
             None => nested.push(column.name().to_string()),
         }
     }

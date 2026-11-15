@@ -50,6 +50,7 @@ use std::cell::RefCell;
 
 /// A lowered expression and the dtype it gives, which is what decides
 /// whether the operation above it may be lowered in turn.
+#[derive(Clone)]
 pub struct Out {
     pub expr: Expr,
     pub dtype: DataType,
@@ -221,6 +222,25 @@ fn settle(places: u32, node: &Node, cx: &Cx) -> Option<Out> {
     };
     let exact = match op {
         BinOp::Mul => inner(node, cx)?,
+        // A small whole power is the base multiplied by itself, exactly:
+        // each step holds the scale of the steps so far, and `arith` refuses
+        // one that passes 38 digits or may not fit (T19). The one rounding
+        // is the one below, so it agrees with the engine's exact power.
+        BinOp::Pow => {
+            let Ir::Lit(Lit::Int(n, _)) = r.kind else {
+                return None;
+            };
+            if !(2..=38).contains(&n) {
+                return None;
+            }
+            let base = inner(l, cx)?;
+            exact_scale(&base.dtype)?;
+            let mut power = base.clone();
+            for _ in 1..n {
+                power = arith(BinOp::Mul, power, base.clone(), cx)?;
+            }
+            power
+        }
         BinOp::Div => {
             // The quotient has the larger scale plus four after its point,
             // and Polars offers at most 21.

@@ -301,6 +301,9 @@ fn column_type(cells: &[&Datum]) -> (Option<S>, bool) {
         // Exact numbers are read back from their cells, but a decimal of more
         // places than a column infers would be read back as a fraction, so
         // the places it keeps are said.
+        // A fraction written `1/3` is a literal only in a column that says it
+        // is one.
+        all if all.iter().all(exact) && all.contains(&S::Fraction) => (Some(S::Fraction), false),
         all if all.iter().all(exact) => {
             let long = all.iter().filter_map(|s| match s {
                 S::Decimal(n)

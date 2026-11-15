@@ -6413,7 +6413,7 @@ ApplicationWindow {
     // `Force`, comes from the unit chosen in `Set unit…`.
     PickerPopup {
         id: typePopup
-        placeholder: "e.g. Decimal"
+        placeholder: "e.g. Decimal, Decimal(6)"
         clearText: "Clear type"
         clearable: win.anyDeclared()
         onCleared: win.setColumnTypes("")
@@ -6436,6 +6436,14 @@ ApplicationWindow {
                         complete: pair[0], group: g[0]});
                 });
             });
+            // `Decimal(10)`: the places a decimal keeps, typed. It is offered
+            // once the digits are in, at the top, and ticked when it is what
+            // the columns have.
+            var places = /^decimal\s*\(\s*(\d{1,2})\s*\)?$/i.exec(text.trim());
+            if (places && parseInt(places[1], 10) <= 38) {
+                var spec = "Decimal(" + parseInt(places[1], 10) + ")";
+                out.unshift({spec: spec, label: spec, complete: spec, group: "Numbers"});
+            }
             // Text that matches no type turns the box red.
             var want = text.toLowerCase();
             if (want.length > 0 && !out.some(function(e) { return e.label.toLowerCase().indexOf(want) >= 0; }))

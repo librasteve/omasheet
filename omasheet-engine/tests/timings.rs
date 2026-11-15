@@ -1249,3 +1249,107 @@ fn a_paged_table_rebuild_against_the_inline_one() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A table of two `Decimal(38, 10)` columns, 20 million rows by default
+/// (`OMASHEET_ROWS` sets another count): the figure `decimal-and-fraction`
+/// 7.3 asks for.
+fn decimal_table(dir: &std::path::Path, rows: usize) {
+    use polars::prelude::*;
+    let scale = 10usize;
+    let one = 10i128.pow(scale as u32);
+    let amount: Int128Chunked = (0..rows)
+        .map(|r| Some((r % 9973) as i128 * one / 7 + 1))
+        .collect_ca("Amount".into());
+    let rate: Int128Chunked = (0..rows)
+        .map(|r| Some((r % 97) as i128 * one / 100 + one / 100))
+        .collect_ca("Rate".into());
+    let amount = amount.into_decimal_unchecked(Some(38), scale).into_series();
+    let rate = rate.into_decimal_unchecked(Some(38), scale).into_series();
+    let mut frame =
+        DataFrame::new(vec![amount.into_column(), rate.into_column()]).expect("a frame");
+    let mut file = std::fs::File::create(dir.join("decimals.parquet")).expect("a writable file");
+    ParquetWriter::new(&mut file)
+        .finish(&mut frame)
+        .expect("a written Parquet");
+}
+
+/// A decimal column summed, multiplied and divided, with Polars and with
+/// the engine: what it costs to keep the exact type, lowered or not. The
+/// quickest of three runs, with the peak memory of the quickest.
+#[test]
+#[ignore = "a measurement: run in release with --ignored --nocapture"]
+fn a_decimal_column_at_twenty_million_rows() {
+    let rows = std::env::var("OMASHEET_ROWS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(20_000_000);
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("decimal-width");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a writable scratch directory");
+    decimal_table(&dir, rows);
+    println!(
+        "\n{:>9}  {:<26}  {:<7}  {:>9}  {:>10}  answer",
+        "rows", "expression", "mode", "time", "peak MiB"
+    );
+    for expr in [
+        "T.Amount.sum()",
+        "T.Plus.sum()",
+        "T.Times.sum()",
+        "T.Over.sum()",
+    ] {
+        // The engine holds about 300 bytes a row here: `OMASHEET_LOWERED_ONLY`
+        // leaves it out at a count that would not fit in memory.
+        let modes: &[Lowering] = if std::env::var_os("OMASHEET_LOWERED_ONLY").is_some() {
+            &[Lowering::Always]
+        } else {
+            &[Lowering::Never, Lowering::Always]
+        };
+        for &lowering in modes {
+            let runs: Vec<_> = (0..3).map(|_| decimal_cost(&dir, expr, lowering)).collect();
+            let best = runs.iter().min_by_key(|r| r.0).expect("a run");
+            println!(
+                "{rows:>9}  {expr:<26}  {:<7}  {:>9}  {:>10.1}  {}",
+                format!("{lowering:?}"),
+                ms(best.0),
+                best.1 as f64 / (1024.0 * 1024.0),
+                best.2,
+            );
+        }
+    }
+    println!("\nmilliseconds; a fresh engine each run\n");
+}
+
+fn decimal_cost(
+    dir: &std::path::Path,
+    expr: &str,
+    lowering: Lowering,
+) -> (Duration, usize, String) {
+    // The computed columns are what lowering reaches: the work is `run`, and
+    // the expression then reads the column back.
+    let text = "view T := dataframe['decimals.parquet']\n\n\
+                Amount : Decimal(10)\nRate : Decimal(10)\n\n\
+                Plus := Amount + Rate\nTimes := Amount * Rate\nOver := Amount / Rate\n";
+    let (mut program, mut diags) = compile(text, 0);
+    assert!(diags.is_empty(), "{diags:?}");
+    let tables = table::read(&mut program, dir, &mut diags);
+    assert!(diags.is_empty(), "{diags:?}");
+    let program = program;
+    let engine = Engine::with_tables(
+        &program,
+        Options {
+            base: Some(dir.to_path_buf()),
+            lowering,
+            ..Options::default()
+        },
+        tables,
+    );
+    let (node, _) = compile_expr(&program, expr, 1).expect("the expression checks");
+    let start = Instant::now();
+    let (answer, peak) = peak_of(|| {
+        engine.run();
+        engine.eval_top(&node)
+    });
+    let time = start.elapsed();
+    let answer = answer.map_or("<error>".into(), |v| engine.show(&v, true));
+    (time, peak, answer)
+}

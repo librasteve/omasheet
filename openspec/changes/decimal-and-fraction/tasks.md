@@ -29,28 +29,21 @@ Draft; nothing is built.
 - [x] 4.2 `/` and `mean` lowered
 - [x] 4.3 The guard, with the `Fraction` engine path as its fallback (T16)
 - [x] 4.4 Window functions over `Decimal(s)` (all but `pct_change` and the rolling windows, which Polars has no decimal version of)
-- [ ] 4.6 `x ** n` for a small whole literal `n` (T19)
+- [x] 4.6 `x ** n` for a small whole literal `n` (T19) (the base multiplied by itself, `n` from 2 to 38 and the scale `n·s` at most 38, then one rounding; any other power is the engine's)
 - [x] 4.5 Remove the guard digits and the lowering refusals the old design needed
 
 ## 5. Interop
 - [x] 5.1 Parquet read and write of `Decimal(p, s)` (T12) (`Decimal(p, s)` read at its scale; one of more than eighteen places is declared in the `.omx` written)
-- [ ] 5.2 Parquet `Fraction` as `{num, den}` with the kind in metadata; `--decimal` (T13)
+- [x] 5.2 Parquet `Fraction` as `{num, den}` with the kind in metadata; `--decimal` (T13) (a fraction of two whole numbers of any length is a cell literal, `parse_big_fraction`)
 - [x] 5.3 CSV, JSON and XLSX (T14) (`n/d` text in CSV and JSON, the nearest double in XLSX)
 
 ## 6. App
-- [ ] 6.1 Column-type picker and schema editor: `Decimal(n)`, `Fraction`
-- [ ] 6.2 Footer shows the exact value of a cut `Fraction` or `Decimal`
+- [x] 6.1 Column-type picker: `Decimal(n)` typed in the box, `Fraction` in the list; `Set type` takes `Decimal(n)` and replaces it whole
+- [x] 6.2 Footer shows the exact value of a cut `Fraction` or `Decimal`
 
 ## 7. Checks
 - [x] 7.1 Table path and sheet path agree on every operation, scale pair and edge value (as `kernel.rs`)
 - [x] 7.2 Regenerate the examples and read each `.expected` difference
-- [ ] 7.3 A 20-million-row decimal column: `+ - * /` and `mean` lowered, timed
-- [x] 7.4 Docs, skill, `project.md` principle 3, release note on the behaviour change (`expressions.md`, `format.md`, `interop.md`, the skill, `project.md`; the release note is to come)
+- [x] 7.3 A 20-million-row decimal column: `+ - * /` and `mean` lowered, timed (`timings.rs`; at 5 million rows lowered is 10.7 times faster than the engine, 365 ms against 3.9 s, with a third of the memory; at 20 million lowered takes 1.6 s and 2.1 GiB; every answer is the same on both paths)
+- [x] 7.4 Docs, skill, `project.md` principle 3, release note on the behaviour change (`expressions.md`, `format.md`, `interop.md`, the skill, `project.md`; the release note is drafted in `release-note.md` for the version that ships it)
 - [x] 7.5 fmt, clippy -D warnings, workspace tests
-
-## Left to do
-- [ ] 4.6 `x ** n` for a small whole literal `n` lowered (T19); it is the engine's for now
-- [ ] 5.2 Parquet `Fraction` as `{num, den}` strings with the kind in the metadata, and `--decimal`; a `Fraction` column is written as text, which reads back exactly
-- [ ] 6.1 the app's column-type picker and schema editor for `Decimal(n)` and `Fraction`
-- [ ] 6.2 the footer's exact value of a cut `Decimal` or `Fraction`
-- [ ] 7.3 a 20-million-row decimal column timed

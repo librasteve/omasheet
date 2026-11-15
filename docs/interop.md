@@ -220,6 +220,7 @@ omasheet import sales.parquet            # one sheet, named after the file
 omasheet export file.omx --parquet       # a file for each sheet
 omasheet export file.omx --parquet --sheet Sales -o sales.parquet
 omasheet export file.omx --parquet --meta  # with the formulas kept as well
+omasheet export file.omx --parquet --decimal  # a Fraction column as doubles, not num and den
 ```
 
 An omasheet type *is* a Polars dtype, so a column is written as the Parquet
@@ -229,7 +230,7 @@ type its own name stands for rather than converted into something near it.
 |---|---|
 | `Integer` | `int64` |
 | `Decimal(s)`, `Percent` | `decimal(38, s)`, at the column's own scale, which a `decimal(p, s)` of a file brings back as `Decimal(s)`; a `Decimal` of more than eighteen places is declared in the `.omx` written, or it would read back as a fraction |
-| `Fraction` | UTF-8 `byte_array`, each cell as `1/7`: exact, and read back as a fraction by an `.omx`. (A struct of `num` and `den` with the kind in the metadata is to come.) |
+| `Fraction` | a `struct` of two UTF-8 strings, `num` and `den`: exact, however long, and read back as a `Fraction` column. With `--decimal` it is the nearest `double` instead, and a note says the column was cut |
 | `Float` | `double` |
 | `Scientific` | a `struct` of two `double`s, `value` and `sigma` |
 | `Complex` | a `struct` of two `double`s, `re` and `im` |

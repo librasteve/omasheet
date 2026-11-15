@@ -2320,3 +2320,31 @@ fn a_workbook_with_a_formula_that_is_not_filled_down_a_column_is_imported_not_re
     // it is lowered now, rounded to ten places, and so is held to the workbook.)
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn parquet_keeps_a_fraction_exact_as_num_and_den() {
+    // A `Fraction` is a struct of two strings, so a googol and its
+    // reciprocal come back to the digit (decimal-and-fraction T13).
+    let file = "sheet T\n\nF : Fraction\n\n| F |\n| --- |\n| 1/3 |\n| = 10**100 |\n| = 1/10**100 |\n| -7/2 |\n";
+    let out = parquet_of(file, None);
+    assert!(out.notices.is_empty(), "{:?}", out.notices);
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    assert!(back.source.contains("F : Fraction"), "{}", back.source);
+    assert_eq!(eval(&back.source, "t[F; 0]"), "1/3");
+    assert_eq!(
+        eval(&back.source, "t[F; 1]"),
+        format!("1{}", "0".repeat(100))
+    );
+    assert_eq!(eval(&back.source, "t[F; 2] * t[F; 1]"), "1");
+    assert_eq!(eval(&back.source, "t[F; 3]"), "-7/2");
+}
+
+#[test]
+fn parquet_decimal_flag_writes_a_fraction_as_a_float_and_says_so() {
+    let file = "sheet T\n\nF : Fraction\n\n| F |\n| --- |\n| 1/3 |\n";
+    let out = parquet::export_with("file.omx", file, None, options(), false, true).unwrap();
+    assert_eq!(out.notices.len(), 1, "{:?}", out.notices);
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    assert!(back.source.contains("F : Float"), "{}", back.source);
+}

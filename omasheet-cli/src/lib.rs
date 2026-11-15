@@ -166,6 +166,11 @@ enum Command {
         #[arg(long, requires = "parquet")]
         meta: bool,
 
+        /// With --parquet: write a Fraction column as the nearest Float64
+        /// rather than as an exact {num, den} struct, and say so
+        #[arg(long, requires = "parquet")]
+        decimal: bool,
+
         /// Export this sheet alone
         #[arg(long, value_name = "NAME")]
         sheet: Option<String>,
@@ -296,6 +301,7 @@ fn export(
     file: &Path,
     ext: &str,
     meta: bool,
+    decimal: bool,
     sheet: Option<&str>,
     output: Option<&Path>,
     options: Options,
@@ -305,8 +311,9 @@ fn export(
     let exported = match ext {
         "xlsx" => omasheet_interop::xlsx::export(&name, &text, sheet, options),
         "json" => omasheet_interop::json::export(&name, &text, sheet, options),
-        "parquet" if meta => omasheet_interop::parquet::export_meta(&name, &text, sheet, options),
-        "parquet" => omasheet_interop::parquet::export(&name, &text, sheet, options),
+        "parquet" => {
+            omasheet_interop::parquet::export_with(&name, &text, sheet, options, meta, decimal)
+        }
         _ => omasheet_interop::csv::export(&name, &text, sheet, options),
     };
     let exported = match exported {
@@ -434,6 +441,7 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
             json,
             parquet,
             meta,
+            decimal,
             sheet,
             output,
             env,
@@ -455,6 +463,7 @@ fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCod
                 &file,
                 ext,
                 meta,
+                decimal,
                 sheet.as_deref(),
                 output.as_deref(),
                 options,

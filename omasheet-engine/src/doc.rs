@@ -349,6 +349,9 @@ fn exact_text(v: &Value, quoted: bool, shown: &str, style: &Style) -> Option<Str
         | Value::Quantity(_)
         | Value::Complex(..)
         | Value::Vector(_) => format_exact(v, quoted, style),
+        // A fraction is shown as itself, `2 3/4`, or as a decimal marked cut:
+        // only a cut one has more to say.
+        Value::Fraction(_) if shown.ends_with('·') => format_exact(v, quoted, style),
         _ => return None,
     };
     (full != shown).then_some(full)
@@ -2024,7 +2027,18 @@ pub fn type_spec(spec: &str) -> Result<(S, Option<Option<Format>>), String> {
         },
         None => (spec, None),
     };
-    let ty = S::from_name(name.trim()).ok_or_else(|| format!("`{name}` is not a type"))?;
+    // `Decimal(6)`: a decimal and the places it keeps.
+    let places = name
+        .trim()
+        .strip_prefix("Decimal(")
+        .and_then(|rest| rest.strip_suffix(')'));
+    let ty = match places {
+        Some(n) => match n.trim().parse::<u8>() {
+            Ok(n) if n <= 38 => S::Decimal(n),
+            _ => return Err("a scale is a whole number of places from 0 to 38".to_string()),
+        },
+        None => S::from_name(name.trim()).ok_or_else(|| format!("`{name}` is not a type"))?,
+    };
     let Some(unit) = unit else {
         return Ok((ty, None));
     };
@@ -2077,7 +2091,19 @@ fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
         let colon = end + text[end..].find(':').unwrap_or(0);
         let rest = &text[colon + 1..];
         let ty_at = colon + 1 + (rest.len() - rest.trim_start_matches([' ', '\t']).len());
-        (colon, ty_at, ty_at + ident_len(&text[ty_at..]))
+        let mut end = ty_at + ident_len(&text[ty_at..]);
+        // `Decimal(6)`: the places are part of the type.
+        if &text[ty_at..end] == "Decimal"
+            && text[end..].starts_with('(')
+            && let Some(close) = text[end..].find(')')
+            && text[end + 1..end + close]
+                .trim()
+                .bytes()
+                .all(|b| b.is_ascii_digit())
+        {
+            end += close + 1;
+        }
+        (colon, ty_at, end)
     };
     let existing = decl.schema.iter().find(|l| l.name == name);
     let mut out = text.to_string();
@@ -5607,6 +5633,24 @@ mod tests {
         let doc = Document::from_text("sheet T\n\nN : Decimal\n\n| N |\n| - |\n| = 10**100 |\n");
         assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
         assert!(!doc.snapshot().problems.is_empty());
+    }
+
+    #[test]
+    fn a_column_can_be_declared_decimal_with_its_places() {
+        let mut doc = Document::from_text("sheet T\n\n| N |\n| - |\n| 1.25 |\n");
+        assert!(doc.set_column_types(0, &[0], Some("Decimal(6)")));
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal(6)");
+        assert!(doc.set_column_types(0, &[0], Some("Fraction")));
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Fraction");
+    }
+
+    #[test]
+    fn a_fraction_shown_cut_has_its_exact_value_for_the_footer() {
+        let doc =
+            Document::from_text("sheet T\n\nN : Fraction\n\n| N |\n| - |\n| 1/10001 |\n| 1/2 |\n");
+        let rows = &doc.snapshot().sheets[0].rows;
+        assert_eq!(rows[0][0].exact.as_deref(), Some("1/10001"));
+        assert_eq!(rows[1][0].exact, None);
     }
 
     /// A sheet of `rows` empty computed cells in one column, filled by

@@ -35,6 +35,25 @@ pub fn parse_mixed(text: &str) -> Option<Rat> {
     Some(if negative { r.neg() } else { r })
 }
 
+/// A fraction of two whole numbers written out, `-7/2`, either of which
+/// may be as long as it likes: the form a `Fraction` is written in, so that
+/// one too big for a token reads back to the digit. `None` unless the text is
+/// just that, and one whose parts fit the lexer's own whole numbers is left to
+/// it.
+pub fn parse_big_fraction(text: &str) -> Option<Rat> {
+    let (n, d) = text.split_once('/')?;
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if !digits(n.strip_prefix('-').unwrap_or(n)) || !digits(d) {
+        return None;
+    }
+    if n.parse::<i64>().is_ok() && d.parse::<i64>().is_ok() {
+        return None;
+    }
+    let n = num_bigint::BigInt::parse_bytes(n.as_bytes(), 10)?;
+    let d = num_bigint::BigInt::parse_bytes(d.as_bytes(), 10)?;
+    Rat::from_big(n, d)
+}
+
 /// A `Complex` as it is written, `3+4i`, for a message.
 pub fn complex_text(re: f64, im: f64) -> String {
     let sign = if im.is_sign_negative() && !im.is_nan() {
@@ -59,6 +78,9 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
 /// As [`parse_literal`]; where `units` is true a number may be followed by an
 /// SI unit or a scale: `5kg` is a quantity and `1k.` is 1000.
 pub fn parse_literal_with(text: &str, units: bool) -> Option<Lit> {
+    if let Some(r) = parse_big_fraction(text) {
+        return Some(Lit::Fraction(Arc::new(r)));
+    }
     if let Some(r) = parse_mixed(text) {
         return Some(Lit::Fraction(Arc::new(r)));
     }
