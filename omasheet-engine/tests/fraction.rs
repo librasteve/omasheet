@@ -33,7 +33,7 @@ sheet G
 | ----- | --- | ---- | ------- |
 | 100   | *   | *    | *       |
 
-Big     := <10> ** Power
+Big     := 10 ** Power
 Tiny    := <1> / Big
 Product := Big * Tiny
 ";

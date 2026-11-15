@@ -3429,6 +3429,10 @@ impl<'a> Checker<'a> {
                     // A quotient of whole numbers is the exact rational it
                     // comes to, a `Fraction`: `1/3 * 3` is `1`.
                     (BinOp::Div, w) if w.is_int() => S::Fraction,
+                    // A power of whole numbers is the exact rational it comes
+                    // to, as a quotient is: `10 ** -2` is `1/100`, and a
+                    // big power is not rounded.
+                    (BinOp::Pow, w) if w.is_int() => S::Fraction,
                     // A quotient or a power of decimals is a decimal, though
                     // it need not end.
                     (BinOp::Div | BinOp::Pow, w) if w.is_int() || w.is_decimal() => {

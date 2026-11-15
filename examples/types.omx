@@ -185,9 +185,8 @@ Fraction := 1 / N
 Back     := Decimal * N
 Exact    := Fraction * N
 
-# What a column that declares nothing cannot hold in a Decimal it holds as a
-# Fraction: 10**100 is not an error. A Fraction beside a Decimal is a Decimal,
-# so this sheet starts from `<10>`.
+# A power of whole numbers is an exact Fraction, so 10**100 is not an error and
+# 10**-100 is 1/10**100, whole where it is whole.
 sheet Googol
 
 | Power | Big | Tiny | Product |
@@ -195,8 +194,8 @@ sheet Googol
 | 50    | *   | *    | *       |
 | 100   | *   | *    | *       |
 
-Big     := <10> ** Power
-Tiny    := <1> / Big
+Big     := 10 ** Power
+Tiny    := 1 / Big
 Product := Big * Tiny
 
 # String is read the way a cell is.

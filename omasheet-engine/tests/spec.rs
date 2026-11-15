@@ -285,12 +285,12 @@ fn decimals() {
     assert!(lint_errors(&format!("{prices}Tea | = Half * 1.5 | 1\n")).is_empty());
 
     // A power with a whole exponent written as it is keeps its base's type;
-    // any other exponent may be negative, so the power is a Decimal.
+    // any other exponent may be negative, so a power of whole numbers is a Fraction.
     let powers = "sheet W\n\nN : Int\nD : Decimal\n\nN | D\n";
     assert!(lint_errors(&format!("{powers}= 2 ** 64 | = 1.1 ** 2\n")).is_empty());
     let errors = lint_errors(&format!("{powers}= 2 ** -1 | 1\n"));
     assert!(
-        errors[0].contains("declared `Integer` but this is `Decimal`"),
+        errors[0].contains("declared `Integer` but this is `Fraction`"),
         "{errors:?}"
     );
     assert!(lint_errors(&format!("{powers}2 | = 1.1 ** W[N; *]\n")).is_empty());

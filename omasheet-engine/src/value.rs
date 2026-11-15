@@ -609,11 +609,11 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
                 (v, _) => Ok(v),
             }
         }
-        // A quotient of two whole numbers is the rational it comes to, whole
-        // where it is whole.
+        // A quotient or a power of two whole numbers is the rational it comes
+        // to, whole where it is whole.
         (N::Exact(_), N::Exact(_))
             if !floating
-                && op == BinOp::Div
+                && matches!(op, BinOp::Div | BinOp::Pow)
                 && matches!((a, b), (Value::Int(..), Value::Int(..))) =>
         {
             Ok(match rational_arith(op, &x, &y)? {
