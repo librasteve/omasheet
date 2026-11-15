@@ -5745,7 +5745,11 @@ mod tests {
         assert_eq!(seq("1, 3 ... Inf", 4), ["1", "3", "5", "7"]);
         assert_eq!(seq("1, 2, 4 ... Inf", 4), ["1", "2", "4", "8"]);
         // Two terms are a difference, so a constant ratio needs three.
-        assert_eq!(seq("1, 1/3 ... Inf", 3), ["1", "1/3", "-0.333·"]);
+        assert_eq!(seq("1, 1/3 ... Inf", 3), ["1", "1/3", "-1/3"]);
+        assert_eq!(
+            seq("1/2, 1/4, 1/8 ... Inf", 4),
+            ["1/2", "1/4", "1/8", "1/16"]
+        );
         // A ratio of thirds cannot be inferred: `1/3` is rounded at the
         // widest scale, and multiplying it out does not give `1/9` back,
         // so the terms read as neither arithmetic nor geometric. Ratios of
