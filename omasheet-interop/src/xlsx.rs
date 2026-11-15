@@ -614,7 +614,7 @@ pub fn export(
                 page.write_string(0, c as u16, &col.name).map_err(fail)?;
             }
             for r in 0..sheet.nrows {
-                for c in 0..sheet.cols.len() {
+                for (c, col) in sheet.cols.iter().enumerate() {
                     let value = file.engine.cell_shown(t, c, r);
                     if is_failure(&value) {
                         losses.add(FAILED, file.column(t, c));
@@ -625,7 +625,7 @@ pub fn export(
                     else {
                         continue;
                     };
-                    let node = match &sheet.cols[c].kind {
+                    let node = match &col.kind {
                         ColKind::Computed(node) => Some(node),
                         ColKind::Data(cells) => match cells.get(r) {
                             Some(Cell::Formula(node)) => Some(node),
