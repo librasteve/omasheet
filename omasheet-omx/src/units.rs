@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn what_is_not_a_unit() {
         for text in [
-            "", " kg", "m2", "kgfoo", "ft", "k", "m^", "m^x", "5", "L", "1",
+            "", " kg", "m2", "kgfoo", "ft", "k", "m^", "m^x", "5", "lb", "1",
         ] {
             assert!(tail(text, 0).is_none(), "{text}");
         }

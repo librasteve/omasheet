@@ -24,9 +24,10 @@ omasheet-engine = { path = "omasheet-engine" }
 omasheet-interop = { path = "omasheet-interop" }
 omasheet-md = { path = "omasheet-md" }
 omasheet-cli = { path = "omasheet-cli" }
-# SI units (add-si-units D228), from its public repository at a fixed commit:
-# move to a crates.io version when it is published.
-siquant = "0.1.2"
+# SI units (add-si-units D228), vendored from crates.io 0.1.2 with the metric
+# non-SI units added (litre, tonne, hectare, bar, eV, cal, Wh, Da) and `u` as
+# a spelling of the micro prefix.
+siquant = { path = "vendor/siquant" }
 calamine = "0.36"
 rust_xlsxwriter = "0.99"
 csv = "1"
