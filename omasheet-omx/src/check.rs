@@ -731,6 +731,55 @@ fn seed_num(e: &Expr) -> Option<Dec> {
     }
 }
 
+/// A seed that is a whole number or a fraction, exactly, with whether it is
+/// written as a fraction. `1/3` is one, as the quotient of whole numbers is;
+/// a decimal anywhere makes the seed none, for it is then rounded to its places.
+fn seed_rat(e: &Expr) -> Option<(Rat, bool)> {
+    match &e.kind {
+        ExprKind::Lit(Lit::Int(i, _)) => Some((Rat::from_i64(*i), false)),
+        ExprKind::Lit(Lit::Fraction(r)) => Some(((**r).clone(), true)),
+        ExprKind::Unary(UnOp::Neg, inner) => seed_rat(inner).map(|(r, f)| (r.neg(), f)),
+        ExprKind::Binary(BinOp::Div, a, b) => {
+            let ((a, _), (b, _)) = (seed_rat(a)?, seed_rat(b)?);
+            Some((a.div(&b)?, true))
+        }
+        _ => None,
+    }
+}
+
+/// The rule of a sequence whose seeds are whole numbers and fractions, the
+/// step worked out exactly: `1, 1/3` steps by `-2/3`, not by `-0.667`.
+fn rat_rule(seeds: &[Expr], span: Span) -> Option<Rule> {
+    let nums: Vec<(Rat, bool)> = seeds.iter().map(seed_rat).collect::<Option<_>>()?;
+    if nums.len() < 2 || !nums.iter().any(|(_, f)| *f) {
+        return None;
+    }
+    let nums: Vec<Rat> = nums.into_iter().map(|(r, _)| r).collect();
+    let at = |kind| Expr { kind, span };
+    let lit = |r: Rat| match r.to_i64() {
+        Some(n) => Lit::Int(n, Base::Dec),
+        None => Lit::Fraction(Arc::new(r)),
+    };
+    let step = |op, r: Rat| {
+        Some(Rule::By(at(ExprKind::Binary(
+            op,
+            Box::new(at(ExprKind::Back(1))),
+            Box::new(at(ExprKind::Lit(lit(r)))),
+        ))))
+    };
+    let diff = nums[1].sub(&nums[0]);
+    if nums.windows(2).all(|w| w[1].sub(&w[0]) == diff) {
+        return step(BinOp::Add, diff);
+    }
+    if !nums[0].is_zero() {
+        let ratio = nums[1].div(&nums[0])?;
+        if nums.windows(2).all(|w| w[0].mul(&ratio) == w[1]) {
+            return step(BinOp::Mul, ratio);
+        }
+    }
+    None
+}
+
 /// What a sequence does for the rows its terms do not give: an expression
 /// written in terms of `$-1`, or a step through a run of names.
 enum Rule {
@@ -2324,6 +2373,9 @@ impl<'a> Checker<'a> {
                 "a sequence of dates steps by a fixed number of days or of months, and one of times by seconds: give the rule instead, such as `$-1 + 7`",
             );
             return None;
+        }
+        if let Some(rule) = rat_rule(seeds, span) {
+            return Some(rule);
         }
         let nums: Option<Vec<Dec>> = seeds.iter().map(seed_num).collect();
         let Some(nums) = nums else {
