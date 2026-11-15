@@ -471,19 +471,17 @@ Odd   := [N; *] in [10, 30]
 }
 
 #[test]
-#[ignore = "a number past 38 digits is a Fraction: decimal-and-fraction, step F"]
-fn xlsx_writes_a_number_past_a_double_as_text() {
+fn xlsx_writes_a_number_past_a_double_in_full_as_text() {
     // A workbook holds its numbers as doubles, and a number whose point
     // sits past where a double reaches is no double at all. Rather than
-    // put an infinity in the cell, the write spells the number out.
-    // The same holds at the other end: a point far enough to the right
-    // leaves a double with nothing but a zero to offer, and a zero is not
-    // the number either.
+    // put an infinity in the cell, the write spells the exact number out:
+    // a whole number in its digits, a fraction as `n/d`. Neither is
+    // rounded to the nearest double, which would be infinity or zero.
     let file = "sheet T\n\nA | B | C\n= 10**1000 | = 1/10**2000 | 2.5\n";
     let out = xlsx::export("t.omx", file, None, options()).unwrap();
     let rows = cells(&out.files[0].bytes, "T");
-    assert_eq!(rows[1][0], Data::String("1e+1000".to_string()));
-    assert_eq!(rows[1][1], Data::String("1e-2000".to_string()));
+    assert_eq!(rows[1][0], Data::String(format!("1{}", "0".repeat(1000))));
+    assert_eq!(rows[1][1], Data::String(format!("1/1{}", "0".repeat(2000))));
     assert_eq!(rows[1][2], Data::Float(2.5));
     assert!(
         out.notices.contains(
@@ -1144,17 +1142,17 @@ fn parquet_leaves_a_failed_cell_empty() {
 }
 
 #[test]
-#[ignore = "a number past 38 digits is a Fraction: decimal-and-fraction, step F"]
-fn parquet_writes_null_for_a_value_wider_than_the_column_type() {
+fn parquet_leaves_a_value_wider_than_the_column_type_empty() {
     // A number past the digits Polars can name has nowhere to sit in a
-    // `Decimal(38, s)`, so its cell is written null and the write says so.
-    // The rest of the column is untouched: `2.5` keeps its point rather
-    // than being dragged to the one scale the monster would allow.
+    // `Decimal(38, s)`, so the cell cannot be calculated and is written
+    // null, and the write says so. The rest of the column is untouched:
+    // `2.5` keeps its point rather than being dragged to the one scale the
+    // monster would allow.
     let file = "sheet T\n\nA : Decimal\n\nA\n= 10**1000\n2.5\n";
     let out = parquet_of(file, None);
     assert_eq!(
         out.notices,
-        ["values too wide for the column's type were written as null: T.A"]
+        ["cells that could not be calculated were left empty: T.A"]
     );
     let back = parquet::import("t", &out.files[0].bytes).expect("imports");
     lints(&back.source);
