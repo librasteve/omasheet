@@ -24,14 +24,14 @@ A number is shown in at most 23 characters, and a `-` before it. From
 `1e-15` up to `1e15` it is plain, `0.015625`; smaller or larger it is in e
 notation, `1e-43` and `1e+60`, and so is one too wide to be plain. An exact
 number in e notation keeps every digit it can, and where they do not all fit
-they are cut and marked: `2 ** 64` is shown as `1.8446744073709551·e+19`.
+they are cut and marked: `2 ** 64` is shown as `1.8446744073709551e+19·`.
 Only the display is cut, and `omasheet eval --exact` gives it in full.
 
 A `Decimal`, a `Float` and the parts of a `Complex` are shown to three places
 after the point, and where they have more the rest is cut and marked with
 `·`: `1/3` is `0.333·` and `sqrt(2)` is `1.414·`. One with no more than three
 places is whole, `19.99`, and one below a thousandth keeps its digits, so as
-not to show as nought. A `Float` in e notation has its mantissa cut the same way, `1.234·e-12`. Before that a `Float`, and each part of a `Complex`, is rounded to 15 places after the point, so that the noise of a calculation shows as nought, marked with `·` as a number with digits not shown is: `cos(90°)` is `0·` and not `6.123·e-17`, and `1e-20.Float` is `0·`. That is the `float_places` of the display style; the value itself, and a file, keep every digit. A quantity with no uncertainty and no format has its number cut the same way, with the `·` after the unit: `arcsin(1)` is `1.571rad·`. A `Scientific`, and a quantity with an uncertainty, is not cut: the uncertainty in brackets
+not to show as nought. A `Float` in e notation has its mantissa cut the same way, `1.234e-12·`. Before that a `Float`, and each part of a `Complex`, is rounded to 15 places after the point, so that the noise of a calculation shows as nought, marked with `·` as a number with digits not shown is: `cos(90°)` is `0·` and not `6.123e-17·`, and `1e-20.Float` is `0·`. That is the `float_places` of the display style; the value itself, and a file, keep every digit. A quantity with no uncertainty and no format has its number cut the same way, with the `·` after the unit: `arcsin(1)` is `1.571rad·`. A `Scientific`, and a quantity with an uncertainty, is not cut: the uncertainty in brackets
 sets the digits it shows.
 
 A `Decimal` is a Polars `Decimal(38, s)`: 38 digits, `s` of them after the
@@ -72,7 +72,7 @@ Numbers are shown the way Raku shows them:
 
 | Type | Shown |
 |---|---|
-| `Integer` | `101`; `1e+15` and `1.8446744073709551·e+19` from `1e15` |
+| `Integer` | `101`; `1e+15` and `1.8446744073709551e+19·` from `1e15` |
 | `Decimal` | `1.01`; `1e-43` below `1e-15` |
 | `Fraction` | `1/7`, `3/4`, `2 3/4`, `333 1/3`; `3` when it is whole |
 | `Percent` | `20%`, `12.5%`, `41.67%` |
@@ -254,12 +254,16 @@ A number followed at once by an SI unit is a quantity: `5kg`, `300cm`,
 `10.5(3)e-3kg` has its uncertainty, and `5kg ± 100g` is a quantity with one.
 A unit of more than one term is joined with `.`, each term with an optional
 `^` and a whole exponent: `kg.m^2.s^-2`. There is no space and no `/`; a
-negative exponent is `m.s^-1`. Only SI is written in a cell: the symbols
-`g m s A K mol cd`, the named units `Hz N Pa J W C V F Ω S Wb T H Bq Gy Sv kat`
-and `°C`, each with an SI prefix from `q` to `Q`, `kg`, `mm`, `μs`, `GHz`. A
-symbol is case-sensitive, and `ºC`, `µ` and the ohm sign are read as `°C`,
-`μ` and `Ω`. A unit other than these is not a unit: `5ft`, `5L` and `5min` are
-errors, and `5 kg` is a number and a name.
+negative exponent is `m.s^-1`. Only metric units are written in a cell: the
+symbols `g m s A K mol cd`, the named units `Hz N Pa J W C V F Ω S Wb T H Bq Gy
+Sv kat` and `°C`, each with an SI prefix from `q` to `Q`, `kg`, `mm`, `μs`,
+`GHz`, and the non-SI units `l` (litre, also `L`), `t` (tonne), `ha` (hectare),
+`bar`, `eV`, `cal` (4.184 J), `Wh` (3600 J) and `Da` (dalton). All but `t` and
+`ha` take prefixes: `ml`, `kWh`, `keV`, `kcal`. A symbol is
+case-sensitive, and `ºC`, `µ` and the ohm sign are read as `°C`, `μ` and `Ω`;
+`u` is read as the prefix `μ`, so `5um` is `5μm`. A unit other than these is
+not a unit: `5ft`, `5lb` and `5min` are errors, and `5 kg` is a number and a
+name.
 
 An angle has the radian `rad`, the steradian `sr` (a radian squared) and the degree `°`, the minute `′` and the second `″` of arc, and the lumen `lm` and the lux `lx` that need it. Degrees, minutes and seconds are written together, `45°30′30″` or `-12°30′`, and `º`, `'` and `"` do for the marks; minutes and seconds are under 60 and only the last part may have a point. `45°` is a degree and `20°C` is Celsius. `sin`, `cos` and `tan` take an angle in any unit (a plain number is in radians), and `arcsin`, `arccos` and `arctan` give one back in `rad`, so `arcsin(0.5).to('°')` is `30°` and `sin(arcsin(0.5)) =~= 0.5` is true; `degrees(x)` takes such an angle too, and gives the number of degrees. An `arcsin` of a number beyond -1 to 1 is a `Complex`, with no unit. `dms` writes an angle out: `45.5°.dms()` is `45°30′0″`, and `dms(x, 2)` keeps two places of seconds.
 
