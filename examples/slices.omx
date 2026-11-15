@@ -40,7 +40,7 @@ May   | 130     | *     | *
 Jun   | 170     | *     | *
 
 # Each month against the opening quarter it is measured from.
-Share  := (Revenue / Opening).round(3)
+Share  := (Revenue / Opening).Decimal.round(3)
 
 # The month before, which a cursor offset gives: `*-1` is one row back,
 # empty in the first row where there is no such row, and `//` reads that

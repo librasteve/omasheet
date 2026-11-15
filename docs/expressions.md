@@ -4,7 +4,7 @@ See [OMX in brief](omx.md) for the grammar. Try any of these with `omasheet eval
 
 ## Numbers
 
-Arithmetic is exact: `1/3 + 1/6` is `0.5`, `0.1 + 0.2` is `0.3`, and integers
+Arithmetic is exact: `1/3 + 1/6` is `1/2`, `0.1 + 0.2` is `0.3`, and integers
 do not overflow. `x.Float` gives a floating-point `Float`.
 
 No exact number is a division by zero, so that gives a `Float`: `1/0` is `Inf`,
@@ -24,38 +24,40 @@ A number is shown in at most 23 characters, and a `-` before it. From
 `1e-15` up to `1e15` it is plain, `0.015625`; smaller or larger it is in e
 notation, `1e-43` and `1e+60`, and so is one too wide to be plain. An exact
 number in e notation keeps every digit it can, and where they do not all fit
-they are cut and marked: `2 ** 64` is shown as `1.8446744073709551·e+19`.
+they are cut and marked: `2 ** 64` is shown as `1.8446744073709551e+19·`.
 Only the display is cut, and `omasheet eval --exact` gives it in full.
 
 A `Decimal`, a `Float` and the parts of a `Complex` are shown to three places
 after the point, and where they have more the rest is cut and marked with
-`·`: `1/3` is `0.333·` and `sqrt(2)` is `1.414·`. One with no more than three
+`·`: `1.0/3` is `0.333·` and `sqrt(2)` is `1.414·`. One with no more than three
 places is whole, `19.99`, and one below a thousandth keeps its digits, so as
-not to show as nought. A `Float` in e notation has its mantissa cut the same way, `1.234·e-12`. Before that a `Float`, and each part of a `Complex`, is rounded to 15 places after the point, so that the noise of a calculation shows as nought, marked with `·` as a number with digits not shown is: `cos(90°)` is `0·` and not `6.123·e-17`, and `1e-20.Float` is `0·`. That is the `float_places` of the display style; the value itself, and a file, keep every digit. A quantity with no uncertainty and no format has its number cut the same way, with the `·` after the unit: `arcsin(1)` is `1.571rad·`. A `Scientific`, and a quantity with an uncertainty, is not cut: the uncertainty in brackets
+not to show as nought. A `Float` in e notation has its mantissa cut the same way, `1.234e-12·`. Before that a `Float`, and each part of a `Complex`, is rounded to 15 places after the point, so that the noise of a calculation shows as nought, marked with `·` as a number with digits not shown is: `cos(90°)` is `0·` and not `6.123e-17·`, and `1e-20.Float` is `0·`. That is the `float_places` of the display style; the value itself, and a file, keep every digit. A quantity with no uncertainty and no format has its number cut the same way, with the `·` after the unit: `arcsin(1)` is `1.571rad·`. A `Scientific`, and a quantity with an uncertainty, is not cut: the uncertainty in brackets
 sets the digits it shows.
 
-A `Decimal` holds 38 digits, so one that does not end within them is
-rounded there: `1/3` is held as 38 threes and shown cut and marked,
-`0.333·`. Pointing at it in the app shows the rest, and
-`--exact` gives every digit of it.
+A `Decimal` is a Polars `Decimal(38, s)`: 38 digits, `s` of them after the
+point, and the places it keeps are the column's, written `Decimal(2)`. A bare
+`Decimal` is `Decimal(10)`, which holds up to about 10²⁸. Every value of a
+column has its scale; the point does not move. A sum is exact at the finer
+of the two scales, a product is worked out exactly and rounded once to it,
+and a quotient, or a mean, is rounded once to ten places or the finer scale
+of its sides, half away from zero. So `1.0/3` is `0.3333333333`, `1.0/3 * 3` is
+`0.9999999999`, and `2.0/7 + 3.0/7` is not `5/7`; for those, use a `Fraction`,
+which is what a quotient of whole numbers is: `1/3 * 3` is `1`.
 
-The 38 digits are significant digits, not a size: the point sits where it
-needs to, left of them or right of them. So `10**1000` is a number, and an
-exact one, held as the single digit it was given; it is only past where the
-point itself reaches, around `1e2147483685`, that a number is too large to
-hold and that is reported. A number this size is no Polars decimal, whose
-point sits within its digits, so a column of them is calculated on the
-engine, and a Parquet or XLSX write puts a null in its place and says so.
+A formula's literal has ten places or its own, whichever is more, so
+`19.99 * 1.5` is `29.985` and not `29.99`. A column that declares
+`Decimal(2)` holds a formula's result rounded to two places, and refuses a
+cell written with more (`0.125` is refused, naming `Decimal(3)` or
+`Fraction`). A column that declares nothing infers the least scale that holds
+its cells: `19.99` and `5` are `Decimal(2)`.
 
-The last eight of those 38 digits are working room. They are held, so that a
-long calculation has room to be right, but they are not compared and not
-shown: 30 digits are. That is what makes two ways of reaching one number
-reach one answer, since no fixed-point decimal is closed under division —
-held in full, a seventh doubled and two sevenths differ in their last digit.
-So `1/3 * 3` is `1`, `1/7 * 7` is `1`, `2/7 + 3/7 == 5/7` is true and
-`1/7 + 1/7 == 2/7` is true. Thirty digits is far more than a calculation of
-any ordinary length will spend; a long enough one can still drift past the
-working room, and then it has a last digit of its own.
+What does not fit is a `Fraction`. A result that needs more than 38 digits at
+its scale, `10**100`, or a decimal written with more than eighteen places, is
+the exact rational it comes to, never an error: an undeclared column holding
+it is a `Fraction` column, and a column that declares a `Decimal` refuses it,
+saying so. `10**100 * <1/10>**80` is `100000000000000000000`.
+
+Only the display is cut, and `--exact` gives a decimal in full.
 
 A `Float` is never rounded: it is shown with the fewest digits that give the
 same `Float` back, `0.30000000000000004`, and always fits.
@@ -64,15 +66,16 @@ A `Percent` is an exact number shown as so many in a hundred: `20%` is `1/5`.
 It is rounded to two digits after the point, `41.67%`, and `--exact` gives
 every digit it holds.
 
-Whole numbers and decimals divided give a `Decimal`, whether or not it
-ends: `7 / 4` is `1.75` and `7 / 3` is `2.333·`, held
-exactly.
+A quotient of whole numbers is a `Fraction`, exact whether or not it would
+end as a decimal: `7 / 4` is `7/4` and `7 / 3` is `2 1/3`. A quotient with a
+decimal in it is a `Decimal`, held to ten places: `7.0 / 4` is `1.75` and
+`7.0 / 3` is `2.333·`.
 
 Numbers are shown the way Raku shows them:
 
 | Type | Shown |
 |---|---|
-| `Integer` | `101`; `1e+15` and `1.8446744073709551·e+19` from `1e15` |
+| `Integer` | `101`; `1e+15` and `1.8446744073709551e+19·` from `1e15` |
 | `Decimal` | `1.01`; `1e-43` below `1e-15` |
 | `Fraction` | `1/7`, `3/4`, `2 3/4`, `333 1/3`; `3` when it is whole |
 | `Percent` | `20%`, `12.5%`, `41.67%` |
@@ -82,28 +85,33 @@ Numbers are shown the way Raku shows them:
 
 A `Float` that is a whole number looks like an `Integer`, but it is still a `Float`.
 
-A `Decimal`, a `Fraction` and a `Percent` are the same exact numbers shown in
-different ways: `19.99`, `1/7` and `20%`. Adding, subtracting, multiplying
-and dividing decimals gives a `Decimal`, and so does an average. Each goes
-anywhere the others do: a `Decimal` column shows `1/3` as `0.333·`.
+A `Decimal` and a `Percent` are the same exact numbers shown in different
+ways: `19.99` and `20%`. Adding, subtracting, multiplying and dividing
+decimals gives a `Decimal`, and so does an average. A `Fraction` is not a
+dress but the exact rational: an integer numerator and denominator of any
+size, always reduced, never rounded. It is shown as a fraction of whole
+numbers, with a whole part where there is one, `1/3`, `2 3/4`; past a
+denominator of 10000 it is shown as a decimal, cut and marked, and in
+e notation where it is very large or small. `--exact` writes a fraction as
+`n/d`, which is how a file carries one.
 
-A `Fraction` is an exact number shown as a fraction of whole numbers, with a
-whole part where there is one: `x.Fraction` gives `1/8` for `0.125` and
-`2 3/4` for `2.75`. The fraction is worked out from the number, not
-remembered from where it was written, so `(2/7 + 3/7).Fraction` is `5/7`.
-Only a denominator of 10000 or less is looked for; past that the number is
-shown as a decimal. Two fractions give a fraction, and a fraction with any
-other number gives a `Decimal`: in a `Fraction` column, `Yield + Yield` is
-still a fraction, where `Yield * 2` is a `Decimal`.
-`--exact` writes a fraction as `n/d`, which is how a file carries one.
+`x.Fraction` is the fraction of the number `x` is: `1/8` for `0.125`, and for
+a decimal quotient the fraction of what it was rounded to, so `(1.0/7).Fraction`
+is `1428571429/10000000000`, where `(1/7).Fraction` is `1/7`. To get a seventh, write one: in a formula a fraction
+is written in angle brackets, `<1/7>`, `<-3/4>` or `<2 3/4>`, and is a
+`Fraction` as `1/7` is in a cell. A fraction beside a whole number or
+another fraction is a fraction, worked out exactly: `<1/7> * 7 == 1` is true,
+and a `Fraction` column holding `Yield * 2` shows fractions. Beside a
+`Decimal` or a `Percent` it is a `Decimal`, rounded to its places, so
+`<1/3> + 0.25` is `0.5833333333`: a `Decimal` is exact only to its places.
+Beside a `Float` it is a `Float`. `sqrt`, `ln`, `exp`, the trigonometry and a fractional
+power of a fraction are `Float`s, having no rational result. A space goes
+before a fraction that follows a `+`, since `+<` is a shift; the error for
+`1+<1/10>` says so.
 
-In a formula `1/10` is a quotient, a `Decimal`. A fraction is written in angle
-brackets, `<1/10>`, `<-3/4>` or `<2 3/4>`, and is a `Fraction` as `1/10` is in a
-cell, so `<1/10> + <1/10>` is `1/5`. It is the same as `Fraction(1/10)`. A
-fraction with a whole number is a `Decimal`, `<1/10> + 1` being `1.1`, so
-where the result should stay a fraction use `<1/1>` for one: `<1/10> + <1/1>`
-is `1 1/10`. A space goes before a fraction that follows a `+`, since `+<` is
-a shift; the error for `1+<1/10>` says so.
+A column of fractions is the engine's: no dataframe has a dtype for a
+rational, so it is not lowered (see [Down a column](#down-a-column)), and a
+write to Parquet or a workbook puts it in as text or the nearest double.
 
 Two percentages give a percentage: `20% + 5%` is `25%`, and so are their
 sum, average, least and greatest. A percentage with any other number gives
@@ -119,7 +127,7 @@ remainder is written with spaces round it. A number is divisible by another
 when the remainder is zero: `x % 3 == 0`. Exact numbers stay exact, and
 `x % 0` is `NaN`, as `0/0` is. A workbook export writes `MOD(a, b)`.
 
-A quotient of whole numbers is a `Decimal`, though `4/2` written out is an
+A quotient of whole numbers is a `Fraction`, though `4/2` written out is an
 `Integer`. A quotient is taken where a whole number is wanted, `[1, 2, 3][4/2]`,
 and reported there if it is not whole, `5/2`.
 
@@ -249,12 +257,16 @@ A number followed at once by an SI unit is a quantity: `5kg`, `300cm`,
 `10.5(3)e-3kg` has its uncertainty, and `5kg ± 100g` is a quantity with one.
 A unit of more than one term is joined with `.`, each term with an optional
 `^` and a whole exponent: `kg.m^2.s^-2`. There is no space and no `/`; a
-negative exponent is `m.s^-1`. Only SI is written in a cell: the symbols
-`g m s A K mol cd`, the named units `Hz N Pa J W C V F Ω S Wb T H Bq Gy Sv kat`
-and `°C`, each with an SI prefix from `q` to `Q`, `kg`, `mm`, `μs`, `GHz`. A
-symbol is case-sensitive, and `ºC`, `µ` and the ohm sign are read as `°C`,
-`μ` and `Ω`. A unit other than these is not a unit: `5ft`, `5L` and `5min` are
-errors, and `5 kg` is a number and a name.
+negative exponent is `m.s^-1`. Only metric units are written in a cell: the
+symbols `g m s A K mol cd`, the named units `Hz N Pa J W C V F Ω S Wb T H Bq Gy
+Sv kat` and `°C`, each with an SI prefix from `q` to `Q`, `kg`, `mm`, `μs`,
+`GHz`, and the non-SI units `l` (litre, also `L`), `t` (tonne), `ha` (hectare),
+`bar`, `eV`, `cal` (4.184 J), `Wh` (3600 J) and `Da` (dalton). All but `t` and
+`ha` take prefixes: `ml`, `kWh`, `keV`, `kcal`. A symbol is
+case-sensitive, and `ºC`, `µ` and the ohm sign are read as `°C`, `μ` and `Ω`;
+`u` is read as the prefix `μ`, so `5um` is `5μm`. A unit other than these is
+not a unit: `5ft`, `5lb` and `5min` are errors, and `5 kg` is a number and a
+name.
 
 An angle has the radian `rad`, the steradian `sr` (a radian squared) and the degree `°`, the minute `′` and the second `″` of arc, and the lumen `lm` and the lux `lx` that need it. Degrees, minutes and seconds are written together, `45°30′30″` or `-12°30′`, and `º`, `'` and `"` do for the marks; minutes and seconds are under 60 and only the last part may have a point. `45°` is a degree and `20°C` is Celsius. `sin`, `cos` and `tan` take an angle in any unit (a plain number is in radians), and `arcsin`, `arccos` and `arctan` give one back in `rad`, so `arcsin(0.5).to('°')` is `30°` and `sin(arcsin(0.5)) =~= 0.5` is true; `degrees(x)` takes such an angle too, and gives the number of degrees. An `arcsin` of a number beyond -1 to 1 is a `Complex`, with no unit. `dms` writes an angle out: `45.5°.dms()` is `45°30′0″`, and `dms(x, 2)` keeps two places of seconds.
 
@@ -290,7 +302,10 @@ quantity and the other math functions need a number with no unit. `sum`, `mean`,
 `median`, `min` and `max` of a column of quantities give one, in the unit of
 the first; `std` and `var` do not. `x.to('g')` and `to(x, 'g')` give a
 quantity in another unit, and `x.Float` gives the number of a quantity with no
-dimension.
+dimension. `x.unit()` gives the unit as text, `5kg.unit()` is `kg`, and
+`x.value()` gives the number in that unit with its uncertainty, as a
+`Scientific`: `10.5(3)kg.value()` is `10.5(3)`. Together they take a quantity
+apart, and `x.to('g').value()` is its number of grams.
 
 A `.` after a unit continues it if what follows is a unit, so `5N.m` is a
 newton metre, and ends it if it is a call or a name, so `5kg.abs()` and
@@ -426,6 +441,69 @@ sheet Best     := ByRegion |> sort(Revenue_sum, desc) |> head(1)
   matches nothing, and a name both sheets have takes `_right` on the other
   sheet's column. The rows come in the left sheet's order, then the other's
 
+## Down a column
+
+A window function gives each row a value read from the rows around it. It
+is a method on a column, and in a computed column it is worked out once for
+the whole column and each row takes its own:
+
+```omx
+Balance := Amount.cum_sum(Date by Account)
+```
+
+| Written | Gives |
+|---|---|
+| `cum_sum() cum_min() cum_max() cum_prod()` | the running total, smallest, largest or product so far |
+| `cum_count()` | how many values so far are not empty |
+| `diff()`, `diff(2)` | the change from the row 1 (or `n`) back, empty where there is none |
+| `pct_change()`, `pct_change(2)` | that change as a share of the row back, a Float |
+| `rank()` | each value's place in order; see below |
+| `forward_fill()`, `backward_fill()` | an empty cell takes the last value above it, or the next below |
+| `rolling_sum(3)` and `rolling_mean rolling_min rolling_max rolling_std` | over the last `n` rows; empty until `n` rows are there, or where one of them is empty |
+
+An empty cell stays empty in `cum_*` and is skipped by it, so the total goes
+on. `rolling_std` is the standard deviation of a sample, and the mean of
+whole numbers is a Decimal, as `mean` is.
+
+Without anything more, the rows are taken in the order of the file, which
+goes wrong without a word when a row was added out of date order. Name an
+**order key**, a column of the same sheet, after the number if there is
+one, and the rows go down it (rows with the same key keep the file's order),
+each answer going back on the row it came from. `by` after it names the
+**partition**: a window for each value of the columns, an empty key being a
+partition of its own, as in [`[x; *-1 by Region]`](#selecting-with-columns-rows).
+
+```omx
+Balance := Amount.cum_sum(Date by Account)
+Change  := Amount.diff(1, Date by Account)
+Recent  := Amount.rolling_mean(3, Date)
+```
+
+`rank` takes words, not a key: how ties are numbered, `average` (the
+default, a Float), `min`, `max`, `dense` or `ordinal`, and `desc` to rank
+from the largest. `by` partitions it: `Score.rank(min, desc by Region)`.
+
+`by` can stand alone, `Amount.cum_sum(by Account)` and `Score.rank(by
+Region)`, for a partition in the order of the file.
+
+Over a whole column, `Sales.Amount.cum_sum(Sales.Date)`, the answer is a
+column. A calculation down a column is written to an XLSX Workbook as its
+values.
+
+**Speed.** Over whole numbers, floats and decimals a column of these is
+calculated by Polars, in one step over the whole table, and the answer is the
+one the engine would give. That is `cum_sum cum_min cum_max cum_count diff
+rank forward_fill backward_fill`, with `pct_change`, `rolling_min` and
+`rolling_max` for whole numbers and floats, `cum_prod` for floats and
+`rolling_sum` for whole numbers; the temporal types and text have `cum_min`,
+`cum_max`, `cum_count` and the fills. Anything else is the engine's, which
+works every type but a row at a time: a Fraction, a number with units, a
+rolling mean or deviation, a float rolling sum (Polars slides a window along
+and the last digit differs), a rolling window or a ratio of decimals (Polars
+has none), a column with a `NaN`, and a total that might pass the largest
+whole number or the digits of a decimal. A table of 3.7 million rows takes a couple of seconds
+for a running total by group, against more than a minute.
+
 ## Sequences with `...`
 
 A computed column may be written as a sequence, `terms ... limit`. The terms
@@ -498,6 +576,10 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
 - Spread: `std(x)` and `var(x)`, of a sample; `std(x, 0)` and `var(x, 0)` of
   a whole population; `quantile(x, 0.9)`, the value that far through the
   values in order
+- Down a column: `cum_sum cum_min cum_max cum_prod cum_count`, `diff`,
+  `pct_change`, `rank`, `forward_fill`, `backward_fill` and
+  `rolling_sum rolling_mean rolling_min rolling_max rolling_std`, as
+  [below](#down-a-column)
 - Sheets: `filter(condition)`, `select(columns)`, `head(n)`, `tail(n)`,
   `sort(columns)`, `group_by(keys) |> agg(aggregates)` and `join(Other,
   keys)`, as [above](#sheets-from-sheets); `shift(n)` — the value `n` rows

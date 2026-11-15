@@ -161,7 +161,7 @@ fn kind_of(s: S) -> Kind {
         | S::Hex
         | S::Octal
         | S::Binary
-        | S::Decimal
+        | S::Decimal(_)
         | S::Fraction
         | S::Percent
         | S::Float
@@ -529,10 +529,10 @@ impl Writer<'_> {
                 number(n.to_string())
             }
             Lit::Int(_, _) => return Err(LITERAL),
-            Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) if !r.is_long() => {
-                number(format_rat(r))
-            }
-            Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) => number(r.to_plain_string()),
+            Lit::Decimal(r) | Lit::Percent(r) if !r.is_long() => number(format_rat(r)),
+            Lit::Decimal(r) | Lit::Percent(r) => number(r.to_plain_string()),
+            // A workbook has no rationals: a fraction is the nearest double.
+            Lit::Fraction(r) => return self.literal(&Lit::Float(r.to_f64())),
             Lit::Float(f) if f.is_finite() => {
                 let size = f.abs();
                 number(if size == 0.0 || (1e-5..1e15).contains(&size) {
@@ -682,8 +682,8 @@ impl Writer<'_> {
                 ..x.clone()
             },
             Func::To(S::Int | S::Hex | S::Octal | S::Binary) if number => of("TRUNC", Kind::Number),
-            Func::To(S::Decimal | S::Percent | S::Float) if number => x.clone(),
-            Func::To(S::Int | S::Decimal | S::Float) if x.kind == Kind::Bool => {
+            Func::To(S::Decimal(_) | S::Percent | S::Float) if number => x.clone(),
+            Func::To(S::Int | S::Decimal(_) | S::Float) if x.kind == Kind::Bool => {
                 Expr::atom(format!("IF({},1,0)", x.text), Kind::Number)
             }
             Func::To(S::Boolean) if number => {
@@ -858,6 +858,9 @@ impl Writer<'_> {
                     kind,
                 )))
             }
+            // A product or quotient settled to a scale is the product or
+            // quotient: a workbook works in doubles and has no scale.
+            Ir::Call(Func::Settle(_), args) if args.len() == 1 => self.scalar(&args[0], cx),
             Ir::Call(func, args) => self.call(*func, args, cx),
             Ir::Apply { args, body, .. } => {
                 let mut given = Vec::with_capacity(args.len());

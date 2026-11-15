@@ -216,12 +216,12 @@ read as one; `Integer` is what is written.
 | `Hex` | `0xff`, `0xFF_FF` — an `Integer` shown in base 16 |
 | `Octal` | `0o17` — an `Integer` shown in base 8 |
 | `Binary` | `0b101` — an `Integer` shown in base 2 |
-| `Decimal` | `19.99`, `1/7`, `2 3/4` — exact |
-| `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction |
+| `Decimal` | `19.99`, `0.125` — exact to the places its column keeps: `Decimal(2)` keeps two, a bare `Decimal` ten (`Decimal(38, 10)`). A column that declares nothing keeps the least that holds its cells, and more than eighteen places make a `Fraction` |
+| `Fraction` | `1/7`, `2 3/4`, `0.125` — the exact rational, of integers of any size, shown as a fraction. It is never rounded and never lowered |
 | `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
 | `Float` | `1.5e3`, `Inf`, `-Inf`, `NaN` — floating point |
-| `Scientific` | `10.5(3)`, `10 ± 0.3` — a value with its measurement uncertainty, each a `Float`; a number with no uncertainty in a `Scientific` column has an uncertainty of zero. Its format, in brackets, is a number format as for a `Float`: with nothing before it the value is shown as `10.5(3)`, with `±` before it as `value ± uncertainty`, and with `~` before it as the value alone, at the places the uncertainty gives: `Length : Scientific[.4f]`, `Scientific[±.3e-3]`, `Scientific[~.2f]` |
-| `Quantity` and its kinds | `5kg`, `300cm`, `9.81m.s^-2`, `10.5(3)e-3kg`, `20°C` — a number and an SI unit, written with no space; a `Scientific` magnitude, so it carries an uncertainty. A column is declared `Quantity` for any dimension, or one of its kinds (`Length`, `Mass`, `Force`, `Energy`, `Pressure`, ...), which admits only a unit of that dimension: `Weight : Mass`. `Angle` holds `rad`, `°` or `45°30′`; `SolidAngle`, `AngularSpeed`, `LuminousFlux` and `Illuminance` hold `sr`, `rad.s^-1`, `lm` and `lx`. `Data`, `DataRate` and `DataDensity` hold `B`, `GiB`, `Mb`, `MiB.s^-1` and `Gb.m^-2`. A cell in another unit of it is converted to the column's unit, which is the preferred unit of the kind (`kg` for `Mass`) or the one in brackets, `Weight : Mass[g]`; a bare number is read in that unit. After a `;` a number format as a `Scientific` takes may follow: `Mass[mg; .1f]`. See *Units* in the expressions guide |
+| `Scientific` | `10.5(3)`, `10 ± 0.3` — a value with its measurement uncertainty, each a `Float`; a number with no uncertainty in a `Scientific` column has an uncertainty of zero. Its format, in brackets, is a number format as for a `Float`: with nothing before it the value is shown as `10.5(3)`, with `±` before it as `value ± uncertainty`, and with `~` before it as the value alone, at the places the uncertainty gives: `Length : Scientific[.4f]`, `Scientific[±.3e-3]`, `Scientific[~.2f]`. The conversion `s` lets the uncertainty lead: a value with one is shown by it, whatever the precision, and a value with none is shown to the precision as significant digits, in `g` form: `Scientific[.9s]` shows `1.0545718176e-34` as `1.05457182e-34` and `6.674 30(15)e-11` as it is |
+| `Quantity` and its kinds | `5kg`, `300cm`, `9.81m.s^-2`, `10.5(3)e-3kg`, `20°C` — a number and an SI unit, written with no space; a `Scientific` magnitude, so it carries an uncertainty. A column is declared `Quantity` for any dimension, or one of its kinds (`Length`, `Mass`, `Force`, `Energy`, `Pressure`, ...), which admits only a unit of that dimension: `Weight : Mass`. `Angle` holds `rad`, `°` or `45°30′`; `SolidAngle`, `AngularSpeed`, `LuminousFlux` and `Illuminance` hold `sr`, `rad.s^-1`, `lm` and `lx`. `Data`, `DataRate` and `DataDensity` hold `B`, `GiB`, `Mb`, `MiB.s^-1` and `Gb.m^-2`. A cell in another unit of it is converted to the column's unit, which is the preferred unit of the kind (`kg` for `Mass`) or the one in brackets, `Weight : Mass[g]`; a bare number is read in that unit. After a `;` a number format as a `Scientific` takes may follow: `Mass[mg; .1f]`. The unit may be left out before the `;`, `Quantity[; .10s]`, and each value is then shown in its own unit; with the conversion `s`, a derived value with no uncertainty is shown in ten significant digits, as `1.054571818e-34J.s`, rather than as `0J.s·`. A `_` before the conversion, `Quantity[; _.10s]`, sets the unit apart from its number by a space, `6.022e+23 mol^-1`; a number shown cut has its `·` after the unit. See *Units* in the expressions guide |
 | `Complex` | `3+4i`, `-1.5-2i`, `2i` — a real and an imaginary part, each a `Float`; a real number in a `Complex` column is that number with no imaginary part |
 | `String` | `hi` or `"hi"`  (escape \|) |
 | `Boolean` | `true`, `false`; a `Boolean` column also reads `1` and `0`, `x` and `o`, `X` and `O`. Its format, in brackets, is any two different characters, the symbol for true and then for false: `Boolean[10]`, `Boolean[xo]`, `Boolean[XO]`, `Boolean[✓✗]` (not a space, `]` or `%`), and the column reads its own two as well; with none it shows `true` and `false` |
@@ -310,34 +310,37 @@ form, `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f`, in either case. None of them
 may hold a space. Only `.omx` keeps which one a column is: through CSV, an
 XLSX Workbook, JSON or Parquet the text goes out and comes back as text.
 
-A `Decimal`, a `Fraction` and a `Percent` hold the same exact numbers, and a
-column of one takes the others, showing what it holds its own way: `1/7` is
-`0.143·` in a `Decimal` column, `1/7` in a `Fraction`
-column, and `14.29%` in a `Percent` column.
+A `Decimal` and a `Percent` hold the same exact numbers, and a column of one
+takes the other, showing what it holds its own way. A `Fraction` column
+takes any exact number, and a `Decimal` column given a `Fraction` rounds it
+to its places: `<1/7>` is `1/7` in a `Fraction` column, `0.1428571429` in a
+`Decimal` one.
 
-The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
+The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**. The more _infectious_ a type, the less exact it is: `Integer` < `Fraction` < `Decimal` < `Float` < `Scientific` < `Complex`. A `Fraction` is exact without limit, whereas a `Decimal` is the same rationals held to a fixed number of places:
 
 - **`Integer` (ℤ)**: whole numbers (i64)
-- **`Decimal` (ℚ)**: exact fractions (d128+ / 38 decimal places)
+- **`Fraction` (ℚ)**: exact rational (num/den)
+- **`Decimal` (ℚ)**: exact to s places (`Decimal(38, s[=10])`)
 - **`Float` (ℝ)**: real numbers (f64)
 - **`Scientific` (ℝ)**: real numbers with uncertainty (2x f64)
 - **`Complex` (ℂ)**: complex numbers (2x f64)
 
-For any operation, and for the cells of a column, the result is the **more infectious** of the types it is made from, the least number system that holds them both: `Integer` + `Decimal` is a `Decimal`, `Decimal` * `Float` is a `Float`, and `Float` + `Complex` is a `Complex`. This is a model, not the machine's: an integer is an `i64`, a `Decimal` a 38-digit fixed point and a `Float` an `f64`, each of finite precision.
+For any operation, and for the cells of a column, the result is the **more infectious** of the types it is made from, the least number system that holds them both: `Integer` + `Decimal` is a `Decimal`, `Decimal` * `Float` is a `Float`, and `Float` + `Complex` is a `Complex`. This is a model, not the machine's: an integer is an `i64`, a `Decimal` a 38-digit fixed point with the places its column keeps, a `Fraction` exact, and a `Float` an `f64`.
 
 Each type may be shown more than one way:
 
 | Type | Literal | Representations |
 |---|---|---|
 | `Integer` | `1` | `Hex` `0xff`, `Octal` `0o17`, `Binary` `0b101` |
-| `Decimal` | `1.0` | `Fraction` `1/7`, `2 3/4`; `Percent` `14.29%` |
+| `Decimal` | `1.0` | `Percent` `14.29%` |
+| `Fraction` | `<1/7>` | `1/7`, `2 3/4` |
 | `Float` | `1e0` | - |
 | `Scientific` | `10.5(3)` | - |
 | `Complex` | `3+4i` | - |
 
 - Two values shown the same way keep it: `Hex` + `Hex` is a `Hex`, and `Fraction` + `Fraction` a `Fraction`.
-- Two different ways of showing one type give the plain type: `Hex` + `Binary` is an `Integer`, and `Fraction` + `Percent` a `Decimal`.
-- Different types give the more infectious, shown plain: `Fraction` * `Integer` is a `Decimal`.
+- Two different ways of showing one type give the plain type: `Hex` + `Binary` is an `Integer`.
+- Different types give the more infectious, shown plain: `Decimal(2)` * `Decimal(4)` is a `Decimal(4)`, and `Fraction` * `Integer` is a `Fraction`, but `Fraction` + `Percent` or `Fraction` * `Decimal` is a `Decimal`.
 - A power with a whole exponent is exact; with any other, such as `2 ** 0.5`, it is a `Float`, as are the trigonometric, exponential and logarithmic functions.
 - A number beside text gives `Any`.
 
@@ -386,28 +389,27 @@ A `20%` in a `Decimal` column is the number it stands for, `0.2`.
 
 A `Fraction` column takes any exact number and shows it as a fraction of
 whole numbers, with a whole part where there is one: `0.125` there is `1/8`
-and `2.75` is `2 3/4`. The fraction is worked out from the number rather
-than remembered from the cell, so one nobody wrote is found too — a seventh
-added to a seventh shows as `2/7`. Only a fraction whose denominator is
-10000 or less is looked for; past that the number is shown as a decimal.
-Two fractions give a fraction, so a `:=` column of `Yield + Yield` over a
-`Fraction` column shows fractions without being declared; a fraction with
-any other number gives a `Decimal`, so `Yield * 2` shows `4.667·`.
+and `2.75` is `2 3/4`. It holds the exact rational: a cell `1/7` is a
+seventh, to every digit, and a seventh added to a seventh is `2/7`, exactly.
+Only a fraction whose denominator is 10000 or less is shown as one; past that
+the number is shown as a decimal, cut and marked. A whole number beside a
+fraction gives a fraction, so a `:=` column of `Yield * 2` over a `Fraction`
+column shows fractions.
 
-A fraction of two whole numbers is an exact `Decimal`: `1/7` and `22/7` are
-both read that way, and one may be written with a space, `2 3/4` for `11/4`.
+In a cell, `1/7` and `22/7` are fractions, and so is `2 3/4` for `11/4`.
 Neither part need be the smaller: `11/3` and `5 7/3` are fine, and a
 `Fraction` column shows them as `3 2/3` and `7 1/3`. A column with no type
-whose cells are all written with a `/` is a `Fraction` column; with any other
-number among them it is a `Decimal` one. A column declared `Decimal` takes the
-same cells and shows them as decimals.
+whose cells are all written with a `/` (or beside whole numbers) is a
+`Fraction` column; with a decimal among them it is a `Decimal` one, a fraction
+beside a decimal being a decimal. A column declared `Decimal` takes the same
+cells and rounds them to its places.
 
 In a formula a fraction is written in angle brackets, `<1/10>`, `<-3/4>` or
-`<2 3/4>`, since a bare `1/10` there is a quotient, a `Decimal`. A fraction
-with a whole number is a `Decimal` too, so `<1/10> + 1` is `1.1`; to stay
-a fraction add `<1/1>`, the fraction that is one, and `<1/10> + <1/1>` is
-`1 1/10`. A space goes before a fraction that follows a `+`, since `+<` is a
-shift.
+`<2 3/4>`, though a bare `1/10` there is a quotient of whole numbers, which is
+the same `Fraction`. A quotient with a decimal in it, `1.0/10`, is a `Decimal`
+rounded to ten places. A fraction beside a whole number is a fraction, so
+`<1/10> + 1` is `11/10`; beside a decimal it is a decimal, so `<1/10> + 0.5` is `0.6`. A space goes before a fraction that follows a `+`,
+since `+<` is a shift.
 
 An `Integer`, `Decimal` or `Float` column may say how its numbers are shown,
 after its type in brackets, as a C `printf` conversion without its `%`:
@@ -503,6 +505,11 @@ accepts them in your locale's form.
   not the row it is called from. The comment above it is its description.
 - `zone Area/City` before the first sheet says which time zone the file's
   date-times are in. Without it, they are in the zone of the machine.
+- `consts [; .10s]` before the first sheet is the number format the
+  constants' values are shown by, as `Set format…` on the Constants tab sets
+  it. Each constant that can take the format uses it. Without the line the
+  format is `; _.10s`, ten significant digits and a space before the unit;
+  `consts []` shows them with no format.
 - `Logged : Datetime("Europe/London")` declares the zone of one column. Its
   cells are the wall clock of that zone, so what is typed in is taken there,
   and each is shown with its offset, which follows the zone's daylight

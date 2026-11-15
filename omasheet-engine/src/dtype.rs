@@ -27,7 +27,8 @@ pub fn type_of(dtype: &DataType) -> Option<S> {
         | DataType::UInt32
         | DataType::UInt64 => S::Int,
         DataType::Float32 | DataType::Float64 => S::Float,
-        DataType::Decimal(..) => S::Decimal,
+        // The scale of the dtype is the places the column keeps.
+        DataType::Decimal(_, scale) => S::Decimal(scale.unwrap_or(0).min(38) as u8),
         DataType::String => S::String,
         DataType::Date => S::Date,
         DataType::Time => S::Time,
@@ -50,12 +51,14 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
     // so a whole one in a column of a base comes back in that base.
     let exact = |d: Dec| match (ty, d.to_i64()) {
         (S::Percent, _) => Cell::Lit(Lit::Percent(d)),
-        (S::Fraction, _) => Cell::Lit(Lit::Fraction(d)),
+        (S::Fraction, _) => Cell::Lit(Lit::Fraction(std::sync::Arc::new(
+            omasheet_omx::rational::Rat::from_dec(d),
+        ))),
         (t, Some(n)) if t.is_int() => Cell::Lit(Lit::Int(n, Base::of(t))),
         _ => Cell::Lit(Lit::Decimal(d)),
     };
     let whole = |n: i64| match ty {
-        S::Decimal | S::Fraction | S::Percent => exact(Dec::from_i64(n)),
+        S::Decimal(_) | S::Fraction | S::Percent => exact(Dec::from_i64(n)),
         _ => Cell::Lit(Lit::Int(n, Base::of(ty))),
     };
     match value {
@@ -218,7 +221,7 @@ pub fn dtype(ty: S, scale: u32) -> Option<DataType> {
         // A whole number in any base is the same `Int64`; the base is the
         // column's, from its type.
         S::Int | S::Hex | S::Octal | S::Binary => DataType::Int64,
-        S::Decimal | S::Fraction | S::Percent => decimal(scale),
+        S::Decimal(_) | S::Fraction | S::Percent => decimal(scale),
         S::Float => DataType::Float64,
         S::Complex => complex_dtype(),
         S::Scientific => uncertain_dtype(),
@@ -314,42 +317,46 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
     // has, which is the widest any value needs. A value that cannot be
     // written at that scale is not written at all, so the column is
     // declined.
-    let decimals = |name: PlSmallStr, pick: &dyn Fn(&Value) -> Option<Dec>| -> Option<Series> {
-        // A Polars decimal names a scale of `0..=38` and no other, so a
-        // value whose point sits outside that is one this column cannot
-        // hold: the scale is clamped, and the rescale below then declines.
-        let scale = values
-            .iter()
-            .filter_map(pick)
-            .map(|d| d.scale())
-            .max()
-            .unwrap_or(0)
-            .clamp(0, MAX_PRECISION as i32);
-        let digits: Vec<Option<i128>> = values
-            .iter()
-            .map(|v| match v {
-                v if null(v) => Some(None),
-                v => {
-                    let d = pick(v)?;
-                    let at = d.rescale(scale)?;
-                    // A value rounded away to nothing is a value lost, and
-                    // this column is the lossless one.
-                    if at.is_zero() && !d.is_zero() {
-                        return None;
+    let decimals =
+        |name: PlSmallStr, floor: i32, pick: &dyn Fn(&Value) -> Option<Dec>| -> Option<Series> {
+            // A Polars decimal names a scale of `0..=38` and no other, so a
+            // value whose point sits outside that is one this column cannot
+            // hold: the scale is clamped, and the rescale below then declines.
+            let scale = values
+                .iter()
+                .filter_map(pick)
+                .map(|d| d.scale())
+                .max()
+                .unwrap_or(0)
+                // A column of the type `Decimal(s)` is held at `s` places at
+                // least, whatever its values need.
+                .max(floor)
+                .clamp(0, MAX_PRECISION as i32);
+            let digits: Vec<Option<i128>> = values
+                .iter()
+                .map(|v| match v {
+                    v if null(v) => Some(None),
+                    v => {
+                        let d = pick(v)?;
+                        let at = d.rescale(scale)?;
+                        // A value rounded away to nothing is a value lost, and
+                        // this column is the lossless one.
+                        if at.is_zero() && !d.is_zero() {
+                            return None;
+                        }
+                        Some(Some(at.unscaled()))
                     }
-                    Some(Some(at.unscaled()))
-                }
-            })
-            .collect::<Option<_>>()?;
-        // The values are unscaled digits already, so the series is built as
-        // a decimal rather than cast to one: casting an integer to a
-        // decimal scales it, which is not what these are.
-        let ca: Int128Chunked = digits.into_iter().collect_ca(name);
-        Some(
-            ca.into_decimal_unchecked(Some(MAX_PRECISION as usize), scale as usize)
-                .into_series(),
-        )
-    };
+                })
+                .collect::<Option<_>>()?;
+            // The values are unscaled digits already, so the series is built as
+            // a decimal rather than cast to one: casting an integer to a
+            // decimal scales it, which is not what these are.
+            let ca: Int128Chunked = digits.into_iter().collect_ca(name);
+            Some(
+                ca.into_decimal_unchecked(Some(MAX_PRECISION as usize), scale as usize)
+                    .into_series(),
+            )
+        };
     let series = match ty {
         S::Int | S::Hex | S::Octal | S::Binary => Series::new(
             name,
@@ -359,7 +366,7 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
                 _ => None,
             })?,
         ),
-        S::Decimal => decimals(name.clone(), &exact)?,
+        S::Decimal(places) => decimals(name.clone(), i32::from(places), &exact)?,
         // A percentage and a fraction are an exact number in a dress, and
         // the dress is display (D69): `cell_of` puts it back on from the
         // column's own type, which is what a table's column declared as one
@@ -367,14 +374,13 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
         // `Decimal(38, s)` its values already are. Only the matching dress
         // is read — a bare number among them would come back wearing one,
         // which is not what the sheet of text says.
-        S::Percent => decimals(name.clone(), &|v| match v {
+        S::Percent => decimals(name.clone(), 0, &|v| match v {
             Value::Percent(d) => Some(*d),
             _ => None,
         })?,
-        S::Fraction => decimals(name.clone(), &|v| match v {
-            Value::Fraction(d) => Some(*d),
-            _ => None,
-        })?,
+        // A rational is not a Polars dtype: a column of them is the
+        // engine's, never lowered.
+        S::Fraction => return None,
         S::Float => {
             let v: Vec<Option<f64>> = values
                 .iter()

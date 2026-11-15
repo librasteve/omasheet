@@ -145,7 +145,9 @@ fn field(v: &Value) -> (String, bool) {
         Value::Null => ("null".to_string(), false),
         Value::Int(n, _) => (n.to_string(), false),
         // An exact number is written in full: every digit it holds.
-        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => (format_rat(r), false),
+        Value::Decimal(r) | Value::Percent(r) => (format_rat(r), false),
+        // A fraction is text, `"1/7"`: JSON has no number for it.
+        Value::Fraction(r) => (quoted(&r.fraction_text()), false),
         Value::Float(f) => (num(*f), false),
         Value::Boolean(b) => (b.to_string(), false),
         v => (quoted(&format_exact(v, false, &Style::ISO)), false),

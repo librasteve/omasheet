@@ -155,6 +155,8 @@ pub struct ConstSnap {
     /// The value in full, when it is shown with fewer digits than it has.
     pub exact: Option<String>,
     pub error: Option<String>,
+    /// A number, a quantity or the like: set right in the grid.
+    pub numeric: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -216,6 +218,9 @@ pub struct Document {
     /// grid's alone like a table's order: a change of them is a step to
     /// undo, and so is kept here, not read.
     filters: String,
+    /// How the constants' values are shown, a number format as a column's:
+    /// read from the file's `consts [..]` line, which the app writes.
+    const_format: String,
     /// The tables' files held whole in memory, by path (D157). Kept across
     /// rebuilds, and dropped when the text no longer names the file or the
     /// file has changed. See [`Document::to_hold`] and [`Document::hold`].
@@ -331,6 +336,33 @@ pub fn read_only_why(snap: &SheetSnap) -> Option<String> {
     Some(format!("`{}` is read-only: import to edit", snap.name))
 }
 
+/// The format in a `consts [format]` line, `Some` if the line is one.
+fn consts_line(line: &str) -> Option<String> {
+    let rest = line.trim().strip_prefix("consts")?;
+    let rest = rest.strip_prefix([' ', '\t'])?.trim();
+    let inner = rest.strip_prefix('[')?.strip_suffix(']')?;
+    Some(inner.trim().to_string())
+}
+
+/// How the constants' values are shown, as the file's `consts [..]` line,
+/// before the first sheet, says.
+fn const_format_in(text: &str) -> String {
+    for line in text.lines() {
+        let t = line.trim_start();
+        if t.starts_with("sheet ") || t.starts_with("view ") {
+            break;
+        }
+        if let Some(f) = consts_line(line) {
+            return f;
+        }
+    }
+    DEFAULT_CONST_FORMAT.to_string()
+}
+
+/// How the constants' values are shown when the file does not say: ten
+/// significant digits, the unit set apart by a space. `consts []` says none.
+pub const DEFAULT_CONST_FORMAT: &str = "; _.10s";
+
 /// What a number shown with fewer digits than it has is in full.
 fn exact_text(v: &Value, quoted: bool, shown: &str, style: &Style) -> Option<String> {
     let full = match v {
@@ -341,11 +373,30 @@ fn exact_text(v: &Value, quoted: bool, shown: &str, style: &Style) -> Option<Str
         | Value::Percent(_)
         | Value::Float(_)
         | Value::Scientific(..)
+        | Value::Quantity(_)
         | Value::Complex(..)
         | Value::Vector(_) => format_exact(v, quoted, style),
+        // A fraction is shown as itself, `2 3/4`, or as a decimal marked cut:
+        // only a cut one has more to say.
+        Value::Fraction(_) if shown.ends_with('·') => format_exact(v, quoted, style),
         _ => return None,
     };
     (full != shown).then_some(full)
+}
+
+/// The format `text` makes for `value`, where it is of a type that takes
+/// one: a quantity, a `Scientific` or a plain number.
+fn const_format_of(value: &Value, text: &str) -> Option<Format> {
+    if text.is_empty() {
+        return None;
+    }
+    let ty = match value {
+        Value::Quantity(_) => S::Quantity(omasheet_omx::types::QId::ANY),
+        Value::Scientific(..) => S::Scientific,
+        Value::Float(_) | Value::Decimal(_) => S::Float,
+        _ => return None,
+    };
+    Format::parse(text, ty).ok().filter(|f| f.takes(ty))
 }
 
 /// A cell as the grid shows it: its value formatted as its column says.
@@ -549,7 +600,7 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             ("b".into(), "binary"),
             ("08b".into(), "binary, eight digits"),
         ],
-        S::Decimal | S::Float | S::Percent | S::Fraction => vec![
+        S::Decimal(_) | S::Float | S::Percent | S::Fraction => vec![
             ("'.2f".into(), "grouped, two places"),
             (".2f".into(), "two places"),
             (".0f".into(), "no places"),
@@ -598,6 +649,15 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             (format!("{unit}; ±.1f"), "± uncertainty, 1 place"),
             (format!("{unit}; ~.1f"), "value only, 1 place"),
             (format!("{unit}; ~.3e-3"), "value only, e notation"),
+            (format!("{unit}; .10s"), "10 digits if exact"),
+            (format!("{unit}; _"), "a space before the unit"),
+        ],
+        // No unit: each value is shown in its own.
+        S::Quantity(_) => vec![
+            ("; .10s".into(), "own unit, 10 digits"),
+            ("; _.10s".into(), "as above, a space"),
+            ("; .3e".into(), "e notation"),
+            ("; ±.3e".into(), "± e notation"),
         ],
         _ => Vec::new(),
     };
@@ -1994,7 +2054,18 @@ pub fn type_spec(spec: &str) -> Result<(S, Option<Option<Format>>), String> {
         },
         None => (spec, None),
     };
-    let ty = S::from_name(name.trim()).ok_or_else(|| format!("`{name}` is not a type"))?;
+    // `Decimal(6)`: a decimal and the places it keeps.
+    let places = name
+        .trim()
+        .strip_prefix("Decimal(")
+        .and_then(|rest| rest.strip_suffix(')'));
+    let ty = match places {
+        Some(n) => match n.trim().parse::<u8>() {
+            Ok(n) if n <= 38 => S::Decimal(n),
+            _ => return Err("a scale is a whole number of places from 0 to 38".to_string()),
+        },
+        None => S::from_name(name.trim()).ok_or_else(|| format!("`{name}` is not a type"))?,
+    };
     let Some(unit) = unit else {
         return Ok((ty, None));
     };
@@ -2005,7 +2076,7 @@ pub fn type_spec(spec: &str) -> Result<(S, Option<Option<Format>>), String> {
     // The type's own unit is written as the type alone.
     if let (S::Quantity(id), Format::Quantity(q)) = (ty, &format)
         && q.number.is_none()
-        && omasheet_omx::units::preferred(id).as_ref() == Some(&q.unit)
+        && omasheet_omx::units::preferred(id).as_ref() == q.unit.as_ref()
     {
         return Ok((ty, Some(None)));
     }
@@ -2047,7 +2118,19 @@ fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
         let colon = end + text[end..].find(':').unwrap_or(0);
         let rest = &text[colon + 1..];
         let ty_at = colon + 1 + (rest.len() - rest.trim_start_matches([' ', '\t']).len());
-        (colon, ty_at, ty_at + ident_len(&text[ty_at..]))
+        let mut end = ty_at + ident_len(&text[ty_at..]);
+        // `Decimal(6)`: the places are part of the type.
+        if &text[ty_at..end] == "Decimal"
+            && text[end..].starts_with('(')
+            && let Some(close) = text[end..].find(')')
+            && text[end + 1..end + close]
+                .trim()
+                .bytes()
+                .all(|b| b.is_ascii_digit())
+        {
+            end += close + 1;
+        }
+        (colon, ty_at, end)
     };
     let existing = decl.schema.iter().find(|l| l.name == name);
     let mut out = text.to_string();
@@ -2368,6 +2451,7 @@ impl Document {
             base: None,
             orders: Default::default(),
             filters: String::new(),
+            const_format: DEFAULT_CONST_FORMAT.to_string(),
             whole: Default::default(),
             edits: 0,
             engine: None,
@@ -2608,6 +2692,70 @@ impl Document {
 
     /// Put the filters in force as `filters`, in one undoable step, as a
     /// sort of a table is. Whether they changed.
+    /// How the constants' values are shown, as written: a quantity's number
+    /// format such as `; .10s`, empty for none.
+    pub fn const_format(&self) -> &str {
+        &self.const_format
+    }
+
+    /// Whether `format` would read as the format of the constants' values:
+    /// a quantity's, or as a `Scientific` or a number takes it.
+    pub fn check_const_format(format: Option<&str>) -> Result<(), String> {
+        let Some(text) = format else { return Ok(()) };
+        let reads = |ty: S| Format::parse(text, ty).is_ok_and(|f| f.takes(ty));
+        if [
+            S::Quantity(omasheet_omx::types::QId::ANY),
+            S::Scientific,
+            S::Float,
+        ]
+        .into_iter()
+        .any(reads)
+        {
+            return Ok(());
+        }
+        Format::parse(text, S::Quantity(omasheet_omx::types::QId::ANY))
+            .map(|_| ())
+            .map_err(|e| e.message)
+    }
+
+    /// Show the constants' values by `format`, where each can take it, and
+    /// as they were with none. Kept in the file as a `consts [format]` line
+    /// before the first sheet, in one undoable step.
+    pub fn set_const_format(&mut self, format: Option<&str>) -> Result<(), String> {
+        Self::check_const_format(format)?;
+        let want = format.unwrap_or("").trim().to_string();
+        if want == self.const_format {
+            return Ok(());
+        }
+        let mut lines: Vec<&str> = self.text.split_inclusive('\n').collect();
+        let line_at = lines.iter().position(|l| consts_line(l).is_some());
+        let first = lines.iter().position(|l| {
+            let t = l.trim();
+            !t.is_empty() && !t.starts_with('#')
+        });
+        let new = format!("consts [{want}]\n");
+        // The default is the absence of the line; none is `consts []`.
+        match (line_at, want == DEFAULT_CONST_FORMAT) {
+            (Some(at), true) => {
+                lines.remove(at);
+                // The blank line that set it off goes with it.
+                if lines.get(at).is_some_and(|l| l.trim().is_empty()) {
+                    lines.remove(at);
+                }
+            }
+            (Some(at), false) => lines[at] = &new,
+            (None, true) => {}
+            (None, false) => {
+                let at = first.unwrap_or(lines.len());
+                lines.insert(at, "\n");
+                lines.insert(at, &new);
+            }
+        }
+        let text: String = lines.concat();
+        self.commit(text);
+        Ok(())
+    }
+
     pub fn set_filters(&mut self, filters: &str) -> bool {
         let same =
             |a: &str, b: &str| a == b || (a.is_empty() && b == "{}") || (a == "{}" && b.is_empty());
@@ -3118,7 +3266,7 @@ impl Document {
         let numbers = if numbers == 0 {
             None
         } else {
-            let mean = arith(BinOp::Div, &sum, &Value::int(numbers as i64)).ok()?;
+            let mean = crate::eval::average(&sum, numbers as i64).ok()?;
             // To two places: it is a glance, not the figure.
             let show = |v: &Value| {
                 let v = crate::value::round_digits(v, 2).unwrap_or_else(|_| v.clone());
@@ -3181,7 +3329,7 @@ impl Document {
         let numbers = if numbers == 0 {
             None
         } else {
-            let mean = arith(BinOp::Div, &sum, &Value::int(numbers as i64)).ok()?;
+            let mean = crate::eval::average(&sum, numbers as i64).ok()?;
             // To two places: it is a glance, not the figure.
             let show = |v: &Value| {
                 let v = crate::value::round_digits(v, 2).unwrap_or_else(|_| v.clone());
@@ -3263,7 +3411,7 @@ impl Document {
         let numbers = if numbers == 0 {
             None
         } else {
-            let mean = arith(BinOp::Div, &sum, &Value::int(numbers as i64)).ok()?;
+            let mean = crate::eval::average(&sum, numbers as i64).ok()?;
             // To two places: it is a glance, not the figure.
             let show = |v: &Value| {
                 let v = crate::value::round_digits(v, 2).unwrap_or_else(|_| v.clone());
@@ -5035,6 +5183,7 @@ impl Document {
     }
 
     fn rebuild(&mut self) {
+        self.const_format = const_format_in(&self.text);
         let mut sources = Sources::new();
         let src = sources.add("file", self.text.as_str());
         let (mut program, mut diags) = compile(&self.text, src);
@@ -5146,9 +5295,12 @@ impl Document {
                     }),
                     format: col.format.as_ref().map(|f| f.to_string()),
                     unit: match (col.ty, &col.format) {
-                        (S::Quantity(_), Some(omasheet_omx::colfmt::Format::Quantity(q))) => {
-                            q.unit.to_string()
-                        }
+                        (
+                            S::Quantity(_),
+                            Some(omasheet_omx::colfmt::Format::Quantity(
+                                omasheet_omx::colfmt::QuantityFormat { unit: Some(u), .. },
+                            )),
+                        ) => u.to_string(),
                         (S::Quantity(id), _) => omasheet_omx::units::preferred(id)
                             .map(|u| u.to_string())
                             .unwrap_or_default(),
@@ -5274,6 +5426,24 @@ impl Document {
                     column.ty = S::Complex.to_string();
                 }
             }
+            // And for a number column holding a `Fraction`: a result too big
+            // or too fine for a `Decimal` (`10**100`) is the exact rational
+            // it comes to, whatever the formula was typed as, so the cells
+            // make the column a `Fraction`. A cell written as a fraction is
+            // not a result: beside a decimal it makes the column a decimal. A column that declares its type
+            // refuses the value instead.
+            for (c, column) in columns.iter_mut().enumerate() {
+                let ty = sheet.cols[c].ty;
+                if column.declared || !ty.is_exact() || ty == S::Fraction {
+                    continue;
+                }
+                if rows
+                    .iter()
+                    .any(|row| row[c].formula && matches!(row[c].value, Value::Fraction(_)))
+                {
+                    column.ty = S::Fraction.to_string();
+                }
+            }
             // A table sorted in the grid is shown in that order, while its
             // file still has as many rows as the order numbers. A paged
             // sheet takes the order as its rows are asked for.
@@ -5335,15 +5505,20 @@ impl Document {
                 }
                 Value::Null => "empty".to_string(),
                 Value::Vector(_) | Value::String(..) => engine.show(&value, true),
-                other => show(other),
+                other => match const_format_of(other, &self.const_format) {
+                    Some(f) => engine.show_in(other, false, Some(&f)),
+                    None => show(other),
+                },
             };
+            let formatted = const_format_of(&value, &self.const_format).is_some();
             snapshot.consts.push(ConstSnap {
+                numeric: value.is_numeric() || matches!(value, Value::Quantity(_)),
                 name: c.name.clone(),
                 source: decl.map_or(String::new(), |d| {
                     self.text[d.expr_span.start as usize..d.expr_span.end as usize].to_string()
                 }),
                 exact: exact(&value, true, &display)
-                    .filter(|f| *f != delocalised(&display, &self.style)),
+                    .filter(|f| !formatted && *f != delocalised(&display, &self.style)),
                 display,
                 error: decl.and_then(|d| within(d.expr_span)),
             });
@@ -5448,7 +5623,7 @@ mod tests {
             Document::from_text("sheet T\n\n| U | V |\n| - | - |\n| =1/0 | 1.5 |\n| 2.5 | 2 |\n");
         let columns = &doc.snapshot().sheets[0].columns;
         assert_eq!(columns[0].ty, "Float");
-        assert_eq!(columns[1].ty, "Decimal");
+        assert_eq!(columns[1].ty, "Decimal(1)");
         assert_eq!(col(&doc, 0, 0), ["Inf", "2.5"]);
         // A declared column keeps its type, and its cell is the error.
         let doc = Document::from_text("sheet T\n\nU : Decimal\n\n| U |\n| - |\n| =1/0 |\n");
@@ -5466,10 +5641,10 @@ mod tests {
         assert!(!doc.text().contains("Fraction"), "{}", doc.text());
         assert!(doc.text().contains("1/3"), "{}", doc.text());
         // A decimal typed beside it makes the column a decimal one, a
-        // fraction and a decimal being a decimal.
+        // fraction and a decimal being a decimal: exact only to its places. Each
+        // cell is still shown as it was written.
         assert!(doc.set_cell(0, 1, 1, "0.25"));
         assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Decimal");
-        // Each cell keeps the format its own contents give it (D192).
         assert_eq!(col(&doc, 0, 1), ["1/3", "0.25"]);
         // So does a whole number and a part, proper or not.
         let doc = Document::from_text("sheet T\n\nA\n1 1/2\n5 7/3\n11/3\n");
@@ -5477,7 +5652,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 0), ["1 1/2", "7 1/3", "3 2/3"]);
         // A decimal alone is a `Decimal`, as is a fraction in a declared one.
         let doc = Document::from_text("sheet T\n\nA\n0.5\n0.25\n");
-        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal(2)");
         let doc = Document::from_text("sheet T\n\nA : Decimal\n\nA\n1/3\n");
         assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
         // The same for a percentage: the first cell gives the type that is
@@ -5487,13 +5662,50 @@ mod tests {
         let column = &doc.snapshot().sheets[0].columns[0];
         assert!(!column.declared && column.ty == "Percent");
         assert!(doc.set_cell(0, 1, 0, "1/2"));
+        // A percentage and a fraction together are decimals: a Decimal is
+        // what a percentage beside a fraction becomes.
         assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
         assert_eq!(col(&doc, 0, 0), ["23%", "1/2"]);
-        assert!(!doc.text().contains("Decimal"), "{}", doc.text());
+        assert!(!doc.text().contains("Fraction"), "{}", doc.text());
         // A fraction among text is text.
         let mut doc = Document::from_text("sheet T\n\nA\nabc\n\n");
         assert!(doc.set_cell(0, 1, 0, "1/3"));
         assert!(!doc.text().contains("Fraction"), "{}", doc.text());
+    }
+
+    #[test]
+    fn a_number_too_big_for_a_decimal_makes_its_column_a_fraction() {
+        // `10**100` is typed an `Integer` before it is worked out, and is the
+        // exact fraction it comes to once it is: the column says so.
+        let doc = Document::from_text("sheet T\n\n| N |\n| - |\n| = 10**100 |\n| = 2 |\n");
+        let column = &doc.snapshot().sheets[0].columns[0];
+        assert_eq!(column.ty, "Fraction");
+        assert!(!column.declared);
+        // Small enough, it stays what it was.
+        let doc = Document::from_text("sheet T\n\n| N |\n| - |\n| = 10**3 |\n");
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Integer");
+        // A column that declares a Decimal is not widened: it refuses.
+        let doc = Document::from_text("sheet T\n\nN : Decimal\n\n| N |\n| - |\n| = 10**100 |\n");
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
+        assert!(!doc.snapshot().problems.is_empty());
+    }
+
+    #[test]
+    fn a_column_can_be_declared_decimal_with_its_places() {
+        let mut doc = Document::from_text("sheet T\n\n| N |\n| - |\n| 1.25 |\n");
+        assert!(doc.set_column_types(0, &[0], Some("Decimal(6)")));
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal(6)");
+        assert!(doc.set_column_types(0, &[0], Some("Fraction")));
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Fraction");
+    }
+
+    #[test]
+    fn a_fraction_shown_cut_has_its_exact_value_for_the_footer() {
+        let doc =
+            Document::from_text("sheet T\n\nN : Fraction\n\n| N |\n| - |\n| 1/10001 |\n| 1/2 |\n");
+        let rows = &doc.snapshot().sheets[0].rows;
+        assert_eq!(rows[0][0].exact.as_deref(), Some("1/10001"));
+        assert_eq!(rows[1][0].exact, None);
     }
 
     /// A sheet of `rows` empty computed cells in one column, filled by
@@ -5533,7 +5745,7 @@ mod tests {
         assert_eq!(seq("1, 3 ... Inf", 4), ["1", "3", "5", "7"]);
         assert_eq!(seq("1, 2, 4 ... Inf", 4), ["1", "2", "4", "8"]);
         // Two terms are a difference, so a constant ratio needs three.
-        assert_eq!(seq("1, 1/3 ... Inf", 3), ["1", "0.333·", "-0.333·"]);
+        assert_eq!(seq("1, 1/3 ... Inf", 3), ["1", "1/3", "-0.333·"]);
         // A ratio of thirds cannot be inferred: `1/3` is rounded at the
         // widest scale, and multiplying it out does not give `1/9` back,
         // so the terms read as neither arithmetic nor geometric. Ratios of
@@ -5686,6 +5898,37 @@ mod tests {
         assert!(bad("1, 2, 5 ... Inf").contains("neither an arithmetic nor a geometric"));
         assert!(bad("2025-01-01, 2025-01-05, 2025-01-20 ... Inf").contains("evenly spaced"));
         assert!(bad("$-1 + 1 ... Inf").contains("term to start from"));
+    }
+
+    #[test]
+    fn a_quantity_column_is_set_right() {
+        let doc = Document::from_text(include_str!("../../examples/showcase/codata.omx"));
+        let t = &doc.snapshot().sheets[0];
+        assert_eq!(t.name, "Constants");
+        for (r, row) in t.rows.iter().enumerate() {
+            assert!(row[2].numeric, "row {r}: {:?}", row[2].display);
+        }
+        let c = &t.columns[2];
+        assert_eq!((c.ty.as_str(), c.declared), ("Quantity", true), "{c:?}");
+        assert_eq!(c.unit, "", "{c:?}");
+        // The pane can set the unit-less format on it and take it off.
+        let mut doc = Document::from_text("sheet S\n\nV : Quantity\n\n| V |\n| --- |\n| 5kg |\n");
+        assert_eq!(doc.set_column_format(0, &[0], Some("; .10s")), Ok(()));
+        assert!(
+            doc.text().contains("V : Quantity[; .10s]"),
+            "{}",
+            doc.text()
+        );
+        // A quantity shown cut says its whole value in the footer.
+        let mut cut = Document::from_text("sheet S\n\n| V |\n| --- |\n| = 1m / 3 |\n");
+        let cell = &cut.snapshot().sheets[0].rows[0][0];
+        assert!(
+            cell.display.ends_with('·') && cell.exact.is_some(),
+            "{cell:?}"
+        );
+        let _ = &mut cut;
+        assert_eq!(doc.set_column_format(0, &[0], None), Ok(()));
+        assert!(doc.text().contains("V : Quantity\n"), "{}", doc.text());
     }
 
     #[test]
@@ -6947,7 +7190,7 @@ mod tests {
         assert!(screen.snapshot().sheets[0].sampled);
         assert_eq!(
             types(&screen),
-            ["String", "Integer", "Decimal", "Date", "Datetime"]
+            ["String", "Integer", "Decimal(1)", "Date", "Datetime"]
         );
         let csv_path = dir.join("x.csv");
         assert_eq!(screen.to_convert(), vec![csv_path.clone()]);
@@ -6965,7 +7208,7 @@ mod tests {
         assert!(!screen.snapshot().sheets[0].sampled);
         assert_eq!(
             types(&screen),
-            ["String", "Integer", "Decimal", "Date", "Datetime"]
+            ["String", "Integer", "Decimal(1)", "Date", "Datetime"]
         );
         assert_eq!(shown(&screen)[..sample.len()], sample[..]);
 
@@ -7040,7 +7283,10 @@ mod tests {
         );
         assert_eq!(screen.snapshot().sheets[0].nrows, crate::table::SAMPLE_ROWS);
         assert_eq!(screen.snapshot().sheets[1].nrows, 2);
-        assert_eq!(types(&screen, 0), ["String", "Integer", "Decimal", "Date"]);
+        assert_eq!(
+            types(&screen, 0),
+            ["String", "Integer", "Decimal(1)", "Date"]
+        );
         assert_eq!(types(&screen, 1), ["Integer"]);
         let rows_path = dir.join("book.json#Rows");
         let other_path = dir.join("book.json#Other");
@@ -7328,6 +7574,57 @@ mod tests {
     }
 
     #[test]
+    fn the_constants_take_a_format_and_are_set_right() {
+        let text = include_str!("../../examples/showcase/codata.omx");
+        // The file may carry a format of its own; the test starts with none.
+        let text: String = text.lines().filter(|l| !l.starts_with("consts [")).fold(
+            String::new(),
+            |mut out, l| {
+                out.push_str(l);
+                out.push('\n');
+                out
+            },
+        );
+        let mut doc = Document::from_text(&text);
+        // Ten significant digits, a space before the unit, unless the file says.
+        assert_eq!(doc.const_format(), "; _.10s");
+        assert_eq!(doc.snapshot().consts[1].display, "6.62607015e-34 J.s");
+        assert!(!doc.text().contains("consts ["));
+        assert!(doc.snapshot().consts.iter().all(|c| c.numeric));
+        assert!(Document::check_const_format(Some("; .9s")).is_ok());
+        assert!(Document::check_const_format(Some("; q")).is_err());
+        // None is `consts []`, and shows a derived constant cut, as before.
+        assert_eq!(doc.set_const_format(None), Ok(()));
+        assert!(doc.text().contains("\nconsts []\n"), "{}", doc.text());
+        assert_eq!(doc.snapshot().consts[1].display, "0J.s·");
+        // Another format is a line of its own, saved, and a reopened file has it.
+        assert_eq!(doc.set_const_format(Some("; .9s")), Ok(()));
+        assert_eq!(doc.text().matches("consts [").count(), 1);
+        assert!(doc.text().contains("\nconsts [; .9s]\n"), "{}", doc.text());
+        assert!(
+            doc.snapshot().problems.is_empty(),
+            "{:?}",
+            doc.snapshot().problems
+        );
+        let reopened = Document::from_text(doc.text());
+        assert_eq!(reopened.const_format(), "; .9s");
+        assert_eq!(reopened.snapshot().consts[1].display, "6.62607015e-34J.s");
+        // The default takes the line out; undo brings the last one back.
+        assert_eq!(doc.set_const_format(Some("; _.10s")), Ok(()));
+        assert!(!doc.text().contains("consts"), "{}", doc.text());
+        assert!(doc.undo());
+        assert_eq!(doc.const_format(), "; .9s");
+    }
+
+    #[test]
+    fn a_quantity_with_no_unit_is_offered_formats() {
+        let any = format_suggestions("Quantity", "");
+        assert!(any.iter().any(|(f, _)| f == "; .10s"), "{any:?}");
+        let mass = format_suggestions("Mass", "g");
+        assert!(mass.iter().any(|(f, _)| f == "g; .10s"), "{mass:?}");
+    }
+
+    #[test]
     fn a_type_and_its_unit_are_set_in_one_step() {
         let src = "sheet S\n\n| Dose |\n| ---- |\n| 5mg |\n| 2g |\n";
         let mut doc = Document::from_text(src);
@@ -7390,7 +7687,7 @@ mod tests {
             assert!(offered.len() >= at_least, "{ty}: only {offered:?}");
         }
         assert!(format_suggestions("String", "").is_empty());
-        assert!(format_suggestions("Quantity", "").is_empty());
+        assert!(!format_suggestions("Quantity", "").is_empty());
         // And Apply takes every one of them.
         let src = "sheet S\n\nDue : Date\n\n| Due |\n| --- |\n| 2025-01-31 |\n";
         let mut doc = Document::from_text(src);
@@ -7561,7 +7858,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 0), ["11.000(82)", "10.50(30)"]);
         assert_eq!(
             doc.set_column_format(0, &[0], Some("x")),
-            Err("`x` is for whole numbers: use 'e', 'f' or 'g'".to_string())
+            Err("`x` is for whole numbers: use 'e', 'f', 'g' or 's'".to_string())
         );
         assert!(doc.set_column_format(0, &[0], Some("±")).is_ok());
         assert!(
@@ -7661,7 +7958,8 @@ mod tests {
         // A new column is the last one.
         doc.set_cell(0, 0, 5, "a | b");
         assert_eq!(doc.snapshot().sheets[0].rows[0][5].display, "a | b");
-        doc.add_computed(0, "Margin", "Profit / Revenue").unwrap();
+        doc.add_computed(0, "Margin", "Profit * 1.0 / Revenue")
+            .unwrap();
         let names: Vec<_> = doc.snapshot().sheets[0]
             .columns
             .iter()
@@ -7676,14 +7974,15 @@ mod tests {
         // A column of no declared type takes the type of its values.
         assert_eq!(col(&doc, 0, 6), ["0.4", "0.417·"]);
         assert_eq!(doc.snapshot().sheets[0].columns[6].ty, "Decimal");
+        // A quotient of whole numbers is a fraction, exactly.
+        doc.add_computed(0, "Ratio", "Profit / Revenue").unwrap();
+        assert_eq!(col(&doc, 0, 7), ["2/5", "5/12"]);
+        assert_eq!(doc.snapshot().sheets[0].columns[7].ty, "Fraction");
         // One that does not end is shown cut and marked, so there is more
         // of it to show.
         let exact = |doc: &Document| doc.snapshot().sheets[0].rows[1][6].exact.clone();
-        assert_eq!(
-            exact(&doc).as_deref(),
-            Some("0.416666666666666666666666666667")
-        );
-        doc.set_cell(0, 0, 6, "Profit / Cost");
+        assert_eq!(exact(&doc).as_deref(), Some("0.4166666667"));
+        doc.set_cell(0, 0, 6, "Profit * 1.0 / Cost");
         assert_eq!(col(&doc, 0, 6), ["0.667·", "0.714·"]);
         doc.set_const(0, "50%");
         assert_eq!(col(&doc, 0, 4), ["20", "25"]);
@@ -8318,7 +8617,7 @@ mod tests {
 
     #[test]
     fn a_block_of_cells_is_summed_exactly() {
-        let text = "sheet T\n\nName | A | B\nx | 1 | 0.5\ny | 2 |\nz | = 1/3 | 1e2\n";
+        let text = "sheet T\n\nName | A | B\nx | 1 | 0.5\ny | 2 |\nz | = 1.0/3 | 1e2\n";
         let doc = Document::from_text(text);
         let sum = |from, to| doc.summary(0, from, to).unwrap();
         let numbers = |s: &str, a: &str| Some((s.to_string(), a.to_string()));

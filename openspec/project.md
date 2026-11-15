@@ -28,13 +28,13 @@ that conversation).
    ranges, `*` is the cursor, an empty slot is "all". Scalars, vectors, sheets
    and N-d arrays all use it.
 3. **Exact numerics.** An omasheet type is a name for a Polars dtype, so
-   `Int` is a 64-bit integer and `Decimal` a 38-digit fixed-point decimal,
-   exact where the result fits and reported where it does not. Its scale is
-   signed and wider than a Polars decimal's, so a number past 38 digits
-   keeps them and moves the point, and such a column stays on the engine. Floating
-   point (`Float`) only on request. (`add-polars-dtypes`, D14-D16;
-   arbitrary-precision `Int` and the rational `Fraction` were the earlier
-   reading.)
+   `Int` is a 64-bit integer and `Decimal(s)` a `Decimal(38, s)`, the places
+   `s` the column's own (ten by default): a product or a quotient is rounded
+   once to them, and everything but a `Fraction` is lowered. What does not fit,
+   or must not be rounded, is a `Fraction`: the exact rational, of integers of
+   any size, the engine's alone. Floating point (`Float`) only on request.
+   (`decimal-and-fraction` reverses `add-polars-dtypes` D15, D17 and D25;
+   `add-polars-dtypes` D14-D16 had dropped the rational.)
 4. **Meaning lives in types.** Units, currencies, percentages and uncertainty
    are part of a value's type, declared per column, checked before execution.
    (Base types in Phase 1; units in Phase 4; uncertainty in Phase 5.)

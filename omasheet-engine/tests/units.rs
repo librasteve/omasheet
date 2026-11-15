@@ -92,7 +92,7 @@ fn with_an_uncertainty() {
 
 #[test]
 fn what_is_not_a_unit_is_an_error() {
-    for bad in ["5 kg", "5km/s", "5m2", "5ft", "5L", "5min", "5kgx"] {
+    for bad in ["5 kg", "5km/s", "5m2", "5ft", "5lb", "5min", "5kgx"] {
         let out = eval(None, "<expression>", bad);
         assert!(!out.ok(), "`{bad}` should fail, gave {}", out.output);
     }
@@ -708,4 +708,40 @@ fn the_inverse_trig_functions_give_an_angle() {
     // Beyond its real domain it is a complex number, which has no unit.
     assert_eq!(shown("arcsin(2)"), "1.571+1.317i·");
     assert!(fails("arcsin(0.5rad)").contains("no unit"));
+}
+
+#[test]
+fn a_quantity_gives_its_unit_and_its_value() {
+    assert_eq!(shown("5kg.unit()"), "kg");
+    assert_eq!(shown("unit(9.81m.s^-2)"), "m.s^-2");
+    assert_eq!(shown("5kg.value()"), "5");
+    assert_eq!(shown("(5kg).to('g').value()"), "5000");
+    // The uncertainty goes with the number.
+    assert_eq!(full("(10.5(3)kg).value()"), "10.5 ± 0.3");
+    // And the number is one to calculate with.
+    assert_eq!(shown("(5kg).value() * 2"), "10");
+    assert!(fails("3.unit()").contains("needs a quantity"));
+    assert!(fails("'kg'.value()").contains("needs a quantity"));
+}
+
+#[test]
+fn the_metric_non_si_units_are_exact_multiples() {
+    assert_eq!(shown("(5l).to('m^3')"), "0.005m^3");
+    assert_eq!(shown("5L"), "5l");
+    assert_eq!(shown("(1L).to('ml')"), "1000ml");
+    assert_eq!(shown("(2t).to('kg')"), "2000kg");
+    assert_eq!(shown("(1ha).to('m^2')"), "10000m^2");
+    assert_eq!(shown("(1bar).to('Pa')"), "100000Pa");
+    assert_eq!(shown("(1kcal).to('J')"), "4184J");
+    assert_eq!(shown("(1kWh).to('MJ')"), "3.6MJ");
+    assert_eq!(shown("(1keV).to('eV')"), "1000eV");
+    // The electronvolt and the dalton are tiny: check them by ratio.
+    assert_eq!(shown("1eV / 1.602176634e-19J"), "1");
+    assert_eq!(shown("(1Da / 1.66053906892e-27kg).Float"), "1");
+    // `u` is the micro prefix, and shown as `μ`.
+    assert_eq!(shown("5um"), "5μm");
+    assert_eq!(shown("5um == 5µm"), "true");
+    // Still no imperial units, and `u` is no unit of its own.
+    assert!(fails("5ft").contains("not a number"));
+    assert!(fails("5u").contains("not a number"));
 }

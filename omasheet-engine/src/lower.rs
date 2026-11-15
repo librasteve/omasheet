@@ -42,7 +42,7 @@ use crate::Value;
 use crate::dtype::{decimal, type_of};
 use omasheet_omx::ast::{BinOp, Lit, UnOp};
 use omasheet_omx::decimal::MAX_PRECISION;
-use omasheet_omx::ir::{Func, Ir, Node};
+use omasheet_omx::ir::{Func, Ir, Node, Spec, Ties, Win};
 use omasheet_omx::types::S;
 use polars::prelude::Column as PlColumn;
 use polars::prelude::*;
@@ -50,6 +50,7 @@ use std::cell::RefCell;
 
 /// A lowered expression and the dtype it gives, which is what decides
 /// whether the operation above it may be lowered in turn.
+#[derive(Clone)]
 pub struct Out {
     pub expr: Expr,
     pub dtype: DataType,
@@ -86,6 +87,11 @@ pub struct Cx<'a> {
     /// For each `+`, `-` and `*` of exact numbers, a test that is true where
     /// the result might need more digits than a decimal holds.
     risks: RefCell<Vec<Expr>>,
+    /// Whether a window function was lowered, whose first rows of a
+    /// partition are empty with every column they read present: nothing
+    /// that the caller's test for a null it cannot account for can tell
+    /// from a failure.
+    windowed: std::cell::Cell<bool>,
 }
 
 impl<'a> Cx<'a> {
@@ -98,7 +104,13 @@ impl<'a> Cx<'a> {
             constant,
             taken: RefCell::new(Vec::new()),
             risks: RefCell::new(Vec::new()),
+            windowed: std::cell::Cell::new(false),
         }
+    }
+
+    /// Whether the expression holds a window function.
+    pub fn windowed(&self) -> bool {
+        self.windowed.get()
     }
 
     /// True for a row where some exact `+`, `-` or `*` of the expression
@@ -192,6 +204,284 @@ fn inner(node: &Node, cx: &Cx) -> Option<Out> {
         }
         _ => None,
     }
+}
+
+/// A product or a quotient of exact numbers, worked out exactly by Polars
+/// and rounded once to `places`, half away from zero, as the engine rounds
+/// it.
+///
+/// Polars multiplies exactly, at the sum of the two scales, and divides
+/// truncated at the larger scale plus four, and a cast to a smaller scale
+/// truncates too (measured: `decimal-and-fraction` design). So the rounding
+/// is written out: half a unit of the last place is added, away from zero,
+/// and the cast then cuts it. For a quotient that is exact as well, since the
+/// digit that decides the rounding is one the truncation has kept.
+fn settle(places: u32, node: &Node, cx: &Cx) -> Option<Out> {
+    let Ir::Binary(op, l, r) = &node.kind else {
+        return None;
+    };
+    let exact = match op {
+        BinOp::Mul => inner(node, cx)?,
+        // A small whole power is the base multiplied by itself, exactly:
+        // each step holds the scale of the steps so far, and `arith` refuses
+        // one that passes 38 digits or may not fit (T19). The one rounding
+        // is the one below, so it agrees with the engine's exact power.
+        BinOp::Pow => {
+            let Ir::Lit(Lit::Int(n, _)) = r.kind else {
+                return None;
+            };
+            if !(2..=38).contains(&n) {
+                return None;
+            }
+            let base = inner(l, cx)?;
+            exact_scale(&base.dtype)?;
+            let mut power = base.clone();
+            for _ in 1..n {
+                power = arith(BinOp::Mul, power, base.clone(), cx)?;
+            }
+            power
+        }
+        BinOp::Div => {
+            // The quotient has the larger scale plus four after its point,
+            // and Polars offers at most 21.
+            if places + 4 > 21 {
+                return None;
+            }
+            let (l, r) = (inner(l, cx)?, inner(r, cx)?);
+            let (x, y) = (exact_scale(&l.dtype)?, exact_scale(&r.dtype)?);
+            if x > places || y > places {
+                return None;
+            }
+            // Both sides at the scale the quotient is wanted to, which is
+            // no loss: it is the larger of theirs or more.
+            let at = decimal(places);
+            let quotient = l.expr.strict_cast(at.clone()) / r.expr.strict_cast(at);
+            Out::new(quotient, decimal(places + 4))?
+        }
+        _ => return None,
+    };
+    let held = exact_scale(&exact.dtype)?;
+    let target = decimal(places);
+    if held <= places {
+        return Out::new(exact.expr.strict_cast(target.clone()), target);
+    }
+    // Half a unit of the place to keep, at the scale it is held at.
+    let half = AnyValue::Decimal(5 * 10i128.pow(held - places - 1), held as usize);
+    let at = decimal(held);
+    let half = lit(Scalar::new(at.clone(), half));
+    let zero = lit(Scalar::new(at.clone(), AnyValue::Decimal(0, held as usize)));
+    let x = exact.expr;
+    let rounded = when(x.clone().gt_eq(zero))
+        .then(x.clone() + half.clone())
+        .otherwise(x - half);
+    Out::new(rounded.cast(target.clone()), target)
+}
+
+/// A window function (`cum_sum`, `diff`, `rank`, `rolling_min`...) down a
+/// column, as one Polars expression: the function wrapped in
+/// `over(partition, order_by = key)`, which Polars answers in the original
+/// row order. `None` unless every column it reads is a dtype Polars gives
+/// the engine's answer for: a whole number or a float, and the temporal
+/// types where the function is an order and no arithmetic. Anything else is
+/// the engine's, which works every other type exactly.
+///
+/// The arguments are those the checker builds: the column, the lag or
+/// window length, the order key if there is one, the partition columns,
+/// and the place of the row, which says the call is over this sheet's own
+/// frame and which Polars has no use for.
+fn window(spec: Spec, args: &[Node], cx: &Cx) -> Option<Out> {
+    if !spec.row || !matches!(args.last()?.kind, Ir::RowIndex { depth: 0 }) {
+        return None;
+    }
+    // A narrower whole number is the `Int64` a sheet holds it as.
+    let column = |node: &Node| match node.kind {
+        Ir::Column { col, .. } => cx.read(col).map(|out| match out.dtype {
+            DataType::Int8
+            | DataType::Int16
+            | DataType::Int32
+            | DataType::UInt8
+            | DataType::UInt16
+            | DataType::UInt32 => Out {
+                expr: out.expr.cast(DataType::Int64),
+                dtype: DataType::Int64,
+            },
+            _ => out,
+        }),
+        _ => None,
+    };
+    let value = column(args.first()?)?;
+    let Ir::Lit(Lit::Int(n, _)) = args.get(1)?.kind else {
+        return None;
+    };
+    let mut at = 2;
+    let order = if spec.order {
+        at += 1;
+        Some(column(args.get(2)?)?)
+    } else {
+        None
+    };
+    let parts: Vec<Out> = args
+        .get(at..args.len() - 1)?
+        .iter()
+        .map(column)
+        .collect::<Option<_>>()?;
+    // The keys are compared as Polars compares them where that is the
+    // engine's order: whole numbers, text and the temporal types. A float
+    // key has its `NaN`, which the two put in different places.
+    let keyed = |k: &Out| {
+        matches!(
+            k.dtype,
+            DataType::Int64 | DataType::String | DataType::Boolean
+        ) || temporal(&k.dtype)
+    };
+    if !order.iter().all(keyed) || !parts.iter().all(keyed) {
+        return None;
+    }
+    let whole = value.dtype == DataType::Int64;
+    let float = value.dtype == DataType::Float64;
+    // A decimal, at the scale its column keeps. Polars cumulates, differs,
+    // ranks and fills it, but has no rolling window, no cumulative product
+    // and no ratio of one that is the engine's.
+    let places = match value.dtype {
+        DataType::Decimal(_, Some(s)) => Some(s as i32),
+        _ => None,
+    };
+    let decimal = places.is_some();
+    let number = whole || float || decimal;
+    let x = value.expr.clone();
+    // A float with a `NaN` in it is the engine's: where the functions put
+    // it in an order differs.
+    let nan_free = |cx: &Cx| {
+        if float {
+            cx.risks.borrow_mut().push(x.clone().is_nan().any(true));
+        }
+    };
+    // A whole number total or difference that might pass an `i64`, which
+    // Polars wraps and the engine moves its point for.
+    let may_overflow = |cx: &Cx, by: f64| {
+        let limit = match (whole, places) {
+            (true, _) => 9.0e18,
+            // The digits a decimal holds are 38 of them, a scale of which
+            // are after the point.
+            (_, Some(s)) => 9.9e37 / 10f64.powi(s),
+            _ => return,
+        };
+        let size = x.clone().cast(DataType::Float64).abs().sum();
+        cx.risks
+            .borrow_mut()
+            .push(size.gt_eq(lit(limit / by)).fill_null(lit(false)));
+    };
+    let window_size = usize::try_from(n).ok().filter(|w| *w >= 1);
+    let rolling = |window_size: usize| RollingOptionsFixedWindow {
+        window_size,
+        min_periods: window_size,
+        ..Default::default()
+    };
+    let (expr, dtype) = match spec.win {
+        Win::CumSum if number => {
+            may_overflow(cx, 1.0);
+            (x.cum_sum(false), value.dtype.clone())
+        }
+        Win::CumProd if float => (x.cum_prod(false), value.dtype.clone()),
+        // A ratio of two decimals is not the engine's to give as a float
+        // the way Polars casts them, nor is a rolling window of one.
+        Win::PctChange | Win::RollingSum | Win::RollingMin | Win::RollingMax if decimal => {
+            return None;
+        }
+        Win::CumMin | Win::CumMax if number || temporal(&value.dtype) => {
+            nan_free(cx);
+            let e = if spec.win == Win::CumMin {
+                x.cum_min(false)
+            } else {
+                x.cum_max(false)
+            };
+            (e, value.dtype.clone())
+        }
+        // The values so far that are not empty, counted by hand: every
+        // dtype, and an empty cell is counted past as it is by the engine.
+        Win::CumCount => (
+            x.is_not_null().cast(DataType::Int64).cum_sum(false),
+            DataType::Int64,
+        ),
+        Win::Diff if number => {
+            may_overflow(cx, 2.0);
+            let lag = usize::try_from(n).ok().filter(|w| *w >= 1)?;
+            (
+                x.diff(lit(lag as i64), polars::series::ops::NullBehavior::Ignore),
+                value.dtype.clone(),
+            )
+        }
+        Win::PctChange if number => {
+            window_size?;
+            let f = x.cast(DataType::Float64);
+            (f.clone() / f.shift(lit(n)) - lit(1.0), DataType::Float64)
+        }
+        Win::Rank(ties) if number => {
+            nan_free(cx);
+            let method = match ties {
+                Ties::Average => RankMethod::Average,
+                Ties::Min => RankMethod::Min,
+                Ties::Max => RankMethod::Max,
+                Ties::Dense => RankMethod::Dense,
+                Ties::Ordinal => RankMethod::Ordinal,
+            };
+            let ranked = x.rank(
+                RankOptions {
+                    method,
+                    descending: spec.desc,
+                },
+                None,
+            );
+            if ties == Ties::Average {
+                (ranked, DataType::Float64)
+            } else {
+                (ranked.cast(DataType::Int64), DataType::Int64)
+            }
+        }
+        Win::ForwardFill | Win::BackwardFill if number || holdable(&value.dtype) => {
+            let strategy = if spec.win == Win::ForwardFill {
+                FillNullStrategy::Forward(None)
+            } else {
+                FillNullStrategy::Backward(None)
+            };
+            (x.fill_null_with_strategy(strategy), value.dtype.clone())
+        }
+        // A window of whole numbers adds exactly in either; of floats the
+        // engine adds each window afresh where Polars slides one along, and
+        // the last digit can differ, so that and the mean are the engine's.
+        Win::RollingSum if whole => {
+            may_overflow(cx, 1.0);
+            (x.rolling_sum(rolling(window_size?)), value.dtype.clone())
+        }
+        Win::RollingMin | Win::RollingMax if number => {
+            nan_free(cx);
+            let w = rolling(window_size?);
+            let e = if spec.win == Win::RollingMin {
+                x.rolling_min(w)
+            } else {
+                x.rolling_max(w)
+            };
+            (e, value.dtype.clone())
+        }
+        _ => return None,
+    };
+    let by: Option<Vec<Expr>> =
+        (!parts.is_empty()).then(|| parts.iter().map(|p| p.expr.clone()).collect());
+    let ordered = order.map(|k| {
+        (
+            vec![k.expr],
+            SortOptions::default().with_maintain_order(true),
+        )
+    });
+    // Windows over nothing at all are the expression as it is.
+    let expr = if by.is_none() && ordered.is_none() {
+        expr
+    } else {
+        expr.over_with_options(by, ordered, WindowMapping::GroupsToRows)
+            .ok()?
+    };
+    cx.windowed.set(true);
+    Out::new(expr, dtype)
 }
 
 /// An aggregate over one whole column as a Polars expression, or `None`
@@ -401,6 +691,18 @@ fn call(func: Func, args: &[Node], cx: &Cx) -> Option<Out> {
             text.expr.str().contains_any(parts, false),
             DataType::Boolean,
         );
+    }
+    // A product or a quotient of exact numbers, rounded once to a scale.
+    if let Func::Settle(places) = func {
+        let [node] = args else {
+            return None;
+        };
+        return settle(u32::from(places), node, cx);
+    }
+    // A window function: the whole column, down its partitions in the order
+    // of its key, which Polars runs over the frame of the sheet's columns.
+    if let Func::Window(spec) = func {
+        return window(spec, args, cx);
     }
     // A value among its column's. Over this row's cell the checker gives
     // the column and the row's place as well, which Polars needs neither

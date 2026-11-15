@@ -26,7 +26,7 @@ use crate::ast::Expr;
 use crate::colfmt::{Format, closing};
 use crate::diag::{Diagnostic, Span};
 use crate::parser::parse_expr;
-use crate::types::S;
+use crate::types::{MAX_DECIMAL_SCALE, S};
 
 #[derive(Debug, Default)]
 pub struct FileAst {
@@ -330,7 +330,9 @@ fn read_format(text: &str, ty: S, span: Span, diags: &mut Vec<Diagnostic>) -> Op
             }
             None => span,
         },
-        Format::Number(_) | Format::Scientific(_) | Format::Quantity(_) | Format::Boolean(_) => span,
+        Format::Number(_) | Format::Scientific(_) | Format::Quantity(_) | Format::Boolean(_) => {
+            span
+        }
     };
     diags.push(
         Diagnostic::new(span, format!("{ty} does not take the format `{f}`"))
@@ -506,6 +508,17 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             continue;
         }
 
+        // consts [<format>], before the first sheet: how the constants'
+        // values are shown. The engine reads it from the text.
+        if sheet.is_none()
+            && ast.sheets.is_empty()
+            && after_keyword(trimmed, "consts")
+                .is_some_and(|rest| rest.starts_with('[') && rest.ends_with(']'))
+        {
+            i += 1;
+            continue;
+        }
+
         // const <Name> = <expr>
         if let Some(rest) = after_keyword(trimmed, "const") {
             let n = ident_len(rest);
@@ -626,29 +639,51 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             // `Datetime("Europe/London")`: the zone its cells are the wall
             // clock of, before any format.
             let mut zone = None;
+            let mut scale: Option<u8> = None;
             if k > 0 && after_ty.starts_with('(') {
                 let open = ty_at + k + 1;
                 let inner = &after_ty[1..];
                 match inner.find(')') {
                     Some(close) => {
                         let text = inner[..close].trim();
-                        let name = text
-                            .strip_prefix('"')
-                            .and_then(|t| t.strip_suffix('"'))
-                            .or_else(|| text.strip_prefix('\'').and_then(|t| t.strip_suffix('\'')));
-                        match name {
-                            Some(name) if is_zone_name(name) => {
-                                zone = Some((name.to_string(), Span::new(src, open, open + close)));
+                        if &body[..k] == "Decimal" {
+                            // `Decimal(2)`: the places the column keeps.
+                            match text.parse::<u8>() {
+                                Ok(n) if n <= MAX_DECIMAL_SCALE => scale = Some(n),
+                                _ => diags.push(
+                                    Diagnostic::new(
+                                        Span::new(src, open, open + close),
+                                        "a scale is a whole number of places from 0 to 38"
+                                            .to_string(),
+                                    )
+                                    .with_help("as `Decimal(2)`"),
+                                ),
                             }
-                            _ => diags.push(
-                                Diagnostic::new(
-                                    Span::new(src, open, open + close),
-                                    "a zone is the name of a time zone in quotes".to_string(),
-                                )
-                                .with_help("as `Datetime(\"Europe/London\")`"),
-                            ),
+                            after_ty = &after_ty[close + 2..];
+                        } else {
+                            let name = text
+                                .strip_prefix('"')
+                                .and_then(|t| t.strip_suffix('"'))
+                                .or_else(|| {
+                                    text.strip_prefix('\'').and_then(|t| t.strip_suffix('\''))
+                                });
+                            match name {
+                                Some(name) if is_zone_name(name) => {
+                                    zone = Some((
+                                        name.to_string(),
+                                        Span::new(src, open, open + close),
+                                    ));
+                                }
+                                _ => diags.push(
+                                    Diagnostic::new(
+                                        Span::new(src, open, open + close),
+                                        "a zone is the name of a time zone in quotes".to_string(),
+                                    )
+                                    .with_help("as `Datetime(\"Europe/London\")`"),
+                                ),
+                            }
+                            after_ty = &after_ty[close + 2..];
                         }
-                        after_ty = &after_ty[close + 2..];
                     }
                     None => {
                         diags.push(Diagnostic::new(
@@ -709,6 +744,10 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             }
             match S::from_name(ty_text) {
                 Some(ty) => {
+                    let ty = match (ty, scale) {
+                        (S::Decimal(_), Some(n)) => S::Decimal(n),
+                        (ty, _) => ty,
+                    };
                     let format = format_text.and_then(|(text, open)| {
                         read_format(text, ty, Span::new(src, open, open + text.len()), diags)
                     });
@@ -833,7 +872,7 @@ mod tests {
         assert_eq!(ast.consts.len(), 1);
         let t = &ast.sheets[0];
         assert_eq!((t.header.len(), t.rows.len(), t.computed.len()), (3, 2, 1));
-        assert_eq!(t.schema[0].ty, S::Decimal);
+        assert_eq!(t.schema[0].ty, S::DECIMAL);
     }
 
     #[test]
@@ -869,7 +908,7 @@ mod tests {
         let ast = parse_file(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         let schema = &ast.sheets[0].schema;
-        assert_eq!(schema[0].ty, S::Decimal);
+        assert_eq!(schema[0].ty, S::DECIMAL);
         assert_eq!(
             schema[0].format.as_ref().map(|f| f.to_string()).as_deref(),
             Some("'.2f")

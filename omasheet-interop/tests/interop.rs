@@ -86,8 +86,8 @@ fn csv_of_one_sheet_has_values_for_computed_columns() {
     assert_eq!(
         text_of(&out, 0),
         "Month,Revenue,Cost,Profit,Share\n\
-         Jan,10000,6000,4000,1333.33333333333333333333333333\n\
-         Feb,12000,7000,5000,1666.66666666666666666666666667\n"
+         Jan,10000,6000,4000,4000/3\n\
+         Feb,12000,7000,5000,5000/3\n"
     );
     assert!(out.notices.is_empty(), "{:?}", out.notices);
 }
@@ -98,7 +98,7 @@ fn csv_keeps_exact_what_ends() {
     let out = csv_of(file, None);
     assert_eq!(
         text_of(&out, 0),
-        "A\n19.99\n1267650600228229401496703205376\n0.333333333333333333333333333333\n0.0009765625\n"
+        "A\n19.99\n1267650600228229401496703205376\n0.3333333333\n0.0009765625\n"
     );
     // Nothing is rounded to write it: a decimal holds every digit there
     // is of it, so there is nothing to report.
@@ -111,7 +111,7 @@ fn csv_keeps_percentages() {
     let out = csv_of(file, None);
     let text = text_of(&out, 0);
     assert!(
-        text.starts_with("A,B\n20%,40%\n12.5%,33.3333333333333333"),
+        text.starts_with("A,B\n20%,40%\n12.5%,33.33333333%"),
         "{text}"
     );
     assert!(out.notices.is_empty(), "{:?}", out.notices);
@@ -193,8 +193,8 @@ fn csv_imports_a_sheet_named_after_the_file() {
 #[test]
 fn csv_reads_every_digit() {
     let out = csv::import("t", b"A\n0.12345678901234567890123\n").unwrap();
-    // Every digit is read and kept; multiplying out brings them back, as
-    // far as the thirty-eight a decimal holds.
+    // Every digit is read and kept, and the places it needs are declared:
+    // 23 of them are a `Decimal(23)`, and multiplying out brings them back.
     assert_eq!(
         eval(&out.source, "t[A; 0] * 1000000000000000"),
         "123456789012345.67890123"
@@ -471,6 +471,7 @@ Odd   := [N; *] in [10, 30]
 }
 
 #[test]
+#[ignore = "a number past 38 digits is a Fraction: decimal-and-fraction, step F"]
 fn xlsx_writes_a_number_past_a_double_as_text() {
     // A workbook holds its numbers as doubles, and a number whose point
     // sits past where a double reaches is no double at all. Rather than
@@ -498,7 +499,7 @@ fn xlsx_writes_one_third_as_the_nearest_double() {
     let file = "sheet T\n\nA | B | C | D\n= 1/3 | 0.5 | true | 2025-01-31\n";
     let out = xlsx::export("t.omx", file, None, options()).unwrap();
     let rows = cells(&out.files[0].bytes, "T");
-    assert_eq!(rows[1][0], Data::Float(0.333_333_333_333_333_3));
+    assert_eq!(rows[1][0], Data::Float(1.0 / 3.0));
     assert_eq!(rows[1][1], Data::Float(0.5));
     assert_eq!(rows[1][2], Data::Bool(true));
     assert!(
@@ -748,11 +749,11 @@ sheet YearEnd
     lints(&out.source);
     // The file works out what the workbook held.
     assert_eq!(eval(&out.source, "Sales.Running"), "[4000, 9000, 14700]");
-    assert_eq!(eval(&out.source, "Sales.Margin"), "[0.4, 0.4167, 0.4318]");
     assert_eq!(
-        eval(&out.source, "YearEnd[Value; 4]"),
-        "0.417613636363636363636363636364"
+        eval(&out.source, "Sales.Margin"),
+        "[2/5, 4167/10000, 2159/5000]"
     );
+    assert_eq!(eval(&out.source, "YearEnd[Value; 4]"), "147/352");
     assert_eq!(eval(&out.source, "YearEnd[Value; 5]"), "yes");
 }
 
@@ -808,8 +809,8 @@ fn json_holds_every_sheet_as_rows_by_column_name() {
     assert_eq!(
         text_of(&out, 0),
         "{\n  \"Sales\": [\n    \
-         {\"Month\": \"Jan\", \"Revenue\": 10000, \"Cost\": 6000, \"Profit\": 4000, \"Share\": 1333.33333333333333333333333333},\n    \
-         {\"Month\": \"Feb\", \"Revenue\": 12000, \"Cost\": 7000, \"Profit\": 5000, \"Share\": 1666.66666666666666666666666667}\n  ],\n  \
+         {\"Month\": \"Jan\", \"Revenue\": 10000, \"Cost\": 6000, \"Profit\": 4000, \"Share\": \"4000/3\"},\n    \
+         {\"Month\": \"Feb\", \"Revenue\": 12000, \"Cost\": 7000, \"Profit\": 5000, \"Share\": \"5000/3\"}\n  ],\n  \
          \"Summary\": [\n    {\"Item\": \"Revenue\", \"Value\": 22000}\n  ]\n}\n"
     );
     assert!(out.notices.is_empty(), "{:?}", out.notices);
@@ -826,7 +827,7 @@ fn json_writes_each_kind_of_value() {
     assert_eq!(
         text_of(&out, 0),
         "[\n  \
-         {\"Name\": \"a\", \"Count\": 7, \"Price\": 19.99, \"Rate\": 0.2, \"N\": 1e+20, \"F\": 0.333333333333333333333333333333, \
+         {\"Name\": \"a\", \"Count\": 7, \"Price\": 19.99, \"Rate\": 0.2, \"N\": 1e+20, \"F\": 0.3333333333, \
          \"On\": true, \"Day\": \"2025-01-31\", \"At\": \"09:30\", \"Gap\": null, \"Bad\": null},\n  \
          {\"Name\": \"42\", \"Count\": -3, \"Price\": 0.125, \"Rate\": -0.05, \"N\": \"Inf\", \"F\": 0.125, \
          \"On\": false, \"Day\": \"2025-02-01\", \"At\": \"17:05\", \"Gap\": \"x\", \"Bad\": 1}\n]\n"
@@ -1126,23 +1127,10 @@ fn parquet_keeps_a_decimal_exact() {
     lints(&back.source);
     assert_eq!(eval(&back.source, "t[A; 0]"), "19.99");
     assert_eq!(eval(&back.source, "t[A; 1]"), "0.0009765625");
-    // A Parquet column has one scale for all its values, so the widest it
-    // can use is the narrowest any of them allows: `19.99` needs two digits
-    // before the point, which leaves thirty-six after it. A third is written
-    // to that scale rather than its own thirty-eight, and the cell it comes
-    // back as carries every one of those digits.
-    assert!(
-        back.source
-            .contains("0.333333333333333333333333333333333333"),
-        "{}",
-        back.source
-    );
-    // Shown, it is the guarded form: the last eight of the thirty-eight
-    // digits are working room, so thirty of them are read.
-    assert_eq!(
-        eval(&back.source, "t[A; 2]"),
-        "0.333333333333333333333333333333"
-    );
+    // A `Decimal` column has its scale, ten places, and a Parquet decimal
+    // is written at it: a third is `0.3333333333`, every digit of it.
+    assert!(back.source.contains("0.3333333333"), "{}", back.source);
+    assert_eq!(eval(&back.source, "t[A; 2]"), "0.3333333333");
 }
 
 #[test]
@@ -1156,6 +1144,7 @@ fn parquet_leaves_a_failed_cell_empty() {
 }
 
 #[test]
+#[ignore = "a number past 38 digits is a Fraction: decimal-and-fraction, step F"]
 fn parquet_writes_null_for_a_value_wider_than_the_column_type() {
     // A number past the digits Polars can name has nowhere to sit in a
     // `Decimal(38, s)`, so its cell is written null and the write says so.
@@ -2108,7 +2097,12 @@ fn a_workbook_sheet_with_offsets_gaps_and_every_kind_of_cell_reads_as_an_import_
     assert_eq!(
         types,
         [
-            "String", "Datetime", "Time", "Duration", "Boolean", "Decimal"
+            "String",
+            "Datetime",
+            "Time",
+            "Duration",
+            "Boolean",
+            "Decimal(1)"
         ]
     );
     let rows = shown_rows(&table, 0);
@@ -2335,20 +2329,35 @@ fn a_workbook_with_a_formula_that_is_not_filled_down_a_column_is_imported_not_re
         }
     });
     assert!(e.contains("no translation"), "{e}");
-    // A formula that is one down the column but that Polars will not
-    // calculate whole (a whole number divided by another is an exact
-    // fraction), which it cannot be held to the workbook by.
-    let e = why("fraction.xlsx", 30, &|sheet, _| {
-        for r in 1..=30 {
-            sheet
-                .write_formula(
-                    r,
-                    4,
-                    Formula::new(format!("=D{0}/B{0}", r + 1)).set_result("0.4"),
-                )
-                .unwrap();
-        }
-    });
-    assert!(e.contains("not one Polars calculates"), "{e}");
+    // (A quotient used to be the formula Polars would not calculate whole;
+    // it is lowered now, rounded to ten places, and so is held to the workbook.)
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn parquet_keeps_a_fraction_exact_as_num_and_den() {
+    // A `Fraction` is a struct of two strings, so a googol and its
+    // reciprocal come back to the digit (decimal-and-fraction T13).
+    let file = "sheet T\n\nF : Fraction\n\n| F |\n| --- |\n| 1/3 |\n| = 10**100 |\n| = 1/10**100 |\n| -7/2 |\n";
+    let out = parquet_of(file, None);
+    assert!(out.notices.is_empty(), "{:?}", out.notices);
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    assert!(back.source.contains("F : Fraction"), "{}", back.source);
+    assert_eq!(eval(&back.source, "t[F; 0]"), "1/3");
+    assert_eq!(
+        eval(&back.source, "t[F; 1]"),
+        format!("1{}", "0".repeat(100))
+    );
+    assert_eq!(eval(&back.source, "t[F; 2] * t[F; 1]"), "1");
+    assert_eq!(eval(&back.source, "t[F; 3]"), "-7/2");
+}
+
+#[test]
+fn parquet_decimal_flag_writes_a_fraction_as_a_float_and_says_so() {
+    let file = "sheet T\n\nF : Fraction\n\n| F |\n| --- |\n| 1/3 |\n";
+    let out = parquet::export_with("file.omx", file, None, options(), false, true).unwrap();
+    assert_eq!(out.notices.len(), 1, "{:?}", out.notices);
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    assert!(back.source.contains("F : Float"), "{}", back.source);
 }

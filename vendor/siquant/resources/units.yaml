@@ -1,0 +1,86 @@
+# Units. Each entry has a `symbol`, a `name` (a picker label only) and exactly
+# one of:
+#   base: <base dimension>   a base unit of that dimension
+#   defn: <unit expression>  defined over units listed EARLIER in this file,
+#                            in the same notation as cell text (kg.m^2.s^-2)
+#
+# Optional: `factor` (decimal string, default 1; the size of the unit in the
+# coherent SI unit), `offset` (decimal string, default 0; added in the unit's
+# own scale before scaling, so kelvin = (celsius + 273.15) * 1), `alt`
+# (typographic alternate symbols), `prefixable` (none | si | binary | both,
+# default none) and `live` (true, the default, means it may be written in
+# cell text; false means a column-level unit only).
+#
+# A printed compound unit lists positive exponents first, named derived units
+# before base units, then base units in the order below (mass, length, current,
+# temperature, amount, luminous intensity, and time last): N.m, kg.m.s^-2,
+# A.s, m.s^-1.
+#
+# `g`, not `kg`, is the prefixable mass unit, at 1e-3 of the coherent kilogram,
+# so `kg` is just `k` + `g` with no special case.
+
+# SI base units.
+- {symbol: g,   name: gram,     base: Mass,              factor: "0.001", prefixable: si, group: Size}
+- {symbol: m,   name: metre,    base: Length,            prefixable: si}
+- {symbol: A,   name: ampere,   base: Current,           prefixable: si}
+- {symbol: K,   name: kelvin,   base: Temperature,       prefixable: si}
+- {symbol: mol, name: mole,     base: Amount,            prefixable: si}
+- {symbol: cd,  name: candela,  base: LuminousIntensity, prefixable: si}
+- {symbol: s,   name: second,   base: Time,              prefixable: si}
+
+# Celsius is affine: kelvin = (celsius + 273.15). Not prefixable, and legal
+# only on its own (never inside a compound unit).
+- {symbol: "°C", name: degree Celsius, defn: K, offset: "273.15", alt: ["ºC"], group: Size}
+
+# SI named derived units.
+- {symbol: Hz,  name: hertz,     defn: "s^-1",                prefixable: si, group: Size}
+- {symbol: N,   name: newton,    defn: "kg.m.s^-2",           prefixable: si, group: Mechanical}
+- {symbol: Pa,  name: pascal,    defn: "kg.m^-1.s^-2",        prefixable: si, group: Mechanical}
+- {symbol: J,   name: joule,     defn: "kg.m^2.s^-2",         prefixable: si, group: Mechanical}
+- {symbol: W,   name: watt,      defn: "kg.m^2.s^-3",         prefixable: si, group: Mechanical}
+- {symbol: C,   name: coulomb,   defn: "A.s",                 prefixable: si, group: Electromagnetic}
+- {symbol: V,   name: volt,      defn: "kg.m^2.A^-1.s^-3",    prefixable: si, group: Electromagnetic}
+- {symbol: F,   name: farad,     defn: "kg^-1.m^-2.A^2.s^4",  prefixable: si, group: Electromagnetic}
+- {symbol: Ω,   name: ohm,       defn: "kg.m^2.A^-2.s^-3",    prefixable: si, alt: ["Ω"], group: Electromagnetic}
+- {symbol: S,   name: siemens,   defn: "kg^-1.m^-2.A^2.s^3",  prefixable: si, group: Electromagnetic}
+- {symbol: Wb,  name: weber,     defn: "kg.m^2.A^-1.s^-2",    prefixable: si, group: Electromagnetic}
+- {symbol: T,   name: tesla,     defn: "kg.A^-1.s^-2",        prefixable: si, group: Electromagnetic}
+- {symbol: H,   name: henry,     defn: "kg.m^2.A^-2.s^-2",    prefixable: si, group: Electromagnetic}
+- {symbol: Bq,  name: becquerel, defn: "s^-1",                prefixable: si, group: Radiation}
+- {symbol: Gy,  name: gray,      defn: "m^2.s^-2",            prefixable: si, group: Radiation}
+- {symbol: Sv,  name: sievert,   defn: "m^2.s^-2",            prefixable: si, group: Radiation}
+- {symbol: kat, name: katal,     defn: "mol.s^-1",            prefixable: si, group: Thermodynamic}
+
+# Data (Stage 2). The bit is the base unit of data and the byte is eight of
+# them. Both take the SI prefixes (`kB` is 1000 B) and the binary ones (`KiB` is
+# 1024 B); rates need no entry of their own: `kb.s^-1`, `MiB.s^-1`.
+- {symbol: b, name: bit,  base: Data, prefixable: both, group: Data}
+- {symbol: B, name: byte, defn: b, factor: "8", prefixable: both, group: Data}
+
+# Angles (Stage 3). The radian is the base unit of the angle dimension, so a
+# frequency (`s^-1`) and an angular speed (`rad.s^-1`) are not the same thing,
+# and the steradian is a radian squared. The degree, the minute of arc and the
+# second of arc are non-SI units the SI accepts; they are live so that `45°`
+# can be written, and cannot take a prefix. `'` and `"` are the ASCII
+# alternates of `′` and `″`, and `º` of `°`.
+- {symbol: rad, name: radian,    base: Angle, prefixable: si, group: Angle}
+- {symbol: sr,  name: steradian, defn: "rad^2", prefixable: si, group: Angle}
+- {symbol: "°", name: degree,    defn: rad, factor: "0.017453292519943295", alt: ["º"], group: Angle}
+- {symbol: "′", name: arcminute, defn: "°", factor: "0.016666666666666666", alt: ["'"], group: Angle}
+- {symbol: "″", name: arcsecond, defn: "′", factor: "0.016666666666666666", alt: ['"'], group: Angle}
+
+# Light (Stage 3): the lumen and the lux need the steradian.
+- {symbol: lm,  name: lumen,     defn: "cd.sr",    prefixable: si, group: Light}
+- {symbol: lx,  name: lux,       defn: "cd.sr.m^-2", prefixable: si, group: Light}
+
+# Non-SI units for the metric stage (omasheet): each an exact multiple of an
+# SI unit, none of the imperial ones. `L` is the other spelling of the litre.
+# `Da` is the dalton (CODATA 2022: 1.66053906892e-27 kg).
+- {symbol: l,   name: litre,            defn: "m^3", factor: "0.001",     alt: ["L"], prefixable: si, group: Size}
+- {symbol: t,   name: tonne,            defn: g,      factor: "1000000", group: Size}
+- {symbol: ha,  name: hectare,          defn: "m^2", factor: "10000",                  group: Size}
+- {symbol: bar, name: bar,              defn: Pa,     factor: "100000",                prefixable: si, group: Mechanical}
+- {symbol: eV,  name: electronvolt,     defn: J,      factor: "1.602176634e-19",       prefixable: si, group: Mechanical}
+- {symbol: cal, name: calorie,          defn: J,      factor: "4.184",                 prefixable: si, group: Mechanical}
+- {symbol: Wh,  name: watt-hour,        defn: J,      factor: "3600",                  prefixable: si, group: Mechanical}
+- {symbol: Da,  name: dalton,           defn: g,      factor: "1.66053906892e-24",     prefixable: si, group: Size}

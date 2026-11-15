@@ -12,6 +12,7 @@ pub mod locale;
 pub mod numfmt;
 pub mod quantity;
 pub mod value;
+pub mod window;
 pub mod zone;
 
 pub use doc::Document;

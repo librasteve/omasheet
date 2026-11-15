@@ -30,7 +30,7 @@ omasheet print file.omx                   # calculate and print every sheet
 omasheet lint file.omx                    # check without calculating
 omasheet eval file.omx 'Orders.Net.sum()' # one expression against a file
 omasheet eval '1/3 + 1/6'                  # or on its own
-omasheet eval --exact file.omx '...'      # every number in full, not 1.8446744073709551·e+19
+omasheet eval --exact file.omx '...'      # every number in full, not 1.8446744073709551e+19·
 ```
 
 Errors come as `file:line:col: error: message` with the line and a marker,
@@ -150,12 +150,12 @@ what you want; declare one when the cells could be read another way.
 | Type | Written |
 |---|---|
 | `Integer` | `42`, `1_000_000` |
-| `Decimal` | `19.99`, `1/7`, `2 3/4` — exact |
-| `Fraction` | `1/7`, `2 3/4`, `0.125` — exact, shown as a fraction, `1/7` and `2 3/4` |
+| `Decimal` | `19.99` — exact to the places its column keeps: `Decimal(2)` is two, a bare `Decimal` ten. A product or a quotient with a decimal in it is rounded to them (`1.0/3 * 3` is `0.9999999999`); a column that declares nothing keeps the least that holds its cells |
+| `Fraction` | `1/7`, `2 3/4` in a cell, `<1/7>` in a formula — the exact rational, shown as a fraction, and what a quotient of whole numbers is: `1/3 * 3` is `1`. Use it also where a number needs more than 38 digits: `10**100` is a `Fraction` where nothing declares a `Decimal` |
 | `Percent` | `20%` — exact, shown as a percentage |
 | `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `'Inf'` in code, `"Inf"` in a cell), which is what a division by zero gives |
 | `Scientific` | `10.5(3)` or `10 ± 0.3` — a value with its measurement uncertainty; digits in brackets are the uncertainty in the last places, an exponent after them scales both: `7.297_352_5643(11)e-3`. It carries through `+ - * / **` and the math functions to first order (independent, in quadrature), `sum` and `mean`; shown as `11.000(82)`, or as a column format in brackets after the type says: `±`, places `.4`, an exponent `e-3`, or together `±.4e-3`. No uncertain complex: beside a `Complex` it becomes a `Float`, with a warning |
-| `Quantity` and its kinds | `5kg`, `300cm`, `9.81m.s^-2`, `10.5(3)e-3kg`, `20°C` — a number and an SI unit with no space, `.` between terms, `^` and a whole exponent, no `/`; only SI units in a cell (prefixes `q`..`Q`, and `g m s A K mol cd`, `Hz N Pa J W C V F Ω S Wb T H Bq Gy Sv kat`, `°C`). `5kg + 300g` is `5.3kg`; a sum needs one dimension and converts the right side to the left's unit; a product or quotient combines units; a result with no dimension is a plain number; `x.to('g')` converts; `1k.` is a scale, the number 1000, and `5m.` is 0.005 while `5m` is five metres. A column `Weight : Mass` holds a cell in the preferred unit, `kg`, or the one in brackets, `Mass[g]`, and reads a bare number in it; a cell of another dimension is an error; `std` and `var` are not taken |
+| `Quantity` and its kinds | `5kg`, `300cm`, `9.81m.s^-2`, `10.5(3)e-3kg`, `20°C` — a number and an SI unit with no space, `.` between terms, `^` and a whole exponent, no `/`; only metric units in a cell (prefixes `q`..`Q`, and `g m s A K mol cd`, `Hz N Pa J W C V F Ω S Wb T H Bq Gy Sv kat`, `°C`, and `l`/`L` `t` (no prefix) `ha` `bar` `eV` `cal` `Wh` `Da`; `u` is the prefix `μ`; no imperial units). `5kg + 300g` is `5.3kg`; a sum needs one dimension and converts the right side to the left's unit; a product or quotient combines units; a result with no dimension is a plain number; `x.to('g')` converts, `x.unit()` is its unit as text and `x.value()` its number with the uncertainty; `1k.` is a scale, the number 1000, and `5m.` is 0.005 while `5m` is five metres. A column `Weight : Mass` holds a cell in the preferred unit, `kg`, or the one in brackets, `Mass[g]`, and reads a bare number in it; a cell of another dimension is an error; `std` and `var` are not taken |
 | `Complex` | `3+4i`, `-1.5-2i`, `2i` — two `Float` parts, the most infectious number type; no order, so no `<` or sort. `re im conj arg` and every math function but `round floor ceil radians degrees` take one; a real past a domain gives one (`sqrt(-4)` is `0+2i`, so a column declared `Float` holding it is an error); `z.Float` works only where the imaginary part is zero |
 | `Boolean` | `true`, `false`; a declared column also reads `1`, `0`, `x`, `o`, `X`, `O`, and shows them by a format of any two characters: `Boolean[10]`, `[xo]`, `[✓✗]` |
 | `Date`, `Time`, `Datetime` | `2025-01-31`, `09:30`, `2025-01-31T09:30` — always ISO. A fraction of a second goes after the seconds, `09:30:15.5`: nine digits for a `Time`, six for a `Datetime` |
@@ -169,7 +169,7 @@ declared one stops the file until every cell reads, so for data that came in
 from elsewhere, read it by name first and declare it once it is clean.
 
 An `Integer` is a `Decimal`. Sums, products, divisions and averages of decimals
-are all `Decimal`. An `Integer` holds 64 bits and a `Decimal` 38 significant digits; a
+are all `Decimal`; a quotient of whole numbers is a `Fraction`, and an average of them a `Decimal`. An `Integer` holds 64 bits and a `Decimal` 38 significant digits; a
 whole number past an `Integer` becomes a `Decimal`, and one past 38 digits
 keeps its 38 and moves the point, so `10**1000` is exact in one digit.
 Only past `1e2147483685`, where the point stops, is a number reported as
@@ -250,6 +250,13 @@ that do not fit are cut and marked `·`. A `Decimal`, `Float` or `Complex` is sh
   usual maths, `today() now() year month day weekday`, `succ` for the next
   value, and the type names as conversions,
   `x.Integer`, `x.Float`, `x.Fraction`, `x.Percent`, `x.String`.
+- Down a column: `Amount.cum_sum()` is a running total, and `cum_min cum_max
+  cum_prod cum_count`, `diff`, `pct_change`, `rank`, `forward_fill`,
+  `backward_fill` and `rolling_sum(3)` (also `rolling_mean rolling_min
+  rolling_max rolling_std`) are like it. Rows go in file order unless an
+  order key is named, so give a ledger its date: `Amount.cum_sum(Date by
+  Account)` is a running total for each account in date order, wherever a
+  row sits in the file.
 - A date plus a whole number is days later; two dates subtract to days.
   `n.day`, `n.week`, `n.month` and `n.year` next to a date say which unit:
   `Placed + 1.month`, which keeps the day of the month or clamps it to the

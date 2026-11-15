@@ -52,7 +52,8 @@ pub fn analyse(edges: &[Vec<(usize, DepKind)>]) -> Vec<Scc> {
                 })
                 .collect();
             let has = |kind: DepKind| internal.iter().find(|e| e.2 == kind).copied();
-            let cycle = if let Some((u, v, _)) = has(DepKind::Whole) {
+            let cycle = if let Some((u, v, _)) = has(DepKind::Whole).or_else(|| has(DepKind::Frame))
+            {
                 Some(close(&internal, u, v, |_| true))
             } else if let (Some(_), Some((u, v, _))) = (has(DepKind::Back), has(DepKind::Fwd)) {
                 Some(close(&internal, u, v, |_| true))

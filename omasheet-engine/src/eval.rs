@@ -176,6 +176,10 @@ pub struct Engine<'p> {
     /// the function, the sheet and the column: worked out once for the
     /// column and looked up a row at a time.
     marks: RefCell<Vec<Marks>>,
+    /// What a window function (`cum_sum`, `diff`, `rank`...) gives down a
+    /// whole column, by the call and the columns it reads: worked out
+    /// once and looked up a row at a time.
+    shaped: RefCell<Vec<(String, Rc<Vec<Value>>)>>,
     /// Which of a `table`'s columns have been read from its file, by sheet
     /// and column, in the order they were read. What is not here was never
     /// read.
@@ -296,7 +300,7 @@ pub(crate) enum Scalar {
     Null,
     Int(i64, Base),
     Decimal(Dec),
-    Fraction(Dec),
+    Fraction(omasheet_omx::rational::Rat),
     Percent(Dec),
     Float(f64),
     Boolean(bool),
@@ -314,7 +318,7 @@ impl Scalar {
             Value::Null => Scalar::Null,
             Value::Int(n, base) => Scalar::Int(*n, *base),
             Value::Decimal(d) => Scalar::Decimal(*d),
-            Value::Fraction(d) => Scalar::Fraction(*d),
+            Value::Fraction(r) => Scalar::Fraction((**r).clone()),
             Value::Percent(d) => Scalar::Percent(*d),
             Value::Float(f) => Scalar::Float(*f),
             Value::Boolean(b) => Scalar::Boolean(*b),
@@ -332,7 +336,7 @@ impl Scalar {
             Scalar::Null => Value::Null,
             Scalar::Int(n, base) => Value::Int(*n, *base),
             Scalar::Decimal(d) => Value::Decimal(*d),
-            Scalar::Fraction(d) => Value::Fraction(*d),
+            Scalar::Fraction(r) => Value::Fraction(Rc::new(r.clone())),
             Scalar::Percent(d) => Value::Percent(*d),
             Scalar::Float(f) => Value::Float(*f),
             Scalar::Boolean(b) => Value::Boolean(*b),
@@ -518,6 +522,7 @@ impl<'p> Engine<'p> {
             aggregates: RefCell::new(Vec::new()),
             filters: RefCell::new(Vec::new()),
             marks: RefCell::new(Vec::new()),
+            shaped: RefCell::new(Vec::new()),
             reads: RefCell::new(Vec::new()),
             rows_read: RefCell::new(0),
             float_totals: std::cell::Cell::new(0),
@@ -651,13 +656,13 @@ impl<'p> Engine<'p> {
         // A plan, an optimiser pass and a collect are slower than the row
         // loop for a sheet of ten rows (D73). An empty sheet has nothing to
         // calculate either way.
-        if !col.elementwise
+        if !(col.elementwise || col.framewise)
             || nrows == 0
             || (self.options.lowering == Lowering::Auto && nrows < ROW_THRESHOLD)
         {
             return false;
         }
-        let Some((frame, expr)) = self.plan(t, c, node) else {
+        let Some((frame, expr, windowed)) = self.plan(t, c, node) else {
             self.attempts.borrow_mut().push((t, c, Attempt::Refused));
             return false;
         };
@@ -665,7 +670,7 @@ impl<'p> Engine<'p> {
         // discarded, no diagnostic is filed for the attempt, and the group
         // is calculated again row by row, which is what produces a per-cell
         // error with the row in it (D67).
-        let Some(column) = self.lowered_column(frame, expr, nrows) else {
+        let Some(column) = self.lowered_column(frame, expr, nrows, windowed) else {
             self.attempts.borrow_mut().push((t, c, Attempt::Failed));
             return false;
         };
@@ -690,7 +695,13 @@ impl<'p> Engine<'p> {
     /// Nothing of the frame is borrowed from here on: the plan is built and
     /// the columns owned before the collect, which Polars runs on a pool of
     /// its own threads (D67's `RefCell` discipline).
-    fn lowered_column(&self, frame: DataFrame, expr: Expr, len: usize) -> Option<PlColumn> {
+    fn lowered_column(
+        &self,
+        frame: DataFrame,
+        expr: Expr,
+        len: usize,
+        windowed: bool,
+    ) -> Option<PlColumn> {
         let unaccounted = frame
             .get_column_names()
             .into_iter()
@@ -703,7 +714,7 @@ impl<'p> Engine<'p> {
             .select([expr, unaccounted])
             .collect()
             .ok()
-            .filter(accounted_for)
+            .filter(|df| windowed || accounted_for(df))
             .and_then(|df| df.get_columns().first().cloned())
             .filter(|column| column.len() == len)?;
         // Polars gives arithmetic a dtype of precision `None`; the full 38
@@ -789,8 +800,8 @@ impl<'p> Engine<'p> {
             return None;
         }
         let column = |cc: usize| self.window_column(t, cc, from, to);
-        let (frame, expr) = self.plan_with(t, c, node, &column)?;
-        let window = self.lowered_column(frame, expr, to - from)?;
+        let (frame, expr, windowed) = self.plan_with(t, c, node, &column)?;
+        let window = self.lowered_column(frame, expr, to - from, windowed)?;
         self.windows.borrow_mut()[t][c] = Some((from, window.clone()));
         Some(window)
     }
@@ -1746,7 +1757,7 @@ impl<'p> Engine<'p> {
     /// The frame a column's formula is evaluated over and the one
     /// expression that calculates it, or `None` where Polars has no answer
     /// of its own for some part of it.
-    fn plan(&self, t: usize, c: usize, node: &Node) -> Option<(DataFrame, Expr)> {
+    fn plan(&self, t: usize, c: usize, node: &Node) -> Option<(DataFrame, Expr, bool)> {
         let column = |cc| self.plan_column(t, cc);
         self.plan_with(t, c, node, &column)
     }
@@ -1759,7 +1770,7 @@ impl<'p> Engine<'p> {
         c: usize,
         node: &Node,
         column: &dyn Fn(usize) -> Option<PlColumn>,
-    ) -> Option<(DataFrame, Expr)> {
+    ) -> Option<(DataFrame, Expr, bool)> {
         let col = &self.prog.sheets[t].cols[c];
         let constant = |i| self.const_value(i).ok();
         let cx = lower::Cx::new(column, &constant);
@@ -1774,6 +1785,7 @@ impl<'p> Engine<'p> {
         // with every column present is the one `run_lowered` does not
         // believe: the column is then the engine's, whole.
         let risk = cx.at_risk();
+        let windowed = cx.windowed();
         let columns = cx.taken();
         // An expression reading no column at all is one value repeated, and
         // the row loop has already memoised it by the second row.
@@ -1782,12 +1794,21 @@ impl<'p> Engine<'p> {
         }
         let frame = DataFrame::new(columns).ok()?;
         let expr = match risk {
+            // A window function has empty cells of its own, so the empty
+            // cell that stands for a result that might not fit cannot be
+            // told from them: where one might not fit, the engine has it.
+            Some(risk) if windowed => {
+                if any_at_risk(&frame, risk) {
+                    return None;
+                }
+                out.expr
+            }
             Some(risk) => polars::prelude::when(risk)
                 .then(polars::prelude::lit(polars::prelude::NULL).cast(out.dtype.clone()))
                 .otherwise(out.expr),
             None => out.expr,
         };
-        Some((frame, expr.alias(col.name.as_str())))
+        Some((frame, expr.alias(col.name.as_str()), windowed))
     }
 
     /// Column `c` of sheet `t` as a Polars column, in the order of its rows:
@@ -1833,7 +1854,10 @@ impl<'p> Engine<'p> {
             && matches!(l, Lit::Float(_) | Lit::Scientific(..))
         {
             let unit = match &col.format {
-                Some(Format::Quantity(f)) => Some(f.unit.clone()),
+                Some(Format::Quantity(omasheet_omx::colfmt::QuantityFormat {
+                    unit: Some(u),
+                    ..
+                })) => Some(u.clone()),
                 _ => crate::quantity::column_unit(id),
             };
             return crate::quantity::dress(lit_value(l, col.ty), id, unit.as_ref())
@@ -2397,13 +2421,22 @@ impl<'p> Engine<'p> {
         // own type — gave one or the other throughout. A column has one
         // type, so it has one dress, and both paths put it on.
         let v = dressed(v, col);
+        // A column that declares the places it keeps holds a formula's result
+        // to them, rounded half away from zero.
+        let v = match col.ty {
+            S::Decimal(places) if col.declared => self.settled(v, places, span)?,
+            _ => v,
+        };
         // A column declared as a quantity type holds its values in that
         // type's unit (add-si-units D233); one that only has the type of its
         // formulas holds each as it is.
         let v = match col.ty {
             S::Quantity(id) if col.declared => {
                 let unit = match &col.format {
-                    Some(Format::Quantity(q)) => Some(q.unit.clone()),
+                    Some(Format::Quantity(omasheet_omx::colfmt::QuantityFormat {
+                        unit: Some(u),
+                        ..
+                    })) => Some(u.clone()),
                     _ => crate::quantity::column_unit(id),
                 };
                 crate::quantity::dress(v, id, unit.as_ref()).or_else(|m| fail(span, m))?
@@ -2433,9 +2466,9 @@ impl<'p> Engine<'p> {
                     | (_, S::Any)
                     | (
                         Value::Int(..),
-                        S::Int | S::Hex | S::Octal | S::Binary | S::Decimal
+                        S::Int | S::Hex | S::Octal | S::Binary | S::Decimal(_)
                     )
-                    | (Value::Decimal(_), S::Decimal)
+                    | (Value::Decimal(_), S::Decimal(_))
                     | (Value::Fraction(_), S::Fraction)
                     | (Value::Percent(_), S::Percent)
                     | (Value::Float(_), S::Float)
@@ -2457,6 +2490,9 @@ impl<'p> Engine<'p> {
             // A division by zero is a `Float` however exact the numbers
             // divided, which an exact column cannot hold.
             let hint = match &v {
+                Value::Fraction(_) if col.ty.is_decimal() => {
+                    "; the value does not fit its places, so declare a wider `Decimal(n)` or `Fraction`"
+                }
                 Value::Float(f) if !f.is_finite() && col.ty.is_exact() => {
                     "; a division by zero is Inf or NaN, so declare the column `Float` \
                      or leave out its type, or guard the division"
@@ -2571,29 +2607,57 @@ impl<'p> Engine<'p> {
         };
         // Each aggregate that is a function of one column, which is what
         // Polars may take for every group at once.
+        // A mean or a middle of decimals is wrapped in the rounding to the
+        // places of its type; Polars answers it unrounded and the engine
+        // rounds what comes back.
+        let mut settles: Vec<(usize, u8)> = Vec::new();
         let aggs: Vec<(usize, Func, usize)> = self.prog.sheets[t]
             .cols
             .iter()
             .enumerate()
-            .filter_map(|(at, col)| match &col.kind {
-                ColKind::Agg(Node {
-                    kind: Ir::Call(func, args),
-                    ..
-                }) => match args.as_slice() {
+            .filter_map(|(at, col)| {
+                let ColKind::Agg(node) = &col.kind else {
+                    return None;
+                };
+                let (node, places) = match &node.kind {
+                    Ir::Call(Func::Settle(p), inner) => match inner.as_slice() {
+                        [inner] => (inner, Some(*p)),
+                        _ => return None,
+                    },
+                    _ => (node, None),
+                };
+                let Ir::Call(func, args) = &node.kind else {
+                    return None;
+                };
+                match args.as_slice() {
                     [
                         Node {
                             kind: Ir::GroupCol(c),
                             ..
                         },
-                    ] => Some((at, *func, *c)),
+                    ] => {
+                        if let Some(p) = places {
+                            settles.push((at, p));
+                        }
+                        Some((at, *func, *c))
+                    }
                     _ => None,
-                },
-                _ => None,
+                }
             })
             .collect();
         if let Some((groups, held)) = self.run_group(view.sheet, &view.rows, keys, &aggs) {
             let mut slots = self.agg_held.borrow_mut();
             for (at, values) in held {
+                let values = match settles.iter().find(|(a, _)| *a == at) {
+                    Some(&(_, places)) => {
+                        let rounded: R<Vec<Value>> = values
+                            .iter()
+                            .map(|v| self.settled(v.clone(), places, span))
+                            .collect();
+                        Rc::new(rounded?)
+                    }
+                    None => values,
+                };
                 slots[t][at] = Some(values);
             }
             return Ok((firsts(&groups), groups));
@@ -2966,10 +3030,7 @@ impl<'p> Engine<'p> {
                             .checked_neg()
                             .map(Value::Percent)
                             .map_or_else(|| fail(span, "the number is too large".to_string()), Ok),
-                        (UnOp::Neg, Value::Fraction(r)) => r
-                            .checked_neg()
-                            .map(Value::Fraction)
-                            .map_or_else(|| fail(span, "the number is too large".to_string()), Ok),
+                        (UnOp::Neg, Value::Fraction(r)) => Ok(Value::Fraction(Rc::new(r.neg()))),
                         (UnOp::Neg, Value::Duration(t)) => {
                             t.checked_neg().map(Value::Duration).map_or_else(
                                 || fail(span, "the duration is out of range".to_string()),
@@ -3301,6 +3362,154 @@ impl<'p> Engine<'p> {
         }
     }
 
+    /// A product, a quotient or a power of exact numbers, worked out exactly
+    /// and rounded once to `places`, half away from zero. A quotient goes
+    /// straight to the scale, so no digit is rounded twice. Anything that is
+    /// not two exact scalars is worked out as it always was and then
+    /// rounded.
+    fn settle(&self, places: u8, node: &Node, span: Span, fr: &mut Frames) -> R {
+        let scale = places as i32;
+        if let Ir::Binary(op @ (BinOp::Mul | BinOp::Div | BinOp::Pow), l, r) = &node.kind {
+            let (left, right) = (self.eval(l, fr)?, self.eval(r, fr)?);
+            let exact = |v: &Value| match v {
+                Value::Int(n, _) => Some(Dec::from_i64(*n)),
+                Value::Decimal(d) => Some(*d),
+                _ => None,
+            };
+            if let (Some(x), Some(y)) = (exact(&left), exact(&right)) {
+                let done = match op {
+                    BinOp::Mul => x.exact_mul(y).and_then(|p| p.rescale(scale)),
+                    // A division by zero is a `Float`, which the usual path says.
+                    BinOp::Div if y.is_zero() => None,
+                    BinOp::Div => x.div_at(y, scale),
+                    _ => y
+                        .to_i64()
+                        .filter(|_| y.is_integer())
+                        .and_then(|e| u32::try_from(e.unsigned_abs()).ok().map(|n| (e, n)))
+                        .and_then(|(e, n)| {
+                            if e >= 0 {
+                                x.exact_powi(n).and_then(|p| p.rescale(scale))
+                            } else {
+                                x.exact_powi(n).and_then(|p| Dec::ONE.div_at(p, scale))
+                            }
+                        }),
+                };
+                if let Some(d) = done {
+                    return Ok(Value::exact(d));
+                }
+            }
+            let v = self.broadcast(*op, &left, &right, span)?;
+            return self.settled(v, places, span);
+        }
+        let v = self.eval(node, fr)?;
+        self.settled(v, places, span)
+    }
+
+    /// A value rounded to `places` where it is a decimal, element by element
+    /// where it is a vector.
+    fn settled(&self, v: Value, places: u8, span: Span) -> R {
+        match v {
+            // Too large for the places it is to have: it is the exact
+            // rational it comes to. A column that declares a `Decimal`
+            // refuses that, and one that declares nothing is a `Fraction`.
+            Value::Decimal(d) => match d.rescale(places as i32) {
+                Some(r) => Ok(Value::exact(r)),
+                None => Ok(Value::Fraction(Rc::new(
+                    omasheet_omx::rational::Rat::from_dec(d),
+                ))),
+            },
+            Value::Percent(d) => match d.rescale(places as i32) {
+                Some(r) => Ok(Value::Percent(r)),
+                None => fail(span, "the percentage does not fit its scale; use Fraction"),
+            },
+            Value::Vector(items) => {
+                let out: R<Vec<Value>> = items
+                    .iter()
+                    .map(|x| self.settled(x.clone(), places, span))
+                    .collect();
+                Ok(Value::Vector(Rc::new(out?)))
+            }
+            other => Ok(other),
+        }
+    }
+
+    /// A window function. Over a vector, the answer for every element;
+    /// over this row's cell, the checker gives the whole column and the
+    /// row's place, and the row's answer is looked up in the column's,
+    /// which is worked out once.
+    fn window(
+        &self,
+        spec: omasheet_omx::ir::Spec,
+        args: &[Node],
+        span: Span,
+        fr: &mut Frames,
+    ) -> R {
+        let vector = |this: &Self, node: &Node, fr: &mut Frames| -> R<Rc<Vec<Value>>> {
+            Ok(match this.eval(node, fr)? {
+                Value::Vector(items) => items,
+                other => Rc::new(vec![other]),
+            })
+        };
+        let keys = args.len() - usize::from(spec.row);
+        let key: Option<String> = if spec.row {
+            let ids: Option<Vec<(usize, usize)>> = args[..keys]
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != 1)
+                .map(|(_, a)| match a.kind {
+                    Ir::Column { sheet, col } => Some((sheet, col)),
+                    _ => None,
+                })
+                .collect();
+            ids.map(|ids| format!("{spec:?}{ids:?}{:?}", args.get(1).map(|a| &a.kind)))
+        } else {
+            None
+        };
+        let held = key.as_ref().and_then(|k| {
+            self.shaped
+                .borrow()
+                .iter()
+                .find(|(held, _)| held == k)
+                .map(|(_, v)| v.clone())
+        });
+        let found = match held {
+            Some(found) => found,
+            None => {
+                let values = vector(self, &args[0], fr)?;
+                let n = self.eval(&args[1], fr)?.as_i64().unwrap_or(0);
+                let mut at = 2;
+                let order = if spec.order {
+                    at += 1;
+                    vector(self, &args[2], fr)?
+                } else {
+                    Rc::new(Vec::new())
+                };
+                let mut parts = Vec::new();
+                for a in &args[at..keys] {
+                    parts.push(vector(self, a, fr)?.to_vec());
+                }
+                let done = crate::window::run(spec, &values, n, &order, &parts)
+                    .or_else(|m| fail(span, m))?;
+                let found = Rc::new(done);
+                if let Some(k) = key {
+                    self.shaped.borrow_mut().push((k, found.clone()));
+                }
+                found
+            }
+        };
+        if !spec.row {
+            return Ok(Value::Vector(found));
+        }
+        let place = self
+            .eval(&args[args.len() - 1], fr)?
+            .as_i64()
+            .and_then(|r| usize::try_from(r).ok());
+        Ok(place
+            .and_then(|r| found.get(r))
+            .cloned()
+            .unwrap_or(Value::Null))
+    }
+
     /// `is_unique` and its kin: over a vector, each element's answer; over
     /// this row's cell, the row's answer out of its column's, which is
     /// worked out once.
@@ -3582,6 +3791,8 @@ impl<'p> Engine<'p> {
             Func::IsUnique | Func::IsDuplicated | Func::IsFirstDistinct | Func::IsLastDistinct => {
                 self.among(func, args, fr)
             }
+            Func::Window(spec) => self.window(spec, args, span, fr),
+            Func::Settle(places) => self.settle(places, &args[0], span, fr),
             Func::IsNull | Func::IsNan => {
                 let absent = |v: &Value| -> R {
                     Ok(match (func, v) {
@@ -3607,7 +3818,8 @@ impl<'p> Engine<'p> {
                     *part = match self.eval(arg, fr)? {
                         Value::Null => return Ok(Value::Null),
                         Value::Int(n, _) => n as f64,
-                        Value::Decimal(d) | Value::Fraction(d) | Value::Percent(d) => d.to_f64(),
+                        Value::Decimal(d) | Value::Percent(d) => d.to_f64(),
+                        Value::Fraction(r) => r.to_f64(),
                         Value::Float(f) => f,
                         // There is no uncertain complex number.
                         Value::Scientific(v, _) => {
@@ -3727,6 +3939,18 @@ impl<'p> Engine<'p> {
                 };
                 let one = |v: &Value| -> R {
                     crate::quantity::dms(v, places).or_else(|m| fail(args[0].span, m))
+                };
+                match self.eval(&args[0], fr)? {
+                    Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                        items.iter().map(one).collect::<R<Vec<_>>>()?,
+                    ))),
+                    single => one(&single),
+                }
+            }
+            Func::UnitOf | Func::ValueOf => {
+                let unit = matches!(func, Func::UnitOf);
+                let one = |v: &Value| -> R {
+                    crate::quantity::part(v, unit).or_else(|m| fail(args[0].span, m))
                 };
                 match self.eval(&args[0], fr)? {
                     Value::Vector(items) => Ok(Value::Vector(Rc::new(
@@ -3884,9 +4108,8 @@ impl<'p> Engine<'p> {
                     match v {
                         Value::Int(i, _) => Some(*i as f64),
                         Value::Scientific(x, _) => Some(*x),
-                        Value::Decimal(d) | Value::Fraction(d) | Value::Percent(d) => {
-                            Some(d.to_f64())
-                        }
+                        Value::Decimal(d) | Value::Percent(d) => Some(d.to_f64()),
+                        Value::Fraction(r) => Some(r.to_f64()),
                         Value::Float(f) => Some(*f),
                         _ => None,
                     }
@@ -3941,17 +4164,26 @@ impl<'p> Engine<'p> {
                     Ok(total)
                 };
                 let total = fold(BinOp::Add, Value::int(0), &|v| Ok(v.clone()))?;
-                let mean = arith(BinOp::Div, &total, &Value::int(n)).or_else(|m| fail(span, m))?;
+                let mean = average(&total, n).or_else(|m| fail(span, m))?;
                 let squares = fold(BinOp::Add, Value::int(0), &|v| {
                     let d = arith(BinOp::Sub, v, &mean).or_else(|m| fail(span, m))?;
                     arith(BinOp::Mul, &d, &d).or_else(|m| fail(span, m))
                 })?;
-                let var = arith(BinOp::Div, &squares, &Value::int(n - ddof))
-                    .or_else(|m| fail(span, m))?;
+                let var = average(&squares, n - ddof).or_else(|m| fail(span, m))?;
                 if func == Func::Var {
                     Ok(var)
                 } else {
-                    math(MathFn::Sqrt, &var).or_else(|m| fail(span, m))
+                    // The root is taken of the variance at thirty places, not
+                    // of the ten it is given as an answer, so that the
+                    // deviation is as good as a float can say it.
+                    let wide = match &squares {
+                        Value::Int(q, _) => Some(Dec::from_i64(*q)),
+                        Value::Decimal(d) => Some(*d),
+                        _ => None,
+                    }
+                    .and_then(|d| d.div_at(Dec::from_i64(n - ddof), 30))
+                    .map(Value::exact);
+                    math(MathFn::Sqrt, &wide.unwrap_or(var)).or_else(|m| fail(span, m))
                 }
             }
             Func::Sum
@@ -4189,7 +4421,7 @@ impl<'p> Engine<'p> {
                     )),
                     Func::Sum => sum().map(kept),
                     Func::Mean if present == 0 => Ok(Value::Null),
-                    Func::Mean => arith(BinOp::Div, &sum()?, &Value::int(present as i64))
+                    Func::Mean => average(&sum()?, present as i64)
                         .map(kept)
                         .or_else(|m| fail(span, m)),
                     Func::Median if present == 0 => Ok(Value::Null),
@@ -4203,9 +4435,7 @@ impl<'p> Engine<'p> {
                         } else {
                             let pair = arith(BinOp::Add, &sorted[n / 2 - 1], &sorted[n / 2])
                                 .or_else(|m| fail(span, m))?;
-                            arith(BinOp::Div, &pair, &Value::int(2))
-                                .map(kept)
-                                .or_else(|m| fail(span, m))
+                            average(&pair, 2).map(kept).or_else(|m| fail(span, m))
                         }
                     }
                     Func::Product => product.or_else(|m| fail(span, m)),
@@ -4702,7 +4932,7 @@ fn agg_value(func: Func, ty: S, any: AnyValue, count: Option<i64>) -> Option<Val
         None => value,
         Some(0) => Value::Null,
         Some(n) => {
-            let mean = arith(BinOp::Div, &value, &Value::int(n)).ok()?;
+            let mean = average(&value, n).ok()?;
             match ty {
                 S::Percent => mean.percent(),
                 S::Fraction => mean.fraction(),
@@ -4732,6 +4962,17 @@ fn ordered(keys: &[Vec<Value>], desc: bool, span: Span) -> R<Vec<usize>> {
         Some(m) => fail(span, m),
         None => Ok(order),
     }
+}
+
+/// A total shared among `n`: an average, which for whole numbers is the
+/// decimal it comes to, ten places or fewer, and not the fraction a quotient
+/// of whole numbers is.
+pub(crate) fn average(total: &Value, n: i64) -> Result<Value, String> {
+    let mean = arith(BinOp::Div, total, &Value::int(n))?;
+    Ok(match (total, mean) {
+        (Value::Int(..), m @ Value::Fraction(_)) => m.plain(),
+        (_, m) => m,
+    })
 }
 
 /// The day of the year a date falls on, 1 to 366.
@@ -4770,12 +5011,27 @@ fn accounted_for(out: &DataFrame) -> bool {
 /// A value in the dress its column's type wears. See [`Engine::fit`].
 fn dressed(v: Value, col: &Column) -> Value {
     match col.ty {
-        S::Percent if matches!(v, Value::Int(_, _) | Value::Decimal(_)) => v.percent(),
+        S::Percent if matches!(v, Value::Int(_, _) | Value::Decimal(_) | Value::Fraction(_)) => {
+            v.percent()
+        }
         S::Fraction if matches!(v, Value::Int(_, _) | Value::Decimal(_)) => v.fraction(),
         // A whole number wears its column's base, whichever it was
         // written or worked out in.
-        t if t.is_int() || t == S::Decimal => match v {
-            Value::Percent(r) | Value::Fraction(r) => Value::exact(r),
+        // A fraction in a column of decimals is rounded to the places it
+        // keeps.
+        S::Decimal(places) => match v {
+            Value::Percent(r) => Value::exact(r),
+            Value::Fraction(r) => match r.to_dec(i32::from(places)) {
+                Some(d) => Value::exact(d),
+                None => Value::Fraction(r),
+            },
+            v => v,
+        },
+        t if t.is_int() => match v {
+            Value::Percent(r) => Value::exact(r),
+            Value::Fraction(r) if r.is_integer() => {
+                r.to_i64().map_or(Value::Fraction(r), Value::int)
+            }
             v => v,
         }
         .rebased(Base::of(t)),
@@ -4784,16 +5040,16 @@ fn dressed(v: Value, col: &Column) -> Value {
         // plain number. A declared `Float` refuses a percentage as it
         // always has, which is the column saying what it is for.
         S::Float if !col.declared => match v {
-            Value::Percent(r) | Value::Fraction(r) => Value::Float(r.to_f64()),
+            Value::Percent(r) => Value::Float(r.to_f64()),
+            Value::Fraction(r) => Value::Float(r.to_f64()),
             v => v,
         },
         // A plain number in a column of scientific values has an
         // uncertainty of nothing.
         S::Scientific => match v {
             Value::Int(n, _) => Value::Scientific(n as f64, 0.0),
-            Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => {
-                Value::Scientific(r.to_f64(), 0.0)
-            }
+            Value::Decimal(r) | Value::Percent(r) => Value::Scientific(r.to_f64(), 0.0),
+            Value::Fraction(r) => Value::Scientific(r.to_f64(), 0.0),
             Value::Float(f) => Value::Scientific(f, 0.0),
             v => v,
         },

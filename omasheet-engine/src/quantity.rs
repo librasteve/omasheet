@@ -51,9 +51,8 @@ fn lift(v: &Value) -> Option<Quantity> {
     Some(match v {
         Value::Quantity(q) => (**q).clone(),
         Value::Int(n, _) => Quantity::exact(*n as f64, one()),
-        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => {
-            Quantity::exact(r.to_f64(), one())
-        }
+        Value::Decimal(r) | Value::Percent(r) => Quantity::exact(r.to_f64(), one()),
+        Value::Fraction(r) => Quantity::exact(r.to_f64(), one()),
         Value::Float(f) => Quantity::exact(*f, one()),
         Value::Scientific(v, s) => Quantity::new(*v, *s, one()).ok()?,
         // A duration beside a quantity is so many seconds: `9560km / PT13H`.
@@ -393,6 +392,21 @@ pub fn dms(v: &Value, places: usize) -> Result<Value, String> {
     }
 }
 
+/// `unit(x)` as text, or `value(x)` as a `Scientific`: the two halves of a
+/// quantity.
+pub fn part(v: &Value, unit: bool) -> Result<Value, String> {
+    match v {
+        Value::Null => Ok(Value::Null),
+        Value::Quantity(q) if unit => Ok(Value::text(&q.unit().to_string())),
+        Value::Quantity(q) => Ok(Value::Scientific(q.value(), q.sigma())),
+        other => Err(format!(
+            "`{}` needs a quantity, found {}",
+            if unit { "unit" } else { "value" },
+            other.kind()
+        )),
+    }
+}
+
 /// `to(x, 'g')`: the quantity in another unit of its dimension.
 pub fn to_unit(v: &Value, unit: &Value) -> Result<Value, String> {
     let Value::String(text, _) = unit else {
@@ -469,7 +483,10 @@ pub fn dress(v: Value, id: QId, column: Option<&Unit>) -> Result<Value, String> 
 /// A quantity as its column's format shows it: in the format's unit, if it
 /// can be, and its number as the format says.
 pub fn show_in(q: &Quantity, f: &omasheet_omx::colfmt::QuantityFormat, style: &Style) -> String {
-    let converted = q.convert(&f.unit).unwrap_or_else(|_| q.clone());
+    let converted = match &f.unit {
+        Some(unit) => q.convert(unit).unwrap_or_else(|_| q.clone()),
+        None => q.clone(),
+    };
     format(&converted, &f.number.unwrap_or_default(), style, false)
 }
 
@@ -479,10 +496,14 @@ pub fn show_in(q: &Quantity, f: &omasheet_omx::colfmt::QuantityFormat, style: &S
 pub fn format(q: &Quantity, f: &SciFormat, style: &Style, exact: bool) -> String {
     let unit = q.unit().to_string();
     let unit = if q.unit().is_dimensionless() {
-        ""
+        String::new()
+    } else if f.gap {
+        // `_`: the unit set apart from its number, `6.022e+23 mol^-1`.
+        format!(" {unit}")
     } else {
-        &unit
+        unit
     };
+    let unit = unit.as_str();
     if exact {
         let n = |x: f64| crate::value::format_float(x, true);
         return if q.sigma() == 0.0 {
@@ -493,13 +514,17 @@ pub fn format(q: &Quantity, f: &SciFormat, style: &Style, exact: bool) -> String
     }
     // With no uncertainty and no format, the number is shown as a `Float` is:
     // to three places, cut and marked, `-1.571rad·`.
-    if q.sigma() == 0.0 && *f == SciFormat::default() {
+    if q.sigma() == 0.0 && (SciFormat { gap: false, ..*f }) == SciFormat::default() {
         let number = crate::value::format_value(&Value::Float(q.value()), false, style, false);
         // The mark of a cut number goes last, after the unit, where a
         // display can set it apart: `1.571rad·`.
-        return match number.strip_suffix(crate::value::MORE) {
-            Some(digits) => format!("{digits}{unit}{}", crate::value::MORE),
-            None => format!("{number}{unit}"),
+        // It follows an exponent, `6.022e+23·`, and goes after the unit all
+        // the same, `6.022e+23mol^-1·`.
+        return if number.contains(crate::value::MORE) {
+            let digits = number.replace(crate::value::MORE, "");
+            format!("{digits}{unit}{}", crate::value::MORE)
+        } else {
+            format!("{number}{unit}")
         };
     }
     let mut number = crate::value::format_scientific(q.value(), q.sigma(), f, style);

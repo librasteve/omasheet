@@ -1771,4 +1771,47 @@ mod tests {
         assert!(doc.undo());
         assert_eq!(held(&doc, 0)[0], "1|2|= A+B|0");
     }
+
+    #[test]
+    fn rows_copied_across_sheets_all_go_in_below_the_bottom_row() {
+        let src = "sheet A\n\nX | Y\n1 | 2\n3 | 4\n5 | 6\n\nsheet B\n\nP | Q\n7 | 8\n";
+        let mut doc = Document::from_text(src);
+        let mut clip = Clip::default();
+        // The same on the sheets of a showcase file.
+        let mut codata = Document::from_text(include_str!("../../examples/showcase/codata.omx"));
+        let rows = codata.snapshot().sheets[0].nrows;
+        let last = codata.snapshot().sheets[1].nrows;
+        let text = clip.copy(&codata, 0, (0, 0), (3, 3));
+        assert_eq!(text.lines().count(), 4);
+        // Into a sheet whose columns are all formulas or typed as well.
+        for sheet in 0..codata.snapshot().sheets.len() {
+            let before = codata.snapshot().sheets[sheet].nrows;
+            assert!(codata.insert_rows(sheet, before, 4));
+            assert_eq!(
+                codata.snapshot().sheets[sheet].nrows,
+                before + 4,
+                "sheet {sheet}"
+            );
+            assert!(codata.undo());
+        }
+        assert!(codata.insert_rows(1, last, 4));
+        assert_eq!(
+            clip.paste(&mut codata, 1, (last, 0), (last, 0), &text),
+            Ok(true)
+        );
+        assert_eq!(codata.snapshot().sheets[1].nrows, last + 4, "rows {rows}");
+        let pasted: Vec<String> = codata.snapshot().sheets[1].rows[last..]
+            .iter()
+            .map(|r| r[0].source.clone())
+            .collect();
+        assert_eq!(pasted.len(), 4);
+        assert!(pasted.iter().all(|s| !s.is_empty()), "{pasted:?}");
+        let mut clip = Clip::default();
+        let text = clip.copy(&doc, 0, (0, 0), (2, 1));
+        assert_eq!(text, "1\t2\n3\t4\n5\t6");
+        // The bottom row of B selected, three rows inserted below it.
+        assert!(doc.insert_rows(1, 1, 3));
+        assert_eq!(clip.paste(&mut doc, 1, (1, 0), (1, 0), &text), Ok(true));
+        assert_eq!(held(&doc, 1), ["7|8", "1|2", "3|4", "5|6"]);
+    }
 }

@@ -81,7 +81,9 @@ impl fmt::Display for BoolFormat {
 /// that unit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QuantityFormat {
-    pub unit: siquant::Unit,
+    /// `None` where the format names no unit, `Quantity[; .9s]`: each value
+    /// is shown in its own unit, or the kind's own unit for a named kind.
+    pub unit: Option<siquant::Unit>,
     pub number: Option<SciFormat>,
 }
 
@@ -101,21 +103,27 @@ impl QuantityFormat {
             len: len.max(1),
             message,
         };
-        if unit_text.is_empty() {
+        // The unit may be left out when a number format follows the `;`.
+        if unit_text.is_empty() && number_part.is_none() {
             return Err(error(0, 1, "needs a unit".to_string()));
         }
         let len = unit_text.chars().count();
-        let unit = siquant::Unit::parse(unit_text, siquant::Scope::Any)
-            .map_err(|_| error(at, len, format!("`{unit_text}` is not a unit")))?;
-        if let Some(t) = id.named()
-            && !t.admits(&unit)
-        {
-            return Err(error(
-                at,
-                len,
-                format!("must be a unit of {}", crate::units::kind_of(t.dims())),
-            ));
-        }
+        let unit = if unit_text.is_empty() {
+            None
+        } else {
+            let unit = siquant::Unit::parse(unit_text, siquant::Scope::Any)
+                .map_err(|_| error(at, len, format!("`{unit_text}` is not a unit")))?;
+            if let Some(t) = id.named()
+                && !t.admits(&unit)
+            {
+                return Err(error(
+                    at,
+                    len,
+                    format!("must be a unit of {}", crate::units::kind_of(t.dims())),
+                ));
+            }
+            Some(unit)
+        };
         let number = match number_part {
             None => None,
             Some(n) => {
@@ -132,11 +140,12 @@ impl QuantityFormat {
 
 impl fmt::Display for QuantityFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.unit)?;
-        if let Some(n) = &self.number {
-            write!(f, "; {n}")?;
+        match (&self.unit, &self.number) {
+            (Some(u), Some(n)) => write!(f, "{u}; {n}"),
+            (Some(u), None) => write!(f, "{u}"),
+            (None, Some(n)) => write!(f, "; {n}"),
+            (None, None) => Ok(()),
         }
-        Ok(())
     }
 }
 
@@ -158,6 +167,9 @@ pub struct SciFormat {
     pub plus_minus: bool,
     /// `~`: the value alone, with no uncertainty shown.
     pub value_only: bool,
+    /// `_`: a quantity's unit set apart from its number by a space, so
+    /// `6.022e+23 mol^-1`.
+    pub gap: bool,
     /// `-`: on the left of its width, rather than the right.
     pub left: bool,
     /// `+`: a sign on every number, `+` on one that is not negative.
@@ -188,6 +200,11 @@ pub enum SciConv {
     Fixed,
     /// `e`: a mantissa and an exponent, its own or the one asked for.
     Exp,
+    /// `s`: as `g`, but the uncertainty leads. A value with an uncertainty
+    /// is shown by it, `6.674 30(15)e-11`, whatever the precision; a value
+    /// with none, which has no digits of its own to go by, is shown to the
+    /// precision as significant digits: `.9s` is `1.05457182e-34`.
+    Auto,
 }
 
 /// The most places a number has.
@@ -206,16 +223,17 @@ impl SciFormat {
         if chars.is_empty() {
             return Err(error(0, 0, "empty"));
         }
-        match chars.first() {
-            Some('±') => {
-                f.plus_minus = true;
-                i += 1;
-            }
-            Some('~') => {
-                f.value_only = true;
-                i += 1;
-            }
-            _ => {}
+        // `±`, `~` and `_` come first, each once, in that order.
+        if chars.first() == Some(&'±') {
+            f.plus_minus = true;
+            i += 1;
+        } else if chars.first() == Some(&'~') {
+            f.value_only = true;
+            i += 1;
+        }
+        if chars.get(i) == Some(&'_') {
+            f.gap = true;
+            i += 1;
         }
         let flags = i;
         while let Some(c) = chars.get(i) {
@@ -270,12 +288,13 @@ impl SciFormat {
         match chars.get(i) {
             None if !named => return Ok(f),
             None => {
-                return Err(error(i, 0, "must end in 'e', 'f' or 'g'"));
+                return Err(error(i, 0, "must end in 'e', 'f', 'g' or 's'"));
             }
-            Some(c @ ('f' | 'F' | 'e' | 'E' | 'g' | 'G')) => {
+            Some(c @ ('f' | 'F' | 'e' | 'E' | 'g' | 'G' | 's')) => {
                 f.conv = match c.to_ascii_lowercase() {
                     'f' => SciConv::Fixed,
                     'e' => SciConv::Exp,
+                    's' => SciConv::Auto,
                     _ => SciConv::General,
                 };
                 f.upper = c.is_ascii_uppercase();
@@ -284,11 +303,11 @@ impl SciFormat {
                 return Err(error(
                     i,
                     1,
-                    &format!("`{c}` is for whole numbers: use 'e', 'f' or 'g'"),
+                    &format!("`{c}` is for whole numbers: use 'e', 'f', 'g' or 's'"),
                 ));
             }
             Some(c) => {
-                return Err(error(i, 1, &format!("`{c}` is not 'e', 'f' or 'g'")));
+                return Err(error(i, 1, &format!("`{c}` is not 'e', 'f', 'g' or 's'")));
             }
         }
         i += 1;
@@ -324,6 +343,9 @@ impl fmt::Display for SciFormat {
         if self.value_only {
             f.write_str("~")?;
         }
+        if self.gap {
+            f.write_str("_")?;
+        }
         for (on, c) in [
             (self.left, '-'),
             (self.plus, '+'),
@@ -347,6 +369,7 @@ impl fmt::Display for SciFormat {
             (SciConv::Exp, true) => Some('E'),
             (SciConv::General, false) => Some('g'),
             (SciConv::General, true) => Some('G'),
+            (SciConv::Auto, _) => Some('s'),
         };
         // `g` is understood where nothing else is said.
         let named = self.left
@@ -387,7 +410,9 @@ impl Format {
             Format::Scientific(_) => ty == S::Scientific,
             Format::Boolean(_) => ty == S::Boolean,
             Format::Quantity(q) => match ty {
-                S::Quantity(id) => id.named().is_none_or(|t| t.admits(&q.unit)),
+                S::Quantity(id) => id
+                    .named()
+                    .is_none_or(|t| q.unit.as_ref().is_none_or(|u| t.admits(u))),
                 _ => false,
             },
         }
@@ -397,8 +422,10 @@ impl Format {
     /// type that takes no format.
     pub fn conversions_of(ty: S) -> Option<&'static str> {
         match ty {
-            S::Scientific => Some("`e`, `f` or `g`, with `±` first"),
-            S::Quantity(_) => Some("a unit of its dimension, as `g`, then `;` and a number format"),
+            S::Scientific => Some("`e`, `f`, `g` or `s`, with `±` first"),
+            S::Quantity(_) => Some(
+                "a unit of its dimension, as `g`, then `;` and a number format, or `;` and a number format alone",
+            ),
             S::Date => Some("the conversions of a date, as `%d %b %Y`"),
             S::Boolean => Some("two different characters, as `10`, `xo` or `✓✗`"),
             S::Time => Some("the conversions of a time, as `%H:%M`"),
@@ -416,7 +443,9 @@ impl Format {
             S::Quantity(_) => {
                 "a quantity format is a unit, as `g`, which may be followed by `;` and a number format, as `g; ±.3e-3`"
             }
-            S::Boolean => "a `Boolean` format is two different characters: the symbol for true, then for false, as `xo` or `✓✗`",
+            S::Boolean => {
+                "a `Boolean` format is two different characters: the symbol for true, then for false, as `xo` or `✓✗`"
+            }
             S::Date | S::Time | S::Datetime => {
                 "a date or time format is a C `strftime` format, as `%d %b %Y`"
             }
@@ -554,6 +583,25 @@ mod tests {
                 .takes(S::Scientific)
         );
         assert!(Format::parse("±.3e", S::Float).is_err());
+    }
+
+    #[test]
+    fn the_s_conversion_and_a_quantity_format_with_no_unit() {
+        let f = SciFormat::parse(".9s").unwrap();
+        assert_eq!((f.conv, f.places), (SciConv::Auto, Some(9)));
+        assert_eq!(f.to_string(), ".9s");
+        assert!(SciFormat::parse("S").is_err());
+        let any = QId::ANY;
+        let q = QuantityFormat::parse("; .9s", any).unwrap();
+        assert!(q.unit.is_none());
+        assert_eq!(q.to_string(), "; .9s");
+        assert!(QuantityFormat::parse("", any).is_err());
+        let gap = QuantityFormat::parse("; _.9s", any).unwrap();
+        assert!(gap.number.unwrap().gap);
+        assert_eq!(gap.to_string(), "; _.9s");
+        assert!(SciFormat::parse("_").unwrap().gap);
+        assert_eq!(SciFormat::parse("±_.2f").unwrap().to_string(), "±_.2f");
+        assert!(QuantityFormat::parse("g", any).unwrap().unit.is_some());
     }
 
     #[test]

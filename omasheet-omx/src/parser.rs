@@ -7,9 +7,9 @@
 //! unary `-`, `**`, then postfix `[ ]`, `.Name` and calls.
 
 use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp, reads_back};
-use crate::decimal::Dec;
 use crate::diag::{Diagnostic, Span};
 use crate::lexer::{Tok, Token, lex};
+use crate::rational::Rat;
 
 type R<T> = Result<T, Diagnostic>;
 
@@ -189,7 +189,23 @@ impl Parser {
                     span,
                 });
             } else {
-                args.push(self.expr()?);
+                // `cum_sum(Date by Account)`: an order key and its partition.
+                // `rank(by Region)` is the partition alone: `by` with no
+                // key before it, which `Own` stands in for.
+                let alone = matches!(self.peek(), Tok::Ident(w) if w == "by")
+                    && matches!(
+                        self.toks.get(self.pos + 1).map(|t| &t.tok),
+                        Some(Tok::Ident(_))
+                    );
+                let e = if alone {
+                    Expr {
+                        kind: ExprKind::Own,
+                        span: self.toks[self.pos].span,
+                    }
+                } else {
+                    self.expr()?
+                };
+                args.push(self.by(e)?);
             }
             if self.eat(&Tok::Comma) {
                 continue;
@@ -503,7 +519,7 @@ impl Parser {
             // A decimal on its own, `<0.5>`, is the fraction it is.
             if let Tok::Decimal(r) = self.peek().clone() {
                 self.bump();
-                return self.fraction_of(start, negative, Some(r));
+                return self.fraction_of(start, negative, Some(Rat::from_dec(r)));
             }
             return bad(self);
         };
@@ -519,7 +535,7 @@ impl Parser {
             };
             let d_span = self.bump().span;
             let part = self.quotient(n, d, d_span)?;
-            Dec::from_i64(first).checked_add(part)
+            Some(Rat::from_i64(first).add(&part))
         } else if self.eat(&Tok::Slash) {
             let Some(d) = whole(self.peek()) else {
                 return bad(self);
@@ -527,37 +543,29 @@ impl Parser {
             let d_span = self.bump().span;
             Some(self.quotient(first, d, d_span)?)
         } else {
-            Some(Dec::from_i64(first))
+            Some(Rat::from_i64(first))
         };
         self.fraction_of(start, negative, value)
     }
 
-    /// `n/d` as an exact number, or the error of a zero denominator.
-    fn quotient(&self, n: i64, d: i64, span: Span) -> R<Dec> {
-        if d == 0 {
-            return Err(Diagnostic::new(
-                span,
-                "a fraction has a denominator that is not zero",
-            ));
-        }
-        Dec::from_i64(n)
-            .checked_div(Dec::from_i64(d))
-            .ok_or_else(|| Diagnostic::new(span, "this fraction is too large"))
+    /// `n/d` as an exact rational, or the error of a zero denominator.
+    fn quotient(&self, n: i64, d: i64, span: Span) -> R<Rat> {
+        Rat::new(n as i128, d as i128)
+            .ok_or_else(|| Diagnostic::new(span, "a fraction has a denominator that is not zero"))
     }
 
     /// Close a fraction at `>`, as the `Fraction` of `value`.
-    fn fraction_of(&mut self, start: Span, negative: bool, value: Option<Dec>) -> R<Expr> {
+    fn fraction_of(&mut self, start: Span, negative: bool, value: Option<Rat>) -> R<Expr> {
         if self.peek() != &Tok::Gt {
             return Err(self.unexpected("`>` to close the fraction"));
         }
         let end = self.bump().span;
         let span = start.to(end);
-        let Some(value) = value.and_then(|v| if negative { v.checked_neg() } else { Some(v) })
-        else {
+        let Some(value) = value.map(|v| if negative { v.neg() } else { v }) else {
             return Err(Diagnostic::new(span, "this fraction is too large"));
         };
         Ok(Expr {
-            kind: ExprKind::Lit(Lit::Fraction(value)),
+            kind: ExprKind::Lit(Lit::Fraction(std::sync::Arc::new(value))),
             span,
         })
     }

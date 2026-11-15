@@ -116,8 +116,8 @@ impl Grid {
 }
 
 const RESERVED: &[&str] = &[
-    "if", "then", "else", "and", "or", "xor", "nand", "nor", "not", "in", "true", "false", "Inf", "NaN", "sheet",
-    "const", "fn", "zone",
+    "if", "then", "else", "and", "or", "xor", "nand", "nor", "not", "in", "true", "false", "Inf",
+    "NaN", "sheet", "const", "fn", "zone",
 ];
 
 /// `raw` as an OMX identifier: the letters, digits and `_` of it, with a
@@ -298,7 +298,23 @@ fn column_type(cells: &[&Datum]) -> (Option<S>, bool) {
     let exact = |s: &S| s.is_exact();
     match seen.as_slice() {
         [] | [S::String] => (None, false),
-        all if all.iter().all(exact) => (None, false),
+        // Exact numbers are read back from their cells, but a decimal of more
+        // places than a column infers would be read back as a fraction, so
+        // the places it keeps are said.
+        // A fraction written `1/3` is a literal only in a column that says it
+        // is one.
+        all if all.iter().all(exact) && all.contains(&S::Fraction) => (Some(S::Fraction), false),
+        all if all.iter().all(exact) => {
+            let long = all.iter().filter_map(|s| match s {
+                S::Decimal(n)
+                    if i32::from(*n) > omasheet_engine::omx::convert::MAX_INFERRED_SCALE =>
+                {
+                    Some(*n)
+                }
+                _ => None,
+            });
+            (long.max().map(S::Decimal), false)
+        }
         [one] => (Some(*one), false),
         all if all.iter().all(|s| exact(s) || *s == S::Float) => (Some(S::Float), false),
         _ => (None, true),

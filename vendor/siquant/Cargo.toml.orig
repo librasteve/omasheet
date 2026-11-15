@@ -1,0 +1,15 @@
+[package]
+name = "siquant"
+version = "0.1.2"
+edition = "2024"
+license = "MIT"
+description = "SI units, prefixes and quantities with uncertainty, defined by YAML resource files."
+repository = "https://github.com/librasteve/siquant"
+readme = "README.md"
+keywords = ["units", "si", "physics", "measurement", "uncertainty"]
+categories = ["science", "mathematics"]
+include = ["/src", "/resources", "/tests", "/README.md", "/LICENSE"]
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_yaml_ng = "0.10.0"

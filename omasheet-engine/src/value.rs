@@ -16,7 +16,8 @@ use omasheet_omx::date::Style;
 use omasheet_omx::decimal::{Dec, MAX_DENOMINATOR, SHOWN_PRECISION};
 use omasheet_omx::duration;
 use omasheet_omx::funcs::MathFn;
-use omasheet_omx::types::{Base, QId, S};
+use omasheet_omx::rational::Rat;
+use omasheet_omx::types::{Base, DEFAULT_SCALE, QId, S};
 use std::cmp::Ordering;
 use std::rc::Rc;
 
@@ -32,9 +33,9 @@ pub enum Value {
     Int(i64, Base),
     /// An exact number that is not whole, shown as a decimal: `2.75`.
     Decimal(Dec),
-    /// An exact number that is not whole, shown as a fraction: `1/3`, and
-    /// `2 3/4` for `2.75`.
-    Fraction(Dec),
+    /// An exact rational, never rounded and shown as a fraction where it is
+    /// a small one: `1/3`, and `2 3/4`. Arbitrary precision.
+    Fraction(Rc<Rat>),
     /// An exact number shown as a percentage: `0.2` for `20%`. It may be
     /// whole, `100%`.
     Percent(Dec),
@@ -127,12 +128,12 @@ impl Value {
         }
     }
 
-    /// An exact number as a fraction, `2.75` as `2 3/4`; anything else as it
+    /// An exact number as a fraction, `2.75` as `11/4`; anything else as it
     /// is. It may be whole, and is shown plainly when it is: `3`, not `3/1`.
     pub fn fraction(self) -> Value {
         match self {
-            Value::Int(n, _) => Value::Fraction(Dec::from_i64(n)),
-            Value::Decimal(r) => Value::Fraction(r),
+            Value::Int(n, _) => Value::Fraction(Rc::new(Rat::from_i64(n))),
+            Value::Decimal(r) | Value::Percent(r) => Value::Fraction(Rc::new(Rat::from_dec(r))),
             other => other,
         }
     }
@@ -141,7 +142,12 @@ impl Value {
     pub fn percent(self) -> Value {
         match self {
             Value::Int(n, _) => Value::Percent(Dec::from_i64(n)),
-            Value::Decimal(r) | Value::Fraction(r) => Value::Percent(r),
+            Value::Decimal(r) => Value::Percent(r),
+            // A percentage keeps ten places, as a quotient does.
+            Value::Fraction(r) => match r.to_dec(i32::from(DEFAULT_SCALE)) {
+                Some(d) => Value::Percent(d),
+                None => Value::Fraction(r),
+            },
             other => other,
         }
     }
@@ -150,7 +156,14 @@ impl Value {
     /// is.
     pub fn plain(self) -> Value {
         match self {
-            Value::Percent(r) | Value::Fraction(r) => Value::exact(r),
+            Value::Percent(r) => Value::exact(r),
+            Value::Fraction(r) => match r.to_i64() {
+                Some(n) => Value::int(n),
+                None => match r.to_dec(i32::from(DEFAULT_SCALE)) {
+                    Some(d) => Value::exact(d),
+                    None => Value::Fraction(r),
+                },
+            },
             other => other,
         }
     }
@@ -159,7 +172,7 @@ impl Value {
         match l {
             Lit::Int(n, b) => Value::Int(*n, *b),
             Lit::Decimal(r) => Value::exact(*r),
-            Lit::Fraction(r) => Value::Fraction(*r),
+            Lit::Fraction(r) => Value::Fraction(Rc::new((**r).clone())),
             Lit::Percent(r) => Value::Percent(*r),
             Lit::Float(f) => Value::Float(*f),
             Lit::Scientific(v, s) => Value::Scientific(*v, *s),
@@ -229,7 +242,7 @@ impl Value {
         Some(match self {
             Value::Int(n, b) => Lit::Int(*n, *b),
             Value::Decimal(r) => Lit::Decimal(*r),
-            Value::Fraction(r) => Lit::Fraction(*r),
+            Value::Fraction(r) => Lit::Fraction(std::sync::Arc::new((**r).clone())),
             Value::Percent(r) => Lit::Percent(*r),
             Value::Float(f) => Lit::Float(*f),
             Value::Scientific(v, s) => Lit::Scientific(*v, *s),
@@ -254,8 +267,8 @@ impl Value {
             (Value::Datetime(_, Some(_)), S::Datetime) | (Value::String(..), S::String) => true,
             // A whole `Decimal` is held as an `Int`.
             (Value::Int(_, b), to) if to.is_int() => *b == Base::of(to),
-            (Value::Int(_, Base::Dec), S::Decimal) => true,
-            (Value::Decimal(_), S::Decimal) => true,
+            (Value::Int(_, Base::Dec), S::Decimal(_)) => true,
+            (Value::Decimal(_), S::Decimal(_)) => true,
             (Value::Fraction(_), S::Fraction) => true,
             (Value::Percent(_), S::Percent) => true,
             (Value::Quantity(q), S::Quantity(id)) => crate::quantity::admitted(q, id),
@@ -299,7 +312,17 @@ impl Value {
         // A `Fraction` is a `Decimal` shown as a fraction, so asking for one
         // is a change of display and not of value.
         if to == S::Fraction {
-            return Ok(self.converted(S::Decimal)?.fraction());
+            return match self {
+                Value::Fraction(_) => Ok(self.clone()),
+                Value::Int(..) | Value::Decimal(_) | Value::Percent(_) => {
+                    Ok(self.clone().fraction())
+                }
+                // A float is the fraction its bits are.
+                Value::Float(f) => Rat::from_f64(*f)
+                    .map(|r| Value::Fraction(Rc::new(r)))
+                    .ok_or_else(|| "a NaN or an infinity is not a fraction".to_string()),
+                other => other.converted(S::DECIMAL).map(Value::fraction),
+            };
         }
         // There is no uncertain complex number: it is the value alone.
         if let (Value::Scientific(v, _), S::Complex) = (self, to) {
@@ -325,6 +348,8 @@ impl Value {
 
 enum N {
     Exact(Dec),
+    /// An exact rational, which beats any other exact number it meets.
+    Rat(Rc<Rat>),
     Float(f64),
     Scientific(f64, f64),
     Complex(f64, f64),
@@ -353,7 +378,8 @@ pub fn mark_degraded() {
 fn number(v: &Value) -> Option<N> {
     Some(match v {
         Value::Int(n, _) => N::Exact(Dec::from_i64(*n)),
-        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => N::Exact(*r),
+        Value::Decimal(r) | Value::Percent(r) => N::Exact(*r),
+        Value::Fraction(r) => N::Rat(r.clone()),
         Value::Float(f) => N::Float(*f),
         Value::Scientific(v, s) => N::Scientific(*v, *s),
         Value::Complex(re, im) => N::Complex(*re, *im),
@@ -435,9 +461,18 @@ pub fn to_f64(r: &Dec) -> f64 {
     r.to_f64()
 }
 
+/// A real number as a `Float`; `None` for anything else.
+pub fn to_float(v: &Value) -> Option<f64> {
+    match number(v)? {
+        N::Complex(..) => None,
+        n => Some(real(&n)),
+    }
+}
+
 fn real(n: &N) -> f64 {
     match n {
         N::Exact(r) => r.to_f64(),
+        N::Rat(r) => r.to_f64(),
         N::Float(f) => *f,
         N::Scientific(v, _) => *v,
         N::Complex(re, _) => *re,
@@ -552,8 +587,43 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     match (&x, &y) {
         // Two of one kind give that kind, so two fractions give a fraction and
         // two percentages a percentage; any other mix is the plain number.
+        // A rational beside a whole number or another rational is a
+        // rational, worked out exactly: nothing is rounded. Beside a decimal
+        // or a percentage it is a decimal, exact only to its places.
+        (N::Rat(_), N::Exact(_) | N::Rat(_)) | (N::Exact(_), N::Rat(_)) if !floating => {
+            let places = |v: &Value| match v {
+                Value::Decimal(d) | Value::Percent(d) => {
+                    Some(d.trimmed().scale().max(i32::from(DEFAULT_SCALE)))
+                }
+                _ => None,
+            };
+            let scale = match (&x, &y) {
+                (N::Rat(_), N::Rat(_)) => None,
+                _ => places(a).into_iter().chain(places(b)).max(),
+            };
+            match (rational_arith(op, &x, &y)?, scale) {
+                (Value::Fraction(r), Some(s)) => Ok(match r.to_dec(s) {
+                    Some(d) => Value::exact(d),
+                    None => Value::Fraction(r),
+                }),
+                (v, _) => Ok(v),
+            }
+        }
+        // A quotient of two whole numbers is the rational it comes to, whole
+        // where it is whole.
+        (N::Exact(_), N::Exact(_))
+            if !floating
+                && op == BinOp::Div
+                && matches!((a, b), (Value::Int(..), Value::Int(..))) =>
+        {
+            Ok(match rational_arith(op, &x, &y)? {
+                Value::Fraction(r) if r.is_integer() => {
+                    r.to_i64().map_or(Value::Fraction(r), Value::int)
+                }
+                v => v,
+            })
+        }
         (N::Exact(x), N::Exact(y)) if !floating => exact_arith(op, x, y).map(|v| match (a, b) {
-            (Value::Fraction(_), Value::Fraction(_)) => v.fraction(),
             (Value::Percent(_), Value::Percent(_)) => v.percent(),
             _ => match v {
                 Value::Int(n, _) => Value::Int(n, base),
@@ -762,6 +832,16 @@ fn scale(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
             }
             .and_then(|d| d.round().to_i64())
         }
+        N::Rat(r) => {
+            let f = r.to_f64();
+            let out = if op == BinOp::Div {
+                us as f64 / f
+            } else {
+                us as f64 * f
+            };
+            let fits = out.is_finite() && out.abs() < i64::MAX as f64;
+            fits.then(|| out.round() as i64)
+        }
         N::Float(f) => {
             let out = if op == BinOp::Div {
                 us as f64 / f
@@ -803,17 +883,110 @@ fn over_zero(x: &Dec) -> f64 {
     }
 }
 
+/// The rational a number is, exactly.
+fn as_rat(n: &N) -> Option<Rat> {
+    match n {
+        N::Exact(d) => Some(Rat::from_dec(*d)),
+        N::Rat(r) => Some((**r).clone()),
+        _ => None,
+    }
+}
+
+/// `+ - * / % **` of two exact numbers, one of them a rational.
+fn rational_arith(op: BinOp, x: &N, y: &N) -> Result<Value, String> {
+    let (Some(a), Some(b)) = (as_rat(x), as_rat(y)) else {
+        return Err("not a rational".into());
+    };
+    let fraction = |r: Rat| Ok(Value::Fraction(Rc::new(r)));
+    match op {
+        BinOp::Add => fraction(a.add(&b)),
+        BinOp::Sub => fraction(a.sub(&b)),
+        BinOp::Mul => fraction(a.mul(&b)),
+        // No exact number is a division by zero: `Inf`, `-Inf` or `NaN`.
+        BinOp::Div | BinOp::Rem if b.is_zero() => Ok(Value::Float(match (op, a.signum()) {
+            (BinOp::Div, 1) => f64::INFINITY,
+            (BinOp::Div, -1) => f64::NEG_INFINITY,
+            _ => f64::NAN,
+        })),
+        BinOp::Div => fraction(a.div(&b).ok_or_else(|| TOO_LARGE.to_string())?),
+        BinOp::Rem => {
+            let q = a.div(&b).ok_or_else(|| TOO_LARGE.to_string())?.floor();
+            fraction(a.sub(&q.mul(&b)))
+        }
+        _ => {
+            let e = b
+                .to_i64()
+                .and_then(|e| i32::try_from(e).ok())
+                .ok_or_else(|| "the exponent must be a whole number".to_string())?;
+            if a.is_zero() && e < 0 {
+                return Ok(Value::Float(f64::INFINITY));
+            }
+            if e.unsigned_abs() > 100_000 {
+                return Err("the exponent is too large".into());
+            }
+            fraction(a.powi(e).ok_or_else(|| TOO_LARGE.to_string())?)
+        }
+    }
+}
+
+fn abs_f64(r: &Rat) -> f64 {
+    r.abs().to_f64()
+}
+
+/// A rational as it is shown: a fraction (`2 3/4`) where its denominator is
+/// small, a whole number in full, and the nearest decimal, cut and marked,
+/// otherwise.
+fn shown_rational(r: &Rat, style: &Style) -> String {
+    let text = if r.is_integer() {
+        match r.to_dec(0) {
+            Some(d) => shown_decimal(&d.checked_abs().unwrap_or(d), group(style)),
+            // Past 38 digits: in e notation, as any large number is.
+            None => shown_float(abs_f64(r), false, group(style)),
+        }
+    } else if r.small_denominator(MAX_DENOMINATOR as u64) {
+        r.abs().mixed_text()
+    } else {
+        let abs = r.abs();
+        // The widest decimal that holds it, unless that is nothing at all.
+        match (0..=38)
+            .rev()
+            .find_map(|s| abs.to_dec(s))
+            .filter(|d| !d.is_zero())
+        {
+            Some(d) => shown_decimal(&d, group(style)),
+            None => shown_float(abs.to_f64(), false, group(style)),
+        }
+    };
+    localised(signed(r.is_negative(), text), style)
+}
+
+/// `+ - * / % **` of two exact numbers, exactly: in a decimal where the
+/// digits fit 38, and where they do not, as the rational they are
+/// (decimal-and-fraction). Nothing is given up and nothing is an error for
+/// being large: a column that declares a `Decimal` refuses a `Fraction`, and
+/// one that declares nothing is a `Fraction`. A quotient is the one result
+/// that is rounded, to ten places or the finer scale of its two sides.
 fn exact_arith(op: BinOp, x: &Dec, y: &Dec) -> Result<Value, String> {
     let (x, y) = (*x, *y);
+    let fits = |d: &Dec| d.precision() <= 38;
+    let rational = || rational_arith(op, &N::Exact(x), &N::Exact(y));
     let out = match op {
-        BinOp::Add => x.checked_add(y),
-        BinOp::Sub => x.checked_sub(y),
-        BinOp::Mul => x.checked_mul(y),
+        BinOp::Add => x.exact_add(y),
+        BinOp::Sub => y.checked_neg().and_then(|n| x.exact_add(n)),
+        BinOp::Mul => x.exact_mul(y).filter(fits),
         BinOp::Div => {
             if y.is_zero() {
                 return Ok(Value::Float(over_zero(&x)));
             }
-            x.checked_div(y)
+            let places = x
+                .trimmed()
+                .scale()
+                .max(y.trimmed().scale())
+                .max(i32::from(DEFAULT_SCALE));
+            match x.div_at(y, places) {
+                Some(q) => Some(q),
+                None => return rational(),
+            }
         }
         // What is left of a division that goes by whole steps down, so that
         // the result has the sign of the divisor: no exact number is a
@@ -842,14 +1015,23 @@ fn exact_arith(op: BinOp, x: &Dec, y: &Dec) -> Result<Value, String> {
             }
             match e {
                 0 => Some(Dec::ONE),
-                e if e > 0 => x.powi(e.unsigned_abs()),
-                e => x
-                    .powi(e.unsigned_abs())
-                    .and_then(|p| Dec::ONE.checked_div(p)),
+                e if e > 0 => x.exact_powi(e.unsigned_abs()).filter(fits),
+                e => x.exact_powi(e.unsigned_abs()).and_then(|p| {
+                    let places = x
+                        .trimmed()
+                        .scale()
+                        .max(i32::from(DEFAULT_SCALE))
+                        .max(p.trimmed().scale());
+                    Dec::ONE.div_at(p, places)
+                }),
             }
         }
     };
-    out.map(Value::exact).ok_or_else(|| TOO_LARGE.to_string())
+    match out {
+        Some(d) => Ok(Value::exact(d)),
+        // It does not fit 38 digits: it is the rational it comes to.
+        None => rational(),
+    }
 }
 
 /// A function of one real number. An exact number stays exact where the
@@ -916,20 +1098,28 @@ fn math_of(m: MathFn, v: &Value) -> Result<Value, String> {
                 .map(Value::Decimal)
                 .ok_or_else(|| TOO_LARGE.to_string());
         }
-        (Value::Fraction(r), MathFn::Abs) => {
-            return r
-                .checked_abs()
-                .map(Value::Fraction)
-                .ok_or_else(|| TOO_LARGE.to_string());
-        }
-        (Value::Decimal(r) | Value::Fraction(r), MathFn::Sign) => {
+        (Value::Fraction(r), MathFn::Abs) => return Ok(Value::Fraction(Rc::new(r.abs()))),
+        (Value::Decimal(r), MathFn::Sign) => {
             return Ok(Value::int(r.signum()));
         }
-        (Value::Decimal(r) | Value::Fraction(r), MathFn::Round) => return Ok(whole(r.round())),
-        (Value::Decimal(r) | Value::Fraction(r), MathFn::Floor) => return Ok(whole(r.floor())),
-        (Value::Decimal(r) | Value::Fraction(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
+        (Value::Fraction(r), MathFn::Sign) => return Ok(Value::int(i64::from(r.signum()))),
+        (Value::Decimal(r), MathFn::Round) => return Ok(whole(r.round())),
+        (Value::Decimal(r), MathFn::Floor) => return Ok(whole(r.floor())),
+        (Value::Decimal(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
+        // A whole number of a fraction: an `Integer` where it fits one.
+        (Value::Fraction(r), MathFn::Round | MathFn::Floor | MathFn::Ceil) => {
+            let n = match m {
+                MathFn::Round => r.round(),
+                MathFn::Floor => r.floor(),
+                _ => r.ceil(),
+            };
+            return Ok(n
+                .to_i64()
+                .map_or_else(|| Value::Fraction(Rc::new(n)), Value::int));
+        }
         (Value::Int(n, _), _) => *n as f64,
-        (Value::Decimal(r) | Value::Fraction(r), _) => r.to_f64(),
+        (Value::Decimal(r), _) => r.to_f64(),
+        (Value::Fraction(r), _) => r.to_f64(),
         (Value::Float(f), _) => *f,
         (other, _) => {
             return Err(format!(
@@ -1092,7 +1282,16 @@ pub fn round_digits(x: &Value, places: i64) -> Result<Value, String> {
         Value::Null => Value::Null,
         Value::Int(_, _) => x.clone(),
         Value::Decimal(d) => Value::Decimal(narrowed(d)),
-        Value::Fraction(d) => Value::Fraction(narrowed(d)),
+        // Rounded to the places asked for, exactly.
+        Value::Fraction(r) => {
+            let factor = Rat::from_i64(10)
+                .powi(places)
+                .ok_or_else(|| TOO_LARGE.to_string())?;
+            let rounded = r.mul(&factor).round();
+            Value::Fraction(Rc::new(
+                rounded.div(&factor).ok_or_else(|| TOO_LARGE.to_string())?,
+            ))
+        }
         Value::Percent(d) => Value::Percent(narrowed(d)),
         // An infinity and a `NaN` have no places to round to.
         Value::Float(f) if !f.is_finite() => Value::Float(*f),
@@ -1151,6 +1350,9 @@ fn compare_exact(a: &Value, b: &Value) -> Result<Option<Ordering>, String> {
         (Value::Boolean(x), Value::Boolean(y)) => x.cmp(y),
         _ => match (number(a), number(b)) {
             (Some(N::Exact(x)), Some(N::Exact(y))) => x.cmp(&y),
+            (Some(N::Rat(x)), Some(N::Rat(y))) => x.cmp(&y),
+            (Some(N::Rat(x)), Some(N::Exact(y))) => (*x).cmp(&Rat::from_dec(y)),
+            (Some(N::Exact(x)), Some(N::Rat(y))) => Rat::from_dec(x).cmp(&y),
             (Some(N::Complex(..)), _) | (_, Some(N::Complex(..))) => {
                 return Err("Complex values have no order".into());
             }
@@ -1354,7 +1556,7 @@ fn scientific(r: &Dec) -> String {
         return format!("{mantissa}{exp}");
     }
     let keep = WIDTH - exp.len() - 1;
-    format!("{}{MORE}{exp}", &mantissa[..keep])
+    format!("{}{exp}{MORE}", &mantissa[..keep])
 }
 
 /// How many characters `text` is.
@@ -1412,18 +1614,6 @@ fn shown_decimal(r: &Dec, sep: Option<char>) -> String {
     scientific(r)
 }
 
-/// A positive exact number as a fraction, where one is to be had and it
-/// fits: `2 3/4`, with the whole part grouped. `None` otherwise, and the
-/// number is shown as a decimal instead.
-fn shown_fraction(r: &Dec, sep: Option<char>) -> Option<String> {
-    let mixed = format_mixed(&r.guarded())?;
-    let mixed = match mixed.split_once(' ') {
-        Some((whole, part)) => format!("{} {part}", grouped(whole.to_string(), sep)),
-        None => mixed,
-    };
-    (width(&mixed) <= WIDTH).then_some(mixed)
-}
-
 /// How many digits after the point a long `Decimal` is given to, in full.
 pub const LONG_DIGITS: usize = SHOWN_PRECISION as usize;
 
@@ -1431,7 +1621,7 @@ pub const LONG_DIGITS: usize = SHOWN_PRECISION as usize;
 /// show when the cut form is pointed at. `None` for anything else, and for
 /// one the shown form already gives whole.
 pub fn long_decimal(v: &Value) -> Option<String> {
-    let (Value::Decimal(r) | Value::Fraction(r)) = v else {
+    let Value::Decimal(r) = v else {
         return None;
     };
     let r = r.guarded();
@@ -1544,7 +1734,12 @@ fn float_to(f: f64, exact: bool, sep: Option<char>, cut: bool) -> String {
         Some(short) => short,
         None => size.to_string(),
     };
-    format!("{sign}{mantissa}{}", exponent(e))
+    // The mark goes last, after the exponent: it is the number that is cut.
+    let (mantissa, more) = match mantissa.strip_suffix(MORE) {
+        Some(m) => (m.to_string(), MORE.to_string()),
+        None => (mantissa, String::new()),
+    };
+    format!("{sign}{mantissa}{}{more}", exponent(e))
 }
 
 /// Shortened to `room` characters and marked with [`MORE`]: a number in e
@@ -1554,10 +1749,12 @@ fn cut(text: String, room: usize) -> String {
         return text;
     }
     let first = |text: &str, n: usize| text.chars().take(n).collect::<String>();
+    // A number already cut carries its mark last; it is put back below.
+    let text = text.strip_suffix(MORE).map_or(text.clone(), str::to_string);
     match text.split_once('e') {
         Some((mantissa, exp)) => {
             let keep = room.saturating_sub(exp.len() + 2).max(1);
-            format!("{}{MORE}e{exp}", first(mantissa, keep))
+            format!("{}e{exp}{MORE}", first(mantissa, keep))
         }
         None => format!("{}{MORE}", first(&text, room - 1)),
     }
@@ -1612,6 +1809,34 @@ fn format_complex(re: f64, im: f64, exact: bool, sep: Option<char>) -> String {
 /// grouping, as for a `Float`. Asked for a conversion, a value with no
 /// uncertainty is shown in the same form, as `11.0000(0)`.
 pub fn format_uncertain(v: f64, s: f64, f: &SciFormat, sep: Option<char>) -> String {
+    // `s`: the uncertainty leads (D-Q2). With one, the precision is not
+    // used; without, it is the significant digits, turned into the places
+    // of the mantissa that `g` would show.
+    if f.conv == SciConv::Auto {
+        let mut g = *f;
+        g.conv = SciConv::General;
+        g.places = match f.places {
+            Some(p) if s == 0.0 && v.is_finite() && v != 0.0 => {
+                let magnitude = v.abs().log10().floor() as i32;
+                let exponent = if (-2..15).contains(&magnitude) {
+                    0
+                } else {
+                    magnitude
+                };
+                let places = (p as i32 - 1 - (magnitude - exponent)).max(0) as usize;
+                // As `g`, with no noughts at the end of the mantissa.
+                let mantissa = format!("{:.places$}", v.abs() / 10f64.powi(exponent));
+                let places = match mantissa.split_once('.') {
+                    Some((_, fraction)) => fraction.trim_end_matches('0').len(),
+                    None => 0,
+                };
+                Some(places as u32)
+            }
+            Some(_) if s == 0.0 => Some(0),
+            _ => None,
+        };
+        return format_uncertain(v, s, &g, sep);
+    }
     let fixed = f.places.is_some() || f.exponent.is_some() || f.conv != SciConv::General;
     if s == 0.0 && !fixed {
         return padded_to(
@@ -1657,6 +1882,7 @@ pub fn format_uncertain(v: f64, s: f64, f: &SciFormat, sep: Option<char>) -> Str
         SciConv::Exp => f.exponent.unwrap_or(magnitude),
         SciConv::General if place <= 0 && (-2..15).contains(&magnitude) => 0,
         SciConv::General => magnitude,
+        SciConv::Auto => unreachable!("`s` is worked out as `g` above"),
     };
     let unit = 10f64.powi(exponent);
     let (mantissa, error) = (v / unit, s / unit);
@@ -1847,7 +2073,7 @@ pub(crate) fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) 
         Value::Decimal(r) if exact => format_rat(r),
         // A `Fraction` in full is the fraction itself, which is the only way
         // to write one that does not end and read it back.
-        Value::Fraction(r) if exact => format_fraction(r).unwrap_or_else(|| format_rat(r)),
+        Value::Fraction(r) if exact => r.fraction_text(),
         // Shown, in at most `WIDTH` characters and a sign: plain from
         // `1e-15` to `1e15`, and otherwise in e notation, `1e+60`.
         // Shown in the app, a plain number of five digits or more is grouped
@@ -1868,17 +2094,7 @@ pub(crate) fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) 
         ),
         // A fraction where there is one to be had, `2 3/4`, and the decimal
         // otherwise.
-        Value::Fraction(r) => {
-            let size = r.checked_abs().unwrap_or(*r);
-            localised(
-                signed(
-                    r.is_negative(),
-                    shown_fraction(&size, group(style))
-                        .unwrap_or_else(|| shown_decimal(&size, group(style))),
-                ),
-                style,
-            )
-        }
+        Value::Fraction(r) => shown_rational(r, style),
         Value::Percent(r) if exact => format_percent(r, true),
         Value::Percent(r) => localised(shown_percent(r, false, group(style)), style),
         Value::Float(f) if exact => format_float(*f, true),
@@ -2023,22 +2239,37 @@ mod tests {
     #[test]
     fn formats_rationals() {
         assert_eq!(format_rat(&rat(175, 4)), "43.75");
-        assert_eq!(format_rat(&rat(1, 3)), "0.333333333333333333333333333333");
+        assert_eq!(
+            format_rat(&rat(1, 3)),
+            "0.33333333333333333333333333333333333333"
+        );
         assert_eq!(format_rat(&rat(-1, 8)), "-0.125");
         assert_eq!(format_rat(&rat(1, 20)), "0.05");
-        assert_eq!(format_rat(&rat(-7, 3)), "-2.33333333333333333333333333333");
+        assert_eq!(
+            format_rat(&rat(-7, 3)),
+            "-2.3333333333333333333333333333333333333"
+        );
     }
 
     #[test]
     fn shows_rationals() {
-        assert_eq!(format_rat(&rat(22, 7)), "3.14285714285714285714285714286");
+        assert_eq!(
+            format_rat(&rat(22, 7)),
+            "3.142857142857142857142857142857142857"
+        );
         assert_eq!(format_rat(&rat(11, 4)), "2.75");
-        assert_eq!(format_rat(&rat(-1, 3)), "-0.333333333333333333333333333333");
+        assert_eq!(
+            format_rat(&rat(-1, 3)),
+            "-0.33333333333333333333333333333333333333"
+        );
     }
 
     #[test]
     fn shows_fractions() {
-        let shown = |n: i64, d: i64| format_scalar(&Value::Fraction(rat(n, d)), false);
+        let frac = |n: i64, d: i64| {
+            Value::Fraction(Rc::new(Rat::new(i128::from(n), i128::from(d)).unwrap()))
+        };
+        let shown = |n: i64, d: i64| format_scalar(&frac(n, d), false);
         assert_eq!(shown(22, 7), "3 1/7");
         assert_eq!(shown(11, 4), "2 3/4");
         assert_eq!(shown(-11, 4), "-2 3/4");
@@ -2047,26 +2278,13 @@ mod tests {
         assert_eq!(shown(1000, 3), "333 1/3");
         assert_eq!(shown(1, 8), "1/8");
         // In full it is the fraction itself, which is how a file writes one.
-        assert_eq!(
-            format_exact(&Value::Fraction(rat(-11, 4)), false, &Style::ISO),
-            "-11/4"
-        );
+        assert_eq!(format_exact(&frac(-11, 4), false, &Style::ISO), "-11/4");
         // One with no fraction of a small enough denominator is a decimal.
         assert_eq!(shown(1, 10_001), "0.00009999000099990000·");
         // Two fractions give a fraction; a fraction with a decimal, a decimal.
-        let sum = arith(
-            BinOp::Add,
-            &Value::Fraction(rat(1, 3)),
-            &Value::Fraction(rat(1, 6)),
-        )
-        .expect("adds");
+        let sum = arith(BinOp::Add, &frac(1, 3), &frac(1, 6)).expect("adds");
         assert_eq!(format_scalar(&sum, false), "1/2");
-        let mixed = arith(
-            BinOp::Add,
-            &Value::Fraction(rat(1, 3)),
-            &Value::Decimal(rat(1, 6)),
-        )
-        .expect("adds");
+        let mixed = arith(BinOp::Add, &frac(1, 3), &Value::Decimal(rat(1, 6))).expect("adds");
         assert_eq!(format_scalar(&mixed, false), "0.5");
     }
 
@@ -2084,17 +2302,17 @@ mod tests {
         // Past an `i64` a whole number is still exact, as a decimal.
         assert_eq!(
             shown(dec("18446744073709551616")),
-            "1.8446744073709551·e+19"
+            "1.8446744073709551e+19·"
         );
         assert_eq!(
             shown(dec("-18446744073709551616")),
-            "-1.8446744073709551·e+19"
+            "-1.8446744073709551e+19·"
         );
         assert_eq!(shown(dec("0.125")), "0.125");
         assert_eq!(shown(dec("0.000000000000001")), "0.000000000000001");
         // The widest and the narrowest a 38-digit decimal reaches.
         assert_eq!(shown(dec("1e-38")), "1e-38");
-        assert_eq!(shown(dec(&"9".repeat(38))), "9.9999999999999999·e+37");
+        assert_eq!(shown(dec(&"9".repeat(38))), "9.9999999999999999e+37·");
         assert_eq!(shown(dec("0.12345678901234567890123")), "0.123·");
     }
 
@@ -2167,7 +2385,7 @@ mod tests {
         assert_eq!(shown(rat(1_000_000_000_000_000_000, 7)), "1.43e+19%");
         assert_eq!(
             format_percent(&rat(5, 12), true),
-            "41.6666666666666666666666666667%"
+            "41.6666666666666666666666666666666667%"
         );
     }
 
@@ -2248,8 +2466,8 @@ mod tests {
         let shown = |f| format_float(f, false);
         // In e notation the mantissa is cut to three places too, and a carry
         // to ten is one of the next power.
-        assert_eq!(shown(1.2246467991473532e-16), "1.225·e-16");
-        assert_eq!(shown(-9.9996e-20), "-1.000·e-19");
+        assert_eq!(shown(1.2246467991473532e-16), "1.225e-16·");
+        assert_eq!(shown(-9.9996e-20), "-1.000e-19·");
         assert_eq!(shown(1.5e30), "1.5e+30");
         // A part nearer zero than the places a Float is shown to is nought.
         assert_eq!(
@@ -2268,11 +2486,11 @@ mod tests {
         assert_eq!(shown(0.1 + 0.2), "0.300·");
         assert_eq!(shown(-2.0 / 3.0), "-0.667·");
         assert_eq!(shown(1e-15), "0.000000000000001");
-        assert_eq!(shown(9.999999999999999e-16), "1.000·e-15");
-        assert_eq!(shown(1.2345678e-15), "1.235·e-15");
+        assert_eq!(shown(9.999999999999999e-16), "1.000e-15·");
+        assert_eq!(shown(1.2345678e-15), "1.235e-15·");
         assert_eq!(shown(999_999_999_999_999.9), "999999999999999.9");
         assert_eq!(shown(1e15), "1e+15");
-        assert_eq!(shown(f64::MAX), "1.798·e+308");
+        assert_eq!(shown(f64::MAX), "1.798e+308·");
     }
 
     #[test]
@@ -2282,10 +2500,10 @@ mod tests {
         assert_eq!(shown(third.converted(S::Int)), "-2");
         assert_eq!(
             shown(third.converted(S::String)),
-            "'-2.33333333333333333333333333333'"
+            "'-2.3333333333333333333333333333333333333'"
         );
-        assert_eq!(shown(Value::Float(0.1).converted(S::Decimal)), "0.1");
-        assert_eq!(shown(Value::text("1/8").converted(S::Decimal)), "0.125");
+        assert_eq!(shown(Value::Float(0.1).converted(S::DECIMAL)), "0.1");
+        assert_eq!(shown(Value::text("1/8").converted(S::DECIMAL)), "0.125");
         assert_eq!(
             shown(Value::Date(1).converted(S::Datetime)),
             "1970-01-02T00:00"
@@ -2301,17 +2519,27 @@ mod tests {
 
     #[test]
     fn division_is_exact_where_it_can_be() {
+        // A quotient of whole numbers is the rational it comes to, so taking
+        // a third back out again gives one.
         let third = arith(BinOp::Div, &Value::int(1), &Value::int(3)).unwrap();
-        assert!(matches!(third, Value::Decimal(_)));
-        // A third is rounded at the widest scale there is, so taking it
-        // back out again does not give one. This is the cost of a
-        // fixed-point decimal in place of a rational, and is deliberate.
+        assert!(matches!(third, Value::Fraction(_)));
         let back = arith(BinOp::Mul, &third, &Value::int(3)).unwrap();
         assert_eq!(format_exact(&back, false, &Style::ISO), "1");
+        // A whole quotient is a whole number.
+        let two = arith(BinOp::Div, &Value::int(6), &Value::int(3)).unwrap();
+        assert!(matches!(two, Value::Int(2, _)));
+        // A third of a decimal is rounded at the widest scale there is, so
+        // taking it back out again does not give one. This is the cost of a
+        // fixed-point decimal in place of a rational, and is deliberate.
+        let one = Value::Decimal(Dec::from_i64(1));
+        let third = arith(BinOp::Div, &one, &Value::int(3)).unwrap();
+        assert!(matches!(third, Value::Decimal(_)));
+        let back = arith(BinOp::Mul, &third, &Value::int(3)).unwrap();
+        assert_eq!(format_exact(&back, false, &Style::ISO), "0.9999999999");
         // One that ends comes back exactly.
         let eighth = arith(BinOp::Div, &Value::int(1), &Value::int(8)).unwrap();
         let one = arith(BinOp::Mul, &eighth, &Value::int(8)).unwrap();
-        assert!(matches!(one, Value::Int(n, _) if n == 1));
+        assert_eq!(format_exact(&one, false, &Style::ISO), "1");
     }
 
     #[test]

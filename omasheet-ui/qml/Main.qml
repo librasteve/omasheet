@@ -391,7 +391,7 @@ ApplicationWindow {
                 rows.push([
                     { d: c.name, s: c.name, e: "", x: "", n: false, f: false },
                     { d: c.source, s: c.source, e: c.error, x: "", n: false, f: true },
-                    { d: c.error ? "#ERROR" : c.display, s: c.source, e: c.error, x: c.exact, n: false, f: false }
+                    { d: c.error ? "#ERROR" : c.display, s: c.source, e: c.error, x: c.exact, n: !!c.numeric && !c.error, f: false }
                 ]);
             }
             list.push({
@@ -400,7 +400,7 @@ ApplicationWindow {
                 columns: [
                     { name: "Name", type: "", formula: "", computed: false, declared: false },
                     { name: "Expression", type: "", formula: "", computed: false, declared: false },
-                    { name: "Value", type: "", formula: "", computed: true, declared: false }
+                    { name: "Value", type: "", formula: "", computed: true, declared: false, format: file.constFormat() }
                 ],
                 rows: rows,
                 nrows: rows.length,
@@ -1588,8 +1588,15 @@ ApplicationWindow {
         ? { cut: true, count: foreign.count, elsewhere: true }
         : marked !== null && marked.rows && !sheet.isConsts && marked.tab < tabs.length
             && marked.text.length > 0
-        ? { cut: false, count: marked.bottom - marked.top + 1 }
+        ? { cut: false, count: textRows(marked.text) }
         : null
+    // The rows a block of copied text holds: what goes in is counted from
+    // the text itself, which a filter may have made fewer than the rows
+    // between the first and the last that were selected.
+    function textRows(text) {
+        var lines = text.replace(/\n$/, "").split("\n");
+        return Math.max(1, lines.length);
+    }
     readonly property bool grabbedElsewhereColumns: foreign !== null && !foreign.sheet && foreign.rows === false
         && foreign.tab !== tab && foreign.tab < tabs.length && !sheet.isConsts
         && foreign.text !== undefined && foreign.text.length > 0 && foreign.names !== undefined
@@ -2368,6 +2375,15 @@ ApplicationWindow {
     }
 
     // Open a picker beside the head of the first selected column.
+    // The format of the selected columns, or of the constants' values.
+    function setFormatOf(text) {
+        return sheet.isConsts ? file.setConstFormat(text)
+            : file.setColumnFormat(tab, selLeft, selRight - selLeft + 1, text);
+    }
+    function checkFormatOf(text) {
+        return sheet.isConsts ? file.checkConstFormat(text)
+            : file.checkColumnFormat(tab, selLeft, selRight - selLeft + 1, text);
+    }
     function pickFor(popup) {
         var head = headCells.itemAt(selLeft);
         if (head)
@@ -2387,10 +2403,11 @@ ApplicationWindow {
     function metaAvailable(kind) {
         if (sheet.columns.length === 0 || !headCells.itemAt(selLeft))
             return false;
+        // The constants take a format for their values and nothing else.
+        if (sheet.isConsts)
+            return kind === "format" && allFormattable();
         if (kind === "filter")
             return selLeft === selRight;
-        if (sheet.isConsts)
-            return false;
         return kind === "format" ? allFormattable() : true;
     }
     function cycleMeta(dir) {
@@ -2442,16 +2459,18 @@ ApplicationWindow {
     // The steps of setting a column go in order, its type and then its format.
     // `Set unit…` is always open: a unit makes the column a kind of quantity,
     // whatever it was.
-    // `Set format…` waits for a declared type that takes a format, and for a
-    // quantity, its unit.
+    // `Set format…` waits for a declared type that takes a format.
     function allFormattable() {
+        // The constants: their Value column.
+        if (sheet.isConsts)
+            return selLeft === 2 && selRight === 2 && sheet.nrows > 0;
         for (var c = selLeft; c <= selRight; c++) {
             var column = sheet.columns[c];
             if (!column || !column.declared)
                 return false;
+            // A quantity takes a format with or without a unit, `Quantity[; .9s]`.
             if (win.isQuantityType(column.type)) {
-                if (!column.unit)
-                    return false;
+                continue;
             } else if (["Integer", "Hex", "Octal", "Binary", "Decimal", "Float", "Scientific", "Boolean", "Date", "Time", "Datetime"].indexOf(column.type) < 0) {
                 return false;
             }
@@ -4035,10 +4054,18 @@ ApplicationWindow {
                                                     ? cellItem.cell.d : "")
                                             : ""
                                         readonly property bool failed: !!cellItem.cell && !!cellItem.cell.e
-                                        function say() { win.hover(cellArea, containsMouse && !cellMenu.visible ? said : "", failed); }
+                                        function say() { win.hover(cellArea, (containsMouse || cellItem.current) && !cellMenu.visible ? said : "", failed); }
                                         onContainsMouseChanged: say()
+                                        // The cell the cursor is on says it too, not only the pointer.
+                                        Connections { target: cellItem; function onCurrentChanged() { cellArea.say(); } }
                                         onSaidChanged: say()
                                         Component.onDestruction: win.hover(cellArea, "", false)
+                                        // An error is also floated beside the cell, for the
+                                        // pointer resting on it or the cursor selecting it.
+                                        ToolTip.visible: failed && !cellMenu.visible && !win.editing
+                                            && (containsMouse || cellItem.current)
+                                        ToolTip.delay: containsMouse ? 400 : 0
+                                        ToolTip.text: failed ? cellItem.cell.e : ""
                                         // A link in the cell under the pointer, opened with Ctrl and a click.
                                         readonly property string link: containsMouse
                                             ? cellText.linkAt(mouseX - cellText.x, mouseY - cellText.y) : ""
@@ -5601,11 +5628,11 @@ ApplicationWindow {
         }
         // Columns, when whole columns are selected. A column added
         // from the footer goes at the end.
-        MenuRule { visible: cellMenu.columns }
+        MenuRule { visible: cellMenu.columns || (win.sheet.isConsts && win.allFormattable()) }
         // The filter box from the column's header, for the one column.
         MenuEntry {
             text: "Set filter\u2026"
-            visible: cellMenu.columns
+            visible: cellMenu.columns && !win.sheet.isConsts
             enabled: visible && cellMenu.editable && win.selLeft === win.selRight
                 && win.sheet.columns.length > 0
             onTriggered: {
@@ -5616,24 +5643,26 @@ ApplicationWindow {
         }
         MenuEntry {
             text: "Set type\u2026"
-            visible: cellMenu.columns
+            visible: cellMenu.columns && !win.sheet.isConsts
             enabled: visible && cellMenu.editable && win.sheet.columns.length > 0
             onTriggered: win.pickFor(typePopup)
         }
         MenuEntry {
             text: "Set unit\u2026"
-            visible: cellMenu.columns
+            visible: cellMenu.columns && !win.sheet.isConsts
             enabled: visible && cellMenu.editable && win.sheet.columns.length > 0
             onTriggered: win.pickFor(unitPopup)
         }
         MenuEntry {
             text: "Set format\u2026"
-            visible: cellMenu.columns
-            enabled: visible && cellMenu.editable && win.sheet.columns.length > 0 && win.allFormattable()
+            // The constants have no whole columns to select, but their Value
+            // column takes a format: it is offered with a Value cell.
+            visible: cellMenu.columns || (win.sheet.isConsts && win.allFormattable())
+            enabled: visible && (cellMenu.editable || win.sheet.isConsts) && win.sheet.columns.length > 0 && win.allFormattable()
             onTriggered: win.pickFor(formatPopup)
         }
         // The columns' own entries, below the Set ones; Change to formula is last.
-        MenuRule { visible: cellMenu.columns }
+        MenuRule { visible: cellMenu.columns || (win.sheet.isConsts && win.allFormattable()) }
         MenuEntry {
             text: win.colsOnHand !== null ? "Insert cells before"
                 : cellMenu.columnCount > 1 ? "Insert " + cellMenu.columnCount + " columns before" : "Insert column before"
@@ -6384,7 +6413,7 @@ ApplicationWindow {
     // `Force`, comes from the unit chosen in `Set unit…`.
     PickerPopup {
         id: typePopup
-        placeholder: "e.g. Decimal"
+        placeholder: "e.g. Decimal, Decimal(6)"
         clearText: "Clear type"
         clearable: win.anyDeclared()
         onCleared: win.setColumnTypes("")
@@ -6393,7 +6422,7 @@ ApplicationWindow {
         // kind, `Mass` or `Force`, is `Set unit…`'s.
         readonly property var typeGroups: [
             ["Numbers", [["Integer", false], ["Binary", true], ["Octal", true], ["Hex", true],
-                ["Decimal", false], ["Fraction", true], ["Percent", true], ["Float", false],
+                ["Fraction", false], ["Decimal", false], ["Percent", true], ["Float", false],
                 ["Scientific", false], ["Complex", false]]],
             ["Text", [["String", false], ["Email", true], ["Url", true], ["Uuid", true]]],
             ["Dates and times", [["Datetime", false], ["Date", true], ["Time", true], ["Duration", true]]],
@@ -6407,6 +6436,14 @@ ApplicationWindow {
                         complete: pair[0], group: g[0]});
                 });
             });
+            // `Decimal(10)`: the places a decimal keeps, typed. It is offered
+            // once the digits are in, at the top, and ticked when it is what
+            // the columns have.
+            var places = /^decimal\s*\(\s*(\d{1,2})\s*\)?$/i.exec(text.trim());
+            if (places && parseInt(places[1], 10) <= 38) {
+                var spec = "Decimal(" + parseInt(places[1], 10) + ")";
+                out.unshift({spec: spec, label: spec, complete: spec, group: "Numbers"});
+            }
             // Text that matches no type turns the box red.
             var want = text.toLowerCase();
             if (want.length > 0 && !out.some(function(e) { return e.label.toLowerCase().indexOf(want) >= 0; }))
@@ -6439,7 +6476,7 @@ ApplicationWindow {
         // keeps the format it had, and the unit is in it, so that goes too.
         onCleared: {
             win.setColumnTypes("Quantity");
-            file.setColumnFormat(win.tab, win.selLeft, win.selRight - win.selLeft + 1, "");
+            win.setFormatOf("");
         }
         wider: 1.4
         taller: 1.8
@@ -6928,7 +6965,7 @@ ApplicationWindow {
             col = c;
             parent = item;
             var column = win.sheet.columns[c];
-            type = column ? column.type : "";
+            type = win.sheet.isConsts ? "Quantity" : column ? column.type : "";
             unit = column && column.unit ? column.unit : "";
             var lines = file.formatChoices(type, unit).split("\n"), list = [];
             for (var i = 0; i < lines.length; i++) {
@@ -6952,14 +6989,14 @@ ApplicationWindow {
             field.selectAll();
         }
         function check() {
-            fault = file.checkColumnFormat(win.tab, win.selLeft, win.selRight - win.selLeft + 1, field.text);
+            fault = win.checkFormatOf(field.text);
         }
         // Apply what is in the field and stay open.
         function apply() {
             check();
             if (fault.length > 0 || !changed)
                 return;
-            var problem = file.setColumnFormat(win.tab, win.selLeft, win.selRight - win.selLeft + 1, field.text);
+            var problem = win.setFormatOf(field.text);
             if (problem.length > 0) {
                 fault = problem;
                 return;

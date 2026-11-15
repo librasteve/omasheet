@@ -51,6 +51,13 @@ impl QId {
     }
 }
 
+/// The scale of a bare `Decimal`: ten places. A `Decimal(38, 10)` holds up
+/// to about 10^28.
+pub const DEFAULT_SCALE: u8 = 10;
+
+/// The most places a `Decimal` can keep: a `Decimal128` holds 38 digits.
+pub const MAX_DECIMAL_SCALE: u8 = 38;
+
 /// The type of a single value. `Any` is "not known until evaluation".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum S {
@@ -67,7 +74,7 @@ pub enum S {
     Binary,
     /// An exact number that ends when written as a decimal: `19.99`. Every
     /// `Int` is one.
-    Decimal,
+    Decimal(u8),
     /// An exact number shown as a fraction of whole numbers: `1/7`, and
     /// `2 3/4` for `2.75`. It holds whatever a `Decimal` does.
     Fraction,
@@ -106,6 +113,14 @@ pub enum S {
 }
 
 impl S {
+    /// A `Decimal` of the default scale.
+    pub const DECIMAL: S = S::Decimal(DEFAULT_SCALE);
+
+    /// A `Decimal` of any scale.
+    pub fn is_decimal(self) -> bool {
+        matches!(self, S::Decimal(_))
+    }
+
     /// A type that can be written in a column schema.
     pub fn from_name(name: &str) -> Option<S> {
         Some(match name {
@@ -116,7 +131,7 @@ impl S {
             "Hex" => S::Hex,
             "Octal" => S::Octal,
             "Binary" => S::Binary,
-            "Decimal" => S::Decimal,
+            "Decimal" => S::DECIMAL,
             "Fraction" => S::Fraction,
             "Percent" => S::Percent,
             "Float" => S::Float,
@@ -143,7 +158,7 @@ impl S {
                 | S::Hex
                 | S::Octal
                 | S::Binary
-                | S::Decimal
+                | S::Decimal(_)
                 | S::Fraction
                 | S::Percent
                 | S::Float
@@ -164,7 +179,7 @@ impl S {
 
     /// An exact number: a whole number, `Decimal`, `Fraction` or `Percent`.
     pub fn is_exact(self) -> bool {
-        self.is_int() || matches!(self, S::Decimal | S::Fraction | S::Percent)
+        self.is_int() || matches!(self, S::Decimal(_) | S::Fraction | S::Percent)
     }
 
     /// A date, a time of day, or both.
@@ -198,7 +213,7 @@ impl S {
 
     fn rank(self) -> u8 {
         match self {
-            S::Int | S::Hex | S::Octal | S::Binary | S::Decimal | S::Fraction | S::Percent => 0,
+            S::Int | S::Hex | S::Octal | S::Binary | S::Decimal(_) | S::Fraction | S::Percent => 0,
             S::Float => 1,
             S::Scientific => 2,
             S::Complex => 3,
@@ -207,19 +222,34 @@ impl S {
     }
 
     /// The wider of two numeric types. `Hex`, `Octal` and `Binary` are
-    /// `Integer`s, and `Fraction` and `Percent` are `Decimal`s, shown another
-    /// way: two of one type stay it, and two different members of a family
-    /// are the family's own type. An `Integer` and a `Decimal` are a
-    /// `Decimal`, a `Float` beside either is a `Float`, and a `Complex` beside
-    /// any number is a `Complex`.
+    /// `Integer`s, and `Percent` is a `Decimal`, shown another way: two of one
+    /// type stay it, and two different members of a family are the family's
+    /// own type. Exactness runs `Integer`, `Fraction`, `Decimal`: a `Fraction`
+    /// beside a whole number is a `Fraction`, but beside a `Decimal` or a
+    /// `Percent` it is a `Decimal`, exact only to its places. A `Float` beside
+    /// any of them is a `Float`, and a `Complex` beside any number is a
+    /// `Complex`.
     pub fn wider(self, other: S) -> S {
         if self == other {
             self
         } else if self.is_exact() && other.is_exact() {
             if self.is_int() && other.is_int() {
                 S::Int
+            } else if (self == S::Fraction && other.is_int())
+                || (other == S::Fraction && self.is_int())
+            {
+                // A rational beside a whole number is a rational.
+                S::Fraction
             } else {
-                S::Decimal
+                // Two decimals keep the places of the finer; a whole number
+                // adds none; a fraction counts as a decimal of the default
+                // scale.
+                let places = |t: S| match t {
+                    S::Decimal(n) => n,
+                    t if t.is_int() => 0,
+                    _ => DEFAULT_SCALE,
+                };
+                S::Decimal(places(self).max(places(other)))
             }
         } else if self.rank() >= other.rank() {
             self
@@ -264,7 +294,7 @@ impl S {
                 | S::Hex
                 | S::Octal
                 | S::Binary
-                | S::Decimal
+                | S::Decimal(_)
                 | S::Fraction
                 | S::Float
                 | S::Scientific
@@ -309,13 +339,19 @@ impl fmt::Display for S {
         if let S::Quantity(q) = self {
             return f.write_str(&q.name());
         }
+        // A scale other than the default is part of the name.
+        if let S::Decimal(n) = self
+            && *n != DEFAULT_SCALE
+        {
+            return write!(f, "Decimal({n})");
+        }
         f.write_str(match self {
             S::Any => "Any",
             S::Int => "Integer",
             S::Hex => "Hex",
             S::Octal => "Octal",
             S::Binary => "Binary",
-            S::Decimal => "Decimal",
+            S::Decimal(_) => "Decimal",
             S::Fraction => "Fraction",
             S::Percent => "Percent",
             S::Float => "Float",
@@ -431,6 +467,11 @@ pub enum DepKind {
     Fixed,
     /// Any rows.
     Whole,
+    /// Any rows of a column of the same sheet, read by a window function
+    /// (`cum_sum`, `diff`, `rank`...). It orders and finds cycles as `Whole`
+    /// does; it differs in that a column that reads nothing else is still
+    /// one Polars can calculate whole, in a frame of the sheet's columns.
+    Frame,
 }
 
 /// A selection of rows and columns from one sheet of the file.
@@ -480,6 +521,11 @@ impl Ty {
 #[cfg(test)]
 mod tests {
     use super::S::*;
+    use super::{DEFAULT_SCALE, S};
+
+    /// A bare `Decimal`, which the glob above would make a constructor.
+    #[allow(non_upper_case_globals)]
+    const Decimal: S = S::Decimal(DEFAULT_SCALE);
 
     /// The tables of the type lattice: the number types, then each family.
     #[test]
@@ -500,16 +546,20 @@ mod tests {
             assert_eq!(a.join(b), Some(Int), "{a} with {b}");
             assert_eq!(b.join(a), Some(Int), "{b} with {a}");
         }
-        // Fraction and Percent are Decimals shown another way.
+        // A Percent is a Decimal shown another way; a Fraction is the exact
+        // rational, which a whole number beside it leaves exact, and a
+        // Decimal or Percent makes a Decimal.
         assert_eq!(Fraction.join(Fraction), Some(Fraction));
         assert_eq!(Percent.join(Percent), Some(Percent));
+        for (a, b) in [(Fraction, Int), (Fraction, Hex)] {
+            assert_eq!(a.join(b), Some(Fraction), "{a} with {b}");
+            assert_eq!(b.join(a), Some(Fraction), "{b} with {a}");
+        }
         for (a, b) in [
             (Fraction, Percent),
             (Fraction, Decimal),
             (Percent, Decimal),
-            (Fraction, Int),
             (Percent, Int),
-            (Fraction, Hex),
         ] {
             assert_eq!(a.join(b), Some(Decimal), "{a} with {b}");
             assert_eq!(b.join(a), Some(Decimal), "{b} with {a}");
@@ -540,5 +590,26 @@ mod tests {
         assert_eq!(Int.join(String), None);
         assert_eq!(String.join(String), Some(String));
         assert_eq!(Any.join(Fraction), Some(Any));
+    }
+}
+
+#[cfg(test)]
+mod scale_tests {
+    use super::*;
+
+    #[test]
+    fn decimals_join_at_the_finer_scale() {
+        assert_eq!(S::Decimal(2).join(S::Decimal(4)), Some(S::Decimal(4)));
+        assert_eq!(S::Decimal(4).join(S::Decimal(2)), Some(S::Decimal(4)));
+        assert_eq!(S::Int.join(S::Decimal(2)), Some(S::Decimal(2)));
+        assert_eq!(S::Decimal(2).join(S::Float), Some(S::Float));
+        assert_eq!(S::Decimal(2).join(S::Decimal(2)), Some(S::Decimal(2)));
+    }
+
+    #[test]
+    fn a_scale_is_part_of_the_name_unless_it_is_the_default() {
+        assert_eq!(S::DECIMAL.to_string(), "Decimal");
+        assert_eq!(S::Decimal(2).to_string(), "Decimal(2)");
+        assert_eq!(S::from_name("Decimal"), Some(S::DECIMAL));
     }
 }

@@ -31,19 +31,24 @@ pub fn format_number(v: &Value, f: &NumFormat, style: &Style) -> Option<String> 
     if f.conv.is_integer() {
         let n = match v {
             Value::Int(n, _) => *n,
-            Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) if r.is_integer() => {
-                r.to_i64()?
-            }
+            Value::Decimal(r) | Value::Percent(r) if r.is_integer() => r.to_i64()?,
+            Value::Fraction(r) if r.is_integer() => r.to_i64()?,
             _ => return None,
         };
         return Some(whole(n, f, style));
     }
     let (negative, size) = match v {
         Value::Int(n, _) => (*n < 0, Size::Exact(Dec::from_i64(*n).checked_abs()?)),
-        Value::Decimal(r) | Value::Fraction(r) | Value::Percent(r) => {
+        Value::Decimal(r) | Value::Percent(r) => {
             let r = r.guarded();
             (r.is_negative(), Size::Exact(r.checked_abs()?))
         }
+        // A fraction as the nearest decimal of the default places, or the
+        // float where it needs more room than a decimal has.
+        Value::Fraction(r) => match r.to_dec(i32::from(omasheet_omx::types::DEFAULT_SCALE)) {
+            Some(d) => (d.is_negative(), Size::Exact(d.checked_abs()?)),
+            None => (r.is_negative(), Size::Float(r.to_f64().abs())),
+        },
         Value::Float(x) if x.is_nan() || x.is_infinite() => {
             return Some(not_finite(*x, f));
         }

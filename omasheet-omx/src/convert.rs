@@ -6,12 +6,14 @@
 use crate::ast::Lit;
 use crate::decimal::Dec;
 use crate::lexer::{Tok, lex};
+use crate::rational::Rat;
 use crate::types::{Base, QId, S};
+use std::sync::Arc;
 
 /// A whole number and a part written on their own, `2 3/4` or `-2 3/4`, as
 /// the exact number they come to, `2.75`. The part may be more than one:
 /// `5 7/3` is `7 1/3`. `None` if the text is anything else.
-pub fn parse_mixed(text: &str) -> Option<Dec> {
+pub fn parse_mixed(text: &str) -> Option<Rat> {
     let toks = lex(text, 0, 0).ok()?;
     let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
     let (negative, rest) = match toks.as_slice() {
@@ -28,9 +30,28 @@ pub fn parse_mixed(text: &str) -> Option<Dec> {
     else {
         return None;
     };
-    let part = Dec::from_i64(*n).checked_div(Dec::from_i64(*d))?;
-    let r = Dec::from_i64(*whole).checked_add(part)?;
-    if negative { r.checked_neg() } else { Some(r) }
+    let part = Rat::new(*n as i128, *d as i128)?;
+    let r = Rat::from_i64(*whole).add(&part);
+    Some(if negative { r.neg() } else { r })
+}
+
+/// A fraction of two whole numbers written out, `-7/2`, either of which
+/// may be as long as it likes: the form a `Fraction` is written in, so that
+/// one too big for a token reads back to the digit. `None` unless the text is
+/// just that, and one whose parts fit the lexer's own whole numbers is left to
+/// it.
+pub fn parse_big_fraction(text: &str) -> Option<Rat> {
+    let (n, d) = text.split_once('/')?;
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if !digits(n.strip_prefix('-').unwrap_or(n)) || !digits(d) {
+        return None;
+    }
+    if n.parse::<i64>().is_ok() && d.parse::<i64>().is_ok() {
+        return None;
+    }
+    let n = num_bigint::BigInt::parse_bytes(n.as_bytes(), 10)?;
+    let d = num_bigint::BigInt::parse_bytes(d.as_bytes(), 10)?;
+    Rat::from_big(n, d)
 }
 
 /// A `Complex` as it is written, `3+4i`, for a message.
@@ -57,17 +78,17 @@ pub fn parse_literal(text: &str) -> Option<Lit> {
 /// As [`parse_literal`]; where `units` is true a number may be followed by an
 /// SI unit or a scale: `5kg` is a quantity and `1k.` is 1000.
 pub fn parse_literal_with(text: &str, units: bool) -> Option<Lit> {
+    if let Some(r) = parse_big_fraction(text) {
+        return Some(Lit::Fraction(Arc::new(r)));
+    }
     if let Some(r) = parse_mixed(text) {
-        return Some(Lit::Fraction(r));
+        return Some(Lit::Fraction(Arc::new(r)));
     }
     let toks = crate::lexer::lex_with(text, 0, 0, units).ok()?;
     let toks: Vec<&Tok> = toks.iter().map(|t| &t.tok).collect();
     // A fraction of two whole numbers, `1/7`, is an exact number.
-    let fraction = |n: i64, d: i64| {
-        Dec::from_i64(n)
-            .checked_div(Dec::from_i64(d))
-            .map(Lit::Fraction)
-    };
+    let fraction =
+        |n: i64, d: i64| Rat::new(n as i128, d as i128).map(|r| Lit::Fraction(Arc::new(r)));
     // A complex number: `4i`, `3+4i`, `-1.5-2i`.
     let real = |t: &Tok| match t {
         Tok::Int(n, _) => Some(*n as f64),
@@ -139,7 +160,8 @@ pub fn parse_literal_with(text: &str, units: bool) -> Option<Lit> {
 pub fn lit_type(l: &Lit) -> S {
     match l {
         Lit::Int(_, b) => b.ty(),
-        Lit::Decimal(_) => S::Decimal,
+        // A cell keeps the places it is written with.
+        Lit::Decimal(d) => S::Decimal(d.trimmed().scale().clamp(0, 38) as u8),
         Lit::Fraction(_) => S::Fraction,
         Lit::Percent(_) => S::Percent,
         Lit::Float(_) => S::Float,
@@ -152,6 +174,67 @@ pub fn lit_type(l: &Lit) -> S {
         Lit::Time(_) => S::Time,
         Lit::Datetime(_) => S::Datetime,
         Lit::Duration(_) => S::Duration,
+    }
+}
+
+fn scale_name(scale: u8) -> String {
+    if scale == crate::types::DEFAULT_SCALE {
+        "Decimal".to_string()
+    } else {
+        format!("Decimal({scale})")
+    }
+}
+
+fn too_large_for(d: &Dec, scale: u8) -> String {
+    format!(
+        "{} is too large for {}, which holds {} digits before the point; use Fraction",
+        d.to_plain_string(),
+        scale_name(scale),
+        38 - scale as i32
+    )
+}
+
+/// Whether the number `d` fits a column that keeps `scale` places of 38
+/// digits: it is held exactly or it is refused, with the type that would
+/// hold it. This is the gate for a cell; a conversion rounds instead.
+pub fn fits_scale(d: &Dec, scale: u8) -> Result<(), String> {
+    match d.rescale(scale as i32) {
+        None => Err(too_large_for(d, scale)),
+        Some(r) if r.cmp_dec(*d) != std::cmp::Ordering::Equal => {
+            let places = d.trimmed().scale().max(0);
+            Err(format!(
+                "{} has more places than {} keeps; use Decimal({places}) or Fraction",
+                d.to_plain_string(),
+                scale_name(scale)
+            ))
+        }
+        Some(_) => Ok(()),
+    }
+}
+
+/// The most places a decimal literal keeps as a `Decimal`: one with more is
+/// the exact `Fraction` it comes to (decimal-and-fraction T11).
+pub const MAX_INFERRED_SCALE: i32 = 18;
+
+/// A literal as the type it is inferred to be: a decimal with more places
+/// than [`MAX_INFERRED_SCALE`] is a `Fraction`, exactly; anything else is
+/// itself.
+pub fn inferred(l: Lit) -> Lit {
+    match l {
+        Lit::Decimal(d) if d.trimmed().scale() > MAX_INFERRED_SCALE => {
+            Lit::Fraction(Arc::new(Rat::from_dec(d)))
+        }
+        other => other,
+    }
+}
+
+/// The type of a literal written in a formula: a decimal has the default
+/// scale or its own places, whichever is more, so that `19.99 * 1.5` is not
+/// rounded to the two places of `19.99`.
+pub fn formula_lit_type(l: &Lit) -> S {
+    match lit_type(l) {
+        S::Decimal(n) => S::Decimal(n.max(crate::types::DEFAULT_SCALE)),
+        other => other,
     }
 }
 
@@ -174,11 +257,27 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     let no = || Err(format!("{from} cannot be made {}", a(to)));
     let real = |l: &Lit| match l {
         Lit::Int(n, _) => Some(*n as f64),
-        Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r) => Some(r.to_f64()),
+        Lit::Decimal(r) | Lit::Percent(r) => Some(r.to_f64()),
+        Lit::Fraction(r) => Some(r.to_f64()),
         Lit::Float(f) => Some(*f),
         Lit::Boolean(b) => Some(*b as u8 as f64),
         _ => None,
     };
+    // A conversion to a `Decimal` of `s` places rounds to them, half away
+    // from zero. (A cell of a column that declares `s` is refused more
+    // places instead: see [`fits_scale`].)
+    if let (Lit::Decimal(d), S::Decimal(s)) = (lit, to) {
+        return d
+            .rescale(s as i32)
+            .map(Lit::Decimal)
+            .ok_or_else(|| too_large_for(d, s));
+    }
+    if let (Lit::Int(n, _), S::Decimal(s)) = (lit, to) {
+        return Dec::from_i64(*n)
+            .rescale(s as i32)
+            .map(|_| lit.clone())
+            .ok_or_else(|| too_large_for(&Dec::from_i64(*n), s));
+    }
     if from == to || to == S::Any {
         return Ok(lit.clone());
     }
@@ -199,7 +298,7 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
                     Ok(Lit::Float(*re))
                 } else {
                     // An exact number is made from the real part's value.
-                    convert(&Lit::Float(*re), S::Decimal).and_then(|d| convert(&d, to))
+                    convert(&Lit::Float(*re), S::DECIMAL).and_then(|d| convert(&d, to))
                 }
             } else {
                 Err(format!(
@@ -213,8 +312,8 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
     // is converted as that number is; and any exact number may be one.
     if to == S::Fraction {
         return match lit {
-            Lit::Int(n, _) => Ok(Lit::Fraction(Dec::from_i64(*n))),
-            Lit::Decimal(r) | Lit::Percent(r) => Ok(Lit::Fraction(*r)),
+            Lit::Int(n, _) => Ok(Lit::Fraction(Arc::new(Rat::from_i64(*n)))),
+            Lit::Decimal(r) | Lit::Percent(r) => Ok(Lit::Fraction(Arc::new(Rat::from_dec(*r)))),
             Lit::String(s) => parse_literal(s.trim())
                 .filter(|l| !matches!(l, Lit::String(_)))
                 .and_then(|l| convert(&l, to).ok())
@@ -222,10 +321,29 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
             _ => no(),
         };
     }
+    // A fraction as another type: whole numbers drop the part, a `Decimal`
+    // rounds to its places, a `Float` is the nearest double, and anything
+    // else is made from the nearest decimal.
     if let Lit::Fraction(r) = lit {
-        let plain = match r.to_i64() {
-            Some(n) => Lit::Int(n, Base::Dec),
-            None => Lit::Decimal(*r),
+        let plain = match to {
+            S::Float => Lit::Float(r.to_f64()),
+            S::Int | S::Hex | S::Octal | S::Binary => match r.trunc().to_i64() {
+                Some(n) => Lit::Int(n, Base::Dec),
+                None => return Err("the number is too large for an Integer".to_string()),
+            },
+            S::Decimal(s) => {
+                return r.to_dec(i32::from(s)).map(Lit::Decimal).ok_or_else(|| {
+                    format!("{r} is too large for {}; use Fraction", scale_name(s))
+                });
+            }
+            S::Boolean => Lit::Boolean(!r.is_zero()),
+            _ => match r.to_i64() {
+                Some(n) => Lit::Int(n, Base::Dec),
+                None => match r.to_dec(i32::from(crate::types::DEFAULT_SCALE)) {
+                    Some(d) => Lit::Decimal(d),
+                    None => return Err(format!("{r} is too large for a Decimal; use Fraction")),
+                },
+            },
         };
         return convert(&plain, to);
     }
@@ -265,7 +383,7 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
                 .ok_or_else(|| format!("`{s}` is not {}", a(to)));
         }
         // A `Percent` is the number it stands for: `20%` is `0.2`.
-        (Lit::Percent(r), S::Int | S::Decimal | S::Boolean) => {
+        (Lit::Percent(r), S::Int | S::Decimal(_) | S::Boolean) => {
             let plain = match r.to_i64() {
                 Some(n) => Lit::Int(n, Base::Dec),
                 None => Lit::Decimal(*r),
@@ -274,12 +392,12 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
         }
         (Lit::Int(n, _), S::Percent) => Lit::Percent(Dec::from_i64(*n)),
         (Lit::Decimal(r), S::Percent) => Lit::Percent(*r),
-        (Lit::Int(n, _), S::Decimal) => Lit::Int(*n, Base::Dec),
+        (Lit::Int(n, _), S::Decimal(_)) => Lit::Int(*n, Base::Dec),
         (Lit::Decimal(r), S::Int) => match r.trunc().to_i64() {
             Some(n) => Lit::Int(n, Base::Dec),
             None => return Err("the number is too large for an Integer".to_string()),
         },
-        (Lit::Float(f), S::Int | S::Decimal | S::Percent) => match Dec::from_f64(*f) {
+        (Lit::Float(f), S::Int | S::Decimal(_) | S::Percent) => match Dec::from_f64(*f) {
             Some(r) if to == S::Percent => Lit::Percent(r),
             Some(r) if to == S::Int => match r.trunc().to_i64() {
                 Some(n) => Lit::Int(n, Base::Dec),
@@ -298,7 +416,7 @@ pub fn convert(lit: &Lit, to: S) -> Result<Lit, String> {
                 return Err(format!("{name} has no exact value"));
             }
         },
-        (Lit::Boolean(b), S::Int | S::Decimal) => Lit::Int(*b as i64, Base::Dec),
+        (Lit::Boolean(b), S::Int | S::Decimal(_)) => Lit::Int(*b as i64, Base::Dec),
         (Lit::Int(..) | Lit::Decimal(_) | Lit::Percent(_) | Lit::Boolean(_), S::Float) => {
             match real(lit) {
                 Some(f) => Lit::Float(f),
@@ -348,7 +466,7 @@ mod tests {
         S::Hex,
         S::Octal,
         S::Binary,
-        S::Decimal,
+        S::DECIMAL,
         S::Percent,
         S::Float,
         S::Complex,
@@ -370,26 +488,28 @@ mod tests {
     fn converts_numbers() {
         assert_eq!(convert(&lit("19.99"), S::Int), Ok(lit("19")));
         assert_eq!(convert(&lit("-19.99"), S::Int), Ok(lit("-19")));
-        assert_eq!(convert(&lit("1e-1"), S::Decimal), Ok(lit("0.1")));
-        assert_eq!(convert(&lit("1/8"), S::Decimal), Ok(lit("0.125")));
+        assert_eq!(convert(&lit("1e-1"), S::DECIMAL), Ok(lit("0.1")));
+        assert_eq!(convert(&lit("1/8"), S::DECIMAL), Ok(lit("0.125")));
         // A fraction is the number it stands for, as a `Decimal` or a `Fraction`.
         assert_eq!(
-            convert(&lit("1/3"), S::Decimal),
-            Ok(Lit::Decimal(
-                Dec::from_i64(1).checked_div(Dec::from_i64(3)).unwrap()
-            ))
+            convert(&lit("1/3"), S::DECIMAL),
+            Ok(Lit::Decimal(Dec::parse("0.3333333333").unwrap()))
         );
+        // To a scale it rounds half away from zero, and a cell would be refused.
+        assert_eq!(
+            convert(&lit("0.125"), S::Decimal(2)),
+            Ok(Lit::Decimal(Dec::parse("0.13").unwrap()))
+        );
+        assert!(fits_scale(&Dec::parse("0.125").unwrap(), 2).is_err());
+        assert!(fits_scale(&Dec::parse("0.12").unwrap(), 2).is_ok());
         assert_eq!(convert(&lit("0.125"), S::Fraction), Ok(lit("1/8")));
         assert_eq!(
             convert(&lit("3"), S::Fraction),
-            Ok(Lit::Fraction(Dec::from_i64(3)))
+            Ok(Lit::Fraction(Arc::new(Rat::from_i64(3))))
         );
         // A fraction of whole numbers is the exact number it stands for,
         // written as a fraction.
-        assert_eq!(
-            lit("7/3"),
-            Lit::Fraction(Dec::from_i64(7).checked_div(Dec::from_i64(3)).unwrap())
-        );
+        assert_eq!(lit("7/3"), Lit::Fraction(Arc::new(Rat::new(7, 3).unwrap())));
         assert_eq!(convert(&lit("-22/7"), S::Int), Ok(lit("-3")));
         // A whole number and a part is the fraction they come to.
         assert_eq!(lit("2 3/4"), lit("11/4"));
@@ -430,7 +550,7 @@ mod tests {
         let text = |s: &str| Lit::String(s.to_string());
         assert_eq!(convert(&text(" 42 "), S::Int), Ok(lit("42")));
         assert_eq!(convert(&text("19.99"), S::Int), Ok(lit("19")));
-        assert_eq!(convert(&text("20%"), S::Decimal), Ok(lit("0.2")));
+        assert_eq!(convert(&text("20%"), S::DECIMAL), Ok(lit("0.2")));
         assert_eq!(convert(&text("20%"), S::Fraction), Ok(lit("1/5")));
         assert_eq!(convert(&text("16:10"), S::Time), Ok(lit("16:10")));
         assert_eq!(convert(&text("2025-01-31"), S::Date), Ok(lit("2025-01-31")));

@@ -8,7 +8,7 @@
 
 use crate::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use crate::colfmt::Format;
-use crate::convert::{lit_type, parse_literal_with};
+use crate::convert::{formula_lit_type, inferred, lit_type, parse_literal_with};
 use crate::cycle::{self, Cyc};
 use crate::date;
 use crate::decimal::Dec;
@@ -16,11 +16,13 @@ use crate::deps;
 use crate::diag::{Diagnostic, Span};
 use crate::file::{FileAst, SourceDecl, parse_file};
 use crate::funcs::{FUNCTIONS, MathFn};
-use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
+use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel, Spec, Ties, Win};
 use crate::parser::parse_expr;
-use crate::types::{Base, DepKind, QId, S, SheetTy, Ty};
+use crate::rational::Rat;
+use crate::types::{Base, DEFAULT_SCALE, DepKind, QId, S, SheetTy, Ty};
 use std::mem;
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// A checked file, ready to evaluate.
 #[derive(Debug, Default)]
@@ -114,6 +116,12 @@ pub struct Column {
     /// whoever evaluates the column. False for a column whose values are
     /// not a formula at all, which has nothing to be lowered.
     pub elementwise: bool,
+    /// Not elementwise, but reads the other columns of its own sheet only
+    /// the way a window function does (`cum_sum`, `rank`...), or the same
+    /// row: the whole column is one expression over a frame of the sheet's
+    /// columns, as an elementwise one is. It is never calculated for a
+    /// window of the rows, which would restart the running total.
+    pub framewise: bool,
 }
 
 #[derive(Debug)]
@@ -319,6 +327,8 @@ struct Checker<'a> {
     /// same row: [`Column::elementwise`]. Worked out in [`Checker::order`],
     /// which is where the dependencies are still to hand.
     elementwise: Vec<Vec<bool>>,
+    /// And [`Column::framewise`].
+    framewise: Vec<Vec<bool>>,
     /// Per sheet, the other sheets its formulas pick a row of with the
     /// cursor, each once. A sheet that holds no rows is as long as these.
     row_reads: Vec<Vec<usize>>,
@@ -683,7 +693,7 @@ fn from_quotient(e: &Expr) -> bool {
 /// it is one, or it is a `Decimal` that a quotient made and whose value is
 /// read when it is used, a fraction of it being reported there.
 fn whole_enough(ty: &Ty, e: &Expr) -> bool {
-    ty.is_whole() || (matches!(ty, Ty::Scalar(S::Decimal)) && from_quotient(e))
+    ty.is_whole() || (matches!(ty, Ty::Scalar(S::Decimal(_) | S::Fraction)) && from_quotient(e))
 }
 
 fn static_of(e: &Expr) -> Option<Static> {
@@ -708,7 +718,9 @@ fn static_of(e: &Expr) -> Option<Static> {
 fn seed_num(e: &Expr) -> Option<Dec> {
     match &e.kind {
         ExprKind::Lit(Lit::Int(i, _)) => Some(Dec::from_i64(*i)),
-        ExprKind::Lit(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)) => Some(*r),
+        ExprKind::Lit(Lit::Decimal(r) | Lit::Percent(r)) => Some(*r),
+        // A fraction written out, as near a decimal as one holds.
+        ExprKind::Lit(Lit::Fraction(r)) => r.to_dec(crate::types::DEFAULT_SCALE as i32),
         ExprKind::Unary(UnOp::Neg, inner) => seed_num(inner).and_then(|r| r.checked_neg()),
         // `1/3` written out, where the lexer did not take it for one.
         ExprKind::Binary(BinOp::Div, a, b) => {
@@ -936,6 +948,7 @@ impl<'a> Checker<'a> {
             col_out: Vec::new(),
             col_deps: Vec::new(),
             elementwise: Vec::new(),
+            framewise: Vec::new(),
             row_reads: Vec::new(),
             view_state: Vec::new(),
             view_out: Vec::new(),
@@ -1853,7 +1866,7 @@ impl<'a> Checker<'a> {
                         .iter()
                         .find(|l| l.name == self.sheets[t].cols[c].name)
                         .and_then(|l| match &l.format {
-                            Some(Format::Quantity(q)) => Some(q.unit.clone()),
+                            Some(Format::Quantity(q)) => q.unit.clone(),
                             _ => None,
                         })
                         .or_else(|| crate::units::preferred(id)),
@@ -2469,16 +2482,16 @@ impl<'a> Checker<'a> {
         let bare = found.is_numeric() && found != S::Complex && want.is_quantity();
         if !found.assignable_to(want) && !bare {
             let help = match (found, want) {
-                (S::Int | S::Decimal | S::Fraction | S::Percent, S::Float) => {
+                (S::Int | S::Decimal(_) | S::Fraction | S::Percent, S::Float) => {
                     "use `.Float` to convert to Float"
                 }
-                (S::Int | S::Decimal | S::Fraction | S::Percent | S::Float, S::Scientific) => {
+                (S::Int | S::Decimal(_) | S::Fraction | S::Percent | S::Float, S::Scientific) => {
                     "use `.Scientific` to convert to Scientific, or write `value ± uncertainty`"
                 }
                 (S::Scientific, S::Float) => {
                     "use `.Float` for the value alone, without its uncertainty"
                 }
-                (S::Int | S::Decimal | S::Fraction | S::Percent | S::Float, S::Complex) => {
+                (S::Int | S::Decimal(_) | S::Fraction | S::Percent | S::Float, S::Complex) => {
                     "use `.Complex` to convert to Complex"
                 }
                 (S::Complex, S::Float) => {
@@ -2486,13 +2499,13 @@ impl<'a> Checker<'a> {
                 }
                 // A division by zero, `1/0`, is a `Float`, which no exact
                 // column holds.
-                (S::Float, S::Decimal | S::Fraction | S::Percent) => {
+                (S::Float, S::Decimal(_) | S::Fraction | S::Percent) => {
                     "declare the column `Float` or leave out its type, use `.Decimal`, or guard \
                      a division by zero"
                 }
                 (S::Percent, S::Int) => "declare the column as `Percent`, or use `.Integer`",
-                (S::Percent, S::Decimal) => "declare the column as `Percent`, or use `.Decimal`",
-                (S::Decimal, S::Int) => "declare the column as `Decimal`, or use `.Integer`",
+                (S::Percent, S::Decimal(_)) => "declare the column as `Percent`, or use `.Decimal`",
+                (S::Decimal(_), S::Int) => "declare the column as `Decimal`, or use `.Integer`",
                 (S::Fraction, S::Int) => "declare the column as `Fraction`, or use `.Integer`",
                 _ => "change the declared type or the formula",
             };
@@ -2517,7 +2530,11 @@ impl<'a> Checker<'a> {
         // A cell of an `.omx` file may hold a quantity or a scale (D229).
         let parsed = parse_literal_with(text, true);
         let Some(want) = declared else {
-            return Some(parsed.unwrap_or_else(|| Lit::String(text.to_string())));
+            return Some(
+                parsed
+                    .map(inferred)
+                    .unwrap_or_else(|| Lit::String(text.to_string())),
+            );
         };
         if want == S::String {
             return Some(match parsed {
@@ -2537,20 +2554,32 @@ impl<'a> Checker<'a> {
             // in a `Fraction` column is a fraction, in a `Percent` column a
             // percentage (`0.4` is `40%`), and in a `Decimal` column the
             // number it stands for.
-            (Some(Lit::Int(n, _)), S::Fraction) => Some(Lit::Fraction(Dec::from_i64(n))),
-            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Fraction) => Some(Lit::Fraction(r)),
+            (Some(Lit::Int(n, _)), S::Fraction) => Some(Lit::Fraction(Arc::new(Rat::from_i64(n)))),
+            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Fraction) => {
+                Some(Lit::Fraction(Arc::new(Rat::from_dec(r))))
+            }
             (Some(l @ Lit::Fraction(_)), S::Fraction) => Some(l),
-            (Some(l @ Lit::Decimal(_)), S::Decimal) => Some(l),
-            (Some(l @ Lit::Fraction(_) | l @ Lit::Percent(_)), S::Decimal) => {
-                crate::convert::convert(&l, S::Decimal).ok()
+            (Some(l @ Lit::Decimal(r)), S::Decimal(places)) => {
+                // A column that says how many places it keeps holds a cell
+                // of that many or fewer; more is refused, not rounded.
+                if let Err(said) = crate::convert::fits_scale(&r, places) {
+                    self.err(span, said);
+                    return None;
+                }
+                Some(l)
+            }
+            (Some(l @ Lit::Fraction(_) | l @ Lit::Percent(_)), S::Decimal(_)) => {
+                crate::convert::convert(&l, S::DECIMAL).ok()
             }
             (Some(l @ Lit::Percent(_)), S::Percent) => Some(l),
             (Some(Lit::Int(n, _)), S::Percent) => Some(Lit::Percent(Dec::from_i64(n))),
-            (Some(Lit::Decimal(r) | Lit::Fraction(r)), S::Percent) => Some(Lit::Percent(r)),
+            (Some(Lit::Decimal(r)), S::Percent) => Some(Lit::Percent(r)),
+            (Some(Lit::Fraction(r)), S::Percent) => r
+                .to_dec(crate::types::DEFAULT_SCALE as i32)
+                .map(Lit::Percent),
             (Some(Lit::Int(n, _)), S::Float) => Some(Lit::Float(n as f64)),
-            (Some(Lit::Decimal(r) | Lit::Fraction(r) | Lit::Percent(r)), S::Float) => {
-                Some(Lit::Float(r.to_f64()))
-            }
+            (Some(Lit::Decimal(r) | Lit::Percent(r)), S::Float) => Some(Lit::Float(r.to_f64())),
+            (Some(Lit::Fraction(r)), S::Float) => Some(Lit::Float(r.to_f64())),
             (Some(l @ Lit::Float(_)), S::Float) => Some(l),
             // A number with no uncertainty in a `Scientific` column has an
             // uncertainty of zero.
@@ -2621,7 +2650,7 @@ impl<'a> Checker<'a> {
                 | S::Hex
                 | S::Octal
                 | S::Binary
-                | S::Decimal
+                | S::Decimal(_)
                 | S::Fraction
                 | S::Percent,
             ) => match crate::convert::convert(&l, want) {
@@ -2680,7 +2709,7 @@ impl<'a> Checker<'a> {
                     S::Hex => "enter a whole number such as `0xff`, or start the cell with `=` for a formula",
                     S::Octal => "enter a whole number such as `0o17`, or start the cell with `=` for a formula",
                     S::Binary => "enter a whole number such as `0b101`, or start the cell with `=` for a formula",
-                    S::Decimal => "enter a number such as `19.99`, `1/7` or `20%`, or start the cell with `=` for a formula",
+                    S::Decimal(_) => "enter a number such as `19.99`, `1/7` or `20%`, or start the cell with `=` for a formula",
                     S::Fraction => "enter a number such as `1/7`, `2 3/4` or `19.99`, or start the cell with `=` for a formula",
                     S::Percent => "enter a percentage such as `20%`, or start the cell with `=` for a formula",
                     S::Float => "enter a number such as `1.5` or `2e-3`, or start the cell with `=` for a formula",
@@ -2708,7 +2737,11 @@ impl<'a> Checker<'a> {
         let span = e.span;
         let fail = (Node::error(span), Ty::Any);
         match &e.kind {
-            ExprKind::Lit(l) => (Node::new(Ir::Lit(l.clone()), span), Ty::Scalar(lit_type(l))),
+            ExprKind::Lit(l) => {
+                let l = inferred(l.clone());
+                let ty = formula_lit_type(&l);
+                (Node::new(Ir::Lit(l), span), Ty::Scalar(ty))
+            }
             ExprKind::Name(name) => self.lower_name(name, span, sc),
             // A row slot reads `by` itself, and nowhere else has one.
             ExprKind::By(..) => {
@@ -3320,7 +3353,7 @@ impl<'a> Checker<'a> {
                 // negative, so the power keeps the type of its base.
                 let whole = matches!(r.kind, ExprKind::Lit(Lit::Int(_, _)));
                 match (op, a.wider(b)) {
-                    (BinOp::Pow, w) if whole && (w.is_int() || w == S::Decimal) => w,
+                    (BinOp::Pow, w) if whole && (w.is_int() || w.is_decimal()) => w,
                     // A power is exact only for a whole exponent; any other
                     // is worked out in floating point.
                     (BinOp::Pow, w)
@@ -3337,9 +3370,17 @@ impl<'a> Checker<'a> {
                     // A quotient of whole numbers written out that comes to
                     // one, `4/2`, is a whole number.
                     (BinOp::Div, w) if w.is_int() && divides(l, r) => S::Int,
+                    // A quotient of whole numbers is the exact rational it
+                    // comes to, a `Fraction`: `1/3 * 3` is `1`.
+                    (BinOp::Div, w) if w.is_int() => S::Fraction,
                     // A quotient or a power of decimals is a decimal, though
                     // it need not end.
-                    (BinOp::Div | BinOp::Pow, w) if w.is_int() || w == S::Decimal => S::Decimal,
+                    (BinOp::Div | BinOp::Pow, w) if w.is_int() || w.is_decimal() => {
+                        S::Decimal(match w {
+                            S::Decimal(n) => n.max(DEFAULT_SCALE),
+                            _ => DEFAULT_SCALE,
+                        })
+                    }
                     // Anything else is the wider of the two, so that two
                     // fractions give a fraction and two percentages a
                     // percentage.
@@ -3347,8 +3388,11 @@ impl<'a> Checker<'a> {
                 }
             }
         } else if op.is_bitwise() {
-            let whole =
-                |s: S, e: &Expr| s.is_int() || s == S::Any || (s == S::Decimal && from_quotient(e));
+            let whole = |s: S, e: &Expr| {
+                s.is_int()
+                    || s == S::Any
+                    || ((s.is_decimal() || s == S::Fraction) && from_quotient(e))
+            };
             if !whole(a, l) || !whole(b, r) {
                 self.err(
                     span,
@@ -3398,6 +3442,18 @@ impl<'a> Checker<'a> {
             }
             S::Boolean
         };
+        // A product, a quotient or a power of exact numbers is worked out
+        // exactly and rounded once, to the scale its type has.
+        let node = match elem {
+            S::Decimal(places)
+                if matches!(op, BinOp::Mul | BinOp::Div | BinOp::Pow)
+                    && a.is_exact()
+                    && b.is_exact() =>
+            {
+                Node::new(Ir::Call(Func::Settle(places), vec![node]), span)
+            }
+            _ => node,
+        };
         let ty = match (av, bv) {
             (None, None) => Ty::Scalar(elem),
             (Some(n), None) | (None, Some(n)) => Ty::Vector(elem, n),
@@ -3418,6 +3474,317 @@ impl<'a> Checker<'a> {
     /// D174). Each is a function of one value, so a column formula or a
     /// filter answers it a row at a time and Polars a column at a time,
     /// except the four that ask about a value among its column's.
+    /// The window functions: `Amount.cum_sum(Date by Account)`, a value down
+    /// a column that reads the rows around it. The column is the receiver;
+    /// then come a lag or window length where there is one, then the order
+    /// key with the partition after it as `by Key`. Over this row's cell
+    /// the whole column is given to the call and the row's place, as
+    /// `is_unique` is; over a column, each element's answer.
+    fn lower_window(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        span: Span,
+        sc: &mut Scope,
+    ) -> (Node, Ty) {
+        let fail = (Node::error(span), Ty::Any);
+        let rolling = name.starts_with("rolling_");
+        let lagged = matches!(name, "diff" | "pct_change");
+        let ranking = name == "rank";
+        let usage = match name {
+            _ if rolling => format!("Amount.{name}(3), or Amount.{name}(3, Date by Account)"),
+            "diff" | "pct_change" => format!("Amount.{name}(), Amount.{name}(2, Date by Account)"),
+            "rank" => {
+                "Score.rank(), Score.rank(min, desc by Region), Score.rank(by Region)".to_string()
+            }
+            _ => format!("Amount.{name}(), or Amount.{name}(Date by Account)"),
+        };
+        if args.is_empty() {
+            self.err_help(
+                span,
+                format!("`{name}` runs down a column, which it is called on"),
+                format!("usage: `{usage}`"),
+            );
+            return fail;
+        }
+        let mut rest: Vec<&Expr> = args[1..].iter().collect();
+        // The partition: `by Key` on the last argument.
+        let mut by: Vec<(String, Span)> = Vec::new();
+        if let Some(last) = rest.last()
+            && let ExprKind::By(inner, keys) = &last.kind
+        {
+            by = keys.clone();
+            let n = rest.len();
+            // `by Key` alone has nothing before it.
+            if matches!(inner.kind, ExprKind::Own) {
+                rest.pop();
+            } else {
+                rest[n - 1] = inner;
+            }
+        }
+        if rest.iter().any(|e| matches!(e.kind, ExprKind::By(..))) {
+            self.err_help(
+                span,
+                "`by` goes after the last argument only",
+                format!("usage: `{usage}`"),
+            );
+            return fail;
+        }
+        // A lag or a window length, a whole number written out.
+        let mut n: i64 = if lagged { 1 } else { 0 };
+        if (lagged || rolling)
+            && let Some(first) = rest.first()
+            && let ExprKind::Lit(Lit::Int(k, _)) = &first.kind
+        {
+            if *k < 1 {
+                self.err(
+                    first.span,
+                    format!("`{name}` needs a whole number of 1 or more"),
+                );
+                return fail;
+            }
+            n = *k;
+            rest.remove(0);
+        }
+        if rolling && n == 0 {
+            self.err_help(
+                span,
+                format!("`{name}` needs the length of the window"),
+                format!("usage: `{usage}`"),
+            );
+            return fail;
+        }
+        // `rank` takes words: how ties are numbered, and `desc`.
+        let (mut ties, mut desc) = (Ties::Average, false);
+        if ranking {
+            for e in rest.drain(..) {
+                match &e.kind {
+                    ExprKind::Name(w) => match w.as_str() {
+                        "average" => ties = Ties::Average,
+                        "min" => ties = Ties::Min,
+                        "max" => ties = Ties::Max,
+                        "dense" => ties = Ties::Dense,
+                        "ordinal" => ties = Ties::Ordinal,
+                        "desc" => desc = true,
+                        "asc" => desc = false,
+                        other => {
+                            self.err_help(
+                                e.span,
+                                format!("`rank` does not take `{other}`"),
+                                "the words are average, min, max, dense, ordinal and desc",
+                            );
+                            return fail;
+                        }
+                    },
+                    _ => {
+                        self.err_help(
+                            e.span,
+                            "`rank` takes words, not a value",
+                            format!("usage: `{usage}`"),
+                        );
+                        return fail;
+                    }
+                }
+            }
+        }
+        if rest.len() > 1 {
+            self.err_help(
+                span,
+                format!("`{name}` takes at most one order key, then `by` its partition"),
+                format!("usage: `{usage}`"),
+            );
+            return fail;
+        }
+        let (recv, rty) = self.lower(&args[0], sc);
+        if matches!(recv.kind, Ir::Error) {
+            return fail;
+        }
+        // Over this row's cell, or over a column.
+        let (s, row_depth, len) = match (&rty, &recv.kind) {
+            (Ty::Scalar(s), Ir::RowCol { depth, .. }) => (*s, Some(*depth), None),
+            (Ty::Vector(s, n), _) => (*s, None, *n),
+            _ => {
+                self.err_help(
+                    args[0].span,
+                    format!(
+                        "`{name}` runs down a column, but this is {}",
+                        rty.describe()
+                    ),
+                    "as `Name.{name}()` in a column's formula, or `Sales.Name.{name}()`"
+                        .replace("{name}", name),
+                );
+                return fail;
+            }
+        };
+        // The sheet the partition keys are columns of.
+        let home: Option<usize> = match (&recv.kind, row_depth) {
+            (Ir::RowCol { .. }, Some(d)) => Some(sc.frames[sc.frames.len() - 1 - d]),
+            (Ir::Column { sheet, .. }, None) => Some(*sheet),
+            _ => None,
+        };
+        let numeric = s.is_numeric() && s != S::Complex;
+        let ordered = numeric || s.is_temporal() || s == S::Duration || s.is_quantity();
+        let (fits, out, what): (bool, S, &str) = match name {
+            "cum_sum" => (numeric || s == S::Duration || s.is_quantity(), s, "numbers"),
+            "cum_prod" => (numeric, s, "numbers"),
+            "cum_min" | "cum_max" => (ordered, s, "numbers, dates or times"),
+            "cum_count" => (true, S::Int, "values"),
+            "diff" => {
+                let out = if s.is_temporal() {
+                    s.shift(true, s).unwrap_or(S::Any)
+                } else {
+                    s
+                };
+                (
+                    numeric || s.is_temporal() || s == S::Duration || s.is_quantity(),
+                    out,
+                    "numbers, dates or times",
+                )
+            }
+            "pct_change" => (numeric && s != S::Scientific, S::Float, "numbers"),
+            "rank" => (
+                ordered || s.is_text(),
+                if ties == Ties::Average {
+                    S::Float
+                } else {
+                    S::Int
+                },
+                "numbers, text, dates or times",
+            ),
+            "forward_fill" | "backward_fill" => (true, s, "values"),
+            "rolling_mean" => (
+                numeric || s == S::Duration || s.is_quantity(),
+                if s.is_int() || s.is_decimal() {
+                    S::DECIMAL
+                } else {
+                    s
+                },
+                "numbers",
+            ),
+            "rolling_sum" => (numeric || s == S::Duration || s.is_quantity(), s, "numbers"),
+            "rolling_min" | "rolling_max" => (ordered, s, "numbers, dates or times"),
+            _ => (numeric && s != S::Scientific, S::Float, "numbers"),
+        };
+        if !fits {
+            self.err(
+                args[0].span,
+                format!("`{name}` needs {what}, but this is {s}"),
+            );
+            return fail;
+        }
+        let win = match name {
+            "cum_sum" => Win::CumSum,
+            "cum_min" => Win::CumMin,
+            "cum_max" => Win::CumMax,
+            "cum_prod" => Win::CumProd,
+            "cum_count" => Win::CumCount,
+            "diff" => Win::Diff,
+            "pct_change" => Win::PctChange,
+            "rank" => Win::Rank(ties),
+            "forward_fill" => Win::ForwardFill,
+            "backward_fill" => Win::BackwardFill,
+            "rolling_sum" => Win::RollingSum,
+            "rolling_mean" => Win::RollingMean,
+            "rolling_min" => Win::RollingMin,
+            "rolling_max" => Win::RollingMax,
+            _ => Win::RollingStd,
+        };
+        let row = row_depth.is_some();
+        // A window over the formula's own sheet is one a frame of its
+        // columns can answer whole.
+        let window_dep = if row_depth == Some(0) {
+            DepKind::Frame
+        } else {
+            DepKind::Whole
+        };
+        let mut call: Vec<Node> = Vec::new();
+        // The column itself, whole.
+        match (&recv.kind, row_depth, home) {
+            (Ir::RowCol { col, .. }, Some(_), Some(t)) => {
+                self.deps.push((DepNode::Col(t, *col), window_dep));
+                call.push(Node::new(
+                    Ir::Column {
+                        sheet: t,
+                        col: *col,
+                    },
+                    span,
+                ));
+            }
+            _ => call.push(recv),
+        }
+        call.push(Node::new(Ir::Lit(Lit::Int(n, Base::Dec)), span));
+        // The order key.
+        let mut order = false;
+        if !ranking && let Some(key) = rest.first() {
+            let (kn, kty) = self.lower(key, sc);
+            if matches!(kn.kind, Ir::Error) {
+                return fail;
+            }
+            order = true;
+            match (&kn.kind, &kty, home) {
+                (Ir::RowCol { depth, col }, Ty::Scalar(_), Some(t))
+                    if Some(*depth) == row_depth =>
+                {
+                    self.deps.push((DepNode::Col(t, *col), window_dep));
+                    call.push(Node::new(
+                        Ir::Column {
+                            sheet: t,
+                            col: *col,
+                        },
+                        span,
+                    ));
+                }
+                (_, Ty::Vector(..), _) if !row => call.push(kn),
+                _ => {
+                    self.err_help(
+                        key.span,
+                        "the order key must be a column of the same sheet",
+                        format!("usage: `{usage}`"),
+                    );
+                    return fail;
+                }
+            }
+        }
+        // The partition keys, columns of the same sheet.
+        let mut parts = 0u8;
+        for (key, at) in &by {
+            let Some(t) = home else {
+                self.err(*at, "`by` needs a column of a sheet to partition by");
+                return fail;
+            };
+            let Some(c) = self.find_col(t, key) else {
+                let tt = SheetTy {
+                    sheet: t,
+                    cols: self.all_cols(t),
+                    rows: None,
+                    kind: DepKind::Whole,
+                };
+                self.no_column(&tt, key, *at);
+                return fail;
+            };
+            self.col_refs.push((*at, t, c));
+            self.deps.push((DepNode::Col(t, c), window_dep));
+            call.push(Node::new(Ir::Column { sheet: t, col: c }, span));
+            parts += 1;
+        }
+        if let Some(depth) = row_depth {
+            call.push(Node::new(Ir::RowIndex { depth }, span));
+        }
+        let spec = Spec {
+            win,
+            desc,
+            order,
+            parts,
+            row,
+        };
+        let ty = if row {
+            Ty::Scalar(out)
+        } else {
+            Ty::Vector(out, len)
+        };
+        (Node::new(Ir::Call(Func::Window(spec), call), span), ty)
+    }
+
     fn lower_test(&mut self, name: &str, args: &[Expr], span: Span, sc: &mut Scope) -> (Node, Ty) {
         let fail = (Node::error(span), Ty::Any);
         let two = matches!(
@@ -3798,14 +4165,31 @@ impl<'a> Checker<'a> {
                         self.err(span, format!("cannot take the `{name}` of {s} values"));
                         return fail;
                     }
-                    Func::Mean | Func::Median if s.is_int() || s == S::Decimal => S::Decimal,
+                    Func::Mean | Func::Median if s.is_int() || s.is_decimal() => {
+                        S::Decimal(match s {
+                            S::Decimal(n) => n.max(DEFAULT_SCALE),
+                            _ => DEFAULT_SCALE,
+                        })
+                    }
                     Func::Min | Func::Max if matches!(s, S::Boolean | S::Complex) => {
                         self.err(span, format!("{s} values have no order for `{name}`"));
                         return fail;
                     }
                     _ => s,
                 };
-                (Node::new(Ir::Call(func, nodes), span), Ty::Scalar(out))
+                let call = Node::new(Ir::Call(func, nodes), span);
+                // A mean or a middle of exact numbers is a quotient, and is
+                // rounded once to the places its type has.
+                let call = match (func, out) {
+                    (Func::Mean | Func::Median, S::Decimal(places)) => {
+                        Node::new(Ir::Call(Func::Settle(places), vec![call]), span)
+                    }
+                    (Func::Mean | Func::Median, S::Percent) => {
+                        Node::new(Ir::Call(Func::Settle(DEFAULT_SCALE), vec![call]), span)
+                    }
+                    _ => call,
+                };
+                (call, Ty::Scalar(out))
             }
             // One vector and a number: the degrees of freedom to subtract,
             // or the fraction of the way through.
@@ -3821,9 +4205,7 @@ impl<'a> Checker<'a> {
                     return fail;
                 }
                 let at = |kind| Expr { kind, span };
-                let bin = |op, a: Expr, b: Expr| {
-                    at(ExprKind::Binary(op, Box::new(a), Box::new(b)))
-                };
+                let bin = |op, a: Expr, b: Expr| at(ExprKind::Binary(op, Box::new(a), Box::new(b)));
                 let not = |a: Expr| at(ExprKind::Unary(UnOp::Not, Box::new(a)));
                 let (a, b) = (args[0].clone(), args[1].clone());
                 let form = match name {
@@ -3845,9 +4227,7 @@ impl<'a> Checker<'a> {
                 let call = |f: &str, x: &Expr| {
                     at(ExprKind::Call(f.to_string(), name_span, vec![x.clone()]))
                 };
-                let bin = |op, a: Expr, b: Expr| {
-                    at(ExprKind::Binary(op, Box::new(a), Box::new(b)))
-                };
+                let bin = |op, a: Expr, b: Expr| at(ExprKind::Binary(op, Box::new(a), Box::new(b)));
                 // Empty values are left out, as `sum` and `count` leave
                 // them: how many are true, against how many there are.
                 let x = &args[0];
@@ -3882,6 +4262,11 @@ impl<'a> Checker<'a> {
             | "to_uppercase" | "starts_with" | "ends_with" | "contains" | "matches"
             | "contains_any" | "is_unique" | "is_duplicated" | "is_first_distinct"
             | "is_last_distinct" => self.lower_test(name, args, span, sc),
+            "cum_sum" | "cum_min" | "cum_max" | "cum_prod" | "cum_count" | "diff"
+            | "pct_change" | "rank" | "forward_fill" | "backward_fill" | "rolling_sum"
+            | "rolling_mean" | "rolling_min" | "rolling_max" | "rolling_std" => {
+                self.lower_window(name, args, span, sc)
+            }
             "is_null" | "is_not_null" | "is_nan" | "is_not_nan" => {
                 if !arity(self, 1, &format!("Sheet.Column.{name}()")) {
                     return fail;
@@ -4068,7 +4453,7 @@ impl<'a> Checker<'a> {
                     _ if s == S::Any => Ty::Any,
                     Func::Std => Ty::Scalar(S::Float),
                     Func::Var if s == S::Scientific => Ty::Scalar(S::Float),
-                    Func::Var if s.is_int() || s == S::Decimal => Ty::Scalar(S::Decimal),
+                    Func::Var if s.is_int() || s.is_decimal() => Ty::Scalar(S::DECIMAL),
                     _ => Ty::Scalar(s),
                 };
                 (Node::new(Ir::Call(func, nodes), span), ty)
@@ -4207,8 +4592,8 @@ impl<'a> Checker<'a> {
                 };
                 let (arg, aty) = self.lower(&args[0], sc);
                 let ty = match aty {
-                    Ty::Any | Ty::Scalar(S::Any | S::Duration) => Ty::Scalar(S::Decimal),
-                    Ty::Vector(S::Any | S::Duration, n) => Ty::Vector(S::Decimal, n),
+                    Ty::Any | Ty::Scalar(S::Any | S::Duration) => Ty::Scalar(S::DECIMAL),
+                    Ty::Vector(S::Any | S::Duration, n) => Ty::Vector(S::DECIMAL, n),
                     other => {
                         if !matches!(arg.kind, Ir::Error) {
                             self.err(
@@ -4264,6 +4649,41 @@ impl<'a> Checker<'a> {
                     return fail;
                 }
                 (Node::new(Ir::Call(Func::ToUnit, vec![arg, unit]), span), ty)
+            }
+            "unit" | "value" => {
+                if !arity(self, 1, &format!("Weight.{name}()")) {
+                    return fail;
+                }
+                let (arg, aty) = self.lower(&args[0], sc);
+                let out = if name == "unit" {
+                    S::String
+                } else {
+                    S::Scientific
+                };
+                let ty = match aty {
+                    Ty::Any | Ty::Scalar(S::Any) => Ty::Any,
+                    Ty::Scalar(S::Quantity(_)) => Ty::Scalar(out),
+                    Ty::Vector(S::Quantity(_), n) => Ty::Vector(out, n),
+                    other => {
+                        if !matches!(arg.kind, Ir::Error) {
+                            self.err_help(
+                                args[0].span,
+                                format!(
+                                    "`{name}` needs a quantity, but this is {}",
+                                    other.describe()
+                                ),
+                                "a quantity is a number with an SI unit, `5kg`",
+                            );
+                        }
+                        return fail;
+                    }
+                };
+                let func = if name == "unit" {
+                    Func::UnitOf
+                } else {
+                    Func::ValueOf
+                };
+                (Node::new(Ir::Call(func, vec![arg]), span), ty)
             }
             "dms" => {
                 if !(1..=2).contains(&args.len()) {
@@ -4565,7 +4985,7 @@ impl<'a> Checker<'a> {
                                     | S::Hex
                                     | S::Octal
                                     | S::Binary
-                                    | S::Decimal
+                                    | S::Decimal(_)
                                     | S::Fraction
                                     | S::Percent
                                     | S::Float
@@ -5281,6 +5701,21 @@ impl<'a> Checker<'a> {
                     .collect()
             })
             .collect();
+        self.framewise = self
+            .col_deps
+            .iter()
+            .map(|cols| {
+                cols.iter()
+                    .map(|deps| {
+                        deps.iter().any(|&(_, kind)| kind == DepKind::Frame)
+                            && deps.iter().all(|&(to, kind)| match to {
+                                DepNode::Col(..) => matches!(kind, DepKind::Same | DepKind::Frame),
+                                DepNode::Const(_) => true,
+                            })
+                    })
+                    .collect()
+            })
+            .collect();
         let nconsts = self.consts.len();
         let mut nodes: Vec<DepNode> = (0..nconsts).map(DepNode::Const).collect();
         for (t, sheet) in self.sheets.iter().enumerate() {
@@ -5381,6 +5816,7 @@ impl<'a> Checker<'a> {
                     // formula, so there is nothing of it to lower, whatever
                     // the cells' own formulas read.
                     elementwise: matches!(kind, ColKind::Computed(_)) && self.elementwise[t][c],
+                    framewise: matches!(kind, ColKind::Computed(_)) && self.framewise[t][c],
                     kind,
                 });
             }

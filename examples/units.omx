@@ -82,6 +82,20 @@ Metres : Length
 | sugar | 300g  | 300g  | 150     |
 | salt  | 5     | 5     | 3.5(2)m |
 
+# With no unit before the `;`, each value is shown in its own unit. The
+# conversion `s` lets the uncertainty lead: a value that has one is shown by
+# it, and an exact value, which has none, in nine significant digits.
+sheet Constants
+
+Value : Quantity[; .9s]
+
+| Name                | Value             |
+| ------------------- | ----------------- |
+| Newton              | 6.674_30(15)e-11m |
+| reduced Planck      | 1.054571817e-34J.s |
+| Faraday             | 96485.33212331C   |
+| whole               | 5kg               |
+
 sheet Totals
 
 | Name     | Value                      |
@@ -149,3 +163,29 @@ Seconds  : Quantity
 | dump   | 1MiB   | 100Mib.s^-1 | *       |
 
 Seconds := Size.to('Mib') / Rate
+
+# Metric units outside the SI, which the SI accepts or science relies on:
+# the litre (`l` or `L`), tonne `t`, hectare `ha`, `bar`, electronvolt `eV`,
+# calorie `cal` (4.184 J), watt-hour `Wh` and dalton `Da`. They are exact
+# multiples of SI units and take the prefixes (`ml`, `kWh`, `keV`, `kcal`),
+# except `t` and `ha`. `u` is read as the prefix micro and shown as `μ`.
+# No imperial units: `5ft` and `5lb` are errors. Each row is a quantity
+# and the same amount in another unit.
+sheet Metric
+
+Item   : String
+Amount : Quantity
+Same   : Quantity
+
+| Item     | Amount  | Same                 |
+| -------- | ------- | -------------------- |
+| tank     | 2.5L    | = (2.5L).to('dm^3')  |
+| can      | 330ml   | = (330ml).to('L')    |
+| cargo    | 1.2t    | = (1.2t).to('kg')    |
+| field    | 3ha     | = (3ha).to('m^2')    |
+| tyre     | 2.2bar  | = (2.2bar).to('kPa') |
+| snack    | 250kcal | = (250kcal).to('kJ') |
+| battery  | 12kWh   | = (12kWh).to('MJ')   |
+| photon   | 511keV  | = (511keV).to('fJ')  |
+| carbon   | 12Da    | = (12Da).to('yg')    |
+| hair     | 70um    | = (70um).to('mm')    |

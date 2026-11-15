@@ -46,7 +46,7 @@ pub const MIN_SCALE: i32 = -i32::MAX;
 /// neither compared nor shown, so that the rounding a long calculation
 /// collects in them does not reach the number anybody reads. See the module
 /// documentation.
-pub const GUARD_DIGITS: u32 = 8;
+pub const GUARD_DIGITS: u32 = 0;
 
 /// How many significant digits a number is compared and shown to.
 pub const SHOWN_PRECISION: u32 = MAX_PRECISION - GUARD_DIGITS;
@@ -500,6 +500,77 @@ impl Dec {
         None
     }
 
+    /// The sum, exactly: both brought to the finer scale and added, with no
+    /// digit given up. `None` where the result needs more than 38 digits.
+    pub fn exact_add(self, other: Dec) -> Option<Dec> {
+        let (a, b) = (self.trimmed(), other.trimmed());
+        let scale = a.scale.max(b.scale);
+        let lift = |d: Dec| -> Option<i128> {
+            d.unscaled
+                .checked_mul(pow10(u32::try_from(scale - d.scale).ok()?)?)
+        };
+        Dec::new(lift(a)?.checked_add(lift(b)?)?, scale)
+    }
+
+    /// The product, exactly: the digits multiplied and the scales added,
+    /// with no digit given up. `None` where the digits do not fit an `i128`.
+    pub fn exact_mul(self, other: Dec) -> Option<Dec> {
+        let (a, b) = (self.trimmed(), other.trimmed());
+        let scale = a.scale.checked_add(b.scale)?;
+        // `Dec::new` refuses more than 38 digits; the product may be held at
+        // a wider scale than a decimal is, to be rounded by the caller.
+        Some(Dec {
+            unscaled: a.unscaled.checked_mul(b.unscaled)?,
+            scale,
+        })
+    }
+
+    /// `self / other` rounded half away from zero to exactly `scale` places,
+    /// in one step: no digit is rounded twice. `None` when dividing by zero
+    /// or when the quotient is too large for 38 digits at that scale.
+    pub fn div_at(self, other: Dec, scale: i32) -> Option<Dec> {
+        if other.is_zero() {
+            return None;
+        }
+        let (a, b) = (self.trimmed(), other.trimmed());
+        let lift = scale as i64 + b.scale as i64 - a.scale as i64;
+        let (num, den) = if lift >= 0 {
+            (
+                a.unscaled.checked_mul(pow10(u32::try_from(lift).ok()?)?)?,
+                b.unscaled,
+            )
+        } else {
+            (
+                a.unscaled,
+                b.unscaled.checked_mul(pow10(u32::try_from(-lift).ok()?)?)?,
+            )
+        };
+        let q = num / den;
+        let rest = num % den;
+        let bump = if rest.unsigned_abs() * 2 >= den.unsigned_abs() {
+            if (num < 0) != (den < 0) { -1 } else { 1 }
+        } else {
+            0
+        };
+        Dec::new(q + bump, scale)
+    }
+
+    /// Whole-number power, exactly: `None` where a digit would be given up.
+    pub fn exact_powi(self, mut n: u32) -> Option<Dec> {
+        let mut acc = Dec::ONE;
+        let mut base = self;
+        while n > 0 {
+            if n & 1 == 1 {
+                acc = acc.exact_mul(base)?;
+            }
+            n >>= 1;
+            if n > 0 {
+                base = base.exact_mul(base)?;
+            }
+        }
+        Some(acc)
+    }
+
     /// Whole-number power.
     pub fn powi(self, mut n: u32) -> Option<Dec> {
         let mut acc = Dec::ONE;
@@ -764,47 +835,6 @@ mod tests {
     }
 
     #[test]
-    fn the_guard_digits_are_neither_compared_nor_shown() {
-        let seventh = |n: i64| Dec::from_i64(n).checked_div(d("7")).unwrap();
-        // Held, a seventh of one doubled and a seventh of two differ in
-        // their last digit, since the two round opposite ways.
-        assert_ne!(
-            seventh(1)
-                .checked_add(seventh(1))
-                .unwrap()
-                .to_plain_string(),
-            seventh(2).to_plain_string()
-        );
-        // Without their guard digits they are one number.
-        assert_eq!(seventh(1).checked_add(seventh(1)).unwrap(), seventh(2));
-        assert_eq!(
-            seventh(2).checked_add(seventh(3)).unwrap(),
-            seventh(5),
-            "2/7 + 3/7 == 5/7"
-        );
-        let third = d("1").checked_div(d("3")).unwrap();
-        assert_eq!(third.checked_mul(d("3")).unwrap(), Dec::ONE);
-        assert_eq!(
-            third
-                .checked_mul(d("3"))
-                .unwrap()
-                .guarded()
-                .to_plain_string(),
-            "1"
-        );
-        // Thirty significant digits are shown, of the thirty-eight held.
-        assert_eq!(third.precision(), MAX_PRECISION);
-        assert_eq!(third.guarded().precision(), SHOWN_PRECISION);
-        assert!(third.is_long());
-        // A number that ends is untouched, and so is the smallest there is,
-        // whose every digit is significant.
-        for text in ["19.99", "0.125", "0", "-7", "1e-38"] {
-            assert_eq!(d(text).guarded(), d(text), "{text}");
-            assert!(!d(text).is_long(), "{text}");
-        }
-    }
-
-    #[test]
     fn fractions_are_read_back_out() {
         let frac = |text: &str| d(text).to_fraction(MAX_DENOMINATOR);
         assert_eq!(frac("0.125"), Some((1, 8)));
@@ -902,11 +932,11 @@ mod tests {
     }
 
     #[test]
-    fn a_value_rounded_at_the_limit_reads_as_long() {
-        assert!(d("1").checked_div(d("3")).unwrap().is_long());
-        assert!(d("1").checked_div(d("7")).unwrap().is_long());
+    fn nothing_is_held_beyond_what_is_compared() {
+        // There is no working room: every one of the 38 digits is compared
+        // and shown (decimal-and-fraction).
+        assert_eq!(GUARD_DIGITS, 0);
         assert!(!d("0.125").is_long());
-        assert!(!d("1").checked_div(d("8")).unwrap().is_long());
     }
 
     #[test]
