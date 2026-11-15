@@ -5949,22 +5949,19 @@ fn quoted(cell: &str) -> bool {
 /// `G` and `me` are CODATA 2022. `gn` and `planck` are not `g` and `h`, which
 /// are the gram and the hour.
 pub const PRELUDE: &[(&str, &str)] = &[
-    (
-        "pi",
-        "the ratio of a circle's circumference to its diameter",
-    ),
-    ("tau", "2 pi, a whole turn in radians"),
-    ("e", "the base of the natural logarithm, 2.71828..."),
-    ("c", "the speed of light, 299792458 m/s"),
-    ("gn", "standard gravity, 9.80665 m/s^2"),
-    ("planck", "the Planck constant, 6.62607015e-34 J.s"),
-    ("hbar", "the reduced Planck constant, planck / tau"),
-    ("kB", "the Boltzmann constant, 1.380649e-23 J/K"),
-    ("NA", "the Avogadro constant, 6.02214076e23 /mol"),
-    ("R", "the gas constant, 8.314462618 J/(mol.K)"),
-    ("qe", "the elementary charge, 1.602176634e-19 C"),
-    ("G", "the gravitational constant, 6.67430e-11 m^3/(kg.s^2)"),
-    ("me", "the electron mass, 9.1093837139e-31 kg"),
+    ("pi", "circumference over diameter"),
+    ("tau", "2 pi, a whole turn"),
+    ("e", "base of the natural logarithm"),
+    ("c", "the speed of light"),
+    ("gn", "standard gravity"),
+    ("planck", "the Planck constant"),
+    ("hbar", "planck / tau"),
+    ("kB", "the Boltzmann constant"),
+    ("NA", "the Avogadro constant"),
+    ("R", "the gas constant"),
+    ("qe", "the elementary charge"),
+    ("G", "the gravitational constant"),
+    ("me", "the electron mass"),
 ];
 
 pub fn prelude(name: &str) -> Option<Lit> {
