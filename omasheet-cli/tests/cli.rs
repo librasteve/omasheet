@@ -16,23 +16,37 @@ fn root() -> PathBuf {
 }
 
 /// The `omasheet` program. It belongs to another package, the app, so it is
-/// built here before the first test that runs it.
+/// built here before the first test that runs it, and cargo says where it put
+/// it: the test's own directory is no guide, as newer cargos keep test
+/// executables apart from the binaries.
 fn program() -> PathBuf {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT
         .get_or_init(|| {
-            // This test is target/<profile>/deps/cli-…, and the program is
-            // target/<profile>/omasheet.
-            let test = std::env::current_exe().unwrap();
-            let dir = test.parent().unwrap().parent().unwrap();
             let mut cargo = Command::new(env!("CARGO"));
-            cargo.args(["build", "--quiet", "--package", "omasheet-ui"]);
-            if dir.ends_with("release") {
+            cargo.args([
+                "build",
+                "--quiet",
+                "--package",
+                "omasheet-ui",
+                "--message-format=json",
+            ]);
+            if !cfg!(debug_assertions) {
                 cargo.arg("--release");
             }
-            let built = cargo.current_dir(root()).status().unwrap();
-            assert!(built.success(), "could not build omasheet");
-            dir.join(format!("omasheet{}", std::env::consts::EXE_SUFFIX))
+            let built = cargo.current_dir(root()).output().unwrap();
+            assert!(built.status.success(), "could not build omasheet");
+            let name = format!("omasheet{}", std::env::consts::EXE_SUFFIX);
+            String::from_utf8_lossy(&built.stdout)
+                .lines()
+                .filter_map(|line| {
+                    let rest = line.split("\"executable\":\"").nth(1)?;
+                    let path = rest.split('"').next()?.replace("\\\\", "\\");
+                    let path = PathBuf::from(path);
+                    (path.file_name()? == name.as_str()).then_some(path)
+                })
+                .next_back()
+                .expect("cargo built no omasheet")
         })
         .clone()
 }
