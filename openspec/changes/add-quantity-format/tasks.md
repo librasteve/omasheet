@@ -1,7 +1,7 @@
 # Tasks: A format for any quantity, and the `s` conversion
 
 ## 1. omx
-- [x] 1.1 `QuantityFormat.unit` is optional; `Quantity[; .9s]` reads, writes back the same, and is refused with no unit and no `;`
+- [x] 1.1 `QuantityFormat.unit` is optional; `Quantity[; .10s]` reads, writes back the same, and is refused with no unit and no `;`
 - [x] 1.2 `SciConv::Auto`, the letter `s`; the help text and the error messages name it
 
 ## 2. engine
@@ -18,5 +18,5 @@
 
 ## 3. showcase and docs
 - [x] 3.0 The format pane offers `Quantity[; ...]` formats, with short descriptions, and is open for a quantity with no unit; the footer says a cut value for the cursor's cell
-- [x] 3.1 `examples/showcase/codata.omx` uses `Quantity[; .9s]` for its Checks
+- [x] 3.1 `examples/showcase/codata.omx` uses `Quantity[; .10s]` for its Checks
 - [x] 3.2 `docs/format.md` describes the unit-less quantity format and `s`
