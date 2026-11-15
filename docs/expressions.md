@@ -291,6 +291,7 @@ sqrt(9m ** 2)        9m             a root, where the units allow it
 sin(30°)             0.5            an angle in any unit
 45°30′ == 45.5°      true           degrees, minutes and seconds
 (pi * 1rad).to('°') 180°          pi in radians, back to degrees
+pi/2 rad            1.571rad       a unit after a constant multiplies the whole term before it
 20°C - 10°C          10°C           an interval of two temperatures keeps the unit
 5kg + 3m             an error: they measure Mass and Length
 ```
