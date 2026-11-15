@@ -29,7 +29,8 @@ pub mod types;
 pub mod units;
 
 pub use check::{
-    Cell, ColKind, Column, Const, Group, Program, Sheet, UserFn, compile, compile_expr,
+    Cell, ColKind, Column, Const, Group, PRELUDE, Program, Sheet, UserFn, compile, compile_expr,
+    prelude,
 };
 pub use decimal::Dec;
 pub use diag::{Diagnostic, Sources, Span};

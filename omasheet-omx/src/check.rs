@@ -6047,7 +6047,7 @@ pub const PRELUDE: &[(&str, &str)] = &[
     ("me", "the electron mass, 9.1093837139e-31 kg"),
 ];
 
-fn prelude(name: &str) -> Option<Lit> {
+pub fn prelude(name: &str) -> Option<Lit> {
     let q = |v: f64, u: &str| {
         siquant::Unit::parse(u, siquant::Scope::Live)
             .ok()

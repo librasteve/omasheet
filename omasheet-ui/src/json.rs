@@ -135,6 +135,7 @@ pub fn snapshot(snap: &Snapshot) -> String {
         out.push(',');
         field(out, "error", c.error.as_deref().unwrap_or(""));
         out.push_str(&format!(",\"numeric\":{}", c.numeric));
+        out.push_str(&format!(",\"builtin\":{}", c.builtin));
         out.push('}');
     });
     out.push_str(",\"problems\":");

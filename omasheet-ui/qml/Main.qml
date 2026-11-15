@@ -388,17 +388,25 @@ ApplicationWindow {
         }
         if (parsed.consts.length > 0) {
             var rows = [];
+            var nreal = 0;
             for (var k = 0; k < parsed.consts.length; k++) {
                 var c = parsed.consts[k];
+                // The built-in ones come last, greyed and not edited.
+                var b = !!c.builtin;
+                if (!b)
+                    nreal++;
                 rows.push([
-                    { d: c.name, s: c.name, e: "", x: "", n: false, f: false },
-                    { d: c.source, s: c.source, e: c.error, x: "", n: false, f: true },
-                    { d: c.error ? "#ERROR" : c.display, s: c.source, e: c.error, x: c.exact, n: !!c.numeric && !c.error, f: false }
+                    { d: c.name, s: c.name, e: "", x: "", n: false, f: false, b: b },
+                    { d: c.source, s: c.source, e: c.error, x: "", n: false, f: !b, b: b },
+                    { d: c.error ? "#ERROR" : c.display, s: c.source, e: c.error, x: c.exact, n: !!c.numeric && !c.error, f: false, b: b }
                 ]);
             }
+            // A file with no sheet and no constant of its own is empty still.
+            if (nreal > 0 || parsed.sheets.length > 0)
             list.push({
                 name: "Constants",
                 isConsts: true,
+                nreal: nreal,
                 columns: [
                     { name: "Name", type: "", formula: "", computed: false, declared: false },
                     { name: "Expression", type: "", formula: "", computed: false, declared: false },
@@ -943,6 +951,12 @@ ApplicationWindow {
             return;
         if (sheet.isConsts && curCol !== 1)
             return;
+        // A built-in constant is replaced by a constant of the same name,
+        // not edited.
+        if (sheet.isConsts && curRow >= sheet.nreal) {
+            notice = "built in: add a constant of the same name to replace it";
+            return;
+        }
         // A formula column has one formula, written in the box at the top:
         // Enter on any cell of it goes there, and typing does nothing.
         var column = sheet.columns[curCol];
@@ -2330,7 +2344,7 @@ ApplicationWindow {
     // formula that reads it is left showing an error.
     property int constGone: -1
     function deleteConstant() {
-        if (!sheet.isConsts || curRow < 0 || curRow >= sheet.nrows)
+        if (!sheet.isConsts || curRow < 0 || curRow >= sheet.nreal)
             return;
         stopEditing();
         constGone = curRow;
@@ -2338,7 +2352,7 @@ ApplicationWindow {
     }
 
     function deleteConstantNow() {
-        if (!sheet.isConsts || constGone < 0 || constGone >= sheet.nrows)
+        if (!sheet.isConsts || constGone < 0 || constGone >= sheet.nreal)
             return;
         var at = constGone;
         notice = file.deleteConst(at);
@@ -3942,7 +3956,8 @@ ApplicationWindow {
                                         verticalAlignment: opened ? Text.AlignTop : Text.AlignVCenter
                                         linkColor: win.accentColor
                                         clip: marked
-                                        color: cellItem.cell && cellItem.cell.e ? win.errorColor : win.textColor
+                                        color: cellItem.cell && cellItem.cell.e ? win.errorColor
+                                            : cellItem.cell && cellItem.cell.b ? win.mutedColor : win.textColor
                                         font.family: win.font.family
                                         font.features: win.font.features
                                         font.pixelSize: win.fontSize

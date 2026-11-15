@@ -157,6 +157,9 @@ pub struct ConstSnap {
     pub error: Option<String>,
     /// A number, a quantity or the like: set right in the grid.
     pub numeric: bool,
+    /// One every file has, such as `pi`: shown greyed, and replaced by a
+    /// constant of the same name rather than edited.
+    pub builtin: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -4714,7 +4717,13 @@ impl Document {
             .trim()
             .replace('\n', " ");
         let ast = self.ast();
-        let Some(name) = self.snapshot.consts.get(index).map(|c| &c.name) else {
+        let Some(name) = self
+            .snapshot
+            .consts
+            .get(index)
+            .filter(|c| !c.builtin)
+            .map(|c| &c.name)
+        else {
             return false;
         };
         let Some(cd) = ast.consts.iter().find(|c| &c.name == name) else {
@@ -4765,7 +4774,13 @@ impl Document {
     /// Take constant `index` out of the file: its line. A formula that
     /// reads it is left to be shown as an error.
     pub fn delete_const(&mut self, index: usize) -> Result<(), String> {
-        let Some(name) = self.snapshot.consts.get(index).map(|c| c.name.clone()) else {
+        let Some(name) = self
+            .snapshot
+            .consts
+            .get(index)
+            .filter(|c| !c.builtin)
+            .map(|c| c.name.clone())
+        else {
             return Err("there is no such constant".into());
         };
         self.remove_consts(|n| n == name);
@@ -5521,6 +5536,35 @@ impl Document {
                     .filter(|f| !formatted && *f != delocalised(&display, &self.style)),
                 display,
                 error: decl.and_then(|d| within(d.expr_span)),
+                builtin: false,
+            });
+        }
+        // The constants every file has, but for those the file defines.
+        for (name, what) in omasheet_omx::PRELUDE {
+            if program.consts.iter().any(|c| c.name == *name) {
+                continue;
+            }
+            let Some(lit) = omasheet_omx::prelude(name) else {
+                continue;
+            };
+            let value = Value::from_lit(&lit);
+            // A bare number is shown to ten digits, as a quantity is.
+            let shown = match value {
+                Value::Float(_) => Format::parse(".10g", S::Float).ok(),
+                _ => const_format_of(&value, &self.const_format),
+            };
+            let display = match shown {
+                Some(f) => engine.show_in(&value, false, Some(&f)),
+                None => show(&value),
+            };
+            snapshot.consts.push(ConstSnap {
+                numeric: true,
+                name: name.to_string(),
+                source: what.to_string(),
+                exact: None,
+                display,
+                error: None,
+                builtin: true,
             });
         }
         for f in &program.funcs {
@@ -6731,6 +6775,7 @@ mod tests {
                 .snapshot()
                 .consts
                 .iter()
+                .filter(|c| !c.builtin)
                 .map(|c| c.display.clone())
                 .collect();
             (shown, doc.column_cache())
@@ -7360,6 +7405,7 @@ mod tests {
             doc.snapshot()
                 .consts
                 .iter()
+                .filter(|c| !c.builtin)
                 .map(|c| c.display.clone())
                 .collect()
         };
@@ -8002,6 +8048,20 @@ mod tests {
     }
 
     #[test]
+    fn the_built_in_constants_are_listed_after_the_files_and_give_way_to_them() {
+        let doc = Document::from_text("const c = 3\n\nsheet T\n\n| X |\n| - |\n| 1 |\n");
+        let snap = doc.snapshot();
+        let own: Vec<_> = snap.consts.iter().filter(|c| !c.builtin).collect();
+        assert_eq!(own.len(), 1);
+        assert_eq!(snap.consts[0].name, "c");
+        let pi = snap.consts.iter().find(|c| c.name == "pi").unwrap();
+        assert!(pi.builtin && pi.display.starts_with("3.14159"), "{pi:?}");
+        // `c` is the file's, so the speed of light is not listed.
+        assert_eq!(snap.consts.iter().filter(|c| c.name == "c").count(), 1);
+        assert!(snap.problems.is_empty());
+    }
+
+    #[test]
     fn constants_can_be_deleted() {
         let mut doc = Document::from_text(
             "const A = 1\nconst B = 2\nconst C = 3\n\nsheet T\n\n| X |\n| - |\n| 1 |\n",
@@ -8011,12 +8071,13 @@ mod tests {
             .snapshot()
             .consts
             .iter()
+            .filter(|c| !c.builtin)
             .map(|c| c.name.clone())
             .collect();
         assert_eq!(names, ["A", "C"]);
         assert!(doc.delete_const(5).is_err());
         assert!(doc.delete_all_consts());
-        assert!(doc.snapshot().consts.is_empty());
+        assert!(doc.snapshot().consts.iter().all(|c| c.builtin));
         assert_eq!(doc.snapshot().sheets.len(), 1);
         assert!(doc.text().starts_with("sheet T"), "{:?}", doc.text());
     }
