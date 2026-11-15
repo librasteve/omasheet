@@ -440,6 +440,10 @@ impl Parser {
         let Tok::Ident(name) = self.peek().clone() else {
             return lhs;
         };
+        // `5 kg` stays an error: only a name or a call makes it a product.
+        if is_plain_number(&lhs) {
+            return lhs;
+        }
         let next_is_call = matches!(
             self.toks.get(self.pos + 1).map(|t| &t.tok),
             Some(Tok::LParen | Tok::Dot | Tok::LBracket)
@@ -842,5 +846,15 @@ mod tests {
     fn single_equals_suggests_double() {
         let err = parse("Sales[; Region = 'UK']").unwrap_err();
         assert!(err.help.unwrap().contains("=="));
+    }
+}
+
+/// Whether an expression is made of literals alone.
+fn is_plain_number(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Lit(_) => true,
+        ExprKind::Unary(_, x) => is_plain_number(x),
+        ExprKind::Binary(_, a, b) => is_plain_number(a) && is_plain_number(b),
+        _ => false,
     }
 }

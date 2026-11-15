@@ -121,8 +121,10 @@ ApplicationWindow {
     Material.foreground: textColor
     color: pageColor
     // Qt has no "monospace" alias on macOS, where the name falls through to
-    // a proportional face; Menlo ships with every Mac.
-    readonly property string monoFamily: Qt.platform.os === "osx" ? "Menlo" : "monospace"
+    // a proportional face; Menlo ships with every Mac. Nor on Windows, where
+    // it can land on a symbol face; Consolas ships with every Windows.
+    readonly property string monoFamily: Qt.platform.os === "osx" ? "Menlo"
+        : Qt.platform.os === "windows" ? "Consolas" : "monospace"
     font.family: monoFamily
     font.pixelSize: fontSize
     // No ligatures: `|>`, `==` and `:=` are shown as they are typed.

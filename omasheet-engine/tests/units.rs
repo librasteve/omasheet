@@ -684,9 +684,9 @@ fn a_column_of_angles_keeps_its_unit() {
 #[test]
 fn approximately_equal_has_a_tolerance_and_equal_has_none() {
     assert_eq!(shown("0.1.Float + 0.2.Float == 0.3.Float"), "false");
-    assert_eq!(shown("pi() * 1rad =~= 180°"), "true");
-    assert_eq!(shown("sin(pi()) == 0"), "false");
-    assert_eq!(shown("sin(pi()) =~= 0"), "true");
+    assert_eq!(shown("pi * 1rad =~= 180°"), "true");
+    assert_eq!(shown("sin(pi) == 0"), "false");
+    assert_eq!(shown("sin(pi) =~= 0"), "true");
     assert_eq!(shown("5kg =~= 5000g"), "true");
     assert_eq!(shown("5kg =~= 5001g"), "false");
     assert_eq!(shown("0.1.Float + 0.2.Float =~= 0.3.Float"), "true");
@@ -701,7 +701,7 @@ fn the_inverse_trig_functions_give_an_angle() {
     assert_eq!(shown("arcsin(0.5)"), "0.524rad·");
     assert_eq!(shown("arcsin(0.5).to('°')"), "30°");
     assert_eq!(shown("arccos(0.5) =~= 60°"), "true");
-    assert_eq!(shown("arctan(1) =~= pi() / 4 * 1rad"), "true");
+    assert_eq!(shown("arctan(1) =~= pi / 4 * 1rad"), "true");
     assert_eq!(shown("sin(arcsin(0.5)) =~= 0.5"), "true");
     assert_eq!(shown("degrees(arctan(1))"), "45");
     assert_eq!(shown("arcsin(0.5 ± 0.01)"), "0.524(12)rad");

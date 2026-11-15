@@ -779,7 +779,7 @@ impl Scope<'_> {
                 ),
                 tight: Tight::Power,
             },
-            ("PI", 0) => Omx::whole("pi()"),
+            ("PI", 0) => Omx::whole("pi"),
             ("TODAY" | "NOW", 0) => {
                 self.volatile = true;
                 Omx::whole(format!("{}()", upper.to_ascii_lowercase()))
