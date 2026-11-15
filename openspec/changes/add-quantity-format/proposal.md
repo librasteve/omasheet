@@ -12,7 +12,7 @@ A derived constant such as ħ = h/2π is exact: it has no uncertainty to set its
 - **file-format** — ADDED: the flag `_`, first in a quantity's number format after any `±` or `~`, which sets the unit apart from its number by a space: `Quantity[; _.9s]` shows `6.022e+23 mol^-1`
 - **app** — CHANGED: a number cut for display has its `·` after the unit, `6.022e+23mol^-1·`, and the footer says the full value of the cell the cursor is on as well as the one under the pointer
 
-- **app** — ADDED: `Set format…` on the Value column of the Constants tab, and F4 there opens it alone. The format, such as `; .10s`, is the view's and is not written to the file; it is shown to every constant that can take it, and the values are set right
+- **app** — ADDED: `Set format…` on the Value column of the Constants tab, and F4 there opens it alone. The format, such as `; .10s`, is written to the file as a `consts [; .10s]` line before the first sheet; it is shown to every constant that can take it, and the values are set right
 
 ## Impact
 

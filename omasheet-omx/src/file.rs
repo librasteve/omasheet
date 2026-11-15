@@ -508,6 +508,17 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             continue;
         }
 
+        // consts [<format>], before the first sheet: how the constants'
+        // values are shown. The engine reads it from the text.
+        if sheet.is_none()
+            && ast.sheets.is_empty()
+            && after_keyword(trimmed, "consts")
+                .is_some_and(|rest| rest.starts_with('[') && rest.ends_with(']'))
+        {
+            i += 1;
+            continue;
+        }
+
         // const <Name> = <expr>
         if let Some(rest) = after_keyword(trimmed, "const") {
             let n = ident_len(rest);

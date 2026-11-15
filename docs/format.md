@@ -504,6 +504,9 @@ accepts them in your locale's form.
   not the row it is called from. The comment above it is its description.
 - `zone Area/City` before the first sheet says which time zone the file's
   date-times are in. Without it, they are in the zone of the machine.
+- `consts [; .10s]` before the first sheet is the number format the
+  constants' values are shown by, as `Set format…` on the Constants tab sets
+  it. Each constant that can take the format uses it.
 - `Logged : Datetime("Europe/London")` declares the zone of one column. Its
   cells are the wall clock of that zone, so what is typed in is taken there,
   and each is shown with its offset, which follows the zone's daylight

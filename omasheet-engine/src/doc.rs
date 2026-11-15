@@ -218,8 +218,8 @@ pub struct Document {
     /// grid's alone like a table's order: a change of them is a step to
     /// undo, and so is kept here, not read.
     filters: String,
-    /// How the constants' values are shown, a number format as a column's,
-    /// by the app: the view's alone, like the filters, and not written.
+    /// How the constants' values are shown, a number format as a column's:
+    /// read from the file's `consts [..]` line, which the app writes.
     const_format: String,
     /// The tables' files held whole in memory, by path (D157). Kept across
     /// rebuilds, and dropped when the text no longer names the file or the
@@ -334,6 +334,29 @@ pub fn read_only_why(snap: &SheetSnap) -> Option<String> {
     }
     snap.source.as_ref()?;
     Some(format!("`{}` is read-only: import to edit", snap.name))
+}
+
+/// The format in a `consts [format]` line, `Some` if the line is one.
+fn consts_line(line: &str) -> Option<String> {
+    let rest = line.trim().strip_prefix("consts")?;
+    let rest = rest.strip_prefix([' ', '\t'])?.trim();
+    let inner = rest.strip_prefix('[')?.strip_suffix(']')?;
+    Some(inner.trim().to_string())
+}
+
+/// How the constants' values are shown, as the file's `consts [..]` line,
+/// before the first sheet, says.
+fn const_format_in(text: &str) -> String {
+    for line in text.lines() {
+        let t = line.trim_start();
+        if t.starts_with("sheet ") || t.starts_with("view ") {
+            break;
+        }
+        if let Some(f) = consts_line(line) {
+            return f;
+        }
+    }
+    String::new()
 }
 
 /// What a number shown with fewer digits than it has is in full.
@@ -2692,14 +2715,39 @@ impl Document {
     }
 
     /// Show the constants' values by `format`, where each can take it, and
-    /// as they were with none. The view's own, not the file's.
+    /// as they were with none. Kept in the file as a `consts [format]` line
+    /// before the first sheet, in one undoable step.
     pub fn set_const_format(&mut self, format: Option<&str>) -> Result<(), String> {
         Self::check_const_format(format)?;
-        let text = format.unwrap_or("").trim().to_string();
-        if text != self.const_format {
-            self.const_format = text;
-            self.rebuild();
+        let want = format.unwrap_or("").trim().to_string();
+        if want == self.const_format {
+            return Ok(());
         }
+        let mut lines: Vec<&str> = self.text.split_inclusive('\n').collect();
+        let line_at = lines.iter().position(|l| consts_line(l).is_some());
+        let first = lines.iter().position(|l| {
+            let t = l.trim();
+            !t.is_empty() && !t.starts_with('#')
+        });
+        let new = format!("consts [{want}]\n");
+        match (line_at, want.is_empty()) {
+            (Some(at), true) => {
+                lines.remove(at);
+                // The blank line that set it off goes with it.
+                if lines.get(at).is_some_and(|l| l.trim().is_empty()) {
+                    lines.remove(at);
+                }
+            }
+            (Some(at), false) => lines[at] = &new,
+            (None, true) => {}
+            (None, false) => {
+                let at = first.unwrap_or(lines.len());
+                lines.insert(at, "\n");
+                lines.insert(at, &new);
+            }
+        }
+        let text: String = lines.concat();
+        self.commit(text);
         Ok(())
     }
 
@@ -5130,6 +5178,7 @@ impl Document {
     }
 
     fn rebuild(&mut self) {
+        self.const_format = const_format_in(&self.text);
         let mut sources = Sources::new();
         let src = sources.add("file", self.text.as_str());
         let (mut program, mut diags) = compile(&self.text, src);
@@ -7530,8 +7579,24 @@ mod tests {
         assert_eq!(doc.const_format(), "; .10s");
         assert_eq!(doc.snapshot().consts[1].display, "6.62607015e-34J.s");
         assert_eq!(doc.snapshot().consts[0].display, "299792458m.s^-1");
+        // It is in the file, so it is saved, and a reopened file has it.
+        assert!(doc.text().contains("\nconsts [; .10s]\n"), "{}", doc.text());
+        assert!(
+            doc.snapshot().problems.is_empty(),
+            "{:?}",
+            doc.snapshot().problems
+        );
+        let reopened = Document::from_text(doc.text());
+        assert_eq!(reopened.const_format(), "; .10s");
+        assert_eq!(reopened.snapshot().consts[1].display, "6.62607015e-34J.s");
+        // Another format replaces the line; none takes it out; undo brings it back.
+        assert_eq!(doc.set_const_format(Some("; .9s")), Ok(()));
+        assert_eq!(doc.text().matches("consts [").count(), 1);
         assert_eq!(doc.set_const_format(None), Ok(()));
+        assert!(!doc.text().contains("consts"), "{}", doc.text());
         assert_eq!(doc.snapshot().consts[1].display, before);
+        assert!(doc.undo());
+        assert_eq!(doc.const_format(), "; .9s");
     }
 
     #[test]
