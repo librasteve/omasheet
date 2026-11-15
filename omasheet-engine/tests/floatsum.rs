@@ -77,7 +77,11 @@ fn columns() -> Vec<(&'static str, Vec<Option<f64>>)> {
 }
 
 fn scratch(name: &str) -> std::path::PathBuf {
-    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "{}-{}",
+        std::process::id(),
+        name
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a writable scratch directory");
     dir
