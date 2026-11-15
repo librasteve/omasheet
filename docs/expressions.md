@@ -140,7 +140,7 @@ is empty). `if c then a else b`.
 Comparisons chain, as in Raku: `0 < x <= 10` is `0 < x and x <= 10`, and
 `a < b < c < d` tests each pair in turn. `in` takes one side each.
 
-`==` on two `Float` values is exact, so `sin(pi()) == 0` is false. `a =~= b` is Raku's approximate equality: true when `a` and `b` differ by less than 1e-15 of the larger of them (or by less than 1e-15 where one is zero), so `sin(pi()) =~= 0` and `pi() * 1rad =~= 180°` are true. It takes numbers, `Complex` values and quantities (the right side is read in the unit of the left), ignores any uncertainty, and leaves `==` exact: it is the one comparison that has a tolerance.
+`==` on two `Float` values is exact, so `sin(pi) == 0` is false. `a =~= b` is Raku's approximate equality: true when `a` and `b` differ by less than 1e-15 of the larger of them (or by less than 1e-15 where one is zero), so `sin(pi) =~= 0` and `pi * 1rad =~= 180°` are true. It takes numbers, `Complex` values and quantities (the right side is read in the unit of the left), ignores any uncertainty, and leaves `==` exact: it is the one comparison that has a tolerance.
 
 A string in a formula is in single quotes: `Name // 'Unknown'`, with `\'`,
 `\\`, `\n` and `\t` as its escapes. Double quotes are for text in a table
@@ -290,7 +290,7 @@ sqrt(9m ** 2)        9m             a root, where the units allow it
 5kg.to('g')          5000g          to another unit of the dimension
 sin(30°)             0.5            an angle in any unit
 45°30′ == 45.5°      true           degrees, minutes and seconds
-(pi() * 1rad).to('°') 180°          pi() in radians, back to degrees
+(pi * 1rad).to('°') 180°          pi in radians, back to degrees
 20°C - 10°C          10°C           an interval of two temperatures keeps the unit
 5kg + 3m             an error: they measure Mass and Length
 ```
@@ -612,7 +612,7 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
   `is_first_distinct()` and `is_last_distinct()`, of a column or a vector,
   or of this row's cell, `Name.is_duplicated()`, which is answered among the
   column's. An empty cell is a value of its own here
-- Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan arcsinh arccosh arctanh pi() e()` and more
+- Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan arcsinh arccosh arctanh` and more, and the constants `pi tau e c gn planck hbar kB NA R qe G me`, which a column, constant or sheet of the same name replaces
   `exp`, `ln`, `log10`, `log2` and the trigonometric functions cast their
   argument to a `Float` as `x.Float` does, so `sin(true)` is `sin(1)`,
   and `ln('20')` is `ln(20)`; a date or a duration is an error. These take a `Complex`

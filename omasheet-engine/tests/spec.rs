@@ -992,7 +992,7 @@ fn math_functions() {
         calc("round([1.234, 1.235, -1.235], 2)"),
         "[1.23, 1.24, -1.24]"
     );
-    assert_eq!(calc("round(pi(), 3)"), "3.142");
+    assert_eq!(calc("round(pi, 3)"), "3.142");
     assert_eq!(calc("(3.14159).round(3)"), "3.142");
     // Scaling by a power of ten keeps a Float and a Decimal in agreement
     // here, where dividing by the multiple would not have: 2.785 as a Float
@@ -1013,11 +1013,10 @@ fn math_functions() {
     assert_eq!(calc("ln(exp(2))"), "2");
     assert_eq!(calc("[log10(1000), log2(8)]"), "[3, 3]");
     assert_eq!(calc("sin(0) + cos(0)"), "1");
-    assert_eq!(calc("degrees(pi())"), "180");
-    assert_eq!(calc("e()"), "2.718281828459045");
-    assert_eq!(calc("ln(e())"), "1");
-    assert_eq!(calc("e() == exp(1)"), "true");
-    assert!(calc_err(None, "e(1)").contains("`e` takes 0 arguments"));
+    assert_eq!(calc("degrees(pi)"), "180");
+    assert_eq!(calc("e"), "2.718281828459045");
+    assert_eq!(calc("ln(e)"), "1");
+    assert_eq!(calc("e == exp(1)"), "true");
     assert_eq!(calc("round(sin(radians(30)) * 1000)"), "500");
     assert_eq!(calc("round(degrees(arctan(1)))"), "45");
     // Over a column, and as a method.

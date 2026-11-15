@@ -658,12 +658,6 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "e raised to the power x.",
         MathFn::Exp,
     ),
-    doc(
-        LOG,
-        "e",
-        "e()",
-        "The base of the natural logarithm, 2.71828...",
-    ),
     math_doc(
         LOG,
         "ln",
@@ -773,15 +767,9 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     math_doc(
         TRIG,
         "degrees",
-        "degrees(pi())",
+        "degrees(pi)",
         "An angle in radians, in degrees.",
         MathFn::Degrees,
-    ),
-    doc(
-        TRIG,
-        "pi",
-        "pi()",
-        "The ratio of a circle's circumference to its diameter, 3.14159...",
     ),
     doc(
         COMPLEX,
@@ -1069,7 +1057,7 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         COMPARE,
         "=~=",
         "a =~= b",
-        "Equal to within 1e-15 of the larger, or of 1 where one is zero, as Raku's =~= is: sin(pi()) =~= 0 is true where == is not. Uncertainties are ignored.",
+        "Equal to within 1e-15 of the larger, or of 1 where one is zero, as Raku's =~= is: sin(pi) =~= 0 is true where == is not. Uncertainties are ignored.",
     ),
     doc(
         WINDOW,

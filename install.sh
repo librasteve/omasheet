@@ -55,7 +55,8 @@ curl -fsSL -o "$TMP/SHA256SUMS" "$BASE/SHA256SUMS" \
   || die "could not fetch $BASE/SHA256SUMS"
 
 info "Checking it"
-if command -v sha256sum >/dev/null; then SUM=(sha256sum); else SUM=(shasum -a 256); fi
+# macOS ships a `sha256sum` of its own that has no --check, so `shasum` goes first.
+if command -v shasum >/dev/null; then SUM=(shasum -a 256); else SUM=(sha256sum); fi
 (cd "$TMP" && grep " $PACKAGE\$" SHA256SUMS | "${SUM[@]}" --check --quiet) \
   || die "$PACKAGE is not what SHA256SUMS says it should be; nothing was installed"
 

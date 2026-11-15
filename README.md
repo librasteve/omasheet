@@ -91,10 +91,6 @@ The Arch package also installs the skill to `/usr/share/omasheet/agent-skill/oma
 ln -sfn /usr/share/omasheet/agent-skill/omasheet ~/.claude/skills/omasheet
 ```
 
-## OmaStore
-
-Omasheet is listed in OmaStore for Omarchy: [omastore://librasteve/omasheet](omastore://librasteve/omasheet)
-
 ## Docs
 
 - [The file format](docs/format.md)

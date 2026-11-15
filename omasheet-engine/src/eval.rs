@@ -3836,8 +3836,6 @@ impl<'p> Engine<'p> {
                 }
                 Ok(Value::Complex(parts[0], parts[1]))
             }
-            Func::Pi => Ok(Value::Float(std::f64::consts::PI)),
-            Func::E => Ok(Value::Float(std::f64::consts::E)),
             Func::Math(m) => {
                 let apply =
                     |v: &Value| -> R { math(m, v).or_else(|message| fail(args[0].span, message)) };

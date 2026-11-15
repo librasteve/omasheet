@@ -17,7 +17,7 @@ sheet Literals
 | seconds       | 45°30′30″         |
 | ascii         | 45º30'30"         |
 | decimal       | 45°30.5′          |
-| radians       | = pi() / 2 * 1rad |
+| radians       | = pi/2 rad       |
 | angular speed | 2rad.s^-1         |
 | solid angle   | 2sr               |
 | luminous flux | 800lm             |
@@ -40,9 +40,9 @@ sheet Arithmetic
 | written out      | = 45.508333333°.dms(1)    |
 | a radian         | = dms(1rad)               |
 | illuminance      | = (800lm / 2m^2).to('lx') |
-| Euler's identity | =e()**(1i*pi())           |
+| Euler's identity | =e**(1i*pi)       |
 
-# Trigonometry in degrees and radians, with `pi()` for the radians. A `Float`
+# Trigonometry in degrees and radians, with `pi` for the radians. A `Float`
 # is not exactly equal to anything it is nearly (`cos(90º)` is 6e-17, not 0),
 # so `==` is false where `=~=`, which allows a difference of 1e-15 of the
 # larger side, is true. Converting to radians and back comes home too.
@@ -52,21 +52,21 @@ sheet Trigonometry
 | Name                           | Value                                 |
 | ------------------------------ | ------------------------------------- |
 | sine of 30º                    | = sin(30º)                            |
-| same in radians                | = sin(pi() / 6 * 1rad)                |
-| they agree                     | = sin(30º) =~= sin(pi() / 6 * 1rad)   |
+| same in radians                | = sin(pi/6 rad)                |
+| they agree                     | = sin(30º) =~= sin(pi/6 rad)   |
 | sine of 30º is a half          | = sin(30º) =~= 0.5                    |
-| cosine of 60º                  | = cos(60º) =~= cos(pi() / 3 * 1rad)   |
-| tangent of 45º                 | = tan(45º) =~= tan(pi() / 4 * 1rad)   |
+| cosine of 60º                  | = cos(60º) =~= cos(pi/3 rad)   |
+| tangent of 45º                 | = tan(45º) =~= tan(pi/4 rad)   |
 | cos of a right angle           | = cos(90º)                            |
 | cos of a right angle (rounded) | =cos(90º).round(-16)                  |
 | is it zero                     | = cos(90º) == 0                       |
 | is it nearly zero              | = cos(90º) =~= 0                      |
-| sin of a half turn             | = sin(pi() * 1rad) =~= sin(180º)      |
-| half turn                      | = 180º =~= pi() * 1rad                |
-| full turn                      | = 360º =~= 2 * pi() * 1rad            |
-| a turn is not half             | = 180º =~= 2 * pi() * 1rad            |
+| sin of a half turn             | = sin(pi rad) =~= sin(180º)      |
+| half turn                      | = 180º =~= pi rad                |
+| full turn                      | = 360º =~= 2 * pi rad            |
+| a turn is not half             | = 180º =~= 2 * pi rad            |
 | round trip                     | = 90º.to('rad').to('º') =~= 90º       |
-| round trip, written            | = (pi() / 2 * 1rad).to('º')           |
+| round trip, written            | = (pi/2 rad).to('º')           |
 | back from seconds              | = 1°.to('″').to('°') =~= 1°           |
 | sin² + cos²                    | = sin(40º) ** 2 + cos(40º) ** 2 =~= 1 |
 
@@ -84,11 +84,11 @@ Quadrant : Angle[rad; .3f]
 | ------- | ------------- | ------- | ------- | -------- | -------- | ----- |
 | ,       | 0°            | *       | *       | 0/1      | *        | *     |
 | east    | 90°           | *       | *       | 1/4      | *        | *     |
-| south   | = pi() * 1rad | *       | *       | 1/2      | *        | *     |
+| south   | = pi rad | *       | *       | 1/2      | *        | *     |
 | lookout | 120°30′       | *       | *       | 1/3      | *        | *     |
 | summit  | 45.5          | *       | *       | 1/4      | *        | *     |
 
 Radians := Bearing.to('rad')
 Written := Bearing.dms()
-Quadrant := 2*pi()*1rad*Fraction
+Quadrant := 2*pi*1rad*Fraction
 Check := Bearing==Quadrant

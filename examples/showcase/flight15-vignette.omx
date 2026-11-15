@@ -156,7 +156,7 @@ TotalDeltaV    := Launch.DeltaV.sum()
 # A circular orbit: v squared is GM over the radius.
 OrbitSpeed     := sqrt(GM / (EarthRadius + OrbitAltitude).to('m'))
 Lost           := TotalDeltaV - OrbitSpeed
-OrbitPeriod    := 2 * pi() * sqrt((EarthRadius + OrbitAltitude).to('m') ** 3 / GM)
+OrbitPeriod    := 2 * pi * sqrt((EarthRadius + OrbitAltitude).to('m') ** 3 / GM)
 # Hours for 14 orbits, a plain number: seconds over 3600 seconds.
 FourteenOrbits := 14 * OrbitPeriod / 3600s
 PayloadMass    := Satellites * SatelliteMass

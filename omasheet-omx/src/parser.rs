@@ -423,12 +423,39 @@ impl Parser {
                 Tok::PlusAmp => BinOp::BitAnd,
                 Tok::PlusLt => BinOp::Shl,
                 Tok::PlusGt => BinOp::Shr,
-                _ => return Ok(lhs),
+                _ => return Ok(self.with_unit(lhs)),
             };
             self.bump();
             let rhs = self.unary()?;
             lhs = Self::binary(lhs, op, rhs);
         }
+    }
+
+    /// A bare unit symbol after a term multiplies the whole product before
+    /// it by one of that unit: `pi rad`, `pi/2 rad`, `tau rad`. A unit
+    /// written against a number, as `2rad`, is a literal and never gets
+    /// here. The symbol must be a unit and not a call, so `pi min(a, b)` is
+    /// still an error.
+    fn with_unit(&mut self, lhs: Expr) -> Expr {
+        let Tok::Ident(name) = self.peek().clone() else {
+            return lhs;
+        };
+        let next_is_call = matches!(
+            self.toks.get(self.pos + 1).map(|t| &t.tok),
+            Some(Tok::LParen | Tok::Dot | Tok::LBracket)
+        );
+        if next_is_call {
+            return lhs;
+        }
+        let Ok(unit) = siquant::Unit::parse(&name, siquant::Scope::Live) else {
+            return lhs;
+        };
+        let span = self.bump().span;
+        let one = Expr {
+            kind: ExprKind::Lit(Lit::Quantity(1.0, 0.0, unit)),
+            span,
+        };
+        Self::binary(lhs, BinOp::Mul, one)
     }
 
     fn unary(&mut self) -> R<Expr> {

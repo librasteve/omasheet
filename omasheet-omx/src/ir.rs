@@ -260,9 +260,6 @@ pub enum Func {
     /// A half goes away from zero, and a number with fewer places than
     /// that is itself.
     RoundDigits,
-    Pi,
-    /// The base of the natural logarithm.
-    E,
     /// A function down a column that reads the rows around each one: a
     /// running total, a difference, a rank, a rolling mean. See [`Spec`].
     Window(Spec),

@@ -65,7 +65,7 @@ Published : Quantity[; .9s]
 
 | Name                    | Derived          | Published                  | Agrees |
 | ----------------------- | ---------------- | -------------------------- | ------ |
-| Reduced Planck constant | = h / (2 * pi()) | 1.054_571_817e-34J.s       | *      |
+| Reduced Planck constant | = h / (2 * pi) | 1.054_571_817e-34J.s       | *      |
 | Magnetic flux quantum   | = h / (2 * e)    | 2.067_833_848e-15Wb        | *      |
 | Faraday constant        | = NA * e         | 96_485.332_12C.mol^-1      | *      |
 | Molar gas constant      | = NA * k         | 8.314_462_618J.mol^-1.K^-1 | *      |
