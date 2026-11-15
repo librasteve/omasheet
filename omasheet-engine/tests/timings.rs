@@ -519,7 +519,11 @@ fn column_cost(dir: &std::path::Path, expr: &str, lowering: Lowering) -> (Durati
 #[test]
 #[ignore = "a measurement: run in release with --ignored --nocapture"]
 fn a_column_as_values_against_the_column() {
-    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("column-width");
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "{}-{}",
+        std::process::id(),
+        "column-width"
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a writable scratch directory");
     println!(
@@ -1283,7 +1287,11 @@ fn a_decimal_column_at_twenty_million_rows() {
         .ok()
         .and_then(|n| n.parse().ok())
         .unwrap_or(20_000_000);
-    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("decimal-width");
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "{}-{}",
+        std::process::id(),
+        "decimal-width"
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a writable scratch directory");
     decimal_table(&dir, rows);

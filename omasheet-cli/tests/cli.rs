@@ -245,7 +245,8 @@ fn time_zones_can_be_given() {
 
 /// A directory of its own for a test to write in.
 fn scratch(name: &str) -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let dir =
+        PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("{}-{}", std::process::id(), name));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
