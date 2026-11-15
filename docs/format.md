@@ -316,10 +316,11 @@ takes any exact number, and a `Decimal` column given a `Fraction` rounds it
 to its places: `<1/7>` is `1/7` in a `Fraction` column, `0.1428571429` in a
 `Decimal` one.
 
-The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
+The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**, and the more infectious a type, the less exact it is: `Integer`, `Fraction`, `Decimal`, `Float`, `Scientific`, `Complex`. A `Fraction` is exact without limit, whereas a `Decimal` is the same rationals held to a fixed number of places:
 
 - **`Integer` (ℤ)**: whole numbers (i64)
-- **`Decimal` (ℚ)**: exact to its places (`Decimal(38, s)`, ten by default); **`Fraction` (ℚ)**: the exact rational, of integers of any size
+- **`Fraction` (ℚ)**: the exact rational, of integers of any size
+- **`Decimal` (ℚ)**: exact to its places (`Decimal(38, s)`, ten by default)
 - **`Float` (ℝ)**: real numbers (f64)
 - **`Scientific` (ℝ)**: real numbers with uncertainty (2x f64)
 - **`Complex` (ℂ)**: complex numbers (2x f64)
@@ -339,7 +340,7 @@ Each type may be shown more than one way:
 
 - Two values shown the same way keep it: `Hex` + `Hex` is a `Hex`, and `Fraction` + `Fraction` a `Fraction`.
 - Two different ways of showing one type give the plain type: `Hex` + `Binary` is an `Integer`.
-- Different types give the more infectious, shown plain: `Decimal(2)` * `Decimal(4)` is a `Decimal(4)`, and `Fraction` * `Integer` or `Fraction` + `Percent` is a `Fraction`.
+- Different types give the more infectious, shown plain: `Decimal(2)` * `Decimal(4)` is a `Decimal(4)`, and `Fraction` * `Integer` is a `Fraction`, but `Fraction` + `Percent` or `Fraction` * `Decimal` is a `Decimal`.
 - A power with a whole exponent is exact; with any other, such as `2 ** 0.5`, it is a `Float`, as are the trigonometric, exponential and logarithmic functions.
 - A number beside text gives `Any`.
 
@@ -391,22 +392,22 @@ whole numbers, with a whole part where there is one: `0.125` there is `1/8`
 and `2.75` is `2 3/4`. It holds the exact rational: a cell `1/7` is a
 seventh, to every digit, and a seventh added to a seventh is `2/7`, exactly.
 Only a fraction whose denominator is 10000 or less is shown as one; past that
-the number is shown as a decimal, cut and marked. Any exact number beside a
+the number is shown as a decimal, cut and marked. A whole number beside a
 fraction gives a fraction, so a `:=` column of `Yield * 2` over a `Fraction`
 column shows fractions.
 
 In a cell, `1/7` and `22/7` are fractions, and so is `2 3/4` for `11/4`.
 Neither part need be the smaller: `11/3` and `5 7/3` are fine, and a
 `Fraction` column shows them as `3 2/3` and `7 1/3`. A column with no type
-whose cells are all written with a `/` is a `Fraction` column; with any other
-number among them it is a `Fraction` one too, a fraction beside a decimal
-being a fraction. A column declared `Decimal` takes the same cells and
-rounds them to its places.
+whose cells are all written with a `/` (or beside whole numbers) is a
+`Fraction` column; with a decimal among them it is a `Decimal` one, a fraction
+beside a decimal being a decimal. A column declared `Decimal` takes the same
+cells and rounds them to its places.
 
 In a formula a fraction is written in angle brackets, `<1/10>`, `<-3/4>` or
 `<2 3/4>`, since a bare `1/10` there is a quotient, a `Decimal` rounded to ten
-places. A fraction beside a whole number or a decimal is a fraction, so
-`<1/10> + 1` is `11/10`. A space goes before a fraction that follows a `+`,
+places. A fraction beside a whole number is a fraction, so
+`<1/10> + 1` is `11/10`; beside a decimal it is a decimal, so `<1/10> + 0.5` is `0.6`. A space goes before a fraction that follows a `+`,
 since `+<` is a shift.
 
 An `Integer`, `Decimal` or `Float` column may say how its numbers are shown,

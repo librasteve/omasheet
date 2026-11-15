@@ -222,24 +222,28 @@ impl S {
     }
 
     /// The wider of two numeric types. `Hex`, `Octal` and `Binary` are
-    /// `Integer`s, and `Fraction` and `Percent` are `Decimal`s, shown another
-    /// way: two of one type stay it, and two different members of a family
-    /// are the family's own type. An `Integer` and a `Decimal` are a
-    /// `Decimal`, a `Float` beside either is a `Float`, and a `Complex` beside
-    /// any number is a `Complex`.
+    /// `Integer`s, and `Percent` is a `Decimal`, shown another way: two of one
+    /// type stay it, and two different members of a family are the family's
+    /// own type. Exactness runs `Integer`, `Fraction`, `Decimal`: a `Fraction`
+    /// beside a whole number is a `Fraction`, but beside a `Decimal` or a
+    /// `Percent` it is a `Decimal`, exact only to its places. A `Float` beside
+    /// any of them is a `Float`, and a `Complex` beside any number is a
+    /// `Complex`.
     pub fn wider(self, other: S) -> S {
         if self == other {
             self
         } else if self.is_exact() && other.is_exact() {
             if self.is_int() && other.is_int() {
                 S::Int
-            } else if self == S::Fraction || other == S::Fraction {
-                // A rational beside any exact number is a rational.
+            } else if (self == S::Fraction && other.is_int())
+                || (other == S::Fraction && self.is_int())
+            {
+                // A rational beside a whole number is a rational.
                 S::Fraction
             } else {
                 // Two decimals keep the places of the finer; a whole number
-                // adds none; a fraction or a percentage counts as a decimal
-                // of the default scale.
+                // adds none; a fraction counts as a decimal of the default
+                // scale.
                 let places = |t: S| match t {
                     S::Decimal(n) => n,
                     t if t.is_int() => 0,
@@ -543,19 +547,20 @@ mod tests {
             assert_eq!(b.join(a), Some(Int), "{b} with {a}");
         }
         // A Percent is a Decimal shown another way; a Fraction is the exact
-        // rational, which any exact number beside it becomes.
+        // rational, which a whole number beside it leaves exact, and a
+        // Decimal or Percent makes a Decimal.
         assert_eq!(Fraction.join(Fraction), Some(Fraction));
         assert_eq!(Percent.join(Percent), Some(Percent));
-        for (a, b) in [
-            (Fraction, Percent),
-            (Fraction, Decimal),
-            (Fraction, Int),
-            (Fraction, Hex),
-        ] {
+        for (a, b) in [(Fraction, Int), (Fraction, Hex)] {
             assert_eq!(a.join(b), Some(Fraction), "{a} with {b}");
             assert_eq!(b.join(a), Some(Fraction), "{b} with {a}");
         }
-        for (a, b) in [(Percent, Decimal), (Percent, Int)] {
+        for (a, b) in [
+            (Fraction, Percent),
+            (Fraction, Decimal),
+            (Percent, Decimal),
+            (Percent, Int),
+        ] {
             assert_eq!(a.join(b), Some(Decimal), "{a} with {b}");
             assert_eq!(b.join(a), Some(Decimal), "{b} with {a}");
         }

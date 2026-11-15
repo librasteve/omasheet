@@ -392,6 +392,21 @@ pub fn dms(v: &Value, places: usize) -> Result<Value, String> {
     }
 }
 
+/// `unit(x)` as text, or `value(x)` as a `Scientific`: the two halves of a
+/// quantity.
+pub fn part(v: &Value, unit: bool) -> Result<Value, String> {
+    match v {
+        Value::Null => Ok(Value::Null),
+        Value::Quantity(q) if unit => Ok(Value::text(&q.unit().to_string())),
+        Value::Quantity(q) => Ok(Value::Scientific(q.value(), q.sigma())),
+        other => Err(format!(
+            "`{}` needs a quantity, found {}",
+            if unit { "unit" } else { "value" },
+            other.kind()
+        )),
+    }
+}
+
 /// `to(x, 'g')`: the quantity in another unit of its dimension.
 pub fn to_unit(v: &Value, unit: &Value) -> Result<Value, String> {
     let Value::String(text, _) = unit else {

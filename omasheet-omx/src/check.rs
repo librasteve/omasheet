@@ -4644,6 +4644,41 @@ impl<'a> Checker<'a> {
                 }
                 (Node::new(Ir::Call(Func::ToUnit, vec![arg, unit]), span), ty)
             }
+            "unit" | "value" => {
+                if !arity(self, 1, &format!("Weight.{name}()")) {
+                    return fail;
+                }
+                let (arg, aty) = self.lower(&args[0], sc);
+                let out = if name == "unit" {
+                    S::String
+                } else {
+                    S::Scientific
+                };
+                let ty = match aty {
+                    Ty::Any | Ty::Scalar(S::Any) => Ty::Any,
+                    Ty::Scalar(S::Quantity(_)) => Ty::Scalar(out),
+                    Ty::Vector(S::Quantity(_), n) => Ty::Vector(out, n),
+                    other => {
+                        if !matches!(arg.kind, Ir::Error) {
+                            self.err_help(
+                                args[0].span,
+                                format!(
+                                    "`{name}` needs a quantity, but this is {}",
+                                    other.describe()
+                                ),
+                                "a quantity is a number with an SI unit, `5kg`",
+                            );
+                        }
+                        return fail;
+                    }
+                };
+                let func = if name == "unit" {
+                    Func::UnitOf
+                } else {
+                    Func::ValueOf
+                };
+                (Node::new(Ir::Call(func, vec![arg]), span), ty)
+            }
             "dms" => {
                 if !(1..=2).contains(&args.len()) {
                     self.err_help(

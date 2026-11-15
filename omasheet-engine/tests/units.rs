@@ -709,3 +709,17 @@ fn the_inverse_trig_functions_give_an_angle() {
     assert_eq!(shown("arcsin(2)"), "1.571+1.317i·");
     assert!(fails("arcsin(0.5rad)").contains("no unit"));
 }
+
+#[test]
+fn a_quantity_gives_its_unit_and_its_value() {
+    assert_eq!(shown("5kg.unit()"), "kg");
+    assert_eq!(shown("unit(9.81m.s^-2)"), "m.s^-2");
+    assert_eq!(shown("5kg.value()"), "5");
+    assert_eq!(shown("(5kg).to('g').value()"), "5000");
+    // The uncertainty goes with the number.
+    assert_eq!(full("(10.5(3)kg).value()"), "10.5 ± 0.3");
+    // And the number is one to calculate with.
+    assert_eq!(shown("(5kg).value() * 2"), "10");
+    assert!(fails("3.unit()").contains("needs a quantity"));
+    assert!(fails("'kg'.value()").contains("needs a quantity"));
+}

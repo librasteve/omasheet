@@ -7,7 +7,8 @@
 #
 # A Fraction is the exact rational. `1/3 * 3` is 0.9999999999 in decimals and
 # `<1/3> * 3` is 1 in fractions. And what a column that declares nothing cannot
-# hold in a Decimal it holds as a Fraction: 10**100 is not an error.
+# hold in a Decimal it holds as a Fraction: 10**100 is not an error. A Fraction
+# beside a Decimal is a Decimal, so the Googol sheet starts from `<10>`.
 
 sheet Prices
 
@@ -46,6 +47,6 @@ sheet Googol
 | 50    | *   | *    | *       |
 | 100   | *   | *    | *       |
 
-Big     := 10 ** Power
+Big     := <10> ** Power
 Tiny    := <1> / Big
 Product := Big * Tiny

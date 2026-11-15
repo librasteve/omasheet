@@ -238,6 +238,11 @@ pub enum Func {
     /// A quantity in another unit of its dimension: `5kg.to('g')`. The unit
     /// is the second argument, as text (add-si-units D234).
     ToUnit,
+    /// The unit of a quantity as text: `5kg.unit()` is `"kg"`.
+    UnitOf,
+    /// The number of a quantity in its own unit, as a `Scientific` that
+    /// carries its uncertainty: `10.5(3)kg.value()` is `10.5(3)`.
+    ValueOf,
     /// An angle as text in degrees, minutes and seconds: `45.5°.dms()` is
     /// `45°30′0″`. An optional second argument is the places of the seconds.
     Dms,

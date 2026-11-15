@@ -993,6 +993,18 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     ),
     doc(
         UNITS,
+        "unit",
+        ".unit()",
+        "The unit of a quantity as text: 5kg.unit() gives kg.",
+    ),
+    doc(
+        UNITS,
+        "value",
+        ".value()",
+        "The number of a quantity in its own unit, with its uncertainty: 10.5(3)kg.value() gives 10.5(3).",
+    ),
+    doc(
+        UNITS,
         "dms",
         ".dms(2)",
         "An angle as text in degrees, minutes and seconds, the seconds to the places given (none if left off): 45.5°.dms() gives 45°30′0″.",

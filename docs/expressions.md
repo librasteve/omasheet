@@ -96,10 +96,12 @@ e notation where it is very large or small. `--exact` writes a fraction as
 a quotient the fraction of what it was rounded to, so `(1/7).Fraction` is
 `1428571429/10000000000`. To get a seventh, write one: in a formula a fraction
 is written in angle brackets, `<1/7>`, `<-3/4>` or `<2 3/4>`, and is a
-`Fraction` as `1/7` is in a cell. A fraction beside any exact number is a
-fraction, worked out exactly: `<1/7> * 7 == 1` is true, `<1/3> + 0.25` is
-`7/12`, and a `Fraction` column holding `Yield * 2` shows fractions. Beside a
-`Float` it is a `Float`. `sqrt`, `ln`, `exp`, the trigonometry and a fractional
+`Fraction` as `1/7` is in a cell. A fraction beside a whole number or
+another fraction is a fraction, worked out exactly: `<1/7> * 7 == 1` is true,
+and a `Fraction` column holding `Yield * 2` shows fractions. Beside a
+`Decimal` or a `Percent` it is a `Decimal`, rounded to its places, so
+`<1/3> + 0.25` is `0.5833333333`: a `Decimal` is exact only to its places.
+Beside a `Float` it is a `Float`. `sqrt`, `ln`, `exp`, the trigonometry and a fractional
 power of a fraction are `Float`s, having no rational result. A space goes
 before a fraction that follows a `+`, since `+<` is a shift; the error for
 `1+<1/10>` says so.
@@ -293,7 +295,10 @@ quantity and the other math functions need a number with no unit. `sum`, `mean`,
 `median`, `min` and `max` of a column of quantities give one, in the unit of
 the first; `std` and `var` do not. `x.to('g')` and `to(x, 'g')` give a
 quantity in another unit, and `x.Float` gives the number of a quantity with no
-dimension.
+dimension. `x.unit()` gives the unit as text, `5kg.unit()` is `kg`, and
+`x.value()` gives the number in that unit with its uncertainty, as a
+`Scientific`: `10.5(3)kg.value()` is `10.5(3)`. Together they take a quantity
+apart, and `x.to('g').value()` is its number of grams.
 
 A `.` after a unit continues it if what follows is a unit, so `5N.m` is a
 newton metre, and ends it if it is a call or a name, so `5kg.abs()` and

@@ -3947,6 +3947,18 @@ impl<'p> Engine<'p> {
                     single => one(&single),
                 }
             }
+            Func::UnitOf | Func::ValueOf => {
+                let unit = matches!(func, Func::UnitOf);
+                let one = |v: &Value| -> R {
+                    crate::quantity::part(v, unit).or_else(|m| fail(args[0].span, m))
+                };
+                match self.eval(&args[0], fr)? {
+                    Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                        items.iter().map(one).collect::<R<Vec<_>>>()?,
+                    ))),
+                    single => one(&single),
+                }
+            }
             Func::ToUnit => {
                 let unit = self.eval(&args[1], fr)?;
                 let one = |v: &Value| -> R {
