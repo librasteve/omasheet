@@ -1213,9 +1213,9 @@ fn parquet_round_trips_the_examples() {
         let text = std::fs::read_to_string(&path).unwrap();
         let first = parquet::export("file.omx", &text, None, options_beside(dir))
             .expect("the file exports");
-        for file in 0..first.files.len() {
-            let name = first.files[file].sheet.as_deref().unwrap_or("T");
-            let imported = parquet::import(name, &first.files[file].bytes)
+        for file in &first.files {
+            let name = file.sheet.as_deref().unwrap_or("T");
+            let imported = parquet::import(name, &file.bytes)
                 .unwrap_or_else(|e| panic!("{} sheet {name}: {e}", path.display()));
             lints(&imported.source);
             // A second trip changes nothing: the types are carried, so there
