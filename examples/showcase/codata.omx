@@ -7,6 +7,8 @@
 # are exact and carry none. The Checks sheet reproduces some of the derived
 # constants from the exact ones, to see that they agree with the chart.
 
+consts [; .12s]
+
 sheet Constants
 
 Value : Quantity[; _.10s]

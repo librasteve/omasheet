@@ -356,8 +356,12 @@ fn const_format_in(text: &str) -> String {
             return f;
         }
     }
-    String::new()
+    DEFAULT_CONST_FORMAT.to_string()
 }
+
+/// How the constants' values are shown when the file does not say: ten
+/// significant digits, the unit set apart by a space. `consts []` says none.
+pub const DEFAULT_CONST_FORMAT: &str = "; _.10s";
 
 /// What a number shown with fewer digits than it has is in full.
 fn exact_text(v: &Value, quoted: bool, shown: &str, style: &Style) -> Option<String> {
@@ -645,13 +649,13 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             (format!("{unit}; ±.1f"), "± uncertainty, 1 place"),
             (format!("{unit}; ~.1f"), "value only, 1 place"),
             (format!("{unit}; ~.3e-3"), "value only, e notation"),
-            (format!("{unit}; .9s"), "9 digits if exact"),
+            (format!("{unit}; .10s"), "10 digits if exact"),
             (format!("{unit}; _"), "a space before the unit"),
         ],
         // No unit: each value is shown in its own.
         S::Quantity(_) => vec![
-            ("; .9s".into(), "own unit, 9 digits"),
-            ("; _.9s".into(), "as above, a space"),
+            ("; .10s".into(), "own unit, 10 digits"),
+            ("; _.10s".into(), "as above, a space"),
             ("; .3e".into(), "e notation"),
             ("; ±.3e".into(), "± e notation"),
         ],
@@ -2447,7 +2451,7 @@ impl Document {
             base: None,
             orders: Default::default(),
             filters: String::new(),
-            const_format: String::new(),
+            const_format: DEFAULT_CONST_FORMAT.to_string(),
             whole: Default::default(),
             edits: 0,
             engine: None,
@@ -2730,7 +2734,8 @@ impl Document {
             !t.is_empty() && !t.starts_with('#')
         });
         let new = format!("consts [{want}]\n");
-        match (line_at, want.is_empty()) {
+        // The default is the absence of the line; none is `consts []`.
+        match (line_at, want == DEFAULT_CONST_FORMAT) {
             (Some(at), true) => {
                 lines.remove(at);
                 // The blank line that set it off goes with it.
@@ -7569,32 +7574,43 @@ mod tests {
 
     #[test]
     fn the_constants_take_a_format_and_are_set_right() {
-        let mut doc = Document::from_text(include_str!("../../examples/showcase/codata.omx"));
-        let before = doc.snapshot().consts[1].display.clone();
-        assert_eq!(before, "0J.s·");
+        let text = include_str!("../../examples/showcase/codata.omx");
+        // The file may carry a format of its own; the test starts with none.
+        let text: String = text.lines().filter(|l| !l.starts_with("consts [")).fold(
+            String::new(),
+            |mut out, l| {
+                out.push_str(l);
+                out.push('\n');
+                out
+            },
+        );
+        let mut doc = Document::from_text(&text);
+        // Ten significant digits, a space before the unit, unless the file says.
+        assert_eq!(doc.const_format(), "; _.10s");
+        assert_eq!(doc.snapshot().consts[1].display, "6.62607015e-34 J.s");
+        assert!(!doc.text().contains("consts ["));
         assert!(doc.snapshot().consts.iter().all(|c| c.numeric));
         assert!(Document::check_const_format(Some("; .9s")).is_ok());
         assert!(Document::check_const_format(Some("; q")).is_err());
-        assert_eq!(doc.set_const_format(Some("; .10s")), Ok(()));
-        assert_eq!(doc.const_format(), "; .10s");
-        assert_eq!(doc.snapshot().consts[1].display, "6.62607015e-34J.s");
-        assert_eq!(doc.snapshot().consts[0].display, "299792458m.s^-1");
-        // It is in the file, so it is saved, and a reopened file has it.
-        assert!(doc.text().contains("\nconsts [; .10s]\n"), "{}", doc.text());
+        // None is `consts []`, and shows a derived constant cut, as before.
+        assert_eq!(doc.set_const_format(None), Ok(()));
+        assert!(doc.text().contains("\nconsts []\n"), "{}", doc.text());
+        assert_eq!(doc.snapshot().consts[1].display, "0J.s·");
+        // Another format is a line of its own, saved, and a reopened file has it.
+        assert_eq!(doc.set_const_format(Some("; .9s")), Ok(()));
+        assert_eq!(doc.text().matches("consts [").count(), 1);
+        assert!(doc.text().contains("\nconsts [; .9s]\n"), "{}", doc.text());
         assert!(
             doc.snapshot().problems.is_empty(),
             "{:?}",
             doc.snapshot().problems
         );
         let reopened = Document::from_text(doc.text());
-        assert_eq!(reopened.const_format(), "; .10s");
+        assert_eq!(reopened.const_format(), "; .9s");
         assert_eq!(reopened.snapshot().consts[1].display, "6.62607015e-34J.s");
-        // Another format replaces the line; none takes it out; undo brings it back.
-        assert_eq!(doc.set_const_format(Some("; .9s")), Ok(()));
-        assert_eq!(doc.text().matches("consts [").count(), 1);
-        assert_eq!(doc.set_const_format(None), Ok(()));
+        // The default takes the line out; undo brings the last one back.
+        assert_eq!(doc.set_const_format(Some("; _.10s")), Ok(()));
         assert!(!doc.text().contains("consts"), "{}", doc.text());
-        assert_eq!(doc.snapshot().consts[1].display, before);
         assert!(doc.undo());
         assert_eq!(doc.const_format(), "; .9s");
     }
@@ -7602,9 +7618,9 @@ mod tests {
     #[test]
     fn a_quantity_with_no_unit_is_offered_formats() {
         let any = format_suggestions("Quantity", "");
-        assert!(any.iter().any(|(f, _)| f == "; .9s"), "{any:?}");
+        assert!(any.iter().any(|(f, _)| f == "; .10s"), "{any:?}");
         let mass = format_suggestions("Mass", "g");
-        assert!(mass.iter().any(|(f, _)| f == "g; .9s"), "{mass:?}");
+        assert!(mass.iter().any(|(f, _)| f == "g; .10s"), "{mass:?}");
     }
 
     #[test]

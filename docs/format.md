@@ -221,7 +221,7 @@ read as one; `Integer` is what is written.
 | `Percent` | `20%`, `12.5%` — exact, shown as a percentage |
 | `Float` | `1.5e3`, `Inf`, `-Inf`, `NaN` — floating point |
 | `Scientific` | `10.5(3)`, `10 ± 0.3` — a value with its measurement uncertainty, each a `Float`; a number with no uncertainty in a `Scientific` column has an uncertainty of zero. Its format, in brackets, is a number format as for a `Float`: with nothing before it the value is shown as `10.5(3)`, with `±` before it as `value ± uncertainty`, and with `~` before it as the value alone, at the places the uncertainty gives: `Length : Scientific[.4f]`, `Scientific[±.3e-3]`, `Scientific[~.2f]`. The conversion `s` lets the uncertainty lead: a value with one is shown by it, whatever the precision, and a value with none is shown to the precision as significant digits, in `g` form: `Scientific[.9s]` shows `1.0545718176e-34` as `1.05457182e-34` and `6.674 30(15)e-11` as it is |
-| `Quantity` and its kinds | `5kg`, `300cm`, `9.81m.s^-2`, `10.5(3)e-3kg`, `20°C` — a number and an SI unit, written with no space; a `Scientific` magnitude, so it carries an uncertainty. A column is declared `Quantity` for any dimension, or one of its kinds (`Length`, `Mass`, `Force`, `Energy`, `Pressure`, ...), which admits only a unit of that dimension: `Weight : Mass`. `Angle` holds `rad`, `°` or `45°30′`; `SolidAngle`, `AngularSpeed`, `LuminousFlux` and `Illuminance` hold `sr`, `rad.s^-1`, `lm` and `lx`. `Data`, `DataRate` and `DataDensity` hold `B`, `GiB`, `Mb`, `MiB.s^-1` and `Gb.m^-2`. A cell in another unit of it is converted to the column's unit, which is the preferred unit of the kind (`kg` for `Mass`) or the one in brackets, `Weight : Mass[g]`; a bare number is read in that unit. After a `;` a number format as a `Scientific` takes may follow: `Mass[mg; .1f]`. The unit may be left out before the `;`, `Quantity[; .9s]`, and each value is then shown in its own unit; with the conversion `s`, a derived value with no uncertainty is shown in nine significant digits, as `1.05457182e-34J.s`, rather than as `0J.s·`. A `_` before the conversion, `Quantity[; _.9s]`, sets the unit apart from its number by a space, `6.022e+23 mol^-1`; a number shown cut has its `·` after the unit. See *Units* in the expressions guide |
+| `Quantity` and its kinds | `5kg`, `300cm`, `9.81m.s^-2`, `10.5(3)e-3kg`, `20°C` — a number and an SI unit, written with no space; a `Scientific` magnitude, so it carries an uncertainty. A column is declared `Quantity` for any dimension, or one of its kinds (`Length`, `Mass`, `Force`, `Energy`, `Pressure`, ...), which admits only a unit of that dimension: `Weight : Mass`. `Angle` holds `rad`, `°` or `45°30′`; `SolidAngle`, `AngularSpeed`, `LuminousFlux` and `Illuminance` hold `sr`, `rad.s^-1`, `lm` and `lx`. `Data`, `DataRate` and `DataDensity` hold `B`, `GiB`, `Mb`, `MiB.s^-1` and `Gb.m^-2`. A cell in another unit of it is converted to the column's unit, which is the preferred unit of the kind (`kg` for `Mass`) or the one in brackets, `Weight : Mass[g]`; a bare number is read in that unit. After a `;` a number format as a `Scientific` takes may follow: `Mass[mg; .1f]`. The unit may be left out before the `;`, `Quantity[; .10s]`, and each value is then shown in its own unit; with the conversion `s`, a derived value with no uncertainty is shown in ten significant digits, as `1.054571818e-34J.s`, rather than as `0J.s·`. A `_` before the conversion, `Quantity[; _.10s]`, sets the unit apart from its number by a space, `6.022e+23 mol^-1`; a number shown cut has its `·` after the unit. See *Units* in the expressions guide |
 | `Complex` | `3+4i`, `-1.5-2i`, `2i` — a real and an imaginary part, each a `Float`; a real number in a `Complex` column is that number with no imaginary part |
 | `String` | `hi` or `"hi"`  (escape \|) |
 | `Boolean` | `true`, `false`; a `Boolean` column also reads `1` and `0`, `x` and `o`, `X` and `O`. Its format, in brackets, is any two different characters, the symbol for true and then for false: `Boolean[10]`, `Boolean[xo]`, `Boolean[XO]`, `Boolean[✓✗]` (not a space, `]` or `%`), and the column reads its own two as well; with none it shows `true` and `false` |
@@ -316,11 +316,10 @@ takes any exact number, and a `Decimal` column given a `Fraction` rounds it
 to its places: `<1/7>` is `1/7` in a `Fraction` column, `0.1428571429` in a
 `Decimal` one.
 
-The numeric types form a hierarchy, **ℤ ⊂ Decimal ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
+The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
 
 - **`Integer` (ℤ)**: whole numbers (i64)
-- **`Decimal`**: exact to its places (`Decimal(38, s)`, ten by default)
-- **`Fraction` (ℚ)**: the exact rational, of integers of any size
+- **`Decimal` (ℚ)**: exact to its places (`Decimal(38, s)`, ten by default); **`Fraction` (ℚ)**: the exact rational, of integers of any size
 - **`Float` (ℝ)**: real numbers (f64)
 - **`Scientific` (ℝ)**: real numbers with uncertainty (2x f64)
 - **`Complex` (ℂ)**: complex numbers (2x f64)
@@ -506,7 +505,9 @@ accepts them in your locale's form.
   date-times are in. Without it, they are in the zone of the machine.
 - `consts [; .10s]` before the first sheet is the number format the
   constants' values are shown by, as `Set format…` on the Constants tab sets
-  it. Each constant that can take the format uses it.
+  it. Each constant that can take the format uses it. Without the line the
+  format is `; _.10s`, ten significant digits and a space before the unit;
+  `consts []` shows them with no format.
 - `Logged : Datetime("Europe/London")` declares the zone of one column. Its
   cells are the wall clock of that zone, so what is typed in is taken there,
   and each is shown with its offset, which follows the zone's daylight
