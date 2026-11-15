@@ -10,20 +10,13 @@ The spreadsheet as a trackable and composable document, not just a binary file. 
 
 📊 **Columns as the computational model**
 
-Named, typed columns and array expressions connect spreadsheet flexibility to structured dataframe querie and transformations.
+Named, typed columns and array expressions connect spreadsheet flexibility to structured dataframe queries and transformations.
 
 🔢 **Strong type system**
 
-The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**:
+The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**. The more _infectious_ a type, the less exact it is: `Integer` < `Fraction` < `Decimal` < `Float` < `Scientific` < `Complex`. A `Fraction` is exact without limit, whereas a `Decimal` is the same rationals held to a fixed number of places:
 
-- **`Integer` (ℤ)**: whole numbers (i64)
-- **`Fraction` (ℚ)**: the exact rational, of integers of any size
-- **`Decimal` (ℚ)**: exact to the places its column keeps (`Decimal(38, s)`, ten by default); a `Fraction` beside one is a `Decimal`
-- **`Float` (ℝ)**: real numbers (f64)
-- **`Scientific` (ℝ)**: real numbers with uncertainty (2x f64)
-- **`Complex` (ℂ)**: complex numbers (2x f64)
-
-Representations (`Fraction`, `Percent`, `Hex`, `Octal`, `Binary`...); the `Quantity` type for SI units, prefixes, data; `String` types (`Email`, `Url`...) and `Boolean` round out a comprehensive set of tools from classroom to complex analytics.
+Other types cover `Quantity` for SI and non-SI units & prefixes; `String`, `Datetime`, `Zoned`, `Boolean` and so on. Representations (`Percent`, `Hex`, `Octal`, `Binary`...) round out a broad set of tools for uses from junior school teaching to complex analytics.
 
 _Automatically follows system dark/light mode._
 

@@ -316,11 +316,11 @@ takes any exact number, and a `Decimal` column given a `Fraction` rounds it
 to its places: `<1/7>` is `1/7` in a `Fraction` column, `0.1428571429` in a
 `Decimal` one.
 
-The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**, and the more infectious a type, the less exact it is: `Integer`, `Fraction`, `Decimal`, `Float`, `Scientific`, `Complex`. A `Fraction` is exact without limit, whereas a `Decimal` is the same rationals held to a fixed number of places:
+The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**. The more _infectious_ a type, the less exact it is: `Integer` < `Fraction` < `Decimal` < `Float` < `Scientific` < `Complex`. A `Fraction` is exact without limit, whereas a `Decimal` is the same rationals held to a fixed number of places:
 
 - **`Integer` (ℤ)**: whole numbers (i64)
-- **`Fraction` (ℚ)**: the exact rational, of integers of any size
-- **`Decimal` (ℚ)**: exact to its places (`Decimal(38, s)`, ten by default)
+- **`Fraction` (ℚ)**: exact rational (num/den)
+- **`Decimal` (ℚ)**: exact to s places (`Decimal(38, s[=10])`)
 - **`Float` (ℝ)**: real numbers (f64)
 - **`Scientific` (ℝ)**: real numbers with uncertainty (2x f64)
 - **`Complex` (ℂ)**: complex numbers (2x f64)
@@ -333,7 +333,7 @@ Each type may be shown more than one way:
 |---|---|---|
 | `Integer` | `1` | `Hex` `0xff`, `Octal` `0o17`, `Binary` `0b101` |
 | `Decimal` | `1.0` | `Percent` `14.29%` |
-| `Fraction` | `<1/7>` | shown `1/7`, `2 3/4` |
+| `Fraction` | `<1/7>` | `1/7`, `2 3/4` |
 | `Float` | `1e0` | - |
 | `Scientific` | `10.5(3)` | - |
 | `Complex` | `3+4i` | - |
