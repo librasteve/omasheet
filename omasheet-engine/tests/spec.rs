@@ -138,30 +138,33 @@ fn literals() {
 fn exact_arithmetic() {
     assert_eq!(calc("0.1 + 0.2"), "0.3");
     assert_eq!(calc("0.1 + 0.2 == 0.3"), "true");
-    assert_eq!(calc("19.99 * 3 == 5997/100"), "true");
+    assert_eq!(calc("19.99 * 3 == 5997.0/100"), "true");
     // A decimal rounds at thirty-eight digits, and the last eight of those
     // are working room: they carry the rounding, and are neither compared
     // nor shown, so a third taken back out again is one.
-    assert_eq!(calc("1 / 3 * 3"), "0.9999999999");
+    assert_eq!(calc("1.0 / 3 * 3"), "0.9999999999");
+    // A quotient of whole numbers is exact, so it is one.
+    assert_eq!(calc("1 / 3 * 3"), "1");
     // One that ends comes back exactly.
     assert_eq!(calc("1 / 8 * 8"), "1");
     // Two ways of reaching one number reach the same answer, which is what
     // the guard digits are for: without them these differ in their last
     // digit, since a seventh of one and a seventh of two round opposite ways.
-    assert_eq!(calc("2/7 + 3/7 == 5/7"), "true");
-    assert_eq!(calc("1/7 + 1/7 == 2/7"), "false");
-    assert_eq!(calc("1/3 + 1/3 + 1/3 == 1"), "false");
-    assert_eq!(calc("1/7 * 7 == 1"), "false");
-    assert_eq!(calc("1/6 + 1/3 == 1/2"), "true");
+    assert_eq!(calc("2.0/7 + 3.0/7 == 5.0/7"), "true");
+    assert_eq!(calc("1.0/7 + 1.0/7 == 2.0/7"), "false");
+    assert_eq!(calc("1.0/3 + 1.0/3 + 1.0/3 == 1"), "false");
+    assert_eq!(calc("1.0/7 * 7 == 1"), "false");
+    assert_eq!(calc("1.0/6 + 1.0/3 == 1.0/2"), "true");
 }
 
 #[test]
 fn floating_point_is_asked_for_never_assumed() {
-    assert_eq!(calc("(1/3).Float"), "0.3333333333");
+    assert_eq!(calc("(1.0/3).Float"), "0.3333333333");
+    assert_eq!(calc("(1/3).Float"), "0.3333333333333333");
     assert_eq!(calc("Float(1) / 3"), "0.3333333333333333");
     // Exact arithmetic stays exact to the thirty digits it shows; it does
     // not fall back to floating point on its own.
-    assert_eq!(calc("1/3 + 1/7 + 1/11 + 1/13 + 1/17"), "0.7028461734");
+    assert_eq!(calc("1.0/3 + 1/7 + 1/11 + 1/13 + 1/17"), "0.7028461734");
     // A power is exact only for a whole exponent; any other is a Float.
     assert!(calc("2 ** 0.5").starts_with("1.41421"));
     assert!(calc_err(None, "approx(1/3)").contains("unknown function `approx`"));
@@ -219,9 +222,11 @@ fn a_fraction_is_written_in_angle_brackets() {
     assert_eq!(show("<-2 3/4>"), "-2 3/4");
     assert_eq!(calc("<1/10> + <1/10>"), "1/5");
     assert_eq!(calc("<1 1/2> * 2"), "3");
-    // With a decimal it is a decimal; a bare quotient is still one.
-    assert_eq!(calc("<1/10> + 0.5"), "3/5");
-    assert_eq!(calc("1/10 + 1/10"), "0.2");
+    // With a decimal it is a decimal; a bare quotient of whole numbers is a
+    // fraction too, and one of decimals a decimal.
+    assert_eq!(calc("<1/10> + 0.5"), "0.6");
+    assert_eq!(calc("1/10 + 1/10"), "1/5");
+    assert_eq!(calc("1.0/10 + 1.0/10"), "0.2");
     // A comparison is as it was.
     assert_eq!(calc("1 < 2"), "true");
     assert_eq!(calc("<1/10> < <1/5>"), "true");
@@ -459,7 +464,8 @@ fn fractions() {
     assert_eq!(calc("<1/3> + <1/3> + <1/3> == 1"), "true");
     // A quotient of decimals is rounded to its ten places, and a fraction
     // made of one is the fraction of what it came to.
-    assert_eq!(calc("(1/7).Fraction"), "1428571429/10000000000");
+    assert_eq!(calc("(1.0/7).Fraction"), "1428571429/10000000000");
+    assert_eq!(calc("(1/7).Fraction"), "1/7");
     // Past the denominator it looks to, it is shown as a decimal.
     assert_eq!(show("<1/10000>"), "1/10000");
     assert_eq!(show("<1/10001>"), "0.00009999000099990000·");
@@ -491,15 +497,16 @@ fn fractions() {
 
 #[test]
 fn rationals_in_full() {
-    assert_eq!(calc("175/4"), "43.75");
-    assert_eq!(calc("1/3 + 1/3"), "0.6666666666");
+    assert_eq!(calc("175/4"), "175/4");
+    assert_eq!(calc("1/3 + 1/3"), "2/3");
     assert_eq!(
         calc("333333333333333333333333333333/1000000000000000000000000000000"),
         "333333333333333333333333333333/1000000000000000000000000000000"
     );
     // A third taken back out again is a hundred: the nines it leaves are
     // all in the guard digits.
-    assert_eq!(calc("100/3 * 3"), "99.9999999999");
+    assert_eq!(calc("100/3 * 3"), "100");
+    assert_eq!(calc("100.0/3 * 3"), "99.9999999999");
     // A fraction of whole numbers is an exact `Decimal`, kept in lowest
     // terms, and one that is more than one is not split into parts.
     assert_eq!(
@@ -512,8 +519,10 @@ fn rationals_in_full() {
         calc("-157142857142857142857142857143/50000000000000000000000000000"),
         "-157142857142857142857142857143/50000000000000000000000000000"
     );
-    assert_eq!(calc("10/6"), "1.6666666667");
-    assert_eq!(calc("7/3 * 3"), "6.9999999999");
+    assert_eq!(calc("10/6"), "5/3");
+    assert_eq!(calc("10.0/6"), "1.6666666667");
+    assert_eq!(calc("7/3 * 3"), "7");
+    assert_eq!(calc("7.0/3 * 3"), "6.9999999999");
     assert_eq!(calc("(7/3).Int"), "2");
     assert_eq!(calc("'22/7'.Decimal"), "3.1428571429");
     // A whole number and a part may be written with a space, in a cell.
@@ -537,26 +546,26 @@ fn display_of_rationals() {
         out.output.trim_end().to_string()
     };
     // A Decimal that ends is shown as that decimal in full.
-    assert_eq!(show("175/4"), "43.75");
-    assert_eq!(show("1/100000"), "0.00001");
-    assert_eq!(show("-1/64"), "-0.016·");
+    assert_eq!(show("175.0/4"), "43.75");
+    assert_eq!(show("1.0/100000"), "0.00001");
+    assert_eq!(show("-1.0/64"), "-0.016·");
     assert_eq!(show("19.99 * 3"), "59.97");
-    assert_eq!(show("100/3 * 3"), "100.000·");
+    assert_eq!(show("100.0/3 * 3"), "100.000·");
     // One that was rounded at the widest scale is cut and marked.
     assert_eq!(show("0.333333333333333333333333333333"), "0.333·");
-    assert_eq!(show("2/6 + 1/3"), "0.667·");
-    assert_eq!(show("-7/3"), "-2.333·");
-    assert_eq!(show("[1/3, 0.5]"), "[0.333·, 0.5]");
+    assert_eq!(show("2.0/6 + 1.0/3"), "0.667·");
+    assert_eq!(show("-7.0/3"), "-2.333·");
+    assert_eq!(show("[1.0/3, 0.5]"), "[0.333·, 0.5]");
     // A Num is never rounded: shown with the fewest digits that give the
     // same Num back.
     assert_eq!(show("4.Float"), "4");
-    assert_eq!(show("(1/3).Float"), "0.333·");
+    assert_eq!(show("(1.0/3).Float"), "0.333·");
     assert_eq!(show("sqrt(2)"), "1.414·");
-    assert_eq!(show("sqrt(2) * 1e20"), "1.414·e+20");
+    assert_eq!(show("sqrt(2) * 1e20"), "1.414e+20·");
     assert_eq!(show("sqrt(2).String"), "1.4142135623730951");
     // Only the display: the value is exact still.
-    assert_eq!(show("1/3 * 3 == 1"), "false");
-    assert_eq!(show("(1/3).String"), "0.3333333333");
+    assert_eq!(show("1.0/3 * 3 == 1"), "false");
+    assert_eq!(show("(1.0/3).String"), "0.3333333333");
 }
 
 #[test]
@@ -569,10 +578,10 @@ fn conversions() {
     assert_eq!(calc("Int(1.5e3)"), "1500");
     assert_eq!(calc("Int(true) + Int(false)"), "1");
     assert_eq!(calc("Decimal(1e-1)"), "0.1");
-    assert_eq!(calc("Decimal(Float(1/3)) == 1/3"), "true");
+    assert_eq!(calc("Decimal(Float(1.0/3)) == 1.0/3"), "true");
     assert_eq!(calc("7.Decimal / 2"), "3.5");
     assert_eq!(calc("(1/4).Float"), "0.25");
-    assert_eq!(calc("(1/3).String"), "0.3333333333");
+    assert_eq!(calc("(1.0/3).String"), "0.3333333333");
     assert_eq!(calc("String(2025-01-31)"), "2025-01-31");
     assert_eq!(calc("Boolean(0)"), "false");
     assert_eq!(calc("0.5.Boolean"), "true");
@@ -652,7 +661,7 @@ fn row_cursor() {
         "Prev := Sales[Revenue; *-1]\nGrowth := Revenue / Sales[Revenue; *-1] - 1\nRunning := Sales[Revenue; 0..*].sum()\nWindow := Sales[Revenue; *-1..*].mean()\n",
     );
     assert_eq!(ask(&file, "Sales.Prev"), "[empty, 100, 120]");
-    assert_eq!(ask(&file, "Sales.Growth"), "[empty, 0.2, 0.25]");
+    assert_eq!(ask(&file, "Sales.Growth"), "[empty, 1/5, 1/4]");
     assert_eq!(ask(&file, "Sales.Running"), "[100, 220, 370]");
     assert_eq!(ask(&file, "Sales.Window"), "[100, 110, 135]");
 }
@@ -924,12 +933,12 @@ fn complex_numbers() {
     // A Complex is above Float: any number beside one gives a Complex.
     assert_eq!(calc("1 + 1i"), "1+1i");
     assert_eq!(calc("0x10 + 1i"), "16+1i");
-    assert_eq!(calc("1/3 + 1i"), "0.3333333333+1i");
+    assert_eq!(calc("1.0/3 + 1i"), "0.3333333333+1i");
     assert_eq!(calc("(1+1i) ** 2"), "0+2i");
     assert_eq!(calc("2i ** -2"), "-0.25-0i");
     assert_eq!(calc("[Inf\\i, 1+NaN\\i]"), "[0+Inf\\i, 1+NaN\\i]");
     // Real numbers have the same parts.
-    assert_eq!(calc("[re(5/2), im(7), conj(3)]"), "[2.5, 0, 3]");
+    assert_eq!(calc("[re(5/2), im(7), conj(3)]"), "[5/2, 0, 3]");
     assert_eq!(calc("sin(0+0i)"), "0+0i");
     assert!(calc_err(None, "round(1i)").contains("cannot be applied to Complex"));
     // No order, but equality, exactly (D198, D202).
@@ -967,7 +976,8 @@ fn complex_numbers() {
 #[test]
 fn math_functions() {
     // Exact numbers stay exact where they can.
-    assert_eq!(calc("abs(-7/2)"), "3.5");
+    assert_eq!(calc("abs(-7/2)"), "7/2");
+    assert_eq!(calc("abs(-7.0/2)"), "3.5");
     assert_eq!(
         calc("[round(5/2), round(-5/2), floor(-7/2), ceil(7/2)]"),
         "[3, -3, -4, 4]"
@@ -1854,7 +1864,7 @@ fn all_errors_reported_together() {
 #[test]
 fn declaration_order_does_not_matter() {
     let file = "sheet T\n\nRevenue | Cost | Margin | Profit\n100 | 60 | * | *\n\nMargin := Profit / Revenue\nProfit := Revenue - Cost\n";
-    assert_eq!(ask(file, "T.Margin"), "[0.4]");
+    assert_eq!(ask(file, "T.Margin"), "[2/5]");
 }
 
 #[test]
@@ -1940,7 +1950,7 @@ Buyer   := NameOf(Who)
 
 #[test]
 fn custom_function_in_a_computed_column() {
-    assert_eq!(ask(FUNCS, "Sales.Margin"), "[0.4, 0.25]");
+    assert_eq!(ask(FUNCS, "Sales.Margin"), "[2/5, 1/4]");
     assert_eq!(ask(FUNCS, "Sales.Buyer"), "['Ada', 'Unknown']");
 }
 
@@ -2381,7 +2391,7 @@ sheet Sales
 
 Profit  := Revenue - Cost
 Tax     := Profit * Rate
-Share   := Revenue / 7
+Share   := Revenue / 7.0
 Running := Profit + [Running; *-1] // 0
 Big     := Revenue > Cost
 ";

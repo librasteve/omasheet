@@ -27,8 +27,8 @@ Double    := 1, 2, 4 ... Inf
 Fib       := 0, 1, $-1 + $-2 ... Inf
 
 # Two terms are read as a difference, so a ratio needs three. A ratio is
-# only found where the terms divide exactly: thirds are rounded at the
-# thirty-eight digits a decimal holds, so this one is given its rule.
+# only found where the terms divide exactly: thirds are fractions, so this
+# one is given its rule.
 Thirds    := 1, $-1 / 3 ... Inf
 
 # A limit the sequence runs down to.

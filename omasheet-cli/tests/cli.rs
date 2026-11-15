@@ -90,9 +90,11 @@ fn examples_match_their_expected_output() {
 
 #[test]
 fn eval_pure_arithmetic() {
-    let out = omasheet(&["eval", "1/3 + 1/3"]);
+    let out = omasheet(&["eval", "1.0/3 + 1.0/3"]);
     assert!(out.status.success());
     assert_eq!(stdout(&out), "0.667·\n");
+    let out = omasheet(&["eval", "1/3 + 1/3"]);
+    assert_eq!(stdout(&out), "2/3\n");
     let out = omasheet(&["eval", "0.1 + 0.2"]);
     assert_eq!(stdout(&out), "0.3\n");
     // A Num is cut to three places and marked; a large Integer is shown in e
@@ -100,7 +102,7 @@ fn eval_pure_arithmetic() {
     let out = omasheet(&["eval", "sqrt(2)"]);
     assert_eq!(stdout(&out), "1.414·\n");
     let out = omasheet(&["eval", "2 ** 64"]);
-    assert_eq!(stdout(&out), "1.8446744073709551·e+19\n");
+    assert_eq!(stdout(&out), "1.8446744073709551e+19·\n");
     let out = omasheet(&["eval", "--exact", "2 ** 64"]);
     assert_eq!(stdout(&out), "18446744073709551616\n");
 }
@@ -168,7 +170,7 @@ fn a_command_needs_no_display() {
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
-    assert_eq!(stdout(&out), "0.5\n");
+    assert_eq!(stdout(&out), "1/2\n");
 }
 
 #[test]

@@ -693,7 +693,7 @@ fn from_quotient(e: &Expr) -> bool {
 /// it is one, or it is a `Decimal` that a quotient made and whose value is
 /// read when it is used, a fraction of it being reported there.
 fn whole_enough(ty: &Ty, e: &Expr) -> bool {
-    ty.is_whole() || (matches!(ty, Ty::Scalar(S::Decimal(_))) && from_quotient(e))
+    ty.is_whole() || (matches!(ty, Ty::Scalar(S::Decimal(_) | S::Fraction)) && from_quotient(e))
 }
 
 fn static_of(e: &Expr) -> Option<Static> {
@@ -3370,6 +3370,9 @@ impl<'a> Checker<'a> {
                     // A quotient of whole numbers written out that comes to
                     // one, `4/2`, is a whole number.
                     (BinOp::Div, w) if w.is_int() && divides(l, r) => S::Int,
+                    // A quotient of whole numbers is the exact rational it
+                    // comes to, a `Fraction`: `1/3 * 3` is `1`.
+                    (BinOp::Div, w) if w.is_int() => S::Fraction,
                     // A quotient or a power of decimals is a decimal, though
                     // it need not end.
                     (BinOp::Div | BinOp::Pow, w) if w.is_int() || w.is_decimal() => {
@@ -3385,8 +3388,11 @@ impl<'a> Checker<'a> {
                 }
             }
         } else if op.is_bitwise() {
-            let whole =
-                |s: S, e: &Expr| s.is_int() || s == S::Any || (s.is_decimal() && from_quotient(e));
+            let whole = |s: S, e: &Expr| {
+                s.is_int()
+                    || s == S::Any
+                    || ((s.is_decimal() || s == S::Fraction) && from_quotient(e))
+            };
             if !whole(a, l) || !whole(b, r) {
                 self.err(
                     span,

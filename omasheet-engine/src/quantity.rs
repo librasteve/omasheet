@@ -518,8 +518,8 @@ pub fn format(q: &Quantity, f: &SciFormat, style: &Style, exact: bool) -> String
         let number = crate::value::format_value(&Value::Float(q.value()), false, style, false);
         // The mark of a cut number goes last, after the unit, where a
         // display can set it apart: `1.571rad·`.
-        // It may stand inside the number, before an exponent, `6.022·e+23`:
-        // it goes after the unit all the same, `6.022e+23mol^-1·`.
+        // It follows an exponent, `6.022e+23·`, and goes after the unit all
+        // the same, `6.022e+23mol^-1·`.
         return if number.contains(crate::value::MORE) {
             let digits = number.replace(crate::value::MORE, "");
             format!("{digits}{unit}{}", crate::value::MORE)

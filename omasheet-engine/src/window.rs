@@ -211,7 +211,7 @@ fn rolled(win: Win, xs: &[&Value]) -> Result<Value, String> {
     };
     Ok(match win {
         Win::RollingSum => sum()?,
-        Win::RollingMean => arith(BinOp::Div, &sum()?, &Value::int(xs.len() as i64))?,
+        Win::RollingMean => crate::eval::average(&sum()?, xs.len() as i64)?,
         Win::RollingMin | Win::RollingMax => {
             let want = if win == Win::RollingMin {
                 Ordering::Less

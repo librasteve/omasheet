@@ -4164,13 +4164,12 @@ impl<'p> Engine<'p> {
                     Ok(total)
                 };
                 let total = fold(BinOp::Add, Value::int(0), &|v| Ok(v.clone()))?;
-                let mean = arith(BinOp::Div, &total, &Value::int(n)).or_else(|m| fail(span, m))?;
+                let mean = average(&total, n).or_else(|m| fail(span, m))?;
                 let squares = fold(BinOp::Add, Value::int(0), &|v| {
                     let d = arith(BinOp::Sub, v, &mean).or_else(|m| fail(span, m))?;
                     arith(BinOp::Mul, &d, &d).or_else(|m| fail(span, m))
                 })?;
-                let var = arith(BinOp::Div, &squares, &Value::int(n - ddof))
-                    .or_else(|m| fail(span, m))?;
+                let var = average(&squares, n - ddof).or_else(|m| fail(span, m))?;
                 if func == Func::Var {
                     Ok(var)
                 } else {
@@ -4422,7 +4421,7 @@ impl<'p> Engine<'p> {
                     )),
                     Func::Sum => sum().map(kept),
                     Func::Mean if present == 0 => Ok(Value::Null),
-                    Func::Mean => arith(BinOp::Div, &sum()?, &Value::int(present as i64))
+                    Func::Mean => average(&sum()?, present as i64)
                         .map(kept)
                         .or_else(|m| fail(span, m)),
                     Func::Median if present == 0 => Ok(Value::Null),
@@ -4436,9 +4435,7 @@ impl<'p> Engine<'p> {
                         } else {
                             let pair = arith(BinOp::Add, &sorted[n / 2 - 1], &sorted[n / 2])
                                 .or_else(|m| fail(span, m))?;
-                            arith(BinOp::Div, &pair, &Value::int(2))
-                                .map(kept)
-                                .or_else(|m| fail(span, m))
+                            average(&pair, 2).map(kept).or_else(|m| fail(span, m))
                         }
                     }
                     Func::Product => product.or_else(|m| fail(span, m)),
@@ -4935,7 +4932,7 @@ fn agg_value(func: Func, ty: S, any: AnyValue, count: Option<i64>) -> Option<Val
         None => value,
         Some(0) => Value::Null,
         Some(n) => {
-            let mean = arith(BinOp::Div, &value, &Value::int(n)).ok()?;
+            let mean = average(&value, n).ok()?;
             match ty {
                 S::Percent => mean.percent(),
                 S::Fraction => mean.fraction(),
@@ -4965,6 +4962,17 @@ fn ordered(keys: &[Vec<Value>], desc: bool, span: Span) -> R<Vec<usize>> {
         Some(m) => fail(span, m),
         None => Ok(order),
     }
+}
+
+/// A total shared among `n`: an average, which for whole numbers is the
+/// decimal it comes to, ten places or fewer, and not the fraction a quotient
+/// of whole numbers is.
+pub(crate) fn average(total: &Value, n: i64) -> Result<Value, String> {
+    let mean = arith(BinOp::Div, total, &Value::int(n))?;
+    Ok(match (total, mean) {
+        (Value::Int(..), m @ Value::Fraction(_)) => m.plain(),
+        (_, m) => m,
+    })
 }
 
 /// The day of the year a date falls on, 1 to 366.
@@ -5003,7 +5011,9 @@ fn accounted_for(out: &DataFrame) -> bool {
 /// A value in the dress its column's type wears. See [`Engine::fit`].
 fn dressed(v: Value, col: &Column) -> Value {
     match col.ty {
-        S::Percent if matches!(v, Value::Int(_, _) | Value::Decimal(_)) => v.percent(),
+        S::Percent if matches!(v, Value::Int(_, _) | Value::Decimal(_) | Value::Fraction(_)) => {
+            v.percent()
+        }
         S::Fraction if matches!(v, Value::Int(_, _) | Value::Decimal(_)) => v.fraction(),
         // A whole number wears its column's base, whichever it was
         // written or worked out in.

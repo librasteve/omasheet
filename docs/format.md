@@ -405,8 +405,9 @@ beside a decimal being a decimal. A column declared `Decimal` takes the same
 cells and rounds them to its places.
 
 In a formula a fraction is written in angle brackets, `<1/10>`, `<-3/4>` or
-`<2 3/4>`, since a bare `1/10` there is a quotient, a `Decimal` rounded to ten
-places. A fraction beside a whole number is a fraction, so
+`<2 3/4>`, though a bare `1/10` there is a quotient of whole numbers, which is
+the same `Fraction`. A quotient with a decimal in it, `1.0/10`, is a `Decimal`
+rounded to ten places. A fraction beside a whole number is a fraction, so
 `<1/10> + 1` is `11/10`; beside a decimal it is a decimal, so `<1/10> + 0.5` is `0.6`. A space goes before a fraction that follows a `+`,
 since `+<` is a shift.
 

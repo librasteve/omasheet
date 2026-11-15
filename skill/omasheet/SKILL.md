@@ -150,8 +150,8 @@ what you want; declare one when the cells could be read another way.
 | Type | Written |
 |---|---|
 | `Integer` | `42`, `1_000_000` |
-| `Decimal` | `19.99` — exact to the places its column keeps: `Decimal(2)` is two, a bare `Decimal` ten. A product or quotient is rounded to them (`1/3 * 3` is `0.9999999999`); a column that declares nothing keeps the least that holds its cells |
-| `Fraction` | `1/7`, `2 3/4` in a cell, `<1/7>` in a formula — the exact rational, shown as a fraction. Use it where `1/3 * 3` must be `1`, or a number needs more than 38 digits: `10**100` is a `Fraction` where nothing declares a `Decimal` |
+| `Decimal` | `19.99` — exact to the places its column keeps: `Decimal(2)` is two, a bare `Decimal` ten. A product or a quotient with a decimal in it is rounded to them (`1.0/3 * 3` is `0.9999999999`); a column that declares nothing keeps the least that holds its cells |
+| `Fraction` | `1/7`, `2 3/4` in a cell, `<1/7>` in a formula — the exact rational, shown as a fraction, and what a quotient of whole numbers is: `1/3 * 3` is `1`. Use it also where a number needs more than 38 digits: `10**100` is a `Fraction` where nothing declares a `Decimal` |
 | `Percent` | `20%` — exact, shown as a percentage |
 | `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `'Inf'` in code, `"Inf"` in a cell), which is what a division by zero gives |
 | `Scientific` | `10.5(3)` or `10 ± 0.3` — a value with its measurement uncertainty; digits in brackets are the uncertainty in the last places, an exponent after them scales both: `7.297_352_5643(11)e-3`. It carries through `+ - * / **` and the math functions to first order (independent, in quadrature), `sum` and `mean`; shown as `11.000(82)`, or as a column format in brackets after the type says: `±`, places `.4`, an exponent `e-3`, or together `±.4e-3`. No uncertain complex: beside a `Complex` it becomes a `Float`, with a warning |
@@ -169,7 +169,7 @@ declared one stops the file until every cell reads, so for data that came in
 from elsewhere, read it by name first and declare it once it is clean.
 
 An `Integer` is a `Decimal`. Sums, products, divisions and averages of decimals
-are all `Decimal`. An `Integer` holds 64 bits and a `Decimal` 38 significant digits; a
+are all `Decimal`; a quotient of whole numbers is a `Fraction`, and an average of them a `Decimal`. An `Integer` holds 64 bits and a `Decimal` 38 significant digits; a
 whole number past an `Integer` becomes a `Decimal`, and one past 38 digits
 keeps its 38 and moves the point, so `10**1000` is exact in one digit.
 Only past `1e2147483685`, where the point stops, is a number reported as

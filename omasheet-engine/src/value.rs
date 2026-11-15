@@ -587,10 +587,41 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     match (&x, &y) {
         // Two of one kind give that kind, so two fractions give a fraction and
         // two percentages a percentage; any other mix is the plain number.
-        // A rational beside any exact number is a rational, worked out
-        // exactly: nothing is rounded.
+        // A rational beside a whole number or another rational is a
+        // rational, worked out exactly: nothing is rounded. Beside a decimal
+        // or a percentage it is a decimal, exact only to its places.
         (N::Rat(_), N::Exact(_) | N::Rat(_)) | (N::Exact(_), N::Rat(_)) if !floating => {
-            rational_arith(op, &x, &y)
+            let places = |v: &Value| match v {
+                Value::Decimal(d) | Value::Percent(d) => {
+                    Some(d.trimmed().scale().max(i32::from(DEFAULT_SCALE)))
+                }
+                _ => None,
+            };
+            let scale = match (&x, &y) {
+                (N::Rat(_), N::Rat(_)) => None,
+                _ => places(a).into_iter().chain(places(b)).max(),
+            };
+            match (rational_arith(op, &x, &y)?, scale) {
+                (Value::Fraction(r), Some(s)) => Ok(match r.to_dec(s) {
+                    Some(d) => Value::exact(d),
+                    None => Value::Fraction(r),
+                }),
+                (v, _) => Ok(v),
+            }
+        }
+        // A quotient of two whole numbers is the rational it comes to, whole
+        // where it is whole.
+        (N::Exact(_), N::Exact(_))
+            if !floating
+                && op == BinOp::Div
+                && matches!((a, b), (Value::Int(..), Value::Int(..))) =>
+        {
+            Ok(match rational_arith(op, &x, &y)? {
+                Value::Fraction(r) if r.is_integer() => {
+                    r.to_i64().map_or(Value::Fraction(r), Value::int)
+                }
+                v => v,
+            })
         }
         (N::Exact(x), N::Exact(y)) if !floating => exact_arith(op, x, y).map(|v| match (a, b) {
             (Value::Percent(_), Value::Percent(_)) => v.percent(),
@@ -1525,7 +1556,7 @@ fn scientific(r: &Dec) -> String {
         return format!("{mantissa}{exp}");
     }
     let keep = WIDTH - exp.len() - 1;
-    format!("{}{MORE}{exp}", &mantissa[..keep])
+    format!("{}{exp}{MORE}", &mantissa[..keep])
 }
 
 /// How many characters `text` is.
@@ -1703,7 +1734,12 @@ fn float_to(f: f64, exact: bool, sep: Option<char>, cut: bool) -> String {
         Some(short) => short,
         None => size.to_string(),
     };
-    format!("{sign}{mantissa}{}", exponent(e))
+    // The mark goes last, after the exponent: it is the number that is cut.
+    let (mantissa, more) = match mantissa.strip_suffix(MORE) {
+        Some(m) => (m.to_string(), MORE.to_string()),
+        None => (mantissa, String::new()),
+    };
+    format!("{sign}{mantissa}{}{more}", exponent(e))
 }
 
 /// Shortened to `room` characters and marked with [`MORE`]: a number in e
@@ -1713,10 +1749,12 @@ fn cut(text: String, room: usize) -> String {
         return text;
     }
     let first = |text: &str, n: usize| text.chars().take(n).collect::<String>();
+    // A number already cut carries its mark last; it is put back below.
+    let text = text.strip_suffix(MORE).map_or(text.clone(), str::to_string);
     match text.split_once('e') {
         Some((mantissa, exp)) => {
             let keep = room.saturating_sub(exp.len() + 2).max(1);
-            format!("{}{MORE}e{exp}", first(mantissa, keep))
+            format!("{}e{exp}{MORE}", first(mantissa, keep))
         }
         None => format!("{}{MORE}", first(&text, room - 1)),
     }
@@ -2264,17 +2302,17 @@ mod tests {
         // Past an `i64` a whole number is still exact, as a decimal.
         assert_eq!(
             shown(dec("18446744073709551616")),
-            "1.8446744073709551·e+19"
+            "1.8446744073709551e+19·"
         );
         assert_eq!(
             shown(dec("-18446744073709551616")),
-            "-1.8446744073709551·e+19"
+            "-1.8446744073709551e+19·"
         );
         assert_eq!(shown(dec("0.125")), "0.125");
         assert_eq!(shown(dec("0.000000000000001")), "0.000000000000001");
         // The widest and the narrowest a 38-digit decimal reaches.
         assert_eq!(shown(dec("1e-38")), "1e-38");
-        assert_eq!(shown(dec(&"9".repeat(38))), "9.9999999999999999·e+37");
+        assert_eq!(shown(dec(&"9".repeat(38))), "9.9999999999999999e+37·");
         assert_eq!(shown(dec("0.12345678901234567890123")), "0.123·");
     }
 
@@ -2428,8 +2466,8 @@ mod tests {
         let shown = |f| format_float(f, false);
         // In e notation the mantissa is cut to three places too, and a carry
         // to ten is one of the next power.
-        assert_eq!(shown(1.2246467991473532e-16), "1.225·e-16");
-        assert_eq!(shown(-9.9996e-20), "-1.000·e-19");
+        assert_eq!(shown(1.2246467991473532e-16), "1.225e-16·");
+        assert_eq!(shown(-9.9996e-20), "-1.000e-19·");
         assert_eq!(shown(1.5e30), "1.5e+30");
         // A part nearer zero than the places a Float is shown to is nought.
         assert_eq!(
@@ -2448,11 +2486,11 @@ mod tests {
         assert_eq!(shown(0.1 + 0.2), "0.300·");
         assert_eq!(shown(-2.0 / 3.0), "-0.667·");
         assert_eq!(shown(1e-15), "0.000000000000001");
-        assert_eq!(shown(9.999999999999999e-16), "1.000·e-15");
-        assert_eq!(shown(1.2345678e-15), "1.235·e-15");
+        assert_eq!(shown(9.999999999999999e-16), "1.000e-15·");
+        assert_eq!(shown(1.2345678e-15), "1.235e-15·");
         assert_eq!(shown(999_999_999_999_999.9), "999999999999999.9");
         assert_eq!(shown(1e15), "1e+15");
-        assert_eq!(shown(f64::MAX), "1.798·e+308");
+        assert_eq!(shown(f64::MAX), "1.798e+308·");
     }
 
     #[test]
@@ -2481,17 +2519,27 @@ mod tests {
 
     #[test]
     fn division_is_exact_where_it_can_be() {
+        // A quotient of whole numbers is the rational it comes to, so taking
+        // a third back out again gives one.
         let third = arith(BinOp::Div, &Value::int(1), &Value::int(3)).unwrap();
-        assert!(matches!(third, Value::Decimal(_)));
-        // A third is rounded at the widest scale there is, so taking it
-        // back out again does not give one. This is the cost of a
+        assert!(matches!(third, Value::Fraction(_)));
+        let back = arith(BinOp::Mul, &third, &Value::int(3)).unwrap();
+        assert_eq!(format_exact(&back, false, &Style::ISO), "1");
+        // A whole quotient is a whole number.
+        let two = arith(BinOp::Div, &Value::int(6), &Value::int(3)).unwrap();
+        assert!(matches!(two, Value::Int(2, _)));
+        // A third of a decimal is rounded at the widest scale there is, so
+        // taking it back out again does not give one. This is the cost of a
         // fixed-point decimal in place of a rational, and is deliberate.
+        let one = Value::Decimal(Dec::from_i64(1));
+        let third = arith(BinOp::Div, &one, &Value::int(3)).unwrap();
+        assert!(matches!(third, Value::Decimal(_)));
         let back = arith(BinOp::Mul, &third, &Value::int(3)).unwrap();
         assert_eq!(format_exact(&back, false, &Style::ISO), "0.9999999999");
         // One that ends comes back exactly.
         let eighth = arith(BinOp::Div, &Value::int(1), &Value::int(8)).unwrap();
         let one = arith(BinOp::Mul, &eighth, &Value::int(8)).unwrap();
-        assert!(matches!(one, Value::Int(n, _) if n == 1));
+        assert_eq!(format_exact(&one, false, &Style::ISO), "1");
     }
 
     #[test]

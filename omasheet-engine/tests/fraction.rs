@@ -33,7 +33,7 @@ sheet G
 | ----- | --- | ---- | ------- |
 | 100   | *   | *    | *       |
 
-Big     := 10 ** Power
+Big     := <10> ** Power
 Tiny    := <1> / Big
 Product := Big * Tiny
 ";
@@ -57,7 +57,8 @@ fn its_reciprocal_is_held_too_and_they_cancel() {
 #[test]
 fn nothing_is_rounded_where_a_decimal_would_be() {
     // A Decimal gives up the last digits of a quotient; a Fraction does not.
-    assert_eq!(calc("1 / 3 * 3 == 1"), "false");
+    assert_eq!(calc("1.0 / 3 * 3 == 1"), "false");
+    assert_eq!(calc("1 / 3 * 3 == 1"), "true");
     assert_eq!(calc("<1> / 3 * 3 == 1"), "true");
     assert_eq!(calc("10 ** 100 + 1 - 10 ** 100"), "1");
     assert_eq!(calc("<1/10> ** 80 * 10 ** 80"), "1");

@@ -4,7 +4,7 @@ See [OMX in brief](omx.md) for the grammar. Try any of these with `omasheet eval
 
 ## Numbers
 
-Arithmetic is exact: `1/3 + 1/6` is `0.5`, `0.1 + 0.2` is `0.3`, and integers
+Arithmetic is exact: `1/3 + 1/6` is `1/2`, `0.1 + 0.2` is `0.3`, and integers
 do not overflow. `x.Float` gives a floating-point `Float`.
 
 No exact number is a division by zero, so that gives a `Float`: `1/0` is `Inf`,
@@ -29,7 +29,7 @@ Only the display is cut, and `omasheet eval --exact` gives it in full.
 
 A `Decimal`, a `Float` and the parts of a `Complex` are shown to three places
 after the point, and where they have more the rest is cut and marked with
-`·`: `1/3` is `0.333·` and `sqrt(2)` is `1.414·`. One with no more than three
+`·`: `1.0/3` is `0.333·` and `sqrt(2)` is `1.414·`. One with no more than three
 places is whole, `19.99`, and one below a thousandth keeps its digits, so as
 not to show as nought. A `Float` in e notation has its mantissa cut the same way, `1.234e-12·`. Before that a `Float`, and each part of a `Complex`, is rounded to 15 places after the point, so that the noise of a calculation shows as nought, marked with `·` as a number with digits not shown is: `cos(90°)` is `0·` and not `6.123e-17·`, and `1e-20.Float` is `0·`. That is the `float_places` of the display style; the value itself, and a file, keep every digit. A quantity with no uncertainty and no format has its number cut the same way, with the `·` after the unit: `arcsin(1)` is `1.571rad·`. A `Scientific`, and a quantity with an uncertainty, is not cut: the uncertainty in brackets
 sets the digits it shows.
@@ -40,8 +40,9 @@ point, and the places it keeps are the column's, written `Decimal(2)`. A bare
 column has its scale; the point does not move. A sum is exact at the finer
 of the two scales, a product is worked out exactly and rounded once to it,
 and a quotient, or a mean, is rounded once to ten places or the finer scale
-of its sides, half away from zero. So `1/3` is `0.3333333333`, `1/3 * 3` is
-`0.9999999999`, and `2/7 + 3/7` is not `5/7`; for those, use a `Fraction`.
+of its sides, half away from zero. So `1.0/3` is `0.3333333333`, `1.0/3 * 3` is
+`0.9999999999`, and `2.0/7 + 3.0/7` is not `5/7`; for those, use a `Fraction`,
+which is what a quotient of whole numbers is: `1/3 * 3` is `1`.
 
 A formula's literal has ten places or its own, whichever is more, so
 `19.99 * 1.5` is `29.985` and not `29.99`. A column that declares
@@ -65,8 +66,10 @@ A `Percent` is an exact number shown as so many in a hundred: `20%` is `1/5`.
 It is rounded to two digits after the point, `41.67%`, and `--exact` gives
 every digit it holds.
 
-Whole numbers and decimals divided give a `Decimal`, whether or not it
-ends: `7 / 4` is `1.75` and `7 / 3` is `2.333·`, held to ten places.
+A quotient of whole numbers is a `Fraction`, exact whether or not it would
+end as a decimal: `7 / 4` is `7/4` and `7 / 3` is `2 1/3`. A quotient with a
+decimal in it is a `Decimal`, held to ten places: `7.0 / 4` is `1.75` and
+`7.0 / 3` is `2.333·`.
 
 Numbers are shown the way Raku shows them:
 
@@ -93,8 +96,8 @@ e notation where it is very large or small. `--exact` writes a fraction as
 `n/d`, which is how a file carries one.
 
 `x.Fraction` is the fraction of the number `x` is: `1/8` for `0.125`, and for
-a quotient the fraction of what it was rounded to, so `(1/7).Fraction` is
-`1428571429/10000000000`. To get a seventh, write one: in a formula a fraction
+a decimal quotient the fraction of what it was rounded to, so `(1.0/7).Fraction`
+is `1428571429/10000000000`, where `(1/7).Fraction` is `1/7`. To get a seventh, write one: in a formula a fraction
 is written in angle brackets, `<1/7>`, `<-3/4>` or `<2 3/4>`, and is a
 `Fraction` as `1/7` is in a cell. A fraction beside a whole number or
 another fraction is a fraction, worked out exactly: `<1/7> * 7 == 1` is true,
@@ -124,7 +127,7 @@ remainder is written with spaces round it. A number is divisible by another
 when the remainder is zero: `x % 3 == 0`. Exact numbers stay exact, and
 `x % 0` is `NaN`, as `0/0` is. A workbook export writes `MOD(a, b)`.
 
-A quotient of whole numbers is a `Decimal`, though `4/2` written out is an
+A quotient of whole numbers is a `Fraction`, though `4/2` written out is an
 `Integer`. A quotient is taken where a whole number is wanted, `[1, 2, 3][4/2]`,
 and reported there if it is not whole, `5/2`.
 

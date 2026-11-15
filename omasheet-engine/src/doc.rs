@@ -3266,7 +3266,7 @@ impl Document {
         let numbers = if numbers == 0 {
             None
         } else {
-            let mean = arith(BinOp::Div, &sum, &Value::int(numbers as i64)).ok()?;
+            let mean = crate::eval::average(&sum, numbers as i64).ok()?;
             // To two places: it is a glance, not the figure.
             let show = |v: &Value| {
                 let v = crate::value::round_digits(v, 2).unwrap_or_else(|_| v.clone());
@@ -3329,7 +3329,7 @@ impl Document {
         let numbers = if numbers == 0 {
             None
         } else {
-            let mean = arith(BinOp::Div, &sum, &Value::int(numbers as i64)).ok()?;
+            let mean = crate::eval::average(&sum, numbers as i64).ok()?;
             // To two places: it is a glance, not the figure.
             let show = |v: &Value| {
                 let v = crate::value::round_digits(v, 2).unwrap_or_else(|_| v.clone());
@@ -3411,7 +3411,7 @@ impl Document {
         let numbers = if numbers == 0 {
             None
         } else {
-            let mean = arith(BinOp::Div, &sum, &Value::int(numbers as i64)).ok()?;
+            let mean = crate::eval::average(&sum, numbers as i64).ok()?;
             // To two places: it is a glance, not the figure.
             let show = |v: &Value| {
                 let v = crate::value::round_digits(v, 2).unwrap_or_else(|_| v.clone());
@@ -5429,7 +5429,8 @@ impl Document {
             // And for a number column holding a `Fraction`: a result too big
             // or too fine for a `Decimal` (`10**100`) is the exact rational
             // it comes to, whatever the formula was typed as, so the cells
-            // make the column a `Fraction`. A column that declares its type
+            // make the column a `Fraction`. A cell written as a fraction is
+            // not a result: beside a decimal it makes the column a decimal. A column that declares its type
             // refuses the value instead.
             for (c, column) in columns.iter_mut().enumerate() {
                 let ty = sheet.cols[c].ty;
@@ -5438,7 +5439,7 @@ impl Document {
                 }
                 if rows
                     .iter()
-                    .any(|row| matches!(row[c].value, Value::Fraction(_)))
+                    .any(|row| row[c].formula && matches!(row[c].value, Value::Fraction(_)))
                 {
                     column.ty = S::Fraction.to_string();
                 }
@@ -5639,12 +5640,12 @@ mod tests {
         // is kept as it was typed.
         assert!(!doc.text().contains("Fraction"), "{}", doc.text());
         assert!(doc.text().contains("1/3"), "{}", doc.text());
-        // A decimal typed beside it keeps the column a fraction one, a
-        // fraction and a decimal being a fraction.
+        // A decimal typed beside it makes the column a decimal one, a
+        // fraction and a decimal being a decimal: exact only to its places. Each
+        // cell is still shown as it was written.
         assert!(doc.set_cell(0, 1, 1, "0.25"));
-        assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Fraction");
-        // A column of fractions shows each as one, the quarter included.
-        assert_eq!(col(&doc, 0, 1), ["1/3", "1/4"]);
+        assert_eq!(doc.snapshot().sheets[0].columns[1].ty, "Decimal");
+        assert_eq!(col(&doc, 0, 1), ["1/3", "0.25"]);
         // So does a whole number and a part, proper or not.
         let doc = Document::from_text("sheet T\n\nA\n1 1/2\n5 7/3\n11/3\n");
         assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Fraction");
@@ -5661,10 +5662,10 @@ mod tests {
         let column = &doc.snapshot().sheets[0].columns[0];
         assert!(!column.declared && column.ty == "Percent");
         assert!(doc.set_cell(0, 1, 0, "1/2"));
-        // A percentage and a fraction together are fractions: the rational
-        // is what any exact number beside it becomes.
-        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Fraction");
-        assert_eq!(col(&doc, 0, 0), ["23/100", "1/2"]);
+        // A percentage and a fraction together are decimals: a Decimal is
+        // what a percentage beside a fraction becomes.
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
+        assert_eq!(col(&doc, 0, 0), ["23%", "1/2"]);
         assert!(!doc.text().contains("Fraction"), "{}", doc.text());
         // A fraction among text is text.
         let mut doc = Document::from_text("sheet T\n\nA\nabc\n\n");
@@ -5744,7 +5745,7 @@ mod tests {
         assert_eq!(seq("1, 3 ... Inf", 4), ["1", "3", "5", "7"]);
         assert_eq!(seq("1, 2, 4 ... Inf", 4), ["1", "2", "4", "8"]);
         // Two terms are a difference, so a constant ratio needs three.
-        assert_eq!(seq("1, 1/3 ... Inf", 3), ["1", "0.333·", "-0.333·"]);
+        assert_eq!(seq("1, 1/3 ... Inf", 3), ["1", "1/3", "-0.333·"]);
         // A ratio of thirds cannot be inferred: `1/3` is rounded at the
         // widest scale, and multiplying it out does not give `1/9` back,
         // so the terms read as neither arithmetic nor geometric. Ratios of
@@ -7957,7 +7958,8 @@ mod tests {
         // A new column is the last one.
         doc.set_cell(0, 0, 5, "a | b");
         assert_eq!(doc.snapshot().sheets[0].rows[0][5].display, "a | b");
-        doc.add_computed(0, "Margin", "Profit / Revenue").unwrap();
+        doc.add_computed(0, "Margin", "Profit * 1.0 / Revenue")
+            .unwrap();
         let names: Vec<_> = doc.snapshot().sheets[0]
             .columns
             .iter()
@@ -7972,11 +7974,15 @@ mod tests {
         // A column of no declared type takes the type of its values.
         assert_eq!(col(&doc, 0, 6), ["0.4", "0.417·"]);
         assert_eq!(doc.snapshot().sheets[0].columns[6].ty, "Decimal");
+        // A quotient of whole numbers is a fraction, exactly.
+        doc.add_computed(0, "Ratio", "Profit / Revenue").unwrap();
+        assert_eq!(col(&doc, 0, 7), ["2/5", "5/12"]);
+        assert_eq!(doc.snapshot().sheets[0].columns[7].ty, "Fraction");
         // One that does not end is shown cut and marked, so there is more
         // of it to show.
         let exact = |doc: &Document| doc.snapshot().sheets[0].rows[1][6].exact.clone();
         assert_eq!(exact(&doc).as_deref(), Some("0.4166666667"));
-        doc.set_cell(0, 0, 6, "Profit / Cost");
+        doc.set_cell(0, 0, 6, "Profit * 1.0 / Cost");
         assert_eq!(col(&doc, 0, 6), ["0.667·", "0.714·"]);
         doc.set_const(0, "50%");
         assert_eq!(col(&doc, 0, 4), ["20", "25"]);
@@ -8611,7 +8617,7 @@ mod tests {
 
     #[test]
     fn a_block_of_cells_is_summed_exactly() {
-        let text = "sheet T\n\nName | A | B\nx | 1 | 0.5\ny | 2 |\nz | = 1/3 | 1e2\n";
+        let text = "sheet T\n\nName | A | B\nx | 1 | 0.5\ny | 2 |\nz | = 1.0/3 | 1e2\n";
         let doc = Document::from_text(text);
         let sum = |from, to| doc.summary(0, from, to).unwrap();
         let numbers = |s: &str, a: &str| Some((s.to_string(), a.to_string()));
