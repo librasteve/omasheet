@@ -95,3 +95,18 @@ film   | 1536MiB  | 50Mib.s^-1   | 245.76s
 backup | 8192MiB  | 1024Mib.s^-1 | 64s
 log    | 0.625MiB | 8Mib.s^-1    | 0.625s
 dump   | 1MiB     | 100Mib.s^-1  | 0.08s
+
+sheet Metric
+
+Item    | Amount  | Same
+--------|---------|----------
+tank    | 2.5l    | 2.5dm^3
+can     | 330ml   | 0.33l
+cargo   | 1.2t    | 1200kg
+field   | 3ha     | 30000m^2
+tyre    | 2.2bar  | 220kPa
+snack   | 250kcal | 1046kJ
+battery | 12kWh   | 43.2MJ
+photon  | 511keV  | 81.871fJ·
+carbon  | 12Da    | 19.926yg·
+hair    | 70μm    | 0.07mm

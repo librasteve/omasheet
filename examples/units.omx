@@ -163,3 +163,29 @@ Seconds  : Quantity
 | dump   | 1MiB   | 100Mib.s^-1 | *       |
 
 Seconds := Size.to('Mib') / Rate
+
+# Metric units outside the SI, which the SI accepts or science relies on:
+# the litre (`l` or `L`), tonne `t`, hectare `ha`, `bar`, electronvolt `eV`,
+# calorie `cal` (4.184 J), watt-hour `Wh` and dalton `Da`. They are exact
+# multiples of SI units and take the prefixes (`ml`, `kWh`, `keV`, `kcal`),
+# except `t` and `ha`. `u` is read as the prefix micro and shown as `μ`.
+# No imperial units: `5ft` and `5lb` are errors. Each row is a quantity
+# and the same amount in another unit.
+sheet Metric
+
+Item   : String
+Amount : Quantity
+Same   : Quantity
+
+| Item     | Amount  | Same                 |
+| -------- | ------- | -------------------- |
+| tank     | 2.5L    | = (2.5L).to('dm^3')  |
+| can      | 330ml   | = (330ml).to('L')    |
+| cargo    | 1.2t    | = (1.2t).to('kg')    |
+| field    | 3ha     | = (3ha).to('m^2')    |
+| tyre     | 2.2bar  | = (2.2bar).to('kPa') |
+| snack    | 250kcal | = (250kcal).to('kJ') |
+| battery  | 12kWh   | = (12kWh).to('MJ')   |
+| photon   | 511keV  | = (511keV).to('fJ')  |
+| carbon   | 12Da    | = (12Da).to('yg')    |
+| hair     | 70um    | = (70um).to('mm')    |
