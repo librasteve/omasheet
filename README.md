@@ -14,7 +14,7 @@ Named, typed columns and array expressions connect spreadsheet flexibility to st
 
 🔢 **Strong type system**
 
-The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**. The more _infectious_ a type, the less exact it is: `Integer` < `Fraction` < `Decimal` < `Float` < `Scientific` < `Complex`. A `Fraction` is exact without limit, whereas a `Decimal` is the same rationals held to a fixed number of places:
+The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**. The more _infectious_ a type, the less exact it is: `Integer` < `Fraction` < `Decimal` < `Float` < `Scientific` < `Complex`. A `Fraction` is exact without limit, whereas a `Decimal` is held to a fixed number of places. `Float` trades exactness for exponential range, `Scientific` provides uncertainty for physical constants and `Complex` has _real_ and _imaginary_ parts.
 
 Other types cover `Quantity` for SI and non-SI units & prefixes; `String`, `Datetime`, `Zoned`, `Boolean` and so on. Representations (`Percent`, `Hex`, `Octal`, `Binary`...) round out a broad set of tools for uses from junior school teaching to complex analytics.
 

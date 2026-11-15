@@ -316,7 +316,7 @@ takes any exact number, and a `Decimal` column given a `Fraction` rounds it
 to its places: `<1/7>` is `1/7` in a `Fraction` column, `0.1428571429` in a
 `Decimal` one.
 
-The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**. The more _infectious_ a type, the less exact it is: `Integer` < `Fraction` < `Decimal` < `Float` < `Scientific` < `Complex`. A `Fraction` is exact without limit, whereas a `Decimal` is the same rationals held to a fixed number of places:
+The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**. The more _infectious_ a type, the less exact it is: `Integer` < `Fraction` < `Decimal` < `Float` < `Scientific` < `Complex`. A `Fraction` is exact without limit, whereas a `Decimal` is held to a fixed number of places:
 
 - **`Integer` (ℤ)**: whole numbers (i64)
 - **`Fraction` (ℚ)**: exact rational (num/den)
