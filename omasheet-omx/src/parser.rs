@@ -444,17 +444,46 @@ impl Parser {
         if is_plain_number(&lhs) {
             return lhs;
         }
-        let next_is_call = matches!(
-            self.toks.get(self.pos + 1).map(|t| &t.tok),
-            Some(Tok::LParen | Tok::Dot | Tok::LBracket)
-        );
-        if next_is_call {
+        // The symbol and what runs on from it, as `rad.s^-1`: a `.` and a
+        // name that is not called, and a `^` and a whole exponent.
+        let tok = |k: usize| self.toks.get(self.pos + k).map(|t| &t.tok);
+        if matches!(tok(1), Some(Tok::LParen | Tok::LBracket)) {
             return lhs;
         }
-        let Ok(unit) = siquant::Unit::parse(&name, siquant::Scope::Live) else {
+        let mut text = name;
+        let mut used = 1;
+        loop {
+            if let (Some(Tok::Dot), Some(Tok::Ident(n)), after) =
+                (tok(used), tok(used + 1), tok(used + 2))
+                && !matches!(after, Some(Tok::LParen | Tok::LBracket))
+            {
+                text.push('.');
+                text.push_str(n);
+                used += 2;
+                continue;
+            }
+            if tok(used) == Some(&Tok::Caret) {
+                let (sign, at) = if tok(used + 1) == Some(&Tok::Minus) {
+                    ("-", used + 2)
+                } else {
+                    ("", used + 1)
+                };
+                if let Some(Tok::Int(n, _)) = tok(at) {
+                    text.push_str(&format!("^{sign}{n}"));
+                    used = at + 1;
+                    continue;
+                }
+            }
+            break;
+        }
+        let Ok(unit) = siquant::Unit::parse(&text, siquant::Scope::Live) else {
             return lhs;
         };
-        let span = self.bump().span;
+        let first = self.span();
+        for _ in 0..used {
+            self.bump();
+        }
+        let span = first.to(self.prev_span());
         let one = Expr {
             kind: ExprKind::Lit(Lit::Quantity(1.0, 0.0, unit)),
             span,

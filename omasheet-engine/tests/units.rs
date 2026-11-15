@@ -745,3 +745,21 @@ fn the_metric_non_si_units_are_exact_multiples() {
     assert!(fails("5ft").contains("not a number"));
     assert!(fails("5u").contains("not a number"));
 }
+
+#[test]
+fn a_unit_after_a_constant_multiplies_it() {
+    assert_eq!(shown("pi rad =~= 180°"), "true");
+    assert_eq!(shown("pi/2 rad =~= 90°"), "true");
+    assert_eq!(shown("tau rad =~= 360°"), "true");
+    // The unit multiplies the whole quotient, not the 2.
+    assert_eq!(shown("pi/2 rad == pi / 2 * 1rad"), "true");
+    // A compound unit, with a power.
+    assert_eq!(shown("tau rad.s^-1 == tau * 1rad.s^-1"), "true");
+    assert_eq!(shown("2 * gn s^2 =~= 19.6133m"), "true");
+    // A number then a unit still wants them together.
+    for bad in ["5 kg", "10/2 kg"] {
+        assert!(!eval(None, "<expression>", bad).ok(), "`{bad}`");
+    }
+    // A function call is not a unit, and a constant of the file wins.
+    assert!(!eval(None, "<expression>", "pi min(1, 2)").ok());
+}
