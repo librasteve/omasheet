@@ -143,6 +143,7 @@ fn agree_but(label: &str, dir: &Path, inline: &str, view: &str) -> Vec<String> {
         doc.snapshot()
             .consts
             .iter()
+            .filter(|c| !c.builtin)
             .map(|c| c.display.clone())
             .collect::<Vec<_>>()
     };

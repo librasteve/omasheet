@@ -5944,6 +5944,53 @@ fn quoted(cell: &str) -> bool {
     matches!(crate::convert::parse_literal(cell), Some(Lit::String(_)))
 }
 
+/// The constants every file has, which its own `const`, column or sheet of
+/// the same name shadows. The exact ones are as the 2019 SI defines them;
+/// `G` and `me` are CODATA 2022. `gn` and `planck` are not `g` and `h`, which
+/// are the gram and the hour.
+pub const PRELUDE: &[(&str, &str)] = &[
+    (
+        "pi",
+        "the ratio of a circle's circumference to its diameter",
+    ),
+    ("tau", "2 pi, a whole turn in radians"),
+    ("e", "the base of the natural logarithm, 2.71828..."),
+    ("c", "the speed of light, 299792458 m/s"),
+    ("gn", "standard gravity, 9.80665 m/s^2"),
+    ("planck", "the Planck constant, 6.62607015e-34 J.s"),
+    ("hbar", "the reduced Planck constant, planck / tau"),
+    ("kB", "the Boltzmann constant, 1.380649e-23 J/K"),
+    ("NA", "the Avogadro constant, 6.02214076e23 /mol"),
+    ("R", "the gas constant, 8.314462618 J/(mol.K)"),
+    ("qe", "the elementary charge, 1.602176634e-19 C"),
+    ("G", "the gravitational constant, 6.67430e-11 m^3/(kg.s^2)"),
+    ("me", "the electron mass, 9.1093837139e-31 kg"),
+];
+
+pub fn prelude(name: &str) -> Option<Lit> {
+    let q = |v: f64, u: &str| {
+        siquant::Unit::parse(u, siquant::Scope::Live)
+            .ok()
+            .map(|u| Lit::Quantity(v, 0.0, u))
+    };
+    match name {
+        "pi" => Some(Lit::Float(std::f64::consts::PI)),
+        "tau" => Some(Lit::Float(std::f64::consts::TAU)),
+        "e" => Some(Lit::Float(std::f64::consts::E)),
+        "c" => q(299_792_458.0, "m.s^-1"),
+        "gn" => q(9.80665, "m.s^-2"),
+        "planck" => q(6.62607015e-34, "J.s"),
+        "hbar" => q(6.62607015e-34 / std::f64::consts::TAU, "J.s"),
+        "kB" => q(1.380649e-23, "J.K^-1"),
+        "NA" => q(6.02214076e23, "mol^-1"),
+        "R" => q(6.02214076e23 * 1.380649e-23, "J.mol^-1.K^-1"),
+        "qe" => q(1.602176634e-19, "C"),
+        "G" => q(6.67430e-11, "m^3.kg^-1.s^-2"),
+        "me" => q(9.1093837139e-31, "kg"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6025,52 +6072,5 @@ mod tests {
         // `Revenue` holds cells of its own, so there is no formula of it to
         // be lowered, elementwise or not.
         assert!(!is_elementwise(&p, "Revenue"));
-    }
-}
-
-/// The constants every file has, which its own `const`, column or sheet of
-/// the same name shadows. The exact ones are as the 2019 SI defines them;
-/// `G` and `me` are CODATA 2022. `gn` and `planck` are not `g` and `h`, which
-/// are the gram and the hour.
-pub const PRELUDE: &[(&str, &str)] = &[
-    (
-        "pi",
-        "the ratio of a circle's circumference to its diameter",
-    ),
-    ("tau", "2 pi, a whole turn in radians"),
-    ("e", "the base of the natural logarithm, 2.71828..."),
-    ("c", "the speed of light, 299792458 m/s"),
-    ("gn", "standard gravity, 9.80665 m/s^2"),
-    ("planck", "the Planck constant, 6.62607015e-34 J.s"),
-    ("hbar", "the reduced Planck constant, planck / tau"),
-    ("kB", "the Boltzmann constant, 1.380649e-23 J/K"),
-    ("NA", "the Avogadro constant, 6.02214076e23 /mol"),
-    ("R", "the gas constant, 8.314462618 J/(mol.K)"),
-    ("qe", "the elementary charge, 1.602176634e-19 C"),
-    ("G", "the gravitational constant, 6.67430e-11 m^3/(kg.s^2)"),
-    ("me", "the electron mass, 9.1093837139e-31 kg"),
-];
-
-pub fn prelude(name: &str) -> Option<Lit> {
-    let q = |v: f64, u: &str| {
-        siquant::Unit::parse(u, siquant::Scope::Live)
-            .ok()
-            .map(|u| Lit::Quantity(v, 0.0, u))
-    };
-    match name {
-        "pi" => Some(Lit::Float(std::f64::consts::PI)),
-        "tau" => Some(Lit::Float(std::f64::consts::TAU)),
-        "e" => Some(Lit::Float(std::f64::consts::E)),
-        "c" => q(299_792_458.0, "m.s^-1"),
-        "gn" => q(9.80665, "m.s^-2"),
-        "planck" => q(6.62607015e-34, "J.s"),
-        "hbar" => q(6.62607015e-34 / std::f64::consts::TAU, "J.s"),
-        "kB" => q(1.380649e-23, "J.K^-1"),
-        "NA" => q(6.02214076e23, "mol^-1"),
-        "R" => q(6.02214076e23 * 1.380649e-23, "J.mol^-1.K^-1"),
-        "qe" => q(1.602176634e-19, "C"),
-        "G" => q(6.67430e-11, "m^3.kg^-1.s^-2"),
-        "me" => q(9.1093837139e-31, "kg"),
-        _ => None,
     }
 }

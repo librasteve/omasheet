@@ -221,7 +221,9 @@ mod tests {
             "\"formula\":\"B * 2\",\"format\":\"\",\"unit\":\"\",\"computed\":true,\"declared\":false"
         ));
         assert!(json.contains("\"d\":\"4\""));
-        assert!(json.ends_with("\"consts\":[],\"problems\":[]}"));
+        // The built-in constants are listed, none of them the file's own.
+        assert!(json.ends_with("],\"problems\":[]}"));
+        assert!(!json.contains("\"consts\":[]"));
     }
 
     #[test]

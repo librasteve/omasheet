@@ -757,6 +757,16 @@ impl Parser {
     }
 }
 
+/// Whether an expression is made of literals alone.
+fn is_plain_number(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Lit(_) => true,
+        ExprKind::Unary(_, x) => is_plain_number(x),
+        ExprKind::Binary(_, a, b) => is_plain_number(a) && is_plain_number(b),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -846,15 +856,5 @@ mod tests {
     fn single_equals_suggests_double() {
         let err = parse("Sales[; Region = 'UK']").unwrap_err();
         assert!(err.help.unwrap().contains("=="));
-    }
-}
-
-/// Whether an expression is made of literals alone.
-fn is_plain_number(e: &Expr) -> bool {
-    match &e.kind {
-        ExprKind::Lit(_) => true,
-        ExprKind::Unary(_, x) => is_plain_number(x),
-        ExprKind::Binary(_, a, b) => is_plain_number(a) && is_plain_number(b),
-        _ => false,
     }
 }
