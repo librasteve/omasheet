@@ -86,8 +86,8 @@ fn csv_of_one_sheet_has_values_for_computed_columns() {
     assert_eq!(
         text_of(&out, 0),
         "Month,Revenue,Cost,Profit,Share\n\
-         Jan,10000,6000,4000,1333.3333333333\n\
-         Feb,12000,7000,5000,1666.6666666667\n"
+         Jan,10000,6000,4000,4000/3\n\
+         Feb,12000,7000,5000,5000/3\n"
     );
     assert!(out.notices.is_empty(), "{:?}", out.notices);
 }
@@ -340,7 +340,11 @@ fn xlsx_has_a_worksheet_for_each_sheet() {
     assert_eq!(sales[1][3], Data::Float(4000.0));
     assert_eq!(
         out.notices,
-        ["constants are not exported: TaxRate", "5 formulas written",]
+        [
+            "constants are not exported: TaxRate",
+            "5 formulas written",
+            "exact rationals were written as floating point: Sales.Share",
+        ]
     );
 }
 
@@ -495,7 +499,7 @@ fn xlsx_writes_one_third_as_the_nearest_double() {
     let file = "sheet T\n\nA | B | C | D\n= 1/3 | 0.5 | true | 2025-01-31\n";
     let out = xlsx::export("t.omx", file, None, options()).unwrap();
     let rows = cells(&out.files[0].bytes, "T");
-    assert_eq!(rows[1][0], Data::Float(0.333_333_333_3));
+    assert_eq!(rows[1][0], Data::Float(1.0 / 3.0));
     assert_eq!(rows[1][1], Data::Float(0.5));
     assert_eq!(rows[1][2], Data::Bool(true));
     assert!(
@@ -503,7 +507,13 @@ fn xlsx_writes_one_third_as_the_nearest_double() {
         "{:?}",
         rows[1][3]
     );
-    assert_eq!(out.notices, ["1 formula written"]);
+    assert_eq!(
+        out.notices,
+        [
+            "1 formula written",
+            "exact rationals were written as floating point: T.A"
+        ]
+    );
 }
 
 fn workbook() -> Vec<u8> {
@@ -739,8 +749,11 @@ sheet YearEnd
     lints(&out.source);
     // The file works out what the workbook held.
     assert_eq!(eval(&out.source, "Sales.Running"), "[4000, 9000, 14700]");
-    assert_eq!(eval(&out.source, "Sales.Margin"), "[0.4, 0.4167, 0.4318]");
-    assert_eq!(eval(&out.source, "YearEnd[Value; 4]"), "0.4176136364");
+    assert_eq!(
+        eval(&out.source, "Sales.Margin"),
+        "[2/5, 4167/10000, 2159/5000]"
+    );
+    assert_eq!(eval(&out.source, "YearEnd[Value; 4]"), "147/352");
     assert_eq!(eval(&out.source, "YearEnd[Value; 5]"), "yes");
 }
 
@@ -796,8 +809,8 @@ fn json_holds_every_sheet_as_rows_by_column_name() {
     assert_eq!(
         text_of(&out, 0),
         "{\n  \"Sales\": [\n    \
-         {\"Month\": \"Jan\", \"Revenue\": 10000, \"Cost\": 6000, \"Profit\": 4000, \"Share\": 1333.3333333333},\n    \
-         {\"Month\": \"Feb\", \"Revenue\": 12000, \"Cost\": 7000, \"Profit\": 5000, \"Share\": 1666.6666666667}\n  ],\n  \
+         {\"Month\": \"Jan\", \"Revenue\": 10000, \"Cost\": 6000, \"Profit\": 4000, \"Share\": \"4000/3\"},\n    \
+         {\"Month\": \"Feb\", \"Revenue\": 12000, \"Cost\": 7000, \"Profit\": 5000, \"Share\": \"5000/3\"}\n  ],\n  \
          \"Summary\": [\n    {\"Item\": \"Revenue\", \"Value\": 22000}\n  ]\n}\n"
     );
     assert!(out.notices.is_empty(), "{:?}", out.notices);

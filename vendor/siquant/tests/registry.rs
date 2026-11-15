@@ -413,7 +413,7 @@ fn types_and_units_are_grouped_for_menus() {
         .filter(|u| u.group == "Size")
         .map(|u| u.symbol)
         .collect();
-    assert_eq!(order, ["g", "°C", "Hz"]);
+    assert_eq!(order, ["g", "°C", "Hz", "l", "t", "ha", "Da"]);
     // Every group named is one of the headings.
     assert!(reg.quantity_types().all(|t| GROUPS.contains(&t.group())));
     assert!(reg.units().all(|u| GROUPS.contains(&u.group)));

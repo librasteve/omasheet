@@ -96,7 +96,6 @@ fn rejects_everything_else() {
         ("(m)", "brackets"),
         ("m\u{b2}", "superscript"),
         ("ft", "non-SI, unknown"),
-        ("L", "litre"),
         ("min", "minute"),
         ("kilogram", "a name"),
         ("metres", "a plural"),
