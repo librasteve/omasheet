@@ -14,16 +14,21 @@
 // The linker's own notes (a duplicate rpath, a large unwind table) come from
 // Qt and the build setup, and there is nothing in this crate to fix.
 #![allow(linker_messages)]
+// A GUI program on Windows, which starts no console window; `winconsole` joins
+// the terminal it was run from, for the command.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod clip;
 mod file;
 mod json;
 mod theme;
+mod winconsole;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    winconsole::attach();
     // The app reads the file to open from the command line itself.
     omasheet_cli::main(|_file| app())
 }
