@@ -318,8 +318,9 @@ fn errors(file: &str) -> Vec<String> {
 fn a_cell_is_held_in_the_columns_unit() {
     let out = view("test.omx", PANTRY);
     assert!(out.ok(), "{:?}", out.errors);
-    // 300g is 0.3kg, and a bare 5 is 5kg.
-    for shown in ["5kg", "0.3kg", "7.50(20)e-3kg"] {
+    // 300g is 0.3kg, and a bare 5 is 5kg: the cells are numbers, and the
+    // head says the unit once.
+    for shown in ["Weight [kg]", "0.3", "7.50(20)e-3"] {
         assert!(out.output.contains(shown), "{shown} in\n{}", out.output);
     }
     assert!(!out.output.contains("300g"), "{}", out.output);
@@ -349,7 +350,8 @@ fn a_cell_of_another_dimension_is_an_error() {
         "sheet S\n\nWeight : Mass\n\n| Weight |\n| --- |\n| = 2 + 3 |\n",
     );
     assert!(out.ok(), "{:?}", out.errors);
-    assert!(out.output.contains("5kg"), "{}", out.output);
+    assert!(out.output.contains("Weight [kg]"), "{}", out.output);
+    assert!(!out.output.contains("5kg"), "{}", out.output);
 }
 
 #[test]
@@ -408,8 +410,9 @@ Area := Width * Height
 ";
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
-    assert!(out.output.contains("0.06m^2"), "{}", out.output);
-    assert!(out.output.contains("3m^2"), "{}", out.output);
+    assert!(out.output.contains("Area [m^2]"), "{}", out.output);
+    assert!(out.output.contains("0.06"), "{}", out.output);
+    assert!(!out.output.contains("0.06m^2"), "{}", out.output);
 }
 
 #[test]
@@ -485,7 +488,15 @@ Metres : Length[cm]
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
     // Converted on entry, and a bare number is read in the column's unit.
-    for shown in ["5000g", "300g", "5g", "200cm", "150cm", "350(20)cm"] {
+    for shown in [
+        "Grams [g]",
+        "Metres [cm]",
+        "5000",
+        "300",
+        "200",
+        "150",
+        "350(20)",
+    ] {
         assert!(out.output.contains(shown), "{shown} in\n{}", out.output);
     }
 }
@@ -522,8 +533,16 @@ Weight : Mass[g; .1f]
 ";
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
+    assert!(out.output.contains("Weight [g]"), "{}", out.output);
+    assert!(out.output.contains("5000.0"), "{}", out.output);
+    assert!(out.output.contains("7.5(2)"), "{}", out.output);
+    // `v` puts the unit back in each row.
+    let down = file.replace("[g; .1f]", "[g; v.1f]");
+    let out = view("test.omx", &down);
+    assert!(out.ok(), "{:?}", out.errors);
     assert!(out.output.contains("5000.0g"), "{}", out.output);
     assert!(out.output.contains("7.5(2)g"), "{}", out.output);
+    assert!(!out.output.contains("[g]"), "{}", out.output);
 }
 
 #[test]
@@ -539,7 +558,8 @@ Weight : Mass[g]
 ";
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
-    assert!(out.output.contains("2500g"), "{}", out.output);
+    assert!(out.output.contains("Weight [g]"), "{}", out.output);
+    assert!(out.output.contains("2500"), "{}", out.output);
 }
 
 #[test]
@@ -581,7 +601,7 @@ fn a_column_of_data_is_held_in_its_unit() {
     let src = "sheet D\n\nSize : Data[GiB]\n\n| Size |\n| ---- |\n| 2TiB |\n| 512MiB |\n| 4 |\n";
     let out = view("test.omx", src);
     assert!(out.ok(), "{:?}", out.errors);
-    for shown in ["2048GiB", "0.5GiB", "4GiB"] {
+    for shown in ["Size [GiB]", "2048", "0.5"] {
         assert!(out.output.contains(shown), "{shown} in\n{}", out.output);
     }
 }
@@ -677,8 +697,9 @@ fn a_column_of_angles_keeps_its_unit() {
     let file = "sheet Sights\n\nBearing : Angle[°]\nRadians : Angle\n\n| Bearing | Radians |\n| ------- | ------- |\n| 90° | * |\n| 45°30′ | * |\n| 0.5rad | * |\n\nRadians := Bearing.to('rad')\n";
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
-    assert!(out.output.contains("45.5°"), "{}", out.output);
-    assert!(out.output.contains("28.648°·"), "{}", out.output);
+    assert!(out.output.contains("Bearing [°]"), "{}", out.output);
+    assert!(out.output.contains("45.5"), "{}", out.output);
+    assert!(out.output.contains("28.648·"), "{}", out.output);
 }
 
 #[test]

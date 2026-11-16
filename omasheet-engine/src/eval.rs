@@ -4794,7 +4794,7 @@ impl<'p> Engine<'p> {
     pub fn render_view(&self, v: &View) -> String {
         let sheet = &self.prog.sheets[v.sheet];
         let mut grid: Vec<Vec<String>> =
-            vec![v.cols.iter().map(|&c| sheet.cols[c].name.clone()).collect()];
+            vec![v.cols.iter().map(|&c| sheet.cols[c].head()).collect()];
         let mut numeric = vec![true; v.cols.len()];
         for &r in v.rows.iter() {
             let mut line = Vec::with_capacity(v.cols.len());
@@ -4806,7 +4806,7 @@ impl<'p> Engine<'p> {
                 // A row is a line, so a cell holding a newline is written
                 // as the escape the file holds it by: the grid keeps its
                 // shape and what is printed reads back as what it was.
-                let text = self.show_in(&value, false, sheet.cols[c].format.as_ref());
+                let text = self.show_in(&value, false, sheet.cols[c].shown_format().as_deref());
                 line.push(if text.contains(['\n', '\r', '\t']) {
                     format!(
                         "\"{}\"",

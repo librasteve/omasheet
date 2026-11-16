@@ -95,6 +95,9 @@ pub struct ColumnSnap {
     /// How its values are shown, as its type line writes it: `'.2f`,
     /// `%d %b %Y`.
     pub format: Option<String>,
+    /// The unit is shown once, in the head, as `Mass[kg]`, and the cells are
+    /// numbers.
+    pub lifted: bool,
     /// The unit a column of quantities is held and shown in: the one its
     /// format names, or the preferred unit of its type. Empty for any other
     /// column, and for a `Quantity` that has none.
@@ -647,13 +650,15 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             ("%c".into(), "as the locale writes it"),
         ],
         S::Quantity(_) if !unit.is_empty() => vec![
-            (unit.to_string(), "the unit alone"),
+            (unit.to_string(), "the unit in the head"),
             (format!("{unit}; .1f"), "(nn) style, 1 place"),
             (format!("{unit}; ±.1f"), "± uncertainty, 1 place"),
             (format!("{unit}; ~.1f"), "value only, 1 place"),
             (format!("{unit}; ~.3e-3"), "value only, e notation"),
             (format!("{unit}; .10s"), "10 digits if exact"),
-            (format!("{unit}; _"), "a space before the unit"),
+            (format!("{unit}; v"), "the unit in each row"),
+            (format!("{unit}; v.1f"), "in each row, 1 place"),
+            (format!("{unit}; v_"), "in each row, a space before it"),
         ],
         // No unit: each value is shown in its own.
         S::Quantity(_) => vec![
@@ -3144,7 +3149,8 @@ impl Document {
                             .get(sheet)
                             .and_then(|errors| errors.get(c).cloned().flatten())
                             .filter(|_| failed);
-                        let format = program.sheets[sheet].cols[c].format.as_ref();
+                        let shown = program.sheets[sheet].cols[c].shown_format();
+                        let format = shown.as_deref();
                         let warning = engine.warning(sheet, c, file_row);
                         cell_snap(engine, &self.style, format, value, source, error, warning)
                     })
@@ -3185,7 +3191,8 @@ impl Document {
             let all: Vec<usize> = (0..n).collect();
             engine.rows_shown(sheet, col, &all)
         });
-        let format = engine.program().sheets[sheet].cols[col].format.as_ref();
+        let column = engine.program().sheets[sheet].cols[col].shown_format();
+        let format = column.as_deref();
         let shown = |v: &Value| match format {
             Some(_) => engine.show_in(v, false, format),
             None => shown_text(engine, v),
@@ -5309,6 +5316,7 @@ impl Document {
                         self.text[c.expr_span.start as usize..c.expr_span.end as usize].to_string()
                     }),
                     format: col.format.as_ref().map(|f| f.to_string()),
+                    lifted: col.head_unit().is_some(),
                     unit: match (col.ty, &col.format) {
                         (
                             S::Quantity(_),
@@ -5388,7 +5396,8 @@ impl Document {
                         }
                         (None, None) => (String::new(), None),
                     };
-                    let format = sheet.cols[c].format.as_ref();
+                    let shown = sheet.cols[c].shown_format();
+                    let format = shown.as_deref();
                     row.push(cell_snap(
                         &engine,
                         &self.style,
@@ -7609,8 +7618,10 @@ mod tests {
         let snap = doc.snapshot();
         let column = &snap.sheets[0].columns[0];
         assert_eq!(column.unit, "g");
-        assert_eq!(snap.sheets[0].rows[0][0].display, "5000g");
-        assert_eq!(snap.sheets[0].rows[1][0].display, "300g");
+        // The unit is said once, in the head, so the cells are numbers.
+        assert!(column.lifted);
+        assert_eq!(snap.sheets[0].rows[0][0].display, "5000");
+        assert_eq!(snap.sheets[0].rows[1][0].display, "300");
         // A unit of another dimension is refused, and the format kept.
         let why = doc.set_column_format(0, &[0], Some("m")).unwrap_err();
         assert!(why.contains("unit of Mass"), "{why}");
@@ -7672,6 +7683,12 @@ mod tests {
         assert!(any.iter().any(|(f, _)| f == "; .10s"), "{any:?}");
         let mass = format_suggestions("Mass", "g");
         assert!(mass.iter().any(|(f, _)| f == "g; .10s"), "{mass:?}");
+        // Every one it offers is one the column takes.
+        let ty = S::from_name("Mass").unwrap();
+        for (f, _) in &mass {
+            assert!(Format::parse(f, ty).is_ok(), "{f}");
+        }
+        assert!(mass.iter().any(|(f, _)| f == "g; v"), "{mass:?}");
     }
 
     #[test]
@@ -7680,7 +7697,7 @@ mod tests {
         let mut doc = Document::from_text(src);
         assert!(doc.set_column_types(0, &[0], Some("Mass[mg]")));
         assert!(doc.text().contains("Dose : Mass[mg]"), "{}", doc.text());
-        assert_eq!(doc.snapshot().sheets[0].rows[1][0].display, "2000mg");
+        assert_eq!(doc.snapshot().sheets[0].rows[1][0].display, "2000");
         // One step to undo.
         assert!(doc.undo());
         assert!(!doc.text().contains("Mass"), "{}", doc.text());

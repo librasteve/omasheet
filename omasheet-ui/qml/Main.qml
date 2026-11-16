@@ -99,6 +99,8 @@ ApplicationWindow {
     readonly property int smallSize: Math.max(8, Math.round(fontSize * 0.917))
     readonly property int captionSize: Math.max(8, Math.round(fontSize * 0.833))
     readonly property int noteSize: Math.max(8, Math.round(fontSize * 0.786))
+    // The type line of a column's head, a little larger than the notes.
+    readonly property int typeSize: Math.max(9, Math.round(fontSize * 0.857))
     readonly property int fineSize: Math.max(8, Math.round(fontSize * 0.714))
     // Dialogs are set a little smaller than the file.
     readonly property int dialogSize: captionSize
@@ -140,7 +142,7 @@ ApplicationWindow {
     FontMetrics {
         id: noteMetrics
         font.family: win.monoFamily
-        font.pixelSize: win.noteSize
+        font.pixelSize: win.typeSize
         font.features: win.font.features
     }
 
@@ -456,6 +458,15 @@ ApplicationWindow {
         return longest;
     }
 
+    // The type as the head shows it: `Mass[kg]` for a column of quantities
+    // that has a unit, whether its cells are numbers or carry the unit too
+    // (`v`); `[]` after the type where it has some other format.
+    function typeLabel(col) {
+        if (isQuantityType(col.type) && col.unit)
+            return col.type + "[" + col.unit + "]";
+        return col.type + (col.format ? "[]" : "");
+    }
+
     function measure() {
         var widths = [];
         var total = 0;
@@ -479,8 +490,7 @@ ApplicationWindow {
             // has already.
             if (cols[c].type.length > 0) {
                 var marked = cols[c].declared || (cols[c].computed && !sheet.isConsts);
-                var typeChars = cols[c].type.length
-                    + (marked ? 3 : 0) + (cols[c].format ? 2 : 0);
+                var typeChars = typeLabel(cols[c]).length + (marked ? 3 : 0);
                 var telltale = sheet.isConsts ? 0 : win.noteSize;
                 w = Math.max(w, Math.ceil(typeChars * noteMetrics.averageCharacterWidth) + telltale + 14);
             }
@@ -3538,11 +3548,11 @@ ApplicationWindow {
                                         textFormat: Text.StyledText
                                         text: !headCell.column ? ""
                                             : (mark.length > 0 ? "<font color=\"" + win.accentColor + "\">" + mark + "</font>" : "")
-                                              + headCell.column.type + (formatted ? "[]" : "")
+                                              + win.typeLabel(headCell.column)
                                         color: win.mutedColor
                                         font.family: win.font.family
                                         font.features: win.font.features
-                                        font.pixelSize: win.noteSize
+                                        font.pixelSize: win.typeSize
                                         elide: Text.ElideNone
                                     }
                                 }

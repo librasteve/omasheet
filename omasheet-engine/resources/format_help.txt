@@ -45,8 +45,10 @@ g | whichever of f and e reads better | .3g → 10.5
 ~ | the value alone | ~.2f → 10.50
 
 == Quantities | Quantity
-unit | the unit the column shows and holds | Mass[g]
-; | then a number format | g; ±.1f → 10.5 ± 0.3g
+unit | the unit the column shows and holds, once, in its head | Mass[g]
+; | then a number format | g; ±.1f → 10.5 ± 0.3
+v | the unit in each row instead of the head | g; v.1f → 10.5g
+_ | with v, a space before the unit | g; v_.1f → 10.5 g
 
 == Date | Date
 %Y %y | year: 2025 or 25 | %Y → 2025

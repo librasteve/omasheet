@@ -483,19 +483,31 @@ pub fn dress(v: Value, id: QId, column: Option<&Unit>) -> Result<Value, String> 
 /// A quantity as its column's format shows it: in the format's unit, if it
 /// can be, and its number as the format says.
 pub fn show_in(q: &Quantity, f: &omasheet_omx::colfmt::QuantityFormat, style: &Style) -> String {
-    let converted = match &f.unit {
-        Some(unit) => q.convert(unit).unwrap_or_else(|_| q.clone()),
-        None => q.clone(),
+    let (converted, fits) = match &f.unit {
+        Some(unit) => match q.convert(unit) {
+            Ok(c) => (c, true),
+            Err(_) => (q.clone(), false),
+        },
+        None => (q.clone(), false),
     };
-    format(&converted, &f.number.unwrap_or_default(), style, false)
+    let number = f.number.unwrap_or_default();
+    // The unit is in the column's head where the column has one, unless a
+    // value cannot be put in it, which keeps its own, so it is not mistaken.
+    let head = fits && f.lifts(false);
+    render(&converted, &number, style, false, !head)
 }
 
 /// A quantity as it is shown: the number as a `Scientific` is, then the
 /// unit with no space. In full, as a file writes it: `5kg`, and `10.5 ±
 /// 0.3kg` with an uncertainty.
 pub fn format(q: &Quantity, f: &SciFormat, style: &Style, exact: bool) -> String {
+    render(q, f, style, exact, true)
+}
+
+/// [`format`], with or without the unit after the number.
+fn render(q: &Quantity, f: &SciFormat, style: &Style, exact: bool, with_unit: bool) -> String {
     let unit = q.unit().to_string();
-    let unit = if q.unit().is_dimensionless() {
+    let unit = if q.unit().is_dimensionless() || !with_unit {
         String::new()
     } else if f.gap {
         // `_`: the unit set apart from its number, `6.022e+23 mol^-1`.
@@ -514,7 +526,13 @@ pub fn format(q: &Quantity, f: &SciFormat, style: &Style, exact: bool) -> String
     }
     // With no uncertainty and no format, the number is shown as a `Float` is:
     // to three places, cut and marked, `-1.571rad·`.
-    if q.sigma() == 0.0 && (SciFormat { gap: false, ..*f }) == SciFormat::default() {
+    if q.sigma() == 0.0
+        && (SciFormat {
+            gap: false,
+            unit_down: false,
+            ..*f
+        }) == SciFormat::default()
+    {
         let number = crate::value::format_value(&Value::Float(q.value()), false, style, false);
         // The mark of a cut number goes last, after the unit, where a
         // display can set it apart: `1.571rad·`.

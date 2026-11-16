@@ -92,6 +92,56 @@ pub struct Source {
     pub span: Span,
 }
 
+impl Column {
+    /// The format that shows the column's cells. A declared column of a kind
+    /// of quantity that names no unit is shown in the kind's preferred one,
+    /// as `Mass` is `Mass[kg]`.
+    pub fn shown_format(&self) -> Option<std::borrow::Cow<'_, crate::colfmt::Format>> {
+        use crate::colfmt::{Format, QuantityFormat};
+        use std::borrow::Cow;
+        match (&self.format, self.ty) {
+            (Some(Format::Quantity(q)), S::Quantity(id))
+                if q.unit.is_none() && self.declared && id.named().is_some() =>
+            {
+                let unit = crate::units::preferred(id)?;
+                Some(Cow::Owned(Format::Quantity(QuantityFormat {
+                    unit: Some(unit),
+                    number: q.number,
+                })))
+            }
+            (Some(f), _) => Some(Cow::Borrowed(f)),
+            (None, S::Quantity(id)) if self.declared && id.named().is_some() => {
+                let unit = crate::units::preferred(id)?;
+                Some(Cow::Owned(Format::Quantity(QuantityFormat {
+                    unit: Some(unit),
+                    number: None,
+                })))
+            }
+            (None, _) => None,
+        }
+    }
+
+    /// The column's name for a printed table: with its unit after it where
+    /// the cells are numbers, `Weight [kg]`.
+    pub fn head(&self) -> String {
+        match self.head_unit() {
+            Some(u) => format!("{} [{u}]", self.name),
+            None => self.name.clone(),
+        }
+    }
+
+    /// The unit a quantity column shows once, in its head, where its cells
+    /// are numbers; `None` for a column that shows it in each row.
+    pub fn head_unit(&self) -> Option<String> {
+        match self.shown_format().as_deref() {
+            Some(crate::colfmt::Format::Quantity(q)) if q.lifts(false) => {
+                q.unit.as_ref().map(|u| u.to_string())
+            }
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Column {
     pub name: String,

@@ -108,6 +108,7 @@ pub fn snapshot(snap: &Snapshot) -> String {
             field(out, "format", c.format.as_deref().unwrap_or(""));
             out.push(',');
             field(out, "unit", &c.unit);
+            out.push_str(&format!(",\"lifted\":{}", c.lifted));
             out.push_str(&format!(
                 ",\"computed\":{},\"declared\":{}}}",
                 c.formula.is_some(),
@@ -218,7 +219,7 @@ mod tests {
         ));
         assert!(json.contains("\"d\":\"say \\\"hi\\\"\""), "{json}");
         assert!(json.contains(
-            "\"formula\":\"B * 2\",\"format\":\"\",\"unit\":\"\",\"computed\":true,\"declared\":false"
+            "\"formula\":\"B * 2\",\"format\":\"\",\"unit\":\"\",\"lifted\":false,\"computed\":true,\"declared\":false"
         ));
         assert!(json.contains("\"d\":\"4\""));
         // The built-in constants are listed, none of them the file's own.

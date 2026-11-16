@@ -69,18 +69,21 @@ Weight : Mass
 # The unit in brackets after the type is the unit the column is shown and held
 # in, whichever the cells were written in: a bare number is read in it. After
 # a `;` a number format as a Scientific takes may follow, `Mass[mg; .1f]`.
+# The unit is said once, in the column's head, and its cells are numbers; a
+# `v` before the conversion puts it down in each row, `Mass[g; v]`.
 sheet Display
 
 Item   : String
 Kilos  : Mass
 Grams  : Mass[g]
+Rows   : Mass[g; v]
 Metres : Length
 
-| Item  | Kilos | Grams | Metres  |
-| ----- | ----- | ----- | ------- |
-| flour | 5kg   | 5kg   | 2m      |
-| sugar | 300g  | 300g  | 150     |
-| salt  | 5     | 5     | 3.5(2)m |
+| Item  | Kilos | Grams | Rows | Metres  |
+| ----- | ----- | ----- | ---- | ------- |
+| flour | 5kg   | 5kg   | 5kg  | 2m      |
+| sugar | 300g  | 300g  | 300g | 150     |
+| salt  | 5     | 5     | 5    | 3.5(2)m |
 
 # With no unit before the `;`, each value is shown in its own unit. The
 # conversion `s` lets the uncertainty lead: a value that has one is shown by
