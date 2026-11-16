@@ -19,7 +19,7 @@ Forthcoming. D numbers are assigned when the change starts; `D-W#` until then.
 ## Open
 
 - Whether the agreement test for a lowered `Scientific` or `Quantity` sigma may be a few ulps rather than exact (D-W5): `hypot` against `sqrt(a² + b²)`. Recommended: exact on the value, within 4 ulps on the sigma (`tidy`, which had that bound, is gone).
-- Whether Polars here has `sqrt` (or `pow`) behind a feature this build does not enable, and what turning it on costs in build time; decides whether `*` and `/` need it for the sigma.
+- **Settled:** more Polars features may be turned on in the workspace `Cargo.toml` (now `lazy`, `abs`, `cum_agg`, `diff`, `rank`, `rolling_window` and the dtype set) where a lowering needs them: `sqrt` and `pow` for the sigma of `*` and `/`, and `floor`, `pow` and `log` for `%` and `**` of a `Scientific`. Each feature is added in the task that needs it, with its cost in build time noted there, and a lowering that needs one stays on the engine until it is on. This lifts the stated reason for `%` and `**` staying on the engine in D-W5; whether they then lower is for task 3.4 to decide on the exactness of the agreement test.
 - Whether a `const` is inlined as `Lit::Percent` by the checker or read as a named value, which decides where D-W3 is applied; `examples/budget.omx` (`Tax := Profit * TaxRate`) is the first test.
 - Whether a declared `Percent` column that mixes a bare number with percentages (D69a: "still declined") is the same case as an inferred column.
 
