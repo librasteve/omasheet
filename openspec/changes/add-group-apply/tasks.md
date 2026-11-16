@@ -19,6 +19,6 @@ Forthcoming; follows `add-units`.
 
 ## 3. Checks
 - [ ] 3.1 Tests: a value, a vector, a sheet, an empty group, an empty key, a failing group, the order
-- [ ] 3.2 `apply` and `agg` give the same groups in the same order
+- [ ] 3.2 `apply` and `agg` give the same groups in the same order, and a body that lowers gives the same answer, shape, type and error lowered as in the engine (the lowered path follows `widen-polars-lowering`; until then the engine runs every body)
 - [ ] 3.3 `docs/expressions.md`, `docs/format.md`, the skill, `examples/groups.omx` and its `.expected`
 - [ ] 3.4 fmt, clippy -D warnings, workspace tests

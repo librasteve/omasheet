@@ -5,7 +5,7 @@ Forthcoming; follows `polars-function-registry`.
 ## 0. Settle
 - [x] 0.1 Read the engine's uncertainty formulas and its offset-unit rule; settle D-W4 and D-W5 against them (siquant `quantity.rs`/`unit.rs`, `value.rs:402`)
 - [x] 0.2 The open items in `design.md`
-- [ ] 0.3 D-W6 against `add-group-apply`: rewrite its D-A6 and task 3.2
+- [x] 0.3 D-W6 against `add-group-apply`: rewrite its D-A6 and task 3.2
 
 ## 1. Static types only
 - [ ] 1.1 `lower.rs` declines a column with no declared type, a `Fraction` and anything typed `Any`, by name

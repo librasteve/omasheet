@@ -30,5 +30,5 @@ The owner asked for `group_by` and `apply` (2026-11-10). `group_by` with `agg` i
 
 - A function written inline in the call (OMX has no lambdas); only a named `fn`
 - `apply` on a single column per element (Polars `map_elements`); `apply` over a whole sheet with no `group_by` (that is calling the function)
-- Lowering to Polars: `map_groups` calls arbitrary code, so `apply` is run by the engine, one group at a time, and leaves the rest of the plan to Polars. A `Complex`/`Scientific` value in a group is fine, being the engine's own
+- Lowering a body that does not lower: `map_groups` calls arbitrary code, so such an `apply` is run by the engine, one group at a time, and leaves the rest of the plan to Polars. A body that does lower is calculated in Polars once `widen-polars-lowering` lands (its D-W6, and D-A6 here). A `Complex`/`Scientific` value in a group is fine, being the engine's own
 - Parallel evaluation of groups
