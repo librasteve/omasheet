@@ -30,9 +30,10 @@ Only the display is cut, and `omasheet eval --exact` gives it in full.
 A `Decimal`, a `Float` and the parts of a `Complex` are shown to three places
 after the point, and where they have more the rest is cut and marked with
 `·`: `1.0/3` is `0.333·` and `sqrt(2)` is `1.414·`. One with no more than three
-places is whole, `19.99`, and one below a thousandth keeps its digits, so as
-not to show as nought. A `Float` in e notation has its mantissa cut the same way, `1.234e-12·`. Before that a `Float`, and each part of a `Complex`, is rounded to 15 places after the point, so that the noise of a calculation shows as nought, marked with `·` as a number with digits not shown is: `cos(90°)` is `0·` and not `6.123e-17·`, and `1e-20.Float` is `0·`. That is the `float_places` of the display style; the value itself, and a file, keep every digit. A quantity with no uncertainty and no format has its number cut the same way, with the `·` after the unit: `arcsin(1)` is `1.571rad·`. A `Scientific`, and a quantity with an uncertainty, is not cut: the uncertainty in brackets
-sets the digits it shows.
+places is whole, `19.99`. One below 1 is shown to three significant digits
+instead, `pi / 1000` is `0.00314·`, so as not to show as nought or as one
+digit; below a millionth it keeps its digits, or is in e notation. A `Float` in e notation has its mantissa cut the same way, `1.234e-12·`. Before that a `Float`, and each part of a `Complex`, is rounded to 15 places after the point, and to no more than 15 significant digits, so that the noise of a calculation is not shown, and not marked either, as it is not digits that were there: `cos(90°)` is `0` and not `6.123e-17·`, `100 * 1.1.Float` is `110` and not `110.00000000000001`, and `1e-20.Float` is `0`. That is the `float_places` of the display style; the value itself, and a file, keep every digit, and `=~=` compares numbers that differ by noise. A quantity with no uncertainty and no format has its number cut the same way, with the `·` after the unit: `arcsin(1)` is `1.571rad·`. A `Scientific` with an uncertainty, and a quantity with one, is not cut: the uncertainty in brackets
+sets the digits it shows. One with an uncertainty of nought is an inexact number, and is shown as a `Float` is: `(1/3.Float) ± 0` is `0.333·`.
 
 A `Decimal` is a Polars `Decimal(38, s)`: 38 digits, `s` of them after the
 point, and the places it keeps are the column's, written `Decimal(2)`. A bare

@@ -468,7 +468,7 @@ fn fractions() {
     assert_eq!(calc("(1/7).Fraction"), "1/7");
     // Past the denominator it looks to, it is shown as a decimal.
     assert_eq!(show("<1/10000>"), "1/10000");
-    assert_eq!(show("<1/10001>"), "0.00009999000099990000·");
+    assert_eq!(show("<1/10001>"), "0.0001000·");
     // A googol, and the reciprocal of a number past the atoms in the
     // universe: held exactly.
     assert_eq!(calc("<10> ** 100 * <1/10> ** 80"), "100000000000000000000");
@@ -548,7 +548,7 @@ fn display_of_rationals() {
     // A Decimal that ends is shown as that decimal in full.
     assert_eq!(show("175.0/4"), "43.75");
     assert_eq!(show("1.0/100000"), "0.00001");
-    assert_eq!(show("-1.0/64"), "-0.016·");
+    assert_eq!(show("-1.0/64"), "-0.0156·");
     assert_eq!(show("19.99 * 3"), "59.97");
     assert_eq!(show("100.0/3 * 3"), "100.000·");
     // One that was rounded at the widest scale is cut and marked.

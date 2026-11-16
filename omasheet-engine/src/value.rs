@@ -1452,26 +1452,35 @@ pub const WIDTH: usize = 23;
 pub const MORE: char = '·';
 
 /// How many digits after the point a `Decimal`, a `Float` or the parts of a
-/// `Complex` are shown to: `0.333·`. A number with fewer has them all, and one
-/// below a thousandth keeps the digits it has, so as not to show as nought.
+/// `Complex` are shown to: `0.333·`. A number with fewer has them all. One
+/// below 1 is shown to as many places as give it this many significant
+/// digits, `0.00314·`, so as not to show as nought or as one digit (down to a
+/// millionth, below which a number is shown in full or in e notation).
 pub const SHOWN_DIGITS: usize = 3;
 
-/// A plain positive number rounded to [`SHOWN_DIGITS`] places after its point and
-/// marked with [`MORE`]; `None` where it has no more than that, or is too small
-/// for them to say anything.
+/// A plain positive number rounded to [`SHOWN_DIGITS`] places after its point,
+/// or to that many significant digits where it is below 1, and marked with
+/// [`MORE`]; `None` where it has no more than that.
 fn cut_places(plain: &str) -> Option<String> {
     let (whole, fraction) = plain.split_once('.')?;
-    let small = whole == "0" && fraction.chars().take(SHOWN_DIGITS).all(|c| c == '0');
-    if fraction.len() <= SHOWN_DIGITS || small {
+    // Below 1 the places start at the first digit that is not nought.
+    let places = if whole == "0" {
+        match fraction.bytes().position(|b| b != b'0') {
+            // Past six noughts it is shown as it was before, in full or in e
+            // notation, so that e notation is not made wider than it is.
+            Some(zeros) if zeros <= 5 => zeros + SHOWN_DIGITS,
+            _ => return None,
+        }
+    } else {
+        SHOWN_DIGITS
+    };
+    if fraction.len() <= places {
         return None;
     }
     // Rounded to the nearest, a half upwards, on the digits themselves: a
     // trip that comes back as 0.9999999999999999 reads as `1.000·`.
-    let mut digits: Vec<u8> = whole
-        .bytes()
-        .chain(fraction.bytes().take(SHOWN_DIGITS))
-        .collect();
-    if fraction.as_bytes()[SHOWN_DIGITS] >= b'5' {
+    let mut digits: Vec<u8> = whole.bytes().chain(fraction.bytes().take(places)).collect();
+    if fraction.as_bytes()[places] >= b'5' {
         let mut k = digits.len();
         loop {
             if k == 0 {
@@ -1487,7 +1496,7 @@ fn cut_places(plain: &str) -> Option<String> {
             }
         }
     }
-    let point = digits.len() - SHOWN_DIGITS;
+    let point = digits.len() - places;
     // A carry into a sixteenth digit is a number for e notation, not for this.
     if point > 15 {
         return None;
@@ -1978,6 +1987,15 @@ fn grouped_whole(text: &str, sep: char) -> String {
 
 /// A scientific value as `style` shows a number: its point the style's own.
 pub fn format_scientific(v: f64, s: f64, f: &SciFormat, style: &Style) -> String {
+    // With no uncertainty and no format of its own it is an inexact number,
+    // shown as a `Float` is: without the noise, and cut.
+    let plain = f.places.is_none()
+        && f.exponent.is_none()
+        && matches!(f.conv, SciConv::Auto | SciConv::General);
+    if s == 0.0 && plain && v.is_finite() {
+        let text = shown_float(to_places(v, style), false, group(style));
+        return localised(padded_to(f, String::new(), text, String::new()), style);
+    }
     localised(format_uncertain(v, s, f, group(style)), style)
 }
 
@@ -1998,35 +2016,32 @@ pub fn format_exact(v: &Value, quoted: bool, style: &Style) -> String {
     format_value(v, quoted, style, true)
 }
 
-/// A `Float` rounded to the places `style` shows it to, so that noise past
-/// them is gone: `6.1e-17` is `0` at fifteen. Also whether that changed it by
-/// more than the last place of a float, in which case it is shown marked with
-/// [`MORE`], as a number with more digits than are shown is. A number with
-/// fewer digits than that before its point has no more than a float holds,
-/// and is left as it is.
-fn to_places(f: f64, style: &Style) -> (f64, bool) {
+/// A `Float` rounded to the places `style` shows it to, so that the noise of
+/// its arithmetic is gone: `6.1e-17` is `0` at fifteen, and `110.00000000000001`
+/// is `110`. That is not marked with [`MORE`]: the digits are past what a float
+/// holds, and `=~=` is the way to compare them. A number with fewer digits than
+/// that before its point has no more than a float holds, and is left as it is.
+fn to_places(f: f64, style: &Style) -> f64 {
     let Some(places) = style.float_places else {
-        return (f, false);
+        return f;
     };
     // Past 1e15 a float has no digits left to round off.
     if !f.is_finite() || f.abs() >= 1e15 {
-        return (f, false);
+        return f;
     }
+    // A float holds fifteen significant digits, so a larger number keeps
+    // fewer places.
+    let places = if f == 0.0 {
+        places
+    } else {
+        let magnitude = f.abs().log10().floor() as i64;
+        places.min((14 - magnitude).max(0) as u32)
+    };
     // Rounded as a decimal, which is exact, rather than by arithmetic, whose
     // own rounding would change numbers such as 4.4.
     let rounded: f64 = format!("{f:.*}", places as usize).parse().unwrap_or(f);
     // A zero keeps no sign: `-1e-17` is shown as `0`.
-    let rounded = if rounded == 0.0 { 0.0 } else { rounded };
-    (rounded, rounded != f)
-}
-
-/// A shown number with [`MORE`] after it, unless it has one already.
-fn marked(text: String, more: bool) -> String {
-    if more && !text.ends_with(MORE) {
-        format!("{text}{MORE}")
-    } else {
-        text
-    }
+    if rounded == 0.0 { 0.0 } else { rounded }
 }
 
 /// What a number shown in `style` groups its digits by, until it is shown.
@@ -2098,10 +2113,10 @@ pub(crate) fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) 
         Value::Percent(r) if exact => format_percent(r, true),
         Value::Percent(r) => localised(shown_percent(r, false, group(style)), style),
         Value::Float(f) if exact => format_float(*f, true),
-        Value::Float(f) => {
-            let (f, more) = to_places(*f, style);
-            marked(localised(shown_float(f, false, group(style)), style), more)
-        }
+        Value::Float(f) => localised(
+            shown_float(to_places(*f, style), false, group(style)),
+            style,
+        ),
         // In full, a file writes both parts: `10.5 ± 0.3`.
         Value::Scientific(v, s) if exact => {
             format!("{} ± {}", format_float(*v, true), format_float(*s, true))
@@ -2110,11 +2125,8 @@ pub(crate) fn format_value(v: &Value, quoted: bool, style: &Style, exact: bool) 
         Value::Quantity(q) => crate::quantity::format(q, &SciFormat::default(), style, exact),
         Value::Complex(re, im) if exact => format_complex(*re, *im, true, None),
         Value::Complex(re, im) => {
-            let ((re, more_re), (im, more_im)) = (to_places(*re, style), to_places(*im, style));
-            marked(
-                localised(format_complex(re, im, false, group(style)), style),
-                more_re || more_im,
-            )
+            let (re, im) = (to_places(*re, style), to_places(*im, style));
+            localised(format_complex(re, im, false, group(style)), style)
         }
         Value::String(s, _) if quoted => omasheet_omx::lexer::quoted(s),
         Value::String(s, _) => s.to_string(),
@@ -2280,7 +2292,7 @@ mod tests {
         // In full it is the fraction itself, which is how a file writes one.
         assert_eq!(format_exact(&frac(-11, 4), false, &Style::ISO), "-11/4");
         // One with no fraction of a small enough denominator is a decimal.
-        assert_eq!(shown(1, 10_001), "0.00009999000099990000·");
+        assert_eq!(shown(1, 10_001), "0.0001000·");
         // Two fractions give a fraction; a fraction with a decimal, a decimal.
         let sum = arith(BinOp::Add, &frac(1, 3), &frac(1, 6)).expect("adds");
         assert_eq!(format_scalar(&sum, false), "1/2");
@@ -2354,7 +2366,7 @@ mod tests {
         let shown = |v: Value| format_styled(&v, false, &de);
         assert_eq!(shown(Value::Decimal(rat(123_455, 10))), "12.345,5");
         assert_eq!(shown(Value::Decimal(rat(1, 8))), "0,125");
-        assert_eq!(shown(Value::Float(1.5e-20)), "0·");
+        assert_eq!(shown(Value::Float(1.5e-20)), "0");
         let full = |v: Value| format_styled(&v, false, &de.with_float_places(None));
         assert_eq!(full(Value::Float(1.5e-20)), "1,5e-20");
         assert_eq!(shown(Value::Percent(rat(5, 12))), "41,67%");
@@ -2438,7 +2450,7 @@ mod tests {
         assert_eq!(complex(1.5, -2.0), "1.5-2i");
         assert_eq!(complex(1e20, 1e-7), "1e+20+0.0000001i");
         // Past the places a Float is shown to, a part is nought.
-        assert_eq!(complex(1e20, 1e-20), "1e+20+0i·");
+        assert_eq!(complex(1e20, 1e-20), "1e+20+0i");
         assert_eq!(
             format_styled(
                 &Value::Complex(1e20, 1e-20),
@@ -2447,12 +2459,16 @@ mod tests {
             ),
             "1e+20+1e-20i"
         );
-        // ... and marked, as a number with digits not shown is.
-        assert_eq!(format_scalar(&Value::Float(6.1e-17), false), "0·");
-        assert_eq!(format_scalar(&Value::Float(-6.1e-17), false), "0·");
+        // ... and not marked: it is noise, not digits that were there.
+        assert_eq!(format_scalar(&Value::Float(6.1e-17), false), "0");
+        assert_eq!(format_scalar(&Value::Float(-6.1e-17), false), "0");
+        assert_eq!(
+            format_scalar(&Value::Float(110.00000000000001), false),
+            "110"
+        );
         assert_eq!(format_scalar(&Value::Float(0.0), false), "0");
         assert_eq!(format_scalar(&Value::Float(4.4), false), "4.4");
-        assert_eq!(format_scalar(&Value::Float(0.1 + 0.2), false), "0.3·");
+        assert_eq!(format_scalar(&Value::Float(0.1 + 0.2), false), "0.3");
         assert_eq!(format_scalar(&Value::Float(0.3), false), "0.3");
         assert_eq!(complex(0.0, f64::INFINITY), "0+Inf\\i");
         assert_eq!(complex(1.0 / 3.0, 1.0), "0.333+1i·");
@@ -2472,7 +2488,7 @@ mod tests {
         // A part nearer zero than the places a Float is shown to is nought.
         assert_eq!(
             format_scalar(&Value::Complex(1.2246467991473532e-16, 2.0), false),
-            "0+2i·"
+            "0+2i"
         );
         assert_eq!(
             format_styled(
