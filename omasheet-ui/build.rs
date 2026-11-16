@@ -3,6 +3,13 @@
 use cxx_qt_build::{CxxQtBuilder, QmlModule};
 
 fn main() {
+    // The icon the Windows executable carries, which the taskbar, the title
+    // bar and the Start menu shortcut all show.
+    #[cfg(windows)]
+    embed_resource::compile("omasheet.rc", embed_resource::NONE)
+        .manifest_required()
+        .expect("could not embed the icon");
+
     let msvc = std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|env| env == "msvc");
     // SAFETY: the closure only adds a compiler flag.
     unsafe {

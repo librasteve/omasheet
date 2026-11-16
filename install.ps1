@@ -60,12 +60,14 @@ $Link = $Shell.CreateShortcut((Join-Path $Menu 'Omasheet.lnk'))
 $Link.TargetPath = $Exe
 $Link.WorkingDirectory = $Dest
 $Link.Description = 'Text-native spreadsheet'
+$Link.IconLocation = "$Exe,0"
 $Link.Save()
 
 # .omx opens with Omasheet (per user, so nothing here needs administrator).
 $Class = 'HKCU:\Software\Classes\Omasheet.omx'
 New-Item -Force "$Class\shell\open\command" -Value "`"$Exe`" `"%1`"" | Out-Null
 New-Item -Force $Class -Value 'Omasheet file' | Out-Null
+New-Item -Force "$Class\DefaultIcon" -Value "$Exe,0" | Out-Null
 New-Item -Force 'HKCU:\Software\Classes\.omx' -Value 'Omasheet.omx' | Out-Null
 
 # Programs and Features lists it, and removes it.
@@ -75,6 +77,7 @@ New-Item -Force $Uninstall | Out-Null
 Set-ItemProperty $Uninstall DisplayName 'Omasheet'
 Set-ItemProperty $Uninstall DisplayVersion "$Version"
 Set-ItemProperty $Uninstall Publisher 'Stephen Roe'
+Set-ItemProperty $Uninstall DisplayIcon "$Exe,0"
 Set-ItemProperty $Uninstall InstallLocation $Dest
 Set-ItemProperty $Uninstall UninstallString "powershell -NoProfile -ExecutionPolicy Bypass -File `"$Dest\uninstall.ps1`""
 

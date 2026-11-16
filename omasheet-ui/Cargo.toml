@@ -23,3 +23,6 @@ notify = { version = "8", default-features = false, features = ["macos_fsevent"]
 
 [build-dependencies]
 cxx-qt-build = { version = "0.10", features = ["link_qt_object_files"] }
+
+[target."cfg(windows)".build-dependencies]
+embed-resource = "3"

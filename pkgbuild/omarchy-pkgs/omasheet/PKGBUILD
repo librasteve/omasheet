@@ -4,7 +4,7 @@
 # where ../PKGBUILD builds the checkout it is in. Keep the two alike.
 
 pkgname=omasheet
-pkgver=0.1.11
+pkgver=0.1.12
 pkgrel=1
 pkgdesc='Text-native spreadsheet: plain-text .omx files, with a Qt Quick app'
 arch=('x86_64' 'aarch64')
