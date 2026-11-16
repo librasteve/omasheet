@@ -1,6 +1,6 @@
 [package]
 name = "siquant"
-version = "0.1.2"
+version = "0.1.4"
 edition = "2024"
 license = "MIT"
 description = "SI units, prefixes and quantities with uncertainty, defined by YAML resource files."

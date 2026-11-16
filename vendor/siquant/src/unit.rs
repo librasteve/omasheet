@@ -183,13 +183,14 @@ impl Unit {
                 right: to.dims,
             });
         }
-        // The same unit is the same number, with no rounding to 15 digits.
+        // The same unit is the same number, with no arithmetic on it.
         if self == to {
             return Ok(value);
         }
-        Ok(tidy(
-            (value + self.offset) * self.factor / to.factor - to.offset,
-        ))
+        // Plain `f64` arithmetic: a quantity is a measurement, not an exact
+        // number, so `2g` in `mg` may be `2000.0000000000002`. It is shown to
+        // a few places and compared with `=~=`.
+        Ok((value + self.offset) * self.factor / to.factor - to.offset)
     }
 
     /// How many `to` units one of this unit's size is, for a spread.
@@ -203,22 +204,7 @@ impl Unit {
         if self == to {
             return Ok(1.0);
         }
-        Ok(tidy(self.factor / to.factor))
-    }
-}
-
-/// A converted number to the 15 significant digits a float holds for sure,
-/// so that `2g` in `mg` is `2000` and not `2000.0000000000002`. It is done
-/// only where that moves the number by no more than a few of the last places,
-/// which is the noise of the sum: a number that is not near a 15-digit one,
-/// such as `90°` in radians, keeps all its digits.
-fn tidy(x: f64) -> f64 {
-    if x == 0.0 || !x.is_finite() {
-        return x;
-    }
-    match format!("{x:.14e}").parse::<f64>() {
-        Ok(r) if (r - x).abs() <= 4.0 * f64::EPSILON * x.abs() => r,
-        _ => x,
+        Ok(self.factor / to.factor)
     }
 }
 
