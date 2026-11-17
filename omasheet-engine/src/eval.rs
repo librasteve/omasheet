@@ -2738,6 +2738,19 @@ impl<'p> Engine<'p> {
             }
             return Ok((firsts(&groups), groups));
         }
+        let groups = self.plain_groups(view, keys, span)?;
+        Ok((firsts(&groups), groups))
+    }
+
+    /// The rows of `view` in groups by the key columns `keys`, each group's
+    /// rows in the order they came in, the groups in the order a sort by the
+    /// keys puts them.
+    fn plain_groups(
+        &self,
+        view: &crate::value::View,
+        keys: &[usize],
+        span: Span,
+    ) -> Result<Groups, Fail> {
         let mut cells = Vec::with_capacity(view.rows.len());
         for &r in view.rows.iter() {
             let mut row = Vec::with_capacity(keys.len());
@@ -2764,7 +2777,7 @@ impl<'p> Engine<'p> {
         if !current.is_empty() {
             groups.push(Rc::new(current));
         }
-        Ok((firsts(&groups), groups))
+        Ok(groups)
     }
 
     /// The pairs of rows of `left` and of the sheet `join` joins it to whose
@@ -3095,6 +3108,65 @@ impl<'p> Engine<'p> {
                     sheet: t,
                     rows,
                     cols: self.all_cols[t].clone(),
+                }))
+            }
+            // `apply` of a function that gives rows of the sheet it groups:
+            // each group's rows, in the order of the groups, are the rows of
+            // the sheet, read through the key columns and the function's own.
+            Ir::GroupApply {
+                base,
+                keys,
+                body,
+                cols,
+            } => {
+                let Value::Sheet(view) = self.eval(base, fr)? else {
+                    return Err(Fail::Poison);
+                };
+                let groups = self.plain_groups(&view, keys, span)?;
+                let wanted = &cols[keys.len()..];
+                let mut rows: Vec<usize> = Vec::new();
+                for g in groups {
+                    let label = keys
+                        .iter()
+                        .map(|&c| {
+                            let name = &self.prog.sheets[view.sheet].cols[c].name;
+                            let shown = self
+                                .cell(view.sheet, c, g[0])
+                                .map(|v| self.show(&v, true))
+                                .unwrap_or_default();
+                            format!("{name} = {shown}")
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.grouping.borrow_mut().push((view.sheet, g.clone()));
+                    let given = self.eval(body, &mut Vec::new());
+                    self.grouping.borrow_mut().pop();
+                    let say = |why: String| {
+                        self.diags.borrow_mut().push(Diagnostic::new(
+                            body.span,
+                            format!("in the group {label}: {why}"),
+                        ));
+                    };
+                    match given {
+                        Ok(Value::Sheet(got)) if got.sheet == view.sheet && *got.cols == *wanted => {
+                            rows.extend(got.rows.iter().copied());
+                        }
+                        Ok(Value::Sheet(_)) => say(
+                            "the function gave a sheet with other columns than for the other groups"
+                                .to_string(),
+                        ),
+                        Ok(other) => say(format!(
+                            "the function gave {}, not rows of the sheet",
+                            other.kind()
+                        )),
+                        Err(Fail::Diag(d)) => say(d.message),
+                        Err(Fail::Poison) => {}
+                    }
+                }
+                Ok(Value::Sheet(View {
+                    sheet: view.sheet,
+                    rows: Rc::new(rows),
+                    cols: Rc::new(cols.clone()),
                 }))
             }
             Ir::RowIndex { depth } => {

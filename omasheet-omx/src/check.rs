@@ -1653,6 +1653,7 @@ impl<'a> Checker<'a> {
             );
             return (Node::error(span), Ty::Any);
         }
+        let base_node = node.clone();
         let mut names: Vec<(String, Span)> = Vec::new();
         let mut key_cols = Vec::new();
         for k in keys {
@@ -1688,7 +1689,7 @@ impl<'a> Checker<'a> {
             };
             // `apply` calls a function of one sheet on each group's rows;
             // `agg` works an aggregate out over them.
-            let (node, ty, derived) = if apply {
+            let (mut node, ty, derived) = if apply {
                 let ExprKind::Name(fname) = &e.kind else {
                     self.err_help(
                         e.span,
@@ -1739,13 +1740,71 @@ impl<'a> Checker<'a> {
                 Ty::Any => S::Any,
                 // The mistake a reader makes first: a column where its
                 // aggregate was meant.
-                Ty::Vector(..) | Ty::Sheet(_) if apply => {
-                    self.err_help(
-                        e.span,
-                        "`apply` of a function that gives a column or a sheet is not built yet",
-                        "for now the function gives one value for each group",
+                // A function that gives rows of the sheet it is called on
+                // makes those rows, with the keys read through the source.
+                Ty::Sheet(rows) if apply => {
+                    if rows.sheet != shape.sheet {
+                        self.err_help(
+                            e.span,
+                            "`apply` of a function that gives a sheet needs rows of the sheet it groups",
+                            "end the function with `select`, `sort`, `filter` or `head` of its argument",
+                        );
+                        return (Node::error(span), Ty::Any);
+                    }
+                    for &c in rows.cols.iter() {
+                        if let Some((clash, _)) = names
+                            .iter()
+                            .find(|(n, _)| *n == self.sheets[shape.sheet].cols[c].name)
+                        {
+                            self.err_help(
+                                e.span,
+                                format!(
+                                    "the function gives a column `{clash}`, which is also a key"
+                                ),
+                                "leave it out of the function's sheet, for example with `select`",
+                            );
+                            return (Node::error(span), Ty::Any);
+                        }
+                    }
+                    let cols: Vec<usize> =
+                        key_cols.iter().chain(rows.cols.iter()).copied().collect();
+                    for &c in &cols {
+                        let from = &self.sheets[shape.sheet].cols[c];
+                        let (name, from_span) = (from.name.clone(), from.span);
+                        let ty = self.col_type(shape.sheet, c);
+                        self.sheets[t].cols.push(ColInfo {
+                            name,
+                            span: from_span,
+                            declared: None,
+                            src: ColSrc::Done,
+                            from: None,
+                        });
+                        self.col_state[t].push(St::Done(ty));
+                        self.col_out[t].push(Some(ColKind::View(c)));
+                        self.col_deps[t].push(Vec::new());
+                    }
+                    let out = SheetTy {
+                        sheet: shape.sheet,
+                        cols: Rc::new(cols.clone()),
+                        rows: None,
+                        kind: shape.kind,
+                    };
+                    let node = Node::new(
+                        Ir::GroupApply {
+                            base: Box::new(base_node),
+                            keys: key_cols,
+                            body: Box::new(node),
+                            cols,
+                        },
+                        span,
                     );
-                    return (Node::error(span), Ty::Any);
+                    return (node, Ty::Sheet(out));
+                }
+                // A column is one value a group where it has one row, as a
+                // cell's is.
+                Ty::Vector(s, _) if apply => {
+                    node = Node::new(Ir::Single(Box::new(node)), e.span);
+                    s
                 }
                 Ty::Vector(..) => {
                     self.err_help(
@@ -5073,8 +5132,11 @@ impl<'a> Checker<'a> {
                     // Over a column the values are their own key, so a
                     // column name has nothing to name.
                     Ty::Vector(..) | Ty::Any if rest.is_empty() => sorted(Vec::new(), bty),
+                    // What a function's parameter is is not known where it
+                    // is defined; it is checked where it is called.
+                    Ty::Any => fail,
                     other => {
-                        if !rest.is_empty() && matches!(other, Ty::Vector(..) | Ty::Any) {
+                        if !rest.is_empty() && matches!(other, Ty::Vector(..)) {
                             self.err_help(
                                 rest[0].span,
                                 "`sort` over a column takes no column name",

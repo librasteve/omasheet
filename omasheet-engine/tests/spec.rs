@@ -2732,7 +2732,14 @@ sheet Orders
 
 fn Worth(orders) = (orders.Qty * orders.Price).sum()
 fn Biggest(rows) = rows.Qty.max()
+fn Top2(rows) = rows |> sort(Qty, desc) |> head(2) |> select(Qty, Price)
+fn Whole(rows) = rows
+fn Only(rows) = rows.Qty
 
+sheet BestTwo := Orders |> group_by(Region) |> apply(Top2)
+sheet Dearest := RegionWorth |> sort(Worth, desc) |> head(2)
+sheet Smallest := BestTwo |> sort(Price) |> head(2)
+sheet Onlys := Orders |> group_by(Region) |> apply(Only)
 sheet RegionWorth := Orders |> group_by(Region) |> apply(Worth)
 sheet Named := Orders |> group_by(Region) |> apply(Total := Worth)
 ";
@@ -2749,6 +2756,46 @@ fn apply_calls_a_function_on_each_group() {
     assert_eq!(ask(APPLY_ORDERS, "RegionWorth.Worth"), "[100, 32, 13.5]");
     // The same as the aggregate it stands for, in the same order.
     assert_eq!(ask(APPLY_ORDERS, "Named.Total"), "[100, 32, 13.5]");
+}
+
+/// A function that gives rows of the sheet makes a row for each of them, with
+/// the keys of its group, in the order of the groups.
+#[test]
+fn apply_of_a_sheet_makes_the_rows_of_each_group() {
+    let f = APPLY_ORDERS;
+    assert_eq!(
+        ask(f, "BestTwo.Region"),
+        "['East', 'North', 'North', 'South', 'South']"
+    );
+    assert_eq!(ask(f, "BestTwo.Qty"), "[1, 3, 2, 4, 1]");
+    assert_eq!(ask(f, "BestTwo.Price"), "[100, 4, 10, 2, 5.5]");
+    // A column the keys also name is the function's to leave out.
+    let clash = lint_errors(&format!(
+        "{f}\nsheet G := Orders |> group_by(Region) |> apply(Whole)\n"
+    ))
+    .join("\n");
+    assert!(clash.contains("also a key"), "{clash}");
+}
+
+/// What `apply` makes is an ordinary calculated sheet: later stages read it.
+#[test]
+fn what_apply_makes_is_read_by_later_stages() {
+    let f = APPLY_ORDERS;
+    assert_eq!(ask(f, "Dearest.Region"), "['East', 'North']");
+    assert_eq!(ask(f, "Smallest.Region"), "['South', 'North']");
+    assert_eq!(ask(f, "Smallest.Price"), "[2, 4]");
+}
+
+/// A group the function fails on is an error in its own row, and the other
+/// groups are worked out.
+#[test]
+fn apply_fails_a_group_in_its_own_row() {
+    let f = APPLY_ORDERS;
+    // A column of one row is its one value, as a cell's is; a column of two
+    // is an error in that group's row, and East is still worked out.
+    assert_eq!(ask(f, "Onlys[Only; 0]"), "1");
+    let why = calc_err(Some(f), "Onlys[Only; 1]");
+    assert!(why.contains("a cell holds one value"), "{why}");
 }
 
 /// `apply` is refused where it does not go, and a function it cannot call is

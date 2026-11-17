@@ -12,10 +12,10 @@ Forthcoming; follows `add-units`.
 - [x] 1.3 The engine: split into groups in key order, call per group, assemble rows with keys
 
 ## 2. The result
-- [ ] 2.1 One row per group for a value or a vector; prepended keys for a sheet
-- [ ] 2.2 Shape and type checks across groups (D-A4, D-A5), errors naming the group
-- [ ] 2.3 A failing group is an error in its rows only (D-A8)
-- [ ] 2.4 The result is an ordinary calculated sheet: later stages, read-only, exports
+- [x] 2.1 One row per group for a value or a vector; prepended keys for a sheet
+- [x] 2.2 Shape and type checks across groups (D-A4, D-A5), errors naming the group
+- [x] 2.3 A failing group is an error in its rows only (D-A8)
+- [x] 2.4 The result is an ordinary calculated sheet: later stages, read-only, exports
 
 ## 3. Checks
 - [ ] 3.1 Tests: a value, a vector, a sheet, an empty group, an empty key, a failing group, the order
