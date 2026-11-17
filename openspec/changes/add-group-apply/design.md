@@ -4,7 +4,7 @@ Forthcoming. D numbers are assigned when the change starts; `D-A#` until then.
 
 | # | Status | Decision | Notes |
 |---|--------|----------|-------|
-| D-A1 | Proposed | The stage is spelled `apply`, as the owner asked, though the current Polars name is `map_groups` (`apply` is its name before 0.19) | An exception to N1/N2 of `polars-function-registry`, to be recorded in that change's exceptions list (N9) with this reason: `apply` is the name pandas, Grist and older Polars share, and it reads as what it does. A `map_groups` alias is not added: one name |
+| D-A1 | Settled (0.1) | The stage is spelled `apply`, as the owner asked, though the current Polars name is `map_groups` (`apply` is its name before 0.19) | An exception to N1/N2 of `polars-function-registry`, to be recorded in that change's exceptions list (N9) with this reason: `apply` is the name pandas, Grist and older Polars share, and it reads as what it does. A `map_groups` alias is not added: one name |
 | D-A2 | Proposed | The function is called once per group, with the group as a sheet whose columns are the source's, key columns included | So `Worth(orders)` of the existing example works unchanged. Dropping the keys would mean a function could not use them, and passing them separately would need a second parameter |
 | D-A3 | Proposed | A function that gives a single value or a vector makes one row per group; one that gives a sheet makes its rows, keys prepended | The two Polars cases. The shape is known from the function's result type, which the checker works out once, not per group |
 | D-A4 | Proposed | Every group must give the same shape: a function that gives a sheet for one group must give a sheet with the same columns for the others, or it is a cell-level error naming the group | Polars requires one schema. A group with no rows is allowed |
@@ -26,11 +26,11 @@ sheet BestThree   := Sales  |> group_by(Region) |> apply(Top3)
 
 `RegionWorth` has `Region` and `Worth`. `BestThree` has `Region` and the columns of `Sales`, the best three rows of each region.
 
-## Open
+## Open items, settled (0.2)
 
-- Whether the single-value column takes the function's name or `Name := apply(Fn)` is the only way to name it (as an aggregate of anything else must be named); recommended: it takes the function's name, and `Name := apply(Fn)` renames.
-- Behaviour when the function returns a sheet with a column the keys also name: the key wins and the clash is an error, to be confirmed in the spec.
-- Whether a later change opens `apply` to a `fn` with extra arguments by partial application.
+- **The column of a single value takes the function's name**, and `Name := apply(Fn)` renames it.
+- **A sheet result with a column the keys also name:** the key wins, and the clash is an error naming the column, to be written into the spec.
+- **`apply` of a `fn` with extra arguments by partial application is left out of this change.** A later change may open it.
 
 ## Risks
 

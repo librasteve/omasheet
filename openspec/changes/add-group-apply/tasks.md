@@ -3,8 +3,8 @@
 Forthcoming; follows `add-units`.
 
 ## 0. Settle
-- [ ] 0.1 D-A1 against the registry's naming rules; record the exception there
-- [ ] 0.2 The open items in `design.md`
+- [x] 0.1 D-A1 against the registry's naming rules; record the exception there
+- [x] 0.2 The open items in `design.md`
 
 ## 1. The stage
 - [ ] 1.1 Parse `apply(Fn)` after `group_by`; refuse it elsewhere with an error saying where it goes
