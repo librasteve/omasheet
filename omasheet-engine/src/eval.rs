@@ -1907,7 +1907,10 @@ impl<'p> Engine<'p> {
         }
         // A column of quantities is numbers in a dataframe, and the unit is
         // the engine's own; a plan over it would work on the numbers alone.
-        if col.ty.is_quantity() && matches!(col.kind, ColKind::Frame) {
+        if col.ty.is_quantity()
+            && matches!(col.kind, ColKind::Frame)
+            && self.quantity_unit(t, c).is_none()
+        {
             return None;
         }
         let (Some((zone, _)), false) = (&col.zone, matches!(col.kind, ColKind::Frame)) else {
@@ -1933,7 +1936,9 @@ impl<'p> Engine<'p> {
         let S::Quantity(id) = col.ty else {
             return None;
         };
-        if !col.declared || id.named().is_none() || matches!(col.kind, ColKind::Frame) {
+        // A table's own column has the kind and the unit its file gives it.
+        let own = matches!(col.kind, ColKind::Frame);
+        if !(col.declared || own) || id.named().is_none() {
             return None;
         }
         match &col.format {

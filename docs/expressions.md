@@ -443,6 +443,19 @@ sheet Best     := ByRegion |> sort(Revenue_sum, desc) |> head(1)
   matches nothing, and a name both sheets have takes `_right` on the other
   sheet's column. The rows come in the left sheet's order, then the other's
 
+## Calculated in Polars
+
+A formula column over a table big enough to be worth it is calculated by Polars, in one step over the whole column, when every part of the formula is one it can do. The answer is the one the engine would give a row at a time, to the digit; a formula with any part Polars cannot do is the engine's, whole. The type of each column a formula reads is the one the checker has for it, written in the schema or worked out from all of the column's cells, so a column with no declared type is no worse off.
+
+What is calculated in Polars:
+
+- whole numbers, floats and decimals: `+ - *`, a quotient to as many places as Polars has (21), and a small whole power;
+- a percentage in the formula, `Revenue * 5%` or `Profit * TaxRate` with `const TaxRate = 20%`, and a `Percent` column, as the `Decimal` each is. The result is a percentage where both sides are, and the plain number for any other mix;
+- a quantity, in a column that declares a named kind (`Length`, `Mass`, `Area`, ...) or in a file's own column of one: `+ - * /` with another quantity or a number. A sum converts its right side to the left's unit, a product or a quotient is in the product or quotient of the units, and the answer is held in the unit of the column it is written into, so `Area := Width * Height` is in `m^2` whichever units the lengths were written in;
+- a `Scientific`, and a quantity with an uncertainty: `+ - * /` with a number or another, the uncertainty carried to first order as the engine does. It is worked out as `sqrt(a² + b²)` where the engine has `hypot`, so it may differ from the engine's in the last place.
+
+What is always the engine's: a `Fraction`; a column of mixed types; a quantity in an offset unit (`°C`) or a scale (`k.`), or in a column with no declared kind; a quantity operation whose answer has no dimension, as `Width / Height` has; a sum of two dimensions, which is an error there; a divisor of nought, which is an error there; `%` and `**` of a `Scientific`; and a `Complex`. The answer is the same either way, and only the time differs.
+
 ## Down a column
 
 A window function gives each row a value read from the rows around it. It

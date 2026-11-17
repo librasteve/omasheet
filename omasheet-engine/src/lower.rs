@@ -166,11 +166,17 @@ impl<'a> Cx<'a> {
         }
         drop(taken);
         if let Some(unit) = unit {
-            if !is_uncertain(&dtype) {
-                return None;
-            }
+            // The file's own column is the numbers alone, or a struct of the
+            // numbers and their uncertainties.
+            let expr = match &dtype {
+                d if is_uncertain(d) => col(name),
+                DataType::Float64 => {
+                    as_struct(vec![col(name).alias("value"), lit(0.0).alias("sigma")])
+                }
+                _ => return None,
+            };
             return Some(Out {
-                expr: col(name),
+                expr,
                 dtype: quantity_dtype(),
                 unit: Some(unit),
             });

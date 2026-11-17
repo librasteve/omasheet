@@ -24,5 +24,5 @@ Forthcoming; follows `polars-function-registry`.
 - [x] 3.4 Tests: every operator, an empty column, a null, a unit conversion, an uncertainty through a chain; the two paths agree
 
 ## 4. Checks
-- [ ] 4.1 `docs/expressions.md`: which columns are calculated in Polars
-- [ ] 4.2 fmt, clippy -D warnings, workspace tests
+- [x] 4.1 `docs/expressions.md`: which columns are calculated in Polars
+- [x] 4.2 fmt, clippy -D warnings, workspace tests
