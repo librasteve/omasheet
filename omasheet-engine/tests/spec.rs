@@ -2590,6 +2590,46 @@ fn a_percentage_constant_in_the_budget_is_lowered() {
     assert_eq!(tax, Some(Attempt::Lowered));
 }
 
+/// `+ - * /` of values with an uncertainty are two `Float64` expressions, the
+/// value and the sigma (widen-polars-lowering D-W5). The two paths agree on
+/// the value to the bit, and on the sigma to the digit shown here.
+#[test]
+fn an_uncertain_operation_is_lowered() {
+    let file = "\
+sheet T
+
+V : Scientific
+S : Scientific
+
+| V        | S       | N | Sum | Diff | Prod | Quot | Scale | Price | Tiny | Whole | Mix | Chain |
+| -------- | ------- | - | --- | ---- | ---- | ---- | ----- | ----- | ---- | ----- | --- | ----- |
+| 10 ± 0.1 | 20.5(3) | 4 | *   | *    | *    | *    | *     | *     | *    | *     | *   | *     |
+| 7.5(2)   | 0.5(1)  | 2 | *   | *    | *    | *    | *     | *     | *    | *     | *   | *     |
+| 3 ± 0    | 2 ± 0.5 | 5 | *   | *    | *    | *    | *     | *     | *    | *     | *   | *     |
+| 0.1(1)   | 19.99(1)| 7 | *   | *    | *    | *    | *     | *     | *    | *     | *   | *     |
+
+Sum   := V + S
+Diff  := V - S
+Prod  := V * S
+Quot  := V / S
+Scale := V * 1.5
+Price := V * 19.99
+Tiny  := V + 0.1
+Whole := N * V
+Mix   := V / N
+Chain := (V + S) * V / S
+";
+    let (lowered, shown) = calculated(file, Lowering::Always);
+    let (_, engine) = calculated(file, Lowering::Never);
+    assert_eq!(shown, engine);
+    for name in [
+        "Sum", "Diff", "Prod", "Quot", "Scale", "Price", "Tiny", "Whole", "Mix", "Chain",
+    ] {
+        let attempt = lowered.iter().find(|(col, _)| col == name).map(|(_, a)| *a);
+        assert_eq!(attempt, Some(Attempt::Lowered), "{name}");
+    }
+}
+
 /// A column of a percentage and a bare number is a `Decimal` (`S::wider`), so
 /// it lowers, and its numbers are the engine's.
 #[test]
@@ -3720,8 +3760,9 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // columns lowering forced calculates in one step, and 8.3 is where that
     // number is read. `windows.omx` adds five: the window functions of whole
     // numbers, which Polars runs down the column, and a percentage in a
-    // formula adds two (widen-polars-lowering D-W3).
-    assert_eq!(taken, 77, "the columns taken at once");
+    // formula adds two (widen-polars-lowering D-W3), and an uncertain
+    // operation five more (D-W5).
+    assert_eq!(taken, 82, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read

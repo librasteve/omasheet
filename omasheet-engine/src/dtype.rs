@@ -465,8 +465,30 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
         // Polars has no arithmetic for a struct, so a `Complex` column is
         // the engine's to calculate and is never handed over (D200).
         S::Complex => return None,
-        // Nor for a `Scientific`, nor for a quantity.
-        S::Scientific | S::Quantity(_) => return None,
+        // A `Scientific` is a struct of `value` and `sigma`, which is what
+        // Parquet holds and what a lowered `Scientific` operation is read
+        // from (widen-polars-lowering D-W5). An exact number among the cells
+        // has an uncertainty of nought, as the writer reads it. A quantity
+        // has no dtype of its own yet.
+        S::Scientific => {
+            let part = |pick: fn((f64, f64)) -> f64, field: &str| -> Option<Series> {
+                let parts: Option<Vec<Option<f64>>> = values
+                    .iter()
+                    .map(|v| match v {
+                        Value::Scientific(x, s) => Some(Some(pick((*x, *s)))),
+                        Value::Float(f) => Some(Some(pick((*f, 0.0)))),
+                        v if null(v) => Some(None),
+                        other => exact(other).map(|d| Some(pick((d.to_f64(), 0.0)))),
+                    })
+                    .collect();
+                Some(Series::new(field.into(), parts?))
+            };
+            let (value, sigma) = (part(|p| p.0, "value")?, part(|p| p.1, "sigma")?);
+            StructChunked::from_series(name, values.len(), [value, sigma].iter())
+                .ok()?
+                .into_series()
+        }
+        S::Quantity(_) => return None,
         // A column of anything: there is no one dtype to hold it as.
         S::Any => return None,
     };

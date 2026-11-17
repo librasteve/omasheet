@@ -49,7 +49,7 @@
 //!   are Polars' but behind a feature this build does not enable.
 
 use crate::Value;
-use crate::dtype::{decimal, type_of};
+use crate::dtype::{decimal, is_uncertain, type_of, uncertain_dtype};
 use omasheet_omx::ast::{BinOp, Lit, UnOp};
 use omasheet_omx::decimal::MAX_PRECISION;
 use omasheet_omx::ir::{Func, Ir, Node, Spec, Ties, Win};
@@ -903,7 +903,68 @@ fn element(l: &Lit, dtype: &DataType) -> Option<AnyValue<'static>> {
     })
 }
 
+/// The value and the uncertainty of an operand of a `Scientific` operation:
+/// the two fields of one, or a whole number, a decimal or a `Float` with an
+/// uncertainty of nought. A decimal is the `Float` the engine makes of it,
+/// `unscaled / 10^scale`, which the tests check is the same to the bit.
+fn uncertain_parts(o: &Out) -> Option<(Expr, Expr)> {
+    match &o.dtype {
+        d if is_uncertain(d) => Some((
+            o.expr.clone().struct_().field_by_name("value"),
+            o.expr.clone().struct_().field_by_name("sigma"),
+        )),
+        DataType::Int64 | DataType::Decimal(..) => {
+            Some((o.expr.clone().cast(DataType::Float64), lit(0.0)))
+        }
+        DataType::Float64 => Some((o.expr.clone(), lit(0.0))),
+        _ => None,
+    }
+}
+
+/// `+ - * /` of values that carry an uncertainty, to first order and with the
+/// two independent, as `value::uncertain_arith` does: a value expression and
+/// a sigma expression, both `Float64`, over the `value` and `sigma` fields.
+/// The sigma is `sqrt(a² + b²)` where the engine has `hypot`, so it may differ
+/// in the last place; the value is the same to the bit.
+fn scientific(op: BinOp, l: Out, r: Out, cx: &Cx) -> Option<Out> {
+    let ((x, sx), (y, sy)) = (uncertain_parts(&l)?, uncertain_parts(&r)?);
+    // A term that is zero because its uncertainty is, whatever the slope.
+    let term = |slope: Expr, s: Expr| {
+        when(s.clone().eq(lit(0.0)))
+            .then(lit(0.0))
+            .otherwise(slope * s)
+    };
+    let hypot = |a: Expr, b: Expr| (a.clone() * a + b.clone() * b).sqrt();
+    let (value, sigma) = match op {
+        BinOp::Add => (x + y, hypot(sx, sy)),
+        BinOp::Sub => (x - y, hypot(sx, sy)),
+        BinOp::Mul => (x.clone() * y.clone(), hypot(term(y, sx), term(x, sy))),
+        BinOp::Div => {
+            // A zero divisor is the engine's to answer.
+            cx.risks.borrow_mut().push(y.clone().eq(lit(0.0)));
+            (
+                x.clone() / y.clone(),
+                hypot(
+                    term(lit(1.0) / y.clone(), sx),
+                    term(-x.clone() / (y.clone() * y), sy),
+                ),
+            )
+        }
+        _ => return None,
+    };
+    let dtype = uncertain_dtype();
+    Out::new(
+        as_struct(vec![value.alias("value"), sigma.alias("sigma")]),
+        dtype,
+    )
+}
+
 fn binary(op: BinOp, l: Out, r: Out, cx: &Cx) -> Option<Out> {
+    // A value with an uncertainty is two numbers, each with a formula
+    // (widen-polars-lowering D-W5).
+    if is_uncertain(&l.dtype) || is_uncertain(&r.dtype) {
+        return scientific(op, l, r, cx);
+    }
     match op {
         BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => arith(op, l, r, cx),
         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => compare(op, l, r),
