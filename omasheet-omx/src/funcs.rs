@@ -427,6 +427,14 @@ pub const FUNCTIONS: &[FuncDoc] = &[
          Revenue.sum() makes the column Revenue_sum, and Name := names it. The groups are in the \
          order of their keys.",
     ),
+    doc(
+        PIPE,
+        "apply",
+        "Orders |> group_by(Region) |> apply(Worth)",
+        "A row for each group: the key columns, then what a function gives for the group's rows, \
+         which it takes as a sheet. The column is named for the function, and Name := apply(Fn) \
+         names it. The groups are in the order of their keys.",
+    ),
     doc(MATH, "is_null", ".is_null()", "Whether a cell is empty."),
     doc(
         MATH,

@@ -2719,6 +2719,53 @@ Twice := Free * 2
     }
 }
 
+const APPLY_ORDERS: &str = "\
+sheet Orders
+
+| Region | Qty | Price |
+| ------ | --- | ----- |
+| North  | 2   | 10    |
+| South  | 1   | 5.5   |
+| North  | 3   | 4     |
+| South  | 4   | 2     |
+| East   | 1   | 100   |
+
+fn Worth(orders) = (orders.Qty * orders.Price).sum()
+fn Biggest(rows) = rows.Qty.max()
+
+sheet RegionWorth := Orders |> group_by(Region) |> apply(Worth)
+sheet Named := Orders |> group_by(Region) |> apply(Total := Worth)
+";
+
+/// `apply(Fn)` after `group_by` calls the function once on the rows of each
+/// group, as a sheet, and a row for each group has the keys and what the
+/// function gave (add-group-apply).
+#[test]
+fn apply_calls_a_function_on_each_group() {
+    assert_eq!(
+        ask(APPLY_ORDERS, "RegionWorth.Region"),
+        "['East', 'North', 'South']"
+    );
+    assert_eq!(ask(APPLY_ORDERS, "RegionWorth.Worth"), "[100, 32, 13.5]");
+    // The same as the aggregate it stands for, in the same order.
+    assert_eq!(ask(APPLY_ORDERS, "Named.Total"), "[100, 32, 13.5]");
+}
+
+/// `apply` is refused where it does not go, and a function it cannot call is
+/// said so.
+#[test]
+fn apply_says_where_it_goes_and_what_it_takes() {
+    let errors = |stage: &str| lint_errors(&format!("{APPLY_ORDERS}\n{stage}\n")).join("\n");
+    let elsewhere = errors("sheet G := Orders |> apply(Worth)");
+    assert!(elsewhere.contains("ends a sheet's formula"), "{elsewhere}");
+    let unknown = errors("sheet G := Orders |> group_by(Region) |> apply(Nothing)");
+    assert!(unknown.contains("no `Nothing`"), "{unknown}");
+    let arity = errors("fn Two(a, b) = a\nsheet G := Orders |> group_by(Region) |> apply(Two)");
+    assert!(arity.contains("takes one argument, not 2"), "{arity}");
+    let many = errors("sheet G := Orders |> group_by(Region) |> apply(Worth, Biggest)");
+    assert!(many.contains("one function"), "{many}");
+}
+
 /// A column of a percentage and a bare number is a `Decimal` (`S::wider`), so
 /// it lowers, and its numbers are the engine's.
 #[test]

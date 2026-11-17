@@ -48,6 +48,8 @@ pub enum Ir {
     /// A column of the sheet being grouped, over the rows of the group an
     /// aggregate of `agg` is being worked out for.
     GroupCol(usize),
+    /// The rows of the group `apply` is calling its function on, as a sheet.
+    GroupSheet,
     /// The position of the row `depth` frames out, counting from zero.
     RowIndex {
         depth: usize,

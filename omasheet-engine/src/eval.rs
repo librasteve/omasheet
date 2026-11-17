@@ -3085,6 +3085,18 @@ impl<'p> Engine<'p> {
                 };
                 self.column(t, *col, &rows)
             }
+            // The rows of the group `apply` is calling a function on, as the
+            // sheet they are rows of.
+            Ir::GroupSheet => {
+                let Some((t, rows)) = self.grouping.borrow().last().cloned() else {
+                    return fail(span, "the rows of a group outside `apply`");
+                };
+                Ok(Value::Sheet(View {
+                    sheet: t,
+                    rows,
+                    cols: self.all_cols[t].clone(),
+                }))
+            }
             Ir::RowIndex { depth } => {
                 let (_, r) = fr[fr.len() - 1 - depth];
                 Ok(Value::int(r as i64))

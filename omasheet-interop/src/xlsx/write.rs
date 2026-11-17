@@ -761,7 +761,7 @@ impl Writer<'_> {
             Ir::RowIndex { .. } | Ir::Empty => Err(SEQUENCE),
             // Only an aggregate of `agg` reads a group, and one is never
             // written as a formula.
-            Ir::GroupCol(_) => Err(OTHER_SHEET),
+            Ir::GroupCol(_) | Ir::GroupSheet => Err(OTHER_SHEET),
             Ir::Const(i) => {
                 let apart = Cx {
                     depth: 0,
