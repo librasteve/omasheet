@@ -414,9 +414,7 @@ fn unit_shown(value: &Value, format: Option<&Format>, display: &str) -> Option<S
     let Value::Quantity(q) = value else {
         return None;
     };
-    let shown = display
-        .strip_suffix(crate::value::MORE)
-        .unwrap_or(display);
+    let shown = display.strip_suffix(crate::value::MORE).unwrap_or(display);
     let column = match format {
         Some(Format::Quantity(f)) => f.unit.as_ref().map(|u| u.to_string()),
         _ => None,
