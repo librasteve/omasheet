@@ -13,6 +13,7 @@ Forthcoming. D numbers are assigned when the change starts; `D-A#` until then.
 | D-A7 | Proposed | A function may read the whole file (constants, other sheets, other functions) but not the row it is called from, as every `fn` (format.md) | No change to what a function sees |
 | D-A8 | Proposed | An error inside the function for one group is an error in that group's row(s) and is reported with the group's key, and the other groups are still worked out | Same as a failing cell: it does not stop the sheet |
 | D-A9 | Proposed | `group_by` is a stage that may be followed by `agg` or `apply`, and by nothing else | As now for `agg`: it has no rows of its own |
+| D-A10 | Proposed | A function that gives rows of a sheet other than the one grouped makes a row for each of them, the keys of its group read at the group's first row and the function's columns at the row of the other sheet each pairs with. A group it gives no rows for has no rows | Reuses the pairing a `join` keeps (D85): the keys are `ColKind::View` of the grouped sheet and the function's columns `ColKind::Joined` of the other. Every sheet value is a view of a sheet of the file, so this covers every result a function can give; no stage makes rows from nothing. The clash with a key's name is the same error as for the same sheet (D-A9) |
 
 ## Example
 

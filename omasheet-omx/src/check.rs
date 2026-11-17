@@ -68,6 +68,10 @@ pub struct Sheet {
     /// What a sheet computed by `join` joins the sheet [`Sheet::view`]
     /// gives to (D85).
     pub join: Option<Join>,
+    /// A sheet computed by `apply` of a function that gives rows of another
+    /// sheet: its rows are those of the group they came of, with the row of
+    /// the other sheet each pairs with, as a join's are.
+    pub paired: bool,
 }
 
 /// A join of the sheet a view gives to another: its rows are the pairs of
@@ -339,6 +343,7 @@ struct Checker<'a> {
     view_out: Vec<Option<Node>>,
     group_out: Vec<Option<Vec<usize>>>,
     join_out: Vec<Option<Join>>,
+    paired_out: Vec<bool>,
     view_deps: Vec<Vec<(DepNode, DepKind)>>,
     const_state: Vec<St<Ty>>,
     const_out: Vec<Option<Node>>,
@@ -1007,6 +1012,7 @@ impl<'a> Checker<'a> {
             view_out: Vec::new(),
             group_out: Vec::new(),
             join_out: Vec::new(),
+            paired_out: Vec::new(),
             view_deps: Vec::new(),
             const_state: Vec::new(),
             const_out: Vec::new(),
@@ -1028,6 +1034,7 @@ impl<'a> Checker<'a> {
             ck.view_out.push(None);
             ck.group_out.push(None);
             ck.join_out.push(None);
+            ck.paired_out.push(false);
             ck.view_deps.push(Vec::new());
             ck.sheets.push(SheetInfo {
                 name: t.name.clone(),
@@ -1263,6 +1270,7 @@ impl<'a> Checker<'a> {
             ck.view_out.push(None);
             ck.group_out.push(None);
             ck.join_out.push(None);
+            ck.paired_out.push(false);
             ck.view_deps.push(Vec::new());
             ck.sheets.push(SheetInfo {
                 name: t.name.clone(),
@@ -1743,18 +1751,11 @@ impl<'a> Checker<'a> {
                 // A function that gives rows of the sheet it is called on
                 // makes those rows, with the keys read through the source.
                 Ty::Sheet(rows) if apply => {
-                    if rows.sheet != shape.sheet {
-                        self.err_help(
-                            e.span,
-                            "`apply` of a function that gives a sheet needs rows of the sheet it groups",
-                            "end the function with `select`, `sort`, `filter` or `head` of its argument",
-                        );
-                        return (Node::error(span), Ty::Any);
-                    }
+                    let other = rows.sheet != shape.sheet;
                     for &c in rows.cols.iter() {
                         if let Some((clash, _)) = names
                             .iter()
-                            .find(|(n, _)| *n == self.sheets[shape.sheet].cols[c].name)
+                            .find(|(n, _)| *n == self.sheets[rows.sheet].cols[c].name)
                         {
                             self.err_help(
                                 e.span,
@@ -1768,10 +1769,22 @@ impl<'a> Checker<'a> {
                     }
                     let cols: Vec<usize> =
                         key_cols.iter().chain(rows.cols.iter()).copied().collect();
-                    for &c in &cols {
-                        let from = &self.sheets[shape.sheet].cols[c];
+                    for (at, &c) in cols.iter().enumerate() {
+                        // The keys are the grouped sheet's; the function's
+                        // columns are its own sheet's, read at the row each
+                        // result row pairs with where that is another sheet.
+                        let (from_sheet, kind) = if at < key_cols.len() {
+                            (shape.sheet, ColKind::View(c))
+                        } else if other {
+                            self.deps
+                                .push((DepNode::Col(rows.sheet, c), DepKind::Whole));
+                            (rows.sheet, ColKind::Joined(c))
+                        } else {
+                            (shape.sheet, ColKind::View(c))
+                        };
+                        let from = &self.sheets[from_sheet].cols[c];
                         let (name, from_span) = (from.name.clone(), from.span);
-                        let ty = self.col_type(shape.sheet, c);
+                        let ty = self.col_type(from_sheet, c);
                         self.sheets[t].cols.push(ColInfo {
                             name,
                             span: from_span,
@@ -1780,12 +1793,17 @@ impl<'a> Checker<'a> {
                             from: None,
                         });
                         self.col_state[t].push(St::Done(ty));
-                        self.col_out[t].push(Some(ColKind::View(c)));
+                        self.col_out[t].push(Some(kind));
                         self.col_deps[t].push(Vec::new());
                     }
+                    self.paired_out[t] = other;
                     let out = SheetTy {
                         sheet: shape.sheet,
-                        cols: Rc::new(cols.clone()),
+                        cols: Rc::new(if other {
+                            key_cols.clone()
+                        } else {
+                            cols.clone()
+                        }),
                         rows: None,
                         kind: shape.kind,
                     };
@@ -1795,6 +1813,7 @@ impl<'a> Checker<'a> {
                             keys: key_cols,
                             body: Box::new(node),
                             cols,
+                            other: other.then_some(rows.sheet),
                         },
                         span,
                     );
@@ -6021,6 +6040,7 @@ impl<'a> Checker<'a> {
             let view = self.view_out[t].take();
             let group = self.group_out[t].take();
             let join = self.join_out[t].take();
+            let paired = self.paired_out[t];
             let view_of = match &self.view_state[t] {
                 St::Done(Ty::Sheet(shape)) | St::Busy(Ty::Sheet(shape)) => Some(shape.clone()),
                 _ => None,
@@ -6035,6 +6055,7 @@ impl<'a> Checker<'a> {
                 view_of,
                 group,
                 join,
+                paired,
             });
         }
         let mut consts = Vec::new();

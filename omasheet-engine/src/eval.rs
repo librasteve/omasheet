@@ -218,6 +218,9 @@ pub struct Engine<'p> {
     /// each row of the join pairs with: none, for a left row a left join
     /// kept with nothing to pair it with.
     joined: RefCell<Vec<Option<Paired>>>,
+    /// The rows an `apply` that gave rows of another sheet paired with,
+    /// until the sheet it makes takes them.
+    apply_paired: RefCell<Option<Paired>>,
     /// The partitions of a whole sheet by its key columns, for `*-1 by
     /// Region`: worked out once, so a column of such offsets is not a pass
     /// over the sheet for every cell.
@@ -511,6 +514,7 @@ impl<'p> Engine<'p> {
             groups: RefCell::new(vec![None; prog.sheets.len()]),
             grouping: RefCell::new(Vec::new()),
             joined: RefCell::new(vec![None; prog.sheets.len()]),
+            apply_paired: RefCell::new(None),
             partitions: RefCell::new(HashMap::new()),
             agg_held: RefCell::new(
                 prog.sheets
@@ -2656,6 +2660,11 @@ impl<'p> Engine<'p> {
             },
             (value, _) => value,
         };
+        if self.prog.sheets[t].paired
+            && let Some(paired) = self.apply_paired.borrow_mut().take()
+        {
+            self.joined.borrow_mut()[t] = Some(paired);
+        }
         self.views.borrow_mut()[t] = Slot::Done(value.clone());
         match value {
             Value::Sheet(view) => Ok(view),
@@ -3118,10 +3127,14 @@ impl<'p> Engine<'p> {
                 keys,
                 body,
                 cols,
+                other,
             } => {
                 let Value::Sheet(view) = self.eval(base, fr)? else {
                     return Err(Fail::Poison);
                 };
+                // Rows of another sheet are each paired with the first row
+                // of their group, where the keys are read.
+                let mut paired: Vec<Option<usize>> = Vec::new();
                 let groups = self.plain_groups(&view, keys, span)?;
                 let wanted = &cols[keys.len()..];
                 let mut rows: Vec<usize> = Vec::new();
@@ -3148,8 +3161,15 @@ impl<'p> Engine<'p> {
                         ));
                     };
                     match given {
-                        Ok(Value::Sheet(got)) if got.sheet == view.sheet && *got.cols == *wanted => {
-                            rows.extend(got.rows.iter().copied());
+                        Ok(Value::Sheet(got))
+                            if got.sheet == other.unwrap_or(view.sheet) && *got.cols == *wanted =>
+                        {
+                            if other.is_some() {
+                                rows.extend(std::iter::repeat_n(g[0], got.rows.len()));
+                                paired.extend(got.rows.iter().map(|&r| Some(r)));
+                            } else {
+                                rows.extend(got.rows.iter().copied());
+                            }
                         }
                         Ok(Value::Sheet(_)) => say(
                             "the function gave a sheet with other columns than for the other groups"
@@ -3162,6 +3182,9 @@ impl<'p> Engine<'p> {
                         Err(Fail::Diag(d)) => say(d.message),
                         Err(Fail::Poison) => {}
                     }
+                }
+                if let Some(sheet) = other {
+                    *self.apply_paired.borrow_mut() = Some((*sheet, Rc::new(paired)));
                 }
                 Ok(Value::Sheet(View {
                     sheet: view.sheet,

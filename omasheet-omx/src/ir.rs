@@ -58,6 +58,9 @@ pub enum Ir {
         keys: Vec<usize>,
         body: Box<Node>,
         cols: Vec<usize>,
+        /// The sheet the function gives rows of, where that is not the one
+        /// grouped.
+        other: Option<usize>,
     },
     /// The position of the row `depth` frames out, counting from zero.
     RowIndex {

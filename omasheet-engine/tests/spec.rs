@@ -2730,12 +2730,23 @@ sheet Orders
 | South  | 4   | 2     |
 | East   | 1   | 100   |
 
+sheet Targets
+
+| Region | Goal |
+| ------ | ---- |
+| South  | 70   |
+| North  | 50   |
+| North  | 60   |
+
+fn GoalsOf(rows) = Targets[; Region == rows[Region; 0]] |> select(Goal)
 fn Worth(orders) = (orders.Qty * orders.Price).sum()
 fn Biggest(rows) = rows.Qty.max()
 fn Top2(rows) = rows |> sort(Qty, desc) |> head(2) |> select(Qty, Price)
 fn Whole(rows) = rows
 fn Only(rows) = rows.Qty
 
+sheet Goals := Orders |> group_by(Region) |> apply(GoalsOf)
+sheet Biggest := Goals |> sort(Goal, desc) |> head(1)
 sheet BestTwo := Orders |> group_by(Region) |> apply(Top2)
 sheet Dearest := RegionWorth |> sort(Worth, desc) |> head(2)
 sheet Smallest := BestTwo |> sort(Price) |> head(2)
@@ -2784,6 +2795,18 @@ fn what_apply_makes_is_read_by_later_stages() {
     assert_eq!(ask(f, "Dearest.Region"), "['East', 'North']");
     assert_eq!(ask(f, "Smallest.Region"), "['South', 'North']");
     assert_eq!(ask(f, "Smallest.Price"), "[2, 4]");
+}
+
+/// A function that gives rows of another sheet makes a row for each of them,
+/// with the keys of its group: a group it gives none for has no rows.
+#[test]
+fn apply_of_another_sheets_rows_pairs_them_with_the_group() {
+    let f = APPLY_ORDERS;
+    assert_eq!(ask(f, "Goals.Region"), "['North', 'North', 'South']");
+    assert_eq!(ask(f, "Goals.Goal"), "[50, 60, 70]");
+    // And what it makes is read by a later stage as any sheet is.
+    assert_eq!(ask(f, "Biggest.Region"), "['South']");
+    assert_eq!(ask(f, "Biggest.Goal"), "[70]");
 }
 
 /// A group the function fails on is an error in its own row, and the other
