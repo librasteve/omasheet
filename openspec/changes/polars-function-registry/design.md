@@ -68,6 +68,12 @@ features    the Cargo feature the Polars function needs
 - N17's one-pass evaluation for `Decimal` (exact) against Polars' `cum_sum`, which may not take every decimal scale; the exact pass is the fallback.
 - `join_where` needs an expression language over two sheets' columns at once; how a name clash is spelled (N12) is to be settled with the checker.
 
+## Exceptions to N1 and N2 (N9)
+
+Each line is a name that is not the Polars method name, with the reason, and is the exceptions list the N9 test reads.
+
+- `apply` for Polars' `map_groups` (`add-group-apply` D-A1, settled): `apply` is the name pandas, Grist and older Polars (before 0.19) share, and it reads as what it does. No `map_groups` alias: one name.
+
 ## Risks
 
 - Polars changes its names between versions; N1 pins them to the version in `Cargo.toml`, and N9's test fails on a drift.

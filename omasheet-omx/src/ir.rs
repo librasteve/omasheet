@@ -48,6 +48,20 @@ pub enum Ir {
     /// A column of the sheet being grouped, over the rows of the group an
     /// aggregate of `agg` is being worked out for.
     GroupCol(usize),
+    /// The rows of the group `apply` is calling its function on, as a sheet.
+    GroupSheet,
+    /// `apply` of a function that gives rows of the sheet `base` is grouped
+    /// from: `body` is called on each group's rows, and `cols` are the
+    /// `keys` and then the columns the function gives.
+    GroupApply {
+        base: Box<Node>,
+        keys: Vec<usize>,
+        body: Box<Node>,
+        cols: Vec<usize>,
+        /// The sheet the function gives rows of, where that is not the one
+        /// grouped.
+        other: Option<usize>,
+    },
     /// The position of the row `depth` frames out, counting from zero.
     RowIndex {
         depth: usize,

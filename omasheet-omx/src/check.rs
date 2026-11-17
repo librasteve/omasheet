@@ -68,6 +68,10 @@ pub struct Sheet {
     /// What a sheet computed by `join` joins the sheet [`Sheet::view`]
     /// gives to (D85).
     pub join: Option<Join>,
+    /// A sheet computed by `apply` of a function that gives rows of another
+    /// sheet: its rows are those of the group they came of, with the row of
+    /// the other sheet each pairs with, as a join's are.
+    pub paired: bool,
 }
 
 /// A join of the sheet a view gives to another: its rows are the pairs of
@@ -389,6 +393,7 @@ struct Checker<'a> {
     view_out: Vec<Option<Node>>,
     group_out: Vec<Option<Vec<usize>>>,
     join_out: Vec<Option<Join>>,
+    paired_out: Vec<bool>,
     view_deps: Vec<Vec<(DepNode, DepKind)>>,
     const_state: Vec<St<Ty>>,
     const_out: Vec<Option<Node>>,
@@ -933,14 +938,18 @@ fn monthly_step(seeds: &[Expr]) -> Option<Rule> {
     })
 }
 
-/// The base, keys and aggregates of `Base |> group_by(Keys) |> agg(Aggs)`.
-fn grouped(e: &Expr) -> Option<(&Expr, &[Expr], &[Expr])> {
+/// The base, keys and aggregates of `Base |> group_by(Keys) |> agg(Aggs)`,
+/// or the base, keys and function of `... |> apply(Fn)`, and whether it is
+/// the second.
+fn grouped(e: &Expr) -> Option<(&Expr, &[Expr], &[Expr], bool)> {
     let ExprKind::Call(name, _, args) = &e.kind else {
         return None;
     };
-    if name != "agg" {
-        return None;
-    }
+    let apply = match name.as_str() {
+        "agg" => false,
+        "apply" => true,
+        _ => return None,
+    };
     let (inner, aggs) = args.split_first()?;
     let ExprKind::Call(name, _, args) = &inner.kind else {
         return None;
@@ -949,7 +958,7 @@ fn grouped(e: &Expr) -> Option<(&Expr, &[Expr], &[Expr])> {
         return None;
     }
     let (base, keys) = args.split_first()?;
-    Some((base, keys, aggs))
+    Some((base, keys, aggs, apply))
 }
 
 /// The name an aggregate's column takes from the expression, when it is a
@@ -1053,6 +1062,7 @@ impl<'a> Checker<'a> {
             view_out: Vec::new(),
             group_out: Vec::new(),
             join_out: Vec::new(),
+            paired_out: Vec::new(),
             view_deps: Vec::new(),
             const_state: Vec::new(),
             const_out: Vec::new(),
@@ -1074,6 +1084,7 @@ impl<'a> Checker<'a> {
             ck.view_out.push(None);
             ck.group_out.push(None);
             ck.join_out.push(None);
+            ck.paired_out.push(false);
             ck.view_deps.push(Vec::new());
             ck.sheets.push(SheetInfo {
                 name: t.name.clone(),
@@ -1309,6 +1320,7 @@ impl<'a> Checker<'a> {
             ck.view_out.push(None);
             ck.group_out.push(None);
             ck.join_out.push(None);
+            ck.paired_out.push(false);
             ck.view_deps.push(Vec::new());
             ck.sheets.push(SheetInfo {
                 name: t.name.clone(),
@@ -1552,8 +1564,8 @@ impl<'a> Checker<'a> {
             return;
         };
         let made = formula.expr.as_ref().and_then(|e| {
-            if let Some((base, keys, aggs)) = grouped(e) {
-                Some(self.lower_group(t, base, keys, aggs, e.span))
+            if let Some((base, keys, aggs, apply)) = grouped(e) {
+                Some(self.lower_group(t, base, keys, aggs, apply, e.span))
             } else if let ExprKind::Call(name, _, args) = &e.kind
                 && name == "join"
             {
@@ -1641,9 +1653,15 @@ impl<'a> Checker<'a> {
         base: &Expr,
         keys: &[Expr],
         aggs: &[Expr],
+        apply: bool,
         span: Span,
     ) -> (Node, Ty) {
-        let usage = "Sales |> group_by(Region) |> agg(Revenue.sum())";
+        let usage = if apply {
+            "Sales |> group_by(Region) |> apply(Worth)"
+        } else {
+            "Sales |> group_by(Region) |> agg(Revenue.sum())"
+        };
+        let stage = if apply { "apply" } else { "agg" };
         let keys = &self.spliced(keys, 0)[..];
         let mut scope = Scope {
             frames: Vec::new(),
@@ -1676,11 +1694,24 @@ impl<'a> Checker<'a> {
         if aggs.is_empty() {
             self.err_help(
                 span,
-                "`agg` needs an aggregate to work out for each group",
+                if apply {
+                    "`apply` needs a function to call on each group".to_string()
+                } else {
+                    "`agg` needs an aggregate to work out for each group".to_string()
+                },
                 format!("usage: `{usage}`"),
             );
             return (Node::error(span), Ty::Any);
         }
+        if apply && aggs.len() != 1 {
+            self.err_help(
+                span,
+                "`apply` takes the name of one function",
+                format!("usage: `{usage}`"),
+            );
+            return (Node::error(span), Ty::Any);
+        }
+        let base_node = node.clone();
         let mut names: Vec<(String, Span)> = Vec::new();
         let mut key_cols = Vec::new();
         for k in keys {
@@ -1714,18 +1745,136 @@ impl<'a> Checker<'a> {
                 ExprKind::Named(name, name_span, e) => (Some((name.clone(), *name_span)), &**e),
                 _ => (None, a),
             };
-            let mut scope = Scope {
-                frames: Vec::new(),
-                own: false,
-                col: None,
-                group: Some(shape.clone()),
+            // `apply` calls a function of one sheet on each group's rows;
+            // `agg` works an aggregate out over them.
+            let (mut node, ty, derived) = if apply {
+                let ExprKind::Name(fname) = &e.kind else {
+                    self.err_help(
+                        e.span,
+                        "`apply` takes the name of a function",
+                        format!("usage: `{usage}`"),
+                    );
+                    return (Node::error(span), Ty::Any);
+                };
+                let Some(f) = self.funcs.iter().position(|f| &f.name == fname) else {
+                    self.err_help(
+                        e.span,
+                        format!(
+                            "`apply` needs a function the file defines, and there is no `{fname}`"
+                        ),
+                        "define it with `fn Name(rows) = …`",
+                    );
+                    return (Node::error(span), Ty::Any);
+                };
+                if self.funcs[f].params.len() != 1 {
+                    self.err_help(
+                        e.span,
+                        format!(
+                            "`apply` calls `{fname}` with the rows of one group, so it takes one argument, not {}",
+                            self.funcs[f].params.len()
+                        ),
+                        format!("usage: `{}`", self.funcs[f].usage()),
+                    );
+                    return (Node::error(span), Ty::Any);
+                }
+                let rows = (Node::new(Ir::GroupSheet, e.span), Ty::Sheet(shape.clone()));
+                let (node, ty) = self.apply_nodes(f, e.span, vec![rows], e.span);
+                if matches!(node.kind, Ir::Error) {
+                    return (Node::error(span), Ty::Any);
+                }
+                (node, ty, Some(fname.clone()))
+            } else {
+                let mut scope = Scope {
+                    frames: Vec::new(),
+                    own: false,
+                    col: None,
+                    group: Some(shape.clone()),
+                };
+                let (node, ty) = self.lower(e, &mut scope);
+                (node, ty, derived_name(e))
             };
-            let (node, ty) = self.lower(e, &mut scope);
             let s = match ty {
                 Ty::Scalar(s) => s,
                 Ty::Any => S::Any,
                 // The mistake a reader makes first: a column where its
                 // aggregate was meant.
+                // A function that gives rows of the sheet it is called on
+                // makes those rows, with the keys read through the source.
+                Ty::Sheet(rows) if apply => {
+                    let other = rows.sheet != shape.sheet;
+                    for &c in rows.cols.iter() {
+                        if let Some((clash, _)) = names
+                            .iter()
+                            .find(|(n, _)| *n == self.sheets[rows.sheet].cols[c].name)
+                        {
+                            self.err_help(
+                                e.span,
+                                format!(
+                                    "the function gives a column `{clash}`, which is also a key"
+                                ),
+                                "leave it out of the function's sheet, for example with `select`",
+                            );
+                            return (Node::error(span), Ty::Any);
+                        }
+                    }
+                    let cols: Vec<usize> =
+                        key_cols.iter().chain(rows.cols.iter()).copied().collect();
+                    for (at, &c) in cols.iter().enumerate() {
+                        // The keys are the grouped sheet's; the function's
+                        // columns are its own sheet's, read at the row each
+                        // result row pairs with where that is another sheet.
+                        let (from_sheet, kind) = if at < key_cols.len() {
+                            (shape.sheet, ColKind::View(c))
+                        } else if other {
+                            self.deps
+                                .push((DepNode::Col(rows.sheet, c), DepKind::Whole));
+                            (rows.sheet, ColKind::Joined(c))
+                        } else {
+                            (shape.sheet, ColKind::View(c))
+                        };
+                        let from = &self.sheets[from_sheet].cols[c];
+                        let (name, from_span) = (from.name.clone(), from.span);
+                        let ty = self.col_type(from_sheet, c);
+                        self.sheets[t].cols.push(ColInfo {
+                            name,
+                            span: from_span,
+                            declared: None,
+                            src: ColSrc::Done,
+                            from: None,
+                        });
+                        self.col_state[t].push(St::Done(ty));
+                        self.col_out[t].push(Some(kind));
+                        self.col_deps[t].push(Vec::new());
+                    }
+                    self.paired_out[t] = other;
+                    let out = SheetTy {
+                        sheet: shape.sheet,
+                        cols: Rc::new(if other {
+                            key_cols.clone()
+                        } else {
+                            cols.clone()
+                        }),
+                        rows: None,
+                        kind: shape.kind,
+                    };
+                    let node = Node::new(
+                        Ir::GroupApply {
+                            base: Box::new(base_node),
+                            keys: key_cols,
+                            body: Box::new(node),
+                            cols,
+                            other: other.then_some(rows.sheet),
+                        },
+                        span,
+                    );
+                    return (node, Ty::Sheet(out));
+                }
+                // A column is one value a group where it has one row, as a
+                // cell's is.
+                Ty::Vector(s, _) if apply => {
+                    node = Node::new(Ir::Single(Box::new(node)), e.span);
+                    s
+                }
                 Ty::Vector(..) => {
                     self.err_help(
                         e.span,
@@ -1749,8 +1898,7 @@ impl<'a> Checker<'a> {
                     return (Node::error(span), Ty::Any);
                 }
             };
-            let Some((name, name_span)) = given.or_else(|| derived_name(e).map(|n| (n, e.span)))
-            else {
+            let Some((name, name_span)) = given.or_else(|| derived.map(|n| (n, e.span))) else {
                 self.err_help(
                     a.span,
                     "this aggregate needs a name for its column",
@@ -1761,8 +1909,8 @@ impl<'a> Checker<'a> {
             if names.iter().any(|(n, _)| *n == name) {
                 self.err_help(
                     a.span,
-                    format!("`agg` makes two columns named `{name}`"),
-                    "name one of them with `:=`, for example `agg(Other := …)`",
+                    format!("`{stage}` makes two columns named `{name}`"),
+                    format!("name one of them with `:=`, for example `{stage}(Other := …)`"),
                 );
                 return (Node::error(span), Ty::Any);
             }
@@ -2118,10 +2266,25 @@ impl<'a> Checker<'a> {
             );
             return fail;
         }
+        let lowered: Vec<(Node, Ty)> = args.iter().map(|arg| self.lower(arg, sc)).collect();
+        self.apply_nodes(f, name_span, lowered, span)
+    }
+
+    /// A call of function `f` with arguments already lowered: its body,
+    /// checked for them. What is wrong inside the body is reported at the
+    /// call.
+    fn apply_nodes(
+        &mut self,
+        f: usize,
+        name_span: Span,
+        args: Vec<(Node, Ty)>,
+        span: Span,
+    ) -> (Node, Ty) {
+        let fail = (Node::error(span), Ty::Any);
+        let func = self.funcs[f].clone();
         let mut nodes = Vec::new();
         let mut params = Vec::new();
-        for (arg, param) in args.iter().zip(&func.params) {
-            let (node, ty) = self.lower(arg, sc);
+        for ((node, ty), param) in args.into_iter().zip(&func.params) {
             // An argument that failed to check is unknown to the body.
             let known = !matches!(node.kind, Ir::Error);
             params.push((param.clone(), known.then_some(ty)));
@@ -5038,8 +5201,11 @@ impl<'a> Checker<'a> {
                     // Over a column the values are their own key, so a
                     // column name has nothing to name.
                     Ty::Vector(..) | Ty::Any if rest.is_empty() => sorted(Vec::new(), bty),
+                    // What a function's parameter is is not known where it
+                    // is defined; it is checked where it is called.
+                    Ty::Any => fail,
                     other => {
-                        if !rest.is_empty() && matches!(other, Ty::Vector(..) | Ty::Any) {
+                        if !rest.is_empty() && matches!(other, Ty::Vector(..)) {
                             self.err_help(
                                 rest[0].span,
                                 "`sort` over a column takes no column name",
@@ -5060,9 +5226,10 @@ impl<'a> Checker<'a> {
             }
             // `group_by`, `agg` and `join` make a sheet of new rows, so
             // they are the whole of a sheet's formula and are read there.
-            "group_by" | "agg" | "join" => {
+            "group_by" | "agg" | "apply" | "join" => {
                 let example = match name {
                     "join" => "sheet Both := Sales |> join(Targets, Month)",
+                    "apply" => "sheet ByRegion := Sales |> group_by(Region) |> apply(Worth)",
                     _ => "sheet ByRegion := Sales |> group_by(Region) |> agg(Revenue.sum())",
                 };
                 self.err_help(
@@ -5923,6 +6090,7 @@ impl<'a> Checker<'a> {
             let view = self.view_out[t].take();
             let group = self.group_out[t].take();
             let join = self.join_out[t].take();
+            let paired = self.paired_out[t];
             let view_of = match &self.view_state[t] {
                 St::Done(Ty::Sheet(shape)) | St::Busy(Ty::Sheet(shape)) => Some(shape.clone()),
                 _ => None,
@@ -5937,6 +6105,7 @@ impl<'a> Checker<'a> {
                 view_of,
                 group,
                 join,
+                paired,
             });
         }
         let mut consts = Vec::new();

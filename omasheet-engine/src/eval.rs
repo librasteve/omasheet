@@ -218,6 +218,9 @@ pub struct Engine<'p> {
     /// each row of the join pairs with: none, for a left row a left join
     /// kept with nothing to pair it with.
     joined: RefCell<Vec<Option<Paired>>>,
+    /// The rows an `apply` that gave rows of another sheet paired with,
+    /// until the sheet it makes takes them.
+    apply_paired: RefCell<Option<Paired>>,
     /// The partitions of a whole sheet by its key columns, for `*-1 by
     /// Region`: worked out once, so a column of such offsets is not a pass
     /// over the sheet for every cell.
@@ -511,6 +514,7 @@ impl<'p> Engine<'p> {
             groups: RefCell::new(vec![None; prog.sheets.len()]),
             grouping: RefCell::new(Vec::new()),
             joined: RefCell::new(vec![None; prog.sheets.len()]),
+            apply_paired: RefCell::new(None),
             partitions: RefCell::new(HashMap::new()),
             agg_held: RefCell::new(
                 prog.sheets
@@ -906,7 +910,8 @@ impl<'p> Engine<'p> {
         };
         let column = |c| self.plan_column(t, c);
         let constant = |i| self.const_value(i).ok();
-        let cx = lower::Cx::new(&column, &constant);
+        let unit = |c| self.quantity_unit(t, c);
+        let cx = lower::Cx::new(&column, &constant, &unit);
         let Some(out) = lower::expr(node, &cx) else {
             return refused(self);
         };
@@ -986,7 +991,8 @@ impl<'p> Engine<'p> {
         let nrows = self.prog.sheets[t].nrows;
         let column = |c| self.plan_column(t, c);
         let constant = |i| self.const_value(i).ok();
-        let cx = lower::Cx::new(&column, &constant);
+        let unit = |c| self.quantity_unit(t, c);
+        let cx = lower::Cx::new(&column, &constant, &unit);
         let out = lower::expr(node, &cx)?;
         if out.dtype != DataType::Boolean {
             return None;
@@ -1066,6 +1072,203 @@ impl<'p> Engine<'p> {
         order
     }
 
+    /// The rows of the sheet `o` each group's function picks by what the
+    /// group's first row holds, `on` pairs of a column of the grouped sheet
+    /// and one of `o`: a join of the groups' first rows to `o`, by the
+    /// join's own rules (D85), taken by Polars. Given back as the rows of
+    /// the grouped sheet, each group's first row repeated for each row of `o`
+    /// it gets, and the row of `o` beside each. `None` leaves it to the
+    /// engine.
+    fn run_group_lookup(
+        &self,
+        view: &crate::value::View,
+        keys: &[usize],
+        o: usize,
+        on: &[(usize, usize)],
+        span: Span,
+    ) -> Option<(Vec<usize>, Vec<Option<usize>>)> {
+        let right = crate::value::View {
+            sheet: o,
+            rows: Rc::new((0..self.prog.sheets[o].nrows).collect()),
+            cols: self.all_cols[o].clone(),
+        };
+        let join = Join {
+            right: Node::new(Ir::Sheet(o), span),
+            left_keys: on.iter().map(|&(l, _)| l).collect(),
+            right_keys: on.iter().map(|&(_, r)| r).collect(),
+            left: false,
+        };
+        let pairs = self.run_join(view, &right, &join)?;
+        let mut matches: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (l, r) in pairs {
+            matches.entry(l).or_default().push(r?);
+        }
+        let groups = match self.run_group(view.sheet, &view.rows, keys, &[]) {
+            Some((groups, _)) => groups,
+            None => self.plain_groups(view, keys, span).ok()?,
+        };
+        let (mut rows, mut paired) = (Vec::new(), Vec::new());
+        for g in groups {
+            for &r in matches.get(&g[0]).map(Vec::as_slice).unwrap_or(&[]) {
+                rows.push(g[0]);
+                paired.push(Some(r));
+            }
+        }
+        Some((rows, paired))
+    }
+
+    /// The rows each group's function gives, taken by Polars in one
+    /// `group_by`, the groups in the order of their keys as `run_group` has
+    /// them and each group's rows in the order its steps put them. The
+    /// conditions are of single rows, so they are asked of the whole sheet
+    /// first; a group they leave nothing of has no rows, as it has none
+    /// there. `None` leaves the groups to the engine.
+    fn run_group_rows(
+        &self,
+        t: usize,
+        rows: &[usize],
+        keys: &[usize],
+        steps: &[Step],
+    ) -> Option<Vec<usize>> {
+        if self.options.lowering == Lowering::Never {
+            return None;
+        }
+        let nrows = self.prog.sheets[t].nrows;
+        if nrows == 0 || (self.options.lowering == Lowering::Auto && nrows < ROW_THRESHOLD) {
+            return None;
+        }
+        if rows.len() != nrows || rows.iter().enumerate().any(|(p, &r)| p != r) {
+            return None;
+        }
+        let refused = |engine: &Engine| {
+            engine.filters.borrow_mut().push((t, Attempt::Refused));
+            None
+        };
+        let mut columns: Vec<PlColumn> = Vec::new();
+        let take = |c: usize, columns: &mut Vec<PlColumn>| -> Option<polars::prelude::PlSmallStr> {
+            let column = self.pl_column(t, c)?;
+            let name = column.name().clone();
+            if !columns.iter().any(|held| held.name() == &name) {
+                columns.push(column);
+            }
+            Some(name)
+        };
+        let mut by: Vec<Expr> = Vec::with_capacity(keys.len());
+        let mut key_names = Vec::with_capacity(keys.len());
+        for &c in keys {
+            let Some(name) = take(c, &mut columns) else {
+                return refused(self);
+            };
+            by.push(col(name.clone()));
+            key_names.push(name);
+        }
+        let mut wanted: Option<Expr> = None;
+        let mut expr = col(ROW_INDEX);
+        for step in steps {
+            match step {
+                Step::Filter(node) => {
+                    let Some((frame, cond)) = self.filter_plan(t, node) else {
+                        return refused(self);
+                    };
+                    for column in frame.take_columns() {
+                        if !columns.iter().any(|held| held.name() == column.name()) {
+                            columns.push(column);
+                        }
+                    }
+                    wanted = Some(match wanted {
+                        Some(w) => w.and(cond.fill_null(polars::prelude::lit(false))),
+                        None => cond.fill_null(polars::prelude::lit(false)),
+                    });
+                }
+                Step::Sort(sort_keys, desc) => {
+                    let mut sort_by = Vec::with_capacity(sort_keys.len());
+                    for &c in sort_keys {
+                        let Some(name) = take(c, &mut columns) else {
+                            return refused(self);
+                        };
+                        sort_by.push(col(name));
+                    }
+                    let options = SortMultipleOptions::default()
+                        .with_order_descending(*desc)
+                        .with_nulls_last(*desc)
+                        .with_maintain_order(true);
+                    expr = expr.sort_by(sort_by, options);
+                }
+                Step::Head(n) => expr = expr.head(Some(*n)),
+                Step::Tail(n) => expr = expr.tail(Some(*n)),
+            }
+        }
+        let Ok(frame) = DataFrame::new(columns) else {
+            return refused(self);
+        };
+        let mut lazy = frame.lazy().with_row_index(ROW_INDEX, None);
+        if let Some(w) = wanted {
+            lazy = lazy.filter(w);
+        }
+        let options = SortMultipleOptions::default()
+            .with_nulls_last(false)
+            .with_maintain_order(true);
+        let Ok(out) = lazy
+            .group_by_stable(by.clone())
+            .agg([expr.alias(ROW_INDEX)])
+            .sort_by_exprs(by, options)
+            .collect()
+        else {
+            self.filters.borrow_mut().push((t, Attempt::Failed));
+            return None;
+        };
+        let limit = 10i128.pow(SHOWN_PRECISION);
+        for name in &key_names {
+            let column = out.column(name).ok()?;
+            if matches!(column.dtype(), DataType::Decimal(..)) {
+                for i in 0..column.len() {
+                    if let Ok(AnyValue::Decimal(n, _)) = column.get(i)
+                        && n.unsigned_abs() >= limit as u128
+                    {
+                        return refused(self);
+                    }
+                }
+            }
+        }
+        let listed = out.column(ROW_INDEX).ok()?.list().ok()?.clone();
+        let mut given = Vec::new();
+        for list in listed.into_iter() {
+            for p in list?.u32().ok()?.into_iter() {
+                given.push(p? as usize);
+            }
+        }
+        self.filters.borrow_mut().push((t, Attempt::Lowered));
+        Some(given)
+    }
+
+    /// An expression over the columns of the grouped sheet `t`, lowered to
+    /// be one value for each row of the sheet: the columns it reads, the
+    /// expression, its dtype and its type. `None` where it does not lower,
+    /// reads a number a row of it might not hold, or has a cell empty for it
+    /// to read, the engine's answer there being its own.
+    fn derived(&self, t: usize, node: &Node) -> Option<(Vec<PlColumn>, Expr, DataType, S)> {
+        let constant = |i| self.const_value(i).ok();
+        let unit = |c| self.quantity_unit(t, c);
+        let column = |c| self.pl_column(t, c);
+        let cx = lower::Cx::new(&column, &constant, &unit);
+        let out = lower::expr(node, &cx)?;
+        if out.unit.is_some() || matches!(out.dtype, DataType::Struct(_)) || cx.windowed() {
+            return None;
+        }
+        let risk = cx.at_risk();
+        let taken = cx.taken();
+        if taken.is_empty() || taken.iter().any(|c| c.null_count() > 0) {
+            return None;
+        }
+        if let Some(risk) = risk
+            && any_at_risk(&DataFrame::new(taken.clone()).ok()?, risk)
+        {
+            return None;
+        }
+        let elem = out.ty()?;
+        Some((taken, out.expr, out.dtype, elem))
+    }
+
     /// The groups of a whole sheet by its key columns, and the aggregates of
     /// `aggs` over each group, taken by Polars in one `group_by`. `aggs` is
     /// each lowerable aggregate of the grouped sheet: its column there, its
@@ -1084,7 +1287,7 @@ impl<'p> Engine<'p> {
         t: usize,
         rows: &[usize],
         keys: &[usize],
-        aggs: &[(usize, Func, usize)],
+        aggs: &[(usize, Func, Source)],
     ) -> Option<(Groups, Vec<(usize, AggValues)>)> {
         if self.options.lowering == Lowering::Never {
             return None;
@@ -1126,9 +1329,29 @@ impl<'p> Engine<'p> {
         // `run_agg` asks of a whole column.
         let mut select = vec![col(ROW_INDEX)];
         let mut plans = Vec::with_capacity(aggs.len());
-        for (k, &(_, func, c)) in aggs.iter().enumerate() {
-            let Some((name, dtype)) = take(c) else {
-                continue;
+        let mut derived: Vec<Expr> = Vec::new();
+        let mut extra: Vec<PlColumn> = Vec::new();
+        for (k, (_, func, source)) in aggs.iter().enumerate() {
+            let func = *func;
+            let (name, dtype, elem) = match source {
+                Source::Col(c) => {
+                    let Some((name, dtype)) = take(*c) else {
+                        continue;
+                    };
+                    (name, dtype, self.prog.sheets[t].cols[*c].ty)
+                }
+                // The aggregate of an expression over the columns: the
+                // expression is a column of its own, taken whole, and then
+                // aggregated as any column is.
+                Source::Expr(node) => {
+                    let Some((taken, expr, dtype, elem)) = self.derived(t, node) else {
+                        continue;
+                    };
+                    let name: polars::prelude::PlSmallStr = format!("d{k}").into();
+                    extra.extend(taken);
+                    derived.push(expr.alias(name.clone()));
+                    (name, dtype, elem)
+                }
             };
             let mean = func == Func::Mean;
             let Some(expr) = lower::aggregate(if mean { Func::Sum } else { func }, &name, &dtype)
@@ -1160,7 +1383,12 @@ impl<'p> Engine<'p> {
                 parts.push(lower::has_a_number(&name).alias(format!("n{k}")));
             }
             select.extend(parts);
-            plans.push((k, mean, total, guard));
+            plans.push((k, mean, total, guard, elem));
+        }
+        for column in extra {
+            if !columns.iter().any(|held| held.name() == column.name()) {
+                columns.push(column);
+            }
         }
         let Ok(frame) = DataFrame::new(columns) else {
             return refused(self);
@@ -1170,6 +1398,7 @@ impl<'p> Engine<'p> {
             .with_maintain_order(true);
         let Ok(out) = frame
             .lazy()
+            .with_columns(derived)
             .with_row_index(ROW_INDEX, None)
             .group_by(by.clone())
             .agg(select)
@@ -1210,10 +1439,10 @@ impl<'p> Engine<'p> {
             groups.push(Rc::new(members));
         }
         self.filters.borrow_mut().push((t, Attempt::Lowered));
-        let ty = |c: usize| self.prog.sheets[t].cols[c].ty;
         let mut held = Vec::new();
-        'agg: for (k, mean, total, guard) in plans {
-            let (at, func, c) = aggs[k];
+        'agg: for (k, mean, total, guard, elem) in plans {
+            let (at, func, _) = &aggs[k];
+            let (at, func) = (*at, *func);
             let get = |part: &str, i: usize| out.column(&format!("{part}{k}")).ok()?.get(i).ok();
             let mut values = Vec::with_capacity(groups.len());
             for (i, group) in groups.iter().enumerate() {
@@ -1230,17 +1459,17 @@ impl<'p> Engine<'p> {
                         true => Some(get("c", i)?.try_extract::<i64>().ok()?),
                         false => None,
                     };
-                    agg_value(func, ty(c), get("a", i)?, count)
+                    agg_value(func, elem, get("a", i)?, count)
                 })();
                 match answer {
                     Some(v) => values.push(v),
                     None => {
-                        self.aggregates.borrow_mut().push((t, c, Attempt::Refused));
+                        self.aggregates.borrow_mut().push((t, at, Attempt::Refused));
                         continue 'agg;
                     }
                 }
             }
-            self.aggregates.borrow_mut().push((t, c, Attempt::Lowered));
+            self.aggregates.borrow_mut().push((t, at, Attempt::Lowered));
             held.push((at, Rc::new(values)));
         }
         Some((groups, held))
@@ -1773,12 +2002,16 @@ impl<'p> Engine<'p> {
     ) -> Option<(DataFrame, Expr, bool)> {
         let col = &self.prog.sheets[t].cols[c];
         let constant = |i| self.const_value(i).ok();
-        let cx = lower::Cx::new(column, &constant);
+        let unit = |cc| self.quantity_unit(t, cc);
+        let cx = lower::Cx::new(column, &constant, &unit);
         let out = lower::expr(node, &cx)?;
+        // A quantity is held in the unit of the column it is for.
+        let was_quantity = out.unit.is_some();
+        let out = lower::in_unit(out, self.quantity_unit(t, c).as_ref())?;
         // The same answer the row path's `fit` gives: a column that says
         // what it holds holds it, and a lowered result of another type is
         // one the two paths would disagree about.
-        if col.declared && !out.ty()?.assignable_to(col.ty) {
+        if col.declared && !was_quantity && !out.ty()?.assignable_to(col.ty) {
             return None;
         }
         // A row whose result might not fit is nothing here, and a nothing
@@ -1884,9 +2117,27 @@ impl<'p> Engine<'p> {
     /// back out of the copy.
     fn plan_column(&self, t: usize, c: usize) -> Option<PlColumn> {
         let col = &self.prog.sheets[t].cols[c];
+        // A `Scientific`, and a column that declares a named quantity type,
+        // are read into a plan as a `value` and a `sigma`; the units of a
+        // quantity are the plan's own (widen-polars-lowering D-W4, D-W5).
+        let quantity = self.quantity_unit(t, c);
+        if (col.ty == S::Scientific || quantity.is_some()) && !matches!(col.kind, ColKind::Frame) {
+            return self.uncertain_column(t, c, quantity.as_ref());
+        }
+        // A plan is over a column whose type the checker knows, declared or
+        // inferred from all of its cells (widen-polars-lowering D-W1, D-W2).
+        // Where it is one type, that type is the plan's. A `Fraction` is
+        // arbitrary precision, not a `Decimal(38, s)`, and `Any` has no type
+        // to choose a lowering by, so a plan over either is the engine's.
+        if matches!(col.ty, S::Fraction | S::Any) {
+            return None;
+        }
         // A column of quantities is numbers in a dataframe, and the unit is
         // the engine's own; a plan over it would work on the numbers alone.
-        if col.ty.is_quantity() && matches!(col.kind, ColKind::Frame) {
+        if col.ty.is_quantity()
+            && matches!(col.kind, ColKind::Frame)
+            && self.quantity_unit(t, c).is_none()
+        {
             return None;
         }
         let (Some((zone, _)), false) = (&col.zone, matches!(col.kind, ColKind::Frame)) else {
@@ -1899,6 +2150,58 @@ impl<'p> Engine<'p> {
             .map(|r| self.cell_shown(t, c, r))
             .collect();
         let built = crate::dtype::zoned_column(&col.name, zone, &values)?;
+        self.copies.borrow_mut()[t][c] = Some(built.clone());
+        Some(built)
+    }
+
+    /// The unit a column that declares a named quantity type holds its values
+    /// in: the unit of its format, or the preferred unit of the type. `None`
+    /// for any other column, and for one that only has the type of its
+    /// formulas, whose values are each in the unit they came out in.
+    fn quantity_unit(&self, t: usize, c: usize) -> Option<siquant::Unit> {
+        let col = &self.prog.sheets[t].cols[c];
+        let S::Quantity(id) = col.ty else {
+            return None;
+        };
+        // A table's own column has the kind and the unit its file gives it.
+        let own = matches!(col.kind, ColKind::Frame);
+        if !(col.declared || own) || id.named().is_none() {
+            return None;
+        }
+        match &col.format {
+            Some(Format::Quantity(omasheet_omx::colfmt::QuantityFormat {
+                unit: Some(u), ..
+            })) => Some(u.clone()),
+            _ => crate::quantity::column_unit(id),
+        }
+    }
+
+    /// A `Scientific` column, or one of quantities in `unit`, as the struct of
+    /// `value` and `sigma` a plan reads. A quantity in another unit than the
+    /// column's, or a value that is neither a number nor empty, is not one a
+    /// plan is made over.
+    fn uncertain_column(
+        &self,
+        t: usize,
+        c: usize,
+        unit: Option<&siquant::Unit>,
+    ) -> Option<PlColumn> {
+        if let Some(copy) = self.copies.borrow()[t][c].clone() {
+            return Some(copy);
+        }
+        let col = &self.prog.sheets[t].cols[c];
+        let values: Vec<Value> = (0..self.prog.sheets[t].nrows)
+            .map(|r| self.cell_shown(t, c, r))
+            .collect();
+        let fits = |v: &Value| match (v, unit) {
+            (Value::Quantity(q), Some(unit)) => q.unit() == unit,
+            (Value::Quantity(_), None) | (_, Some(_)) if !matches!(v, Value::Null) => false,
+            _ => true,
+        };
+        if !values.iter().all(fits) {
+            return None;
+        }
+        let built = crate::dtype::uncertain_column(&col.name, &values)?;
         self.copies.borrow_mut()[t][c] = Some(built.clone());
         Some(built)
     }
@@ -2580,6 +2883,11 @@ impl<'p> Engine<'p> {
             },
             (value, _) => value,
         };
+        if self.prog.sheets[t].paired
+            && let Some(paired) = self.apply_paired.borrow_mut().take()
+        {
+            self.joined.borrow_mut()[t] = Some(paired);
+        }
         self.views.borrow_mut()[t] = Slot::Done(value.clone());
         match value {
             Value::Sheet(view) => Ok(view),
@@ -2611,7 +2919,7 @@ impl<'p> Engine<'p> {
         // places of its type; Polars answers it unrounded and the engine
         // rounds what comes back.
         let mut settles: Vec<(usize, u8)> = Vec::new();
-        let aggs: Vec<(usize, Func, usize)> = self.prog.sheets[t]
+        let aggs: Vec<(usize, Func, Source)> = self.prog.sheets[t]
             .cols
             .iter()
             .enumerate()
@@ -2619,30 +2927,30 @@ impl<'p> Engine<'p> {
                 let ColKind::Agg(node) = &col.kind else {
                     return None;
                 };
+                // A call of a function `apply` makes is the body of the
+                // function over the group's columns.
+                let node = group_form(node)?;
                 let (node, places) = match &node.kind {
                     Ir::Call(Func::Settle(p), inner) => match inner.as_slice() {
-                        [inner] => (inner, Some(*p)),
+                        [inner] => (inner.clone(), Some(*p)),
                         _ => return None,
                     },
-                    _ => (node, None),
+                    _ => (node.clone(), None),
                 };
                 let Ir::Call(func, args) = &node.kind else {
                     return None;
                 };
-                match args.as_slice() {
-                    [
-                        Node {
-                            kind: Ir::GroupCol(c),
-                            ..
-                        },
-                    ] => {
-                        if let Some(p) = places {
-                            settles.push((at, p));
-                        }
-                        Some((at, *func, *c))
-                    }
-                    _ => None,
+                let [arg] = args.as_slice() else {
+                    return None;
+                };
+                let source = match &arg.kind {
+                    Ir::GroupCol(c) => Source::Col(*c),
+                    _ => Source::Expr(arg.clone()),
+                };
+                if let Some(p) = places {
+                    settles.push((at, p));
                 }
+                Some((at, *func, source))
             })
             .collect();
         if let Some((groups, held)) = self.run_group(view.sheet, &view.rows, keys, &aggs) {
@@ -2662,6 +2970,19 @@ impl<'p> Engine<'p> {
             }
             return Ok((firsts(&groups), groups));
         }
+        let groups = self.plain_groups(view, keys, span)?;
+        Ok((firsts(&groups), groups))
+    }
+
+    /// The rows of `view` in groups by the key columns `keys`, each group's
+    /// rows in the order they came in, the groups in the order a sort by the
+    /// keys puts them.
+    fn plain_groups(
+        &self,
+        view: &crate::value::View,
+        keys: &[usize],
+        span: Span,
+    ) -> Result<Groups, Fail> {
         let mut cells = Vec::with_capacity(view.rows.len());
         for &r in view.rows.iter() {
             let mut row = Vec::with_capacity(keys.len());
@@ -2688,7 +3009,7 @@ impl<'p> Engine<'p> {
         if !current.is_empty() {
             groups.push(Rc::new(current));
         }
-        Ok((firsts(&groups), groups))
+        Ok(groups)
     }
 
     /// The pairs of rows of `left` and of the sheet `join` joins it to whose
@@ -3008,6 +3329,116 @@ impl<'p> Engine<'p> {
                     return fail(span, "a column of a group outside `agg`");
                 };
                 self.column(t, *col, &rows)
+            }
+            // The rows of the group `apply` is calling a function on, as the
+            // sheet they are rows of.
+            Ir::GroupSheet => {
+                let Some((t, rows)) = self.grouping.borrow().last().cloned() else {
+                    return fail(span, "the rows of a group outside `apply`");
+                };
+                Ok(Value::Sheet(View {
+                    sheet: t,
+                    rows,
+                    cols: self.all_cols[t].clone(),
+                }))
+            }
+            // `apply` of a function that gives rows of the sheet it groups:
+            // each group's rows, in the order of the groups, are the rows of
+            // the sheet, read through the key columns and the function's own.
+            Ir::GroupApply {
+                base,
+                keys,
+                body,
+                cols,
+                other,
+            } => {
+                let Value::Sheet(view) = self.eval(base, fr)? else {
+                    return Err(Fail::Poison);
+                };
+                // A body of `sort`, `head`, `tail` and conditions over the
+                // rows is the groups' rows taken by Polars at once.
+                if other.is_none()
+                    && let Some(steps) = group_steps(body)
+                    && let Some(rows) = self.run_group_rows(view.sheet, &view.rows, keys, &steps)
+                {
+                    return Ok(Value::Sheet(View {
+                        sheet: view.sheet,
+                        rows: Rc::new(rows),
+                        cols: Rc::new(cols.clone()),
+                    }));
+                }
+                // Rows of another sheet picked by what the group's first row
+                // holds are a join of the groups to it, taken by Polars.
+                if let Some(o) = other
+                    && let Some(on) = group_lookup(body, *o)
+                    && let Some((rows, paired)) = self.run_group_lookup(&view, keys, *o, &on, span)
+                {
+                    *self.apply_paired.borrow_mut() = Some((*o, Rc::new(paired)));
+                    return Ok(Value::Sheet(View {
+                        sheet: view.sheet,
+                        rows: Rc::new(rows),
+                        cols: Rc::new(cols.clone()),
+                    }));
+                }
+                // Rows of another sheet are each paired with the first row
+                // of their group, where the keys are read.
+                let mut paired: Vec<Option<usize>> = Vec::new();
+                let groups = self.plain_groups(&view, keys, span)?;
+                let wanted = &cols[keys.len()..];
+                let mut rows: Vec<usize> = Vec::new();
+                for g in groups {
+                    let label = keys
+                        .iter()
+                        .map(|&c| {
+                            let name = &self.prog.sheets[view.sheet].cols[c].name;
+                            let shown = self
+                                .cell(view.sheet, c, g[0])
+                                .map(|v| self.show(&v, true))
+                                .unwrap_or_default();
+                            format!("{name} = {shown}")
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.grouping.borrow_mut().push((view.sheet, g.clone()));
+                    let given = self.eval(body, &mut Vec::new());
+                    self.grouping.borrow_mut().pop();
+                    let say = |why: String| {
+                        self.diags.borrow_mut().push(Diagnostic::new(
+                            body.span,
+                            format!("in the group {label}: {why}"),
+                        ));
+                    };
+                    match given {
+                        Ok(Value::Sheet(got))
+                            if got.sheet == other.unwrap_or(view.sheet) && *got.cols == *wanted =>
+                        {
+                            if other.is_some() {
+                                rows.extend(std::iter::repeat_n(g[0], got.rows.len()));
+                                paired.extend(got.rows.iter().map(|&r| Some(r)));
+                            } else {
+                                rows.extend(got.rows.iter().copied());
+                            }
+                        }
+                        Ok(Value::Sheet(_)) => say(
+                            "the function gave a sheet with other columns than for the other groups"
+                                .to_string(),
+                        ),
+                        Ok(other) => say(format!(
+                            "the function gave {}, not rows of the sheet",
+                            other.kind()
+                        )),
+                        Err(Fail::Diag(d)) => say(d.message),
+                        Err(Fail::Poison) => {}
+                    }
+                }
+                if let Some(sheet) = other {
+                    *self.apply_paired.borrow_mut() = Some((*sheet, Rc::new(paired)));
+                }
+                Ok(Value::Sheet(View {
+                    sheet: view.sheet,
+                    rows: Rc::new(rows),
+                    cols: Rc::new(cols.clone()),
+                }))
             }
             Ir::RowIndex { depth } => {
                 let (_, r) = fr[fr.len() - 1 - depth];
@@ -5186,4 +5617,175 @@ pub fn run_filter_plan(frame: DataFrame, expr: Expr) -> Option<Vec<bool>> {
         mask[r as usize] = true;
     }
     Some(mask)
+}
+
+/// What an aggregate of a group is over: a column of the grouped sheet, or an
+/// expression over its columns.
+enum Source {
+    Col(usize),
+    Expr(Node),
+}
+
+/// The body of an aggregate as it reads the group's columns: a call of a
+/// function `apply` makes, over the rows of the group, is the function's body
+/// with each column of those rows (`rows.Qty`) the group's own column. `None`
+/// where the body reads the rows any other way.
+fn group_form(node: &Node) -> Option<Node> {
+    let Ir::Apply { args, body, .. } = &node.kind else {
+        return Some(node.clone());
+    };
+    if !args.iter().all(|a| matches!(a.kind, Ir::GroupSheet)) {
+        return None;
+    }
+    fn rows(node: &Node) -> Option<Node> {
+        let kind = match &node.kind {
+            Ir::Lit(_) | Ir::Const(_) | Ir::GroupCol(_) => return Some(node.clone()),
+            Ir::Field { base, col } if matches!(base.kind, Ir::Arg(_)) => Ir::GroupCol(*col),
+            Ir::Unary(op, x) => Ir::Unary(*op, Box::new(rows(x)?)),
+            Ir::Binary(op, l, r) => Ir::Binary(*op, Box::new(rows(l)?), Box::new(rows(r)?)),
+            Ir::If(c, y, n) => Ir::If(Box::new(rows(c)?), Box::new(rows(y)?), Box::new(rows(n)?)),
+            Ir::Call(f, xs) => Ir::Call(*f, xs.iter().map(rows).collect::<Option<_>>()?),
+            _ => return None,
+        };
+        Some(Node::new(kind, node.span))
+    }
+    rows(body)
+}
+
+/// One step of what a function does to the rows of its group, where each is
+/// one Polars can do for every group at once.
+enum Step {
+    /// A condition of one row at a time.
+    Filter(Node),
+    /// `sort` by the columns, descending or not.
+    Sort(Vec<usize>, bool),
+    Head(usize),
+    Tail(usize),
+}
+
+/// The steps of a function that gives rows of its group: `sort`, `head`,
+/// `tail`, a row condition and `select`, over the group's rows. The
+/// conditions are asked of the whole sheet before the groups are made, so
+/// they come before the first `head` or `tail`, and the one `sort` too, each
+/// step after a `sort` working on the rows in the order it gave. `None`
+/// where the body does anything else.
+fn group_steps(body: &Node) -> Option<Vec<Step>> {
+    let Ir::Apply { args, body, .. } = &body.kind else {
+        return None;
+    };
+    if !matches!(args.as_slice(), [a] if matches!(a.kind, Ir::GroupSheet)) {
+        return None;
+    }
+    fn walk(node: &Node, steps: &mut Vec<Step>) -> Option<()> {
+        match &node.kind {
+            Ir::Arg(0) => Some(()),
+            Ir::Index { base, rows, cols } => {
+                walk(base, steps)?;
+                if matches!(cols, ColSel::One(_)) {
+                    return None;
+                }
+                let cut = steps
+                    .iter()
+                    .any(|s| matches!(s, Step::Head(_) | Step::Tail(_)));
+                match rows {
+                    RowSel::All => {}
+                    RowSel::Order { keys, desc } if !keys.is_empty() => {
+                        if cut || steps.iter().any(|s| matches!(s, Step::Sort(..))) {
+                            return None;
+                        }
+                        steps.push(Step::Sort(keys.clone(), *desc));
+                    }
+                    RowSel::Pred(cond) => {
+                        if cut {
+                            return None;
+                        }
+                        steps.push(Step::Filter((**cond).clone()));
+                    }
+                    RowSel::RangeVal(range) => match &range.kind {
+                        Ir::Unary(UnOp::UpTo, n) => steps.push(Step::Head(whole(n)?)),
+                        Ir::Binary(BinOp::Range, lo, hi) => {
+                            let (Ir::Unary(UnOp::Neg, n), Ir::Lit(Lit::Int(-1, _))) =
+                                (&lo.kind, &hi.kind)
+                            else {
+                                return None;
+                            };
+                            steps.push(Step::Tail(whole(n)?));
+                        }
+                        _ => return None,
+                    },
+                    _ => return None,
+                }
+                Some(())
+            }
+            _ => None,
+        }
+    }
+    fn whole(n: &Node) -> Option<usize> {
+        match &n.kind {
+            Ir::Lit(Lit::Int(n, _)) => usize::try_from(*n).ok(),
+            _ => None,
+        }
+    }
+    let mut steps = Vec::new();
+    walk(body, &mut steps)?;
+    (!steps.is_empty()).then_some(steps)
+}
+
+/// The columns a function that gives rows of the sheet `o` picks them by:
+/// each pair a column of the group's first row and the column of `o` it must
+/// equal, from `Other[; Col == rows[Key; 0]]` and then `select`. `None` for
+/// anything else.
+fn group_lookup(body: &Node, o: usize) -> Option<Vec<(usize, usize)>> {
+    let Ir::Apply { args, body, .. } = &body.kind else {
+        return None;
+    };
+    if !matches!(args.as_slice(), [a] if matches!(a.kind, Ir::GroupSheet)) {
+        return None;
+    }
+    fn equal(cond: &Node, on: &mut Vec<(usize, usize)>) -> Option<()> {
+        let Ir::Binary(op, l, r) = &cond.kind else {
+            return None;
+        };
+        match op {
+            BinOp::And => {
+                equal(l, on)?;
+                equal(r, on)
+            }
+            BinOp::Eq => {
+                let (Ir::RowCol { depth: 0, col }, Ir::Index { base, rows, cols }) =
+                    (&l.kind, &r.kind)
+                else {
+                    return None;
+                };
+                let (Ir::Arg(0), RowSel::Pos(at), ColSel::One(key)) = (&base.kind, rows, cols)
+                else {
+                    return None;
+                };
+                matches!(at.kind, Ir::Lit(Lit::Int(0, _))).then_some(())?;
+                on.push((*key, *col));
+                Some(())
+            }
+            _ => None,
+        }
+    }
+    fn walk(node: &Node, o: usize, on: &mut Vec<(usize, usize)>) -> Option<()> {
+        match &node.kind {
+            Ir::Sheet(s) if *s == o => Some(()),
+            Ir::Index { base, rows, cols } => {
+                if matches!(cols, ColSel::One(_)) {
+                    return None;
+                }
+                walk(base, o, on)?;
+                match rows {
+                    RowSel::All => Some(()),
+                    RowSel::Pred(cond) => equal(cond, on),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+    let mut on = Vec::new();
+    walk(body, o, &mut on)?;
+    (!on.is_empty()).then_some(on)
 }

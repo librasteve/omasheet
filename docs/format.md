@@ -136,6 +136,7 @@ over it ([Sheets from sheets](expressions.md#sheets-from-sheets)):
 sheet Dearest  := Passengers |> sort(Fare, desc) |> select(Name, Fare) |> head(5)
 sheet ByClass  := Passengers |> group_by(Pclass) |> agg(Fare.mean(), Aboard := Name.len())
 sheet Against  := Sales |> join(Goals, Month, left)
+sheet Takings  := Sales |> group_by(Region) |> apply(Takings)
 ```
 
 It has no rows in the text and no header row: its columns and its rows are

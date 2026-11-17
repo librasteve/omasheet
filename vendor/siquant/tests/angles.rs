@@ -185,14 +185,16 @@ fn a_quantity_in_its_own_unit_is_not_rounded() {
 }
 
 #[test]
-fn a_conversion_keeps_the_digits_it_has() {
+fn a_conversion_is_plain_float_arithmetic() {
     // 90° is 1.5707963267948966 rad: rounded to 15 digits it would be off by 3e-15.
     let half_pi = q(90.0, "°").convert(&u("rad")).unwrap().value();
     assert_eq!(half_pi, std::f64::consts::FRAC_PI_2);
     let back = q(half_pi, "rad").convert(&u("°")).unwrap().value();
     assert!((back - 90.0).abs() < 1e-13, "{back}");
-    // And the noise of a sum is still cleaned up.
-    assert_eq!(to_value(2.0, "g", "mg"), 2000.0);
+    // A quantity is a measurement: a conversion is plain `f64` arithmetic and
+    // may be a few ulps off (`2000.0000000000002`), which a host shows rounded.
+    let mg = to_value(2.0, "g", "mg");
+    assert!((mg - 2000.0).abs() <= 4.0 * f64::EPSILON * 2000.0, "{mg}");
 }
 
 fn to_value(value: f64, from: &str, into: &str) -> f64 {

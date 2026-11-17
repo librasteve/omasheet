@@ -414,9 +414,7 @@ fn unit_shown(value: &Value, format: Option<&Format>, display: &str) -> Option<S
     let Value::Quantity(q) = value else {
         return None;
     };
-    let shown = display
-        .strip_suffix(crate::value::MORE)
-        .unwrap_or(display);
+    let shown = display.strip_suffix(crate::value::MORE).unwrap_or(display);
     let column = match format {
         Some(Format::Quantity(f)) => f.unit.as_ref().map(|u| u.to_string()),
         _ => None,
@@ -7689,7 +7687,7 @@ mod tests {
         // None is `consts []`, and shows a derived constant cut, as before.
         assert_eq!(doc.set_const_format(None), Ok(()));
         assert!(doc.text().contains("\nconsts []\n"), "{}", doc.text());
-        assert_eq!(doc.snapshot().consts[1].display, "0J.s·");
+        assert_eq!(doc.snapshot().consts[1].display, "0J.s");
         // Another format is a line of its own, saved, and a reopened file has it.
         assert_eq!(doc.set_const_format(Some("; .9s")), Ok(()));
         assert_eq!(doc.text().matches("consts [").count(), 1);

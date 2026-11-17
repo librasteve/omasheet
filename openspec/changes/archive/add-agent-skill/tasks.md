@@ -9,15 +9,15 @@
 ## 2. Package (`packaging`)
 - [x] 2.1 Both `PKGBUILD`s install the skill to `/usr/share/omasheet/agent-skill/omasheet/SKILL.md`
 - [x] 2.2 Both `.install` files print the `ln -sfn` command on install and upgrade, and not on removal
-- [ ] 2.3 Build the package with `pkgbuild/build` and confirm the skill is in it
-- [ ] 2.4 Install it and confirm the hint prints on install and upgrade, and not on removal
-- [ ] 2.5 Run the printed `ln -sfn` and confirm Claude Code loads the skill
+- [x] 2.3 Build the package with `pkgbuild/build` and confirm the skill is in it
+- [x] 2.4 Install it and confirm the hint prints on install and upgrade, and not on removal
+- [x] 2.5 Run the printed `ln -sfn` and confirm Claude Code loads the skill
 
 ## 3. Release
-- [ ] 3.1 Bump `pkgver` to 0.1.8 in both `PKGBUILD`s
-- [ ] 3.2 Merge `dev` to `main`, so the README's raw URL resolves
-- [ ] 3.3 Tag `v0.1.8`
-- [ ] 3.4 `omarchy-pkgs/omasheet/PKGBUILD`: update `sha256sums` for the tag's tarball
+- [x] 3.1 Bump `pkgver` to 0.1.8 in both `PKGBUILD`s
+- [x] 3.2 Merge `dev` to `main`, so the README's raw URL resolves
+- [x] 3.3 Tag `v0.1.8`
+- [x] 3.4 `omarchy-pkgs/omasheet/PKGBUILD`: update `sha256sums` for the tag's tarball
 
 ## 4. Tidy
 - [x] 4.1 Point the `openspec/changes/**` mentions of the old skill path at the new one

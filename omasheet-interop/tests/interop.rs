@@ -1995,7 +1995,8 @@ fn a_workbook_sheet_as_a_table_shows_what_an_import_of_it_shows() {
         assert_eq!(imported.len(), tabled.len(), "{file}#{sheet}");
         for (a, b) in imported.iter().flatten().zip(tabled.iter().flatten()) {
             let same = match a.strip_suffix(omasheet_engine::value::MORE) {
-                Some(head) => b.starts_with(head),
+                // A noise-only zero is not shown, where the text has it.
+                Some(head) => b.starts_with(head.trim_end_matches('0')),
                 None => a == b,
             };
             assert!(same, "{file}#{sheet}: {a} is not {b}");

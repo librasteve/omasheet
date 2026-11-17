@@ -468,7 +468,7 @@ fn fractions() {
     assert_eq!(calc("(1/7).Fraction"), "1/7");
     // Past the denominator it looks to, it is shown as a decimal.
     assert_eq!(show("<1/10000>"), "1/10000");
-    assert_eq!(show("<1/10001>"), "0.00009999000099990000·");
+    assert_eq!(show("<1/10001>"), "0.0001000·");
     // A googol, and the reciprocal of a number past the atoms in the
     // universe: held exactly.
     assert_eq!(calc("<10> ** 100 * <1/10> ** 80"), "100000000000000000000");
@@ -548,7 +548,7 @@ fn display_of_rationals() {
     // A Decimal that ends is shown as that decimal in full.
     assert_eq!(show("175.0/4"), "43.75");
     assert_eq!(show("1.0/100000"), "0.00001");
-    assert_eq!(show("-1.0/64"), "-0.016·");
+    assert_eq!(show("-1.0/64"), "-0.0156·");
     assert_eq!(show("19.99 * 3"), "59.97");
     assert_eq!(show("100.0/3 * 3"), "100.000·");
     // One that was rounded at the widest scale is cut and marked.
@@ -2490,6 +2490,496 @@ Part  : Fraction
     }
 }
 
+/// A column lowers by its type, declared or inferred from all its cells
+/// (widen-polars-lowering D-W1, D-W2): a `Fraction` and an `Any` never do.
+#[test]
+fn a_plan_is_over_columns_of_one_known_type() {
+    // Inferred, with nothing declared: whole numbers are `Integer`.
+    let inferred = "\
+sheet T
+
+| A | B | C |
+| - | - | - |
+| 1 | 2 | * |
+| 3 | 4 | * |
+
+C := A + B
+";
+    assert_eq!(attempt(inferred, "C"), Some(Attempt::Lowered));
+    assert_eq!(ask(inferred, "T.C"), "[3, 7]");
+    // A column of fractions is the engine's, however it is written.
+    let fractions = "\
+sheet T
+
+A : Fraction
+
+| A   | B | C |
+| --- | - | - |
+| 1/3 | 2 | * |
+| 1/6 | 4 | * |
+
+C := A + B
+";
+    assert_ne!(attempt(fractions, "C"), Some(Attempt::Lowered));
+    assert_eq!(ask(fractions, "T.C"), "[7/3, 25/6]");
+    // One that mixes types has no one type, so it is the engine's too.
+    let mixed = "\
+sheet T
+
+| A     | B | C |
+| ----- | - | - |
+| 1     | 2 | * |
+| apple | 4 | * |
+
+C := A == B
+";
+    assert_ne!(attempt(mixed, "C"), Some(Attempt::Lowered));
+}
+
+/// A percentage in an expression is the `Decimal` it holds, and the dress of
+/// the result is the checker's (widen-polars-lowering D-W3): two percentages
+/// a percentage, any other mix the plain number. Both paths agree, to the
+/// digit and in the dress.
+#[test]
+fn a_percentage_in_an_expression_is_lowered() {
+    let file = "\
+const TaxRate = 20%
+
+sheet T
+
+Rate : Percent
+
+| N   | Rate | Plus | Scaled | Both | Whole | Mixed | Fixed | Tax | Cut |
+| --- | ---- | ---- | ------ | ---- | ----- | ----- | ----- | --- | --- |
+| 100 | 5%   | *    | *      | *    | *     | *     | *     | *   | *   |
+| 250 | 12.5%| *    | *      | *    | *     | *     | *     | *   | *   |
+
+Plus   := Rate + 2%
+Scaled := N * 5%
+Both   := 5% + 3%
+Whole  := 1 + 2
+Mixed  := Rate * 2
+Fixed  := Rate + 5%
+Tax    := N * TaxRate
+Cut    := N - N * 10%
+";
+    let (lowered, shown) = calculated(file, Lowering::Always);
+    let (_, engine) = calculated(file, Lowering::Never);
+    assert_eq!(shown, engine);
+    // An expression that reads no column has nothing to lower over, a whole
+    // number sum as much as a sum of percentages.
+    let attempt = |name: &str| lowered.iter().find(|(col, _)| col == name).map(|(_, a)| *a);
+    assert_eq!(attempt("Both"), attempt("Whole"));
+    for name in ["Plus", "Scaled", "Mixed", "Fixed", "Tax", "Cut"] {
+        assert_eq!(attempt(name), Some(Attempt::Lowered), "{name}");
+    }
+}
+
+/// `examples/budget.omx` is the first case: `Tax := Profit * TaxRate`, where
+/// the constant is a percentage, is lowered and gives the engine's answer.
+#[test]
+fn a_percentage_constant_in_the_budget_is_lowered() {
+    let file = include_str!("../../examples/budget.omx");
+    let (lowered, shown) = calculated(file, Lowering::Always);
+    let (_, engine) = calculated(file, Lowering::Never);
+    assert_eq!(shown, engine);
+    let tax = lowered
+        .iter()
+        .find(|(col, _)| col == "Tax")
+        .map(|(_, a)| *a);
+    assert_eq!(tax, Some(Attempt::Lowered));
+}
+
+/// `+ - * /` of values with an uncertainty are two `Float64` expressions, the
+/// value and the sigma (widen-polars-lowering D-W5). The two paths agree on
+/// the value to the bit, and on the sigma to the digit shown here.
+#[test]
+fn an_uncertain_operation_is_lowered() {
+    let file = "\
+sheet T
+
+V : Scientific
+S : Scientific
+
+| V        | S       | N | Sum | Diff | Prod | Quot | Scale | Price | Tiny | Whole | Mix | Chain |
+| -------- | ------- | - | --- | ---- | ---- | ---- | ----- | ----- | ---- | ----- | --- | ----- |
+| 10 ± 0.1 | 20.5(3) | 4 | *   | *    | *    | *    | *     | *     | *    | *     | *   | *     |
+| 7.5(2)   | 0.5(1)  | 2 | *   | *    | *    | *    | *     | *     | *    | *     | *   | *     |
+| 3 ± 0    | 2 ± 0.5 | 5 | *   | *    | *    | *    | *     | *     | *    | *     | *   | *     |
+| 0.1(1)   | 19.99(1)| 7 | *   | *    | *    | *    | *     | *     | *    | *     | *   | *     |
+|          | 2 ± 0.5 | 3 | *   | *    | *    | *    | *     | *    | *     | *     | *   | *     |
+
+Sum   := V + S
+Diff  := V - S
+Prod  := V * S
+Quot  := V / S
+Scale := V * 1.5
+Price := V * 19.99
+Tiny  := V + 0.1
+Whole := N * V
+Mix   := V / N
+Chain := (V + S) * V / S
+";
+    let (lowered, shown) = calculated(file, Lowering::Always);
+    let (_, engine) = calculated(file, Lowering::Never);
+    assert_eq!(shown, engine);
+    for name in [
+        "Sum", "Diff", "Prod", "Quot", "Scale", "Price", "Tiny", "Whole", "Mix", "Chain",
+    ] {
+        let attempt = lowered.iter().find(|(col, _)| col == name).map(|(_, a)| *a);
+        assert_eq!(attempt, Some(Attempt::Lowered), "{name}");
+    }
+}
+
+/// `+ - * /` of quantities, and of a quantity and a number, are the numbers
+/// in the unit of the column they are for (widen-polars-lowering D-W4): the
+/// units are worked out once, a sum converts its right side to the left's,
+/// and a product or a quotient of two dimensions is held in the unit of the
+/// column that declares it. Both paths agree, to the digit.
+#[test]
+fn a_quantity_operation_is_lowered() {
+    let file = "\
+sheet Q
+
+Width  : Length
+Height : Length
+Depth  : Length[mm]
+Area   : Area
+Volume : Volume
+Girth  : Length
+Gap    : Length[cm]
+Half   : Length
+Cut    : Length
+Kilos  : Mass
+Grams  : Mass[g]
+Total  : Mass
+Less   : Mass[g]
+Scaled : Mass[g]
+
+| Width | Height | Depth | Area | Volume | Girth | Gap | Half | Cut | Kilos  | Grams | Total | Less | Scaled |
+| ----- | ------ | ----- | ---- | ------ | ----- | --- | ---- | --- | ------ | ----- | ----- | ---- | ------ |
+| 20cm  | 30cm   | 5mm   | *    | *      | *     | *   | *    | *   | 5kg    | 300g  | *     | *    | *      |
+| 2m    | 150cm  | 12mm  | *    | *      | *     | *   | *    | *   | 7.5(2)kg | 5g  | *     | *    | *      |
+| 0.1m  | 3(1)cm | 7mm   | *    | *      | *     | *   | *    | *   | 0.3kg  | 2.5kg | *     | *    | *      |
+|       | 40cm   | 1mm   | *    | *      | *     | *   | *    | *   |        | 1kg   | *     | *    | *      |
+
+Area   := Width * Height
+Volume := Width * Height * Depth
+Girth  := 2 * (Width + Height)
+Gap    := Width - Height
+Half   := Width / 2
+Cut    := Width * 0.75
+Total  := Kilos + Grams
+Less   := Kilos - Grams
+Scaled := Kilos * 1.5
+";
+    let (lowered, shown) = calculated(file, Lowering::Always);
+    let (_, engine) = calculated(file, Lowering::Never);
+    assert_eq!(shown, engine);
+    assert_eq!(ask(file, "Q.Area")[..11].to_string(), "[0.06m^2, 3");
+    for name in [
+        "Area", "Volume", "Girth", "Gap", "Half", "Cut", "Total", "Less", "Scaled",
+    ] {
+        let attempt = lowered.iter().find(|(col, _)| col == name).map(|(_, a)| *a);
+        assert_eq!(attempt, Some(Attempt::Lowered), "{name}");
+    }
+}
+
+/// What stays on the engine, with the same answer either way: an offset unit,
+/// a quantity of no declared kind, a result with no dimension, two dimensions
+/// added, and a divisor of nought (widen-polars-lowering D-W4, 3.5).
+#[test]
+fn a_quantity_the_plan_cannot_hold_is_the_engines() {
+    let file = "\
+sheet Q
+
+Width  : Length
+Height : Length
+Kilos  : Mass
+Warm   : Temperature
+Free   : Quantity
+
+| Width | Height | Kilos | N | Warm | Free | Pure | Bad | Part | Next | Twice |
+| ----- | ------ | ----- | - | ---- | ---- | ---- | --- | ---- | ---- | ----- |
+| 20cm  | 30cm   | 5kg   | 2 | 20°C | 5kg  | *    | *   | *    | *    | *     |
+| 2m    | 150cm  | 7kg   | 0 | 25°C | 2m   | *    | *   | *    | *    | *     |
+
+Pure  := Width / Height
+Bad   := Width + Kilos
+Part  := Kilos / N
+Next  := Warm + 5K
+Twice := Free * 2
+";
+    let (lowered, shown) = calculated(file, Lowering::Always);
+    let (_, engine) = calculated(file, Lowering::Never);
+    assert_eq!(shown, engine);
+    for name in ["Pure", "Bad", "Part", "Next", "Twice"] {
+        let attempt = lowered.iter().find(|(col, _)| col == name).map(|(_, a)| *a);
+        assert_ne!(attempt, Some(Attempt::Lowered), "{name}");
+    }
+}
+
+const APPLY_ORDERS: &str = "\
+sheet Orders
+
+| Region | Qty | Price |
+| ------ | --- | ----- |
+| North  | 2   | 10    |
+| South  | 1   | 5.5   |
+| North  | 3   | 4     |
+| South  | 4   | 2     |
+| East   | 1   | 100   |
+
+sheet Targets
+
+| Region | Goal |
+| ------ | ---- |
+| South  | 70   |
+| North  | 50   |
+| North  | 60   |
+
+fn GoalsOf(rows) = Targets[; Region == rows[Region; 0]] |> select(Goal)
+fn Worth(orders) = (orders.Qty * orders.Price).sum()
+fn Biggest(rows) = rows.Qty.max()
+fn Top2(rows) = rows |> sort(Qty, desc) |> head(2) |> select(Qty, Price)
+fn Whole(rows) = rows
+fn Only(rows) = rows.Qty
+
+sheet Goals := Orders |> group_by(Region) |> apply(GoalsOf)
+sheet Biggest := Goals |> sort(Goal, desc) |> head(1)
+sheet BestTwo := Orders |> group_by(Region) |> apply(Top2)
+sheet Dearest := RegionWorth |> sort(Worth, desc) |> head(2)
+sheet Smallest := BestTwo |> sort(Price) |> head(2)
+sheet Onlys := Orders |> group_by(Region) |> apply(Only)
+sheet RegionWorth := Orders |> group_by(Region) |> apply(Worth)
+sheet Named := Orders |> group_by(Region) |> apply(Total := Worth)
+";
+
+/// `apply(Fn)` after `group_by` calls the function once on the rows of each
+/// group, as a sheet, and a row for each group has the keys and what the
+/// function gave (add-group-apply).
+#[test]
+fn apply_calls_a_function_on_each_group() {
+    assert_eq!(
+        ask(APPLY_ORDERS, "RegionWorth.Region"),
+        "['East', 'North', 'South']"
+    );
+    assert_eq!(ask(APPLY_ORDERS, "RegionWorth.Worth"), "[100, 32, 13.5]");
+    // The same as the aggregate it stands for, in the same order.
+    assert_eq!(ask(APPLY_ORDERS, "Named.Total"), "[100, 32, 13.5]");
+}
+
+/// A function that gives rows of the sheet makes a row for each of them, with
+/// the keys of its group, in the order of the groups.
+#[test]
+fn apply_of_a_sheet_makes_the_rows_of_each_group() {
+    let f = APPLY_ORDERS;
+    assert_eq!(
+        ask(f, "BestTwo.Region"),
+        "['East', 'North', 'North', 'South', 'South']"
+    );
+    assert_eq!(ask(f, "BestTwo.Qty"), "[1, 3, 2, 4, 1]");
+    assert_eq!(ask(f, "BestTwo.Price"), "[100, 4, 10, 2, 5.5]");
+    // A column the keys also name is the function's to leave out.
+    let clash = lint_errors(&format!(
+        "{f}\nsheet G := Orders |> group_by(Region) |> apply(Whole)\n"
+    ))
+    .join("\n");
+    assert!(clash.contains("also a key"), "{clash}");
+}
+
+/// What `apply` makes is an ordinary calculated sheet: later stages read it.
+#[test]
+fn what_apply_makes_is_read_by_later_stages() {
+    let f = APPLY_ORDERS;
+    assert_eq!(ask(f, "Dearest.Region"), "['East', 'North']");
+    assert_eq!(ask(f, "Smallest.Region"), "['South', 'North']");
+    assert_eq!(ask(f, "Smallest.Price"), "[2, 4]");
+}
+
+/// A function that gives rows of another sheet makes a row for each of them,
+/// with the keys of its group: a group it gives none for has no rows.
+#[test]
+fn apply_of_another_sheets_rows_pairs_them_with_the_group() {
+    let f = APPLY_ORDERS;
+    assert_eq!(ask(f, "Goals.Region"), "['North', 'North', 'South']");
+    assert_eq!(ask(f, "Goals.Goal"), "[50, 60, 70]");
+    // And what it makes is read by a later stage as any sheet is.
+    assert_eq!(ask(f, "Biggest.Region"), "['South']");
+    assert_eq!(ask(f, "Biggest.Goal"), "[70]");
+}
+
+/// A group the function fails on is an error in its own row, and the other
+/// groups are worked out.
+#[test]
+fn apply_fails_a_group_in_its_own_row() {
+    let f = APPLY_ORDERS;
+    // A column of one row is its one value, as a cell's is; a column of two
+    // is an error in that group's row, and East is still worked out.
+    assert_eq!(ask(f, "Onlys[Only; 0]"), "1");
+    let why = calc_err(Some(f), "Onlys[Only; 1]");
+    assert!(why.contains("a cell holds one value"), "{why}");
+}
+
+/// `apply` and `agg` make the same groups in the same order, an empty key
+/// first as a group of its own, and a group the function gives no rows for
+/// has none.
+#[test]
+fn apply_makes_the_groups_agg_makes() {
+    let f = "\
+sheet T
+
+| K | V |
+| - | - |
+| b | 1 |
+|   | 2 |
+| a | 3 |
+| b | 4 |
+
+fn Sum(rows) = rows.V.sum()
+fn Big(rows) = rows |> sort(V, desc) |> head(1) |> select(V)
+fn None(rows) = rows[; V > 100] |> select(V)
+
+sheet ByApply := T |> group_by(K) |> apply(Sum)
+sheet ByAgg := T |> group_by(K) |> agg(Sum := V.sum())
+sheet Tops := T |> group_by(K) |> apply(Big)
+sheet Nothing := T |> group_by(K) |> apply(None)
+";
+    assert_eq!(ask(f, "ByApply.K"), ask(f, "ByAgg.K"));
+    assert_eq!(ask(f, "ByApply.Sum"), ask(f, "ByAgg.Sum"));
+    assert_eq!(ask(f, "ByApply.Sum"), "[2, 3, 5]");
+    assert_eq!(ask(f, "Tops.V"), "[2, 3, 4]");
+    assert_eq!(ask(f, "Nothing.V"), "[]");
+}
+
+/// A function that gives a value, over an expression of the group's columns,
+/// is calculated by Polars for every group at once, and gives what the engine
+/// gives (add-group-apply D-A6); one it cannot calculate there is the engine's.
+#[test]
+fn apply_of_a_value_is_lowered_with_its_body() {
+    let f = format!(
+        "{APPLY_ORDERS}\nfn Hi(rows) = rows.Qty.max()\n\
+         sheet Peak := Orders |> group_by(Region) |> apply(Hi)\n"
+    );
+    for expr in [
+        "RegionWorth.Worth",
+        "RegionWorth.Region",
+        "Peak.Hi",
+        "Named.Total",
+    ] {
+        both_ways(&f, expr, None);
+    }
+    // The aggregate of an expression, and of a column, each taken by Polars.
+    for expr in ["RegionWorth.Worth", "Peak.Hi"] {
+        let ran = both_ways(&f, expr, None);
+        assert!(!ran.aggregates.is_empty(), "{expr}");
+        assert!(
+            ran.aggregates.iter().all(|a| *a == Attempt::Lowered),
+            "{expr}"
+        );
+    }
+}
+
+/// A function that gives the group's own rows, by `sort`, `head`, `tail` and
+/// a row condition, is taken by Polars for every group at once and gives the
+/// rows the engine gives, in the same order, ties and empty cells included.
+#[test]
+fn apply_of_rows_is_lowered_with_its_steps() {
+    let f = "\
+sheet T
+
+| K | V | W |
+| - | - | - |
+| b | 3 | 1 |
+|   | 2 | 9 |
+| a | 3 | 2 |
+| b | 3 | 3 |
+| a |   | 4 |
+| b | 7 | 5 |
+| a | 1 | 6 |
+|   | 5 | 7 |
+
+fn Best(rows) = rows |> sort(V, desc) |> head(2) |> select(V, W)
+fn Low(rows) = rows |> sort(V) |> head(2) |> select(W)
+fn Last(rows) = rows |> tail(2) |> select(W)
+fn Big(rows) = rows[; V > 2] |> sort(W, desc) |> select(V, W)
+fn Both(rows) = rows[; W > 1] |> sort(V, W) |> head(1) |> select(W)
+fn Twice(rows) = rows |> sort(V) |> head(2) |> tail(1) |> select(W)
+fn Every(rows) = rows |> select(V)
+
+sheet Best := T |> group_by(K) |> apply(Best)
+sheet Low := T |> group_by(K) |> apply(Low)
+sheet Last := T |> group_by(K) |> apply(Last)
+sheet Big := T |> group_by(K) |> apply(Big)
+sheet Both := T |> group_by(K) |> apply(Both)
+sheet Twice := T |> group_by(K) |> apply(Twice)
+sheet Every := T |> group_by(K) |> apply(Every)
+";
+    for expr in [
+        "Best.K", "Best.V", "Best.W", "Low.W", "Last.K", "Last.W", "Big.K", "Big.W", "Both.K",
+        "Both.W", "Twice.W", "Every.V",
+    ] {
+        let ran = both_ways(f, expr, None);
+        assert!(ran.filters.contains(&Attempt::Lowered), "{expr}");
+    }
+    assert_eq!(ask(f, "Best.W"), "[7, 9, 2, 6, 5, 1]");
+}
+
+/// A function that gives rows of another sheet picked by what the group's
+/// first row holds is a join, taken by Polars, and gives the pairs the engine
+/// gives, a group it finds nothing for having no rows and an empty key none.
+#[test]
+fn apply_of_another_sheets_rows_is_lowered_as_a_join() {
+    let f = format!(
+        "{APPLY_ORDERS}\n\
+         fn Both(rows) = Targets[; Region == rows[Region; 0] and Goal > 0] |> select(Goal)\n\
+         sheet Both := Orders |> group_by(Region) |> apply(Both)\n"
+    );
+    for expr in ["Goals.Region", "Goals.Goal", "Biggest.Goal"] {
+        let ran = both_ways(&f, expr, None);
+        assert!(ran.filters.contains(&Attempt::Lowered), "{expr}");
+    }
+    assert_eq!(ask(&f, "Goals.Goal"), "[50, 60, 70]");
+    // A condition that is not a lookup by the group is the engine's.
+    both_ways(&f, "Both.Goal", None);
+}
+
+/// `apply` is refused where it does not go, and a function it cannot call is
+/// said so.
+#[test]
+fn apply_says_where_it_goes_and_what_it_takes() {
+    let errors = |stage: &str| lint_errors(&format!("{APPLY_ORDERS}\n{stage}\n")).join("\n");
+    let elsewhere = errors("sheet G := Orders |> apply(Worth)");
+    assert!(elsewhere.contains("ends a sheet's formula"), "{elsewhere}");
+    let unknown = errors("sheet G := Orders |> group_by(Region) |> apply(Nothing)");
+    assert!(unknown.contains("no `Nothing`"), "{unknown}");
+    let arity = errors("fn Two(a, b) = a\nsheet G := Orders |> group_by(Region) |> apply(Two)");
+    assert!(arity.contains("takes one argument, not 2"), "{arity}");
+    let many = errors("sheet G := Orders |> group_by(Region) |> apply(Worth, Biggest)");
+    assert!(many.contains("one function"), "{many}");
+}
+
+/// A column of a percentage and a bare number is a `Decimal` (`S::wider`), so
+/// it lowers, and its numbers are the engine's.
+#[test]
+fn a_column_of_a_percentage_and_a_number_is_a_decimal() {
+    let file = "\
+sheet T
+
+| Base | Rate | Fee |
+| ---- | ---- | --- |
+| 100  | 20%  | *   |
+| 200  | 0.5  | *   |
+
+Fee := Base * Rate
+";
+    assert_eq!(attempt(file, "Fee"), Some(Attempt::Lowered));
+    assert_eq!(ask(file, "T.Fee"), "[20, 100]");
+    // Each cell keeps the dress it was written in; only the plan reads them
+    // as the plain numbers they hold.
+    assert_eq!(ask(file, "T.Rate"), "[20%, 0.5]");
+}
+
 #[test]
 fn a_column_reading_a_percentage_column_is_lowered() {
     // The win is not the aggregate: a column of the text declared `Percent`
@@ -2512,12 +3002,13 @@ Fee := Base * Rate
 }
 
 #[test]
-fn a_percentage_in_a_formula_is_not_lowered() {
-    // `Rate` is `20%`, and what omasheet makes of a percentage met in the
-    // middle of a sum is its own rule rather than arithmetic (D69). The
-    // dress a column wears is another matter: it is put back on as a value
-    // is read out of the dataframe, exactly as the row path puts it on.
-    assert_eq!(attempt(GATES, "Tax"), Some(Attempt::Refused));
+fn a_percentage_in_a_formula_is_lowered() {
+    // `Rate` is `20%`, a `Decimal` in a dress (D69, widen-polars-lowering
+    // D-W3). The dress a column wears is put back on as a value is read out
+    // of the dataframe, exactly as the row path puts it on, and the answer is
+    // the engine's.
+    assert_eq!(attempt(GATES, "Tax"), Some(Attempt::Lowered));
+    assert_eq!(ask(GATES, "Sales.Tax"), "[8, 10, 14]");
 }
 
 #[test]
@@ -3597,8 +4088,10 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // calculated, which is 32 of the 64. The other thirty-two are the
     // columns lowering forced calculates in one step, and 8.3 is where that
     // number is read. `windows.omx` adds five: the window functions of whole
-    // numbers, which Polars runs down the column.
-    assert_eq!(taken, 75, "the columns taken at once");
+    // numbers, which Polars runs down the column, and a percentage in a
+    // formula adds two (widen-polars-lowering D-W3), and an uncertain
+    // operation five more (D-W5) and a quantity operation three (D-W4).
+    assert_eq!(taken, 85, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read

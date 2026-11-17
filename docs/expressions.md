@@ -30,9 +30,10 @@ Only the display is cut, and `omasheet eval --exact` gives it in full.
 A `Decimal`, a `Float` and the parts of a `Complex` are shown to three places
 after the point, and where they have more the rest is cut and marked with
 `·`: `1.0/3` is `0.333·` and `sqrt(2)` is `1.414·`. One with no more than three
-places is whole, `19.99`, and one below a thousandth keeps its digits, so as
-not to show as nought. A `Float` in e notation has its mantissa cut the same way, `1.234e-12·`. Before that a `Float`, and each part of a `Complex`, is rounded to 15 places after the point, so that the noise of a calculation shows as nought, marked with `·` as a number with digits not shown is: `cos(90°)` is `0·` and not `6.123e-17·`, and `1e-20.Float` is `0·`. That is the `float_places` of the display style; the value itself, and a file, keep every digit. A quantity with no uncertainty and no format has its number cut the same way, with the `·` after the unit: `arcsin(1)` is `1.571rad·`. A `Scientific`, and a quantity with an uncertainty, is not cut: the uncertainty in brackets
-sets the digits it shows.
+places is whole, `19.99`. One below 1 is shown to three significant digits
+instead, `pi / 1000` is `0.00314·`, so as not to show as nought or as one
+digit; below a millionth it keeps its digits, or is in e notation. A `Float` in e notation has its mantissa cut the same way, `1.234e-12·`. Before that a `Float`, and each part of a `Complex`, is rounded to 15 places after the point, and to no more than 15 significant digits, so that the noise of a calculation is not shown, and not marked either, as it is not digits that were there: `cos(90°)` is `0` and not `6.123e-17·`, `100 * 1.1.Float` is `110` and not `110.00000000000001`, and `1e-20.Float` is `0`. That is the `float_places` of the display style; the value itself, and a file, keep every digit, and `=~=` compares numbers that differ by noise. A quantity with no uncertainty and no format has its number cut the same way, with the `·` after the unit: `arcsin(1)` is `1.571rad·`. A `Scientific` with an uncertainty, and a quantity with one, is not cut: the uncertainty in brackets
+sets the digits it shows. One with an uncertainty of nought is an inexact number, and is shown as a `Float` is: `(1/3.Float) ± 0` is `0.333·`.
 
 A `Decimal` is a Polars `Decimal(38, s)`: 38 digits, `s` of them after the
 point, and the places it keeps are the column's, written `Decimal(2)`. A bare
@@ -435,12 +436,34 @@ sheet Best     := ByRegion |> sort(Revenue_sum, desc) |> head(1)
   needs an aggregate, `Revenue.sum()` and not `Revenue`. An aggregate of
   one column is named for it, `Revenue_sum`; `Name := …` names one, and
   an aggregate of anything else must be named
+- `group_by(keys) |> apply(Fn)`: calls the function `Fn` once on the rows of each group, as a sheet, in the order `agg` gives the groups. The function takes one argument, the group's rows, and what it gives sets what the group makes. A value (`fn Takings(rows) = (rows.Units * rows.Price).sum()`) makes one row, the keys and a column named for the function (`apply(Total := Takings)` names it). A column or a sheet of the group's own rows (`fn BestTwo(rows) = rows |> sort(Units, desc) |> head(2) |> select(Rep, Units)`) makes a row for each row it gives, the keys repeated, so the top rows of each group and a ranking within it are one function each. A sheet that is another's rows (a lookup in a second sheet by the group's key) is paired with the group in the same way a `join` pairs rows. A function that gives a column a key also names is an error, so `select` it away; a group it gives no rows for has none, and a group it fails on has no rows and says why. See `examples/groups.omx`
 - `join(Other, keys)`: a row for every pair of rows of the two sheets whose
   key columns are equal, the left sheet's columns and then the other's.
   `join(Other, keys, left)` keeps a left row that matches nothing, its other
   columns empty. A key that matches twice gives two rows, an empty key
   matches nothing, and a name both sheets have takes `_right` on the other
   sheet's column. The rows come in the left sheet's order, then the other's
+
+## Calculated in Polars
+
+A formula column over a table big enough to be worth it is calculated by Polars, in one step over the whole column, when every part of the formula is one it can do. The answer is the one the engine would give a row at a time, to the digit; a formula with any part Polars cannot do is the engine's, whole. The type of each column a formula reads is the one the checker has for it, written in the schema or worked out from all of the column's cells, so a column with no declared type is no worse off.
+
+What is calculated in Polars:
+
+- whole numbers, floats and decimals: `+ - *`, a quotient to as many places as Polars has (21), and a small whole power;
+- a percentage in the formula, `Revenue * 5%` or `Profit * TaxRate` with `const TaxRate = 20%`, and a `Percent` column, as the `Decimal` each is. The result is a percentage where both sides are, and the plain number for any other mix;
+- a quantity, in a column that declares a named kind (`Length`, `Mass`, `Area`, ...) or in a file's own column of one: `+ - * /` with another quantity or a number. A sum converts its right side to the left's unit, a product or a quotient is in the product or quotient of the units, and the answer is held in the unit of the column it is written into, so `Area := Width * Height` is in `m^2` whichever units the lengths were written in;
+- a `Scientific`, and a quantity with an uncertainty: `+ - * /` with a number or another, the uncertainty carried to first order as the engine does. It is worked out as `sqrt(a² + b²)` where the engine has `hypot`, so it may differ from the engine's in the last place.
+
+A `group_by(keys) |> apply(Fn)` is calculated in Polars, for every group at once, in these cases:
+
+- a function that gives a value: `fn Takings(rows) = (rows.Units * rows.Price).sum()`, an aggregate of a column or of an expression over the group's columns that Polars can do;
+- a function that gives rows of the grouped sheet: `sort` (one), `head`, `tail`, a condition on one row at a time and `select`, as in `rows |> sort(Units, desc) |> head(2) |> select(Rep, Units)`. The condition comes before any `head` or `tail`;
+- a function that gives rows of another sheet picked by equality with the group's key, `Targets[; Region == rows[Region; 0]] |> select(Target)`, as a join.
+
+Any other function, a group's cell that is empty where the body reads it, or an operation that might not fit, is called a group at a time by the engine, with the same answer. A rank within each group is a `rank(... by Key)` column, not an `apply`.
+
+What is always the engine's: a `Fraction`; a column of mixed types; a quantity in an offset unit (`°C`) or a scale (`k.`), or in a column with no declared kind; a quantity operation whose answer has no dimension, as `Width / Height` has; a sum of two dimensions, which is an error there; a divisor of nought, which is an error there; `%` and `**` of a `Scientific`; and a `Complex`. The answer is the same either way, and only the time differs.
 
 ## Down a column
 

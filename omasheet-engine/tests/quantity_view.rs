@@ -90,3 +90,54 @@ fn a_view_reads_a_column_of_quantities_in_its_kind_and_unit() {
         }
     }
 }
+
+/// A formula over a file's own column of quantities is calculated in Polars,
+/// in the unit the file gives the column, with the answer the engine's
+/// (widen-polars-lowering D-W4).
+#[test]
+fn a_formula_over_a_files_quantity_column_is_lowered() {
+    let dir = scratch("quantity-lowered");
+    file(&dir);
+    let text = "view Q := dataframe['q.parquet']\n\nWeight : Mass[g]\nLen : Length\nAny : Quantity\n\
+                Doubled : Mass[g]\nLong : Length\nTotal : Mass[g]\n\n\
+                Doubled := Weight * 2\nLong := Len + Len\nTotal := Weight + Weight / 4\n";
+    let run = |lowering: Lowering| {
+        let (mut program, mut diags) = compile(text, 0);
+        let tables = table::read(&mut program, &dir, &mut diags);
+        assert!(diags.is_empty(), "{diags:?}");
+        let engine = Engine::with_tables(
+            &program,
+            Options {
+                base: Some(dir.clone()),
+                lowering,
+                exact: true,
+                ..Options::default()
+            },
+            tables,
+        );
+        engine.run();
+        let attempts: Vec<_> = engine
+            .attempts()
+            .into_iter()
+            .map(|(t, c, a)| (program.sheets[t].cols[c].name.clone(), a))
+            .collect();
+        let mut shown = Vec::new();
+        for c in 0..program.sheets[0].cols.len() {
+            for r in 0..program.sheets[0].nrows.max(3) {
+                shown.push(engine.show(&engine.cell_shown(0, c, r), true));
+            }
+        }
+        (attempts, shown)
+    };
+    let (lowered, a) = run(Lowering::Always);
+    let (_, b) = run(Lowering::Never);
+    assert_eq!(a, b);
+    for name in ["Doubled", "Long", "Total"] {
+        let attempt = lowered.iter().find(|(col, _)| col == name).map(|(_, x)| *x);
+        assert_eq!(
+            attempt,
+            Some(omasheet_engine::eval::Attempt::Lowered),
+            "{name}"
+        );
+    }
+}
