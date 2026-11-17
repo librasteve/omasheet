@@ -23,6 +23,8 @@ ApplicationWindow {
     readonly property color accentColor: file.themeAccent
     readonly property color selectionFill: file.themeSelection
     readonly property color mutedColor: file.themeMuted
+    // A unit shown after its number: the text colour, slightly muted.
+    readonly property color unitColor: Qt.tint(textColor, Qt.rgba(mutedColor.r, mutedColor.g, mutedColor.b, 0.65))
     readonly property color errorColor: file.themeError
     readonly property color warningColor: file.themeWarning
     readonly property color lineColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.14)
@@ -458,12 +460,27 @@ ApplicationWindow {
         return longest;
     }
 
+    // The boxes that set a column, filter, type, unit and format, are all this
+    // wide, the widest of them, and open the same way beside the column: at
+    // the head's top, on its right edge, and over it by a pixel or two only,
+    // so the column is not hidden. Where there is no room on the right, on its
+    // left, over the same pixels.
+    readonly property int setPopupWidth: Math.min(Math.round(fontSize * 30), width - 16)
+    function placeBeside(box, item) {
+        var lap = 2;
+        var right = item.mapToItem(null, item.width - lap, 0).x;
+        box.x = right + box.width <= win.width - 8 ? item.width - lap
+            : Math.max(-item.mapToItem(null, 0, 0).x + 8, lap - box.width);
+        box.y = 0;
+    }
+
     // The type as the head shows it: `Mass[kg]` for a column of quantities
     // that has a unit, whether its cells are numbers or carry the unit too
     // (`v`); `[]` after the type where it has some other format.
     function typeLabel(col) {
+        // `Quantity` is long, and is set `Q` where it has a unit to show.
         if (isQuantityType(col.type) && col.unit)
-            return col.type + "[" + col.unit + "]";
+            return (col.type === "Quantity" ? "Q" : col.type) + "[" + col.unit + "]";
         return col.type + (col.format ? "[]" : "");
     }
 
@@ -3953,12 +3970,24 @@ ApplicationWindow {
                                         readonly property bool cut: !marked && !!cellItem.cell && !!cellItem.cell.n
                                             && cellItem.cell.d.length > 1
                                             && cellItem.cell.d.charAt(cellItem.cell.d.length - 1) === "\u00b7"
-                                        text: marked ? cellItem.cell.h
-                                            : !cellItem.cell ? ""
+                                        // A quantity's unit, at the end of what is shown,
+                                        // is set in a slightly muted tone, apart from its number.
+                                        readonly property string shownText: !cellItem.cell ? ""
                                             : lines && !opened ? cellItem.cell.d.split("\n")[0]
                                             : cut ? cellItem.cell.d.slice(0, -1)
                                             : cellItem.cell.d
-                                        textFormat: marked ? Text.StyledText : Text.PlainText
+                                        readonly property bool unitSet: !marked && !lines && !!cellItem.cell
+                                            && !!cellItem.cell.u && !cellItem.cell.e
+                                            && shownText.length > cellItem.cell.u.length
+                                            && shownText.slice(-cellItem.cell.u.length) === cellItem.cell.u
+                                        function escaped(t) {
+                                            return t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+                                        }
+                                        text: marked ? cellItem.cell.h
+                                            : unitSet ? escaped(shownText.slice(0, -cellItem.cell.u.length))
+                                                + "<font color=\"" + win.unitColor + "\">" + escaped(cellItem.cell.u) + "</font>"
+                                            : shownText
+                                        textFormat: marked || unitSet ? Text.StyledText : Text.PlainText
                                         // Opened, it is drawn over the rows
                                         // below rather than growing the row.
                                         height: opened ? Math.max(parent.height, contentHeight + 6) : parent.height
@@ -5133,7 +5162,7 @@ ApplicationWindow {
         property string fault: ""
         readonly property bool sortable: !win.sheet.isConsts
         padding: 8
-        width: Math.min(Math.round(win.fontSize * 30), win.width - 16)
+        width: win.setPopupWidth
         // The filter is written on several lines when it is long: the caret
         // beside the box opens it out, and Enter then starts a line, with
         // Ctrl+Enter to apply.
@@ -5154,11 +5183,7 @@ ApplicationWindow {
             // Beside the column, lapping a little over its right edge so
             // that it stays plain whose box it is; to its left, over the
             // column, where there is no room on the right.
-            var lap = Math.round(win.fontSize * 0.8);
-            var right = item.mapToItem(null, item.width - lap, 0).x;
-            x = right + width <= win.width - 8 ? item.width - lap
-                : Math.max(-item.mapToItem(null, 0, 0).x + 8, lap - width);
-            y = 0;
+            win.placeBeside(columnPopup, item);
             applied = win.filterOf(c);
             filterField.text = applied;
             check();
@@ -5789,11 +5814,10 @@ ApplicationWindow {
         // The column whose head is marked while the box is open.
         property int col: 0
         signal picked(string spec)
-        // How much wider and taller than usual the box is.
-        property real wider: 1
+        // How much taller than usual the box is.
         property real taller: 1
         padding: 6
-        width: Math.min(Math.round(win.fontSize * 17 * wider), win.width - 16)
+        width: win.setPopupWidth
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: grid.forceActiveFocus()
         // The cursor is in the text box once the box is up.
@@ -6055,11 +6079,7 @@ ApplicationWindow {
                 closed = c0;
                 refresh();
             }
-            var lap = Math.round(win.fontSize * 0.8);
-            var right = item.mapToItem(null, item.width - lap, 0).x;
-            x = right + width <= win.width - 8 ? item.width - lap
-                : Math.max(-item.mapToItem(null, 0, 0).x + 8, lap - width);
-            y = 0;
+            win.placeBeside(picker, item);
             touched = false;
             settled = false;
             open();
@@ -6505,7 +6525,6 @@ ApplicationWindow {
             win.setColumnTypes("Quantity");
             win.setFormatOf("");
         }
-        wider: 1.4
         taller: 1.8
         helpable: true
         onHelpAsked: prefixHelp.openBeside(unitPopup)
@@ -6976,7 +6995,7 @@ ApplicationWindow {
         property real stretch: 0
         readonly property bool changed: fault.length === 0 && field.text.trim() !== applied
         padding: 8
-        width: Math.min(Math.round(win.fontSize * 28), win.width - 16)
+        width: win.setPopupWidth
         // Escape and Enter, and a click in the legend beside it, are the
         // legend's, with it open.
         closePolicy: formatHelp.visible ? Popup.NoAutoClose
@@ -7006,11 +7025,7 @@ ApplicationWindow {
             field.text = applied.length > 0 ? applied : (list.length > 0 ? list[0].format : "");
             marked = -1;
             check();
-            var lap = Math.round(win.fontSize * 0.8);
-            var right = item.mapToItem(null, item.width - lap, 0).x;
-            x = right + width <= win.width - 8 ? item.width - lap
-                : Math.max(-item.mapToItem(null, 0, 0).x + 8, lap - width);
-            y = 0;
+            win.placeBeside(formatPopup, item);
             open();
             field.forceActiveFocus();
             field.selectAll();

@@ -50,6 +50,10 @@ fn cell_rows(out: &mut String, rows: &[Vec<CellSnap>]) {
         list(out, row, |out, cell| {
             out.push('{');
             field(out, "d", &cell.display);
+            if let Some(unit) = &cell.unit {
+                out.push(',');
+                field(out, "u", unit);
+            }
             out.push(',');
             field(out, "s", &cell.source);
             out.push(',');

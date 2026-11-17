@@ -119,6 +119,9 @@ pub struct CellSnap {
     /// computed column, the column's expression.
     pub source: String,
     pub numeric: bool,
+    /// The unit a quantity is shown with, at the end of `display`, for the
+    /// grid to set apart from its number; `None` where it shows none.
+    pub unit: Option<String>,
     pub formula: bool,
     /// Why the cell could not be calculated, if it could not.
     pub error: Option<String>,
@@ -405,6 +408,33 @@ fn const_format_of(value: &Value, text: &str) -> Option<Format> {
     Format::parse(text, ty).ok().filter(|f| f.takes(ty))
 }
 
+/// The unit a quantity is shown with, where `display` ends in it: the
+/// column's, or the value's own. A number shown cut ends in a mark after it.
+fn unit_shown(value: &Value, format: Option<&Format>, display: &str) -> Option<String> {
+    let Value::Quantity(q) = value else {
+        return None;
+    };
+    let shown = display
+        .strip_suffix(crate::value::MORE)
+        .unwrap_or(display);
+    let column = match format {
+        Some(Format::Quantity(f)) => f.unit.as_ref().map(|u| u.to_string()),
+        _ => None,
+    };
+    [column, Some(q.unit().to_string())]
+        .into_iter()
+        .flatten()
+        .filter(|u| !u.is_empty())
+        .find(|u| {
+            shown.strip_suffix(u.as_str()).is_some_and(|number| {
+                number
+                    .chars()
+                    .last()
+                    .is_some_and(|c| c.is_ascii_digit() || c == ')' || c == ' ')
+            })
+        })
+}
+
 /// A cell as the grid shows it: its value formatted as its column says.
 fn cell_snap(
     engine: &Engine,
@@ -423,7 +453,9 @@ fn cell_snap(
         None => shown_text(engine, &value),
     };
     let full = exact_text(&value, false, &display, style);
+    let unit = unit_shown(&value, format, &display);
     CellSnap {
+        unit,
         shortened: format.is_none()
             && full
                 .as_ref()
@@ -7689,6 +7721,19 @@ mod tests {
             assert!(Format::parse(f, ty).is_ok(), "{f}");
         }
         assert!(mass.iter().any(|(f, _)| f == "g; v"), "{mass:?}");
+    }
+
+    #[test]
+    fn a_unit_in_the_row_is_said_apart_from_its_number() {
+        let src = "sheet S\n\nA : Mass[g; v]\nB : Mass[g]\nC : Quantity[; .3s]\n\n| A | B | C |\n| - | - | - |\n| 5kg | 5kg | 2m |\n";
+        let doc = Document::from_text(src);
+        let row = &doc.snapshot().sheets[0].rows[0];
+        assert_eq!(row[0].display, "5000g");
+        assert_eq!(row[0].unit.as_deref(), Some("g"));
+        // In the head, so not in the row.
+        assert_eq!(row[1].display, "5000");
+        assert_eq!(row[1].unit, None);
+        assert_eq!(row[2].unit.as_deref(), Some("m"));
     }
 
     #[test]

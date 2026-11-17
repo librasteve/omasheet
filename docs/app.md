@@ -40,7 +40,7 @@ rewrites the text, and saving writes exactly that.
   rest). It is there for every column: the column
   becomes a column of the kind of quantity the unit is of (`mg` makes it
   `Mass[mg]`), and a type it had before goes. The column's head shows it in full, `Mass[mg]`, and its cells are
-  numbers; a `v` in its number format, `Mass[mg; v]`, puts the unit in each cell too; the head still shows it.
+  numbers; a `v` in its number format, `Mass[mg; v]`, puts the unit in each cell too; the head still shows it. A plain `Quantity` column with a unit is shown as `Q[unit]` in its head, to keep it narrow; the file still says `Quantity`.
 - The same menu has **Set format…** for a column of numbers, dates, times
   or quantities, which shows its cells in a format without changing them. Its
   box is the filter box's kind: a field holding the format in use, or an

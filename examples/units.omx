@@ -25,7 +25,7 @@ sheet Literals
 | uncertain    | 10.5(3)e-3kg |
 | kilo         | 1.5k.        |
 | milli        | 5m.          |
-| micro        | 10μF         |
+| micro        | 10uF         |
 
 sheet Arithmetic
 
@@ -56,10 +56,10 @@ sheet Arithmetic
 # given.
 sheet Pantry
 
-Item   : String
-Weight : Mass
+Item : String
+Load : Mass
 
-| Item  | Weight  |
+| Item  | Load    |
 | ----- | ------- |
 | flour | 5kg     |
 | sugar | 300g    |
@@ -101,13 +101,13 @@ Value : Quantity[; .9s]
 
 sheet Totals
 
-| Name     | Value                      |
-| -------- | -------------------------- |
-| total    | = Pantry.Weight.sum()      |
-| mean     | = Pantry.Weight.mean()     |
-| largest  | = Pantry.Weight.max()      |
-| smallest | = Pantry.Weight.min()      |
-| in grams | = Pantry.Weight.sum().to('g') |
+| Name     | Value                       |
+| -------- | --------------------------- |
+| total    | = Pantry.Load.sum()         |
+| mean     | = Pantry.Load.mean()        |
+| largest  | = Pantry.Load.max()         |
+| smallest | = Pantry.Load.min()         |
+| in grams | = Pantry.Load.sum().to('g') |
 
 # A computed column of quantities may be declared too: it is held in the unit
 # of its type, so the product of two lengths is an area in square metres
