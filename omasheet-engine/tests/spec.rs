@@ -2880,6 +2880,51 @@ fn apply_of_a_value_is_lowered_with_its_body() {
     }
 }
 
+/// A function that gives the group's own rows, by `sort`, `head`, `tail` and
+/// a row condition, is taken by Polars for every group at once and gives the
+/// rows the engine gives, in the same order, ties and empty cells included.
+#[test]
+fn apply_of_rows_is_lowered_with_its_steps() {
+    let f = "\
+sheet T
+
+| K | V | W |
+| - | - | - |
+| b | 3 | 1 |
+|   | 2 | 9 |
+| a | 3 | 2 |
+| b | 3 | 3 |
+| a |   | 4 |
+| b | 7 | 5 |
+| a | 1 | 6 |
+|   | 5 | 7 |
+
+fn Best(rows) = rows |> sort(V, desc) |> head(2) |> select(V, W)
+fn Low(rows) = rows |> sort(V) |> head(2) |> select(W)
+fn Last(rows) = rows |> tail(2) |> select(W)
+fn Big(rows) = rows[; V > 2] |> sort(W, desc) |> select(V, W)
+fn Both(rows) = rows[; W > 1] |> sort(V, W) |> head(1) |> select(W)
+fn Twice(rows) = rows |> sort(V) |> head(2) |> tail(1) |> select(W)
+fn Every(rows) = rows |> select(V)
+
+sheet Best := T |> group_by(K) |> apply(Best)
+sheet Low := T |> group_by(K) |> apply(Low)
+sheet Last := T |> group_by(K) |> apply(Last)
+sheet Big := T |> group_by(K) |> apply(Big)
+sheet Both := T |> group_by(K) |> apply(Both)
+sheet Twice := T |> group_by(K) |> apply(Twice)
+sheet Every := T |> group_by(K) |> apply(Every)
+";
+    for expr in [
+        "Best.K", "Best.V", "Best.W", "Low.W", "Last.K", "Last.W", "Big.K", "Big.W", "Both.K",
+        "Both.W", "Twice.W", "Every.V",
+    ] {
+        let ran = both_ways(f, expr, None);
+        assert!(ran.filters.contains(&Attempt::Lowered), "{expr}");
+    }
+    assert_eq!(ask(f, "Best.W"), "[7, 9, 2, 6, 5, 1]");
+}
+
 /// `apply` is refused where it does not go, and a function it cannot call is
 /// said so.
 #[test]

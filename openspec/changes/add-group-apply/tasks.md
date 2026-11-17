@@ -26,5 +26,5 @@ Forthcoming; follows `add-units`.
 
 ## 4. The lowered path
 - [x] 4.1 A function that gives a value lowers with its body: the call is read as the body over the group's columns, and an aggregate of an expression of them is a column of its own for Polars to aggregate in the one `group_by` `agg` already uses; a body or a column it cannot lower, a cell empty in a column it reads, or an operation that might not fit, is the engine's
-- [ ] 4.2 A function that gives rows (a column, a sheet, the top rows of each group) lowers: `sort`, `head`, `select` and `filter` over the group's rows as `sort_by`, `head` and `filter` over the groups
+- [x] 4.2 A function that gives rows of the grouped sheet lowers when it is `sort` (once), `head`, `tail`, a row condition and `select` over the group's rows: the conditions are asked of the whole sheet first, and the rest is one `group_by_stable` with `sort_by` and `head`/`tail` for each group; any other step, or a second `sort`, or a condition after a `head`, is the engine's
 - [ ] 4.3 The rank within a group, and the other-sheet pairing, on the lowered path

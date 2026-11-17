@@ -1072,6 +1072,130 @@ impl<'p> Engine<'p> {
         order
     }
 
+    /// The rows each group's function gives, taken by Polars in one
+    /// `group_by`, the groups in the order of their keys as `run_group` has
+    /// them and each group's rows in the order its steps put them. The
+    /// conditions are of single rows, so they are asked of the whole sheet
+    /// first; a group they leave nothing of has no rows, as it has none
+    /// there. `None` leaves the groups to the engine.
+    fn run_group_rows(
+        &self,
+        t: usize,
+        rows: &[usize],
+        keys: &[usize],
+        steps: &[Step],
+    ) -> Option<Vec<usize>> {
+        if self.options.lowering == Lowering::Never {
+            return None;
+        }
+        let nrows = self.prog.sheets[t].nrows;
+        if nrows == 0 || (self.options.lowering == Lowering::Auto && nrows < ROW_THRESHOLD) {
+            return None;
+        }
+        if rows.len() != nrows || rows.iter().enumerate().any(|(p, &r)| p != r) {
+            return None;
+        }
+        let refused = |engine: &Engine| {
+            engine.filters.borrow_mut().push((t, Attempt::Refused));
+            None
+        };
+        let mut columns: Vec<PlColumn> = Vec::new();
+        let take = |c: usize, columns: &mut Vec<PlColumn>| -> Option<polars::prelude::PlSmallStr> {
+            let column = self.pl_column(t, c)?;
+            let name = column.name().clone();
+            if !columns.iter().any(|held| held.name() == &name) {
+                columns.push(column);
+            }
+            Some(name)
+        };
+        let mut by: Vec<Expr> = Vec::with_capacity(keys.len());
+        let mut key_names = Vec::with_capacity(keys.len());
+        for &c in keys {
+            let Some(name) = take(c, &mut columns) else {
+                return refused(self);
+            };
+            by.push(col(name.clone()));
+            key_names.push(name);
+        }
+        let mut wanted: Option<Expr> = None;
+        let mut expr = col(ROW_INDEX);
+        for step in steps {
+            match step {
+                Step::Filter(node) => {
+                    let Some((frame, cond)) = self.filter_plan(t, node) else {
+                        return refused(self);
+                    };
+                    for column in frame.take_columns() {
+                        if !columns.iter().any(|held| held.name() == column.name()) {
+                            columns.push(column);
+                        }
+                    }
+                    wanted = Some(match wanted {
+                        Some(w) => w.and(cond.fill_null(polars::prelude::lit(false))),
+                        None => cond.fill_null(polars::prelude::lit(false)),
+                    });
+                }
+                Step::Sort(sort_keys, desc) => {
+                    let mut sort_by = Vec::with_capacity(sort_keys.len());
+                    for &c in sort_keys {
+                        let Some(name) = take(c, &mut columns) else {
+                            return refused(self);
+                        };
+                        sort_by.push(col(name));
+                    }
+                    let options = SortMultipleOptions::default()
+                        .with_order_descending(*desc)
+                        .with_nulls_last(*desc)
+                        .with_maintain_order(true);
+                    expr = expr.sort_by(sort_by, options);
+                }
+                Step::Head(n) => expr = expr.head(Some(*n)),
+                Step::Tail(n) => expr = expr.tail(Some(*n)),
+            }
+        }
+        let Ok(frame) = DataFrame::new(columns) else {
+            return refused(self);
+        };
+        let mut lazy = frame.lazy().with_row_index(ROW_INDEX, None);
+        if let Some(w) = wanted {
+            lazy = lazy.filter(w);
+        }
+        let options = SortMultipleOptions::default()
+            .with_nulls_last(false)
+            .with_maintain_order(true);
+        let Ok(out) = lazy
+            .group_by_stable(by.clone())
+            .agg([expr.alias(ROW_INDEX)])
+            .sort_by_exprs(by, options)
+            .collect()
+        else {
+            self.filters.borrow_mut().push((t, Attempt::Failed));
+            return None;
+        };
+        let limit = 10i128.pow(SHOWN_PRECISION);
+        for name in &key_names {
+            let column = out.column(name).ok()?;
+            if matches!(column.dtype(), DataType::Decimal(..)) {
+                for i in 0..column.len() {
+                    if let Ok(AnyValue::Decimal(n, _)) = column.get(i)
+                        && n.unsigned_abs() >= limit as u128
+                    {
+                        return refused(self);
+                    }
+                }
+            }
+        }
+        let listed = out.column(ROW_INDEX).ok()?.list().ok()?.clone();
+        let mut given = Vec::new();
+        for list in listed.into_iter() {
+            for p in list?.u32().ok()?.into_iter() {
+                given.push(p? as usize);
+            }
+        }
+        self.filters.borrow_mut().push((t, Attempt::Lowered));
+        Some(given)
+    }
+
     /// An expression over the columns of the grouped sheet `t`, lowered to
     /// be one value for each row of the sheet: the columns it reads, the
     /// expression, its dtype and its type. `None` where it does not lower,
@@ -3186,6 +3310,18 @@ impl<'p> Engine<'p> {
                 let Value::Sheet(view) = self.eval(base, fr)? else {
                     return Err(Fail::Poison);
                 };
+                // A body of `sort`, `head`, `tail` and conditions over the
+                // rows is the groups' rows taken by Polars at once.
+                if other.is_none()
+                    && let Some(steps) = group_steps(body)
+                    && let Some(rows) = self.run_group_rows(view.sheet, &view.rows, keys, &steps)
+                {
+                    return Ok(Value::Sheet(View {
+                        sheet: view.sheet,
+                        rows: Rc::new(rows),
+                        cols: Rc::new(cols.clone()),
+                    }));
+                }
                 // Rows of another sheet are each paired with the first row
                 // of their group, where the keys are read.
                 let mut paired: Vec<Option<usize>> = Vec::new();
@@ -5456,4 +5592,83 @@ fn group_form(node: &Node) -> Option<Node> {
         Some(Node::new(kind, node.span))
     }
     rows(body)
+}
+
+/// One step of what a function does to the rows of its group, where each is
+/// one Polars can do for every group at once.
+enum Step {
+    /// A condition of one row at a time.
+    Filter(Node),
+    /// `sort` by the columns, descending or not.
+    Sort(Vec<usize>, bool),
+    Head(usize),
+    Tail(usize),
+}
+
+/// The steps of a function that gives rows of its group: `sort`, `head`,
+/// `tail`, a row condition and `select`, over the group's rows. The
+/// conditions are asked of the whole sheet before the groups are made, so
+/// they come before the first `head` or `tail`, and the one `sort` too, each
+/// step after a `sort` working on the rows in the order it gave. `None`
+/// where the body does anything else.
+fn group_steps(body: &Node) -> Option<Vec<Step>> {
+    let Ir::Apply { args, body, .. } = &body.kind else {
+        return None;
+    };
+    if !matches!(args.as_slice(), [a] if matches!(a.kind, Ir::GroupSheet)) {
+        return None;
+    }
+    fn walk(node: &Node, steps: &mut Vec<Step>) -> Option<()> {
+        match &node.kind {
+            Ir::Arg(0) => Some(()),
+            Ir::Index { base, rows, cols } => {
+                walk(base, steps)?;
+                if matches!(cols, ColSel::One(_)) {
+                    return None;
+                }
+                let cut = steps
+                    .iter()
+                    .any(|s| matches!(s, Step::Head(_) | Step::Tail(_)));
+                match rows {
+                    RowSel::All => {}
+                    RowSel::Order { keys, desc } if !keys.is_empty() => {
+                        if cut || steps.iter().any(|s| matches!(s, Step::Sort(..))) {
+                            return None;
+                        }
+                        steps.push(Step::Sort(keys.clone(), *desc));
+                    }
+                    RowSel::Pred(cond) => {
+                        if cut {
+                            return None;
+                        }
+                        steps.push(Step::Filter((**cond).clone()));
+                    }
+                    RowSel::RangeVal(range) => match &range.kind {
+                        Ir::Unary(UnOp::UpTo, n) => steps.push(Step::Head(whole(n)?)),
+                        Ir::Binary(BinOp::Range, lo, hi) => {
+                            let (Ir::Unary(UnOp::Neg, n), Ir::Lit(Lit::Int(-1, _))) =
+                                (&lo.kind, &hi.kind)
+                            else {
+                                return None;
+                            };
+                            steps.push(Step::Tail(whole(n)?));
+                        }
+                        _ => return None,
+                    },
+                    _ => return None,
+                }
+                Some(())
+            }
+            _ => None,
+        }
+    }
+    fn whole(n: &Node) -> Option<usize> {
+        match &n.kind {
+            Ir::Lit(Lit::Int(n, _)) => usize::try_from(*n).ok(),
+            _ => None,
+        }
+    }
+    let mut steps = Vec::new();
+    walk(body, &mut steps)?;
+    (!steps.is_empty()).then_some(steps)
 }
