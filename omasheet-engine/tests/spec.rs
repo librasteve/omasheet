@@ -2821,6 +2821,37 @@ fn apply_fails_a_group_in_its_own_row() {
     assert!(why.contains("a cell holds one value"), "{why}");
 }
 
+/// `apply` and `agg` make the same groups in the same order, an empty key
+/// first as a group of its own, and a group the function gives no rows for
+/// has none.
+#[test]
+fn apply_makes_the_groups_agg_makes() {
+    let f = "\
+sheet T
+
+| K | V |
+| - | - |
+| b | 1 |
+|   | 2 |
+| a | 3 |
+| b | 4 |
+
+fn Sum(rows) = rows.V.sum()
+fn Big(rows) = rows |> sort(V, desc) |> head(1) |> select(V)
+fn None(rows) = rows[; V > 100] |> select(V)
+
+sheet ByApply := T |> group_by(K) |> apply(Sum)
+sheet ByAgg := T |> group_by(K) |> agg(Sum := V.sum())
+sheet Tops := T |> group_by(K) |> apply(Big)
+sheet Nothing := T |> group_by(K) |> apply(None)
+";
+    assert_eq!(ask(f, "ByApply.K"), ask(f, "ByAgg.K"));
+    assert_eq!(ask(f, "ByApply.Sum"), ask(f, "ByAgg.Sum"));
+    assert_eq!(ask(f, "ByApply.Sum"), "[2, 3, 5]");
+    assert_eq!(ask(f, "Tops.V"), "[2, 3, 4]");
+    assert_eq!(ask(f, "Nothing.V"), "[]");
+}
+
 /// `apply` is refused where it does not go, and a function it cannot call is
 /// said so.
 #[test]

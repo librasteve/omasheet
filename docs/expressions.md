@@ -436,6 +436,7 @@ sheet Best     := ByRegion |> sort(Revenue_sum, desc) |> head(1)
   needs an aggregate, `Revenue.sum()` and not `Revenue`. An aggregate of
   one column is named for it, `Revenue_sum`; `Name := …` names one, and
   an aggregate of anything else must be named
+- `group_by(keys) |> apply(Fn)`: calls the function `Fn` once on the rows of each group, as a sheet, in the order `agg` gives the groups. The function takes one argument, the group's rows, and what it gives sets what the group makes. A value (`fn Takings(rows) = (rows.Units * rows.Price).sum()`) makes one row, the keys and a column named for the function (`apply(Total := Takings)` names it). A column or a sheet of the group's own rows (`fn BestTwo(rows) = rows |> sort(Units, desc) |> head(2) |> select(Rep, Units)`) makes a row for each row it gives, the keys repeated, so the top rows of each group and a ranking within it are one function each. A sheet that is another's rows (a lookup in a second sheet by the group's key) is paired with the group in the same way a `join` pairs rows. A function that gives a column a key also names is an error, so `select` it away; a group it gives no rows for has none, and a group it fails on has no rows and says why. See `examples/groups.omx`
 - `join(Other, keys)`: a row for every pair of rows of the two sheets whose
   key columns are equal, the left sheet's columns and then the other's.
   `join(Other, keys, left)` keeps a left row that matches nothing, its other

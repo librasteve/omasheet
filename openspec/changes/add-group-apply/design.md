@@ -19,13 +19,13 @@ Forthcoming. D numbers are assigned when the change starts; `D-A#` until then.
 
 ```omx
 fn Worth(orders) = (orders.Qty * orders.Price).sum()
-fn Top3(rows)    = rows |> sort(Revenue, desc) |> head(3)
+fn Top3(rows)    = rows |> sort(Revenue, desc) |> head(3) |> select(Month, Revenue)
 
 sheet RegionWorth := Orders |> group_by(Region) |> apply(Worth)
 sheet BestThree   := Sales  |> group_by(Region) |> apply(Top3)
 ```
 
-`RegionWorth` has `Region` and `Worth`. `BestThree` has `Region` and the columns of `Sales`, the best three rows of each region.
+`RegionWorth` has `Region` and `Worth`. `BestThree` has `Region` and the columns the function keeps (a column a key also names is `select`ed away), the best three rows of each region.
 
 ## Open items, settled (0.2)
 

@@ -1,0 +1,82 @@
+sheet Sales
+
+Region | Rep     | Units | Price
+-------|---------|-------|------
+North  | Ada     |    12 |   9.5
+North  | Grace   |    30 |     8
+North  | Linus   |     7 |    12
+South  | Alan    |    25 |     9
+South  | Edsger  |    18 |     9
+East   | Barbara |    40 |   7.5
+East   | Donald  |     4 |    15
+East   | Ken     |    22 |  8.25
+East   | Dennis  |    22 |     8
+
+sheet Targets
+
+Region | Target
+-------|-------
+North  |    300
+North  |    500
+South  |    400
+
+sheet Takings
+
+Region | Takings
+-------|--------
+East   |   717.5
+North  |     438
+South  |     387
+
+sheet Wide
+
+Region | Range
+-------|------
+East   |    36
+North  |    23
+South  |     7
+
+sheet Top
+
+Region | Rep     | Units
+-------|---------|------
+East   | Barbara |    40
+East   | Ken     |    22
+North  | Grace   |    30
+North  | Ada     |    12
+South  | Alan    |    25
+South  | Edsger  |    18
+
+sheet Ranks
+
+Region | Rep     | Units
+-------|---------|------
+East   | Barbara |    40
+East   | Ken     |    22
+East   | Dennis  |    22
+East   | Donald  |     4
+North  | Grace   |    30
+North  | Ada     |    12
+North  | Linus   |     7
+South  | Alan    |    25
+South  | Edsger  |    18
+
+sheet Aims
+
+Region | Target
+-------|-------
+North  |    300
+North  |    500
+South  |    400
+
+sheet Leader
+
+Region | Takings
+-------|--------
+East   |   717.5
+
+sheet Star
+
+Region | Rep     | Units
+-------|---------|------
+East   | Barbara |    40

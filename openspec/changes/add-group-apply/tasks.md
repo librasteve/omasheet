@@ -19,7 +19,7 @@ Forthcoming; follows `add-units`.
 - [x] 2.5 A function that gives rows of another sheet: paired as a join's rows are (D-A10)
 
 ## 3. Checks
-- [ ] 3.1 Tests: a value, a vector, a sheet, an empty group, an empty key, a failing group, the order
-- [ ] 3.2 `apply` and `agg` give the same groups in the same order, and a body that lowers gives the same answer, shape, type and error lowered as in the engine (the lowered path follows `widen-polars-lowering`; until then the engine runs every body)
-- [ ] 3.3 `docs/expressions.md`, `docs/format.md`, the skill, `examples/groups.omx` and its `.expected`, with a good set of `group_by |> apply` examples (a value, a column, a sheet, the top rows of each group, a rank within a group)
-- [ ] 3.4 fmt, clippy -D warnings, workspace tests
+- [x] 3.1 Tests: a value, a vector, a sheet, an empty group, an empty key, a failing group, the order
+- [x] 3.2 (the engine runs every body; the lowered path is a follow-on) `apply` and `agg` give the same groups in the same order, and a body that lowers gives the same answer, shape, type and error lowered as in the engine (the lowered path follows `widen-polars-lowering`; until then the engine runs every body)
+- [x] 3.3 `docs/expressions.md`, `docs/format.md`, the skill, `examples/groups.omx` and its `.expected`, with a good set of `group_by |> apply` examples (a value, a column, a sheet, the top rows of each group, a rank within a group)
+- [x] 3.4 fmt, clippy -D warnings, workspace tests

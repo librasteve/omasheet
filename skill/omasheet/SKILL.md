@@ -227,6 +227,13 @@ that do not fit are cut and marked `·`. A `Decimal`, `Float` or `Complex` is sh
   join(Targets, Month, left)` pairs rows whose keys are equal, a row for
   every match; `left` keeps a row with no match, an empty key matches
   nothing, and a name in both sheets takes `_right` on the second.
+- `group_by(keys) |> apply(Fn)` calls a function on each group's rows
+  (`fn Takings(rows) = (rows.Units * rows.Price).sum()`): a value makes a
+  row for the group, a sheet of the rows (`fn Top(rows) = rows |>
+  sort(Units, desc) |> head(2) |> select(Rep, Units)`) makes a row for each
+  row it gives, after the key columns. Give the function one argument, and
+  `select` away a column a key also names. `apply(Total := Fn)` names the
+  column. It ends a `sheet Name :=` formula like `agg`.
 - Ranges: `0..2` includes both ends, `0..^2` leaves out the last, `^2` is
   the first two.
 - Equality is `==`. A single `=` only starts a formula cell or binds a
