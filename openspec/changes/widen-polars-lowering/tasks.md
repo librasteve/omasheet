@@ -12,9 +12,9 @@ Forthcoming; follows `polars-function-registry`.
 - [x] 1.2 Correct the module header: what is declined, and why
 
 ## 2. Percent
-- [ ] 2.1 `Lit::Percent` and a percent `const` as a `Decimal` in a declared column
-- [ ] 2.2 The result's dress from `S::wider` through `Column::ty`
-- [ ] 2.3 Tests: `N * 5%`, `Rate + 2%`, `5% + 3%`, `Rate * 2`, `Profit * TaxRate` (`examples/budget.omx`); the two paths agree
+- [x] 2.1 `Lit::Percent` and a percent `const` as a `Decimal` in a declared column
+- [x] 2.2 The result's dress from `S::wider` through `Column::ty`
+- [x] 2.3 Tests: `N * 5%`, `Rate + 2%`, `5% + 3%`, `Rate * 2`, `Profit * TaxRate` (`examples/budget.omx`); the two paths agree
 
 ## 3. Quantity and Scientific
 - [ ] 3.1 `Quantity op Quantity`: result unit from the checker, a constant factor for the right side

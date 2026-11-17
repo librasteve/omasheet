@@ -560,7 +560,10 @@ pub fn float(dtype: &DataType) -> bool {
 fn literal(l: &Lit) -> Option<Out> {
     match l {
         Lit::Int(n, _) => Out::new(lit(*n), DataType::Int64),
-        Lit::Decimal(d) => {
+        // A percentage holds the plain number (`20%` is `0.2`), and the dress
+        // is display (D69): the number is a `Decimal`, and the result's own
+        // dress is the checker's, from `S::wider` (widen-polars-lowering D-W3).
+        Lit::Decimal(d) | Lit::Percent(d) => {
             // Polars names a scale of `0..=38`: a number held past that, as
             // `1e80` is, has no decimal to be and keeps its calculation on
             // the engine.
@@ -599,8 +602,8 @@ fn literal(l: &Lit) -> Option<Out> {
             let value = AnyValue::Duration(*us, TimeUnit::Microseconds);
             Out::new(lit(Scalar::new(dtype.clone(), value)), dtype)
         }
-        // A percentage is display, not a dtype (D69).
-        Lit::Percent(_) | Lit::Fraction(_) => None,
+        // A fraction is arbitrary precision, not a `Decimal(38, s)` (D-W2).
+        Lit::Fraction(_) => None,
     }
 }
 
@@ -613,6 +616,7 @@ fn lit_of(v: Value) -> Option<Lit> {
     Some(match v {
         Value::Int(n, b) => Lit::Int(n, b),
         Value::Decimal(d) => Lit::Decimal(d),
+        Value::Percent(d) => Lit::Percent(d),
         Value::Float(f) => Lit::Float(f),
         Value::String(s, _) => Lit::String(s.to_string()),
         Value::Boolean(b) => Lit::Boolean(b),

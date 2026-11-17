@@ -2536,6 +2536,60 @@ C := A == B
     assert_ne!(attempt(mixed, "C"), Some(Attempt::Lowered));
 }
 
+/// A percentage in an expression is the `Decimal` it holds, and the dress of
+/// the result is the checker's (widen-polars-lowering D-W3): two percentages
+/// a percentage, any other mix the plain number. Both paths agree, to the
+/// digit and in the dress.
+#[test]
+fn a_percentage_in_an_expression_is_lowered() {
+    let file = "\
+const TaxRate = 20%
+
+sheet T
+
+Rate : Percent
+
+| N   | Rate | Plus | Scaled | Both | Whole | Mixed | Fixed | Tax | Cut |
+| --- | ---- | ---- | ------ | ---- | ----- | ----- | ----- | --- | --- |
+| 100 | 5%   | *    | *      | *    | *     | *     | *     | *   | *   |
+| 250 | 12.5%| *    | *      | *    | *     | *     | *     | *   | *   |
+
+Plus   := Rate + 2%
+Scaled := N * 5%
+Both   := 5% + 3%
+Whole  := 1 + 2
+Mixed  := Rate * 2
+Fixed  := Rate + 5%
+Tax    := N * TaxRate
+Cut    := N - N * 10%
+";
+    let (lowered, shown) = calculated(file, Lowering::Always);
+    let (_, engine) = calculated(file, Lowering::Never);
+    assert_eq!(shown, engine);
+    // An expression that reads no column has nothing to lower over, a whole
+    // number sum as much as a sum of percentages.
+    let attempt = |name: &str| lowered.iter().find(|(col, _)| col == name).map(|(_, a)| *a);
+    assert_eq!(attempt("Both"), attempt("Whole"));
+    for name in ["Plus", "Scaled", "Mixed", "Fixed", "Tax", "Cut"] {
+        assert_eq!(attempt(name), Some(Attempt::Lowered), "{name}");
+    }
+}
+
+/// `examples/budget.omx` is the first case: `Tax := Profit * TaxRate`, where
+/// the constant is a percentage, is lowered and gives the engine's answer.
+#[test]
+fn a_percentage_constant_in_the_budget_is_lowered() {
+    let file = include_str!("../../examples/budget.omx");
+    let (lowered, shown) = calculated(file, Lowering::Always);
+    let (_, engine) = calculated(file, Lowering::Never);
+    assert_eq!(shown, engine);
+    let tax = lowered
+        .iter()
+        .find(|(col, _)| col == "Tax")
+        .map(|(_, a)| *a);
+    assert_eq!(tax, Some(Attempt::Lowered));
+}
+
 /// A column of a percentage and a bare number is a `Decimal` (`S::wider`), so
 /// it lowers, and its numbers are the engine's.
 #[test]
@@ -2579,12 +2633,13 @@ Fee := Base * Rate
 }
 
 #[test]
-fn a_percentage_in_a_formula_is_not_lowered() {
-    // `Rate` is `20%`, and what omasheet makes of a percentage met in the
-    // middle of a sum is its own rule rather than arithmetic (D69). The
-    // dress a column wears is another matter: it is put back on as a value
-    // is read out of the dataframe, exactly as the row path puts it on.
-    assert_eq!(attempt(GATES, "Tax"), Some(Attempt::Refused));
+fn a_percentage_in_a_formula_is_lowered() {
+    // `Rate` is `20%`, a `Decimal` in a dress (D69, widen-polars-lowering
+    // D-W3). The dress a column wears is put back on as a value is read out
+    // of the dataframe, exactly as the row path puts it on, and the answer is
+    // the engine's.
+    assert_eq!(attempt(GATES, "Tax"), Some(Attempt::Lowered));
+    assert_eq!(ask(GATES, "Sales.Tax"), "[8, 10, 14]");
 }
 
 #[test]
@@ -3664,8 +3719,9 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // calculated, which is 32 of the 64. The other thirty-two are the
     // columns lowering forced calculates in one step, and 8.3 is where that
     // number is read. `windows.omx` adds five: the window functions of whole
-    // numbers, which Polars runs down the column.
-    assert_eq!(taken, 75, "the columns taken at once");
+    // numbers, which Polars runs down the column, and a percentage in a
+    // formula adds two (widen-polars-lowering D-W3).
+    assert_eq!(taken, 77, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read
