@@ -113,6 +113,17 @@ impl Column {
                     number: q.number,
                 })))
             }
+            // A bare `Duration` is `Duration[s]`.
+            (None, S::Duration) => Some(Cow::Owned(Format::Quantity(QuantityFormat {
+                unit: siquant::Unit::parse("s", siquant::Scope::Any).ok(),
+                number: None,
+            }))),
+            (Some(Format::Quantity(q)), S::Duration) if q.unit.is_none() => {
+                Some(Cow::Owned(Format::Quantity(QuantityFormat {
+                    unit: siquant::Unit::parse("s", siquant::Scope::Any).ok(),
+                    number: q.number,
+                })))
+            }
             (Some(f), _) => Some(Cow::Borrowed(f)),
             (None, S::Quantity(id)) if self.declared && id.named().is_some() => {
                 let unit = crate::units::preferred(id)?;
@@ -2929,6 +2940,32 @@ impl<'a> Checker<'a> {
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
             (Some(l @ Lit::Datetime(_)), S::Datetime) => Some(l),
             (Some(l @ Lit::Duration(_)), S::Duration) => Some(l),
+            // A quantity of time, `139s`, is a duration.
+            (Some(Lit::Quantity(v, sigma, unit)), S::Duration) => {
+                if unit.dims() != siquant::Dim::of(siquant::Base::Time) {
+                    self.err(
+                        span,
+                        format!(
+                            "a {} is not a length of time: only a quantity of time, as `139s`, can be one",
+                            crate::units::kind_of(unit.dims())
+                        ),
+                    );
+                    return None;
+                }
+                // With an uncertainty it cannot be a whole number of
+                // microseconds: it is held as a quantity of seconds.
+                if sigma != 0.0 {
+                    return siquant::Unit::parse("s", siquant::Scope::Any)
+                        .ok()
+                        .map(|sec| Lit::Quantity(v * unit.factor(), sigma * unit.factor(), sec));
+                }
+                let micros = (v * unit.factor() * 1e6).round();
+                if !micros.is_finite() || micros.abs() >= 9.0e18 {
+                    self.err(span, "the duration is out of range");
+                    return None;
+                }
+                Some(Lit::Duration(micros as i64))
+            }
             (Some(l @ Lit::Boolean(_)), S::Boolean) => Some(l),
             // A `Boolean` column also reads `1` and `0`, `x` and `o`, `X`
             // and `O`; no other column or undeclared cell does.
@@ -2985,7 +3022,7 @@ impl<'a> Checker<'a> {
                     S::Date => "enter a date such as `2025-01-31`, or start the cell with `=` for a formula",
                     S::Time => "enter a time such as `09:30` or `09:30:15`, or start the cell with `=` for a formula",
                     S::Datetime => "enter a date-time such as `2025-01-31T09:30`, or start the cell with `=` for a formula",
-                    S::Duration => "enter a duration such as `PT1H30M` or `P2D`, or start the cell with `=` for a formula",
+                    S::Duration => "enter a duration such as `PT1H30M`, `139s` or `+11:30` (a time of day with no sign is a `Time`), or start the cell with `=` for a formula",
                     S::Url => "enter a web address such as `https://example.com`, or start the cell with `=` for a formula",
                     S::Email => "enter an email address such as `name@example.com`, or start the cell with `=` for a formula",
                     S::Uuid => "enter a UUID such as `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f`, or start the cell with `=` for a formula",
@@ -3547,6 +3584,8 @@ impl<'a> Checker<'a> {
                 BinOp::Sub => a.shift(true, b),
                 BinOp::Mul if scaled(a, b) || scaled(b, a) => Some(S::Duration),
                 BinOp::Div if scaled(a, b) => Some(S::Duration),
+                // Two durations over each other are a plain number.
+                BinOp::Div if a == S::Duration && b == S::Duration => Some(S::Float),
                 _ => None,
             };
             let Some(s) = shifted else {

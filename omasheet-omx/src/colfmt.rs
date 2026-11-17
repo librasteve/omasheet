@@ -18,6 +18,38 @@ pub enum Format {
     Scientific(SciFormat),
     Quantity(QuantityFormat),
     Boolean(BoolFormat),
+    /// How a `Duration` column shows its values other than as a number of a
+    /// unit, which is a [`Format::Quantity`]: `iso` or `%H:%M:%S`.
+    Duration(DurationStyle),
+}
+
+/// A `Duration` shown as a whole, rather than as a number in a unit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DurationStyle {
+    /// An ISO 8601 duration, `PT1H30M`.
+    Iso,
+    /// Signed hours, minutes and seconds, `+01:30:00`; the hours are not
+    /// capped at 24.
+    Clock,
+}
+
+impl DurationStyle {
+    fn parse(text: &str) -> Option<DurationStyle> {
+        match text.trim() {
+            "iso" => Some(DurationStyle::Iso),
+            "%H:%M:%S" => Some(DurationStyle::Clock),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for DurationStyle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            DurationStyle::Iso => "iso",
+            DurationStyle::Clock => "%H:%M:%S",
+        })
+    }
 }
 
 /// How a column of booleans is shown: any two different characters, the one
@@ -438,6 +470,17 @@ impl Format {
         match ty {
             S::Scientific => SciFormat::parse(text).map(Format::Scientific),
             S::Quantity(id) => QuantityFormat::parse(text, id).map(Format::Quantity),
+            S::Duration => match DurationStyle::parse(text) {
+                Some(style) => Ok(Format::Duration(style)),
+                None => match QId::from_name("Duration") {
+                    Some(id) => QuantityFormat::parse(text, id).map(Format::Quantity),
+                    None => Err(FormatError {
+                        at: 0,
+                        len: 1,
+                        message: "a `Duration` format is a unit of time".to_string(),
+                    }),
+                },
+            },
             S::Date | S::Time | S::Datetime => DateFormat::parse(text).map(Format::Date),
             S::Boolean => BoolFormat::parse(text).map(Format::Boolean),
             _ => NumFormat::parse(text).map(Format::Number),
@@ -451,7 +494,12 @@ impl Format {
             Format::Date(f) => f.takes(ty),
             Format::Scientific(_) => ty == S::Scientific,
             Format::Boolean(_) => ty == S::Boolean,
+            Format::Duration(_) => ty == S::Duration,
             Format::Quantity(q) => match ty {
+                S::Duration => q
+                    .unit
+                    .as_ref()
+                    .is_none_or(|u| u.dims() == siquant::Dim::of(siquant::Base::Time)),
                 S::Quantity(id) => id
                     .named()
                     .is_none_or(|t| q.unit.as_ref().is_none_or(|u| t.admits(u))),
@@ -467,6 +515,9 @@ impl Format {
             S::Scientific => Some("`e`, `f`, `g` or `s`, with `±` first"),
             S::Quantity(_) => Some(
                 "a unit of its dimension, as `g`, then `;` and a number format, or `;` and a number format alone",
+            ),
+            S::Duration => Some(
+                "a unit of time, as `h`, then `;` and a number format; or `iso`, or `%H:%M:%S`",
             ),
             S::Date => Some("the conversions of a date, as `%d %b %Y`"),
             S::Boolean => Some("two different characters, as `10`, `xo` or `✓✗`"),
@@ -484,6 +535,9 @@ impl Format {
             }
             S::Quantity(_) => {
                 "a quantity format is a unit, as `g`, which may be followed by `;` and a number format, as `g; ±.3e-3`"
+            }
+            S::Duration => {
+                "a `Duration` format is a unit of time, as `h`, which may be followed by `;` and a number format, or `iso`, or `%H:%M:%S`"
             }
             S::Boolean => {
                 "a `Boolean` format is two different characters: the symbol for true, then for false, as `xo` or `✓✗`"
@@ -519,6 +573,7 @@ impl fmt::Display for Format {
             Format::Number(n) => n.fmt(f),
             Format::Date(d) => d.fmt(f),
             Format::Scientific(s) => s.fmt(f),
+            Format::Duration(d) => d.fmt(f),
             Format::Quantity(q) => q.fmt(f),
             Format::Boolean(b) => b.fmt(f),
         }

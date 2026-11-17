@@ -96,7 +96,6 @@ fn rejects_everything_else() {
         ("(m)", "brackets"),
         ("m\u{b2}", "superscript"),
         ("ft", "non-SI, unknown"),
-        ("min", "minute"),
         ("kilogram", "a name"),
         ("metres", "a plural"),
         ("Kg", "wrong case"),
@@ -111,6 +110,28 @@ fn rejects_everything_else() {
     for (text, why) in cases {
         assert!(live(text).is_err(), "should reject `{text}` ({why})");
     }
+}
+
+#[test]
+fn units_of_time_and_the_prefixes_beside_them() {
+    for (text, seconds) in [
+        ("s", 1.0),
+        ("min", 60.0),
+        ("h", 3600.0),
+        ("d", 86400.0),
+        ("wk", 604800.0),
+        ("ms", 1e-3),
+    ] {
+        let u = live(text).unwrap_or_else(|e| panic!("{text}: {e:?}"));
+        assert!((u.factor() - seconds).abs() < 1e-9 * seconds, "{text}");
+    }
+    // `h` and `d` are prefixes too, before another unit, and alone with a dot.
+    assert!((live("hPa").unwrap().factor() - 1e2).abs() < 1e-9);
+    assert!((live("dm").unwrap().factor() - 0.1).abs() < 1e-12);
+    assert!(live("h.").is_ok() && live("d.").is_ok());
+    // A time unit takes no prefix.
+    assert!(live("kmin").is_err());
+    assert!(live("dd").is_err());
 }
 
 #[test]

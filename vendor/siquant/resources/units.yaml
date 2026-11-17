@@ -83,4 +83,11 @@
 - {symbol: eV,  name: electronvolt,     defn: J,      factor: "1.602176634e-19",       prefixable: si, group: Mechanical}
 - {symbol: cal, name: calorie,          defn: J,      factor: "4.184",                 prefixable: si, group: Mechanical}
 - {symbol: Wh,  name: watt-hour,        defn: J,      factor: "3600",                  prefixable: si, group: Mechanical}
+# Units of time, each an exact multiple of the second. They are not prefixable:
+# `h` and `d` are units on their own and the prefixes hecto and deci only
+# before another unit, as `hPa` and `dm`.
+- {symbol: min, name: minute,           defn: s,      factor: "60",                   group: Size}
+- {symbol: h,   name: hour,             defn: s,      factor: "3600",                 group: Size}
+- {symbol: d,   name: day,              defn: s,      factor: "86400",                group: Size}
+- {symbol: wk,  name: week,             defn: s,      factor: "604800",               group: Size}
 - {symbol: Da,  name: dalton,           defn: g,      factor: "1.66053906892e-24",     prefixable: si, group: Size}

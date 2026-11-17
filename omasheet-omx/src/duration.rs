@@ -162,11 +162,103 @@ pub fn format(micros: i64) -> String {
     out
 }
 
+/// `micros` as signed hours, minutes and seconds: `+01:30:00`, `-0:00:30.5`
+/// is written `-00:00:30.5`. The hours are not capped at 24, `+128:04:15`.
+/// It reads back as the same duration, by [`parse_clock`].
+pub fn format_clock(micros: i64) -> String {
+    let sign = if micros < 0 { '-' } else { '+' };
+    let n = micros.unsigned_abs();
+    let second = MICROS as u64;
+    let (h, m, s, frac) = (
+        n / (3_600 * second),
+        n / (60 * second) % 60,
+        n / second % 60,
+        n % second,
+    );
+    let mut out = format!("{sign}{h:02}:{m:02}:{s:02}");
+    if frac > 0 {
+        out += &format!(".{}", format!("{frac:06}").trim_end_matches('0'));
+    }
+    out
+}
+
+/// The duration written as `text` in the signed colon form, `+11:30`,
+/// `-0:00:30.5` or `+128:04:15`: a `+` or `-`, hours, minutes below 60, and
+/// perhaps seconds below 60 with a fraction. Without the seconds it is hours
+/// and minutes. `NotDuration::Shape` if `text` is not shaped as one.
+pub fn parse_clock(text: &str) -> Result<i64, NotDuration> {
+    let (neg, rest) = match text.as_bytes().first() {
+        Some(b'+') => (false, &text[1..]),
+        Some(b'-') => (true, &text[1..]),
+        _ => return Err(NotDuration::Shape),
+    };
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let mut parts = rest.split(':');
+    let (Some(h), Some(m)) = (parts.next(), parts.next()) else {
+        return Err(NotDuration::Shape);
+    };
+    let sec = parts.next();
+    if parts.next().is_some() || !digits(h) || !digits(m) || m.len() != 2 {
+        return Err(NotDuration::Shape);
+    }
+    let (whole, frac) = match sec {
+        None => ("0", ""),
+        Some(s) => match s.split_once('.') {
+            Some((w, f)) => (w, f),
+            None => (s, ""),
+        },
+    };
+    if !digits(whole) || (sec.is_some() && whole.len() != 2) || (sec.is_some_and(|s| s.contains('.')) && !digits(frac)) {
+        return Err(NotDuration::Shape);
+    }
+    let says = |m: &str| Err(NotDuration::Says(m.to_string()));
+    let (Ok(h), Ok(m), Ok(s)) = (h.parse::<i64>(), m.parse::<i64>(), whole.parse::<i64>()) else {
+        return says("the duration is out of range");
+    };
+    if m >= 60 {
+        return says("minutes are below 60");
+    }
+    if s >= 60 {
+        return says("seconds are below 60");
+    }
+    if frac.len() > 6 {
+        return says("a duration is held to the microsecond");
+    }
+    let micros_frac: i64 = if frac.is_empty() {
+        0
+    } else {
+        format!("{frac:0<6}").parse().unwrap_or(0)
+    };
+    let total = h
+        .checked_mul(3_600)
+        .and_then(|x| x.checked_add(m * 60 + s))
+        .and_then(|x| x.checked_mul(MICROS))
+        .and_then(|x| x.checked_add(micros_frac));
+    match total {
+        Some(t) => Ok(if neg { -t } else { t }),
+        None => says("the duration is out of range"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const HOUR: i64 = 3_600 * MICROS;
+
+    #[test]
+    fn the_signed_colon_form_reads_and_shows() {
+        assert_eq!(parse_clock("+11:30"), Ok(11 * HOUR + 30 * 60 * MICROS));
+        assert_eq!(parse_clock("-0:00:30.5"), Ok(-(30 * MICROS + MICROS / 2)));
+        assert_eq!(parse_clock("+128:04:15"), Ok(128 * HOUR + 4 * 60 * MICROS + 15 * MICROS));
+        assert_eq!(parse_clock("11:30"), Err(NotDuration::Shape));
+        assert!(matches!(parse_clock("+11:75"), Err(NotDuration::Says(_))));
+        assert_eq!(format_clock(128 * HOUR + 4 * 60 * MICROS + 15 * MICROS), "+128:04:15");
+        assert_eq!(format_clock(-(30 * MICROS + MICROS / 2)), "-00:00:30.5");
+        for t in [0, 5400 * MICROS, -HOUR, 1] {
+            assert_eq!(parse_clock(&format_clock(t)), Ok(t));
+        }
+    }
 
     #[test]
     fn reads_the_fixed_units() {

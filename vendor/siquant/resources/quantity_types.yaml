@@ -8,12 +8,14 @@
 # `group` is the heading a menu files the type under: SI Base, Data, Size,
 # Mechanical, Electromagnetic, Thermodynamic, Radiation or Other (the default).
 #
-# Types for time arrive with the stage that adds it.
+# `Duration` is the type for time: a `Quantity` whose unit is of the dimension
+# of time, `s` unless the column says another (add-duration-kind).
 
 - {name: Dimensionless,     dims: {}, group: Other}
 
 - {name: Length,            dims: {Length: 1},             unit: m, group: SI Base}
 - {name: Mass,              dims: {Mass: 1},               unit: kg, group: SI Base}
+- {name: Duration,          dims: {Time: 1},               unit: s, group: SI Base}
 - {name: Current,           dims: {Current: 1},            unit: A, group: SI Base}
 - {name: Temperature,       dims: {Temperature: 1},        unit: K, group: SI Base}
 - {name: AmountOfSubstance, dims: {Amount: 1},             unit: mol, group: SI Base}

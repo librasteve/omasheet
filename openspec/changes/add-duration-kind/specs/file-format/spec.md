@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: Duration is a kind of quantity
-`Duration` SHALL be a kind of `Quantity` of the dimension of time, held and shown in the unit the column says and otherwise in `s`. A column of it SHALL have the rules of every kind: a bare number is read in its unit, its head shows the unit as `Duration[s]`, `v` puts the unit in each row, and a value may carry an uncertainty.
+`Duration` SHALL be a kind of `Quantity` of the dimension of time, held and shown in the unit the column says and otherwise in `s`. A column of it SHALL have the rules of every kind: a bare number is read in its unit, its head shows the unit as `Duration[s]`, `v` puts the unit in each row, and it is held as a whole number of microseconds, a Polars `Duration`, or, where a value has an uncertainty, as a quantity of seconds.
 
 #### Scenario: A column of durations
 - **WHEN** `Run : Duration[min]` holds `90s` and `PT2H`
@@ -12,7 +12,8 @@
 
 #### Scenario: An uncertainty
 - **WHEN** a `Duration[s]` column holds `10.5(3)s`
-- **THEN** it is shown as `10.5(3)`
+- **THEN** it is held as a quantity of seconds and shown as `10.5(3)`
+- **AND** adding it to a date or a time is an error, since those are exact
 
 #### Scenario: A different dimension
 - **WHEN** a `Duration` column holds `5kg`

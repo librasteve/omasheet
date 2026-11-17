@@ -21,8 +21,9 @@ sheet Clocks
 | date-time      | = 2025-01-31T17:05:00 + 3600s |
 | two lengths    | = PT1H + 30s                  |
 | mixed          | = 17:05:00 + PT1H30M - 600s   |
-| as seconds     | = PT90M.Quantity              |
-| and back      | = 5400s.Duration              |
+| as a quantity  | = PT90M + 5s                  |
+| signed         | = 09:00 + +01:30              |
+| a difference   | = 2025-03-01 - 2024-03-01     |
 
 # A plane flies from London or Munich to San Francisco. It leaves at the time
 # shown on London's clocks, is in the air for its `Airtime`, and lands after a
@@ -32,16 +33,17 @@ sheet Flight
 
 Flight   : String
 Leaves   : Datetime
-Airtime  : Duration
+Airtime  : Duration[%H:%M:%S]
 Distance : Length[km]
 Speed    : Speed[m.s^-1; .1f]
 Mach     : Float[.2f]
+Elapsed  : Duration[h; .2f]
 
 | Flight  | Leaves           | Airtime  | Distance | Gate | Lands | SFO | Speed | Mach | Elapsed |
 | ------- | ---------------- | -------- | -------- | ---- | ----- | --- | ----- | ---- | ------- |
-| LHR-SFO | 2025-03-10T11:05 | PT11H10M | 8610km   | *    | *     | *   | *     | *    | *       |
-| MUC-SFO | 2025-03-10T12:30 | PT11H35M | 9120km   | *    | *     | *   | *     | *    | *       |
-| SFO-LHR | 2025-03-10T21:30 | PT10H20M | 8610km   | *    | *     | *   | *     | *    | *       |
+| LHR-SFO | 2025-03-10T11:05 | +11:10   | 8610km   | *    | *     | *   | *     | *    | *       |
+| MUC-SFO | 2025-03-10T12:30 | +11:35   | 9120km   | *    | *     | *   | *     | *    | *       |
+| SFO-LHR | 2025-03-10T21:30 | +10:20   | 8610km   | *    | *     | *   | *     | *    | *       |
 
 # At the gate forty minutes before leaving, and on the ground ten after landing.
 Gate  := Leaves - PT40M
@@ -50,4 +52,5 @@ SFO   := Lands.convert_time_zone('America/Los_Angeles')
 Speed := (Distance / Airtime).to('m.s^-1')
 # The speed of sound is about 343 m/s at sea level.
 Mach  := Speed / 343m.s^-1
-Elapsed := Airtime.Quantity()
+# The time in the air in hours, a unit in the head.
+Elapsed := Airtime

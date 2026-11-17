@@ -92,7 +92,7 @@ fn with_an_uncertainty() {
 
 #[test]
 fn what_is_not_a_unit_is_an_error() {
-    for bad in ["5 kg", "5km/s", "5m2", "5ft", "5lb", "5min", "5kgx"] {
+    for bad in ["5 kg", "5km/s", "5m2", "5ft", "5lb", "5kgx"] {
         let out = eval(None, "<expression>", bad);
         assert!(!out.ok(), "`{bad}` should fail, gave {}", out.output);
     }
@@ -632,25 +632,47 @@ fn a_distance_over_a_duration_is_a_speed() {
 }
 
 #[test]
-fn a_duration_and_a_quantity_of_time_convert_either_way() {
-    assert_eq!(shown("PT10S.Quantity"), "10s");
-    assert_eq!(shown("PT90M.Quantity"), "5400s");
-    assert_eq!(shown("PT90M.Quantity + 5s"), "5405s");
-    assert_eq!(shown("PT10S.Quantity.to('ms')"), "10000ms");
-    assert_eq!(shown("5400s.Duration"), "PT1H30M");
-    assert_eq!(shown("PT1H.Quantity.Duration"), "PT1H");
-    assert_eq!(shown("1ks.Duration"), "PT16M40S");
-    assert!(fails("5kg.Duration").contains("not a length of time"));
-    assert!(fails("2025-01-31.Quantity").contains("cannot be applied"));
-    // In a column.
-    let file = "sheet S\n\nAir : Duration\nSecs : Quantity\n\n| Air | Secs |\n| --- | ---- |\n| PT1H | * |\n| PT90S | * |\n\nSecs := Air.Quantity\n";
+fn a_duration_is_a_quantity_of_time_with_nothing_to_convert() {
+    // `.Quantity` and `.Duration` are gone.
+    assert!(fails("PT90M.Quantity").contains("cannot be applied"));
+    assert!(fails("5400s.Duration").contains("cannot be applied"));
+    // A quantity of time beside a duration is a duration.
+    assert_eq!(shown("PT1H + 30min"), "PT1H30M");
+    assert_eq!(shown("PT90M - 1h"), "PT30M");
+    // Two durations over each other are a number.
+    assert_eq!(shown("PT1H / PT30M"), "2");
+    // The signed colon form, and a second sign after an operand.
+    assert_eq!(shown("+11:30"), "PT11H30M");
+    assert_eq!(shown("-0:00:30.5"), "-PT30.5S");
+    assert_eq!(shown("+128:04:15"), "P5DT8H4M15S");
+    assert_eq!(shown("09:00 + +01:30"), "10:30");
+    assert_eq!(shown("2025-03-01 - 2024-03-01"), "P365D");
+    assert!(fails("+11:75").contains("below 60"));
+}
+
+#[test]
+fn a_duration_may_have_an_uncertainty() {
+    let file = "sheet S\n\nT : Duration[s; ±.1f]\nU : Duration[s; ±.1f]\n\n| T | U |\n| - | - |\n| 10.5(3)s | * |\n| PT1M | * |\n\nU := T + PT10S\n";
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
-    assert!(
-        out.output.contains("3600s") && out.output.contains("90s"),
-        "{}",
-        out.output
-    );
+    assert!(out.output.contains("10.5 ± 0.3") && out.output.contains("20.5 ± 0.3"), "{}", out.output);
+    // An exact duration stays a whole number of microseconds.
+    assert_eq!(shown("PT1M * 2"), "PT2M");
+    assert!(fails("09:00 + 10.5(3)s").contains("uncertainty"));
+    assert!(fails("PT1H + 5kg").contains("not a length of time") || fails("PT1H + 5kg").contains("cannot"));
+}
+
+#[test]
+fn a_duration_column_shows_its_unit_in_the_head() {
+    let file = "sheet S\n\nA : Duration\nB : Duration[h; .2f]\nC : Duration[%H:%M:%S]\nD : Duration[iso]\nE : Duration[min; v.1f]\n\n| A | B | C | D | E |\n| - | - | - | - | - |\n| PT1H30M | 5400s | +128:04:15 | -PT30M | 139s |\n";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    let o = &out.output;
+    assert!(o.contains("A [s]") && o.contains("5400"), "{o}");
+    assert!(o.contains("B [h]") && o.contains("1.50"), "{o}");
+    assert!(o.contains("+128:04:15") && o.contains("-PT30M"), "{o}");
+    // `v` puts the unit in each row.
+    assert!(o.contains("2.3min"), "{o}");
 }
 
 // ---- angles (add-angles) ----
@@ -783,4 +805,17 @@ fn a_unit_after_a_constant_multiplies_it() {
     }
     // A function call is not a unit, and a constant of the file wins.
     assert!(!eval(None, "<expression>", "pi min(1, 2)").ok());
+}
+
+#[test]
+fn units_of_time_are_units() {
+    assert_eq!(shown("90s + 1min"), "150s");
+    assert_eq!(shown("(2h).to('min')"), "120min");
+    assert_eq!(shown("1d.to('h')"), "24h");
+    assert_eq!(shown("1wk.to('d')"), "7d");
+    // `h` and `d` are still the prefixes before another unit.
+    assert_eq!(shown("1hPa.to('Pa')"), "100Pa");
+    assert_eq!(shown("1dm.to('cm')"), "10cm");
+    // A call with brackets is a call, not a unit.
+    assert_eq!(shown("[1min, 2min].min()"), "1min");
 }

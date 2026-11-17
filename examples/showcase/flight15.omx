@@ -103,10 +103,10 @@ Stage      : String
 Engines    : Integer
 Throttle   : Float[.2f]
 Isp        : Quantity[s; .0f]
-BurnStart  : Quantity[s; .0f]
-BurnEnd    : Quantity[s; .0f]
+BurnStart  : Duration[s; .0f]
+BurnEnd    : Duration[s; .0f]
 Dropped    : Mass[Mg; .0f]
-BurnTime   : Quantity[s; .0f]
+BurnTime   : Duration[s; .0f]
 Thrust     : Force[kN; .0f]
 Exhaust    : Quantity[m.s^-1; .1f]
 MassFlow   : Quantity[kg.s^-1; .0f]

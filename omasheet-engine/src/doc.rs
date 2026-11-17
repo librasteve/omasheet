@@ -411,6 +411,13 @@ fn const_format_of(value: &Value, text: &str) -> Option<Format> {
 /// The unit a quantity is shown with, where `display` ends in it: the
 /// column's, or the value's own. A number shown cut ends in a mark after it.
 fn unit_shown(value: &Value, format: Option<&Format>, display: &str) -> Option<String> {
+    if let Value::Duration(_) = value {
+        return match format {
+            Some(Format::Quantity(f)) => f.unit.as_ref().map(|u| u.to_string()),
+            _ => None,
+        }
+        .filter(|u| display.ends_with(u.as_str()));
+    }
     let Value::Quantity(q) = value else {
         return None;
     };
@@ -460,10 +467,11 @@ fn cell_snap(
                 .is_some_and(|f| *f != delocalised(&display, style)),
         exact: full,
         display,
-        // A quantity is a number with a unit: the grid sets it right, as a
+        // A quantity or a duration is a number with a unit: the grid sets it right, as a
         // number, not left as text. A boolean is set right too, so that the
         // `1` and `0` of a `Boolean[10]` column line up as digits do.
-        numeric: value.is_numeric() || matches!(value, Value::Quantity(_) | Value::Boolean(_)),
+        numeric: value.is_numeric()
+            || matches!(value, Value::Quantity(_) | Value::Duration(_) | Value::Boolean(_)),
         value,
         formula: source.starts_with('='),
         error: error.or_else(|| failed.then(|| "this cell could not be calculated".to_string())),
@@ -584,6 +592,7 @@ pub fn format_help(ty: &str) -> String {
     let family = match S::from_name(ty) {
         Some(S::Scientific) => "Scientific",
         Some(S::Quantity(_)) => "Quantity",
+        Some(S::Duration) => "Duration",
         Some(S::Date | S::Time | S::Datetime) => "Date",
         Some(S::Boolean) => "Boolean",
         Some(_) => "Number",
@@ -678,6 +687,15 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             ("%d/%m/%Y %H:%M %Z".into(), "31/01/2025 17:05 BST"),
             ("%a %-d %b %H:%M".into(), "Fri 31 Jan 17:05"),
             ("%c".into(), "as the locale writes it"),
+        ],
+        S::Duration => vec![
+            ("s".into(), "seconds, the unit in the head"),
+            ("min".into(), "minutes"),
+            ("h; .2f".into(), "hours, 2 places"),
+            ("d; .1f".into(), "days, 1 place"),
+            ("h; v.1f".into(), "the unit in each row"),
+            ("%H:%M:%S".into(), "+01:30:00, hours past a day"),
+            ("iso".into(), "PT1H30M"),
         ],
         S::Quantity(_) if !unit.is_empty() => vec![
             (unit.to_string(), "the unit in the head"),
@@ -5347,16 +5365,13 @@ impl Document {
                     }),
                     format: col.format.as_ref().map(|f| f.to_string()),
                     lifted: col.head_unit().is_some(),
-                    unit: match (col.ty, &col.format) {
+                    unit: match (col.ty, col.shown_format().as_deref()) {
                         (
-                            S::Quantity(_),
+                            S::Quantity(_) | S::Duration,
                             Some(omasheet_omx::colfmt::Format::Quantity(
                                 omasheet_omx::colfmt::QuantityFormat { unit: Some(u), .. },
                             )),
                         ) => u.to_string(),
-                        (S::Quantity(id), _) => omasheet_omx::units::preferred(id)
-                            .map(|u| u.to_string())
-                            .unwrap_or_default(),
                         _ => String::new(),
                     },
                 });
@@ -5566,7 +5581,7 @@ impl Document {
             };
             let formatted = const_format_of(&value, &self.const_format).is_some();
             snapshot.consts.push(ConstSnap {
-                numeric: value.is_numeric() || matches!(value, Value::Quantity(_)),
+                numeric: value.is_numeric() || matches!(value, Value::Quantity(_) | Value::Duration(_)),
                 name: c.name.clone(),
                 source: decl.map_or(String::new(), |d| {
                     self.text[d.expr_span.start as usize..d.expr_span.end as usize].to_string()

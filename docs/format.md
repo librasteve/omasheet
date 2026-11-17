@@ -229,7 +229,7 @@ read as one; `Integer` is what is written.
 | `Date` | `2025-01-31` |
 | `Time` | `09:30`, `09:30:15`, `09:30:15.5` |
 | `Datetime` | `2025-01-31T09:30`, `2025-01-31T09:30:15.123456` |
-| `Duration` | `PT30M`, `PT1H30M`, `P1DT6H`, `PT0.5S`, `P2W`, `-PT30M` — ISO 8601 |
+| `Duration` | `PT1H30M`, `P1DT6H`, `-PT30M` (ISO 8601), `139s` (a quantity of time) or `+11:30`, `-0:00:30.5`, `+128:04:15` (a sign, then hours, minutes and perhaps seconds) — a kind of `Quantity` for time. Its head shows the unit, `Duration[s]`, and the cells are numbers, `5400`; `Duration[h; .2f]` shows hours, `Duration[iso]` shows `PT1H30M` and `Duration[%H:%M:%S]` shows `+01:30:00`, with hours past 24 |
 | `Url` | `https://example.com`, `mailto:name@example.com` |
 | `Email` | `name@example.com` |
 | `Uuid` | `7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f` |
@@ -268,13 +268,7 @@ held and no more, so `09:30:15.5` comes back as it was written.
 `millisecond`, `microsecond` and `nanosecond` give what is left after the
 second.
 
-A `Duration` is a length of time, written in ISO 8601: `P`, then weeks and
-days, then `T` and hours, minutes and seconds, each number before its
-letter. Only those units are taken; `P1Y` and `P1M` are refused, since a year
-and a month are not a fixed length. Only the seconds take a fraction, to six
-digits. It is held in microseconds and shown in days and the time after
-them, `P1DT10H5M30S`, which reads back as the same duration; none is `PT0S`.
-A name shaped as one, such as `P1D`, is read as a duration.
+A `Duration` is a length of time and a kind of `Quantity`, of the dimension of time, with the unit `s`. It is written three ways: in ISO 8601, `P`, then weeks and days, then `T` and hours, minutes and seconds, each number before its letter; as a quantity of time, `139s`, `90min`, `2h`, `1.5d`; or with a sign and a colon, `+hh:mm:ss.x`, where the sign is what makes it a duration and not a time of day, `+11:30` is 11 hours 30 minutes and `-0:00:30.5` is minus half a minute and a half; the hours may pass 24, `+128:04:15`, but minutes and seconds are below 60. `min`, `h`, `d` and `wk` are units of 60, 3600, 86400 and 604800 seconds. In ISO only those units are taken; `P1Y` and `P1M` are refused, since a year and a month are not a fixed length. Only the seconds take a fraction, to six digits. It is held in microseconds, as a Polars `Duration`, whatever unit the column shows it in. A value may have an uncertainty, `10.5(3)s`, which a whole number of microseconds cannot hold, so it is held as a quantity of seconds and the column is calculated by the engine rather than Polars; it cannot move a date or a time, which are exact. A bare `Duration` column is `Duration[s]`: its head says `Duration[s]` and its cells are numbers of seconds. `Duration[h; .2f]` shows hours to two places, `Duration[iso]` shows `P1DT10H5M30S` (days and the time after them; none is `PT0S`) and `Duration[%H:%M:%S]` shows `+34:05:30`; each reads back as the same duration. A name shaped as an ISO duration, such as `P1D`, is read as one.
 
 A cell's written form carries its type where that form is distinctive:
 `true`, `2025-01-31`, `09:30`, `20%` and `1.5e3` read as a `Boolean`, a

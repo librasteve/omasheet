@@ -2,7 +2,7 @@
 #
 # A section starts `== Title | Families`, and says which columns it is shown
 # for: Number (Integer, Decimal, Float, Percent, Fraction, Hex, Octal, Binary),
-# Scientific, Quantity, Date (Date, Time and Datetime), Boolean. The lines under it are
+# Scientific, Quantity, Duration, Date (Date, Time and Datetime), Boolean. The lines under it are
 # `what you write | what it does | an example`, the example being a format and
 # then, after `→`, what it shows. A line starting `: ` is a note, shown across
 # the panel and wrapped. Blank lines and lines starting with `#` are ignored.
@@ -12,14 +12,14 @@
 == Shape of a format | Number Scientific Quantity
 : A format is flags, a width, .places and a conversion, in that order. Only the conversion is needed. `08.2f` is zero fill, width 8, 2 places, fixed: 00012.50.
 
-== Flags | Number Scientific Quantity
+== Flags | Number Scientific Quantity Duration
 ' | group the digits in threes | '.0f → 1,234
 + | always show the sign | +.1f → +2.5
 (space) | a space where a + would go | " .1f" → " 2.5"
 0 | fill the width with zeros | 08.2f → 00012.50
 - | align left in the width | -8.1f → 2.5
 
-== Width and places | Number Scientific Quantity
+== Width and places | Number Scientific Quantity Duration
 8 | at least 8 characters wide | 8.1f → "     2.5"
 .2 | 2 places after the point | .2f → 3.14
 
@@ -33,7 +33,7 @@ o | octal | o → 17
 b | binary | b → 101
 # | a prefix: 0x, 0o, 0b | #x → 0xff
 
-== Conversions | Scientific Quantity
+== Conversions | Scientific Quantity Duration
 f | fixed places | .2f → 10.50
 e | a mantissa and an exponent | .3e → 1.050e1
 e-3 | the same exponent for every cell, here 10^-3 | .1e-3 → 10500.0e-3
@@ -43,6 +43,14 @@ g | whichever of f and e reads better | .3g → 10.5
 (nothing) | the value with its uncertainty in brackets | .2f → 10.50(30)
 ± | value ± uncertainty | ±.2f → 10.50 ± 0.30
 ~ | the value alone | ~.2f → 10.50
+
+== Durations | Duration
+: A bare Duration is Duration[s]: a number of seconds, with the unit in the head. A unit of time may be followed by ; and a number format, as h; .2f. The conversion needs only the unit, so a number format is needed for places alone.
+s | seconds | s → 5400
+min h d wk | minutes, hours, days or weeks | h; .2f → 1.50
+v | the unit in each row too | h; v.1f → 1.5h
+iso | an ISO 8601 duration | iso → PT1H30M
+%H:%M:%S | signed hours, minutes and seconds; the hours pass 24 | %H:%M:%S → +01:30:00
 
 == Quantities | Quantity
 unit | the unit the column shows and holds, once, in its head | Mass[g]

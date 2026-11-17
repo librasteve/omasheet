@@ -265,6 +265,19 @@ pub fn lex_with(text: &str, src: u32, base: usize, units: bool) -> Result<Vec<To
             i = end;
             continue;
         }
+        // A `+` or `-` after an operand is the operator, so `09:00 + +01:30`
+        // is a time plus a duration; anywhere else it signs a duration.
+        if (c == b'+' || c == b'-') && !out.last().is_some_and(|t| ends_operand(&t.tok)) {
+            if let Some(found) = clock_duration(text, i) {
+                let (tok, end) = found.map_err(|(msg, s, e)| Diagnostic::new(span(s, e), msg))?;
+                out.push(Token {
+                    tok,
+                    span: span(start, end),
+                });
+                i = end;
+                continue;
+            }
+        }
         if let Some(found) = iso_duration(text, i) {
             let (tok, end) = found.map_err(|(msg, s, e)| Diagnostic::new(span(s, e), msg))?;
             out.push(Token {
@@ -496,6 +509,74 @@ fn based(text: &str, i: usize) -> Option<Result<(Tok, usize), NumErr>> {
     } else {
         Ok((Tok::Int(n, base), j))
     })
+}
+
+/// Whether a token ends an operand, so that a `+` or `-` after it is an
+/// operator.
+fn ends_operand(t: &Tok) -> bool {
+    matches!(
+        t,
+        Tok::Int(..)
+            | Tok::Decimal(_)
+            | Tok::Float(_)
+            | Tok::Percent(_)
+            | Tok::Imag(_)
+            | Tok::Scientific(..)
+            | Tok::Quantity(..)
+            | Tok::Str(_)
+            | Tok::Text(_)
+            | Tok::Date(_)
+            | Tok::Time(_)
+            | Tok::Datetime(_)
+            | Tok::Duration(_)
+            | Tok::Ident(_)
+            | Tok::True
+            | Tok::False
+            | Tok::RParen
+            | Tok::RBracket
+    )
+}
+
+/// Lex a duration in the signed colon form, `+11:30` or `-0:00:30.5`, if one
+/// starts at `i`, which is a `+` or `-`.
+fn clock_duration(text: &str, i: usize) -> Option<Result<(Tok, usize), NumErr>> {
+    let b = text.as_bytes();
+    let mut end = i + 1;
+    let run = |end: &mut usize| {
+        let start = *end;
+        while b.get(*end).is_some_and(u8::is_ascii_digit) {
+            *end += 1;
+        }
+        *end > start
+    };
+    if !run(&mut end) || b.get(end) != Some(&b':') {
+        return None;
+    }
+    end += 1;
+    if !run(&mut end) {
+        return None;
+    }
+    if b.get(end) == Some(&b':') {
+        end += 1;
+        if !run(&mut end) {
+            return None;
+        }
+        if b.get(end) == Some(&b'.') {
+            end += 1;
+            if !run(&mut end) {
+                return None;
+            }
+        }
+    }
+    // Followed by a letter or digit it is something else.
+    if b.get(end).is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_') {
+        return None;
+    }
+    match duration::parse_clock(&text[i..end]) {
+        Ok(micros) => Some(Ok((Tok::Duration(micros), end))),
+        Err(NotDuration::Says(msg)) => Some(Err((msg, i, end))),
+        Err(NotDuration::Shape) => None,
+    }
 }
 
 /// Lex an ISO 8601 duration, `PT1H30M`, if one starts at `i`. A word that
@@ -1098,7 +1179,7 @@ mod tests {
         // None of these lexes to a quantity token. (`5km/s` is the quantity
         // `5km`, a `/` and a name; that is not one literal, see convert.rs.)
         for bad in [
-            "5 kg", "5m2", "5ft", "5lb", "5min", "5kgx", "5k", "5m^", "10 m", "5Kg",
+            "5 kg", "5m2", "5ft", "5lb", "5kgx", "5k", "5m^", "10 m", "5Kg",
         ] {
             let ok = lex(bad, 0, 0)
                 .map(|t| t.iter().any(|t| matches!(t.tok, Tok::Quantity(..))))
@@ -1202,6 +1283,12 @@ mod tests {
         use crate::funcs::FUNCTIONS;
         use siquant::{Scope, Unit};
         for f in FUNCTIONS {
+            // `min` is the minute too. A function is called with brackets, and
+            // after a number `.` continues a unit only where no `(` follows
+            // (D237): `5kg.min()` is the call, `5kg.min` kilogram minutes.
+            if f.name == "min" {
+                continue;
+            }
             assert!(
                 Unit::parse(f.name, Scope::Live).is_err(),
                 "the function `{}` is also a unit symbol",

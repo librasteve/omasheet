@@ -17,7 +17,7 @@ use omasheet_omx::decimal::{Dec, MAX_DENOMINATOR, SHOWN_PRECISION};
 use omasheet_omx::duration;
 use omasheet_omx::funcs::MathFn;
 use omasheet_omx::rational::Rat;
-use omasheet_omx::types::{Base, DEFAULT_SCALE, QId, S};
+use omasheet_omx::types::{Base, DEFAULT_SCALE, S};
 use std::cmp::Ordering;
 use std::rc::Rc;
 
@@ -277,19 +277,6 @@ impl Value {
         if fits {
             return Ok(self.clone());
         }
-        // A `Duration` is a quantity of seconds, `PT90M.Quantity` is `5400s`,
-        // and a quantity of time is a `Duration`, `5400s.Duration` is `PT1H30M`.
-        match (self, to) {
-            (Value::Duration(us), S::Quantity(id)) => {
-                return if id == QId::ANY {
-                    Ok(crate::quantity::from_duration(*us))
-                } else {
-                    Err(format!("a duration is not a `{}`", id.name()))
-                };
-            }
-            (Value::Quantity(q), S::Duration) => return crate::quantity::as_duration(q),
-            _ => {}
-        }
         // A quantity with no dimension is a number; one with a unit is not.
         if let (Value::Quantity(q), S::Float | S::Scientific) = (self, to) {
             let (v, s) = q.to_number().map_err(|_| {
@@ -548,6 +535,22 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         Some(Err(e)) => return Err(e.clone()),
         None => (a, b),
     };
+    // A duration scaled by a number with an uncertainty is a quantity of
+    // seconds, as the number is a quantity with no dimension.
+    let scaled_by_uncertain = matches!(op, BinOp::Mul | BinOp::Div)
+        && matches!(
+            (a, b),
+            (Value::Duration(_), Value::Scientific(_, s)) | (Value::Scientific(_, s), Value::Duration(_)) if *s != 0.0
+        );
+    if scaled_by_uncertain {
+        let lift = |v: &Value| match v {
+            Value::Duration(us) => crate::quantity::from_duration(*us),
+            other => other.clone(),
+        };
+        return crate::quantity::arith(op, &lift(a), &lift(b)).unwrap_or(Err(
+            "cannot scale a duration".to_string(),
+        ));
+    }
     if let Some(done) = crate::quantity::arith(op, a, b) {
         return done;
     }
@@ -815,6 +818,14 @@ fn shift(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
 /// `*` and `/` of a `Duration` by a number, to the nearest microsecond.
 /// `None` if neither side is a duration, or the other is not a number.
 fn scale(op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, String>> {
+    // How many times one duration is another.
+    if let (BinOp::Div, Value::Duration(x), Value::Duration(y)) = (op, a, b) {
+        return Some(if *y == 0 {
+            Err("cannot divide a duration by zero".to_string())
+        } else {
+            Ok(Value::Float(*x as f64 / *y as f64))
+        });
+    }
     let (us, n) = match (op, a, b) {
         (BinOp::Mul | BinOp::Div, Value::Duration(us), n) => (*us, number(n)?),
         (BinOp::Mul, n, Value::Duration(us)) => (*us, number(n)?),

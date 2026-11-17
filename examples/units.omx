@@ -26,6 +26,7 @@ sheet Literals
 | kilo         | 1.5k.        |
 | milli        | 5m.          |
 | micro        | 10uF         |
+| duration     | 42s          |
 
 sheet Arithmetic
 
@@ -57,9 +58,9 @@ sheet Arithmetic
 sheet Pantry
 
 Item : String
-Load : Mass
+Amount : Mass
 
-| Item  | Load    |
+| Item  | Amount  |
 | ----- | ------- |
 | flour | 5kg     |
 | sugar | 300g    |
@@ -101,13 +102,13 @@ Value : Quantity[; .9s]
 
 sheet Totals
 
-| Name     | Value                       |
-| -------- | --------------------------- |
-| total    | = Pantry.Load.sum()         |
-| mean     | = Pantry.Load.mean()        |
-| largest  | = Pantry.Load.max()         |
-| smallest | = Pantry.Load.min()         |
-| in grams | = Pantry.Load.sum().to('g') |
+| Name     | Value                         |
+| -------- | ----------------------------- |
+| total    | = Pantry.Amount.sum()         |
+| mean     | = Pantry.Amount.mean()        |
+| largest  | = Pantry.Amount.max()         |
+| smallest | = Pantry.Amount.min()         |
+| in grams | = Pantry.Amount.sum().to('g') |
 
 # A computed column of quantities may be declared too: it is held in the unit
 # of its type, so the product of two lengths is an area in square metres
@@ -192,3 +193,55 @@ Same   : Quantity
 | photon   | 511keV  | = (511keV).to('fJ')  |
 | carbon   | 12Da    | = (12Da).to('yg')    |
 | hair     | 70um    | = (70um).to('mm')    |
+
+# Time is a kind of quantity too, `Duration`, held in seconds, `s`, with the
+# units `min`, `h`, `d` and `wk`. A duration is written as a quantity,
+# `90min`, in ISO 8601, `PT1H30M`, or with a sign and a colon, `+01:30` (an
+# unsigned `01:30` is a time of day). A bare `Duration` is `Duration[s]`; the
+# unit goes in the head, and `iso` or `%H:%M:%S` show the whole of it. A
+# distance over a duration is a speed, and a speed times a duration a distance.
+sheet Durations
+
+Task    : String
+Spent   : Duration[min]
+Hours   : Duration[h; .2f]
+Clock   : Duration[%H:%M:%S]
+Iso     : Duration[iso]
+Seconds : Duration
+Share   : Float[.2f]
+Pace    : Speed[km.h^-1; .1f]
+
+| Task    | Spent    | Hours | Clock | Iso | Seconds | Share | Pace |
+| ------- | -------- | ----- | ----- | --- | ------- | ----- | ---- |
+| plan    | 45min    | *     | *     | *   | *       | *     | *    |
+| build   | PT2H     | *     | *     | *   | *       | *     | *    |
+| test    | +01:30   | *     | *     | *   | *       | *     | *    |
+| review  | 2700s    | *     | *     | *   | *       | *     | *    |
+| ship    | 0.1d     | *     | *     | *   | *       | *     | *    |
+
+Hours   := Spent
+Clock   := Spent
+Iso     := Spent
+Seconds := Spent
+Share   := Spent / Durations.Spent.sum()
+Pace    := 12km / Spent
+
+# A duration may have an uncertainty, `10.5(3)s`, as any quantity does. A
+# whole number of microseconds cannot hold one, so a value that has one is
+# held as a quantity of seconds, and it passes through a sum or a product as
+# an uncertain value does. It cannot move a date or a time, which are exact.
+sheet Stopwatch
+
+Lap    : String
+Time   : Duration[s; ±.1f]
+Total  : Duration[s; ±.1f]
+Double : Duration[s; .1f]
+
+| Lap    | Time     | Total | Double |
+| ------ | -------- | ----- | ------ |
+| first  | 10.5(3)s | *     | *      |
+| second | 90(2)s   | *     | *      |
+| third  | PT1M     | *     | *      |
+
+Total  := Time + PT10S
+Double := Time * 2

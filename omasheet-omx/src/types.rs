@@ -305,14 +305,11 @@ impl S {
                         || self == S::Boolean
                         || (quantity && matches!(to, S::Float | S::Scientific))
                 }
-                // A `Duration` is a quantity of seconds, and a quantity of
-                // time, as `10s`, is a `Duration`; the dimension is checked
-                // when it is worked out.
-                S::Quantity(_) => quantity || self == S::Duration,
+                S::Quantity(_) => quantity,
                 S::Percent | S::Boolean => number,
                 S::Date | S::Time => self == S::Datetime,
                 S::Datetime => self == S::Date,
-                S::Duration => quantity,
+                S::Duration => false,
             }
     }
 
@@ -331,6 +328,10 @@ impl S {
             // A `Length` is a `Quantity`, and a `Quantity` may be a `Length`:
             // the dimension is checked when the value is.
             || (self.is_quantity() && to.is_quantity())
+            // A quantity of time may be a `Duration`, which holds it as
+            // seconds where it has an uncertainty: its dimension is checked
+            // when the value is.
+            || (self.is_quantity() && to == S::Duration)
     }
 }
 

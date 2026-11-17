@@ -2112,12 +2112,12 @@ fn a_workbook_sheet_with_offsets_gaps_and_every_kind_of_cell_reads_as_an_import_
     assert_eq!(rows.len(), 4, "the empty row between is a row");
     assert_eq!(
         rows[0],
-        ["a", "2024-03-05T00:00", "10:30", "PT1H30M", "true", "3"]
+        ["a", "2024-03-05T00:00", "10:30", "5400", "true", "3"]
     );
     assert_eq!(rows[1], ["", "", "", "", "", ""]);
     assert_eq!(
         rows[2],
-        ["b", "2024-03-06T12:00", "00:15", "PT12H", "false", "2.5"]
+        ["b", "2024-03-06T12:00", "00:15", "43200", "false", "2.5"]
     );
     assert_eq!(rows[3], ["", "2024-03-07T00:00", "", "", "", "4"]);
     // And an import of it is the same, cell for cell.

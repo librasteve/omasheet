@@ -89,6 +89,33 @@ pub fn to_lit(q: &Quantity) -> Lit {
     Lit::Quantity(q.value(), q.sigma(), q.unit().clone())
 }
 
+/// A quantity of time held in a `Duration` column: a whole number of
+/// microseconds, or with an uncertainty, which that cannot hold, a quantity
+/// of seconds. An error says what else it measures.
+pub fn into_duration(q: &Quantity) -> Result<Value, String> {
+    if q.sigma() == 0.0 {
+        return as_duration(q);
+    }
+    let seconds = Unit::parse("s", Scope::Live).map_err(said)?;
+    let (v, s, f) = (q.value(), q.sigma(), q.unit().factor());
+    if q.unit().dims() != siquant::Dim::of(siquant::Base::Time) {
+        return as_duration(q);
+    }
+    Quantity::new(v * f, s * f, seconds)
+        .map(|q| Value::Quantity(Rc::new(q)))
+        .map_err(said)
+}
+
+/// A `Duration` of `us` microseconds as a column of the format `f` shows it:
+/// a number of its unit. `None` if the format names a unit that is not one
+/// of time.
+pub fn show_duration_in(us: i64, f: &omasheet_omx::colfmt::QuantityFormat, style: &Style) -> Option<String> {
+    match from_duration(us) {
+        Value::Quantity(q) => Some(show_in(&q, f, style)),
+        _ => None,
+    }
+}
+
 /// A `Duration` as the quantity of seconds it stands for: `PT90M` is `5400s`.
 pub fn from_duration(us: i64) -> Value {
     match Unit::parse("s", Scope::Live) {
@@ -133,7 +160,17 @@ pub fn as_span(op: BinOp, a: &Value, b: &Value) -> Option<Result<(Value, Value),
         Value::Quantity(q) => as_duration(q),
         other => Ok(other.clone()),
     };
+    // A duration with an uncertainty is a quantity of seconds, which can
+    // be added to another, but cannot move a date or a time.
+    let uncertain = |v: &Value| matches!(v, Value::Quantity(q) if q.sigma() != 0.0);
     match (a, b) {
+        (q, t) | (t, q) if uncertain(q) && matches!(t, Value::Duration(_) | Value::Quantity(_)) => {
+            None
+        }
+        (q, _) | (_, q) if uncertain(q) => Some(Err(
+            "a duration with an uncertainty cannot move a date or a time, which are exact"
+                .to_string(),
+        )),
         (Value::Quantity(_), t) | (t, Value::Quantity(_)) if timed(t) => {
             Some(side(a).and_then(|x| side(b).map(|y| (x, y))))
         }

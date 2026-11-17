@@ -21,7 +21,8 @@ use crate::{Lowering, Options, ROW_THRESHOLD, lower};
 use omasheet_omx::ast::Lit;
 use omasheet_omx::ast::{BinOp, UnOp};
 use omasheet_omx::check::Join;
-use omasheet_omx::colfmt::Format;
+use omasheet_omx::colfmt::{DurationStyle, Format};
+use omasheet_omx::duration;
 use omasheet_omx::cycle;
 use omasheet_omx::date;
 use omasheet_omx::decimal::{Dec, SHOWN_PRECISION};
@@ -2744,6 +2745,12 @@ impl<'p> Engine<'p> {
                 };
                 crate::quantity::dress(v, id, unit.as_ref()).or_else(|m| fail(span, m))?
             }
+            // A `Duration` column holds a quantity of time as microseconds,
+            // or with an uncertainty as seconds.
+            S::Duration => match &v {
+                Value::Quantity(q) => crate::quantity::into_duration(q).or_else(|m| fail(span, m))?,
+                _ => v,
+            },
             _ => v,
         };
         // A column with a zone shows an instant on that zone's clocks.
@@ -2782,6 +2789,8 @@ impl<'p> Engine<'p> {
                     | (Value::Boolean(_), S::Boolean)
                     | (Value::Date(_), S::Date)
                     | (Value::Time(_), S::Time)
+                    | (Value::Duration(_), S::Duration)
+                    | (Value::Quantity(_), S::Duration)
                     | (
                         Value::Datetime(_, None) | Value::Datetime(_, Some(_)),
                         S::Datetime
@@ -5174,6 +5183,12 @@ impl<'p> Engine<'p> {
             },
             Some(Format::Quantity(f)) => match v {
                 Value::Quantity(q) => Some(crate::quantity::show_in(q, f, &style)),
+                Value::Duration(us) => crate::quantity::show_duration_in(*us, f, &style),
+                _ => None,
+            },
+            Some(Format::Duration(d)) => match (v, d) {
+                (Value::Duration(us), DurationStyle::Iso) => Some(duration::format(*us)),
+                (Value::Duration(us), DurationStyle::Clock) => Some(duration::format_clock(*us)),
                 _ => None,
             },
             Some(Format::Boolean(f)) => match v {

@@ -330,7 +330,11 @@ fn read_format(text: &str, ty: S, span: Span, diags: &mut Vec<Diagnostic>) -> Op
             }
             None => span,
         },
-        Format::Number(_) | Format::Scientific(_) | Format::Quantity(_) | Format::Boolean(_) => {
+        Format::Number(_)
+        | Format::Scientific(_)
+        | Format::Quantity(_)
+        | Format::Boolean(_)
+        | Format::Duration(_) => {
             span
         }
     };

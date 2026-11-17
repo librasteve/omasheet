@@ -1,7 +1,8 @@
 # Every column type, with dates and times: a whole number beside a Date
 # counts days, and beside a Time or a Datetime seconds, and two of a kind
-# differ by a Duration, written `PT8H30M`. A file always writes them the ISO
-# way, and may say which time zone its date-times are in.
+# differ by a Duration, shown in the unit its column names, or as `PT8H30M`
+# under `Duration[iso]`. A file always writes dates and times the ISO way,
+# and may say which time zone its date-times are in.
 
 zone Europe/London
 const Day = P1D
@@ -15,6 +16,8 @@ End    : Time
 Rate   : Decimal
 Paid   : Boolean
 Logged : Datetime
+Shift  : Duration[iso]
+Delay  : Duration[%H:%M:%S]
 
 | Who   | On         | Start | End   | Rate  | Paid  | Logged              | Begins | Shift | Hours | Pay | Due | Weekday | Month | Delay | Late | Sydney |
 | ----- | ---------- | ----- | ----- | ----- | ----- | ------------------- | ------ | ----- | ----- | --- | --- | ------- | ----- | ----- | ---- | ------ |
@@ -34,6 +37,8 @@ Late    := Logged.date() > On
 Sydney  := Logged.convert_time_zone('Australia/Sydney')
 
 sheet Totals
+
+Span : Duration[d]
 
 | Label | Hours | Pay | First | Span |
 | ----- | ----- | --- | ----- | ---- |
