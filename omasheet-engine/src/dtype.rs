@@ -366,7 +366,12 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
                 _ => None,
             })?,
         ),
-        S::Decimal(places) => decimals(name.clone(), i32::from(places), &exact)?,
+        // A column of a percentage and a bare number is a `Decimal`
+        // (`S::wider`), so a percentage is read as the plain number it holds.
+        S::Decimal(places) => decimals(name.clone(), i32::from(places), &|v| match v {
+            Value::Percent(d) => Some(*d),
+            other => exact(other),
+        })?,
         // A percentage and a fraction are an exact number in a dress, and
         // the dress is display (D69): `cell_of` puts it back on from the
         // column's own type, which is what a table's column declared as one

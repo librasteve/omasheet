@@ -8,8 +8,8 @@ Forthcoming; follows `polars-function-registry`.
 - [x] 0.3 D-W6 against `add-group-apply`: rewrite its D-A6 and task 3.2
 
 ## 1. Static types only
-- [ ] 1.1 `lower.rs` declines a column with no declared type, a `Fraction` and anything typed `Any`, by name
-- [ ] 1.2 Correct the module header: what is declined, and why
+- [x] 1.1 `plan_column` declines a `Fraction` and anything typed `Any`, by name; an undeclared column is judged by its inferred type (D-W1, D-W2); a percentage and a bare number in a column is a `Decimal`
+- [x] 1.2 Correct the module header: what is declined, and why
 
 ## 2. Percent
 - [ ] 2.1 `Lit::Percent` and a percent `const` as a `Decimal` in a declared column

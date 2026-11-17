@@ -2490,6 +2490,73 @@ Part  : Fraction
     }
 }
 
+/// A column lowers by its type, declared or inferred from all its cells
+/// (widen-polars-lowering D-W1, D-W2): a `Fraction` and an `Any` never do.
+#[test]
+fn a_plan_is_over_columns_of_one_known_type() {
+    // Inferred, with nothing declared: whole numbers are `Integer`.
+    let inferred = "\
+sheet T
+
+| A | B | C |
+| - | - | - |
+| 1 | 2 | * |
+| 3 | 4 | * |
+
+C := A + B
+";
+    assert_eq!(attempt(inferred, "C"), Some(Attempt::Lowered));
+    assert_eq!(ask(inferred, "T.C"), "[3, 7]");
+    // A column of fractions is the engine's, however it is written.
+    let fractions = "\
+sheet T
+
+A : Fraction
+
+| A   | B | C |
+| --- | - | - |
+| 1/3 | 2 | * |
+| 1/6 | 4 | * |
+
+C := A + B
+";
+    assert_ne!(attempt(fractions, "C"), Some(Attempt::Lowered));
+    assert_eq!(ask(fractions, "T.C"), "[7/3, 25/6]");
+    // One that mixes types has no one type, so it is the engine's too.
+    let mixed = "\
+sheet T
+
+| A     | B | C |
+| ----- | - | - |
+| 1     | 2 | * |
+| apple | 4 | * |
+
+C := A == B
+";
+    assert_ne!(attempt(mixed, "C"), Some(Attempt::Lowered));
+}
+
+/// A column of a percentage and a bare number is a `Decimal` (`S::wider`), so
+/// it lowers, and its numbers are the engine's.
+#[test]
+fn a_column_of_a_percentage_and_a_number_is_a_decimal() {
+    let file = "\
+sheet T
+
+| Base | Rate | Fee |
+| ---- | ---- | --- |
+| 100  | 20%  | *   |
+| 200  | 0.5  | *   |
+
+Fee := Base * Rate
+";
+    assert_eq!(attempt(file, "Fee"), Some(Attempt::Lowered));
+    assert_eq!(ask(file, "T.Fee"), "[20, 100]");
+    // Each cell keeps the dress it was written in; only the plan reads them
+    // as the plain numbers they hold.
+    assert_eq!(ask(file, "T.Rate"), "[20%, 0.5]");
+}
+
 #[test]
 fn a_column_reading_a_percentage_column_is_lowered() {
     // The win is not the aggregate: a column of the text declared `Percent`

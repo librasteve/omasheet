@@ -16,22 +16,32 @@
 //!
 //! What it does not handle, on purpose rather than for want of writing:
 //!
-//! - **Division and the mean of exact numbers** (D72). A Polars quotient has
-//!   `max(x, y) + 4` digits after the point and cannot be given more than
-//!   21, where `Dec` is only equal to itself down to 30; and a Polars mean
-//!   over a decimal column comes back `f64`. Over floating-point numbers
-//!   both are lowered — a quotient by `arith` and a mean by its `sum` and
-//!   its `count` (D72b).
-//! - **A percentage or a fraction**, which are an exact number in a dress
-//!   rather than a dtype (D69). The dress is a column's, re-applied when a
-//!   value is read back out of one, and what omasheet makes of a percentage
-//!   met in the middle of a sum is its own rule rather than arithmetic.
+//! - **A column of no one type** (widen-polars-lowering D-W1, D-W2). A plan
+//!   is over columns whose type the checker knows, declared or inferred from
+//!   all of their cells, which `plan_column` reads in. A `Fraction` is
+//!   arbitrary precision and not a `Decimal(38, s)`, and anything typed `Any`
+//!   (a column of mixed types) has no type to choose a lowering by, so a
+//!   plan over either is the engine's. So is a value that is a vector, a
+//!   sheet or a row.
+//! - **A quotient past 21 places, and a mean that Polars gives as `f64`**
+//!   (D72). A Polars quotient has `max(x, y) + 4` digits after the point and
+//!   cannot be given more than 21, where `Dec` is only equal to itself down to
+//!   30; and a Polars mean over a decimal column comes back `f64`. Within
+//!   that a quotient is lowered by `settle`, and over floating-point numbers
+//!   a quotient by `arith` and a mean by its `sum` and its `count` (D72b).
+//! - **A percentage literal or a fraction literal**, which are an exact
+//!   number in a dress rather than a dtype (D69). A `Percent` column is
+//!   lowered as the `Decimal` it holds (D69a), and so is a column of a
+//!   percentage and a bare number, which is a `Decimal`; what is declined is
+//!   a `Lit::Percent` or percent constant met in the expression itself, which
+//!   `widen-polars-lowering` takes up (D-W3).
+//! - **A quantity or an uncertain value in arithmetic.** The unit and the
+//!   propagated uncertainty are the engine's own; `widen-polars-lowering`
+//!   takes these up (D-W4, D-W5).
 //! - **Dates and times in arithmetic.** A whole number beside one counts
 //!   days, or seconds, which is a scaling per type rather than an addition.
 //!   The two are compared, though, both sides being whole numbers of the
 //!   same unit.
-//! - **A value with no dtype to be held as**: anything the checker typed
-//!   `Any`, and a vector, a sheet or a row.
 //! - **Most calls.** [`call`] says which are here and why the rest are not;
 //!   the short of it is that a conversion, a rounding and a zone are
 //!   omasheet's own rules rather than Polars', and that `abs`, `sign`,

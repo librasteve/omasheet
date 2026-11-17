@@ -1884,6 +1884,14 @@ impl<'p> Engine<'p> {
     /// back out of the copy.
     fn plan_column(&self, t: usize, c: usize) -> Option<PlColumn> {
         let col = &self.prog.sheets[t].cols[c];
+        // A plan is over a column whose type the checker knows, declared or
+        // inferred from all of its cells (widen-polars-lowering D-W1, D-W2).
+        // Where it is one type, that type is the plan's. A `Fraction` is
+        // arbitrary precision, not a `Decimal(38, s)`, and `Any` has no type
+        // to choose a lowering by, so a plan over either is the engine's.
+        if matches!(col.ty, S::Fraction | S::Any) {
+            return None;
+        }
         // A column of quantities is numbers in a dataframe, and the unit is
         // the engine's own; a plan over it would work on the numbers alone.
         if col.ty.is_quantity() && matches!(col.kind, ColKind::Frame) {
