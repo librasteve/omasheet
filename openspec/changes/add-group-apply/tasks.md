@@ -23,3 +23,8 @@ Forthcoming; follows `add-units`.
 - [x] 3.2 (the engine runs every body; the lowered path is a follow-on) `apply` and `agg` give the same groups in the same order, and a body that lowers gives the same answer, shape, type and error lowered as in the engine (the lowered path follows `widen-polars-lowering`; until then the engine runs every body)
 - [x] 3.3 `docs/expressions.md`, `docs/format.md`, the skill, `examples/groups.omx` and its `.expected`, with a good set of `group_by |> apply` examples (a value, a column, a sheet, the top rows of each group, a rank within a group)
 - [x] 3.4 fmt, clippy -D warnings, workspace tests
+
+## 4. The lowered path
+- [x] 4.1 A function that gives a value lowers with its body: the call is read as the body over the group's columns, and an aggregate of an expression of them is a column of its own for Polars to aggregate in the one `group_by` `agg` already uses; a body or a column it cannot lower, a cell empty in a column it reads, or an operation that might not fit, is the engine's
+- [ ] 4.2 A function that gives rows (a column, a sheet, the top rows of each group) lowers: `sort`, `head`, `select` and `filter` over the group's rows as `sort_by`, `head` and `filter` over the groups
+- [ ] 4.3 The rank within a group, and the other-sheet pairing, on the lowered path

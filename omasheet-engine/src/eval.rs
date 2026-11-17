@@ -1072,6 +1072,34 @@ impl<'p> Engine<'p> {
         order
     }
 
+    /// An expression over the columns of the grouped sheet `t`, lowered to
+    /// be one value for each row of the sheet: the columns it reads, the
+    /// expression, its dtype and its type. `None` where it does not lower,
+    /// reads a number a row of it might not hold, or has a cell empty for it
+    /// to read, the engine's answer there being its own.
+    fn derived(&self, t: usize, node: &Node) -> Option<(Vec<PlColumn>, Expr, DataType, S)> {
+        let constant = |i| self.const_value(i).ok();
+        let unit = |c| self.quantity_unit(t, c);
+        let column = |c| self.pl_column(t, c);
+        let cx = lower::Cx::new(&column, &constant, &unit);
+        let out = lower::expr(node, &cx)?;
+        if out.unit.is_some() || matches!(out.dtype, DataType::Struct(_)) || cx.windowed() {
+            return None;
+        }
+        let risk = cx.at_risk();
+        let taken = cx.taken();
+        if taken.is_empty() || taken.iter().any(|c| c.null_count() > 0) {
+            return None;
+        }
+        if let Some(risk) = risk
+            && any_at_risk(&DataFrame::new(taken.clone()).ok()?, risk)
+        {
+            return None;
+        }
+        let elem = out.ty()?;
+        Some((taken, out.expr, out.dtype, elem))
+    }
+
     /// The groups of a whole sheet by its key columns, and the aggregates of
     /// `aggs` over each group, taken by Polars in one `group_by`. `aggs` is
     /// each lowerable aggregate of the grouped sheet: its column there, its
@@ -1090,7 +1118,7 @@ impl<'p> Engine<'p> {
         t: usize,
         rows: &[usize],
         keys: &[usize],
-        aggs: &[(usize, Func, usize)],
+        aggs: &[(usize, Func, Source)],
     ) -> Option<(Groups, Vec<(usize, AggValues)>)> {
         if self.options.lowering == Lowering::Never {
             return None;
@@ -1132,9 +1160,29 @@ impl<'p> Engine<'p> {
         // `run_agg` asks of a whole column.
         let mut select = vec![col(ROW_INDEX)];
         let mut plans = Vec::with_capacity(aggs.len());
-        for (k, &(_, func, c)) in aggs.iter().enumerate() {
-            let Some((name, dtype)) = take(c) else {
-                continue;
+        let mut derived: Vec<Expr> = Vec::new();
+        let mut extra: Vec<PlColumn> = Vec::new();
+        for (k, (_, func, source)) in aggs.iter().enumerate() {
+            let func = *func;
+            let (name, dtype, elem) = match source {
+                Source::Col(c) => {
+                    let Some((name, dtype)) = take(*c) else {
+                        continue;
+                    };
+                    (name, dtype, self.prog.sheets[t].cols[*c].ty)
+                }
+                // The aggregate of an expression over the columns: the
+                // expression is a column of its own, taken whole, and then
+                // aggregated as any column is.
+                Source::Expr(node) => {
+                    let Some((taken, expr, dtype, elem)) = self.derived(t, node) else {
+                        continue;
+                    };
+                    let name: polars::prelude::PlSmallStr = format!("d{k}").into();
+                    extra.extend(taken);
+                    derived.push(expr.alias(name.clone()));
+                    (name, dtype, elem)
+                }
             };
             let mean = func == Func::Mean;
             let Some(expr) = lower::aggregate(if mean { Func::Sum } else { func }, &name, &dtype)
@@ -1166,7 +1214,12 @@ impl<'p> Engine<'p> {
                 parts.push(lower::has_a_number(&name).alias(format!("n{k}")));
             }
             select.extend(parts);
-            plans.push((k, mean, total, guard));
+            plans.push((k, mean, total, guard, elem));
+        }
+        for column in extra {
+            if !columns.iter().any(|held| held.name() == column.name()) {
+                columns.push(column);
+            }
         }
         let Ok(frame) = DataFrame::new(columns) else {
             return refused(self);
@@ -1176,6 +1229,7 @@ impl<'p> Engine<'p> {
             .with_maintain_order(true);
         let Ok(out) = frame
             .lazy()
+            .with_columns(derived)
             .with_row_index(ROW_INDEX, None)
             .group_by(by.clone())
             .agg(select)
@@ -1216,10 +1270,10 @@ impl<'p> Engine<'p> {
             groups.push(Rc::new(members));
         }
         self.filters.borrow_mut().push((t, Attempt::Lowered));
-        let ty = |c: usize| self.prog.sheets[t].cols[c].ty;
         let mut held = Vec::new();
-        'agg: for (k, mean, total, guard) in plans {
-            let (at, func, c) = aggs[k];
+        'agg: for (k, mean, total, guard, elem) in plans {
+            let (at, func, _) = &aggs[k];
+            let (at, func) = (*at, *func);
             let get = |part: &str, i: usize| out.column(&format!("{part}{k}")).ok()?.get(i).ok();
             let mut values = Vec::with_capacity(groups.len());
             for (i, group) in groups.iter().enumerate() {
@@ -1236,17 +1290,17 @@ impl<'p> Engine<'p> {
                         true => Some(get("c", i)?.try_extract::<i64>().ok()?),
                         false => None,
                     };
-                    agg_value(func, ty(c), get("a", i)?, count)
+                    agg_value(func, elem, get("a", i)?, count)
                 })();
                 match answer {
                     Some(v) => values.push(v),
                     None => {
-                        self.aggregates.borrow_mut().push((t, c, Attempt::Refused));
+                        self.aggregates.borrow_mut().push((t, at, Attempt::Refused));
                         continue 'agg;
                     }
                 }
             }
-            self.aggregates.borrow_mut().push((t, c, Attempt::Lowered));
+            self.aggregates.borrow_mut().push((t, at, Attempt::Lowered));
             held.push((at, Rc::new(values)));
         }
         Some((groups, held))
@@ -2696,7 +2750,7 @@ impl<'p> Engine<'p> {
         // places of its type; Polars answers it unrounded and the engine
         // rounds what comes back.
         let mut settles: Vec<(usize, u8)> = Vec::new();
-        let aggs: Vec<(usize, Func, usize)> = self.prog.sheets[t]
+        let aggs: Vec<(usize, Func, Source)> = self.prog.sheets[t]
             .cols
             .iter()
             .enumerate()
@@ -2704,30 +2758,30 @@ impl<'p> Engine<'p> {
                 let ColKind::Agg(node) = &col.kind else {
                     return None;
                 };
+                // A call of a function `apply` makes is the body of the
+                // function over the group's columns.
+                let node = group_form(node)?;
                 let (node, places) = match &node.kind {
                     Ir::Call(Func::Settle(p), inner) => match inner.as_slice() {
-                        [inner] => (inner, Some(*p)),
+                        [inner] => (inner.clone(), Some(*p)),
                         _ => return None,
                     },
-                    _ => (node, None),
+                    _ => (node.clone(), None),
                 };
                 let Ir::Call(func, args) = &node.kind else {
                     return None;
                 };
-                match args.as_slice() {
-                    [
-                        Node {
-                            kind: Ir::GroupCol(c),
-                            ..
-                        },
-                    ] => {
-                        if let Some(p) = places {
-                            settles.push((at, p));
-                        }
-                        Some((at, *func, *c))
-                    }
-                    _ => None,
+                let [arg] = args.as_slice() else {
+                    return None;
+                };
+                let source = match &arg.kind {
+                    Ir::GroupCol(c) => Source::Col(*c),
+                    _ => Source::Expr(arg.clone()),
+                };
+                if let Some(p) = places {
+                    settles.push((at, p));
                 }
+                Some((at, *func, source))
             })
             .collect();
         if let Some((groups, held)) = self.run_group(view.sheet, &view.rows, keys, &aggs) {
@@ -5369,4 +5423,37 @@ pub fn run_filter_plan(frame: DataFrame, expr: Expr) -> Option<Vec<bool>> {
         mask[r as usize] = true;
     }
     Some(mask)
+}
+
+/// What an aggregate of a group is over: a column of the grouped sheet, or an
+/// expression over its columns.
+enum Source {
+    Col(usize),
+    Expr(Node),
+}
+
+/// The body of an aggregate as it reads the group's columns: a call of a
+/// function `apply` makes, over the rows of the group, is the function's body
+/// with each column of those rows (`rows.Qty`) the group's own column. `None`
+/// where the body reads the rows any other way.
+fn group_form(node: &Node) -> Option<Node> {
+    let Ir::Apply { args, body, .. } = &node.kind else {
+        return Some(node.clone());
+    };
+    if !args.iter().all(|a| matches!(a.kind, Ir::GroupSheet)) {
+        return None;
+    }
+    fn rows(node: &Node) -> Option<Node> {
+        let kind = match &node.kind {
+            Ir::Lit(_) | Ir::Const(_) | Ir::GroupCol(_) => return Some(node.clone()),
+            Ir::Field { base, col } if matches!(base.kind, Ir::Arg(_)) => Ir::GroupCol(*col),
+            Ir::Unary(op, x) => Ir::Unary(*op, Box::new(rows(x)?)),
+            Ir::Binary(op, l, r) => Ir::Binary(*op, Box::new(rows(l)?), Box::new(rows(r)?)),
+            Ir::If(c, y, n) => Ir::If(Box::new(rows(c)?), Box::new(rows(y)?), Box::new(rows(n)?)),
+            Ir::Call(f, xs) => Ir::Call(*f, xs.iter().map(rows).collect::<Option<_>>()?),
+            _ => return None,
+        };
+        Some(Node::new(kind, node.span))
+    }
+    rows(body)
 }

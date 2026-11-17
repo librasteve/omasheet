@@ -231,6 +231,9 @@ fn inner(node: &Node, cx: &Cx) -> Option<Out> {
         // first gate has already refused, and one reaching a row of an
         // enclosing sheet is a frame this expression is not over.
         Ir::RowCol { depth: 0, col } => cx.read(*col),
+        // A column of the rows of a group, which `run_group` has over the
+        // whole sheet and groups after: one value of it per row.
+        Ir::GroupCol(col) => cx.read(*col),
         Ir::Call(func, args) => call(*func, args, cx),
         Ir::Binary(BinOp::In, l, r) => within(inner(l, cx)?, r, cx),
         Ir::Unary(op, operand) => unary(*op, inner(operand, cx)?),

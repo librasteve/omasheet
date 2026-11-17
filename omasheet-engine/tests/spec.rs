@@ -2852,6 +2852,34 @@ sheet Nothing := T |> group_by(K) |> apply(None)
     assert_eq!(ask(f, "Nothing.V"), "[]");
 }
 
+/// A function that gives a value, over an expression of the group's columns,
+/// is calculated by Polars for every group at once, and gives what the engine
+/// gives (add-group-apply D-A6); one it cannot calculate there is the engine's.
+#[test]
+fn apply_of_a_value_is_lowered_with_its_body() {
+    let f = format!(
+        "{APPLY_ORDERS}\nfn Hi(rows) = rows.Qty.max()\n\
+         sheet Peak := Orders |> group_by(Region) |> apply(Hi)\n"
+    );
+    for expr in [
+        "RegionWorth.Worth",
+        "RegionWorth.Region",
+        "Peak.Hi",
+        "Named.Total",
+    ] {
+        both_ways(&f, expr, None);
+    }
+    // The aggregate of an expression, and of a column, each taken by Polars.
+    for expr in ["RegionWorth.Worth", "Peak.Hi"] {
+        let ran = both_ways(&f, expr, None);
+        assert!(!ran.aggregates.is_empty(), "{expr}");
+        assert!(
+            ran.aggregates.iter().all(|a| *a == Attempt::Lowered),
+            "{expr}"
+        );
+    }
+}
+
 /// `apply` is refused where it does not go, and a function it cannot call is
 /// said so.
 #[test]
