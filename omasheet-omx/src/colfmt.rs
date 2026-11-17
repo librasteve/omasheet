@@ -128,13 +128,40 @@ impl QuantityFormat {
             None => None,
             Some(n) => {
                 let start = unit_part.chars().count() + 1 + lead(n);
-                Some(SciFormat::parse(n).map_err(|mut e| {
+                Some(SciFormat::parse_in(n, true).map_err(|mut e| {
                     e.at += start;
                     e
                 })?)
             }
         };
+        // A named kind with no unit is shown in its preferred unit.
+        let lifts = unit.is_some() || id.named().is_some();
+        if let Some(n) = number {
+            if n.unit_down && !lifts {
+                return Err(error(
+                    0,
+                    unit_part.chars().count().max(1),
+                    "`v` needs a unit: with none, each value is shown in its own".to_string(),
+                ));
+            }
+            if n.gap && lifts && !n.unit_down {
+                let start = unit_part.chars().count() + 1;
+                return Err(error(
+                    start,
+                    number_part.map_or(1, |s| s.chars().count()).max(1),
+                    "`_` spaces the unit in each row, which is shown in the head: write `v_`"
+                        .to_string(),
+                ));
+            }
+        }
         Ok(QuantityFormat { unit, number })
+    }
+
+    /// Whether the column shows its unit once, in its head, and its cells
+    /// as numbers: a column that has a unit, unless `v` puts it in each row.
+    /// `kind` is whether its type names a kind, which has a unit of its own.
+    pub fn lifts(&self, kind: bool) -> bool {
+        (self.unit.is_some() || kind) && !self.number.is_some_and(|n| n.unit_down)
     }
 }
 
@@ -170,6 +197,9 @@ pub struct SciFormat {
     /// `_`: a quantity's unit set apart from its number by a space, so
     /// `6.022e+23 mol^-1`.
     pub gap: bool,
+    /// `v`: a quantity's unit shown down in each row, `10.5g`, rather than
+    /// once in the column's head. Only a quantity format takes it.
+    pub unit_down: bool,
     /// `-`: on the left of its width, rather than the right.
     pub left: bool,
     /// `+`: a sign on every number, `+` on one that is not negative.
@@ -212,6 +242,11 @@ const MOST_PLACES: u32 = 17;
 
 impl SciFormat {
     pub fn parse(text: &str) -> Result<SciFormat, FormatError> {
+        SciFormat::parse_in(text, false)
+    }
+
+    /// As [`SciFormat::parse`], where `v` is read too if `quantity`.
+    fn parse_in(text: &str, quantity: bool) -> Result<SciFormat, FormatError> {
         let chars: Vec<char> = text.trim().chars().collect();
         let error = |at: usize, len: usize, message: &str| FormatError {
             at,
@@ -223,12 +258,16 @@ impl SciFormat {
         if chars.is_empty() {
             return Err(error(0, 0, "empty"));
         }
-        // `±`, `~` and `_` come first, each once, in that order.
+        // `±`, `~`, `v` and `_` come first, each once, in that order.
         if chars.first() == Some(&'±') {
             f.plus_minus = true;
             i += 1;
         } else if chars.first() == Some(&'~') {
             f.value_only = true;
+            i += 1;
+        }
+        if quantity && chars.get(i) == Some(&'v') {
+            f.unit_down = true;
             i += 1;
         }
         if chars.get(i) == Some(&'_') {
@@ -342,6 +381,9 @@ impl fmt::Display for SciFormat {
         }
         if self.value_only {
             f.write_str("~")?;
+        }
+        if self.unit_down {
+            f.write_str("v")?;
         }
         if self.gap {
             f.write_str("_")?;
@@ -602,6 +644,41 @@ mod tests {
         assert!(SciFormat::parse("_").unwrap().gap);
         assert_eq!(SciFormat::parse("±_.2f").unwrap().to_string(), "±_.2f");
         assert!(QuantityFormat::parse("g", any).unwrap().unit.is_some());
+    }
+
+    #[test]
+    fn the_unit_is_in_the_head_unless_v_puts_it_in_the_rows() {
+        let mass = QId::from_name("Mass").unwrap();
+        // A unit, or a kind that has one, is lifted into the head.
+        assert!(QuantityFormat::parse("g", mass).unwrap().lifts(false));
+        assert!(QuantityFormat::parse("g; .1f", mass).unwrap().lifts(false));
+        assert!(QuantityFormat::parse("; .1f", mass).unwrap().lifts(true));
+        // `v` keeps it in each row, and is written back as read.
+        let down = QuantityFormat::parse("g; v.1f", mass).unwrap();
+        assert!(!down.lifts(false));
+        assert_eq!(down.to_string(), "g; v.1f");
+        assert_eq!(
+            QuantityFormat::parse("g; v_.1f", mass).unwrap().to_string(),
+            "g; v_.1f"
+        );
+        assert_eq!(
+            QuantityFormat::parse("g; ±v.1f", mass).unwrap().to_string(),
+            "g; ±v.1f"
+        );
+        // A quantity with no unit has one in each row already.
+        assert!(
+            !QuantityFormat::parse("; .9s", QId::ANY)
+                .unwrap()
+                .lifts(false)
+        );
+        let e = QuantityFormat::parse("; v.9s", QId::ANY).unwrap_err();
+        assert!(e.message.contains("needs a unit"), "{}", e.message);
+        // `_` spaces a unit in the row, so it needs `v` where there is one.
+        let e = QuantityFormat::parse("g; _.1f", mass).unwrap_err();
+        assert!(e.message.contains("v_"), "{}", e.message);
+        assert!(QuantityFormat::parse("; _.9s", QId::ANY).is_ok());
+        // Only a quantity takes it.
+        assert!(SciFormat::parse("v.1f").is_err());
     }
 
     #[test]

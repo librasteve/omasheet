@@ -381,8 +381,7 @@ fn sheet(
     format: Format,
 ) -> String {
     let cols = &program.sheets[view.sheet].cols;
-    let mut grid: Vec<Vec<String>> =
-        vec![view.cols.iter().map(|&c| cols[c].name.clone()).collect()];
+    let mut grid: Vec<Vec<String>> = vec![view.cols.iter().map(|&c| cols[c].head()).collect()];
     let mut numeric = vec![true; view.cols.len()];
     for &r in view.rows.iter() {
         let mut line = Vec::with_capacity(view.cols.len());
@@ -393,7 +392,7 @@ fn sheet(
             if !matches!(value, Value::Null | Value::Error) && !number {
                 numeric[k] = false;
             }
-            let shown = place(engine, &value, format, cols[c].format.as_ref());
+            let shown = place(engine, &value, format, cols[c].shown_format().as_deref());
             line.push(shown.replace('|', "\\|").replace('\n', " "));
         }
         grid.push(line);
@@ -640,7 +639,19 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
         };
         // What reads one column, or a cell of it, shows by its format.
         let shown_by = column_read(&node)
-            .and_then(|(t, c)| program.sheets.get(t)?.cols.get(c)?.format.as_ref());
+            .and_then(|(t, c)| program.sheets.get(t)?.cols.get(c)?.shown_format())
+            .map(std::borrow::Cow::into_owned)
+            // A value in a sentence has no column head to give its unit.
+            .map(|f| match f {
+                ColFormat::Quantity(mut q) => {
+                    let mut n = q.number.unwrap_or_default();
+                    n.unit_down = true;
+                    q.number = Some(n);
+                    ColFormat::Quantity(q)
+                }
+                other => other,
+            });
+        let shown_by = shown_by.as_ref();
         // A sheet stands apart from the text around it.
         let apart = |view: &View| {
             let shown = sheet(&engine, &program, view, format);

@@ -27,11 +27,11 @@ equal       | true
 
 sheet Disks
 
-Disk   | Size    | Free
--------|---------|--------
-system | 512GiB  | 120GiB
-data   | 2048GiB | 1536GiB
-backup | 4000GiB | 3500GiB
+Disk   | Size [GiB] | Free [GiB]
+-------|------------|-----------
+system | 512        | 120
+data   | 2048       | 1536
+backup | 4000       | 3500
 
 sheet Totals
 

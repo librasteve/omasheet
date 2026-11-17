@@ -25,7 +25,7 @@ sheet Literals
 | uncertain    | 10.5(3)e-3kg |
 | kilo         | 1.5k.        |
 | milli        | 5m.          |
-| micro        | 10μF         |
+| micro        | 10uF         |
 
 sheet Arithmetic
 
@@ -56,10 +56,10 @@ sheet Arithmetic
 # given.
 sheet Pantry
 
-Item   : String
-Weight : Mass
+Item : String
+Load : Mass
 
-| Item  | Weight  |
+| Item  | Load    |
 | ----- | ------- |
 | flour | 5kg     |
 | sugar | 300g    |
@@ -69,18 +69,21 @@ Weight : Mass
 # The unit in brackets after the type is the unit the column is shown and held
 # in, whichever the cells were written in: a bare number is read in it. After
 # a `;` a number format as a Scientific takes may follow, `Mass[mg; .1f]`.
+# The unit is said once, in the column's head, and its cells are numbers; a
+# `v` before the conversion puts it down in each row, `Mass[g; v]`.
 sheet Display
 
 Item   : String
 Kilos  : Mass
 Grams  : Mass[g]
+Rows   : Mass[g; v]
 Metres : Length
 
-| Item  | Kilos | Grams | Metres  |
-| ----- | ----- | ----- | ------- |
-| flour | 5kg   | 5kg   | 2m      |
-| sugar | 300g  | 300g  | 150     |
-| salt  | 5     | 5     | 3.5(2)m |
+| Item  | Kilos | Grams | Rows | Metres  |
+| ----- | ----- | ----- | ---- | ------- |
+| flour | 5kg   | 5kg   | 5kg  | 2m      |
+| sugar | 300g  | 300g  | 300g | 150     |
+| salt  | 5     | 5     | 5    | 3.5(2)m |
 
 # With no unit before the `;`, each value is shown in its own unit. The
 # conversion `s` lets the uncertainty lead: a value that has one is shown by
@@ -98,13 +101,13 @@ Value : Quantity[; .9s]
 
 sheet Totals
 
-| Name     | Value                      |
-| -------- | -------------------------- |
-| total    | = Pantry.Weight.sum()      |
-| mean     | = Pantry.Weight.mean()     |
-| largest  | = Pantry.Weight.max()      |
-| smallest | = Pantry.Weight.min()      |
-| in grams | = Pantry.Weight.sum().to('g') |
+| Name     | Value                       |
+| -------- | --------------------------- |
+| total    | = Pantry.Load.sum()         |
+| mean     | = Pantry.Load.mean()        |
+| largest  | = Pantry.Load.max()         |
+| smallest | = Pantry.Load.min()         |
+| in grams | = Pantry.Load.sum().to('g') |
 
 # A computed column of quantities may be declared too: it is held in the unit
 # of its type, so the product of two lengths is an area in square metres
