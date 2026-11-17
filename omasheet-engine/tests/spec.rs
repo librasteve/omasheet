@@ -2925,6 +2925,25 @@ sheet Every := T |> group_by(K) |> apply(Every)
     assert_eq!(ask(f, "Best.W"), "[7, 9, 2, 6, 5, 1]");
 }
 
+/// A function that gives rows of another sheet picked by what the group's
+/// first row holds is a join, taken by Polars, and gives the pairs the engine
+/// gives, a group it finds nothing for having no rows and an empty key none.
+#[test]
+fn apply_of_another_sheets_rows_is_lowered_as_a_join() {
+    let f = format!(
+        "{APPLY_ORDERS}\n\
+         fn Both(rows) = Targets[; Region == rows[Region; 0] and Goal > 0] |> select(Goal)\n\
+         sheet Both := Orders |> group_by(Region) |> apply(Both)\n"
+    );
+    for expr in ["Goals.Region", "Goals.Goal", "Biggest.Goal"] {
+        let ran = both_ways(&f, expr, None);
+        assert!(ran.filters.contains(&Attempt::Lowered), "{expr}");
+    }
+    assert_eq!(ask(&f, "Goals.Goal"), "[50, 60, 70]");
+    // A condition that is not a lookup by the group is the engine's.
+    both_ways(&f, "Both.Goal", None);
+}
+
 /// `apply` is refused where it does not go, and a function it cannot call is
 /// said so.
 #[test]

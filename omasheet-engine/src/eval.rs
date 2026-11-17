@@ -1072,6 +1072,51 @@ impl<'p> Engine<'p> {
         order
     }
 
+    /// The rows of the sheet `o` each group's function picks by what the
+    /// group's first row holds, `on` pairs of a column of the grouped sheet
+    /// and one of `o`: a join of the groups' first rows to `o`, by the
+    /// join's own rules (D85), taken by Polars. Given back as the rows of
+    /// the grouped sheet, each group's first row repeated for each row of `o`
+    /// it gets, and the row of `o` beside each. `None` leaves it to the
+    /// engine.
+    fn run_group_lookup(
+        &self,
+        view: &crate::value::View,
+        keys: &[usize],
+        o: usize,
+        on: &[(usize, usize)],
+        span: Span,
+    ) -> Option<(Vec<usize>, Vec<Option<usize>>)> {
+        let right = crate::value::View {
+            sheet: o,
+            rows: Rc::new((0..self.prog.sheets[o].nrows).collect()),
+            cols: self.all_cols[o].clone(),
+        };
+        let join = Join {
+            right: Node::new(Ir::Sheet(o), span),
+            left_keys: on.iter().map(|&(l, _)| l).collect(),
+            right_keys: on.iter().map(|&(_, r)| r).collect(),
+            left: false,
+        };
+        let pairs = self.run_join(view, &right, &join)?;
+        let mut matches: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (l, r) in pairs {
+            matches.entry(l).or_default().push(r?);
+        }
+        let groups = match self.run_group(view.sheet, &view.rows, keys, &[]) {
+            Some((groups, _)) => groups,
+            None => self.plain_groups(view, keys, span).ok()?,
+        };
+        let (mut rows, mut paired) = (Vec::new(), Vec::new());
+        for g in groups {
+            for &r in matches.get(&g[0]).map(Vec::as_slice).unwrap_or(&[]) {
+                rows.push(g[0]);
+                paired.push(Some(r));
+            }
+        }
+        Some((rows, paired))
+    }
+
     /// The rows each group's function gives, taken by Polars in one
     /// `group_by`, the groups in the order of their keys as `run_group` has
     /// them and each group's rows in the order its steps put them. The
@@ -3316,6 +3361,19 @@ impl<'p> Engine<'p> {
                     && let Some(steps) = group_steps(body)
                     && let Some(rows) = self.run_group_rows(view.sheet, &view.rows, keys, &steps)
                 {
+                    return Ok(Value::Sheet(View {
+                        sheet: view.sheet,
+                        rows: Rc::new(rows),
+                        cols: Rc::new(cols.clone()),
+                    }));
+                }
+                // Rows of another sheet picked by what the group's first row
+                // holds are a join of the groups to it, taken by Polars.
+                if let Some(o) = other
+                    && let Some(on) = group_lookup(body, *o)
+                    && let Some((rows, paired)) = self.run_group_lookup(&view, keys, *o, &on, span)
+                {
+                    *self.apply_paired.borrow_mut() = Some((*o, Rc::new(paired)));
                     return Ok(Value::Sheet(View {
                         sheet: view.sheet,
                         rows: Rc::new(rows),
@@ -5671,4 +5729,63 @@ fn group_steps(body: &Node) -> Option<Vec<Step>> {
     let mut steps = Vec::new();
     walk(body, &mut steps)?;
     (!steps.is_empty()).then_some(steps)
+}
+
+/// The columns a function that gives rows of the sheet `o` picks them by:
+/// each pair a column of the group's first row and the column of `o` it must
+/// equal, from `Other[; Col == rows[Key; 0]]` and then `select`. `None` for
+/// anything else.
+fn group_lookup(body: &Node, o: usize) -> Option<Vec<(usize, usize)>> {
+    let Ir::Apply { args, body, .. } = &body.kind else {
+        return None;
+    };
+    if !matches!(args.as_slice(), [a] if matches!(a.kind, Ir::GroupSheet)) {
+        return None;
+    }
+    fn equal(cond: &Node, on: &mut Vec<(usize, usize)>) -> Option<()> {
+        let Ir::Binary(op, l, r) = &cond.kind else {
+            return None;
+        };
+        match op {
+            BinOp::And => {
+                equal(l, on)?;
+                equal(r, on)
+            }
+            BinOp::Eq => {
+                let (Ir::RowCol { depth: 0, col }, Ir::Index { base, rows, cols }) =
+                    (&l.kind, &r.kind)
+                else {
+                    return None;
+                };
+                let (Ir::Arg(0), RowSel::Pos(at), ColSel::One(key)) = (&base.kind, rows, cols)
+                else {
+                    return None;
+                };
+                matches!(at.kind, Ir::Lit(Lit::Int(0, _))).then_some(())?;
+                on.push((*key, *col));
+                Some(())
+            }
+            _ => None,
+        }
+    }
+    fn walk(node: &Node, o: usize, on: &mut Vec<(usize, usize)>) -> Option<()> {
+        match &node.kind {
+            Ir::Sheet(s) if *s == o => Some(()),
+            Ir::Index { base, rows, cols } => {
+                if matches!(cols, ColSel::One(_)) {
+                    return None;
+                }
+                walk(base, o, on)?;
+                match rows {
+                    RowSel::All => Some(()),
+                    RowSel::Pred(cond) => equal(cond, on),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+    let mut on = Vec::new();
+    walk(body, o, &mut on)?;
+    (!on.is_empty()).then_some(on)
 }
