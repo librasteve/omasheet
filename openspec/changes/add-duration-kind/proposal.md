@@ -22,7 +22,7 @@ Every other dimension has a named kind of `Quantity`, `Mass[kg]`, `Length[m]`, `
 - `omasheet-omx`: `types.rs` (`S::Duration` becomes `Quantity(Duration)`), `check.rs` (the rules for dates and quantities), the lexer and `convert.rs` (the signed colon form, and the sign against the operator)
 - `omasheet-engine`: `value.rs`, `quantity.rs` (`as_span`, `as_duration`, `from_duration` fall away, and the `.Quantity` and `.Duration` conversions), `eval.rs`, the `total_*` functions
 - `omasheet-interop`: Parquet, xlsx and CSV, where a `Duration` column is a Polars duration and, in the file, an ISO text
-- `docs/format.md`, `docs/expressions.md`, `skill/omasheet/SKILL.md`, `examples/durations.omx` and its expected output, `examples/showcase/flight15-vignette.omx`
+- `docs/format.md`, `docs/expressions.md`, `skill/omasheet/SKILL.md`, `examples/durations.omx` and its expected output, `examples/showcase/flight15.omx`
 
 ## Out of Scope
 

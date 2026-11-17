@@ -6165,7 +6165,8 @@ fn quoted(cell: &str) -> bool {
 
 /// The constants every file has, which its own `const`, column or sheet of
 /// the same name shadows. The exact ones are as the 2019 SI defines them;
-/// `G` and `me` are CODATA 2022. `gn` and `planck` are not `g` and `h`, which
+/// `G` and `me` are CODATA 2022; `au` is as the IAU fixes it, and `ly` and
+/// `ld` are `c` times a Julian year and a day. `gn` and `planck` are not `g` and `h`, which
 /// are the gram and the hour.
 pub const PRELUDE: &[(&str, &str)] = &[
     ("pi", "circumference over diameter"),
@@ -6182,6 +6183,9 @@ pub const PRELUDE: &[(&str, &str)] = &[
     ("qe", "the elementary charge"),
     ("G", "the gravitational constant"),
     ("me", "the electron mass"),
+    ("au", "the astronomical unit"),
+    ("ly", "the light year"),
+    ("ld", "the light day"),
 ];
 
 pub fn prelude(name: &str) -> Option<Lit> {
@@ -6205,6 +6209,11 @@ pub fn prelude(name: &str) -> Option<Lit> {
         "qe" => q(1.602176634e-19, "C"),
         "G" => q(6.67430e-11, "m^3.kg^-1.s^-2"),
         "me" => q(9.1093837139e-31, "kg"),
+        // Exact: the IAU astronomical unit, and the distance light goes in a
+        // Julian year (365.25 days) and in a day.
+        "au" => q(149_597_870_700.0, "m"),
+        "ly" => q(9_460_730_472_580_800.0, "m"),
+        "ld" => q(25_902_068_371_200.0, "m"),
         _ => None,
     }
 }

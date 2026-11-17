@@ -636,7 +636,7 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
   `is_first_distinct()` and `is_last_distinct()`, of a column or a vector,
   or of this row's cell, `Name.is_duplicated()`, which is answered among the
   column's. An empty cell is a value of its own here
-- Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan arcsinh arccosh arctanh` and more, and the constants `pi tau e c gn planck hbar kB NA R qe G me`, which a column, constant or sheet of the same name replaces
+- Maths: `abs round floor ceil sqrt exp ln log10 log2 sin cos tan arcsinh arccosh arctanh` and more, and the constants `pi tau e c gn planck hbar kB NA R qe G me au ly ld`, which a column, constant or sheet of the same name replaces
   `exp`, `ln`, `log10`, `log2` and the trigonometric functions cast their
   argument to a `Float` as `x.Float` does, so `sin(true)` is `sin(1)`,
   and `ln('20')` is `ln(20)`; a date or a duration is an error. These take a `Complex`

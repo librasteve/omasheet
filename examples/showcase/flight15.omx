@@ -33,6 +33,10 @@ const OrbitAltitude = Flight15[Value; Item == 'OrbitAltitude'].first()
 const EntryTime = Flight15[Value; Item == 'AtmosphericEntry'].first()
 const LandingBurnTime = Flight15[Value; Item == 'ShipLandingBurn'].first()
 
+# The speed of a circular orbit at the flight's altitude: v squared is GM
+# over the radius.
+const OrbitSpeed = sqrt(GM / (EarthRadius + OrbitAltitude).to('m'))
+
 # The number of Raptor 3 engines on the booster and on the ship, and the
 # Starlink V3 satellites carried (Flight15 sheet, Engines and Payload rows).
 const BoosterEngines = 33
@@ -137,33 +141,33 @@ DeltaV     := DeltaV(Exhaust, StartMass, EndMass)
 LiftoffTWR := Thrust / (StartMass * g0)
 JetPower   := 0.5 * Thrust * Exhaust
 
-# The speed a circular orbit at the flight's altitude needs, and how long
-# the 14 orbits take, against the sourced "more than 22 hours".
+# What the two stages add up to, against what the orbit needs: a circular
+# orbit at the flight's altitude (v squared is GM over the radius), and how
+# long the 14 orbits take, against the sourced "more than 22 hours".
 sheet Ascent
 
-TotalDeltaV  : Quantity[m.s^-1; .1f]
-OrbitSpeed   : Quantity[m.s^-1; .1f]
-Lost         : Quantity[m.s^-1; .1f]
-OrbitPeriod  : Quantity[s; .0f]
-FourteenOrbits : Float[.2f]
-PayloadMass  : Mass[Mg; .0f]
-PayloadKinetic : Energy[GJ; .1f]
-PayloadLift  : Energy[GJ; .2f]
-BoosterTWR   : Float[.4f]
-PeakJetPower : Power[GW; .4f]
+| Item           | Value                                                                  | What                                              |
+| -------------- | ---------------------------------------------------------------------- | ------------------------------------------------- |
+| TotalDeltaV    | = Launch.DeltaV.sum()                                                  | Delta-v of the two stages together                |
+| OrbitSpeed     | = OrbitSpeed                                                           | Speed of a circular orbit at the flight's altitude |
+| Lost           | = Launch.DeltaV.sum() - OrbitSpeed                                     | Delta-v lost to gravity and drag                  |
+| OrbitPeriod    | = 2 * pi * sqrt((EarthRadius + OrbitAltitude).to('m') ** 3 / GM)       | Time for one orbit                                |
+| FourteenOrbits | = 14 * 2 * pi * sqrt((EarthRadius + OrbitAltitude).to('m') ** 3 / GM) / 3600s | Hours for 14 orbits, a plain number         |
+| PayloadMass    | = Satellites * SatelliteMass                                           | Mass of the Starlink V3 satellites                |
+| PayloadKinetic | = Kinetic(Satellites * SatelliteMass, OrbitSpeed).to('GJ')             | Their kinetic energy in orbit                     |
+| PayloadLift    | = (Satellites * SatelliteMass * g0 * OrbitAltitude).to('GJ')           | The work of lifting them to altitude              |
+| BoosterTWR     | = Launch[LiftoffTWR; 0]                                                | Booster thrust-to-weight at liftoff               |
+| PeakJetPower   | = Launch.JetPower.max()                                                | Greatest power in an exhaust                      |
 
-TotalDeltaV    := Launch.DeltaV.sum()
-# A circular orbit: v squared is GM over the radius.
-OrbitSpeed     := sqrt(GM / (EarthRadius + OrbitAltitude).to('m'))
-Lost           := TotalDeltaV - OrbitSpeed
-OrbitPeriod    := 2 * pi * sqrt((EarthRadius + OrbitAltitude).to('m') ** 3 / GM)
-# Hours for 14 orbits, a plain number: seconds over 3600 seconds.
-FourteenOrbits := 14 * OrbitPeriod / 3600s
-PayloadMass    := Satellites * SatelliteMass
-PayloadKinetic := Kinetic(PayloadMass, OrbitSpeed)
-PayloadLift    := PayloadMass * g0 * OrbitAltitude
-BoosterTWR     := Launch[LiftoffTWR; 0]
-PeakJetPower   := Launch.JetPower.max()
+# The figures the report quotes, by name.
+const AscentTotalDeltaV = Ascent[Value; Item == 'TotalDeltaV'].first()
+const AscentLost = Ascent[Value; Item == 'Lost'].first()
+const AscentOrbitPeriod = Ascent[Value; Item == 'OrbitPeriod'].first()
+const AscentFourteenOrbits = Ascent[Value; Item == 'FourteenOrbits'].first()
+const AscentPayloadMass = Ascent[Value; Item == 'PayloadMass'].first()
+const AscentPayloadKinetic = Ascent[Value; Item == 'PayloadKinetic'].first()
+const AscentPayloadLift = Ascent[Value; Item == 'PayloadLift'].first()
+const AscentBoosterTWR = Ascent[Value; Item == 'BoosterTWR'].first()
 
 # ---------------------------------------------------------------------------
 # Fuel: chemical reactions, energy and time. Starship burns methane with
@@ -197,36 +201,25 @@ MixRatio       := (OxMoles * OxMolar) / (FuelMoles * FuelMolar)
 SpecificEnergy := (Heat / (FuelMoles * FuelMolar + OxMoles * OxMolar)).to('MJ.kg^-1')
 CO2PerKg       := (CO2Moles * MolarCO2 / (FuelMoles * FuelMolar + OxMoles * OxMolar))
 
-# Booster 22 burns methane and oxygen from liftoff to cutoff: how much, how
-# fast, and how much of the chemical energy turns into the motion of the
-# exhaust. Raptor does not burn it all as stoichiometric methane, so this is
-# the ideal.
+# Each stage burns methane and oxygen: how much, how fast, and how much of
+# the chemical energy turns into the motion of the exhaust. Raptor does not
+# burn it all as stoichiometric methane, so this is the ideal. A row for each
+# row of Launch.
 sheet Burn
 
-Propellant   : Mass[Mg; .0f]
-MassFlow     : Quantity[Mg.s^-1; .2f]
-PerEngine    : Quantity[kg.s^-1; .0f]
-BurnTime     : Quantity[s; .0f]
-Energy       : Energy[TJ; .3f]
-Power        : Power[GW; .2f]
-JetPower     : Power[GW; .4f]
-Efficiency   : Percent
-CO2          : Mass[Mg; .0f]
-HydrogenEnergy : Energy[TJ; .3f]
-RP1Energy    : Energy[TJ; .3f]
-
-Propellant     := Launch[Propellant; 0]
-MassFlow       := Launch[MassFlow; 0]
-PerEngine      := MassFlow / BoosterEngines
-BurnTime       := Launch[BurnTime; 0]
-Energy         := (Propellant * Propellants[SpecificEnergy; 0]).to('TJ')
-Power          := (MassFlow * Propellants[SpecificEnergy; 0]).to('GW')
-JetPower       := Launch[JetPower; 0]
-Efficiency     := (JetPower / Power).Percent
-CO2            := (Propellant * Propellants[CO2PerKg; 0]).to('Mg')
+Stage          := Launch[Stage; *]
+Propellant     := Launch[Propellant; *]
+MassFlow       := Launch[MassFlow; *]
+PerEngine      := Launch[MassFlow; *] / Launch[Engines; *]
+BurnTime       := Launch[BurnTime; *]
+Energy         := (Launch[Propellant; *] * Propellants[SpecificEnergy; 0]).to('TJ')
+Power          := (Launch[MassFlow; *] * Propellants[SpecificEnergy; 0]).to('GW')
+JetPower       := Launch[JetPower; *]
+Efficiency     := (Launch[JetPower; *] / (Launch[MassFlow; *] * Propellants[SpecificEnergy; 0]).to('GW')).Percent
+CO2            := (Launch[Propellant; *] * Propellants[CO2PerKg; 0]).to('Mg')
 # The same mass of the other two fuels, for comparison.
-HydrogenEnergy := (Propellant * Propellants[SpecificEnergy; 2]).to('TJ')
-RP1Energy      := (Propellant * Propellants[SpecificEnergy; 1]).to('TJ')
+HydrogenEnergy := (Launch[Propellant; *] * Propellants[SpecificEnergy; 2]).to('TJ')
+RP1Energy      := (Launch[Propellant; *] * Propellants[SpecificEnergy; 1]).to('TJ')
 
 # ---------------------------------------------------------------------------
 # Re-entry thermodynamics: temperature, speed, radiation, ablation. The ship
@@ -252,7 +245,7 @@ HeatLoad   : Quantity[MJ.m^-2; .3f]
 
 | Altitude | Speed         | Density        | Dwell | Dynamic | StagTemp | HeatFlux | WallTemp | Radiated | Recession | HeatLoad | Source |
 | -------- | ------------- | -------------- | ----- | ------- | -------- | -------- | -------- | -------- | --------- | -------- | ------ |
-| 80km     | = Ascent.OrbitSpeed.first() | 1.8e-5kg.m^-3 | 100s  | *       | *        | *        | *        | *        | *         | *        | speed from the orbit at 275 km (computed); density from the [1976 standard atmosphere](https://en.wikipedia.org/wiki/U.S._Standard_Atmosphere); dwell assumed |
+| 80km     | = OrbitSpeed | 1.8e-5kg.m^-3 | 100s  | *       | *        | *        | *        | *        | *         | *        | speed from the orbit at 275 km (computed); density from the [1976 standard atmosphere](https://en.wikipedia.org/wiki/U.S._Standard_Atmosphere); dwell assumed |
 | 70km     | 7.6km.s^-1    | 8.3e-5kg.m^-3  | 150s  | *       | *        | *        | *        | *        | *         | *        | speed and dwell assumed; density from the [1976 standard atmosphere](https://en.wikipedia.org/wiki/U.S._Standard_Atmosphere) |
 | 60km     | 7.2km.s^-1    | 3.1e-4kg.m^-3  | 200s  | *       | *        | *        | *        | *        | *         | *        | speed and dwell assumed; density from the [1976 standard atmosphere](https://en.wikipedia.org/wiki/U.S._Standard_Atmosphere) |
 | 50km     | 6km.s^-1      | 1.0e-3kg.m^-3  | 200s  | *       | *        | *        | *        | *        | *         | *        | speed and dwell assumed; density from the [1976 standard atmosphere](https://en.wikipedia.org/wiki/U.S._Standard_Atmosphere) |
@@ -274,41 +267,35 @@ Radiated  := (Emissivity * Sigma * WallTemp ** 4).to('kW.m^-2')
 Recession := (HeatFlux / (HeatOfAblation * AblatorDensity) * Dwell).to('mm')
 HeatLoad  := (HeatFlux * Dwell).to('MJ.m^-2')
 
+# The extremes and totals of the descent, and the ship's energy at entry.
 sheet Peak
 
-AirTemp       : Quantity[K; .0f]
-AirCelsius    : Quantity[°C; .1f]
-HeatFlux      : Quantity[kW.m^-2; .1f]
-ShieldTemp    : Quantity[K; .1f]
-ShieldCelsius : Quantity[°C; .1f]
-TileMargin    : Quantity[°C; .1f]
-Dynamic       : Pressure[kPa; .3f]
-HeatLoad      : Quantity[MJ.m^-2; .2f]
-IfAblative    : Length[mm; .2f]
-RadiationOK   : Boolean
-EntryEnergy   : Energy[TJ; .3f]
-TNT           : Mass[Mg; .0f]
-EntryToBurn   : Quantity[s; .0f]
-Source        : String
+| Item          | Value                                                              | What                                                     |
+| ------------- | ------------------------------------------------------------------ | -------------------------------------------------------- |
+| AirTemp       | = Reentry.StagTemp.max()                                           | Hottest air in front of the ship                         |
+| AirCelsius    | = Reentry.StagTemp.max().to('°C')                                  | The same in Celsius                                      |
+| HeatFlux      | = Reentry.HeatFlux.max()                                           | Peak heat into each square metre of shield               |
+| ShieldTemp    | = Reentry.WallTemp.max()                                           | Hottest tile, where it radiates what arrives             |
+| ShieldCelsius | = Reentry.WallTemp.max().to('°C')                                  | The same in Celsius                                      |
+| TileMargin    | = Flight15[Value; Item == 'TileLimit'].first() - Reentry.WallTemp.max().to('°C') | How far under the tiles' rating (negative: over) |
+| Dynamic       | = Reentry.Dynamic.max()                                            | Peak dynamic pressure                                    |
+| HeatLoad      | = Reentry.HeatLoad.sum()                                           | Heat taken by each square metre over the descent         |
+| IfAblative    | = Reentry.Recession.sum()                                          | What an ablative shield would lose instead               |
+| RadiationOK   | = Reentry.Radiated.max() =~= Reentry.HeatFlux.max()                | The tiles radiate what they receive                      |
+| EntryEnergy   | = Kinetic(ShipDryMass, OrbitSpeed).to('TJ')                        | Ship kinetic energy at entry (empty, satellites deployed) |
+| TNT           | = (Kinetic(ShipDryMass, OrbitSpeed) / 4.184MJ.kg^-1).to('Mg')      | The same as a mass of TNT at 4.184 MJ per kg             |
+| EntryToBurn   | = LandingBurnTime - EntryTime                                      | From entry to the landing burn, from the sourced times   |
 
-# The hottest air, and the same in Celsius.
-AirTemp       := Reentry.StagTemp.max()
-AirCelsius    := AirTemp.to('°C')
-HeatFlux      := Reentry.HeatFlux.max()
-ShieldTemp    := Reentry.WallTemp.max()
-ShieldCelsius := ShieldTemp.to('°C')
-# How far under the tiles' rating the hottest tile sits (negative: over).
-TileMargin    := Flight15[Value; Item == 'TileLimit'].first() - ShieldCelsius
-Dynamic       := Reentry.Dynamic.max()
-# Totals over the bands.
-HeatLoad      := Reentry.HeatLoad.sum()
-IfAblative    := Reentry.Recession.sum()
-# The tiles radiate what they receive.
-RadiationOK   := Reentry.Radiated.max() =~= Reentry.HeatFlux.max()
-# The ship's kinetic energy when it enters (empty, satellites deployed), and
-# the same as a mass of TNT at 4.184 MJ per kg.
-EntryEnergy   := Kinetic(ShipDryMass, Ascent.OrbitSpeed.first()).to('TJ')
-TNT           := (EntryEnergy / 4.184MJ.kg^-1).to('Mg')
-# From entry to the landing burn, from the sourced times.
-EntryToBurn   := LandingBurnTime - EntryTime
-Source        := 'tile limit: [Starship wiki](https://starship-spacex.fandom.com/wiki/Starship_Thermal_Protection_System_(TPS)); times: [Space Launch Schedule](https://www.spacelaunchschedule.com/launch/starship-starlink-group-31-2-starship-flight-15)'
+# The figures the report quotes, by name.
+const PeakAirTemp = Peak[Value; Item == 'AirTemp'].first()
+const PeakAirCelsius = Peak[Value; Item == 'AirCelsius'].first()
+const PeakHeatFlux = Peak[Value; Item == 'HeatFlux'].first()
+const PeakShieldTemp = Peak[Value; Item == 'ShieldTemp'].first()
+const PeakShieldCelsius = Peak[Value; Item == 'ShieldCelsius'].first()
+const PeakTileMargin = Peak[Value; Item == 'TileMargin'].first()
+const PeakDynamic = Peak[Value; Item == 'Dynamic'].first()
+const PeakHeatLoad = Peak[Value; Item == 'HeatLoad'].first()
+const PeakIfAblative = Peak[Value; Item == 'IfAblative'].first()
+const PeakEntryEnergy = Peak[Value; Item == 'EntryEnergy'].first()
+const PeakTNT = Peak[Value; Item == 'TNT'].first()
+const PeakEntryToBurn = Peak[Value; Item == 'EntryToBurn'].first()

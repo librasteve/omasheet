@@ -1,0 +1,63 @@
+# Voyager 1 and 2, worked in distances: where the two probes are from the
+# Sun on 17 November 2026, what that is in astronomical units, light days
+# and light years, how long a radio signal takes to reach them, and when
+# each would reach some places along the way. Voyager 1 is about to pass
+# one light day from the Sun.
+#
+# `au`, `ly` and `ld` are built in, like `c`: the astronomical unit, the
+# light year and the light day, each a length in metres, so a distance is
+# a number times one, and a division by one gives the number back.
+#
+# The launches are history: Voyager 2 on 1977-08-20, Voyager 1 on
+# 1977-09-05. The probes' distances and speeds are NOT sourced here: they
+# are rounded from NASA's Voyager mission status page,
+# https://voyager.jpl.nasa.gov/mission/status/, which changes by the
+# second, so check them there. They are assumed. The places are rounded
+# textbook figures.
+
+# The day the distances are given for.
+const Epoch = 2026-11-17
+
+# A year of light travel is 365.25 days: a Julian year.
+const Year = 365.25 * 24 * 3600s
+
+# Assumed: each probe's distance from the Sun and speed away from it.
+const V1Distance = 1 * ld
+const V1Speed = 16.95km.s^-1
+
+# How long light takes to cover a distance, in hours.
+fn LightHours(d) = (d / c).to('s') / 3600s
+
+# How many years a probe at a distance and speed takes to reach another
+# distance; negative if it has already passed.
+fn YearsTo(d, from, v) = ((d - from) / v).to('s') / Year
+
+# The date that is a number of years from the epoch, to the nearest day;
+# before it if the years are negative.
+fn DateAfter(years) = Epoch + round(years * 365.25).Integer
+
+# Each row is a place or a probe, nearest first, with its distance from the
+# Sun in the unit that reads best and the rest worked from it.
+sheet Voyager
+
+Place    : String
+Gigametres : Length[Gm; v_'.0f]
+LightDays       : Float[.4f]
+Date     : Date[%a %-d %b %Y]
+
+| Place            | LightDays | Gigametres    | Date |
+| ---------------- | --------- | ------------- | ---- |
+| Earth            | *         | = 1 * au      | *    |
+| Sun to Neptune   | *         | = 30.07 * au  | *    |
+| Heliopause       | *         | = 120 * au    | *    |
+| Voyager 1        | *         | = 1 * ld      | *    |
+| Oort cloud edge  | *         | = 2000 * au   | *    |
+| One light year   | *         | = 1 * ly      | *    |
+| Proxima Centauri | *         | = 4.2465 * ly | *    |
+
+LightDays      := (Gigametres / ld)
+# One-way light time, in hours: the delay of a signal to a probe.
+# Years for each probe to get there at its speed now, and the date that is.
+# Negative is already passed, and only roughly when, as the speed was not
+# always today's.
+Date         := DateAfter(YearsTo(Gigametres, V1Distance, V1Speed))
