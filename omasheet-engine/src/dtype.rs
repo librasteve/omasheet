@@ -260,6 +260,49 @@ pub fn is_uncertain(dtype: &DataType) -> bool {
     *dtype == uncertain_dtype()
 }
 
+/// A `Scientific` column, or one of quantities in one unit, as a struct of
+/// `value` and `sigma`, which is what Parquet holds and what a lowered
+/// operation is read from (widen-polars-lowering D-W4, D-W5). An exact number
+/// among the cells has an uncertainty of nought, as the writer reads it;
+/// `None` for a value that is neither a number nor empty. The caller has
+/// checked that every quantity is in the column's unit.
+pub fn uncertain_column(name: &str, values: &[Value]) -> Option<PlColumn> {
+    let part = |pick: fn((f64, f64)) -> f64, field: &str| -> Option<Series> {
+        let parts: Option<Vec<Option<f64>>> = values
+            .iter()
+            .map(|v| match v {
+                Value::Scientific(x, s) => Some(Some(pick((*x, *s)))),
+                Value::Float(f) => Some(Some(pick((*f, 0.0)))),
+                Value::Quantity(q) => Some(Some(pick((q.value(), q.sigma())))),
+                Value::Null => Some(None),
+                Value::Int(n, _) => Some(Some(pick((*n as f64, 0.0)))),
+                Value::Decimal(d) => Some(Some(pick((d.to_f64(), 0.0)))),
+                _ => None,
+            })
+            .collect();
+        Some(Series::new(field.into(), parts?))
+    };
+    let (value, sigma) = (part(|p| p.0, "value")?, part(|p| p.1, "sigma")?);
+    let name: PlSmallStr = name.into();
+    Some(
+        StructChunked::from_series(name, values.len(), [value, sigma].iter())
+            .ok()?
+            .into_series()
+            .into_column(),
+    )
+}
+
+/// The dtype of a quantity inside a plan: the two fields of a `Scientific`
+/// and a third, so that nothing that does not know about units takes it for
+/// one. Only `lower` makes or reads it; the unit is the `Out`'s.
+pub fn quantity_dtype() -> DataType {
+    DataType::Struct(vec![
+        Field::new("value".into(), DataType::Float64),
+        Field::new("sigma".into(), DataType::Float64),
+        Field::new("quantity".into(), DataType::Boolean),
+    ])
+}
+
 /// The two parts of one value of a [`complex_dtype`] column (`re` and `im`)
 /// or of an [`uncertain_dtype`] one (`value` and `sigma`), each `None`
 /// where it is null. `None` if the value is not such a struct.
@@ -465,30 +508,8 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
         // Polars has no arithmetic for a struct, so a `Complex` column is
         // the engine's to calculate and is never handed over (D200).
         S::Complex => return None,
-        // A `Scientific` is a struct of `value` and `sigma`, which is what
-        // Parquet holds and what a lowered `Scientific` operation is read
-        // from (widen-polars-lowering D-W5). An exact number among the cells
-        // has an uncertainty of nought, as the writer reads it. A quantity
-        // has no dtype of its own yet.
-        S::Scientific => {
-            let part = |pick: fn((f64, f64)) -> f64, field: &str| -> Option<Series> {
-                let parts: Option<Vec<Option<f64>>> = values
-                    .iter()
-                    .map(|v| match v {
-                        Value::Scientific(x, s) => Some(Some(pick((*x, *s)))),
-                        Value::Float(f) => Some(Some(pick((*f, 0.0)))),
-                        v if null(v) => Some(None),
-                        other => exact(other).map(|d| Some(pick((d.to_f64(), 0.0)))),
-                    })
-                    .collect();
-                Some(Series::new(field.into(), parts?))
-            };
-            let (value, sigma) = (part(|p| p.0, "value")?, part(|p| p.1, "sigma")?);
-            StructChunked::from_series(name, values.len(), [value, sigma].iter())
-                .ok()?
-                .into_series()
-        }
-        S::Quantity(_) => return None,
+        // Nor for a `Scientific`, nor for a quantity.
+        S::Scientific | S::Quantity(_) => return None,
         // A column of anything: there is no one dtype to hold it as.
         S::Any => return None,
     };

@@ -906,7 +906,8 @@ impl<'p> Engine<'p> {
         };
         let column = |c| self.plan_column(t, c);
         let constant = |i| self.const_value(i).ok();
-        let cx = lower::Cx::new(&column, &constant);
+        let unit = |c| self.quantity_unit(t, c);
+        let cx = lower::Cx::new(&column, &constant, &unit);
         let Some(out) = lower::expr(node, &cx) else {
             return refused(self);
         };
@@ -986,7 +987,8 @@ impl<'p> Engine<'p> {
         let nrows = self.prog.sheets[t].nrows;
         let column = |c| self.plan_column(t, c);
         let constant = |i| self.const_value(i).ok();
-        let cx = lower::Cx::new(&column, &constant);
+        let unit = |c| self.quantity_unit(t, c);
+        let cx = lower::Cx::new(&column, &constant, &unit);
         let out = lower::expr(node, &cx)?;
         if out.dtype != DataType::Boolean {
             return None;
@@ -1773,12 +1775,16 @@ impl<'p> Engine<'p> {
     ) -> Option<(DataFrame, Expr, bool)> {
         let col = &self.prog.sheets[t].cols[c];
         let constant = |i| self.const_value(i).ok();
-        let cx = lower::Cx::new(column, &constant);
+        let unit = |cc| self.quantity_unit(t, cc);
+        let cx = lower::Cx::new(column, &constant, &unit);
         let out = lower::expr(node, &cx)?;
+        // A quantity is held in the unit of the column it is for.
+        let was_quantity = out.unit.is_some();
+        let out = lower::in_unit(out, self.quantity_unit(t, c).as_ref())?;
         // The same answer the row path's `fit` gives: a column that says
         // what it holds holds it, and a lowered result of another type is
         // one the two paths would disagree about.
-        if col.declared && !out.ty()?.assignable_to(col.ty) {
+        if col.declared && !was_quantity && !out.ty()?.assignable_to(col.ty) {
             return None;
         }
         // A row whose result might not fit is nothing here, and a nothing
@@ -1884,6 +1890,13 @@ impl<'p> Engine<'p> {
     /// back out of the copy.
     fn plan_column(&self, t: usize, c: usize) -> Option<PlColumn> {
         let col = &self.prog.sheets[t].cols[c];
+        // A `Scientific`, and a column that declares a named quantity type,
+        // are read into a plan as a `value` and a `sigma`; the units of a
+        // quantity are the plan's own (widen-polars-lowering D-W4, D-W5).
+        let quantity = self.quantity_unit(t, c);
+        if (col.ty == S::Scientific || quantity.is_some()) && !matches!(col.kind, ColKind::Frame) {
+            return self.uncertain_column(t, c, quantity.as_ref());
+        }
         // A plan is over a column whose type the checker knows, declared or
         // inferred from all of its cells (widen-polars-lowering D-W1, D-W2).
         // Where it is one type, that type is the plan's. A `Fraction` is
@@ -1907,6 +1920,56 @@ impl<'p> Engine<'p> {
             .map(|r| self.cell_shown(t, c, r))
             .collect();
         let built = crate::dtype::zoned_column(&col.name, zone, &values)?;
+        self.copies.borrow_mut()[t][c] = Some(built.clone());
+        Some(built)
+    }
+
+    /// The unit a column that declares a named quantity type holds its values
+    /// in: the unit of its format, or the preferred unit of the type. `None`
+    /// for any other column, and for one that only has the type of its
+    /// formulas, whose values are each in the unit they came out in.
+    fn quantity_unit(&self, t: usize, c: usize) -> Option<siquant::Unit> {
+        let col = &self.prog.sheets[t].cols[c];
+        let S::Quantity(id) = col.ty else {
+            return None;
+        };
+        if !col.declared || id.named().is_none() || matches!(col.kind, ColKind::Frame) {
+            return None;
+        }
+        match &col.format {
+            Some(Format::Quantity(omasheet_omx::colfmt::QuantityFormat {
+                unit: Some(u), ..
+            })) => Some(u.clone()),
+            _ => crate::quantity::column_unit(id),
+        }
+    }
+
+    /// A `Scientific` column, or one of quantities in `unit`, as the struct of
+    /// `value` and `sigma` a plan reads. A quantity in another unit than the
+    /// column's, or a value that is neither a number nor empty, is not one a
+    /// plan is made over.
+    fn uncertain_column(
+        &self,
+        t: usize,
+        c: usize,
+        unit: Option<&siquant::Unit>,
+    ) -> Option<PlColumn> {
+        if let Some(copy) = self.copies.borrow()[t][c].clone() {
+            return Some(copy);
+        }
+        let col = &self.prog.sheets[t].cols[c];
+        let values: Vec<Value> = (0..self.prog.sheets[t].nrows)
+            .map(|r| self.cell_shown(t, c, r))
+            .collect();
+        let fits = |v: &Value| match (v, unit) {
+            (Value::Quantity(q), Some(unit)) => q.unit() == unit,
+            (Value::Quantity(_), None) | (_, Some(_)) if !matches!(v, Value::Null) => false,
+            _ => true,
+        };
+        if !values.iter().all(fits) {
+            return None;
+        }
+        let built = crate::dtype::uncertain_column(&col.name, &values)?;
         self.copies.borrow_mut()[t][c] = Some(built.clone());
         Some(built)
     }

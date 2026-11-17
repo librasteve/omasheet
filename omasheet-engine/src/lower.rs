@@ -49,13 +49,14 @@
 //!   are Polars' but behind a feature this build does not enable.
 
 use crate::Value;
-use crate::dtype::{decimal, is_uncertain, type_of, uncertain_dtype};
+use crate::dtype::{decimal, is_uncertain, quantity_dtype, type_of, uncertain_dtype};
 use omasheet_omx::ast::{BinOp, Lit, UnOp};
 use omasheet_omx::decimal::MAX_PRECISION;
 use omasheet_omx::ir::{Func, Ir, Node, Spec, Ties, Win};
 use omasheet_omx::types::S;
 use polars::prelude::Column as PlColumn;
 use polars::prelude::*;
+use siquant::Unit;
 use std::cell::RefCell;
 
 /// A lowered expression and the dtype it gives, which is what decides
@@ -64,6 +65,9 @@ use std::cell::RefCell;
 pub struct Out {
     pub expr: Expr,
     pub dtype: DataType,
+    /// The unit of a quantity, whose dtype is then [`quantity_dtype`]: the
+    /// value and the sigma are numbers of that unit (D-W4).
+    pub unit: Option<Unit>,
 }
 
 impl Out {
@@ -73,7 +77,11 @@ impl Out {
     /// the plan would be read back as a wall clock. An operation that would
     /// give one is not lowered.
     fn new(expr: Expr, dtype: DataType) -> Option<Out> {
-        (!zoned(&dtype)).then_some(Out { expr, dtype })
+        (!zoned(&dtype)).then_some(Out {
+            expr,
+            dtype,
+            unit: None,
+        })
     }
 
     /// The omasheet type this gives, or `None` for a dtype no omasheet type
@@ -93,6 +101,8 @@ impl Out {
 pub struct Cx<'a> {
     column: &'a dyn Fn(usize) -> Option<PlColumn>,
     constant: &'a dyn Fn(usize) -> Option<Value>,
+    /// The unit a column of quantities holds its values in.
+    unit: &'a dyn Fn(usize) -> Option<Unit>,
     taken: RefCell<Vec<PlColumn>>,
     /// For each `+`, `-` and `*` of exact numbers, a test that is true where
     /// the result might need more digits than a decimal holds.
@@ -108,10 +118,12 @@ impl<'a> Cx<'a> {
     pub fn new(
         column: &'a dyn Fn(usize) -> Option<PlColumn>,
         constant: &'a dyn Fn(usize) -> Option<Value>,
+        unit: &'a dyn Fn(usize) -> Option<Unit>,
     ) -> Cx<'a> {
         Cx {
             column,
             constant,
+            unit,
             taken: RefCell::new(Vec::new()),
             risks: RefCell::new(Vec::new()),
             windowed: std::cell::Cell::new(false),
@@ -145,11 +157,24 @@ impl<'a> Cx<'a> {
     fn read(&self, c: usize) -> Option<Out> {
         let column = (self.column)(c)?;
         let (name, dtype) = (column.name().clone(), column.dtype().clone());
+        // A column of quantities is a `value` and a `sigma` in the column's
+        // unit, which is the plan's to know and Polars' not.
+        let unit = (self.unit)(c);
         let mut taken = self.taken.borrow_mut();
         if !taken.iter().any(|held| held.name() == &name) {
             taken.push(column);
         }
         drop(taken);
+        if let Some(unit) = unit {
+            if !is_uncertain(&dtype) {
+                return None;
+            }
+            return Some(Out {
+                expr: col(name),
+                dtype: quantity_dtype(),
+                unit: Some(unit),
+            });
+        }
         // A date-time in a zone is held as an instant. It is read in
         // microseconds only, and compared with a column of the same zone
         // only (see `pair`): against a wall clock it would be compared by
@@ -158,6 +183,7 @@ impl<'a> Cx<'a> {
             return zoned(&dtype).then(|| Out {
                 expr: col(name),
                 dtype,
+                unit: None,
             });
         }
         // A Parquet date-time in nanoseconds or milliseconds is read as the
@@ -314,6 +340,7 @@ fn window(spec: Spec, args: &[Node], cx: &Cx) -> Option<Out> {
             | DataType::UInt32 => Out {
                 expr: out.expr.cast(DataType::Int64),
                 dtype: DataType::Int64,
+                unit: None,
             },
             _ => out,
         }),
@@ -959,9 +986,126 @@ fn scientific(op: BinOp, l: Out, r: Out, cx: &Cx) -> Option<Out> {
     )
 }
 
+/// The value, the uncertainty and the unit of an operand of a quantity
+/// operation: a quantity, or a number, which has no dimension.
+fn quantity_parts(o: &Out, other: &Unit) -> Option<(Expr, Expr, Unit)> {
+    match &o.unit {
+        Some(unit) => Some((
+            o.expr.clone().struct_().field_by_name("value"),
+            o.expr.clone().struct_().field_by_name("sigma"),
+            unit.clone(),
+        )),
+        None => {
+            let (x, s) = uncertain_parts(o)?;
+            Some((x, s, Unit::one(other.registry())))
+        }
+    }
+}
+
+/// `+ - * /` of quantities, and of a quantity and a number, as
+/// `siquant::Quantity` does them, in `f64` and in the same order: the units
+/// are worked out here, once, by siquant itself, and what is left for Polars
+/// is the numbers. A unit with an offset (`°C`) or a scale (`k.`), a sum of
+/// two dimensions, and a result with no dimension are the engine's.
+fn quantity(op: BinOp, l: Out, r: Out, cx: &Cx) -> Option<Out> {
+    let unit_of = |o: &Out| o.unit.clone();
+    let reference = unit_of(&l).or_else(|| unit_of(&r))?;
+    let (x, sx, ux) = quantity_parts(&l, &reference)?;
+    let (y, sy, uy) = quantity_parts(&r, &reference)?;
+    let plain = |u: &Unit| !u.is_affine() && !u.is_scale();
+    if !plain(&ux) || !plain(&uy) {
+        return None;
+    }
+    let hypot = |a: Expr, b: Expr| (a.clone() * a + b.clone() * b).sqrt();
+    let convert = |value: Expr, from: &Unit, to: &Unit| {
+        // `Unit::convert_value`: the same unit is the same number, with no
+        // arithmetic on it.
+        if from == to {
+            value
+        } else {
+            (value + lit(from.offset())) * lit(from.factor()) / lit(to.factor()) - lit(to.offset())
+        }
+    };
+    let (value, sigma, unit) = match op {
+        BinOp::Add | BinOp::Sub => {
+            // A number has no dimension to add to one.
+            if l.unit.is_none() || r.unit.is_none() || ux.dims() != uy.dims() {
+                return None;
+            }
+            let sign = if op == BinOp::Add { 1.0 } else { -1.0 };
+            let ratio = uy.spread_ratio(&ux).ok()?;
+            let (value, sigma) = (convert(y, &uy, &ux), sy * lit(ratio));
+            (x + lit(sign) * value, hypot(sx, sigma), ux)
+        }
+        BinOp::Mul => (
+            x.clone() * y.clone(),
+            hypot(y * sx, x * sy),
+            ux.mul(&uy).ok()?,
+        ),
+        BinOp::Div => {
+            // A zero divisor is the engine's to answer.
+            cx.risks.borrow_mut().push(y.clone().eq(lit(0.0)));
+            (
+                x.clone() / y.clone(),
+                hypot(sx / y.clone(), x * sy / (y.clone() * y)),
+                ux.div(&uy).ok()?,
+            )
+        }
+        _ => return None,
+    };
+    // A result with no dimension is a number, a `Float` or a `Scientific` by
+    // its uncertainty, which is not known until the row is.
+    if unit.is_dimensionless() {
+        return None;
+    }
+    Some(Out {
+        expr: as_struct(vec![
+            value.alias("value"),
+            sigma.alias("sigma"),
+            lit(true).alias("quantity"),
+        ]),
+        dtype: quantity_dtype(),
+        unit: Some(unit),
+    })
+}
+
+/// A quantity result as the number it is in the unit of the column it is for:
+/// `Quantity::convert`, which is what a column that declares a quantity type
+/// holds its values as (`quantity::dress`). A result that is not a quantity
+/// is as it was; a quantity for a column with no unit to hold it in, or of
+/// another dimension, is the engine's, which says why.
+pub fn in_unit(out: Out, target: Option<&Unit>) -> Option<Out> {
+    let Some(unit) = &out.unit else {
+        return Some(out);
+    };
+    let target = target?;
+    if unit.dims() != target.dims() {
+        return None;
+    }
+    let value = out.expr.clone().struct_().field_by_name("value");
+    let sigma = out.expr.struct_().field_by_name("sigma");
+    let (value, sigma) = if unit == target {
+        (value, sigma)
+    } else {
+        let ratio = unit.spread_ratio(target).ok()?;
+        (
+            (value + lit(unit.offset())) * lit(unit.factor()) / lit(target.factor())
+                - lit(target.offset()),
+            sigma * lit(ratio),
+        )
+    };
+    Out::new(
+        as_struct(vec![value.alias("value"), sigma.alias("sigma")]),
+        uncertain_dtype(),
+    )
+}
+
 fn binary(op: BinOp, l: Out, r: Out, cx: &Cx) -> Option<Out> {
     // A value with an uncertainty is two numbers, each with a formula
     // (widen-polars-lowering D-W5).
+    if l.unit.is_some() || r.unit.is_some() {
+        return quantity(op, l, r, cx);
+    }
     if is_uncertain(&l.dtype) || is_uncertain(&r.dtype) {
         return scientific(op, l, r, cx);
     }
@@ -1135,6 +1279,10 @@ fn compare(op: BinOp, l: Out, r: Out) -> Option<Out> {
 /// be the same: the pair of them and the dtype they met at, or `None` where
 /// they have no common dtype the engine would agree about.
 fn pair(l: Out, r: Out) -> Option<(Expr, Expr, DataType)> {
+    // Two quantities may be in two units, which a `when` would not keep.
+    if l.unit.is_some() || r.unit.is_some() {
+        return None;
+    }
     let dtype = match (exact_scale(&l.dtype), exact_scale(&r.dtype)) {
         (Some(x), Some(y)) => decimal(x.max(y)),
         // For the reason `arith` gives: a decimal with a fractional part is

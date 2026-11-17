@@ -2607,6 +2607,7 @@ S : Scientific
 | 7.5(2)   | 0.5(1)  | 2 | *   | *    | *    | *    | *     | *     | *    | *     | *   | *     |
 | 3 ± 0    | 2 ± 0.5 | 5 | *   | *    | *    | *    | *     | *     | *    | *     | *   | *     |
 | 0.1(1)   | 19.99(1)| 7 | *   | *    | *    | *    | *     | *     | *    | *     | *   | *     |
+|          | 2 ± 0.5 | 3 | *   | *    | *    | *    | *     | *    | *     | *     | *   | *     |
 
 Sum   := V + S
 Diff  := V - S
@@ -2627,6 +2628,94 @@ Chain := (V + S) * V / S
     ] {
         let attempt = lowered.iter().find(|(col, _)| col == name).map(|(_, a)| *a);
         assert_eq!(attempt, Some(Attempt::Lowered), "{name}");
+    }
+}
+
+/// `+ - * /` of quantities, and of a quantity and a number, are the numbers
+/// in the unit of the column they are for (widen-polars-lowering D-W4): the
+/// units are worked out once, a sum converts its right side to the left's,
+/// and a product or a quotient of two dimensions is held in the unit of the
+/// column that declares it. Both paths agree, to the digit.
+#[test]
+fn a_quantity_operation_is_lowered() {
+    let file = "\
+sheet Q
+
+Width  : Length
+Height : Length
+Depth  : Length[mm]
+Area   : Area
+Volume : Volume
+Girth  : Length
+Gap    : Length[cm]
+Half   : Length
+Cut    : Length
+Kilos  : Mass
+Grams  : Mass[g]
+Total  : Mass
+Less   : Mass[g]
+Scaled : Mass[g]
+
+| Width | Height | Depth | Area | Volume | Girth | Gap | Half | Cut | Kilos  | Grams | Total | Less | Scaled |
+| ----- | ------ | ----- | ---- | ------ | ----- | --- | ---- | --- | ------ | ----- | ----- | ---- | ------ |
+| 20cm  | 30cm   | 5mm   | *    | *      | *     | *   | *    | *   | 5kg    | 300g  | *     | *    | *      |
+| 2m    | 150cm  | 12mm  | *    | *      | *     | *   | *    | *   | 7.5(2)kg | 5g  | *     | *    | *      |
+| 0.1m  | 3(1)cm | 7mm   | *    | *      | *     | *   | *    | *   | 0.3kg  | 2.5kg | *     | *    | *      |
+|       | 40cm   | 1mm   | *    | *      | *     | *   | *    | *   |        | 1kg   | *     | *    | *      |
+
+Area   := Width * Height
+Volume := Width * Height * Depth
+Girth  := 2 * (Width + Height)
+Gap    := Width - Height
+Half   := Width / 2
+Cut    := Width * 0.75
+Total  := Kilos + Grams
+Less   := Kilos - Grams
+Scaled := Kilos * 1.5
+";
+    let (lowered, shown) = calculated(file, Lowering::Always);
+    let (_, engine) = calculated(file, Lowering::Never);
+    assert_eq!(shown, engine);
+    assert_eq!(ask(file, "Q.Area")[..11].to_string(), "[0.06m^2, 3");
+    for name in [
+        "Area", "Volume", "Girth", "Gap", "Half", "Cut", "Total", "Less", "Scaled",
+    ] {
+        let attempt = lowered.iter().find(|(col, _)| col == name).map(|(_, a)| *a);
+        assert_eq!(attempt, Some(Attempt::Lowered), "{name}");
+    }
+}
+
+/// What stays on the engine, with the same answer either way: an offset unit,
+/// a quantity of no declared kind, a result with no dimension, two dimensions
+/// added, and a divisor of nought (widen-polars-lowering D-W4, 3.5).
+#[test]
+fn a_quantity_the_plan_cannot_hold_is_the_engines() {
+    let file = "\
+sheet Q
+
+Width  : Length
+Height : Length
+Kilos  : Mass
+Warm   : Temperature
+Free   : Quantity
+
+| Width | Height | Kilos | N | Warm | Free | Pure | Bad | Part | Next | Twice |
+| ----- | ------ | ----- | - | ---- | ---- | ---- | --- | ---- | ---- | ----- |
+| 20cm  | 30cm   | 5kg   | 2 | 20°C | 5kg  | *    | *   | *    | *    | *     |
+| 2m    | 150cm  | 7kg   | 0 | 25°C | 2m   | *    | *   | *    | *    | *     |
+
+Pure  := Width / Height
+Bad   := Width + Kilos
+Part  := Kilos / N
+Next  := Warm + 5K
+Twice := Free * 2
+";
+    let (lowered, shown) = calculated(file, Lowering::Always);
+    let (_, engine) = calculated(file, Lowering::Never);
+    assert_eq!(shown, engine);
+    for name in ["Pure", "Bad", "Part", "Next", "Twice"] {
+        let attempt = lowered.iter().find(|(col, _)| col == name).map(|(_, a)| *a);
+        assert_ne!(attempt, Some(Attempt::Lowered), "{name}");
     }
 }
 
@@ -3761,8 +3850,8 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // number is read. `windows.omx` adds five: the window functions of whole
     // numbers, which Polars runs down the column, and a percentage in a
     // formula adds two (widen-polars-lowering D-W3), and an uncertain
-    // operation five more (D-W5).
-    assert_eq!(taken, 82, "the columns taken at once");
+    // operation five more (D-W5) and a quantity operation three (D-W4).
+    assert_eq!(taken, 85, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read

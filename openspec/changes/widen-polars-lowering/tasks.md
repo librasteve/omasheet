@@ -17,11 +17,11 @@ Forthcoming; follows `polars-function-registry`.
 - [x] 2.3 Tests: `N * 5%`, `Rate + 2%`, `5% + 3%`, `Rate * 2`, `Profit * TaxRate` (`examples/budget.omx`); the two paths agree
 
 ## 3. Quantity and Scientific
-- [ ] 3.1 `Quantity op Quantity`: result unit from the checker, a constant factor for the right side
+- [x] 3.1 `Quantity op Quantity`: result unit from the checker, a constant factor for the right side
 - [x] 3.2 `Scientific op` a number or a `Scientific`: a value and an uncertainty expression
-- [ ] 3.3 Offset units, scales, a column against a column in another unit, `Any`, and a mixed dimension stay on the engine; tests that they do
-- [ ] 3.5 A zero divisor in `Quantity / Quantity` is not believed: the engine calculates the column and gives its error
-- [ ] 3.4 Tests: every operator, an empty column, a null, a unit conversion, an uncertainty through a chain; the two paths agree
+- [x] 3.3 Offset units, scales, a column against a column in another unit, `Any`, and a mixed dimension stay on the engine; tests that they do
+- [x] 3.5 A zero divisor in `Quantity / Quantity` is not believed: the engine calculates the column and gives its error
+- [x] 3.4 Tests: every operator, an empty column, a null, a unit conversion, an uncertainty through a chain; the two paths agree
 
 ## 4. Checks
 - [ ] 4.1 `docs/expressions.md`: which columns are calculated in Polars
