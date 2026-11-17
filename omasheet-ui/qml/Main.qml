@@ -3976,16 +3976,19 @@ ApplicationWindow {
                                             : lines && !opened ? cellItem.cell.d.split("\n")[0]
                                             : cut ? cellItem.cell.d.slice(0, -1)
                                             : cellItem.cell.d
-                                        readonly property bool unitSet: !marked && !lines && !!cellItem.cell
-                                            && !!cellItem.cell.u && !cellItem.cell.e
-                                            && shownText.length > cellItem.cell.u.length
-                                            && shownText.slice(-cellItem.cell.u.length) === cellItem.cell.u
+                                        // Read once, and never undefined: a binding can run for a
+                                        // cell that has just changed before unitSet has caught up.
+                                        readonly property string unitText: !!cellItem.cell && !!cellItem.cell.u ? cellItem.cell.u : ""
+                                        readonly property bool unitSet: !marked && !lines && unitText.length > 0
+                                            && !cellItem.cell.e
+                                            && shownText.length > unitText.length
+                                            && shownText.slice(-unitText.length) === unitText
                                         function escaped(t) {
                                             return t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
                                         }
                                         text: marked ? cellItem.cell.h
-                                            : unitSet ? escaped(shownText.slice(0, -cellItem.cell.u.length))
-                                                + "<font color=\"" + win.unitColor + "\">" + escaped(cellItem.cell.u) + "</font>"
+                                            : unitSet ? escaped(shownText.slice(0, -unitText.length))
+                                                + "<font color=\"" + win.unitColor + "\">" + escaped(unitText) + "</font>"
                                             : shownText
                                         textFormat: marked || unitSet ? Text.StyledText : Text.PlainText
                                         // Opened, it is drawn over the rows
