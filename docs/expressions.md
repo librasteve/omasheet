@@ -455,6 +455,14 @@ What is calculated in Polars:
 - a quantity, in a column that declares a named kind (`Length`, `Mass`, `Area`, ...) or in a file's own column of one: `+ - * /` with another quantity or a number. A sum converts its right side to the left's unit, a product or a quotient is in the product or quotient of the units, and the answer is held in the unit of the column it is written into, so `Area := Width * Height` is in `m^2` whichever units the lengths were written in;
 - a `Scientific`, and a quantity with an uncertainty: `+ - * /` with a number or another, the uncertainty carried to first order as the engine does. It is worked out as `sqrt(a² + b²)` where the engine has `hypot`, so it may differ from the engine's in the last place.
 
+A `group_by(keys) |> apply(Fn)` is calculated in Polars, for every group at once, in these cases:
+
+- a function that gives a value: `fn Takings(rows) = (rows.Units * rows.Price).sum()`, an aggregate of a column or of an expression over the group's columns that Polars can do;
+- a function that gives rows of the grouped sheet: `sort` (one), `head`, `tail`, a condition on one row at a time and `select`, as in `rows |> sort(Units, desc) |> head(2) |> select(Rep, Units)`. The condition comes before any `head` or `tail`;
+- a function that gives rows of another sheet picked by equality with the group's key, `Targets[; Region == rows[Region; 0]] |> select(Target)`, as a join.
+
+Any other function, a group's cell that is empty where the body reads it, or an operation that might not fit, is called a group at a time by the engine, with the same answer. A rank within each group is a `rank(... by Key)` column, not an `apply`.
+
 What is always the engine's: a `Fraction`; a column of mixed types; a quantity in an offset unit (`°C`) or a scale (`k.`), or in a column with no declared kind; a quantity operation whose answer has no dimension, as `Width / Height` has; a sum of two dimensions, which is an error there; a divisor of nought, which is an error there; `%` and `**` of a `Scientific`; and a `Complex`. The answer is the same either way, and only the time differs.
 
 ## Down a column
