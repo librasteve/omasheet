@@ -68,6 +68,17 @@ pub const GROUPS: [&str; 10] = [
     "Other",
 ];
 
+/// Where two types share a dimension, the one a calculated result is given
+/// (`Energy`, not `Torque`). Fixed, not a setting; a column can declare the
+/// other.
+pub const INFERRED: [&str; 5] = [
+    "Area",
+    "Energy",
+    "Frequency",
+    "SpecificEnergy",
+    "Momentum",
+];
+
 fn group_of(what: &str, group: Option<&str>, default: &str) -> Result<String> {
     let group = group.unwrap_or(default);
     if GROUPS.contains(&group) {
@@ -594,8 +605,24 @@ impl Registry {
         Some((def.base, def.exp))
     }
 
+    /// The quantity type a result of this dimension is given: the only type
+    /// that has it, or where several do, the one in [`INFERRED`]; `None`
+    /// where no type has it, and the result is a plain `Quantity`. A column
+    /// declared as another type of the same dimension (`Torque` for
+    /// `Energy`) still takes the result, as any unit of its dimension fits.
+    pub fn infer_type(&self, dims: Dim) -> Option<QuantityType> {
+        let all = self.quantity_types_for(dims);
+        match all.len() {
+            0 | 1 => all.into_iter().next(),
+            _ => {
+                let fixed = all.iter().find(|t| INFERRED.contains(&t.name()));
+                fixed.or(all.first()).cloned()
+            }
+        }
+    }
+
     /// Every quantity type with exactly this dimension, to suggest a column
-    /// type; never used to infer one.
+    /// type; `infer_type` chooses the one a result is given.
     pub fn quantity_types_for(&self, dims: Dim) -> Vec<QuantityType> {
         (0..self.0.types.len())
             .filter(|&i| self.0.types[i].dims == dims)

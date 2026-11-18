@@ -31,9 +31,44 @@ pub enum DurationStyle {
     /// Signed hours, minutes and seconds, `+01:30:00`; the hours are not
     /// capped at 24.
     Clock,
+    /// A count of seconds with its unit, `30s`. Only ever inferred.
+    Seconds,
+    /// Left to the cells: a column that declares no format shows a duration
+    /// in the form its literals are written in, by the kinds of them it holds
+    /// (`KIND_*`). The signed clock form is the most favoured, then seconds,
+    /// and ISO the least.
+    Auto(u8),
 }
 
+/// A duration written as `+17:04:10`.
+pub const KIND_CLOCK: u8 = 1;
+/// A duration written as a quantity of time, `10s`.
+pub const KIND_SECONDS: u8 = 2;
+/// A duration written as ISO 8601, `PT17H4M`.
+pub const KIND_ISO: u8 = 4;
+
 impl DurationStyle {
+    /// The style that shows `micros`: itself, or for `Auto` the most
+    /// favoured of the forms the column's literals are written in. Seconds
+    /// beside ISO are shown as seconds only while under a minute, where a
+    /// count of seconds still reads; past that, as the clock.
+    pub fn resolve(self, micros: i64) -> DurationStyle {
+        let DurationStyle::Auto(kinds) = self else {
+            return self;
+        };
+        if kinds & KIND_CLOCK != 0 {
+            DurationStyle::Clock
+        } else if kinds & KIND_SECONDS != 0 {
+            if kinds & KIND_ISO != 0 && micros.unsigned_abs() >= 60_000_000 {
+                DurationStyle::Clock
+            } else {
+                DurationStyle::Seconds
+            }
+        } else {
+            DurationStyle::Iso
+        }
+    }
+
     fn parse(text: &str) -> Option<DurationStyle> {
         match text.trim() {
             "iso" => Some(DurationStyle::Iso),
@@ -48,6 +83,8 @@ impl fmt::Display for DurationStyle {
         f.write_str(match self {
             DurationStyle::Iso => "iso",
             DurationStyle::Clock => "%H:%M:%S",
+            DurationStyle::Seconds => "s",
+            DurationStyle::Auto(_) => "auto",
         })
     }
 }
@@ -151,7 +188,7 @@ impl QuantityFormat {
                 return Err(error(
                     at,
                     len,
-                    format!("must be a unit of {}", crate::units::kind_of(t.dims())),
+                    format!("must be a unit of {}", crate::units::kinds_of(t.dims())),
                 ));
             }
             Some(unit)

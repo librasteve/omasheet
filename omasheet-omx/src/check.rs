@@ -114,6 +114,9 @@ impl Column {
                 })))
             }
             // A bare `Duration` is `Duration[s]`.
+            (None, S::Duration) if self.duration_kinds != 0 && !self.declared => Some(Cow::Owned(
+                Format::Duration(crate::colfmt::DurationStyle::Auto(self.duration_kinds)),
+            )),
             (None, S::Duration) => Some(Cow::Owned(Format::Quantity(QuantityFormat {
                 unit: siquant::Unit::parse("s", siquant::Scope::Any).ok(),
                 number: None,
@@ -187,6 +190,10 @@ pub struct Column {
     /// columns, as an elementwise one is. It is never calculated for a
     /// window of the rows, which would restart the running total.
     pub framewise: bool,
+    /// For a `Duration` column that declares no format: the forms its
+    /// literals are written in (`colfmt::KIND_*`), which choose how it is
+    /// shown. Nothing for any other column.
+    pub duration_kinds: u8,
 }
 
 #[derive(Debug)]
@@ -394,6 +401,8 @@ struct Checker<'a> {
     elementwise: Vec<Vec<bool>>,
     /// And [`Column::framewise`].
     framewise: Vec<Vec<bool>>,
+    /// And [`Column::duration_kinds`], by sheet and column.
+    duration_kinds: std::collections::HashMap<(usize, usize), u8>,
     /// Per sheet, the other sheets its formulas pick a row of with the
     /// cursor, each once. A sheet that holds no rows is as long as these.
     row_reads: Vec<Vec<usize>>,
@@ -1068,6 +1077,7 @@ impl<'a> Checker<'a> {
             col_deps: Vec::new(),
             elementwise: Vec::new(),
             framewise: Vec::new(),
+            duration_kinds: std::collections::HashMap::new(),
             row_reads: Vec::new(),
             view_state: Vec::new(),
             view_out: Vec::new(),
@@ -2157,10 +2167,18 @@ impl<'a> Checker<'a> {
                 let mut cells = Vec::with_capacity(decl.rows.len());
                 let mut formulas = Vec::new();
                 let mut inferred: Option<S> = None;
-                let mut widen = |s: S| {
+                // The same, were a quantity of time (`10s`) left a quantity:
+                // it is a duration only where the whole column is durations.
+                let mut as_quantity: Option<S> = None;
+                let mut time_cells: Vec<usize> = Vec::new();
+                let mut widen = |s: S, q: S| {
                     inferred = Some(match inferred {
                         None => s,
                         Some(prev) => prev.join(s).unwrap_or(S::Any),
+                    });
+                    as_quantity = Some(match as_quantity {
+                        None => q,
+                        Some(prev) => prev.join(q).unwrap_or(S::Any),
                     });
                 };
                 for (r, row) in decl.rows.iter().enumerate() {
@@ -2179,7 +2197,16 @@ impl<'a> Checker<'a> {
                             symbols,
                         ) {
                             Some(lit) => {
-                                widen(lit_type(&lit));
+                                let seconds = declared.is_none()
+                                    && matches!(lit, Lit::Duration(_))
+                                    && crate::duration::kinds(&cell.text) == crate::colfmt::KIND_SECONDS;
+                                if seconds {
+                                    time_cells.push(r);
+                                }
+                                widen(
+                                    lit_type(&lit),
+                                    if seconds { S::Quantity(QId::ANY) } else { lit_type(&lit) },
+                                );
                                 cells.push(match lit {
                                     // In quotes it is text as it is.
                                     Lit::String(s) if !quoted(&cell.text) => Cell::Markdown(s),
@@ -2189,6 +2216,14 @@ impl<'a> Checker<'a> {
                             None => cells.push(Cell::Invalid),
                         }
                     }
+                }
+                if inferred != Some(S::Duration) && !time_cells.is_empty() {
+                    for &r in &time_cells {
+                        if let Some(q) = parse_literal_with(&decl.rows[r][h].text, true) {
+                            cells[r] = Cell::Lit(q);
+                        }
+                    }
+                    inferred = as_quantity;
                 }
                 self.col_state[t][c] = St::Busy(declared.or(inferred).unwrap_or(S::Any));
                 let name = self.sheets[t].cols[c].name.clone();
@@ -2210,6 +2245,16 @@ impl<'a> Checker<'a> {
                         }
                         Err(d) => self.cur.push(d),
                     }
+                }
+                // A `Duration` column left to its cells is shown in the forms
+                // its literals are written in.
+                if declared.is_none() && inferred == Some(S::Duration) {
+                    let kinds = decl
+                        .rows
+                        .iter()
+                        .map(|row| crate::duration::kinds(&row[h].text))
+                        .fold(0, |a, b| a | b);
+                    self.duration_kinds.insert((t, c), kinds);
                 }
                 (
                     ColKind::Data(cells),
@@ -2839,6 +2884,14 @@ impl<'a> Checker<'a> {
         // A cell of an `.omx` file may hold a quantity or a scale (D229).
         let parsed = parse_literal_with(text, true);
         let Some(want) = declared else {
+            // A quantity of time, `10s`, is a duration like `PT10S` and
+            // `+00:00:10`, so that a column of them is one.
+            if let Some(Lit::Quantity(v, sigma, unit)) = &parsed
+                && *sigma == 0.0
+                && unit.dims() == siquant::Dim::of(siquant::Base::Time)
+            {
+                return self.time_literal(span, *v, 0.0, unit);
+            }
             return Some(
                 parsed
                     .map(inferred)
@@ -3657,10 +3710,15 @@ impl<'a> Checker<'a> {
                         Some(if a == b { a } else { S::Quantity(QId::ANY) })
                     }
                     BinOp::Mul | BinOp::Div if quantity_and_span => Some(S::Any),
-                    BinOp::Mul if qa && qb => Some(S::Any),
+                    BinOp::Mul | BinOp::Div if qa && qb => Some(match (a, b) {
+                        (S::Quantity(x), S::Quantity(y)) => {
+                            crate::units::product_type(x, y, op == BinOp::Div)
+                                .map_or(S::Any, S::Quantity)
+                        }
+                        _ => S::Any,
+                    }),
                     BinOp::Mul if qa && plain(b) => Some(a),
                     BinOp::Mul if plain(a) && qb => Some(b),
-                    BinOp::Div if qa && qb => Some(S::Any),
                     BinOp::Div if qa && plain(b) => Some(a),
                     BinOp::Div if plain(a) && qb => Some(S::Quantity(QId::ANY)),
                     BinOp::Pow if qa && plain(b) => Some(S::Any),
@@ -6165,6 +6223,7 @@ impl<'a> Checker<'a> {
                     // the cells' own formulas read.
                     elementwise: matches!(kind, ColKind::Computed(_)) && self.elementwise[t][c],
                     framewise: matches!(kind, ColKind::Computed(_)) && self.framewise[t][c],
+                    duration_kinds: self.duration_kinds.get(&(t, c)).copied().unwrap_or(0),
                     kind,
                 });
             }

@@ -2,7 +2,7 @@
 
 ## 0. Settle
 - [x] 0.1 `d` as a unit against the prefix `d` (deci): no clash, `dm` and `hPa` still read as prefix and unit, `d.` and `h.` are still scales, and `kmin` and `dd` are refused
-- [ ] 0.2 What a result is named (`Duration ± Duration` and date differences are `Duration`; others a `Quantity` until declared)
+- [x] 0.2 What a result is named: `Duration ± Duration` and date differences are `Duration`; the product or quotient of named kinds is the kind of its dimension (`Registry::infer_type`; `Energy`, `Frequency`, `Momentum`, `SpecificEnergy` and `Area` fixed where kinds share one), else a `Quantity`; a declared column may take another kind or unit of the dimension
 - [x] 0.3 A `Duration` column holds a Polars `Duration(ns)` whatever its unit; the unit is display metadata. Parquet reads and writes it natively; CSV and xlsx read back as `Duration[s]`. A duration with an uncertainty stays on the engine path
 
 ## 1. siquant

@@ -1,5 +1,22 @@
 # omx-expressions
 
+## ADDED Requirements
+
+### Requirement: The kind of a calculated quantity
+The product or quotient of two quantities of named kinds SHALL be of the kind that has the dimension of the result: the only kind that has it, or, where two kinds share a dimension, the fixed one of `Energy` (not `Torque`), `Frequency` (not `Radioactivity`), `Momentum` (not `Impulse`) and `SpecificEnergy` (not `Dose`), and `Area`; where no kind has it, a `Quantity`. A result with no dimension SHALL be a number. The unit of the result SHALL be the unit the operands give, and a column that declares another kind of the same dimension, or another unit, SHALL take it. A result of the dimension of time SHALL be a `Duration`.
+
+#### Scenario: A named result
+- **WHEN** `Force * Length` is calculated for a `Force` and a `Length` column
+- **THEN** the result is an `Energy`
+
+#### Scenario: Another kind of the dimension
+- **WHEN** a column declared `Torque[N.m]` is `Force * Length`
+- **THEN** it takes the result in `N.m`
+
+#### Scenario: No kind
+- **WHEN** `2kg * 3m^5` is calculated
+- **THEN** the result is a `Quantity` of `6kg.m^5`
+
 ## MODIFIED Requirements
 
 ### Requirement: Arithmetic with durations

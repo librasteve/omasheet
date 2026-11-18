@@ -144,9 +144,19 @@ pub fn tail(text: &str, at: usize) -> Option<(Tail, usize)> {
     None
 }
 
-/// What a dimension is called: the names of the quantity types that have it
-/// (`Mass`, `Energy/Torque`), or its symbols where none does.
+/// What a dimension is called: the type a result of it is given (`Energy`,
+/// not `Torque`, see `Registry::infer_type`), or its symbols where no type
+/// has it.
 pub fn kind_of(dims: siquant::Dim) -> String {
+    match Registry::builtin().infer_type(dims) {
+        Some(t) => t.name().to_string(),
+        None => dims.to_string(),
+    }
+}
+
+/// Every name a dimension has (`Energy/Torque`), for where a unit is
+/// checked against a column type that may be any of them.
+pub fn kinds_of(dims: siquant::Dim) -> String {
     let names: Vec<String> = Registry::builtin()
         .quantity_types_for(dims)
         .iter()
@@ -157,6 +167,21 @@ pub fn kind_of(dims: siquant::Dim) -> String {
     } else {
         names.join("/")
     }
+}
+
+/// The type of `a * b` or `a / b` of two named quantity types, where it
+/// can be told before the values are known: the inferred type of the
+/// product's dimension, `None` for a result with none (a number) or for
+/// either side not named.
+pub fn product_type(a: QId, b: QId, divide: bool) -> Option<QId> {
+    let (da, db) = (a.named()?.dims(), b.named()?.dims());
+    let db = if divide { db.checked_scale(-1)? } else { db };
+    let dims = da.checked_add(db)?;
+    if dims.is_dimensionless() {
+        return None;
+    }
+    let t = Registry::builtin().infer_type(dims)?;
+    QId::from_name(t.name())
 }
 
 /// The unit a column of this type holds its values in, unless it says

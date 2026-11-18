@@ -315,6 +315,7 @@ fn fill(
                 zone: None,
                 elementwise: false,
                 framewise: false,
+                duration_kinds: 0,
             });
         }
     }

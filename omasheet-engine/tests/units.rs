@@ -828,3 +828,18 @@ fn units_of_time_are_units() {
     // A call with brackets is a call, not a unit.
     assert_eq!(shown("[1min, 2min].min()"), "1min");
 }
+
+#[test]
+fn a_result_is_the_inferred_type_and_a_column_may_declare_another() {
+    // Force times Length is Energy, which a Torque column or a Quantity
+    // column takes as well; the unit is the operands', or the column's.
+    let file = "sheet W\n\nF : Force[N]\nD : Length[m]\nT : Torque[N.m]\nE : Energy[kWh]\n\n\
+                | F | D | T | E |\n| - | - | - | - |\n| 10N | 3m | * | * |\n\nT := F * D\nE := F * D\n";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    assert!(out.output.contains("30"), "{}", out.output);
+    // A dimension no type has is a plain quantity, and still calculates.
+    assert_eq!(shown("2kg * 3m^5"), "6kg.m^5");
+    // The error names the one inferred type, not every type of the dimension.
+    assert!(fails("5J + 3kg").contains("Energy and Mass"), "{}", fails("5J + 3kg"));
+}

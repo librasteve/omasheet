@@ -5186,9 +5186,12 @@ impl<'p> Engine<'p> {
                 Value::Duration(us) => crate::quantity::show_duration_in(*us, f, &style),
                 _ => None,
             },
-            Some(Format::Duration(d)) => match (v, d) {
-                (Value::Duration(us), DurationStyle::Iso) => Some(duration::format(*us)),
-                (Value::Duration(us), DurationStyle::Clock) => Some(duration::format_clock(*us)),
+            Some(Format::Duration(d)) => match v {
+                Value::Duration(us) => Some(match d.resolve(*us) {
+                    DurationStyle::Clock => duration::format_clock(*us),
+                    DurationStyle::Seconds => duration::format_seconds(*us),
+                    _ => duration::format(*us),
+                }),
                 _ => None,
             },
             Some(Format::Boolean(f)) => match v {

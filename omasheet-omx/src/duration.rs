@@ -182,6 +182,47 @@ pub fn format_clock(micros: i64) -> String {
     out
 }
 
+/// `micros` as a count of seconds with its unit: `30s`, `-1.5s`.
+pub fn format_seconds(micros: i64) -> String {
+    let n = micros.unsigned_abs();
+    let second = MICROS as u64;
+    let sign = if micros < 0 { "-" } else { "" };
+    let (whole, frac) = (n / second, n % second);
+    if frac > 0 {
+        format!("{sign}{whole}.{}s", format!("{frac:06}").trim_end_matches('0'))
+    } else {
+        format!("{sign}{whole}s")
+    }
+}
+
+/// The forms of duration written in `text`, a cell or a formula, as the
+/// `KIND_*` bits of [`crate::colfmt`]: a signed clock `+17:04`, a quantity of
+/// time `10s`, ISO `PT17H4M`. Nothing for text that holds none.
+pub fn kinds(text: &str) -> u8 {
+    use crate::colfmt::{KIND_CLOCK, KIND_ISO, KIND_SECONDS};
+    use regex::Regex;
+    use std::sync::OnceLock;
+    static RES: OnceLock<[Regex; 3]> = OnceLock::new();
+    let [clock, seconds, iso] = RES.get_or_init(|| {
+        [
+            Regex::new(r"(?:^|[^\w:.])[+-]\d+:\d\d(?::\d\d(?:\.\d+)?)?(?:[^\d:.]|$)").unwrap(),
+            Regex::new(r"(?:^|[^\w.])\d+(?:\.\d+)?(?:us|ms|s|min|h|d|wk)(?:[^\w]|$)").unwrap(),
+            Regex::new(r"(?:^|[^\w])-?P(?:\d+[WD]|T\d)").unwrap(),
+        ]
+    });
+    let mut out = 0;
+    if clock.is_match(text) {
+        out |= KIND_CLOCK;
+    }
+    if seconds.is_match(text) {
+        out |= KIND_SECONDS;
+    }
+    if iso.is_match(text) {
+        out |= KIND_ISO;
+    }
+    out
+}
+
 /// The duration written as `text` in the signed colon form, `+11:30`,
 /// `-0:00:30.5` or `+128:04:15`: a `+` or `-`, hours, minutes below 60, and
 /// perhaps seconds below 60 with a fraction. Without the seconds it is hours

@@ -269,6 +269,8 @@ case-sensitive, and `ºC`, `µ` and the ohm sign are read as `°C`, `μ` and `Ω
 not a unit: `5ft`, `5lb` and `5min` are errors, and `5 kg` is a number and a
 name.
 
+The product or quotient of two quantities takes the kind that has the dimension of the result: `Force * Length` is an `Energy`, `Length / Speed` a `Duration`. Where two kinds share a dimension the result is the fixed one of `Energy` (not `Torque`), `Frequency` (not `Radioactivity`), `Momentum` (not `Impulse`) and `SpecificEnergy` (not `Dose`), and `Area`; where no kind has the dimension it is a `Quantity`. Its unit is the one the operands give. A column that declares the other kind, `Torque[N.m]`, or another unit, `Energy[kWh]`, takes the result all the same, as any unit of the dimension fits.
+
 An angle has the radian `rad`, the steradian `sr` (a radian squared) and the degree `°`, the minute `′` and the second `″` of arc, and the lumen `lm` and the lux `lx` that need it. Degrees, minutes and seconds are written together, `45°30′30″` or `-12°30′`, and `º`, `'` and `"` do for the marks; minutes and seconds are under 60 and only the last part may have a point. `45°` is a degree and `20°C` is Celsius. `sin`, `cos` and `tan` take an angle in any unit (a plain number is in radians), and `arcsin`, `arccos` and `arctan` give one back in `rad`, so `arcsin(0.5).to('°')` is `30°` and `sin(arcsin(0.5)) =~= 0.5` is true; `degrees(x)` takes such an angle too, and gives the number of degrees. An `arcsin` of a number beyond -1 to 1 is a `Complex`, with no unit. `dms` writes an angle out: `45.5°.dms()` is `45°30′0″`, and `dms(x, 2)` keeps two places of seconds.
 
 Data has two units, the bit `b` and the byte `B` (eight bits). Each takes the SI

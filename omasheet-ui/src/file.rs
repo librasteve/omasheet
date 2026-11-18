@@ -2203,7 +2203,7 @@ fn unit_lines() -> String {
             if !seen.insert(symbol.clone()) {
                 continue;
             }
-            // The kind the unit is held in, else the first of its dimension
+            // The kind the unit is held in, else the inferred type of its dimension
             // (the registry has none for time, so it is a duration).
             let kind = reg
                 .quantity_types()
@@ -2211,9 +2211,7 @@ fn unit_lines() -> String {
                 .map(|t| t.name().to_string())
                 .or_else(|| {
                     let u = siquant::Unit::parse(&symbol, siquant::Scope::Live).ok()?;
-                    reg.quantity_types_for(u.dims())
-                        .first()
-                        .map(|t| t.name().to_string())
+                    reg.infer_type(u.dims()).map(|t| t.name().to_string())
                 })
                 .or_else(|| (symbol == "s").then(|| "Duration".to_string()));
             let name = name.replace("degree ", "");

@@ -2143,7 +2143,7 @@ pub fn type_spec(spec: &str) -> Result<(S, Option<Option<Format>>), String> {
 /// writes one: the kind of quantity the unit is of, `Mass[g]`, or `Quantity`
 /// with the unit where no kind is named for its dimension. Where several
 /// kinds share the dimension, the one that holds the unit anyway
-/// (`J` is `Energy`, `N.m` is `Torque`), else the first.
+/// (`J` is `Energy`, `N.m` is `Torque`), else the inferred one.
 pub fn unit_spec(unit: &str) -> Result<String, String> {
     let reg = siquant::Registry::builtin();
     let u = siquant::Unit::parse(unit.trim(), siquant::Scope::Live)
@@ -2152,7 +2152,8 @@ pub fn unit_spec(unit: &str) -> Result<String, String> {
     let kind = kinds
         .iter()
         .find(|k| k.preferred_unit().as_ref() == Some(&u))
-        .or_else(|| kinds.first());
+        .cloned()
+        .or_else(|| reg.infer_type(u.dims()));
     Ok(match kind {
         Some(k) => format!("{}[{u}]", k.name()),
         None => format!("Quantity[{u}]"),
