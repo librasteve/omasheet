@@ -70,13 +70,7 @@ pub const GROUPS: [&str; 9] = [
 /// Where two types share a dimension, the one a calculated result is given
 /// (`Energy`, not `Torque`). Fixed, not a setting; a column can declare the
 /// other.
-pub const INFERRED: [&str; 5] = [
-    "Area",
-    "Energy",
-    "Frequency",
-    "SpecificEnergy",
-    "Momentum",
-];
+pub const INFERRED: [&str; 5] = ["Area", "Energy", "Frequency", "SpecificEnergy", "Momentum"];
 
 fn group_of(what: &str, group: Option<&str>, default: &str) -> Result<String> {
     let group = group.unwrap_or(default);

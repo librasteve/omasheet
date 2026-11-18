@@ -413,7 +413,10 @@ fn types_and_units_are_grouped_for_menus() {
         .filter(|u| u.group == "Size")
         .map(|u| u.symbol)
         .collect();
-    assert_eq!(order, ["g", "°C", "Hz", "l", "t", "ha", "min", "h", "d", "wk", "Da"]);
+    assert_eq!(
+        order,
+        ["g", "°C", "Hz", "l", "t", "ha", "min", "h", "d", "wk", "Da"]
+    );
     // Every group named is one of the headings.
     assert!(reg.quantity_types().all(|t| GROUPS.contains(&t.group())));
     assert!(reg.units().all(|u| GROUPS.contains(&u.group)));
@@ -436,7 +439,7 @@ fn the_katal_is_filed_under_thermodynamic() {
 
 #[test]
 fn a_dimension_with_several_types_is_inferred_as_the_fixed_one() {
-    use siquant::{Registry, Unit, Scope};
+    use siquant::{Registry, Scope, Unit};
     let reg = Registry::builtin();
     let of = |unit: &str| {
         let u = Unit::parse(unit, Scope::Live).unwrap();
