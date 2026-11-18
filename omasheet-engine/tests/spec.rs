@@ -771,7 +771,7 @@ fn durations() {
         ask(&file.replace("Took : Duration\n\n", ""), "Log.Took.max()"),
         "PT1H"
     );
-    let errs = lint_errors("sheet Log\n\nTook : Duration\n\nTook\n90\n");
+    let errs = lint_errors("sheet Log\n\nTook : Duration\n\nTook\n09:30\n");
     assert!(errs[0].contains("is not a `Duration` literal"), "{errs:?}");
 }
 

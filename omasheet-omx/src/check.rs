@@ -2128,6 +2128,16 @@ impl<'a> Checker<'a> {
                             _ => None,
                         })
                         .or_else(|| crate::units::preferred(id)),
+                    // A bare number in a `Duration` column is in its unit.
+                    Some(S::Duration) => decl
+                        .schema
+                        .iter()
+                        .find(|l| l.name == self.sheets[t].cols[c].name)
+                        .and_then(|l| match &l.format {
+                            Some(Format::Quantity(q)) => q.unit.clone(),
+                            _ => None,
+                        })
+                        .or_else(|| siquant::Unit::parse("s", siquant::Scope::Any).ok()),
                     _ => None,
                 };
                 // A column of booleans also reads its own two symbols.
@@ -2794,6 +2804,29 @@ impl<'a> Checker<'a> {
         want
     }
 
+    /// A length of time of `v` in `unit`, with an uncertainty of `sigma`, as
+    /// a literal: whole microseconds, or with an uncertainty, which they
+    /// cannot hold, seconds.
+    fn time_literal(
+        &mut self,
+        span: Span,
+        v: f64,
+        sigma: f64,
+        unit: &siquant::Unit,
+    ) -> Option<Lit> {
+        if sigma != 0.0 {
+            return siquant::Unit::parse("s", siquant::Scope::Any)
+                .ok()
+                .map(|sec| Lit::Quantity(v * unit.factor(), sigma * unit.factor(), sec));
+        }
+        let micros = (v * unit.factor() * 1e6).round();
+        if !micros.is_finite() || micros.abs() >= 9.0e18 {
+            self.err(span, "the duration is out of range");
+            return None;
+        }
+        Some(Lit::Duration(micros as i64))
+    }
+
     /// A cell without a leading `=`: a literal, never an expression.
     fn literal_cell(
         &mut self,
@@ -2940,6 +2973,27 @@ impl<'a> Checker<'a> {
             (Some(l @ Lit::Time(_)), S::Time) => Some(l),
             (Some(l @ Lit::Datetime(_)), S::Datetime) => Some(l),
             (Some(l @ Lit::Duration(_)), S::Duration) => Some(l),
+            // A bare number is read in the column's unit.
+            (
+                Some(
+                    l @ (Lit::Int(..)
+                    | Lit::Decimal(_)
+                    | Lit::Fraction(_)
+                    | Lit::Float(_)
+                    | Lit::Scientific(..)),
+                ),
+                S::Duration,
+            ) if column.is_some() => {
+                let unit = column.clone()?;
+                let (v, sigma) = match l {
+                    Lit::Scientific(v, s) => (v, s),
+                    other => match crate::convert::convert(&other, S::Float) {
+                        Ok(Lit::Float(f)) => (f, 0.0),
+                        _ => return None,
+                    },
+                };
+                return self.time_literal(span, v, sigma, &unit);
+            }
             // A quantity of time, `139s`, is a duration.
             (Some(Lit::Quantity(v, sigma, unit)), S::Duration) => {
                 if unit.dims() != siquant::Dim::of(siquant::Base::Time) {
@@ -2952,19 +3006,7 @@ impl<'a> Checker<'a> {
                     );
                     return None;
                 }
-                // With an uncertainty it cannot be a whole number of
-                // microseconds: it is held as a quantity of seconds.
-                if sigma != 0.0 {
-                    return siquant::Unit::parse("s", siquant::Scope::Any)
-                        .ok()
-                        .map(|sec| Lit::Quantity(v * unit.factor(), sigma * unit.factor(), sec));
-                }
-                let micros = (v * unit.factor() * 1e6).round();
-                if !micros.is_finite() || micros.abs() >= 9.0e18 {
-                    self.err(span, "the duration is out of range");
-                    return None;
-                }
-                Some(Lit::Duration(micros as i64))
+                return self.time_literal(span, v, sigma, &unit);
             }
             (Some(l @ Lit::Boolean(_)), S::Boolean) => Some(l),
             // A `Boolean` column also reads `1` and `0`, `x` and `o`, `X`

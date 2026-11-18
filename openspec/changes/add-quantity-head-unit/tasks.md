@@ -15,4 +15,4 @@
 ## 4. checks
 - [x] 4.1 Tests for the flags, the errors, the heads and the rows; `examples/*.expected` regenerated
 - [x] 4.2 `docs/format.md`, `docs/app.md`, the skill, the format help and `examples/units.omx`
-- [ ] 4.3 Look at it in the running app
+- [x] 4.3 Look at it in the running app

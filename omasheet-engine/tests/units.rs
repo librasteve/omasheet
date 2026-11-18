@@ -663,6 +663,15 @@ fn a_duration_may_have_an_uncertainty() {
 }
 
 #[test]
+fn a_bare_number_in_a_duration_column_is_in_its_unit() {
+    let file = "sheet S\n\nM : Duration[min]\nH : Duration[h]\nU : Duration[min; ±.1f]\n\n| M | H | U |\n| - | - | - |\n| 90 | 1.5 | 2(1) |\n";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    // `1.5` hours is 90 minutes, and `2(1)` is 2 minutes, plus or minus 1.
+    assert!(out.output.contains("90") && out.output.contains("1.5"), "{}", out.output);
+}
+
+#[test]
 fn a_duration_column_shows_its_unit_in_the_head() {
     let file = "sheet S\n\nA : Duration\nB : Duration[h; .2f]\nC : Duration[%H:%M:%S]\nD : Duration[iso]\nE : Duration[min; v.1f]\n\n| A | B | C | D | E |\n| - | - | - | - | - |\n| PT1H30M | 5400s | +128:04:15 | -PT30M | 139s |\n";
     let out = view("test.omx", file);

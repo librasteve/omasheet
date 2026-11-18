@@ -1116,6 +1116,34 @@ fn parquet_holds_a_quantity_uncertainty_as_a_struct() {
 }
 
 #[test]
+fn parquet_holds_a_duration_uncertainty_as_a_struct() {
+    use polars::prelude::*;
+    // A whole number of microseconds has no room for an uncertainty, so a
+    // column with one is written as the numbers of its unit and a `sigma`,
+    // and a column without is a Parquet duration as it was.
+    let file = "sheet T\n\nRun : Duration[s; ±.1f]\nPlain : Duration[min]\n\n| Run | Plain |\n| --- | ----- |\n| 10.5(3)s | 90s |\n| PT1M | 2h |\n";
+    let out = parquet_of(file, None);
+    let df = ParquetReader::new(std::io::Cursor::new(out.files[0].bytes.clone()))
+        .finish()
+        .expect("reads");
+    assert_eq!(
+        df.column("Run").unwrap().dtype(),
+        &DataType::Struct(vec![
+            Field::new("value".into(), DataType::Float64),
+            Field::new("sigma".into(), DataType::Float64),
+        ])
+    );
+    assert_eq!(
+        df.column("Plain").unwrap().dtype(),
+        &DataType::Duration(TimeUnit::Microseconds)
+    );
+    let back = parquet::import("t", &out.files[0].bytes).expect("imports");
+    lints(&back.source);
+    assert!(back.source.contains("Run   : Duration"), "{}", back.source);
+    assert_eq!(eval(&back.source, "t[Run; 0]"), "10.5 ± 0.3s");
+}
+
+#[test]
 fn parquet_keeps_a_decimal_exact() {
     // A decimal column is written as a Parquet decimal, so every digit of it
     // survives the trip: this is what CSV cannot do.

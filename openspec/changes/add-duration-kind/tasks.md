@@ -23,7 +23,7 @@ Decision: a column of the `Duration` kind is stored as a Polars `Duration` (micr
 - [x] 3.4 The `total_*` functions, filters, sorts and `cum_sum` of durations
 
 ## 4. Interop
-- [x] 4.1 Parquet, xlsx and CSV, in and out
+- [x] 4.1 Parquet, xlsx and CSV, in and out: a Parquet duration is a `Duration`; one with an uncertainty is a `value` and `sigma` struct with the kind in the metadata; xlsx and CSV write an uncertain cell as text, `10.5 ± 0.3s`
 
 ## 5. Checks
 - [x] 5.1 Tests for the kind, the units, the three literals, the sign and the operator, the rules

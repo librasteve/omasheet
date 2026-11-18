@@ -243,6 +243,19 @@ fn frame(
             }
             // Numbers in the column's unit, or text where a cell has its
             // own; the kind goes in the metadata.
+            // A `Duration` is a Polars duration, but a cell with an
+            // uncertainty is not one: the column is then written as the
+            // numbers of its unit, with the `sigma`, as a kind of quantity.
+            S::Duration
+                if cells.iter().any(|v| matches!(v, Value::Quantity(_)))
+                    && omasheet_engine::omx::types::QId::from_name("Duration").is_some() =>
+            {
+                let id = omasheet_engine::omx::types::QId::from_name("Duration")
+                    .unwrap_or(omasheet_engine::omx::types::QId::ANY);
+                let (series, kind) = quantity_series(name, col, id, &cells)?;
+                kinds.push((col.name.clone(), kind));
+                series
+            }
             S::Quantity(id) => {
                 let (series, kind) = quantity_series(name, col, id, &cells)?;
                 kinds.push((col.name.clone(), kind));
@@ -436,6 +449,11 @@ fn quantity_series(
         .iter()
         .map(|v| match v {
             Value::Quantity(q) => q.convert(&unit).ok().map(|q| (q.value(), q.sigma())),
+            // A duration beside the uncertain ones is so many seconds.
+            Value::Duration(us) => match omasheet_engine::quantity::from_duration(*us) {
+                Value::Quantity(q) => q.convert(&unit).ok().map(|q| (q.value(), 0.0)),
+                _ => None,
+            },
             Value::Int(n, _) => Some((*n as f64, 0.0)),
             Value::Float(f) => Some((*f, 0.0)),
             Value::Scientific(x, s) => Some((*x, *s)),
