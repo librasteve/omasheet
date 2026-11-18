@@ -1,16 +1,16 @@
 sheet Sales
 
 Region | Rep     | Units | Price
--------|---------|-------|------
-North  | Ada     |    12 |   9.5
-North  | Grace   |    30 |     8
-North  | Linus   |     7 |    12
-South  | Alan    |    25 |     9
-South  | Edsger  |    18 |     9
-East   | Barbara |    40 |   7.5
-East   | Donald  |     4 |    15
-East   | Ken     |    22 |  8.25
-East   | Dennis  |    22 |     8
+-------|---------|-------|-------
+North  | Ada     |    12 | $9.50
+North  | Grace   |    30 | $8.00
+North  | Linus   |     7 | $12.00
+South  | Alan    |    25 | $9.00
+South  | Edsger  |    18 | $9.00
+East   | Barbara |    40 | $7.50
+East   | Donald  |     4 | $15.00
+East   | Ken     |    22 | $8.25
+East   | Dennis  |    22 | $8.00
 
 sheet Targets
 
@@ -23,10 +23,10 @@ South  |    400
 sheet Takings
 
 Region | Takings
--------|--------
-East   |   717.5
-North  |     438
-South  |     387
+-------|---------
+East   | 717.5USD
+North  | 438USD
+South  | 387USD
 
 sheet Wide
 
@@ -72,8 +72,8 @@ South  |    400
 sheet Leader
 
 Region | Takings
--------|--------
-East   |   717.5
+-------|---------
+East   | 717.5USD
 
 sheet Star
 

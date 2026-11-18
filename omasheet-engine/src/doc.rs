@@ -141,6 +141,69 @@ pub struct Summary {
     pub numbers: Option<(String, String)>,
 }
 
+/// The cells of a selection as they are added up: how many hold a value,
+/// the plain numbers among them and their sum, and the measures, quantities
+/// or durations, of one kind.
+struct Tally {
+    count: usize,
+    numbers: usize,
+    sum: Value,
+    measures: Measures,
+}
+
+/// The measures in a selection, added where they are of one kind: quantities
+/// of one dimension, in the unit of the first (`5kg` and `300g`, or `$5` and
+/// `3EUR`, by the rates), or durations. A selection of two kinds, or of
+/// measures and plain numbers, has no sum.
+enum Measures {
+    None,
+    Quantities(siquant::Quantity, usize),
+    Durations(i128, usize),
+    Mixed,
+}
+
+impl Tally {
+    fn new() -> Tally {
+        Tally {
+            count: 0,
+            numbers: 0,
+            sum: Value::int(0.into()),
+            measures: Measures::None,
+        }
+    }
+
+    fn add(&mut self, value: &Value) -> Option<()> {
+        if !matches!(value, Value::Null | Value::Error) {
+            self.count += 1;
+        }
+        if value.is_numeric() {
+            self.numbers += 1;
+            self.sum = arith(BinOp::Add, &self.sum, value).ok()?;
+        }
+        self.measures = match (std::mem::replace(&mut self.measures, Measures::Mixed), value) {
+            (m, v) if !matches!(v, Value::Quantity(_) | Value::Duration(_)) => {
+                // A number beside measures is neither.
+                if v.is_numeric() && !matches!(m, Measures::None) {
+                    Measures::Mixed
+                } else {
+                    m
+                }
+            }
+            (Measures::None, Value::Quantity(q)) => Measures::Quantities((**q).clone(), 1),
+            (Measures::None, Value::Duration(us)) => Measures::Durations(i128::from(*us), 1),
+            (Measures::Quantities(sum, n), Value::Quantity(q)) => match sum.add(q) {
+                Ok(sum) => Measures::Quantities(sum, n + 1),
+                Err(_) => Measures::Mixed,
+            },
+            (Measures::Durations(sum, n), Value::Duration(us)) => {
+                Measures::Durations(sum + i128::from(*us), n + 1)
+            }
+            _ => Measures::Mixed,
+        };
+        Some(())
+    }
+}
+
 /// A function the file defines.
 #[derive(Debug, Clone)]
 pub struct FuncSnap {
@@ -542,6 +605,8 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
         })
     };
     let (key, unit) = match S::from_name(ty) {
+        // Money has a hint of its own: it is written by a sign or a code.
+        Some(S::Quantity(_)) if ty == "Currency" => ("Currency", String::new()),
         Some(S::Quantity(id)) => match omasheet_omx::units::preferred(id) {
             Some(unit) => ("Quantity kind", unit.to_string()),
             None => ("Quantity", String::new()),
@@ -714,6 +779,16 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             ("h; v.1f".into(), "the unit in each row"),
             ("%H:%M:%S".into(), "+01:30:00, hours past a day"),
             ("iso".into(), "PT1H30M"),
+        ],
+        // Money: the places it is spent in by default, and a sign to show it by.
+        S::Quantity(_) if siquant::Registry::builtin().rate(unit).is_some() => vec![
+            (unit.to_string(), "the code in the head, two places"),
+            (format!("{unit}; $"), "the sign in each row"),
+            (format!("{unit}; $.0f"), "the sign, no places"),
+            (format!("{unit}; $'.2f"), "the sign, grouped, two places"),
+            (format!("{unit}; .4f"), "four places"),
+            (format!("{unit}; v"), "the code in each row"),
+            (format!("{unit}; .8f"), "eight places, for a coin"),
         ],
         S::Quantity(_) if !unit.is_empty() => vec![
             (unit.to_string(), "the unit in the head"),
@@ -2562,6 +2637,13 @@ impl Document {
         self.rebuild();
     }
 
+    /// Calculates the document again from its own text, with nothing edited:
+    /// for when something the text depends on has changed, as exchange rates
+    /// do.
+    pub fn recalculate(&mut self) {
+        self.rebuild();
+    }
+
     pub fn style(&self) -> &Style {
         &self.style
     }
@@ -3285,18 +3367,8 @@ impl Document {
         (bottom, right): (usize, usize),
     ) -> Option<Summary> {
         let t = self.snapshot.sheets.get(sheet)?;
-        let (mut count, mut numbers) = (0, 0);
-        let mut sum = Value::int(0.into());
-        let mut add = |value: &Value| {
-            if !matches!(value, Value::Null | Value::Error) {
-                count += 1;
-            }
-            if value.is_numeric() {
-                numbers += 1;
-                sum = arith(BinOp::Add, &sum, value).ok()?;
-            }
-            Some(())
-        };
+        let mut tally = Tally::new();
+        let mut add = |value: &Value| tally.add(value);
         let end = (bottom + 1).min(t.nrows);
         let cols = left..(right + 1).min(t.columns.len());
         if !t.paged {
@@ -3306,7 +3378,7 @@ impl Document {
                 }
             }
         } else if let Some(fast) = self.summary_native(sheet, top..end, cols.clone()) {
-            (count, numbers, sum) = fast;
+            (tally.count, tally.numbers, tally.sum) = fast;
         } else if let Some(engine) = &self.engine {
             // A paged sheet's selection can be the whole of a big file, so
             // only the selected columns are read, as values and not as the
@@ -3340,18 +3412,7 @@ impl Document {
                 from = to;
             }
         }
-        let numbers = if numbers == 0 {
-            None
-        } else {
-            let mean = crate::eval::average(&sum, numbers as i64).ok()?;
-            // To two places: it is a glance, not the figure.
-            let show = |v: &Value| {
-                let v = crate::value::round_digits(v, 2).unwrap_or_else(|_| v.clone());
-                format_styled(&v, false, &self.style)
-            };
-            Some((show(&sum), show(&mean)))
-        };
-        Some(Summary { count, numbers })
+        self.glance(tally)
     }
 
     /// [`Document::summary`] of only the listed `rows` of the block, the ones
@@ -3363,18 +3424,8 @@ impl Document {
         (left, right): (usize, usize),
     ) -> Option<Summary> {
         let t = self.snapshot.sheets.get(sheet)?;
-        let (mut count, mut numbers) = (0, 0);
-        let mut sum = Value::int(0.into());
-        let mut add = |value: &Value| {
-            if !matches!(value, Value::Null | Value::Error) {
-                count += 1;
-            }
-            if value.is_numeric() {
-                numbers += 1;
-                sum = arith(BinOp::Add, &sum, value).ok()?;
-            }
-            Some(())
-        };
+        let mut tally = Tally::new();
+        let mut add = |value: &Value| tally.add(value);
         let cols = left..(right + 1).min(t.columns.len());
         let rows: Vec<usize> = rows.iter().copied().filter(|&r| r < t.nrows).collect();
         if !t.paged {
@@ -3398,21 +3449,56 @@ impl Document {
                 }
             }
         }
-        self.glance(count, numbers, sum)
+        self.glance(tally)
     }
 
-    /// A [`Summary`] of a count, how many of them were numbers, and their sum.
-    fn glance(&self, count: usize, numbers: usize, sum: Value) -> Option<Summary> {
-        let numbers = if numbers == 0 {
-            None
-        } else {
-            let mean = crate::eval::average(&sum, numbers as i64).ok()?;
-            // To two places: it is a glance, not the figure.
-            let show = |v: &Value| {
-                let v = crate::value::round_digits(v, 2).unwrap_or_else(|_| v.clone());
-                format_styled(&v, false, &self.style)
-            };
-            Some((show(&sum), show(&mean)))
+    /// A [`Summary`] of a tally: the count, and the sum and mean of the
+    /// numbers, or of the measures where they are all of one kind.
+    fn glance(&self, tally: Tally) -> Option<Summary> {
+        let Tally {
+            count,
+            numbers,
+            sum,
+            measures,
+        } = tally;
+        // To two places: it is a glance, not the figure.
+        let show = |v: &Value| {
+            let v = crate::value::round_digits(v, 2).unwrap_or_else(|_| v.clone());
+            format_styled(&v, false, &self.style)
+        };
+        let numbers = match measures {
+            // Plain numbers, as ever.
+            Measures::None if numbers > 0 => {
+                let mean = crate::eval::average(&sum, numbers as i64).ok()?;
+                Some((show(&sum), show(&mean)))
+            }
+            Measures::Quantities(sum, n) => {
+                let places = omasheet_omx::colfmt::SciFormat {
+                    conv: omasheet_omx::colfmt::SciConv::Fixed,
+                    places: Some(2),
+                    ..Default::default()
+                };
+                let format = omasheet_omx::colfmt::QuantityFormat {
+                    unit: None,
+                    number: Some(places),
+                };
+                let mean = siquant::Quantity::new(
+                    sum.value() / n as f64,
+                    sum.sigma() / n as f64,
+                    sum.unit().clone(),
+                )
+                .ok()?;
+                let text = |q: &siquant::Quantity| crate::quantity::show_in(q, &format, &self.style);
+                Some((text(&sum), text(&mean)))
+            }
+            Measures::Durations(total, n) => {
+                let mean = total / n as i128;
+                let text = |us: i128| {
+                    omasheet_omx::duration::format_seconds(i64::try_from(us).unwrap_or(i64::MAX))
+                };
+                Some((text(total), text(mean)))
+            }
+            _ => None,
         };
         Some(Summary { count, numbers })
     }
@@ -5794,13 +5880,29 @@ mod tests {
         ] {
             let mut doc = Document::from_text(&format!("sheet T\n\n| A |\n| - |\n| {cells} |\n"));
             assert!(!doc.snapshot().sheets[0].columns[0].declared);
-            assert_eq!(doc.check_column_format(0, &[0], Some(format)), Ok(()), "{ty}");
+            assert_eq!(
+                doc.check_column_format(0, &[0], Some(format)),
+                Ok(()),
+                "{ty}"
+            );
             doc.set_column_format(0, &[0], Some(format)).unwrap();
             let column = &doc.snapshot().sheets[0].columns[0];
             assert!(column.declared, "{ty}: {}", doc.text());
             assert!(column.ty.starts_with(ty), "{ty}: {}", column.ty);
-            assert!(doc.text().contains(&format!("[{format}]")), "{}", doc.text());
+            assert!(
+                doc.text().contains(&format!("[{format}]")),
+                "{}",
+                doc.text()
+            );
         }
+    }
+
+    #[test]
+    fn a_column_of_money_has_the_type_currency() {
+        let doc = Document::from_text("sheet T\n\n| A |\n| - |\n| $5 |\n| £3 |\n| 2EUR |\n");
+        let column = &doc.snapshot().sheets[0].columns[0];
+        assert_eq!(column.ty, "Currency");
+        assert!(!column.declared);
     }
 
     #[test]
@@ -8728,6 +8830,10 @@ mod tests {
             "Duration: a period of time, e.g. P2DT1H30M (2d 1h 30m)"
         );
         assert_eq!(entry_hint(&us, ""), "");
+        assert_eq!(
+            entry_hint(&us, "Currency"),
+            "money, e.g. $5, €6, £7 or 8BTC"
+        );
         // A cell that does not fit says what would.
         let mut doc = Document::with_style("sheet T\n\nOn : Date\n\nOn\n2025-01-31\n", us);
         doc.set_cell(0, 0, 0, "soon");
@@ -8882,6 +8988,31 @@ mod tests {
         // A block that runs off the sheet is cut to it.
         assert_eq!(sum((2, 1), (9, 9)).count, 2);
         assert!(doc.summary(5, (0, 0), (1, 1)).is_none());
+    }
+
+    #[test]
+    fn measures_of_one_kind_are_summed_and_averaged() {
+        let doc = Document::from_text(concat!(
+            "sheet T\n\n| Mass | Money | Span | Mixed | Plain |\n| - | - | - | - | - |\n",
+            "| 5kg | $5 | 10s | 5kg | 1 |\n",
+            "| 300g | $3 | PT20S | 2m | 2 |\n",
+        ));
+        let glance = |col| doc.summary(0, (0, col), (1, col)).unwrap();
+        let of = |col| glance(col).numbers;
+        let pair = |s: &str, m: &str| Some((s.to_string(), m.to_string()));
+        // In the unit of the first, to two places.
+        assert_eq!(of(0), pair("5.30kg", "2.65kg"));
+        assert_eq!(of(1), pair("8.00USD", "4.00USD"));
+        assert_eq!(of(2), pair("30s", "15s"));
+        // Two kinds make no sum, and plain numbers still do.
+        assert_eq!(of(3), None);
+        assert_eq!(glance(3).count, 2);
+        assert_eq!(of(4), pair("3", "1.5"));
+        // Across columns, two kinds make none either.
+        assert_eq!(doc.summary(0, (0, 0), (1, 1)).unwrap().numbers, None);
+        // Under a filter, the rows shown are summed.
+        let shown = doc.summary_of_rows(0, &[1], (0, 0)).unwrap();
+        assert_eq!(shown.numbers, pair("300.00g", "300.00g"));
     }
 
     #[test]

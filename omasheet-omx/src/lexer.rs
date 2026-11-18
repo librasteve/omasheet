@@ -229,6 +229,27 @@ pub fn lex_with(text: &str, src: u32, base: usize, units: bool) -> Result<Vec<To
             continue;
         }
         let start = i;
+        // Money written the other way round: the sign first, `€5.50`, `$100`.
+        if units && let Some((unit, at)) = units::money(text, i) {
+            let (tok, end) =
+                number(text, at, false).map_err(|(msg, s, e)| Diagnostic::new(span(s, e), msg))?;
+            let raw = || text[at..end].replace('_', "");
+            let (value, sigma) = match tok {
+                Tok::Int(n, Base::Dec) => (n as f64, 0.0),
+                Tok::Decimal(_) | Tok::Float(_) => (raw().parse().unwrap_or(f64::NAN), 0.0),
+                Tok::Scientific(v, s) => (v, s),
+                _ => {
+                    return Err(Diagnostic::new(span(start, end), "not an amount of money")
+                        .with_help("write a plain number after the sign, `€5.50`"));
+                }
+            };
+            out.push(Token {
+                tok: Tok::Quantity(value, sigma, unit),
+                span: span(start, end),
+            });
+            i = end;
+            continue;
+        }
         if let Some(found) = based(text, i) {
             // `0Bq` is zero becquerel, not a bad binary number: where what
             // follows a zero reads as a unit, that is read before the error.
@@ -1118,6 +1139,28 @@ mod tests {
             Tok::Quantity(v, sigma, u) => (v, sigma, u.to_string()),
             other => panic!("`{s}` is {other:?}"),
         }
+    }
+
+    #[test]
+    fn money_is_written_by_its_code_or_its_sign_either_side() {
+        // The sign after, as any unit; the code is shown for it.
+        assert_eq!(quantity("5USD"), (5.0, 0.0, "USD".into()));
+        assert_eq!(quantity("5$"), (5.0, 0.0, "USD".into()));
+        assert_eq!(quantity("5€"), (5.0, 0.0, "EUR".into()));
+        assert_eq!(quantity("5A$"), (5.0, 0.0, "AUD".into()));
+        // Before, where money is usually written.
+        assert_eq!(quantity("$5"), (5.0, 0.0, "USD".into()));
+        assert_eq!(quantity("£1_000.50"), (1000.5, 0.0, "GBP".into()));
+        assert_eq!(quantity("\u{ffe5}100"), (100.0, 0.0, "JPY".into()));
+        assert_eq!(quantity("€3.5(2)"), (3.5, 0.2, "EUR".into()));
+        // Money per something is a unit like any other.
+        assert_eq!(quantity("5KiB.$^-1"), (5.0, 0.0, "KiB.USD^-1".into()));
+        // `$-1` is a term counted back in a sequence, not money.
+        let toks = lex("$-1", 0, 0).unwrap();
+        assert_eq!(toks[0].tok, Tok::Dollar);
+        // A sign with no amount is no money.
+        assert!(lex("€", 0, 0).is_err());
+        assert!(lex("€x", 0, 0).is_err());
     }
 
     #[test]

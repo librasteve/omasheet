@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use serde::Deserialize;
 
@@ -21,9 +21,16 @@ use crate::quantity::QuantityType;
 use crate::unit::{Term, Unit};
 
 const PREFIXES_YAML: &str = include_str!("../resources/prefixes.yaml");
-const UNITS_YAML: &str = include_str!("../resources/units.yaml");
+const UNITS_YAML: &str = concat!(
+    include_str!("../resources/units.yaml"),
+    include_str!("../resources/currency.yaml")
+);
+const RATES_JSON: &str = include_str!("../resources/rates.json");
 const TYPES_YAML: &str = include_str!("../resources/quantity_types.yaml");
-const MENU_TXT: &str = include_str!("../resources/menu.txt");
+const MENU_TXT: &str = concat!(
+    include_str!("../resources/menu.txt"),
+    include_str!("../resources/currency-menu.txt")
+);
 
 /// Which unit a [`Term`] names: an index into the registry's unit table.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -135,6 +142,16 @@ pub(crate) struct Inner {
     pub unity: UnitId,
     /// The menu: set once, after the registry exists, as reading it needs one.
     pub menu: OnceLock<Menu>,
+    /// What a currency is worth, which changes while the rest never does.
+    pub rates: RwLock<Rates>,
+}
+
+/// The exchange rates: for each currency but the base, the size of one of it
+/// in the base currency, and the date they are as of.
+#[derive(Default)]
+pub(crate) struct Rates {
+    pub as_of: String,
+    pub factor: HashMap<UnitId, f64>,
 }
 
 /// The menu a host files units and quantity types under: the headings in
@@ -261,7 +278,19 @@ impl Inner {
     /// The size of one term in the coherent unit: (prefix x unit) ^ exponent.
     pub(crate) fn term_factor(&self, t: &Term) -> f64 {
         let scale = t.prefix.map_or(1.0, |p| self.prefix_def(p).scale);
-        (scale * self.unit_def(t.unit).factor).powi(i32::from(t.exp))
+        (scale * self.unit_factor(t.unit)).powi(i32::from(t.exp))
+    }
+
+    /// The size of a unit in the coherent unit of its dimension. A currency
+    /// other than the base is worth what the rates say, and `NaN` while they
+    /// do not.
+    fn unit_factor(&self, id: UnitId) -> f64 {
+        let def = self.unit_def(id);
+        if def.currency && !def.is_base {
+            let rates = self.rates.read().unwrap_or_else(|e| e.into_inner());
+            return rates.factor.get(&id).copied().unwrap_or(f64::NAN);
+        }
+        def.factor
     }
 
     /// The dimension, factor and offset of a normalised list of terms.
@@ -269,6 +298,9 @@ impl Inner {
         let mut dims = Dim::NONE;
         let mut factor = 1.0;
         for t in terms {
+            if self.unit_factor(t.unit).is_nan() {
+                return Err(Error::NoRate(self.unit_def(t.unit).symbol.clone()));
+            }
             let scaled = self
                 .unit_def(t.unit)
                 .dims
@@ -496,6 +528,14 @@ impl fmt::Debug for Registry {
     }
 }
 
+/// The snapshot of rates compiled into the crate: the shape of the file
+/// currency-api serves, `{"date": "2026-11-18", "usd": {"eur": 0.86, ...}}`.
+#[derive(Deserialize)]
+struct Bundled {
+    date: String,
+    usd: HashMap<String, f64>,
+}
+
 /// What a caller may know of one unit.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UnitInfo<'a> {
@@ -510,6 +550,8 @@ pub struct UnitInfo<'a> {
     pub currency: bool,
     /// The heading a menu files it under, one of [`Registry::groups`].
     pub group: &'a str,
+    /// The other symbols it is written with: `€` for `EUR`, `º` for `°`.
+    pub alts: &'a [String],
 }
 
 /// What a caller may know of one prefix.
@@ -526,8 +568,16 @@ impl Registry {
     pub fn builtin() -> &'static Registry {
         static BUILTIN: OnceLock<Registry> = OnceLock::new();
         BUILTIN.get_or_init(|| {
-            Registry::from_yaml_with_menu(PREFIXES_YAML, UNITS_YAML, TYPES_YAML, MENU_TXT)
-                .expect("the embedded resource files are valid")
+            let bundled: Bundled =
+                serde_yaml_ng::from_str(RATES_JSON).expect("the embedded rates are valid");
+            Registry::load(
+                PREFIXES_YAML,
+                UNITS_YAML,
+                TYPES_YAML,
+                MENU_TXT,
+                Some(&bundled),
+            )
+            .expect("the embedded resource files are valid")
         })
     }
 
@@ -549,6 +599,18 @@ impl Registry {
         types: &str,
         menu: &str,
     ) -> Result<Registry> {
+        Registry::load(prefixes, units, types, menu, None)
+    }
+
+    /// As [`Registry::from_yaml_with_menu`], with rates set before the menu
+    /// is read, as reading it converts every unit in it.
+    fn load(
+        prefixes: &str,
+        units: &str,
+        types: &str,
+        menu: &str,
+        rates: Option<&Bundled>,
+    ) -> Result<Registry> {
         let prefix_rows: Vec<PrefixRow> =
             serde_yaml_ng::from_str(prefixes).or_else(|e| resource("prefixes.yaml", e))?;
         let unit_rows: Vec<UnitRow> =
@@ -568,6 +630,9 @@ impl Registry {
             inner.add_type(row)?;
         }
         let reg = Registry(Arc::new(inner));
+        if let Some(r) = rates {
+            reg.set_rates(&r.date, r.usd.iter().map(|(k, v)| (k.as_str(), *v)));
+        }
         let menu = reg.read_menu(menu)?;
         let _ = reg.0.menu.set(menu);
         Ok(reg)
@@ -657,6 +722,70 @@ impl Registry {
             .map(|(h, units)| (h.as_str(), units.as_slice()))
     }
 
+    /// Sets what currencies are worth: for each code, how many of it make one
+    /// US dollar, as of the date `as_of`. A code is read in either case; one
+    /// that is no currency, or the dollar itself, or a rate that is not a
+    /// positive number, is left out. A currency not named keeps its rate.
+    /// Returns how many were set.
+    ///
+    /// The registry is shared, so every user of it sees the new rates; a
+    /// [`Unit`] already parsed keeps the rates it was parsed with.
+    pub fn set_rates<'a>(
+        &self,
+        as_of: &str,
+        per_usd: impl IntoIterator<Item = (&'a str, f64)>,
+    ) -> usize {
+        let mut set = 0;
+        let mut rates = self.0.rates.write().unwrap_or_else(|e| e.into_inner());
+        for (code, rate) in per_usd {
+            let Some(&id) = self.0.unit_by_symbol.get(&code.to_uppercase()) else {
+                continue;
+            };
+            let def = self.0.unit_def(id);
+            if !def.currency || def.is_base || !rate.is_finite() || rate <= 0.0 {
+                continue;
+            }
+            rates.factor.insert(id, 1.0 / rate);
+            set += 1;
+        }
+        if set > 0 {
+            rates.as_of = as_of.to_string();
+        }
+        set
+    }
+
+    /// How many of a currency make one US dollar, if there is a rate for it.
+    pub fn rate(&self, code: &str) -> Option<f64> {
+        let id = *self.0.unit_by_symbol.get(&code.to_uppercase())?;
+        let def = self.0.unit_def(id);
+        if !def.currency {
+            return None;
+        }
+        if def.is_base {
+            return Some(1.0);
+        }
+        let rates = self.0.rates.read().unwrap_or_else(|e| e.into_inner());
+        rates.factor.get(&id).map(|f| 1.0 / f)
+    }
+
+    /// The sign a currency is written with, `€` for `EUR`, if it has one: the
+    /// first alternate of its code, which is how a front end shows an amount
+    /// of it before the number.
+    pub fn currency_sign(&self, code: &str) -> Option<&str> {
+        let id = *self.0.unit_by_symbol.get(code)?;
+        let def = self.0.unit_def(id);
+        if !def.currency {
+            return None;
+        }
+        def.alts.first().map(String::as_str)
+    }
+
+    /// The date the rates are as of, as it was given to [`Registry::set_rates`].
+    pub fn rates_as_of(&self) -> String {
+        let rates = self.0.rates.read().unwrap_or_else(|e| e.into_inner());
+        rates.as_of.clone()
+    }
+
     /// The unit written as `text`, in the notation of cell text.
     pub fn parse_unit(&self, text: &str, scope: Scope) -> Result<Unit> {
         let terms = self.0.parse_terms(text, scope)?;
@@ -738,6 +867,7 @@ impl Registry {
                     .menu
                     .get()
                     .map_or(OTHER, |m| m.unit_groups[i].as_str()),
+                alts: &u.alts,
             })
     }
 

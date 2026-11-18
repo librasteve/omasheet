@@ -1,0 +1,64 @@
+# Money is a kind of quantity, `Currency`, with a base unit of its own: the US
+# dollar, `USD`, written `$`. Any ISO code is a unit, and so are the crypto
+# tickers (`BTC`, `ETH`): about 340 in all, from currency-api. A sign goes
+# before the amount, `€5.50`, or after it, `5€`; the codes go after, `5GBP`.
+# `$ € £ ¥ ￥ ₹ ₩ ฿ ₽ ₺ ₪ ₱ ₴ ₫ ₦` stand for USD, EUR, GBP, JPY (both yens),
+# INR, KRW, THB, RUB, TRY, ILS, PHP, UAH, VND and NGN; `A$ C$ HK$ NZ$ S$`
+# for AUD, CAD, HKD, NZD and SGD. `$-1` stays the term before in a sequence, so
+# a negative amount is `-$5`.
+#
+# A sum converts the right side to the unit of the left, as any quantity does,
+# by the rates in use: `omasheet rates` says what date they are as of, and
+# `omasheet rates update` fetches the latest. The rates that come with the
+# program are used until then, and this file is calculated with them.
+#
+# Money mixes with every other unit: a price a kilogram is `USD.kg^-1` and data
+# for the money is `GiB.USD^-1`. A conversion from one currency to another, with
+# `.to('EUR')` or a sum, is by the rates, so this file keeps to what they do not
+# change.
+
+sheet Literals
+
+| Name      | Value    |
+| --------- | -------- |
+| dollars   | $5       |
+| euros     | €5.50    |
+| pounds    | £100     |
+| yen       | ¥1_000   |
+| after     | 5€       |
+| code      | 5GBP     |
+| bitcoin   | 0.001BTC |
+| owed      | -$5      |
+| uncertain | £3.5(2)  |
+
+sheet Conversions
+
+| Name        | Value                    |
+| ----------- | ------------------------ |
+| sum         | = $5 + 3USD              |
+| same money  | = $5 == 5USD             |
+| per kilo    | = $12 / 2kg              |
+| data a buck | = 1GiB / $5              |
+
+# A column can be of the type `Currency`, a kind of Quantity as `Mass` is: the
+# unit in brackets is the one the column shows and holds, once, in its head, and
+# a cell in another currency is converted to it by the rates. A bare number is
+# read in that unit. Money is shown to the places it is spent in, two for the
+# dollar, the euro and the yen and more for a coin worth more, unless a number
+# format says otherwise. A `$` in the format shows each amount by its sign,
+# `€4.50`, and by its code where a currency has none, `3.00CHF`. This sheet
+# keeps each column to its own currency, so what it shows does not move with
+# the rates.
+sheet Prices
+
+Item    : String
+Dollars : Currency[USD]
+Euros   : Currency[EUR; $]
+Swiss   : Currency[CHF; $]
+Coin    : Currency[BTC]
+Yen     : Currency[JPY; $.0f]
+
+| Item | Dollars | Euros | Swiss   | Coin     | Yen   |
+| ---- | ------- | ----- | ------- | -------- | ----- |
+| tea  | $5      | €4.5  | 3CHF    | 0.001BTC | ¥480  |
+| mug  | 12.5    | -€2   | 7.25CHF | 0.25BTC  | 1_250 |

@@ -279,6 +279,21 @@ ApplicationWindow {
         selSummary = "";
         summaryTimer.restart();
     }
+    // The exchange rates change about once a day: fetched as the app starts,
+    // and again every few hours it is left open. A fetch that fails leaves
+    // the rates as they were.
+    // Only where the file has money in it: others have no use for them.
+    Timer {
+        interval: 4 * 60 * 60 * 1000
+        running: true
+        repeat: true
+        onTriggered: if (file.ratesNote.length > 0) file.updateRates()
+    }
+    Timer {
+        interval: 500
+        running: true
+        onTriggered: if (file.ratesNote.length > 0) file.updateRates()
+    }
     Timer {
         id: summaryTimer
         interval: 150
@@ -4986,6 +5001,15 @@ ApplicationWindow {
                     font.pixelSize: win.captionSize
                 }
 
+                // Where the file has money in it, the date its rates are as of;
+                // a click fetches the latest.
+                FooterButton {
+                    visible: file.ratesNote.length > 0
+                    implicitHeight: win.fontSize + 6
+                    label: file.ratesNote
+                    onClicked: file.updateRates()
+                }
+
                 FooterButton {
                     readonly property int count: file.notes.length > 0 ? file.notes.split("\n").length : 0
                     visible: count > 0
@@ -5813,7 +5837,7 @@ ApplicationWindow {
         // A box with its own help, from a button beside Apply: the prefixes.
         property bool helpable: false
         signal helpAsked()
-        // Buttons under the search box, one for each sector, `Metric`, `Non-Metric`, `All units` and `Currency`, for
+        // Buttons under the search box, one for each sector, `Metric`, `Non-Metric`, `All Units` and `Currency`, for
         // a list that has units of other systems in it: which to show.
         // The sector shown, `metric` (the default), `other` (non-metric),
         // `currency` or `all`; only the buttons change it, and a search is
@@ -5888,6 +5912,10 @@ ApplicationWindow {
             var all = provider(search.text.trim());
             var shown = all.filter(function(e) {
                 if (systems && sector !== "all" && e.sector !== sector)
+                    return false;
+                // Money is a sector of its own, its buttons; `All Units` is the
+                // units of measure, and a search that names a currency finds it.
+                if (systems && sector === "all" && e.sector === "currency" && want.length === 0 && !e.keep)
                     return false;
                 return want.length === 0 || e.keep
                     || e.label.toLowerCase().indexOf(want) >= 0
@@ -6296,7 +6324,7 @@ ApplicationWindow {
                 Item { Layout.fillWidth: true }
                 Repeater {
                     model: [{label: "Metric", sector: "metric"}, {label: "Non-Metric", sector: "other"},
-                        {label: "All units", sector: "all"}, {label: "Currency", sector: "currency"}]
+                        {label: "All Units", sector: "all"}, {label: "Currency", sector: "currency"}]
                     delegate: Rectangle {
                         required property var modelData
                         readonly property bool on: picker.sector === modelData.sector
@@ -6545,7 +6573,7 @@ ApplicationWindow {
                 ["Scientific", false], ["Complex", false]]],
             ["Text", [["String", false], ["Email", true], ["Url", true], ["Uuid", true]]],
             ["Dates and times", [["Datetime", false], ["Date", true], ["Time", true], ["Duration", true]]],
-            ["Other", [["Boolean", false], ["Quantity", false]]]
+            ["Other", [["Boolean", false], ["Quantity", false], ["Currency", false]]]
         ]
         provider: function(text) {
             var out = [];
@@ -6576,8 +6604,8 @@ ApplicationWindow {
             var spec = win.sharedSpec(true);
             var at = spec.indexOf("[");
             var type = at < 0 ? spec : spec.substring(0, at);
-            // `Duration` is a kind of quantity but has an entry of its own.
-            return type !== "Duration" && win.isQuantityType(type) ? "Quantity" : type;
+            // `Duration` and `Currency` are kinds of quantity with an entry of their own.
+            return type !== "Duration" && type !== "Currency" && win.isQuantityType(type) ? "Quantity" : type;
         }
         function show(c, item) {
             // A type the cells gave, `Duration`, where none is declared: the
@@ -6590,7 +6618,7 @@ ApplicationWindow {
             at = found.indexOf("(");
             if (at >= 0)
                 found = found.substring(0, at);
-            inferred = found !== "Duration" && win.isQuantityType(found) ? "Quantity" : found;
+            inferred = found !== "Duration" && found !== "Currency" && win.isQuantityType(found) ? "Quantity" : found;
             openFor(c, item, now(), ["Numbers", "Text", "Dates and times", "Other"]);
         }
     }
@@ -6716,7 +6744,18 @@ ApplicationWindow {
                     inferred = tickFor(seen.substring(i0 + 1, seen.length - 1));
                 else if (seen === "Duration")
                     inferred = "s";
+                // Money held in the dollar, the unit of its kind.
+                else if (seen === "Currency")
+                    inferred = "USD";
             }
+            // Opens on the sector of the unit the column has, or is inferred to
+            // have, as `Non-Metric` for `ft` and `Currency` for `EUR`, else
+            // for a column of money, the currency sector, else the metric one.
+            var wanted = at >= 0 ? spec.substring(at + 1, spec.length - 1) : inferred;
+            var found = provider("").filter(function(e) { return e.spec === wanted; });
+            var kind = at >= 0 ? spec.substring(0, at) : win.sharedSpec(false);
+            sector = found.length > 0 ? found[0].sector
+                : kind.split("[")[0] === "Currency" ? "currency" : "metric";
             openFor(c, item, at < 0 ? "" : spec.substring(at + 1, spec.length - 1), ["SI Base"]);
         }
     }

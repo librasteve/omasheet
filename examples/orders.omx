@@ -1,5 +1,6 @@
 # Two sheets: a lookup from one into the other, conditional sums, a
-# date-time cutoff, and a running total per customer.
+# date-time cutoff, and a running total per customer. The prices and what comes
+# of them are `Currency`, in dollars, each shown by its sign.
 
 sheet Customers
 
@@ -11,7 +12,11 @@ sheet Customers
 
 sheet Orders
 
-Placed : Datetime
+Placed   : Datetime
+Price    : Currency[USD; $.2f]
+Total    : Currency[USD; $.2f]
+Discount : Currency[USD; $.2f]
+ToDate   : Currency[USD; $.2f]
 
 | Placed           | CustomerID | Qty | Price | Customer | Region | Total | Discount | Rush | ToDate |
 | ---------------- | ---------- | --- | ----- | -------- | ------ | ----- | -------- | ---- | ------ |
@@ -23,15 +28,17 @@ Placed : Datetime
 Customer := Customers[; ID == CustomerID].Name // 'Unknown'
 Region   := Customers[; ID == CustomerID].Region // '?'
 Total    := Qty * Price
-Discount := if Total > 50 and Region in ['UK', 'US'] then Total * 10% else 0
+Discount := if Total > $50 and Region in ['UK', 'US'] then Total * 10% else $0
 Rush     := Placed < 2025-03-04T00:00
 
 # What each customer has spent so far: `*-1 by CustomerID` is the row
 # before among that customer's own orders, so the total runs on per
 # customer, and a customer's first order has none before it.
-ToDate   := Total + ([ToDate; *-1 by CustomerID] // 0)
+ToDate   := Total + ([ToDate; *-1 by CustomerID] // $0)
 
 sheet ByRegion
+
+Sales : Currency[USD; $.2f]
 
 | Region | Count | Sales |
 | ------ | ----- | ----- |

@@ -4,6 +4,9 @@
 # needs from the row, it is given.
 #
 # The comment above a function is what the function directory says about it.
+#
+# The prices and costs are `Currency`, in dollars: a function takes money as
+# it takes any value, and `revenue == $0` is a comparison with no dollars.
 
 const VatRate = 20%
 
@@ -11,7 +14,7 @@ const VatRate = 20%
 fn WithVat(price) = price * (1 + VatRate)
 
 # Profit as a share of revenue; nothing where there is no revenue.
-fn Margin(revenue, cost) = if revenue == 0 then 0 else (revenue - cost) / revenue
+fn Margin(revenue, cost) = if revenue == $0 then 0 else (revenue - cost) / revenue
 
 # A customer's name from their ID.
 fn CustomerName(id) = Customers[; ID == id].Name // 'Unknown'
@@ -30,6 +33,11 @@ sheet Customers
 | 2   | Grace Inc |
 
 sheet Orders
+
+Price : Currency[USD; $.2f]
+Cost  : Currency[USD; $.2f]
+Net   : Currency[USD; $.2f]
+Gross : Currency[USD; $.2f]
 
 | CustomerID | Qty | Price | Cost | Customer | Net | Gross | Margin |
 | ---------- | --- | ----- | ---- | -------- | --- | ----- | ------ |

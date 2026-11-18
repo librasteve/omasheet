@@ -70,3 +70,6 @@
 - {name: AngularSpeed,      dims: {Angle: 1, Time: -1},                unit: "rad.s^-1"}
 - {name: LuminousFlux,      dims: {LuminousIntensity: 1, Angle: 2},    unit: lm}
 - {name: Illuminance,       dims: {LuminousIntensity: 1, Angle: 2, Length: -2}, unit: lx}
+
+# Money: the US dollar, `$`, is the base unit; the rest are worth what the rates say.
+- {name: Currency, dims: {Currency: 1}, unit: USD}

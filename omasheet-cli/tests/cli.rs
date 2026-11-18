@@ -126,8 +126,8 @@ fn eval_against_a_file() {
     let expr = "Orders[Total; Region == 'US'].sum()";
     let flag = omasheet(&["eval", "--file", "examples/orders.omx", expr]);
     let positional = omasheet(&["eval", "examples/orders.omx", expr]);
-    assert_eq!(stdout(&flag), "74.47\n");
-    assert_eq!(stdout(&positional), "74.47\n");
+    assert_eq!(stdout(&flag), "74.47USD\n");
+    assert_eq!(stdout(&positional), "74.47USD\n");
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn eval_from_standard_input() {
         .write_all(b"Sales.Revenue.mean()\n")
         .unwrap();
     let out = child.wait_with_output().unwrap();
-    assert_eq!(stdout(&out), "11733.333·\n");
+    assert_eq!(stdout(&out), "11733.333USD·\n");
 }
 
 #[test]
@@ -260,7 +260,9 @@ fn path(dir: &std::path::Path, file: &str) -> String {
 fn export_writes_beside_the_file_and_leaves_it_alone() {
     let dir = scratch("export");
     let file = path(&dir, "budget.omx");
-    std::fs::copy(root().join("examples/budget.omx"), &file).unwrap();
+    // A budget of plain numbers: a workbook has no type for money, which it
+    // holds as text.
+    std::fs::copy(root().join("omasheet-cli/tests/fixtures/budget.omx"), &file).unwrap();
     let before = std::fs::read(&file).unwrap();
 
     let out = omasheet(&["export", &file, "--xlsx"]);
@@ -347,7 +349,9 @@ fn export_needs_a_format_and_a_file_that_compiles() {
 fn import_reads_what_export_wrote() {
     let dir = scratch("import");
     let file = path(&dir, "budget.omx");
-    std::fs::copy(root().join("examples/budget.omx"), &file).unwrap();
+    // A budget of plain numbers: a workbook has no type for money, which it
+    // holds as text.
+    std::fs::copy(root().join("omasheet-cli/tests/fixtures/budget.omx"), &file).unwrap();
     assert!(omasheet(&["export", &file, "--xlsx"]).status.success());
 
     let back = path(&dir, "back.omx");
@@ -607,9 +611,11 @@ fn render_writes_html() {
     assert_eq!(stdout(&out), "");
     let html = std::fs::read_to_string(&page).unwrap();
     assert!(html.contains("<title>First quarter</title>"), "{html}");
-    assert!(html.contains("Revenue for the quarter was 35200"), "{html}");
+    assert!(html.contains("Revenue for the quarter was $35200.00"), "{html}");
+    // Money keeps its format, in the text and in each row of a table: its sign,
+    // to two places.
     assert!(
-        html.contains("<td style=\"text-align: right\">5700</td>"),
+        html.contains("<td style=\"text-align: right\">$5700.00</td>"),
         "{html}"
     );
 }

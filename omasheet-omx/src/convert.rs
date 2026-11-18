@@ -157,6 +157,11 @@ pub fn parse_literal_with(text: &str, units: bool) -> Option<Lit> {
     })
 }
 
+/// The dimension of money: the dollar to the first power.
+fn money() -> siquant::Dim {
+    siquant::Dim::of(siquant::Base::Currency)
+}
+
 pub fn lit_type(l: &Lit) -> S {
     match l {
         Lit::Int(_, b) => b.ty(),
@@ -167,6 +172,11 @@ pub fn lit_type(l: &Lit) -> S {
         Lit::Float(_) => S::Float,
         Lit::Scientific(..) => S::Scientific,
         Lit::Complex(..) => S::Complex,
+        // Money has a type of its own, as a duration does; the rest are
+        // a `Quantity`, whatever their kind.
+        Lit::Quantity(_, _, unit) if unit.dims() == money() => {
+            QId::from_name("Currency").map_or(S::Quantity(QId::ANY), S::Quantity)
+        }
         Lit::Quantity(..) => S::Quantity(QId::ANY),
         Lit::String(_) => S::String,
         Lit::Boolean(_) => S::Boolean,

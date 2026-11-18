@@ -551,11 +551,61 @@ pub fn show_in(q: &Quantity, f: &omasheet_omx::colfmt::QuantityFormat, style: &S
         },
         None => (q.clone(), false),
     };
-    let number = f.number.unwrap_or_default();
+    let mut number = f.number.unwrap_or_default();
+    if let Some(code) = currency_code(&converted) {
+        // Money is shown to the places it is spent in, unless the format says.
+        if number.places.is_none()
+            && number.conv == omasheet_omx::colfmt::SciConv::General
+            && !number.plus_minus
+            && !number.value_only
+            && converted.sigma() == 0.0
+        {
+            number.conv = omasheet_omx::colfmt::SciConv::Fixed;
+            number.places = Some(money_places(&code));
+        }
+        if number.sign {
+            return render_money(&converted, &code, &number, style);
+        }
+    }
     // The unit is in the column's head where the column has one, unless a
     // value cannot be put in it, which keeps its own, so it is not mistaken.
     let head = fits && f.lifts(false);
     render(&converted, &number, style, false, !head)
+}
+
+/// The code of a quantity of money in one currency, `EUR`: not a price a
+/// kilogram, and not a quantity of anything else.
+fn currency_code(q: &Quantity) -> Option<String> {
+    let code = q.unit().to_string();
+    if code.contains(['.', '^']) {
+        return None;
+    }
+    Registry::builtin().rate(&code).map(|_| code)
+}
+
+/// How many places an amount of a currency is shown to by default: the
+/// least that shows a hundredth of a dollar's worth, so two for the dollar,
+/// the euro and the yen, and seven for a bitcoin; two at the least and eight
+/// at the most.
+fn money_places(code: &str) -> u32 {
+    let dollars = Registry::builtin().rate(code).map_or(1.0, |r| 1.0 / r);
+    (100.0 * dollars).log10().round().clamp(2.0, 8.0) as u32
+}
+
+/// An amount of money by its sign, `€4.55` and `-$5.00`, or by its code
+/// after the number where it has no sign, `4.55CHF`.
+fn render_money(q: &Quantity, code: &str, f: &SciFormat, style: &Style) -> String {
+    let mut number = crate::value::format_scientific(q.value(), q.sigma(), f, style);
+    if q.sigma() == 0.0 && !f.plus_minus {
+        number = number.replacen("(0)", "", 1);
+    }
+    match Registry::builtin().currency_sign(code) {
+        Some(sign) => match number.strip_prefix('-') {
+            Some(digits) => format!("-{sign}{digits}"),
+            None => format!("{sign}{number}"),
+        },
+        None => format!("{number}{code}"),
+    }
 }
 
 /// A quantity as it is shown: the number as a `Scientific` is, then the

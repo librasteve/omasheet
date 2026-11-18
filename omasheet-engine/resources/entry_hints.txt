@@ -31,5 +31,6 @@ Date          | Date: {date_pattern}, e.g. {date}{or_iso}
 Time          | Time: e.g. {time}
 Datetime      | Datetime: e.g. {datetime}{or_iso}
 Duration      | Duration: a period of time, e.g. P2DT1H30M (2d 1h 30m)
+Currency      | money, e.g. $5, €6, £7 or 8BTC
 Quantity      | Quantity: a value with a unit, e.g. 5kg or 9.81m.s^-2
 Quantity kind | {name}: a value with a unit, e.g. 5{unit} or 10.5(3){unit}

@@ -1,8 +1,11 @@
 # Calling a function on each group: `group_by(keys) |> apply(Fn)` calls Fn
 # once on the rows of each group and makes a row for each group (a value)
-# or for each row it gives back (a sheet), after the key columns.
+# or for each row it gives back (a sheet), after the key columns. The prices
+# are `Currency`, in dollars, so what the takings come to is money too.
 
 sheet Sales
+
+Price : Currency[USD; $.2f]
 
 | Region | Rep     | Units | Price |
 | ------ | ------- | ----- | ----- |

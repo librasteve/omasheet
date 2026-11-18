@@ -16,6 +16,8 @@
 # A cursor is the other way of reaching another row: `Sales[Revenue; *-1]`
 # is the row before this one, where a slice is a run of rows taken from one
 # end. `shift(n)` says the same over a whole column.
+#
+# The revenue is `Currency`, in dollars, so the totals and the growth are money.
 
 const Opening = Sales.Revenue |> head(3) |> sum()
 const Closing = Sales.Revenue |> tail(3) |> sum()
@@ -30,6 +32,9 @@ const BestOpening = Sales.Revenue |> head(3) |> max()
 const Months      = Sales.Revenue.len()
 
 sheet Sales
+
+Revenue : Currency[USD; $.2f]
+Growth  : Currency[USD; $.2f]
 
 Month | Revenue | Share | Growth
 Jan   | 100     | *     | *
@@ -53,7 +58,7 @@ Growth := Revenue - (Sales[Revenue; *-1] // Revenue)
 # an edit, as a table does not.
 sheet Best := Sales |> head(3)
 
-sheet Over := Sales |> filter(Revenue > 100) |> select(Month, Revenue)
+sheet Over := Sales |> filter(Revenue > $100) |> select(Month, Revenue)
 
 # And one calculated from a calculated sheet, which settles after it.
 sheet Opened := Best |> head(1)

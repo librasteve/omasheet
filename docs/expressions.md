@@ -275,6 +275,8 @@ Qi`, where `KiB` is 1024 B: `4GiB`, `100Mb`. A rate needs no unit of its own,
 `MiB.s^-1` or `kb.s^-1`. A binary prefix and a dot on its own is a scale, as
 `k.` is: `1Ki.` is 1024 and `1.5Mi.` is 1572864.
 
+Money is a kind of quantity too, `Currency`, of its own dimension `$`, with the US dollar `USD` for its unit. Every currency in [currency-api](https://latest.currency-api.pages.dev/v1/currencies/usd.json), about 340 of them with the crypto ones (`BTC`, `ETH`), is a unit by its code, `5GBP`, and the signs `$ € £ ¥ ￥ ₹ ₩ ฿ ₽ ₺ ₪ ₱ ₴ ₫ ₦` and `A$ C$ HK$ NZ$ S$` are a code each, written after the number, `5€`, or before it, `€5.50`. `$-1` is still the term before in a sequence, so a negative amount is `-$5`. A sum converts the right side to the unit of the left by the rates in use, and money mixes with the other units, `1GiB / $5` is `0.2GiB.USD^-1`. The rates change about once a day: the program has a snapshot of its own, a copy of the last fetch is kept in its cache directory, `omasheet rates` says what date they are as of and `omasheet rates update` fetches the latest; the app does so itself while a file with money in it is open, and says `rates 2026-11-18 (today)` in its status bar, `(cached)` or `(bundled)` for rates of an earlier day. A column `Price : Currency[EUR]` shows and holds euros, reads a bare number in them, and shows two places, or more for a unit worth more, unless the format gives places, `Currency[EUR; .4f]`; `$` in the format puts each amount down by its sign, `Currency[EUR; $]` is `€4.50`, and by its code where it has no sign, `3.00CHF`.
+
 ```
 5kg + 300g           5.3kg          the right side is converted to the left's unit
 300g + 5kg           5300g

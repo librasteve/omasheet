@@ -547,7 +547,11 @@ fn the_non_metric_units_have_their_values() {
     assert!(near(to(80.0, "gsm", "kg.m^-2"), 0.08));
     let metric = |s: &str| reg.units().find(|u| u.symbol == s).unwrap().metric;
     assert!(metric("gsm") && metric("mhp") && !metric("ft") && !metric("°F"));
-    assert!(reg.units().all(|u| !u.currency));
+    assert!(
+        reg.units()
+            .filter(|u| u.currency)
+            .all(|u| u.dims == Dim::of(Base::Currency))
+    );
 }
 
 #[test]
@@ -560,4 +564,99 @@ fn every_menu_entry_is_written_as_the_registry_writes_it() {
             assert_eq!(&u.to_string(), e, "`{e}` is written another way");
         }
     }
+}
+
+#[test]
+fn a_currency_is_a_dimension_of_its_own() {
+    use siquant::{Registry, Scope, Unit};
+    let reg = Registry::builtin();
+    // The dollar is the base, and its symbol is an alternate of `USD`.
+    let usd = Unit::parse("USD", Scope::Live).unwrap();
+    assert_eq!(Unit::parse("$", Scope::Live).unwrap(), usd);
+    assert_eq!(usd.to_string(), "USD");
+    for alt in ["€", "£", "¥", "￥", "A$", "NZ$"] {
+        assert!(Unit::parse(alt, Scope::Live).is_ok(), "{alt}");
+    }
+    assert_eq!(
+        Unit::parse("￥", Scope::Live).unwrap(),
+        Unit::parse("JPY", Scope::Live).unwrap()
+    );
+    // Money over data is its own dimension: `KiB/$`.
+    let per = Unit::parse("KiB.$^-1", Scope::Live).unwrap();
+    assert_eq!(
+        per.dims(),
+        Dim::NONE.with(Base::Data, 1).with(Base::Currency, -1)
+    );
+    // Every currency, crypto included, is in the registry and in the menu.
+    assert!(reg.units().filter(|u| u.currency).count() > 300);
+    for region in ["Europe", "Americas", "Africa", "Asia-Pacific", "Digital"] {
+        assert!(reg.groups().contains(&region), "{region}");
+    }
+    let sector = |code: &str| {
+        reg.units()
+            .find(|u| u.symbol == code)
+            .unwrap()
+            .group
+            .to_string()
+    };
+    assert_eq!(sector("EUR"), "Europe");
+    assert_eq!(sector("USD"), "Americas");
+    assert_eq!(sector("ZAR"), "Africa");
+    assert_eq!(sector("JPY"), "Asia-Pacific");
+    assert_eq!(sector("BTC"), "Digital");
+    assert_eq!(sector("XAU"), "Other");
+    for code in ["EUR", "BTC", "ETH", "XAU"] {
+        assert!(reg.rate(code).is_some(), "{code}");
+    }
+}
+
+#[test]
+fn a_unit_says_the_other_symbols_it_is_written_with() {
+    let reg = siquant::Registry::builtin();
+    let alts = |code: &str| {
+        reg.units()
+            .find(|u| u.symbol == code)
+            .unwrap()
+            .alts
+            .to_vec()
+    };
+    assert_eq!(alts("EUR"), ["€"]);
+    assert_eq!(alts("JPY"), ["¥", "￥"]);
+    assert!(alts("m").is_empty());
+}
+
+#[test]
+fn a_currency_has_a_sign_to_show_it_by() {
+    let reg = siquant::Registry::builtin();
+    assert_eq!(reg.currency_sign("USD"), Some("$"));
+    assert_eq!(reg.currency_sign("EUR"), Some("€"));
+    assert_eq!(reg.currency_sign("AUD"), Some("A$"));
+    // No sign, or no currency.
+    assert_eq!(reg.currency_sign("CHF"), None);
+    assert_eq!(reg.currency_sign("kg"), None);
+}
+
+#[test]
+fn rates_set_what_a_currency_is_worth() {
+    use siquant::{Quantity, Registry, Scope, Unit};
+    let reg = Registry::builtin();
+    reg.set_rates(
+        "2030-01-01",
+        [("eur", 0.8), ("GBP", 0.5), ("nonsense", 2.0), ("usd", 9.0)],
+    );
+    assert_eq!(reg.rates_as_of(), "2030-01-01");
+    // The dollar is the base: it is always one, and no rate moves it.
+    assert_eq!(reg.rate("USD"), Some(1.0));
+    assert_eq!(reg.rate("EUR"), Some(0.8));
+    let eur = Unit::parse("EUR", Scope::Live).unwrap();
+    let gbp = Unit::parse("GBP", Scope::Live).unwrap();
+    // 0.8 EUR make a dollar and 0.5 GBP make one, so 1 GBP is 1.6 EUR.
+    let q = Quantity::new(1.0, 0.0, gbp).unwrap().convert(&eur).unwrap();
+    assert!((q.value() - 1.6).abs() < 1e-12, "{}", q.value());
+    // A bad rate is left out.
+    assert_eq!(
+        reg.set_rates("x", [("EUR", -1.0), ("EUR", f64::NAN), ("EUR", 0.0)]),
+        0
+    );
+    assert_eq!(reg.rates_as_of(), "2030-01-01");
 }

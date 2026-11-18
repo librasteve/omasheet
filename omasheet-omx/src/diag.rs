@@ -78,7 +78,10 @@ impl Sources {
     /// 1-based line and column of a byte offset.
     pub fn line_col(&self, src: u32, offset: u32) -> (usize, usize) {
         let text = self.text(src);
-        let offset = (offset as usize).min(text.len());
+        let mut offset = (offset as usize).min(text.len());
+        while !text.is_char_boundary(offset) {
+            offset -= 1;
+        }
         let before = &text[..offset];
         let line = before.matches('\n').count() + 1;
         let line_start = before.rfind('\n').map_or(0, |i| i + 1);
@@ -89,8 +92,18 @@ impl Sources {
     /// the faulty span.
     pub fn render(&self, d: &Diagnostic) -> String {
         let text = self.text(d.span.src);
-        let start = (d.span.start as usize).min(text.len());
-        let end = (d.span.end as usize).clamp(start, text.len());
+        // A span is bytes, and one worked out in characters can land inside a
+        // character: it is moved back to the start of it, so that a mistake
+        // beside a `£` is reported and does not stop the program.
+        let boundary = |at: usize| {
+            let mut at = at.min(text.len());
+            while !text.is_char_boundary(at) {
+                at -= 1;
+            }
+            at
+        };
+        let start = boundary(d.span.start as usize);
+        let end = boundary(d.span.end as usize).max(start);
         let (line, col) = self.line_col(d.span.src, start as u32);
         let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
         let line_end = text[start..].find('\n').map_or(text.len(), |i| start + i);

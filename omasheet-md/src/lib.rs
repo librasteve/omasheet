@@ -13,7 +13,7 @@
 
 use omasheet_engine::omx::colfmt::Format as ColFormat;
 use omasheet_engine::omx::file::{is_zone_name, parse_file};
-use omasheet_engine::omx::ir::{ColSel, Ir, Node};
+use omasheet_engine::omx::ir::{ColSel, Func, Ir, Node};
 use omasheet_engine::omx::{Diagnostic, Sources, Span, compile, compile_expr};
 use omasheet_engine::value::View;
 use omasheet_engine::{Engine, Options, Outcome, Value, base_of, table};
@@ -379,6 +379,19 @@ fn column_read(node: &Node) -> Option<(usize, usize)> {
     }
 }
 
+/// The column a total, mean, extreme or end of a column is of, `Sales.Revenue.sum()`:
+/// a measure of the same kind as the column, so that where the column's
+/// format is a quantity's, money in dollars, it is shown by it.
+fn aggregate_of(node: &Node) -> Option<(usize, usize)> {
+    match &node.kind {
+        Ir::Call(
+            Func::Sum | Func::Mean | Func::Min | Func::Max | Func::Median | Func::First | Func::Last,
+            args,
+        ) if args.len() == 1 => column_read(&args[0]),
+        _ => None,
+    }
+}
+
 /// Rows and columns of a sheet as a Markdown table, numbers to the right.
 fn sheet(
     engine: &Engine,
@@ -644,9 +657,24 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
             }
         };
         // What reads one column, or a cell of it, shows by its format.
+        let format_of = |(t, c): (usize, usize)| {
+            program
+                .sheets
+                .get(t)?
+                .cols
+                .get(c)?
+                .shown_format()
+                .map(std::borrow::Cow::into_owned)
+        };
         let shown_by = column_read(&node)
-            .and_then(|(t, c)| program.sheets.get(t)?.cols.get(c)?.shown_format())
-            .map(std::borrow::Cow::into_owned)
+            .and_then(format_of)
+            // A total of a column of quantities is a quantity of its unit, which
+            // a total of numbers has no such format to say.
+            .or_else(|| {
+                aggregate_of(&node)
+                    .and_then(format_of)
+                    .filter(|f| matches!(f, ColFormat::Quantity(_)))
+            })
             // A value in a sentence has no column head to give its unit.
             .map(|f| match f {
                 ColFormat::Quantity(mut q) => {

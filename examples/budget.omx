@@ -1,12 +1,19 @@
 # A monthly budget: computed columns, a constant, and one-off formula cells.
+# The money is of the type `Currency`, here in dollars: `Currency[USD; $.2f]`
+# holds its cells in the one unit, shows each by its sign, to two
+# places, and a cell in another currency would be converted to it.
 
 const TaxRate = 20%
 
 sheet Sales
 
-Closed : Datetime
-Margin : Percent
-Growth : Percent
+Closed  : Datetime
+Revenue : Currency[USD; $.2f]
+Cost    : Currency[USD; $.2f]
+Profit  : Currency[USD; $.2f]
+Tax     : Currency[USD; $.2f]
+Margin  : Percent
+Growth  : Percent
 
 | Month | Closed           | Revenue                     | Cost | Profit | Tax | Margin | Growth |
 | ----- | ---------------- | --------------------------- | ---- | ------ | --- | ------ | ------ |
@@ -16,8 +23,8 @@ Growth : Percent
 
 Profit := Revenue - Cost
 Tax    := Profit * TaxRate
-Margin := Profit / Revenue
-Growth := Revenue / Sales[Revenue; *-1] - 1
+Margin := (Profit / Revenue).Percent
+Growth := (Revenue / Sales[Revenue; *-1] - 1).Percent
 
 sheet Summary
 
@@ -33,6 +40,8 @@ sheet Summary
 # sales yet, and Mar has no goal.
 
 sheet Goals
+
+Target : Currency[USD; $.2f]
 
 | Month | Target | Owner |
 | ----- | ------ | ----- |

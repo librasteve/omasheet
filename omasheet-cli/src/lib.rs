@@ -111,6 +111,17 @@ enum Command {
         #[command(flatten)]
         env: Env,
     },
+    /// Show the exchange rates in use, or fetch the latest
+    ///
+    /// `omasheet rates` says what date they are as of and where they came
+    /// from; `omasheet rates update` fetches the latest from currency-api and
+    /// keeps a copy for when there is no network. A file is never calculated
+    /// on a fetch it did not ask for.
+    Rates {
+        /// `update` to fetch the latest rates
+        #[arg(value_parser = ["update"])]
+        action: Option<String>,
+    },
     /// Check a file without evaluating it
     Lint {
         /// The file to check
@@ -384,6 +395,20 @@ fn finish(outcome: Outcome) -> ExitCode {
 
 fn run(cli: Cli, open: impl FnOnce(Option<&Path>) -> ExitCode) -> Result<ExitCode, ExitCode> {
     match cli.command {
+        Some(Command::Rates { action }) => {
+            if action.is_some() {
+                match omasheet_engine::rates::update() {
+                    Ok(status) => println!("{}", status.describe()),
+                    Err(e) => {
+                        eprintln!("error: no rates fetched: {e}");
+                        return Err(ExitCode::FAILURE);
+                    }
+                }
+            } else {
+                println!("{}", omasheet_engine::rates::status().describe());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Some(Command::Lint { file }) => {
             let text = read(&file)?;
             Ok(finish(omasheet_engine::lint(
@@ -512,6 +537,8 @@ pub fn main(open: impl FnOnce(Option<&Path>) -> ExitCode) -> ExitCode {
         return ExitCode::from(code as u8);
     }
     omasheet_engine::table::copy_in_children();
+    // The rates kept from the last fetch, if later than the bundled ones.
+    omasheet_engine::rates::load_cache();
     match run(Cli::parse(), open) {
         Ok(code) | Err(code) => code,
     }

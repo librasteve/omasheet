@@ -4091,8 +4091,10 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // numbers, which Polars runs down the column, and a percentage in a
     // formula adds two (widen-polars-lowering D-W3), and an uncertain
     // operation five more (D-W5) and a quantity operation three (D-W4),
-    // and `units.omx`'s four columns of durations shown four ways.
-    assert_eq!(taken, 89, "the columns taken at once");
+    // and `units.omx`'s four columns of durations shown four ways. The money
+    // of the budget, the ledger, the orders and the rest is `Currency`, a
+    // quantity, which is worked out a cell at a time: two fewer.
+    assert_eq!(taken, 87, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read

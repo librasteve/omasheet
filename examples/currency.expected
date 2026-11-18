@@ -1,0 +1,29 @@
+sheet Literals
+
+Name      | Value
+----------|------------
+dollars   | 5USD
+euros     | 5.5EUR
+pounds    | 100GBP
+yen       | 1000JPY
+after     | 5EUR
+code      | 5GBP
+bitcoin   | 0.001BTC
+owed      | -5USD
+uncertain | 3.50(20)GBP
+
+sheet Conversions
+
+Name        | Value
+------------|--------------
+sum         | 8USD
+same money  | true
+per kilo    | 6USD.kg^-1
+data a buck | 0.2GiB.USD^-1
+
+sheet Prices
+
+Item | Dollars [USD] | Euros  | Swiss   | Coin [BTC] | Yen
+-----|---------------|--------|---------|------------|------
+tea  | 5.00          | €4.50  | 3.00CHF | 0.0010000  | ¥480
+mug  | 12.50         | -€2.00 | 7.25CHF | 0.2500000  | ¥1250

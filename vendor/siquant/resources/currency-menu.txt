@@ -1,0 +1,350 @@
+
+== Americas
+USD | US Dollar
+CAD | Canadian Dollar
+ANG | Dutch Guilder
+ARS | Argentine Peso
+AWG | Aruban or Dutch Guilder
+BBD | Barbadian or Bajan Dollar
+BMD | Bermudian Dollar
+BOB | Bolivian Bolíviano
+BRL | Brazilian Real
+BSD | Bahamian Dollar
+BZD | Belizean Dollar
+CLP | Chilean Peso
+COP | Colombian Peso
+CRC | Costa Rican Colon
+CUC | Cuban Convertible Peso
+CUP | Cuban Peso
+DOP | Dominican Peso
+FKP | Falkland Island Pound
+GTQ | Guatemalan Quetzal
+GYD | Guyanese Dollar
+HNL | Honduran Lempira
+HTG | Haitian Gourde
+JMD | Jamaican Dollar
+KYD | Caymanian Dollar
+MXN | Mexican Peso
+MXV | MXV
+NIO | Nicaraguan Cordoba
+PAB | Panamanian Balboa
+PEN | Peruvian Sol
+PYG | Paraguayan Guarani
+SRD | Surinamese Dollar
+SRG | Surinamese Guilder
+SVC | Salvadoran Colon
+TTD | Trinidadian Dollar
+UYU | Uruguayan Peso
+VEB | Venezuelan Bolívar
+VED | VED
+VEF | Venezuelan Bolívar
+VES | Venezuelan Bolívar
+XCD | East Caribbean Dollar
+XCG | Xchange
+
+== Europe
+EUR | Euro
+GBP | British Pound
+CHF | Swiss Franc
+ALL | Albanian Lek
+ATS | Austrian Schilling
+BAM | Bosnian Convertible Mark
+BEF | Belgian Franc
+BGN | Bulgarian Lev
+BYN | Belarusian Ruble
+BYR | Belarusian Ruble
+CYP | Cypriot Pound
+CZK | Czech Koruna
+DEM | German Deutsche Mark
+DKK | Danish Krone
+EEK | Estonian Kroon
+ESP | Spanish Peseta
+FIM | Finnish Markka
+FRF | French Franc
+GGP | Guernsey Pound
+GIP | Gibraltar Pound
+GRD | Greek Drachma
+HRK | Croatian Kuna
+HUF | Hungarian Forint
+IEP | Irish Pound
+IMP | Isle of Man Pound
+ISK | Icelandic Krona
+ITL | Italian Lira
+JEP | Jersey Pound
+LTL | Lithuanian Litas
+LUF | Luxembourg Franc
+LVL | Latvian Lat
+MDL | Moldovan Leu
+MKD | Macedonian Denar
+MTL | Maltese Lira
+NLG | Dutch Guilder
+NOK | Norwegian Krone
+PLN | Polish Zloty
+PTE | Portuguese Escudo
+ROL | Romanian Leu
+RON | Romanian Leu
+RSD | Serbian Dinar
+RUB | Russian Ruble
+SEK | Swedish Krona
+SIT | Slovenian Tolar
+SKK | Slovak Koruna
+SPL | Seborgan Luigino
+TRL | TRL
+TRY | Turkish Lira
+UAH | Ukrainian Hryvnia
+VAL | Vatican City Lira
+
+== Africa
+AOA | Angolan Kwanza
+BIF | Burundian Franc
+BWP | Botswana Pula
+CDF | Congolese Franc
+CVE | Cape Verdean Escudo
+DJF | Djiboutian Franc
+DZD | Algerian Dinar
+EGP | Egyptian Pound
+ERN | Eritrean Nakfa
+ETB | Ethiopian Birr
+GHC | Ghanaian Cedi
+GHS | Ghanaian Cedi
+GMD | Gambian Dalasi
+GNF | Guinean Franc
+KES | Kenyan Shilling
+KMF | Comorian Franc
+LRD | Liberian Dollar
+LSL | Basotho Loti
+LYD | Libyan Dinar
+MAD | Moroccan Dirham
+MGA | Malagasy Ariary
+MGF | Malagasy Franc
+MRO | Mauritanian Ouguiya
+MRU | Mauritanian Ouguiya
+MUR | Mauritian Rupee
+MWK | Malawian Kwacha
+MZM | Mozambican Metical
+MZN | Mozambican Metical
+NAD | Namibian Dollar
+NGN | Nigerian Naira
+RWF | Rwandan Franc
+SCR | Seychellois Rupee
+SDD | Sudanese Dinar
+SDG | Sudanese Pound
+SLE | Sierra Leonean Leone
+SLL | Sierra Leonean Leone
+SOS | Somali Shilling
+SSP | South Sudanese Pound
+STD | Sao Tomean Dobra
+STN | Sao Tomean Dobra
+SZL | Swazi Lilangeni
+TND | Tunisian Dinar
+TZS | Tanzanian Shilling
+UGX | Ugandan Shilling
+XAF | Central African CFA Franc BEAC
+XOF | CFA Franc
+ZAR | South African Rand
+ZMK | Zambian Kwacha
+ZMW | Zambian Kwacha
+ZWD | Zimbabwean Dollar
+ZWG | ZWG
+ZWL | Zimbabwean Dollar
+
+== Asia-Pacific
+JPY | Japanese Yen
+AUD | Australian Dollar
+CNY | Chinese Yuan Renminbi
+INR | Indian Rupee
+AED | Emirati Dirham
+AFN | Afghan Afghani
+AMD | Armenian Dram
+AZM | Azerbaijani Manat
+AZN | Azerbaijan Manat
+BDT | Bangladeshi Taka
+BHD | Bahraini Dinar
+BND | Bruneian Dollar
+BTN | Bhutanese Ngultrum
+CNH | Chinese Yuan Renminbi Offshore
+FJD | Fijian Dollar
+GEL | Georgian Lari
+HKD | Hong Kong Dollar
+IDR | Indonesian Rupiah
+ILS | Israeli Shekel
+IQD | Iraqi Dinar
+IRR | Iranian Rial
+JOD | Jordanian Dinar
+KGS | Kyrgyzstani Som
+KHR | Cambodian Riel
+KPW | North Korean Won
+KRW | South Korean Won
+KWD | Kuwaiti Dinar
+KZT | Kazakhstani Tenge
+LAK | Lao Kip
+LBP | Lebanese Pound
+LKR | Sri Lankan Rupee
+MMK | Burmese Kyat
+MNT | Mongolian Tughrik
+MOP | Macau Pataca
+MVR | Maldivian Rufiyaa
+MYR | Malaysian Ringgit
+NPR | Nepalese Rupee
+NZD | New Zealand Dollar
+OMR | Omani Rial
+PGK | Papua New Guinean Kina
+PHP | Philippine Peso
+PKR | Pakistani Rupee
+QAR | Qatari Riyal
+SAR | Saudi Arabian Riyal
+SBD | Solomon Islander Dollar
+SGD | Singapore Dollar
+SYP | Syrian Pound
+THB | Thai Baht
+TJS | Tajikistani Somoni
+TMM | Turkmenistani Manat
+TMT | Turkmenistani Manat
+TOP | Tongan Pa'anga
+TVD | Tuvaluan Dollar
+TWD | Taiwan New Dollar
+UZS | Uzbekistani Som
+VND | Vietnamese Dong
+VUV | Ni-Vanuatu Vatu
+WST | Samoan Tala
+XPF | CFP Franc
+YER | Yemeni Rial
+
+== Digital
+BTC | Bitcoin
+ETH | Ethereum
+AAVE | Aave
+ADA | Cardano
+AKT | Akash Network
+ALGO | Algorand
+AMP | Amp
+APE | ApeCoin
+APT | Aptos
+AR | Arweave
+ARB | Arbitrum
+ATOM | Cosmos
+AVAX | Avalanche
+AXS | Axie Infinity
+BAKE | BakeryToken
+BAT | Basic Attention Token
+BCH | Bitcoin Cash
+BNB | Binance Coin
+BSV | Bitcoin SV
+BSW | Biswap
+BTCB | Bitcoin BEP2
+BTG | Bitcoin Gold
+BTT | BitTorrent
+BUSD | Binance USD
+CAKE | PancakeSwap
+CELO | Celo
+CFX | Conflux
+CHZ | Chiliz
+COMP | Compound
+CRO | Crypto.com Chain
+CRV | Curve DAO Token
+CSPR | Casper
+CVX | Convex Finance
+DAI | DAI
+DASH | Digital Cash
+DCR | Decred
+DFI | DfiStarter
+DOGE | Dogecoin
+DOT | Polkadot
+DYDX | dYdX
+EGLD | Elrond
+ENJ | Enjin Coin
+EOS | EOS
+ETC | Ethereum Classic
+EURC | EURC
+FEI | Fei USD
+FIL | Filecoin
+FLOW | Flow
+FLR | FLARE
+FRAX | Frax
+FTT | FarmaTrust
+GALA | Gala
+GMX | Goldmaxcoin
+GNO | Gnosis
+GRT | The Graph
+GUSD | Gemini US Dollar
+HBAR | Hedera
+HNT | Helium
+HOT | Hydro Protocol
+HT | Huobi Token
+ICP | Internet Computer
+IMX | Immutable X
+INJ | Injective
+KAS | KAS
+KAVA | Kava
+KCS | Kucoin
+KDA | Kadena
+KLAY | Klaytn
+KNC | Kyber Network Crystals
+KSM | Kusama
+LDO | Lido DAO Token
+LEO | LEOcoin
+LINK | Chainlink
+LRC | Loopring
+LTC | Litecoin
+LUNA | Terra
+LUNC | LUNC
+MANA | Mana Coin Decentraland
+MBX | MobieCoin
+MINA | Mina
+MKR | Maker
+NEAR | NEAR Protocol
+NEO | NEO
+NEXO | NEXO
+NFT | NFT
+OKB | Okex
+ONE | Menlo One
+OP | Optimism
+ORDI | ORDI
+PAXG | PAX Gold
+PEPE | PEPE
+PI | Plian
+POL | Proof Of Liquidity
+QNT | Quant
+QTUM | QTUM
+RPL | Rocket Pool
+RUNE | THORChain (ERC20)
+RVN | Ravencoin
+SAND | The Sandbox
+SHIB | Shiba Inu
+SHP | Saint Helenian Pound
+SNX | Synthetix Network
+SOL | Solana
+STX | Stacks
+SUI | Sui
+THETA | Theta
+TRX | TRON
+TUSD | True USD
+TWT | Trust Wallet Token
+UNI | Uniswap
+USDC | USDC
+USDD | USDD
+USDP | USDP Stablecoin
+USDT | Tether
+VET | Vechain
+WAVES | Waves
+WEMIX | WEMIX
+WOO | WOO Network
+XAUT | Tether Gold
+XBT | XBT
+XCH | Chia
+XDC | XDC Network
+XEC | Eternal Coin
+XEM | NEM
+XLM | Stellar Lumen
+XMR | Monero
+XRP | Ripple
+XTZ | Tezos
+ZEC | ZCash
+ZIL | Zilliqa
+
+== Other
+XAG | Silver Ounce
+XAU | Gold Ounce
+XDR | IMF Special Drawing Rights
+XPD | Palladium Ounce
+XPT | Platinum Ounce

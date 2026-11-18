@@ -203,10 +203,22 @@ impl QuantityFormat {
                 })?)
             }
         };
+        // A sign is for money: the kind `Currency`, or a `Quantity` of any.
+        if let Some(n) = number
+            && n.sign
+            && id.named().is_some_and(|t| t.name() != "Currency")
+        {
+            let start = unit_part.chars().count() + 1;
+            return Err(error(
+                start,
+                number_part.map_or(1, |s| s.chars().count()).max(1),
+                "`$` is for a currency".to_string(),
+            ));
+        }
         // A named kind with no unit is shown in its preferred unit.
         let lifts = unit.is_some() || id.named().is_some();
         if let Some(n) = number {
-            if n.unit_down && !lifts {
+            if n.unit_down && !n.sign && !lifts {
                 return Err(error(
                     0,
                     unit_part.chars().count().max(1),
@@ -269,6 +281,11 @@ pub struct SciFormat {
     /// `v`: a quantity's unit shown down in each row, `10.5g`, rather than
     /// once in the column's head. Only a quantity format takes it.
     pub unit_down: bool,
+    /// `$`: money shown with its sign before the number in each row, `€4.55`,
+    /// and its code after where it has no sign, `4.55CHF`, rather than once
+    /// in the column's head. It puts the unit down, as `v` does, and a
+    /// currency format takes it.
+    pub sign: bool,
     /// `-`: on the left of its width, rather than the right.
     pub left: bool,
     /// `+`: a sign on every number, `+` on one that is not negative.
@@ -337,6 +354,10 @@ impl SciFormat {
         }
         if quantity && chars.get(i) == Some(&'v') {
             f.unit_down = true;
+            i += 1;
+        } else if quantity && chars.get(i) == Some(&'$') {
+            f.unit_down = true;
+            f.sign = true;
             i += 1;
         }
         if chars.get(i) == Some(&'_') {
@@ -451,7 +472,9 @@ impl fmt::Display for SciFormat {
         if self.value_only {
             f.write_str("~")?;
         }
-        if self.unit_down {
+        if self.sign {
+            f.write_str("$")?;
+        } else if self.unit_down {
             f.write_str("v")?;
         }
         if self.gap {
@@ -808,5 +831,25 @@ mod tests {
         // A number format's error is placed after the unit and the `;`.
         let e = Format::parse("g; x", ty).unwrap_err();
         assert_eq!(e.at, 3, "{e:?}");
+    }
+
+    #[test]
+    fn a_dollar_sign_shows_money_by_its_sign() {
+        let money = QId::from_name("Currency").unwrap();
+        let f = QuantityFormat::parse("EUR; $", money).unwrap();
+        assert!(f.number.unwrap().sign);
+        // The sign is in each row, so the head holds no unit.
+        assert!(!f.lifts(true));
+        assert_eq!(f.to_string(), "EUR; $");
+        assert_eq!(
+            QuantityFormat::parse("USD; $'.2f", money).unwrap().to_string(),
+            "USD; $'.2f"
+        );
+        // With no unit, each value by its own sign.
+        assert!(QuantityFormat::parse("; $", QId::ANY).is_ok());
+        // Only money has one.
+        let mass = QId::from_name("Mass").unwrap();
+        let e = QuantityFormat::parse("g; $", mass).unwrap_err();
+        assert!(e.message.contains("currency"), "{}", e.message);
     }
 }

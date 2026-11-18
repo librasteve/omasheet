@@ -11,6 +11,7 @@ pub mod eval;
 pub mod locale;
 pub mod numfmt;
 pub mod quantity;
+pub mod rates;
 pub mod value;
 pub mod window;
 pub mod zone;

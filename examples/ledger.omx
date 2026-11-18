@@ -1,10 +1,16 @@
 # A running balance: each row reads the row before it. A memo is text
 # written bare, so it may hold Markdown; in quotes it would be as it is.
+# The money is `Currency`, in pounds: a bare number is read in the column's
+# currency, `£0` is the nought a first row starts from, and the `$` of the
+# format shows each amount by the sign of its own currency, here `£`.
 
 sheet Ledger
 
-When : Datetime
-Memo : String
+When    : Datetime
+Memo    : String
+Amount  : Currency[GBP; $.2f]
+Balance : Currency[GBP; $.2f]
+Average : Currency[GBP; $.2f]
 
 | When                | Memo                                            | Amount | Balance | Average |
 | ------------------- | ----------------------------------------------- | ------ | ------- | ------- |
@@ -14,5 +20,5 @@ Memo : String
 | 2025-01-28T00:05    | Salary, _less tax_                              | 3100   | *       | *       |
 | 2025-02-02T13:30    | Electricity, meter `E-4471`                     | -64.15 | *       | *       |
 
-Balance := (Ledger[Balance; *-1] // 0) + Amount
+Balance := (Ledger[Balance; *-1] // £0) + Amount
 Average := Ledger[Amount; 0..*].mean()

@@ -25,9 +25,13 @@ A document can hold files of its own. This block is a file like any other,
 and it reads the one named at the top:
 
 ```omx
-const Target = 4500
+const Target = $4500
 
 sheet Targets
+
+Goal   : Currency[USD; $.2f]
+Profit : Currency[USD; $.2f]
+Over   : Currency[USD; $.2f]
 
 | Month | Goal | Profit | Over | Met | Note                                     |
 | ----- | ---- | ------ | ---- | --- | ---------------------------------------- |
@@ -37,7 +41,7 @@ sheet Targets
 
 Profit := Sales[Profit; *]
 Over   := Profit - Goal
-Met    := Over >= 0
+Met    := Over >= $0
 ```
 
 {{ Targets[; Met].Month.count() }} of {{ Targets.Month.count() }} months met

@@ -37,6 +37,9 @@ pub mod qobject {
         #[qproperty(i32, revision)]
         #[qproperty(QString, status)]
         #[qproperty(QString, notes)]
+        /// What the exchange rates are as of, where the file has money in it:
+        /// `rates 2026-11-18 (live)`; empty where it has none.
+        #[qproperty(QString, rates_note)]
         #[qproperty(bool, can_undo)]
         #[qproperty(bool, can_redo)]
         #[qproperty(bool, dark_mode)]
@@ -404,6 +407,11 @@ pub mod qobject {
         /// Take back the step `set_filters` just made, as its filter failed.
         #[qinvokable]
         fn retract_filters(self: Pin<&mut File>);
+        /// Fetch the latest exchange rates on a worker, and calculate the
+        /// file again with them when they come. Nothing happens if a fetch
+        /// is already under way.
+        #[qinvokable]
+        fn update_rates(self: Pin<&mut File>);
         #[qinvokable]
         fn reload_theme(self: Pin<&mut File>);
         /// Take the theme from now on: Omarchy's as it changes, and without
@@ -533,6 +541,10 @@ pub struct FileRust {
     status: QString,
     /// What the last import or export changed or left behind, a line each.
     notes: QString,
+    rates_note: QString,
+    /// Is a fetch of the rates under way, and did the last one fail?
+    rates_updating: std::cell::Cell<bool>,
+    rates_failed: bool,
     can_undo: bool,
     can_redo: bool,
     dark_mode: bool,
@@ -591,6 +603,9 @@ impl Default for FileRust {
             revision: 0,
             status: QString::default(),
             notes: QString::default(),
+            rates_note: QString::default(),
+            rates_updating: std::cell::Cell::new(false),
+            rates_failed: false,
             export_warning: QString::default(),
             can_undo: false,
             can_redo: false,
@@ -686,6 +701,7 @@ impl qobject::File {
             status
         };
         self.as_mut().set_status(QString::from(status));
+        self.as_mut().show_rates();
         let next = self.rust().revision.wrapping_add(1);
         self.as_mut().set_revision(next);
     }
@@ -2022,6 +2038,44 @@ impl qobject::File {
         }
     }
 
+    /// Says what the rates are as of, if the file has money in it.
+    fn show_rates(mut self: Pin<&mut Self>) {
+        let note = if omasheet_engine::rates::mentions(self.rust().doc.text()) {
+            let mut note = omasheet_engine::rates::status().short();
+            if self.rust().rates_failed {
+                note += ", not updated";
+            }
+            note
+        } else {
+            String::new()
+        };
+        if self.rates_note().to_string() != note {
+            self.as_mut().set_rates_note(QString::from(&note));
+        }
+    }
+
+    fn update_rates(self: Pin<&mut Self>) {
+        if self.rust().rates_updating.replace(true) {
+            return;
+        }
+        let thread = self.qt_thread();
+        std::thread::spawn(move || {
+            let fetched = omasheet_engine::rates::update();
+            let _ = thread.queue(move |mut file| {
+                file.rust().rates_updating.set(false);
+                // Only a fetch that came changes what is shown: the sums are
+                // by the new rates, so the file is calculated again.
+                file.as_mut().rust_mut().rates_failed = fetched.is_err();
+                if fetched.is_ok() && omasheet_engine::rates::mentions(file.rust().doc.text()) {
+                    file.as_mut().rust_mut().doc.recalculate();
+                    file.as_mut().refresh("");
+                } else {
+                    file.as_mut().show_rates();
+                }
+            });
+        });
+    }
+
     fn reload_theme(mut self: Pin<&mut Self>) {
         let theme = theme::load(self.system_dark);
         self.as_mut().set_dark_mode(theme.dark);
@@ -2180,10 +2234,17 @@ fn unit_lines() -> String {
                 .or_else(|| kind.clone())
                 .unwrap_or_else(|| symbol.clone());
             let name = name.replace("degree ", "");
-            let hint = match kind {
+            let mut hint = match kind {
                 Some(k) if k != name => format!("{k} ({name})"),
                 _ => name,
             };
+            // The other symbols it is written with, `€` for `EUR`, are in the
+            // description too, so that a search for the sign finds the unit.
+            if let Some(row) = reg.units().find(|r| r.symbol == symbol)
+                && !row.alts.is_empty()
+            {
+                hint = format!("{hint} {}", row.alts.join(" "));
+            }
             // The sector of the unit, for the buttons of the picker: metric
             // (nothing), `other` for a non-metric one, or `currency`.
             // A prefixed one, `kft`, goes with the unit it is a prefix of, and a
@@ -2245,6 +2306,17 @@ mod unit_order_tests {
                 })
             })
             .collect()
+    }
+
+    #[test]
+    fn a_unit_describes_the_symbols_it_is_also_written_with() {
+        let hint = |g: &str, s: &str| group(g).into_iter().find(|(u, _)| u == s).unwrap().1;
+        assert!(hint("Europe", "EUR").contains('€'), "{}", hint("Europe", "EUR"));
+        assert!(hint("Americas", "USD").contains('$'));
+        assert!(hint("Asia-Pacific", "JPY").contains('¥'));
+        assert!(hint("Asia-Pacific", "JPY").contains('￥'));
+        // Not for a unit with only the one symbol.
+        assert!(!hint("SI Base", "m").contains("  "));
     }
 
     #[test]

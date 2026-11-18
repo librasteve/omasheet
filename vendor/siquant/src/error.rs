@@ -34,6 +34,8 @@ pub enum Error {
     DivideByZero,
     /// A root cannot be taken of this unit or value.
     BadRoot(String),
+    /// A currency has no exchange rate yet.
+    NoRate(String),
     /// A resource file is invalid.
     Resource(String),
 }
@@ -63,6 +65,7 @@ impl fmt::Display for Error {
             Error::NegativeSigma => f.write_str("an uncertainty cannot be negative"),
             Error::DivideByZero => f.write_str("division by zero"),
             Error::BadRoot(s) => write!(f, "cannot take the root: {s}"),
+            Error::NoRate(s) => write!(f, "no exchange rate for `{s}`"),
             Error::Resource(s) => write!(f, "invalid resource: {s}"),
         }
     }

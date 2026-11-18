@@ -21,10 +21,30 @@ pub enum Tail {
     Scale { base: u8, exp: i16 },
 }
 
-/// Can `c` be part of a unit symbol? Letters, and the degree, minute and
-/// second signs of an angle.
+/// The signs of money, each written for a currency: `$` the dollar and `€`
+/// the euro, `£`, `¥` and the full-width `￥`, `₹`, `₩`, `฿`, `₽`, `₺`, `₪`,
+/// `₱`, `₴`, `₫` and `₦`.
+pub const MONEY: &[char] = &[
+    '$', '€', '£', '¥', '￥', '₹', '₩', '฿', '₽', '₺', '₪', '₱', '₴', '₫', '₦',
+];
+
+/// Can `c` be part of a unit symbol? Letters, the degree, minute and
+/// second signs of an angle, and the signs of money, as `$` is in `A$`, `m.$^-1`.
 fn symbol_char(c: char) -> bool {
-    c.is_alphabetic() || matches!(c, '°' | '′' | '″')
+    c.is_alphabetic() || matches!(c, '°' | '′' | '″') || MONEY.contains(&c)
+}
+
+/// A sign of money at `text[at..]` with a digit straight after it, `€5.50`,
+/// `$100`: the currency it stands for and where the amount starts. `$-1` is
+/// not one: that is a term counted back in a sequence.
+pub fn money(text: &str, at: usize) -> Option<(Unit, usize)> {
+    let sign = text[at..].chars().next().filter(|c| MONEY.contains(c))?;
+    let start = at + sign.len_utf8();
+    if !text[start..].starts_with(|c: char| c.is_ascii_digit()) {
+        return None;
+    }
+    let unit = Unit::parse(&text[at..start], Scope::Live).ok()?;
+    Some((unit, start))
 }
 
 /// The length in bytes of the run of symbol characters at the start of `s`.
