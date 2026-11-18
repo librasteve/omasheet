@@ -2186,20 +2186,30 @@ fn unit_lines() -> String {
             };
             // The sector of the unit, for the buttons of the picker: metric
             // (nothing), `other` for a non-metric one, or `currency`.
-            // A prefixed one, `kft`, goes with the unit it is a prefix of.
-            let row = reg.units().find(|r| r.symbol == symbol).or_else(|| {
-                ["k", "M", "G", "m", "u", "\u{b5}", "n", "c"]
-                    .iter()
-                    .find_map(|p| {
-                        let rest = symbol.strip_prefix(p)?;
-                        reg.units().find(|r| r.symbol == rest)
-                    })
-            });
-            let sector = match row {
-                Some(r) if r.currency => "currency",
-                Some(r) if !r.metric => "other",
-                _ => "",
+            // A prefixed one, `kft`, goes with the unit it is a prefix of, and a
+            // compound one, `ft.s^-1`, is non-metric if any of its parts is.
+            let row_of = |sym: &str| {
+                reg.units().find(|r| r.symbol == sym).or_else(|| {
+                    ["k", "M", "G", "m", "u", "\u{b5}", "n", "c"]
+                        .iter()
+                        .find_map(|p| {
+                            let rest = sym.strip_prefix(p)?;
+                            reg.units().find(|r| r.symbol == rest)
+                        })
+                })
             };
+            let mut sector = "";
+            let parts = symbol
+                .split(|c: char| matches!(c, '.' | '/' | '*' | '(' | ')') || c == '\u{b7}')
+                .map(|p| p.split('^').next().unwrap_or(p))
+                .filter(|p| !p.is_empty() && !p.chars().all(|c| c.is_ascii_digit() || c == '-'));
+            for part in parts {
+                match row_of(part) {
+                    Some(r) if r.currency => sector = "currency",
+                    Some(r) if !r.metric && sector != "currency" => sector = "other",
+                    _ => {}
+                }
+            }
             lines.push(format!("{group}\t{symbol}\t{hint}\t{sector}"));
         }
     }
