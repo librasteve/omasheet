@@ -169,12 +169,16 @@ Seconds  : Quantity
 Seconds := Size.to('Mib') / Rate
 
 # Metric units outside the SI, which the SI accepts or science relies on:
-# the litre (`l` or `L`), tonne `t`, hectare `ha`, `bar`, electronvolt `eV`,
-# calorie `cal` (4.184 J), watt-hour `Wh` and dalton `Da`. They are exact
-# multiples of SI units and take the prefixes (`ml`, `kWh`, `keV`, `kcal`),
-# except `t` and `ha`. `u` is read as the prefix micro and shown as `μ`.
-# No imperial units: `5ft` and `5lb` are errors. Each row is a quantity
-# and the same amount in another unit.
+# the litre (`l` or `L`), tonne `t` with `kt` and `Mt`, carat `ct`, hectare
+# `ha` and `are`, `barn`, `bar`, `atm`, `torr` and `mmHg`, electronvolt `eV`,
+# calorie `cal` (4.184 J), watt-hour `Wh`, the metric horsepower `hp`, dalton
+# `Da`, the astronomical `au`, `ly`, `ld` and `pc`, `Å`, the nautical mile
+# `nmi` and knot `kn`, the year `yr`, `gon` and `rev`, and `rem`, `Ci`, `R`,
+# `Jy`, `tog` and `sverdrup`. They are exact multiples of SI units and most
+# take the prefixes (`ml`, `kWh`, `keV`, `kcal`, `kpc`, `mCi`), except `t`,
+# `ha` and the like. `u` is read as the prefix micro and shown as `μ`.
+# No imperial or cgs units: `5ft` and `5lb` are errors. Each row is a
+# quantity and the same amount in another unit.
 sheet Metric
 
 Item   : String
@@ -193,6 +197,17 @@ Same   : Quantity
 | photon   | 511keV  | = (511keV).to('fJ')  |
 | carbon   | 12Da    | = (12Da).to('yg')    |
 | hair     | 70um    | = (70um).to('mm')    |
+| star     | 4.25ly  | = (4.25ly).to('pc')  |
+| orbit    | 1au     | = (1au).to('Gm')     |
+| gem      | 5ct     | = (5ct).to('g')      |
+| weather  | 1atm    | = (1atm).to('kPa')   |
+| engine   | 100hp   | = (100hp).to('kW')   |
+| ship     | 12kn    | = (12kn).to('km.h^-1') |
+| lens     | 5Å      | = (5Å).to('nm')      |
+| target   | 12barn  | = (12barn).to('fm^2') |
+| scan     | 50rem   | = (50rem).to('mSv')  |
+| source   | 3Ci     | = (3Ci).to('GBq')    |
+| current  | 15sverdrup | = (15sverdrup).to('hm^3.s^-1') |
 
 # Time is a kind of quantity too, `Duration`, held in seconds, `s`, with the
 # units `min`, `h`, `d` and `wk`. A duration is written as a quantity,

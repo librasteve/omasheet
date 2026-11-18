@@ -99,18 +99,29 @@ dump   | 1          | 100             | 0.08s
 
 sheet Metric
 
-Item    | Amount  | Same
---------|---------|----------
-tank    | 2.5l    | 2.5dm^3
-can     | 330ml   | 0.33l
-cargo   | 1.2t    | 1200kg
-field   | 3ha     | 30000m^2
-tyre    | 2.2bar  | 220kPa
-snack   | 250kcal | 1046kJ
-battery | 12kWh   | 43.2MJ
-photon  | 511keV  | 81.871fJ·
-carbon  | 12Da    | 19.926yg·
-hair    | 70μm    | 0.07mm
+Item    | Amount     | Same
+--------|------------|--------------
+tank    | 2.5l       | 2.5dm^3
+can     | 330ml      | 0.33l
+cargo   | 1.2t       | 1200kg
+field   | 3ha        | 30000m^2
+tyre    | 2.2bar     | 220kPa
+snack   | 250kcal    | 1046kJ
+battery | 12kWh      | 43.2MJ
+photon  | 511keV     | 81.871fJ·
+carbon  | 12Da       | 19.926yg·
+hair    | 70μm       | 0.07mm
+star    | 4.25ly     | 1.303pc·
+orbit   | 1au        | 149.598Gm·
+gem     | 5ct        | 1g
+weather | 1atm       | 101.325kPa
+engine  | 100hp      | 73.550kW·
+ship    | 12kn       | 22.224km.h^-1
+lens    | 5Å         | 0.5nm
+target  | 12barn     | 1200fm^2
+scan    | 50rem      | 500mSv
+source  | 3Ci        | 111GBq
+current | 15sverdrup | 15hm^3.s^-1
 
 sheet Durations
 
