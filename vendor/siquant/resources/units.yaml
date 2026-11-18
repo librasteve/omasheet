@@ -91,3 +91,42 @@
 - {symbol: d,   name: day,              defn: s,      factor: "86400",                group: Size}
 - {symbol: wk,  name: week,             defn: s,      factor: "604800",               group: Size}
 - {symbol: Da,  name: dalton,           defn: g,      factor: "1.66053906892e-24",     prefixable: si, group: Size}
+
+# Astronomical lengths, exact: the astronomical unit (IAU 2012), the light
+# year (the Julian year at the speed of light), the light day, and the parsec
+# (648000/pi astronomical units, to the digits a double holds). The parsec,
+# the light year and the Julian year take prefixes: `kpc`, `Mly`, `Gyr`.
+- {symbol: au,  name: astronomical unit, defn: m, factor: "149597870700",       group: Size}
+- {symbol: ly,  name: light year,        defn: m, factor: "9460730472580800",  prefixable: si, group: Size}
+- {symbol: ld,  name: light day,         defn: m, factor: "25902068371200",     group: Size}
+- {symbol: pc,  name: parsec,            defn: m, factor: "3.0856775814913673e16", prefixable: si, group: Size}
+- {symbol: "Å", name: angstrom,          defn: m, factor: "1e-10", alt: ["å", "\u212b"], group: Size}
+- {symbol: nmi, name: nautical mile,     defn: m, factor: "1852",               group: Size}
+- {symbol: kn,  name: knot,              defn: "nmi.h^-1", group: Mechanical}
+- {symbol: yr,  name: year,              defn: s, factor: "31557600",           prefixable: si, group: Size}
+# Area and mass. The barn is spelled out, as `b` is the bit; the tonne takes no
+# prefix, so the kilotonne and the megatonne are units of their own.
+- {symbol: are,  name: are,       defn: "m^2", factor: "100",    group: Size}
+- {symbol: barn, name: barn,      defn: "m^2", factor: "1e-28",  prefixable: si, group: Size}
+- {symbol: ct,   name: carat,     defn: g,     factor: "0.2",    group: Size}
+- {symbol: kt,   name: kilotonne, defn: g,     factor: "1000000000",  group: Size}
+- {symbol: Mt,   name: megatonne, defn: g,     factor: "1000000000000", group: Size}
+# Angle: the gon (a hundredth of a right angle) and the turn.
+- {symbol: gon, name: gon,        defn: rad, factor: "0.015707963267948967", group: Angle}
+- {symbol: rev, name: revolution, defn: rad, factor: "6.283185307179586", group: Angle}
+# Pressure and power. The torr is 101325/760 Pa, the mmHg its conventional
+# value, and `hp` the metric horsepower (the German PS), 75 kgf.m/s; `PS` itself is a petasiemens.
+- {symbol: atm,  name: atmosphere, defn: Pa, factor: "101325",             group: Mechanical}
+- {symbol: torr, name: torr,       defn: Pa, factor: "133.32236842105263", prefixable: si, group: Mechanical}
+- {symbol: mmHg, name: millimetre of mercury, defn: Pa, factor: "133.322387415", group: Mechanical}
+- {symbol: hp,   name: metric horsepower,     defn: W,  factor: "735.49875",     group: Mechanical}
+# Radiation: the rem, the curie and the roentgen; the rad of dose is left out
+# as it is the radian's symbol.
+- {symbol: rem, name: rem,      defn: Sv,       factor: "0.01",   prefixable: si, group: Radiation}
+- {symbol: Ci,  name: curie,    defn: Bq,       factor: "3.7e10", prefixable: si, group: Radiation}
+- {symbol: R,   name: roentgen, defn: "C.kg^-1", factor: "2.58e-4", prefixable: si, group: Radiation}
+# Other science units: the jansky, the tog and the sverdrup (`Sv` is the
+# sievert).
+- {symbol: Jy,       name: jansky,    defn: "W.m^-2.Hz^-1", factor: "1e-26", prefixable: si, group: Other}
+- {symbol: tog,      name: tog,       defn: "K.m^2.W^-1",   factor: "0.1",   group: Other}
+- {symbol: sverdrup, name: sverdrup,  defn: "m^3.s^-1",     factor: "1e6",   group: Other}

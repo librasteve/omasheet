@@ -261,13 +261,7 @@ A unit of more than one term is joined with `.`, each term with an optional
 negative exponent is `m.s^-1`. Only metric units are written in a cell: the
 symbols `g m s A K mol cd`, the named units `Hz N Pa J W C V F Ω S Wb T H Bq Gy
 Sv kat` and `°C`, each with an SI prefix from `q` to `Q`, `kg`, `mm`, `μs`,
-`GHz`, and the non-SI units `l` (litre, also `L`), `t` (tonne), `ha` (hectare),
-`bar`, `eV`, `cal` (4.184 J), `Wh` (3600 J) and `Da` (dalton). All but `t` and
-`ha` take prefixes: `ml`, `kWh`, `keV`, `kcal`. A symbol is
-case-sensitive, and `ºC`, `µ` and the ohm sign are read as `°C`, `μ` and `Ω`;
-`u` is read as the prefix `μ`, so `5um` is `5μm`. A unit other than these is
-not a unit: `5ft`, `5lb` and `5min` are errors, and `5 kg` is a number and a
-name.
+`GHz`, and the non-SI units the metric system uses: `l` (litre, also `L`), `t` (tonne), `kt` and `Mt` (kilo- and megatonne, as the tonne takes no prefix), `ct` (carat, 200 mg), `ha` (hectare), `are`, `barn`, `bar`, `atm`, `torr`, `mmHg`, `eV`, `cal` (4.184 J), `Wh` (3600 J), `hp` (the metric horsepower, 735.49875 W), `Da` (dalton), `min`, `h`, `d`, `wk` and `yr` (the Julian year) for time, `au`, `ly`, `ld`, `pc`, `Å` and `nmi` for length, `kn` (knot), `gon` and `rev` for angle, `rem`, `Ci` and `R` for radiation, `Jy` (jansky), `tog` and `sverdrup`. All but `t`, `kt`, `Mt`, `ha`, `are`, `ct`, `au`, `ld`, `Å`, `nmi`, `kn`, `atm`, `mmHg`, `hp`, `gon`, `rev`, `tog`, `sverdrup`, `min`, `h`, `d` and `wk` take prefixes: `ml`, `kWh`, `keV`, `kcal`, `kpc`, `Mly`, `Gyr`, `mbarn`, `mCi`, `mJy`. A symbol is case-sensitive, and `ºC`, `µ` and the ohm sign are read as `°C`, `μ` and `Ω`; `u` is read as the prefix `μ`, so `5um` is `5μm`. A unit other than these is not a unit: `5ft` and `5lb` are errors, imperial and US units being left out, and `5 kg` is a number and a name. `PS` is a petasiemens, so the metric horsepower is `hp`, and the barn is spelled out as `b` is the bit.
 
 The product or quotient of two quantities takes the kind that has the dimension of the result: `Force * Length` is an `Energy`, `Length / Speed` a `Duration`. Where two kinds share a dimension the result is the fixed one of `Energy` (not `Torque`), `Frequency` (not `Radioactivity`), `Momentum` (not `Impulse`) and `SpecificEnergy` (not `Dose`), and `Area`; where no kind has the dimension it is a `Quantity`. Its unit is the one the operands give. A column that declares the other kind, `Torque[N.m]`, or another unit, `Energy[kWh]`, takes the result all the same, as any unit of the dimension fits.
 

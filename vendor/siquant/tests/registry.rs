@@ -415,7 +415,10 @@ fn types_and_units_are_grouped_for_menus() {
         .collect();
     assert_eq!(
         order,
-        ["g", "°C", "Hz", "l", "t", "ha", "min", "h", "d", "wk", "Da"]
+        [
+            "g", "°C", "Hz", "l", "t", "ha", "min", "h", "d", "wk", "Da", "au", "ly", "ld", "pc",
+            "Å", "nmi", "yr", "are", "barn", "ct", "kt", "Mt"
+        ]
     );
     // Every group named is one of the headings.
     assert!(reg.quantity_types().all(|t| GROUPS.contains(&t.group())));
@@ -457,4 +460,45 @@ fn a_dimension_with_several_types_is_inferred_as_the_fixed_one() {
     assert_eq!(of("m^2").as_deref(), Some("Area"));
     // None: a plain quantity.
     assert_eq!(of("kg.m^5"), None);
+}
+
+#[test]
+fn the_astronomical_and_metric_units_have_their_values() {
+    use siquant::{Quantity, Registry, Scope, Unit};
+    let reg = Registry::builtin();
+    let _ = reg;
+    let to = |v: f64, from: &str, into: &str| {
+        let a = Quantity::exact(v, Unit::parse(from, Scope::Live).unwrap());
+        a.convert(&Unit::parse(into, Scope::Live).unwrap())
+            .unwrap()
+            .value()
+    };
+    let near = |a: f64, b: f64| (a - b).abs() <= 1e-9 * b.abs();
+    // A light year is a Julian year at the speed of light.
+    assert!(near(to(1.0, "ly", "m"), 299_792_458.0 * 31_557_600.0));
+    assert!(near(to(1.0, "ld", "m"), 299_792_458.0 * 86_400.0));
+    assert!(near(to(1.0, "au", "km"), 149_597_870.7));
+    assert!(near(to(1.0, "pc", "ly"), 3.261_563_777_167_433));
+    assert!(near(to(1.0, "pc", "au"), 648_000.0 / std::f64::consts::PI));
+    assert!(near(to(1.0, "kpc", "pc"), 1000.0) && near(to(1.0, "Gyr", "yr"), 1e9));
+    assert!(near(to(1.0, "yr", "d"), 365.25) && near(to(1.0, "Å", "pm"), 100.0));
+    assert!(near(to(1.0, "nmi", "m"), 1852.0) && near(to(1.0, "kn", "m.s^-1"), 1852.0 / 3600.0));
+    assert!(near(to(1.0, "are", "m^2"), 100.0) && near(to(1.0, "barn", "m^2"), 1e-28));
+    assert!(near(to(1.0, "mbarn", "barn"), 1e-3));
+    assert!(near(to(1.0, "ct", "mg"), 200.0));
+    assert!(near(to(1.0, "kt", "t"), 1000.0) && near(to(1.0, "Mt", "kt"), 1000.0));
+    assert!(near(to(1.0, "rev", "°"), 360.0) && near(to(100.0, "gon", "°"), 90.0));
+    assert!(near(to(1.0, "atm", "Pa"), 101_325.0) && near(to(760.0, "torr", "atm"), 1.0));
+    assert!(near(to(1.0, "mmHg", "Pa"), 133.322_387_415));
+    assert!(near(to(1.0, "hp", "W"), 735.498_75));
+    assert!(near(to(100.0, "rem", "Sv"), 1.0) && near(to(1.0, "Ci", "Bq"), 3.7e10));
+    assert!(near(to(1.0, "R", "C.kg^-1"), 2.58e-4) && near(to(1.0, "mCi", "Bq"), 3.7e7));
+    assert!(near(to(1.0, "Jy", "W.m^-2.Hz^-1"), 1e-26) && near(to(1.0, "tog", "K.m^2.W^-1"), 0.1));
+    assert!(near(to(1.0, "sverdrup", "m^3.s^-1"), 1e6));
+    // `PS` is a petasiemens, and `b` the bit: neither is a horsepower or a barn.
+    assert!(
+        Unit::parse("PS", Scope::Live).unwrap().dims()
+            == Unit::parse("S", Scope::Live).unwrap().dims()
+    );
+    assert_eq!(to(1.0, "B", "b"), 8.0);
 }
