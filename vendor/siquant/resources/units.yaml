@@ -69,7 +69,7 @@
 - {symbol: "′", name: arcminute, defn: "°", factor: "0.016666666666666666", alt: ["'"], group: Angle}
 - {symbol: "″", name: arcsecond, defn: "′", factor: "0.016666666666666666", alt: ['"'], group: Angle}
 
-# Light (Stage 3): the lumen and the lux need the steradian.
+# Luminous flux and illuminance (Stage 3): the lumen and the lux need the steradian.
 - {symbol: lm,  name: lumen,     defn: "cd.sr",    prefixable: si, group: Radiation}
 - {symbol: lx,  name: lux,       defn: "cd.sr.m^-2", prefixable: si, group: Radiation}
 

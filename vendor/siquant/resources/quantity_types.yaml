@@ -66,5 +66,5 @@
 - {name: Angle,             dims: {Angle: 1},                          unit: rad, group: Angle}
 - {name: SolidAngle,        dims: {Angle: 2},                          unit: sr, group: Angle}
 - {name: AngularSpeed,      dims: {Angle: 1, Time: -1},                unit: "rad.s^-1", group: Angle}
-- {name: LuminousFlux,      dims: {LuminousIntensity: 1, Angle: 2},    unit: lm, group: Light}
-- {name: Illuminance,       dims: {LuminousIntensity: 1, Angle: 2, Length: -2}, unit: lx, group: Light}
+- {name: LuminousFlux,      dims: {LuminousIntensity: 1, Angle: 2},    unit: lm, group: Radiation}
+- {name: Illuminance,       dims: {LuminousIntensity: 1, Angle: 2, Length: -2}, unit: lx, group: Radiation}
