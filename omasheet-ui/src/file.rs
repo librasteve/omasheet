@@ -2186,7 +2186,16 @@ fn unit_lines() -> String {
             };
             // The sector of the unit, for the buttons of the picker: metric
             // (nothing), `other` for a non-metric one, or `currency`.
-            let sector = match reg.units().find(|r| r.symbol == symbol) {
+            // A prefixed one, `kft`, goes with the unit it is a prefix of.
+            let row = reg.units().find(|r| r.symbol == symbol).or_else(|| {
+                ["k", "M", "G", "m", "u", "\u{b5}", "n", "c"]
+                    .iter()
+                    .find_map(|p| {
+                        let rest = symbol.strip_prefix(p)?;
+                        reg.units().find(|r| r.symbol == rest)
+                    })
+            });
+            let sector = match row {
                 Some(r) if r.currency => "currency",
                 Some(r) if !r.metric => "other",
                 _ => "",

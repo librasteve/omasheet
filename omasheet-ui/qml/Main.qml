@@ -5813,7 +5813,7 @@ ApplicationWindow {
         // A box with its own help, from a button beside Apply: the prefixes.
         property bool helpable: false
         signal helpAsked()
-        // Buttons under the search box, one for each sector, `Metric`, `Non-Metric`, `Currency` and `All`, for
+        // Buttons under the search box, one for each sector, `Metric`, `Non-Metric`, `All units` and `Currency`, for
         // a list that has units of other systems in it: which to show.
         // The sector shown, `metric` (the default), `other` (non-metric),
         // `currency` or `all`; only the buttons change it, and a search is
@@ -6296,7 +6296,7 @@ ApplicationWindow {
                 Item { Layout.fillWidth: true }
                 Repeater {
                     model: [{label: "Metric", sector: "metric"}, {label: "Non-Metric", sector: "other"},
-                        {label: "Currency", sector: "currency"}, {label: "All", sector: "all"}]
+                        {label: "All units", sector: "all"}, {label: "Currency", sector: "currency"}]
                     delegate: Rectangle {
                         required property var modelData
                         readonly property bool on: picker.sector === modelData.sector
