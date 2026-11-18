@@ -70,8 +70,8 @@
 - {symbol: "″", name: arcsecond, defn: "′", factor: "0.016666666666666666", alt: ['"'], group: Angle}
 
 # Light (Stage 3): the lumen and the lux need the steradian.
-- {symbol: lm,  name: lumen,     defn: "cd.sr",    prefixable: si, group: Light}
-- {symbol: lx,  name: lux,       defn: "cd.sr.m^-2", prefixable: si, group: Light}
+- {symbol: lm,  name: lumen,     defn: "cd.sr",    prefixable: si, group: Radiation}
+- {symbol: lx,  name: lux,       defn: "cd.sr.m^-2", prefixable: si, group: Radiation}
 
 # Non-SI units for the metric stage (omasheet): each an exact multiple of an
 # SI unit, none of the imperial ones. `L` is the other spelling of the litre.
