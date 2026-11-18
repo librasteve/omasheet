@@ -482,7 +482,7 @@ file's zone. A format that does not read, or that the column's type does
 not take, is an error where it is written.
 
 See `examples/types.omx` for every type at work, and `examples/formats.omx`
-and `examples/dateformats.omx` for formats.
+and `examples/datetimes.omx` for formats.
 
 Dates and times are always written this way in the file. The app shows and
 accepts them in your locale's form.

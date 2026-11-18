@@ -60,6 +60,10 @@ in a..b | is in a range of values | * in 1..5
 == Parts of a time | Time
 .hour .minute .second | the parts of a time | *.minute == 0
 
+== Parts of a duration | Span
+: A Duration is compared with another or with a quantity of time, `* > 1h` or `* < 90min`, as it is a quantity of time.
+.total_hours() | the whole in hours, also .total_days(), .total_minutes(), .total_seconds() | *.total_hours() > 1.5
+
 == Join | Any
 and | both are true | * > {v} and * != {w}
 or | either is true | * < {v} or * > {w}

@@ -306,6 +306,14 @@ fn aligned(a: &Quantity, b: &Quantity) -> Result<(Pair, Pair), String> {
     Ok(((x.value(), x.sigma()), (y.value(), y.sigma())))
 }
 
+/// A duration as the quantity of seconds it is, any other value as it is.
+fn timed(v: &Value) -> Value {
+    match v {
+        Value::Duration(us) => from_duration(*us),
+        other => other.clone(),
+    }
+}
+
 /// Order two single values where one is a quantity. Two quantities of one
 /// dimension are equal when they differ by no more than their uncertainties
 /// together, as two `Scientific` values are, where `tolerant`. `None` where
@@ -318,7 +326,9 @@ pub fn compare(a: &Value, b: &Value, tolerant: bool) -> Option<Result<Option<Ord
         if matches!(a, Value::Null) || matches!(b, Value::Null) {
             return Ok(None);
         }
-        let (Value::Quantity(x), Value::Quantity(y)) = (a, b) else {
+        // A duration is a quantity of time beside one.
+        let (a, b) = (timed(a), timed(b));
+        let (Value::Quantity(x), Value::Quantity(y)) = (&a, &b) else {
             return Err(format!("cannot compare {} and {}", a.kind(), b.kind()));
         };
         let ((vx, sx), (vy, sy)) = aligned(x, y)?;
@@ -341,6 +351,7 @@ pub fn approx(a: &Value, b: &Value) -> Option<Result<Option<bool>, String>> {
     if !matches!(a, Value::Quantity(_)) && !matches!(b, Value::Quantity(_)) {
         return None;
     }
+    let (a, b) = (&timed(a), &timed(b));
     let (Value::Quantity(x), Value::Quantity(y)) = (a, b) else {
         return Some(Err(format!("cannot compare {} and {}", a.kind(), b.kind())));
     };

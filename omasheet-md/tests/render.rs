@@ -19,6 +19,11 @@ Mar   | 150
 fn load(path: &str) -> Result<(String, String), String> {
     match path {
         "Sales.omx" => Ok((path.to_string(), SALES.to_string())),
+        "Runs.omx" => Ok((
+            path.to_string(),
+            "sheet Runs\n\nBurn : Duration[s; .0f]\nLap : Duration[h; .1f]\n\n| Burn | Lap |\n| - | - |\n| 139s | 90min |\n"
+                .to_string(),
+        )),
         "London.omx" => Ok((
             path.to_string(),
             "zone Europe/London\nconst A = 1\n".to_string(),
@@ -340,4 +345,10 @@ fn a_cell_of_a_date_column_is_shown_by_its_format() {
         "{}",
         out.output
     );
+}
+
+#[test]
+fn a_cell_of_a_duration_column_is_shown_in_its_unit() {
+    let out = markdown("---\nfiles: [Runs.omx]\n---\n\nBurn {{ Runs[Burn; 0] }}, lap {{ Runs[Lap; 0] }}.\n");
+    assert!(out.contains("Burn 139s, lap 1.5h."), "{out}");
 }

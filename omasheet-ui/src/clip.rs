@@ -1742,6 +1742,31 @@ mod tests {
     }
 
     #[test]
+    fn a_clock_duration_is_copied_with_its_sign() {
+        let doc = Document::from_text(
+            "sheet T\n\n| A | B |\n| - | - |\n| +17:04 | = 10s + PT17H4M |\n| -00:00:30 | = A * 2 |\n| PT1H | = A |\n",
+        );
+        for values in [false, true] {
+            let text = block_text(&doc, 0, (0, 0), (2, 1), values);
+            for cell in text.split(['\t', '\n']) {
+                if cell.contains(':') {
+                    assert!(cell.starts_with(['+', '-']), "{values}: {text:?}");
+                }
+            }
+        }
+        let out = block_text(&doc, 0, (0, 0), (2, 1), true);
+        assert_eq!(out, "+17:04:00\t+17:04:10\n-00:00:30\t-00:01:00\n+01:00:00\t+01:00:00");
+        // Declared, the same.
+        let doc = Document::from_text(
+            "sheet T\n\nA : Duration[%H:%M:%S]\nB : Duration[%H:%M:%S]\n\n| A | B |\n| - | - |\n| PT1H | = A / 2 |\n| -PT30S | = A |\n",
+        );
+        assert_eq!(
+            block_text(&doc, 0, (0, 0), (1, 1), true),
+            "+01:00:00\t+00:30:00\n-00:00:30\t-00:00:30"
+        );
+    }
+
+    #[test]
     fn a_copy_of_a_filtered_block_takes_the_rows_that_are_shown() {
         let mut doc = Document::from_text(GRID);
         let mut clip = Clip::default();

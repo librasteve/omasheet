@@ -869,3 +869,31 @@ fn a_quantity_takes_a_power_to_four_and_a_root_to_four() {
     let bad = view("test.omx", "sheet G\n\nL : Length[m]\nR : Length[m]\n\n| L | R |\n| - | - |\n| 4m | * |\n\nR := L ** (1/2)\n");
     assert!(bad.errors.join("\n").contains("no root of 2"), "{:?}", bad.errors);
 }
+
+#[test]
+fn a_duration_compares_with_a_quantity_of_time() {
+    assert_eq!(shown("PT90M > 1h"), "true");
+    assert_eq!(shown("90min > PT1H"), "true");
+    assert_eq!(shown("PT90M == 5400s"), "true");
+    assert_eq!(shown("PT90M =~= 1.5h"), "true");
+    assert!(fails("PT90M > 5kg").contains("they measure Duration and Mass"));
+    // As a column test, which is what a filter is.
+    let file = "sheet L\n\nTook : Duration[h; .2f]\nSlow : Boolean\n\n| Took | Slow |\n| - | - |\n| PT30M | * |\n| PT90M | * |\n| 2h | * |\n\nSlow := Took > 1h\n";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    assert_eq!(out.output.matches("true").count(), 2, "{}", out.output);
+}
+
+#[test]
+fn durations_total_and_run() {
+    assert_eq!(shown("PT1H30M.total_minutes()"), "90");
+    assert_eq!(shown("PT36H.total_days()"), "1.5");
+    assert_eq!(shown("PT90S.total_seconds()"), "90");
+    assert_eq!(shown("[PT1H, PT30M, PT10M].cum_sum()"), "[PT1H, PT1H30M, PT1H40M]");
+    assert_eq!(shown("[PT1H, PT30M].sum()"), "PT1H30M");
+    // A running total of a column in another unit shows in the column's.
+    let file = "sheet L\n\nTook : Duration[min]\nSoFar : Duration[min]\n\n| Took | SoFar |\n| - | - |\n| 30min | * |\n| PT45M | * |\n\nSoFar := Took.cum_sum()\n";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    assert!(out.output.contains("30") && out.output.contains("75"), "{}", out.output);
+}

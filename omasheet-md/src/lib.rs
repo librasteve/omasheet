@@ -13,7 +13,7 @@
 
 use omasheet_engine::omx::colfmt::Format as ColFormat;
 use omasheet_engine::omx::file::{is_zone_name, parse_file};
-use omasheet_engine::omx::ir::{Ir, Node};
+use omasheet_engine::omx::ir::{ColSel, Ir, Node};
 use omasheet_engine::omx::{Diagnostic, Sources, Span, compile, compile_expr};
 use omasheet_engine::value::View;
 use omasheet_engine::{Engine, Options, Outcome, Value, base_of, table};
@@ -367,6 +367,12 @@ fn column_read(node: &Node) -> Option<(usize, usize)> {
     }
     match &node.kind {
         Ir::Column { sheet, col } => Some((*sheet, *col)),
+        // `Sheet[Col; row]` reads one column of the sheet.
+        Ir::Index {
+            base,
+            cols: ColSel::One(col),
+            ..
+        } if sheet_of(base).is_some() => Some((sheet_of(base)?, *col)),
         Ir::Index { base, .. } => column_read(base),
         Ir::Field { base, col } => Some((sheet_of(base)?, *col)),
         _ => None,

@@ -3842,7 +3842,11 @@ impl<'a> Checker<'a> {
             }
         } else if op.is_comparison() {
             let equality = matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Approx);
+            // A duration is a quantity of time beside one; the dimension is
+            // checked when the values are.
+            let timed = (a == S::Duration && b.is_quantity()) || (a.is_quantity() && b == S::Duration);
             let ok = unknown
+                || timed
                 || match a.join(b) {
                     Some(S::Boolean | S::Complex) => equality,
                     Some(_) => true,
