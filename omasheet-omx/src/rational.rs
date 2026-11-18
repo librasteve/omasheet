@@ -85,6 +85,11 @@ impl Rat {
         self.0.numer()
     }
 
+    /// The numerator and denominator, where both are small.
+    pub fn parts(&self) -> Option<(i64, i64)> {
+        Some((self.0.numer().to_i64()?, self.0.denom().to_i64()?))
+    }
+
     pub fn denom(&self) -> &BigInt {
         self.0.denom()
     }

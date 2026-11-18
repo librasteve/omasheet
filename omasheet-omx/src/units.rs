@@ -184,6 +184,36 @@ pub fn product_type(a: QId, b: QId, divide: bool) -> Option<QId> {
     QId::from_name(t.name())
 }
 
+/// The type of `a ^ (num/den)` of a named quantity type, `den` being 1 for a
+/// power and 2 to 4 for a root: the inferred type of the new dimension. `Ok(None)`
+/// for a result with no type or none of dimension; an error where a root
+/// does not divide the dimension, as a square root of a length.
+pub fn power_type(a: QId, num: i16, den: u16) -> Result<Option<QId>, String> {
+    let Some(t) = a.named() else { return Ok(None) };
+    let mut dims = t.dims().checked_scale(num).ok_or("the power is out of range")?;
+    if den > 1 {
+        let n = i8::try_from(den).map_err(|_| "the root is out of range")?;
+        let mut out = siquant::Dim::NONE;
+        for base in siquant::Base::ALL {
+            let e = dims.exponent(base);
+            if e % n != 0 {
+                return Err(format!(
+                    "a {} has no root of {den}: every exponent of its dimension must divide by it",
+                    t.name()
+                ));
+            }
+            out = out.with(base, e / n);
+        }
+        dims = out;
+    }
+    if dims.is_dimensionless() {
+        return Ok(None);
+    }
+    Ok(Registry::builtin()
+        .infer_type(dims)
+        .and_then(|t| QId::from_name(t.name())))
+}
+
 /// The unit a column of this type holds its values in, unless it says
 /// another: the preferred unit of a named type, none for a `Quantity`.
 pub fn preferred(id: QId) -> Option<Unit> {

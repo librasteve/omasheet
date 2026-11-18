@@ -208,12 +208,21 @@ fn arith_of(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         BinOp::Mul => x.mul(&y),
         BinOp::Div => x.div(&y),
         BinOp::Pow => {
+            // A root is the power `1/2`, `1/3` or `1/4`.
+            if let Value::Fraction(r) = b
+                && let Some((1, n @ 2..=4)) = r.parts()
+            {
+                return x
+                    .root(n as u16)
+                    .map(value)
+                    .map_err(|e| explain("take a root of", &x, &y, e));
+            }
             let n = match b {
                 Value::Int(n, _) => i16::try_from(*n)
                     .map_err(|_| "the power of a quantity is out of range".to_string())?,
                 _ => {
                     return Err(format!(
-                        "a quantity takes a whole power, but this is {}",
+                        "a quantity takes a whole power or a root, `1/2`, `1/3` or `1/4`, but this is {}",
                         b.kind()
                     ));
                 }

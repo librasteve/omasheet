@@ -741,6 +741,14 @@ fn const_int(e: &Expr) -> Option<i64> {
     }
 }
 
+/// A power written out, as the numerator and the denominator: `3`, `-2`,
+/// `1/3`, `(1/2)`. A root is a denominator above 1.
+fn const_power(e: &Expr) -> Option<(i16, u16)> {
+    let (r, _) = seed_rat(e)?;
+    let (num, den) = r.parts()?;
+    Some((i16::try_from(num).ok()?, u16::try_from(den).ok()?))
+}
+
 /// Whether `a / b` is a quotient of whole numbers written out that comes to a
 /// whole number: `4/2`.
 fn divides(a: &Expr, b: &Expr) -> bool {
@@ -3721,7 +3729,18 @@ impl<'a> Checker<'a> {
                     BinOp::Mul if plain(a) && qb => Some(b),
                     BinOp::Div if qa && plain(b) => Some(a),
                     BinOp::Div if plain(a) && qb => Some(S::Quantity(QId::ANY)),
-                    BinOp::Pow if qa && plain(b) => Some(S::Any),
+                    BinOp::Pow if qa && plain(b) => match (a, const_power(r)) {
+                        (S::Quantity(x), Some((num, den))) if den <= 4 => {
+                            match crate::units::power_type(x, num, den) {
+                                Ok(t) => Some(t.map_or(S::Any, S::Quantity)),
+                                Err(m) => {
+                                    self.err(span, m);
+                                    return fail;
+                                }
+                            }
+                        }
+                        _ => Some(S::Any),
+                    },
                     BinOp::PlusMinus if qa && (qb || plain(b)) => Some(a),
                     _ => None,
                 }

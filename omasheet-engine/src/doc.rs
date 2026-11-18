@@ -5730,6 +5730,46 @@ mod tests {
     }
 
     #[test]
+    fn a_duration_shows_in_the_form_its_literals_are_written_in() {
+        let shown = |text: &str| col(&Document::from_text(text), 0, 0);
+        // The clock form always carries its sign, zero too.
+        assert_eq!(
+            shown("sheet T\n\n| A |\n| - |\n| +17:04 |\n| -00:00:30 |\n| +00:00:00 |\n"),
+            ["+17:04:00", "-00:00:30", "+00:00:00"]
+        );
+        let declared = "sheet T\n\nA : Duration[%H:%M:%S]\n\n| A | B |\n| - | - |\n| PT1H | * |\n| -PT30S | * |\n| 0s | * |\n\nB := A - A\n";
+        let doc = Document::from_text(declared);
+        assert_eq!(col(&doc, 0, 0), ["+01:00:00", "-00:00:30", "+00:00:00"]);
+        // Seconds beside a clock literal show as the clock; beside ISO, seconds.
+        assert_eq!(shown("sheet T\n\n| A |\n| - |\n| +17:04 |\n| 10s |\n"), ["+17:04:00", "+00:00:10"]);
+        assert_eq!(shown("sheet T\n\n| A |\n| - |\n| 10s |\n| PT20S |\n"), ["10s", "20s"]);
+        assert_eq!(shown("sheet T\n\n| A |\n| - |\n| = 10s + PT17H4M |\n"), ["+17:04:10"]);
+        assert_eq!(shown("sheet T\n\n| A |\n| - |\n| = PT10S + PT17H4M |\n"), ["PT17H4M10S"]);
+    }
+
+    #[test]
+    fn a_duration_aligns_right_but_a_time_does_not() {
+        let numeric = |text: &str| {
+            Document::from_text(text).snapshot().sheets[0]
+                .rows
+                .iter()
+                .map(|r| r[0].numeric)
+                .collect::<Vec<_>>()
+        };
+        for cells in [
+            "+17:04", "-00:00:30", "10s", "PT20S", "= 10s + PT20S", "= 17:05:10 - 17:05:00",
+            "= 2025-03-01 - 2024-03-01",
+        ] {
+            let text = format!("sheet T\n\n| A |\n| - |\n| {cells} |\n");
+            assert_eq!(numeric(&text), [true], "{cells}");
+        }
+        for cells in ["17:05:00", "2025-01-31", "2025-01-31T09:30", "= 17:05:00 + 10s"] {
+            let text = format!("sheet T\n\n| A |\n| - |\n| {cells} |\n");
+            assert_eq!(numeric(&text), [false], "{cells}");
+        }
+    }
+
+    #[test]
     fn a_value_written_as_a_fraction_makes_a_fraction_column() {
         let mut doc = Document::from_text("sheet T\n\nA | B\n1 | \n2 | 1/2\n");
         assert!(doc.set_cell(0, 0, 1, "1/3"));

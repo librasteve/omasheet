@@ -843,3 +843,29 @@ fn a_result_is_the_inferred_type_and_a_column_may_declare_another() {
     // The error names the one inferred type, not every type of the dimension.
     assert!(fails("5J + 3kg").contains("Energy and Mass"), "{}", fails("5J + 3kg"));
 }
+
+#[test]
+fn a_quantity_takes_a_power_to_four_and_a_root_to_four() {
+    // Powers and roots keep the unit, whole, and the uncertainty goes through.
+    assert_eq!(shown("3m ** 2"), "9m^2");
+    assert_eq!(shown("2m ** 4"), "16m^4");
+    assert_eq!(shown("9m^2 ** (1/2)"), "3m");
+    assert_eq!(shown("8m^3 ** (1/3)"), "2m");
+    assert_eq!(shown("16m^4 ** (1/4)"), "2m");
+    assert_eq!(shown("sqrt(9m^2)"), "3m");
+    let (v, s, u) = parts("4(2)m^2 ** (1/2)");
+    assert_eq!((v, u.as_str()), (2.0, "m"));
+    assert!((s - 0.5).abs() < 1e-9, "{s}");
+    // A root the unit does not divide, or one beyond four, is refused.
+    assert!(fails("5m ** (1/2)").contains("not divisible"), "{}", fails("5m ** (1/2)"));
+    assert!(fails("32m^5 ** (1/5)").contains("whole power or a root"));
+    // A column of a kind takes the typed result, and the checker refuses
+    // a root of a kind that has none before any value is known.
+    let file = "sheet G\n\nA : Area[m^2]\nL : Length[m]\nV : Volume[m^3]\nR : Length[m]\nS : Area[m^2]\n\n\
+                | A | L | V | R | S |\n| - | - | - | - | - |\n| 9m^2 | 4m | 8m^3 | * | * |\n\nR := A ** (1/2)\nS := L ** 2\n";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+    assert!(out.output.contains('3') && out.output.contains("16"), "{}", out.output);
+    let bad = view("test.omx", "sheet G\n\nL : Length[m]\nR : Length[m]\n\n| L | R |\n| - | - |\n| 4m | * |\n\nR := L ** (1/2)\n");
+    assert!(bad.errors.join("\n").contains("no root of 2"), "{:?}", bad.errors);
+}
