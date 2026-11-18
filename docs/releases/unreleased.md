@@ -32,7 +32,7 @@ Each is an exact multiple of an SI unit (or a conventional value), and each take
 - **Mass:** `ct` (carat, 200 mg), and `kt` and `Mt` (kilotonne and megatonne, as the tonne `t` takes no prefix).
 - **Area:** `are` (100 m²) and `barn` (1e-28 m², spelled out because `b` is the bit; `mbarn` works).
 - **Angle:** `gon` (1/400 of a turn) and `rev` (a turn, 2π rad).
-- **Pressure and power:** `atm` (101 325 Pa), `torr` (101325/760 Pa), `mmHg` and `hp`, the **metric** horsepower, 735.49875 W. The German `PS` cannot be a symbol because it is a petasiemens (`P` and `S`); `hp` is not the mechanical horsepower of 745.7 W.
+- **Pressure and power:** `atm` (101 325 Pa), `torr` (101325/760 Pa) and `hp`, the **metric** horsepower, 735.49875 W. The German `PS` cannot be a symbol because it is a petasiemens (`P` and `S`); `hp` is not the mechanical horsepower of 745.7 W.
 - **Radiation:** `rem` (0.01 Sv), `Ci` (curie, 3.7e10 Bq) and `R` (roentgen, 2.58e-4 C/kg).
 - **Other:** `Jy` (jansky), `tog` (0.1 K·m²/W) and `sverdrup` (1e6 m³/s; `Sv` is the sievert).
 - **Left out on purpose:** imperial and US units, cgs units (`dyn`, `erg`, `G`, `Mx`, `Oe`, `Gal`, `P`, `St`), the rad of dose, `g0` (use the constant `gn`), `kgf`, solid-angle `deg²` and `spat`.

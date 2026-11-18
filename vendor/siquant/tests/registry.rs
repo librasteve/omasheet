@@ -489,7 +489,6 @@ fn the_astronomical_and_metric_units_have_their_values() {
     assert!(near(to(1.0, "kt", "t"), 1000.0) && near(to(1.0, "Mt", "kt"), 1000.0));
     assert!(near(to(1.0, "rev", "°"), 360.0) && near(to(100.0, "gon", "°"), 90.0));
     assert!(near(to(1.0, "atm", "Pa"), 101_325.0) && near(to(760.0, "torr", "atm"), 1.0));
-    assert!(near(to(1.0, "mmHg", "Pa"), 133.322_387_415));
     assert!(near(to(1.0, "hp", "W"), 735.498_75));
     assert!(near(to(100.0, "rem", "Sv"), 1.0) && near(to(1.0, "Ci", "Bq"), 3.7e10));
     assert!(near(to(1.0, "R", "C.kg^-1"), 2.58e-4) && near(to(1.0, "mCi", "Bq"), 3.7e7));

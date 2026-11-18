@@ -170,7 +170,7 @@ Seconds := Size.to('Mib') / Rate
 
 # Metric units outside the SI, which the SI accepts or science relies on:
 # the litre (`l` or `L`), tonne `t` with `kt` and `Mt`, carat `ct`, hectare
-# `ha` and `are`, `barn`, `bar`, `atm`, `torr` and `mmHg`, electronvolt `eV`,
+# `ha` and `are`, `barn`, `bar`, `atm` and `torr`, electronvolt `eV`,
 # calorie `cal` (4.184 J), watt-hour `Wh`, the metric horsepower `hp`, dalton
 # `Da`, the astronomical `au`, `ly`, `ld` and `pc`, `Å`, the nautical mile
 # `nmi` and knot `kn`, the year `yr`, `gon` and `rev`, and `rem`, `Ci`, `R`,

@@ -114,11 +114,9 @@
 # Angle: the gon (a hundredth of a right angle) and the turn.
 - {symbol: gon, name: gon,        defn: rad, factor: "0.015707963267948967", group: Angle}
 - {symbol: rev, name: revolution, defn: rad, factor: "6.283185307179586", group: Angle}
-# Pressure and power. The torr is 101325/760 Pa, the mmHg its conventional
-# value, and `hp` the metric horsepower (the German PS), 75 kgf.m/s; `PS` itself is a petasiemens.
+# Pressure and power. The torr is 101325/760 Pa, and `hp` the metric horsepower (the German PS), 75 kgf.m/s; `PS` itself is a petasiemens.
 - {symbol: atm,  name: atmosphere, defn: Pa, factor: "101325",             group: Mechanical}
 - {symbol: torr, name: torr,       defn: Pa, factor: "133.32236842105263", prefixable: si, group: Mechanical}
-- {symbol: mmHg, name: millimetre of mercury, defn: Pa, factor: "133.322387415", group: Mechanical}
 - {symbol: hp,   name: metric horsepower,     defn: W,  factor: "735.49875",     group: Mechanical}
 # Radiation: the rem, the curie and the roentgen; the rad of dose is left out
 # as it is the radian's symbol.
