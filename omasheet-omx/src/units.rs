@@ -327,10 +327,12 @@ mod tests {
     #[test]
     fn what_is_not_a_unit() {
         for text in [
-            "", " kg", "m2", "kgfoo", "ft", "k", "m^", "m^x", "5", "lb", "1",
+            "", " kg", "m2", "kgfoo", "xyz", "k", "m^", "m^x", "5", "foo", "1",
         ] {
             assert!(tail(text, 0).is_none(), "{text}");
         }
+        // The imperial units are units now, `5ft` and `5lb`.
+        assert!(tail("ft", 0).is_some() && tail("lb", 0).is_some());
         assert!(tail("m s", 0).is_some()); // the metre; the space ends it
         assert_eq!(unit("m s"), Some(("m".into(), 1)));
     }

@@ -20,3 +20,6 @@ coinvent-omasheet-format-chatgpt.md
 /windows/dist
 
 reddit-tues.md
+
+# A page rendered from examples/report.md to look at, `omasheet render --html`.
+/examples/report.html
