@@ -22,10 +22,10 @@ use omasheet_omx::ast::Lit;
 use omasheet_omx::ast::{BinOp, UnOp};
 use omasheet_omx::check::Join;
 use omasheet_omx::colfmt::{DurationStyle, Format};
-use omasheet_omx::duration;
 use omasheet_omx::cycle;
 use omasheet_omx::date;
 use omasheet_omx::decimal::{Dec, SHOWN_PRECISION};
+use omasheet_omx::duration;
 use omasheet_omx::funcs::MathFn;
 use omasheet_omx::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel};
 use omasheet_omx::types::Base;
@@ -2748,7 +2748,9 @@ impl<'p> Engine<'p> {
             // A `Duration` column holds a quantity of time as microseconds,
             // or with an uncertainty as seconds.
             S::Duration => match &v {
-                Value::Quantity(q) => crate::quantity::into_duration(q).or_else(|m| fail(span, m))?,
+                Value::Quantity(q) => {
+                    crate::quantity::into_duration(q).or_else(|m| fail(span, m))?
+                }
                 _ => v,
             },
             _ => v,

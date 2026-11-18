@@ -334,9 +334,7 @@ fn read_format(text: &str, ty: S, span: Span, diags: &mut Vec<Diagnostic>) -> Op
         | Format::Scientific(_)
         | Format::Quantity(_)
         | Format::Boolean(_)
-        | Format::Duration(_) => {
-            span
-        }
+        | Format::Duration(_) => span,
     };
     diags.push(
         Diagnostic::new(span, format!("{ty} does not take the format `{f}`"))

@@ -1,0 +1,72 @@
+# Proposed non-metric units, from Physics::Unit (en_SI/general.yaml), for the picker.
+# Edit freely: delete a line to drop it, move it under another heading to regroup or reorder.
+# Format: symbol | Kind (name).
+# Each would be `metric: false`, so Metric only hides it and All units shows it.
+# Headings are the existing ones. ?? marks a symbol or a size to decide.
+
+== Length 
+in | Length (inch)
+ft | Length (foot)
+yd | Length (yard)
+mi | Length (mile)
+fur | Length (furlong)
+ftm | Length (fathom)
+chain | Length(chain)
+rod | Length (rod)
+thou | Length (thou)
+
+== Typographic 
+pica | Length (pica)
+point | Length (point)  ?? clashes with the US pint
+
+== Mass
+oz | Mass (ounce)
+lb | Mass (pound)
+st | Mass (stone)
+cwt | Mass (hundredweight)  ?? the US one or the UK one
+ton | Mass (short ton)
+lton | Mass (long ton)
+gr | Mass (grain)
+ozt | Mass (troy ounce)
+dwt | Mass (pennyweight)
+slug | Mass (slug)
+
+==Area
+ft^2 | Area (square foot)
+in^2 | Area (square inch)
+mi^2 | Area (square mile)
+ac | Area (acre)
+
+==Volume
+ft^3 | Volume (cubic foot)
+in^3 | Volume (cubic inch)
+gal | Volume (US gallon)
+qt | Volume (US quart)
+pt | Volume (US pint)
+cup | Volume (US cup)
+floz | Volume (US fluid ounce)
+tbsp | Volume (tablespoon)
+tsp | Volume (teaspoon)
+bbl | Volume (barrel)  ?? Physics::Unit's barrel or the oil barrel <== oil barrel
+impgal | Volume (imperial gallon)
+imppint | Volume (imperial pint)
+cord | Volume (cord)
+
+== Mechanical 
+mph | Speed (mile per hour)
+fps | Speed (foot per second)
+ft.s^-2 | Acceleration (foot per second squared)
+
+== Physical
+lbf | Force (pound-force)
+ozf | Force (ounce-force)
+psi | Pressure (pound per square inch)
+btu | Energy (British thermal unit)
+therm | Energy (therm)
+lbf.ft | Torque (pound-foot)
+hp | Power (mechanical horsepower)  ?? <== use mhp for the metric one
+
+== Thermal
+°F | Temperature (Fahrenheit)
+°R | Temperature (Rankine)
+

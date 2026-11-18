@@ -189,7 +189,10 @@ pub fn format_seconds(micros: i64) -> String {
     let sign = if micros < 0 { "-" } else { "" };
     let (whole, frac) = (n / second, n % second);
     if frac > 0 {
-        format!("{sign}{whole}.{}s", format!("{frac:06}").trim_end_matches('0'))
+        format!(
+            "{sign}{whole}.{}s",
+            format!("{frac:06}").trim_end_matches('0')
+        )
     } else {
         format!("{sign}{whole}s")
     }
@@ -249,7 +252,10 @@ pub fn parse_clock(text: &str) -> Result<i64, NotDuration> {
             None => (s, ""),
         },
     };
-    if !digits(whole) || (sec.is_some() && whole.len() != 2) || (sec.is_some_and(|s| s.contains('.')) && !digits(frac)) {
+    if !digits(whole)
+        || (sec.is_some() && whole.len() != 2)
+        || (sec.is_some_and(|s| s.contains('.')) && !digits(frac))
+    {
         return Err(NotDuration::Shape);
     }
     let says = |m: &str| Err(NotDuration::Says(m.to_string()));
@@ -291,10 +297,16 @@ mod tests {
     fn the_signed_colon_form_reads_and_shows() {
         assert_eq!(parse_clock("+11:30"), Ok(11 * HOUR + 30 * 60 * MICROS));
         assert_eq!(parse_clock("-0:00:30.5"), Ok(-(30 * MICROS + MICROS / 2)));
-        assert_eq!(parse_clock("+128:04:15"), Ok(128 * HOUR + 4 * 60 * MICROS + 15 * MICROS));
+        assert_eq!(
+            parse_clock("+128:04:15"),
+            Ok(128 * HOUR + 4 * 60 * MICROS + 15 * MICROS)
+        );
         assert_eq!(parse_clock("11:30"), Err(NotDuration::Shape));
         assert!(matches!(parse_clock("+11:75"), Err(NotDuration::Says(_))));
-        assert_eq!(format_clock(128 * HOUR + 4 * 60 * MICROS + 15 * MICROS), "+128:04:15");
+        assert_eq!(
+            format_clock(128 * HOUR + 4 * 60 * MICROS + 15 * MICROS),
+            "+128:04:15"
+        );
         assert_eq!(format_clock(-(30 * MICROS + MICROS / 2)), "-00:00:30.5");
         for t in [0, 5400 * MICROS, -HOUR, 1] {
             assert_eq!(parse_clock(&format_clock(t)), Ok(t));

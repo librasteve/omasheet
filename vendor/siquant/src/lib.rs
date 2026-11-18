@@ -29,7 +29,6 @@ pub use dim::{Base, Dim, NUM_BASES};
 pub use error::{Error, Result};
 pub use quantity::{Quantity, QuantityType};
 pub use registry::{
-    GROUPS, INFERRED, PrefixId, PrefixInfo, PrefixKind, Prefixable, Registry, Scope, UnitId,
-    UnitInfo,
+    INFERRED, PrefixId, PrefixInfo, PrefixKind, Prefixable, Registry, Scope, UnitId, UnitInfo,
 };
 pub use unit::{Term, Unit};

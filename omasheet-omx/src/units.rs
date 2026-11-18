@@ -190,7 +190,10 @@ pub fn product_type(a: QId, b: QId, divide: bool) -> Option<QId> {
 /// does not divide the dimension, as a square root of a length.
 pub fn power_type(a: QId, num: i16, den: u16) -> Result<Option<QId>, String> {
     let Some(t) = a.named() else { return Ok(None) };
-    let mut dims = t.dims().checked_scale(num).ok_or("the power is out of range")?;
+    let mut dims = t
+        .dims()
+        .checked_scale(num)
+        .ok_or("the power is out of range")?;
     if den > 1 {
         let n = i8::try_from(den).map_err(|_| "the root is out of range")?;
         let mut out = siquant::Dim::NONE;

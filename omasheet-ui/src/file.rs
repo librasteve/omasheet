@@ -1749,7 +1749,7 @@ impl qobject::File {
     fn quantity_kinds(&self) -> QString {
         let reg = siquant::Registry::builtin();
         let mut lines = Vec::new();
-        for group in siquant::GROUPS {
+        for group in reg.groups() {
             for t in reg.quantity_types().filter(|t| t.group() == group) {
                 let unit = t
                     .preferred_unit()
@@ -2129,97 +2129,69 @@ fn table_as_sheet(doc: &Document, sheet: usize, name: &str) -> Result<String, St
     Ok(format!("sheet {name}\n{rest}"))
 }
 
-/// The units of `Set unit…`, a line each: group, symbol, hint.
+/// The units of `Set unit…`, a line each: group, symbol, hint. The groups and
+/// the order of the units in them are those of siquant's `menu.txt`.
 fn unit_lines() -> String {
     let reg = siquant::Registry::builtin();
-    let mut seen = std::collections::HashSet::new();
     let mut lines = Vec::new();
-    for group in siquant::GROUPS {
-        // The units of the group in the order of the resource file, and
-        // those a kind of the group is held in, `kg`, `m^2`, `m.s^-1`,
-        // named for the unit where the registry has one and for the kind
-        // where it has not. The kinds' come first, which gives the
-        // kilogram, not the gram, and the katal last of its group; only
-        // the Size group lists its own units first.
-        let mut own: Vec<(String, String)> = reg
-            .units()
-            .filter(|u| u.live && u.group == group)
-            .map(|u| (u.symbol.to_string(), u.name.to_string()))
-            .collect();
-        let mut kinds: Vec<(String, String)> = Vec::new();
-        for t in reg.quantity_types().filter(|t| t.group() == group) {
-            if let Some(u) = t.preferred_unit() {
-                let symbol = u.to_string();
-                // A prefixed unit is named for its prefix and its unit:
-                // `kg` is the kilogram.
-                let prefixed = || {
-                    const PREFIXES: [(&str, &str); 8] = [
-                        ("k", "kilo"),
-                        ("M", "mega"),
-                        ("G", "giga"),
-                        ("m", "milli"),
-                        ("u", "micro"),
-                        ("\u{b5}", "micro"),
-                        ("n", "nano"),
-                        ("c", "centi"),
-                    ];
-                    PREFIXES.iter().find_map(|(p, word)| {
-                        let rest = symbol.strip_prefix(p)?;
-                        let r = reg.units().find(|r| r.symbol == rest)?;
-                        Some(format!("{word}{}", r.name))
-                    })
-                };
-                let name = reg
-                    .units()
-                    .find(|r| r.symbol == symbol)
-                    .map(|r| r.name.to_string())
-                    .or_else(prefixed)
-                    .unwrap_or_else(|| t.name().to_string());
-                kinds.push((symbol, name));
-            }
-        }
-        let both = if group != "Size" {
-            kinds.append(&mut own);
-            kinds
-        } else {
-            own.append(&mut kinds);
-            own
-        };
-        // The shorter symbols first, the order otherwise kept; each named
-        // by its kind and, where the registry has one, its unit: `Energy
-        // (joule)`.
-        let mut both = both;
-        // The base units, though, in the order of the SI's own list.
-        const BASE: [&str; 7] = ["m", "kg", "s", "K", "A", "mol", "cd"];
-        both.sort_by_key(|(symbol, _)| {
-            let base = BASE.iter().position(|b| b == symbol).unwrap_or(BASE.len());
-            (
-                if group == "SI Base" { base } else { 0 },
-                symbol == "kat",
-                symbol.chars().count(),
-            )
-        });
-        for (symbol, name) in both {
-            if !seen.insert(symbol.clone()) {
-                continue;
-            }
-            // The kind the unit is held in, else the inferred type of its dimension
-            // (the registry has none for time, so it is a duration).
+    for (group, entries) in reg.menu() {
+        for symbol in entries {
+            // The kind the unit is held in, else the kind of its dimension
+            // that is filed under the same heading (`Radioactivity`, not
+            // `Frequency`, for the curie), else the inferred type of the
+            // dimension.
+            let dims = siquant::Unit::parse(symbol, siquant::Scope::Live)
+                .ok()
+                .map(|u| u.dims());
             let kind = reg
                 .quantity_types()
-                .find(|t| t.preferred_unit().is_some_and(|u| u.to_string() == symbol))
-                .map(|t| t.name().to_string())
+                .find(|t| t.preferred_unit().is_some_and(|u| u.to_string() == *symbol))
                 .or_else(|| {
-                    let u = siquant::Unit::parse(&symbol, siquant::Scope::Live).ok()?;
-                    reg.infer_type(u.dims()).map(|t| t.name().to_string())
+                    reg.quantity_types_for(dims?)
+                        .into_iter()
+                        .find(|t| t.group() == group)
                 })
-                .or_else(|| (symbol == "s").then(|| "Duration".to_string()));
+                .or_else(|| reg.infer_type(dims?))
+                .map(|t| t.name().to_string());
+            // A prefixed unit is named for its prefix and its unit: `kg` is
+            // the kilogram.
+            let prefixed = || {
+                const PREFIXES: [(&str, &str); 8] = [
+                    ("k", "kilo"),
+                    ("M", "mega"),
+                    ("G", "giga"),
+                    ("m", "milli"),
+                    ("u", "micro"),
+                    ("\u{b5}", "micro"),
+                    ("n", "nano"),
+                    ("c", "centi"),
+                ];
+                PREFIXES.iter().find_map(|(p, word)| {
+                    let rest = symbol.strip_prefix(p)?;
+                    let r = reg.units().find(|r| r.symbol == rest)?;
+                    Some(format!("{word}{}", r.name))
+                })
+            };
+            let name = reg
+                .units()
+                .find(|r| r.symbol == symbol)
+                .map(|r| r.name.to_string())
+                .or_else(prefixed)
+                .or_else(|| kind.clone())
+                .unwrap_or_else(|| symbol.clone());
             let name = name.replace("degree ", "");
             let hint = match kind {
                 Some(k) if k != name => format!("{k} ({name})"),
                 _ => name,
             };
-            lines.push(format!("{group}\t{symbol}\t{hint}"));
+            // The sector of the unit, for the buttons of the picker: metric
+            // (nothing), `other` for a non-metric one, or `currency`.
+            let sector = match reg.units().find(|r| r.symbol == symbol) {
+                Some(r) if r.currency => "currency",
+                Some(r) if !r.metric => "other",
+                _ => "",
+            };
+            lines.push(format!("{group}\t{symbol}\t{hint}\t{sector}"));
         }
     }
     lines.join("\n")
@@ -2236,5 +2208,37 @@ mod relative_tests {
         assert_eq!(rel("/a/b/data/x.csv", "/a/b"), Path::new("data/x.csv"));
         assert_eq!(rel("/a/data/x.csv", "/a/b"), Path::new("../data/x.csv"));
         assert_eq!(rel("/a/b/x.csv", "/a/b"), Path::new("x.csv"));
+    }
+}
+
+#[cfg(test)]
+mod unit_order_tests {
+    use super::unit_lines;
+
+    fn group(name: &str) -> Vec<(String, String)> {
+        unit_lines()
+            .lines()
+            .filter_map(|l| {
+                let mut f = l.split('\t');
+                (f.next()? == name).then(|| {
+                    let symbol = f.next().unwrap().to_string();
+                    (symbol, f.next().unwrap_or("").to_string())
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn units_go_in_the_order_of_the_menu() {
+        let symbols = |g: &str| group(g).into_iter().map(|(s, _)| s).collect::<Vec<_>>();
+        assert_eq!(symbols("SI Base"), ["m", "kg", "s", "A", "K", "mol", "cd"]);
+        let contextual = symbols("Contextual");
+        let at = |s: &str| contextual.iter().position(|x| x == s).unwrap();
+        assert_eq!(at("rpm"), at("rev") + 1);
+        // A unit is named for its kind where the registry has one for it.
+        let radiation = group("Radiation");
+        let hint = |s: &str| radiation.iter().find(|(u, _)| u == s).unwrap().1.clone();
+        assert_eq!(hint("Ci"), "Radioactivity (curie)");
+        assert_eq!(hint("Gy"), "Dose (gray)");
     }
 }

@@ -2502,21 +2502,25 @@ ApplicationWindow {
     // The steps of setting a column go in order, its type and then its format.
     // `Set unit…` is always open: a unit makes the column a kind of quantity,
     // whatever it was.
-    // `Set format…` waits for a declared type that takes a format.
+    // `Set format…` waits for a type, declared or inferred, that takes a format.
     function allFormattable() {
         // The constants: their Value column.
         if (sheet.isConsts)
             return selLeft === 2 && selRight === 2 && sheet.nrows > 0;
         for (var c = selLeft; c <= selRight; c++) {
             var column = sheet.columns[c];
-            if (!column || !column.declared)
+            // A type the column was declared, or has from its cells: applying
+            // a format declares it.
+            if (!column || !column.type)
                 return false;
             // A quantity takes a format with or without a unit, `Quantity[; .9s]`.
             if (win.isQuantityType(column.type)) {
                 continue;
-            } else if (["Integer", "Hex", "Octal", "Binary", "Decimal", "Float", "Scientific", "Boolean", "Date", "Time", "Datetime"].indexOf(column.type) < 0) {
-                return false;
             }
+            // `Decimal(2)` is a `Decimal`.
+            var base = column.type.split("(")[0];
+            if (["Integer", "Hex", "Octal", "Binary", "Decimal", "Float", "Scientific", "Boolean", "Date", "Time", "Datetime", "Duration"].indexOf(base) < 0)
+                return false;
         }
         return true;
     }
@@ -5787,6 +5791,11 @@ ApplicationWindow {
         // and it is not a change to take it.
         property var tickFor: function(spec) { return spec; }
         readonly property string tick: tickFor(current)
+        // Where the columns declare nothing but have a type of their cells:
+        // that entry is where the list opens and the mark starts, ready for
+        // Apply to declare it. Not ticked, as it is not yet what they have.
+        property string inferred: ""
+        readonly property string start: tick.length > 0 ? tick : inferred
         // Has something been marked, or typed, since the box opened?
         property bool touched: false
         property string fault: ""
@@ -5804,6 +5813,13 @@ ApplicationWindow {
         // A box with its own help, from a button beside Apply: the prefixes.
         property bool helpable: false
         signal helpAsked()
+        // Buttons under the search box, one for each sector, `Metric`, `Non-Metric`, `Currency` and `All`, for
+        // a list that has units of other systems in it: which to show.
+        // The sector shown, `metric` (the default), `other` (non-metric),
+        // `currency` or `all`; only the buttons change it, and a search is
+        // of the sector that is shown.
+        property bool systems: false
+        property string sector: "metric"
         // What the last Apply was refused for, where it can be: shown under
         // the list until something else is typed or taken.
         property string error: ""
@@ -5819,6 +5835,8 @@ ApplicationWindow {
         signal picked(string spec)
         // How much taller than usual the box is.
         property real taller: 1
+        // Rows the list is at least as tall as, though it holds fewer.
+        property int minRows: 0
         padding: 6
         width: win.setPopupWidth
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -5869,6 +5887,8 @@ ApplicationWindow {
                 error = "";
             var all = provider(search.text.trim());
             var shown = all.filter(function(e) {
+                if (systems && sector !== "all" && e.sector !== sector)
+                    return false;
                 return want.length === 0 || e.keep
                     || e.label.toLowerCase().indexOf(want) >= 0
                     || (e.hint || "").toLowerCase().indexOf(want) >= 0;
@@ -5895,7 +5915,7 @@ ApplicationWindow {
                     }
                 }
             for (var j = 0; at < 0 && j < list.length; j++) {
-                if (!list[j].header && list[j].spec === tick) {
+                if (!list[j].header && list[j].spec === start) {
                     at = j;
                     break;
                 }
@@ -6066,22 +6086,31 @@ ApplicationWindow {
             col = c;
             parent = item;
             current = haveCurrent;
-            // Closed, but for the group that has the one the columns have.
+            // Every group closed but one: the group that has the type or unit
+            // the columns have or are inferred to have, else the first. This is
+            // so for every box of groups with carets; `open0` is no longer
+            // asked, whatever a box offers.
             var c0 = {};
-            var groups = provider("").map(function(e) { return e.group || ""; });
-            for (var i = 0; i < groups.length; i++) {
-                if (groups[i])
-                    c0[groups[i]] = open0.indexOf(groups[i]) < 0;
+            var all = provider("");
+            var names = all.map(function(e) { return e.group || ""; });
+            for (var i = 0; i < names.length; i++) {
+                if (names[i])
+                    c0[names[i]] = true;
             }
+            var g = "";
+            for (var m = 0; m < all.length && !g; m++) {
+                if (all[m].spec === start)
+                    g = all[m].group || "";
+            }
+            if (!g) {
+                for (var k = 0; k < names.length && !g; k++)
+                    g = names[k];
+            }
+            if (g)
+                c0[g] = false;
             closed = c0;
             search.text = "";
             refresh();
-            var g = groupOf(tick);
-            if (g) {
-                c0[g] = false;
-                closed = c0;
-                refresh();
-            }
             win.placeBeside(picker, item);
             touched = false;
             settled = false;
@@ -6260,6 +6289,44 @@ ApplicationWindow {
                 }
               }
             }
+            RowLayout {
+                visible: picker.systems
+                Layout.fillWidth: true
+                spacing: 6
+                Item { Layout.fillWidth: true }
+                Repeater {
+                    model: [{label: "Metric", sector: "metric"}, {label: "Non-Metric", sector: "other"},
+                        {label: "Currency", sector: "currency"}, {label: "All", sector: "all"}]
+                    delegate: Rectangle {
+                        required property var modelData
+                        readonly property bool on: picker.sector === modelData.sector
+                        implicitWidth: sysLabel.implicitWidth + 12
+                        implicitHeight: Math.round(win.fontSize * 1.8)
+                        radius: 3
+                        color: on ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.18)
+                            : sysArea.containsMouse ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.08) : "transparent"
+                        border.color: on ? win.accentColor : win.lineColor
+                        Text {
+                            id: sysLabel
+                            anchors.centerIn: parent
+                            text: parent.modelData.label
+                            color: win.textColor
+                            font.family: win.font.family
+                            font.pixelSize: win.smallSize
+                        }
+                        MouseArea {
+                            id: sysArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: {
+                                picker.sector = parent.modelData.sector;
+                                picker.refresh(true);
+                                search.forceActiveFocus();
+                            }
+                        }
+                    }
+                }
+            }
             Text {
                 visible: picker.note.length > 0
                 Layout.fillWidth: true
@@ -6276,7 +6343,7 @@ ApplicationWindow {
                 // The list as tall as it is, up to the usual height; the handle then
                 // stretches the box past that, to room beyond what it holds.
                 Layout.preferredHeight: Math.max(Math.round(win.fontSize * 5), Math.min(
-                    Math.min(contentHeight, Math.round(win.fontSize * 22 * picker.taller)) + picker.stretch,
+                    Math.min(Math.max(contentHeight, Math.round(win.fontSize * 1.9 * picker.minRows)), Math.round(win.fontSize * 22 * picker.taller)) + picker.stretch,
                     Math.round(win.height * 0.9), win.roomFor(listView, picker.y, Math.round(win.fontSize * 7))))
                 clip: true
                 model: picker.rows
@@ -6463,6 +6530,8 @@ ApplicationWindow {
     // `Force`, comes from the unit chosen in `Set unit…`.
     PickerPopup {
         id: typePopup
+        taller: 1.5
+        minRows: 16
         placeholder: "e.g. Decimal, Decimal(6)"
         clearText: "Clear type"
         clearable: win.anyDeclared()
@@ -6507,9 +6576,21 @@ ApplicationWindow {
             var spec = win.sharedSpec(true);
             var at = spec.indexOf("[");
             var type = at < 0 ? spec : spec.substring(0, at);
-            return win.isQuantityType(type) ? "Quantity" : type;
+            // `Duration` is a kind of quantity but has an entry of its own.
+            return type !== "Duration" && win.isQuantityType(type) ? "Quantity" : type;
         }
         function show(c, item) {
+            // A type the cells gave, `Duration`, where none is declared: the
+            // list opens at it, and only its group, with it marked. A
+            // decimal's places are not an entry: `Decimal(2)` marks `Decimal`.
+            var found = now().length === 0 ? win.sharedSpec(false) : "";
+            var at = found.indexOf("[");
+            if (at >= 0)
+                found = found.substring(0, at);
+            at = found.indexOf("(");
+            if (at >= 0)
+                found = found.substring(0, at);
+            inferred = found !== "Duration" && win.isQuantityType(found) ? "Quantity" : found;
             openFor(c, item, now(), ["Numbers", "Text", "Dates and times", "Other"]);
         }
     }
@@ -6529,6 +6610,7 @@ ApplicationWindow {
             win.setFormatOf("");
         }
         taller: 1.8
+        systems: true
         helpable: true
         onHelpAsked: prefixHelp.openBeside(unitPopup)
         // The units in the list, for what stands for a prefixed one.
@@ -6564,7 +6646,7 @@ ApplicationWindow {
                 var f = lines[i].split("\t");
                 if (f.length < 3)
                     continue;
-                out.push({spec: f[1], label: f[1], complete: f[1], hint: f[2], group: f[0]});
+                out.push({spec: f[1], label: f[1], complete: f[1], hint: f[2], group: f[0], sector: f[3] === "other" ? "other" : f[3] === "currency" ? "currency" : "metric"});
             }
             // `Mass[kg]` or `kg`: the unit is what is taken.
             var open = text.indexOf("[");
@@ -6623,6 +6705,17 @@ ApplicationWindow {
                     note += "; unit=" + parts[2] + " (" + parts[3] + ")";
                 } else
                     note += "; unit=" + unit;
+            }
+            // No unit declared: the one an inferred quantity is held in, `s` for a
+            // `Duration`, is where the list opens, with it marked.
+            inferred = "";
+            if (at < 0) {
+                var seen = win.sharedSpec(false);
+                var i0 = seen.indexOf("[");
+                if (i0 >= 0)
+                    inferred = tickFor(seen.substring(i0 + 1, seen.length - 1));
+                else if (seen === "Duration")
+                    inferred = "s";
             }
             openFor(c, item, at < 0 ? "" : spec.substring(at + 1, spec.length - 1), ["SI Base"]);
         }
@@ -7251,6 +7344,8 @@ ApplicationWindow {
                     width: ListView.view.width
                     height: Math.round(win.fontSize * 1.9)
                     radius: 3
+                    // Nothing drawn past the row, whatever the text is.
+                    clip: true
                     color: formatPopup.marked === index
                         ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.22)
                         : choiceArea.containsMouse ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.08)
@@ -7263,6 +7358,7 @@ ApplicationWindow {
                         anchors.verticalCenter: parent.verticalCenter
                         width: Math.round(parent.width * 0.42)
                         elide: Text.ElideRight
+                        clip: true
                         text: choice.modelData.format
                         color: win.textColor
                         font.family: win.monoFamily
@@ -7275,6 +7371,7 @@ ApplicationWindow {
                         anchors.right: parent.right
                         anchors.rightMargin: 8
                         elide: Text.ElideRight
+                        clip: true
                         text: choice.modelData.shows
                         color: win.mutedColor
                         font.family: win.font.family

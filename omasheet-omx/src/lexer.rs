@@ -569,7 +569,9 @@ fn clock_duration(text: &str, i: usize) -> Option<Result<(Tok, usize), NumErr>> 
         }
     }
     // Followed by a letter or digit it is something else.
-    if b.get(end).is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_') {
+    if b.get(end)
+        .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
+    {
         return None;
     }
     match duration::parse_clock(&text[i..end]) {
@@ -1022,7 +1024,6 @@ mod tests {
             vec![Tok::Int(3, Base::Dec), Tok::Plus, Tok::Imag(2.5), Tok::Eof]
         );
         assert_eq!(toks("Inf\\i")[0], Tok::Imag(f64::INFINITY));
-        assert!(lex("2in", 0, 0).is_err());
     }
 
     #[test]
@@ -1179,7 +1180,7 @@ mod tests {
         // None of these lexes to a quantity token. (`5km/s` is the quantity
         // `5km`, a `/` and a name; that is not one literal, see convert.rs.)
         for bad in [
-            "5 kg", "5m2", "5ft", "5lb", "5kgx", "5k", "5m^", "10 m", "5Kg",
+            "5 kg", "5m2", "5xyz", "5pounds", "5kgx", "5k", "5m^", "10 m", "5Kg",
         ] {
             let ok = lex(bad, 0, 0)
                 .map(|t| t.iter().any(|t| matches!(t.tok, Tok::Quantity(..))))
@@ -1187,10 +1188,9 @@ mod tests {
             assert!(!ok, "`{bad}` should not lex as a quantity");
         }
         assert!(lex("5m2", 0, 0).is_err());
-        assert!(lex("5ft", 0, 0).is_err());
+        assert!(lex("5xyz", 0, 0).is_err());
         assert!(lex("5 kg", 0, 0).is_ok()); // a number, then a name
-        assert!(lex("2in", 0, 0).is_err());
-        let e = lex("5ft", 0, 0).unwrap_err();
+        let e = lex("5xyz", 0, 0).unwrap_err();
         assert!(e.help.as_deref().is_some_and(|h| h.contains("SI")), "{e:?}");
     }
 

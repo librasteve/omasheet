@@ -60,15 +60,19 @@ QtObject {
 
     // Whether a window kept at (x, y) would still have its title bar on a
     // screen, as when a monitor it was on has been unplugged since.
-    function onScreen(x, y, width) {
+    // The screen that has it, or null. The window is put on that screen
+    // by name, as well as at the place: a place on another monitor than the
+    // primary, said without the screen, is "outside any known screen" to Qt,
+    // which then leaves the window out of sight.
+    function screenFor(x, y, width) {
         var screens = Qt.application.screens;
         for (var i = 0; i < screens.length; i++) {
             var s = screens[i];
             if (x + width > s.virtualX + 100 && x < s.virtualX + s.width - 100
                     && y >= s.virtualY && y < s.virtualY + s.height - 60)
-                return true;
+                return s;
         }
-        return false;
+        return null;
     }
 
     // The window kept from last time, as { width, height, x, y }, or null
@@ -80,15 +84,25 @@ QtObject {
         if (!(w >= 640 && h >= 420 && w <= 10000 && h <= 10000))
             return null;
         var x = parseInt(wh[2]), y = parseInt(wh[3]);
-        var placed = !isNaN(x) && !isNaN(y) && onScreen(x, y, w);
-        return { width: w, height: h, x: placed ? x : null, y: placed ? y : null };
+        var on = isNaN(x) || isNaN(y) ? null : screenFor(x, y, w);
+        if (on) {
+            // Qt wants the whole window inside the one screen: a window that
+            // hangs over an edge, into the next screen or off the desktop, is
+            // "outside any known screen". Pulled back in, and made smaller if
+            // it is bigger than the screen.
+            w = Math.min(w, on.width);
+            h = Math.min(h, on.height);
+            x = Math.max(on.virtualX, Math.min(x, on.virtualX + on.width - w));
+            y = Math.max(on.virtualY, Math.min(y, on.virtualY + on.height - h));
+        }
+        return { width: w, height: h, x: on ? x : null, y: on ? y : null, screen: on };
     }
 
     // `fontSize` is the size the window that asked for this one is at, so a
     // second window opens at the zoom of the first. Zero leaves it unset, and
     // the window takes the size the desktop is at, which is what the first
     // window opens at.
-    function open(tab, fontSize, width, height, x, y) {
+    function open(tab, fontSize, width, height, x, y, screen) {
         count++;
         var props = { tab: tab };
         if (fontSize > 0)
@@ -98,6 +112,8 @@ QtObject {
             props.height = height;
         }
         if (x !== null && y !== null) {
+            if (screen)
+                props.screen = screen;
             props.x = x;
             props.y = y;
         }
@@ -125,6 +141,6 @@ QtObject {
         if (saved === null)
             open(0, 0, 0, 0, null, null);
         else
-            open(0, 0, saved.width, saved.height, saved.x, saved.y);
+            open(0, 0, saved.width, saved.height, saved.x, saved.y, saved.screen);
     }
 }

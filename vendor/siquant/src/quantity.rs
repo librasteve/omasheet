@@ -205,9 +205,14 @@ impl QuantityType {
         u16::try_from(self.index).expect("fewer than 65536 quantity types")
     }
 
-    /// The heading a menu files the type under: see [`crate::GROUPS`].
+    /// The heading a menu files the type under, that of its preferred unit:
+    /// see [`crate::Registry::groups`].
     pub fn group(&self) -> &str {
-        &self.reg.0.types[self.index].group
+        self.reg
+            .0
+            .menu
+            .get()
+            .map_or("Other", |m| m.type_groups[self.index].as_str())
     }
 
     /// The name, as a column declares it.

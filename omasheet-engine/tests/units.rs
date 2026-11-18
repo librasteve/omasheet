@@ -92,7 +92,7 @@ fn with_an_uncertainty() {
 
 #[test]
 fn what_is_not_a_unit_is_an_error() {
-    for bad in ["5 kg", "5km/s", "5m2", "5ft", "5lb", "5kgx"] {
+    for bad in ["5 kg", "5km/s", "5m2", "5xyz", "5pounds", "5kgx"] {
         let out = eval(None, "<expression>", bad);
         assert!(!out.ok(), "`{bad}` should fail, gave {}", out.output);
     }
@@ -655,11 +655,18 @@ fn a_duration_may_have_an_uncertainty() {
     let file = "sheet S\n\nT : Duration[s; ±.1f]\nU : Duration[s; ±.1f]\n\n| T | U |\n| - | - |\n| 10.5(3)s | * |\n| PT1M | * |\n\nU := T + PT10S\n";
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
-    assert!(out.output.contains("10.5 ± 0.3") && out.output.contains("20.5 ± 0.3"), "{}", out.output);
+    assert!(
+        out.output.contains("10.5 ± 0.3") && out.output.contains("20.5 ± 0.3"),
+        "{}",
+        out.output
+    );
     // An exact duration stays a whole number of microseconds.
     assert_eq!(shown("PT1M * 2"), "PT2M");
     assert!(fails("09:00 + 10.5(3)s").contains("uncertainty"));
-    assert!(fails("PT1H + 5kg").contains("not a length of time") || fails("PT1H + 5kg").contains("cannot"));
+    assert!(
+        fails("PT1H + 5kg").contains("not a length of time")
+            || fails("PT1H + 5kg").contains("cannot")
+    );
 }
 
 #[test]
@@ -668,7 +675,11 @@ fn a_bare_number_in_a_duration_column_is_in_its_unit() {
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
     // `1.5` hours is 90 minutes, and `2(1)` is 2 minutes, plus or minus 1.
-    assert!(out.output.contains("90") && out.output.contains("1.5"), "{}", out.output);
+    assert!(
+        out.output.contains("90") && out.output.contains("1.5"),
+        "{}",
+        out.output
+    );
 }
 
 #[test]
@@ -793,8 +804,8 @@ fn the_metric_non_si_units_are_exact_multiples() {
     // `u` is the micro prefix, and shown as `μ`.
     assert_eq!(shown("5um"), "5μm");
     assert_eq!(shown("5um == 5µm"), "true");
-    // Still no imperial units, and `u` is no unit of its own.
-    assert!(fails("5ft").contains("not a number"));
+    // `u` is no unit of its own.
+    assert!(fails("5xyz").contains("not a number"));
     assert!(fails("5u").contains("not a number"));
 }
 
@@ -841,7 +852,11 @@ fn a_result_is_the_inferred_type_and_a_column_may_declare_another() {
     // A dimension no type has is a plain quantity, and still calculates.
     assert_eq!(shown("2kg * 3m^5"), "6kg.m^5");
     // The error names the one inferred type, not every type of the dimension.
-    assert!(fails("5J + 3kg").contains("Energy and Mass"), "{}", fails("5J + 3kg"));
+    assert!(
+        fails("5J + 3kg").contains("Energy and Mass"),
+        "{}",
+        fails("5J + 3kg")
+    );
 }
 
 #[test]
@@ -857,7 +872,11 @@ fn a_quantity_takes_a_power_to_four_and_a_root_to_four() {
     assert_eq!((v, u.as_str()), (2.0, "m"));
     assert!((s - 0.5).abs() < 1e-9, "{s}");
     // A root the unit does not divide, or one beyond four, is refused.
-    assert!(fails("5m ** (1/2)").contains("not divisible"), "{}", fails("5m ** (1/2)"));
+    assert!(
+        fails("5m ** (1/2)").contains("not divisible"),
+        "{}",
+        fails("5m ** (1/2)")
+    );
     assert!(fails("32m^5 ** (1/5)").contains("whole power or a root"));
     // A column of a kind takes the typed result, and the checker refuses
     // a root of a kind that has none before any value is known.
@@ -865,9 +884,20 @@ fn a_quantity_takes_a_power_to_four_and_a_root_to_four() {
                 | A | L | V | R | S |\n| - | - | - | - | - |\n| 9m^2 | 4m | 8m^3 | * | * |\n\nR := A ** (1/2)\nS := L ** 2\n";
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
-    assert!(out.output.contains('3') && out.output.contains("16"), "{}", out.output);
-    let bad = view("test.omx", "sheet G\n\nL : Length[m]\nR : Length[m]\n\n| L | R |\n| - | - |\n| 4m | * |\n\nR := L ** (1/2)\n");
-    assert!(bad.errors.join("\n").contains("no root of 2"), "{:?}", bad.errors);
+    assert!(
+        out.output.contains('3') && out.output.contains("16"),
+        "{}",
+        out.output
+    );
+    let bad = view(
+        "test.omx",
+        "sheet G\n\nL : Length[m]\nR : Length[m]\n\n| L | R |\n| - | - |\n| 4m | * |\n\nR := L ** (1/2)\n",
+    );
+    assert!(
+        bad.errors.join("\n").contains("no root of 2"),
+        "{:?}",
+        bad.errors
+    );
 }
 
 #[test]
@@ -889,11 +919,18 @@ fn durations_total_and_run() {
     assert_eq!(shown("PT1H30M.total_minutes()"), "90");
     assert_eq!(shown("PT36H.total_days()"), "1.5");
     assert_eq!(shown("PT90S.total_seconds()"), "90");
-    assert_eq!(shown("[PT1H, PT30M, PT10M].cum_sum()"), "[PT1H, PT1H30M, PT1H40M]");
+    assert_eq!(
+        shown("[PT1H, PT30M, PT10M].cum_sum()"),
+        "[PT1H, PT1H30M, PT1H40M]"
+    );
     assert_eq!(shown("[PT1H, PT30M].sum()"), "PT1H30M");
     // A running total of a column in another unit shows in the column's.
     let file = "sheet L\n\nTook : Duration[min]\nSoFar : Duration[min]\n\n| Took | SoFar |\n| - | - |\n| 30min | * |\n| PT45M | * |\n\nSoFar := Took.cum_sum()\n";
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
-    assert!(out.output.contains("30") && out.output.contains("75"), "{}", out.output);
+    assert!(
+        out.output.contains("30") && out.output.contains("75"),
+        "{}",
+        out.output
+    );
 }

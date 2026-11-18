@@ -20,7 +20,7 @@
 # so `kg` is just `k` + `g` with no special case.
 
 # SI base units.
-- {symbol: g,   name: gram,     base: Mass,              factor: "0.001", prefixable: si, group: Size}
+- {symbol: g,   name: gram,     base: Mass,              factor: "0.001", prefixable: si}
 - {symbol: m,   name: metre,    base: Length,            prefixable: si}
 - {symbol: A,   name: ampere,   base: Current,           prefixable: si}
 - {symbol: K,   name: kelvin,   base: Temperature,       prefixable: si}
@@ -30,32 +30,32 @@
 
 # Celsius is affine: kelvin = (celsius + 273.15). Not prefixable, and legal
 # only on its own (never inside a compound unit).
-- {symbol: "°C", name: degree Celsius, defn: K, offset: "273.15", alt: ["ºC"], group: Size}
+- {symbol: "°C", name: degree Celsius, defn: K, offset: "273.15", alt: ["ºC"]}
 
 # SI named derived units.
-- {symbol: Hz,  name: hertz,     defn: "s^-1",                prefixable: si, group: Size}
-- {symbol: N,   name: newton,    defn: "kg.m.s^-2",           prefixable: si, group: Mechanical}
-- {symbol: Pa,  name: pascal,    defn: "kg.m^-1.s^-2",        prefixable: si, group: Mechanical}
-- {symbol: J,   name: joule,     defn: "kg.m^2.s^-2",         prefixable: si, group: Mechanical}
-- {symbol: W,   name: watt,      defn: "kg.m^2.s^-3",         prefixable: si, group: Mechanical}
-- {symbol: C,   name: coulomb,   defn: "A.s",                 prefixable: si, group: Electromagnetic}
-- {symbol: V,   name: volt,      defn: "kg.m^2.A^-1.s^-3",    prefixable: si, group: Electromagnetic}
-- {symbol: F,   name: farad,     defn: "kg^-1.m^-2.A^2.s^4",  prefixable: si, group: Electromagnetic}
-- {symbol: Ω,   name: ohm,       defn: "kg.m^2.A^-2.s^-3",    prefixable: si, alt: ["Ω"], group: Electromagnetic}
-- {symbol: S,   name: siemens,   defn: "kg^-1.m^-2.A^2.s^3",  prefixable: si, group: Electromagnetic}
-- {symbol: Wb,  name: weber,     defn: "kg.m^2.A^-1.s^-2",    prefixable: si, group: Electromagnetic}
-- {symbol: T,   name: tesla,     defn: "kg.A^-1.s^-2",        prefixable: si, group: Electromagnetic}
-- {symbol: H,   name: henry,     defn: "kg.m^2.A^-2.s^-2",    prefixable: si, group: Electromagnetic}
-- {symbol: Bq,  name: becquerel, defn: "s^-1",                prefixable: si, group: Radiation}
-- {symbol: Gy,  name: gray,      defn: "m^2.s^-2",            prefixable: si, group: Radiation}
-- {symbol: Sv,  name: sievert,   defn: "m^2.s^-2",            prefixable: si, group: Radiation}
-- {symbol: kat, name: katal,     defn: "mol.s^-1",            prefixable: si, group: Thermodynamic}
+- {symbol: Hz,  name: hertz,     defn: "s^-1",                prefixable: si}
+- {symbol: N,   name: newton,    defn: "kg.m.s^-2",           prefixable: si}
+- {symbol: Pa,  name: pascal,    defn: "kg.m^-1.s^-2",        prefixable: si}
+- {symbol: J,   name: joule,     defn: "kg.m^2.s^-2",         prefixable: si}
+- {symbol: W,   name: watt,      defn: "kg.m^2.s^-3",         prefixable: si}
+- {symbol: C,   name: coulomb,   defn: "A.s",                 prefixable: si}
+- {symbol: V,   name: volt,      defn: "kg.m^2.A^-1.s^-3",    prefixable: si}
+- {symbol: F,   name: farad,     defn: "kg^-1.m^-2.A^2.s^4",  prefixable: si}
+- {symbol: Ω,   name: ohm,       defn: "kg.m^2.A^-2.s^-3",    prefixable: si, alt: ["Ω"]}
+- {symbol: S,   name: siemens,   defn: "kg^-1.m^-2.A^2.s^3",  prefixable: si}
+- {symbol: Wb,  name: weber,     defn: "kg.m^2.A^-1.s^-2",    prefixable: si}
+- {symbol: T,   name: tesla,     defn: "kg.A^-1.s^-2",        prefixable: si}
+- {symbol: H,   name: henry,     defn: "kg.m^2.A^-2.s^-2",    prefixable: si}
+- {symbol: Bq,  name: becquerel, defn: "s^-1",                prefixable: si}
+- {symbol: Gy,  name: gray,      defn: "m^2.s^-2",            prefixable: si}
+- {symbol: Sv,  name: sievert,   defn: "m^2.s^-2",            prefixable: si}
+- {symbol: kat, name: katal,     defn: "mol.s^-1",            prefixable: si}
 
 # Data (Stage 2). The bit is the base unit of data and the byte is eight of
 # them. Both take the SI prefixes (`kB` is 1000 B) and the binary ones (`KiB` is
 # 1024 B); rates need no entry of their own: `kb.s^-1`, `MiB.s^-1`.
-- {symbol: b, name: bit,  base: Data, prefixable: both, group: Data}
-- {symbol: B, name: byte, defn: b, factor: "8", prefixable: both, group: Data}
+- {symbol: b, name: bit,  base: Data, prefixable: both}
+- {symbol: B, name: byte, defn: b, factor: "8", prefixable: both}
 
 # Angles (Stage 3). The radian is the base unit of the angle dimension, so a
 # frequency (`s^-1`) and an angular speed (`rad.s^-1`) are not the same thing,
@@ -63,68 +63,122 @@
 # second of arc are non-SI units the SI accepts; they are live so that `45°`
 # can be written, and cannot take a prefix. `'` and `"` are the ASCII
 # alternates of `′` and `″`, and `º` of `°`.
-- {symbol: rad, name: radian,    base: Angle, prefixable: si, group: Angle}
-- {symbol: sr,  name: steradian, defn: "rad^2", prefixable: si, group: Angle}
-- {symbol: "°", name: degree,    defn: rad, factor: "0.017453292519943295", alt: ["º"], group: Angle}
-- {symbol: "′", name: arcminute, defn: "°", factor: "0.016666666666666666", alt: ["'"], group: Angle}
-- {symbol: "″", name: arcsecond, defn: "′", factor: "0.016666666666666666", alt: ['"'], group: Angle}
+- {symbol: rad, name: radian,    base: Angle, prefixable: si}
+- {symbol: sr,  name: steradian, defn: "rad^2", prefixable: si}
+- {symbol: "°", name: degree,    defn: rad, factor: "0.017453292519943295", alt: ["º"]}
+- {symbol: "′", name: arcminute, defn: "°", factor: "0.016666666666666666", alt: ["'"]}
+- {symbol: "″", name: arcsecond, defn: "′", factor: "0.016666666666666666", alt: ['"']}
 
 # Luminous flux and illuminance (Stage 3): the lumen and the lux need the steradian.
-- {symbol: lm,  name: lumen,     defn: "cd.sr",    prefixable: si, group: Radiation}
-- {symbol: lx,  name: lux,       defn: "cd.sr.m^-2", prefixable: si, group: Radiation}
+- {symbol: lm,  name: lumen,     defn: "cd.sr",    prefixable: si}
+- {symbol: lx,  name: lux,       defn: "cd.sr.m^-2", prefixable: si}
 
 # Non-SI units for the metric stage (omasheet): each an exact multiple of an
 # SI unit, none of the imperial ones. `L` is the other spelling of the litre.
 # `Da` is the dalton (CODATA 2022: 1.66053906892e-27 kg).
-- {symbol: l,   name: litre,            defn: "m^3", factor: "0.001",     alt: ["L"], prefixable: si, group: Size}
-- {symbol: t,   name: tonne,            defn: g,      factor: "1000000", group: Size}
-- {symbol: ha,  name: hectare,          defn: "m^2", factor: "10000",                  group: Size}
-- {symbol: bar, name: bar,              defn: Pa,     factor: "100000",                prefixable: si, group: Mechanical}
-- {symbol: eV,  name: electronvolt,     defn: J,      factor: "1.602176634e-19",       prefixable: si, group: Mechanical}
-- {symbol: cal, name: calorie,          defn: J,      factor: "4.184",                 prefixable: si, group: Mechanical}
-- {symbol: Wh,  name: watt-hour,        defn: J,      factor: "3600",                  prefixable: si, group: Mechanical}
+- {symbol: l,   name: litre,            defn: "m^3", factor: "0.001",     alt: ["L"], prefixable: si}
+- {symbol: t,   name: tonne,            defn: g,      factor: "1000000"}
+- {symbol: ha,  name: hectare,          defn: "m^2", factor: "10000"}
+- {symbol: bar, name: bar,              defn: Pa,     factor: "100000",                prefixable: si}
+- {symbol: eV,  name: electronvolt,     defn: J,      factor: "1.602176634e-19",       prefixable: si}
+- {symbol: cal, name: calorie,          defn: J,      factor: "4.184",                 prefixable: si}
+- {symbol: Wh,  name: watt-hour,        defn: J,      factor: "3600",                  prefixable: si}
 # Units of time, each an exact multiple of the second. They are not prefixable:
 # `h` and `d` are units on their own and the prefixes hecto and deci only
 # before another unit, as `hPa` and `dm`.
-- {symbol: min, name: minute,           defn: s,      factor: "60",                   group: Size}
-- {symbol: h,   name: hour,             defn: s,      factor: "3600",                 group: Size}
-- {symbol: d,   name: day,              defn: s,      factor: "86400",                group: Size}
-- {symbol: wk,  name: week,             defn: s,      factor: "604800",               group: Size}
-- {symbol: Da,  name: dalton,           defn: g,      factor: "1.66053906892e-24",     prefixable: si, group: Size}
+- {symbol: min, name: minute,           defn: s,      factor: "60"}
+- {symbol: h,   name: hour,             defn: s,      factor: "3600"}
+- {symbol: d,   name: day,              defn: s,      factor: "86400"}
+- {symbol: wk,  name: week,             defn: s,      factor: "604800"}
+- {symbol: Da,  name: dalton,           defn: g,      factor: "1.66053906892e-24",     prefixable: si}
 
 # Astronomical lengths, exact: the astronomical unit (IAU 2012), the light
 # year (the Julian year at the speed of light), the light day, and the parsec
 # (648000/pi astronomical units, to the digits a double holds). The parsec,
 # the light year and the Julian year take prefixes: `kpc`, `Mly`, `Gyr`.
-- {symbol: au,  name: astronomical unit, defn: m, factor: "149597870700",       group: Size}
-- {symbol: ly,  name: light year,        defn: m, factor: "9460730472580800",  prefixable: si, group: Size}
-- {symbol: ld,  name: light day,         defn: m, factor: "25902068371200",     group: Size}
-- {symbol: pc,  name: parsec,            defn: m, factor: "3.0856775814913673e16", prefixable: si, group: Size}
-- {symbol: "Å", name: angstrom,          defn: m, factor: "1e-10", alt: ["å", "\u212b"], group: Size}
-- {symbol: nmi, name: nautical mile,     defn: m, factor: "1852",               group: Size}
-- {symbol: kn,  name: knot,              defn: "nmi.h^-1", group: Mechanical}
-- {symbol: yr,  name: year,              defn: s, factor: "31557600",           prefixable: si, group: Size}
+- {symbol: au,  name: astronomical unit, defn: m, factor: "149597870700"}
+- {symbol: ly,  name: light year,        defn: m, factor: "9460730472580800",  prefixable: si}
+- {symbol: ld,  name: light day,         defn: m, factor: "25902068371200"}
+- {symbol: pc,  name: parsec,            defn: m, factor: "3.0856775814913673e16", prefixable: si}
+- {symbol: "Å", name: angstrom,          defn: m, factor: "1e-10", alt: ["å", "\u212b"]}
+- {symbol: nmi, name: nautical mile,     defn: m, factor: "1852"}
+- {symbol: kn,  name: knot,              defn: "nmi.h^-1"}
+- {symbol: yr,  name: year,              defn: s, factor: "31557600",           prefixable: si}
 # Area and mass. The barn is spelled out, as `b` is the bit; the tonne takes no
 # prefix, so the kilotonne and the megatonne are units of their own.
-- {symbol: are,  name: are,       defn: "m^2", factor: "100",    group: Size}
-- {symbol: barn, name: barn,      defn: "m^2", factor: "1e-28",  prefixable: si, group: Size}
-- {symbol: ct,   name: carat,     defn: g,     factor: "0.2",    group: Size}
-- {symbol: kt,   name: kilotonne, defn: g,     factor: "1000000000",  group: Size}
-- {symbol: Mt,   name: megatonne, defn: g,     factor: "1000000000000", group: Size}
+- {symbol: are,  name: are,       defn: "m^2", factor: "100"}
+- {symbol: barn, name: barn,      defn: "m^2", factor: "1e-28",  prefixable: si}
+- {symbol: ct,   name: carat,     defn: g,     factor: "0.2"}
+- {symbol: kt,   name: kilotonne, defn: g,     factor: "1000000000"}
+- {symbol: Mt,   name: megatonne, defn: g,     factor: "1000000000000"}
 # Angle: the gon (a hundredth of a right angle) and the turn.
-- {symbol: gon, name: gon,        defn: rad, factor: "0.015707963267948967", group: Angle}
-- {symbol: rev, name: revolution, defn: rad, factor: "6.283185307179586", group: Angle}
-# Pressure and power. The torr is 101325/760 Pa, and `hp` the metric horsepower (the German PS), 75 kgf.m/s; `PS` itself is a petasiemens.
-- {symbol: atm,  name: atmosphere, defn: Pa, factor: "101325",             group: Mechanical}
-- {symbol: torr, name: torr,       defn: Pa, factor: "133.32236842105263", prefixable: si, group: Mechanical}
-- {symbol: hp,   name: metric horsepower,     defn: W,  factor: "735.49875",     group: Mechanical}
+- {symbol: gon, name: gon,        defn: rad, factor: "0.015707963267948967"}
+- {symbol: rev, name: revolution, defn: rad, factor: "6.283185307179586"}
+# The revolution per minute, an angular speed: 2 pi / 60 rad.s^-1.
+- {symbol: rpm, name: revolution per minute, defn: "rad.s^-1", factor: "0.10471975511965977"}
+# Pressure and power. The torr is 101325/760 Pa, and `mhp` the metric horsepower (the German PS), 75 kgf.m/s; `PS` itself is a petasiemens, and `hp` is the mechanical one.
+- {symbol: atm,  name: atmosphere, defn: Pa, factor: "101325"}
+- {symbol: torr, name: torr,       defn: Pa, factor: "133.32236842105263", prefixable: si}
+- {symbol: mhp,  name: metric horsepower,     defn: W,  factor: "735.49875"}
 # Radiation: the rem, the curie and the roentgen; the rad of dose is left out
 # as it is the radian's symbol.
-- {symbol: rem, name: rem,      defn: Sv,       factor: "0.01",   prefixable: si, group: Radiation}
-- {symbol: Ci,  name: curie,    defn: Bq,       factor: "3.7e10", prefixable: si, group: Radiation}
-- {symbol: R,   name: roentgen, defn: "C.kg^-1", factor: "2.58e-4", prefixable: si, group: Radiation}
+- {symbol: rem, name: rem,      defn: Sv,       factor: "0.01",   prefixable: si}
+- {symbol: Ci,  name: curie,    defn: Bq,       factor: "3.7e10", prefixable: si}
+- {symbol: R,   name: roentgen, defn: "C.kg^-1", factor: "2.58e-4", prefixable: si}
 # Other science units: the jansky, the tog and the sverdrup (`Sv` is the
 # sievert).
-- {symbol: Jy,       name: jansky,    defn: "W.m^-2.Hz^-1", factor: "1e-26", prefixable: si, group: Other}
-- {symbol: tog,      name: tog,       defn: "K.m^2.W^-1",   factor: "0.1",   group: Other}
-- {symbol: sverdrup, name: sverdrup,  defn: "m^3.s^-1",     factor: "1e6",   group: Other}
+- {symbol: Jy,       name: jansky,    defn: "W.m^-2.Hz^-1", factor: "1e-26", prefixable: si}
+- {symbol: tog,      name: tog,       defn: "K.m^2.W^-1",   factor: "0.1"}
+- {symbol: sverdrup, name: sverdrup,  defn: "m^3.s^-1",     factor: "1e6"}
+# Non-metric units (`metric: false`, which a menu may hide). The imperial and
+# US customary units are exact multiples of the metre, the gram and so on.
+# Length.
+- {symbol: in,   name: inch,      defn: m,  factor: "0.0254",  metric: false}
+- {symbol: ft,   name: foot,      defn: m,  factor: "0.3048",  metric: false}
+- {symbol: yd,   name: yard,      defn: ft, factor: "3",       metric: false}
+- {symbol: mi,   name: mile,      defn: ft, factor: "5280",    metric: false}
+- {symbol: fur,  name: furlong,   defn: ft, factor: "660",     metric: false}
+- {symbol: ftm,  name: fathom,    defn: yd, factor: "2",       metric: false}
+- {symbol: chain, name: chain,    defn: ft, factor: "66",      metric: false}
+- {symbol: rod,  name: rod,       defn: yd, factor: "5.5",     metric: false}
+- {symbol: thou, name: thou,      defn: in, factor: "0.001",   metric: false}
+- {symbol: pica, name: pica,      defn: in, factor: "0.16666666666666666", metric: false}
+- {symbol: point, name: typographic point, defn: in, factor: "0.013888888888888888", metric: false}
+# Mass.
+- {symbol: oz,   name: ounce,         defn: g,  factor: "28.349523125",  metric: false}
+- {symbol: lb,   name: pound,         defn: g,  factor: "453.59237",     metric: false}
+- {symbol: st,   name: stone,         defn: lb, factor: "14",           metric: false}
+- {symbol: cwt,  name: hundredweight, defn: lb, factor: "100",          metric: false}
+- {symbol: ton,  name: short ton,     defn: lb, factor: "2000",         metric: false}
+- {symbol: lton, name: long ton,      defn: lb, factor: "2240",         metric: false}
+- {symbol: gr,   name: grain,         defn: g,  factor: "0.06479891",   metric: false}
+- {symbol: ozt,  name: troy ounce,    defn: g,  factor: "31.1034768",   metric: false}
+- {symbol: dwt,  name: pennyweight,   defn: g,  factor: "1.55517384",   metric: false}
+- {symbol: slug, name: slug,          defn: g,  factor: "14593.902937206", metric: false}
+# Area and volume.
+- {symbol: ac,   name: acre,    defn: "ft^2", factor: "43560", metric: false}
+- {symbol: gal,  name: US gallon,       defn: l, factor: "3.785411784",  metric: false}
+- {symbol: qt,   name: US quart,        defn: gal, factor: "0.25",       metric: false}
+- {symbol: pt,   name: US pint,         defn: gal, factor: "0.125",      metric: false}
+- {symbol: cup,  name: US cup,          defn: pt, factor: "0.5",       metric: false}
+- {symbol: floz, name: US fluid ounce,  defn: pt, factor: "0.0625",    metric: false}
+- {symbol: tbsp, name: tablespoon,      defn: floz, factor: "0.5",       metric: false}
+- {symbol: tsp,  name: teaspoon,        defn: tbsp, factor: "0.3333333333333333", metric: false}
+- {symbol: bbl,  name: barrel,          defn: gal, factor: "42",         metric: false}
+- {symbol: impgal,  name: imperial gallon, defn: l, factor: "4.54609",   metric: false}
+- {symbol: imppint, name: imperial pint,   defn: impgal, factor: "0.125", metric: false}
+- {symbol: cord, name: cord,            defn: "ft^3", factor: "128",    metric: false}
+# Speed, force, pressure, energy and power.
+- {symbol: mph,  name: mile per hour,   defn: "m.s^-1", factor: "0.44704", metric: false}
+- {symbol: fps,  name: foot per second, defn: "m.s^-1", factor: "0.3048",  metric: false}
+- {symbol: lbf,  name: pound-force,     defn: N,   factor: "4.4482216152605", metric: false}
+- {symbol: ozf,  name: ounce-force,     defn: lbf, factor: "0.0625",          metric: false}
+- {symbol: psi,  name: pound per square inch, defn: Pa, factor: "6894.757293168361", metric: false}
+- {symbol: btu,  name: British thermal unit,  defn: J,  factor: "1055.056",  metric: false}
+- {symbol: therm, name: therm,          defn: btu, factor: "100000",         metric: false}
+- {symbol: hp,   name: mechanical horsepower, defn: W, factor: "745.6998715822702", metric: false}
+# Temperature scales.
+- {symbol: "°F", name: degree Fahrenheit, defn: K, factor: "0.5555555555555556", offset: "459.67", alt: ["ºF"], metric: false}
+- {symbol: "°R", name: degree Rankine,    defn: K, factor: "0.5555555555555556", alt: ["ºR"], metric: false}
+# Paper weight, a metric unit: a gram per square metre.
+- {symbol: gsm,  name: gram per square metre, defn: "g.m^-2"}

@@ -2207,13 +2207,18 @@ impl<'a> Checker<'a> {
                             Some(lit) => {
                                 let seconds = declared.is_none()
                                     && matches!(lit, Lit::Duration(_))
-                                    && crate::duration::kinds(&cell.text) == crate::colfmt::KIND_SECONDS;
+                                    && crate::duration::kinds(&cell.text)
+                                        == crate::colfmt::KIND_SECONDS;
                                 if seconds {
                                     time_cells.push(r);
                                 }
                                 widen(
                                     lit_type(&lit),
-                                    if seconds { S::Quantity(QId::ANY) } else { lit_type(&lit) },
+                                    if seconds {
+                                        S::Quantity(QId::ANY)
+                                    } else {
+                                        lit_type(&lit)
+                                    },
                                 );
                                 cells.push(match lit {
                                     // In quotes it is text as it is.
@@ -3844,7 +3849,8 @@ impl<'a> Checker<'a> {
             let equality = matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Approx);
             // A duration is a quantity of time beside one; the dimension is
             // checked when the values are.
-            let timed = (a == S::Duration && b.is_quantity()) || (a.is_quantity() && b == S::Duration);
+            let timed =
+                (a == S::Duration && b.is_quantity()) || (a.is_quantity() && b == S::Duration);
             let ok = unknown
                 || timed
                 || match a.join(b) {

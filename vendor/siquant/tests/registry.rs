@@ -386,14 +386,15 @@ fn a_scale_is_a_base_and_an_exponent() {
 
 #[test]
 fn types_and_units_are_grouped_for_menus() {
-    use siquant::{GROUPS, Registry};
+    use siquant::Registry;
     let reg = Registry::builtin();
     let group = |n: &str| reg.quantity_type(n).unwrap().group().to_string();
+    // A type is filed under the heading of its preferred unit.
     assert_eq!(group("Mass"), "SI Base");
-    assert_eq!(group("Area"), "Size");
-    assert_eq!(group("Force"), "Mechanical");
+    assert_eq!(group("Area"), "Magnitude");
+    assert_eq!(group("Force"), "Physical");
     assert_eq!(group("Resistance"), "Electromagnetic");
-    assert_eq!(group("SpecificHeat"), "Thermodynamic");
+    assert_eq!(group("SpecificHeat"), "Thermal");
     assert_eq!(group("Dose"), "Radiation");
     assert_eq!(group("Dimensionless"), "Other");
     let unit = |s: &str| {
@@ -404,25 +405,28 @@ fn types_and_units_are_grouped_for_menus() {
             .to_string()
     };
     // The gram is not an SI base unit: the kilogram is, which is `Mass`'s.
-    assert_eq!(unit("g"), "Size");
+    assert_eq!(unit("g"), "Magnitude");
+    assert_eq!(unit("au"), "Astronomical");
+    assert_eq!(unit("ct"), "Contextual");
+    assert_eq!(unit("rpm"), "Contextual");
     assert_eq!(unit("m"), "SI Base");
-    assert_eq!(unit("N"), "Mechanical");
-    assert_eq!(unit("°C"), "Size");
-    let order: Vec<&str> = reg
-        .units()
-        .filter(|u| u.group == "Size")
-        .map(|u| u.symbol)
-        .collect();
-    assert_eq!(
-        order,
-        [
-            "g", "°C", "Hz", "l", "t", "ha", "min", "h", "d", "wk", "Da", "au", "ly", "ld", "pc",
-            "Å", "nmi", "yr", "are", "barn", "ct", "kt", "Mt"
-        ]
-    );
+    assert_eq!(unit("N"), "Physical");
+    assert_eq!(unit("°C"), "Thermal");
+    assert_eq!(unit("kat"), "Chemical");
+    // The headings and what is under them are those of `resources/menu.txt`,
+    // in its order.
+    let menu: Vec<(&str, &[String])> = reg.menu().collect();
+    assert_eq!(menu[0].0, "SI Base");
+    assert_eq!(menu[0].1, ["m", "kg", "s", "A", "K", "mol", "cd"]);
+    let contextual = menu.iter().find(|(h, _)| *h == "Contextual").unwrap();
+    let at = |s: &str| contextual.1.iter().position(|u| u == s).unwrap();
+    assert_eq!(at("rpm"), at("rev") + 1);
+    // `Other` is added last for what the menu does not name, a type of no unit.
+    assert_eq!(reg.groups().last(), Some(&"Other"));
     // Every group named is one of the headings.
-    assert!(reg.quantity_types().all(|t| GROUPS.contains(&t.group())));
-    assert!(reg.units().all(|u| GROUPS.contains(&u.group)));
+    let groups = reg.groups();
+    assert!(reg.quantity_types().all(|t| groups.contains(&t.group())));
+    assert!(reg.units().all(|u| groups.contains(&u.group)));
     // The base types are the seven with a base unit of their own, `Duration`
     // being the one for time.
     assert_eq!(
@@ -434,10 +438,25 @@ fn types_and_units_are_grouped_for_menus() {
 }
 
 #[test]
-fn the_katal_is_filed_under_thermodynamic() {
-    let reg = siquant::Registry::builtin();
-    let kat = reg.units().find(|u| u.symbol == "kat").unwrap();
-    assert_eq!(kat.group, "Thermodynamic");
+fn every_live_unit_and_preferred_unit_is_in_the_menu() {
+    use siquant::Registry;
+    // A menu that leaves one out is refused, naming it.
+    let units = "- {symbol: m, name: metre, base: Length}\n- {symbol: ft, name: foot, defn: m, factor: \"0.3048\"}";
+    let err = Registry::from_yaml_with_menu("[]", units, "[]", "== A\nm | the metre\n")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("`ft` is in no group"), "{err}");
+    // And one that names a unit twice, or one that is not a unit.
+    let err = Registry::from_yaml_with_menu("[]", units, "[]", "== A\nm\nft\n== B\nm\n")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("twice"), "{err}");
+    let err = Registry::from_yaml_with_menu("[]", units, "[]", "== A\nm\nft\nfurlong\n")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("furlong"), "{err}");
+    let ok = Registry::from_yaml_with_menu("[]", units, "[]", "== A\nm\n== B\nft | foot\n");
+    assert!(ok.is_ok());
 }
 
 #[test]
@@ -489,7 +508,7 @@ fn the_astronomical_and_metric_units_have_their_values() {
     assert!(near(to(1.0, "kt", "t"), 1000.0) && near(to(1.0, "Mt", "kt"), 1000.0));
     assert!(near(to(1.0, "rev", "°"), 360.0) && near(to(100.0, "gon", "°"), 90.0));
     assert!(near(to(1.0, "atm", "Pa"), 101_325.0) && near(to(760.0, "torr", "atm"), 1.0));
-    assert!(near(to(1.0, "hp", "W"), 735.498_75));
+    assert!(near(to(1.0, "mhp", "W"), 735.498_75));
     assert!(near(to(100.0, "rem", "Sv"), 1.0) && near(to(1.0, "Ci", "Bq"), 3.7e10));
     assert!(near(to(1.0, "R", "C.kg^-1"), 2.58e-4) && near(to(1.0, "mCi", "Bq"), 3.7e7));
     assert!(near(to(1.0, "Jy", "W.m^-2.Hz^-1"), 1e-26) && near(to(1.0, "tog", "K.m^2.W^-1"), 0.1));
@@ -500,4 +519,45 @@ fn the_astronomical_and_metric_units_have_their_values() {
             == Unit::parse("S", Scope::Live).unwrap().dims()
     );
     assert_eq!(to(1.0, "B", "b"), 8.0);
+}
+
+#[test]
+fn the_non_metric_units_have_their_values() {
+    use siquant::{Registry, Scope, Unit};
+    let reg = Registry::builtin();
+    let to = |v: f64, from: &str, into: &str| {
+        let a = Unit::parse(from, Scope::Live).unwrap();
+        let b = Unit::parse(into, Scope::Live).unwrap();
+        a.convert_value(v, &b).unwrap()
+    };
+    let near = |a: f64, b: f64| (a - b).abs() <= 1e-9 * b.abs().max(1.0);
+    assert!(near(to(1.0, "ft", "m"), 0.3048));
+    assert!(near(to(1.0, "mi", "m"), 1609.344));
+    assert!(near(to(1.0, "lb", "g"), 453.592_37));
+    assert!(near(to(1.0, "ton", "kg"), 907.184_74));
+    assert!(near(to(1.0, "gal", "l"), 3.785_411_784));
+    assert!(near(to(1.0, "ac", "m^2"), 4046.856_422_4));
+    assert!(near(to(1.0, "ft^2", "m^2"), 0.092_903_04));
+    assert!(near(to(1.0, "psi", "Pa"), 6894.757_293_168_361));
+    assert!(near(to(1.0, "hp", "W"), 745.699_871_582_270_2));
+    assert!(near(to(1.0, "mph", "m.s^-1"), 0.447_04));
+    assert!(near(to(212.0, "°F", "°C"), 100.0));
+    assert!(near(to(32.0, "°F", "K"), 273.15));
+    // The gram per square metre, which is metric.
+    assert!(near(to(80.0, "gsm", "kg.m^-2"), 0.08));
+    let metric = |s: &str| reg.units().find(|u| u.symbol == s).unwrap().metric;
+    assert!(metric("gsm") && metric("mhp") && !metric("ft") && !metric("°F"));
+    assert!(reg.units().all(|u| !u.currency));
+}
+
+#[test]
+fn every_menu_entry_is_written_as_the_registry_writes_it() {
+    use siquant::{Registry, Scope, Unit};
+    let reg = Registry::builtin();
+    for (_, entries) in reg.menu() {
+        for e in entries {
+            let u = Unit::parse(e, Scope::Live).unwrap();
+            assert_eq!(&u.to_string(), e, "`{e}` is written another way");
+        }
+    }
 }

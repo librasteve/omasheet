@@ -1,0 +1,94 @@
+sheet Length
+
+Item    | Amount | Same
+--------|--------|---------
+screw   | 5in    | 127mm
+door    | 7ft    | 2.134m·
+pitch   | 100yd  | 91.44m
+hike    | 3mi    | 4.828km·
+race    | 8fur   | 1.609km·
+depth   | 6ftm   | 10.973m·
+cricket | 1chain | 20.117m·
+fence   | 40rod  | 201.168m
+gauge   | 10thou | 254μm
+
+sheet Mass
+
+Item   | Amount | Same
+-------|--------|-----------
+letter | 1oz    | 28.350g·
+bag    | 25lb   | 11.340kg·
+rider  | 11st   | 69.853kg·
+coal   | 2cwt   | 90.718kg·
+truck  | 20ton  | 18.144t·
+ship   | 1lton  | 1.016t·
+pellet | 15gr   | 971.984mg·
+gold   | 5ozt   | 155.517g·
+ring   | 3dwt   | 4.666g·
+engine | 2slug  | 29.188kg·
+
+sheet Area
+
+Item   | Amount  | Same
+-------|---------|-------------
+room   | 200ft^2 | 18.581m^2·
+tile   | 16in^2  | 103.226cm^2·
+county | 40mi^2  | 103.600km^2·
+farm   | 160ac   | 64.750ha·
+
+sheet Volume
+
+Item    | Amount   | Same
+--------|----------|-----------
+freezer | 5ft^3    | 141.584l·
+engine  | 350in^3  | 5.735l·
+tank    | 15gal    | 56.781l·
+milk    | 1qt      | 946.353ml·
+beer    | 1pt      | 473.176ml·
+rice    | 2cup     | 473.176ml·
+shot    | 1.5floz  | 44.360ml·
+spoon   | 2tbsp    | 29.574ml·
+dose    | 1tsp     | 4.929ml·
+crude   | 1bbl     | 158.987l·
+fuel    | 10impgal | 45.461l·
+pub     | 1imppint | 568.261ml·
+wood    | 1cord    | 3.625m^3·
+
+sheet Mechanical
+
+Item  | Amount        | Same
+------|---------------|---------------
+road  | 60mph         | 96.561km.h^-1·
+pitch | 90mph         | 40.234m.s^-1·
+rifle | 2800fps       | 853.44m.s^-1
+fall  | 32.174ft.s^-2 | 9.807m.s^-2·
+
+sheet Physical
+
+Item   | Amount   | Same
+-------|----------|------------
+thrust | 1000lbf  | 4.448kN·
+punch  | 8ozf     | 2.224N·
+tyre   | 32psi    | 220.632kPa·
+heater | 12000btu | 12.661MJ·
+gas    | 1therm   | 105.506MJ·
+wrench | 80ft.lbf | 108.465N.m·
+engine | 200hp    | 149.140kW·
+
+sheet Thermal
+
+Item     | Amount | Same      | Back      | Check
+---------|--------|-----------|-----------|------
+boiling  | 212°F  | 100°C     | 100°C     | true
+freezing | 32°F   | 273.15K   | 32°F      | true
+body     | 98.6°F | 37°C      | 98.6°F    | true
+zero     | 0°R    | 0K        | 0°R       | true
+room     | 68°F   | 20.000°C· | 68.000°F· | true
+
+sheet Typographic
+
+Item   | Amount  | Same
+-------|---------|---------
+column | 12pica  | 50.8mm
+body   | 12point | 4.233mm·
+page   | 66pica  | 11in

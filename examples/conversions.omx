@@ -1,0 +1,142 @@
+# Non-metric units, the imperial and US ones, by the groups of the unit
+# picker (they are the `Non-Metric` sector there). Each
+# is an exact multiple of an SI unit, and none takes a prefix; each row is a
+# quantity and the same amount in a metric unit. A `°F` is converted as a
+# temperature, with its offset.
+
+# Inch `in`, foot `ft`, yard `yd`, mile `mi`, furlong `fur`, fathom `ftm`, `chain` and `rod`, and the `thou`.
+sheet Length
+
+Item   : String
+Amount : Quantity
+Same   : Quantity
+
+| Item    | Amount | Same                |
+| ------- | ------ | ------------------- |
+| screw   | 5in    | = (5in).to('mm')    |
+| door    | 7ft    | = (7ft).to('m')     |
+| pitch   | 100yd  | = (100yd).to('m')   |
+| hike    | 3mi    | = (3mi).to('km')    |
+| race    | 8fur   | = (8fur).to('km')   |
+| depth   | 6ftm   | = (6ftm).to('m')    |
+| cricket | 1chain | = (1chain).to('m')  |
+| fence   | 40rod  | = (40rod).to('m')   |
+| gauge   | 10thou | = (10thou).to('um') |
+
+# Ounce `oz`, pound `lb`, stone `st`, hundredweight `cwt`, short ton `ton`, long ton `lton`, grain `gr`, troy ounce `ozt`, pennyweight `dwt` and `slug`.
+sheet Mass
+
+Item   : String
+Amount : Quantity
+Same   : Quantity
+
+| Item   | Amount | Same               |
+| ------ | ------ | ------------------ |
+| letter | 1oz    | = (1oz).to('g')    |
+| bag    | 25lb   | = (25lb).to('kg')  |
+| rider  | 11st   | = (11st).to('kg')  |
+| coal   | 2cwt   | = (2cwt).to('kg')  |
+| truck  | 20ton  | = (20ton).to('t')  |
+| ship   | 1lton  | = (1lton).to('t')  |
+| pellet | 15gr   | = (15gr).to('mg')  |
+| gold   | 5ozt   | = (5ozt).to('g')   |
+| ring   | 3dwt   | = (3dwt).to('g')   |
+| engine | 2slug  | = (2slug).to('kg') |
+
+# Square foot `ft^2`, `in^2` and `mi^2`, and the acre `ac`.
+sheet Area
+
+Item   : String
+Amount : Quantity
+Same   : Quantity
+
+| Item   | Amount  | Same                  |
+| ------ | ------- | --------------------- |
+| room   | 200ft^2 | = (200ft^2).to('m^2') |
+| tile   | 16in^2  | = (16in^2).to('cm^2') |
+| county | 40mi^2  | = (40mi^2).to('km^2') |
+| farm   | 160ac   | = (160ac).to('ha')    |
+
+# Cubic foot `ft^3` and `in^3`, the US gallon `gal`, quart `qt`, pint `pt`, cup, `floz`, `tbsp` and `tsp`, the oil barrel `bbl`, the imperial `impgal` and `imppint`, and the `cord`.
+sheet Volume
+
+Item   : String
+Amount : Quantity
+Same   : Quantity
+
+| Item    | Amount   | Same                  |
+| ------- | -------- | --------------------- |
+| freezer | 5ft^3    | = (5ft^3).to('l')     |
+| engine  | 350in^3  | = (350in^3).to('l')   |
+| tank    | 15gal    | = (15gal).to('l')     |
+| milk    | 1qt      | = (1qt).to('ml')      |
+| beer    | 1pt      | = (1pt).to('ml')      |
+| rice    | 2cup     | = (2cup).to('ml')     |
+| shot    | 1.5floz  | = (1.5floz).to('ml')  |
+| spoon   | 2tbsp    | = (2tbsp).to('ml')    |
+| dose    | 1tsp     | = (1tsp).to('ml')     |
+| crude   | 1bbl     | = (1bbl).to('l')      |
+| fuel    | 10impgal | = (10impgal).to('l')  |
+| pub     | 1imppint | = (1imppint).to('ml') |
+| wood    | 1cord    | = (1cord).to('m^3')   |
+
+# Speed `mph` and `fps`, and an acceleration in `ft.s^-2`.
+sheet Mechanical
+
+Item   : String
+Amount : Quantity
+Same   : Quantity
+
+| Item  | Amount        | Same                           |
+| ----- | ------------- | ------------------------------ |
+| road  | 60mph         | = (60mph).to('km.h^-1')        |
+| pitch | 90mph         | = (90mph).to('m.s^-1')         |
+| rifle | 2800fps       | = (2800fps).to('m.s^-1')       |
+| fall  | 32.174ft.s^-2 | = (32.174ft.s^-2).to('m.s^-2') |
+
+# Force `lbf` and `ozf`, pressure `psi`, energy `btu` and `therm`, torque `lbf.ft` and the mechanical horsepower `hp` (the metric one is `mhp`).
+sheet Physical
+
+Item   : String
+Amount : Quantity
+Same   : Quantity
+
+| Item   | Amount   | Same                   |
+| ------ | -------- | ---------------------- |
+| thrust | 1000lbf  | = (1000lbf).to('kN')   |
+| punch  | 8ozf     | = (8ozf).to('N')       |
+| tyre   | 32psi    | = (32psi).to('kPa')    |
+| heater | 12000btu | = (12000btu).to('MJ')  |
+| gas    | 1therm   | = (1therm).to('MJ')    |
+| wrench | 80lbf.ft | = (80lbf.ft).to('N.m') |
+| engine | 200hp    | = (200hp).to('kW')     |
+
+# The scales `°F` and `°R`.
+sheet Thermal
+
+Item   : String
+Amount : Quantity
+Same   : Quantity
+
+| Item     | Amount | Same                | Back               | Check |
+| -------- | ------ | ------------------- | ------------------ | ----- |
+| boiling  | 212°F  | = (212°F).to('°C')  | =[*-1; *].to('ºC') | *     |
+| freezing | 32°F   | = (32°F).to('K')    | =[*-1; *].to('ºF') | *     |
+| body     | 98.6°F | = (98.6°F).to('°C') | =[*-1; *].to('ºF') | *     |
+| zero     | 0°R    | = (0°R).to('K')     | =[*-1; *].to('ºR') | *     |
+| room     | 68°F   | = (68°F).to('°C')   | =[*-1; *].to('ºF') | *     |
+
+Check := Amount=~=Back
+
+# The `pica` and the typographic `point` (a US pint is `pt`).
+sheet Typographic
+
+Item   : String
+Amount : Quantity
+Same   : Quantity
+
+| Item   | Amount  | Same                 |
+| ------ | ------- | -------------------- |
+| column | 12pica  | = (12pica).to('mm')  |
+| body   | 12point | = (12point).to('mm') |
+| page   | 66pica  | = (66pica).to('in')  |

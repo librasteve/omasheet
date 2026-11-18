@@ -1,0 +1,122 @@
+# Units in the Set unit picker, by group, in the order shown.
+# Edit freely: move a line to reorder, move it under another heading to regroup, delete a line to drop it.
+# Format: symbol | what the picker says about it.
+
+== SI Base
+m | Length (metre)
+kg | Mass (kilogram)
+s | Duration (second)
+A | Current (ampere)
+K | Temperature (kelvin)
+mol | AmountOfSubstance (mole)
+cd | LuminousIntensity (candela)
+
+== Data
+b | Data (bit)
+B | Data (byte)
+b.s^-1 | DataRate
+b.m^-2 | DataDensity
+
+== Angle
+rad | Angle (radian)
+° | Angle (degree)
+′ | Angle (arcminute)
+″ | Angle (arcsecond)
+gon | Angle (gon)
+sr | SolidAngle (steradian)
+
+== Timespan 
+min | Duration (minute)
+h | Duration (hour)
+d | Duration (day)
+wk | Duration (week)
+yr | Duration (year)
+
+== Magnitude 
+g | Mass (gram)
+t | Mass (tonne)
+kt | Mass (kilotonne)
+Mt | Mass (megatonne)
+m^2 | Area
+ha | Area (hectare)
+m^3 | Volume
+l | Volume (litre)
+
+== Mechanical
+Hz | Frequency (hertz)
+m.s^-1 | Speed
+m.s^-2 | Acceleration
+m^3.s^-1 | Flow
+N.s | Impulse
+kg.m.s^-1 | Momentum
+kg.m^2 | MomentOfInertia
+rad.s^-1 | AngularSpeed
+kg.m^2.s^-1 | AngularMomentum
+
+== Physical
+Pa | Pressure (pascal)
+N | Force (newton)
+J | Energy (joule)
+W | Power (watt)
+N.m | Torque
+W.m^-2 | Irradiance
+kg.m^-2 | ArealDensity
+kg.m^-3 | Density
+
+== Thermal
+°C | Temperature (Celsius)
+J.kg^-1 | SpecificEnergy
+W.kg^-1 | SpecificPower
+J.kg^-1.K^-1 | SpecificHeat
+W.K^-1 | ThermalConductance
+K.W^-1 | ThermalResistance
+
+== Electromagnetic
+C | Charge (coulomb)
+V | Potential (volt)
+Ω | Resistance (ohm)
+S | Conductance (siemens)
+F | Capacitance (farad)
+H | Inductance (henry)
+T | MagneticField (tesla)
+Wb | MagneticFlux (weber)
+
+== Astronomical 
+au | Length (astronomical unit)
+ld | Length (light day)
+ly | Length (light year)
+pc | Length (parsec)
+lm | LuminousFlux (lumen)
+lx | Illuminance (lux)
+Jy | SpectralFluxDensity (jansky)
+
+== Chemical 
+Å | Length (angstrom)
+Da | Mass (dalton)
+cal | Energy (calorie)
+kat | CatalyticActivity (katal)
+
+== Radiation
+Bq | Radioactivity (becquerel)
+Ci | Frequency (curie)
+rem | SpecificEnergy (rem)
+Gy | Dose (gray)
+Sv | SpecificEnergy (sievert)
+R | RadiationExposure (roentgen)
+
+== Contextual 
+nmi | Length (nautical mile)
+are | Area (are)
+barn | Area (barn)
+ct | Mass (carat)
+rev | Angle (revolution)
+rpm | AngularSpeed (revs per min)
+kn | Speed (knot)
+sverdrup | Flow (sverdrup)
+torr | Pressure (torr)
+bar | Pressure (bar)
+atm | Pressure (atmosphere)
+eV | Energy (electronvolt)
+Wh | Energy (watt-hour)
+hp | Power (metric horsepower)
+tog | ThermalInsulance (tog)

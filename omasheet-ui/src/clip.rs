@@ -1755,7 +1755,10 @@ mod tests {
             }
         }
         let out = block_text(&doc, 0, (0, 0), (2, 1), true);
-        assert_eq!(out, "+17:04:00\t+17:04:10\n-00:00:30\t-00:01:00\n+01:00:00\t+01:00:00");
+        assert_eq!(
+            out,
+            "+17:04:00\t+17:04:10\n-00:00:30\t-00:01:00\n+01:00:00\t+01:00:00"
+        );
         // Declared, the same.
         let doc = Document::from_text(
             "sheet T\n\nA : Duration[%H:%M:%S]\nB : Duration[%H:%M:%S]\n\n| A | B |\n| - | - |\n| PT1H | = A / 2 |\n| -PT30S | = A |\n",

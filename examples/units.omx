@@ -171,13 +171,13 @@ Seconds := Size.to('Mib') / Rate
 # Metric units outside the SI, which the SI accepts or science relies on:
 # the litre (`l` or `L`), tonne `t` with `kt` and `Mt`, carat `ct`, hectare
 # `ha` and `are`, `barn`, `bar`, `atm` and `torr`, electronvolt `eV`,
-# calorie `cal` (4.184 J), watt-hour `Wh`, the metric horsepower `hp`, dalton
+# calorie `cal` (4.184 J), watt-hour `Wh`, the metric horsepower `mhp`, dalton
 # `Da`, the astronomical `au`, `ly`, `ld` and `pc`, `Å`, the nautical mile
 # `nmi` and knot `kn`, the year `yr`, `gon` and `rev`, and `rem`, `Ci`, `R`,
 # `Jy`, `tog` and `sverdrup`. They are exact multiples of SI units and most
 # take the prefixes (`ml`, `kWh`, `keV`, `kcal`, `kpc`, `mCi`), except `t`,
 # `ha` and the like. `u` is read as the prefix micro and shown as `μ`.
-# No imperial or cgs units: `5ft` and `5lb` are errors. Each row is a
+# Imperial and US units (`ft`, `lb`, `gal`, `psi`, `°F`) are units too, and no cgs ones. Each row is a
 # quantity and the same amount in another unit.
 sheet Metric
 
@@ -201,7 +201,7 @@ Same   : Quantity
 | orbit    | 1au     | = (1au).to('Gm')     |
 | gem      | 5ct     | = (5ct).to('g')      |
 | weather  | 1atm    | = (1atm).to('kPa')   |
-| engine   | 100hp   | = (100hp).to('kW')   |
+| engine   | 100mhp  | = (100mhp).to('kW')   |
 | ship     | 12kn    | = (12kn).to('km.h^-1') |
 | lens     | 5Å      | = (5Å).to('nm')      |
 | target   | 12barn  | = (12barn).to('fm^2') |
@@ -260,3 +260,11 @@ Double : Duration[s; .1f]
 
 Total  := Time + PT10S
 Double := Time * 2
+
+sheet Flight
+
+| A       | B                | C         | D      | E                | F                | G                       | H                        | I                  | J     |
+| ------- | ---------------- | --------- | ------ | ---------------- | ---------------- | ----------------------- | ------------------------ | ------------------ | ----- |
+| LHR-SFO | 2025-03-10T11:05 | +11:10:00 | 8610km | 2025-03-10T10:25 | 2025-03-10T22:25 | 10/03/2025 15:25 -07:00 | 214.17910447761193m.s^-1 | 0.6244288760280231 | 11.17 |
+| MUC-SFO | 2025-03-10T12:30 | +11:35:00 | 9120km | 2025-03-10T11:50 | 2025-03-11T00:15 | 10/03/2025 17:15 -07:00 | 218.705035971223m.s^-1   | 0.6376240115779096 | 11.58 |
+| SFO-LHR | 2025-03-10T21:30 | +10:20:00 | 8610km | 2025-03-10T20:50 | 2025-03-11T08:00 | 11/03/2025 01:00 -07:00 | 231.4516129032258m.s^-1  | 0.6747860434496379 | 10.33 |

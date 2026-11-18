@@ -547,9 +547,8 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
             Value::Duration(us) => crate::quantity::from_duration(*us),
             other => other.clone(),
         };
-        return crate::quantity::arith(op, &lift(a), &lift(b)).unwrap_or(Err(
-            "cannot scale a duration".to_string(),
-        ));
+        return crate::quantity::arith(op, &lift(a), &lift(b))
+            .unwrap_or(Err("cannot scale a duration".to_string()));
     }
     if let Some(done) = crate::quantity::arith(op, a, b) {
         return done;

@@ -95,7 +95,7 @@ fn rejects_everything_else() {
         ("m\u{22c5}s", "dot operator"),
         ("(m)", "brackets"),
         ("m\u{b2}", "superscript"),
-        ("ft", "non-SI, unknown"),
+        ("furlongs", "a name"),
         ("kilogram", "a name"),
         ("metres", "a plural"),
         ("Kg", "wrong case"),

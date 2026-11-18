@@ -23,6 +23,7 @@ use crate::unit::{Term, Unit};
 const PREFIXES_YAML: &str = include_str!("../resources/prefixes.yaml");
 const UNITS_YAML: &str = include_str!("../resources/units.yaml");
 const TYPES_YAML: &str = include_str!("../resources/quantity_types.yaml");
+const MENU_TXT: &str = include_str!("../resources/menu.txt");
 
 /// Which unit a [`Term`] names: an index into the registry's unit table.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -52,37 +53,10 @@ pub enum Prefixable {
     Both,
 }
 
-/// The headings a menu files units and quantity types under, in order. A
-/// resource file names one of them in its `group` field; the default is the
-/// last.
-pub const GROUPS: [&str; 9] = [
-    "SI Base",
-    "Data",
-    "Angle",
-    "Size",
-    "Mechanical",
-    "Electromagnetic",
-    "Thermodynamic",
-    "Radiation",
-    "Other",
-];
-
 /// Where two types share a dimension, the one a calculated result is given
 /// (`Energy`, not `Torque`). Fixed, not a setting; a column can declare the
 /// other.
 pub const INFERRED: [&str; 5] = ["Area", "Energy", "Frequency", "SpecificEnergy", "Momentum"];
-
-fn group_of(what: &str, group: Option<&str>, default: &str) -> Result<String> {
-    let group = group.unwrap_or(default);
-    if GROUPS.contains(&group) {
-        Ok(group.to_string())
-    } else {
-        resource(
-            what,
-            format!("`{group}` is not a group: {}", GROUPS.join(", ")),
-        )
-    }
-}
 
 /// Whether a prefix is a power of ten or of two.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,12 +103,12 @@ pub(crate) struct UnitDef {
     pub offset: f64,
     pub prefixable: Prefixable,
     pub live: bool,
+    pub metric: bool,
+    pub currency: bool,
     /// What the unit is defined as; a base unit is defined as itself.
     pub defn: Vec<Term>,
     /// Is it a base unit, one defined by a dimension and not by other units?
     pub is_base: bool,
-    /// The heading a menu files it under, one of [`GROUPS`].
-    pub group: String,
 }
 
 impl UnitDef {
@@ -147,7 +121,6 @@ pub(crate) struct TypeDef {
     pub name: String,
     pub dims: Dim,
     pub unit: Option<Vec<Term>>,
-    pub group: String,
 }
 
 #[derive(Default)]
@@ -160,7 +133,24 @@ pub(crate) struct Inner {
     /// The dimensionless unit a bare prefix scales: `k.` is prefix `k` and
     /// this. It has no symbol, so it is reached only by that form.
     pub unity: UnitId,
+    /// The menu: set once, after the registry exists, as reading it needs one.
+    pub menu: OnceLock<Menu>,
 }
+
+/// The menu a host files units and quantity types under: the headings in
+/// order, each with the units under it in order, and the heading of every
+/// unit and every type.
+#[derive(Default)]
+pub(crate) struct Menu {
+    /// Each heading and the units under it, as the registry writes them.
+    pub sections: Vec<(String, Vec<String>)>,
+    /// The heading of each unit, by its place in the unit table.
+    pub unit_groups: Vec<String>,
+    /// The heading of each quantity type, by its place in the type table.
+    pub type_groups: Vec<String>,
+}
+
+const OTHER: &str = "Other";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -188,7 +178,13 @@ struct UnitRow {
     prefixable: Prefixable,
     #[serde(default = "yes")]
     live: bool,
-    group: Option<String>,
+    /// False for a unit of another system (imperial, US), which a menu may
+    /// hide.
+    #[serde(default = "yes")]
+    metric: bool,
+    /// True for a unit of currency, a sector of a menu of its own.
+    #[serde(default)]
+    currency: bool,
 }
 
 fn yes() -> bool {
@@ -201,7 +197,6 @@ struct TypeRow {
     name: String,
     dims: BTreeMap<String, i8>,
     unit: Option<String>,
-    group: Option<String>,
 }
 
 fn resource<T>(what: &str, e: impl fmt::Display) -> Result<T> {
@@ -252,13 +247,14 @@ impl Inner {
             offset: 0.0,
             prefixable: Prefixable::None,
             live: true,
+            metric: true,
+            currency: false,
             defn: vec![Term {
                 prefix: None,
                 unit: id,
                 exp: 1,
             }],
             is_base: true,
-            group: "Other".to_string(),
         });
     }
 
@@ -413,17 +409,10 @@ impl Inner {
             offset,
             prefixable: row.prefixable,
             live: row.live,
+            metric: row.metric,
+            currency: row.currency,
             defn,
             is_base: row.base.is_some(),
-            group: group_of(
-                &what,
-                row.group.as_deref(),
-                if row.base.is_some() {
-                    "SI Base"
-                } else {
-                    "Other"
-                },
-            )?,
         });
         Ok(())
     }
@@ -485,7 +474,6 @@ impl Inner {
             name: row.name,
             dims,
             unit,
-            group: group_of(&what, row.group.as_deref(), "Other")?,
         });
         Ok(())
     }
@@ -516,7 +504,11 @@ pub struct UnitInfo<'a> {
     pub dims: Dim,
     pub prefixable: Prefixable,
     pub live: bool,
-    /// The heading a menu files it under, one of [`GROUPS`].
+    /// Is it a metric unit? A menu may hide the others.
+    pub metric: bool,
+    /// Is it a currency? A menu keeps these in a sector of their own.
+    pub currency: bool,
+    /// The heading a menu files it under, one of [`Registry::groups`].
     pub group: &'a str,
 }
 
@@ -534,14 +526,29 @@ impl Registry {
     pub fn builtin() -> &'static Registry {
         static BUILTIN: OnceLock<Registry> = OnceLock::new();
         BUILTIN.get_or_init(|| {
-            Registry::from_yaml(PREFIXES_YAML, UNITS_YAML, TYPES_YAML)
+            Registry::from_yaml_with_menu(PREFIXES_YAML, UNITS_YAML, TYPES_YAML, MENU_TXT)
                 .expect("the embedded resource files are valid")
         })
     }
 
     /// A registry from three YAML documents, in the schema of `resources/`.
     /// Units may only be defined over units listed before them.
+    /// Everything is then filed under `Other`.
     pub fn from_yaml(prefixes: &str, units: &str, types: &str) -> Result<Registry> {
+        Registry::from_yaml_with_menu(prefixes, units, types, "")
+    }
+
+    /// A registry from three YAML documents and a menu, in the schema of
+    /// `resources/menu.txt`: `== Heading` lines, each followed by the units
+    /// under it, one a line, the unit first and anything after ` | ` a note.
+    /// With a menu every live unit and every preferred unit of a type must be
+    /// named in it, once.
+    pub fn from_yaml_with_menu(
+        prefixes: &str,
+        units: &str,
+        types: &str,
+        menu: &str,
+    ) -> Result<Registry> {
         let prefix_rows: Vec<PrefixRow> =
             serde_yaml_ng::from_str(prefixes).or_else(|e| resource("prefixes.yaml", e))?;
         let unit_rows: Vec<UnitRow> =
@@ -560,7 +567,94 @@ impl Registry {
         for row in type_rows {
             inner.add_type(row)?;
         }
-        Ok(Registry(Arc::new(inner)))
+        let reg = Registry(Arc::new(inner));
+        let menu = reg.read_menu(menu)?;
+        let _ = reg.0.menu.set(menu);
+        Ok(reg)
+    }
+
+    /// Reads a menu, and files every unit and type under one of its headings.
+    fn read_menu(&self, text: &str) -> Result<Menu> {
+        let mut sections: Vec<(String, Vec<String>)> = Vec::new();
+        let mut group_of_unit: HashMap<String, usize> = HashMap::new();
+        for (n, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let at = || format!("menu.txt line {}", n + 1);
+            if let Some(heading) = line.strip_prefix("==") {
+                sections.push((heading.trim().to_string(), Vec::new()));
+                continue;
+            }
+            let Some(section) = sections.len().checked_sub(1) else {
+                return resource(&at(), "a unit before any `== heading`");
+            };
+            let unit = line.split(" | ").next().unwrap_or(line).trim();
+            let shown = match self.parse_unit(unit, Scope::Any) {
+                Ok(u) => u.to_string(),
+                Err(e) => return resource(&at(), format!("`{unit}` is not a unit: {e}")),
+            };
+            if group_of_unit.insert(shown.clone(), section).is_some() {
+                return resource(&at(), format!("`{shown}` is in the menu twice"));
+            }
+            sections[section].1.push(shown);
+        }
+        let filed = !sections.is_empty();
+        let heading = |shown: &str, what: &str| -> Result<String> {
+            match group_of_unit.get(shown) {
+                Some(&i) => Ok(sections[i].0.clone()),
+                None if filed => resource("menu.txt", format!("{what} `{shown}` is in no group")),
+                None => Ok(OTHER.to_string()),
+            }
+        };
+        let mut unit_groups = Vec::with_capacity(self.0.units.len());
+        for u in &self.0.units {
+            let group = if u.symbol.is_empty() || !u.live {
+                OTHER.to_string()
+            } else {
+                let shown = self.parse_unit(&u.symbol, Scope::Any)?.to_string();
+                heading(&shown, "the unit")?
+            };
+            unit_groups.push(group);
+        }
+        let mut type_groups = Vec::with_capacity(self.0.types.len());
+        for t in &self.0.types {
+            let group = match &t.unit {
+                Some(terms) => {
+                    let shown = Unit::from_terms(self, terms.clone())?.to_string();
+                    heading(&shown, "the preferred unit")?
+                }
+                None => OTHER.to_string(),
+            };
+            type_groups.push(group);
+        }
+        // What is filed under `Other` with no such heading still has one.
+        let uses_other = unit_groups.iter().chain(&type_groups).any(|g| g == OTHER);
+        if uses_other && !sections.iter().any(|(h, _)| h == OTHER) {
+            sections.push((OTHER.to_string(), Vec::new()));
+        }
+        Ok(Menu {
+            sections,
+            unit_groups,
+            type_groups,
+        })
+    }
+
+    /// The headings a menu files units and quantity types under, in order.
+    pub fn groups(&self) -> Vec<&str> {
+        self.menu().map(|(heading, _)| heading).collect()
+    }
+
+    /// Each heading with the units under it, in the order of the menu
+    /// (`resources/menu.txt`), each as the registry writes it: `N.m`.
+    pub fn menu(&self) -> impl Iterator<Item = (&str, &[String])> {
+        self.0
+            .menu
+            .get()
+            .into_iter()
+            .flat_map(|m| m.sections.iter())
+            .map(|(h, units)| (h.as_str(), units.as_slice()))
     }
 
     /// The unit written as `text`, in the notation of cell text.
@@ -629,14 +723,21 @@ impl Registry {
         self.0
             .units
             .iter()
-            .filter(|u| !u.symbol.is_empty())
-            .map(|u| UnitInfo {
+            .enumerate()
+            .filter(|(_, u)| !u.symbol.is_empty())
+            .map(|(i, u)| UnitInfo {
                 symbol: &u.symbol,
                 name: &u.name,
                 dims: u.dims,
                 prefixable: u.prefixable,
                 live: u.live,
-                group: &u.group,
+                metric: u.metric,
+                currency: u.currency,
+                group: self
+                    .0
+                    .menu
+                    .get()
+                    .map_or(OTHER, |m| m.unit_groups[i].as_str()),
             })
     }
 

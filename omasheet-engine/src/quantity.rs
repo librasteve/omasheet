@@ -109,7 +109,11 @@ pub fn into_duration(q: &Quantity) -> Result<Value, String> {
 /// A `Duration` of `us` microseconds as a column of the format `f` shows it:
 /// a number of its unit. `None` if the format names a unit that is not one
 /// of time.
-pub fn show_duration_in(us: i64, f: &omasheet_omx::colfmt::QuantityFormat, style: &Style) -> Option<String> {
+pub fn show_duration_in(
+    us: i64,
+    f: &omasheet_omx::colfmt::QuantityFormat,
+    style: &Style,
+) -> Option<String> {
     match from_duration(us) {
         Value::Quantity(q) => Some(show_in(&q, f, style)),
         _ => None,

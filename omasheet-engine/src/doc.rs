@@ -451,6 +451,21 @@ fn cell_snap(
     warning: Option<&str>,
 ) -> CellSnap {
     let failed = matches!(value, Value::Error);
+    // A duration worked out by a formula in a column that says nothing of
+    // how durations are shown is shown in the form its literals are written
+    // in: `PT1H + 30s` is `+01:00:30`.
+    let own = match (&value, format) {
+        (Value::Duration(_), None) if source.starts_with('=') => {
+            match omasheet_omx::duration::kinds(&source) {
+                0 => None,
+                kinds => Some(Format::Duration(omasheet_omx::colfmt::DurationStyle::Auto(
+                    kinds,
+                ))),
+            }
+        }
+        _ => None,
+    };
+    let format = own.as_ref().or(format);
     // A column's format shows its numbers as it says, so one it rounds is
     // not one shown short.
     let display = match format {
@@ -471,7 +486,10 @@ fn cell_snap(
         // number, not left as text. A boolean is set right too, so that the
         // `1` and `0` of a `Boolean[10]` column line up as digits do.
         numeric: value.is_numeric()
-            || matches!(value, Value::Quantity(_) | Value::Duration(_) | Value::Boolean(_)),
+            || matches!(
+                value,
+                Value::Quantity(_) | Value::Duration(_) | Value::Boolean(_)
+            ),
         value,
         formula: source.starts_with('='),
         error: error.or_else(|| failed.then(|| "this cell could not be calculated".to_string())),
@@ -3572,7 +3590,7 @@ impl Document {
         let snap = self.snapshot.sheets.get(sheet).ok_or_else(String::new)?;
         let mut columns = Vec::new();
         for column in cols.iter().filter_map(|&c| snap.columns.get(c)) {
-            let ty = S::from_name(&column.ty).unwrap_or(S::Any);
+            let ty = type_spec(&column.ty).map_or(S::Any, |(ty, _)| ty);
             let found = read_column_format(&column.name, ty, format)?;
             columns.push((column.name.clone(), ty, found));
         }
@@ -3605,7 +3623,7 @@ impl Document {
     ) -> Result<(), String> {
         let snap = self.snapshot.sheets.get(sheet).ok_or_else(String::new)?;
         for column in cols.iter().filter_map(|&c| snap.columns.get(c)) {
-            let ty = S::from_name(&column.ty).unwrap_or(S::Any);
+            let ty = type_spec(&column.ty).map_or(S::Any, |(ty, _)| ty);
             read_column_format(&column.name, ty, format)?;
         }
         Ok(())
@@ -5582,7 +5600,8 @@ impl Document {
             };
             let formatted = const_format_of(&value, &self.const_format).is_some();
             snapshot.consts.push(ConstSnap {
-                numeric: value.is_numeric() || matches!(value, Value::Quantity(_) | Value::Duration(_)),
+                numeric: value.is_numeric()
+                    || matches!(value, Value::Quantity(_) | Value::Duration(_)),
                 name: c.name.clone(),
                 source: decl.map_or(String::new(), |d| {
                     self.text[d.expr_span.start as usize..d.expr_span.end as usize].to_string()
@@ -5741,10 +5760,47 @@ mod tests {
         let doc = Document::from_text(declared);
         assert_eq!(col(&doc, 0, 0), ["+01:00:00", "-00:00:30", "+00:00:00"]);
         // Seconds beside a clock literal show as the clock; beside ISO, seconds.
-        assert_eq!(shown("sheet T\n\n| A |\n| - |\n| +17:04 |\n| 10s |\n"), ["+17:04:00", "+00:00:10"]);
-        assert_eq!(shown("sheet T\n\n| A |\n| - |\n| 10s |\n| PT20S |\n"), ["10s", "20s"]);
-        assert_eq!(shown("sheet T\n\n| A |\n| - |\n| = 10s + PT17H4M |\n"), ["+17:04:10"]);
-        assert_eq!(shown("sheet T\n\n| A |\n| - |\n| = PT10S + PT17H4M |\n"), ["PT17H4M10S"]);
+        assert_eq!(
+            shown("sheet T\n\n| A |\n| - |\n| +17:04 |\n| 10s |\n"),
+            ["+17:04:00", "+00:00:10"]
+        );
+        assert_eq!(
+            shown("sheet T\n\n| A |\n| - |\n| 10s |\n| PT20S |\n"),
+            ["10s", "20s"]
+        );
+        assert_eq!(
+            shown("sheet T\n\n| A |\n| - |\n| = 10s + PT17H4M |\n"),
+            ["+17:04:10"]
+        );
+        assert_eq!(
+            shown("sheet T\n\n| A |\n| - |\n| = PT10S + PT17H4M |\n"),
+            ["PT17H4M10S"]
+        );
+        // The same cell by cell where the column holds other things too.
+        assert_eq!(
+            shown(
+                "sheet T\n\n| A |\n| - |\n| = PT1H + 30s |\n| = PT90M + 5s |\n| = 2025-03-01 - 2024-03-01 |\n| = 17:05:00 + 10s |\n"
+            ),
+            ["+01:00:30", "+01:30:05", "P365D", "17:05:10"]
+        );
+    }
+
+    #[test]
+    fn a_format_set_on_an_inferred_column_declares_its_type() {
+        for (cells, ty, format) in [
+            ("+17:04", "Duration", "iso"),
+            ("2025-01-31", "Date", "%d/%m/%Y"),
+            ("0.5", "Decimal", ".3f"),
+        ] {
+            let mut doc = Document::from_text(&format!("sheet T\n\n| A |\n| - |\n| {cells} |\n"));
+            assert!(!doc.snapshot().sheets[0].columns[0].declared);
+            assert_eq!(doc.check_column_format(0, &[0], Some(format)), Ok(()), "{ty}");
+            doc.set_column_format(0, &[0], Some(format)).unwrap();
+            let column = &doc.snapshot().sheets[0].columns[0];
+            assert!(column.declared, "{ty}: {}", doc.text());
+            assert!(column.ty.starts_with(ty), "{ty}: {}", column.ty);
+            assert!(doc.text().contains(&format!("[{format}]")), "{}", doc.text());
+        }
     }
 
     #[test]
@@ -5757,13 +5813,23 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         for cells in [
-            "+17:04", "-00:00:30", "10s", "PT20S", "= 10s + PT20S", "= 17:05:10 - 17:05:00",
+            "+17:04",
+            "-00:00:30",
+            "10s",
+            "PT20S",
+            "= 10s + PT20S",
+            "= 17:05:10 - 17:05:00",
             "= 2025-03-01 - 2024-03-01",
         ] {
             let text = format!("sheet T\n\n| A |\n| - |\n| {cells} |\n");
             assert_eq!(numeric(&text), [true], "{cells}");
         }
-        for cells in ["17:05:00", "2025-01-31", "2025-01-31T09:30", "= 17:05:00 + 10s"] {
+        for cells in [
+            "17:05:00",
+            "2025-01-31",
+            "2025-01-31T09:30",
+            "= 17:05:00 + 10s",
+        ] {
             let text = format!("sheet T\n\n| A |\n| - |\n| {cells} |\n");
             assert_eq!(numeric(&text), [false], "{cells}");
         }

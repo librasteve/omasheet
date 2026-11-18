@@ -26,14 +26,16 @@ The product or quotient of two named quantities is the kind of its dimension: `F
 
 ## New metric units
 
-Each is an exact multiple of an SI unit (or a conventional value), and each takes part in prefixes where it says so. None is imperial or cgs.
+Each is an exact multiple of an SI unit (or a conventional value), and each takes part in prefixes where it says so. The imperial and US units are listed under their own bullet; none is cgs.
 
 - **Length:** `au` (149 597 870 700 m), `ly` (light year, 9 460 730 472 580 800 m), `ld` (light day), `pc` (parsec) and `Å` (angstrom); `ly`, `pc` and `yr` take prefixes, so `kpc`, `Mly` and `Gyr` work. `nmi` is the nautical mile (1852 m) and `kn` the knot.
 - **Mass:** `ct` (carat, 200 mg), and `kt` and `Mt` (kilotonne and megatonne, as the tonne `t` takes no prefix).
 - **Area:** `are` (100 m²) and `barn` (1e-28 m², spelled out because `b` is the bit; `mbarn` works).
-- **Angle:** `gon` (1/400 of a turn) and `rev` (a turn, 2π rad).
-- **Pressure and power:** `atm` (101 325 Pa), `torr` (101325/760 Pa) and `hp`, the **metric** horsepower, 735.49875 W. The German `PS` cannot be a symbol because it is a petasiemens (`P` and `S`); `hp` is not the mechanical horsepower of 745.7 W.
+- **Angle:** `gon` (1/400 of a turn), `rev` (a turn, 2π rad) and `rpm` (a revolution per minute, an angular speed).
+- **Pressure and power:** `atm` (101 325 Pa), `torr` (101325/760 Pa) and `mhp`, the **metric** horsepower, 735.49875 W (`hp` is the mechanical one, 745.7 W). The German `PS` cannot be a symbol because it is a petasiemens (`P` and `S`); `hp` is not the mechanical horsepower of 745.7 W.
 - **Radiation:** `rem` (0.01 Sv), `Ci` (curie, 3.7e10 Bq) and `R` (roentgen, 2.58e-4 C/kg).
 - **Other:** `Jy` (jansky), `tog` (0.1 K·m²/W) and `sverdrup` (1e6 m³/s; `Sv` is the sievert).
-- **Left out on purpose:** imperial and US units, cgs units (`dyn`, `erg`, `G`, `Mx`, `Oe`, `Gal`, `P`, `St`), the rad of dose, `g0` (use the constant `gn`), `kgf`, solid-angle `deg²` and `spat`.
+- **Imperial and US units:** length `in` `ft` `yd` `mi` `fur` `ftm` `chain` `rod` `thou` `pica` `point`; mass `oz` `lb` `st` `cwt` `ton` `lton` `gr` `ozt` `dwt` `slug`; area `ac`; volume `gal` `qt` `pt` `cup` `floz` `tbsp` `tsp` `bbl` (the 42-gallon oil barrel) `impgal` `imppint` `cord`; `mph`, `fps`, `lbf`, `ozf`, `psi`, `btu`, `therm`, `hp` (mechanical horsepower) and the scales `°F` and `°R`. None takes a prefix, and each is in the `Non-Metric` sector of the unit picker, whose buttons `Metric` (the default), `Non-Metric`, `Currency` and `All` choose the sector shown; a search is of the sector shown. `gsm` (a gram per square metre) is metric.
+- **Left out on purpose:** cgs units (`dyn`, `erg`, `G`, `Mx`, `Oe`, `Gal`, `P`, `St`), the rad of dose, `g0` (use the constant `gn`), `kgf`, solid-angle `deg²` and `spat`.
+- **The unit picker** is regrouped and ordered by hand: SI Base, Data, Angle, Timespan, Magnitude, Mechanical, Physical, Thermal, Electromagnetic, Astronomical, Chemical, Contextual and Radiation, with the units in each in a fixed order. The picker and the quantity-type picker read one file, siquant's `resources/menu.txt`, and the type picker files a type under the heading of its preferred unit. A unit is named for the kind of its group (`Radioactivity`, not `Frequency`, for the curie).
 - `lm` (lumen) and `lx` (lux), with the `LuminousFlux` and `Illuminance` kinds, are now in the Radiation group of the unit picker, and the empty Light group is gone. The units come from siquant 0.1.6.
