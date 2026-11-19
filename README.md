@@ -1,24 +1,26 @@
+<p align="center">
+  <img src="header.png" alt="Omasheet" width="480">
+</p>
+
 # Omasheet
 
-<img src="header.png" alt="Omasheet">
+**What Markdown is to words, Omasheet is to numbers.** A plain-text spreadsheet with SI units, exact arithmetic and typed columns, in files you can diff, review and hand to an AI.
 
-What Markdown is to words, Omasheet is to numbers.
+[![CI](https://github.com/librasteve/omasheet/actions/workflows/ci.yml/badge.svg)](https://github.com/librasteve/omasheet/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/librasteve/omasheet?color=7ee0c8)](https://github.com/librasteve/omasheet/releases/latest)
+[![MIT licence](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 
-📄 **Text as the source of truth**
+[Website](https://omasheet.org) · [Install](#install) · [Run](#run) · [Docs](#docs) · [Releases](https://github.com/librasteve/omasheet/releases)
 
-The spreadsheet as a trackable and composable document, not just a binary file. Great for Git version control and LLM workflow automation.
+<a href="Screenshot.png"><img src="Screenshot.png" alt="The Omasheet app, showing the Sales sheet from the example below"></a>
 
-📊 **Columns as the computational model**
+The app on macOS, Windows, Arch and Omarchy follows your system dark and light mode.
 
-Named, typed columns and array expressions connect spreadsheet flexibility to structured dataframe queries and transformations.
+## Why Omasheet
 
-🔢 **Strong type system**
+### The file is the spreadsheet
 
-The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**. The more _infectious_ a type, the less exact it is: `Integer` < `Fraction` < `Decimal` < `Float` < `Scientific` < `Complex`. A `Fraction` is exact without limit, whereas a `Decimal` is held to a fixed number of places. `Float` trades exactness for exponential range, `Scientific` provides uncertainty for physical constants and `Complex` has _real_ and _imaginary_ parts.
-
-Other types cover `Quantity` for SI and non-SI units & prefixes; `String`, `Datetime`, `Zoned`, `Boolean` and so on. Representations (`Percent`, `Hex`, `Octal`, `Binary`...) round out a broad set of tools for uses from junior school teaching to complex analytics.
-
-_Automatically follows system dark/light mode._
+An `.omx` file holds constants, functions and sheets as readable text. It diffs cleanly in Git, reviews like code, and is easy for an LLM to read and write. A formula is written once per column and applies down every row, so a sheet reads like a small, typed program over its own data.
 
 ```omx
 const TaxRate = 20%
@@ -36,7 +38,39 @@ Tax     := Profit * TaxRate
 Running := [Revenue; 0..*].sum()
 ```
 
-<img src="Screenshot.png">
+### Numbers that know their dimensions
+
+Write `5kg + 300g` and get `5.3kg`. Add a mass to a length and you get an error that says so, not a meaningless number. All the SI prefixes work on every unit, angles and time are quantities too, and uncertainty (`5kg ± 100g`) carries through your arithmetic.
+
+```sh
+$ omasheet eval '5kg + 300g'
+5.3kg
+$ omasheet eval '5kg + 3m'
+<expression>:1:1: error: cannot add kg and m: they measure Mass and Length
+```
+
+### Exact where it counts
+
+The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**. The more _infectious_ a type, the less exact it is: `Integer` < `Fraction` < `Decimal` < `Float` < `Scientific` < `Complex`. A `Fraction` is exact without limit, whereas a `Decimal` is held to a fixed number of places. `Float` trades exactness for exponential range, `Scientific` provides uncertainty for physical constants and `Complex` has _real_ and _imaginary_ parts. Other types cover `Quantity`, `String`, `Datetime`, `Zoned`, `Boolean` and representations such as `Percent`, `Hex` and `Binary`.
+
+<a href="docs/images/types.png"><img src="docs/images/types.png" alt="A sheet of typed columns: Text, Int, Decimal, Fraction, Percent, Num, Complex and Bool"></a>
+
+### Markdown in, finished report out
+
+Put a sheet inside a Markdown document and render it to HTML with the same displays as the grid, so the numbers and the prose stay in one reviewable file.
+
+<a href="docs/images/spreadmeetsmd.png"><img src="docs/images/spreadmeetsmd.png" alt="A spreadsheet and a Markdown report side by side"></a>
+
+### Built for scripts and AI agents
+
+Columns map to dataframe-style queries and transformations, run by Polars, including windowed columns such as `cum_sum`, `diff`, `rank` and `rolling_mean`. Everything the app does is on the command line, and an [agent skill](#ai-skill) lets Claude and friends write `.omx` files that type-check.
+
+### And more
+
+- **Interchange.** Import and export XLSX, CSV, JSON and Parquet, with types and units kept where the format allows.
+- **Built-in constants.** `pi`, `c`, `planck`, `kB`, `NA` and more, from the 2019 SI and CODATA 2022.
+- **Booleans and logic.** Symbol formats such as `✓✗`, logic functions and gate operators, set right in the grid.
+- **Native.** One Rust binary, with a Qt app on macOS, Windows, Arch and Omarchy.
 
 ## Install
 
@@ -103,6 +137,10 @@ ln -sfn /usr/share/omasheet/agent-skill/omasheet ~/.claude/skills/omasheet
 
 **Breaking change in 0.1.6.** Numbers are now the Polars dtypes, so exactness narrows from rational to a 38-digit decimal: `Int` is 64-bit rather than arbitrary-precision, and a result that does not fit is reported. `Complex` was dropped and has since returned (the most infectious number type, stored in Parquet as a struct of `re` and `im`), and the type names follow Polars: `Bool` is `Boolean`, `Text` is `String`, `Num` is `Float`, and an empty cell is `Null`. Files written for 0.1.5 and earlier may need their schema lines renamed.
 
-Early and changing. MAY CONTAIN ERRORS.
+## Status
 
-Copyright (c) 2026 Stephen Roe. MIT licence; see [LICENSE](LICENSE).
+Early and changing, and it may contain errors. Please [open an issue](https://github.com/librasteve/omasheet/issues) if a number surprises you.
+
+## Licence
+
+MIT. Copyright (c) 2026 Stephen Roe. See [LICENSE](LICENSE).
