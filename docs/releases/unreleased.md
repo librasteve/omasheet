@@ -8,6 +8,15 @@ Notes for the release after 0.1.12, kept here until it is cut. The items marked 
 - **`.Quantity` and `.Duration` are gone.** A `Duration` is already a quantity of time, so there is nothing to convert: `PT90M.Quantity` is `PT90M`, and `5400s.Duration` is `5400s` in a `Duration` column. There is no compatibility form.
 - **An uncertainty on a `Duration`** (`10.5(3)s`) is held as seconds and the column is calculated by the engine; it cannot move a date or a time, which are exact.
 
+- **A comment line is `//`, not `#`.** A `#` line is a heading in Markdown, so an `.omx` read as Markdown showed its comments as headings. There is no compatibility form: change `# note` to `// note`.
+- **`Decimal(n)` is `Decimal[n]`**, and takes a format after a `;`, `Decimal[2; .4f]`. A declared `Decimal[n]` shows `n` places by default.
+
+## Display
+
+- **Units are shown as the SI recommends**, `m⋅s⁻¹` and `kg⋅m²`, in heads and in each row, and are read in that form too (siquant 0.3.1). A `^` in the format, `Quantity[m.s^-1; ^]`, shows `m.s^-1`.
+- **`Percent` takes a format** as a `Decimal` does, `Percent[.1f]`. `*` before a byte or a bit, `Data[*B]`, picks binary prefixes, `1.5KiB`.
+- Money passes through derived sheets and CSV and XLSX; a `*` before a unit shows the prefix that suits each value; `Ctrl+Shift+F` pastes a format; custom functions are added and removed in the functions dialog; Markdown `code` in a cell is set apart.
+
 ## Durations
 
 - **Literals:** ISO 8601 (`PT1H30M`, no calendar years or months), a quantity of time (`139s`, `90min`, `1.5d`) and a signed colon form, `+11:30` or `-0:00:30.5` (the sign is what makes it a duration; an unsigned `11:30` is still a time of day). After an operand a sign is an operator, so `09:00 + +01:30` is `10:30`.

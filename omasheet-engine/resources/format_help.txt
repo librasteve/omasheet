@@ -57,9 +57,10 @@ unit | the unit the column shows and holds, once, in its head | Mass[g]
 ; | then a number format | g; ±.1f → 10.5 ± 0.3
 v | the unit in each row instead of the head | g; v.1f → 10.5g
 _ | with v, * or $, a space before the unit | g; v_.1f → 10.5 g
+^ | the unit as the parser reads it, m.s^-1, not m⋅s⁻¹ | m.s^-1; ^
 
 == Prefix | Metric
-* | before a metric unit: each value with the prefix that suits it, in each row | *m → 1.5km, 2mm
+* | before a metric unit: each value with the prefix that suits it (binary for B and b), in each row | *m → 1.5km, 2mm; *B → 1.5KiB
 
 == Money | Money
 $ | its sign before the number in each row, its code after where it has none | EUR; $ → €4.55

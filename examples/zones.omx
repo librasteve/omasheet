@@ -1,25 +1,25 @@
-# Time zones, and the things worth knowing about them.
-#
-# 1. This file is in New York. Open it in the app anywhere else and the grid
-#    shows `Placed` on your own clocks (14:12 in London for the first row),
-#    while the entry box shows what is stored here (09:12). What you type is
-#    taken in the file's zone, so a cell never shifts by being re-entered.
-#    The command line shows what is stored unless you pass `--locale`.
-#
-# 2. It is `.convert_time_zone('Asia/Tokyo')`, not `.in(...)`: `in` is the membership
-#    operator. A converted date-time prints its offset from UTC; one in the
-#    file's own zone prints none.
-#
-# 3. In the file's own zone the clocks are taken at their word. Across zones
-#    it is the instant that counts. See the Clocks sheet.
-#
-# 4. A column can declare a zone of its own, as Logs does below, whatever the
-#    file's zone is. What is typed into it is the wall clock of that zone, and
-#    each value is shown with its offset, which follows that zone's daylight
-#    saving. A Parquet file that holds a zone is read, and written, the same way.
-#
-# 5. `now()`, `today()` and `.local()` depend on when and where the file is
-#    opened, so this example leaves them out. `--now` and `--zone` pin them.
+// Time zones, and the things worth knowing about them.
+//
+// 1. This file is in New York. Open it in the app anywhere else and the grid
+//    shows `Placed` on your own clocks (14:12 in London for the first row),
+//    while the entry box shows what is stored here (09:12). What you type is
+//    taken in the file's zone, so a cell never shifts by being re-entered.
+//    The command line shows what is stored unless you pass `--locale`.
+//
+// 2. It is `.convert_time_zone('Asia/Tokyo')`, not `.in(...)`: `in` is the membership
+//    operator. A converted date-time prints its offset from UTC; one in the
+//    file's own zone prints none.
+//
+// 3. In the file's own zone the clocks are taken at their word. Across zones
+//    it is the instant that counts. See the Clocks sheet.
+//
+// 4. A column can declare a zone of its own, as Logs does below, whatever the
+//    file's zone is. What is typed into it is the wall clock of that zone, and
+//    each value is shown with its offset, which follows that zone's daylight
+//    saving. A Parquet file that holds a zone is read, and written, the same way.
+//
+// 5. `now()`, `today()` and `.local()` depend on when and where the file is
+//    opened, so this example leaves them out. `--now` and `--zone` pin them.
 
 zone America/New_York
 
@@ -33,44 +33,44 @@ Placed : Datetime
 | 2025-07-15T16:30 | Grace | *      | *   | *      | *     | *       | *    | *    | *    |
 | 2025-12-31T20:00 | Linus | *      | *   | *      | *     | *       | *    | *    | *    |
 
-# The same instant on other clocks. New York is 5 hours behind UTC in winter
-# and 4 in summer; Tokyo keeps no daylight saving.
+// The same instant on other clocks. New York is 5 hours behind UTC in winter
+// and 4 in summer; Tokyo keeps no daylight saving.
 Offset  := Placed.base_utc_offset() / 3600
 UTC     := Placed.utc()
 London  := Placed.convert_time_zone('Europe/London')
 Tokyo   := Placed.convert_time_zone('Asia/Tokyo')
-# The parts are those of the zone the value is in: Linus's call is already
-# next year in Tokyo.
+// The parts are those of the zone the value is in: Linus's call is already
+// next year in Tokyo.
 TokyoOn := Tokyo.date()
 Zone    := Tokyo.time_zone()
-# Back in the file's own zone it is an ordinary date-time again.
+// Back in the file's own zone it is an ordinary date-time again.
 Back    := Tokyo.convert_time_zone('America/New_York')
-# A converted value is still the same instant.
+// A converted value is still the same instant.
 Same    := Tokyo == Placed
 
 sheet Clocks
 
-# Noon to noon over three nights in New York: an ordinary one, the night the
-# clocks go forward, and the night they go back.
+// Noon to noon over three nights in New York: an ordinary one, the night the
+// clocks go forward, and the night they go back.
 | Night   | From             | To               | Wall | Elapsed |
 | ------- | ---------------- | ---------------- | ---- | ------- |
 | Plain   | 2025-06-01T12:00 | 2025-06-02T12:00 | *    | *       |
 | Forward | 2025-03-08T12:00 | 2025-03-09T12:00 | *    | *       |
 | Back    | 2025-11-01T12:00 | 2025-11-02T12:00 | *    | *       |
 
-# On the wall every one of them is 24 hours...
+// On the wall every one of them is 24 hours...
 Wall    := (To - From).total_hours()
-# ...but the elapsed time is not. Convert both ends to compare instants.
+// ...but the elapsed time is not. Convert both ends to compare instants.
 Elapsed := (To.utc() - From.utc()).total_hours()
 
-# 02:30 on 9 March 2025 does not exist in New York. It is read as if the
-# clocks had not gone forward, so through UTC and back it comes out as 03:30.
+// 02:30 on 9 March 2025 does not exist in New York. It is read as if the
+// clocks had not gone forward, so through UTC and back it comes out as 03:30.
 const Skipped = (2025-03-09 + 02:30).utc().convert_time_zone('America/New_York')
 
 sheet Logs
 
-# This column keeps London time, though the file is in New York. The first
-# cell is on GMT (+00:00) and the second on BST (+01:00).
+// This column keeps London time, though the file is in New York. The first
+// cell is on GMT (+00:00) and the second on BST (+01:00).
 Logged : Datetime("Europe/London")
 
 | Logged           | Event  | Offset | NewYork | Same |
@@ -79,11 +79,11 @@ Logged : Datetime("Europe/London")
 | 2025-07-01T09:30 | summer | *      | *       | *    |
 
 Offset  := Logged.base_utc_offset() / 3600
-# The same instant on the file's own clocks, which print no offset.
+// The same instant on the file's own clocks, which print no offset.
 NewYork := Logged.convert_time_zone('America/New_York')
-# Comparison is on the instant, not the wall clock.
+// Comparison is on the instant, not the wall clock.
 Same    := NewYork == Logged
 
-# Subtraction is on the instant too: 1 March to 1 July is 122 days on the
-# wall, but the clocks went forward in between, so an hour less.
+// Subtraction is on the instant too: 1 March to 1 July is 122 days on the
+// wall, but the clocks went forward in between, so an hour less.
 const LogGap = Logs.Logged.max() - Logs.Logged.min()

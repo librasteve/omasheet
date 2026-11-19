@@ -1,9 +1,9 @@
-# Every column type, with dates and times: a whole number beside a Date
-# counts days, and beside a Time or a Datetime seconds, and two of a kind
-# differ by a Duration, shown in the unit its column names, or as `PT8H30M`
-# under `Duration[iso]`. A file always writes dates and times the ISO way,
-# and may say which time zone its date-times are in. The hourly rate is money,
-# `Currency` in pounds, and the hours times it is money too.
+// Every column type, with dates and times: a whole number beside a Date
+// counts days, and beside a Time or a Datetime seconds, and two of a kind
+// differ by a Duration, shown in the unit its column names, or as `PT8H30M`
+// under `Duration[iso]`. A file always writes dates and times the ISO way,
+// and may say which time zone its date-times are in. The hourly rate is money,
+// `Currency` in pounds, and the hours times it is money too.
 
 zone Europe/London
 const Day = P1D
@@ -52,11 +52,11 @@ Pay   := Shifts.Pay.sum()
 First := Shifts.On.min()
 Span  := Shifts.On.max() - Shifts.On.min()
 
-# A column of dates or times shown by a C `strftime` format after its type in
-# brackets, with `%f` for a fraction of a second, glibc's flags, `%-d`, and
-# `%]` for a `]`. The value is unchanged; only how it is shown. Names of days
-# and months are the locale's, which this example prints in the `C` locale, so
-# in English.
+// A column of dates or times shown by a C `strftime` format after its type in
+// brackets, with `%f` for a fraction of a second, glibc's flags, `%-d`, and
+// `%]` for a `]`. The value is unchanged; only how it is shown. Names of days
+// and months are the locale's, which this example prints in the `C` locale, so
+// in English.
 sheet Diary
 
 Day    : Date[%a %-d %b %Y]

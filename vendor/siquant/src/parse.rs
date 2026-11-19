@@ -85,6 +85,9 @@ impl Inner {
         if text.is_empty() {
             return syntax(0, "a unit is expected");
         }
+        // The SI recommended form, `m⋅s⁻¹`, reads as `m.s^-1`.
+        let ascii = ascii_form(text);
+        let text = ascii.as_str();
         // A prefix and a `.` on their own is a scale: `k.` is 1000. The dot
         // makes it a prefix and nothing else, so `m.` is milli, not the metre.
         if let Some(body) = text.strip_suffix('.')
@@ -144,4 +147,42 @@ fn parse_exponent(text: &str, at: usize) -> Result<i16> {
         Ok(n) => Ok(n),
         Err(_) => Err(Error::Overflow),
     }
+}
+
+/// `m⋅s⁻¹` as `m.s^-1`: the dot operator as the `.` between terms, and a run
+/// of superscript digits, with an optional superscript minus, as a `^`
+/// exponent. Text with neither is returned as it is.
+fn ascii_form(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_exponent = false;
+    for c in text.chars() {
+        let digit = match c {
+            '⁰' => Some('0'),
+            '¹' => Some('1'),
+            '²' => Some('2'),
+            '³' => Some('3'),
+            '⁴' => Some('4'),
+            '⁵' => Some('5'),
+            '⁶' => Some('6'),
+            '⁷' => Some('7'),
+            '⁸' => Some('8'),
+            '⁹' => Some('9'),
+            '⁻' => Some('-'),
+            _ => None,
+        };
+        match digit {
+            Some(d) => {
+                if !in_exponent {
+                    out.push('^');
+                    in_exponent = true;
+                }
+                out.push(d);
+            }
+            None => {
+                in_exponent = false;
+                out.push(if c == '⋅' { '.' } else { c });
+            }
+        }
+    }
+    out
 }

@@ -193,13 +193,6 @@ fn open_brackets(s: &str) -> i32 {
             '\'' | '"' if quote.is_none_or(|q| q == c) => {
                 quote = if in_string { None } else { Some(c) };
             }
-            '#' if !in_string => {
-                for c in chars.by_ref() {
-                    if c == '\n' {
-                        break;
-                    }
-                }
-            }
             '(' | '[' if !in_string => depth += 1,
             ')' | ']' if !in_string => depth -= 1,
             _ => {}
@@ -398,7 +391,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
         let trimmed = line.text.trim();
         let lead = line.text.len() - line.text.trim_start().len();
         let at = line.start + lead;
-        if let Some(comment) = trimmed.strip_prefix('#') {
+        if let Some(comment) = trimmed.strip_prefix("//") {
             doc.push(comment.trim());
             i += 1;
             continue;
@@ -1045,7 +1038,7 @@ mod tests {
     #[test]
     fn parses_a_function() {
         let mut diags = Vec::new();
-        let src = "# Profit as a share\n# of revenue.\nfn Margin(revenue, cost) =\n  (revenue - cost) / revenue\nfn Vat() = 20%\n";
+        let src = "// Profit as a share\n// of revenue.\nfn Margin(revenue, cost) =\n  (revenue - cost) / revenue\nfn Vat() = 20%\n";
         let ast = parse_file(src, 0, &mut diags);
         assert!(diags.is_empty(), "{diags:?}");
         let f = &ast.funcs[0];

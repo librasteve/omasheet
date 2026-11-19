@@ -1,6 +1,6 @@
-# Two sheets: a lookup from one into the other, conditional sums, a
-# date-time cutoff, and a running total per customer. The prices and what comes
-# of them are `Currency`, in dollars, each shown by its sign.
+// Two sheets: a lookup from one into the other, conditional sums, a
+// date-time cutoff, and a running total per customer. The prices and what comes
+// of them are `Currency`, in dollars, each shown by its sign.
 
 sheet Customers
 
@@ -31,9 +31,9 @@ Total    := Qty * Price
 Discount := if Total > $50 and Region in ['UK', 'US'] then Total * 10% else $0
 Rush     := Placed < 2025-03-04T00:00
 
-# What each customer has spent so far: `*-1 by CustomerID` is the row
-# before among that customer's own orders, so the total runs on per
-# customer, and a customer's first order has none before it.
+// What each customer has spent so far: `*-1 by CustomerID` is the row
+// before among that customer's own orders, so the total runs on per
+// customer, and a customer's first order has none before it.
 ToDate   := Total + ([ToDate; *-1 by CustomerID] // $0)
 
 sheet ByRegion

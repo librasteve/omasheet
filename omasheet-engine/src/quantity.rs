@@ -218,7 +218,16 @@ fn arith_of(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
             {
                 return x
                     .root(n as u16)
-                    .map(value)
+                    .map(|root| {
+                        // A root that is whole, `216000s³` to `60s`, is not
+                        // left a hair off it by the floating point.
+                        let whole = root.value().round();
+                        let exact = whole.powi(n as i32) == x.value();
+                        match Quantity::new(whole, root.sigma(), root.unit().clone()) {
+                            Ok(snapped) if exact && whole != root.value() => value(snapped),
+                            _ => value(root),
+                        }
+                    })
                     .map_err(|e| explain("take a root of", &x, &y, e));
             }
             let n = match b {
@@ -589,14 +598,18 @@ fn with_best_prefix(q: &Quantity, base: &Unit) -> Quantity {
     if v == 0.0 || !v.is_finite() {
         return in_base;
     }
+    // Data, the bit and the byte, takes the binary prefixes, powers of 1024,
+    // `1536B` as `1.5KiB`; any other unit the powers of 1000.
+    let binary = matches!(base.to_string().as_str(), "B" | "b");
+    let (radix, per): (f64, i32) = if binary { (2.0, 10) } else { (10.0, 3) };
     let steps: Vec<_> = Registry::builtin()
         .prefixes()
-        .filter(|p| p.base == 10 && p.exp != 0 && p.exp % 3 == 0)
+        .filter(|p| p.base == if binary { 2 } else { 10 } && p.exp != 0 && i32::from(p.exp) % per == 0)
         .map(|p| (i32::from(p.exp), p.symbol.to_string()))
         .collect();
-    let lowest = steps.iter().map(|s| s.0).min().unwrap_or(0);
-    let highest = steps.iter().map(|s| s.0).max().unwrap_or(0);
-    let want = ((v.abs().log10() / 3.0).floor() as i32 * 3).clamp(lowest, highest);
+    let lowest = steps.iter().map(|s| s.0).min().unwrap_or(0).min(0);
+    let highest = steps.iter().map(|s| s.0).max().unwrap_or(0).max(0);
+    let want = ((v.abs().log(radix) / f64::from(per)).floor() as i32 * per).clamp(lowest, highest);
     let Some((_, symbol)) = steps.iter().find(|s| s.0 == want) else {
         return in_base;
     };
@@ -650,6 +663,13 @@ pub fn format(q: &Quantity, f: &SciFormat, style: &Style, exact: bool) -> String
 /// [`format`], with or without the unit after the number.
 fn render(q: &Quantity, f: &SciFormat, style: &Style, exact: bool, with_unit: bool) -> String {
     let unit = q.unit().to_string();
+    // Shown as the SI recommends, `m⋅s⁻¹`, unless `^` or the full form asks
+    // for the notation the parser reads, `m.s^-1`.
+    let unit = if exact || f.ascii {
+        unit
+    } else {
+        omasheet_omx::colfmt::pretty_unit(&unit)
+    };
     let unit = if q.unit().is_dimensionless() || !with_unit {
         String::new()
     } else if f.gap {
@@ -672,6 +692,7 @@ fn render(q: &Quantity, f: &SciFormat, style: &Style, exact: bool, with_unit: bo
     if q.sigma() == 0.0
         && (SciFormat {
             gap: false,
+            ascii: false,
             unit_down: false,
             ..*f
         }) == SciFormat::default()

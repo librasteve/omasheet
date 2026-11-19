@@ -1,8 +1,8 @@
-# Sequences. `terms ... limit` fills a column: the terms given start it,
-# and the rest follow the rule. `$-1` is the term before this one, `$-2`
-# the one before that. With no rule the step is taken from the terms, as a
-# difference or as a ratio. `Inf` runs to the end of the column; any other
-# limit stops there and leaves the rows after it empty.
+// Sequences. `terms ... limit` fills a column: the terms given start it,
+// and the rest follow the rule. `$-1` is the term before this one, `$-2`
+// the one before that. With no rule the step is taken from the terms, as a
+// difference or as a ratio. `Inf` runs to the end of the column; any other
+// limit stops there and leaves the rows after it empty.
 
 sheet Numbers
 
@@ -17,21 +17,21 @@ sheet Numbers
 | *   | *      | *   | *      | *         |
 | *   | *      | *   | *      | *         |
 
-# Arithmetic: a constant difference.
+// Arithmetic: a constant difference.
 Odd       := 1, 3 ... Inf
 
-# Geometric: a constant ratio.
+// Geometric: a constant ratio.
 Double    := 1, 2, 4 ... Inf
 
-# A rule of its own, reading the two terms before it.
+// A rule of its own, reading the two terms before it.
 Fib       := 0, 1, $-1 + $-2 ... Inf
 
-# Two terms are read as a difference, so a ratio needs three. A ratio is
-# only found where the terms divide exactly: thirds are fractions, so this
-# one is given its rule.
+// Two terms are read as a difference, so a ratio needs three. A ratio is
+// only found where the terms divide exactly: thirds are fractions, so this
+// one is given its rule.
 Thirds    := 1, $-1 / 3 ... Inf
 
-# A limit the sequence runs down to.
+// A limit the sequence runs down to.
 Countdown := 20, 15 ... 0
 
 sheet Labels
@@ -44,13 +44,13 @@ sheet Labels
 | *   | *    | *    |
 | *   | *    | *    |
 
-# String counts up the way letters and digits do, carrying at `Z`.
+// String counts up the way letters and digits do, carrying at `Z`.
 Col  := 'A', 'B' ... Inf
 
-# Which is how a workbook's columns are named after the twenty-sixth.
+// Which is how a workbook's columns are named after the twenty-sixth.
 Pair := 'AY' ... 'BC'
 
-# Digits carry too, and only the last run of them moves.
+// Digits carry too, and only the last run of them moves.
 Code := 'job-A8' ... 'job-B2'
 
 sheet Names
@@ -66,16 +66,16 @@ sheet Names
 | *   | *     | *     | *      | *       |
 | *   | *     | *     | *      | *       |
 
-# The days of the week and the months of the year are known by name, in
-# full or in three letters, and they go round: Sunday to Monday.
+// The days of the week and the months of the year are known by name, in
+// full or in three letters, and they go round: Sunday to Monday.
 Day     := 'Monday', 'Tuesday' ... Inf
 Short   := 'Sat', 'Sun' ... Inf
 Month   := 'January', 'February' ... Inf
 
-# A month written with its year carries into the year.
+// A month written with its year carries into the year.
 Period  := 'Nov-2026', 'Dec-2026' ... Inf
 
-# The step is taken from the terms here too, so these are quarters.
+// The step is taken from the terms here too, so these are quarters.
 Quarter := 'Jan-2026', 'Apr-2026' ... Inf
 
 sheet Dates
@@ -88,30 +88,30 @@ sheet Dates
 | *    | *    | *     | *       | *        | *       | *   |
 | *    | *    | *     | *       | *        | *       | *   |
 
-# Dates a fixed number of days apart step by days.
+// Dates a fixed number of days apart step by days.
 Week     := 2025-01-01, 2025-01-08 ... Inf
 
-# A time and a date-time step by seconds.
+// A time and a date-time step by seconds.
 Slot     := 09:00, 09:30 ... Inf
 Stamp    := 2025-03-01T08:00, 2025-03-01T09:00 ... Inf
 
-# The same day of each month steps by months, however many days that is.
+// The same day of each month steps by months, however many days that is.
 Monthly  := 2025-01-01, 2025-02-01, 2025-03-01 ... Inf
 
-# The day counted from is the largest given, so the end of February goes
-# on to the end of March rather than back to its 28th.
+// The day counted from is the largest given, so the end of February goes
+// on to the end of March rather than back to its 28th.
 MonthEnd := 2025-01-31, 2025-02-28 ... Inf
 Quarter  := 2025-01-15, 2025-04-15 ... Inf
 
-# Or say it outright: `n.month`, `n.year` and `n.week` next to a date, and
-# `month_end` for the last day of a month, from wherever the sequence starts.
+// Or say it outright: `n.month`, `n.year` and `n.week` next to a date, and
+// `month_end` for the last day of a month, from wherever the sequence starts.
 Due      := month_end(2025-01-10), month_end($-1 + 1.month) ... Inf
 
-# Chance, as Raku has it. `rand()` is a Float from 0 up to 1. `roll` takes
-# values from a column and puts each back, so a count may pass its length;
-# `pick` deals each once, so it stops at the column's length. What is drawn
-# changes with every run (`--seed 7` repeats one), so this sheet shows only
-# what holds whatever is drawn.
+// Chance, as Raku has it. `rand()` is a Float from 0 up to 1. `roll` takes
+// values from a column and puts each back, so a count may pass its length;
+// `pick` deals each once, so it stops at the column's length. What is drawn
+// changes with every run (`--seed 7` repeats one), so this sheet shows only
+// what holds whatever is drawn.
 
 sheet Chance
 

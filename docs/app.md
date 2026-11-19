@@ -99,6 +99,7 @@ rewrites the text, and saving writes exactly that.
   number is typed as a file writes it, `12345.678`, or `12_345.678` to group
   it, and copying a cell copies it that way.
 - Dates and times follow your locale; the file stays ISO.
+- In a `Date` column (or a `Datetime` one, for the start of the day) a day and month alone, `2/3`, is read in your locale's order, day first in Britain and month first in the US. It takes the year of the nearest cell above in the column that has one, or this year if none has, and the file holds the whole date, `2026-03-02`. A day that month does not have, `31/4`, is left as typed.
 - A file in another time zone is shown on your clocks.
 
 | Keys | |

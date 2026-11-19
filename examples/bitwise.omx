@@ -1,12 +1,12 @@
-# Bitwise operations on whole numbers, written as Raku writes them: `+&`,
-# `+|` and `+^` for and, or and xor, `+^` before a number for its
-# complement, and `+<` and `+>` for the shifts. `and`, `or` and `not` stay
-# the Boolean words they are.
-#
-# `+&`, `+<` and `+>` bind as `*` does and `+|` and `+^` as `+` does, so a
-# flag test needs no brackets. Two numbers of one base give that base and a
-# mix an Integer; a shift keeps the base of the number it shifts. `+>` fills
-# with the sign, and the complement is the 64-bit one.
+// Bitwise operations on whole numbers, written as Raku writes them: `+&`,
+// `+|` and `+^` for and, or and xor, `+^` before a number for its
+// complement, and `+<` and `+>` for the shifts. `and`, `or` and `not` stay
+// the Boolean words they are.
+//
+// `+&`, `+<` and `+>` bind as `*` does and `+|` and `+^` as `+` does, so a
+// flag test needs no brackets. Two numbers of one base give that base and a
+// mix an Integer; a shift keeps the base of the number it shifts. `+>` fills
+// with the sign, and the complement is the 64-bit one.
 
 sheet Permissions
 
@@ -37,7 +37,7 @@ Flipped := +^Word
 Masked  := Word +^ 0xffff
 Signed  := -16 +> 2
 
-# In a table, a `+|` in a cell's formula stays in the cell.
+// In a table, a `+|` in a cell's formula stays in the cell.
 sheet Cells
 
 | Public            | Cleared             |

@@ -572,9 +572,18 @@ fn contains(outer: Span, inner: Span) -> bool {
 
 /// A date or time typed the way `style` writes it (`31/1/2025`, `9:30 pm`),
 /// as a file writes it, for a column of type `ty`. `None` if it is not one.
-fn iso_entry(style: &Style, ty: &str, input: &str) -> Option<String> {
+///
+/// A day and a month alone, `2/3`, take `year` where there is one: the year
+/// of the nearest cell above with a year in it, or else this year.
+fn iso_entry(style: &Style, ty: &str, input: &str, year: Option<i64>) -> Option<String> {
     let text = input.trim();
-    let date = || style.parse_date(text).map(date::format);
+    let date = || {
+        style.parse_date(text).map(date::format).or_else(|| {
+            let (month, day) = style.parse_day_month(text)?;
+            let days = date::from_ymd(year?, month, day)?;
+            Some(date::format(days))
+        })
+    };
     let time = || style.parse_time(text).map(date::format_time);
     let datetime = || style.parse_datetime(text).map(date::format_datetime);
     match ty {
@@ -592,6 +601,12 @@ fn iso_entry(style: &Style, ty: &str, input: &str) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// The year a cell of a date column holds, as a file writes it.
+fn year_of(cell: &str) -> Option<i64> {
+    let (year, rest) = cell.trim().split_at_checked(4)?;
+    (year.bytes().all(|b| b.is_ascii_digit()) && rest.starts_with('-')).then(|| year.parse().ok())?
 }
 
 /// What can be typed into a cell of a column of type `ty`, with an example
@@ -2948,7 +2963,7 @@ impl Document {
         let line_at = lines.iter().position(|l| consts_line(l).is_some());
         let first = lines.iter().position(|l| {
             let t = l.trim();
-            !t.is_empty() && !t.starts_with('#')
+            !t.is_empty() && !t.starts_with("//")
         });
         let new = format!("consts [{want}]\n");
         // The default is the absence of the line; none is `consts []`.
@@ -3174,8 +3189,20 @@ impl Document {
                 // The file keeps the text as it was entered (D186): a column's
                 // type shows it in its own format, and a type is never set
                 // by what is typed into a cell (D191).
+                // A day and a month alone take the year of the nearest cell
+                // above that has one, or else this year.
+                let year = matches!(ty, "Date" | "Datetime").then(|| {
+                    grid.rows[..*row]
+                        .iter()
+                        .rev()
+                        .find_map(|(_, r)| year_of(&r[*col]))
+                        .unwrap_or_else(|| {
+                            let now = crate::zone::utc_now().div_euclid(date::MICROS);
+                            date::civil_from_days(now.div_euclid(86_400)).0
+                        })
+                });
                 grid.rows[*row].1[*col] =
-                    iso_entry(&style, ty, text).unwrap_or_else(|| clean_cell(text));
+                    iso_entry(&style, ty, text, year).unwrap_or_else(|| clean_cell(text));
             }
         })
     }
@@ -5145,7 +5172,7 @@ impl Document {
         while start > 0 {
             let before = &self.text[..start - 1];
             let line_at = before.rfind('\n').map_or(0, |i| i + 1);
-            if !before[line_at..].trim_start().starts_with('#') {
+            if !before[line_at..].trim_start().starts_with("//") {
                 break;
             }
             start = line_at;
@@ -5232,7 +5259,7 @@ impl Document {
                 let mut start = self.line_start(decl.span.start as usize);
                 while start > 0 {
                     let above = self.line_start(start - 1);
-                    if !self.text[above..start].starts_with('#') {
+                    if !self.text[above..start].starts_with("//") {
                         break;
                     }
                     start = above;
@@ -5406,7 +5433,7 @@ impl Document {
         let (mut start, mut end) = self.sheet_lines(decl);
         while start > 0 {
             let above = self.line_start(start - 1);
-            if !self.text[above..start].starts_with('#') {
+            if !self.text[above..start].starts_with("//") {
                 break;
             }
             start = above;
@@ -5428,7 +5455,7 @@ impl Document {
                     .map_or(0, |k| k + 1);
                 while at > 0 {
                     let above = rest[..at - 1].rfind('\n').map_or(0, |k| k + 1);
-                    if !rest[above..at].starts_with('#') {
+                    if !rest[above..at].starts_with("//") {
                         break;
                     }
                     at = above;
@@ -5979,7 +6006,7 @@ mod tests {
 
     use super::*;
 
-    const SALES: &str = "# sales\nconst Rate = 20%\n\nsheet Sales\n\n| Month | Revenue | Cost | Profit | Tax |\n| ----- | ------- | ---- | ------ | --- |\n| Jan   | 100     | 60   | *      | *   |\n| Feb   | 120     | 70   | *      | *   |\n\nProfit := Revenue - Cost\nTax := Profit * Rate\n";
+    const SALES: &str = "// sales\nconst Rate = 20%\n\nsheet Sales\n\n| Month | Revenue | Cost | Profit | Tax |\n| ----- | ------- | ---- | ------ | --- |\n| Jan   | 100     | 60   | *      | *   |\n| Feb   | 120     | 70   | *      | *   |\n\nProfit := Revenue - Cost\nTax := Profit * Rate\n";
 
     fn col(doc: &Document, sheet: usize, col: usize) -> Vec<String> {
         doc.snapshot().sheets[sheet]
@@ -6064,6 +6091,18 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    #[test]
+    fn a_percent_column_takes_a_format_as_a_decimal_does() {
+        let mut doc = Document::from_text("sheet T\n\nA : Percent\n\n| A |\n| - |\n| 41.667% |\n| 5% |\n");
+        assert_eq!(doc.check_column_format(0, &[0], Some(".1f")), Ok(()));
+        // A whole-number conversion is not one a percentage takes.
+        assert!(doc.check_column_format(0, &[0], Some("d")).is_err());
+        doc.set_column_format(0, &[0], Some(".1f")).unwrap();
+        assert!(doc.text().contains("A : Percent[.1f]"), "{}", doc.text());
+        let rows = &doc.snapshot().sheets[0].rows;
+        assert_eq!((rows[0][0].display.as_str(), rows[1][0].display.as_str()), ("41.7%", "5.0%"));
     }
 
     #[test]
@@ -8092,7 +8131,7 @@ mod tests {
         let mut doc = Document::from_text(&text);
         // Ten significant digits, a space before the unit, unless the file says.
         assert_eq!(doc.const_format(), "; _.10s");
-        assert_eq!(doc.snapshot().consts[1].display, "6.62607015e-34 J.s");
+        assert_eq!(doc.snapshot().consts[1].display, "6.62607015e-34 J⋅s");
         assert!(!doc.text().contains("consts ["));
         assert!(doc.snapshot().consts.iter().all(|c| c.numeric));
         assert!(Document::check_const_format(Some("; .9s")).is_ok());
@@ -8100,7 +8139,7 @@ mod tests {
         // None is `consts []`, and shows a derived constant cut, as before.
         assert_eq!(doc.set_const_format(None), Ok(()));
         assert!(doc.text().contains("\nconsts []\n"), "{}", doc.text());
-        assert_eq!(doc.snapshot().consts[1].display, "0J.s");
+        assert_eq!(doc.snapshot().consts[1].display, "0J⋅s");
         // Another format is a line of its own, saved, and a reopened file has it.
         assert_eq!(doc.set_const_format(Some("; .9s")), Ok(()));
         assert_eq!(doc.text().matches("consts [").count(), 1);
@@ -8112,7 +8151,7 @@ mod tests {
         );
         let reopened = Document::from_text(doc.text());
         assert_eq!(reopened.const_format(), "; .9s");
-        assert_eq!(reopened.snapshot().consts[1].display, "6.62607015e-34J.s");
+        assert_eq!(reopened.snapshot().consts[1].display, "6.62607015e-34J⋅s");
         // The default takes the line out; undo brings the last one back.
         assert_eq!(doc.set_const_format(Some("; _.10s")), Ok(()));
         assert!(!doc.text().contains("consts"), "{}", doc.text());
@@ -8436,7 +8475,7 @@ mod tests {
             doc.text()
                 .contains("Jan   | 100                       | 60")
         );
-        assert!(doc.text().contains("# sales\nconst Rate = 20%"));
+        assert!(doc.text().contains("// sales\nconst Rate = 20%"));
         assert!(
             doc.text()
                 .ends_with("Profit := Revenue - Cost\nTax := Profit * Rate\n")
@@ -8606,7 +8645,7 @@ mod tests {
 
     #[test]
     fn functions_are_listed_and_follow_a_renamed_column() {
-        let text = "# Everything sold.\nfn Sold() = Sales.Revenue.sum()\nfn Net(a, b) = a - b\n\n"
+        let text = "// Everything sold.\nfn Sold() = Sales.Revenue.sum()\nfn Net(a, b) = a - b\n\n"
             .to_string()
             + "sheet Sales\n\nMonth | Revenue | Cost | Profit\nJan   | 100     | 60   | *\n\nProfit := Net(Revenue, Cost)\n";
         let mut doc = Document::from_text(&text);
@@ -8972,10 +9011,10 @@ mod tests {
 
     #[test]
     fn the_source_is_aligned() {
-        let ragged = "sheet T\n\nA | Bee\n100 | x\n# a note\n2 |\n\nsheet U\n\nC|D\n1|22\n";
+        let ragged = "sheet T\n\nA | Bee\n100 | x\n// a note\n2 |\n\nsheet U\n\nC|D\n1|22\n";
         let mut doc = Document::from_text(ragged);
         // A Markdown table: outer pipes, a `---` line, every `|` in step.
-        let aligned = "sheet T\n\n| A   | Bee |\n| --- | --- |\n| 100 | x   |\n# a note\n| 2   |     |\n\n\
+        let aligned = "sheet T\n\n| A   | Bee |\n| --- | --- |\n| 100 | x   |\n// a note\n| 2   |     |\n\n\
                        sheet U\n\n| C   | D   |\n| --- | --- |\n| 1   | 22  |\n";
         assert_eq!(doc.aligned_text(), aligned);
         // Shown aligned, but not changed until it is edited.
@@ -8999,6 +9038,37 @@ mod tests {
     }
 
     #[test]
+    fn a_day_and_month_take_the_year_above_or_this_one() {
+        let gb = Style::new(date::Order::Dmy, '/', false);
+        let us = Style::new(date::Order::Mdy, '/', false);
+        let this_year = date::civil_from_days(
+            crate::zone::utc_now().div_euclid(date::MICROS).div_euclid(86_400),
+        )
+        .0;
+        let start = "sheet T\n\nOn : Date\n\n| On |\n| -- |\n|    |\n|    |\n|    |\n|    |\n";
+        let cells = |doc: &Document| -> Vec<String> {
+            doc.text().lines().skip(6).map(|l| l.trim_matches(['|', ' ']).to_string()).collect()
+        };
+        // Day first in Britain; the year is this one with none above.
+        let mut doc = Document::with_style(start, gb);
+        assert!(doc.set_cells(0, &[(0, 0, "2/3".into())]));
+        assert_eq!(cells(&doc)[0], format!("{this_year}-03-02"));
+        // An explicit year above is the year taken, and it carries on down.
+        assert!(doc.set_cells(
+            0,
+            &[(1, 0, "5/6/2021".into()), (2, 0, "7/8".into()), (3, 0, "1/12".into())]
+        ));
+        assert_eq!(&cells(&doc)[1..], ["2021-06-05", "2021-08-07", "2021-12-01"]);
+        // Month first in the US.
+        let mut doc = Document::with_style(start, us);
+        assert!(doc.set_cells(0, &[(0, 0, "2/3".into())]));
+        assert_eq!(cells(&doc)[0], format!("{this_year}-02-03"));
+        // Not a day of the month is not a date, and is left as typed.
+        assert!(doc.set_cells(0, &[(1, 0, "31/4".into())]));
+        assert_eq!(cells(&doc)[1], "31/4");
+    }
+
+    #[test]
     fn entry_hints_follow_the_style() {
         let us = Style::new(date::Order::Mdy, '/', true);
         assert_eq!(
@@ -9016,7 +9086,7 @@ mod tests {
         );
         assert_eq!(
             entry_hint(&us, "Duration"),
-            "Duration: a timespan, e.g. +2:00:00"
+            "Duration: a timespan, e.g. 2.0ms or +2:00:00"
         );
         assert_eq!(entry_hint(&us, ""), "");
         assert_eq!(
@@ -9045,7 +9115,7 @@ mod tests {
                 .nth(1)
                 .unwrap()
                 .trim_end_matches(" or ISO");
-            assert!(iso_entry(&us, ty, example).is_some(), "{hint}");
+            assert!(iso_entry(&us, ty, example, None).is_some(), "{hint}");
         }
     }
 
@@ -9232,7 +9302,7 @@ mod tests {
         assert_eq!(doc.snapshot().funcs.len(), 2);
         // Out again, with the comment above it.
         let mut doc = Document::from_text(
-            "# Half of it.\nfn Half(x) = x / 2\n\nsheet T\n\n| A |\n| - |\n| 4 |\n",
+            "// Half of it.\nfn Half(x) = x / 2\n\nsheet T\n\n| A |\n| - |\n| 4 |\n",
         );
         assert!(doc.delete_function("Half").is_ok());
         assert_eq!(doc.text(), "sheet T\n\n| A |\n| - |\n| 4 |\n");
@@ -9263,8 +9333,8 @@ mod tests {
         doc.set_column_types(0, &[2], Some("Decimal[2; .2f]"));
         assert!(doc.text().contains("C : Decimal[2; .2f]"), "{}", doc.text());
         // Another type lets go of the places and the format.
-        doc.set_column_types(0, &[2], Some("Percent"));
-        assert!(doc.text().contains("C : Percent\n"), "{}", doc.text());
+        doc.set_column_types(0, &[2], Some("Integer"));
+        assert!(doc.text().contains("C : Integer\n"), "{}", doc.text());
     }
 
     #[test]
@@ -9571,7 +9641,7 @@ mod tests {
 
     #[test]
     fn a_sheet_moves_with_its_comment() {
-        let text = "# One\nsheet T\n\n| A |\n| - |\n| 1 |\n\nsheet U\n\n| X |\n| - |\n| 2 |\n\n# Three\nsheet V\n\n| Y |\n| - |\n| 3 |\n";
+        let text = "// One\nsheet T\n\n| A |\n| - |\n| 1 |\n\nsheet U\n\n| X |\n| - |\n| 2 |\n\n// Three\nsheet V\n\n| Y |\n| - |\n| 3 |\n";
         let order = |doc: &Document| {
             doc.snapshot()
                 .sheets
@@ -9582,18 +9652,18 @@ mod tests {
         let mut doc = Document::from_text(text);
         doc.move_sheet(0, 2).unwrap();
         assert_eq!(order(&doc), ["U", "V", "T"]);
-        assert!(doc.text().contains("# One\nsheet T"));
+        assert!(doc.text().contains("// One\nsheet T"));
         assert!(doc.snapshot().problems.is_empty());
         doc.move_sheet(2, 1).unwrap();
         assert_eq!(order(&doc), ["U", "T", "V"]);
-        assert!(doc.text().contains("| 1 |\n\n# Three\nsheet V"));
+        assert!(doc.text().contains("| 1 |\n\n// Three\nsheet V"));
         doc.move_sheet(1, 0).unwrap();
         assert_eq!(doc.text(), text);
     }
 
     #[test]
     fn a_sheet_is_duplicated_just_after_itself() {
-        let text = "sheet T\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n# Kept\nsheet U\n\n| X |\n| - |\n| 9 |\n";
+        let text = "sheet T\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n// Kept\nsheet U\n\n| X |\n| - |\n| 9 |\n";
         let mut doc = Document::from_text(text);
         assert_eq!(doc.duplicate_sheet(0), Ok("T_001".to_string()));
         let names: Vec<_> = doc
@@ -9605,12 +9675,12 @@ mod tests {
         assert_eq!(names, ["T", "T_001", "U"]);
         assert_eq!(doc.duplicate_sheet(0), Ok("T_002".to_string()));
         assert!(doc.snapshot().problems.is_empty());
-        assert!(doc.text().contains("# Kept\nsheet U"), "{}", doc.text());
+        assert!(doc.text().contains("// Kept\nsheet U"), "{}", doc.text());
     }
 
     #[test]
     fn a_sheet_pasted_onto_another_replaces_it_under_its_name_copied() {
-        let text = "sheet T\n\n| A   | B   |\n| --- | --- |\n| 1   | 2   |\n\nB := A + 1\n\n# Kept\nsheet U\n\n| X |\n| - |\n| 9 |\n";
+        let text = "sheet T\n\n| A   | B   |\n| --- | --- |\n| 1   | 2   |\n\nB := A + 1\n\n// Kept\nsheet U\n\n| X |\n| - |\n| 9 |\n";
         let mut doc = Document::from_text(text);
         assert_eq!(doc.paste_sheet(0, 1), Ok("T_001".to_string()));
         let columns = &doc.snapshot().sheets[1].columns;
@@ -9620,7 +9690,7 @@ mod tests {
         );
         assert_eq!(col(&doc, 1, 1), ["2"]);
         assert_eq!(doc.snapshot().sheets[1].name, "T_001");
-        assert!(doc.text().contains("# Kept\nsheet T_001"));
+        assert!(doc.text().contains("// Kept\nsheet T_001"));
         // Pasted again, onto the copy: the next free name.
         assert_eq!(doc.paste_sheet(1, 0), Ok("T_002".to_string()));
         assert!(doc.undo());
@@ -9837,7 +9907,7 @@ mod tests {
 
     #[test]
     fn sheets_can_be_put_in_renamed_and_deleted() {
-        let text = "const K = Sales.Revenue.sum()\n\n# The sales.\nsheet Sales\n\nMonth | Revenue\nJan   | 100\nFeb   | 120\n\n\
+        let text = "const K = Sales.Revenue.sum()\n\n// The sales.\nsheet Sales\n\nMonth | Revenue\nJan   | 100\nFeb   | 120\n\n\
                     sheet Summary\n\nLabel | Total                     | Twice\nAll   | = Sales[Revenue; 0] + K | *\n\nTwice := Sales.Revenue.sum() * 2\n";
         let mut doc = Document::from_text(text);
         let names = |doc: &Document| -> Vec<String> {
@@ -9854,7 +9924,7 @@ mod tests {
         doc.insert_sheet(4, "Last", None).unwrap();
         assert_eq!(names(&doc), ["First", "Sales", "Middle", "Summary", "Last"]);
         assert!(
-            doc.text().contains("\n\n# The sales.\nsheet Sales\n"),
+            doc.text().contains("\n\n// The sales.\nsheet Sales\n"),
             "{}",
             doc.text()
         );
@@ -9908,7 +9978,7 @@ mod tests {
         assert!(names(&doc).is_empty());
         assert_eq!(
             doc.text(),
-            "const K = Sales.Revenue.sum()\n\n# The sales.\n"
+            "const K = Sales.Revenue.sum()\n\n// The sales.\n"
         );
     }
 

@@ -1,5 +1,5 @@
-# Exact arithmetic. Every number here is exact unless it is asked to be a
-# Float, a floating-point number, as the Float column is.
+// Exact arithmetic. Every number here is exact unless it is asked to be a
+// Float, a floating-point number, as the Float column is.
 
 sheet Sums
 
@@ -17,7 +17,7 @@ Same := Exact == Float
 
 sheet Split
 
-# A bill split three ways stays exact: the shares add back to the bill.
+// A bill split three ways stays exact: the shares add back to the bill.
 
 | Person | Share |
 | ------ | ----- |

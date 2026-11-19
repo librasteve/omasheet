@@ -1,0 +1,31 @@
+// Opening a big file: how long until the first screen of rows, for a CSV, two
+// workbooks and Parquet files of two sizes. Release build, measured
+// 2026-11-07. Warm is as the file was left, Cold is with the disk cache
+// purged first (not taken for the workbooks).
+//
+// A CSV or a workbook is read once into a Parquet copy, kept for the next
+// open: Copy is that one-off cost, warm. A Parquet file is never copied.
+// Size is the file in MB. Change is the cold time against the CSV's, and
+// Valid is whether it keeps to the target for the first screen.
+
+const Target = 50ms
+
+sheet Benchmark
+
+Run    : String
+FileSize : Data[MiB; v_'.0f]
+Rows   : Integer
+Warm   : Duration[ms; v_.1f]
+Cold   : Duration[ms; v_.1f]
+Change : Percent
+Beats_50ms  : Boolean[✓✗]
+
+| Run             | FileSize | Rows     | Cold | Warm | Change | Beats_50ms |
+| --------------- | -------- | -------- | ---- | ---- | ------ | ---------- |
+| CSV, large      | 1060MiB  | 20800000 | 57   | 27   | *      | *          |
+| XLSX, large     | 42MiB    | 1048575  |      | 23   | *      | *          |
+| Parquet, medium | 236MiB   | 20800000 | 12.8 | 10.8 | *      | *          |
+| Parquet, large  | 610MiB   | 23900000 | 45.6 | 37   | *      | *          |
+
+Change := (Warm/Cold-1).Percent
+Beats_50ms := Cold <= Target

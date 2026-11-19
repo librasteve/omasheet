@@ -1,25 +1,27 @@
-# Window functions: a value for each row that reads the rows around it.
-# They are written as a method on a column, `Amount.cum_sum()`, and run down
-# the column in the order of the file.
-#
-# The rows below are NOT in date order, which is the usual way for a running
-# total to go wrong without a word. Give the function an order key and it
-# goes down the column by that key, and puts each answer back on its own row;
-# `by Account` then runs a separate window for each account.
-#
-#   InFileOrder  the running total as the rows lie: wrong for a ledger
-#   Balance      the running total in date order, for each account
-#   Largest      the largest deposit so far, in date order
-#   Change       the change from the account's last row
-#   Growth       and as a share of it
-#   Place        the rank of the amount among the account's, largest first
-#   Rolling      the mean of the account's last two amounts
-#   Price        an empty price takes the last one before it, by date
+// Window functions: a value for each row that reads the rows around it.
+// They are written as a method on a column, `Amount.cum_sum()`, and run down
+// the column in the order of the file.
+//
+// The rows below are NOT in date order, which is the usual way for a running
+// total to go wrong without a word. Give the function an order key and it
+// goes down the column by that key, and puts each answer back on its own row;
+// `by Account` then runs a separate window for each account.
+//
+//   InFileOrder  the running total as the rows lie: wrong for a ledger
+//   Balance      the running total in date order, for each account
+//   Largest      the largest deposit so far, in date order
+//   Change       the change from the account's last row
+//   Growth       and as a share of it
+//   Place        the rank of the amount among the account's, largest first
+//   Rolling      the mean of the account's last two amounts
+//   Price        an empty price takes the last one before it, by date
 
 sheet Ledger
 
 Date : Date
 Account : String
+Price : Currency[USD; $.2f]
+Filled : Currency[USD; $.2f]
 
 | Date       | Account | Amount | Price | InFileOrder | Balance | Largest | Change | Growth | Place | Rolling | Filled |
 | ---------- | ------- | ------ | ----- | ----------- | ------- | ------- | ------ | ------ | ----- | ------- | ------ |

@@ -1,16 +1,18 @@
-# Numbers with SI units. A unit is written right after the number, in SI,
-# with no space: `5kg`, `300cm`, `20°C`. A unit of more than one term is
-# joined with `.` and takes `^` and a whole exponent, `kg.m^2.s^-2`, and
-# there is no `/`. The number is any number a Scientific is, so
-# `10.5(3)e-3kg` has its uncertainty, and it propagates through arithmetic
-# as it does for a Scientific.
-#
-# A sum and a comparison convert the right side to the unit of the left; a
-# product and a quotient combine the units; a result with no dimension is a
-# plain number. Two quantities of different dimensions are an error.
-#
-# A prefix and a `.` on their own is a scale: `1k.` is 1000, `5m.` is 0.005,
-# and the number it makes is exact. `m` alone is the metre and `m.` is milli.
+// Numbers with SI units. A unit is written right after the number, in SI,
+// with no space: `5kg`, `300cm`, `20°C`. A unit of more than one term is
+// joined with `.` and takes `^` and a whole exponent, `kg.m^2.s^-2`, and
+// there is no `/`. It is shown as the SI recommends, `kg⋅m²⋅s⁻²`, and that
+// form is read too; a `^` in a column's format, `Speed[m.s^-1; ^]`, keeps
+// the form written here. The number is any number a Scientific is, so
+// `10.5(3)e-3kg` has its uncertainty, and it propagates through arithmetic
+// as it does for a Scientific.
+//
+// A sum and a comparison convert the right side to the unit of the left; a
+// product and a quotient combine the units; a result with no dimension is a
+// plain number. Two quantities of different dimensions are an error.
+//
+// A prefix and a `.` on their own is a scale: `1k.` is 1000, `5m.` is 0.005,
+// and the number it makes is exact. `m` alone is the metre and `m.` is milli.
 
 sheet Literals
 
@@ -50,11 +52,11 @@ sheet Arithmetic
 | plus-minus    | = 5kg ± 100g              |
 | kilo of a sum | = 1.5k. + 500             |
 
-# A column can be of a quantity type, here `Mass`: a `Quantity` of that
-# dimension. A cell in another unit of it is converted to the column's unit, a
-# bare number is read in that unit, and a cell of another dimension is an
-# error. A column with no declared type, or `Quantity`, holds whatever it is
-# given.
+// A column can be of a quantity type, here `Mass`: a `Quantity` of that
+// dimension. A cell in another unit of it is converted to the column's unit, a
+// bare number is read in that unit, and a cell of another dimension is an
+// error. A column with no declared type, or `Quantity`, holds whatever it is
+// given.
 sheet Pantry
 
 Item : String
@@ -67,11 +69,11 @@ Amount : Mass
 | salt  | 5       |
 | yeast | 7.5(2)g |
 
-# The unit in brackets after the type is the unit the column is shown and held
-# in, whichever the cells were written in: a bare number is read in it. After
-# a `;` a number format as a Scientific takes may follow, `Mass[mg; .1f]`.
-# The unit is said once, in the column's head, and its cells are numbers; a
-# `v` before the conversion puts it down in each row, `Mass[g; v]`.
+// The unit in brackets after the type is the unit the column is shown and held
+// in, whichever the cells were written in: a bare number is read in it. After
+// a `;` a number format as a Scientific takes may follow, `Mass[mg; .1f]`.
+// The unit is said once, in the column's head, and its cells are numbers; a
+// `v` before the conversion puts it down in each row, `Mass[g; v]`.
 sheet Display
 
 Item   : String
@@ -86,9 +88,9 @@ Metres : Length
 | sugar | 300g  | 300g  | 300g | 150     |
 | salt  | 5     | 5     | 5    | 3.5(2)m |
 
-# With no unit before the `;`, each value is shown in its own unit. The
-# conversion `s` lets the uncertainty lead: a value that has one is shown by
-# it, and an exact value, which has none, in nine significant digits.
+// With no unit before the `;`, each value is shown in its own unit. The
+// conversion `s` lets the uncertainty lead: a value that has one is shown by
+// it, and an exact value, which has none, in nine significant digits.
 sheet Constants
 
 Value : Quantity[; .9s]
@@ -110,9 +112,9 @@ sheet Totals
 | smallest | = Pantry.Amount.min()         |
 | in grams | = Pantry.Amount.sum().to('g') |
 
-# A computed column of quantities may be declared too: it is held in the unit
-# of its type, so the product of two lengths is an area in square metres
-# whatever units the lengths were written in.
+// A computed column of quantities may be declared too: it is held in the unit
+// of its type, so the product of two lengths is an area in square metres
+// whatever units the lengths were written in.
 sheet Boxes
 
 Width     : Length
@@ -128,9 +130,9 @@ Perimeter : Length
 Area      := Width * Height
 Perimeter := 2 * (Width + Height)
 
-# Data over an area, as a disk drive's: `DataDensity` holds `b.m^-2`, here
-# shown in `Tib.m^-2`. A drive's capacity over its platter area gives it, and
-# data units take the binary and SI prefixes alike (see `data.omx`).
+// Data over an area, as a disk drive's: `DataDensity` holds `b.m^-2`, here
+// shown in `Tib.m^-2`. A drive's capacity over its platter area gives it, and
+// data units take the binary and SI prefixes alike (see `data.omx`).
 sheet Drives
 
 Drive    : String
@@ -146,11 +148,11 @@ Density  : DataDensity[Tib.m^-2]
 
 Density := Capacity / Platter
 
-# Data: data in bytes and bits, with the binary prefixes (`KiB` is 1024 B)
-# and the SI ones (`kB` is 1000 B). A column of `Data` shows its cells in
-# the unit it names, `Data[MiB]`, whichever they were written in, and a
-# `DataRate[Mib.s^-1]` column holds mebibits a second. Dividing a size in
-# mebibits by such a rate leaves seconds.
+// Data: data in bytes and bits, with the binary prefixes (`KiB` is 1024 B)
+// and the SI ones (`kB` is 1000 B). A column of `Data` shows its cells in
+// the unit it names, `Data[MiB]`, whichever they were written in, and a
+// `DataRate[Mib.s^-1]` column holds mebibits a second. Dividing a size in
+// mebibits by such a rate leaves seconds.
 sheet Data
 
 File     : String
@@ -168,17 +170,17 @@ Seconds  : Quantity
 
 Seconds := Size.to('Mib') / Rate
 
-# Metric units outside the SI, which the SI accepts or science relies on:
-# the litre (`l` or `L`), tonne `t` with `kt` and `Mt`, carat `ct`, hectare
-# `ha` and `are`, `barn`, `bar`, `atm` and `torr`, electronvolt `eV`,
-# calorie `cal` (4.184 J), watt-hour `Wh`, the metric horsepower `mhp`, dalton
-# `Da`, the astronomical `au`, `ly`, `ld` and `pc`, `Å`, the nautical mile
-# `nmi` and knot `kn`, the year `yr`, `gon` and `rev`, and `rem`, `Ci`, `R`,
-# `Jy`, `tog` and `sverdrup`. They are exact multiples of SI units and most
-# take the prefixes (`ml`, `kWh`, `keV`, `kcal`, `kpc`, `mCi`), except `t`,
-# `ha` and the like. `u` is read as the prefix micro and shown as `μ`.
-# Imperial and US units (`ft`, `lb`, `gal`, `psi`, `°F`) are units too, and no cgs ones. Each row is a
-# quantity and the same amount in another unit.
+// Metric units outside the SI, which the SI accepts or science relies on:
+// the litre (`l` or `L`), tonne `t` with `kt` and `Mt`, carat `ct`, hectare
+// `ha` and `are`, `barn`, `bar`, `atm` and `torr`, electronvolt `eV`,
+// calorie `cal` (4.184 J), watt-hour `Wh`, the metric horsepower `mhp`, dalton
+// `Da`, the astronomical `au`, `ly`, `ld` and `pc`, `Å`, the nautical mile
+// `nmi` and knot `kn`, the year `yr`, `gon` and `rev`, and `rem`, `Ci`, `R`,
+// `Jy`, `tog` and `sverdrup`. They are exact multiples of SI units and most
+// take the prefixes (`ml`, `kWh`, `keV`, `kcal`, `kpc`, `mCi`), except `t`,
+// `ha` and the like. `u` is read as the prefix micro and shown as `μ`.
+// Imperial and US units (`ft`, `lb`, `gal`, `psi`, `°F`) are units too, and no cgs ones. Each row is a
+// quantity and the same amount in another unit.
 sheet Metric
 
 Item   : String
@@ -209,12 +211,12 @@ Same   : Quantity
 | source   | 3Ci     | = (3Ci).to('GBq')    |
 | current  | 15sverdrup | = (15sverdrup).to('hm^3.s^-1') |
 
-# Time is a kind of quantity too, `Duration`, held in seconds, `s`, with the
-# units `min`, `h`, `d` and `wk`. A duration is written as a quantity,
-# `90min`, in ISO 8601, `PT1H30M`, or with a sign and a colon, `+01:30` (an
-# unsigned `01:30` is a time of day). A bare `Duration` is `Duration[s]`; the
-# unit goes in the head, and `iso` or `%H:%M:%S` show the whole of it. A
-# distance over a duration is a speed, and a speed times a duration a distance.
+// Time is a kind of quantity too, `Duration`, held in seconds, `s`, with the
+// units `min`, `h`, `d` and `wk`. A duration is written as a quantity,
+// `90min`, in ISO 8601, `PT1H30M`, or with a sign and a colon, `+01:30` (an
+// unsigned `01:30` is a time of day). A bare `Duration` is `Duration[s]`; the
+// unit goes in the head, and `iso` or `%H:%M:%S` show the whole of it. A
+// distance over a duration is a speed, and a speed times a duration a distance.
 sheet Durations
 
 Task    : String
@@ -241,10 +243,10 @@ Seconds := Spent
 Share   := Spent / Durations.Spent.sum()
 Pace    := 12km / Spent
 
-# A duration may have an uncertainty, `10.5(3)s`, as any quantity does. A
-# whole number of microseconds cannot hold one, so a value that has one is
-# held as a quantity of seconds, and it passes through a sum or a product as
-# an uncertain value does. It cannot move a date or a time, which are exact.
+// A duration may have an uncertainty, `10.5(3)s`, as any quantity does. A
+// whole number of microseconds cannot hold one, so a value that has one is
+// held as a quantity of seconds, and it passes through a sum or a product as
+// an uncertain value does. It cannot move a date or a time, which are exact.
 sheet Stopwatch
 
 Lap    : String
@@ -269,9 +271,9 @@ sheet Flight
 | MUC-SFO | 2025-03-10T12:30 | +11:35:00 | 9120km | 2025-03-10T11:50 | 2025-03-11T00:15 | 10/03/2025 17:15 -07:00 | 218.705035971223m.s^-1   | 0.6376240115779096 | 11.58 |
 | SFO-LHR | 2025-03-10T21:30 | +10:20:00 | 8610km | 2025-03-10T20:50 | 2025-03-11T08:00 | 11/03/2025 01:00 -07:00 | 231.4516129032258m.s^-1  | 0.6747860434496379 | 10.33 |
 
-# A `*` before a metric unit, `Length[*m]`, shows each value with the prefix
-# that suits it, a power of a thousand, in each row: `1.5km`, `2mm`. The
-# column's values are the same as with `Length[m]`; only the display differs.
+// A `*` before a metric unit, `Length[*m]`, shows each value with the prefix
+// that suits it, a power of a thousand, in each row: `1.5km`, `2mm`. The
+// column's values are the same as with `Length[m]`; only the display differs.
 sheet Prefixed
 
 Distance : Length[*m]
@@ -283,3 +285,15 @@ Weight   : Mass[*g]
 | 0.002m   | 0.0005kg |
 | 3m       | 2g       |
 | 5in      | 0kg      |
+
+// A unit of more than one term is shown as the SI recommends, `m⋅s⁻¹`, in
+// the head and in each row; a `^` after the `;` shows it as written, `m.s^-1`.
+sheet Notation
+
+Recommended : Quantity[m.s^-1]
+Written     : Quantity[m.s^-1; ^]
+
+| Recommended | Written |
+| ----------- | ------- |
+| 9.81m.s^-1  | 9.81m.s^-1 |
+| 3m⋅s⁻¹      | 3m⋅s⁻¹  |

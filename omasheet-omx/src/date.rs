@@ -378,6 +378,28 @@ impl Style {
         }
     }
 
+    /// Read a day and a month with no year, `2/3`, as this style writes
+    /// them: day first for `Dmy`, month first for the others. The month and
+    /// then the day, or `None` if it is not a day of that month (any year
+    /// that has a 29 February is allowed, so `29/2` reads).
+    pub fn parse_day_month(&self, text: &str) -> Option<(i64, i64)> {
+        let parts: Vec<&str> = text.trim().split(['/', '-', '.']).collect();
+        let [a, b] = parts.as_slice() else {
+            return None;
+        };
+        let num = |p: &str| {
+            (matches!(p.len(), 1 | 2) && p.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| p.parse::<i64>().ok())
+                .flatten()
+        };
+        let (month, day) = match self.order {
+            Order::Dmy => (num(b)?, num(a)?),
+            Order::Ymd | Order::Mdy => (num(a)?, num(b)?),
+        };
+        from_ymd(2024, month, day)?;
+        Some((month, day))
+    }
+
     /// Read a time: `9:30`, `09:30:15`, `9:30 pm`.
     pub fn parse_time(&self, text: &str) -> Option<i64> {
         let lower = text.trim().to_ascii_lowercase();

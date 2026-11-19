@@ -39,7 +39,16 @@ pub fn format_number(v: &Value, f: &NumFormat, style: &Style) -> Option<String> 
     }
     let (negative, size) = match v {
         Value::Int(n, _) => (*n < 0, Size::Exact(Dec::from_i64(*n).checked_abs()?)),
-        Value::Decimal(r) | Value::Percent(r) => {
+        // A percentage is shown as so many in a hundred, with a `%` after
+        // the number the format makes.
+        Value::Percent(r) => {
+            let r = r.guarded();
+            let hundred = r.checked_mul(Dec::from_i64(100))?;
+            let body = places(Size::Exact(hundred.checked_abs()?), f)?;
+            let shown = laid_out(f, sign(hundred.is_negative(), f), "", &body, style);
+            return Some(format!("{shown}%"));
+        }
+        Value::Decimal(r) => {
             let r = r.guarded();
             (r.is_negative(), Size::Exact(r.checked_abs()?))
         }

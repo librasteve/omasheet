@@ -1,24 +1,24 @@
-# The numbers, Boolean and the kinds of text: what each type holds and how
-# it is shown.
-#
-# Integer, Fraction, Decimal and Percent are exact, a Float is floating
-# point, a Scientific is a Float with an uncertainty, and a Complex is a pair
-# of Floats. Decimal, Fraction and Percent hold
-# the same numbers and show them in different ways: as a decimal, as a
-# fraction, and as so many in a hundred.
-#
-# A number is shown in at most 23 characters: plain from 1e-15 to 1e15, and
-# in e notation otherwise, with digits that do not fit cut and marked with
-# …. A Decimal that does not end is cut and marked too, and a Fraction is a
-# fraction where there is one of a small enough denominator. A quotient
-# of Ints is a Fraction, and a number worked out from Decimals is a Decimal. A
-# Percent is rounded to two digits, and a Float is never rounded.
-#
-# A quotient of whole numbers is a Fraction, exact with nothing in it
-# rounded: 1/3 * 3 is 1, and 2/7 + 3/7 == 5/7. A Decimal keeps the places its
-# column says, ten by default, and a quotient of Decimals is rounded to them:
-# 1.0/3 * 3 is 0.9999999999.
-# `omasheet --exact examples/types.omx` shows them in full.
+// The numbers, Boolean and the kinds of text: what each type holds and how
+// it is shown.
+//
+// Integer, Fraction, Decimal and Percent are exact, a Float is floating
+// point, a Scientific is a Float with an uncertainty, and a Complex is a pair
+// of Floats. Decimal, Fraction and Percent hold
+// the same numbers and show them in different ways: as a decimal, as a
+// fraction, and as so many in a hundred.
+//
+// A number is shown in at most 23 characters: plain from 1e-15 to 1e15, and
+// in e notation otherwise, with digits that do not fit cut and marked with
+// …. A Decimal that does not end is cut and marked too, and a Fraction is a
+// fraction where there is one of a small enough denominator. A quotient
+// of Ints is a Fraction, and a number worked out from Decimals is a Decimal. A
+// Percent is rounded to two digits, and a Float is never rounded.
+//
+// A quotient of whole numbers is a Fraction, exact with nothing in it
+// rounded: 1/3 * 3 is 1, and 2/7 + 3/7 == 5/7. A Decimal keeps the places its
+// column says, ten by default, and a quotient of Decimals is rounded to them:
+// 1.0/3 * 3 is 0.9999999999.
+// `omasheet --exact examples/types.omx` shows them in full.
 
 const Half = 50%
 const Third = 1/3
@@ -43,8 +43,8 @@ Checked : Boolean
 | minus | -3                         | -4.5  | 5/2   | -5%   | -1.6e-19 | -1.5-2i | true    |
 | huge  | 9_000_000_000_000_000_000  | 1000  | 3     | 0.5   | 6.02e23  | 1e20    | false   |
 
-# What is done with the numbers above. A column with no type takes the type
-# of its formula.
+// What is done with the numbers above. A column with no type takes the type
+// of its formula.
 sheet Arithmetic
 
 | Name  | Square | Inverse | Whole | Taxed | Split | Raised | Part | Scaled | Root | Measured | Size | Turned | Likely |
@@ -54,44 +54,44 @@ sheet Arithmetic
 | minus | *      | *       | *     | *     | *     | *      | *    | *      | *    | *        | *    | *      | *      |
 | huge  | *      | *       | *     | *     | *     | *      | *    | *      | *    | *        | *    | *      | *      |
 
-# Exact stays exact as far as it fits: an Integer reaches 64 bits and a
-# Decimal thirty-eight digits, and past that it is reported rather than
-# wrapped. A division of whole numbers is a Fraction, exact whatever the
-# size: 1 / 9e18 is not rounded to nothing.
+// Exact stays exact as far as it fits: an Integer reaches 64 bits and a
+// Decimal thirty-eight digits, and past that it is reported rather than
+// wrapped. A division of whole numbers is a Fraction, exact whatever the
+// size: 1 / 9e18 is not rounded to nothing.
 Square  := Numbers[Count; *] ** 2
 Inverse := 1 / Numbers[Count; *]
 Whole   := Inverse * Numbers[Count; *]
 
-# Sums, products and divisions of Decimals are Decimal, though a division
-# need not end.
+// Sums, products and divisions of Decimals are Decimal, though a division
+// need not end.
 Taxed   := Numbers[Price; *] * 1.2
 Split   := Numbers[Price; *] / 3
 
-# Two Percents give a Percent. A Percent with any other number gives a
-# Decimal, so a price times a rate is a price.
+// Two Percents give a Percent. A Percent with any other number gives a
+// Decimal, so a price times a rate is a price.
 Raised  := Numbers[Rate; *] + 5%
 Part    := Numbers[Price; *] * Numbers[Rate; *]
 
-# One Float makes the result a Float.
+// One Float makes the result a Float.
 Scaled  := Numbers[Share; *] * Numbers[Reading; *]
 Root    := sqrt(Numbers[Reading; *].abs())
 
-# A Scientific is a Float with an uncertainty, written `value ± sigma`; it is
-# above Float, and a Complex is above it.
+// A Scientific is a Float with an uncertainty, written `value ± sigma`; it is
+// above Float, and a Complex is above it.
 Measured := Numbers[Price; *] ± 0.1
 
-# A Complex shows each part as a Float, and is above Float: a real number
-# beside one makes the result a Complex.
+// A Complex shows each part as a Float, and is above Float: a real number
+// beside one makes the result a Complex.
 Size    := abs(Numbers[Wave; *])
 Turned  := Numbers[Wave; *] * Turn
 
 Likely  := Numbers[Checked; *] and Numbers[Share; *] < Half
 
-# No exact number is a division by zero, so that is a Float: Inf, -Inf, or NaN
-# for zero over zero. So is a function outside its domain. Each is written
-# in a cell as it is shown, and the text of one is in quotes. A NaN is
-# ordered greatest and equal to itself, as a dataframe orders it, so Same is
-# true of one.
+// No exact number is a division by zero, so that is a Float: Inf, -Inf, or NaN
+// for zero over zero. So is a function outside its domain. Each is written
+// in a cell as it is shown, and the text of one is in quotes. A NaN is
+// ordered greatest and equal to itself, as a dataframe orders it, so Same is
+// true of one.
 sheet Limits
 
 | Top | Over | Root | Log | Limit | Same | Word   | Add           | Multiply      |
@@ -105,7 +105,7 @@ Root := sqrt(Top)
 Log  := ln(Top)
 Same := Limit == Limit
 
-# The name of a type converts to it: `x.Integer`, `x.Integer()` or `Integer(x)`.
+// The name of a type converts to it: `x.Integer`, `x.Integer()` or `Integer(x)`.
 sheet Converted
 
 Value : Decimal
@@ -122,7 +122,7 @@ Value : Decimal
 AsInt     := Value.Integer
 Rounded   := round(Value)
 
-# A Float always has a Decimal: the one it is shown as.
+// A Float always has a Decimal: the one it is shown as.
 AsDecimal := Value.Float.Decimal
 AsPercent := Value.Percent
 AsNum     := Value.Float
@@ -130,10 +130,10 @@ AsComplex := Value.Complex
 AsBool    := Value.Boolean
 AsText    := Value.String
 
-# A Fraction column shows what it holds as a fraction. Two fractions give a
-# fraction, and so does a fraction with a whole number, so Yield * 2 is
-# 4 2/3; a fraction with a Decimal or a Percent gives a Decimal, so
-# Yield * 0.5 would be 1.167· and not 1 1/6.
+// A Fraction column shows what it holds as a fraction. Two fractions give a
+// fraction, and so does a fraction with a whole number, so Yield * 2 is
+// 4 2/3; a fraction with a Decimal or a Percent gives a Decimal, so
+// Yield * 0.5 would be 1.167· and not 1 1/6.
 sheet Mixes
 
 Yield : Fraction
@@ -148,12 +148,12 @@ Yield : Fraction
 Doubled := Yield + Yield
 Share   := Yield.Percent
 
-# A Decimal keeps the places its column says, and a Fraction keeps everything.
-# `Decimal[2]` is money: two places, held exactly, and shown
-# as `.2f` shows them; a format follows the places, `Decimal[4; .4f]`. A product or a quotient is
-# worked out exactly and rounded once, half away from zero, to the places its
-# type has: a Decimal beside a finer one takes the finer, and a quotient takes
-# ten places or the finer of its sides. A bare `Decimal` keeps ten.
+// A Decimal keeps the places its column says, and a Fraction keeps everything.
+// `Decimal[2]` is money: two places, held exactly, and shown
+// as `.2f` shows them; a format follows the places, `Decimal[4; .4f]`. A product or a quotient is
+// worked out exactly and rounded once, half away from zero, to the places its
+// type has: a Decimal beside a finer one takes the finer, and a quotient takes
+// ten places or the finer of its sides. A bare `Decimal` keeps ten.
 sheet Prices
 
 Price : Decimal[2]
@@ -171,8 +171,8 @@ Tax     := Price * Rate
 Share   := Price / Prices.Price.sum()
 Running := Price.cum_sum()
 
-# A quotient of whole numbers is the exact rational, a Fraction: `1/3 * 3` is 1,
-# where `1.0/3 * 3` is 0.9999999999 in decimals.
+// A quotient of whole numbers is the exact rational, a Fraction: `1/3 * 3` is 1,
+// where `1.0/3 * 3` is 0.9999999999 in decimals.
 sheet Thirds
 
 | N | Decimal | Fraction | Back | Exact |
@@ -186,8 +186,8 @@ Fraction := 1 / N
 Back     := Decimal * N
 Exact    := Fraction * N
 
-# A power of whole numbers is an exact Fraction, so 10**100 is not an error and
-# 10**-100 is 1/10**100, whole where it is whole.
+// A power of whole numbers is an exact Fraction, so 10**100 is not an error and
+// 10**-100 is 1/10**100, whole where it is whole.
 sheet Googol
 
 | Power | Big | Tiny | Product |
@@ -199,7 +199,7 @@ Big     := 10 ** Power
 Tiny    := 1 / Big
 Product := Big * Tiny
 
-# String is read the way a cell is.
+// String is read the way a cell is.
 sheet Written
 
 String : String
@@ -217,10 +217,10 @@ Whole   := String.Integer
 Decimal := String.Decimal
 Percent := String.Percent
 
-# A web address, an email address and a UUID are text read as something
-# narrower: the cell keeps the text that was written, and the column says
-# what it was read as. A column declared as one takes only text that reads
-# as one, so a cell that is not an address says so where it is.
+// A web address, an email address and a UUID are text read as something
+// narrower: the cell keeps the text that was written, and the column says
+// what it was read as. A column declared as one takes only text that reads
+// as one, so a cell that is not an address says so where it is.
 sheet Text
 
 Site    : Url
@@ -232,23 +232,23 @@ Ref     : Uuid
 | https://example.com    | name@example.com      | 7b4e2c10-5f8a-4c3e-9d21-0a1b2c3d4e5f | sales@example.com | *       | *      |
 | mailto:help@example.uk | a.b+tag@example.co.uk | 00000000-0000-0000-0000-000000000000 | ops@example.co.uk | *       | *      |
 
-# Text that came in from a file is read as one of them by the type's name,
-# which is how a column of it is checked a row at a time.
+// Text that came in from a file is read as one of them by the type's name,
+// which is how a column of it is checked a row at a time.
 Checked := Written.Email
 
-# Any of them is text, and goes where text is asked for.
+// Any of them is text, and goes where text is asked for.
 AsText  := Contact.String
 
-# What a sum, product or quotient is follows from its two sides. Integer,
-# Fraction, Decimal and Float are each wider than the one before: the wider,
-# the less exact. A Percent is a Decimal shown another way, so two of one
-# give that one, and a Percent with a Fraction or any other number gives a
-# Decimal. A power with a whole
-# exponent is exact; with any other it is a Float, as a root is. In a
-# formula `1/10` is a quotient of whole numbers, a Fraction; `1.0/10` is a
-# Decimal. A fraction may also be written in angle brackets, `<1/10>` or
-# `<2 3/4>`, as it is in a cell. Put a space before one
-# after a `+`, since `+<` is a shift.
+// What a sum, product or quotient is follows from its two sides. Integer,
+// Fraction, Decimal and Float are each wider than the one before: the wider,
+// the less exact. A Percent is a Decimal shown another way, so two of one
+// give that one, and a Percent with a Fraction or any other number gives a
+// Decimal. A power with a whole
+// exponent is exact; with any other it is a Float, as a root is. In a
+// formula `1/10` is a quotient of whole numbers, a Fraction; `1.0/10` is a
+// Decimal. A fraction may also be written in angle brackets, `<1/10>` or
+// `<2 3/4>`, as it is in a cell. Put a space before one
+// after a `+`, since `+<` is a shift.
 sheet Joined
 
 | Fractions | Percents | Mixed | Whole | Root | Written |
@@ -261,13 +261,13 @@ Whole   := Fractions * 3
 Root    := Fractions ** 0.5
 Written := <2 3/4> + Fractions
 
-# The join of each pair of types, shown by what a sum of them looks like.
-# Integer, Fraction, Decimal and Float: a Float is shown in fewer digits than
-# the Decimal beside it, and a Decimal is exact only to its places, where a
-# Fraction beside a whole number or another Fraction is exact. Hex, Octal and
-# Binary join to an Integer unless both are the same; a Percent is a Decimal.
-# Above Decimal the order is a line: Float, Scientific, Complex. The higher
-# one wins, and a Scientific beside a Complex loses its uncertainty.
+// The join of each pair of types, shown by what a sum of them looks like.
+// Integer, Fraction, Decimal and Float: a Float is shown in fewer digits than
+// the Decimal beside it, and a Decimal is exact only to its places, where a
+// Fraction beside a whole number or another Fraction is exact. Hex, Octal and
+// Binary join to an Integer unless both are the same; a Percent is a Decimal.
+// Above Decimal the order is a line: Float, Scientific, Complex. The higher
+// one wins, and a Scientific beside a Complex loses its uncertainty.
 sheet Lattice
 
 | Left       | Right      | Sum                                     |
@@ -292,11 +292,11 @@ sheet Lattice
 | Float      | Complex    | =(1e0 + 3i).String                      |
 | Integer    | Complex    | =(1 + 3i).String                        |
 
-# A column with no type line takes its type from the cells it holds, as the
-# join of them, and a cell is shown as it was written: 1, 1.1, 1/2, 23% and
-# 1e5 and text may stand together, and none changes the others. The cells
-# never set the type; the heading shows what they come to. The first column
-# is a Float one, the second an Integer one, whatever bases are in it.
+// A column with no type line takes its type from the cells it holds, as the
+// join of them, and a cell is shown as it was written: 1, 1.1, 1/2, 23% and
+// 1e5 and text may stand together, and none changes the others. The cells
+// never set the type; the heading shows what they come to. The first column
+// is a Float one, the second an Integer one, whatever bases are in it.
 sheet Free
 
 | Written | Bases |
@@ -307,9 +307,9 @@ sheet Free
 | 23%     | 7     |
 | 1e5     | 0x10  |
 
-# Setting the type is different: it puts one format on every cell, and a value
-# that fits is shown in it, whichever way it was written. The file keeps what
-# was entered, so 15 is 0b1111 in a Binary column, a way to change a base.
+// Setting the type is different: it puts one format on every cell, and a value
+// that fits is shown in it, whichever way it was written. The file keeps what
+// was entered, so 15 is 0b1111 in a Binary column, a way to change a base.
 sheet Set
 
 Bin  : Binary

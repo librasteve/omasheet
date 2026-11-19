@@ -1,8 +1,8 @@
-# A running balance: each row reads the row before it. A memo is text
-# written bare, so it may hold Markdown; in quotes it would be as it is.
-# The money is `Currency`, in pounds: a bare number is read in the column's
-# currency, `£0` is the nought a first row starts from, and the `$` of the
-# format shows each amount by the sign of its own currency, here `£`.
+// A running balance: each row reads the row before it. A memo is text
+// written bare, so it may hold Markdown; in quotes it would be as it is.
+// The money is `Currency`, in pounds: a bare number is read in the column's
+// currency, `£0` is the nought a first row starts from, and the `$` of the
+// format shows each amount by the sign of its own currency, here `£`.
 
 sheet Ledger
 

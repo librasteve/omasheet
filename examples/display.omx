@@ -1,18 +1,18 @@
-# How each kind of number is shown: the display table of the numerics spec,
-# one sheet for each type.
-#
-# A number is shown in at most 23 characters. From 1e-15 up to 1e15 it is
-# plain; smaller or larger, or too wide to be plain, it is in e notation, with
-# its mantissa cut and marked · where even that is too wide. The Spec column
-# is how the spec shows the value in the app, in a locale that writes
-# 12,345.5, to compare with how it is shown there; `print` does not group
-# digits. A Float is first rounded to 15 places after its point, the noise
-# of a calculation shown as nought, so 5e-324 is shown 0 where the Spec
-# column, which is the table as first written, has it in e notation.
-#
-# A declared `Decimal[n]` of fewer than ten places shows its n places, as `.nf`
-# does, so the two Decimal columns of places 1 and 0 below show in full what
-# a bare `Decimal` would show in e notation.
+// How each kind of number is shown: the display table of the numerics spec,
+// one sheet for each type.
+//
+// A number is shown in at most 23 characters. From 1e-15 up to 1e15 it is
+// plain; smaller or larger, or too wide to be plain, it is in e notation, with
+// its mantissa cut and marked · where even that is too wide. The Spec column
+// is how the spec shows the value in the app, in a locale that writes
+// 12,345.5, to compare with how it is shown there; `print` does not group
+// digits. A Float is first rounded to 15 places after its point, the noise
+// of a calculation shown as nought, so 5e-324 is shown 0 where the Spec
+// column, which is the table as first written, has it in e notation.
+//
+// A declared `Decimal[n]` of fewer than ten places shows its n places, as `.nf`
+// does, so the two Decimal columns of places 1 and 0 below show in full what
+// a bare `Decimal` would show in e notation.
 
 sheet Ints
 
@@ -28,10 +28,10 @@ Spec  : String
 | Medium | 123456789012345678 | "1.23456789012345678e+17" |
 | Medium | = 10**18 - 1       | "9.99999999999999999e+17" |
 
-# A Decimal keeps the places its column says, so numbers of very different
-# sizes go in columns of different scales: 38 places for the tiny, 23 for
-# those with a long tail, 1 for the large, and none for the largest. What
-# one column cannot hold is a Fraction.
+// A Decimal keeps the places its column says, so numbers of very different
+// sizes go in columns of different scales: 38 places for the tiny, 23 for
+// those with a long tail, 1 for the large, and none for the largest. What
+// one column cannot hold is a Fraction.
 
 sheet Tiny
 
@@ -80,8 +80,8 @@ Spec  : String
 | ----- | -------- | ---------------------------------------- |
 | Large | = 10**37 | "10000000000000000000000000000000000000" |
 
-# A Fraction is shown as a fraction of whole numbers where there is one of a
-# denominator up to 10000, and as a decimal where there is not.
+// A Fraction is shown as a fraction of whole numbers where there is one of a
+// denominator up to 10000, and as a decimal where there is not.
 sheet Fractions
 
 Value : Fraction

@@ -31,7 +31,9 @@ pub const MONEY: &[char] = &[
 /// Can `c` be part of a unit symbol? Letters, the degree, minute and
 /// second signs of an angle, and the signs of money, as `$` is in `A$`, `m.$^-1`.
 fn symbol_char(c: char) -> bool {
-    c.is_alphabetic() || matches!(c, '°' | '′' | '″') || MONEY.contains(&c)
+    c.is_alphabetic()
+        || matches!(c, '°' | '′' | '″' | '⋅' | '⁻' | '⁰' | '¹' | '²' | '³' | '⁴' | '⁵' | '⁶' | '⁷' | '⁸' | '⁹')
+        || MONEY.contains(&c)
 }
 
 /// A sign of money at `text[at..]` with a digit straight after it, `€5.50`,

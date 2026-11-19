@@ -155,7 +155,7 @@ impl Column {
             && let Some(u) = &q.unit
             && q.number.is_some_and(|n| n.prefixed)
         {
-            return format!("{} [*{u}]", self.name);
+            return format!("{} [*{}]", self.name, head_unit_text(u, q.number));
         }
         match self.head_unit() {
             Some(u) => format!("{} [{u}]", self.name),
@@ -168,10 +168,21 @@ impl Column {
     pub fn head_unit(&self) -> Option<String> {
         match self.shown_format().as_deref() {
             Some(crate::colfmt::Format::Quantity(q)) if q.lifts(false) => {
-                q.unit.as_ref().map(|u| u.to_string())
+                q.unit.as_ref().map(|u| head_unit_text(u, q.number))
             }
             _ => None,
         }
+    }
+}
+
+/// A unit as a column's head shows it: as the SI recommends, `m⋅s⁻¹`, or as
+/// the parser reads it, `m.s^-1`, where the format has `^`.
+fn head_unit_text(unit: &impl ToString, number: Option<crate::colfmt::SciFormat>) -> String {
+    let text = unit.to_string();
+    if number.is_some_and(|n| n.ascii) {
+        text
+    } else {
+        crate::colfmt::pretty_unit(&text)
     }
 }
 
@@ -3718,7 +3729,17 @@ impl<'a> Checker<'a> {
         // product or quotient measures.
         let quantity_and_span = matches!(op, BinOp::Mul | BinOp::Div)
             && ((a.is_quantity() && b == S::Duration) || (a == S::Duration && b.is_quantity()));
-        let elem = if op.is_arithmetic() && (timed(a) || timed(b)) && !quantity_and_span {
+        // Two durations multiplied, or one raised to a power, are a quantity
+        // of seconds squared, cubed or to the fourth: worked out with the
+        // value, as a quantity's dimension is.
+        let duration_power = (op == BinOp::Mul && a == S::Duration && b == S::Duration)
+            || (op == BinOp::Pow && a == S::Duration && (b.is_int() || b == S::Any))
+            // What is not known yet, beside a duration, is worked out with the value.
+            || (matches!(op, BinOp::Mul | BinOp::Div)
+                && ((a == S::Any && b == S::Duration) || (a == S::Duration && b == S::Any)));
+        let elem = if duration_power {
+            S::Any
+        } else if op.is_arithmetic() && (timed(a) || timed(b)) && !quantity_and_span {
             // A duration is scaled by a number: `PT1H * 3`, `P1D / 2`.
             let scaled = |d: S, n: S| d == S::Duration && n.is_numeric();
             let shifted = match op {

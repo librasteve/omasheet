@@ -1,15 +1,17 @@
-# Household bills for a shared flat. This file is the spreadsheet:
-# read it, diff it and review it like any other text.
+// Household bills for a shared flat. This file is the spreadsheet:
+// read it, diff it and review it like any other text.
 
 const People = 3
 
-# One person's part of a bill, to the penny.
-fn Share(x) = round(x / People, 2)
+// One person's part of a bill, shown to the penny.
+fn Share(x) = x / People
 
 sheet Bills
 
 Due  : Date
 Note : String
+Amount : Currency[GBP; $.2f]
+Each   : Currency[GBP; $.2f]
 
 | Bill        | Due        | Amount  | Each | Paid  | Note                                      |
 | ----------- | ---------- | ------- | ---- | ----- | ----------------------------------------- |

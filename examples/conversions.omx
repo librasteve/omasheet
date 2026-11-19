@@ -1,10 +1,10 @@
-# Non-metric units, the imperial and US ones, by the groups of the unit
-# picker (they are the `Non-Metric` sector there). Each
-# is an exact multiple of an SI unit, and none takes a prefix; each row is a
-# quantity and the same amount in a metric unit. A `°F` is converted as a
-# temperature, with its offset.
+// Non-metric units, the imperial and US ones, by the groups of the unit
+// picker (they are the `Non-Metric` sector there). Each
+// is an exact multiple of an SI unit, and none takes a prefix; each row is a
+// quantity and the same amount in a metric unit. A `°F` is converted as a
+// temperature, with its offset.
 
-# Inch `in`, foot `ft`, yard `yd`, mile `mi`, furlong `fur`, fathom `ftm`, `chain` and `rod`, and the `thou`.
+// Inch `in`, foot `ft`, yard `yd`, mile `mi`, furlong `fur`, fathom `ftm`, `chain` and `rod`, and the `thou`.
 sheet Length
 
 Item   : String
@@ -23,7 +23,7 @@ Same   : Quantity
 | fence   | 40rod  | = (40rod).to('m')   |
 | gauge   | 10thou | = (10thou).to('um') |
 
-# Ounce `oz`, pound `lb`, stone `st`, hundredweight `cwt`, short ton `ton`, long ton `lton`, grain `gr`, troy ounce `ozt`, pennyweight `dwt` and `slug`.
+// Ounce `oz`, pound `lb`, stone `st`, hundredweight `cwt`, short ton `ton`, long ton `lton`, grain `gr`, troy ounce `ozt`, pennyweight `dwt` and `slug`.
 sheet Mass
 
 Item   : String
@@ -43,7 +43,7 @@ Same   : Quantity
 | ring   | 3dwt   | = (3dwt).to('g')   |
 | engine | 2slug  | = (2slug).to('kg') |
 
-# Square foot `ft^2`, `in^2` and `mi^2`, and the acre `ac`.
+// Square foot `ft^2`, `in^2` and `mi^2`, and the acre `ac`.
 sheet Area
 
 Item   : String
@@ -57,7 +57,7 @@ Same   : Quantity
 | county | 40mi^2  | = (40mi^2).to('km^2') |
 | farm   | 160ac   | = (160ac).to('ha')    |
 
-# Cubic foot `ft^3` and `in^3`, the US gallon `gal`, quart `qt`, pint `pt`, cup, `floz`, `tbsp` and `tsp`, the oil barrel `bbl`, the imperial `impgal` and `imppint`, and the `cord`.
+// Cubic foot `ft^3` and `in^3`, the US gallon `gal`, quart `qt`, pint `pt`, cup, `floz`, `tbsp` and `tsp`, the oil barrel `bbl`, the imperial `impgal` and `imppint`, and the `cord`.
 sheet Volume
 
 Item   : String
@@ -80,7 +80,7 @@ Same   : Quantity
 | pub     | 1imppint | = (1imppint).to('ml') |
 | wood    | 1cord    | = (1cord).to('m^3')   |
 
-# Speed `mph` and `fps`, and an acceleration in `ft.s^-2`.
+// Speed `mph` and `fps`, and an acceleration in `ft.s^-2`.
 sheet Mechanical
 
 Item   : String
@@ -94,7 +94,7 @@ Same   : Quantity
 | rifle | 2800fps       | = (2800fps).to('m.s^-1')       |
 | fall  | 32.174ft.s^-2 | = (32.174ft.s^-2).to('m.s^-2') |
 
-# Force `lbf` and `ozf`, pressure `psi`, energy `btu` and `therm`, torque `lbf.ft` and the mechanical horsepower `hp` (the metric one is `mhp`).
+// Force `lbf` and `ozf`, pressure `psi`, energy `btu` and `therm`, torque `lbf.ft` and the mechanical horsepower `hp` (the metric one is `mhp`).
 sheet Physical
 
 Item   : String
@@ -111,7 +111,7 @@ Same   : Quantity
 | wrench | 80lbf.ft | = (80lbf.ft).to('N.m') |
 | engine | 200hp    | = (200hp).to('kW')     |
 
-# The scales `°F` and `°R`.
+// The scales `°F` and `°R`.
 sheet Thermal
 
 Item   : String
@@ -128,7 +128,7 @@ Same   : Quantity
 
 Check := Amount=~=Back
 
-# The `pica` and the typographic `point` (a US pint is `pt`).
+// The `pica` and the typographic `point` (a US pint is `pt`).
 sheet Typographic
 
 Item   : String

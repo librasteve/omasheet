@@ -1,10 +1,10 @@
-# A number with its measurement uncertainty. `10 ± 0.1` and
-# the concise `10.5(3)` of the physical tables, where the digits in brackets
-# are the uncertainty in the last places, make the same kind of value. It
-# propagates through arithmetic, powers and the math functions to first
-# order, treating its operands as independent, and is shown in the concise
-# form with the uncertainty to two digits. `±` binds more tightly than any
-# other operator, `**` included: `10 ± 0.1 ** 2` is `(10 ± 0.1) ** 2`.
+// A number with its measurement uncertainty. `10 ± 0.1` and
+// the concise `10.5(3)` of the physical tables, where the digits in brackets
+// are the uncertainty in the last places, make the same kind of value. It
+// propagates through arithmetic, powers and the math functions to first
+// order, treating its operands as independent, and is shown in the concise
+// form with the uncertainty to two digits. `±` binds more tightly than any
+// other operator, `**` included: `10 ± 0.1 ** 2` is `(10 ± 0.1) ** 2`.
 
 sheet Literals
 
@@ -32,10 +32,10 @@ sheet Arithmetic
 | larger than the value | = 0.5 ± 0.8              |
 | coarse         | = 1000 ± 200                    |
 
-# Every math function carries the uncertainty to first order: the value is
-# f(x) and the uncertainty is |f'(x)| times that of x. `round`, `floor`,
-# `ceil` and `sign` have no slope, so they leave none; `re` and `conj` leave
-# it as it was and `im` and `arg` of a real number are exact.
+// Every math function carries the uncertainty to first order: the value is
+// f(x) and the uncertainty is |f'(x)| times that of x. `round`, `floor`,
+// `ceil` and `sign` have no slope, so they leave none; `re` and `conj` leave
+// it as it was and `im` and `arg` of a real number are exact.
 sheet Functions
 
 | Function | Value                  |
@@ -67,11 +67,11 @@ sheet Functions
 | arg      | = arg(-3 ± 0.1)        |
 | exact    | = sin(0.5)             |
 
-# There are no uncertain complex numbers. Where a calculation gives a
-# Complex from a scientific value, the value becomes a Float, and the app
-# says `uncertain complex not supported` in its bottom bar. Each of these is
-# a Complex in a column of its own sheet, so that none changes the type of the
-# columns above.
+// There are no uncertain complex numbers. Where a calculation gives a
+// Complex from a scientific value, the value becomes a Float, and the app
+// says `uncertain complex not supported` in its bottom bar. Each of these is
+// a Complex in a column of its own sheet, so that none changes the type of the
+// columns above.
 sheet Degraded
 
 | Name              | Value                   |
@@ -92,21 +92,21 @@ Length : Scientific
 | 10.5(3)     |
 | 10          |
 
-# A column's format, in brackets after its type, is a number format as for a
-# Float, `f` for places, `e` for an exponent, `g` for whichever reads better,
-# with the sign, width and grouping flags, and `±` before it for
-# value ± uncertainty: `±+10.3e-3`. `e-3` sets one exponent for the whole
-# column. With no format a value is shown in the concise form, the
-# uncertainty to two digits at the place it sets. The same five values in
-# each column:
-#   Concise       each cell sets its own places and exponent
-#   PlusMinus     `±`: every value as value ± uncertainty
-#   SameExponent  `e-3`: one exponent for the column
-#   Aligned       `.4f`: one number of places, so the brackets stand in line
-#   Both          `.3e-3`: the same exponent and places, the brackets in line
-#   AllPlusMinus  `±.3e-3`: plus-minus, with the same exponent and places
-# A value with no uncertainty keeps every digit it has under a format, and
-# an uncertainty of `(0)`.
+// A column's format, in brackets after its type, is a number format as for a
+// Float, `f` for places, `e` for an exponent, `g` for whichever reads better,
+// with the sign, width and grouping flags, and `±` before it for
+// value ± uncertainty: `±+10.3e-3`. `e-3` sets one exponent for the whole
+// column. With no format a value is shown in the concise form, the
+// uncertainty to two digits at the place it sets. The same five values in
+// each column:
+//   Concise       each cell sets its own places and exponent
+//   PlusMinus     `±`: every value as value ± uncertainty
+//   SameExponent  `e-3`: one exponent for the column
+//   Aligned       `.4f`: one number of places, so the brackets stand in line
+//   Both          `.3e-3`: the same exponent and places, the brackets in line
+//   AllPlusMinus  `±.3e-3`: plus-minus, with the same exponent and places
+// A value with no uncertainty keeps every digit it has under a format, and
+// an uncertainty of `(0)`.
 sheet Formats
 
 Concise      : Scientific
@@ -130,11 +130,11 @@ Aligned      := Concise
 Both         := Concise
 AllPlusMinus := Concise
 
-# Two numbers are equal when they differ by no more than their uncertainties
-# together (in quadrature): `10 ± 0.3` is the same as `10.2`, since 0.2 is
-# inside 0.3, but not `11`. `<=` and `>=` hold for numbers within that
-# distance, `<` and `>` only for ones clear of it. A number with no
-# uncertainty counts as exact. Sorting still goes by the values alone.
+// Two numbers are equal when they differ by no more than their uncertainties
+// together (in quadrature): `10 ± 0.3` is the same as `10.2`, since 0.2 is
+// inside 0.3, but not `11`. `<=` and `>=` hold for numbers within that
+// distance, `<` and `>` only for ones clear of it. A number with no
+// uncertainty counts as exact. Sorting still goes by the values alone.
 sheet Comparison
 
 | Name             | Value                      |

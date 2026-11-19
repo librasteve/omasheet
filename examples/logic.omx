@@ -1,7 +1,7 @@
-# An empty cell is an unknown rather than a no, and `and` and `or` read it
-# that way: one that cannot change the answer does not decide it. So a check
-# still waiting leaves a decision empty, except where the other check has
-# already settled it. Write `a // false` to read a gap as a no instead.
+// An empty cell is an unknown rather than a no, and `and` and `or` read it
+// that way: one that cannot change the answer does not decide it. So a check
+// still waiting leaves a decision empty, except where the other check has
+// already settled it. Write `a // false` to read a gap as a no instead.
 
 sheet Applications
 

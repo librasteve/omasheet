@@ -1,12 +1,12 @@
-# Hex, Octal and Binary: whole numbers shown in base 16, 8 and 2. Each holds
-# what an Integer holds; only how it is shown differs. `0xff`, `0o17` and
-# `0b101` are literals of these types, in a cell and in a formula, with the
-# prefix and the hex digits in either case and `_` among the digits.
-#
-# A negative one is shown as its 64-bit two's complement, as a format's `x`,
-# `o` and `b` show it, and written in the file as `-0xff`, which reads back
-# as the same number. Arithmetic on two of one base gives that base, and on
-# any other mix an Integer. A format on the column replaces the prefix.
+// Hex, Octal and Binary: whole numbers shown in base 16, 8 and 2. Each holds
+// what an Integer holds; only how it is shown differs. `0xff`, `0o17` and
+// `0b101` are literals of these types, in a cell and in a formula, with the
+// prefix and the hex digits in either case and `_` among the digits.
+//
+// A negative one is shown as its 64-bit two's complement, as a format's `x`,
+// `o` and `b` show it, and written in the file as `-0xff`, which reads back
+// as the same number. Arithmetic on two of one base gives that base, and on
+// any other mix an Integer. A format on the column replaces the prefix.
 
 sheet Registers
 

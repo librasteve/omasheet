@@ -25,6 +25,8 @@ ApplicationWindow {
     readonly property color mutedColor: file.themeMuted
     // A unit shown after its number: the text colour, slightly muted.
     readonly property color unitColor: Qt.tint(textColor, Qt.rgba(mutedColor.r, mutedColor.g, mutedColor.b, 0.65))
+    // `code` in Markdown text: monospace, in the accent leaning on the text.
+    readonly property color codeColor: Qt.tint(textColor, Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.8))
     readonly property color errorColor: file.themeError
     readonly property color warningColor: file.themeWarning
     readonly property color lineColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.14)
@@ -492,11 +494,20 @@ ApplicationWindow {
     // The type as the head shows it: `Mass[kg]` for a column of quantities
     // that has a unit, whether its cells are numbers or carry the unit too
     // (`v`); `[]` after the type where it has some other format.
+    // A unit as the SI writes it, `m⋅s⁻¹`, from `m.s^-1`.
+    function prettyUnit(u) {
+        var sup = {"-": "\u207b", "0": "\u2070", "1": "\u00b9", "2": "\u00b2", "3": "\u00b3", "4": "\u2074",
+                   "5": "\u2075", "6": "\u2076", "7": "\u2077", "8": "\u2078", "9": "\u2079"};
+        return u.replace(/\^(-?\d+)/g, function (m, e) {
+            return e.split("").map(function (c) { return sup[c]; }).join("");
+        }).replace(/([^.])\.(?=[^.])/g, "$1\u22c5");
+    }
+
     function typeLabel(col) {
         // `Quantity` is long, and is set `Q` where it has a unit to show.
         if (isQuantityType(col.type) && col.unit)
             return (col.type === "Quantity" ? "Q" : col.type) + "["
-                + (col.format && col.format.charAt(0) === "*" ? "*" : "") + col.unit + "]";
+                + (col.format && col.format.charAt(0) === "*" ? "*" : "") + prettyUnit(col.unit) + "]";
         // A decimal's places are in its brackets: `Decimal[2;]` has a format too.
         if (col.format && col.type.indexOf("Decimal[") === 0)
             return col.type.slice(0, -1) + ";]";
@@ -2555,7 +2566,7 @@ ApplicationWindow {
             }
             // `Decimal[2]` is a `Decimal`.
             var base = column.type.split("[")[0];
-            if (["Integer", "Hex", "Octal", "Binary", "Decimal", "Float", "Scientific", "Boolean", "Date", "Time", "Datetime", "Duration"].indexOf(base) < 0)
+            if (["Integer", "Hex", "Octal", "Binary", "Decimal", "Percent", "Float", "Scientific", "Boolean", "Date", "Time", "Datetime", "Duration"].indexOf(base) < 0)
                 return false;
         }
         return true;
@@ -4028,7 +4039,11 @@ ApplicationWindow {
                                         function escaped(t) {
                                             return t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
                                         }
+                                        // Styled text has no `<code>`: it is set in
+                                        // teletype, in the code colour.
                                         text: marked ? cellItem.cell.h
+                                                .replace(/<code>/g, "<tt><font color=\"" + win.codeColor + "\">")
+                                                .replace(/<\/code>/g, "</font></tt>")
                                             : unitSet ? escaped(shownText.slice(0, -unitText.length))
                                                 + "<font color=\"" + win.unitColor + "\">" + escaped(unitText) + "</font>"
                                             : shownText

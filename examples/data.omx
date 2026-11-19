@@ -1,7 +1,7 @@
-# Data units. The bit `b` and the byte `B` (eight bits) take the SI prefixes,
-# where `kB` is 1000 B, and the binary ones, where `KiB` is 1024 B. A rate
-# needs no unit of its own: `MiB.s^-1`, `kb.s^-1`. A binary prefix and a `.` on
-# its own is a scale, as `k.` is: `1Ki.` is 1024.
+// Data units. The bit `b` and the byte `B` (eight bits) take the SI prefixes,
+// where `kB` is 1000 B, and the binary ones, where `KiB` is 1024 B. A rate
+// needs no unit of its own: `MiB.s^-1`, `kb.s^-1`. A binary prefix and a `.` on
+// its own is a scale, as `k.` is: `1Ki.` is 1024.
 
 sheet Literals
 
@@ -30,9 +30,9 @@ sheet Arithmetic
 | ordered     | = 1kB < 1KiB           |
 | equal       | = 8b == 1B             |
 
-# A column of data. `Data` is held in bytes unless it says another, as
-# `Data[GiB]`, in which a cell written in any unit is shown, and a bare
-# number is read.
+// A column of data. `Data` is held in bytes unless it says another, as
+// `Data[GiB]`, in which a cell written in any unit is shown, and a bare
+// number is read.
 sheet Disks
 
 Disk : String
@@ -51,3 +51,15 @@ sheet Totals
 | ----- | --------------------- |
 | size  | = Disks.Size.sum()    |
 | free  | = Disks.Free.sum()    |
+
+// A `*` before a byte or a bit, `Data[*B]`, shows each value in the binary
+// prefix that suits it, a power of 1024: `1.5KiB`, `3GiB`.
+sheet Prefixed
+
+Size : Data[*B]
+
+| Size  |
+| ----- |
+| 1536B |
+| 5B    |
+| 3GiB  |

@@ -15,7 +15,7 @@ OMX is the expression language of Omasheet. An expression has no effects: it rea
 
 ## Lexical
 
-- A comment is `#` to the end of the line. White space between tokens is free.
+- A comment is a line that starts with `//` (a `//` inside an expression is the empty-cell operator). White space between tokens is free.
 - A name is letters, digits and `_`, not starting with a digit. The words `if then else and or xor nand nor not in by` are reserved. `true`, `false`, `Inf` and `NaN` are values.
 - Text is `'single quoted'` in code. `"double quoted"` is for table cells only.
 - `_` may separate digits: `1_000_000`.

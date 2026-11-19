@@ -1,11 +1,11 @@
-# CODATA 2022 recommended values of the fundamental physical constants,
-# from the NIST wall chart (NIST SP 961, May 2024):
-# https://physics.nist.gov/cuu/pdf/wall_2022.pdf
-#
-# Each value is a Quantity with its standard uncertainty in the last digits,
-# `6.674_30(15)e-11m^3.kg^-1.s^-2`. The seven constants that define the SI
-# are exact and carry none. The Checks sheet reproduces some of the derived
-# constants from the exact ones, to see that they agree with the chart.
+// CODATA 2022 recommended values of the fundamental physical constants,
+// from the NIST wall chart (NIST SP 961, May 2024):
+// https://physics.nist.gov/cuu/pdf/wall_2022.pdf
+//
+// Each value is a Quantity with its standard uncertainty in the last digits,
+// `6.674_30(15)e-11m^3.kg^-1.s^-2`. The seven constants that define the SI
+// are exact and carry none. The Checks sheet reproduces some of the derived
+// constants from the exact ones, to see that they agree with the chart.
 
 sheet Constants
 
@@ -47,11 +47,11 @@ Value : Quantity[; _.10s]
 | muon magnetic moment anomaly               | amu     | 1.165_920_62(41)e-3            | measured |
 | proton magnetic moment to nuclear magneton | mup/muN | 2.792_847_344_63(82)           | measured |
 
-# Derived constants worked out from the exact ones, set beside the
-# published values, which the chart prints to ten digits or so. The format
-# `[; .9s]` names no unit, so each value keeps its own, and shows nine
-# significant digits since an exact value has no uncertainty to set them. `Agrees`
-# holds when the two differ by less than one part in 10^8.
+// Derived constants worked out from the exact ones, set beside the
+// published values, which the chart prints to ten digits or so. The format
+// `[; .9s]` names no unit, so each value keeps its own, and shows nine
+// significant digits since an exact value has no uncertainty to set them. `Agrees`
+// holds when the two differ by less than one part in 10^8.
 const c  = Constants[Value; Symbol == 'c'].first()
 const h  = Constants[Value; Symbol == 'h'].first()
 const e  = Constants[Value; Symbol == 'e'].first()

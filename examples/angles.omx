@@ -1,12 +1,12 @@
-# Angles. A degree is `45°`, and degrees, minutes and seconds of arc are
-# written together, `45°30′30″` (`º`, `'` and `"` do for `°`, `′` and `″`).
-# The radian `rad` is the unit of an angle, a steradian `sr` is a radian
-# squared, and a lumen `lm` and a lux `lx` need it. An angle is a dimension of
-# its own, so a frequency in `Hz` and a speed of turning in `rad.s^-1` are not
-# mixed up.
-#
-# `sin`, `cos` and `tan` take an angle in any unit and work in radians; `dms`
-# writes an angle out as degrees, minutes and seconds.
+// Angles. A degree is `45°`, and degrees, minutes and seconds of arc are
+// written together, `45°30′30″` (`º`, `'` and `"` do for `°`, `′` and `″`).
+// The radian `rad` is the unit of an angle, a steradian `sr` is a radian
+// squared, and a lumen `lm` and a lux `lx` need it. An angle is a dimension of
+// its own, so a frequency in `Hz` and a speed of turning in `rad.s^-1` are not
+// mixed up.
+//
+// `sin`, `cos` and `tan` take an angle in any unit and work in radians; `dms`
+// writes an angle out as degrees, minutes and seconds.
 
 sheet Literals
 
@@ -42,10 +42,10 @@ sheet Arithmetic
 | illuminance      | = (800lm / 2m^2).to('lx') |
 | Euler's identity | =e**(1i*pi)       |
 
-# Trigonometry in degrees and radians, with `pi` for the radians. A `Float`
-# is not exactly equal to anything it is nearly (`cos(90º)` is 6e-17, not 0),
-# so `==` is false where `=~=`, which allows a difference of 1e-15 of the
-# larger side, is true. Converting to radians and back comes home too.
+// Trigonometry in degrees and radians, with `pi` for the radians. A `Float`
+// is not exactly equal to anything it is nearly (`cos(90º)` is 6e-17, not 0),
+// so `==` is false where `=~=`, which allows a difference of 1e-15 of the
+// larger side, is true. Converting to radians and back comes home too.
 sheet Trigonometry
 
 
@@ -70,8 +70,8 @@ sheet Trigonometry
 | back from seconds              | = 1°.to('″').to('°') =~= 1°           |
 | sin² + cos²                    | = sin(40º) ** 2 + cos(40º) ** 2 =~= 1 |
 
-# A column of angles is shown in the unit it names, `Angle[°]`, whatever the
-# cells were written in, and a bare number is read in it.
+// A column of angles is shown in the unit it names, `Angle[°]`, whatever the
+// cells were written in, and a bare number is read in it.
 sheet Bearings
 
 Place    : String

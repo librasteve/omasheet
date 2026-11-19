@@ -1,27 +1,27 @@
-# Complex numbers: a real and an imaginary part, each a Float. `3+4i` is the
-# sum of `3` and `4i`, and a Complex is above Float in the type lattice, so a
-# real number beside one makes the result a Complex.
-#
-# A Complex has no order, so there is no `<`, `max` or sort; `=` and `!=` take
-# both parts, exactly. To get a real number out, use `re` or `abs`, or `.Float`
-# where the imaginary part is exactly zero; `=~=` is the comparison that
-# allows for the noise of a calculation.
-# In a Parquet file a Complex column is a struct of two doubles, `re` and `im`.
-#
-# The maths functions are here too. A real argument past the edge of a
-# function's real domain gives the principal complex value, not NaN, and the
-# edge itself stays real; a column that holds one is Complex, where a column
-# declared Float would reject the cell, and `sqrt(-4).Float` is an error.
-# `round floor ceil radians degrees` do not take a complex number.
-#
-# Each function is set beside its inverse, and the inverse of the result is
-# set beside the argument, so a round trip reads across a row. A Match is
-# true where every trip comes back to within 1e-12: a function and its
-# inverse meet only on the principal branch, so the arguments are chosen
-# inside it.
-# The trips are rounded to 12 places before they are shown, because the last
-# digit of a trip is the maths library's to say: it differs between machines,
-# and the display marks a number whose noise it rounds away.
+// Complex numbers: a real and an imaginary part, each a Float. `3+4i` is the
+// sum of `3` and `4i`, and a Complex is above Float in the type lattice, so a
+// real number beside one makes the result a Complex.
+//
+// A Complex has no order, so there is no `<`, `max` or sort; `=` and `!=` take
+// both parts, exactly. To get a real number out, use `re` or `abs`, or `.Float`
+// where the imaginary part is exactly zero; `=~=` is the comparison that
+// allows for the noise of a calculation.
+// In a Parquet file a Complex column is a struct of two doubles, `re` and `im`.
+//
+// The maths functions are here too. A real argument past the edge of a
+// function's real domain gives the principal complex value, not NaN, and the
+// edge itself stays real; a column that holds one is Complex, where a column
+// declared Float would reject the cell, and `sqrt(-4).Float` is an error.
+// `round floor ceil radians degrees` do not take a complex number.
+//
+// Each function is set beside its inverse, and the inverse of the result is
+// set beside the argument, so a round trip reads across a row. A Match is
+// true where every trip comes back to within 1e-12: a function and its
+// inverse meet only on the principal branch, so the arguments are chosen
+// inside it.
+// The trips are rounded to 12 places before they are shown, because the last
+// digit of a trip is the maths library's to say: it differs between machines,
+// and the display marks a number whose noise it rounds away.
 
 sheet Parts
 
@@ -43,8 +43,8 @@ Root  := sqrt(Z)
 Exp   := exp(Z)
 Ln    := ln(Z)
 
-# The four operations, and a power: a whole exponent is repeated
-# multiplication, as in Raku, and any other is exp(w ln z).
+// The four operations, and a power: a whole exponent is repeated
+// multiplication, as in Raku, and any other is exp(w ln z).
 sheet Arithmetic
 
 A : Complex
@@ -64,8 +64,8 @@ Squared    := A ** 2
 Doubled       := A * 2
 Same       := A == A
 
-# A real number in a Complex column has no imaginary part, and a Complex is
-# a real number only where its imaginary part is zero.
+// A real number in a Complex column has no imaginary part, and a Complex is
+// a real number only where its imaginary part is zero.
 sheet Reals
 
 Z : Complex
@@ -100,8 +100,8 @@ Arccosh := arccosh(X)
 Arctanh := arctanh(X)
 Power   := X ** 0.5
 
-# exp and ln, and a root and its square. The imaginary part of the argument
-# is within (-pi, pi], which is where ln undoes exp.
+// exp and ln, and a root and its square. The imaginary part of the argument
+// is within (-pi, pi], which is where ln undoes exp.
 sheet LogExp
 
 Z : Complex
@@ -121,8 +121,8 @@ Root    := sqrt(Z)
 Squared := round(re(Root ** 2), 12) + round(im(Root ** 2), 12) * 1i
 Match   := abs(LnExp - Z) < 1e-12 and abs(ExpLn - Z) < 1e-12 and abs(Squared - Z) < 1e-12
 
-# sin, cos and tan against arcsin, arccos and arctan. The real part of the
-# argument is within (0, pi/2), where all three come back.
+// sin, cos and tan against arcsin, arccos and arctan. The real part of the
+// argument is within (0, pi/2), where all three come back.
 sheet Trig
 
 Z : Complex
@@ -142,8 +142,8 @@ Tan    := tan(Z)
 ArcTan := round(re(arctan(Tan)), 12) + round(im(arctan(Tan)), 12) * 1i
 Match  := abs(ArcSin - Z) < 1e-12 and abs(ArcCos - Z) < 1e-12 and abs(ArcTan - Z) < 1e-12
 
-# sinh, cosh and tanh against arcsinh, arccosh and arctanh. The real part is
-# positive and the imaginary part within [0, pi/2), where all three come back.
+// sinh, cosh and tanh against arcsinh, arccosh and arctanh. The real part is
+// positive and the imaginary part within [0, pi/2), where all three come back.
 sheet Hyper
 
 Z : Complex

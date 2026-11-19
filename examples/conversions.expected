@@ -29,19 +29,19 @@ engine | 2slug  | 29.188kg·
 
 sheet Area
 
-Item   | Amount  | Same
--------|---------|-------------
-room   | 200ft^2 | 18.581m^2·
-tile   | 16in^2  | 103.226cm^2·
-county | 40mi^2  | 103.600km^2·
-farm   | 160ac   | 64.750ha·
+Item   | Amount | Same
+-------|--------|------------
+room   | 200ft² | 18.581m²·
+tile   | 16in²  | 103.226cm²·
+county | 40mi²  | 103.600km²·
+farm   | 160ac  | 64.750ha·
 
 sheet Volume
 
 Item    | Amount   | Same
 --------|----------|-----------
-freezer | 5ft^3    | 141.584l·
-engine  | 350in^3  | 5.735l·
+freezer | 5ft³     | 141.584l·
+engine  | 350in³   | 5.735l·
 tank    | 15gal    | 56.781l·
 milk    | 1qt      | 946.353ml·
 beer    | 1pt      | 473.176ml·
@@ -52,16 +52,16 @@ dose    | 1tsp     | 4.929ml·
 crude   | 1bbl     | 158.987l·
 fuel    | 10impgal | 45.461l·
 pub     | 1imppint | 568.261ml·
-wood    | 1cord    | 3.625m^3·
+wood    | 1cord    | 3.625m³·
 
 sheet Mechanical
 
-Item  | Amount        | Same
-------|---------------|---------------
-road  | 60mph         | 96.561km.h^-1·
-pitch | 90mph         | 40.234m.s^-1·
-rifle | 2800fps       | 853.44m.s^-1
-fall  | 32.174ft.s^-2 | 9.807m.s^-2·
+Item  | Amount       | Same
+------|--------------|--------------
+road  | 60mph        | 96.561km⋅h⁻¹·
+pitch | 90mph        | 40.234m⋅s⁻¹·
+rifle | 2800fps      | 853.44m⋅s⁻¹
+fall  | 32.174ft⋅s⁻² | 9.807m⋅s⁻²·
 
 sheet Physical
 
@@ -72,7 +72,7 @@ punch  | 8ozf     | 2.224N·
 tyre   | 32psi    | 220.632kPa·
 heater | 12000btu | 12.661MJ·
 gas    | 1therm   | 105.506MJ·
-wrench | 80ft.lbf | 108.465N.m·
+wrench | 80ft⋅lbf | 108.465N⋅m·
 engine | 200hp    | 149.140kW·
 
 sheet Thermal

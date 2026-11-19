@@ -535,6 +535,21 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         Some(Err(e)) => return Err(e.clone()),
         None => (a, b),
     };
+    // Two durations multiplied, or one raised to the second, third or fourth
+    // power, are a quantity of seconds squared, cubed or to the fourth: a
+    // synthetic type, as `5s * 5s` is. A root of it is a quantity of time.
+    let to_the_power = matches!(op, BinOp::Pow)
+        && matches!(a, Value::Duration(_))
+        && matches!(b, Value::Int(2..=4, _));
+    let product = op == BinOp::Mul && matches!((a, b), (Value::Duration(_), Value::Duration(_)));
+    if to_the_power || product {
+        let lift = |v: &Value| match v {
+            Value::Duration(us) => crate::quantity::from_duration(*us),
+            other => other.clone(),
+        };
+        return crate::quantity::arith(op, &lift(a), &lift(b))
+            .unwrap_or(Err("cannot multiply durations".to_string()));
+    }
     // A duration scaled by a number with an uncertainty is a quantity of
     // seconds, as the number is a quantity with no dimension.
     let scaled_by_uncertain = matches!(op, BinOp::Mul | BinOp::Div)

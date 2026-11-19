@@ -1,7 +1,7 @@
-# Number formats: a column of numbers shown by a C `printf` conversion,
-# without its `%`, after its type in brackets. The value is unchanged; only
-# how it is shown. `'` would group the digits by the locale's separator,
-# which this example leaves out so that it prints the same everywhere.
+// Number formats: a column of numbers shown by a C `printf` conversion,
+// without its `%`, after its type in brackets. The value is unchanged; only
+// how it is shown. `'` would group the digits by the locale's separator,
+// which this example leaves out so that it prints the same everywhere.
 
 sheet Prices
 
@@ -13,8 +13,8 @@ Count  : Integer[05d]
 Hex    : Integer[#x]
 Bits   : Integer[08b]
 
-# `.fmt(format)` shows a value as text in a format, so it can be shown in
-# a format its column does not carry.
+// `.fmt(format)` shows a value as text in a format, so it can be shown in
+// a format its column does not carry.
 Padded := Price.fmt('08.2f')
 Spoken := Count.fmt('x')
 

@@ -1,6 +1,6 @@
 ---
 name: omasheet
-description: Read, write, check and convert Omasheet files — plain-text `.omx` spreadsheets with named, typed sheets and formulas in OMX, the Omasheet expression language. Use this whenever the user mentions omasheet, an `.omx` file, OMX formulas, or `omx` blocks and `{{ }}` values in Markdown; whenever they want a spreadsheet, budget, ledger or sheet of calculations kept as text or in Git; and whenever they want to bring an `.xlsx` or `.csv` into a file, export one, or render a Markdown report from one. Use it before writing or editing any `.omx` text, even a small change: the syntax is not Excel's and is easy to guess wrong.
+description: Read, write, check and convert Omasheet files — plain-text `.omx` spreadsheets with named, typed sheets and formulas in OMX, the Omasheet expression language. Use this whenever the user mentions omasheet, an `.omx` file, OMX formulas, or `omx` blocks and `{{ }}` values in Markdown; whenever they want a spreadsheet, budget, ledger or sheet of calculations kept as text or in Git; and whenever they want to bring an `.xlsx` or `.csv` into a file, export one, or render a Markdown report from one. Use it before writing or editing any `.omx` text, even a small change, since the syntax is not Excel's and is easy to guess wrong.
 ---
 
 # Omasheet
@@ -52,10 +52,10 @@ newer than this page: read them when something here does not work.
 ## A whole file
 
 ```omx
-# Orders for a small shop.
+// Orders for a small shop.
 const VatRate = 20%
 
-# The price with VAT added.
+// The price with VAT added.
 fn WithVat(x) = x * (1 + VatRate)
 
 sheet Orders
@@ -83,7 +83,7 @@ sheet Summary
 
 ## The format
 
-- `# comment` on a line of its own. The comment above an `fn` is its
+- `// comment` on a line of its own. The comment above an `fn` is its
   description.
 - `const Name = expression` and `fn Name(a, b) = expression`, anywhere. A
   function sees its parameters, constants and sheets, not the row it was
@@ -152,7 +152,7 @@ what you want; declare one when the cells could be read another way.
 | `Integer` | `42`, `1_000_000` |
 | `Decimal` | `19.99` — exact to the places its column keeps: `Decimal[2]` is two, shown as `.2f` does unless a format follows (`Decimal[2; .4f]`), a bare `Decimal` ten. A product or a quotient with a decimal in it is rounded to them (`1.0/3 * 3` is `0.9999999999`); a column that declares nothing keeps the least that holds its cells |
 | `Fraction` | `1/7`, `2 3/4` in a cell, `<1/7>` in a formula — the exact rational, shown as a fraction, and what a quotient of whole numbers is: `1/3 * 3` is `1`. Use it also where a number needs more than 38 digits: `10**100` is a `Fraction` where nothing declares a `Decimal` |
-| `Percent` | `20%` — exact, shown as a percentage |
+| `Percent` | `20%` — exact, shown as a percentage; a format as a `Decimal`'s, `Percent[.1f]`, gives `41.7%` |
 | `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `'Inf'` in code, `"Inf"` in a cell), which is what a division by zero gives |
 | `Scientific` | `10.5(3)` or `10 ± 0.3` — a value with its measurement uncertainty; digits in brackets are the uncertainty in the last places, an exponent after them scales both: `7.297_352_5643(11)e-3`. It carries through `+ - * / **` and the math functions to first order (independent, in quadrature), `sum` and `mean`; shown as `11.000(82)`, or as a column format in brackets after the type says: `±`, places `.4`, an exponent `e-3`, or together `±.4e-3`. No uncertain complex: beside a `Complex` it becomes a `Float`, with a warning |
 | `Quantity` and its kinds | `5kg`, `300cm`, `9.81m.s^-2`, `10.5(3)e-3kg`, `20°C` — a number and an SI unit with no space, `.` between terms, `^` and a whole exponent, no `/`; only metric units in a cell (prefixes `q`..`Q`, and `g m s A K mol cd`, `Hz N Pa J W C V F Ω S Wb T H Bq Gy Sv kat`, `°C`, and the non-SI metric units `l`/`L` `t` `kt` `Mt` `ct` `ha` `are` `barn` `bar` `atm` `torr` `eV` `cal` `Wh` `mhp` (metric horsepower) `gsm` `Da`, time `min` `h` `d` `wk` `yr`, length `au` `ly` `ld` `pc` `Å` `nmi`, `kn` `gon` `rev` `rpm`, `rem` `Ci` `R` `Jy` `tog` `sverdrup`; `u` is the prefix `μ`; and the imperial and US units `in` `ft` `yd` `mi` `lb` `oz` `st` `ton` `ac` `gal` `qt` `pt` `cup` `floz` `psi` `btu` `hp` (mechanical) `mph` `°F` `°R` and the like, which take no prefix; no cgs units). `5kg + 300g` is `5.3kg`; a sum needs one dimension and converts the right side to the left's unit; a product or quotient combines units; a result with no dimension is a plain number; `x.to('g')` converts, `x.unit()` is its unit as text and `x.value()` its number with the uncertainty; `1k.` is a scale, the number 1000, and `5m.` is 0.005 while `5m` is five metres. A column `Load : Mass` holds a cell in the preferred unit, `kg`, or the one in brackets, `Mass[g]`, and reads a bare number in it; its head shows the unit once, `Mass[kg]`, and its cells are numbers, and `v` puts the unit in each row too, `Mass[g; v]`; a cell of another dimension is an error; `std` and `var` are not taken |

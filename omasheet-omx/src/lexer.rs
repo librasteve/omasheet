@@ -222,12 +222,6 @@ pub fn lex_with(text: &str, src: u32, base: usize, units: bool) -> Result<Vec<To
             i += 1;
             continue;
         }
-        if c == b'#' {
-            while i < b.len() && b[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
         let start = i;
         // Money written the other way round: the sign first, `€5.50`, `$100`.
         if units && let Some((unit, at)) = units::money(text, i) {
@@ -1129,7 +1123,7 @@ mod tests {
         assert!(lex("24:00", 0, 0).is_err());
         assert!(lex("9:30", 0, 0).is_err());
         assert!(lex("09:30:1", 0, 0).is_err());
-        assert_eq!(toks("a // b |> c ..^ d # note").len(), 8);
+        assert_eq!(toks("a // b |> c ..^ d").len(), 8);
     }
 
     // ---- units and scales (add-si-units) ----

@@ -1,4 +1,4 @@
-# A monthly budget: computed columns, a constant, and one-off formula cells.
+// A monthly budget: computed columns, a constant, and one-off formula cells.
 
 const TaxRate = 20%
 
@@ -29,8 +29,8 @@ sheet Summary
 | Average margin | = Sales.Margin.mean()                                    |
 | Books closed   | = Sales.Closed.max()                                    |
 
-# What each month was meant to bring in. Feb was set twice, Apr has no
-# sales yet, and Mar has no goal.
+// What each month was meant to bring in. Feb was set twice, Apr has no
+// sales yet, and Mar has no goal.
 
 sheet Goals
 
@@ -41,9 +41,9 @@ sheet Goals
 | Feb   | 12500  | Cy    |
 | Apr   | 14000  | Ann   |
 
-# Each month's sales beside its goals: `join` pairs the rows of two
-# sheets whose key columns are equal, a row for every pair, so Feb is there
-# twice. `left` keeps a month that matches nothing, Mar with no goal, and
-# a month with no sales does not appear.
+// Each month's sales beside its goals: `join` pairs the rows of two
+// sheets whose key columns are equal, a row for every pair, so Feb is there
+// twice. `left` keeps a month that matches nothing, Mar with no goal, and
+// a month with no sales does not appear.
 
 sheet Against := Sales |> select(Month, Revenue, Profit) |> join(Goals, Month, left)

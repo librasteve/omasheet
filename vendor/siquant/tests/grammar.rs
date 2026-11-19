@@ -59,6 +59,21 @@ fn accepts_typographic_alternates() {
 }
 
 #[test]
+fn accepts_the_si_recommended_form_and_prints_the_one_notation() {
+    // `m⋅s⁻¹`: the dot operator between terms and superscript exponents.
+    assert_eq!(
+        live("m\u{22c5}s\u{207b}\u{b9}").unwrap(),
+        live("m.s^-1").unwrap()
+    );
+    assert_eq!(live("m\u{b2}").unwrap(), live("m^2").unwrap());
+    assert_eq!(
+        live("kg\u{22c5}m\u{b2}\u{22c5}s\u{207b}\u{b2}").unwrap(),
+        live("kg.m^2.s^-2").unwrap()
+    );
+    assert_eq!(live("m\u{b2}").unwrap().to_string(), "m^2");
+}
+
+#[test]
 fn rejects_everything_else() {
     let cases: &[(&str, &str)] = &[
         ("", "empty"),
@@ -92,9 +107,7 @@ fn rejects_everything_else() {
         ("x.", "not a prefix"),
         ("m*s", "star"),
         ("m\u{b7}s", "middle dot"),
-        ("m\u{22c5}s", "dot operator"),
         ("(m)", "brackets"),
-        ("m\u{b2}", "superscript"),
         ("furlongs", "a name"),
         ("kilogram", "a name"),
         ("metres", "a plural"),

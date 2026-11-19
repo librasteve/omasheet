@@ -680,6 +680,11 @@ The app lists them all under `fn()` (F1).
   `Duration` is a speed, `8610km / PT11H10M`, in `km.s^-1` until it is `.to('m.s^-1')`.
   A `Duration` is itself a quantity of time, so there is nothing to convert
   between them. Two durations over each other are a number, `PT1H / PT30M` is `2`.
+  Two durations multiplied, `PT1M * PT1M`, or one raised to the 2nd, 3rd or 4th
+  power, `PT1M ** 2`, are a quantity of seconds to that power, `3600s²`; the
+  root takes it back, `(PT1M ** 2) ** (1/2)` is `60s`, and so do `1/3` and `1/4`
+  for the cube and the fourth power. A quantity of time works wherever a
+  `Duration` does. Another power of a duration is an error.
 - A duration may be written with a sign and a colon, `+01:30` or `-0:00:30.5`.
   After an operand a `+` or `-` is the operator, so `09:00 + +01:30` is `10:30`,
   and `09:00 +01:30` is two times added. See `examples/durations.omx`.

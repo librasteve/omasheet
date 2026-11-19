@@ -410,9 +410,9 @@ Area := Width * Height
 ";
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
-    assert!(out.output.contains("Area [m^2]"), "{}", out.output);
+    assert!(out.output.contains("Area [m²]"), "{}", out.output);
     assert!(out.output.contains("0.06"), "{}", out.output);
-    assert!(!out.output.contains("0.06m^2"), "{}", out.output);
+    assert!(!out.output.contains("0.06m²"), "{}", out.output);
 }
 
 #[test]
@@ -430,7 +430,7 @@ Reading : Quantity
 ";
     let out = view("test.omx", file);
     assert!(out.ok(), "{:?}", out.errors);
-    for shown in ["5kg", "300cm", "9.81m.s^-2"] {
+    for shown in ["5kg", "300cm", "9.81m⋅s⁻²"] {
         assert!(out.output.contains(shown), "{shown} in\n{}", out.output);
     }
 }
@@ -627,8 +627,8 @@ fn a_quantity_of_time_is_a_duration_beside_a_date_or_a_time() {
 
 #[test]
 fn a_distance_over_a_duration_is_a_speed() {
-    assert_eq!(shown("(7200km / PT2H).to('m.s^-1')"), "1000m.s^-1");
-    assert_eq!(shown("36km / PT1H"), "0.01km.s^-1");
+    assert_eq!(shown("(7200km / PT2H).to('m.s^-1')"), "1000m⋅s⁻¹");
+    assert_eq!(shown("36km / PT1H"), "0.01km⋅s⁻¹");
 }
 
 #[test]
@@ -789,11 +789,11 @@ fn a_quantity_gives_its_unit_and_its_value() {
 
 #[test]
 fn the_metric_non_si_units_are_exact_multiples() {
-    assert_eq!(shown("(5l).to('m^3')"), "0.005m^3");
+    assert_eq!(shown("(5l).to('m^3')"), "0.005m³");
     assert_eq!(shown("5L"), "5l");
     assert_eq!(shown("(1L).to('ml')"), "1000ml");
     assert_eq!(shown("(2t).to('kg')"), "2000kg");
-    assert_eq!(shown("(1ha).to('m^2')"), "10000m^2");
+    assert_eq!(shown("(1ha).to('m^2')"), "10000m²");
     assert_eq!(shown("(1bar).to('Pa')"), "100000Pa");
     assert_eq!(shown("(1kcal).to('J')"), "4184J");
     assert_eq!(shown("(1kWh).to('MJ')"), "3.6MJ");
@@ -850,7 +850,7 @@ fn a_result_is_the_inferred_type_and_a_column_may_declare_another() {
     assert!(out.ok(), "{:?}", out.errors);
     assert!(out.output.contains("30"), "{}", out.output);
     // A dimension no type has is a plain quantity, and still calculates.
-    assert_eq!(shown("2kg * 3m^5"), "6kg.m^5");
+    assert_eq!(shown("2kg * 3m^5"), "6kg⋅m⁵");
     // The error names the one inferred type, not every type of the dimension.
     assert!(
         fails("5J + 3kg").contains("Energy and Mass"),
@@ -862,8 +862,8 @@ fn a_result_is_the_inferred_type_and_a_column_may_declare_another() {
 #[test]
 fn a_quantity_takes_a_power_to_four_and_a_root_to_four() {
     // Powers and roots keep the unit, whole, and the uncertainty goes through.
-    assert_eq!(shown("3m ** 2"), "9m^2");
-    assert_eq!(shown("2m ** 4"), "16m^4");
+    assert_eq!(shown("3m ** 2"), "9m²");
+    assert_eq!(shown("2m ** 4"), "16m⁴");
     assert_eq!(shown("9m^2 ** (1/2)"), "3m");
     assert_eq!(shown("8m^3 ** (1/3)"), "2m");
     assert_eq!(shown("16m^4 ** (1/4)"), "2m");

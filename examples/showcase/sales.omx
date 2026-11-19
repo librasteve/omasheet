@@ -1,5 +1,5 @@
-# Orders by region. Columns are named and typed, and a computed column is
-# one expression over the whole column, like a dataframe.
+// Orders by region. Columns are named and typed, and a computed column is
+// one expression over the whole column, like a dataframe.
 
 const VatRate = 20%
 
@@ -7,6 +7,10 @@ sheet Orders
 
 Placed : Date
 Region : String
+Price  : Currency[GBP; $.2f]
+Net    : Currency[GBP; $.2f]
+Vat    : Currency[GBP; $.2f]
+Gross  : Currency[GBP; $.2f]
 
 | Placed     | Region | Product | Qty | Price  | Net | Vat | Gross |
 | ---------- | ------ | ------- | --- | ------ | --- | --- | ----- |
@@ -25,6 +29,7 @@ Gross := Net + Vat
 
 sheet Regions
 
+Sales : Currency[GBP; $.2f]
 Share : Percent
 
 | Region | Count | Units | Sales | Share |
@@ -36,7 +41,7 @@ Share : Percent
 Count := Orders[; Region == Regions[Region; *]].len()
 Units := Orders[; Region == Regions[Region; *]].Qty.sum()
 Sales := Orders[; Region == Regions[Region; *]].Net.sum()
-Share := Sales / Orders.Net.sum()
+Share := (Sales / Orders.Net.sum()).Percent
 
 sheet Facts
 
@@ -45,5 +50,5 @@ sheet Facts
 | Net sales     | = Orders.Net.sum()                               |
 | Average order | = Orders.Net.mean()                               |
 | Best region   | = Regions[; Sales == Regions.Sales.max()].Region |
-| Big orders    | = Orders[; Net > 200].len()                    |
+| Big orders    | = Orders[; Net > £200].len()                    |
 | Kettles sold  | = Orders[; Product == 'Kettle'].Qty.sum()        |

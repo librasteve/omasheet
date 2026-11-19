@@ -4093,8 +4093,9 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // operation five more (D-W5) and a quantity operation three (D-W4),
     // and `units.omx`'s four columns of durations shown four ways. The money
     // of the budget, the ledger, the orders and the rest is `Currency`, a
-    // quantity, which is worked out a cell at a time: two fewer.
-    assert_eq!(taken, 87, "the columns taken at once");
+    // quantity, which is worked out a cell at a time: two fewer, and one more
+    // for the filled price of `windows.omx`.
+    assert_eq!(taken, 86, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read
@@ -4377,4 +4378,23 @@ fn random_numbers_and_choices() {
         assert_eq!(with(seed, "[1, 2, 3].pick() in [1, 2, 3]"), "true");
         assert_eq!(with(seed, "(1..6).roll() in [1, 2, 3, 4, 5, 6]"), "true");
     }
+}
+
+#[test]
+fn durations_multiply_and_take_powers_into_quantities_of_seconds() {
+    // Two durations multiplied, or one raised to the 2nd, 3rd or 4th power,
+    // are a quantity of seconds to that power.
+    assert_eq!(calc("PT1M * PT1M"), "3600s^2");
+    assert_eq!(calc("PT1M ** 2"), "3600s^2");
+    assert_eq!(calc("PT1M ** 3"), "216000s^3");
+    assert_eq!(calc("PT1M ** 4"), "12960000s^4");
+    // The roots take them back to a quantity of time.
+    assert_eq!(calc("(PT1M ** 2) ** (1/2)"), "60s");
+    assert_eq!(calc("(PT1M ** 3) ** (1/3)"), "60s");
+    assert_eq!(calc("(PT1M ** 4) ** (1/4)"), "60s");
+    // A duration over a duration is a number, and over a square it is a quantity of time.
+    assert_eq!(calc("PT1M / PT30S"), "2");
+    assert_eq!(calc("(PT1M * PT1M) / PT1M"), "60s");
+    // Other powers of a duration are not a thing.
+    assert!(calc_err(None, "PT1M ** 5").contains("cannot apply `**`"));
 }

@@ -339,6 +339,9 @@ pub struct SciFormat {
     /// the prefix that suits it (`2mm`, `1.5km`), in the unit's own row.
     /// It puts the unit down, as `v` does; only a quantity format takes it.
     pub prefixed: bool,
+    /// `^`: a quantity's unit written as the parser reads it, `m.s^-1`, where
+    /// it is otherwise shown as the SI recommends, `m⋅s⁻¹`.
+    pub ascii: bool,
     /// `$`: money shown with its sign before the number in each row, `€4.55`,
     /// and its code after where it has no sign, `4.55CHF`, rather than once
     /// in the column's head. It puts the unit down, as `v` does, and a
@@ -420,6 +423,10 @@ impl SciFormat {
         }
         if chars.get(i) == Some(&'_') {
             f.gap = true;
+            i += 1;
+        }
+        if quantity && chars.get(i) == Some(&'^') {
+            f.ascii = true;
             i += 1;
         }
         let flags = i;
@@ -537,6 +544,9 @@ impl fmt::Display for SciFormat {
         }
         if self.gap {
             f.write_str("_")?;
+        }
+        if self.ascii {
+            f.write_str("^")?;
         }
         for (on, c) in [
             (self.left, '-'),
@@ -711,6 +721,52 @@ impl fmt::Display for Format {
             Format::Boolean(b) => b.fmt(f),
         }
     }
+}
+
+/// A unit as the SI recommends it be written, `m⋅s⁻¹`, from the notation the
+/// parser reads, `m.s^-1`: a dot operator between terms and exponents as
+/// superscripts. A scale's own dot, `k.`, stays.
+pub fn pretty_unit(unit: &str) -> String {
+    let mut out = String::with_capacity(unit.len());
+    let chars: Vec<char> = unit.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '.' if i > 0
+                && chars[i - 1] != '.'
+                && chars.get(i + 1).is_some_and(|&n| n != '.') =>
+            {
+                out.push('⋅');
+            }
+            '^' if chars
+                .get(i + 1)
+                .is_some_and(|&n| n == '-' || n.is_ascii_digit()) =>
+            {
+                i += 1;
+                while let Some(&c) = chars.get(i) {
+                    out.push(match c {
+                        '-' => '⁻',
+                        '0' => '⁰',
+                        '1' => '¹',
+                        '2' => '²',
+                        '3' => '³',
+                        '4' => '⁴',
+                        '5' => '⁵',
+                        '6' => '⁶',
+                        '7' => '⁷',
+                        '8' => '⁸',
+                        '9' => '⁹',
+                        _ => break,
+                    });
+                    i += 1;
+                }
+                continue;
+            }
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -924,6 +980,21 @@ mod tests {
         let mass = QId::from_name("Mass").unwrap();
         let e = QuantityFormat::parse("g; $", mass).unwrap_err();
         assert!(e.message.contains("currency"), "{}", e.message);
+    }
+
+    #[test]
+    fn units_are_set_as_the_si_writes_them_and_a_caret_asks_for_the_ascii() {
+        assert_eq!(pretty_unit("m.s^-1"), "m⋅s⁻¹");
+        assert_eq!(pretty_unit("kg.m^2.s^-2"), "kg⋅m²⋅s⁻²");
+        assert_eq!(pretty_unit("kg"), "kg");
+        assert_eq!(pretty_unit("k."), "k.");
+        let speed = QId::ANY;
+        let f = QuantityFormat::parse("m.s^-1; ^", speed).unwrap();
+        assert!(f.number.unwrap().ascii);
+        assert_eq!(f.to_string(), "m.s^-1; ^");
+        assert!(SciFormat::parse_in("v_^.1f", true).unwrap().ascii);
+        // Only a quantity's format takes it.
+        assert!(SciFormat::parse_in("^", false).is_err());
     }
 
     #[test]

@@ -1,20 +1,20 @@
-# Moving, cutting and pasting: every way a formula can point at a row or a
-# column, in a sheet big enough to move things around in.
-#
-# `Checks` reads results out of `Grid` and compares each with the value it had
-# when this file was written. Move rows and columns, cut and paste cells: a
-# reference is rewritten so that it still reads what it read, and `Verdict`
-# says how many checks of each kind no longer hold.
-#
-#   cell   reads fixed cells, by offset, number or name: holds through any
-#          move, cut or paste
-#   own    reads its own row or column with a plain `*` or a bare name: holds
-#          through any move, and changes only if that formula is itself cut
-#          and pasted onto another row
-#   range  a range follows its two ends: changes when a row is moved into or
-#          out of it
-#   order  a formula column that reads the row before: recalculated for the
-#          new order of rows
+// Moving, cutting and pasting: every way a formula can point at a row or a
+// column, in a sheet big enough to move things around in.
+//
+// `Checks` reads results out of `Grid` and compares each with the value it had
+// when this file was written. Move rows and columns, cut and paste cells: a
+// reference is rewritten so that it still reads what it read, and `Verdict`
+// says how many checks of each kind no longer hold.
+//
+//   cell   reads fixed cells, by offset, number or name: holds through any
+//          move, cut or paste
+//   own    reads its own row or column with a plain `*` or a bare name: holds
+//          through any move, and changes only if that formula is itself cut
+//          and pasted onto another row
+//   range  a range follows its two ends: changes when a row is moved into or
+//          out of it
+//   order  a formula column that reads the row before: recalculated for the
+//          new order of rows
 
 const Corner  = Grid[1; 0]
 const LastApr = Grid[Apr; -1]

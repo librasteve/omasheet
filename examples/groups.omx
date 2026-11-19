@@ -1,7 +1,7 @@
-# Calling a function on each group: `group_by(keys) |> apply(Fn)` calls Fn
-# once on the rows of each group and makes a row for each group (a value)
-# or for each row it gives back (a sheet), after the key columns. The prices
-# are `Currency`, in dollars, so what the takings come to is money too.
+// Calling a function on each group: `group_by(keys) |> apply(Fn)` calls Fn
+// once on the rows of each group and makes a row for each group (a value)
+// or for each row it gives back (a sheet), after the key columns. The prices
+// are `Currency`, in dollars, so what the takings come to is money too.
 
 sheet Sales
 
@@ -19,19 +19,19 @@ Price : Currency[USD; $.2f]
 | East   | Ken     | 22    | 8.25  |
 | East   | Dennis  | 22    | 8     |
 
-# A value: a row for each group, one column named for the function.
+// A value: a row for each group, one column named for the function.
 fn Takings(rows) = (rows.Units * rows.Price).sum()
 
-# A value from any expression over the group's columns.
+// A value from any expression over the group's columns.
 fn Spread(rows) = rows.Units.max() - rows.Units.min()
 
-# A sheet: the best two reps of each group, whole rows kept.
+// A sheet: the best two reps of each group, whole rows kept.
 fn BestTwo(rows) = rows |> sort(Units, desc) |> head(2) |> select(Rep, Units)
 
-# A rank within each group: every row comes back, best first.
+// A rank within each group: every row comes back, best first.
 fn Ranked(rows) = rows |> sort(Units, desc) |> select(Rep, Units)
 
-# Another sheet's rows: each group's own lines of a lookup sheet.
+// Another sheet's rows: each group's own lines of a lookup sheet.
 sheet Targets
 
 | Region | Target |
@@ -43,12 +43,12 @@ sheet Targets
 fn TargetsOf(rows) = Targets[; Region == rows[Region; 0]] |> select(Target)
 
 sheet Takings := Sales |> group_by(Region) |> apply(Takings)
-# `Name := Fn` names the column it makes.
+// `Name := Fn` names the column it makes.
 sheet Wide    := Sales |> group_by(Region) |> apply(Range := Spread)
 sheet Top     := Sales |> group_by(Region) |> apply(BestTwo)
 sheet Ranks   := Sales |> group_by(Region) |> apply(Ranked)
 sheet Aims    := Sales |> group_by(Region) |> apply(TargetsOf)
 
-# What `apply` makes is a sheet like any other: the best group, the best rep.
+// What `apply` makes is a sheet like any other: the best group, the best rep.
 sheet Leader  := Takings |> sort(Takings, desc) |> head(1)
 sheet Star    := Top |> sort(Units, desc) |> head(1)

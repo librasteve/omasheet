@@ -5,6 +5,8 @@ Here are the fruit sales for {{ today() }}.
 ```omx
 sheet Fruit
 
+Price : Currency[USD; $.2f]
+
 | Item   | Price | Qty | Total |
 | ------ | ----- | --- | ----- |
 | Apple  | 0.5   | 5   | *     |
@@ -13,4 +15,4 @@ sheet Fruit
 Total := Price * Qty
 ```
 
-Altogether that comes to ${{ Fruit.Total.sum() }} of sales, across {{ Fruit.Item.count() }} kinds of fruit.
+Altogether that comes to {{ Fruit.Total.sum() }} of sales, across {{ Fruit.Item.count() }} kinds of fruit.

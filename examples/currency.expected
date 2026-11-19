@@ -15,11 +15,11 @@ uncertain | 3.50(20)GBP
 sheet Conversions
 
 Name        | Value
-------------|--------------
+------------|-------------
 sum         | 8USD
 same money  | true
-per kilo    | 6USD.kg^-1
-data a buck | 0.2GiB.USD^-1
+per kilo    | 6USD⋅kg⁻¹
+data a buck | 0.2GiB⋅USD⁻¹
 
 sheet Prices
 

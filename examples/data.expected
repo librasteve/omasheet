@@ -1,13 +1,13 @@
 sheet Literals
 
 Name     | Value
----------|------------
+---------|-----------
 byte     | 5B
 bit      | 40b
 kilobyte | 1kB
 kibibyte | 1KiB
 memory   | 16GiB
-speed    | 100Mib.s^-1
+speed    | 100Mib⋅s⁻¹
 scale    | 1024
 mebi     | 1572864
 
@@ -39,3 +39,11 @@ Name | Value
 -----|--------
 size | 6560GiB
 free | 5156GiB
+
+sheet Prefixed
+
+Size [*B]
+---------
+1.5KiB
+5B
+3GiB
