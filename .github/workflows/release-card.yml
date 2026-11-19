@@ -45,7 +45,8 @@ jobs:
         run: |
           gh release view "$TAG" --json body,name,tagName > release.json
           jq -r .body release.json > notes.md
-          python3 -I .github/release-card/render.py notes.md card.html --tag "$TAG"
+          python3 -I .github/release-card/render.py notes.md card.html --tag "$TAG" \
+            --page index.html --repo "$GITHUB_REPOSITORY"
           google-chrome --headless=new --no-sandbox --hide-scrollbars \
             --window-size=1200,630 --screenshot="$PWD/card.png" "file://$PWD/card.html"
           ls -l card.png
@@ -53,7 +54,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: card
-          path: card.png
+          path: |
+            card.png
+            index.html
 
       - name: Attach it and put it in the notes
         if: ${{ env.APPLY == 'true' }}
@@ -63,6 +66,28 @@ jobs:
           # Idempotent: a re-run replaces the image line rather than adding another.
           { echo "![Omasheet $TAG](${url}) <!-- release-card -->"; echo; grep -v 'release-card -->' notes.md; } > new-notes.md
           gh release edit "$TAG" --notes-file new-notes.md
+
+      # The release page on github.com cannot be given a card, so this page on
+      # omasheet.org carries the Open Graph tags and sends people on to the
+      # release. Share https://omasheet.org/r/<tag>/ on Reddit, Discord etc.
+      # Needs a SITE_TOKEN secret: a fine-grained token with Contents: write on
+      # librasteve/omasheet.org.
+      - name: Publish the share page
+        if: ${{ env.APPLY == 'true' }}
+        env:
+          SITE_TOKEN: ${{ secrets.SITE_TOKEN }}
+        run: |
+          [ -n "$SITE_TOKEN" ] || { echo "::warning::No SITE_TOKEN secret; the share page was not published."; exit 0; }
+          git clone --depth 1 "https://x-access-token:${SITE_TOKEN}@github.com/librasteve/omasheet.org.git" site
+          mkdir -p "site/r/$TAG"
+          cp card.png index.html "site/r/$TAG/"
+          cd site
+          git add "r/$TAG"
+          if git diff --cached --quiet; then echo "Share page already up to date."; exit 0; fi
+          git -c user.name="release-card" -c user.email="release-card@users.noreply.github.com" \
+            commit -m "card $TAG"
+          git push
+          echo "Share: https://omasheet.org/r/$TAG/" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Post to Discord
         if: ${{ env.APPLY == 'true' && github.event_name == 'release' }}
@@ -74,7 +99,7 @@ jobs:
           jq -n --arg tag "$TAG" --arg repo "$GITHUB_REPOSITORY" --arg name "$(jq -r .name release.json)" '{
             embeds: [{
               title: $name,
-              url: "https://github.com/\($repo)/releases/tag/\($tag)",
+              url: "https://omasheet.org/r/\($tag)/",
               color: 8381640,
               image: {url: "https://github.com/\($repo)/releases/download/\($tag)/card.png"}
             }]}' > payload.json

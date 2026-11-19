@@ -94,10 +94,25 @@ def render(title, summary, picks, tag):
                .replace("{{SUMMARY}}", e(summary)).replace("{{ITEMS}}", items))
 
 
+def page(title, summary, tag, repo, site):
+    """The share page: Open Graph tags for crawlers, a redirect for people."""
+    e = html.escape
+    share = f"{site}/r/{tag}/"
+    release = f"https://github.com/{repo}/releases/tag/{tag}"
+    return ((HERE / "page.html").read_text()
+            .replace("{{TITLE}}", e(title, quote=True)).replace("{{SUMMARY}}", e(summary, quote=True))
+            .replace("{{SHARE}}", share).replace("{{RELEASE}}", release))
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("notes"); ap.add_argument("out")
     ap.add_argument("--tag", default=""); ap.add_argument("--name", default="")
+    ap.add_argument("--page", help="also write the share page here")
+    ap.add_argument("--repo", default="librasteve/omasheet")
+    ap.add_argument("--site", default="https://omasheet.org")
     a = ap.parse_args()
     title, summary, picks = parse(pathlib.Path(a.notes).read_text())
+    if a.page:
+        pathlib.Path(a.page).write_text(page(a.name or title, summary, a.tag, a.repo, a.site))
     pathlib.Path(a.out).write_text(render(a.name or title, summary, picks, a.tag))
