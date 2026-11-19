@@ -1,0 +1,81 @@
+# Renders a social card (1200x630 PNG) for each release, for Reddit, Discord and
+# link previews. It attaches card.png to the release, puts it at the top of the
+# notes, and posts to Discord when the DISCORD_WEBHOOK secret is set.
+#
+# The card's content comes from a hidden block in the release notes:
+#   <!-- card
+#   title: Omasheet 0.1.13: something short
+#   summary: One or two sentences.
+#   Heading | One sentence. | `chip` `chip`
+#   -->
+# (up to three heading lines). Without it, the card is derived from the notes.
+name: Release card
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to render, such as v0.1.12
+        required: true
+      apply:
+        description: Also attach the card to that release and edit its notes. Left off, the PNG is only a workflow artifact.
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # gh release upload and edit
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  APPLY: ${{ github.event_name == 'release' || inputs.apply }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  card:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/release-card
+
+      - name: Render the card
+        run: |
+          gh release view "$TAG" --json body,name,tagName > release.json
+          jq -r .body release.json > notes.md
+          python3 -I .github/release-card/render.py notes.md card.html --tag "$TAG"
+          google-chrome --headless=new --no-sandbox --hide-scrollbars \
+            --window-size=1200,630 --screenshot="$PWD/card.png" "file://$PWD/card.html"
+          ls -l card.png
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: card
+          path: card.png
+
+      - name: Attach it and put it in the notes
+        if: ${{ env.APPLY == 'true' }}
+        run: |
+          gh release upload "$TAG" card.png --clobber
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/card.png"
+          # Idempotent: a re-run replaces the image line rather than adding another.
+          { echo "![Omasheet $TAG](${url}) <!-- release-card -->"; echo; grep -v 'release-card -->' notes.md; } > new-notes.md
+          gh release edit "$TAG" --notes-file new-notes.md
+
+      - name: Post to Discord
+        if: ${{ env.APPLY == 'true' && github.event_name == 'release' }}
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          [ -n "$WEBHOOK" ] || { echo "No DISCORD_WEBHOOK secret; skipping."; exit 0; }
+          # Discord renders the embed image from the release asset URL.
+          jq -n --arg tag "$TAG" --arg repo "$GITHUB_REPOSITORY" --arg name "$(jq -r .name release.json)" '{
+            embeds: [{
+              title: $name,
+              url: "https://github.com/\($repo)/releases/tag/\($tag)",
+              color: 8381640,
+              image: {url: "https://github.com/\($repo)/releases/download/\($tag)/card.png"}
+            }]}' > payload.json
+          curl -fsS -H 'Content-Type: application/json' -d @payload.json "$WEBHOOK"
