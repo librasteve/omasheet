@@ -636,6 +636,7 @@ impl Writer<'_> {
         match func {
             Func::Today => return named("TODAY", Kind::Date),
             Func::Now => return named("NOW", Kind::Datetime),
+            Func::Rand => return named("RAND", Kind::Number),
             _ => {}
         }
         // `round(x, n)` is Excel's own `ROUND(x,n)`.

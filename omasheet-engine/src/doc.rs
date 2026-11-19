@@ -152,12 +152,14 @@ struct Tally {
 }
 
 /// The measures in a selection, added where they are of one kind: quantities
-/// of one dimension, in the unit of the first (`5kg` and `300g`, or `$5` and
-/// `3EUR`, by the rates), or durations. A selection of two kinds, or of
-/// measures and plain numbers, has no sum.
+/// of one dimension (`5kg` and `300g`, or `$5` and `3EUR`, by the rates), or
+/// durations. Quantities in one unit are added in it; in several, in the
+/// preferred unit of their type, and where it has none, not at all. A
+/// selection of two kinds, or of measures and plain numbers, has no sum.
 enum Measures {
     None,
-    Quantities(siquant::Quantity, usize),
+    /// The sum, how many, and whether more than one unit is among them.
+    Quantities(siquant::Quantity, usize, bool),
     Durations(i128, usize),
     Mixed,
 }
@@ -180,7 +182,10 @@ impl Tally {
             self.numbers += 1;
             self.sum = arith(BinOp::Add, &self.sum, value).ok()?;
         }
-        self.measures = match (std::mem::replace(&mut self.measures, Measures::Mixed), value) {
+        self.measures = match (
+            std::mem::replace(&mut self.measures, Measures::Mixed),
+            value,
+        ) {
             (m, v) if !matches!(v, Value::Quantity(_) | Value::Duration(_)) => {
                 // A number beside measures is neither.
                 if v.is_numeric() && !matches!(m, Measures::None) {
@@ -189,10 +194,10 @@ impl Tally {
                     m
                 }
             }
-            (Measures::None, Value::Quantity(q)) => Measures::Quantities((**q).clone(), 1),
+            (Measures::None, Value::Quantity(q)) => Measures::Quantities((**q).clone(), 1, false),
             (Measures::None, Value::Duration(us)) => Measures::Durations(i128::from(*us), 1),
-            (Measures::Quantities(sum, n), Value::Quantity(q)) => match sum.add(q) {
-                Ok(sum) => Measures::Quantities(sum, n + 1),
+            (Measures::Quantities(sum, n, many), Value::Quantity(q)) => match sum.add(q) {
+                Ok(next) => Measures::Quantities(next, n + 1, many || sum.unit() != q.unit()),
                 Err(_) => Measures::Mixed,
             },
             (Measures::Durations(sum, n), Value::Duration(us)) => {
@@ -681,9 +686,19 @@ pub fn format_help(ty: &str) -> String {
         Some(_) => "Number",
         None => return String::new(),
     };
+    // A quantity of money takes `$`, any other `*`, and a plain `Quantity`
+    // either.
+    let more: &[&str] = match (family, ty) {
+        ("Quantity", "Currency") => &["Money"],
+        ("Quantity", "Quantity") => &["Metric", "Money"],
+        ("Quantity", _) => &["Metric"],
+        _ => &[],
+    };
+    let mut families = vec![family];
+    families.extend(more);
     legend(
         include_str!("../resources/format_help.txt"),
-        &[family],
+        &families,
         ("", ""),
     )
 }
@@ -2161,14 +2176,45 @@ fn reformatted(text: &str, l: &SchemaLine, format: Option<&Format>) -> String {
     let rest = &text[colon + 1..];
     let ty_at = colon + 1 + (rest.len() - rest.trim_start_matches([' ', '\t']).len());
     let ty_end = ty_at + ident_len(&text[ty_at..]);
+    let mut out = text.to_string();
+    // A decimal's places and its format share the brackets, `Decimal[2; .4f]`,
+    // so both are written again.
+    if &text[ty_at..ty_end] == "Decimal" {
+        out.replace_range(ty_at..type_run_end(text, ty_at), &type_text(l.ty, format));
+        return out;
+    }
     let old_end = match text[ty_end..].starts_with('[') {
         true => closing(&text[ty_end + 1..]).map_or(ty_end, |k| ty_end + k + 2),
         false => ty_end,
     };
-    let mut out = text.to_string();
     let new = format.map(|f| format!("[{f}]")).unwrap_or_default();
     out.replace_range(ty_end..old_end, &new);
     out
+}
+
+/// Where the type written at `at` ends: its name
+/// and the brackets of a format or of `Decimal[2; .4f]`.
+fn type_run_end(text: &str, at: usize) -> usize {
+    let mut end = at + ident_len(&text[at..]);
+    if text[end..].starts_with('[')
+        && let Some(close) = closing(&text[end + 1..])
+    {
+        end += close + 2;
+    }
+    end
+}
+
+/// A type as a type line writes it, with its format: `Decimal[2; .4f]` for a
+/// decimal of two places, `Mass[g]` for a quantity.
+fn type_text(ty: S, format: Option<&Format>) -> String {
+    match (ty, format) {
+        (S::Decimal(n), format) if n != omasheet_omx::types::DEFAULT_SCALE => match format {
+            Some(f) => format!("Decimal[{n}; {}]", f.to_string().trim()),
+            None => format!("Decimal[{n}]"),
+        },
+        (ty, Some(f)) => format!("{ty}[{f}]"),
+        (ty, None) => ty.to_string(),
+    }
 }
 
 /// `format` read for a column of type `ty`: `None` for no format; an error
@@ -2203,16 +2249,28 @@ pub fn type_spec(spec: &str) -> Result<(S, Option<Option<Format>>), String> {
         },
         None => (spec, None),
     };
-    // `Decimal(6)`: a decimal and the places it keeps.
-    let places = name
-        .trim()
-        .strip_prefix("Decimal(")
-        .and_then(|rest| rest.strip_suffix(')'));
-    let ty = match places {
-        Some(n) => match n.trim().parse::<u8>() {
-            Ok(n) if n <= 38 => S::Decimal(n),
-            _ => return Err("a scale is a whole number of places from 0 to 38".to_string()),
-        },
+    // `Decimal[6]` and `Decimal[6; .2f]`: the places first, then a format.
+    let (unit, scale) = match (name.trim(), unit) {
+        ("Decimal", Some(inner)) => {
+            let (head, rest) = match inner.split_once(';') {
+                Some((h, r)) => (h.trim(), Some(r.trim())),
+                None => (inner.trim(), None),
+            };
+            if !head.is_empty() && head.bytes().all(|b| b.is_ascii_digit()) {
+                match head.parse::<u8>() {
+                    Ok(n) if n <= 38 => (rest.filter(|r| !r.is_empty()), Some(n)),
+                    _ => return Err("a scale is a whole number of places from 0 to 38".into()),
+                }
+            } else if head.is_empty() && rest.is_some() {
+                (rest.filter(|r| !r.is_empty()), None)
+            } else {
+                (Some(inner), None)
+            }
+        }
+        (_, unit) => (unit, None),
+    };
+    let ty = match scale {
+        Some(n) => S::Decimal(n),
         None => S::from_name(name.trim()).ok_or_else(|| format!("`{name}` is not a type"))?,
     };
     let Some(unit) = unit else {
@@ -2268,18 +2326,7 @@ fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
         let colon = end + text[end..].find(':').unwrap_or(0);
         let rest = &text[colon + 1..];
         let ty_at = colon + 1 + (rest.len() - rest.trim_start_matches([' ', '\t']).len());
-        let mut end = ty_at + ident_len(&text[ty_at..]);
-        // `Decimal(6)`: the places are part of the type.
-        if &text[ty_at..end] == "Decimal"
-            && text[end..].starts_with('(')
-            && let Some(close) = text[end..].find(')')
-            && text[end + 1..end + close]
-                .trim()
-                .bytes()
-                .all(|b| b.is_ascii_digit())
-        {
-            end += close + 1;
-        }
+        let end = ty_at + ident_len(&text[ty_at..]);
         (colon, ty_at, end)
     };
     let existing = decl.schema.iter().find(|l| l.name == name);
@@ -2301,6 +2348,15 @@ fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
     };
     if let Some(l) = existing {
         let (_, ty_at, mut ty_end) = parts(l);
+        // A decimal's places share the brackets with its format, so a type
+        // line that has or gets a decimal is written whole.
+        if &text[ty_at..ty_at + ident_len(&text[ty_at..])] == "Decimal"
+            || matches!(ty, S::Decimal(_))
+        {
+            let kept = l.format.as_ref().filter(|f| f.takes(ty));
+            out.replace_range(ty_at..type_run_end(text, ty_at), &type_text(ty, kept));
+            return out;
+        }
         // A format the new type does not take goes with the old type.
         if l.format.as_ref().is_some_and(|f| !f.takes(ty))
             && text[ty_end..].starts_with('[')
@@ -2328,7 +2384,11 @@ fn retyped(text: &str, decl: &SheetDecl, name: &str, ty: Option<S>) -> String {
         }
         offset = offset.max(theirs);
     }
-    let line = format!("{name:<width$} : {ty}\n", width = offset - 1);
+    let line = format!(
+        "{name:<width$} : {}\n",
+        type_text(ty, None),
+        width = offset - 1
+    );
     // In the order of the header row; with no type lines yet, above it.
     let place = |n: &str| decl.header.iter().position(|h| h.0 == n);
     let here = place(name).unwrap_or(usize::MAX);
@@ -3472,24 +3532,41 @@ impl Document {
                 let mean = crate::eval::average(&sum, numbers as i64).ok()?;
                 Some((show(&sum), show(&mean)))
             }
-            Measures::Quantities(sum, n) => {
-                let places = omasheet_omx::colfmt::SciFormat {
-                    conv: omasheet_omx::colfmt::SciConv::Fixed,
-                    places: Some(2),
-                    ..Default::default()
+            Measures::Quantities(sum, n, many) => {
+                // Units that differ are shown in the type's own: the metre
+                // for lengths, where the first row's would be chance.
+                let sum = if many {
+                    let reg = siquant::Registry::builtin();
+                    let unit = reg
+                        .infer_type(sum.unit().dims())
+                        .and_then(|t| t.preferred_unit());
+                    match unit.map(|u| sum.convert(&u)) {
+                        Some(Ok(sum)) => Some(sum),
+                        _ => None,
+                    }
+                } else {
+                    Some(sum)
                 };
-                let format = omasheet_omx::colfmt::QuantityFormat {
-                    unit: None,
-                    number: Some(places),
-                };
-                let mean = siquant::Quantity::new(
-                    sum.value() / n as f64,
-                    sum.sigma() / n as f64,
-                    sum.unit().clone(),
-                )
-                .ok()?;
-                let text = |q: &siquant::Quantity| crate::quantity::show_in(q, &format, &self.style);
-                Some((text(&sum), text(&mean)))
+                sum.and_then(|sum| {
+                    let places = omasheet_omx::colfmt::SciFormat {
+                        conv: omasheet_omx::colfmt::SciConv::Fixed,
+                        places: Some(2),
+                        ..Default::default()
+                    };
+                    let format = omasheet_omx::colfmt::QuantityFormat {
+                        unit: None,
+                        number: Some(places),
+                    };
+                    let mean = siquant::Quantity::new(
+                        sum.value() / n as f64,
+                        sum.sigma() / n as f64,
+                        sum.unit().clone(),
+                    )
+                    .ok()?;
+                    let text =
+                        |q: &siquant::Quantity| crate::quantity::show_in(q, &format, &self.style);
+                    Some((text(&sum), text(&mean)))
+                })
             }
             Measures::Durations(total, n) => {
                 let mean = total / n as i128;
@@ -4954,24 +5031,31 @@ impl Document {
 
     fn remove_consts(&mut self, gone: impl Fn(&str) -> bool) -> bool {
         let ast = self.ast();
-        let mut spans: Vec<(usize, usize)> = ast
+        let spans: Vec<(usize, usize)> = ast
             .consts
             .iter()
             .filter(|c| gone(&c.name))
-            .map(|c| {
-                let start = self.line_start(c.span.start as usize);
-                let end = self.text[c.span.end as usize..]
-                    .find('\n')
-                    .map_or(self.text.len(), |i| c.span.end as usize + i + 1);
-                (start, end)
-            })
+            .map(|c| self.line_span(c.span.start as usize, c.span.end as usize))
             .collect();
+        self.remove_spans(spans)
+    }
+
+    /// The whole lines from the one holding `start` to the one holding `end`.
+    fn line_span(&self, start: usize, end: usize) -> (usize, usize) {
+        let first = self.line_start(start);
+        let last = self.text[end..]
+            .find('\n')
+            .map_or(self.text.len(), |i| end + i + 1);
+        (first, last)
+    }
+
+    /// Take the lines out of the file, and the blank lines left standing
+    /// where they were, at the top of the file or under another blank line.
+    fn remove_spans(&mut self, mut spans: Vec<(usize, usize)>) -> bool {
         spans.sort();
         let mut text = self.text.clone();
         for (start, end) in spans.into_iter().rev() {
             text.replace_range(start..end, "");
-            // The blank lines left standing where it was go with it, at
-            // the top of the file or under another blank line.
             let at = start;
             let blank_before = text[..at].is_empty() || text[..at].ends_with("\n\n");
             if blank_before {
@@ -4984,6 +5068,90 @@ impl Document {
             }
         }
         self.commit(text)
+    }
+
+    /// Put a function of the file's own in, before the first sheet. `head`
+    /// is how it is called, `Margin(revenue, cost)`, with or without `fn`
+    /// before it, and `expr` what it stands for.
+    pub fn add_function(&mut self, head: &str, expr: &str) -> Result<(), String> {
+        let head = head.trim();
+        let head = head.strip_prefix("fn ").unwrap_or(head).trim_start();
+        let name_len = ident_len(head);
+        let name = &head[..name_len];
+        let rest = head[name_len..].trim();
+        let params = rest
+            .strip_prefix('(')
+            .and_then(|r| r.strip_suffix(')'))
+            .ok_or("write it as Name(a, b): a name, then its parameters in brackets")?;
+        let params: Vec<&str> = params
+            .split(',')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .collect();
+        let name = valid_name(name)?.to_string();
+        if let Some(bad) = params.iter().find(|p| ident_len(p) != p.len()) {
+            return Err(format!("`{bad}` is not a valid parameter name"));
+        }
+        let expr = expr.trim().trim_start_matches('=').trim();
+        if expr.is_empty() {
+            return Err("a function needs an expression".into());
+        }
+        let taken = self.snapshot.funcs.iter().any(|f| f.name == name)
+            || omasheet_omx::funcs::FUNCTIONS
+                .iter()
+                .any(|f| f.name == name)
+            || self.snapshot.consts.iter().any(|c| c.name == name)
+            || self.snapshot.sheets.iter().any(|t| t.name == name);
+        if taken {
+            return Err(format!("the name `{name}` is already used"));
+        }
+        let at = self
+            .ast()
+            .sheets
+            .first()
+            .map(|t| {
+                self.text[..t.span.start as usize]
+                    .rfind('\n')
+                    .map_or(0, |i| i + 1)
+            })
+            .unwrap_or(self.text.len());
+        let mut text = self.text.clone();
+        text.insert_str(
+            at,
+            &format!(
+                "fn {name}({}) = {}\n\n",
+                params.join(", "),
+                expr.replace('\n', " ")
+            ),
+        );
+        // What does not read as an expression is not put in.
+        let ast = parse_file(&text, 0, &mut Vec::new());
+        if !ast.funcs.iter().any(|f| f.name == name && f.expr.is_some()) {
+            return Err("that is not an expression".into());
+        }
+        self.commit(text);
+        Ok(())
+    }
+
+    /// Take the function `name` of the file out: its line and the comment
+    /// above it. A formula that calls it is left to be shown as an error.
+    pub fn delete_function(&mut self, name: &str) -> Result<(), String> {
+        let ast = self.ast();
+        let Some(f) = ast.funcs.iter().find(|f| f.name == name) else {
+            return Err(format!("there is no function `{name}` in this file"));
+        };
+        let (mut start, end) = self.line_span(f.span.start as usize, f.span.end as usize);
+        // The comment lines directly above are its description.
+        while start > 0 {
+            let before = &self.text[..start - 1];
+            let line_at = before.rfind('\n').map_or(0, |i| i + 1);
+            if !before[line_at..].trim_start().starts_with('#') {
+                break;
+            }
+            start = line_at;
+        }
+        self.remove_spans(vec![(start, end)]);
+        Ok(())
     }
 
     /// Append a new sheet with one empty row.
@@ -5827,7 +5995,7 @@ mod tests {
             Document::from_text("sheet T\n\n| U | V |\n| - | - |\n| =1/0 | 1.5 |\n| 2.5 | 2 |\n");
         let columns = &doc.snapshot().sheets[0].columns;
         assert_eq!(columns[0].ty, "Float");
-        assert_eq!(columns[1].ty, "Decimal(1)");
+        assert_eq!(columns[1].ty, "Decimal[1]");
         assert_eq!(col(&doc, 0, 0), ["Inf", "2.5"]);
         // A declared column keeps its type, and its cell is the error.
         let doc = Document::from_text("sheet T\n\nU : Decimal\n\n| U |\n| - |\n| =1/0 |\n");
@@ -5889,12 +6057,33 @@ mod tests {
             let column = &doc.snapshot().sheets[0].columns[0];
             assert!(column.declared, "{ty}: {}", doc.text());
             assert!(column.ty.starts_with(ty), "{ty}: {}", column.ty);
+            // A decimal's places are in the brackets before its format.
+            let text = doc.text();
             assert!(
-                doc.text().contains(&format!("[{format}]")),
-                "{}",
-                doc.text()
+                text.contains(&format!("[{format}]")) || text.contains(&format!("; {format}]")),
+                "{text}"
             );
         }
+    }
+
+    #[test]
+    fn a_calculated_sheet_shows_a_column_of_another_as_it_is_shown() {
+        let doc = Document::from_text(concat!(
+            "sheet Sales\n\nPrice : Currency[USD; $.2f]\nUnits : Integer\n\n",
+            "| Item | Price | Units |\n| - | - | - |\n| tea | 5 | 2 |\n| mug | 12.5 | 1 |\n\n",
+            "sheet Top := Sales |> sort(Price, desc) |> head(1)\n",
+            "sheet Again := Top |> select(Item, Price)\n",
+            "sheet Both := Sales |> join(Sales, Item, left)\n",
+        ));
+        let cell = |t: usize, row: usize, col: usize| {
+            doc.snapshot().sheets[t].rows[row][col].display.clone()
+        };
+        assert_eq!(cell(0, 1, 1), "$12.50");
+        // Through a view, a view of a view, and both sides of a join.
+        assert_eq!(cell(1, 0, 1), "$12.50");
+        assert_eq!(cell(2, 0, 1), "$12.50");
+        assert_eq!(cell(3, 1, 1), "$12.50");
+        assert_eq!(cell(3, 1, 3), "$12.50");
     }
 
     #[test]
@@ -5959,7 +6148,7 @@ mod tests {
         assert_eq!(col(&doc, 0, 0), ["1 1/2", "7 1/3", "3 2/3"]);
         // A decimal alone is a `Decimal`, as is a fraction in a declared one.
         let doc = Document::from_text("sheet T\n\nA\n0.5\n0.25\n");
-        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal(2)");
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal[2]");
         let doc = Document::from_text("sheet T\n\nA : Decimal\n\nA\n1/3\n");
         assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal");
         // The same for a percentage: the first cell gives the type that is
@@ -6000,8 +6189,8 @@ mod tests {
     #[test]
     fn a_column_can_be_declared_decimal_with_its_places() {
         let mut doc = Document::from_text("sheet T\n\n| N |\n| - |\n| 1.25 |\n");
-        assert!(doc.set_column_types(0, &[0], Some("Decimal(6)")));
-        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal(6)");
+        assert!(doc.set_column_types(0, &[0], Some("Decimal[6]")));
+        assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Decimal[6]");
         assert!(doc.set_column_types(0, &[0], Some("Fraction")));
         assert_eq!(doc.snapshot().sheets[0].columns[0].ty, "Fraction");
     }
@@ -7502,7 +7691,7 @@ mod tests {
         assert!(screen.snapshot().sheets[0].sampled);
         assert_eq!(
             types(&screen),
-            ["String", "Integer", "Decimal(1)", "Date", "Datetime"]
+            ["String", "Integer", "Decimal[1]", "Date", "Datetime"]
         );
         let csv_path = dir.join("x.csv");
         assert_eq!(screen.to_convert(), vec![csv_path.clone()]);
@@ -7520,7 +7709,7 @@ mod tests {
         assert!(!screen.snapshot().sheets[0].sampled);
         assert_eq!(
             types(&screen),
-            ["String", "Integer", "Decimal(1)", "Date", "Datetime"]
+            ["String", "Integer", "Decimal[1]", "Date", "Datetime"]
         );
         assert_eq!(shown(&screen)[..sample.len()], sample[..]);
 
@@ -7597,7 +7786,7 @@ mod tests {
         assert_eq!(screen.snapshot().sheets[1].nrows, 2);
         assert_eq!(
             types(&screen, 0),
-            ["String", "Integer", "Decimal(1)", "Date"]
+            ["String", "Integer", "Decimal[1]", "Date"]
         );
         assert_eq!(types(&screen, 1), ["Integer"]);
         let rows_path = dir.join("book.json#Rows");
@@ -8827,12 +9016,12 @@ mod tests {
         );
         assert_eq!(
             entry_hint(&us, "Duration"),
-            "Duration: a period of time, e.g. P2DT1H30M (2d 1h 30m)"
+            "Duration: a timespan, e.g. +2:00:00"
         );
         assert_eq!(entry_hint(&us, ""), "");
         assert_eq!(
             entry_hint(&us, "Currency"),
-            "money, e.g. $5, €6, £7 or 8BTC"
+            "Currency, an amount, e.g. $4, €5, £6 or 7BTC"
         );
         // A cell that does not fit says what would.
         let mut doc = Document::with_style("sheet T\n\nOn : Date\n\nOn\n2025-01-31\n", us);
@@ -8949,6 +9138,12 @@ mod tests {
         assert!(mass.contains("#\tUncertainty"), "{mass}");
         assert!(mass.contains("#\tQuantities"));
         assert!(!mass.contains("#\tDate"));
+        // `*` is for a metric unit, `$` for money, and a plain Quantity has both.
+        assert!(mass.contains("*m → 1.5km") && !mass.contains("EUR; $"));
+        let money = format_help("Currency");
+        assert!(money.contains("EUR; $") && !money.contains("*m →"));
+        let any = format_help("Quantity");
+        assert!(any.contains("*m →") && any.contains("EUR; $"));
         let date = format_help("Date");
         assert!(
             date.contains("%Y %y\tyear: 2025 or 25\t%Y → 2025"),
@@ -8993,9 +9188,9 @@ mod tests {
     #[test]
     fn measures_of_one_kind_are_summed_and_averaged() {
         let doc = Document::from_text(concat!(
-            "sheet T\n\n| Mass | Money | Span | Mixed | Plain |\n| - | - | - | - | - |\n",
-            "| 5kg | $5 | 10s | 5kg | 1 |\n",
-            "| 300g | $3 | PT20S | 2m | 2 |\n",
+            "sheet T\n\n| Mass | Money | Span | Mixed | Plain | Len | Odd |\n| - | - | - | - | - | - | - |\n",
+            "| 5kg | $5 | 10s | 5kg | 1 | 5in | 1m.s |\n",
+            "| 300g | $3 | PT20S | 2m | 2 | 2m | 1km.s |\n",
         ));
         let glance = |col| doc.summary(0, (0, col), (1, col)).unwrap();
         let of = |col| glance(col).numbers;
@@ -9008,11 +9203,68 @@ mod tests {
         assert_eq!(of(3), None);
         assert_eq!(glance(3).count, 2);
         assert_eq!(of(4), pair("3", "1.5"));
+        // Units that differ are summed in the type's own, not the first's.
+        assert_eq!(of(5), pair("2.13m", "1.06m"));
+        // Where the type has none, only the count.
+        assert_eq!(of(6), None);
+        assert_eq!(glance(6).count, 2);
         // Across columns, two kinds make none either.
         assert_eq!(doc.summary(0, (0, 0), (1, 1)).unwrap().numbers, None);
         // Under a filter, the rows shown are summed.
         let shown = doc.summary_of_rows(0, &[1], (0, 0)).unwrap();
         assert_eq!(shown.numbers, pair("300.00g", "300.00g"));
+    }
+
+    #[test]
+    fn a_function_of_the_files_own_can_be_added_and_taken_out() {
+        let mut doc = Document::from_text("sheet T\n\n| A |\n| - |\n| 4 |\n");
+        assert!(doc.add_function("Half(x)", "= x / 2").is_ok());
+        assert!(doc.text().starts_with("fn Half(x) = x / 2\n\nsheet T"));
+        assert_eq!(doc.snapshot().funcs[0].usage, "Half(x)");
+        // It can be called.
+        assert!(doc.add_function("fn Twice(a, b)", "Half(a) + b").is_ok());
+        // A name in use, a builtin's, a bad head or no expression: refused.
+        assert!(doc.add_function("Half(x)", "x").is_err());
+        assert!(doc.add_function("sum(x)", "x").is_err());
+        assert!(doc.add_function("Half", "x").is_err());
+        assert!(doc.add_function("Odd(x)", "").is_err());
+        assert!(doc.add_function("Odd(x)", "x +").is_err());
+        assert_eq!(doc.snapshot().funcs.len(), 2);
+        // Out again, with the comment above it.
+        let mut doc = Document::from_text(
+            "# Half of it.\nfn Half(x) = x / 2\n\nsheet T\n\n| A |\n| - |\n| 4 |\n",
+        );
+        assert!(doc.delete_function("Half").is_ok());
+        assert_eq!(doc.text(), "sheet T\n\n| A |\n| - |\n| 4 |\n");
+        assert!(doc.delete_function("Half").is_err());
+        assert!(doc.undo());
+        assert_eq!(doc.snapshot().funcs.len(), 1);
+    }
+
+    #[test]
+    fn a_decimal_takes_its_places_and_format_in_the_brackets() {
+        let text = "sheet T\n\nA : Decimal[2; .4f]\nB : Decimal[3]\n\n| A | B | C |\n| - | - | - |\n| 5 | 1.5 | 2 |\n";
+        let mut doc = Document::from_text(text);
+        assert!(doc.snapshot().problems.is_empty(), "{:?}", doc.snapshot().problems);
+        let shown = |doc: &Document, c: usize| doc.snapshot().sheets[0].rows[0][c].display.trim().to_string();
+        // Its places, and a format of its own.
+        assert_eq!(shown(&doc, 0), "5.0000");
+        // `Decimal[3]` shows its three places by default.
+        assert_eq!(shown(&doc, 1), "1.500");
+        let ty = |doc: &Document, c: usize| doc.snapshot().sheets[0].columns[c].ty.clone();
+        assert_eq!((ty(&doc, 0).as_str(), ty(&doc, 1).as_str()), ("Decimal[2]", "Decimal[3]"));
+        // A format set keeps the places, and a type set keeps the format.
+        doc.set_column_format(0, &[1], Some(".1f")).unwrap();
+        assert!(doc.text().contains("B : Decimal[3; .1f]"), "{}", doc.text());
+        doc.set_column_types(0, &[1], Some("Decimal[5]"));
+        assert!(doc.text().contains("B : Decimal[5; .1f]"), "{}", doc.text());
+        doc.set_column_format(0, &[1], None).unwrap();
+        assert!(doc.text().contains("B : Decimal[5]\n"), "{}", doc.text());
+        doc.set_column_types(0, &[2], Some("Decimal[2; .2f]"));
+        assert!(doc.text().contains("C : Decimal[2; .2f]"), "{}", doc.text());
+        // Another type lets go of the places and the format.
+        doc.set_column_types(0, &[2], Some("Percent"));
+        assert!(doc.text().contains("C : Percent\n"), "{}", doc.text());
     }
 
     #[test]

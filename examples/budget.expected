@@ -29,9 +29,9 @@ Apr   | $14000.00 | Ann
 
 sheet Against
 
-Month | Revenue  | Profit  | Target   | Owner
-------|----------|---------|----------|------
-Jan   | 10000USD | 4000USD | 9500USD  | Ann
-Feb   | 12000USD | 5000USD | 11000USD | Bob
-Feb   | 12000USD | 5000USD | 12500USD | Cy
-Mar   | 13200USD | 5700USD |          |
+Month | Revenue   | Profit   | Target    | Owner
+------|-----------|----------|-----------|------
+Jan   | $10000.00 | $4000.00 | $9500.00  | Ann
+Feb   | $12000.00 | $5000.00 | $11000.00 | Bob
+Feb   | $12000.00 | $5000.00 | $12500.00 | Cy
+Mar   | $13200.00 | $5700.00 |           |

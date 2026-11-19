@@ -43,3 +43,14 @@ Week       | Slot  | Stamp            | Monthly    | MonthEnd   | Quarter    | D
 2025-01-15 | 10:00 | 2025-03-01T10:00 | 2025-03-01 | 2025-03-31 | 2025-07-15 | 2025-03-31
 2025-01-22 | 10:30 | 2025-03-01T11:00 | 2025-04-01 | 2025-04-30 | 2025-10-15 | 2025-04-30
 2025-01-29 | 11:00 | 2025-03-01T12:00 | 2025-05-01 | 2025-05-31 | 2026-01-15 | 2025-05-31
+
+sheet Chance
+
+Draw                   | Holds
+-----------------------|------
+rand() is a fraction   | true
+roll(20) takes 20      | 20
+pick(20) takes all 8   | 8
+pick(8) deals each     | 64
+a shuffle keeps the 15 | 15
+a die is 1 to 6        | true

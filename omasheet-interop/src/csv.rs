@@ -33,10 +33,53 @@ pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
     if rows.is_empty() {
         return Err("it has no header row".to_string());
     }
+    let mut grid = Grid::from_rows(name, rows);
+    units_in_the_heads(&mut grid);
     let mut imported = Imported::default();
-    imported.source = write_omx(vec![Grid::from_rows(name, rows)], &mut imported.notices);
+    imported.source = write_omx(vec![grid], &mut imported.notices);
     Ok(imported)
 }
+
+/// A head with a unit after it, `Revenue [USD]`, over numbers is a column of
+/// that kind of quantity, `Revenue : Currency[USD]`: the way this program
+/// writes one, and the numbers are read in the unit.
+fn units_in_the_heads(grid: &mut Grid) {
+    use omasheet_engine::omx::types::S;
+    let width = grid.headers.len();
+    let mut kinds: Vec<Option<String>> = vec![None; width];
+    for c in 0..width {
+        let head = grid.headers[c].clone();
+        let Some((name, unit)) = head
+            .strip_suffix(']')
+            .and_then(|h| h.rsplit_once(" ["))
+            .map(|(n, u)| (n.trim_end().to_string(), u.to_string()))
+        else {
+            continue;
+        };
+        let Ok(parsed) = siquant::Unit::parse(&unit, siquant::Scope::Any) else {
+            continue;
+        };
+        let Some(kind) = siquant::Registry::builtin().infer_type(parsed.dims()) else {
+            continue;
+        };
+        // Only numbers, or nothing, under it.
+        let plain = grid.rows.iter().all(|row| match row.get(c) {
+            None | Some(Datum::Empty) => true,
+            Some(Datum::Lit(_, ty)) => ty.is_numeric() || matches!(ty, S::Scientific),
+            _ => false,
+        });
+        if name.is_empty() || !plain {
+            continue;
+        }
+        grid.headers[c] = name;
+        kinds[c] = Some(format!("{}[{unit}]", kind.name()));
+    }
+    if kinds.iter().any(Option::is_some) {
+        grid.kinds = kinds;
+    }
+}
+
+const UNCERTAINTY: &str = "uncertainties were dropped, leaving the values";
 
 /// A value as a CSV field, and whether it was rounded to write it. An
 /// exact number is written in full: every digit it holds, which is every
@@ -67,8 +110,15 @@ pub fn export(
             let sheet = &file.program.sheets[t];
             let mut writer = ::csv::Writer::from_writer(Vec::new());
             let fail = |e: ::csv::Error| e.to_string();
+            // A column of quantities has its unit once, in its head, and plain
+            // numbers under it, as a printed table has: `Revenue [USD]`.
+            let units: Vec<Option<siquant::Unit>> =
+                sheet.cols.iter().map(crate::quantity_unit).collect();
             writer
-                .write_record(sheet.cols.iter().map(|c| c.name.as_str()))
+                .write_record(sheet.cols.iter().zip(&units).map(|(c, unit)| match unit {
+                    Some(u) => format!("{} [{u}]", c.name),
+                    None => c.name.clone(),
+                }))
                 .map_err(fail)?;
             for r in 0..sheet.nrows {
                 let mut record = Vec::with_capacity(sheet.cols.len());
@@ -77,6 +127,23 @@ pub fn export(
                     if is_failure(&value) {
                         losses.add(FAILED, file.column(t, c));
                         record.push(String::new());
+                        continue;
+                    }
+                    let in_unit = match (&units[c], &value) {
+                        (Some(unit), Value::Quantity(q)) => q.convert(unit).ok(),
+                        // A duration is microseconds: in seconds, then the unit.
+                        (Some(unit), Value::Duration(us)) => {
+                            let seconds = siquant::Unit::parse("s", siquant::Scope::Any).ok();
+                            seconds
+                                .and_then(|s| siquant::Quantity::exact(*us as f64 / 1e6, s).convert(unit).ok())
+                        }
+                        _ => None,
+                    };
+                    if let Some(q) = &in_unit {
+                        if q.sigma() != 0.0 {
+                            losses.add(UNCERTAINTY, file.column(t, c));
+                        }
+                        record.push(omasheet_engine::value::format_float(q.value(), true));
                         continue;
                     }
                     let (text, rounded) = field(&value);

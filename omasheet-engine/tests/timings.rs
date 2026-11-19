@@ -1335,7 +1335,7 @@ fn decimal_cost(
     // The computed columns are what lowering reaches: the work is `run`, and
     // the expression then reads the column back.
     let text = "view T := dataframe['decimals.parquet']\n\n\
-                Amount : Decimal(10)\nRate : Decimal(10)\n\n\
+                Amount : Decimal[10]\nRate : Decimal[10]\n\n\
                 Plus := Amount + Rate\nTimes := Amount * Rate\nOver := Amount / Rate\n";
     let (mut program, mut diags) = compile(text, 0);
     assert!(diags.is_empty(), "{diags:?}");

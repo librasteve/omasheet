@@ -177,6 +177,7 @@ pub mod qobject {
             col1: i32,
             text: &QString,
             by_row: bool,
+            by_col: bool,
         ) -> QString;
         /// Paste as `paste_cells` does, but turned about: each copied row
         /// goes down a column.
@@ -383,6 +384,13 @@ pub mod qobject {
         fn delete_const(self: Pin<&mut File>, index: i32) -> QString;
         #[qinvokable]
         fn delete_all_consts(self: Pin<&mut File>);
+        /// Put in a function of the file's own: how it is called,
+        /// `Margin(revenue, cost)`, and what it stands for.
+        #[qinvokable]
+        fn add_function(self: Pin<&mut File>, head: &QString, expr: &QString) -> QString;
+        /// Take the file's own function `name` out.
+        #[qinvokable]
+        fn delete_function(self: Pin<&mut File>, name: &QString) -> QString;
 
         #[qinvokable]
         fn undo(self: Pin<&mut File>);
@@ -1186,12 +1194,13 @@ impl qobject::File {
         col1: i32,
         text: &QString,
         by_row: bool,
+        by_col: bool,
     ) -> QString {
         let text = text.to_string();
         let (from, to) = ((index(row0), index(col0)), (index(row1), index(col1)));
-        let said = self
-            .as_mut()
-            .clip(|clip, doc| clip.paste_reference_in(doc, index(sheet), from, to, &text, by_row));
+        let said = self.as_mut().clip(|clip, doc| {
+            clip.paste_reference_in(doc, index(sheet), from, to, &text, by_row, by_col)
+        });
         match said {
             Ok(Some(said)) => {
                 self.refresh(&said);
@@ -1617,6 +1626,16 @@ impl qobject::File {
         self.edit(|doc| doc.delete_all_consts());
     }
 
+    fn add_function(self: Pin<&mut Self>, head: &QString, expr: &QString) -> QString {
+        let (head, expr) = (head.to_string(), expr.to_string());
+        self.try_edit(|doc| doc.add_function(&head, &expr))
+    }
+
+    fn delete_function(self: Pin<&mut Self>, name: &QString) -> QString {
+        let name = name.to_string();
+        self.try_edit(|doc| doc.delete_function(&name))
+    }
+
     fn undo(self: Pin<&mut Self>) {
         self.edit(|doc| doc.undo());
     }
@@ -1721,21 +1740,12 @@ impl qobject::File {
     }
 
     fn entry_hint(&self, ty: &QString) -> QString {
-        // Only where the way to write a value is not plain from its type.
         let ty = ty.to_string();
-        let quantity = omasheet_engine::omx::S::from_name(&ty).is_some_and(|s| s.is_quantity());
-        if !quantity
-            && !matches!(
-                ty.as_str(),
-                "Date" | "Time" | "Datetime" | "Duration" | "Boolean" | "Url" | "Email" | "Uuid"
-            )
-        {
-            return QString::default();
-        }
         // The header shows the type already.
         let hint = entry_hint(&style(), &ty);
         let hint = hint.strip_prefix(&format!("{ty}: ")).unwrap_or(&hint);
-        QString::from(hint)
+        // `String` has nothing to add to its name.
+        QString::from(if hint == ty { "" } else { hint })
     }
 
     fn check_column_format(&self, sheet: i32, first: i32, count: i32, format: &QString) -> QString {
@@ -2311,7 +2321,11 @@ mod unit_order_tests {
     #[test]
     fn a_unit_describes_the_symbols_it_is_also_written_with() {
         let hint = |g: &str, s: &str| group(g).into_iter().find(|(u, _)| u == s).unwrap().1;
-        assert!(hint("Europe", "EUR").contains('€'), "{}", hint("Europe", "EUR"));
+        assert!(
+            hint("Europe", "EUR").contains('€'),
+            "{}",
+            hint("Europe", "EUR")
+        );
         assert!(hint("Americas", "USD").contains('$'));
         assert!(hint("Asia-Pacific", "JPY").contains('¥'));
         assert!(hint("Asia-Pacific", "JPY").contains('￥'));

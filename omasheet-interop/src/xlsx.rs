@@ -422,6 +422,30 @@ fn stands_for(f: f64, r: &Dec) -> bool {
     f.is_finite() && (f != 0.0 || r.is_zero())
 }
 
+/// The unit and the number format of a column of money, `None` for any other
+/// column: the currency the column shows, and `"€"#,##0.00` for it, to the
+/// places it shows, or the places its currency is spent in.
+fn money_column(col: &omasheet_engine::omx::check::Column) -> Option<(siquant::Unit, Format)> {
+    let unit = crate::quantity_unit(col)?;
+    let code = unit.to_string();
+    let reg = siquant::Registry::builtin();
+    reg.rate(&code)?;
+    let places = match col.shown_format().as_deref() {
+        Some(omasheet_engine::omx::colfmt::Format::Quantity(q)) => q.number.and_then(|n| n.places),
+        _ => None,
+    }
+    .unwrap_or_else(|| omasheet_engine::quantity::money_places(&code));
+    let digits = match places {
+        0 => "#,##0".to_string(),
+        n => format!("#,##0.{}", "0".repeat(n as usize)),
+    };
+    let pattern = match reg.currency_sign(&code) {
+        Some(sign) => format!("\"{sign}\"{digits};-\"{sign}\"{digits}"),
+        None => format!("{digits}\" {code}\";-{digits}\" {code}\""),
+    };
+    Some((unit, Format::new().set_num_format(pattern)))
+}
+
 /// A value as text, for a cell that cannot hold it as itself.
 fn written(value: &Value) -> String {
     format_exact(value, false, &date::Style::ISO)
@@ -613,6 +637,11 @@ pub fn export(
             for (c, col) in sheet.cols.iter().enumerate() {
                 page.write_string(0, c as u16, &col.name).map_err(fail)?;
             }
+            // Money is written as numbers of its currency, in the column's unit,
+            // with a number format that shows its sign or its code, so that a
+            // workbook can add it up: `"€"#,##0.00`.
+            let money: Vec<Option<(siquant::Unit, Format)>> =
+                sheet.cols.iter().map(money_column).collect();
             for r in 0..sheet.nrows {
                 for (c, col) in sheet.cols.iter().enumerate() {
                     let value = file.engine.cell_shown(t, c, r);
@@ -620,9 +649,21 @@ pub fn export(
                         losses.add(FAILED, file.column(t, c));
                         continue;
                     }
-                    let Some(shown) =
-                        shown(&formats, &value, |what| losses.add(what, file.column(t, c)))
-                    else {
+                    let in_currency = match (&money[c], &value) {
+                        (Some((unit, format)), Value::Quantity(q)) => {
+                            q.convert(unit).ok().map(|q| (q, format))
+                        }
+                        _ => None,
+                    };
+                    let Some(shown) = (match in_currency {
+                        Some((q, format)) => {
+                            if q.sigma() != 0.0 {
+                                losses.add(UNCERTAINTY, file.column(t, c));
+                            }
+                            Some(Shown::Number(q.value(), Some(format)))
+                        }
+                        None => shown(&formats, &value, |what| losses.add(what, file.column(t, c))),
+                    }) else {
                         continue;
                     };
                     let node = match &col.kind {

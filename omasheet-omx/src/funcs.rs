@@ -587,6 +587,35 @@ pub const FUNCTIONS: &[FuncDoc] = &[
         "The square root, as a Float. A negative x gives a complex number: sqrt(-4) is 0+2i.",
         MathFn::Sqrt,
     ),
+    doc(
+        CONVERT,
+        "fmt",
+        "Price.fmt('.2f')",
+        "A value, or each value of a column, as text in a format written as a column's is: \
+         Price.fmt('.2f') shows 3.5 as 3.50, and Count.fmt('x') shows 255 as ff. The format \
+         must suit the type.",
+    ),
+    doc(
+        MATH,
+        "rand",
+        "rand()",
+        "A random Float from 0 up to, but not including, 1: Raku's rand. rand() * 6 is from 0 up to 6.",
+    ),
+    doc(
+        MATH,
+        "roll",
+        "Name.roll(3)",
+        "Values taken at random from a column, one with no count, or a vector of that many. Each \
+         is put back, so it may come again, as a die rolls: (1..6).roll(2).",
+    ),
+    doc(
+        MATH,
+        "pick",
+        "Name.pick(3)",
+        "Values taken at random from a column, one with no count, or a vector of that many. None \
+         comes twice, and no more come than the column holds, as a hand is dealt: Name.pick(Name.len()) \
+         shuffles it.",
+    ),
     doc(CONVERT, "Integer", ".Integer", "A whole number: truncates."),
     doc(
         CONVERT,

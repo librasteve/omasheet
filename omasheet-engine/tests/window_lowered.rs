@@ -210,7 +210,7 @@ fn a_nan_and_an_overflow_are_left_to_the_engine() {
     assert_ne!(attempts.first(), Some(&Attempt::Lowered), "{attempts:?}");
 }
 
-const DECIMALS: &str = "I : Integer\nF : Decimal(2)";
+const DECIMALS: &str = "I : Integer\nF : Decimal[2]";
 
 #[test]
 fn a_decimal_column_is_lowered_where_polars_has_the_window() {
@@ -242,10 +242,10 @@ fn what_polars_has_no_decimal_window_for_stays_on_the_engine() {
 fn a_small_whole_power_of_a_decimal_is_lowered_and_rounded_once() {
     // `x ** n` is the base multiplied by itself, exactly, and rounded once
     // (decimal-and-fraction T19): the engine's answer to the digit.
-    agree("I : Integer\nF : Decimal(2)", "F ** 2", true);
-    agree("I : Integer\nF : Decimal(2)", "F ** 3", true);
-    agree("I : Integer\nF : Decimal(10)", "F ** 2", true);
+    agree("I : Integer\nF : Decimal[2]", "F ** 2", true);
+    agree("I : Integer\nF : Decimal[2]", "F ** 3", true);
+    agree("I : Integer\nF : Decimal[10]", "F ** 2", true);
     // Past 38 digits, or a negative or large exponent, is the engine's.
-    agree("I : Integer\nF : Decimal(10)", "F ** 4", false);
-    agree("I : Integer\nF : Decimal(2)", "F ** 40", false);
+    agree("I : Integer\nF : Decimal[10]", "F ** 4", false);
+    agree("I : Integer\nF : Decimal[2]", "F ** 40", false);
 }

@@ -649,18 +649,15 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                     Some(close) => {
                         let text = inner[..close].trim();
                         if &body[..k] == "Decimal" {
-                            // `Decimal(2)`: the places the column keeps.
-                            match text.parse::<u8>() {
-                                Ok(n) if n <= MAX_DECIMAL_SCALE => scale = Some(n),
-                                _ => diags.push(
-                                    Diagnostic::new(
-                                        Span::new(src, open, open + close),
-                                        "a scale is a whole number of places from 0 to 38"
-                                            .to_string(),
-                                    )
-                                    .with_help("as `Decimal(2)`"),
-                                ),
-                            }
+                            // The places are written in square brackets.
+                            diags.push(
+                                Diagnostic::new(
+                                    Span::new(src, open - 1, open + close + 1),
+                                    "the places of a `Decimal` are written in square brackets"
+                                        .to_string(),
+                                )
+                                .with_help(format!("write `Decimal[{text}]`")),
+                            );
                             after_ty = &after_ty[close + 2..];
                         } else {
                             let name = text
@@ -700,7 +697,40 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                 let open = ty_at + k + 1;
                 match closing(&after_ty[1..]) {
                     Some(close) => {
-                        format_text = Some((&after_ty[1..close + 1], open));
+                        let inner = &after_ty[1..close + 1];
+                        // `Decimal[2]` and `Decimal[2; .4f]`: the places
+                        // the column keeps, as a quantity's unit comes first,
+                        // then any format after a `;`.
+                        let (head, rest) = match inner.split_once(';') {
+                            Some((h, r)) => (h, Some(r)),
+                            None => (inner, None),
+                        };
+                        let places = head.trim();
+                        if &body[..k] == "Decimal"
+                            && scale.is_none()
+                            && (places.bytes().all(|b| b.is_ascii_digit()) && !places.is_empty()
+                                || (places.is_empty() && rest.is_some()))
+                        {
+                            if !places.is_empty() {
+                                match places.parse::<u8>() {
+                                    Ok(n) if n <= MAX_DECIMAL_SCALE => scale = Some(n),
+                                    _ => diags.push(
+                                        Diagnostic::new(
+                                            Span::new(src, open, open + head.len()),
+                                            "a scale is a whole number of places from 0 to 38"
+                                                .to_string(),
+                                        )
+                                        .with_help("as `Decimal[2]`"),
+                                    ),
+                                }
+                            }
+                            format_text = rest.map(|r| {
+                                let at = open + head.len() + 1 + (r.len() - r.trim_start().len());
+                                (r.trim_start(), at)
+                            });
+                        } else {
+                            format_text = Some((inner, open));
+                        }
                         after_ty = &after_ty[close + 2..];
                     }
                     None => {

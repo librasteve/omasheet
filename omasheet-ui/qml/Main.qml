@@ -495,7 +495,11 @@ ApplicationWindow {
     function typeLabel(col) {
         // `Quantity` is long, and is set `Q` where it has a unit to show.
         if (isQuantityType(col.type) && col.unit)
-            return (col.type === "Quantity" ? "Q" : col.type) + "[" + col.unit + "]";
+            return (col.type === "Quantity" ? "Q" : col.type) + "["
+                + (col.format && col.format.charAt(0) === "*" ? "*" : "") + col.unit + "]";
+        // A decimal's places are in its brackets: `Decimal[2;]` has a format too.
+        if (col.format && col.type.indexOf("Decimal[") === 0)
+            return col.type.slice(0, -1) + ";]";
         return col.type + (col.format ? "[]" : "");
     }
 
@@ -1569,10 +1573,17 @@ ApplicationWindow {
             return "cells";
         // One cell of a sheet with one row is a cell, unless its header or
         // row number was what was clicked.
-        var cols = wholeColumns && (byCol || sheet.nrows > 1);
+        // Every cell of the sheet, picked by Select All or a drag, is the
+        // sheet.
+        if (wholeColumns && wholeRows && !byRow && !byCol)
+            return sheet.nrows > 1 || sheet.columns.length > 1 ? "all" : "cells";
+        // A block of cells that happens to run the length of its columns is
+        // still a block: whole columns are those picked by their headers,
+        // so a cut of one and a cut of the other are not mistaken.
+        var cols = wholeColumns && byCol;
         var rows = wholeRows && (byRow || sheet.columns.length > 1);
         if (cols && rows)
-            return byRow ? "row" : byCol ? "column" : "all";
+            return byRow ? "row" : "column";
         return rows ? "row" : cols ? "column" : "cells";
     }
     // Whole rows or columns are selected as a whole, with no cell of their
@@ -2353,7 +2364,7 @@ ApplicationWindow {
         grabbed = null;
         var text = clipboard.take();
         if (text.length > 0 && !sheet.isConsts)
-            pasteWith(text, function() { return file.pasteReference(tab, selTop, selLeft, selBottom, selRight, text, selKind === "row"); });
+            pasteWith(text, function() { return file.pasteReference(tab, selTop, selLeft, selBottom, selRight, text, selKind === "row", selKind === "column"); });
     }
 
     // A new sheet beside the one shown: asked for by name.
@@ -2452,7 +2463,8 @@ ApplicationWindow {
     // then format, and round again; Shift+F4 goes the other way. The
     // one open is closed as the next opens, and a panel that is not open to this
     // selection (format before there is a type, filter for several columns) is
-    // passed by.
+    // passed by, as is format for a column declared as any type but a
+    // quantity or currency.
     readonly property var metaPanels: ["filter", "type", "unit", "format"]
     function metaPanel(kind) {
         return kind === "type" ? typePopup : kind === "unit" ? unitPopup
@@ -2466,7 +2478,16 @@ ApplicationWindow {
             return kind === "format" && allFormattable();
         if (kind === "filter")
             return selLeft === selRight;
-        return kind === "format" ? allFormattable() : true;
+        if (kind !== "format")
+            return true;
+        // A column declared as a type other than a quantity or currency is
+        // passed by: the panels go round the ones that suit what it holds.
+        for (var c = selLeft; c <= selRight; c++) {
+            var col = sheet.columns[c];
+            if (col && col.declared && !isQuantityType(col.type) && col.type !== "Duration")
+                return false;
+        }
+        return allFormattable();
     }
     function cycleMeta(dir) {
         var at = -1;
@@ -2532,8 +2553,8 @@ ApplicationWindow {
             if (win.isQuantityType(column.type)) {
                 continue;
             }
-            // `Decimal(2)` is a `Decimal`.
-            var base = column.type.split("(")[0];
+            // `Decimal[2]` is a `Decimal`.
+            var base = column.type.split("[")[0];
             if (["Integer", "Hex", "Octal", "Binary", "Decimal", "Float", "Scientific", "Boolean", "Date", "Time", "Datetime", "Duration"].indexOf(base) < 0)
                 return false;
         }
@@ -3441,6 +3462,8 @@ ApplicationWindow {
                         win.cutSelection();
                     } else if (ctrl && shift && event.key === Qt.Key_T) {
                         if (win.canTranspose) win.pasteTransposed();
+                    } else if (ctrl && shift && event.key === Qt.Key_F) {
+                        if (win.canPasteFormat) win.pasteFormat();
                     } else if (ctrl && shift && event.key === Qt.Key_R) {
                         if (win.canPasteReference) win.pasteReference();
                     } else if (ctrl && event.key === Qt.Key_V) {
@@ -6560,7 +6583,7 @@ ApplicationWindow {
         id: typePopup
         taller: 1.5
         minRows: 16
-        placeholder: "e.g. Decimal, Decimal(6)"
+        placeholder: "e.g. Decimal"
         clearText: "Clear type"
         clearable: win.anyDeclared()
         onCleared: win.setColumnTypes("")
@@ -6583,12 +6606,12 @@ ApplicationWindow {
                         complete: pair[0], group: g[0]});
                 });
             });
-            // `Decimal(10)`: the places a decimal keeps, typed. It is offered
+            // `Decimal(10)` typed: the places a decimal keeps, offered as `Decimal[10]`. It is offered
             // once the digits are in, at the top, and ticked when it is what
             // the columns have.
             var places = /^decimal\s*\(\s*(\d{1,2})\s*\)?$/i.exec(text.trim());
             if (places && parseInt(places[1], 10) <= 38) {
-                var spec = "Decimal(" + parseInt(places[1], 10) + ")";
+                var spec = "Decimal[" + parseInt(places[1], 10) + "]";
                 out.unshift({spec: spec, label: spec, complete: spec, group: "Numbers"});
             }
             // Text that matches no type turns the box red.
@@ -6610,7 +6633,7 @@ ApplicationWindow {
         function show(c, item) {
             // A type the cells gave, `Duration`, where none is declared: the
             // list opens at it, and only its group, with it marked. A
-            // decimal's places are not an entry: `Decimal(2)` marks `Decimal`.
+            // decimal's places are not an entry: `Decimal[2]` marks `Decimal`.
             var found = now().length === 0 ? win.sharedSpec(false) : "";
             var at = found.indexOf("[");
             if (at >= 0)
@@ -7157,7 +7180,11 @@ ApplicationWindow {
             choices = list;
             applied = now();
             // What is in force, or the first of those the type takes.
-            field.text = applied.length > 0 ? applied : (list.length > 0 ? list[0].format : "");
+            // A decimal of 2 places is shown as `.2f` says, unless a format says otherwise.
+            var places = /^Decimal\[(\d+)\]$/.exec(type);
+            field.text = applied.length > 0 ? applied
+                : places && Number(places[1]) !== 10 ? "." + places[1] + "f"
+                : (list.length > 0 ? list[0].format : "");
             marked = -1;
             check();
             win.placeBeside(formatPopup, item);
@@ -7999,7 +8026,7 @@ ApplicationWindow {
         // A file's sheet holds no data of its own: a column added to it is a formula.
         readonly property bool formulaOnly: (kind === "column" || kind === "computed")
             && !win.sheet.isConsts && !win.sheet.view && (win.sheet.why || "").length > 0
-        readonly property bool needsExpr: kind === "computed" || kind === "const" || kind === "setFormula"
+        readonly property bool needsExpr: kind === "computed" || kind === "const" || kind === "setFormula" || kind === "function"
             || (kind === "sheet" && formulaBox.checked)
         title: kind === "sheet" ? "New sheet"
              : kind === "rows" ? "Insert rows in " + win.sheet.name
@@ -8009,6 +8036,7 @@ ApplicationWindow {
              : kind === "column" ? "New column in " + win.sheet.name
              : kind === "computed" ? "New formula column in " + win.sheet.name
              : kind === "setFormula" ? "Set column " + (win.sheet.columns[column] ? win.sheet.columns[column].name : "") + " as formula"
+             : kind === "function" ? "New function"
              : "New constant"
         focus: true
         // Not `standardButtons`: Ok would close the dialog before a refused
@@ -8146,6 +8174,7 @@ ApplicationWindow {
                                                       : file.insertColumn(win.tab, at, nameField.text))
                         : kind === "computed" ? (at < 0 ? file.addComputed(win.tab, nameField.text, exprField.text)
                                                         : file.insertComputed(win.tab, at, nameField.text, exprField.text))
+                        : kind === "function" ? file.addFunction(nameField.text, exprField.text)
                         : file.addConst(nameField.text, exprField.text);
                 });
             }
@@ -8210,7 +8239,7 @@ ApplicationWindow {
                 visible: !promptDialog.counted
                 focus: true
                 Layout.fillWidth: true
-                placeholderText: "Name"
+                placeholderText: promptDialog.kind === "function" ? "Name(a, b)" : "Name"
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.dialogSize
@@ -8282,6 +8311,7 @@ ApplicationWindow {
                 visible: promptDialog.needsExpr
                 placeholderText: promptDialog.kind === "computed" || promptDialog.kind === "setFormula" ? "Formula, e.g. = Revenue - Cost"
                     : promptDialog.kind === "sheet" ? "Expression, e.g. Sales |> head(3)"
+                    : promptDialog.kind === "function" ? "Expression, e.g. (a - b) / a"
                     : "Expression, e.g. 20%"
                 font.family: win.font.family
                 font.features: win.font.features
@@ -8567,7 +8597,7 @@ ApplicationWindow {
                         width: parent.width - 16
                         spacing: 2
                         Text {
-                            width: parent.width
+                            width: parent.width - (entry.item.category === "Custom" ? deleteLink.width + 8 : 0)
                             text: (entry.item.usage || "")
                                 + (functionsDialog.copied === entry.item.name ? "   copied" : "")
                             color: win.textColor
@@ -8598,6 +8628,32 @@ ApplicationWindow {
                             font.pixelSize: win.fineSize
                         }
                     }
+                    // A function of the file's own can be taken out of it.
+                    Text {
+                        id: deleteLink
+                        visible: !entry.heading && entry.item.category === "Custom"
+                        z: 2
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        anchors.top: body.top
+                        text: "Delete"
+                        color: deleteArea.containsMouse ? win.errorColor : win.mutedColor
+                        font.family: win.font.family
+                        font.features: win.font.features
+                        font.pixelSize: win.fineSize
+                        MouseArea {
+                            id: deleteArea
+                            anchors.fill: parent
+                            anchors.margins: -4
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                win.notice = file.deleteFunction(entry.item.name);
+                                functionsDialog.all = JSON.parse(file.functionsJson());
+                                functionsDialog.refresh();
+                            }
+                        }
+                    }
                     MouseArea {
                         id: entryArea
                         anchors.fill: parent
@@ -8616,14 +8672,29 @@ ApplicationWindow {
                     }
                 }
             }
-            Label {
+            RowLayout {
                 Layout.fillWidth: true
-                text: functionsDialog.shown.length === 0 ? "No function matches."
-                    : "Click a function to copy it."
-                color: win.mutedColor
-                font.family: win.font.family
-                font.features: win.font.features
-                font.pixelSize: win.fineSize
+                spacing: 8
+                Label {
+                    Layout.fillWidth: true
+                    text: functionsDialog.shown.length === 0 ? "No function matches."
+                        : "Click a function to copy it."
+                    color: win.mutedColor
+                    font.family: win.font.family
+                    font.features: win.font.features
+                    font.pixelSize: win.fineSize
+                }
+                Button {
+                    text: "+ Custom function"
+                    flat: true
+                    font.family: win.font.family
+                    font.features: win.font.features
+                    font.pixelSize: win.dialogSize
+                    onClicked: {
+                        functionsDialog.close();
+                        promptDialog.ask("function");
+                    }
+                }
             }
         }
     }

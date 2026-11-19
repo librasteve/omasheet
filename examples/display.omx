@@ -9,6 +9,10 @@
 # digits. A Float is first rounded to 15 places after its point, the noise
 # of a calculation shown as nought, so 5e-324 is shown 0 where the Spec
 # column, which is the table as first written, has it in e notation.
+#
+# A declared `Decimal[n]` of fewer than ten places shows its n places, as `.nf`
+# does, so the two Decimal columns of places 1 and 0 below show in full what
+# a bare `Decimal` would show in e notation.
 
 sheet Ints
 
@@ -31,7 +35,7 @@ Spec  : String
 
 sheet Tiny
 
-Value : Decimal(38)
+Value : Decimal[38]
 Spec  : String
 
 | Size   | Value                                          | Spec                      |
@@ -42,7 +46,7 @@ Spec  : String
 
 sheet Decimals
 
-Value : Decimal(23)
+Value : Decimal[23]
 Spec  : String
 
 | Size   | Value                                         | Spec                      |
@@ -57,24 +61,24 @@ Spec  : String
 
 sheet Large
 
-Value : Decimal(1)
+Value : Decimal[1]
 Spec  : String
 
-| Size   | Value                                         | Spec                      |
-| ------ | --------------------------------------------- | ------------------------- |
-| Large  | 1000000000000000                              | "1e+15"                   |
-| Large  | = 2**64                                       | "1.8446744073709551e+19·" |
-| Large  | 1234567890123456.5                            | "1.2345678901234565e+15"  |
-| Large  | 123456789012345678.5                          | "1.2345678901234567e+17·" |
+| Size  | Value                | Spec                     |
+| ----- | -------------------- | ------------------------ |
+| Large | 1000000000000000     | "1000000000000000.0"     |
+| Large | = 2**64              | "18446744073709551616.0" |
+| Large | 1234567890123456.5   | "1234567890123456.5"     |
+| Large | 123456789012345678.5 | "123456789012345678.5"   |
 
 sheet Largest
 
-Value : Decimal(0)
+Value : Decimal[0]
 Spec  : String
 
-| Size   | Value                                         | Spec                      |
-| ------ | --------------------------------------------- | ------------------------- |
-| Large  | = 10**37                                      | "1e+37"                   |
+| Size  | Value    | Spec                                     |
+| ----- | -------- | ---------------------------------------- |
+| Large | = 10**37 | "10000000000000000000000000000000000000" |
 
 # A Fraction is shown as a fraction of whole numbers where there is one of a
 # denominator up to 10000, and as a decimal where there is not.

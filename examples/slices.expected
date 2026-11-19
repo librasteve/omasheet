@@ -20,21 +20,21 @@ sheet Best
 
 Month | Revenue | Share | Growth
 ------|---------|-------|-------
-Jan   | 100USD  |  0.27 | 0USD
-Feb   | 120USD  | 0.324 | 20USD
-Mar   | 150USD  | 0.405 | 30USD
+Jan   | $100.00 |  0.27 | $0.00
+Feb   | $120.00 | 0.324 | $20.00
+Mar   | $150.00 | 0.405 | $30.00
 
 sheet Over
 
 Month | Revenue
 ------|--------
-Feb   | 120USD
-Mar   | 150USD
-May   | 130USD
-Jun   | 170USD
+Feb   | $120.00
+Mar   | $150.00
+May   | $130.00
+Jun   | $170.00
 
 sheet Opened
 
 Month | Revenue | Share | Growth
 ------|---------|-------|-------
-Jan   | 100USD  |  0.27 | 0USD
+Jan   | $100.00 |  0.27 | $0.00

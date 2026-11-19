@@ -206,6 +206,14 @@ pub enum Func {
     LenChars,
     ToLowercase,
     ToUppercase,
+    /// A value as text, in the format its second argument gives.
+    Fmt,
+    /// A random `Float` from 0 up to, not including, 1: Raku's `rand`.
+    Rand,
+    /// Values taken at random from a vector, as Raku's `roll` does, each put
+    /// back after it is taken, and `pick`, which does not put it back.
+    Roll,
+    Pick,
     /// Whether a text starts with, ends with or holds another, literally.
     StartsWith,
     EndsWith,

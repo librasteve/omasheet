@@ -319,8 +319,8 @@ fn decimals() {
     // An average of decimals is a Decimal, as are their sum, least and
     // greatest.
     let file = "sheet P\n\nPrice\n4.50\n9\n0.25\n";
-    assert!(calc_err(Some(file), "P.Price.sum() + true").contains("Decimal(2) and Boolean"));
-    assert!(calc_err(Some(file), "P.Price.max() + true").contains("Decimal(2) and Boolean"));
+    assert!(calc_err(Some(file), "P.Price.sum() + true").contains("Decimal[2] and Boolean"));
+    assert!(calc_err(Some(file), "P.Price.max() + true").contains("Decimal[2] and Boolean"));
     assert!(calc_err(Some(file), "P.Price.mean() + true").contains("Decimal and Boolean"));
     assert_eq!(ask(file, "P.Price.sum()"), "13.75");
 }
@@ -3265,7 +3265,7 @@ fn a_sum_with_no_room_for_its_total_stays_on_the_engine() {
     // has an answer for them (a `Fraction`), and the bound is what hands it
     // back. It is a bound and not the sum, so it refuses a shade early.
     let sheet = |rows: usize| {
-        let mut text = String::from("sheet T\n\nBig : Decimal(28)\n\n| Big |\n| --- |\n");
+        let mut text = String::from("sheet T\n\nBig : Decimal[28]\n\n| Big |\n| --- |\n");
         for _ in 0..rows {
             text.push_str("| 9000000000 |\n");
         }
@@ -4344,4 +4344,37 @@ fn boolean_gates_and_aggregates() {
     assert_eq!(ask(FLAGS, "T.A.any()"), "true");
     assert_eq!(ask(FLAGS, "T.B.none()"), "false");
     assert_eq!(ask(FLAGS, "T[; false].C.none()"), "true");
+}
+
+#[test]
+fn random_numbers_and_choices() {
+    let seeded = |seed: u64| Options {
+        seed: Some(seed),
+        ..exact()
+    };
+    let with = |seed: u64, expr: &str| {
+        let out = eval_with(None, "<expression>", expr, seeded(seed));
+        assert!(out.ok(), "`{expr}` failed:\n{}", out.errors.join("\n"));
+        out.output.trim_end().to_string()
+    };
+    // The same seed gives the same numbers, another seed others.
+    assert_eq!(with(7, "rand()"), with(7, "rand()"));
+    assert_ne!(with(7, "rand()"), with(8, "rand()"));
+    assert_eq!(with(7, "[1, 2, 3].roll(5)"), with(7, "[1, 2, 3].roll(5)"));
+    // `rand` is from 0 up to, not including, 1.
+    for seed in 0..50 {
+        assert_eq!(with(seed, "rand() >= 0 and rand() < 1"), "true");
+    }
+    // `roll` puts each back, so a count may pass the column's length.
+    assert_eq!(with(1, "[1, 2, 3].roll(9).len()"), "9");
+    assert_eq!(with(1, "[1, 2, 3].roll(0).len()"), "0");
+    // `pick` does not, so it deals each once and no more than there are.
+    assert_eq!(with(1, "[1, 2, 3, 4].pick(4).sum()"), "10");
+    assert_eq!(with(1, "[1, 2, 3, 4].pick(9).len()"), "4");
+    assert_eq!(with(1, "[1, 2, 3, 4].pick(4).min()"), "1");
+    // One at a time, from the column; a die from a range.
+    for seed in 0..20 {
+        assert_eq!(with(seed, "[1, 2, 3].pick() in [1, 2, 3]"), "true");
+        assert_eq!(with(seed, "(1..6).roll() in [1, 2, 3, 4, 5, 6]"), "true");
+    }
 }

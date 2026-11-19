@@ -191,7 +191,7 @@ fn scale_name(scale: u8) -> String {
     if scale == crate::types::DEFAULT_SCALE {
         "Decimal".to_string()
     } else {
-        format!("Decimal({scale})")
+        format!("Decimal[{scale}]")
     }
 }
 
@@ -213,7 +213,7 @@ pub fn fits_scale(d: &Dec, scale: u8) -> Result<(), String> {
         Some(r) if r.cmp_dec(*d) != std::cmp::Ordering::Equal => {
             let places = d.trimmed().scale().max(0);
             Err(format!(
-                "{} has more places than {} keeps; use Decimal({places}) or Fraction",
+                "{} has more places than {} keeps; use Decimal[{places}] or Fraction",
                 d.to_plain_string(),
                 scale_name(scale)
             ))

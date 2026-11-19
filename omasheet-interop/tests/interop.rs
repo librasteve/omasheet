@@ -131,6 +131,33 @@ fn xlsx_writes_a_percentage_as_its_number() {
 }
 
 #[test]
+fn csv_writes_money_as_numbers_with_its_unit_in_the_head() {
+    let file = "sheet T\n\nPrice : Currency[EUR; $]\nWeight : Mass[g]\n\nItem | Price | Weight\ntea | €4.5 | 2kg\nmug | 8 | 300g\n";
+    let out = csv_of(file, None);
+    let text = text_of(&out, 0);
+    assert_eq!(
+        text,
+        "Item,Price [EUR],Weight [g]\ntea,4.5,2000\nmug,8,300\n"
+    );
+}
+
+#[test]
+fn xlsx_writes_money_as_numbers_a_workbook_can_add() {
+    let file = "sheet T\n\nPrice : Currency[EUR; $]\nSwiss : Currency[CHF]\n\nItem | Price | Swiss\ntea | €4.5 | 3CHF\nmug | 8 | 7.25CHF\n";
+    let out = xlsx::export("t.omx", file, None, options()).unwrap();
+    let rows = cells(&out.files[0].bytes, "T");
+    assert_eq!(rows[1][1], Data::Float(4.5));
+    assert_eq!(rows[2][1], Data::Float(8.0));
+    assert_eq!(rows[2][2], Data::Float(7.25));
+    // Not written as text, so nothing is said of it.
+    assert!(
+        !out.notices.iter().any(|n| n.contains("as text")),
+        "{:?}",
+        out.notices
+    );
+}
+
+#[test]
 fn xlsx_writes_an_uncertain_value_as_its_value() {
     let file = "sheet T\n\nLength : Scientific\n\nLength\n10 ± 0.1\n11.2(4)\n";
     let out = xlsx::export("t.omx", file, None, options()).unwrap();
@@ -194,7 +221,7 @@ fn csv_imports_a_sheet_named_after_the_file() {
 fn csv_reads_every_digit() {
     let out = csv::import("t", b"A\n0.12345678901234567890123\n").unwrap();
     // Every digit is read and kept, and the places it needs are declared:
-    // 23 of them are a `Decimal(23)`, and multiplying out brings them back.
+    // 23 of them are a `Decimal[23]`, and multiplying out brings them back.
     assert_eq!(
         eval(&out.source, "t[A; 0] * 1000000000000000"),
         "123456789012345.67890123"
@@ -2133,7 +2160,7 @@ fn a_workbook_sheet_with_offsets_gaps_and_every_kind_of_cell_reads_as_an_import_
             "Time",
             "Duration",
             "Boolean",
-            "Decimal(1)"
+            "Decimal[1]"
         ]
     );
     let rows = shown_rows(&table, 0);

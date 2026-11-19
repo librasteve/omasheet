@@ -114,6 +114,7 @@ rewrites the text, and saving writes exactly that.
 | Ctrl+Shift+V | Paste values: not formulas |
 | Ctrl+Shift+T | Paste transposed: rows as columns |
 | Ctrl+Shift+R | Paste reference: a live link to the cells copied |
+| Ctrl+Shift+F | Paste format: the type, unit and format of the columns copied, without their values |
 | Ctrl+Enter | Insert row/col after (Shift: before) |
 | Delete | Clear |
 | Ctrl+Delete | Delete the selected rows, columns or sheet |

@@ -696,12 +696,15 @@ impl Clip {
         to: Cell,
         text: &str,
     ) -> Result<Option<String>, String> {
-        self.paste_reference_in(doc, sheet, from, to, text, false)
+        self.paste_reference_in(doc, sheet, from, to, text, false, false)
     }
 
     /// As `paste_reference`. Onto whole rows (`by_row`) the formula columns
     /// are passed over: a row has no formula of its own to set in one, and
     /// each of its other cells is frozen to the source cell it stands for.
+    /// Whole columns (`by_col`) pasted over whole columns of data make them
+    /// formula columns, each one formula reading its source column, where
+    /// cells would each hold a reference of their own.
     pub fn paste_reference_in(
         &mut self,
         doc: &mut Document,
@@ -710,6 +713,7 @@ impl Clip {
         to: Cell,
         text: &str,
         by_row: bool,
+        by_col: bool,
     ) -> Result<Option<String>, String> {
         let Some(r) = self
             .refer
@@ -736,7 +740,12 @@ impl Clip {
         } else {
             (r.rows.len(), r.cols.len())
         };
+        let whole = by_col
+            && !by_row
+            && r.rows.len() == r.sheet_rows
+            && r.rows.windows(2).all(|w| w[1] == w[0] + 1);
         let mut formulas = Vec::new();
+        let mut converts = Vec::new();
         let mut cells = Vec::new();
         for j in 0..cols {
             let col = from.1 + j;
@@ -764,6 +773,9 @@ impl Clip {
                 formulas.push((col, expr));
             } else if let Some(why) = doc.read_only_cell(sheet, col) {
                 return Err(why);
+            } else if whole {
+                let expr = column_ref(same, &r.sheet, name, r.rows[0] as i64 - from.0 as i64);
+                converts.push((col, expr));
             } else {
                 for i in 0..rows {
                     let row = r.rows[if single { 0 } else { i }];
@@ -772,20 +784,34 @@ impl Clip {
                 }
             }
         }
-        if formulas.is_empty() && cells.is_empty() {
+        if formulas.is_empty() && converts.is_empty() && cells.is_empty() {
             return Ok(None);
         }
-        let said = formulas.first().map(|(_, e)| e.clone()).or_else(|| {
-            cells
-                .first()
-                .map(|(_, _, e)| e.trim_start_matches("= ").to_string())
-        });
+        let said = formulas
+            .first()
+            .or(converts.first())
+            .map(|(_, e)| e.clone())
+            .or_else(|| {
+                cells
+                    .first()
+                    .map(|(_, _, e)| e.trim_start_matches("= ").to_string())
+            });
+        let mut failed = None;
         let changed = doc.as_one(|doc| {
             for (col, expr) in &formulas {
                 doc.set_column_formula(sheet, *col, expr);
             }
+            for (col, expr) in &converts {
+                if let Err(why) = doc.set_column_as_formula(sheet, *col, "", expr) {
+                    failed = Some(why);
+                    return;
+                }
+            }
             doc.set_cells(sheet, &cells);
         });
+        if let Some(why) = failed {
+            return Err(why);
+        }
         // What was cut stays where it is: a reference moves nothing.
         self.cut = None;
         Ok(changed.then(|| said.map_or_else(String::new, |s| format!("Pasted `{s}`"))))
@@ -1305,6 +1331,21 @@ mod tests {
     }
 
     #[test]
+    fn whole_columns_as_a_reference_make_formula_columns() {
+        let mut doc = doc();
+        let mut clip = Clip::default();
+        let last = doc.snapshot().sheets[0].nrows - 1;
+        // T's column A in full, pasted by reference onto U's column A.
+        let text = clip.copy(&doc, 0, (0, 0), (last, 0));
+        let nrows = doc.snapshot().sheets[1].nrows;
+        let said = clip.paste_reference_in(&mut doc, 1, (0, 0), (nrows - 1, 0), &text, false, true);
+        assert_eq!(said, Ok(Some("Pasted `T[A; *]`".to_string())));
+        let target = &doc.snapshot().sheets[1].columns[0];
+        assert_eq!(target.name, "X");
+        assert_eq!(target.formula.as_deref(), Some("T[A; *]"));
+    }
+
+    #[test]
     fn one_cell_as_a_reference_fills_the_block_it_is_pasted_on() {
         let mut doc = doc();
         let mut clip = Clip::default();
@@ -1332,7 +1373,7 @@ mod tests {
         let mut doc = doc();
         let mut clip = Clip::default();
         let text = clip.copy(&doc, 0, (0, 0), (0, 3));
-        let said = clip.paste_reference_in(&mut doc, 0, (2, 0), (2, 3), &text, true);
+        let said = clip.paste_reference_in(&mut doc, 0, (2, 0), (2, 3), &text, true, false);
         assert!(matches!(said, Ok(Some(_))), "{said:?}");
         assert_eq!(held(&doc, 0)[2], "= [A; 0]|= [B; 0]|= [C; 0]|");
         // The formula column is as it was.

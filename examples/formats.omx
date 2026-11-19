@@ -13,8 +13,14 @@ Count  : Integer[05d]
 Hex    : Integer[#x]
 Bits   : Integer[08b]
 
-| Item   | Price     | Signed | Sci        | Short    | Count | Hex | Bits |
-| ------ | --------- | ------ | ---------- | -------- | ----- | --- | ---- |
-| Tea    | 12345.678 | 2.25   | 123456.789 | 0.000012 | 42    | 255 | 5    |
-| Coffee | 3.5       | -0.04  | 0.5        | 1e21     | -7    | -1  | 255  |
-| Cake   | 19.995    | 0      | 1e-10      | 100      | 0     | 0   | 0    |
+# `.fmt(format)` shows a value as text in a format, so it can be shown in
+# a format its column does not carry.
+Padded := Price.fmt('08.2f')
+Spoken := Count.fmt('x')
+
+| Item   | Price     | Signed | Sci        | Short    | Count | Hex | Bits | Padded | Spoken |
+| ------ | --------- | ------ | ---------- | -------- | ----- | --- | ---- | ------ | ------ |
+| Tea    | 12345.678 | 2.25   | 123456.789 | 0.000012 | 42    | 255 | 5    | *      | *      |
+| Coffee | 3.5       | -0.04  | 0.5        | 1e21     | -7    | -1  | 255  | *      | *      |
+| Cake   | 19.995    | 0      | 1e-10      | 100      | 0     | 0   | 0    | *      | *      |
+

@@ -39,6 +39,11 @@ struct Env {
     #[arg(long, value_name = "DATETIME")]
     now: Option<String>,
 
+    /// What seeds `rand`, `roll` and `pick`, in place of the clock, so that a
+    /// run can be repeated
+    #[arg(long, value_name = "NUMBER")]
+    seed: Option<u64>,
+
     /// The time zone of this machine, in place of the one it is set to; it
     /// is also the zone of a file that names none
     #[arg(long, value_name = "ZONE")]
@@ -74,6 +79,7 @@ impl Env {
                 ExitCode::from(2)
             })?);
         }
+        options.seed = self.seed;
         if let Some(text) = &self.now {
             let iso = Style::ISO;
             let day = || Some(iso.parse_date(text)? as i64 * date::DAY_MICROS);

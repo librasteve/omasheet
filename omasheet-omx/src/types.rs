@@ -123,6 +123,15 @@ impl S {
 
     /// A type that can be written in a column schema.
     pub fn from_name(name: &str) -> Option<S> {
+        // `Decimal[2]`: a decimal and the places it keeps.
+        if let Some(n) = name
+            .strip_prefix("Decimal[")
+            .and_then(|r| r.strip_suffix(']'))
+            .and_then(|n| n.trim().parse::<u8>().ok())
+            && n <= MAX_DECIMAL_SCALE
+        {
+            return Some(S::Decimal(n));
+        }
         Some(match name {
             "Integer" => S::Int,
             // `Int` is what this type was called before, and is still read
@@ -344,7 +353,7 @@ impl fmt::Display for S {
         if let S::Decimal(n) = self
             && *n != DEFAULT_SCALE
         {
-            return write!(f, "Decimal({n})");
+            return write!(f, "Decimal[{n}]");
         }
         f.write_str(match self {
             S::Any => "Any",
@@ -610,7 +619,7 @@ mod scale_tests {
     #[test]
     fn a_scale_is_part_of_the_name_unless_it_is_the_default() {
         assert_eq!(S::DECIMAL.to_string(), "Decimal");
-        assert_eq!(S::Decimal(2).to_string(), "Decimal(2)");
+        assert_eq!(S::Decimal(2).to_string(), "Decimal[2]");
         assert_eq!(S::from_name("Decimal"), Some(S::DECIMAL));
     }
 }

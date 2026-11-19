@@ -106,3 +106,20 @@ Quarter  := 2025-01-15, 2025-04-15 ... Inf
 # Or say it outright: `n.month`, `n.year` and `n.week` next to a date, and
 # `month_end` for the last day of a month, from wherever the sequence starts.
 Due      := month_end(2025-01-10), month_end($-1 + 1.month) ... Inf
+
+# Chance, as Raku has it. `rand()` is a Float from 0 up to 1. `roll` takes
+# values from a column and puts each back, so a count may pass its length;
+# `pick` deals each once, so it stops at the column's length. What is drawn
+# changes with every run (`--seed 7` repeats one), so this sheet shows only
+# what holds whatever is drawn.
+
+sheet Chance
+
+| Draw                   | Holds                                  |
+| ---------------------- | -------------------------------------- |
+| rand() is a fraction   | = rand() >= 0 and rand() < 1           |
+| roll(20) takes 20      | = Numbers.Odd.roll(20).len()           |
+| pick(20) takes all 8   | = Numbers.Odd.pick(20).len()           |
+| pick(8) deals each     | = Numbers.Odd.pick(8).sum()            |
+| a shuffle keeps the 15 | = Numbers.Odd.pick(8).max()            |
+| a die is 1 to 6        | = (1..6).roll() >= 1 and (1..6).roll() <= 6 |

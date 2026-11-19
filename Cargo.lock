@@ -1944,6 +1944,7 @@ dependencies = [
  "polars",
  "rust_xlsxwriter",
  "serde_json",
+ "siquant",
 ]
 
 [[package]]

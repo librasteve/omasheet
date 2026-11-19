@@ -149,14 +149,15 @@ Doubled := Yield + Yield
 Share   := Yield.Percent
 
 # A Decimal keeps the places its column says, and a Fraction keeps everything.
-# `Decimal(2)` is money: two places, held exactly. A product or a quotient is
+# `Decimal[2]` is money: two places, held exactly, and shown
+# as `.2f` shows them; a format follows the places, `Decimal[4; .4f]`. A product or a quotient is
 # worked out exactly and rounded once, half away from zero, to the places its
 # type has: a Decimal beside a finer one takes the finer, and a quotient takes
 # ten places or the finer of its sides. A bare `Decimal` keeps ten.
 sheet Prices
 
-Price : Decimal(2)
-Rate  : Decimal(4)
+Price : Decimal[2]
+Rate  : Decimal[4; .4f]
 
 | Item   | Price | Qty | Rate   | Net | Tax | Share | Running |
 | ------ | ----- | --- | ------ | --- | --- | ----- | ------- |

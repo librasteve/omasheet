@@ -36,8 +36,8 @@ digit; below a millionth it keeps its digits, or is in e notation. A `Float` in 
 sets the digits it shows. One with an uncertainty of nought is an inexact number, and is shown as a `Float` is: `(1/3.Float) ± 0` is `0.333·`.
 
 A `Decimal` is a Polars `Decimal(38, s)`: 38 digits, `s` of them after the
-point, and the places it keeps are the column's, written `Decimal(2)`. A bare
-`Decimal` is `Decimal(10)`, which holds up to about 10²⁸. Every value of a
+point, and the places it keeps are the column's, written `Decimal[2]`. A bare
+`Decimal` is `Decimal[10]`, which holds up to about 10²⁸. Every value of a
 column has its scale; the point does not move. A sum is exact at the finer
 of the two scales, a product is worked out exactly and rounded once to it,
 and a quotient, or a mean, is rounded once to ten places or the finer scale
@@ -47,10 +47,10 @@ which is what a quotient of whole numbers is: `1/3 * 3` is `1`.
 
 A formula's literal has ten places or its own, whichever is more, so
 `19.99 * 1.5` is `29.985` and not `29.99`. A column that declares
-`Decimal(2)` holds a formula's result rounded to two places, and refuses a
-cell written with more (`0.125` is refused, naming `Decimal(3)` or
+`Decimal[2]` holds a formula's result rounded to two places, and refuses a
+cell written with more (`0.125` is refused, naming `Decimal[3]` or
 `Fraction`). A column that declares nothing infers the least scale that holds
-its cells: `19.99` and `5` are `Decimal(2)`.
+its cells: `19.99` and `5` are `Decimal[2]`.
 
 What does not fit is a `Fraction`. A result that needs more than 38 digits at
 its scale, `10**100`, or a decimal written with more than eighteen places, is
@@ -632,6 +632,8 @@ Called as `sum(x)`, `x.sum()` or `x |> sum()`.
   counts characters, and `to_lowercase()` and `to_uppercase()` change case,
   so `Name.to_lowercase().starts_with('a')` ignores it. Each is empty of an
   empty cell
+- Showing a value: `fmt('.2f')` gives a value, or each value of a column, as text in a format written as a column's is, `Price.fmt('.2f')`; see *Number formats* in the file format guide
+- Chance, as Raku has it: `rand()` is a `Float` from 0 up to, not including, 1 (Raku's `rand`). `Name.roll()` is one value of a column at random, and `Name.roll(3)` a vector of three, each put back after it is taken, so it may come again, as a die rolls; `(1..6).roll()` is a die. `Name.pick()` is one at random and `Name.pick(3)` three that are all different, none coming twice and no more than the column holds, as a hand is dealt; `Name.pick(Name.len())` shuffles it. Each cell draws afresh, and what is drawn is kept until the file is calculated again. `--seed 7` on the command line seeds them, so that a run can be repeated. `rand()` is `RAND()` in an exported workbook; `roll` and `pick` have no formula there
 - Among a column's values: `is_unique()`, `is_duplicated()`,
   `is_first_distinct()` and `is_last_distinct()`, of a column or a vector,
   or of this row's cell, `Name.is_duplicated()`, which is answered among the

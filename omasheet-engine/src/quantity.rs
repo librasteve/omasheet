@@ -552,6 +552,10 @@ pub fn show_in(q: &Quantity, f: &omasheet_omx::colfmt::QuantityFormat, style: &S
         None => (q.clone(), false),
     };
     let mut number = f.number.unwrap_or_default();
+    let converted = match &f.unit {
+        Some(base) if fits && number.prefixed => with_best_prefix(&converted, base),
+        _ => converted,
+    };
     if let Some(code) = currency_code(&converted) {
         // Money is shown to the places it is spent in, unless the format says.
         if number.places.is_none()
@@ -573,6 +577,34 @@ pub fn show_in(q: &Quantity, f: &omasheet_omx::colfmt::QuantityFormat, style: &S
     render(&converted, &number, style, false, !head)
 }
 
+/// `q` in `base` with the prefix, a power of a thousand, that gives it the
+/// shortest form: `1500g` is `1.5kg` and `0.002m` is `2mm`. Zero and what
+/// has no number stay in `base`, and a value past the prefixes takes the
+/// last of them.
+fn with_best_prefix(q: &Quantity, base: &Unit) -> Quantity {
+    let Ok(in_base) = q.convert(base) else {
+        return q.clone();
+    };
+    let v = in_base.value();
+    if v == 0.0 || !v.is_finite() {
+        return in_base;
+    }
+    let steps: Vec<_> = Registry::builtin()
+        .prefixes()
+        .filter(|p| p.base == 10 && p.exp != 0 && p.exp % 3 == 0)
+        .map(|p| (i32::from(p.exp), p.symbol.to_string()))
+        .collect();
+    let lowest = steps.iter().map(|s| s.0).min().unwrap_or(0);
+    let highest = steps.iter().map(|s| s.0).max().unwrap_or(0);
+    let want = ((v.abs().log10() / 3.0).floor() as i32 * 3).clamp(lowest, highest);
+    let Some((_, symbol)) = steps.iter().find(|s| s.0 == want) else {
+        return in_base;
+    };
+    Unit::parse(&format!("{}{base}", symbol), Scope::Any)
+        .and_then(|u| in_base.convert(&u))
+        .unwrap_or(in_base)
+}
+
 /// The code of a quantity of money in one currency, `EUR`: not a price a
 /// kilogram, and not a quantity of anything else.
 fn currency_code(q: &Quantity) -> Option<String> {
@@ -587,7 +619,7 @@ fn currency_code(q: &Quantity) -> Option<String> {
 /// least that shows a hundredth of a dollar's worth, so two for the dollar,
 /// the euro and the yen, and seven for a bitcoin; two at the least and eight
 /// at the most.
-fn money_places(code: &str) -> u32 {
+pub fn money_places(code: &str) -> u32 {
     let dollars = Registry::builtin().rate(code).map_or(1.0, |r| 1.0 / r);
     (100.0 * dollars).log10().round().clamp(2.0, 8.0) as u32
 }

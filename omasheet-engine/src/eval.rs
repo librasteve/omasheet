@@ -240,6 +240,8 @@ pub struct Engine<'p> {
     zones: RefCell<HashMap<String, Option<Rc<Zone>>>>,
     /// What `now()` gives.
     now: i64,
+    /// The state of the generator `rand`, `roll` and `pick` draw from.
+    rng: std::cell::Cell<u64>,
 }
 
 /// The complaint about a file that names a time zone there is none of.
@@ -484,8 +486,10 @@ impl<'p> Engine<'p> {
             .now
             .or_else(|| home.from_utc(utc_now()))
             .unwrap_or(0);
+        let seed = options.seed.unwrap_or_else(|| utc_now() as u64);
         // Moved in last: every other field is made from it.
         Engine {
+            rng: std::cell::Cell::new(seed),
             tables,
             held: RefCell::new(
                 prog.sheets
@@ -2805,7 +2809,7 @@ impl<'p> Engine<'p> {
             // divided, which an exact column cannot hold.
             let hint = match &v {
                 Value::Fraction(_) if col.ty.is_decimal() => {
-                    "; the value does not fit its places, so declare a wider `Decimal(n)` or `Fraction`"
+                    "; the value does not fit its places, so declare a wider `Decimal[n]` or `Fraction`"
                 }
                 Value::Float(f) if !f.is_finite() && col.ty.is_exact() => {
                     "; a division by zero is Inf or NaN, so declare the column `Float` \
@@ -3708,6 +3712,127 @@ impl<'p> Engine<'p> {
         }
     }
 
+    /// The next 64 random bits: SplitMix64, which is small and passes the
+    /// usual tests, and is repeatable from a seed.
+    fn draw(&self) -> u64 {
+        let state = self.rng.get().wrapping_add(0x9E37_79B9_7F4A_7C15);
+        self.rng.set(state);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// A random whole number from 0 up to `n`.
+    fn below(&self, n: usize) -> usize {
+        ((self.draw() as u128 * n as u128) >> 64) as usize
+    }
+
+    /// `x.roll()` and `x.pick()`, as Raku has them: with no count, one value
+    /// of a vector at random; with a count, that many in a vector, `roll`
+    /// putting each back, so that it may come again, and `pick` not, so
+    /// that it comes once, and no more than the vector holds.
+    fn choose(&self, func: Func, args: &[Node], span: Span, fr: &mut Frames) -> R {
+        // A range written out is the whole numbers it spans: `(1..6).roll()`
+        // is a die.
+        let items = match &args[0].kind {
+            Ir::Binary(op @ (BinOp::Range | BinOp::RangeEx), lo, hi) => {
+                let (lo, hi) = (self.int(lo, fr)?, self.int(hi, fr)?);
+                let end = if *op == BinOp::Range { hi.saturating_add(1) } else { hi };
+                if end.saturating_sub(lo) > 10_000_000 {
+                    return fail(args[0].span, "this range is too long to take from");
+                }
+                Rc::new((lo..end).map(Value::int).collect::<Vec<_>>())
+            }
+            _ => match self.eval(&args[0], fr)? {
+                Value::Vector(items) => items,
+                _ => return fail(args[0].span, "expected a column or a vector here"),
+            },
+        };
+        let count = match args.get(1) {
+            Some(n) => match self.int(n, fr)? {
+                n if n >= 0 => Some(n as usize),
+                _ => return fail(n.span, "the count must not be negative"),
+            },
+            None => None,
+        };
+        if items.is_empty() {
+            return match count {
+                Some(_) => Ok(Value::Vector(Rc::new(Vec::new()))),
+                None => Ok(Value::Null),
+            };
+        }
+        let mut taken = Vec::new();
+        if func == Func::Roll {
+            for _ in 0..count.unwrap_or(1) {
+                taken.push(items[self.below(items.len())].clone());
+            }
+        } else {
+            // A partial shuffle: each place swaps with one of those after it.
+            let mut order: Vec<usize> = (0..items.len()).collect();
+            let n = count.unwrap_or(1).min(items.len());
+            for i in 0..n {
+                let j = i + self.below(items.len() - i);
+                order.swap(i, j);
+                taken.push(items[order[i]].clone());
+            }
+        }
+        let _ = span;
+        match count {
+            Some(_) => Ok(Value::Vector(Rc::new(taken))),
+            None => Ok(taken.pop().unwrap_or(Value::Null)),
+        }
+    }
+
+    /// `x.fmt(spec)`: a value, or each of a column's, as text in a format.
+    fn fmt(&self, args: &[Node], fr: &mut Frames) -> R {
+        let spec = match self.eval(&args[1], fr)? {
+            Value::String(s, _) => s,
+            other => {
+                return fail(
+                    args[1].span,
+                    format!("expected a format as text, found {}", other.kind()),
+                );
+            }
+        };
+        let one = |v: &Value| -> R {
+            let ty = match v {
+                Value::Null => return Ok(Value::Null),
+                Value::Int(_, Base::Dec) => S::Int,
+                Value::Int(_, Base::Hex) => S::Hex,
+                Value::Int(_, Base::Oct) => S::Octal,
+                Value::Int(_, Base::Bin) => S::Binary,
+                Value::Decimal(_) => S::Decimal(0),
+                Value::Fraction(_) => S::Fraction,
+                Value::Percent(_) => S::Percent,
+                Value::Float(_) => S::Float,
+                Value::Scientific(..) => S::Scientific,
+                Value::Quantity(_) => S::Quantity(omasheet_omx::types::QId::ANY),
+                Value::Boolean(_) => S::Boolean,
+                Value::Date(_) => S::Date,
+                Value::Time(_) => S::Time,
+                Value::Datetime(..) => S::Datetime,
+                Value::Duration(_) => S::Duration,
+                other => {
+                    return fail(
+                        args[0].span,
+                        format!("{} does not take a format", other.kind()),
+                    );
+                }
+            };
+            match Format::read_for(&spec, ty) {
+                Ok(f) => Ok(Value::text(&self.show_in(v, false, Some(&f)))),
+                Err(why) => fail(args[1].span, why),
+            }
+        };
+        match self.eval(&args[0], fr)? {
+            Value::Vector(items) => Ok(Value::Vector(Rc::new(
+                items.iter().map(one).collect::<R<Vec<_>>>()?,
+            ))),
+            single => one(&single),
+        }
+    }
+
     /// One of the tests Polars has that look at a value alone, or a text
     /// function they are written with (filter-by-expression D174). Empty
     /// of an empty cell, as Polars answers a null.
@@ -4230,6 +4355,9 @@ impl<'p> Engine<'p> {
             | Func::Contains
             | Func::Matches
             | Func::ContainsAny => self.test(func, args, fr),
+            Func::Fmt => self.fmt(args, fr),
+            Func::Rand => Ok(Value::Float((self.draw() >> 11) as f64 / (1u64 << 53) as f64)),
+            Func::Roll | Func::Pick => self.choose(func, args, span, fr),
             Func::IsUnique | Func::IsDuplicated | Func::IsFirstDistinct | Func::IsLastDistinct => {
                 self.among(func, args, fr)
             }

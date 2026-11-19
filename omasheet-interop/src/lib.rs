@@ -556,6 +556,23 @@ impl File<'_> {
     }
 }
 
+/// The unit a column of quantities shows its values in, where its format
+/// names one: `USD` for `Currency[USD]`, `kg` for `Mass`. A format with no
+/// unit names none.
+pub(crate) fn quantity_unit(col: &omasheet_engine::omx::check::Column) -> Option<siquant::Unit> {
+    use omasheet_engine::omx::colfmt::Format;
+    // A bare `Duration` is shown in the forms its cells are written in, and
+    // is written as they are: only one that names a unit has numbers of it.
+    let named = matches!(&col.format, Some(Format::Quantity(q)) if q.unit.is_some());
+    if col.ty == omasheet_engine::omx::types::S::Duration && !named {
+        return None;
+    }
+    match col.shown_format().as_deref() {
+        Some(omasheet_engine::omx::colfmt::Format::Quantity(q)) => q.unit.clone(),
+        _ => None,
+    }
+}
+
 /// Things an export could not write exactly, each with the columns it
 /// happened in, in the order they were met.
 #[derive(Default)]

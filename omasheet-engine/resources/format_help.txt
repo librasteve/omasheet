@@ -56,8 +56,13 @@ iso | an ISO 8601 duration | iso → PT1H30M
 unit | the unit the column shows and holds, once, in its head | Mass[g]
 ; | then a number format | g; ±.1f → 10.5 ± 0.3
 v | the unit in each row instead of the head | g; v.1f → 10.5g
-_ | with v, a space before the unit | g; v_.1f → 10.5 g
-$ | money: its sign before the number in each row, its code after where it has none | EUR; $ → €4.55
+_ | with v, * or $, a space before the unit | g; v_.1f → 10.5 g
+
+== Prefix | Metric
+* | before a metric unit: each value with the prefix that suits it, in each row | *m → 1.5km, 2mm
+
+== Money | Money
+$ | its sign before the number in each row, its code after where it has none | EUR; $ → €4.55
 
 == Date | Date
 %Y %y | year: 2025 or 25 | %Y → 2025

@@ -135,6 +135,14 @@ impl Column {
                     number: None,
                 })))
             }
+            // `Decimal[2]` is shown to its two places, as `.2f` shows them,
+            // unless a format says otherwise. Past the ten a bare `Decimal`
+            // keeps, the places are for exactness and not for show.
+            (None, S::Decimal(n)) if self.declared && n < DEFAULT_SCALE => {
+                crate::numfmt::NumFormat::parse(&format!(".{n}f"))
+                    .ok()
+                    .map(|f| Cow::Owned(Format::Number(f)))
+            }
             (None, _) => None,
         }
     }
@@ -142,6 +150,13 @@ impl Column {
     /// The column's name for a printed table: with its unit after it where
     /// the cells are numbers, `Weight [kg]`.
     pub fn head(&self) -> String {
+        // A column in whichever prefix suits each cell says so: `[*m]`.
+        if let Some(crate::colfmt::Format::Quantity(q)) = self.shown_format().as_deref()
+            && let Some(u) = &q.unit
+            && q.number.is_some_and(|n| n.prefixed)
+        {
+            return format!("{} [*{u}]", self.name);
+        }
         match self.head_unit() {
             Some(u) => format!("{} [{u}]", self.name),
             None => self.name.clone(),
@@ -403,6 +418,9 @@ struct Checker<'a> {
     framewise: Vec<Vec<bool>>,
     /// And [`Column::duration_kinds`], by sheet and column.
     duration_kinds: std::collections::HashMap<(usize, usize), u8>,
+    /// For a column of a calculated sheet that is another sheet's column, as
+    /// a view's are, the sheet and column it is: it is shown as that one is.
+    origin: std::collections::HashMap<(usize, usize), (usize, usize)>,
     /// Per sheet, the other sheets its formulas pick a row of with the
     /// cursor, each once. A sheet that holds no rows is as long as these.
     row_reads: Vec<Vec<usize>>,
@@ -1086,6 +1104,7 @@ impl<'a> Checker<'a> {
             elementwise: Vec::new(),
             framewise: Vec::new(),
             duration_kinds: std::collections::HashMap::new(),
+            origin: std::collections::HashMap::new(),
             row_reads: Vec::new(),
             view_state: Vec::new(),
             view_out: Vec::new(),
@@ -1653,6 +1672,8 @@ impl<'a> Checker<'a> {
                 };
                 let (name, span) = (from.name.clone(), from.span);
                 let ty = self.col_type(shape.sheet, c);
+                self.origin
+                    .insert((t, self.sheets[t].cols.len()), (shape.sheet, c));
                 self.sheets[t].cols.push(ColInfo {
                     name,
                     span,
@@ -1759,7 +1780,9 @@ impl<'a> Checker<'a> {
             names.push((name.clone(), k.span));
         }
         let mut columns = Vec::new();
+        let mut origins: Vec<Option<(usize, usize)>> = Vec::new();
         for &c in &key_cols {
+            origins.push(Some((shape.sheet, c)));
             let from_span = self.sheets[shape.sheet].cols[c].span;
             let ty = self.col_type(shape.sheet, c);
             columns.push((
@@ -1864,6 +1887,8 @@ impl<'a> Checker<'a> {
                         let from = &self.sheets[from_sheet].cols[c];
                         let (name, from_span) = (from.name.clone(), from.span);
                         let ty = self.col_type(from_sheet, c);
+                        self.origin
+                            .insert((t, self.sheets[t].cols.len()), (from_sheet, c));
                         self.sheets[t].cols.push(ColInfo {
                             name,
                             span: from_span,
@@ -1945,8 +1970,12 @@ impl<'a> Checker<'a> {
             }
             names.push((name.clone(), name_span));
             columns.push((name, name_span, s, ColKind::Agg(node)));
+            origins.push(None);
         }
-        for (name, span, ty, kind) in columns {
+        for (at, (name, span, ty, kind)) in columns.into_iter().enumerate() {
+            if let Some(from) = origins[at] {
+                self.origin.insert((t, self.sheets[t].cols.len()), from);
+            }
             self.sheets[t].cols.push(ColInfo {
                 name,
                 span,
@@ -2053,7 +2082,9 @@ impl<'a> Checker<'a> {
             right_keys.push(rc);
         }
         let mut columns: Vec<(String, Span, S, ColKind)> = Vec::new();
+        let mut origins: Vec<(usize, usize)> = Vec::new();
         for &c in lshape.cols.iter() {
+            origins.push((lshape.sheet, c));
             let from = &self.sheets[lshape.sheet].cols[c];
             let (name, from_span) = (from.name.clone(), from.span);
             let ty = self.col_type(lshape.sheet, c);
@@ -2080,8 +2111,11 @@ impl<'a> Checker<'a> {
                 .push((DepNode::Col(rshape.sheet, c), DepKind::Whole));
             let ty = self.col_type(rshape.sheet, c);
             columns.push((name, from_span, ty, ColKind::Joined(c)));
+            origins.push((rshape.sheet, c));
         }
-        for (name, span, ty, kind) in columns {
+        for (at, (name, span, ty, kind)) in columns.into_iter().enumerate() {
+            self.origin
+                .insert((t, self.sheets[t].cols.len()), origins[at]);
             self.sheets[t].cols.push(ColInfo {
                 name,
                 span,
@@ -4226,6 +4260,54 @@ impl<'a> Checker<'a> {
         (Node::new(Ir::Call(Func::Window(spec), call), span), ty)
     }
 
+    /// `x.fmt("'.2f")`: a value, or each of a column's, as text in a format.
+    fn lower_fmt(&mut self, args: &[Expr], span: Span, sc: &mut Scope) -> (Node, Ty) {
+        let fail = (Node::error(span), Ty::Any);
+        if args.len() != 2 {
+            self.err_help(
+                span,
+                format!("`fmt` takes a value and a format, found {} arguments", args.len()),
+                "usage: `Sales.Price.fmt('.2f')`".to_string(),
+            );
+            return fail;
+        }
+        let (val, vty) = self.lower(&args[0], sc);
+        let (spec, sty) = self.lower(&args[1], sc);
+        if matches!(val.kind, Ir::Error) || matches!(spec.kind, Ir::Error) {
+            return fail;
+        }
+        if !matches!(&sty, Ty::Any) && !matches!(&sty, Ty::Scalar(s) if *s == S::Any || s.is_text()) {
+            self.err_help(
+                args[1].span,
+                format!("`fmt` needs a format as text, but this is {}", sty.describe()),
+                "usage: `Sales.Price.fmt('.2f')`".to_string(),
+            );
+            return fail;
+        }
+        let ty = match &vty {
+            Ty::Any => Ty::Scalar(S::String),
+            Ty::Scalar(_) => Ty::Scalar(S::String),
+            Ty::Vector(_, n) => Ty::Vector(S::String, *n),
+            other => {
+                self.err(
+                    args[0].span,
+                    format!("`fmt` needs a value or a column, but this is {}", other.describe()),
+                );
+                return fail;
+            }
+        };
+        // A format written out is checked here, against what it formats.
+        if let ExprKind::Lit(Lit::String(text)) = &args[1].kind
+            && let Ty::Scalar(s) | Ty::Vector(s, _) = &vty
+            && *s != S::Any
+            && let Err(why) = Format::read_for(text, *s)
+        {
+            self.err(args[1].span, why);
+            return fail;
+        }
+        (Node::new(Ir::Call(Func::Fmt, vec![val, spec]), span), ty)
+    }
+
     fn lower_test(&mut self, name: &str, args: &[Expr], span: Span, sc: &mut Scope) -> (Node, Ty) {
         let fail = (Node::error(span), Ty::Any);
         let two = matches!(
@@ -4703,6 +4785,62 @@ impl<'a> Checker<'a> {
             | "to_uppercase" | "starts_with" | "ends_with" | "contains" | "matches"
             | "contains_any" | "is_unique" | "is_duplicated" | "is_first_distinct"
             | "is_last_distinct" => self.lower_test(name, args, span, sc),
+            "fmt" => self.lower_fmt(args, span, sc),
+            "rand" => {
+                if !arity(self, 0, "rand()") {
+                    return fail;
+                }
+                (
+                    Node::new(Ir::Call(Func::Rand, Vec::new()), span),
+                    Ty::Scalar(S::Float),
+                )
+            }
+            "roll" | "pick" => {
+                if args.is_empty() || args.len() > 2 {
+                    self.err_help(
+                        span,
+                        format!("`{name}` takes a column and, if you want more than one, a count"),
+                        format!("usage: `Sales.Item.{name}()` or `Sales.Item.{name}(3)`"),
+                    );
+                    return fail;
+                }
+                let (arg, aty) = self.lower(&args[0], sc);
+                let s = match aty {
+                    Ty::Any => S::Any,
+                    Ty::Vector(s, _) => s,
+                    Ty::Range => S::Int,
+                    other => {
+                        if !matches!(arg.kind, Ir::Error) {
+                            self.err(
+                                args[0].span,
+                                format!("`{name}` takes from a column, but this is {}", other.describe()),
+                            );
+                        }
+                        return fail;
+                    }
+                };
+                let mut nodes = vec![arg];
+                if let Some(n) = args.get(1) {
+                    let (count, nty) = self.lower(n, sc);
+                    if !nty.is_whole() {
+                        if !matches!(count.kind, Ir::Error) {
+                            self.err(
+                                n.span,
+                                format!("`{name}` needs a whole number to take, but this is {}", nty.describe()),
+                            );
+                        }
+                        return fail;
+                    }
+                    nodes.push(count);
+                }
+                let ty = if nodes.len() == 2 {
+                    Ty::Vector(s, None)
+                } else {
+                    Ty::Scalar(s)
+                };
+                let func = if name == "roll" { Func::Roll } else { Func::Pick };
+                (Node::new(Ir::Call(func, nodes), span), ty)
+            }
             "cum_sum" | "cum_min" | "cum_max" | "cum_prod" | "cum_count" | "diff"
             | "pct_change" | "rank" | "forward_fill" | "backward_fill" | "rolling_sum"
             | "rolling_mean" | "rolling_min" | "rolling_max" | "rolling_std" => {
@@ -6276,6 +6414,33 @@ impl<'a> Checker<'a> {
                 join,
                 paired,
             });
+        }
+        // A column of a calculated sheet that is another sheet's is shown as
+        // that one is, in the dollars of its format: passed down as far as
+        // sheets are calculated from sheets.
+        for _ in 0..sheets.len() {
+            let mut changed = false;
+            for t in 0..sheets.len() {
+                for c in 0..sheets[t].cols.len() {
+                    if sheets[t].cols[c].format.is_some() {
+                        continue;
+                    }
+                    let Some(&(from_t, from_c)) = self.origin.get(&(t, c)) else {
+                        continue;
+                    };
+                    let inherited = sheets
+                        .get(from_t)
+                        .and_then(|s| s.cols.get(from_c))
+                        .and_then(|col| col.format.clone());
+                    if inherited.is_some() {
+                        sheets[t].cols[c].format = inherited;
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
         }
         let mut consts = Vec::new();
         let lists: Vec<Option<Vec<String>>> = self

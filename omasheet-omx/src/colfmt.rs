@@ -167,14 +167,24 @@ impl QuantityFormat {
         let lead = |s: &str| s.chars().count() - s.trim_start().chars().count();
         let at = lead(unit_part);
         let unit_text = unit_part.trim();
+        // `*m`: the unit with whichever prefix suits each value.
+        let star = unit_text.starts_with('*');
+        let (at, unit_text) = if star {
+            (at + 1, unit_text[1..].trim_start())
+        } else {
+            (at, unit_text)
+        };
         let error = |at: usize, len: usize, message: String| FormatError {
             at,
             len: len.max(1),
             message,
         };
         // The unit may be left out when a number format follows the `;`.
-        if unit_text.is_empty() && number_part.is_none() {
+        if unit_text.is_empty() && number_part.is_none() && !star {
             return Err(error(0, 1, "needs a unit".to_string()));
+        }
+        if star && unit_text.is_empty() && id.named().is_none() {
+            return Err(error(0, 1, "`*` needs a unit: write `*m`".to_string()));
         }
         let len = unit_text.chars().count();
         let unit = if unit_text.is_empty() {
@@ -191,6 +201,13 @@ impl QuantityFormat {
                     format!("must be a unit of {}", crate::units::kinds_of(t.dims())),
                 ));
             }
+            if star && !takes_si_prefixes(unit_text) {
+                return Err(error(
+                    at,
+                    len,
+                    "`*` is for a metric unit without its prefix, as `*g` for grams".to_string(),
+                ));
+            }
             Some(unit)
         };
         let number = match number_part {
@@ -202,6 +219,14 @@ impl QuantityFormat {
                     e
                 })?)
             }
+        };
+        let number = if star {
+            let mut n = number.unwrap_or_default();
+            n.prefixed = true;
+            n.unit_down = true;
+            Some(n)
+        } else {
+            number
         };
         // A sign is for money: the kind `Currency`, or a `Quantity` of any.
         if let Some(n) = number
@@ -246,8 +271,37 @@ impl QuantityFormat {
     }
 }
 
+/// Whether `symbol` is a metric unit as the registry has it, with no prefix
+/// of its own, and takes one: `g` and `m`, not `km` or `in`.
+fn takes_si_prefixes(symbol: &str) -> bool {
+    siquant::Registry::builtin().units().any(|u| {
+        u.symbol == symbol
+            && matches!(
+                u.prefixable,
+                siquant::Prefixable::Si | siquant::Prefixable::Both
+            )
+    })
+}
+
 impl fmt::Display for QuantityFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(n) = self.number.filter(|n| n.prefixed) {
+            let n = SciFormat {
+                prefixed: false,
+                unit_down: false,
+                ..n
+            };
+            f.write_str("*")?;
+            if let Some(u) = &self.unit {
+                write!(f, "{u}")?;
+            }
+            let rest = n.to_string();
+            return if rest.is_empty() {
+                Ok(())
+            } else {
+                write!(f, "; {rest}")
+            };
+        }
         match (&self.unit, &self.number) {
             (Some(u), Some(n)) => write!(f, "{u}; {n}"),
             (Some(u), None) => write!(f, "{u}"),
@@ -281,6 +335,10 @@ pub struct SciFormat {
     /// `v`: a quantity's unit shown down in each row, `10.5g`, rather than
     /// once in the column's head. Only a quantity format takes it.
     pub unit_down: bool,
+    /// `*` before a quantity's unit, `Length[*m]`: each value is shown with
+    /// the prefix that suits it (`2mm`, `1.5km`), in the unit's own row.
+    /// It puts the unit down, as `v` does; only a quantity format takes it.
+    pub prefixed: bool,
     /// `$`: money shown with its sign before the number in each row, `€4.55`,
     /// and its code after where it has no sign, `4.55CHF`, rather than once
     /// in the column's head. It puts the unit down, as `v` does, and a
@@ -544,6 +602,21 @@ impl Format {
             S::Date | S::Time | S::Datetime => DateFormat::parse(text).map(Format::Date),
             S::Boolean => BoolFormat::parse(text).map(Format::Boolean),
             _ => NumFormat::parse(text).map(Format::Number),
+        }
+    }
+
+    /// The format `text` for a value of type `ty`, or why there is none: it
+    /// does not read, or the type does not take it.
+    pub fn read_for(text: &str, ty: S) -> Result<Format, String> {
+        let Some(takes) = Format::conversions_of(ty) else {
+            return Err(format!("{ty} does not take a format"));
+        };
+        let f = Format::parse(text, ty)
+            .map_err(|e| format!("{} ({})", e.message, Format::help(ty)))?;
+        if f.takes(ty) {
+            Ok(f)
+        } else {
+            Err(format!("{ty} does not take the format `{f}`: it takes {takes}"))
         }
     }
 
@@ -851,5 +924,25 @@ mod tests {
         let mass = QId::from_name("Mass").unwrap();
         let e = QuantityFormat::parse("g; $", mass).unwrap_err();
         assert!(e.message.contains("currency"), "{}", e.message);
+    }
+
+    #[test]
+    fn a_star_shows_each_value_in_the_prefix_that_suits_it() {
+        let length = QId::from_name("Length").unwrap();
+        let f = QuantityFormat::parse("*m", length).unwrap();
+        assert!(f.number.unwrap().prefixed);
+        // The unit is in each row, so the head holds none.
+        assert!(!f.lifts(true));
+        assert_eq!(f.to_string(), "*m");
+        assert_eq!(
+            QuantityFormat::parse("*m; .2f", length).unwrap().to_string(),
+            "*m; .2f"
+        );
+        // A bare star of a kind is its preferred unit.
+        assert!(QuantityFormat::parse("*", length).is_ok());
+        assert!(QuantityFormat::parse("*", QId::ANY).is_err());
+        // Only a metric unit with no prefix of its own takes it.
+        assert!(QuantityFormat::parse("*km", length).is_err());
+        assert!(QuantityFormat::parse("*in", length).is_err());
     }
 }

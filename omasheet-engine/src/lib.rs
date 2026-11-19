@@ -54,6 +54,9 @@ pub struct Options {
     /// start of 1970-01-01 on the clocks of the file's time zone — the unit
     /// a date-time is held in.
     pub now: Option<i64>,
+    /// What seeds `rand`, `roll` and `pick`, in place of the clock: the same
+    /// seed gives the same numbers.
+    pub seed: Option<u64>,
     /// The time zone of this machine, in place of the one it is set to. It
     /// is also the zone of a file that names none.
     pub zone: Option<Zone>,

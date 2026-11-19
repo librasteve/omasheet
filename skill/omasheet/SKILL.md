@@ -150,7 +150,7 @@ what you want; declare one when the cells could be read another way.
 | Type | Written |
 |---|---|
 | `Integer` | `42`, `1_000_000` |
-| `Decimal` | `19.99` — exact to the places its column keeps: `Decimal(2)` is two, a bare `Decimal` ten. A product or a quotient with a decimal in it is rounded to them (`1.0/3 * 3` is `0.9999999999`); a column that declares nothing keeps the least that holds its cells |
+| `Decimal` | `19.99` — exact to the places its column keeps: `Decimal[2]` is two, shown as `.2f` does unless a format follows (`Decimal[2; .4f]`), a bare `Decimal` ten. A product or a quotient with a decimal in it is rounded to them (`1.0/3 * 3` is `0.9999999999`); a column that declares nothing keeps the least that holds its cells |
 | `Fraction` | `1/7`, `2 3/4` in a cell, `<1/7>` in a formula — the exact rational, shown as a fraction, and what a quotient of whole numbers is: `1/3 * 3` is `1`. Use it also where a number needs more than 38 digits: `10**100` is a `Fraction` where nothing declares a `Decimal` |
 | `Percent` | `20%` — exact, shown as a percentage |
 | `Float` | `1.5e3` — floating point, only when asked for; `Inf`, `-Inf`, `NaN` (as text, `'Inf'` in code, `"Inf"` in a cell), which is what a division by zero gives |
