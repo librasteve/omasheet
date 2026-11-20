@@ -20,6 +20,7 @@
 
 mod clip;
 mod file;
+mod icon;
 mod json;
 mod theme;
 mod winconsole;
@@ -49,6 +50,7 @@ fn app() -> ExitCode {
     if let Some(mut app) = app.as_mut() {
         app.as_mut()
             .set_application_name(&QString::from("omasheet"));
+        icon::set();
         app.as_mut().set_organization_name(&QString::from("Omacom"));
         app.as_mut()
             .set_organization_domain(&QString::from("omacom.io"));

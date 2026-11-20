@@ -19,6 +19,8 @@ fn main() {
         .qt_module("Quick")
         .qt_module("QuickControls2")
         .file("src/file.rs")
+        .file("src/icon.rs")
+        .cpp_file("src/icon.cpp")
         // MSVC reads the C++ Qt makes of the QML, strings and all, in the
         // system code page unless it is told it is UTF-8, and `▾` comes out
         // as `â–¾`.

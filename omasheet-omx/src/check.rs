@@ -4672,7 +4672,7 @@ impl<'a> Checker<'a> {
                                     "`{name}` needs a vector, but this is {}",
                                     other.describe()
                                 ),
-                                "select one column, for example `Sales.Revenue`",
+                                "select one column, for example `Sheet1.A`",
                             );
                             return fail;
                         }
@@ -5004,7 +5004,7 @@ impl<'a> Checker<'a> {
                                 "`{name}` needs a vector of numbers, but this is {}",
                                 vty.describe()
                             ),
-                            "select one column, for example `Sales.Revenue`",
+                            "select one column, for example `Sheet1.A`",
                         );
                     }
                     return fail;
