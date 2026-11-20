@@ -1,48 +1,94 @@
+<p align="center">
+  <img src="header.png" alt="Omasheet" width="480">
+</p>
+
 # Omasheet
 
-<img src="header.png" alt="Omasheet">
+**What Markdown is to words, Omasheet is to numbers.** A plain-text spreadsheet with SI units, exact arithmetic and typed columns, in files you can diff, review and hand to an AI.
 
-What Markdown is to words, Omasheet is to numbers.
+[![CI](https://github.com/librasteve/omasheet/actions/workflows/ci.yml/badge.svg)](https://github.com/librasteve/omasheet/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/librasteve/omasheet?color=7ee0c8)](https://github.com/librasteve/omasheet/releases/latest)
+[![MIT licence](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 
-📄 **Text as the source of truth**
+[Website](https://omasheet.org) · [Install](#install) · [Run](#run) · [Docs](#docs) · [Releases](https://github.com/librasteve/omasheet/releases) · [Support](#support)
 
-The spreadsheet as a trackable and composable document, not just a binary file. Great for Git version control and LLM workflow automation.
 
-📊 **Columns as the computational model**
+<a href="docs/images/screenshot.png"><img src="docs/images/screenshot.png" alt="This is the app: a Benchmark sheet with input data, measured duration and memory, and calculated columns for Change (Warm vs. Cold) and whether Cold beats the 50ms target, defined once and checked as you work."></a>
 
-Named, typed columns and array expressions connect spreadsheet flexibility to structured dataframe queries and transformations.
+Omarchy first · your theme · keys or mouse · built on Polars · macOS · Windows · Linux · Rust · MIT
 
-🔢 **Strong type system**
+### The file is the spreadsheet
 
-The numeric types form a hierarchy, **ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ**. The more _infectious_ a type, the less exact it is: `Integer` < `Fraction` < `Decimal` < `Float` < `Scientific` < `Complex`. A `Fraction` is exact without limit, whereas a `Decimal` is held to a fixed number of places. `Float` trades exactness for exponential range, `Scientific` provides uncertainty for physical constants and `Complex` has _real_ and _imaginary_ parts.
-
-Other types cover `Quantity` for SI and non-SI units & prefixes; `String`, `Datetime`, `Zoned`, `Boolean` and so on. Representations (`Percent`, `Hex`, `Octal`, `Binary`...) round out a broad set of tools for uses from junior school teaching to complex analytics.
-
-_Automatically follows system dark/light mode._
+An `.omx` file holds constants, functions and sheets as readable text. It diffs cleanly in Git, reviews like code, and is easy for an LLM to read and write. A formula is written once per column and applies down every row, so a sheet reads like a small, typed program over its own data.
 
 ```omx
-const TaxRate = 20%
+const Target = 50
 
-sheet Sales
+sheet Benchmark
 
-| Month | Revenue | Cost | Profit | Tax | Running |
-| ----- | ------- | ---- | ------ | --- | ------- |
-| Jan   | 10000   | 6000 | *      | *   | *       |
-| Feb   | 12000   | 7000 | *      | *   | *       |
-| Mar   | 15000   | 8000 | *      | *   | *       |
+| Run             | FileSize | Rows     | Cold | Warm | Change | Beats_50ms |
+| --------------- | -------- | -------- | ---- | ---- | ------ | ---------- |
+| CSV, large      | 1060     | 20800000 | 57   | 27   | *      | *          |
+| XLSX, large     | 42       | 1048575  |      | 23   | *      | *          |
+| Parquet, medium | 236      | 20800000 | 12.8 | 10.8 | *      | *          |
+| Parquet, large  | 610      | 23900000 | 45.6 | 37   | *      | *          |
 
-Profit  := Revenue - Cost
-Tax     := Profit * TaxRate
-Running := [Revenue; 0..*].sum()
+Change := (Warm/Cold-1).Percent
+Beats_50ms := Cold <= Target
 ```
 
-<img src="Screenshot.png">
+### Numbers that know their dimensions
+
+Write `5kg + 300g` and get `5.3kg`. Add a mass to a length and you get an error that says so, not a meaningless number. All the SI prefixes work on every unit, angles and time are quantities too, and uncertainty (`5kg ± 100g`) carries through your arithmetic.
+
+```text
+> 5kg±100g + 300g
+5.30(10)kg
+> 9.81m.s^-2 * 2s
+19.62m⋅s⁻¹
+> sin(45°30′30″)
+0.713·
+> €100.to('$')
+109.673USD·
+> 5kg + 3m
+error: cannot add kg and m: they measure Mass and Length
+```
+
+### Exact where it counts
+
+Fractions are exact without limit, Decimals keep money to the penny, and scientific notation carries uncertainty. From `1/3 + 1/6 == 1/2` to physical constants such as **G**: `6.67430(15)e-11 m³⋅kg⁻¹⋅s⁻²`, numbers mean what they say.
+
+| Type | Group | Literal | Representations |
+|---|---|---|---|
+| `Integer` | ℤ | `1` | `0xff`, `0o17`, `0b101` |
+| `Fraction` | ℚ | `<1/7>` | `1/7`, `2 3/4` |
+| `Decimal` | ℚ | `1.0` | `14.29%` |
+| `Float` | ℝ | `1e0` | - |
+| `Scientific` | ℝ | `1.01(01)e0` | `1 ± 0.01` |
+| `Complex` | ℂ | `3+4i` | - |
+
+`Integer`, `Fraction` and `Decimal` are exact, and each type is more infectious than the one above it: an operation gives the least number system that holds its operands. Other types cover `Quantity`, `String`, `Datetime`, `Zoned` and `Boolean`.
+
+### Markdown in, finished report out
+
+Put a sheet inside a Markdown document and render it to HTML with the same displays as the grid, so the numbers and the prose stay in one reviewable file.
+
+Have your AI run this on every build, apply a theme, save to the repo and post to your intranet or email the team.
+
+<a href="docs/images/benchmarks-report.png"><img src="docs/images/benchmarks-report.png" width="50%" alt="A rendered report, Opening a big file, with a table of benchmark runs and sentences whose figures are worked out from the sheet"></a>
+
+### Built for scripts and AI agents
+
+Filter, `sort`, `group_by`, `agg`, `select`, `apply`, etc. run as Polars queries with streaming and lazy execution. Everything the app does is on the command line, and an [agent skill](#ai-skill) lets Claude and friends write `.omx` files that type-check.
+
+### And more
+
+- **Interchange.** Import and export XLSX, CSV, JSON and Parquet, with types and units kept where the format allows.
+- **Built-in constants.** `pi`, `c`, `planck`, `kB`, `NA` and more, from the 2019 SI and CODATA 2022.
+- **Booleans and logic.** Symbol formats such as `✓✗`, logic functions and gate operators, set right in the grid.
+- **Native.** One Rust binary, with a Qt app on macOS, Windows, Arch and Omarchy.
 
 ## Install
-
-**From OmaStore** — Omasheet is listed under Office in
-[OmaStore](https://github.com/KitsuneForgering/OmaStore), the community app
-store for Omarchy. Search for it there and click `install`.
 
 **Omarchy and Arch Linux, with pacman** (the same `install.sh` line as for macOS):
 
@@ -52,6 +98,10 @@ curl -fsSL https://raw.githubusercontent.com/librasteve/omasheet/main/install.sh
 
 **Update:** run the same line again.
 **Uninstall:** `sudo pacman -R omasheet` on Arch; on macOS delete `/Applications/Omasheet.app` and `/usr/local/bin/omasheet`; on Windows run `uninstall.ps1` in the install folder, or use Apps & features.
+
+**From OmaStore** — Omasheet is listed under Office in
+[OmaStore](https://github.com/KitsuneForgering/OmaStore), the community app
+store for Omarchy. Search for it there and click `install`.
 
 **macOS** (Apple silicon or Intel) open Terminal app and use the same `curl` line; installs `Omasheet.app` into `/Applications` and the `omasheet` command into `/usr/local/bin`.
 
@@ -69,7 +119,7 @@ the binary is at `target/release/omasheet`.
 
 ```sh
 omasheet                                # the app, on a new file
-omasheet examples/budget.omx            # the app, on a .omx, .csv, .json or .xlsx file
+omasheet examples/budget.omx            # the app, on a .omx, .csv, .json, .xlsx or .parquet file
 omasheet print examples/budget.omx      # print the calculated file
 omasheet eval '1/3 + 1/6'               # 1/2, exactly
 omasheet export examples/budget.omx --xlsx [or --csv | --json | --parquet]
@@ -85,7 +135,7 @@ Prompt your favorite AI with:
 Please load the Omasheet skill from https://raw.githubusercontent.com/librasteve/omasheet/main/skill/omasheet/SKILL.md and follow its instructions when creating, checking, or converting spreadsheets.
 ```
 
-The Arch package also installs the skill to `/usr/share/omasheet/agent-skill/omasheet`. To give it to Claude Code:
+The Omarchy package also installs the skill to `/usr/share/omasheet/agent-skill/omasheet`. To give it to Claude Code:
 
 ```sh
 ln -sfn /usr/share/omasheet/agent-skill/omasheet ~/.claude/skills/omasheet
@@ -101,8 +151,18 @@ ln -sfn /usr/share/omasheet/agent-skill/omasheet ~/.claude/skills/omasheet
 - [`examples/`](examples) — worked files, each with its expected output
 - [`openspec/`](openspec) — the design and the specs
 
-**Breaking change in 0.1.6.** Numbers are now the Polars dtypes, so exactness narrows from rational to a 38-digit decimal: `Int` is 64-bit rather than arbitrary-precision, and a result that does not fit is reported. `Complex` was dropped and has since returned (the most infectious number type, stored in Parquet as a struct of `re` and `im`), and the type names follow Polars: `Bool` is `Boolean`, `Text` is `String`, `Num` is `Float`, and an empty cell is `Null`. Files written for 0.1.5 and earlier may need their schema lines renamed.
+## Support
 
-Early and changing. MAY CONTAIN ERRORS.
+Omasheet is free, MIT licensed and built by one person. If it is useful to you, you can help keep it going:
 
-Copyright (c) 2026 Stephen Roe. MIT licence; see [LICENSE](LICENSE).
+- [♥ Donate](https://github.com/sponsors/librasteve)
+- [Support on Patreon](https://www.patreon.com/cw/librasteve/membership)
+- [★ Star it on GitHub](https://github.com/librasteve/omasheet)
+
+## Status
+
+Early and changing, and it may contain errors. Please [open an issue](https://github.com/librasteve/omasheet/issues) if a number surprises you.
+
+## Licence
+
+MIT. Copyright (c) 2026 Stephen Roe. See [LICENSE](LICENSE).
