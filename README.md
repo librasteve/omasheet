@@ -10,14 +10,21 @@
 [![Release](https://img.shields.io/github/v/release/librasteve/omasheet?color=7ee0c8)](https://github.com/librasteve/omasheet/releases/latest)
 [![MIT licence](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 
-[Website](https://omasheet.org) · [Install](#install) · [Run](#run) · [Docs](#docs) · [Releases](https://github.com/librasteve/omasheet/releases) · [Support](#support)
+[Website](https://omasheet.org) · [Install](#install) · [Run](#run) · [Docs](#docs) · [Releases](https://github.com/librasteve/omasheet/releases)
 
 
 <a href="docs/images/screenshot.png"><img src="docs/images/screenshot.png" alt="This is the app: a Benchmark sheet with input data, measured duration and memory, and calculated columns for Change (Warm vs. Cold) and whether Cold beats the 50ms target, defined once and checked as you work."></a>
 
 Omarchy first · your theme · keys or mouse · built on Polars · macOS · Windows · Linux · Rust · MIT
 
-### The file is the spreadsheet
+### Support
+
+Omasheet is free and MIT licensed. If it is useful to you, please help keep it going. Your support is appreciated.
+
+[♥ Donate](https://github.com/sponsors/librasteve) · [Support on Patreon](https://www.patreon.com/cw/librasteve/membership) · [★ Star it on GitHub](https://github.com/librasteve/omasheet)
+
+
+### The plain-text spreadsheet
 
 An `.omx` file holds constants, functions and sheets as readable text. It diffs cleanly in Git, reviews like code, and is easy for an LLM to read and write. A formula is written once per column and applies down every row, so a sheet reads like a small, typed program over its own data.
 
@@ -150,14 +157,6 @@ ln -sfn /usr/share/omasheet/agent-skill/omasheet ~/.claude/skills/omasheet
 - [XLSX, CSV, JSON and Markdown](docs/interop.md)
 - [`examples/`](examples) — worked files, each with its expected output
 - [`openspec/`](openspec) — the design and the specs
-
-## Support
-
-Omasheet is free, MIT licensed and built by one person. If it is useful to you, you can help keep it going:
-
-- [♥ Donate](https://github.com/sponsors/librasteve)
-- [Support on Patreon](https://www.patreon.com/cw/librasteve/membership)
-- [★ Star it on GitHub](https://github.com/librasteve/omasheet)
 
 ## Status
 
