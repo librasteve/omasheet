@@ -5602,11 +5602,73 @@ impl<'a> Checker<'a> {
                     Ty::Scalar(S::Complex),
                 )
             }
-            _ if S::from_name(name).is_some() => {
-                if !arity(self, 1, &format!("{name}(x)")) {
+            // `type(x)`: the name of the type of a value, `'Length'`.
+            "type" => {
+                if !arity(self, 1, "x.type()") {
                     return fail;
                 }
+                let (arg, aty) = self.lower(&args[0], sc);
+                let named = |s: S| match s {
+                    // A quantity not declared as a kind has only its
+                    // dimension, which is read from the value.
+                    S::Quantity(q) if q.named().is_none() => None,
+                    s => Some(s.to_string()),
+                };
+                match aty {
+                    Ty::Scalar(s) | Ty::Vector(s, _) => match named(s) {
+                        Some(n) => (
+                            Node::new(Ir::Lit(Lit::String(n)), span),
+                            Ty::Scalar(S::String),
+                        ),
+                        None => (
+                            Node::new(Ir::Call(Func::TypeOf, vec![arg]), span),
+                            Ty::Scalar(S::String),
+                        ),
+                    },
+                    Ty::Any => (
+                        Node::new(Ir::Call(Func::TypeOf, vec![arg]), span),
+                        Ty::Scalar(S::String),
+                    ),
+                    other => {
+                        self.err(
+                            args[0].span,
+                            format!("`type` needs a value, but this is {}", other.describe()),
+                        );
+                        fail
+                    }
+                }
+            }
+            // A quantity kind or `Duration` also takes a unit: `Length(x)`
+            // reads a number in the kind's own unit, `Length(x, 'km')` in the
+            // one given, and a quantity is converted to it.
+            _ if S::from_name(name).is_some() => {
                 let to = S::from_name(name).unwrap_or(S::Any);
+                let with_unit = matches!(to, S::Quantity(_) | S::Duration);
+                if with_unit && args.len() == 2 {
+                    let (unit, uty) = self.lower(&args[1], sc);
+                    if !matches!(uty, Ty::Scalar(S::String) | Ty::Any) {
+                        self.err_help(
+                            args[1].span,
+                            format!("the unit must be text, but this is {}", uty.describe()),
+                            format!("usage: `{name}(x, 'km')`"),
+                        );
+                        return fail;
+                    }
+                    let (arg, aty) = self.lower(&args[0], sc);
+                    let (mut node, ty) = self.convert(name, to, arg, aty, args[0].span, span);
+                    if let Ir::Call(_, a) = &mut node.kind {
+                        a.push(unit);
+                    }
+                    return (node, ty);
+                }
+                let usage = if with_unit {
+                    format!("{name}(x) or {name}(x, 'km')")
+                } else {
+                    format!("{name}(x)")
+                };
+                if !arity(self, 1, &usage) {
+                    return fail;
+                }
                 let (arg, aty) = self.lower(&args[0], sc);
                 self.convert(name, to, arg, aty, args[0].span, span)
             }

@@ -314,11 +314,15 @@ impl S {
                         || self == S::Boolean
                         || (quantity && matches!(to, S::Float | S::Scientific))
                 }
-                S::Quantity(_) => quantity,
+                // A number takes the kind's unit, or the one given: `Length(2.5)`,
+                // `Length(2.5, 'km')`.
+                S::Quantity(_) => quantity || number,
                 S::Percent | S::Boolean => number,
                 S::Date | S::Time => self == S::Datetime,
                 S::Datetime => self == S::Date,
-                S::Duration => false,
+                // A quantity of time, or a number of the unit given (seconds
+                // by default).
+                S::Duration => quantity || number,
             }
     }
 

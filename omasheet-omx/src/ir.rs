@@ -176,6 +176,9 @@ pub enum Func {
     Quantile,
     /// A value as another type: `Int(x)`, `Num(x)` and the rest.
     To(S),
+    /// `x.type()` of a value whose type is not known until it is read: the
+    /// kind of a quantity from its dimension.
+    TypeOf,
     /// `Complex(re, im)`: a complex number from its two parts.
     Complex,
     /// The next value after this one: a number plus one, or the next text

@@ -309,6 +309,21 @@ dimension. `x.unit()` gives the unit as text, `5kg.unit()` is `kg`, and
 `Scientific`: `10.5(3)kg.value()` is `10.5(3)`. Together they take a quantity
 apart, and `x.to('g').value()` is its number of grams.
 
+A kind of quantity, such as `Length`, `Mass` or `Energy`, and `Duration` are also
+functions that give a value of that kind, in a call or as a method. A number, or
+text that reads as one, takes the kind's own unit, seconds for a `Duration`, or
+the unit given as a second argument: `Length(2.5)` is `2.5m`, `Length(2.5, 'km')`
+is `2.5km` and `Length('5km')` is `5km`. A quantity of that kind is converted to
+the unit given, `(5km).Length('mi')` is `3.107mi`, and otherwise kept in its own
+unit. One of another dimension is an error: `Mass(5km)`. `Quantity` has no unit of
+its own, so `Quantity(2.5, 'kg')` needs one. `x.type()` gives the name of the
+type of `x` as text: `5.type()` is `Integer`, `Length(3).type()` is `Length`, and
+a quantity with no declared kind gives every kind its dimension has, so
+`(5J).type()` is `Energy/Torque`.
+
+A formula in a sheet may begin a reference with a `.` to mean that sheet, so
+`.Revenue.sum()` is `Sales.Revenue.sum()` written in `Sales`.
+
 A `.` after a unit continues it if what follows is a unit, so `5N.m` is a
 newton metre, and ends it if it is a call or a name, so `5kg.abs()` and
 `5m.Float` are the methods.

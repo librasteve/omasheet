@@ -14,7 +14,7 @@ use omasheet_omx::ast::{BinOp, Lit};
 use omasheet_omx::colfmt::SciFormat;
 use omasheet_omx::date::Style;
 use omasheet_omx::funcs::MathFn;
-use omasheet_omx::types::QId;
+use omasheet_omx::types::{QId, S};
 use siquant::{Quantity, Registry, Scope, Unit};
 use std::cmp::Ordering;
 use std::rc::Rc;
@@ -510,6 +510,83 @@ pub fn to_unit(v: &Value, unit: &Value) -> Result<Value, String> {
     }
 }
 
+/// `Length(x)`, `Length(x, 'km')`, `Duration(x, 'ms')`: a value as a quantity
+/// kind or a `Duration`. A number, or text that reads as one (`'5km'`), is
+/// taken in `unit`, or the kind's own unit (seconds for a `Duration`); a
+/// quantity is converted to `unit` if it is given and is otherwise kept in the
+/// unit it has. A quantity of another dimension is an error.
+pub fn kind(v: &Value, to: S, unit: Option<&Unit>) -> Result<Value, String> {
+    let v = match v {
+        Value::Null => return Ok(Value::Null),
+        Value::String(text, _) => {
+            let text = text.trim();
+            match omasheet_omx::convert::parse_literal_with(text, true) {
+                Some(lit) => Value::from_lit(&lit),
+                None => return Err(format!("`{text}` is not a number or a quantity")),
+            }
+        }
+        other => other.clone(),
+    };
+    match to {
+        S::Duration => match &v {
+            Value::Duration(_) => Ok(v),
+            Value::Quantity(q) => into_duration(q),
+            number => {
+                let n = lift(number)
+                    .filter(|_| !matches!(number, Value::Duration(_)))
+                    .ok_or_else(|| format!("{} cannot be made a `Duration`", number.kind()))?;
+                let unit = match unit {
+                    Some(u) => u.clone(),
+                    None => Unit::parse("s", Scope::Live).map_err(said)?,
+                };
+                let q = Quantity::new(n.value(), n.sigma(), unit).map_err(said)?;
+                into_duration(&q)
+            }
+        },
+        S::Quantity(id) => {
+            let v = match v {
+                Value::Duration(us) => from_duration(us),
+                other => other,
+            };
+            let already = matches!(v, Value::Quantity(_));
+            if let (Some(u), Some(t)) = (unit, id.named())
+                && u.dims() != t.dims()
+            {
+                return Err(format!("`{u}` is not a unit of {}", id.name()));
+            }
+            // A quantity keeps its own unit unless one is asked for.
+            let column = match (unit, already) {
+                (Some(u), _) => Some(u.clone()),
+                (None, true) => None,
+                (None, false) => column_unit(id),
+            };
+            match dress(v, id, column.as_ref())? {
+                out @ Value::Quantity(_) => Ok(out),
+                other => Err(format!(
+                    "{} needs a unit to be a `{}`: write `{}(x, 'unit')`",
+                    other.kind(),
+                    id.name(),
+                    id.name()
+                )),
+            }
+        }
+        other => Err(format!("`{other}` takes no unit")),
+    }
+}
+
+/// The unit named by text, as `'km'`.
+pub fn unit_named(v: &Value) -> Result<Unit, String> {
+    let Value::String(text, _) = v else {
+        return Err(format!("expected the name of a unit, found {}", v.kind()));
+    };
+    Unit::parse(text, Scope::Any).map_err(|e| format!("`{text}` is not a unit: {e}"))
+}
+
+/// `x.type()` of a quantity: its kind, or every kind its dimension has.
+pub fn type_name(q: &Quantity) -> String {
+    omasheet_omx::units::kinds_of(q.unit().dims())
+}
+
 /// Whether a quantity may be held in a column of this type: any quantity in
 /// a `Quantity` column, and in a named one a quantity of that dimension.
 pub fn admitted(q: &Quantity, id: QId) -> bool {
@@ -715,6 +792,11 @@ fn render(q: &Quantity, f: &SciFormat, style: &Style, exact: bool, with_unit: bo
     // `218.3(0)m.s^-1`. `±` asks for it, as `218.3 ± 0.0`.
     if q.sigma() == 0.0 && !f.plus_minus {
         number = number.replacen("(0)", "", 1);
+    }
+    // The mark of a cut number goes last, after the unit, on the right.
+    if number.contains(crate::value::MORE) {
+        let digits = number.replace(crate::value::MORE, "");
+        return format!("{digits}{unit}{}", crate::value::MORE);
     }
     format!("{number}{unit}")
 }

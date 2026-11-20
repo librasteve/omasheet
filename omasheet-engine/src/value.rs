@@ -277,6 +277,17 @@ impl Value {
         if fits {
             return Ok(self.clone());
         }
+        // A number or text as a quantity kind, a quantity of time as a
+        // `Duration`, and a text `Duration` such as `PT90M`.
+        if matches!(to, S::Quantity(_) | S::Duration) && !matches!(self, Value::Duration(_)) {
+            let iso = matches!((self, to), (Value::String(..), S::Duration))
+                .then(|| self.to_lit().and_then(|l| convert::convert(&l, to).ok()))
+                .flatten();
+            if let Some(l) = iso {
+                return Ok(Value::from_lit(&l));
+            }
+            return crate::quantity::kind(self, to, None);
+        }
         // A quantity with no dimension is a number; one with a unit is not.
         if let (Value::Quantity(q), S::Float | S::Scientific) = (self, to) {
             let (v, s) = q.to_number().map_err(|_| {
@@ -2008,6 +2019,31 @@ fn grouped_whole(text: &str, sep: char) -> String {
         out.push(digit);
     }
     out + rest
+}
+
+/// A value and its uncertainty in the concise form, `6.6743(15)e-11`, as a
+/// file writes it: the number of digits the uncertainty gives it.
+pub fn format_uncertain_plain(v: f64, s: f64) -> String {
+    format_uncertain(v, s, &SciFormat::default(), None)
+}
+
+/// What a copy puts on the clipboard for a value that has an uncertainty:
+/// the concise form, `6.6743(15)e-11kg`, which reads back, in place of the
+/// `±` form a file shows in full. `None` for any other value.
+pub fn copied_uncertain(v: &Value) -> Option<String> {
+    match v {
+        Value::Scientific(x, s) if *s != 0.0 => Some(format_uncertain_plain(*x, *s)),
+        Value::Quantity(q) if q.sigma() != 0.0 => Some(format!(
+            "{}{}",
+            format_uncertain_plain(q.value(), q.sigma()),
+            if q.unit().is_dimensionless() {
+                String::new()
+            } else {
+                q.unit().to_string()
+            }
+        )),
+        _ => None,
+    }
 }
 
 /// A scientific value as `style` shows a number: its point the style's own.

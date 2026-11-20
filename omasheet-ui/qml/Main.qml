@@ -1120,6 +1120,13 @@ ApplicationWindow {
                 var lead = m[0].length - (sheet.name.length + 1 + name.length);
                 add(0, i, nRows - 1, i, { index: m.index + lead, 0: m[0].slice(lead) });
             }
+            // The same with a leading dot, `.Revenue`: this sheet's whole
+            // column. A dot after a name, `)` or `]` is a method or a field.
+            var dotted = new RegExp("(?:^|[^A-Za-z0-9_.)\\]])\\." + name + "(?![A-Za-z0-9_(\\[])", "g");
+            while ((m = dotted.exec(code)) !== null) {
+                var dot = m.index + m[0].length - (1 + name.length);
+                add(0, i, nRows - 1, i, { index: dot, 0: m[0].slice(m[0].length - (1 + name.length)) });
+            }
             var bare = new RegExp("(?:^|[^A-Za-z0-9_.\\[])" + name + "(?![A-Za-z0-9_.(\\[])", "g");
             while ((m = bare.exec(code)) !== null) {
                 var at = m.index + m[0].length - name.length;
@@ -1216,9 +1223,13 @@ ApplicationWindow {
             model: win.refBoxes
             Item {
                 required property var modelData
-                readonly property rect a: marks.edit.positionToRectangle(modelData.start)
-                readonly property rect b: marks.edit.positionToRectangle(modelData.end)
-                visible: a.y === b.y && b.x > a.x
+                // The boxes are read from the formula box's text, which can be a
+                // keystroke ahead of this editor's: a place past its end is not
+                // drawn, and not asked of the text control.
+                readonly property bool inText: modelData.end <= marks.edit.length
+                readonly property rect a: inText ? marks.edit.positionToRectangle(modelData.start) : Qt.rect(0, 0, 0, 0)
+                readonly property rect b: inText ? marks.edit.positionToRectangle(modelData.end) : Qt.rect(0, 0, 0, 0)
+                visible: inText && a.y === b.y && b.x > a.x
                 x: a.x
                 y: a.y
                 width: b.x - a.x

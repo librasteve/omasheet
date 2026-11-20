@@ -4225,8 +4225,21 @@ impl<'p> Engine<'p> {
         }
         match func {
             Func::To(to) => {
-                let convert =
-                    |v: &Value| -> R { v.converted(to).or_else(|message| fail(span, message)) };
+                // `Length(x, 'km')`: the unit is the second argument.
+                let unit = match args.get(1) {
+                    Some(u) => Some(
+                        crate::quantity::unit_named(&self.eval(u, fr)?)
+                            .or_else(|message| fail(span, message))?,
+                    ),
+                    None => None,
+                };
+                let convert = |v: &Value| -> R {
+                    match &unit {
+                        Some(u) => crate::quantity::kind(v, to, Some(u)),
+                        None => v.converted(to),
+                    }
+                    .or_else(|message| fail(span, message))
+                };
                 match self.eval(&args[0], fr)? {
                     Value::Vector(items) => Ok(Value::Vector(Rc::new(
                         items.iter().map(convert).collect::<R<Vec<_>>>()?,
@@ -4234,6 +4247,10 @@ impl<'p> Engine<'p> {
                     single => convert(&single),
                 }
             }
+            Func::TypeOf => match self.eval(&args[0], fr)? {
+                Value::Quantity(q) => Ok(Value::text(&crate::quantity::type_name(&q))),
+                other => Ok(Value::text(other.kind())),
+            },
             Func::Succ => {
                 let next = |v: &Value| -> R {
                     match v {

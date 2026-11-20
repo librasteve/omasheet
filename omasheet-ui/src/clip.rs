@@ -216,7 +216,9 @@ fn block_text(doc: &Document, sheet: usize, from: Cell, to: Cell, values: bool) 
             // A value in full, where it is shown with fewer digits than it
             // has.
             .map(|(c, cell)| match &t.columns[c].formula {
-                _ if values => cell.exact.clone().unwrap_or_else(|| cell.display.clone()),
+                _ if values => omasheet_engine::value::copied_uncertain(&cell.value)
+                    .or_else(|| cell.exact.clone())
+                    .unwrap_or_else(|| cell.display.clone()),
                 Some(formula) => format!("= {formula}"),
                 // A cell of a file's has no text behind it: its value is
                 // what it holds.
@@ -970,6 +972,17 @@ mod tests {
         let mut clip = Clip::default();
         assert_eq!(clip.copy(&doc, 0, (0, 2), (0, 3)), "= A+B\t= A + B");
         assert_eq!(Clip::text(&doc, 0, (0, 0), (1, 1)), "1\t2\n10\t20");
+    }
+
+    #[test]
+    fn an_uncertain_value_is_copied_in_the_concise_form() {
+        let doc = Document::from_text(
+            "sheet T\n\nG                    | H\n6.6743e-11 ± 1.5e-15 | *\n\nH := 6.6743e-11kg ± 1.5e-15kg\n",
+        );
+        let values = block_text(&doc, 0, (0, 0), (0, 1), true);
+        let (g, h) = values.split_once('\t').unwrap();
+        assert!(g.contains("(15)") && !g.contains('±'), "{g}");
+        assert!(h.contains("(15)") && h.ends_with("kg") && !h.contains('±'), "{h}");
     }
 
     #[test]

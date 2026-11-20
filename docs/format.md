@@ -326,11 +326,11 @@ Each type may be shown more than one way:
 
 | Type | Literal | Representations |
 |---|---|---|
-| `Integer` | `1` | `Hex` `0xff`, `Octal` `0o17`, `Binary` `0b101` |
-| `Decimal` | `1.0` | `Percent` `14.29%` |
+| `Integer` | `1` | `0xff`, `0o17`, `0b101` |
 | `Fraction` | `<1/7>` | `1/7`, `2 3/4` |
+| `Decimal` | `1.0` | `14.29%` |
 | `Float` | `1e0` | - |
-| `Scientific` | `10.5(3)` | - |
+| `Scientific` | `1.01(01)e0` | `1 ± 0.01` |
 | `Complex` | `3+4i` | - |
 
 - Two values shown the same way keep it: `Hex` + `Hex` is a `Hex`, and `Fraction` + `Fraction` a `Fraction`.

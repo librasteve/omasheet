@@ -246,6 +246,42 @@ fn quantities_are_equal_within_their_uncertainties() {
 // ---- conversion -------------------------------------------------------------
 
 #[test]
+fn a_kind_makes_a_quantity_of_a_number_text_or_quantity() {
+    assert_eq!(full("Length(2.5)"), "2.5m");
+    assert_eq!(full("Length(2.5, 'km')"), "2.5km");
+    assert_eq!(full("2.5.Length('km')"), "2.5km");
+    assert_eq!(full("Length('5km')"), "5km");
+    assert_eq!(full("5km.Length"), "5km");
+    assert_eq!(full("(5km).Length('m')"), "5000m");
+    assert_eq!(full("Quantity(2.5, 'kg')"), "2.5kg");
+    fails("Mass(5km)");
+    fails("Length(2.5, 'kg')");
+    fails("Quantity(2.5)");
+}
+
+#[test]
+fn a_duration_is_made_of_a_number_or_a_quantity_of_time() {
+    assert_eq!(full("Duration(2.5, 'ms')"), "PT0.0025S");
+    assert_eq!(full("Duration(5)"), "PT5S");
+    assert_eq!(full("(90min).Duration"), "PT1H30M");
+    fails("Duration(2.5, 'm')");
+}
+
+#[test]
+fn type_names_the_type_of_a_value() {
+    assert_eq!(full("5.type()"), "Integer");
+    assert_eq!(full("Length(3).type()"), "Length");
+    assert_eq!(full("(5J).type()"), "Energy/Torque");
+}
+
+#[test]
+fn a_leading_dot_names_a_column_of_this_sheet() {
+    let file = "sheet T\n\nA : Integer\nB : Decimal\n\n| A | B |\n| - | - |\n| 1 | * |\n| 3 | * |\n\nB := A + .A.sum()\n";
+    let out = view("test.omx", file);
+    assert!(out.ok(), "{:?}", out.errors);
+}
+
+#[test]
 fn to_another_unit() {
     assert_eq!(full("5kg.to('g')"), "5000g");
     assert_eq!(full("to(5kg, 'g')"), "5000g");
@@ -633,9 +669,10 @@ fn a_distance_over_a_duration_is_a_speed() {
 
 #[test]
 fn a_duration_is_a_quantity_of_time_with_nothing_to_convert() {
-    // `.Quantity` and `.Duration` are gone.
+    // A duration is not made a `Quantity`, but `Duration(x)` takes a
+    // quantity of time, and a number in the unit given.
     assert!(fails("PT90M.Quantity").contains("cannot be applied"));
-    assert!(fails("5400s.Duration").contains("cannot be applied"));
+    assert_eq!(shown("5400s.Duration"), "PT1H30M");
     // A quantity of time beside a duration is a duration.
     assert_eq!(shown("PT1H + 30min"), "PT1H30M");
     assert_eq!(shown("PT90M - 1h"), "PT30M");

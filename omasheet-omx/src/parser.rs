@@ -656,6 +656,14 @@ impl Parser {
             Tok::True => lit(Lit::Boolean(true)),
             Tok::False => lit(Lit::Boolean(false)),
             Tok::Star => ExprKind::Cursor,
+            // A leading `.`, as `.Revenue.sum()`: the current sheet, with the
+            // dot left for `postfix` to read as the field access.
+            Tok::Dot => {
+                return Ok(Expr {
+                    kind: ExprKind::Own,
+                    span: Span::new(span.src, span.start as usize, span.start as usize),
+                });
+            }
             Tok::Lt => return self.fraction(),
             Tok::Dollar => {
                 self.bump();

@@ -494,10 +494,13 @@ fn unit_shown(value: &Value, format: Option<&Format>, display: &str) -> Option<S
         Some(Format::Quantity(f)) => f.unit.as_ref().map(|u| u.to_string()),
         _ => None,
     };
+    // The unit is shown as the SI writes it, `m⋅s⁻¹`, unless the format asks
+    // for the notation the parser reads: the form that ends the display is it.
     [column, Some(q.unit().to_string())]
         .into_iter()
         .flatten()
         .filter(|u| !u.is_empty())
+        .flat_map(|u| [omasheet_omx::colfmt::pretty_unit(&u), u])
         .find(|u| {
             shown.strip_suffix(u.as_str()).is_some_and(|number| {
                 number
