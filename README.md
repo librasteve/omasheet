@@ -165,3 +165,5 @@ Early and changing, and it may contain errors. Please [open an issue](https://gi
 ## Licence
 
 MIT. Copyright (c) 2026 Stephen Roe. See [LICENSE](LICENSE).
+
+Omasheet is an independent open-source project. It is not affiliated with, endorsed by or sponsored by the Omacom Foundation.
