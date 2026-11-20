@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a505b"/>
+      <stop offset="1" stop-color="#171a1f"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".16"/>
+      <stop offset=".5" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7cf0d4"/>
+      <stop offset="1" stop-color="#2cc9a6"/>
+    </linearGradient>
+    <linearGradient id="cell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4f1ea"/>
+      <stop offset="1" stop-color="#d9d5ca"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#000" flood-opacity=".4"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#body)" filter="url(#shadow)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#gloss)"/>
+  <rect x="103" y="103" width="818" height="818" rx="182" fill="none" stroke="#fff" stroke-opacity=".22" stroke-width="4"/>
+  <g>
+    <rect x="252" y="262" width="160" height="92" rx="16" fill="url(#accent)"/>
+    <rect x="432" y="262" width="160" height="92" rx="16" fill="url(#accent)"/>
+    <rect x="612" y="262" width="160" height="92" rx="16" fill="url(#accent)"/>
+    <g fill="url(#cell)">
+      <rect x="252" y="374" width="160" height="110" rx="16" opacity=".95"/>
+      <rect x="432" y="374" width="160" height="110" rx="16" opacity=".95"/>
+      <rect x="612" y="374" width="160" height="110" rx="16" opacity=".95"/>
+      <rect x="252" y="504" width="160" height="110" rx="16" opacity=".8"/>
+      <rect x="612" y="504" width="160" height="110" rx="16" opacity=".8"/>
+      <rect x="252" y="634" width="160" height="110" rx="16" opacity=".65"/>
+      <rect x="432" y="634" width="160" height="110" rx="16" opacity=".65"/>
+      <rect x="612" y="634" width="160" height="110" rx="16" opacity=".65"/>
+    </g>
+    <rect x="432" y="504" width="160" height="110" rx="16" fill="#101418" stroke="url(#accent)" stroke-width="10"/>
+  </g>
+</svg>

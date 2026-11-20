@@ -22,13 +22,13 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/release/omasheet "$APP/Contents/MacOS/omasheet"
 sed "s/@VERSION@/$VERSION/g" macos/Info.plist > "$APP/Contents/Info.plist"
 
-# The icon: the SVG drawn by Quick Look, then the sizes an .icns holds. The
-# app is still good without one, so a failure here is not the end.
+# The icon: macos/icon.png (rendered from macos/icon.svg, which has the
+# transparent margin and shadow macOS icons have), then the sizes an .icns
+# holds. The app is still good without one, so a failure here is not the end.
 make_icon() {
   local work="$DIST/icon" set="$DIST/omasheet.iconset"
   mkdir -p "$work" "$set"
-  qlmanage -t -s 1024 -o "$work" pkgbuild/omasheet.svg >/dev/null 2>&1
-  local png="$work/omasheet.svg.png" size
+  local png=macos/icon.png size
   [[ -f $png ]] || return 1
   for size in 16 32 128 256 512; do
     sips -z $size $size "$png" --out "$set/icon_${size}x${size}.png" >/dev/null
