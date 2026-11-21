@@ -57,8 +57,11 @@ fn app() -> ExitCode {
     }
 
     let mut engine = QQmlApplicationEngine::new();
-    if let Some(engine) = engine.as_mut() {
-        engine.load(&QUrl::from("qrc:/qt/qml/io/omacom/omasheet/qml/App.qml"));
+    if let Some(mut engine) = engine.as_mut() {
+        engine
+            .as_mut()
+            .load(&QUrl::from("qrc:/qt/qml/io/omacom/omasheet/qml/App.qml"));
+        icon::forward_open(engine);
     }
     match app.as_mut() {
         Some(app) => std::process::exit(app.exec()),

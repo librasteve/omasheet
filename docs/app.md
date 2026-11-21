@@ -102,38 +102,7 @@ rewrites the text, and saving writes exactly that.
 - In a `Date` column (or a `Datetime` one, for the start of the day) a day and month alone, `2/3`, is read in your locale's order, day first in Britain and month first in the US. It takes the year of the nearest cell above in the column that has one, or this year if none has, and the file holds the whole date, `2026-03-02`. A day that month does not have, `31/4`, is left as typed.
 - A file in another time zone is shown on your clocks.
 
-| Keys | |
-|---|---|
-| Ctrl+. | Context menu |
-| Ctrl+? | Keyboard shortcuts |
-| Ctrl++ / Ctrl+- | Zoom in / out (Ctrl+0 resets) |
-| Ctrl+Z / Ctrl+Y | Undo / redo |
-| Ctrl+Arrows | Go to end |
-| Shift+Arrows | Select block |
-| Ctrl+Alt+Left/Right | Previous / next sheet |
-| Ctrl+C / X / V | Copy / Cut / Paste |
-| Ctrl+Shift+V | Paste values: not formulas |
-| Ctrl+Shift+T | Paste transposed: rows as columns |
-| Ctrl+Shift+R | Paste reference: a live link to the cells copied |
-| Ctrl+Shift+F | Paste format: the type, unit and format of the columns copied, without their values |
-| Ctrl+Enter | Insert row/col after (Shift: before) |
-| Delete | Clear |
-| Ctrl+Delete | Delete the selected rows, columns or sheet |
-| Ctrl+O / S | Open / save |
-| Ctrl+Shift+S | Save as |
-| Ctrl+E | Export as an XLSX Workbook, CSV or JSON |
-| Ctrl+K | New constant |
-| Ctrl+Shift+F | Filter this column |
-| Ctrl+D | Duplicate sheet |
-| Ctrl+N | New sheet |
-| Ctrl+Alt+Shift+Left/Right | Move sheet left / right |
-| Ctrl+Shift+N | New window on this file |
-| Ctrl+Alt+N | New file |
-| F1 | View functions |
-| F2 | Edit |
-| F3 | View source |
-| F4 | Cycle column settings: the filter, type, unit and format boxes in turn (Shift+F4 goes back) |
-| F11 | Fullscreen |
+The keyboard shortcuts are listed in [Keyboard shortcuts](keyboard.md), and Ctrl+? shows them in the app.
 
 ### Read-only views, and pasting a reference
 

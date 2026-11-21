@@ -132,6 +132,12 @@ QtObject {
         function onColorSchemeChanged() { app.followTheme(); }
     }
 
+    // A file the system asks the app to open, as a double click in the Finder
+    // does once it is running: the command line has it only at launch.
+    function openExternal(path) {
+        file.openPath(path);
+    }
+
     Component.onCompleted: {
         followTheme();
         var args = Qt.application.arguments;
