@@ -360,6 +360,40 @@ ApplicationWindow {
         if (showSource) sourceText.forceActiveFocus();
         else grid.forceActiveFocus();
     })
+    // The plot pane sits beside the grid and draws the file's plots, one at
+    // a time. The SVG is made in Rust at the pane's size, in the theme's
+    // ink; it is drawn again, after a pause, when the file, the size or the
+    // theme changes.
+    property bool showPlot: file.savedPlotPane()
+    onShowPlotChanged: {
+        file.savePlotPane(showPlot);
+        plotTimer.restart();
+    }
+    property int plotWidth: 440
+    readonly property int plotPaneWidth: Math.max(fontSize * 18, Math.min(plotWidth, width * 0.7))
+    property var plotNames: []
+    property int plotIndex: 0
+    onPlotIndexChanged: plotTimer.restart()
+    property string plotSvg: ""
+    function drawPlot() {
+        var names = [];
+        try { names = JSON.parse(file.plotsJson()); } catch (e) { names = []; }
+        plotNames = names;
+        if (plotIndex >= names.length) plotIndex = 0;
+        if (!showPlot || names.length === 0) {
+            plotSvg = "";
+            return;
+        }
+        var w = Math.max(100, plotPane.width - 24);
+        var h = Math.max(100, plotPane.height - fontSize * 2 - 24);
+        plotSvg = file.plotSvg(names[plotIndex], Math.round(w), Math.round(h));
+    }
+    Timer { id: plotTimer; interval: 150; onTriggered: win.drawPlot() }
+    Connections {
+        target: file
+        function onRevisionChanged() { plotTimer.restart(); }
+        function onThemeForegroundChanged() { plotTimer.restart(); }
+    }
     // Take the source as it has been edited: one step to undo.
     function applySource() {
         if (showSource && sourceText.text !== file.sourceText())
@@ -3940,6 +3974,7 @@ ApplicationWindow {
 
     Component.onCompleted: {
         wrapTimer.restart();
+        plotTimer.restart();
         reload();
         if (file.filePath.length > 0)
             file.keepLastFile(file.filePath);
@@ -4041,6 +4076,7 @@ ApplicationWindow {
     Shortcut { sequence: "F1"; onActivated: functionsDialog.open() }
     Shortcut { sequence: "F2"; enabled: !win.showSource; onActivated: win.editInBox() }
     Shortcut { sequence: "F3"; onActivated: win.viewSource(!win.showSource) }
+    Shortcut { sequence: "F7"; onActivated: win.showPlot = !win.showPlot }
     // F6 moves the keyboard to the style bar and back: arrows choose, Enter acts, Esc leaves.
     Shortcut {
         sequence: "F6"; enabled: !win.editing && win.canStyle
@@ -4497,6 +4533,8 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: !win.showSource
+            // The plot pane takes the right of it.
+            Layout.rightMargin: win.showPlot ? win.plotPaneWidth : 0
             focus: true
 
             Keys.onPressed: function(event) {
@@ -6184,6 +6222,7 @@ ApplicationWindow {
                 FooterButton { id: addColumnButton; label: "+ Column"; quiet: true; visible: !footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
                 FooterButton { id: addConstantButton; label: "+ Constant"; quiet: true; visible: !footerBar.narrow; onClicked: promptDialog.ask("const") }
                 FooterButton { id: fnButton; label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
+                FooterButton { id: plotButton; label: "plot"; quiet: true; active: win.showPlot; tip: "Show the plots of the file (F7)"; onClicked: win.showPlot = !win.showPlot }
                 FooterButton { id: sourceButton; label: "</>"; quiet: true; active: win.showSource; onClicked: win.viewSource(!win.showSource) }
                 FooterButton { id: helpButton; label: "?"; quiet: true; onClicked: helpDialog.open() }
             }
@@ -6383,6 +6422,99 @@ ApplicationWindow {
                     onClicked: problemsDialog.open()
                 }
             }
+        }
+    }
+
+    // The plots of the file, beside the grid. The grid leaves its right side
+    // to it, and it is laid over that.
+    Rectangle {
+        id: plotPane
+        parent: root
+        visible: win.showPlot && !win.showSource
+        x: root.width - width
+        y: grid.y
+        width: win.plotPaneWidth
+        height: grid.height
+        color: win.pageColor
+        onWidthChanged: plotTimer.restart()
+        onHeightChanged: plotTimer.restart()
+
+        // The edge: a line, and a place to take hold of to change the width.
+        Rectangle {
+            width: 1
+            height: parent.height
+            color: win.lineColor
+        }
+        MouseArea {
+            x: -3
+            width: 7
+            height: parent.height
+            cursorShape: Qt.SplitHCursor
+            property real startX: 0
+            property int startWidth: 0
+            onPressed: function(mouse) {
+                startX = mapToItem(root, mouse.x, 0).x;
+                startWidth = win.plotPaneWidth;
+            }
+            onPositionChanged: function(mouse) {
+                if (pressed)
+                    win.plotWidth = startWidth - (mapToItem(root, mouse.x, 0).x - startX);
+            }
+        }
+
+        // Which plot, where there is more than one.
+        Flickable {
+            id: plotPicker
+            visible: win.plotNames.length > 1
+            x: 8
+            y: 6
+            width: parent.width - 16
+            height: win.fontSize * 2
+            contentWidth: plotChoices.width
+            clip: true
+            interactive: contentWidth > width
+            Row {
+                id: plotChoices
+                spacing: 2
+                Repeater {
+                    model: win.plotNames
+                    FooterButton {
+                        required property int index
+                        required property string modelData
+                        label: modelData
+                        active: index === win.plotIndex
+                        onClicked: win.plotIndex = index
+                    }
+                }
+            }
+        }
+
+        Image {
+            visible: win.plotSvg.indexOf("<svg") === 0
+            x: 12
+            y: (plotPicker.visible ? plotPicker.height + 12 : 12)
+            width: parent.width - 24
+            height: parent.height - y - 12
+            fillMode: Image.PreserveAspectFit
+            horizontalAlignment: Image.AlignHCenter
+            verticalAlignment: Image.AlignTop
+            sourceSize.width: width * Screen.devicePixelRatio
+            sourceSize.height: height * Screen.devicePixelRatio
+            source: visible ? "data:image/svg+xml;utf8," + encodeURIComponent(win.plotSvg) : ""
+        }
+
+        // Nothing to draw: there is none, or it could not be.
+        Text {
+            visible: win.plotSvg.indexOf("<svg") !== 0
+            x: 16
+            y: 16
+            width: parent.width - 32
+            wrapMode: Text.Wrap
+            color: win.plotNames.length > 0 ? win.errorColor : win.mutedColor
+            font.family: win.font.family
+            font.pixelSize: win.smallSize
+            text: win.plotNames.length > 0 ? win.plotSvg
+                : "This file has no plots. Write one in the source view (F3):\n\nplot Trend\ntype: line\ndata: " + (win.tabs.length > 0 ? win.tabs[0].name : "Sheet1")
         }
     }
 

@@ -1,6 +1,6 @@
 # The file format
 
-An `.omx` file is plain text: constants, functions and sheets, in any order.
+An `.omx` file is plain text: constants, functions, sheets and plots, in any order.
 A line that starts with `//` is a comment. It is plain text to Markdown, where a `#` line would be a heading.
 
 ```omx
@@ -610,6 +610,37 @@ accepts them in your locale's form.
   saving: `2025-03-01T09:30+00:00`, `2025-07-01T09:30+01:00`. Comparison and
   subtraction are on the instant. Only a column of cells declares a zone, not
   one read from a file, and a zone the system does not know is an error.
+
+## Plots
+
+`plot Name` declares a plot of a sheet, with its controls as `key: value` lines up to the next blank line. A line that starts `//` is a comment.
+
+```omx
+plot Trend
+type: line
+data: Sales |> select(Month, Revenue, Cost)
+title: Revenue and cost
+```
+
+| Control | Meaning |
+|---|---|
+| `type` | `line`, `bar`, `pie` or `candle`. Required |
+| `data` | An expression that gives a sheet: `Sales`, or `Sales \|> filter(Region == 'North') \|> select(Month, Revenue)`. On one line. Required |
+| `x` | The column of labels. The first column of `data` if left out |
+| `y` | The columns of values, `Revenue, Cost`. All the others if left out |
+| `title` | A title above the plot |
+| `width`, `height` | In pixels, 100 to 4000; 640 and 360 if left out |
+| `k` | For `candle`: how many standard deviations the body covers (1). The wick is twice as far |
+
+- A plot has a name of its own: not that of a sheet, a constant or another plot. It may come before or after the sheet it reads.
+- `data` gives a sheet: a sheet by name, or one piped through stages. A grouping or a join is the whole of a `sheet Name :=` formula, so plot that sheet by name.
+- A **line** has a line for each `y` column and a key if there is more than one; an empty cell breaks the line. A **bar** plot groups the columns' bars. A **pie** takes one `y` column of values that are not negative, and shows each slice's share.
+- A **candle** is for uncertainty. One `Scientific` column, `10.5(3)`, is drawn as a body of the value ± `k`σ and a wick of ± 2`k`σ, with a white tick at the value. Four columns are read as open, high, low and close.
+- Line and bar plots draw an error bar for a value that has an uncertainty.
+- Numbers, percentages, quantities (in the column's unit) and durations (in seconds) are plotted; a column of text or dates in `y` is an error. Dates and text in `x` are labels, in the order of the rows.
+- `omasheet lint` reports a control that is not one, a `type` that is not a kind, a `data` that is not a sheet, and an `x` or `y` that is not a column of it. `omasheet print` does not list plots.
+- A report draws a plot ([Reports](reports.md#plots)) and the app shows the file's plots in a pane beside the sheet.
+- A version of omasheet from before plots stops at a `plot` line, as at any word it does not know.
 
 ---
 

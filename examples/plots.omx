@@ -1,0 +1,39 @@
+// Sales for a few months, and the plots of them. A plot is declared like a
+// sheet and drawn where a report or the app asks for it.
+
+sheet Sales
+
+| Month | Revenue | Cost | Measured    |
+| ----- | ------- | ---- | ----------- |
+| Jan   | 100     | 60   | 98.2(15)    |
+| Feb   | 120     | 70   | 121.0(25)   |
+| Mar   | 150     | 90   | 149.1(10)   |
+| Apr   | 140     | 95   | 142.3(40)   |
+| May   | 170     | 100  | 168.8(20)   |
+
+// A line for each column of values.
+plot Trend
+type: line
+data: Sales |> select(Month, Revenue, Cost)
+title: Revenue and cost
+
+plot ByMonth
+type: bar
+data: Sales |> select(Month, Revenue, Cost)
+title: By month
+
+plot Share
+type: pie
+data: Sales
+x: Month
+y: Revenue
+title: Share of revenue
+
+// A value with an uncertainty is a body of one standard deviation and a
+// wick of two.
+plot Spread
+type: candle
+data: Sales
+x: Month
+y: Measured
+title: Measured revenue

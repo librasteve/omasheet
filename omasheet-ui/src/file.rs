@@ -61,6 +61,14 @@ pub mod qobject {
         /// The whole file as JSON: sheets, constants and problems.
         #[qinvokable]
         fn snapshot_json(self: &File) -> QString;
+        /// The names of the file's plots, as a JSON list of strings.
+        #[qinvokable]
+        fn plots_json(self: &File) -> QString;
+        /// The SVG of plot `name` for a pane `width` by `height` pixels, in
+        /// the theme's foreground colour; or, where it cannot be drawn, the
+        /// reason, which does not start with `<svg`.
+        #[qinvokable]
+        fn plot_svg(self: &File, name: &QString, width: i32, height: i32) -> QString;
         /// `count` rows of sheet `sheet` from row `from`, as JSON in the
         /// shape of a sheet's `rows`: how the grid reads a paged sheet,
         /// whose rows the snapshot does not hold.
@@ -541,6 +549,12 @@ pub mod qobject {
         /// Keep a zoomed text size for the next launch; 0 forgets it.
         #[qinvokable]
         fn save_font_size(self: &File, size: i32);
+        /// Whether the plot pane was shown last time.
+        #[qinvokable]
+        fn saved_plot_pane(self: &File) -> bool;
+        /// Keep whether the plot pane is shown, for the next launch.
+        #[qinvokable]
+        fn save_plot_pane(self: &File, shown: bool);
         /// The file last opened or saved, if it is still there; empty if not.
         #[qinvokable]
         fn last_file(self: &File) -> QString;
@@ -785,6 +799,21 @@ impl qobject::File {
             None => PathBuf::new(),
         };
         self.as_mut().rust_mut().doc.set_base(dir);
+    }
+
+    fn plots_json(&self) -> QString {
+        QString::from(&json::strings(&self.rust().doc.plots()))
+    }
+
+    fn plot_svg(&self, name: &QString, width: i32, height: i32) -> QString {
+        let size = (width.clamp(100, 4000) as u32, height.clamp(100, 4000) as u32);
+        let shown = match self.rust().doc.plot_svg(&name.to_string(), size) {
+            // The ink follows the theme: Qt's `Image` does not resolve
+            // `currentColor`.
+            Ok(svg) => svg.replace("currentColor", &self.theme_foreground().to_string()),
+            Err(why) => why,
+        };
+        QString::from(&shown)
     }
 
     fn snapshot_json(&self) -> QString {
@@ -1855,6 +1884,14 @@ impl qobject::File {
 
     fn save_font_size(&self, size: i32) {
         crate::theme::save_font_size(size.max(0) as u32);
+    }
+
+    fn saved_plot_pane(&self) -> bool {
+        crate::theme::read_config("plot-pane").trim() == "1"
+    }
+
+    fn save_plot_pane(&self, shown: bool) {
+        crate::theme::write_config("plot-pane", if shown { "1" } else { "" });
     }
 
     fn last_file(&self) -> QString {

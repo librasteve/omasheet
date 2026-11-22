@@ -693,7 +693,8 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
     for block in &blocks {
         let source: String = block.source.iter().map(|r| &text[r.clone()]).collect();
         let declared = parse_file(&source, 0, &mut Vec::new());
-        let sheets: Vec<String> = declared
+        // The sheets and the plots of the block, in the order written.
+        let mut parts: Vec<(u32, String)> = declared
             .sheets
             .iter()
             .filter_map(|decl| Some((decl, program.sheets.iter().position(|t| t.name == decl.name)?)))
@@ -703,9 +704,22 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
                     rows: Rc::new((0..program.sheets[t].nrows).collect()),
                     cols: Rc::new((0..program.sheets[t].cols.len()).collect()),
                 };
-                sheet(&engine, &program, &view, format, Some(decl))
+                (decl.span.start, sheet(&engine, &program, &view, format, Some(decl)))
             })
             .collect();
+        for decl in &declared.plots {
+            let Some(found) = omasheet_engine::plot::find(&program, &decl.name) else {
+                continue;
+            };
+            match omasheet_engine::plot::svg(&engine, &program, found, None) {
+                // Apart from the text around it: an HTML block runs to the
+                // next blank line.
+                Ok(svg) => parts.push((decl.span.start, format!("\n{svg}\n"))),
+                Err(diags) => out.errors.extend(diags.iter().map(|d| locate(d, 0))),
+            }
+        }
+        parts.sort_by_key(|(at, _)| *at);
+        let sheets: Vec<String> = parts.into_iter().map(|(_, text)| text).collect();
         let mut shown = sheets.join("\n");
         let mut range = block.range.clone();
         if shown.is_empty() {
@@ -726,6 +740,30 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
             )
             .with_help("write an expression, such as `{{ Sales.Revenue.sum() }}`");
             out.errors.push(sources.render(&d));
+            continue;
+        }
+        // The name of a plot is drawn where it is written.
+        if let Some(found) = omasheet_engine::plot::find(&program, expr.trim()) {
+            match omasheet_engine::plot::svg(&engine, &program, found, None) {
+                Ok(svg) => {
+                    let before = &text[..whole.start];
+                    let lead = match before {
+                        b if b.is_empty() || b.ends_with("\n\n") => "",
+                        b if b.ends_with('\n') => "\n",
+                        _ => "\n\n",
+                    };
+                    let after = &text[whole.end..];
+                    let tail = if after.is_empty() || after.starts_with('\n') {
+                        ""
+                    } else {
+                        "\n\n"
+                    };
+                    changes.push((whole, format!("{lead}{svg}{tail}")));
+                }
+                Err(diags) => out
+                    .errors
+                    .extend(diags.iter().map(|d| locate(d, 0))),
+            }
             continue;
         }
         let node = match compile_expr(&program, expr, 1) {

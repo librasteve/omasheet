@@ -354,3 +354,88 @@ fn a_cell_of_a_duration_column_is_shown_in_its_unit() {
     );
     assert!(out.contains("Burn 139s, lap 1.5h."), "{out}");
 }
+
+// -- plots (add-plot-declarations) -------------------------------------------
+
+const PLOTS: &str = "\
+---
+files: [Sales.omx]
+---
+
+# Sales
+
+```omx
+plot Rev
+type: line
+data: Sales
+title: Revenue
+```
+
+After.
+";
+
+fn page_of(text: &str) -> String {
+    let out = render("report.md", text, &load, Format::Html, Options::default());
+    assert!(out.ok(), "{}", out.errors.join("\n"));
+    out.output
+}
+
+#[test]
+fn a_plot_in_a_block_is_drawn_in_its_place() {
+    let md = markdown(PLOTS);
+    assert!(md.contains("<svg"), "{md}");
+    assert!(md.contains(">Revenue<"));
+    assert!(!md.contains("plot Rev"));
+    assert!(md.contains("</svg>\n\nAfter."), "{md}");
+}
+
+#[test]
+fn a_plot_is_an_html_block_in_a_page() {
+    let page = page_of(PLOTS);
+    assert!(page.contains("<svg"), "{page}");
+    // Not wrapped as text, and the paragraph after it is still a paragraph.
+    assert!(!page.contains("&lt;svg"), "{page}");
+    assert!(page.contains("<p>After.</p>"), "{page}");
+}
+
+#[test]
+fn a_block_shows_its_sheet_and_its_plot() {
+    let md = markdown(
+        "# Sales\n\n```omx\nsheet Sales\n\nMonth | Revenue\nJan   | 100\nFeb   | 120\n\nplot Rev\ntype: bar\ndata: Sales\n```\n\nAfter.\n",
+    );
+    assert!(md.contains("| Jan"), "{md}");
+    assert!(md.contains("<rect"), "{md}");
+    assert!(md.find("| Jan").unwrap() < md.find("<svg").unwrap());
+    let page = page_of("```omx\nsheet Sales\n\nMonth | Revenue\nJan   | 100\n\nplot Rev\ntype: bar\ndata: Sales\n```\n\nAfter.\n");
+    assert!(page.contains("<table") && page.contains("<svg"), "{page}");
+}
+
+#[test]
+fn a_plot_by_name_is_drawn_where_it_is_written() {
+    let md = markdown(
+        "---\nfiles: [Sales.omx]\n---\n\n```omx\nplot Rev\ntype: pie\ndata: Sales\n```\n\nThe split:\n\n{{ Rev }}\n\nAfter.\n",
+    );
+    // Once, where it is written; the block draws it too.
+    assert_eq!(md.matches("<svg").count(), 2, "{md}");
+    assert_eq!(md.matches("<path").count(), 6, "{md}");
+}
+
+#[test]
+fn a_plot_takes_what_a_pipeline_gives() {
+    let md = markdown(
+        "---\nfiles: [Sales.omx]\n---\n\n```omx\nplot Rev\ntype: bar\ndata: Sales |> filter(Revenue > 100)\nx: Month\ny: Revenue\n```\n",
+    );
+    assert_eq!(md.matches("<rect").count(), 2, "{md}");
+}
+
+#[test]
+fn a_plot_with_a_mistake_is_reported_where_it_is() {
+    let e = errors(&PLOTS.replace("type: line", "type: radar"));
+    assert!(e.contains("`radar` is not a kind of plot") && e.contains("report.md:9"), "{e}");
+    let e = errors(&PLOTS.replace("title: Revenue", "colour: red"));
+    assert!(e.contains("`colour` is not a control"), "{e}");
+    let e = errors(&PLOTS.replace("data: Sales", "data: Sales\ny: Cost"));
+    assert!(e.contains("no column `Cost`") && e.contains("Month, Revenue"), "{e}");
+    let e = errors(&PLOTS.replace("data: Sales", "data: Sales\ny: Month"));
+    assert!(e.contains("cannot be plotted"), "{e}");
+}

@@ -21,6 +21,19 @@ fn string(out: &mut String, s: &str) {
     out.push('"');
 }
 
+/// A list of strings.
+pub fn strings(items: &[String]) -> String {
+    let mut out = String::from("[");
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        string(&mut out, item);
+    }
+    out.push(']');
+    out
+}
+
 fn field(out: &mut String, name: &str, value: &str) {
     string(out, name);
     out.push(':');

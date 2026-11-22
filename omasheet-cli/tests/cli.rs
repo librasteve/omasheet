@@ -52,8 +52,11 @@ fn program() -> PathBuf {
 }
 
 fn omasheet(args: &[&str]) -> Output {
+    // No cache of rates: an example's money is worked out at the rates
+    // bundled in the program, which are the same on every machine.
     Command::new(program())
         .args(args)
+        .env("XDG_CACHE_HOME", root().join("target/no-rates-cache"))
         .current_dir(root())
         .output()
         .unwrap()
@@ -90,6 +93,8 @@ fn examples_match_their_expected_output() {
             .args(["print", path.to_str().unwrap()])
             .current_dir(root())
             .env("LC_ALL", "C")
+            // And the rates bundled in the program, not a cache of later ones.
+            .env("XDG_CACHE_HOME", root().join("target/no-rates-cache"))
             .output()
             .unwrap();
         assert!(out.status.success(), "{}: {}", path.display(), stderr(&out));
@@ -600,6 +605,15 @@ fn render_matches_the_expected_report() {
     let expected = std::fs::read_to_string(root().join("examples/report.expected")).unwrap();
     assert_eq!(stdout(&out), expected);
     assert!(!expected.contains("{{ S"), "{expected}");
+}
+
+#[test]
+fn render_matches_the_expected_plots() {
+    let out = omasheet(&["render", "examples/plot-report.md"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let expected = std::fs::read_to_string(root().join("examples/plot-report.expected")).unwrap();
+    assert_eq!(stdout(&out), expected);
+    assert_eq!(expected.matches("<svg").count(), 5);
 }
 
 #[test]

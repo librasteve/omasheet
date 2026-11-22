@@ -36,6 +36,33 @@ pub struct FileAst {
     pub consts: Vec<ConstDecl>,
     pub funcs: Vec<FuncDecl>,
     pub sheets: Vec<SheetDecl>,
+    pub plots: Vec<PlotDecl>,
+}
+
+/// The controls a `plot` takes.
+pub const PLOT_KEYS: &str = "type, data, x, y, title, width, height, k";
+
+/// The kinds of plot.
+pub const PLOT_KINDS: &str = "line, bar, pie, candle";
+
+/// `plot <Name>` and its `key: value` lines, to the next blank line.
+#[derive(Debug)]
+pub struct PlotDecl {
+    pub name: String,
+    pub span: Span,
+    pub controls: Vec<PlotControl>,
+}
+
+/// One `key: value` line of a plot.
+#[derive(Debug)]
+pub struct PlotControl {
+    pub key: String,
+    pub key_span: Span,
+    /// The text after the colon, trimmed.
+    pub value: String,
+    pub value_span: Span,
+    /// For `data`: its expression, `None` if it did not parse.
+    pub expr: Option<Expr>,
 }
 
 #[derive(Debug)]
@@ -535,6 +562,71 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
         {
             i += 1;
             continue;
+        }
+
+        // plot <Name>, and its `key: value` lines to the next blank line. The
+        // lines are taken here: left to a sheet, `x: Month` would read as
+        // the type of a column `x`.
+        if let Some(rest) = after_keyword(trimmed, "plot") {
+            let n = ident_len(rest);
+            if n > 0 && rest[n..].trim().is_empty() {
+                ast.sheets.extend(sheet.take().map(|mut t| {
+                    t.settle_widths();
+                    t
+                }));
+                in_body = false;
+                after_header = false;
+                let name_at = at + (trimmed.len() - rest.len());
+                let mut plot = PlotDecl {
+                    name: rest[..n].to_string(),
+                    span: Span::new(src, name_at, name_at + n),
+                    controls: Vec::new(),
+                };
+                while i + 1 < lines.len() && !lines[i + 1].text.trim().is_empty() {
+                    i += 1;
+                    let line = &lines[i];
+                    let body = line.text.trim();
+                    if body.starts_with("//") {
+                        continue;
+                    }
+                    let lead = line.text.len() - line.text.trim_start().len();
+                    let from = line.start + lead;
+                    let Some((key, after)) = body.split_once(':') else {
+                        diags.push(
+                            Diagnostic::new(
+                                Span::new(src, from, from + body.len()),
+                                format!("expected `key: value`, found `{body}`"),
+                            )
+                            .with_help(format!("the controls of a plot are {PLOT_KEYS}")),
+                        );
+                        continue;
+                    };
+                    let value = after.trim();
+                    let value_at = from + key.len() + 1 + (after.len() - after.trim_start().len());
+                    let key = key.trim_end();
+                    let expr = if key == "data" && !value.is_empty() {
+                        match parse_expr(value, src, value_at) {
+                            Ok(e) => Some(e),
+                            Err(d) => {
+                                diags.push(d);
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    plot.controls.push(PlotControl {
+                        key: key.to_string(),
+                        key_span: Span::new(src, from, from + key.len()),
+                        value: value.to_string(),
+                        value_span: Span::new(src, value_at, value_at + value.len()),
+                        expr,
+                    });
+                }
+                ast.plots.push(plot);
+                i += 1;
+                continue;
+            }
         }
 
         // const <Name> = <expr>
@@ -1073,7 +1165,7 @@ mod tests {
         assert!(message.contains("Integer"), "{message}");
         let (at, message) = one("A : String[5d]");
         assert_eq!(at, "5d");
-        assert!(message.contains("String"), "{message}");
+        assert!(message.contains("`clip`"), "{message}");
         assert!(one("A : Integer[d").1.contains("`]`"));
         assert!(one("A : Integer[d] x").1.contains("last thing"));
         assert!(one("A : Integer[]").1.contains("empty"));

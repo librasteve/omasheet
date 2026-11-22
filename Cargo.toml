@@ -5,6 +5,7 @@ members = [
     "omasheet-engine",
     "omasheet-interop",
     "omasheet-md",
+    "omasheet-plot",
     "omasheet-cli",
     "omasheet-ui",
 ]
@@ -23,6 +24,7 @@ omasheet-omx = { path = "omasheet-omx" }
 omasheet-engine = { path = "omasheet-engine" }
 omasheet-interop = { path = "omasheet-interop" }
 omasheet-md = { path = "omasheet-md" }
+omasheet-plot = { path = "omasheet-plot" }
 omasheet-cli = { path = "omasheet-cli" }
 # SI units (add-si-units D228), vendored from crates.io 0.1.2 with the metric
 # non-SI units added (litre, tonne, hectare, bar, eV, cal, Wh, Da) and `u` as
@@ -80,6 +82,9 @@ num-integer = "0.1"
 num-traits = "0.2"
 serde = "1"
 serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
+# Plots drawn to SVG (add-plot-blocks); no `ttf` or bitmap backend, so no
+# system fonts: the text is the viewer's own.
+plotters = { version = "0.3", default-features = false, features = ["svg_backend", "line_series", "candlestick", "errorbar"] }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 
 # Dependencies (Polars above all) are built without debug info: with it, a

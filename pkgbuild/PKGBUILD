@@ -31,6 +31,7 @@ depends=(
   'hicolor-icon-theme'
   "$(_at_least qt6-base)"
   "$(_at_least qt6-declarative)"
+  "$(_at_least qt6-svg)"
   'xdg-desktop-portal'
 )
 makedepends=(

@@ -1,5 +1,7 @@
 # Proposal: a quantity column's unit is in its head
 
+> **Built.** Every task is done; archived.
+
 ## Why
 
 A column of quantities repeats its unit on every row: `5kg`, `0.3kg`, `7.50(20)e-3kg`. The column already has one unit, the one it holds its values in, so the repeat is noise and makes the numbers hard to compare by eye. A spreadsheet puts the unit in the column head and leaves the cells as numbers.

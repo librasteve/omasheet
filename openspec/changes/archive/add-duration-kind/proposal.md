@@ -1,5 +1,7 @@
 # Proposal: `Duration` is the kind of quantity for time
 
+> **Built.** Every task is done; archived.
+
 ## Why
 
 Every other dimension has a named kind of `Quantity`, `Mass[kg]`, `Length[m]`, `Speed[m.s^-1]`, but time has none: a time in seconds is a `Quantity[s]`, a different thing from `Duration`, which is a separate type held in whole microseconds with no uncertainty and no unit. Two types for one idea needs special rules, a quantity of time that becomes a `Duration` beside a date, a `Duration` that is read as seconds beside a unit, and `.Quantity` and `.Duration` to cross between them. `quantity_types.yaml` says "types for time arrive with the stage that adds it"; this is that stage.

@@ -71,6 +71,7 @@ rewrites the text, and saving writes exactly that.
   To copy a formula as text, select it in the box at the top.
 - F3 shows the source of the whole file, to read or to edit. An edit is
   taken when the source is left, saved or closed, and undone as one step.
+- F7, or the `plot` button in the footer, shows the plot pane beside the sheet: the plots the file declares ([Plots](format.md#plots)), one at a time, with a button for each when there are several. They are drawn in the theme's colours and again after each edit, and the pane's edge can be dragged to change its width. Whether it is shown is remembered. A plot is written in the source view (F3); the pane says how when the file has none.
 - Selecting several cells shows their count, sum and average in the footer.
 - Beside that box is the selection, written as a formula would write it:
 

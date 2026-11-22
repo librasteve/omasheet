@@ -1,0 +1,10 @@
+[package]
+name = "omasheet-plot"
+description = "Plots of sheet data as SVG: line, bar, pie and candlestick"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+plotters.workspace = true

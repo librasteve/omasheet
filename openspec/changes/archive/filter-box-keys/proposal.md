@@ -1,5 +1,7 @@
 # Proposal: Keys for the filter box
 
+> **Built, and in part superseded** by `shortcut-style-bar`: Ctrl+Shift+F no longer opens the filter; F4 does, as the first of the column settings. Ctrl+Shift+F is Paste format.
+
 ## Why
 
 The column popup holds the sort entries, the filter field, Clear filter and four buttons, and only the field takes the keyboard. Getting to a button, or opening the popup at all, needs the pointer. Two of its buttons also do the same thing: OK applies and closes, and Cancel closes, which after Apply has already applied is the same, so the popup offers a choice that is not one. Enter applies and closes in one press, so a user cannot apply, look at the grid and then close without reaching for the mouse.

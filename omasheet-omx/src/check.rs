@@ -14,7 +14,7 @@ use crate::date;
 use crate::decimal::Dec;
 use crate::deps;
 use crate::diag::{Diagnostic, Span};
-use crate::file::{FileAst, SourceDecl, parse_file};
+use crate::file::{FileAst, PLOT_KEYS, PLOT_KINDS, SourceDecl, parse_file};
 use crate::funcs::{FUNCTIONS, MathFn};
 use crate::ir::{Bound, ColSel, Func, Ir, Node, Offset, RowSel, Spec, Ties, Win};
 use crate::parser::parse_expr;
@@ -38,6 +38,27 @@ pub struct Program {
     /// Where the source names a column of a sheet: `(span, sheet, column)`.
     /// A formula checked more than once is listed more than once.
     pub col_refs: Vec<(Span, usize, usize)>,
+    /// The plots the file declares.
+    pub plots: Vec<Plot>,
+}
+
+/// A checked `plot`: what to draw, and the expression that gives the sheet
+/// to draw it from. Its columns are named; which of the sheet's they are is
+/// settled when it is drawn.
+#[derive(Debug)]
+pub struct Plot {
+    pub name: String,
+    pub span: Span,
+    /// One of the kinds of `PLOT_KINDS`.
+    pub kind: String,
+    pub data: Node,
+    pub data_span: Span,
+    pub x: Option<String>,
+    pub y: Vec<String>,
+    pub title: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub k: Option<f64>,
 }
 
 #[derive(Debug)]
@@ -456,6 +477,7 @@ struct Checker<'a> {
     deps: Vec<Dep>,
     done: Vec<Diagnostic>,
     col_refs: Vec<(Span, usize, usize)>,
+    plots: Vec<Plot>,
 }
 
 /// Compile a file. If any diagnostic is returned the program must not be
@@ -478,6 +500,11 @@ pub fn compile(text: &str, src: u32) -> (Program, Vec<Diagnostic>) {
     for t in 0..ck.sheets.len() {
         for c in 0..ck.sheets[t].cols.len() {
             ck.ensure_col(t, c);
+        }
+    }
+    if let Some(ast) = ck.ast {
+        for decl in &ast.plots {
+            ck.ensure_plot(decl);
         }
     }
     let order = ck.order();
@@ -1135,6 +1162,7 @@ impl<'a> Checker<'a> {
             deps: Vec::new(),
             done: Vec::new(),
             col_refs: Vec::new(),
+            plots: Vec::new(),
         }
     }
 
@@ -1612,6 +1640,173 @@ impl<'a> Checker<'a> {
         self.const_deps[i] = mem::replace(&mut self.deps, saved.1);
         let mut found = mem::replace(&mut self.cur, saved.0);
         self.done.append(&mut found);
+    }
+
+    /// Check a `plot`: its controls, and the sheet its `data` gives.
+    fn ensure_plot(&mut self, decl: &crate::file::PlotDecl) {
+        let saved = (mem::take(&mut self.cur), mem::take(&mut self.deps));
+        let name = decl.name.clone();
+        let taken = self.sheets.iter().any(|t| t.name == name)
+            || self.consts.iter().any(|c| c.name == name)
+            || self.plots.iter().any(|p| p.name == name);
+        if taken {
+            self.err_help(
+                decl.span,
+                format!("the name `{name}` is already used"),
+                "a plot, a sheet and a constant each have a name of their own",
+            );
+        }
+        let mut kind = None;
+        let mut data: Option<(Node, Ty, Span)> = None;
+        let (mut x, mut y, mut title) = (None, Vec::new(), None);
+        let (mut width, mut height, mut k) = (None, None, None);
+        let mut seen: Vec<&str> = Vec::new();
+        for c in &decl.controls {
+            if !PLOT_KEYS.split(", ").any(|key| key == c.key) {
+                self.err_help(
+                    c.key_span,
+                    format!("`{}` is not a control of a plot", c.key),
+                    format!("the controls are {PLOT_KEYS}"),
+                );
+                continue;
+            }
+            if seen.contains(&c.key.as_str()) {
+                self.err(c.key_span, format!("`{}` is given twice", c.key));
+                continue;
+            }
+            seen.push(&c.key);
+            if c.value.is_empty() {
+                self.err(c.key_span, format!("`{}` has no value", c.key));
+                continue;
+            }
+            match c.key.as_str() {
+                "type" => {
+                    if PLOT_KINDS.split(", ").any(|k| k == c.value) {
+                        kind = Some(c.value.clone());
+                    } else {
+                        self.err_help(
+                            c.value_span,
+                            format!("`{}` is not a kind of plot", c.value),
+                            format!("the types are {PLOT_KINDS}"),
+                        );
+                    }
+                }
+                "data" => {
+                    if let Some(e) = &c.expr {
+                        let mut scope = Scope {
+                            frames: Vec::new(),
+                            own: false,
+                            col: None,
+                            group: None,
+                        };
+                        let (node, ty) = self.lower(e, &mut scope);
+                        data = Some((node, ty, c.value_span));
+                    }
+                }
+                "x" => x = Some((c.value.clone(), c.value_span)),
+                "y" => {
+                    let at = c.value_span.start;
+                    let mut from = 0;
+                    for part in c.value.split(',') {
+                        let lead = part.len() - part.trim_start().len();
+                        let name = part.trim();
+                        let a = at + (from + lead) as u32;
+                        y.push((name.to_string(), Span::new(c.value_span.src, a as usize, a as usize + name.len())));
+                        from += part.len() + 1;
+                    }
+                }
+                "title" => title = Some(c.value.trim_matches('"').to_string()),
+                "width" | "height" => match c.value.parse::<u32>() {
+                    Ok(n) if (100..=4000).contains(&n) => {
+                        if c.key == "width" {
+                            width = Some(n);
+                        } else {
+                            height = Some(n);
+                        }
+                    }
+                    _ => self.err(
+                        c.value_span,
+                        format!("`{}` is a whole number of pixels, 100 to 4000", c.key),
+                    ),
+                },
+                _ => match c.value.parse::<f64>() {
+                    Ok(n) if n > 0.0 && n.is_finite() => k = Some(n),
+                    _ => self.err(c.value_span, "`k` is a number above zero"),
+                },
+            }
+        }
+        if kind.is_none() && !seen.contains(&"type") {
+            self.err_help(
+                decl.span,
+                format!("plot `{name}` needs a `type:`"),
+                format!("write `type: line`; the types are {PLOT_KINDS}"),
+            );
+        }
+        if !seen.contains(&"data") {
+            self.err_help(
+                decl.span,
+                format!("plot `{name}` needs a `data:`"),
+                "write the sheet to plot, such as `data: Sales`",
+            );
+        }
+        // The sheet it gives, and the columns of it that are named.
+        let mut shown = None;
+        if let Some((_, ty, span)) = &data {
+            match ty {
+                Ty::Sheet(shape) => {
+                    let names: Vec<String> = shape
+                        .cols
+                        .iter()
+                        .filter_map(|&c| Some(self.sheets[shape.sheet].cols.get(c)?.name.clone()))
+                        .collect();
+                    let named = x.iter().chain(y.iter());
+                    let mut bad = Vec::new();
+                    for (n, at) in named {
+                        if !names.contains(n) {
+                            bad.push((n.clone(), *at));
+                        }
+                    }
+                    for (n, at) in bad {
+                        self.err_help(
+                            at,
+                            format!("`data` has no column `{n}`"),
+                            format!("its columns are {}", names.join(", ")),
+                        );
+                    }
+                    if y.is_empty() && names.len() < 2 {
+                        self.err(*span, "`data` has no column of values besides `x`");
+                    }
+                    shown = Some(());
+                }
+                Ty::Any => shown = Some(()),
+                other => {
+                    let d = other.describe();
+                    self.err_help(
+                        *span,
+                        format!("`data` gives {d}, and a plot needs a sheet"),
+                        "give a sheet, or a sheet piped through stages, such as `Sales |> select(Month, Revenue)`",
+                    );
+                }
+            }
+        }
+        let mut found = mem::replace(&mut self.cur, saved.0);
+        self.done.append(&mut found);
+        self.deps = saved.1;
+        if let (Some(kind), Some((node, _, data_span)), Some(())) = (kind, data, shown) {
+            self.plots.push(Plot {
+                name,
+                span: decl.span,
+                kind,
+                data: node,
+                data_span,
+                x: x.map(|(n, _)| n),
+                y: y.into_iter().map(|(n, _)| n).collect(),
+                title,
+                width,
+                height,
+                k,
+            });
+        }
     }
 
     /// Lower the expression of a sheet computed from one. A view is a
@@ -6622,6 +6817,7 @@ impl<'a> Checker<'a> {
             funcs: mem::take(&mut self.funcs),
             order,
             col_refs: mem::take(&mut self.col_refs),
+            plots: mem::take(&mut self.plots),
         }
     }
 }

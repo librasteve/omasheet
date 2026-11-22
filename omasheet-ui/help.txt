@@ -38,6 +38,7 @@ F2                   Edit
 F3                   View source
 F4                   Column sort, filter & settings
 F6                   Style bar
+F7                   Plot pane
 F11                  Fullscreen
 
 A cell starting with = is a formula

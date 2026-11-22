@@ -48,8 +48,30 @@ and the `select(…)` sheet becomes a Markdown table with the column formats of 
 - A fenced `omx` block is a file, shown as its sheets. The files and all the blocks of a document are one file, so each can read the others.
 - `{{ expression }}` is replaced by its value. Several values read as a list, `Feb, Mar`, and a sheet is shown as a Markdown table.
 - `{{` in code is left alone, and so is `\{{`. To show the braces themselves, put them in backticks.
+- A plot is drawn as an SVG; see [Plots](#plots).
 - Text written bare in a cell may hold Markdown, `**bold**` or `[a link](there.md)`, and is read as that in the document. Text in quotes, or made by a formula, is shown as it is. HTML in a cell is shown as text.
 - A mistake is reported at its line in the document, or in the file it is in, and nothing is written.
+
+## Plots
+
+A plot is declared in the file, as a sheet is (see [Plots](format.md#plots) for the declaration), and a report draws it as an SVG:
+
+````markdown
+---
+files: [plots.omx]
+---
+
+The trend:
+
+{{ Trend }}
+````
+
+- `{{ Name }}`, where `Name` is a plot, is replaced by its SVG, where it is written.
+- A plot declared in a fenced `omx` block is drawn in the block, after the sheets before it and before those after it, in the order written.
+- The SVG is in the page itself, in both the Markdown and the HTML, with no other files. Its ink is the page's text colour and its background is clear, so it follows a light or dark theme.
+- A mistake in a plot is reported at its line, in the document or in the file it is in.
+
+`examples/plot-report.md` has one of each kind.
 
 A tool that does not know Omasheet shows the block as code and the braces as they are, so a report stays readable on GitHub.
 

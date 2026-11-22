@@ -2795,6 +2795,30 @@ impl Document {
         &self.snapshot
     }
 
+    /// The names of the file's plots, in the order written.
+    pub fn plots(&self) -> Vec<String> {
+        self.engine
+            .as_ref()
+            .map(|e| e.program().plots.iter().map(|p| p.name.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// The SVG of the plot `name`, drawn `size` pixels wide and high, or why
+    /// it cannot be. Its ink is `currentColor`.
+    pub fn plot_svg(&self, name: &str, size: (u32, u32)) -> Result<String, String> {
+        let engine = self.engine.as_ref().ok_or("the file has no calculation")?;
+        let program = engine.program();
+        let plot = crate::plot::find(program, name)
+            .ok_or_else(|| format!("the file has no plot `{name}`"))?;
+        crate::plot::svg(engine, program, plot, Some(size)).map_err(|diags| {
+            diags
+                .iter()
+                .map(|d| d.message.clone())
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+    }
+
     /// What the document's cache of whole columns has done and holds.
     pub fn column_cache(&self) -> crate::table::CacheStats {
         self.columns.stats()

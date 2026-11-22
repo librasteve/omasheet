@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 omasheet-omx.workspace = true
+omasheet-plot.workspace = true
 jiff.workspace = true
 calamine.workspace = true
 polars.workspace = true
