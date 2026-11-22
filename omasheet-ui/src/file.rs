@@ -77,6 +77,10 @@ pub mod qobject {
         #[qinvokable]
         fn new_document(self: Pin<&mut File>);
         #[qinvokable]
+        fn new_instance(self: Pin<&mut File>);
+        #[qinvokable]
+        fn open_in_new_instance(self: Pin<&mut File>, url: &QUrl);
+        #[qinvokable]
         fn open_path(self: Pin<&mut File>, path: &QString) -> bool;
         #[qinvokable]
         fn open_url(self: Pin<&mut File>, url: &QUrl) -> bool;
@@ -791,6 +795,19 @@ impl qobject::File {
     fn set_source_text(self: Pin<&mut Self>, text: &QString) {
         let text = text.to_string();
         self.edit(|doc| doc.set_text(&text));
+    }
+
+    /// A new instance of the app, in a window of its own on a new file, as
+    /// `Cmd+N` does in most apps: this file and its windows are left as they
+    /// are.
+    fn new_instance(self: Pin<&mut Self>) {
+        launch(None);
+    }
+
+    /// A new instance of the app, in a window of its own, open on the file
+    /// `url`: this file and its windows are left as they are.
+    fn open_in_new_instance(self: Pin<&mut Self>, url: &QUrl) {
+        launch(Some(url.to_local_file_or_default().to_string()));
     }
 
     fn new_document(mut self: Pin<&mut Self>) {
@@ -2384,6 +2401,24 @@ fn unit_lines() -> String {
         }
     }
     lines.join("\n")
+}
+
+/// Start another instance of the app, with `path` to open if there is one,
+/// and leave it to run.
+fn launch(path: Option<String>) {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let mut command = std::process::Command::new(exe);
+    if let Some(path) = path {
+        command.arg(path);
+    }
+    if let Ok(mut child) = command.spawn() {
+        // Reaped when it ends, so it does not linger as a zombie.
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
 }
 
 #[cfg(test)]

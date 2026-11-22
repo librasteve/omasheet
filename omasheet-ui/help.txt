@@ -1,5 +1,5 @@
-Ctrl+?               Help
-Ctrl+.               Action menu
+Ctrl+/               Help
+Ctrl+.               Context menu
 Ctrl+Z / Ctrl+Y      Undo / redo
 
 Ctrl++ / Ctrl+-      Zoom in / out
@@ -9,33 +9,35 @@ Ctrl+C / X / V       Copy / cut / paste
 Ctrl+Shift+V         Paste values
 Ctrl+Shift+R         Paste references
 Ctrl+Shift+T         Paste transposed
+Ctrl+Shift+F         Paste format
 Delete               Clear
 Ctrl+Delete          Delete
 
-Ctrl+O / S           Open / save
+Ctrl+O / S           Open (in a new window) / save
 Ctrl+Shift+S         Save as
 Ctrl+E               Export
 
 Ctrl+K               New constant
-Ctrl+Shift+F         Filter this column
 Ctrl+D               Duplicate sheet
-Ctrl+N               New sheet
+Ctrl+Alt+N           New sheet
 Ctrl+Shift+N         New window
-Ctrl+Alt+N           New file
-Ctrl+W               Close this window
+Ctrl+N               New file
+Ctrl+W               Close window
 
 Ctrl+Enter           Insert row/col after
 Ctrl+Shift+Enter     Insert row/col before
 Ctrl+Arrows          Go to end cell
-Ctrl+Alt+L/R         Previous / next sheet
+Shift+Arrows         Select block
+Ctrl+Alt+Left/Right  Previous / next sheet
 Ctrl+Alt+Shift+L/R   Move sheet left / right
 Alt+Enter            Newline
 Ctrl+click           Open link
 
-F1                   View functions
+F1                   Functions help
 F2                   Edit
 F3                   View source
-F4                   Cycle column settings
+F4                   Column sort, filter & settings
+F6                   Style bar
 F11                  Fullscreen
 
 A cell starting with = is a formula

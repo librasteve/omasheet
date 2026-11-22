@@ -793,12 +793,12 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             (".2f".into(), "(nn) style, 2 places"),
             (".3e-3".into(), "(nn) style, e notation"),
             ("±.2f".into(), "± uncertainty, 2 places"),
-            ("±.3e-3".into(), "± uncertainty, e notation"),
+            ("±.3e-3".into(), "± with e notation"),
             ("~.2f".into(), "value only, 2 places"),
             ("~.3e-3".into(), "value only, e notation"),
         ],
         S::String | S::Email | S::Url => vec![
-            ("clip".into(), "cut off at the column's edge"),
+            ("clip".into(), "cut at the edge"),
             ("wrap".into(), "carried on to more lines"),
         ],
         S::Boolean => vec![
@@ -829,20 +829,21 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             ("%c".into(), "as the locale writes it"),
         ],
         S::Duration => vec![
-            ("s".into(), "seconds, the unit in the head"),
+            ("s".into(), "seconds, unit in head"),
             ("min".into(), "minutes"),
             ("h; .2f".into(), "hours, 2 places"),
             ("d; .1f".into(), "days, 1 place"),
             ("h; v.1f".into(), "the unit in each row"),
-            ("%H:%M:%S".into(), "+01:30:00, hours past a day"),
+            ("%H:%M:%S".into(), "+01:30:00, may pass 24h"),
             ("iso".into(), "PT1H30M"),
         ],
         // Money: the places it is spent in by default, and a sign to show it by.
         S::Quantity(_) if siquant::Registry::builtin().rate(unit).is_some() => vec![
-            (unit.to_string(), "the code in the head, two places"),
+            (unit.to_string(), "code in head, 2 places"),
             (format!("{unit}; $"), "the sign in each row"),
             (format!("{unit}; $.0f"), "the sign, no places"),
-            (format!("{unit}; $'.2f"), "the sign, grouped, two places"),
+            (format!("{unit}; $'.2f"), "sign, grouped, 2 places"),
+            (format!("{unit}; $>"), "sign after the number"),
             (format!("{unit}; .4f"), "four places"),
             (format!("{unit}; v"), "the code in each row"),
             (format!("{unit}; .8f"), "eight places, for a coin"),
@@ -856,7 +857,7 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             (format!("{unit}; .10s"), "10 digits if exact"),
             (format!("{unit}; v"), "the unit in each row"),
             (format!("{unit}; v.1f"), "in each row, 1 place"),
-            (format!("{unit}; v_"), "in each row, a space before it"),
+            (format!("{unit}; v_"), "unit in row, spaced"),
         ],
         // No unit: each value is shown in its own.
         S::Quantity(_) => vec![

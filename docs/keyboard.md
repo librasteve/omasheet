@@ -1,45 +1,47 @@
 # Keyboard shortcuts
 
-The keys below work on the cell cursor and the selection. Ctrl+? shows this list in the app.
+The keys below work on the cell cursor and the selection. Ctrl+/ shows this list in the app (Cmd+/ on a Mac).
 
+<!-- keys:begin (generated from omasheet-ui/help.txt by scripts/sync-keyboard.py) -->
 | Keys | |
 |---|---|
+| Ctrl+/ | Help |
 | Ctrl+. | Context menu |
-| Ctrl+? | Keyboard shortcuts |
-| Ctrl++ / Ctrl+- | Zoom in / out (Ctrl+0 resets) |
 | Ctrl+Z / Ctrl+Y | Undo / redo |
-| Ctrl+Arrows | Go to end |
+| Ctrl++ / Ctrl+- | Zoom in / out |
+| Ctrl+0 | Reset zoom |
+| Ctrl+C / X / V | Copy / cut / paste |
+| Ctrl+Shift+V | Paste values |
+| Ctrl+Shift+R | Paste references |
+| Ctrl+Shift+T | Paste transposed |
+| Ctrl+Shift+F | Paste format |
+| Delete | Clear |
+| Ctrl+Delete | Delete |
+| Ctrl+O / S | Open (in a new instance of the app, in a window of its own) / save |
+| Ctrl+Shift+S | Save as |
+| Ctrl+E | Export |
+| Ctrl+K | New constant |
+| Ctrl+D | Duplicate sheet |
+| Ctrl+Alt+N | New sheet |
+| Ctrl+Shift+N | New window |
+| Ctrl+N | New file |
+| Ctrl+W | Close window |
+| Ctrl+Enter | Insert row/col after |
+| Ctrl+Shift+Enter | Insert row/col before |
+| Ctrl+Arrows | Go to end cell |
 | Shift+Arrows | Select block |
 | Ctrl+Alt+Left/Right | Previous / next sheet |
-| Ctrl+C / X / V | Copy / Cut / Paste |
-| Ctrl+Shift+V | Paste values: not formulas |
-| Ctrl+Shift+T | Paste transposed: rows as columns |
-| Ctrl+Shift+R | Paste reference: a live link to the cells copied |
-| Ctrl+Shift+F | Paste format: the type, unit and format of the columns copied, without their values |
-| Ctrl+Enter | Insert row/col after (Shift: before) |
-| Ctrl+B / I | Bold / italic the selected columns or rows (press again to remove) |
-| Ctrl+Alt+1 to 6 | Heading level of the selected columns or rows |
-| Ctrl+Alt+L / E / R | Align the selected columns left / centre / right |
-| Delete | Clear |
-| Ctrl+Delete | Delete the selected rows, columns or sheet |
-| Ctrl+O / S | Open / save |
-| Ctrl+Shift+S | Save as |
-| Ctrl+E | Export as an XLSX Workbook, CSV or JSON |
-| Ctrl+K | New constant |
-| Ctrl+Shift+F | Filter this column |
-| Ctrl+D | Duplicate sheet |
-| Ctrl+N | New sheet |
-| Ctrl+Alt+Shift+Left/Right | Move sheet left / right |
-| Ctrl+Shift+N | New window on this file |
-| Ctrl+Alt+N | New file |
-| F1 | View functions |
+| Ctrl+Alt+Shift+L/R | Move sheet left / right |
+| Alt+Enter | Newline |
+| Ctrl+click | Open link |
+| F1 | Functions help |
 | F2 | Edit |
 | F3 | View source |
-| F4 | Cycle column settings: the filter, type, unit and format boxes in turn (Shift+F4 goes back) |
+| F4 | Column sort, filter & settings |
+| F6 | Style bar |
 | F11 | Fullscreen |
+<!-- keys:end -->
 
 ## Notes
 
-- Ctrl+Shift+F is listed twice. It opens the filter box of the column the cursor is in, and it is also the key for Paste format. If it does not do what you expect, use the context menu (Ctrl+.), which has both as entries.
-- Ctrl+Z undoes and Ctrl+Y redoes what was applied. Ctrl+Shift+Z redoes as well.
 - A `view` sheet is read-only, and the app says so if you try to type in it. See [Views over big files](big-files.md).

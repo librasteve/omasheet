@@ -293,10 +293,10 @@ sheet Notation
 Recommended : Quantity[m.s^-1]
 Written     : Quantity[m.s^-1; ^]
 
-| Recommended | Written |
-| ----------- | ------- |
+| Recommended | Written    |
+| ----------- | ---------- |
 | 9.81m.s^-1  | 9.81m.s^-1 |
-| 3m⋅s⁻¹      | 3m⋅s⁻¹  |
+| 3m⋅s⁻¹      | 3m⋅s⁻¹     |
 
 // A few words are scales too, and need no dot, as none is a unit: `5ppm` is
 // the number 0.000005, exact and with no dimension, so a sum or a product of

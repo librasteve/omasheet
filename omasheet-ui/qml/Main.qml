@@ -581,7 +581,8 @@ ApplicationWindow {
             // type, a mark before it (`:`, `=` or `=:`, with a little over)
             // where it is set or the column is a formula, and `[]` after it
             // where it has a format. A type is never cut off, so this is
-            // what keeps it clear of the telltale. It is set smaller, so a
+            // what keeps it clear of the telltale, unless a width is set for
+            // the column, which wins and cuts the type at its edge. It is set smaller, so a
             // short type such as `Integer` fits the width an empty column
             // has already.
             // A head column with nothing in it is as wide as its name, its
@@ -3387,9 +3388,8 @@ ApplicationWindow {
     // F4: open the Set panels of the selected columns in turn, filter, type, unit,
     // then format, and round again; Shift+F4 goes the other way. The
     // one open is closed as the next opens, and a panel that is not open to this
-    // selection (format before there is a type, filter for several columns) is
-    // passed by, as is format for a column declared as any type but a
-    // quantity or currency.
+    // selection (format before there is a type, filter for several columns, format
+    // for a type that takes none) is passed by.
     readonly property var metaPanels: ["filter", "type", "unit", "format"]
     function metaPanel(kind) {
         return kind === "type" ? typePopup : kind === "unit" ? unitPopup
@@ -3405,13 +3405,6 @@ ApplicationWindow {
             return selLeft === selRight;
         if (kind !== "format")
             return true;
-        // A column declared as a type other than a quantity or currency is
-        // passed by: the panels go round the ones that suit what it holds.
-        for (var c = selLeft; c <= selRight; c++) {
-            var col = sheet.columns[c];
-            if (col && col.declared && !isQuantityType(col.type) && col.type !== "Duration")
-                return false;
-        }
         return allFormattable();
     }
     function cycleMeta(dir) {
@@ -3463,7 +3456,7 @@ ApplicationWindow {
     // The steps of setting a column go in order, its type and then its format.
     // `Set unit…` is always open: a unit makes the column a kind of quantity,
     // whatever it was.
-    // `Set format…` waits for a type, declared or inferred, that takes a format.
+    // `Set format…` waits for a type, declared or inferred.
     function allFormattable() {
         // The constants: their Value column.
         if (sheet.isConsts)
@@ -3474,14 +3467,8 @@ ApplicationWindow {
             // a format declares it.
             if (!column || !column.type)
                 return false;
-            // A quantity takes a format with or without a unit, `Quantity[; .9s]`.
-            if (win.isQuantityType(column.type)) {
-                continue;
-            }
-            // `Decimal[2]` is a `Decimal`.
-            var base = column.type.split("[")[0];
-            if (["Integer", "Hex", "Octal", "Binary", "Decimal", "Percent", "Float", "Scientific", "Boolean", "Date", "Time", "Datetime", "Duration"].indexOf(base) < 0)
-                return false;
+            // Any type is shown the Formats pane: a format that does not read
+            // for it is refused there.
         }
         return true;
     }
@@ -3495,12 +3482,6 @@ ApplicationWindow {
         return false;
     }
 
-    // Ctrl+Shift+F: the filter box of the column the cursor is in.
-    function openFilter() {
-        var head = headCells.itemAt(curCol);
-        if (head)
-            columnPopup.openFor(curCol, head);
-    }
     function anyDeclared() {
         for (var c = selLeft; c <= selRight; c++) {
             if (sheet.columns[c] && sheet.columns[c].declared)
@@ -3995,18 +3976,35 @@ ApplicationWindow {
     readonly property bool typing: editing || formulaField.activeFocus || barMessage.activeFocus || sourceText.activeFocus || promptDialog.opened
         || renamingTab >= 0
 
+    // A File menu on Windows and macOS, where a menu bar is expected; the
+    // keys are the shortcuts below, which the menu calls the same way.
+    menuBar: Qt.platform.os === "osx" || Qt.platform.os === "windows" ? fileBar : null
+    MenuBar {
+        id: fileBar
+        Menu {
+            title: "File"
+            Action { text: "New"; onTriggered: file.newInstance() }
+            Action { text: "Open…"; onTriggered: openDialog.show() }
+            MenuSeparator {}
+            Action { text: "Save"; onTriggered: win.save() }
+            Action { text: "Save As…"; onTriggered: saveDialog.open() }
+            Action { text: "Export…"; onTriggered: exportChoice.open() }
+            MenuSeparator {}
+            Action { text: "Close Window"; onTriggered: win.close() }
+        }
+    }
+
     Shortcut { sequence: "Ctrl+S"; onActivated: win.save() }
     Shortcut { sequence: "Ctrl+Shift+S"; onActivated: saveDialog.open() }
-    Shortcut { sequence: "Ctrl+O"; onActivated: win.guard("open") }
+    Shortcut { sequence: "Ctrl+O"; onActivated: openDialog.show() }
     Shortcut { sequence: "Ctrl+E"; onActivated: exportChoice.open() }
-    Shortcut { sequence: "Ctrl+N"; enabled: !win.typing; onActivated: win.newSheet(true) }
+    Shortcut { sequence: "Ctrl+Alt+N"; enabled: !win.typing; onActivated: win.newSheet(true) }
     Shortcut { sequence: "Ctrl+D"; enabled: !win.typing; onActivated: win.duplicateShownSheet() }
     Shortcut { sequence: "Ctrl+Alt+Shift+Left"; enabled: !win.typing; onActivated: win.moveShownSheet(-1) }
     Shortcut { sequence: "Ctrl+Alt+Shift+Right"; enabled: !win.typing; onActivated: win.moveShownSheet(1) }
     Shortcut { sequence: "Ctrl+K"; enabled: !win.typing; onActivated: promptDialog.ask("const") }
-    Shortcut { sequence: "Ctrl+Shift+F"; enabled: !win.typing && win.hasCursor && !win.hasBlocks; onActivated: win.openFilter() }
     Shortcut { sequence: "Ctrl+Shift+N"; onActivated: win.newWindow(win.tab) }
-    Shortcut { sequence: "Ctrl+Alt+N"; onActivated: win.guard("new") }
+    Shortcut { sequence: "Ctrl+N"; onActivated: file.newInstance() }
     // Cmd+W on a Mac (Qt reads Cmd as Ctrl there); the unsaved-changes check
     // in onClosing still applies.
     Shortcut { sequence: "Ctrl+W"; onActivated: win.close() }
@@ -4020,10 +4018,19 @@ ApplicationWindow {
     // keyboard reports, with Shift or without, is its own affair.
     Shortcut { sequences: ["Ctrl+Alt+Right", "Ctrl+Shift+]", "Ctrl+Shift+}", "Ctrl+}"]; onActivated: win.switchTab(win.tab + 1) }
     Shortcut { sequences: ["Ctrl+Alt+Left", "Ctrl+Shift+[", "Ctrl+Shift+{", "Ctrl+{"]; onActivated: win.switchTab(win.tab - 1) }
-    Shortcut { sequence: "Ctrl+?"; onActivated: helpDialog.open() }
+    Shortcut { sequence: "Ctrl+/"; onActivated: helpDialog.open() }
     Shortcut { sequence: "F1"; onActivated: functionsDialog.open() }
     Shortcut { sequence: "F2"; enabled: !win.showSource; onActivated: win.editInBox() }
     Shortcut { sequence: "F3"; onActivated: win.viewSource(!win.showSource) }
+    // F6 moves the keyboard to the style bar and back: arrows choose, Enter acts, Esc leaves.
+    Shortcut {
+        sequence: "F6"; enabled: !win.editing && win.canStyle
+        onActivated: styleRow.at >= 0 ? styleRow.leave() : styleRow.enter(false)
+    }
+    Shortcut {
+        sequence: "Shift+F6"; enabled: !win.editing && win.canStyle
+        onActivated: styleRow.at >= 0 ? styleRow.leave() : styleRow.enter(true)
+    }
     Shortcut { sequence: "F4"; enabled: !win.editing; onActivated: win.cycleMeta(1) }
     Shortcut { sequence: "Shift+F4"; enabled: !win.editing; onActivated: win.cycleMeta(-1) }
     Shortcut { sequences: ["Meta+F", "F11"]
@@ -4277,10 +4284,71 @@ ApplicationWindow {
                 // alignment. Whole columns and rows take all of them, a block
                 // of cells takes an alignment, which is its columns'.
                 Row {
+                    id: styleRow
                     visible: win.canStyle
                     spacing: 2
                     Layout.alignment: Qt.AlignVCenter
                     Layout.rightMargin: 6
+                    // F6 puts the keyboard here: the buttons that can be used,
+                    // in order, and the one the keyboard is on, -1 where it is not.
+                    property int at: -1
+                    property int last: 0
+                    function usable() {
+                        var out = [];
+                        for (var i = 0; i < children.length; i++)
+                            if (children[i].visible && children[i].usable === true)
+                                out.push(children[i]);
+                        return out;
+                    }
+                    function ring(index) {
+                        var all = usable();
+                        for (var i = 0; i < children.length; i++)
+                            if (children[i].usable !== undefined)
+                                children[i].focused = false;
+                        at = index;
+                        if (index >= 0 && index < all.length) {
+                            all[index].focused = true;
+                            last = index;
+                        }
+                    }
+                    // In from the grid, on the button last used (or the end, going back).
+                    function enter(back) {
+                        var all = usable();
+                        if (all.length === 0)
+                            return;
+                        forceActiveFocus();
+                        ring(back ? all.length - 1 : Math.min(last, all.length - 1));
+                    }
+                    function leave() {
+                        ring(-1);
+                        grid.forceActiveFocus();
+                    }
+                    onActiveFocusChanged: if (!activeFocus) ring(-1)
+                    Keys.onPressed: function(event) {
+                        var all = usable();
+                        if (all.length === 0 || at < 0) {
+                            leave();
+                            event.accepted = true;
+                            return;
+                        }
+                        var k = event.key;
+                        if (k === Qt.Key_Left)
+                            ring(Math.max(0, at - 1));
+                        else if (k === Qt.Key_Right)
+                            ring(Math.min(all.length - 1, at + 1));
+                        else if (k === Qt.Key_Home)
+                            ring(0);
+                        else if (k === Qt.Key_End)
+                            ring(all.length - 1);
+                        else if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Space
+                                 || k === Qt.Key_Down)
+                            all[at].pressed();
+                        else if (k === Qt.Key_Escape)
+                            leave();
+                        else
+                            return;
+                        event.accepted = true;
+                    }
                     StyleButton { label: "\u21B6"; enabled: file.canUndo; onPressed: file.undo() }
                     StyleButton { label: "\u21B7"; enabled: file.canRedo; onPressed: file.redo() }
                     Item { width: Math.round(win.fontSize * 0.6); height: 1 }
@@ -4737,7 +4805,9 @@ ApplicationWindow {
                                         font.family: win.font.family
                                         font.features: win.font.features
                                         font.pixelSize: win.typeSize
-                                        elide: Text.ElideNone
+                                        // Cut at the column's edge where a width set for it is
+                                        // narrower than its type: it must not run into the next head.
+                                        elide: Text.ElideRight
                                     }
                                 }
                                 // The caret of a block of columns headed here.
@@ -6458,6 +6528,8 @@ ApplicationWindow {
         property bool bold: false
         property bool italic: false
         property bool marking: false
+        // The keyboard is on it, from F6.
+        property bool focused: false
         // A word or a label with an arrow, wider than a single character.
         property bool wide: false
         readonly property bool usable: enabled && (!marking || win.canMark)
@@ -6466,6 +6538,8 @@ ApplicationWindow {
         height: Math.round(win.fontSize * 1.6)
         radius: 3
         opacity: usable ? 1 : 0.35
+        border.width: focused ? 2 : 0
+        border.color: win.accentColor
         color: active ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.25)
             : hover.containsMouse && usable ? win.panelColor : "transparent"
         Text {
@@ -8183,6 +8257,8 @@ ApplicationWindow {
     component LegendPopup: Popup {
         id: legend
         property string title: ""
+        // How much taller than its usual height the list has been dragged.
+        property real stretch: 0
         property var source: function() { return ""; }
         property var back: function() { grid.forceActiveFocus(); }
         padding: 8
@@ -8239,8 +8315,9 @@ ApplicationWindow {
             ListView {
                 id: legendList
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(contentHeight, Math.round(win.fontSize * 26), Math.round(win.height * 0.7),
-                    win.roomFor(legendList, legend.y, Math.round(win.fontSize * 4)))
+                Layout.preferredHeight: Math.max(Math.round(win.fontSize * 4), Math.min(
+                    Math.min(contentHeight, Math.round(win.fontSize * 26)) + legend.stretch,
+                    Math.round(win.height * 0.7), win.roomFor(legendList, legend.y, Math.round(win.fontSize * 7))))
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 model: legend.lines
@@ -8332,6 +8409,39 @@ ApplicationWindow {
                     onClicked: legend.close()
                 }
             }
+            // A handle on the bottom edge to stretch the list down by.
+            Item {
+                Layout.fillWidth: true
+                implicitHeight: Math.round(win.smallSize * 1.1)
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: Math.round(win.smallSize * 3)
+                    height: 3
+                    radius: 1.5
+                    color: win.mutedColor
+                    opacity: legendStretch.containsMouse || legendStretch.pressed ? 1 : 0.5
+                }
+                MouseArea {
+                    id: legendStretch
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.SizeVerCursor
+                    property real fromY: 0
+                    property real was: 0
+                    onPressed: function(mouse) {
+                        fromY = mapToItem(null, mouse.x, mouse.y).y;
+                        was = legend.stretch;
+                    }
+                    onPositionChanged: function(mouse) {
+                        if (!pressed)
+                            return;
+                        var most = win.roomFor(legendList, legend.y, Math.round(win.fontSize * 7))
+                            - Math.min(legendList.contentHeight, Math.round(win.fontSize * 26));
+                        legend.stretch = Math.min(Math.max(0, most), Math.max(-Math.round(win.fontSize * 6),
+                            was + mapToItem(null, mouse.x, mouse.y).y - fromY));
+                    }
+                }
+            }
         }
     }
 
@@ -8362,6 +8472,8 @@ ApplicationWindow {
         width: Math.min(Math.round(win.fontSize * 24), win.width - 16)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         property var table: []
+        // How much taller than its usual height the list has been dragged.
+        property real stretch: 0
         // The widths of the columns, in ems of the text, for the head and the rows alike.
         readonly property var widths: [3.6, 5, 3.2, 7]
         function colW(i) { return Math.round(win.fontSize * widths[i]); }
@@ -8479,8 +8591,9 @@ ApplicationWindow {
             ListView {
                 id: prefixList
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(contentHeight, Math.round(win.fontSize * 22), Math.round(win.height * 0.7),
-                    win.roomFor(prefixList, prefixHelp.y, Math.round(win.fontSize * 4)))
+                Layout.preferredHeight: Math.max(Math.round(win.fontSize * 4), Math.min(
+                    Math.min(contentHeight, Math.round(win.fontSize * 22)) + prefixHelp.stretch,
+                    Math.round(win.height * 0.7), win.roomFor(prefixList, prefixHelp.y, Math.round(win.fontSize * 7))))
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 model: prefixHelp.table
@@ -8522,6 +8635,39 @@ ApplicationWindow {
                     onClicked: prefixHelp.close()
                 }
             }
+            // A handle on the bottom edge to stretch the list down by.
+            Item {
+                Layout.fillWidth: true
+                implicitHeight: Math.round(win.smallSize * 1.1)
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: Math.round(win.smallSize * 3)
+                    height: 3
+                    radius: 1.5
+                    color: win.mutedColor
+                    opacity: prefixStretch.containsMouse || prefixStretch.pressed ? 1 : 0.5
+                }
+                MouseArea {
+                    id: prefixStretch
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.SizeVerCursor
+                    property real fromY: 0
+                    property real was: 0
+                    onPressed: function(mouse) {
+                        fromY = mapToItem(null, mouse.x, mouse.y).y;
+                        was = prefixHelp.stretch;
+                    }
+                    onPositionChanged: function(mouse) {
+                        if (!pressed)
+                            return;
+                        var most = win.roomFor(prefixList, prefixHelp.y, Math.round(win.fontSize * 7))
+                            - Math.min(prefixList.contentHeight, Math.round(win.fontSize * 22));
+                        prefixHelp.stretch = Math.min(Math.max(0, most), Math.max(-Math.round(win.fontSize * 6),
+                            was + mapToItem(null, mouse.x, mouse.y).y - fromY));
+                    }
+                }
+            }
         }
     }
 
@@ -8554,6 +8700,18 @@ ApplicationWindow {
         onClosed: grid.forceActiveFocus()
         onOpened: Qt.callLater(function() { field.forceActiveFocus(); field.selectAll(); })
 
+        // The width of the widest format listed, for the column they stand in.
+        FontMetrics {
+            id: formatMetrics
+            font.family: win.monoFamily
+            font.pixelSize: win.smallSize
+        }
+        readonly property real formatWidth: {
+            var most = 0;
+            for (var i = 0; i < choices.length; i++)
+                most = Math.max(most, formatMetrics.advanceWidth(choices[i].format));
+            return Math.ceil(most) + 4;
+        }
         function now() {
             var column = win.sheet.columns[win.selLeft];
             return column && column.format ? column.format : "";
@@ -8815,7 +8973,8 @@ ApplicationWindow {
                         id: formatText
                         x: 8
                         anchors.verticalCenter: parent.verticalCenter
-                        width: Math.round(parent.width * 0.42)
+                        // As wide as the longest format, but never past 45% of the row.
+                        width: Math.min(formatPopup.formatWidth, Math.round(parent.width * 0.45))
                         elide: Text.ElideRight
                         clip: true
                         text: choice.modelData.format
@@ -9025,10 +9184,8 @@ ApplicationWindow {
             }
             open();
         }
-        onAccepted: {
-            win.pendingUrl = selectedFile;
-            win.run("openUrl");
-        }
+        // The file opens in a new instance of the app, in a window of its own.
+        onAccepted: file.openInNewInstance(selectedFile)
     }
 
     Dialogs.FileDialog {

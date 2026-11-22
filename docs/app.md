@@ -102,7 +102,7 @@ rewrites the text, and saving writes exactly that.
 - In a `Date` column (or a `Datetime` one, for the start of the day) a day and month alone, `2/3`, is read in your locale's order, day first in Britain and month first in the US. It takes the year of the nearest cell above in the column that has one, or this year if none has, and the file holds the whole date, `2026-03-02`. A day that month does not have, `31/4`, is left as typed.
 - A file in another time zone is shown on your clocks.
 
-The keyboard shortcuts are listed in [Keyboard shortcuts](keyboard.md), and Ctrl+? shows them in the app.
+The keyboard shortcuts are listed in [Keyboard shortcuts](keyboard.md), and Ctrl+/ shows them in the app (Cmd+/ on a Mac).
 
 ### Read-only views, and pasting a reference
 
@@ -148,8 +148,8 @@ leave it from the first line going up or the last going down. It is checked
 as it is typed, before anything is read: the box turns red while it is
 wrong, and holding the pointer over it says why. So the popup opens at once
 on a view of millions of rows. The circle is solid while the column is
-filtered, and filters on several columns all apply. Ctrl+Shift+F opens the
-popup of the column the cursor is in. **Operators** opens a legend of what a filter can say for the
+filtered, and filters on several columns all apply. F4 opens it for the column
+the cursor is in, the first of the column settings it cycles through. **Operators** opens a legend of what a filter can say for the
 column's type: the comparisons, `in`, the text and date functions, `and`, `or`
 and `not`, each with an example (the text is
 `omasheet-engine/resources/filter_help.txt`).
