@@ -352,7 +352,7 @@ impl Writer<'_> {
                 )
             }
             Some(RowSel::Pred(node)) => Rows::Where(node),
-            Some(RowSel::RangeVal(_) | RowSel::Mask(_)) => return Err(SELECTION),
+            Some(RowSel::RangeVal(_) | RowSel::Mask(_) | RowSel::Block { .. }) => return Err(SELECTION),
             // The row before within a partition is a different number of
             // rows back on each row, which a reference copied down is not.
             Some(RowSel::CursorBy { .. }) => return Err(PARTITION),

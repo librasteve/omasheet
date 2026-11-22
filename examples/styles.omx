@@ -1,0 +1,119 @@
+// Styled sheets: alignment from the rule line, bold, italic and headings
+// from the header row and the leftmost cells. The Sales sheet below shows
+// blocks: totals at three levels in both directions.
+
+sheet Drinks
+
+| **Item**     | _Qty_ | ## Price | Net |
+| :----------- | :---: | -------: | --- |
+| Tea          | 3     | 4.50     | *   |
+| **Coffee**   | 2     | 7.25     | *   |
+| _Mugs_       | 6     | 9        | *   |
+| ## **Total** | 11    | 20.75    | *   |
+
+Net := Qty * Price
+
+// Totals at three levels in both directions. A heading level declares a
+// block, and `^` marks the rows and columns that sum a block up: they stand
+// at its foot, and stay in view when the block is folded. A `^ ###` sums
+// up the `###` block it ends, and a plain `^` the block nearest to it.
+// `block` is the rows under the head, so every summary row is the same
+// formula. Fold the blocks in the app to read the sheet down to any level.
+
+sheet Sales
+
+| Place              | # FY | ## H1 | ### Q1 | Q1_Web                  | Q1_Shop                  | ^ ### Q1_Sum                             | ### Q2 | Q2_Web                  | Q2_Shop                  | ^ ### Q2_Sum                             | ^ ## H1_Sum                             | ## H2 | ### Q3 | Q3_Web                  | Q3_Shop                  | ^ ### Q3_Sum                             | ### Q4 | Q4_Web                  | Q4_Shop                  | ^ ### Q4_Sum                             | ^ ## H2_Sum                             | ^ # FY_Sum                              |
+| :----------------- | ---: | ----: | -----: | ----------------------: | -----------------------: | ---------------------------------------: | -----: | ----------------------: | -----------------------: | ---------------------------------------: | --------------------------------------: | ----: | -----: | ----------------------: | -----------------------: | ---------------------------------------: | -----: | ----------------------: | -----------------------: | ---------------------------------------: | --------------------------------------: | --------------------------------------: |
+| # World            |      |       |        |                         |                          |                                          |        |                         |                          |                                          |                                         |       |        |                         |                          |                                          |        |                         |                          |                                          |                                         |                                         |
+| ## EMEA            |      |       |        |                         |                          |                                          |        |                         |                          |                                          |                                         |       |        |                         |                          |                                          |        |                         |                          |                                          |                                         |                                         |
+| ### UK             |      |       |        |                         |                          |                                          |        |                         |                          |                                          |                                         |       |        |                         |                          |                                          |        |                         |                          |                                          |                                         |                                         |
+| London             |      |       |        | 40                      | 43                       | = Sales[Q1_Web; 3] + Sales[Q1_Shop; 3]   |        | 12                      | 15                       | = Sales[Q2_Web; 3] + Sales[Q2_Shop; 3]   | = Sales[Q1_Sum; 3] + Sales[Q2_Sum; 3]   |       |        | 30                      | 33                       | = Sales[Q3_Web; 3] + Sales[Q3_Shop; 3]   |        | 42                      | 45                       | = Sales[Q4_Web; 3] + Sales[Q4_Shop; 3]   | = Sales[Q3_Sum; 3] + Sales[Q4_Sum; 3]   | = Sales[H1_Sum; 3] + Sales[H2_Sum; 3]   |
+| Leeds              |      |       |        | 47                      | 10                       | = Sales[Q1_Web; 4] + Sales[Q1_Shop; 4]   |        | 19                      | 22                       | = Sales[Q2_Web; 4] + Sales[Q2_Shop; 4]   | = Sales[Q1_Sum; 4] + Sales[Q2_Sum; 4]   |       |        | 37                      | 40                       | = Sales[Q3_Web; 4] + Sales[Q3_Shop; 4]   |        | 49                      | 12                       | = Sales[Q4_Web; 4] + Sales[Q4_Shop; 4]   | = Sales[Q3_Sum; 4] + Sales[Q4_Sum; 4]   | = Sales[H1_Sum; 4] + Sales[H2_Sum; 4]   |
+| ^ ### UK total     |      |       |        | = [Q1_Web; block].sum() | = [Q1_Shop; block].sum() | = [Q1_Sum; block].sum()                  |        | = [Q2_Web; block].sum() | = [Q2_Shop; block].sum() | = [Q2_Sum; block].sum()                  | = [H1_Sum; block].sum()                 |       |        | = [Q3_Web; block].sum() | = [Q3_Shop; block].sum() | = [Q3_Sum; block].sum()                  |        | = [Q4_Web; block].sum() | = [Q4_Shop; block].sum() | = [Q4_Sum; block].sum()                  | = [H2_Sum; block].sum()                 | = [FY_Sum; block].sum()                 |
+| ### France         |      |       |        |                         |                          |                                          |        |                         |                          |                                          |                                         |       |        |                         |                          |                                          |        |                         |                          |                                          |                                         |                                         |
+| Paris              |      |       |        | 28                      | 31                       | = Sales[Q1_Web; 7] + Sales[Q1_Shop; 7]   |        | 40                      | 43                       | = Sales[Q2_Web; 7] + Sales[Q2_Shop; 7]   | = Sales[Q1_Sum; 7] + Sales[Q2_Sum; 7]   |       |        | 18                      | 21                       | = Sales[Q3_Web; 7] + Sales[Q3_Shop; 7]   |        | 30                      | 33                       | = Sales[Q4_Web; 7] + Sales[Q4_Shop; 7]   | = Sales[Q3_Sum; 7] + Sales[Q4_Sum; 7]   | = Sales[H1_Sum; 7] + Sales[H2_Sum; 7]   |
+| Lyon               |      |       |        | 35                      | 38                       | = Sales[Q1_Web; 8] + Sales[Q1_Shop; 8]   |        | 47                      | 10                       | = Sales[Q2_Web; 8] + Sales[Q2_Shop; 8]   | = Sales[Q1_Sum; 8] + Sales[Q2_Sum; 8]   |       |        | 25                      | 28                       | = Sales[Q3_Web; 8] + Sales[Q3_Shop; 8]   |        | 37                      | 40                       | = Sales[Q4_Web; 8] + Sales[Q4_Shop; 8]   | = Sales[Q3_Sum; 8] + Sales[Q4_Sum; 8]   | = Sales[H1_Sum; 8] + Sales[H2_Sum; 8]   |
+| ^ ### France total |      |       |        | = [Q1_Web; block].sum() | = [Q1_Shop; block].sum() | = [Q1_Sum; block].sum()                  |        | = [Q2_Web; block].sum() | = [Q2_Shop; block].sum() | = [Q2_Sum; block].sum()                  | = [H1_Sum; block].sum()                 |       |        | = [Q3_Web; block].sum() | = [Q3_Shop; block].sum() | = [Q3_Sum; block].sum()                  |        | = [Q4_Web; block].sum() | = [Q4_Shop; block].sum() | = [Q4_Sum; block].sum()                  | = [H2_Sum; block].sum()                 | = [FY_Sum; block].sum()                 |
+| ^ ## EMEA total    |      |       |        | = [Q1_Web; block].sum() | = [Q1_Shop; block].sum() | = [Q1_Sum; block].sum()                  |        | = [Q2_Web; block].sum() | = [Q2_Shop; block].sum() | = [Q2_Sum; block].sum()                  | = [H1_Sum; block].sum()                 |       |        | = [Q3_Web; block].sum() | = [Q3_Shop; block].sum() | = [Q3_Sum; block].sum()                  |        | = [Q4_Web; block].sum() | = [Q4_Shop; block].sum() | = [Q4_Sum; block].sum()                  | = [H2_Sum; block].sum()                 | = [FY_Sum; block].sum()                 |
+| ## APAC            |      |       |        |                         |                          |                                          |        |                         |                          |                                          |                                         |       |        |                         |                          |                                          |        |                         |                          |                                          |                                         |                                         |
+| ### Japan          |      |       |        |                         |                          |                                          |        |                         |                          |                                          |                                         |       |        |                         |                          |                                          |        |                         |                          |                                          |                                         |                                         |
+| Tokyo              |      |       |        | 30                      | 33                       | = Sales[Q1_Web; 13] + Sales[Q1_Shop; 13] |        | 42                      | 45                       | = Sales[Q2_Web; 13] + Sales[Q2_Shop; 13] | = Sales[Q1_Sum; 13] + Sales[Q2_Sum; 13] |       |        | 20                      | 23                       | = Sales[Q3_Web; 13] + Sales[Q3_Shop; 13] |        | 32                      | 35                       | = Sales[Q4_Web; 13] + Sales[Q4_Shop; 13] | = Sales[Q3_Sum; 13] + Sales[Q4_Sum; 13] | = Sales[H1_Sum; 13] + Sales[H2_Sum; 13] |
+| Osaka              |      |       |        | 37                      | 40                       | = Sales[Q1_Web; 14] + Sales[Q1_Shop; 14] |        | 49                      | 12                       | = Sales[Q2_Web; 14] + Sales[Q2_Shop; 14] | = Sales[Q1_Sum; 14] + Sales[Q2_Sum; 14] |       |        | 27                      | 30                       | = Sales[Q3_Web; 14] + Sales[Q3_Shop; 14] |        | 39                      | 42                       | = Sales[Q4_Web; 14] + Sales[Q4_Shop; 14] | = Sales[Q3_Sum; 14] + Sales[Q4_Sum; 14] | = Sales[H1_Sum; 14] + Sales[H2_Sum; 14] |
+| ^ ### Japan total  |      |       |        | = [Q1_Web; block].sum() | = [Q1_Shop; block].sum() | = [Q1_Sum; block].sum()                  |        | = [Q2_Web; block].sum() | = [Q2_Shop; block].sum() | = [Q2_Sum; block].sum()                  | = [H1_Sum; block].sum()                 |       |        | = [Q3_Web; block].sum() | = [Q3_Shop; block].sum() | = [Q3_Sum; block].sum()                  |        | = [Q4_Web; block].sum() | = [Q4_Shop; block].sum() | = [Q4_Sum; block].sum()                  | = [H2_Sum; block].sum()                 | = [FY_Sum; block].sum()                 |
+| ### India          |      |       |        |                         |                          |                                          |        |                         |                          |                                          |                                         |       |        |                         |                          |                                          |        |                         |                          |                                          |                                         |                                         |
+| Delhi              |      |       |        | 18                      | 21                       | = Sales[Q1_Web; 17] + Sales[Q1_Shop; 17] |        | 30                      | 33                       | = Sales[Q2_Web; 17] + Sales[Q2_Shop; 17] | = Sales[Q1_Sum; 17] + Sales[Q2_Sum; 17] |       |        | 48                      | 11                       | = Sales[Q3_Web; 17] + Sales[Q3_Shop; 17] |        | 20                      | 23                       | = Sales[Q4_Web; 17] + Sales[Q4_Shop; 17] | = Sales[Q3_Sum; 17] + Sales[Q4_Sum; 17] | = Sales[H1_Sum; 17] + Sales[H2_Sum; 17] |
+| Mumbai             |      |       |        | 25                      | 28                       | = Sales[Q1_Web; 18] + Sales[Q1_Shop; 18] |        | 37                      | 40                       | = Sales[Q2_Web; 18] + Sales[Q2_Shop; 18] | = Sales[Q1_Sum; 18] + Sales[Q2_Sum; 18] |       |        | 15                      | 18                       | = Sales[Q3_Web; 18] + Sales[Q3_Shop; 18] |        | 27                      | 30                       | = Sales[Q4_Web; 18] + Sales[Q4_Shop; 18] | = Sales[Q3_Sum; 18] + Sales[Q4_Sum; 18] | = Sales[H1_Sum; 18] + Sales[H2_Sum; 18] |
+| ^ ### India total  |      |       |        | = [Q1_Web; block].sum() | = [Q1_Shop; block].sum() | = [Q1_Sum; block].sum()                  |        | = [Q2_Web; block].sum() | = [Q2_Shop; block].sum() | = [Q2_Sum; block].sum()                  | = [H1_Sum; block].sum()                 |       |        | = [Q3_Web; block].sum() | = [Q3_Shop; block].sum() | = [Q3_Sum; block].sum()                  |        | = [Q4_Web; block].sum() | = [Q4_Shop; block].sum() | = [Q4_Sum; block].sum()                  | = [H2_Sum; block].sum()                 | = [FY_Sum; block].sum()                 |
+| ^ ## APAC total    |      |       |        | = [Q1_Web; block].sum() | = [Q1_Shop; block].sum() | = [Q1_Sum; block].sum()                  |        | = [Q2_Web; block].sum() | = [Q2_Shop; block].sum() | = [Q2_Sum; block].sum()                  | = [H1_Sum; block].sum()                 |       |        | = [Q3_Web; block].sum() | = [Q3_Shop; block].sum() | = [Q3_Sum; block].sum()                  |        | = [Q4_Web; block].sum() | = [Q4_Shop; block].sum() | = [Q4_Sum; block].sum()                  | = [H2_Sum; block].sum()                 | = [FY_Sum; block].sum()                 |
+| ^ # World total    |      |       |        | = [Q1_Web; block].sum() | = [Q1_Shop; block].sum() | = [Q1_Sum; block].sum()                  |        | = [Q2_Web; block].sum() | = [Q2_Shop; block].sum() | = [Q2_Sum; block].sum()                  | = [H1_Sum; block].sum()                 |       |        | = [Q3_Web; block].sum() | = [Q3_Shop; block].sum() | = [Q3_Sum; block].sum()                  |        | = [Q4_Web; block].sum() | = [Q4_Shop; block].sum() | = [Q4_Sum; block].sum()                  | = [H2_Sum; block].sum()                 | = [FY_Sum; block].sum()                 |
+
+sheet Check
+
+| Label         | Value                                       |
+| ------------- | ------------------------------------------- |
+| Grand total   | = Sales[FY_Sum; 21]                     |
+| Regions added | = Sales[FY_Sum; 10] + Sales[FY_Sum; 20] |
+| Halves added  | = Sales[H1_Sum; 21] + Sales[H2_Sum; 21] |
+
+// A subtotal, a local total and a regional total are summary rows, `^`,
+// under what they sum, and several may close one block: a sum, a mean and
+// a maximum. `block` is the rows under a head, up to the end of its block,
+// with no heading of their own, so no row is counted twice.
+sheet Costs
+
+| Place            | Net                    |
+| ---------------- | ---------------------- |
+| # World          |                        |
+| ## EMEA          |                        |
+| ### UK           |                        |
+| London           | 10                     |
+| Leeds            | 5                      |
+| ^ ### UK sum     | = [Net; block].sum()   |
+| ^ ### UK mean    | = [Net; block].mean()  |
+| ### France       |                        |
+| Paris            | 7                      |
+| Lyon             | 9                      |
+| ^ ### France sum | = [Net; block].sum()   |
+| ^ ## EMEA sum    | = [Net; block].sum()   |
+| ^ ## EMEA max    | = [Net; block].max()   |
+| ## APAC          |                        |
+| Tokyo            | 20                     |
+| ^ ## APAC sum    | = [Net; block].sum()   |
+| ^ # World sum    | = [Net; block].sum()   |
+
+// `rollup` is `group_by` laid out as blocks, for a query to give its
+// result the shape written by hand above: a head row for each group of the
+// outer keys, the groups inside it, and a summary row of the same
+// aggregates at its foot. It is read-only, and folds in the app like the
+// sheets above, the head of a closed block showing its summary.
+sheet Revenue
+
+| Region | Country | City     | Sales | Orders |
+| ------ | ------- | -------- | ----- | ------ |
+| EMEA   | UK      | London   | 120   | 14     |
+| EMEA   | UK      | Leeds    | 45    | 6      |
+| EMEA   | France  | Paris    | 98    | 11     |
+| EMEA   | France  | Lyon     | 52    | 7      |
+| APAC   | Japan   | Tokyo    | 140   | 16     |
+| APAC   | Japan   | Osaka    | 61    | 8      |
+| APAC   | India   | Delhi    | 77    | 9      |
+| APAC   | India   | Mumbai   | 83    | 10     |
+
+sheet ByPlace := Revenue |> rollup(Region, Country, City) |> agg(Sales.sum(), Orders.sum())
+
+// Long text at the edge of a column. Each column is 14 characters wide, the
+// length of its `---`. Nothing said, a text spills over the empty cells to
+// its right; `String[clip]` cuts it off at the column's edge and
+// `String[wrap]` carries it on to more lines. The style bar's ⇢ menu sets
+// them, for text columns only.
+sheet Texty
+
+Clip : String[clip]
+Wrap : String[wrap]
+
+| Spill                                   | Clip                                                    | Wrap                                       | Kind                        |
+| --------------                          | --------------                                          | --------------                             | ----                        |
+| Spills over the empty cells beside it   |                                                         |                                            | spill                       |
+| A long note, cut short by the next cell | "Clipped at the column's edge, \n    never shown whole" | Wrapped on to more lines inside the column | all three                   |
+| Short                                   | Short                                                   | Short                                      | fits                        |
+| "Some text\nwith a newline"             | "Some text\nwith a newline"                             | "Some text\nwith a newline"                | "some text\nwith a newline" |

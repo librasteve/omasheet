@@ -1,0 +1,112 @@
+sheet Drinks
+
+Item   | Qty | Price | Net
+-------|-----|-------|-------
+Tea    |   3 |   4.5 |   13.5
+Coffee |   2 |  7.25 |   14.5
+Mugs   |   6 |     9 |     54
+Total  |  11 | 20.75 | 228.25
+
+sheet Sales
+
+Place        | FY | H1 | Q1 | Q1_Web | Q1_Shop | Q1_Sum | Q2 | Q2_Web | Q2_Shop | Q2_Sum | H1_Sum | H2 | Q3 | Q3_Web | Q3_Shop | Q3_Sum | Q4 | Q4_Web | Q4_Shop | Q4_Sum | H2_Sum | FY_Sum
+-------------|----|----|----|--------|---------|--------|----|--------|---------|--------|--------|----|----|--------|---------|--------|----|--------|---------|--------|--------|-------
+World        |    |    |    |        |         |        |    |        |         |        |        |    |    |        |         |        |    |        |         |        |        |
+EMEA         |    |    |    |        |         |        |    |        |         |        |        |    |    |        |         |        |    |        |         |        |        |
+UK           |    |    |    |        |         |        |    |        |         |        |        |    |    |        |         |        |    |        |         |        |        |
+London       |    |    |    |     40 |      43 |     83 |    |     12 |      15 |     27 |    110 |    |    |     30 |      33 |     63 |    |     42 |      45 |     87 |    150 |    260
+Leeds        |    |    |    |     47 |      10 |     57 |    |     19 |      22 |     41 |     98 |    |    |     37 |      40 |     77 |    |     49 |      12 |     61 |    138 |    236
+UK total     |    |    |    |     87 |      53 |    140 |    |     31 |      37 |     68 |    208 |    |    |     67 |      73 |    140 |    |     91 |      57 |    148 |    288 |    496
+France       |    |    |    |        |         |        |    |        |         |        |        |    |    |        |         |        |    |        |         |        |        |
+Paris        |    |    |    |     28 |      31 |     59 |    |     40 |      43 |     83 |    142 |    |    |     18 |      21 |     39 |    |     30 |      33 |     63 |    102 |    244
+Lyon         |    |    |    |     35 |      38 |     73 |    |     47 |      10 |     57 |    130 |    |    |     25 |      28 |     53 |    |     37 |      40 |     77 |    130 |    260
+France total |    |    |    |     63 |      69 |    132 |    |     87 |      53 |    140 |    272 |    |    |     43 |      49 |     92 |    |     67 |      73 |    140 |    232 |    504
+EMEA total   |    |    |    |    150 |     122 |    272 |    |    118 |      90 |    208 |    480 |    |    |    110 |     122 |    232 |    |    158 |     130 |    288 |    520 |   1000
+APAC         |    |    |    |        |         |        |    |        |         |        |        |    |    |        |         |        |    |        |         |        |        |
+Japan        |    |    |    |        |         |        |    |        |         |        |        |    |    |        |         |        |    |        |         |        |        |
+Tokyo        |    |    |    |     30 |      33 |     63 |    |     42 |      45 |     87 |    150 |    |    |     20 |      23 |     43 |    |     32 |      35 |     67 |    110 |    260
+Osaka        |    |    |    |     37 |      40 |     77 |    |     49 |      12 |     61 |    138 |    |    |     27 |      30 |     57 |    |     39 |      42 |     81 |    138 |    276
+Japan total  |    |    |    |     67 |      73 |    140 |    |     91 |      57 |    148 |    288 |    |    |     47 |      53 |    100 |    |     71 |      77 |    148 |    248 |    536
+India        |    |    |    |        |         |        |    |        |         |        |        |    |    |        |         |        |    |        |         |        |        |
+Delhi        |    |    |    |     18 |      21 |     39 |    |     30 |      33 |     63 |    102 |    |    |     48 |      11 |     59 |    |     20 |      23 |     43 |    102 |    204
+Mumbai       |    |    |    |     25 |      28 |     53 |    |     37 |      40 |     77 |    130 |    |    |     15 |      18 |     33 |    |     27 |      30 |     57 |     90 |    220
+India total  |    |    |    |     43 |      49 |     92 |    |     67 |      73 |    140 |    232 |    |    |     63 |      29 |     92 |    |     47 |      53 |    100 |    192 |    424
+APAC total   |    |    |    |    110 |     122 |    232 |    |    158 |     130 |    288 |    520 |    |    |    110 |      82 |    192 |    |    118 |     130 |    248 |    440 |    960
+World total  |    |    |    |    260 |     244 |    504 |    |    276 |     220 |    496 |   1000 |    |    |    220 |     204 |    424 |    |    276 |     260 |    536 |    960 |   1960
+
+sheet Check
+
+Label         | Value
+--------------|------
+Grand total   |  1960
+Regions added |  1960
+Halves added  |  1960
+
+sheet Costs
+
+Place      | Net
+-----------|----
+World      |
+EMEA       |
+UK         |
+London     |  10
+Leeds      |   5
+UK sum     |  15
+UK mean    | 7.5
+France     |
+Paris      |   7
+Lyon       |   9
+France sum |  16
+EMEA sum   |  31
+EMEA max   |  10
+APAC       |
+Tokyo      |  20
+APAC sum   |  20
+World sum  |  51
+
+sheet Revenue
+
+Region | Country | City   | Sales | Orders
+-------|---------|--------|-------|-------
+EMEA   | UK      | London |   120 |     14
+EMEA   | UK      | Leeds  |    45 |      6
+EMEA   | France  | Paris  |    98 |     11
+EMEA   | France  | Lyon   |    52 |      7
+APAC   | Japan   | Tokyo  |   140 |     16
+APAC   | Japan   | Osaka  |    61 |      8
+APAC   | India   | Delhi  |    77 |      9
+APAC   | India   | Mumbai |    83 |     10
+
+sheet ByPlace
+
+Region | Country | City   | Sales_sum | Orders_sum
+-------|---------|--------|-----------|-----------
+APAC   |         |        |           |
+APAC   | India   |        |           |
+APAC   | India   | Delhi  |        77 |          9
+APAC   | India   | Mumbai |        83 |         10
+APAC   | India   |        |       160 |         19
+APAC   | Japan   |        |           |
+APAC   | Japan   | Osaka  |        61 |          8
+APAC   | Japan   | Tokyo  |       140 |         16
+APAC   | Japan   |        |       201 |         24
+APAC   |         |        |       361 |         43
+EMEA   |         |        |           |
+EMEA   | France  |        |           |
+EMEA   | France  | Lyon   |        52 |          7
+EMEA   | France  | Paris  |        98 |         11
+EMEA   | France  |        |       150 |         18
+EMEA   | UK      |        |           |
+EMEA   | UK      | Leeds  |        45 |          6
+EMEA   | UK      | London |       120 |         14
+EMEA   | UK      |        |       165 |         20
+EMEA   |         |        |       315 |         38
+
+sheet Texty
+
+Spill                                   | Clip                                                    | Wrap                                       | Kind
+----------------------------------------|---------------------------------------------------------|--------------------------------------------|----------------------------
+Spills over the empty cells beside it   |                                                         |                                            | spill
+A long note, cut short by the next cell | "Clipped at the column's edge, \n    never shown whole" | Wrapped on to more lines inside the column | all three
+Short                                   | Short                                                   | Short                                      | fits
+"Some text\nwith a newline"             | "Some text\nwith a newline"                             | "Some text\nwith a newline"                | "some text\nwith a newline"

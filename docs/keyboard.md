@@ -17,6 +17,9 @@ The keys below work on the cell cursor and the selection. Ctrl+? shows this list
 | Ctrl+Shift+R | Paste reference: a live link to the cells copied |
 | Ctrl+Shift+F | Paste format: the type, unit and format of the columns copied, without their values |
 | Ctrl+Enter | Insert row/col after (Shift: before) |
+| Ctrl+B / I | Bold / italic the selected columns or rows (press again to remove) |
+| Ctrl+Alt+1 to 6 | Heading level of the selected columns or rows |
+| Ctrl+Alt+L / E / R | Align the selected columns left / centre / right |
 | Delete | Clear |
 | Ctrl+Delete | Delete the selected rows, columns or sheet |
 | Ctrl+O / S | Open / save |

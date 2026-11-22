@@ -1,0 +1,15 @@
+sheet Sales
+
+Region | Y2025 | Q1 | Q2 | Y2026
+-------|-------|----|----|------
+EMEA   |    30 | 10 | 20 |    40
+UK     |    10 |  4 |  6 |    15
+France |    20 |  6 | 14 |    25
+APAC   |     5 |  2 |  3 |     8
+
+sheet Summary
+
+Label | Value
+------|------
+EMEA  |    30
+Rows  |    22

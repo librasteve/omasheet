@@ -64,6 +64,94 @@ Tax    := Profit * 20%
 of its name in the header row is an error, and so is anything but `*` in a
 cell of a computed column.
 
+### Styling
+
+A sheet is styled in Markdown, written once for a whole column or row.
+
+- The colons of the `---` line align a column: `:---` left, `:---:` centre,
+  `---:` right. With none, numbers are set right and anything else left.
+- A header cell written as Markdown styles its column: `**Qty**` is bold and
+  `_Qty_` italic for the whole column, and `## Qty` is a heading of that level
+  (`#` to `######`), which sets the header cell itself larger and, see below,
+  declares a block of columns. They combine, `## **_Qty_**`.
+- The leftmost cell of a row written the same way styles the whole row:
+  `**Total**` makes every cell of the row bold, and `## Total` sets the
+  leftmost cell larger and declares a block of rows.
+- The markers are not part of the name or the value. `**Total**` is the
+  label `Total`, so `Orders[; Item == 'Total']` still finds it, and the
+  column is `Qty` to a formula. Bold and italic from a row and its
+  column add up. A heading level is for the header cell and the leftmost cell
+  alone, so the two never meet; the alignment is always the column's.
+- Only a header cell and the leftmost cell of a row carry a style. Bare text
+  anywhere else is Markdown for display, as before, and its value keeps its
+  markers. To keep markers in a header or leftmost cell as they are, quote it:
+  `"**Total**"`.
+- The app shows the styles in the grid, and sets them with Ctrl+B, Ctrl+I,
+  Ctrl+Alt+1 to 6 and Ctrl+Alt+L, E and R on whole columns or rows (alignment
+  on any cells' columns), writing the markers for you. A rendered report
+  sets each column's alignment, and bold and italic in its cells; a heading
+  level is bold there, as a table has no headings.
+
+```omx
+sheet Orders
+
+| **Item**     | _Qty_ | ## Price | Net |
+| :----------- | :---: | -------: | --- |
+| Tea          | 3     | 4.50     | *   |
+| ## **Total** | 11    | 20.75    | *   |
+
+Net := Qty * Price
+```
+
+### Blocks
+
+A heading level also declares a block, the same for rows and columns. A row whose leftmost cell has a level starts a block that runs down to just before the next row with the same level or a higher one (a smaller number), and a header cell with a level starts a block of columns the same way to the right. Lines under it with a deeper level are blocks inside it. A heading with nothing under it is only a heading.
+
+```omx
+sheet Sales
+
+| Region     | ## Y2025 | ### Q1 | ### Q2 | ## Y2026 |
+| :--------- | -------: | -----: | -----: | -------: |
+| ## EMEA    | 30       | 10     | 20     | 40       |
+| ### UK     | 10       | 4      | 6      | 15       |
+| ### France | 20       | 6      | 14     | 25       |
+| ## APAC    | 5        | 2      | 3      | 8        |
+```
+
+- In the app a block shows a caret on its head, which folds the lines under it away. A row's caret stands in the row numbers and points down when the block is open and right when it is closed; a column's stands in its header and points right when open and down when closed. Both are stepped in by how many blocks they are inside, and Alt-click folds a block and the blocks inside it. The corner has a line of numbered buttons for the columns and another for the rows, each showing that dimension down to a depth on its own; 0 closes every block, 1 opens the top level, and the last number opens every block.
+- The style bar reads, left to right, ↶ ↷ (undo and redo, style changes included), then B, I, H (heading level), Σ (summary), alignment, width and wrap, which are stored in the file, then ❄, ⊘ and ✕, which are not. ✕ clears the selection's styles and column width after asking. B, I, H and Σ need whole rows or columns selected; on a block of cells they say so in the message bar.
+- ❄ freezes the rows above and the columns to the left of the selected cell, so that they stay in view as the rest scrolls; pressed again it thaws them. Like hiding, it belongs to the view and is not kept in the file.
+- The style bar's ⊘ menu hides the selected columns, or rows when whole rows are selected, and a double line marks where something is hidden. Each hide is a step: Show last undoes the latest, Show all brings everything back, and Hide again puts back what Show all took off. Hide empty hides in one step every row with nothing in it but its leftmost cell, and every column with nothing in it, which takes away the empty head column of a block; a closed block whose head is hidden shows its own summary in its place. Like folding, hiding is the view's alone and is not kept in the file. The ⇔ menu sets the selected columns' width, 4 to 60 characters, or auto to fit the cells, and that is kept in the file as the length of the column's `---` line: a rule wider or narrower than the cells need is a width, and one as wide as they need (as a tidy table has) is auto. A rule shorter than four characters is never a width. The ⇢ menu next to it sets what a long text does at its column's edge, ⇢ spill (the default), ⇥ clip or ↵ wrap, for the selected text columns, and writes it as the column's `String[clip]` or `String[wrap]`; a row with wrapped text is as tall as its longest one needs. A sheet read from a file, or of more than 3000 rows, does not wrap: its long text stays on one line. In an `.xlsx` export a wrapped column is a workbook's wrapped text. A column inside a block of columns with nothing in it is hidden by itself; a head and a summary column stay.
+- Folding only hides. Hidden cells still calculate, and a formula over them includes them. Which blocks are folded is not kept in the file.
+- A block of rows or columns is drawn in the app as a box: the outermost in a full line and the block inside it in a fainter, stepped-in one, and never more than two levels. A rendered page marks a block's edge with a slightly fatter gridline.
+- A sheet with blocks is not sorted or filtered, and the controls for them are muted.
+- A heading level sets only the header cell, or the leftmost cell, larger; the head row's other cells are ordinary data.
+
+#### Summary rows and columns
+
+A total goes at the foot of its block, in a summary row: a row whose leftmost cell starts with `^ `. A header cell that starts with `^ ` is a summary column, at the right end of its block. A summary line belongs to the block it is inside, so one block may be closed by several: a sum, a mean, a maximum.
+
+```omx
+sheet Costs
+
+| Place            | Net                   |
+| ---------------- | --------------------- |
+| ## EMEA          |                       |
+| ### UK           |                       |
+| London           | 10                    |
+| Leeds            | 5                     |
+| ^ ### UK sum     | = [Net; block].sum()  |
+| ^ ### UK mean    | = [Net; block].mean() |
+| ### France       |                       |
+| Paris            | 7                     |
+| ^ ### France sum | = [Net; block].sum()  |
+| ^ ## EMEA sum    | = [Net; block].sum()  |
+```
+
+- A summary line is never a head and never ends a block, whatever level it has. Without a level it belongs to the innermost block around it. With one, `^ ## EMEA sum`, it belongs to the nearest block headed by that level, which is how `EMEA sum` closes EMEA and not France, where both end together. The level also sets the line larger, as a heading does. The marker comes first and combines with the others: `^ ## **Total**`.
+- Folding a block hides everything under its head, its summary lines too, and the head shows the values of its first summary line, in italics, so a closed sheet reads as its totals. A summary line of a block around it stays in view. The app's style bar has a Σ button that marks the selected rows or columns as summary lines.
+- `[Net; block]` in a summary row is the lines the block sums: those with no heading level and not themselves summary lines, so nothing is counted twice.
+
 ## Views: a sheet whose rows are in Parquet or CSV
 
 A sheet may read its rows from a Parquet or CSV file instead of holding them:
@@ -224,7 +312,7 @@ read as one; `Integer` is what is written.
 | `Scientific` | `10.5(3)`, `10 ± 0.3` — a value with its measurement uncertainty, each a `Float`; a number with no uncertainty in a `Scientific` column has an uncertainty of zero. Its format, in brackets, is a number format as for a `Float`: with nothing before it the value is shown as `10.5(3)`, with `±` before it as `value ± uncertainty`, and with `~` before it as the value alone, at the places the uncertainty gives: `Length : Scientific[.4f]`, `Scientific[±.3e-3]`, `Scientific[~.2f]`. The conversion `s` lets the uncertainty lead: a value with one is shown by it, whatever the precision, and a value with none is shown to the precision as significant digits, in `g` form: `Scientific[.9s]` shows `1.0545718176e-34` as `1.05457182e-34` and `6.674 30(15)e-11` as it is |
 | `Quantity` and its kinds | `5kg`, `300cm`, `9.81m.s^-2`, `10.5(3)e-3kg`, `20°C` — a number and an SI unit, written with no space; a `Scientific` magnitude, so it carries an uncertainty. A column is declared `Quantity` for any dimension, or one of its kinds (`Length`, `Mass`, `Force`, `Energy`, `Pressure`, ...), which admits only a unit of that dimension: `Load : Mass`. `Angle` holds `rad`, `°` or `45°30′`; `SolidAngle`, `AngularSpeed`, `LuminousFlux` and `Illuminance` hold `sr`, `rad.s^-1`, `lm` and `lx`. `Data`, `DataRate` and `DataDensity` hold `B`, `GiB`, `Mb`, `MiB.s^-1` and `Gb.m^-2`. A cell in another unit of it is converted to the column's unit, which is the preferred unit of the kind (`kg` for `Mass`) or the one in brackets, `Load : Mass[g]`; a bare number is read in that unit. The column's head says its unit once, `Mass[kg]`, in full whatever the width it takes, and its cells are numbers: `5`, `0.3`, `7.50(20)e-3`. After a `;` a number format as a `Scientific` takes may follow: `Mass[mg; .1f]`. A `v` before the conversion, `Mass[g; v.1f]`, puts the unit down in each row too, `5000.0g`; the head still says it, `Mass[g]`. A `*` before a metric unit, `Length[*m]`, shows each value with the prefix that gives it the shortest form, a power of a thousand, in each row: `1.5km`, `2mm`; the head holds no unit. It takes the unit without a prefix (`*g`, not `*kg`), and a bare `*` of a kind takes its preferred unit. The bit and the byte take the binary prefixes, powers of 1024, `Data[*B]`: `1536B` is `1.5KiB`. The unit may be left out before the `;`, `Quantity[; .10s]`, and each value is then shown in its own unit, as it has no one unit for a head, and `v` is an error there; with the conversion `s`, a derived value with no uncertainty is shown in ten significant digits, as `1.054571818e-34J.s`, rather than as `0J.s·`. A `_` before the conversion, `Quantity[; _.10s]`, sets the unit apart from its number by a space, `6.022e+23 mol^-1`; with a unit in the head it is written `v_`, `Mass[g; v_.1f]`; a number shown cut has its `·` after the unit. A unit is shown as the SI recommends, `m⋅s⁻¹` and `kg⋅m²`, in the head and in each row, and is read in that form as well as `m.s^-1`; a `^` after the `v` or `_`, `Speed[m.s^-1; ^]`, shows it as it is written in a file instead. A table printed or put in Markdown names the unit after the column, `Load [kg]`, and a value in a sentence keeps its unit. See *Units* in the expressions guide |
 | `Complex` | `3+4i`, `-1.5-2i`, `2i` — a real and an imaginary part, each a `Float`; a real number in a `Complex` column is that number with no imaginary part |
-| `String` | `hi` or `"hi"`  (escape \|) |
+| `String` | `hi` or `"hi"`  (escape \|). Its format, in brackets, says what a cell wider than its column does: nothing said, the text spills over the empty cells to its right; `String[clip]` cuts it off at the column's edge; `String[wrap]` carries it on to more lines inside the column. `Url` and `Email` take them too |
 | `Boolean` | `true`, `false`; a `Boolean` column also reads `1` and `0`, `x` and `o`, `X` and `O`. Its format, in brackets, is any two different characters, the symbol for true and then for false: `Boolean[10]`, `Boolean[xo]`, `Boolean[XO]`, `Boolean[✓✗]` (not a space, `]` or `%`), and the column reads its own two as well; with none it shows `true` and `false` |
 | `Date` | `2025-01-31` |
 | `Time` | `09:30`, `09:30:15`, `09:30:15.5` |
@@ -406,6 +494,14 @@ the same `Fraction`. A quotient with a decimal in it, `1.0/10`, is a `Decimal`
 rounded to ten places. A fraction beside a whole number is a fraction, so
 `<1/10> + 1` is `11/10`; beside a decimal it is a decimal, so `<1/10> + 0.5` is `0.6`. A space goes before a fraction that follows a `+`,
 since `+<` is a shift.
+
+Without a format, a number is shown in a practical way whatever its type, and what is stored is not changed:
+
+- A very large or very small number is shown in e notation, not as a long run of zeros. From `1e15` up, or below `1e-15` (other than zero), an `Integer`, a `Decimal`, a `Fraction` that is a whole number and a `Float` are shown so: `10**30` is `1e+30`, `0.0000000000000001` is `1e-16`, and `123456789012345678` is `1.23456789012345678e+17`. In between they are plain. A `Fraction` that is not whole stays a fraction, `1/3`, or a mixed number once it is large.
+- A `Decimal` is shown to three places after the point, `12345.679·`, with a `·` after it where it stores more digits. A `Decimal` below 1 is shown to three significant digits, `0.00314·`. A number with no more digits than that is shown whole, and a number too long for 23 characters is cut and marked the same way. Pointing at a cut number in the app shows it in full, and `--exact` on the command line does too.
+- A `Percent` is rounded to two places, `41.67%`.
+
+A column format, below, replaces these rules for its column.
 
 An `Integer`, `Decimal` or `Float` column may say how its numbers are shown,
 after its type in brackets, as a C `printf` conversion without its `%`:

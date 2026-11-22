@@ -112,9 +112,25 @@ ApplicationWindow {
     readonly property int headerHeight: Math.round(fontSize * 3.3)
     // Wide enough for the last row's number: a digit of the caption font is
     // about 0.62 of its size, with a font-size of room beside it.
-    readonly property int gutterWidth: Math.round(Math.max(fontSize * 3.4,
+    readonly property int numberWidth: Math.round(Math.max(fontSize * 3.4,
         captionSize * 0.62 * String(Math.max(0, (sheet ? sheet.nrows : 0) - 1)).length + fontSize * 1.2))
-    onFontSizeChanged: Qt.callLater(function() { win.measure(); win.reveal(); })
+    readonly property int gutterWidth: numberWidth + rowCaretWidth
+    // The corner's level buttons: each as wide as this, and a row's carets
+    // stand under the buttons, the first level under the button 1.
+    readonly property int levelButtonWidth: Math.max(10, Math.round(fontSize * 1.1))
+    readonly property int levelPitch: levelButtonWidth + 1
+    readonly property real caretSpan: Math.round(noteSize * 0.95)
+    readonly property int cornerNeed: hasBlocks
+        ? Math.ceil(caretSpan + 1 + Math.max(rowLevelCount, colLevelCount) * levelPitch + 6) : 0
+    // Where the caret of a row block `depth` deep stands: centred under the
+    // corner's button of the same number, the buttons being numbered from 0
+    // as the depths are.
+    function rowCaretX(depth) {
+        var count = rowLevelCount;
+        var left = rowCaretWidth - 3 - (count - depth) * levelPitch + 1;
+        return left + levelButtonWidth / 2 - caretSpan / 2;
+    }
+    onFontSizeChanged: { wrapTimer.restart(); Qt.callLater(function() { win.measure(); win.reveal(); }); }
 
     function zoom(step) {
         fontSize = step === 0 ? baseFontSize : Math.max(8, Math.min(40, fontSize + step));
@@ -514,18 +530,51 @@ ApplicationWindow {
         return col.type + (col.format ? "[]" : "");
     }
 
+    // A rollup's key columns are one, the first, with each row's own name
+    // stepped in by its level; the others are out of the way.
+    readonly property int treeKeys: sheet && sheet.tree > 1 ? sheet.tree : 0
+    function treeIndent(row) {
+        if (treeKeys === 0)
+            return 0;
+        var level = sheet.rowStyles && sheet.rowStyles[row] ? (sheet.rowStyles[row] >> 2) & 7 : 0;
+        return ((level > 0 ? Math.min(level, treeKeys) : treeKeys) - 1) * Math.round(fontSize * 1.1);
+    }
+    readonly property string treeTitle: {
+        if (treeKeys === 0)
+            return "";
+        var names = [];
+        for (var k = 0; k < treeKeys; k++)
+            names.push(sheet.columns[k].name);
+        return names.join("\u203A");
+    }
+    // The head columns with nothing in them, which show no type line.
+    property var slimCols: []
     function measure() {
         var widths = [];
+        var slim = [];
         var total = 0;
         var cols = sheet.columns;
         for (var c = 0; c < cols.length; c++) {
-            var chars = cols[c].name.length;
+            // A heading's name is set larger, and a block's head has a caret.
+            var chars = (c === 0 && treeKeys > 0 ? treeTitle.length : cols[c].name.length) * levelScale((cols[c].style >> 2) & 7)
+                + colCaretShift(c) / metrics.averageCharacterWidth;
             // A paged sheet is measured by its first block of rows.
             var measured = sheet.paged ? Math.min(sheet.nrows, pageSize) : sheet.nrows;
+            var filled = false;
+            var ownFilled = false;
             for (var r = 0; r < measured; r++) {
-                var cell = cellAt(r, c);
-                if (cell)
-                    chars = Math.max(chars, lineWidth(cell.d));
+                var cell = cellAt(r, shownColumn(c));
+                var own = shownColumn(c) === c ? cell : cellAt(r, c);
+                if (own && own.d.length > 0)
+                    ownFilled = true;
+                if (cell) {
+                    // A heading's or a bold cell's text is set larger or wider.
+                    var st = styleOf(cols[c], r, c);
+                    var grow = levelScale((st >> 2) & 7) * ((st & 1) ? 1.1 : 1);
+                    chars = Math.max(chars, lineWidth(cell.d) * grow + (c === 0 ? treeIndent(r) / metrics.averageCharacterWidth : 0));
+                    if (cell.d.length > 0)
+                        filled = true;
+                }
             }
             var w = Math.round(Math.min(46, Math.max(7, chars + 2)) * metrics.averageCharacterWidth) + 14;
             // Never narrower than the type line beside the telltale: the
@@ -535,15 +584,33 @@ ApplicationWindow {
             // what keeps it clear of the telltale. It is set smaller, so a
             // short type such as `Integer` fits the width an empty column
             // has already.
-            if (cols[c].type.length > 0) {
+            // A head column with nothing in it is as wide as its name, its
+            // caret and the telltale: no type line, no room to spare.
+            // Whether it is empty is its own cells' business: a closed head
+            // shows its summary's values, which would make it wider and move
+            // its caret from under the pointer, so only its width follows.
+            var empty = !!colHeads[c] && !ownFilled;
+            if (empty) {
+                var shownW = filled ? w : 0;
+                w = Math.ceil(cols[c].name.length * levelScale((cols[c].style >> 2) & 7) * metrics.averageCharacterWidth * 1.1)
+                    + colCaretShift(c, true) + win.noteSize + 14;
+                w = Math.max(w, shownW);
+            } else if (cols[c].type.length > 0) {
                 var marked = cols[c].declared || (cols[c].computed && !sheet.isConsts);
                 var typeChars = typeLabel(cols[c]).length + (marked ? 3 : 0);
                 var telltale = sheet.isConsts ? 0 : win.noteSize;
                 w = Math.max(w, Math.ceil(typeChars * noteMetrics.averageCharacterWidth) + telltale + 14);
             }
+            var set = cols[c].width;
+            if (set)
+                w = Math.round(set * metrics.averageCharacterWidth) + 14;
+            if (hiddenCols[c])
+                w = 0;
             widths.push(w);
+            slim.push(empty);
             total += w;
         }
+        slimCols = slim;
         colWidths = widths;
         totalWidth = total;
     }
@@ -555,6 +622,596 @@ ApplicationWindow {
         anchorRow = Math.min(anchorRow, maxRow);
         curCol = Math.min(curCol, maxCol);
         anchorCol = Math.min(anchorCol, maxCol);
+    }
+
+    // Blocks: the rows and columns a heading level declares, from the
+    // snapshot as [head, end, depth]. A block is folded to its head, and
+    // which are folded is the grid's view alone, by sheet name and then the
+    // head's number: `folds[name].rows` and `.cols`. A sheet with blocks is
+    // not sorted or filtered; its rows shown are the ones folding leaves.
+    readonly property var rowBlockList: sheet && sheet.rowBlocks ? sheet.rowBlocks : []
+    readonly property var colBlockList: sheet && sheet.colBlocks ? sheet.colBlocks : []
+    readonly property bool hasBlocks: rowBlockList.length > 0 || colBlockList.length > 0
+    readonly property int caretStep: Math.round(fontSize * 1.0)
+    property var folds: ({})
+    property int foldRev: 0
+    // The panes frozen, by sheet name: the rows above and the columns left of
+    // the cell the freeze was made at stay in view as the rest scrolls. The
+    // grid's view alone, like folding.
+    property var freezes: ({})
+    property int freezeRev: 0
+    readonly property int frozenRows: {
+        freezeRev;
+        var f = sheet ? freezes[sheet.name] : null;
+        if (!f || !f.rows)
+            return 0;
+        // Never more than half the room, or there would be nothing to scroll.
+        return Math.min(f.rows, shownCount - 1, Math.max(0, Math.floor(rowsView.height / rowHeight / 2)));
+    }
+    readonly property int frozenCols: {
+        freezeRev;
+        colWidths;
+        var f = sheet ? freezes[sheet.name] : null;
+        if (!f || !f.cols)
+            return 0;
+        var w = gutterWidth, n = Math.min(f.cols, sheet.columns.length - 1);
+        for (var c = 0; c < n; c++)
+            w += colWidths[c] || 0;
+        return w <= hflick.width / 2 ? n : 0;
+    }
+    readonly property bool frozen: frozenRows > 0 || frozenCols > 0
+    // Where the frozen columns end, from the left of the sheet.
+    readonly property real frozenEdge: {
+        var w = gutterWidth;
+        for (var c = 0; c < frozenCols; c++)
+            w += colWidths[c] || 0;
+        return w;
+    }
+    // Freeze at the cell with the cursor: the rows above it and the columns
+    // left of it; or let go, where something is frozen already.
+    function toggleFreeze() {
+        var all = JSON.parse(JSON.stringify(freezes));
+        if (frozen || !(curRow > 0 || curCol > 0)) {
+            delete all[sheet.name];
+        } else {
+            all[sheet.name] = { rows: posOf(curRow), cols: curCol };
+        }
+        freezes = all;
+        freezeRev++;
+        grid.forceActiveFocus();
+    }
+    // Columns the reader hid and widths the reader set, by sheet name and
+    // then column name: `colView[name].hide` and `.width` (in characters).
+    // The grid's view alone, like folding: the file is not touched.
+    property var colView: ({})
+    property int colViewRev: 0
+    readonly property var widthChoices: [4, 6, 8, 10, 12, 16, 20, 24, 30, 40, 60]
+    function viewOf(kind, name) {
+        colViewRev;
+        var v = sheet ? colView[sheet.name] : null;
+        return v && v[kind] ? v[kind][name] : undefined;
+    }
+    function setView(mutate) {
+        var all = JSON.parse(JSON.stringify(colView));
+        var v = all[sheet.name] || (all[sheet.name] = { width: {}, stack: [], stash: [] });
+        if (!v.width) v.width = {};
+        mutate(v);
+        colView = all;
+        colViewRev++;
+    }
+    // What the reader hid is kept as batches, so that it can be undone a
+    // step at a time: each hide is a batch of column names and row numbers,
+    // "show last" takes the latest off, "show all" takes everything off and
+    // keeps it, and "hide again" puts that back.
+    function viewState() {
+        var v = colView[sheet.name];
+        return v || { stack: [], stash: [] };
+    }
+    function setBatches(stack, stash) {
+        setView(function(v) { v.stack = stack; v.stash = stash; });
+        grid.forceActiveFocus();
+    }
+    function hideSelected() {
+        if (!sheet.columns)
+            return;
+        var v = viewState();
+        var batch = { cols: [], rows: [] };
+        var r = revealed;
+        if (r && r.sheet === sheet.name && r.kind === selKind
+                && (r.kind === "row" ? (selTop === r.from && selBottom === r.to) : (selLeft === r.from && selRight === r.to))) {
+            // The block a show selected: only what it had brought back.
+            if (r.kind === "row")
+                batch.rows = r.rows;
+            else
+                batch.cols = r.cols;
+        } else if (selKind === "row") {
+            for (var r = selTop; r <= selBottom; r++)
+                batch.rows.push(r);
+        } else {
+            for (var c = selLeft; c <= selRight; c++)
+                if (sheet.columns[c])
+                    batch.cols.push(sheet.columns[c].name);
+        }
+        if (batch.cols.length + batch.rows.length === 0)
+            return;
+        // Hiding something new drops what "hide again" would have restored.
+        setBatches((v.stack || []).concat([batch]), []);
+    }
+    // Every row of the sheet with nothing but its leftmost cell filled, and
+    // every column with only empty cells, as one hide.
+    // That includes the empty head column of a block of columns.
+    function hideEmpty() {
+        if (!sheet.columns || sheet.paged || sheet.nrows === 0)
+            return;
+        var v = viewState();
+        var batch = { cols: [], rows: [] };
+        var cols = sheet.columns.length;
+        var filledCol = [];
+        for (var r = 0; r < sheet.nrows; r++) {
+            // A row with only its leftmost cell filled, a block's head that
+            // names it and no more, is as good as empty.
+            var any = false;
+            for (var c = 0; c < cols; c++) {
+                var cell = cellAt(r, c);
+                if (cell && cell.d.length > 0) {
+                    if (c > 0 || cols === 1)
+                        any = true;
+                    filledCol[c] = true;
+                }
+            }
+            if (!any && !readerHidden.rows[r])
+                batch.rows.push(r);
+        }
+        for (var k = 0; k < cols; k++)
+            if (!filledCol[k] && !readerHidden.cols[sheet.columns[k].name])
+                batch.cols.push(sheet.columns[k].name);
+        if (batch.cols.length + batch.rows.length === 0)
+            return;
+        setBatches((v.stack || []).concat([batch]), []);
+    }
+    // What a show brought back stays selected, so that Hide takes it away
+    // again: the selection is one block, so a disjoint set is selected as
+    // the span from its first to its last, and `revealed` remembers which
+    // of the span were the ones that had been hidden.
+    property var revealed: null
+    function reveal_(batches) {
+        var cols = [], rows = [];
+        for (var i = 0; i < batches.length; i++) {
+            cols = cols.concat(batches[i].cols);
+            rows = rows.concat(batches[i].rows);
+        }
+        revealed = null;
+        if (cols.length > 0) {
+            var idx = [];
+            for (var c = 0; c < sheet.columns.length; c++)
+                if (cols.indexOf(sheet.columns[c].name) >= 0)
+                    idx.push(c);
+            if (idx.length === 0)
+                return;
+            revealed = { sheet: sheet.name, kind: "column", cols: cols, from: idx[0], to: idx[idx.length - 1] };
+            selectLine(false, idx[0], false);
+            selectLine(false, idx[idx.length - 1], true);
+        } else if (rows.length > 0) {
+            rows.sort(function(x, y) { return x - y; });
+            revealed = { sheet: sheet.name, kind: "row", rows: rows, from: rows[0], to: rows[rows.length - 1] };
+            selectLine(true, rows[0], false);
+            selectLine(true, rows[rows.length - 1], true);
+        }
+    }
+    function showLast() {
+        var v = viewState();
+        var st = (v.stack || []).slice();
+        var gone = st.pop();
+        setBatches(st, v.stash || []);
+        if (gone)
+            reveal_([gone]);
+    }
+    function showAllHidden() {
+        var v = viewState();
+        if ((v.stack || []).length > 0) {
+            setBatches([], v.stack);
+            reveal_(v.stack);
+        }
+    }
+    function hideAgain() {
+        var v = viewState();
+        if ((v.stash || []).length > 0)
+            setBatches(v.stash, []);
+    }
+    // The columns (by name) and rows (by number) in force.
+    readonly property var readerHidden: {
+        colViewRev;
+        var cols = {}, rows = {}, n = 0;
+        var st = sheet ? (colView[sheet.name] || {}).stack || [] : [];
+        for (var i = 0; i < st.length; i++) {
+            for (var c = 0; c < st[i].cols.length; c++) { cols[st[i].cols[c]] = true; n++; }
+            for (var r = 0; r < st[i].rows.length; r++) { rows[st[i].rows[r]] = true; n++; }
+        }
+        return { cols: cols, rows: rows, count: n };
+    }
+    readonly property int hiddenByReader: readerHidden.count
+    readonly property bool canShowLast: ((colView[sheet.name] || {}).stack || []).length > 0 && colViewRev >= 0
+    readonly property bool canHideAgain: ((colView[sheet.name] || {}).stash || []).length > 0 && colViewRev >= 0
+    readonly property string readerRowList: Object.keys(readerHidden.rows).join(",")
+    // A width is the length of a column's `---` in the file.
+    function setWidth(chars) {
+        if (canStyle && selKind !== "row")
+            file.setColumnsWidth(tab, selLeft, selRight - selLeft + 1, chars);
+        grid.forceActiveFocus();
+    }
+    readonly property int selWidth: canStyle && sheet.columns[selLeft] ? (sheet.columns[selLeft].width || 0) : 0
+
+    // What a long text does at the edge of its column: spill over the empty
+    // cells to its right (nothing said), `clip` or `wrap`, the format of a
+    // text column. Per column only.
+    function isText(col) {
+        return !!col && (col.type === "String" || col.type === "Email" || col.type === "Url");
+    }
+    function flowOf(col) {
+        return isText(col) && (col.format === "clip" || col.format === "wrap") ? col.format : "";
+    }
+    readonly property bool selTextCols: {
+        if (!canStyle || selKind === "row" || !sheet.columns)
+            return false;
+        for (var c = selLeft; c <= selRight; c++)
+            if (!isText(sheet.columns[c]))
+                return false;
+        return true;
+    }
+    readonly property string selFlow: selTextCols ? flowOf(sheet.columns[selLeft]) : ""
+    function setFlow(flow) {
+        if (selTextCols) {
+            var why = file.setColumnFormat(tab, selLeft, selRight - selLeft + 1, flow);
+            if (why) {
+                styleWarning = why;
+                styleWarningTimer.restart();
+            }
+        }
+        grid.forceActiveFocus();
+    }
+    // The width of the empty cells to the right of a cell, which its text
+    // may spill over: up to the first that holds anything.
+    function spillRoom(row, index) {
+        var room = 0;
+        for (var c = index + 1; c < colWidths.length; c++) {
+            if ((colWidths[c] || 0) <= 0)
+                continue;
+            var cell = cellAt(shownRow(row), shownColumn(c));
+            if (cell && (cell.d !== "" || cell.e))
+                break;
+            room += colWidths[c];
+        }
+        return room;
+    }
+    // Said in the footer, amber, when a style is asked of a block of cells.
+    property string styleWarning: ""
+    Timer {
+        id: styleWarningTimer
+        interval: 4000
+        onTriggered: win.styleWarning = ""
+    }
+    function warnStyle() {
+        styleWarning = "Styles may only be applied to whole columns or rows";
+        styleWarningTimer.restart();
+    }
+    readonly property var rowHeads: headsOf(rowBlockList)
+    readonly property var colHeads: headsOf(colBlockList)
+    function headsOf(list) {
+        var m = {};
+        for (var i = 0; i < list.length; i++)
+            m[list[i][0]] = list[i];
+        return m;
+    }
+    function depthOf(list) {
+        var d = 0;
+        for (var i = 0; i < list.length; i++)
+            d = Math.max(d, list[i][2] + 1);
+        return d;
+    }
+    readonly property int rowCaretWidth: cornerNeed
+    // The levels the corner offers, for rows and for columns each: down to
+    // each depth, and every one open.
+    readonly property int rowLevelCount: rowBlockList.length > 0 ? depthOf(rowBlockList) + 1 : 0
+    readonly property int colLevelCount: colBlockList.length > 0 ? depthOf(colBlockList) + 1 : 0
+    function isFolded(kind, head) {
+        foldRev;
+        var f = folds[sheet.name];
+        return !!(f && f[kind] && f[kind][head]);
+    }
+    function setFolds(mutate) {
+        var all = JSON.parse(JSON.stringify(folds));
+        var f = all[sheet.name] || (all[sheet.name] = { rows: {}, cols: {} });
+        mutate(f);
+        folds = all;
+        foldRev++;
+    }
+    // Open or close the block headed at `head`; `deep` does its blocks too.
+    function toggleFold(kind, head, deep) {
+        var list = kind === "rows" ? rowBlockList : colBlockList;
+        var on = !isFolded(kind, head);
+        setFolds(function(f) {
+            f[kind][head] = on || undefined;
+            if (!on)
+                delete f[kind][head];
+            if (!deep)
+                return;
+            for (var i = 0; i < list.length; i++)
+                if (list[i][0] > head && list[i][1] <= (headsOf(list)[head] || [0, 0])[1]) {
+                    if (on)
+                        f[kind][list[i][0]] = true;
+                    else
+                        delete f[kind][list[i][0]];
+                }
+        });
+        if (kind === "cols")
+            curCol = shownCol(curCol, -1);
+    }
+    // Show the rows, or the columns, down to depth `n` of their blocks: the
+    // blocks at depth n - 1 are closed, and every deeper one open. Rows and
+    // columns are set apart.
+    function showLevel(kind, n) {
+        var list = kind === "rows" ? rowBlockList : colBlockList;
+        setFolds(function(f) {
+            f[kind] = {};
+            for (var i = 0; i < list.length; i++)
+                if (list[i][2] === n - 1)
+                    f[kind][list[i][0]] = true;
+        });
+        if (kind === "cols")
+            selectCell(curRow, shownCol(curCol, -1), false);
+    }
+    // Folds move with the rows or columns an edit adds or takes away.
+    function shiftFolds(kind, at, delta) {
+        if (delta === 0)
+            return;
+        setFolds(function(f) {
+            var moved = {};
+            for (var h in f[kind]) {
+                var n = parseInt(h);
+                if (delta > 0 && n >= at)
+                    moved[n + delta] = true;
+                else if (delta < 0 && n >= at - delta)
+                    moved[n + delta] = true;
+                else if (delta < 0 && n >= at)
+                    continue;
+                else
+                    moved[n] = true;
+            }
+            f[kind] = moved;
+        });
+    }
+    readonly property string foldedRowHeads: {
+        foldRev;
+        var heads = [];
+        for (var i = 0; i < rowBlockList.length; i++)
+            if (isFolded("rows", rowBlockList[i][0]))
+                heads.push(rowBlockList[i][0]);
+        return heads.join(",");
+    }
+    // The columns folded away, by number.
+    readonly property var hiddenCols: {
+        foldRev;
+        colViewRev;
+        var hidden = {};
+        for (var u = 0; sheet && sheet.columns && u < sheet.columns.length; u++)
+            if (readerHidden.cols[sheet.columns[u].name] || (u > 0 && u < treeKeys))
+                hidden[u] = true;
+        // A column inside a block of columns with nothing in it goes out of
+        // the way by itself. A head stays, for it carries the block's caret,
+        // and so does a summary column, and a paged sheet is not scanned.
+        if (sheet && !sheet.paged && sheet.nrows > 0)
+            for (var b = 0; b < colBlockList.length; b++)
+                for (var e = colBlockList[b][0] + 1; e < colBlockList[b][1]; e++) {
+                    if (colHeads[e] || hidden[e] || (sheet.colOwners && sheet.colOwners[e] >= 0 && summaryColumn(e)))
+                        continue;
+                    var any = false;
+                    for (var rr = 0; rr < sheet.nrows && !any; rr++) {
+                        var ce = cellAt(rr, e);
+                        any = !!ce && ce.d.length > 0;
+                    }
+                    if (!any)
+                        hidden[e] = true;
+                }
+        for (var i = 0; i < colBlockList.length; i++)
+            if (isFolded("cols", colBlockList[i][0]))
+                for (var c = colBlockList[i][0] + 1; c < colBlockList[i][1]; c++) {
+                    // A summary column of one around this block stays. Its own
+                    // are shown by its head, or where the reader hid the head,
+                    // as themselves.
+                    var o = sheet.colOwners ? sheet.colOwners[c] : -1;
+                    var headless = !!readerHidden.cols[sheet.columns[colBlockList[i][0]].name];
+                    if (!(o >= 0 && (o < colBlockList[i][0] || (headless && o === colBlockList[i][0]))))
+                        hidden[c] = true;
+                }
+        return hidden;
+    }
+    function summaryColumn(c) {
+        return !!sheet.columns[c] && ((sheet.columns[c].style >> 5) & 1) === 1;
+    }
+    onHiddenColsChanged: measure()
+    onColViewRevChanged: measure()
+    // A closed block's head shows the values of its first summary row or
+    // column, so the closed sheet reads as its totals. By head: where it is.
+    readonly property var rowFirstSum: firstSummaries(sheet ? sheet.rowOwners : null)
+    readonly property var colFirstSum: firstSummaries(sheet ? sheet.colOwners : null)
+    function firstSummaries(owners) {
+        var m = {};
+        for (var i = 0; owners && i < owners.length; i++)
+            if (owners[i] >= 0 && m[owners[i]] === undefined)
+                m[owners[i]] = i;
+        return m;
+    }
+    function shownRow(row) {
+        foldRev;
+        return rowHeads[row] && isFolded("rows", row) && rowFirstSum[row] !== undefined ? rowFirstSum[row] : row;
+    }
+    function shownColumn(col) {
+        foldRev;
+        return colHeads[col] && isFolded("cols", col) && colFirstSum[col] !== undefined ? colFirstSum[col] : col;
+    }
+    // The nearest column showing from `col`, looking in `dir` first.
+    function shownCol(col, dir) {
+        var last = sheet.columns.length - 1;
+        col = Math.max(0, Math.min(last, col));
+        for (var c = col; c >= 0 && c <= last; c += dir === 0 ? 1 : dir)
+            if (!hiddenCols[c])
+                return c;
+        for (var d = col; d >= 0 && d <= last; d -= dir === 0 ? 1 : dir)
+            if (!hiddenCols[d])
+                return d;
+        return col;
+    }
+    // The last row of each block that shows, and the last column: where a
+    // block's edge is drawn, a fatter gridline. A closed block ends at its head.
+    readonly property var rowEnds: edgesOf(rowBlockList, function(r) { return isHidden(r); })
+    readonly property var colEnds: edgesOf(colBlockList, function(c) { return !!hiddenCols[c]; })
+    // Where the reader hid something, a double line: by the last column or
+    // row still showing before it.
+    readonly property var colSeams: {
+        var m = {};
+        if (!sheet || !sheet.columns)
+            return m;
+        for (var h = 0; h < sheet.columns.length; h++)
+            if (readerHidden.cols[sheet.columns[h].name]) {
+                var c = h - 1;
+                while (c >= 0 && hiddenCols[c])
+                    c--;
+                if (c >= 0)
+                    m[c] = true;
+                else
+                    m.lead = true;
+            }
+        return m;
+    }
+    // Each block of rows is a box: for each row showing, the depths of the
+    // blocks it is inside (`c`), those that open at it (`t`) and those that
+    // close at it (`b`).
+    readonly property var boxRows: {
+        foldRev;
+        filterShown;
+        var m = {};
+        for (var i = 0; i < rowBlockList.length; i++) {
+            var head = rowBlockList[i][0], depth = rowBlockList[i][2];
+            // Two levels of boxes at most: deeper ones are not drawn.
+            if (depth > 1)
+                continue;
+            var last = rowBlockList[i][1] - 1;
+            // The summary of the block around this one ends where this one's
+            // run ends, but belongs to that one.
+            var rs = sheet.rowStyles || [];
+            var headLevel = rs[head] ? (rs[head] >> 2) & 7 : 0;
+            while (last > head && (isHidden(last)
+                    || (depth > 0 && rs[last] && ((rs[last] >> 5) & 1) && ((rs[last] >> 2) & 7) < headLevel)))
+                last--;
+            if (isHidden(head))
+                continue;
+            for (var r = head; r <= last; r++) {
+                if (isHidden(r))
+                    continue;
+                var e = m[r] || (m[r] = { c: [], t: [], b: [] });
+                e.c.push(depth);
+                if (r === head)
+                    e.t.push(depth);
+                if (r === last)
+                    e.b.push(depth);
+            }
+            // The line under a block is also the top of the row after it, so
+            // that it reads as clearly as the one above the next block.
+            var after = last + 1;
+            while (after < sheet.nrows && isHidden(after))
+                after++;
+            if (after < sheet.nrows && depth > 0) {
+                var n = m[after] || (m[after] = { c: [], t: [], b: [] });
+                n.t.push(depth);
+            }
+        }
+        return m;
+    }
+    // The same for blocks of columns: for each column showing, the depths
+    // of the blocks that open at it (`l`) and close at it (`r`).
+    readonly property var boxCols: {
+        foldRev;
+        colViewRev;
+        var m = {};
+        var cs = sheet && sheet.columns ? sheet.columns : [];
+        for (var i = 0; i < colBlockList.length; i++) {
+            var head = colBlockList[i][0], depth = colBlockList[i][2];
+            if (depth > 1 || hiddenCols[head])
+                continue;
+            var last = colBlockList[i][1] - 1;
+            var headLevel = cs[head] ? (cs[head].style >> 2) & 7 : 0;
+            // The summary column of the block around this one closes that one.
+            while (last > head && (hiddenCols[last]
+                    || (depth > 0 && cs[last] && ((cs[last].style >> 5) & 1) && ((cs[last].style >> 2) & 7) < headLevel)))
+                last--;
+            var a = m[head] || (m[head] = { l: [], r: [] });
+            a.l.push(depth);
+            var b = m[last] || (m[last] = { l: [], r: [] });
+            b.r.push(depth);
+        }
+        return m;
+    }
+    readonly property int lastCol: {
+        var c = sheet && sheet.columns ? sheet.columns.length - 1 : 0;
+        while (c > 0 && hiddenCols[c])
+            c--;
+        return c;
+    }
+    // The first column and row showing, where something hidden before them
+    // is told by a double line on their top or left edge.
+    readonly property int firstCol: {
+        var c = 0;
+        while (sheet && sheet.columns && c < sheet.columns.length - 1 && hiddenCols[c])
+            c++;
+        return c;
+    }
+    readonly property int firstRow: {
+        filterShown;
+        var r = 0;
+        while (sheet && r < sheet.nrows - 1 && isHidden(r))
+            r++;
+        return r;
+    }
+    readonly property var rowSeams: {
+        var m = {};
+        filterShown;
+        for (var key in readerHidden.rows) {
+            var r = parseInt(key) - 1;
+            while (r >= 0 && isHidden(r))
+                r--;
+            if (r >= 0)
+                m[r] = true;
+            else
+                m.lead = true;
+        }
+        return m;
+    }
+    function edgesOf(list, hidden) {
+        foldRev;
+        var m = {};
+        for (var i = 0; i < list.length; i++) {
+            // Only the outermost blocks are ruled off: inside one, the
+            // subtotals of its blocks run on together.
+            if (list[i][2] > 0)
+                continue;
+            var r = list[i][1] - 1;
+            while (r > list[i][0] && hidden(r))
+                r--;
+            m[r] = true;
+        }
+        return m;
+    }
+    readonly property color blockLineColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.4)
+    // A head column with nothing in it is not indented by its depth: the
+    // columns beside it already show the nesting, and the indent only
+    // widens the deeper ones.
+    function colDepth(col) {
+        var b = colHeads[col];
+        return b && !slimCols[col] ? b[2] : 0;
+    }
+    function colCaretShift(col, slim) {
+        var b = colHeads[col];
+        return b ? ((slim || slimCols[col] ? 0 : b[2]) + 1) * caretStep + 2 : 0;
     }
 
     // The filters in force, by sheet and then column name: each column's
@@ -595,8 +1252,16 @@ ApplicationWindow {
         return parts.join("\u001e");
     }
     readonly property string filterKey: tab + "\u001d" + filterSpec + "\u001d" + file.revision
+        + "\u001d" + (hasBlocks ? "b" + foldedRowHeads : "") + "\u001d" + readerRowList
     onFilterKeyChanged: runFilter()
     function runFilter() {
+        file.hideRows(tab, readerRowList);
+        // A sheet with blocks shows the rows its folds leave, and no filter.
+        if (hasBlocks) {
+            filterPending = false;
+            filterShown = { count: file.foldRows(tab, foldedRowHeads), serial: ++filterSerial };
+            return;
+        }
         var count = file.filterRows(tab, filterSpec);
         filterPending = count === -3;
         if (!filterPending)
@@ -644,7 +1309,89 @@ ApplicationWindow {
     function rowAtY(y) {
         if (shownCount === 0)
             return 0;
-        return rowAt(Math.max(0, Math.min(shownCount - 1, Math.floor(y / rowHeight))));
+        return rowAt(placeAtY(y));
+    }
+
+    // Rows are `rowHeight` high, except in a sheet with a `String[wrap]`
+    // column, where a row is as tall as its longest wrapped text needs. Then
+    // `rowTops` holds where each place starts, and one past the last its end;
+    // otherwise it is null and a place is a multiplication, which a table of
+    // millions of rows needs. A paged sheet, or one of more than 3000 rows,
+    // does not wrap: its long text stays on one line.
+    readonly property var wrapCols: {
+        var out = [];
+        if (sheet.paged || !sheet.columns)
+            return out;
+        for (var c = 0; c < sheet.columns.length; c++)
+            if (flowOf(sheet.columns[c]) === "wrap")
+                out.push(c);
+        return out;
+    }
+    property var rowTops: null
+    // Measuring text lays it out, so it is done in a timer, once, after what
+    // it depends on has changed, and not in a binding that would read the
+    // measurer it is changing.
+    Timer {
+        id: wrapTimer
+        interval: 0
+        onTriggered: win.rowTops = win.wrapCols.length === 0 || win.shownCount > 3000 ? null : win.wrapTops()
+    }
+    onWrapColsChanged: wrapTimer.restart()
+    onSheetChanged: wrapTimer.restart()
+    onShownCountChanged: wrapTimer.restart()
+    onColWidthsChanged: wrapTimer.restart()
+    function wrapTops() {
+        var n = shownCount, tops = new Array(n + 1), y = 0;
+        for (var p = 0; p < n; p++) {
+            tops[p] = y;
+            var h = rowHeight, r = shownRow(rowAt(p));
+            for (var k = 0; k < wrapCols.length; k++) {
+                var c = wrapCols[k], w = (colWidths[c] || 0) - 14;
+                var cell = w > 0 ? cellAt(r, shownColumn(c)) : null;
+                if (!cell || cell.n || !cell.d)
+                    continue;
+                measurer.width = w;
+                measurer.text = cell.d;
+                h = Math.max(h, measurer.contentHeight + 8);
+            }
+            y += h;
+        }
+        tops[n] = y;
+        return tops;
+    }
+    Text {
+        id: measurer
+        visible: false
+        wrapMode: Text.Wrap
+        textFormat: Text.PlainText
+        font.family: win.font.family
+        font.features: win.font.features
+        font.pixelSize: win.fontSize
+    }
+    // Where place `pos` starts, how tall it is, and the place at `y`.
+    function topOf(pos) {
+        // `rowTops` can be a step behind `shownCount` for a moment, after rows
+        // were hidden or a block closed: then a place is where an even grid
+        // would have it, never undefined.
+        var at = rowTops ? rowTops[Math.max(0, Math.min(pos, shownCount))] : undefined;
+        return at === undefined ? pos * rowHeight : at;
+    }
+    function heightOf(pos) {
+        var h = rowTops && pos >= 0 && pos < shownCount ? rowTops[pos + 1] - rowTops[pos] : rowHeight;
+        return isNaN(h) ? rowHeight : h;
+    }
+    function placeAtY(y) {
+        if (!rowTops)
+            return Math.max(0, Math.min(shownCount - 1, Math.floor(y / rowHeight)));
+        var lo = 0, hi = Math.max(0, shownCount - 1);
+        while (lo < hi) {
+            var mid = (lo + hi + 1) >> 1;
+            if (rowTops[mid] <= y)
+                lo = mid;
+            else
+                hi = mid - 1;
+        }
+        return lo;
     }
     function filtered(col) {
         return filterOf(col).length > 0;
@@ -770,6 +1517,8 @@ ApplicationWindow {
         row = Math.max(0, Math.min(sheet.nrows - 1, row));
         curRow = isHidden(row) ? shownFrom(row, row >= curRow ? 1 : -1) : row;
         curCol = Math.max(0, Math.min(sheet.columns.length - 1, col));
+        if (hiddenCols[curCol])
+            curCol = shownCol(curCol, col >= curCol ? 1 : -1);
         if (!extend) {
             anchorRow = curRow;
             anchorCol = curCol;
@@ -878,11 +1627,14 @@ ApplicationWindow {
     function showPlace(pos) {
         if (pos < 0)
             return;
-        var top = rowsView.originY + pos * rowHeight;
-        var bottom = top + rowHeight;
+        // A row under the frozen ones is not in view.
+        if (pos < frozenRows)
+            return;
+        var top = rowsView.originY + topOf(pos);
+        var bottom = top + heightOf(pos);
         var y = rowsView.contentY;
-        if (top < y)
-            y = top;
+        if (top < y + topOf(frozenRows))
+            y = top - topOf(frozenRows);
         else if (bottom > y + rowsView.height)
             y = bottom - rowsView.height;
         if (y !== rowsView.contentY)
@@ -895,8 +1647,13 @@ ApplicationWindow {
         for (var c = 0; c < col; c++)
             x += colWidths[c];
         var w = colWidths[col] || 0;
-        if (x - gutterWidth < hflick.contentX)
-            hflick.contentX = x - gutterWidth;
+        if (col < frozenCols)
+            return;
+        var pin = 0;
+        for (var p = 0; p < frozenCols; p++)
+            pin += colWidths[p] || 0;
+        if (x - gutterWidth < hflick.contentX + pin)
+            hflick.contentX = x - gutterWidth - pin;
         else if (x + w > hflick.contentX + hflick.width)
             hflick.contentX = x + w - hflick.width;
     }
@@ -1215,6 +1972,43 @@ ApplicationWindow {
 
     // Marks under the references in a formula's text, each in the colour
     // its cells have on the grid. Put in a text control as a child.
+    // A chevron drawn as the sort caret is, so the two match: `dir` is
+    // where it points, 0 up, 90 right, 180 down.
+    component Chevron: Item {
+        id: chev
+        property real dir: 0
+        property color tint: win.accentColor
+        readonly property real span: Math.round(win.noteSize * 0.95)
+        readonly property real arm: span / 2 / Math.cos(40 * Math.PI / 180)
+        readonly property real thick: Math.max(2, Math.round(win.noteSize / 6))
+        width: span
+        height: span
+        rotation: dir
+        Item {
+            id: shape
+            width: chev.span
+            height: Math.ceil(chev.arm * Math.sin(40 * Math.PI / 180) + chev.thick)
+            anchors.centerIn: parent
+            Rectangle {
+                x: chev.span / 2 - chev.arm
+                width: chev.arm
+                height: chev.thick
+                radius: chev.thick / 2
+                color: chev.tint
+                transformOrigin: Item.Right
+                rotation: -40
+            }
+            Rectangle {
+                x: chev.span / 2
+                width: chev.arm
+                height: chev.thick
+                radius: chev.thick / 2
+                color: chev.tint
+                transformOrigin: Item.Left
+                rotation: 40
+            }
+        }
+    }
     component RefMarks: Item {
         id: marks
         required property var edit
@@ -1567,6 +2361,14 @@ ApplicationWindow {
         var c = cellAt(curRow, curCol);
         return !!c && !!c.e;
     }
+    // What the column of the cursor accepts, in the locale's way of writing
+    // it, said in the footer when nothing else is: nothing for a formula
+    // column, whose cells are not typed in.
+    readonly property string entryHint: {
+        var column = hasCursor ? sheet.columns[curCol]
+            : selKind === "column" && selLeft === selRight ? sheet.columns[selLeft] : undefined;
+        return column && column.type && !column.computed && !sheet.isConsts ? file.entryHint(column.type) : "";
+    }
     property var hintFrom: null
     function hover(from, text, bad) {
         if (text.length > 0) {
@@ -1724,6 +2526,105 @@ ApplicationWindow {
 
     // Make an edit that adds or takes away rows at `row` or columns at
     // `col`, or neither, and keep the mark on the cells it was on.
+    // A cell's bold, italic and heading level as one number: bit 0 bold, bit
+    // 1 italic, the level above them. Bold and italic are the column's and
+    // the row's together. A heading level is only for the lines that head
+    // a block: the leftmost cell has its row's, and a header cell its
+    // column's, which the header shows itself.
+    function styleOf(column, row, index) {
+        var c = column && column.style ? column.style : 0;
+        var r = sheet.rowStyles && sheet.rowStyles[row] ? sheet.rowStyles[row] : 0;
+        return ((c | r) & 3) | ((index === 0 ? (r >> 2) & 7 : 0) << 2);
+    }
+
+    // What the style bar shows and may do for the selection.
+    readonly property bool canStyle: !sheet.isConsts && !sheet.why && !!sheet.columns && sheet.columns.length > 0
+    readonly property bool canMark: selKind === "row" || selKind === "column" || selKind === "all"
+    readonly property int selStyle: {
+        if (!canStyle)
+            return 0;
+        if (selKind === "row")
+            return sheet.rowStyles && sheet.rowStyles[selTop] ? sheet.rowStyles[selTop] : 0;
+        var c = sheet.columns[selLeft];
+        return canMark && c ? c.style : 0;
+    }
+    readonly property string selAlign: canStyle && sheet.columns[selLeft] ? sheet.columns[selLeft].align : ""
+
+    function levelScale(level) {
+        return [1, 1.35, 1.25, 1.15, 1.1, 1.05, 1][level] || 1;
+    }
+
+    // Said alignment, or numbers to the right and the rest to the left.
+    function alignment(letter, numeric) {
+        return letter === "c" ? Text.AlignHCenter
+            : letter === "r" ? Text.AlignRight
+            : letter === "l" ? Text.AlignLeft
+            : numeric ? Text.AlignRight : Text.AlignLeft;
+    }
+
+    // Set the style of what is selected, from the shortcuts. `kind` is
+    // "bold", "italic", "summary", "level" with `value`, or "align" with `value` one
+    // of l, c, r or "" for none. A whole column's style is written in its
+    // header cell and a whole row's in its leftmost cell; a block of cells
+    // takes only an alignment, which is its columns'.
+    // A style over several columns or rows is one step to undo.
+    function setStyle(kind, value) {
+        var mark = file.undoMark();
+        applyStyle(kind, value);
+        file.joinSince(mark);
+    }
+    function applyStyle(kind, value) {
+        if (sheet.isConsts || sheet.why || !(sheet.columns && sheet.columns.length))
+            return;
+        var cols = [];
+        for (var c = selLeft; c <= selRight; c++)
+            cols.push(c);
+        function bits(b, i, l, m) { return (b ? 1 : 0) | (i ? 2 : 0) | (l << 2) | (m ? 32 : 0); }
+        if (kind === "clear") {
+            // Everything: each selected column's style, with its alignment,
+            // or each selected row's. A block of cells clears its columns'.
+            // A column's width goes with its style.
+            if (selKind !== "row")
+                setWidth(0);
+            if (selKind === "row") {
+                file.setRowStyle(tab, selTop, selBottom - selTop + 1, 0);
+            } else {
+                for (var q = 0; q < cols.length; q++)
+                    if (sheet.columns[cols[q]])
+                        file.setColumnStyle(tab, cols[q], "", 0);
+                // The whole sheet clears its rows' as well.
+                if (selKind === "all" && sheet.nrows > 0)
+                    file.setRowStyle(tab, 0, sheet.nrows, 0);
+            }
+        } else if (kind === "align") {
+            for (var k = 0; k < cols.length; k++) {
+                var col = sheet.columns[cols[k]];
+                if (col)
+                    file.setColumnStyle(tab, cols[k], value === col.align ? "" : value, col.style);
+            }
+        } else if (selKind === "column" || selKind === "all") {
+            for (var j = 0; j < cols.length; j++) {
+                var cc = sheet.columns[cols[j]];
+                if (!cc)
+                    continue;
+                var s = cc.style, b = s & 1, i = (s >> 1) & 1, l = (s >> 2) & 7, m = (s >> 5) & 1;
+                if (kind === "bold") b = b ? 0 : 1;
+                else if (kind === "italic") i = i ? 0 : 1;
+                else if (kind === "summary") m = m ? 0 : 1;
+                else l = l === value ? 0 : value;
+                file.setColumnStyle(tab, cols[j], cc.align, bits(b, i, l, m));
+            }
+        } else if (selKind === "row") {
+            var first = sheet.rowStyles && sheet.rowStyles[selTop] ? sheet.rowStyles[selTop] : 0;
+            var b2 = first & 1, i2 = (first >> 1) & 1, l2 = (first >> 2) & 7, m2 = (first >> 5) & 1;
+            if (kind === "bold") b2 = b2 ? 0 : 1;
+            else if (kind === "italic") i2 = i2 ? 0 : 1;
+            else if (kind === "summary") m2 = m2 ? 0 : 1;
+            else l2 = l2 === value ? 0 : value;
+            file.setRowStyle(tab, selTop, selBottom - selTop + 1, bits(b2, i2, l2, m2));
+        }
+    }
+
     function keeping(row, col, edit) {
         if (selectionHidesRows())
             return;
@@ -1732,6 +2633,8 @@ ApplicationWindow {
         keepMark = true;
         edit();
         keepMark = false;
+        shiftFolds("rows", row, sheet.nrows - rows);
+        shiftFolds("cols", col, sheet.columns.length - cols);
         if (m === null || m.tab !== tab)
             return;
         var v = shifted(m.top, m.bottom, row, sheet.nrows - rows);
@@ -2666,7 +3569,7 @@ ApplicationWindow {
         var x = gutterWidth - hflick.contentX;
         for (var c = 0; c < curCol; c++)
             x += colWidths[c];
-        var y = headerHeight + (posOf(curRow) + 1) * rowHeight - rowsView.contentY;
+        var y = headerHeight + topOf(posOf(curRow) + 1) - rowsView.contentY;
         cellMenu.popup(grid, Math.max(0, Math.min(grid.width - cellMenu.width, x)),
                        Math.max(headerHeight, Math.min(grid.height - rowHeight, y)));
     }
@@ -3047,6 +3950,7 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        wrapTimer.restart();
         reload();
         if (file.filePath.length > 0)
             file.keepLastFile(file.filePath);
@@ -3100,7 +4004,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Alt+Shift+Left"; enabled: !win.typing; onActivated: win.moveShownSheet(-1) }
     Shortcut { sequence: "Ctrl+Alt+Shift+Right"; enabled: !win.typing; onActivated: win.moveShownSheet(1) }
     Shortcut { sequence: "Ctrl+K"; enabled: !win.typing; onActivated: promptDialog.ask("const") }
-    Shortcut { sequence: "Ctrl+Shift+F"; enabled: !win.typing && win.hasCursor; onActivated: win.openFilter() }
+    Shortcut { sequence: "Ctrl+Shift+F"; enabled: !win.typing && win.hasCursor && !win.hasBlocks; onActivated: win.openFilter() }
     Shortcut { sequence: "Ctrl+Shift+N"; onActivated: win.newWindow(win.tab) }
     Shortcut { sequence: "Ctrl+Alt+N"; onActivated: win.guard("new") }
     // Cmd+W on a Mac (Qt reads Cmd as Ctrl there); the unsaved-changes check
@@ -3369,25 +4273,126 @@ ApplicationWindow {
                     }
                 }
 
-                // What the column accepts, in the locale's way of writing it:
-                // nothing for a formula column, whose cells are not typed in.
-                Text {
-                    // The column of the cursor, or the one whole column selected.
-                    readonly property var column: win.hasCursor ? win.sheet.columns[win.curCol]
-                        : win.selKind === "column" && win.selLeft === win.selRight
-                        ? win.sheet.columns[win.selLeft] : undefined
-                    readonly property string hint: column && column.type && !column.computed && !win.sheet.isConsts
-                        ? file.entryHint(column.type) : ""
-                    visible: hint.length > 0
-                    text: hint
-                    // Between the muted colour and the text's: quiet, but read.
-                    color: Qt.rgba((win.mutedColor.r + win.textColor.r) / 2,
-                        (win.mutedColor.g + win.textColor.g) / 2,
-                        (win.mutedColor.b + win.textColor.b) / 2, 1)
-                    font: win.font
+                // The style of the selection: bold, italic, heading level,
+                // alignment. Whole columns and rows take all of them, a block
+                // of cells takes an alignment, which is its columns'.
+                Row {
+                    visible: win.canStyle
+                    spacing: 2
                     Layout.alignment: Qt.AlignVCenter
-                    Layout.maximumWidth: win.width * 0.45
-                    elide: Text.ElideRight
+                    Layout.rightMargin: 6
+                    StyleButton { label: "\u21B6"; enabled: file.canUndo; onPressed: file.undo() }
+                    StyleButton { label: "\u21B7"; enabled: file.canRedo; onPressed: file.redo() }
+                    Item { width: Math.round(win.fontSize * 0.6); height: 1 }
+                    StyleButton { label: "B"; bold: true; marking: true; active: (win.selStyle & 1) !== 0; onPressed: win.setStyle("bold", 0) }
+                    StyleButton { label: "I"; italic: true; marking: true; active: (win.selStyle & 2) !== 0; onPressed: win.setStyle("italic", 0) }
+                    StyleButton {
+                        id: levelButton
+                        label: (((win.selStyle >> 2) & 7) > 0 ? "H" + ((win.selStyle >> 2) & 7) : "H") + " \u25BE"
+                        wide: true
+                        marking: true
+                        active: ((win.selStyle >> 2) & 7) > 0
+                        onPressed: levelMenu.popup(levelButton, 0, levelButton.height)
+                    }
+                    StyleButton { label: "\u03A3"; marking: true; active: (win.selStyle & 32) !== 0; onPressed: win.setStyle("summary", 0) }
+                    StyleButton {
+                        id: alignButton
+                        label: (win.selAlign === "l" ? "\u2190" : win.selAlign === "c" ? "\u2194"
+                            : win.selAlign === "r" ? "\u2192" : "\u2261") + " \u25BE"
+                        wide: true
+                        active: win.selAlign !== ""
+                        onPressed: alignMenu.popup(alignButton, 0, alignButton.height)
+                    }
+                    StyleButton {
+                        id: widthButton
+                        label: "\u21D4 \u25BE"
+                        wide: true
+                        active: win.selWidth > 0
+                        onPressed: widthMenu.popup(widthButton, 0, widthButton.height)
+                    }
+                    Item { width: Math.round(win.fontSize * 0.6); height: 1 }
+                    StyleButton {
+                        id: flowButton
+                        label: (win.selFlow === "clip" ? "\u21E5" : win.selFlow === "wrap" ? "\u21B5" : "\u21E2") + " \u25BE"
+                        wide: true
+                        enabled: win.selTextCols
+                        active: win.selFlow !== ""
+                        onPressed: flowMenu.popup(flowButton, 0, flowButton.height)
+                    }
+                    Item { width: Math.round(win.fontSize * 0.6); height: 1 }
+                    StyleButton { label: "\u2744"; active: win.frozen; onPressed: win.toggleFreeze() }
+                    StyleButton {
+                        id: viewButton
+                        label: "\u2298 \u25BE"
+                        wide: true
+                        active: win.hiddenByReader > 0
+                        onPressed: viewMenu.popup(viewButton, 0, viewButton.height)
+                    }
+                    StyleButton { label: "\u2715"; onPressed: clearStylesDialog.open() }
+                    Menu {
+                        topPadding: 2
+                        bottomPadding: 2
+                        id: viewMenu
+                        width: Math.round(win.fontSize * 10)
+                        onClosed: grid.forceActiveFocus()
+                        StyleEntry { text: "\u2298 Hide " + (win.selKind === "row" ? "row" : "col"); onTriggered: win.hideSelected() }
+                        StyleEntry { text: "Hide empty"; onTriggered: win.hideEmpty() }
+                        StyleEntry { text: "Show last"; enabled: win.canShowLast; onTriggered: win.showLast() }
+                        StyleEntry { text: "Show all" + (win.hiddenByReader > 0 ? " (" + win.hiddenByReader + ")" : ""); enabled: win.canShowLast; onTriggered: win.showAllHidden() }
+                        StyleEntry { text: "Hide again"; enabled: win.canHideAgain; onTriggered: win.hideAgain() }
+                    }
+                    Menu {
+                        topPadding: 2
+                        bottomPadding: 2
+                        id: flowMenu
+                        width: Math.round(win.fontSize * 3.5)
+                        onClosed: grid.forceActiveFocus()
+                        StyleEntry { text: "\u21E2"; current: win.selFlow === ""; onTriggered: win.setFlow("") }
+                        StyleEntry { text: "\u21E5"; current: win.selFlow === "clip"; onTriggered: win.setFlow("clip") }
+                        StyleEntry { text: "\u21B5"; current: win.selFlow === "wrap"; onTriggered: win.setFlow("wrap") }
+                    }
+                    Menu {
+                        topPadding: 2
+                        bottomPadding: 2
+                        id: widthMenu
+                        width: Math.round(win.fontSize * 4)
+                        onClosed: grid.forceActiveFocus()
+                        StyleEntry { text: "auto"; current: win.selWidth === 0; onTriggered: win.setWidth(0) }
+                        Repeater {
+                            model: win.widthChoices
+                            delegate: StyleEntry {
+                                required property int modelData
+                                text: modelData
+                                current: win.selWidth === modelData
+                                onTriggered: win.setWidth(modelData)
+                            }
+                        }
+                    }
+                    Menu {
+                        topPadding: 2
+                        bottomPadding: 2
+                        id: alignMenu
+                        width: Math.round(win.fontSize * 3.5)
+                        onClosed: grid.forceActiveFocus()
+                        StyleEntry { text: "\u2261"; current: win.selAlign === ""; onTriggered: win.setStyle("align", "") }
+                        StyleEntry { text: "\u2190"; current: win.selAlign === "l"; onTriggered: win.setStyle("align", "l") }
+                        StyleEntry { text: "\u2194"; current: win.selAlign === "c"; onTriggered: win.setStyle("align", "c") }
+                        StyleEntry { text: "\u2192"; current: win.selAlign === "r"; onTriggered: win.setStyle("align", "r") }
+                    }
+                    Menu {
+                        topPadding: 2
+                        bottomPadding: 2
+                        id: levelMenu
+                        width: Math.round(win.fontSize * 3.5)
+                        onClosed: grid.forceActiveFocus()
+                        StyleEntry { text: "\u2205"; current: ((win.selStyle >> 2) & 7) === 0; onTriggered: win.setStyle("level", (win.selStyle >> 2) & 7) }
+                        StyleEntry { text: "H1"; current: ((win.selStyle >> 2) & 7) === 1; onTriggered: win.setStyle("level", 1) }
+                        StyleEntry { text: "H2"; current: ((win.selStyle >> 2) & 7) === 2; onTriggered: win.setStyle("level", 2) }
+                        StyleEntry { text: "H3"; current: ((win.selStyle >> 2) & 7) === 3; onTriggered: win.setStyle("level", 3) }
+                        StyleEntry { text: "H4"; current: ((win.selStyle >> 2) & 7) === 4; onTriggered: win.setStyle("level", 4) }
+                        StyleEntry { text: "H5"; current: ((win.selStyle >> 2) & 7) === 5; onTriggered: win.setStyle("level", 5) }
+                        StyleEntry { text: "H6"; current: ((win.selStyle >> 2) & 7) === 6; onTriggered: win.setStyle("level", 6) }
+                    }
                 }
             }
 
@@ -3478,6 +4483,18 @@ ApplicationWindow {
                         win.switchTab(win.tab - 1);
                     } else if (ctrl && event.key === Qt.Key_Period) {
                         win.keyMenu();
+                    } else if (ctrl && !(event.modifiers & Qt.AltModifier) && !shift && event.key === Qt.Key_B) {
+                        win.setStyle("bold", 0);
+                    } else if (ctrl && !(event.modifiers & Qt.AltModifier) && !shift && event.key === Qt.Key_I) {
+                        win.setStyle("italic", 0);
+                    } else if (ctrl && (event.modifiers & Qt.AltModifier) && event.key >= Qt.Key_1 && event.key <= Qt.Key_6) {
+                        win.setStyle("level", event.key - Qt.Key_0);
+                    } else if (ctrl && (event.modifiers & Qt.AltModifier) && event.key === Qt.Key_L) {
+                        win.setStyle("align", "l");
+                    } else if (ctrl && (event.modifiers & Qt.AltModifier) && event.key === Qt.Key_E) {
+                        win.setStyle("align", "c");
+                    } else if (ctrl && (event.modifiers & Qt.AltModifier) && event.key === Qt.Key_R) {
+                        win.setStyle("align", "r");
                     } else if (ctrl && event.key === Qt.Key_C) {
                         win.copySelection();
                     } else if (ctrl && event.key === Qt.Key_X) {
@@ -3529,6 +4546,29 @@ ApplicationWindow {
                 visible: win.tabs.length > 0
                 ScrollBar.horizontal: hbar
 
+                // The edges of the frozen panes, over everything: a line under the
+                // frozen rows and one beside the frozen columns, which stay where
+                // they are as the rest scrolls.
+                Rectangle {
+                    parent: hflick.contentItem
+                    visible: win.frozenRows > 0
+                    x: hflick.contentX
+                    y: win.headerHeight + win.topOf(win.frozenRows) - 1
+                    width: hflick.width
+                    height: 2
+                    color: win.blockLineColor
+                    z: 7
+                }
+                Rectangle {
+                    parent: hflick.contentItem
+                    visible: win.frozenCols > 0
+                    x: hflick.contentX + win.frozenEdge - 1
+                    y: 0
+                    width: 2
+                    height: hflick.height
+                    color: win.blockLineColor
+                    z: 7
+                }
                 // Where a dragged column would land.
                 Rectangle {
                     parent: hflick.contentItem
@@ -3547,6 +4587,8 @@ ApplicationWindow {
                         height: win.headerHeight
                         // The corner: the whole sheet.
                         Rectangle {
+                            z: 5
+                            transform: Translate { x: win.frozenCols > 0 ? hflick.contentX : 0 }
                             width: win.gutterWidth
                             height: win.headerHeight
                             color: win.selKind === "all"
@@ -3556,6 +4598,61 @@ ApplicationWindow {
                             readonly property bool marked: win.outline !== null && win.outline.rows && win.outline.columns
                             MarkEdge { visible: parent.marked; width: parent.width; height: 1 }
                             MarkEdge { visible: parent.marked; width: 1; height: parent.height }
+                            // Show the blocks down to a depth: 0 is every block closed,
+                            // and the last of the numbers is every block open. The
+                            // columns' are on the top line, pointing right as their
+                            // carets do, and the rows' under them, pointing down.
+                            Column {
+                                visible: win.hasBlocks
+                                z: 3
+                                anchors.right: parent.right
+                                anchors.rightMargin: 3 + win.numberWidth
+                                anchors.bottom: parent.bottom
+                                anchors.bottomMargin: 3
+                                spacing: 1
+                                Repeater {
+                                    model: [
+                                        { kind: "cols", count: win.colLevelCount, dir: 90 },
+                                        { kind: "rows", count: win.rowLevelCount, dir: 180 }
+                                    ]
+                                    Row {
+                                        id: levelRow
+                                        required property var modelData
+                                        visible: modelData.count > 0
+                                        // Flush right, so the buttons stand where the carets expect.
+                                        x: parent.width - width
+                                        spacing: 1
+                                        Chevron {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            dir: levelRow.modelData.dir
+                                        }
+                                        Repeater {
+                                            model: levelRow.modelData.count
+                                            Rectangle {
+                                                required property int index
+                                                width: win.levelButtonWidth
+                                                height: Math.round(win.fontSize * 0.95)
+                                                radius: 2
+                                                color: levelArea.containsMouse ? win.lineColor : "transparent"
+                                                border.color: win.lineColor
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: parent.index
+                                                    color: win.mutedColor
+                                                    font.pixelSize: win.captionSize
+                                                }
+                                                MouseArea {
+                                                    id: levelArea
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: win.showLevel(levelRow.modelData.kind, parent.index + 1)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             MouseArea {
                                 anchors.fill: parent
                                 enabled: !win.sheet.isConsts
@@ -3577,6 +4674,8 @@ ApplicationWindow {
                             Rectangle {
                                 id: headCell
                                 required property int index
+                                z: index < win.frozenCols ? 4 : 0
+                                transform: Translate { x: headCell.index < win.frozenCols ? hflick.contentX : 0 }
                                 readonly property var column: win.sheet.columns[index]
                                 // The name is being typed over, in place.
                                 property bool renaming: false
@@ -3588,6 +4687,7 @@ ApplicationWindow {
                                     }
                                 }
                                 width: win.colWidths[index] || 0
+                                visible: width > 0
                                 height: win.headerHeight
                                 // Stronger while the sort and filter box beside it is open.
                                 color: (columnPopup.visible && columnPopup.col === index)
@@ -3600,18 +4700,20 @@ ApplicationWindow {
                                 Column {
                                     id: headLabels
                                     anchors.verticalCenter: parent.verticalCenter
-                                    x: 7
-                                    width: parent.width - 14
+                                    x: 7 + win.colCaretShift(headCell.index)
+                                    width: parent.width - 14 - win.colCaretShift(headCell.index)
                                     Text {
                                         id: nameLine
                                         // Clear of the telltale, which stands to its right.
                                         width: parent.width - filterButton.width
-                                        text: headCell.column ? headCell.column.name : ""
+                                        text: headCell.column ? (headCell.index === 0 && win.treeKeys > 0 ? win.treeTitle : headCell.column.name) : ""
                                         color: win.textColor
                                         font.family: win.font.family
                                         font.features: win.font.features
-                                        font.pixelSize: win.fontSize
+                                        font.pixelSize: win.fontSize * win.levelScale(headCell.column ? (headCell.column.style >> 2) & 7 : 0)
                                         font.bold: true
+                                        font.italic: !!headCell.column && (headCell.column.style & 2) !== 0
+                                        horizontalAlignment: win.alignment(headCell.column ? headCell.column.align : "", false)
                                         elide: Text.ElideRight
                                     }
                                     // The type, always muted, with a mark right before it in
@@ -3621,6 +4723,7 @@ ApplicationWindow {
                                     // and changes.
                                     Text {
                                         id: typeLine
+                                        visible: !win.slimCols[headCell.index]
                                         readonly property bool computed: !!headCell.column && headCell.column.computed && !win.sheet.isConsts
                                         readonly property bool declared: !!headCell.column && headCell.column.declared
                                         readonly property string mark: (computed ? "=" : "") + (declared ? ":" : "")
@@ -3637,6 +4740,23 @@ ApplicationWindow {
                                         elide: Text.ElideNone
                                     }
                                 }
+                                // The caret of a block of columns headed here.
+                                Chevron {
+                                    readonly property var block: win.colHeads[headCell.index]
+                                    visible: !!block
+                                    z: 3
+                                    x: 2 + win.colDepth(headCell.index) * win.caretStep
+                                    y: headLabels.y + nameLine.height / 2 - height / 2
+                                    dir: win.isFolded("cols", headCell.index) ? 180 : 90
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        anchors.margins: -3
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: function(mouse) {
+                                            win.toggleFold("cols", headCell.index, (mouse.modifiers & Qt.AltModifier) !== 0);
+                                        }
+                                    }
+                                }
                                 // The telltale to the right of the name and a little
                                 // below its middle, which opens the column's sort and
                                 // filter, with room for a caret above or below it: an
@@ -3651,6 +4771,7 @@ ApplicationWindow {
                                     // comes after it and covers the whole cell.
                                     z: 2
                                     visible: !win.sheet.isConsts
+                                    opacity: win.hasBlocks ? 0.3 : 1
                                     readonly property bool active: win.filtered(headCell.index)
                                     readonly property string sorted: win.sortedAs(headCell.index)
                                     readonly property bool solid: active
@@ -3714,6 +4835,10 @@ ApplicationWindow {
                                     }
                                 }
                                 Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: win.lineColor }
+                                ColBox { col: index }
+                                Rectangle { visible: !!win.colSeams[index]; anchors.right: parent.right; anchors.rightMargin: 3; width: 1; height: parent.height; color: win.blockLineColor }
+                                Rectangle { visible: !!win.colSeams.lead && index === win.firstCol; anchors.left: parent.left; width: 1; height: parent.height; color: win.blockLineColor }
+                                Rectangle { visible: !!win.colSeams.lead && index === win.firstCol; anchors.left: parent.left; anchors.leftMargin: 3; width: 1; height: parent.height; color: win.blockLineColor }
                                 Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: win.lineColor }
                                 // Columns copied or cut are marked from their headers down.
                                 readonly property bool marked: win.outline !== null && win.outline.columns
@@ -3860,9 +4985,10 @@ ApplicationWindow {
                         clip: true
                         property real contentY: 0
                         readonly property real originY: 0
-                        readonly property real contentHeight: win.shownCount * win.rowHeight
-                        readonly property int first: Math.floor(contentY / win.rowHeight)
-                        readonly property real offset: contentY - first * win.rowHeight
+                        readonly property real contentHeight: win.topOf(win.shownCount)
+                        readonly property int first: win.placeAtY(contentY)
+                        readonly property int scrollFirst: Math.max(first, win.frozenRows)
+                        readonly property real offset: contentY - win.topOf(first)
                         readonly property int slots: Math.ceil(height / win.rowHeight) + 1
                         // Always a number: NaN, before the sizes are known,
                         // would never equal itself, and set it again forever.
@@ -3898,8 +5024,18 @@ ApplicationWindow {
                                 rowsView.contentY = rowsView.clamp(rowsView.contentY - dy);
                             }
 
+                        // The frozen rows hide what scrolls under them.
+                        Rectangle {
+                            visible: win.frozenRows > 0
+                            z: 2.5
+                            y: 0
+                            width: parent.width
+                            height: win.topOf(win.frozenRows)
+                            color: win.pageColor
+                        }
+
                         Repeater {
-                        model: Math.max(0, Math.min(rowsView.slots, win.shownCount - rowsView.first))
+                        model: win.frozenRows + Math.max(0, Math.min(rowsView.slots, win.shownCount - rowsView.scrollFirst))
                         delegate: Row {
                             id: rowItem
                             // Which of the rows drawn this is, from the top.
@@ -3907,26 +5043,32 @@ ApplicationWindow {
                             // The place in the list it shows, and the row of
                             // the sheet at that place, which a filter makes
                             // other than the place.
-                            readonly property int place: rowsView.first + index
+                            // The first rows are pinned where they are; the rest
+                            // go on from the first one scrolled to.
+                            readonly property bool pinned: index < win.frozenRows
+                            readonly property int place: pinned ? index : rowsView.scrollFirst + index - win.frozenRows
                             readonly property int row: win.rowAt(place)
-                            y: index * win.rowHeight - rowsView.offset
-                            height: win.rowHeight
+                            y: pinned ? win.topOf(index) : win.topOf(place) - rowsView.contentY
+                            height: win.heightOf(pinned ? index : place)
                             // The row holding a cell opened out to its lines
                             // is drawn above the others: a list paints its
                             // delegates in the order it made them, which is
                             // not the order of the rows.
-                            z: win.openCell !== null && win.openCell.tab === win.tab
+                            z: pinned ? 3 : win.openCell !== null && win.openCell.tab === win.tab
                                 && win.openCell.row === rowItem.row ? 2 : 0
 
                             // The row number.
                             Rectangle {
+                                z: 5
+                                transform: Translate { x: win.frozenCols > 0 ? hflick.contentX : 0 }
                                 width: win.gutterWidth
-                                height: win.rowHeight
+                                height: rowItem.height
                                 color: rowItem.row >= win.selTop && rowItem.row <= win.selBottom
                                     ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.16)
                                     : win.panelColor
                                 Text {
                                     anchors.centerIn: parent
+                                    anchors.horizontalCenterOffset: win.rowCaretWidth / 2
                                     text: rowItem.row
                                     color: win.mutedColor
                                     font.family: win.font.family
@@ -3934,6 +5076,29 @@ ApplicationWindow {
                                     font.pixelSize: win.captionSize
                                 }
                                 Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: win.lineColor }
+                                Rectangle { visible: !!win.rowEnds[rowItem.row]; anchors.bottom: parent.bottom; width: parent.width; height: 2; color: win.blockLineColor }
+                                Rectangle { visible: !!win.rowSeams[rowItem.row]; anchors.bottom: parent.bottom; anchors.bottomMargin: 3; width: parent.width; height: 1; color: win.blockLineColor }
+                                Rectangle { visible: !!win.rowSeams.lead && rowItem.row === win.firstRow; anchors.top: parent.top; width: parent.width; height: 1; color: win.blockLineColor }
+                                Rectangle { visible: !!win.rowSeams.lead && rowItem.row === win.firstRow; anchors.top: parent.top; anchors.topMargin: 3; width: parent.width; height: 1; color: win.blockLineColor }
+                                // The caret of a block headed here: open or closed, and
+                                // stepped in by how many blocks it is inside.
+                                Chevron {
+                                    id: rowCaret
+                                    readonly property var block: win.rowHeads[rowItem.row]
+                                    visible: !!block
+                                    z: 3
+                                    x: win.rowCaretX(block ? block[2] : 0)
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    dir: win.isFolded("rows", rowItem.row) ? 90 : 180
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        anchors.margins: -3
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: function(mouse) {
+                                            win.toggleFold("rows", rowItem.row, (mouse.modifiers & Qt.AltModifier) !== 0);
+                                        }
+                                    }
+                                }
                                 // Rows copied or cut are marked from their numbers across.
                                 readonly property bool marked: win.outline !== null && win.outline.rows
                                     && rowItem.row >= win.outline.top && rowItem.row <= win.outline.bottom
@@ -3975,7 +5140,9 @@ ApplicationWindow {
                                     id: cellItem
                                     required property int index
                                     readonly property int row: rowItem.row
-                                    readonly property var cell: win.cellAt(row, index)
+                                    readonly property var cell: win.cellAt(win.shownRow(row), win.shownColumn(index))
+                                    // A closed head shows its summary's values, in italics.
+                                    readonly property bool borrowed: win.shownRow(row) !== row || win.shownColumn(index) !== index
                                     readonly property var column: win.sheet.columns[index]
                                     readonly property bool current: win.hasCursor && row === win.curRow && index === win.curCol
                                     readonly property bool selected: row >= win.selTop && row <= win.selBottom
@@ -3986,22 +5153,29 @@ ApplicationWindow {
                                         && win.selTop === win.selBottom && win.selLeft === win.selRight
                                     // Copied or cut, and not yet done with.
                                     readonly property bool marked: win.isMarked(row, index)
+                                    // Bold, italic and heading level: the column's, from its
+                                    // header cell, and the row's, from its leftmost cell.
+                                    readonly property int style: win.styleOf(column, row, index)
                                     // Where the arrows are pointing a formula reference.
                                     readonly property bool picked: row === win.pickRow && index === win.pickCol
                                     // Referred to by the formula being typed.
                                     readonly property color pickColor: (win.refBoxes.length > 0 && win.refColorAt(row, index)) || "transparent"
                                     readonly property bool inPick: win.refBoxes.length > 0 && win.refColorAt(row, index) !== ""
                                     width: win.colWidths[index] || 0
-                                    height: win.rowHeight
+                                    visible: width > 0
+                                    height: rowItem.height
                                     // A cell opened out to its lines is drawn
                                     // over the cells beside it as well as the
                                     // rows below: the lines are longer than
                                     // the cell is wide, and a cell made after
                                     // it would otherwise be drawn over them.
-                                    z: win.openCell !== null && win.openCell.tab === win.tab
+                                    readonly property bool pinnedCol: index < win.frozenCols
+                                    z: (pinnedCol ? 4 : 0) + (win.openCell !== null && win.openCell.tab === win.tab
                                         && win.openCell.row === row && win.openCell.col === index ? 1
-                                        : (win.editing && current ? 1 : 0)
-                                    color: (selected && !alone) || marked
+                                        : (win.editing && current ? 1 : 0))
+                                    transform: Translate { x: cellItem.pinnedCol ? hflick.contentX : 0 }
+                                    color: pinnedCol ? Qt.tint(win.pageColor, plainColor) : plainColor
+                                    readonly property color plainColor: (selected && !alone) || marked
                                         ? Qt.rgba(win.selectionFill.r, win.selectionFill.g, win.selectionFill.b, 0.55)
                                         : column && column.computed ? win.computedTint : "transparent"
 
@@ -4012,10 +5186,20 @@ ApplicationWindow {
                                         // cell, and an opened cell sets its
                                         // own from the lines it holds.
                                         anchors.left: parent.left
-                                        anchors.right: parent.right
                                         anchors.top: parent.top
-                                        anchors.leftMargin: 7
-                                        anchors.rightMargin: 7
+                                        anchors.topMargin: wrapped ? 4 : 0
+                                        anchors.leftMargin: 7 + (cellItem.index === 0 ? win.treeIndent(cellItem.row) : 0)
+                                        // The cell's width, less its margins, and the empty
+                                        // cells beside it where a long text spills over them.
+                                        width: parent.width - anchors.leftMargin - 7 + room
+                                        // What a long text does at the edge of its column.
+                                        readonly property string flow: win.flowOf(cellItem.column)
+                                        readonly property bool wrapped: flow === "wrap" && !!win.rowTops && !!cellItem.cell && !cellItem.cell.n
+                                        readonly property bool spills: flow === "" && !!cellItem.cell
+                                            && !cellItem.cell.n && !cellItem.cell.e
+                                            && win.alignment(cellItem.column ? cellItem.column.align : "", false) === Text.AlignLeft
+                                            && implicitWidth > parent.width - anchors.leftMargin - 7
+                                        readonly property real room: spills ? win.spillRoom(cellItem.row, cellItem.index) : 0
                                         visible: !(win.editing && cellItem.current)
                                         // A cell is one line tall, so one
                                         // holding a newline shows its first
@@ -4037,7 +5221,7 @@ ApplicationWindow {
                                         // A quantity's unit, at the end of what is shown,
                                         // is set in a slightly muted tone, apart from its number.
                                         readonly property string shownText: !cellItem.cell ? ""
-                                            : lines && !opened ? cellItem.cell.d.split("\n")[0]
+                                            : lines && !opened && !wrapped ? cellItem.cell.d.split("\n")[0]
                                             : cut ? cellItem.cell.d.slice(0, -1)
                                             : cellItem.cell.d
                                         // Read once, and never undefined: a binding can run for a
@@ -4061,20 +5245,25 @@ ApplicationWindow {
                                         textFormat: marked || unitSet ? Text.StyledText : Text.PlainText
                                         // Opened, it is drawn over the rows
                                         // below rather than growing the row.
-                                        height: opened ? Math.max(parent.height, contentHeight + 6) : parent.height
+                                        height: opened ? Math.max(parent.height, contentHeight + 6) : wrapped ? parent.height - 4 : parent.height
                                         z: opened ? 30 : 0
-                                        verticalAlignment: opened ? Text.AlignTop : Text.AlignVCenter
+                                        verticalAlignment: opened || wrapped ? Text.AlignTop : Text.AlignVCenter
                                         linkColor: win.accentColor
-                                        clip: marked
+                                        clip: marked || flow === "clip"
+                                        wrapMode: wrapped ? Text.Wrap : Text.NoWrap
+                                        maximumLineCount: 100000
                                         color: cellItem.cell && cellItem.cell.e ? win.errorColor
                                             : cellItem.cell && cellItem.cell.b ? win.mutedColor : win.textColor
                                         font.family: win.font.family
                                         font.features: win.font.features
-                                        font.pixelSize: win.fontSize
-                                        horizontalAlignment: cellItem.cell && cellItem.cell.n ? Text.AlignRight : Text.AlignLeft
+                                        font.pixelSize: win.fontSize * win.levelScale((cellItem.style >> 2) & 7)
+                                        font.bold: (cellItem.style & 1) !== 0
+                                        font.italic: (cellItem.style & 2) !== 0 || cellItem.borrowed
+                                        horizontalAlignment: win.alignment(cellItem.column ? cellItem.column.align : "",
+                                            cellItem.cell && cellItem.cell.n)
                                         // Opened, every line is shown whole;
                                         // closed, the one line is cut to fit.
-                                        elide: opened ? Text.ElideNone : Text.ElideRight
+                                        elide: opened || flow === "clip" ? Text.ElideNone : Text.ElideRight
                                     }
 
                                     // The mark of a number shown cut: faint, and in the
@@ -4132,7 +5321,15 @@ ApplicationWindow {
                                     }
 
                                     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: win.lineColor }
+                                ColBox { col: index }
+                                Rectangle { visible: !!win.colSeams[index]; anchors.right: parent.right; anchors.rightMargin: 3; width: 1; height: parent.height; color: win.blockLineColor }
+                                Rectangle { visible: !!win.colSeams.lead && index === win.firstCol; anchors.left: parent.left; width: 1; height: parent.height; color: win.blockLineColor }
+                                Rectangle { visible: !!win.colSeams.lead && index === win.firstCol; anchors.left: parent.left; anchors.leftMargin: 3; width: 1; height: parent.height; color: win.blockLineColor }
                                     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: win.lineColor }
+                                    RowBox { row: cellItem.row; first: cellItem.index === win.firstCol; last: cellItem.index === win.lastCol }
+                                    Rectangle { visible: !!win.rowSeams[row]; anchors.bottom: parent.bottom; anchors.bottomMargin: 3; width: parent.width; height: 1; color: win.blockLineColor }
+                                    Rectangle { visible: !!win.rowSeams.lead && row === win.firstRow; anchors.top: parent.top; width: parent.width; height: 1; color: win.blockLineColor }
+                                    Rectangle { visible: !!win.rowSeams.lead && row === win.firstRow; anchors.top: parent.top; anchors.topMargin: 3; width: parent.width; height: 1; color: win.blockLineColor }
                                     // The outline of what was copied or cut.
                                     // Copied is outlined, cut is dashed.
                                     MarkEdge { visible: cellItem.marked && cellItem.row === win.outline.top && !win.outline.columns; width: parent.width; height: 1 }
@@ -4934,7 +6131,12 @@ ApplicationWindow {
                 id: fadeTimer
                 interval: 5000
                 running: barMessage.passing && !barHover.hovered
-                onTriggered: barMessage.faded = barMessage.passing && !barHover.hovered
+                onTriggered: {
+                    barMessage.faded = barMessage.passing && !barHover.hovered;
+                    // What the app said gives way to the column's hint.
+                    if (barMessage.faded)
+                        barMessage.statusShown = false;
+                }
             }
 
             // What the app has to say, centred in the bar whatever else
@@ -4972,7 +6174,18 @@ ApplicationWindow {
                     && !moving && !win.formulaCell && win.sheet.sampled !== true
                     && (win.notice.length > 0 || file.status.length > 0)
                 property bool faded: false
-                opacity: faded && win.hint.length === 0 && win.cellWarning.length === 0 ? 0 : 1
+                // Whether a status message still shows, or has given way to the hint.
+                property bool statusShown: true
+                Connections {
+                    target: file
+                    function onStatusChanged() { barMessage.statusShown = true; }
+                }
+                // The column's entry hint is what the bar says when it has nothing
+                // else, and it stays.
+                readonly property bool showsEntryHint: win.entryHint.length > 0 && win.hint.length === 0 && win.styleWarning.length === 0
+                    && win.notice.length === 0 && win.cellWarning.length === 0 && win.cellFull.length === 0
+                    && !moving && !win.formulaCell && (file.status.length === 0 || !statusShown) && win.busyText.length === 0 && !win.filterPending
+                opacity: faded && win.hint.length === 0 && win.cellWarning.length === 0 && win.styleWarning.length === 0 && !showsEntryHint ? 0 : 1
                 Behavior on opacity { NumberAnimation { duration: 700 } }
                 onTextChanged: {
                     faded = false;
@@ -4984,10 +6197,12 @@ ApplicationWindow {
                     target: win
                     function onRefusalRevChanged() {
                         barMessage.faded = false;
+                        barMessage.statusShown = true;
                         fadeTimer.restart();
                     }
                 }
                 text: win.busyText.length > 0 ? win.busyText
+                    : win.styleWarning.length > 0 ? win.styleWarning
                     : win.filterPending ? "Filtering\u2026"
                     : win.hint.length > 0 ? win.hint
                     : win.notice.length > 0 ? win.notice
@@ -4995,14 +6210,16 @@ ApplicationWindow {
                     : win.cellFull.length > 0 ? win.cellFull
                     : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
                     : win.formulaCell ? "This is a formula column, this change will apply to the entire column"
-                    : file.status.length > 0 ? file.status
+                    : file.status.length > 0 && (statusShown || win.entryHint.length === 0) ? file.status
+                    : win.entryHint.length > 0 ? win.entryHint
                     // With nothing more pressing to say, a calculated sheet
                     // says what it is calculated from.
                     // A formula written over several lines is said in one
                     // here, the bar being one line tall.
                     : win.sheet.view ? win.sheet.name + " := " + win.sheet.view.replace(/\s+/g, " ")
                     : ""
-                color: win.hint.length > 0 ? (win.hintBad ? win.errorColor : win.mutedColor)
+                color: win.styleWarning.length > 0 ? win.warningColor
+                    : win.hint.length > 0 ? (win.hintBad ? win.errorColor : win.mutedColor)
                     : win.notice.length > 0 ? win.errorColor
                     : win.cellWarning.length > 0 ? win.warningColor
                     : win.cellFailed ? win.errorColor : win.mutedColor
@@ -5149,6 +6366,131 @@ ApplicationWindow {
             onClicked: popupButton.clicked()
         }
     }
+    // The edges of the blocks a row is inside, drawn in a cell: the outermost
+    // block in full, those inside it fainter and stepped in, so that they
+    // read as boxes within a box. Only the first and last cells of a row
+    // draw the sides, and the first and last of a block the top and bottom.
+    component RowBox: Item {
+        id: box
+        property int row
+        property bool first
+        property bool last
+        anchors.fill: parent
+        readonly property var info: win.boxRows[row]
+        function tone(d) {
+            var c = win.blockLineColor;
+            return d === 0 ? c : Qt.rgba(c.r, c.g, c.b, c.a * (d === 1 ? 0.55 : 0.35));
+        }
+        function weight(d) { return d === 0 ? 2 : 1; }
+        function inset(d) { return d === 0 ? 0 : d * 2 + 1; }
+        Repeater {
+            model: box.info && box.first ? box.info.c : []
+            Rectangle {
+                required property int modelData
+                x: box.inset(modelData); width: box.weight(modelData); height: box.height
+                color: box.tone(modelData)
+            }
+        }
+        Repeater {
+            model: box.info && box.last ? box.info.c : []
+            Rectangle {
+                required property int modelData
+                x: box.width - width - box.inset(modelData); width: box.weight(modelData); height: box.height
+                color: box.tone(modelData)
+            }
+        }
+        Repeater {
+            model: box.info ? box.info.t : []
+            Rectangle {
+                required property int modelData
+                x: box.first ? box.inset(modelData) : 0
+                width: box.width - x - (box.last ? box.inset(modelData) : 0)
+                height: box.weight(modelData)
+                color: box.tone(modelData)
+            }
+        }
+        Repeater {
+            model: box.info ? box.info.b : []
+            Rectangle {
+                required property int modelData
+                x: box.first ? box.inset(modelData) : 0
+                width: box.width - x - (box.last ? box.inset(modelData) : 0)
+                height: box.weight(modelData)
+                y: box.height - height
+                color: box.tone(modelData)
+            }
+        }
+    }
+    // The sides of the blocks of columns a column opens and closes, drawn
+    // down each of its cells and its header, as RowBox draws rows'.
+    component ColBox: Item {
+        id: cbox
+        property int col
+        anchors.fill: parent
+        readonly property var info: win.boxCols[col]
+        function tone(d) {
+            var c = win.blockLineColor;
+            return d === 0 ? c : Qt.rgba(c.r, c.g, c.b, c.a * 0.55);
+        }
+        Repeater {
+            model: cbox.info ? cbox.info.l : []
+            Rectangle {
+                required property int modelData
+                x: 0; width: modelData === 0 ? 2 : 1; height: cbox.height
+                color: cbox.tone(modelData)
+            }
+        }
+        Repeater {
+            model: cbox.info ? cbox.info.r : []
+            Rectangle {
+                required property int modelData
+                x: cbox.width - width; width: modelData === 0 ? 2 : 1; height: cbox.height
+                color: cbox.tone(modelData)
+            }
+        }
+    }
+    // A button of the style bar. `marking` ones need whole rows or columns
+    // selected, and are dimmed otherwise.
+    component StyleButton: Rectangle {
+        id: styleButton
+        property string label
+        property bool active: false
+        property bool bold: false
+        property bool italic: false
+        property bool marking: false
+        // A word or a label with an arrow, wider than a single character.
+        property bool wide: false
+        readonly property bool usable: enabled && (!marking || win.canMark)
+        signal pressed()
+        width: wide ? labelText.implicitWidth + 14 : Math.round(win.fontSize * 1.9)
+        height: Math.round(win.fontSize * 1.6)
+        radius: 3
+        opacity: usable ? 1 : 0.35
+        color: active ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.25)
+            : hover.containsMouse && usable ? win.panelColor : "transparent"
+        Text {
+            id: labelText
+            anchors.centerIn: parent
+            text: styleButton.label
+            color: win.textColor
+            font.family: win.font.family
+            font.pixelSize: win.smallSize
+            font.bold: styleButton.bold
+            font.italic: styleButton.italic
+        }
+        MouseArea {
+            id: hover
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: {
+                if (styleButton.usable)
+                    styleButton.pressed();
+                else if (styleButton.enabled && styleButton.marking)
+                    win.warnStyle();
+                grid.forceActiveFocus();
+            }
+        }
+    }
     component MenuEntry: MenuItem {
         // An entry that does not apply takes no room, and the arrow keys
         // pass it by: so each is also disabled while it is hidden.
@@ -5159,6 +6501,26 @@ ApplicationWindow {
         bottomPadding: 0
         leftPadding: 12
         rightPadding: 12
+        font.family: win.font.family
+        font.features: win.font.features
+        font.pixelSize: win.smallSize
+    }
+    // An entry of the style bar's dropdowns: slimmer, with the setting in force marked.
+    component StyleEntry: MenuItem {
+        // The setting in force, marked when the list is opened.
+        property bool current: false
+        font.bold: current
+        Material.foreground: current ? win.accentColor : win.textColor
+        // An entry that does not apply takes no room, and the arrow keys
+        // pass it by: so each is also disabled while it is hidden.
+        height: visible ? implicitHeight : 0
+        activeFocusOnTab: visible
+        implicitHeight: Math.round(win.fontSize * 1.3)
+        topPadding: 0
+        bottomPadding: 0
+        leftPadding: 8
+        rightPadding: 8
+        spacing: 0
         font.family: win.font.family
         font.features: win.font.features
         font.pixelSize: win.smallSize
@@ -5257,6 +6619,11 @@ ApplicationWindow {
         onOpened: Qt.callLater(function() { filterField.forceActiveFocus(); filterField.selectAll(); })
 
         function openFor(c, item) {
+            // Sorting and filtering are off while the sheet has blocks.
+            if (win.hasBlocks) {
+                win.notice = "Sorting and filtering are off while the sheet has blocks.";
+                return;
+            }
             col = c;
             parent = item;
             multiline = false;
@@ -5766,7 +7133,7 @@ ApplicationWindow {
             text: "Set filter\u2026"
             visible: cellMenu.columns && !win.sheet.isConsts
             enabled: visible && cellMenu.editable && win.selLeft === win.selRight
-                && win.sheet.columns.length > 0
+                && win.sheet.columns.length > 0 && !win.hasBlocks
             onTriggered: {
                 var head = headCells.itemAt(win.selLeft);
                 if (head)
@@ -7905,6 +9272,28 @@ ApplicationWindow {
             font.features: win.font.features
             font.pixelSize: win.dialogSize
         }
+    }
+
+    Dialog {
+        font.pixelSize: win.dialogSize
+        id: clearStylesDialog
+        anchors.centerIn: parent
+        modal: true
+        width: 440
+        focus: true
+        title: "Clear"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        Shortcut { sequence: "Return"; enabled: clearStylesDialog.visible; onActivated: clearStylesDialog.accept() }
+        Label {
+            width: parent.width
+            text: "Clear all styles from selection?"
+            wrapMode: Text.Wrap
+            font.family: win.font.family
+            font.features: win.font.features
+            font.pixelSize: win.dialogSize
+        }
+        onAccepted: win.setStyle("clear", 0)
+        onClosed: grid.forceActiveFocus()
     }
 
     Dialog {

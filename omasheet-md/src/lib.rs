@@ -13,6 +13,7 @@
 
 use omasheet_engine::omx::colfmt::Format as ColFormat;
 use omasheet_engine::omx::file::{is_zone_name, parse_file};
+use omasheet_engine::omx::style::blocks as outline_blocks;
 use omasheet_engine::omx::ir::{ColSel, Func, Ir, Node};
 use omasheet_engine::omx::{Diagnostic, Sources, Span, compile, compile_expr};
 use omasheet_engine::value::View;
@@ -398,9 +399,33 @@ fn sheet(
     program: &omasheet_engine::omx::Program,
     view: &View,
     format: Format,
+    decl: Option<&omasheet_engine::omx::file::SheetDecl>,
 ) -> String {
+    use omasheet_engine::omx::style::{Align, Style};
     let cols = &program.sheets[view.sheet].cols;
-    let mut grid: Vec<Vec<String>> = vec![view.cols.iter().map(|&c| cols[c].head()).collect()];
+    // The style of a column the file's header row says, and of a row its
+    // leftmost cell says. A heading is bold, as a table has no headings.
+    let col_style = |c: usize| {
+        decl.and_then(|d| {
+            let k = d.header.iter().position(|h| h.0 == cols[c].name)?;
+            d.col_styles.get(k).copied()
+        })
+        .unwrap_or_default()
+    };
+    let row_style = |r: usize| {
+        decl.and_then(|d| d.row_styles.get(r).copied()).unwrap_or_default()
+    };
+    let plain = |s: Style| Style { level: 0, bold: s.bold || s.level > 0, ..s };
+    let aligns: Vec<Align> = view.cols.iter().map(|&c| col_style(c).align).collect();
+    let wrapped = |text: String, style: Style| {
+        if text.is_empty() { text } else { plain(style).wrap(&text) }
+    };
+    let mut grid: Vec<Vec<String>> = vec![
+        view.cols
+            .iter()
+            .map(|&c| wrapped(cols[c].head(), col_style(c)))
+            .collect(),
+    ];
     let mut numeric = vec![true; view.cols.len()];
     for &r in view.rows.iter() {
         let mut line = Vec::with_capacity(view.cols.len());
@@ -412,7 +437,15 @@ fn sheet(
                 numeric[k] = false;
             }
             let shown = place(engine, &value, format, cols[c].shown_format().as_deref());
-            line.push(shown.replace('|', "\\|").replace('\n', " "));
+            let shown = shown.replace('|', "\\|").replace('\n', " ");
+            // A heading level is the leftmost cell's, from its row; the
+            // column's is its header cell's.
+            let (cs, rs) = (col_style(c), row_style(r));
+            let (cs, rs) = (
+                Style { level: 0, ..cs },
+                Style { level: if k == 0 { rs.level } else { 0 }, ..rs },
+            );
+            line.push(wrapped(shown, cs.over(rs)));
         }
         grid.push(line);
     }
@@ -425,6 +458,51 @@ fn sheet(
                 .max(3)
         })
         .collect();
+    // Said alignment wins; otherwise numbers go to the right.
+    let right = |k: usize| match aligns[k] {
+        Align::Right => true,
+        Align::Auto => numeric[k],
+        _ => false,
+    };
+    // A sheet with blocks is a table of its own in a page, so that the
+    // edge of each block can be drawn a little fatter.
+    if format == Format::Html && let Some(_) = decl {
+        let rows: Vec<u8> = view.rows.iter().map(|&r| row_style(r).level).collect();
+        let rows_sum: Vec<bool> = view.rows.iter().map(|&r| row_style(r).summary).collect();
+        let columns: Vec<u8> = view.cols.iter().map(|&c| col_style(c).level).collect();
+        let cols_sum: Vec<bool> = view.cols.iter().map(|&c| col_style(c).summary).collect();
+        let (rb, cb) = (outline_blocks(&rows, &rows_sum), outline_blocks(&columns, &cols_sum));
+        if !rb.is_empty() || !cb.is_empty() {
+            let row_end = |i: usize| rb.iter().any(|b| b.end == i + 1);
+            let col_end = |k: usize| cb.iter().any(|b| b.end == k + 1);
+            let cell = |text: &str| {
+                let mut html = String::new();
+                pulldown_cmark::html::push_html(&mut html, inline(&text.replace("\\|", "|")).into_iter());
+                html.trim_end().to_string()
+            };
+            let mut out = String::from("<table>\n");
+            for (i, row) in grid.iter().enumerate() {
+                let tag = if i == 0 { "th" } else { "td" };
+                let ends = i > 0 && row_end(i - 1);
+                out.push_str(if ends { "<tr class=\"rend\">" } else { "<tr>" });
+                for (k, text) in row.iter().enumerate() {
+                    let align = match aligns[k] {
+                        Align::Center => "center",
+                        _ if right(k) => "right",
+                        _ => "left",
+                    };
+                    let class = if col_end(k) { " class=\"cend\"" } else { "" };
+                    out.push_str(&format!(
+                        "<{tag}{class} style=\"text-align:{align}\">{}</{tag}>",
+                        cell(text)
+                    ));
+                }
+                out.push_str("</tr>\n");
+            }
+            out.push_str("</table>\n");
+            return out;
+        }
+    }
     let mut out = String::new();
     for (i, row) in grid.iter().enumerate() {
         let cells: Vec<String> = row
@@ -432,7 +510,7 @@ fn sheet(
             .enumerate()
             .map(|(k, text)| {
                 let pad = " ".repeat(widths[k] - text.chars().count());
-                if numeric[k] {
+                if right(k) {
                     format!("{pad}{text}")
                 } else {
                     format!("{text}{pad}")
@@ -444,10 +522,10 @@ fn sheet(
             let rule: Vec<String> = (0..widths.len())
                 .map(|k| {
                     let dashes = "-".repeat(widths[k] - 1);
-                    if numeric[k] {
-                        format!("{dashes}:")
-                    } else {
-                        format!(":{dashes}")
+                    match aligns[k] {
+                        Align::Center => format!(":{}:", "-".repeat(widths[k] - 2)),
+                        _ if right(k) => format!("{dashes}:"),
+                        _ => format!(":{dashes}"),
                     }
                 })
                 .collect();
@@ -463,6 +541,8 @@ body { font: 16px/1.6 system-ui, sans-serif; max-width: 46rem; margin: 2rem auto
 sheet { border-collapse: collapse; margin: 1rem 0; font-variant-numeric: tabular-nums; }
 th, td { padding: 0.25rem 0.75rem; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
 th { border-bottom-width: 2px; }
+th.cend, td.cend { border-right: 2px solid color-mix(in srgb, currentColor 40%, transparent); }
+tr.rend td { border-bottom: 2px solid color-mix(in srgb, currentColor 40%, transparent); }
 code, pre { font-family: ui-monospace, monospace; font-size: 0.9em; }
 pre { overflow-x: auto; padding: 0.75rem; border: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
 ";
@@ -616,14 +696,14 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
         let sheets: Vec<String> = declared
             .sheets
             .iter()
-            .filter_map(|decl| program.sheets.iter().position(|t| t.name == decl.name))
-            .map(|t| {
+            .filter_map(|decl| Some((decl, program.sheets.iter().position(|t| t.name == decl.name)?)))
+            .map(|(decl, t)| {
                 let view = View {
                     sheet: t,
                     rows: Rc::new((0..program.sheets[t].nrows).collect()),
                     cols: Rc::new((0..program.sheets[t].cols.len()).collect()),
                 };
-                sheet(&engine, &program, &view, format)
+                sheet(&engine, &program, &view, format, Some(decl))
             })
             .collect();
         let mut shown = sheets.join("\n");
@@ -688,7 +768,7 @@ pub fn render(name: &str, text: &str, load: &Load, format: Format, options: Opti
         let shown_by = shown_by.as_ref();
         // A sheet stands apart from the text around it.
         let apart = |view: &View| {
-            let shown = sheet(&engine, &program, view, format);
+            let shown = sheet(&engine, &program, view, format, None);
             let before = &text[..whole.start];
             let lead = match before {
                 b if b.is_empty() || b.ends_with("\n\n") => "",

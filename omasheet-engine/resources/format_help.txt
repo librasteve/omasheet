@@ -2,7 +2,7 @@
 #
 # A section starts `== Title | Families`, and says which columns it is shown
 # for: Number (Integer, Decimal, Float, Percent, Fraction, Hex, Octal, Binary),
-# Scientific, Quantity, Duration, Date (Date, Time and Datetime), Boolean. The lines under it are
+# Scientific, Quantity, Duration, Date (Date, Time and Datetime), Boolean, Text. The lines under it are
 # `what you write | what it does | an example`, the example being a format and
 # then, after `→`, what it shows. A line starting `: ` is a note, shown across
 # the panel and wrapped. Blank lines and lines starting with `#` are ignored.
@@ -90,3 +90,8 @@ $ | its sign before the number in each row, its code after where it has none | E
 xo | x for true, o for false | xo → x
 XO | X for true, O for false | XO → X
 ✓✗ | any two characters you like | ✓✗ → ✓
+
+== Long text | Text
+: Text wider than its column spills over the empty cells to its right, unless a format says otherwise. The format only matters where the column has a width.
+clip | cut off at the edge of the column | clip → a long no
+wrap | carried on to more lines inside the column | wrap → a long / note

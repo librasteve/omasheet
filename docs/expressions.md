@@ -402,6 +402,17 @@ calculation.
 | `Sales[Revenue; *-1]` | the row before this one; `*` is this row |
 | `Sales[Revenue; 0..*]` | from the top down to this row |
 | `Sales[Revenue; *-1 by Region]` | the row before this one among the rows of this row's region |
+| `[Revenue; block]` | the rows of a [block](format.md#blocks), if this row heads it or is a summary row (`^`) that closes it: those with no heading level of their own and not summary rows, up to the end of the block. Empty for any other row |
+
+A heading row's total is the sum of the rows it heads, and a computed column
+gives every row of the sheet its own, the leaves keeping their value:
+
+```omx
+Total := if [Net; block].count() > 0 then [Net; block].sum() else Net
+```
+
+`block` takes only the leaf rows, so a block inside another is not added twice,
+and a row that heads nothing gives none. A summary row may read its own column this way, since it reads only the rows above it that it sums: `^ Total | = [Net; block].sum()`, one formula for every summary row.
 
 Inside its own sheet the name can be dropped: `[Revenue; *-1]`. A row
 outside the sheet is empty, so `[Revenue; *-1] // 0` starts a running value.
@@ -451,6 +462,7 @@ sheet Best     := ByRegion |> sort(Revenue_sum, desc) |> head(1)
   needs an aggregate, `Revenue.sum()` and not `Revenue`. An aggregate of
   one column is named for it, `Revenue_sum`; `Name := …` names one, and
   an aggregate of anything else must be named
+- `rollup(keys) |> agg(aggregates)`: `group_by` laid out as [blocks](format.md#blocks). For each group of the outer keys there is a head row, with its key and nothing else, then the groups inside it, then a summary row of the same aggregates over all of the group's rows; the groups of the last key are the rows between, so a single key is `group_by`. The head and summary rows carry a heading level for their key and `^`, so the sheet folds in the app and a closed head shows its summary. It is read-only, takes no `apply`, and has no grand total. In the app its key columns are shown as one, headed `Region › Country › City`, each row naming only its own level, stepped in; the columns are still there for formulas and export. See `examples/styles.omx`
 - `group_by(keys) |> apply(Fn)`: calls the function `Fn` once on the rows of each group, as a sheet, in the order `agg` gives the groups. The function takes one argument, the group's rows, and what it gives sets what the group makes. A value (`fn Takings(rows) = (rows.Units * rows.Price).sum()`) makes one row, the keys and a column named for the function (`apply(Total := Takings)` names it). A column or a sheet of the group's own rows (`fn BestTwo(rows) = rows |> sort(Units, desc) |> head(2) |> select(Rep, Units)`) makes a row for each row it gives, the keys repeated, so the top rows of each group and a ranking within it are one function each. A sheet that is another's rows (a lookup in a second sheet by the group's key) is paired with the group in the same way a `join` pairs rows. A function that gives a column a key also names is an error, so `select` it away; a group it gives no rows for has none, and a group it fails on has no rows and says why. See `examples/groups.omx`
 - `join(Other, keys)`: a row for every pair of rows of the two sheets whose
   key columns are equal, the left sheet's columns and then the other's.

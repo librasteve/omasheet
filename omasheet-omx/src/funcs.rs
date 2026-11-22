@@ -413,6 +413,14 @@ pub const FUNCTIONS: &[FuncDoc] = &[
     ),
     doc(
         PIPE,
+        "rollup",
+        "sheet ByPlace := Sales |> rollup(Region, City) |> agg(Revenue.sum())",
+        "Like group_by, with the groups laid out as blocks: a head row for each group of the outer \
+         keys, the rows of the groups inside it, and a summary row of the same aggregates at its \
+         foot. It ends a sheet's formula, with agg after it.",
+    ),
+    doc(
+        PIPE,
         "join",
         "sheet Both := Sales |> join(Targets, Month, left)",
         "The rows of two sheets paired where their key columns are equal, a row for every pair. \

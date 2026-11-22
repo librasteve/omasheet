@@ -90,10 +90,16 @@ QtObject {
             // hangs over an edge, into the next screen or off the desktop, is
             // "outside any known screen". Pulled back in, and made smaller if
             // it is bigger than the screen.
+            // On a Mac the menu bar and the window's own title bar sit
+            // outside the size and place a window is given, and one that
+            // does not fit under them is moved and trimmed by the system,
+            // a little more each time it is kept and put back. So the room
+            // for them is left here, and what is put back already fits.
+            var bar = Qt.platform.os === "osx" ? 90 : 0;
             w = Math.min(w, on.width);
-            h = Math.min(h, on.height);
+            h = Math.min(h, on.height - bar);
             x = Math.max(on.virtualX, Math.min(x, on.virtualX + on.width - w));
-            y = Math.max(on.virtualY, Math.min(y, on.virtualY + on.height - h));
+            y = Math.max(on.virtualY + bar * 0.6, Math.min(y, on.virtualY + on.height - h));
         }
         return { width: w, height: h, x: on ? x : null, y: on ? y : null, screen: on };
     }

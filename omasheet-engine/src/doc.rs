@@ -20,6 +20,7 @@ use omasheet_omx::colfmt::{Format, closing};
 use omasheet_omx::date::{self, Style};
 use omasheet_omx::file::{FileAst, SchemaLine, SheetDecl, ident_len, parse_file, split_cells};
 use omasheet_omx::parser::parse_expr;
+use omasheet_omx::style::{Block as Outline, Style as CellStyle, outline};
 use omasheet_omx::types::Base;
 use omasheet_omx::{ColKind, Diagnostic, S, Sources, Span, compile, text};
 use std::cmp::Ordering;
@@ -58,6 +59,16 @@ pub struct SheetSnap {
     pub rows: Vec<Vec<CellSnap>>,
     /// How many rows the sheet has, paged or not.
     pub nrows: usize,
+    /// The style each row's leftmost cell says for the whole row, in the
+    /// file's order; empty where the sheet has none.
+    pub row_styles: Vec<CellStyle>,
+    /// The blocks of rows and of columns that heading levels declare, which
+    /// the grid folds. A sheet with any has no sort or filter.
+    pub row_outline: Vec<Outline>,
+    pub col_outline: Vec<Outline>,
+    /// For each row, the head of the block it sums up, for a summary row.
+    pub row_owner: Vec<Option<usize>>,
+    pub col_owner: Vec<Option<usize>>,
     /// Its rows are formatted as they are asked for, not held here: a big
     /// sheet whose rows are a file's or another sheet's (D80).
     pub paged: bool,
@@ -77,6 +88,8 @@ pub struct SheetSnap {
     /// its own, and a formula a sort cannot be added to the end of, so it
     /// is sorted in the grid alone, as a table is.
     pub grouped: bool,
+    /// How many key columns of a rollup are shown as the first: 0 for none.
+    pub tree: usize,
     /// The rows are a file's first few, shown while the rest is copied: the
     /// sheet has more rows than it shows, as many as the file has.
     pub sampled: bool,
@@ -102,6 +115,9 @@ pub struct ColumnSnap {
     /// format names, or the preferred unit of its type. Empty for any other
     /// column, and for a `Quantity` that has none.
     pub unit: String,
+    /// The alignment, bold, italic and heading level its header cell says
+    /// for the whole column.
+    pub style: CellStyle,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -627,6 +643,9 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
             (!line.starts_with('#') && name.trim() == key).then(|| hint.trim().to_string())
         })
     };
+    // A decimal's places are in brackets after its name, `Decimal[2]`, and
+    // are not part of what is typed.
+    let base = ty.split_once('[').map_or(ty, |(name, _)| name);
     let (key, unit) = match S::from_name(ty) {
         // Money has a hint of its own: it is written by a sign or a code.
         Some(S::Quantity(_)) if ty == "Currency" => ("Currency", String::new()),
@@ -634,7 +653,7 @@ pub fn entry_hint(style: &Style, ty: &str) -> String {
             Some(unit) => ("Quantity kind", unit.to_string()),
             None => ("Quantity", String::new()),
         },
-        _ => (ty, String::new()),
+        _ => (base, String::new()),
     };
     let Some(hint) = find(key) else {
         return String::new();
@@ -701,6 +720,7 @@ pub fn format_help(ty: &str) -> String {
         Some(S::Duration) => "Duration",
         Some(S::Date | S::Time | S::Datetime) => "Date",
         Some(S::Boolean) => "Boolean",
+        Some(S::String | S::Email | S::Url) => "Text",
         Some(_) => "Number",
         None => return String::new(),
     };
@@ -776,6 +796,10 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             ("±.3e-3".into(), "± uncertainty, e notation"),
             ("~.2f".into(), "value only, 2 places"),
             ("~.3e-3".into(), "value only, e notation"),
+        ],
+        S::String | S::Email | S::Url => vec![
+            ("clip".into(), "cut off at the column's edge"),
+            ("wrap".into(), "carried on to more lines"),
         ],
         S::Boolean => vec![
             ("10".into(), "1 and 0"),
@@ -2027,9 +2051,23 @@ fn valid_name(name: &str) -> Result<&str, String> {
     Ok(name)
 }
 
+/// Why a sheet with blocks is not sorted.
+pub const BLOCKS_NO_SORT: &str =
+    "a sheet with blocks, rows or columns under a heading, is not sorted or filtered";
+
 /// The most problems a snapshot lists; a formula failing in every row of a
 /// table of millions would otherwise list them all.
 const MOST_PROBLEMS: usize = 200;
+
+/// A leftmost cell written with its row's style: not an empty cell, or a
+/// formula, which have no text to put markers round.
+fn rewrap(cell: &str, style: CellStyle) -> String {
+    if style.is_plain() || cell.is_empty() || cell == FORMULA_CELL || cell.starts_with('=') {
+        cell.to_string()
+    } else {
+        style.wrap(cell)
+    }
+}
 
 /// The header and rows of a sheet as text, plus where each row came from.
 struct Grid {
@@ -2037,6 +2075,10 @@ struct Grid {
     /// Which columns of the header row are formula columns: their cells
     /// are `*`.
     formula: Vec<bool>,
+    /// Each column's style: its alignment, and the markers of its header
+    /// cell. A row's markers are kept in its leftmost cell's text, so that
+    /// they go where the row goes.
+    col_style: Vec<CellStyle>,
     /// `(original row index, cells)`; `None` for a new row.
     rows: Vec<(Option<usize>, Vec<String>)>,
 }
@@ -2047,11 +2089,18 @@ impl Grid {
         Grid {
             header: t.header.iter().map(|(name, _)| name.clone()).collect(),
             formula: t.header.iter().map(|(name, _)| formula(name)).collect(),
+            col_style: t.col_styles.clone(),
             rows: t
                 .rows
                 .iter()
                 .enumerate()
-                .map(|(i, row)| (Some(i), row.iter().map(|c| c.text.clone()).collect()))
+                .map(|(i, row)| {
+                    let mut cells: Vec<String> = row.iter().map(|c| c.text.clone()).collect();
+                    if let (Some(first), Some(style)) = (cells.first_mut(), t.row_styles.get(i)) {
+                        *first = rewrap(first, *style);
+                    }
+                    (Some(i), cells)
+                })
                 .collect(),
         }
     }
@@ -2071,16 +2120,23 @@ impl Grid {
             return text.to_string();
         }
         let n = self.header.len();
-        // At least as wide as the `---` that Markdown asks for.
-        let mut widths: Vec<usize> = self
+        let heads: Vec<String> = self
             .header
             .iter()
-            .map(|h| h.chars().count().max(3))
+            .enumerate()
+            .map(|(k, h)| self.col_style.get(k).copied().unwrap_or_default().wrap(h))
             .collect();
+        // At least as wide as the `---` that Markdown asks for.
+        let mut widths: Vec<usize> = heads.iter().map(|h| h.chars().count().max(3)).collect();
         for (_, row) in &self.rows {
             for (k, cell) in row.iter().enumerate().take(n) {
                 widths[k] = widths[k].max(cell.chars().count());
             }
+        }
+        // A set width pads the cells out to it; a narrower one leaves the
+        // rule shorter than they are.
+        for (k, w) in widths.iter_mut().enumerate() {
+            *w = (*w).max(self.col_style.get(k).map_or(0, |s| s.width as usize));
         }
         let line = |cells: &[String]| {
             let padded: Vec<String> = cells
@@ -2090,14 +2146,18 @@ impl Grid {
                 .collect();
             format!("| {} |", padded.join(" | "))
         };
-        let rule: Vec<String> = widths.iter().map(|w| "-".repeat(*w)).collect();
+        let rule: Vec<String> = widths
+            .iter()
+            .enumerate()
+            .map(|(k, w)| self.col_style.get(k).copied().unwrap_or_default().rule(*w))
+            .collect();
         let rule = line(&rule);
 
         // (start, end, replacement), applied from the end of the text back.
         let mut edits: Vec<(usize, usize, String)> = Vec::new();
         let range = |s: Span| (s.start as usize, s.end as usize);
         let (hs, he) = range(t.header_line);
-        edits.push((hs, he, line(&self.header)));
+        edits.push((hs, he, line(&heads)));
         let mut anchor = he;
         if let Some(sep) = t.separator_line {
             let (s, e) = range(sep);
@@ -3204,8 +3264,14 @@ impl Document {
                             date::civil_from_days(now.div_euclid(86_400)).0
                         })
                 });
-                grid.rows[*row].1[*col] =
-                    iso_entry(&style, ty, text, year).unwrap_or_else(|| clean_cell(text));
+                let entered = iso_entry(&style, ty, text, year).unwrap_or_else(|| clean_cell(text));
+                // A row's markers stay on its leftmost cell unless the new
+                // text brings its own.
+                grid.rows[*row].1[*col] = if *col == 0 && CellStyle::strip(&entered).0.is_plain() {
+                    rewrap(&entered, CellStyle::strip(&grid.rows[*row].1[0]).0)
+                } else {
+                    entered
+                };
             }
         })
     }
@@ -3341,6 +3407,45 @@ impl Document {
     }
 
     /// How many rows sheet `sheet` has, paged or not.
+    /// Whether the sheet has blocks of rows or columns, which its headings
+    /// declare. Its rows are not sorted or filtered while it has.
+    pub fn has_blocks(&self, sheet: usize) -> bool {
+        self.snapshot
+            .sheets
+            .get(sheet)
+            .is_some_and(|t| !t.row_outline.is_empty() || !t.col_outline.is_empty())
+    }
+
+    /// The rows left showing when the blocks headed by `folded` are
+    /// closed: every row but those inside a closed block. A head that is
+    /// not the head of a block is no block to close.
+    pub fn unfolded_rows(&self, sheet: usize, folded: &[usize]) -> Vec<usize> {
+        self.unfolded_rows_without(sheet, folded, &[])
+    }
+
+    /// As [`Document::unfolded_rows`], where the reader has taken the rows in
+    /// `away` out of the grid: a closed block whose head is one of them has
+    /// no head to show its summary, so its own summary rows show instead.
+    pub fn unfolded_rows_without(&self, sheet: usize, folded: &[usize], away: &[usize]) -> Vec<usize> {
+        let Some(t) = self.snapshot.sheets.get(sheet) else {
+            return Vec::new();
+        };
+        let mut hidden = vec![false; t.nrows];
+        for b in t.row_outline.iter().filter(|b| folded.contains(&b.head)) {
+            // Only a summary row of a block around it stays; its own are
+            // shown by its head.
+            let headless = away.contains(&b.head);
+            for r in b.head + 1..b.end {
+                let owner = t.row_owner.get(r).copied().flatten();
+                let keeps = owner.is_some_and(|o| o < b.head || (headless && o == b.head));
+                if !keeps {
+                    hidden[r] = true;
+                }
+            }
+        }
+        (0..t.nrows).filter(|&r| !hidden[r]).collect()
+    }
+
     pub fn row_count(&self, sheet: usize) -> usize {
         self.snapshot.sheets.get(sheet).map_or(0, |t| t.nrows)
     }
@@ -3822,6 +3927,41 @@ impl Document {
         Ok(())
     }
 
+    /// Set the style of a column: its alignment and the markers of its
+    /// header cell, which style every cell below.
+    pub fn set_column_style(&mut self, sheet: usize, col: usize, style: CellStyle) -> bool {
+        self.edit_grid(sheet, |grid| {
+            if let Some(slot) = grid.col_style.get_mut(col) {
+                // A width is not part of the style the caller gives.
+                *slot = CellStyle { width: slot.width, ..style };
+            }
+        })
+    }
+
+    /// Set the width, in characters, of `count` columns from `first`: the
+    /// length of their `---` in the file. 0 fits them to their cells.
+    pub fn set_columns_width(&mut self, sheet: usize, first: usize, count: usize, width: u16) -> bool {
+        self.edit_grid(sheet, |grid| {
+            for slot in grid.col_style.iter_mut().skip(first).take(count) {
+                slot.width = width;
+            }
+        })
+    }
+
+    /// Set the style of rows: the markers of their leftmost cells. A row
+    /// whose leftmost cell is empty or a formula has no text to carry it.
+    /// The alignment is a column's and is not taken from `style`.
+    pub fn set_row_style(&mut self, sheet: usize, first: usize, count: usize, style: CellStyle) -> bool {
+        self.edit_grid(sheet, |grid| {
+            let end = (first + count).min(grid.rows.len());
+            for (_, row) in grid.rows.iter_mut().take(end).skip(first) {
+                if let Some(cell) = row.first_mut() {
+                    *cell = rewrap(CellStyle::strip(cell).1, style);
+                }
+            }
+        })
+    }
+
     /// Insert `count` empty rows before row `at`.
     pub fn insert_rows(&mut self, sheet: usize, at: usize, count: usize) -> bool {
         self.edit_grid(sheet, |grid| {
@@ -3943,8 +4083,20 @@ impl Document {
             order.iter().map(cell).collect()
         };
         for (_, row) in &mut grid.rows {
+            // The row's markers stay on whatever is leftmost now.
+            let style = row.first().map_or(CellStyle::default(), |c| CellStyle::strip(c).0);
+            if let Some(first) = row.first_mut() {
+                *first = CellStyle::strip(first).1.to_string();
+            }
             *row = pick(row);
+            if let Some(first) = row.first_mut() {
+                *first = rewrap(first, style);
+            }
         }
+        grid.col_style = order
+            .iter()
+            .map(|n| column(n).and_then(|k| grid.col_style.get(k).copied()).unwrap_or_default())
+            .collect();
         grid.header = order.to_vec();
         grid.formula = order.iter().map(formula).collect();
         Some(grid.write(decl, text))
@@ -3982,6 +4134,7 @@ impl Document {
                 }
             }
             grid.header.push(name);
+            grid.col_style.push(CellStyle::default());
             grid.formula.push(false);
             for (_, row) in &mut grid.rows {
                 row.push(String::new());
@@ -4087,10 +4240,19 @@ impl Document {
             ));
         }
         // Line the changed sheets up again.
+        // A width is what the file said before the rename: a column that
+        // fitted its cells still does, and is not now read as set.
+        let before_ast = self.ast();
         for name in touched {
             let ast = parse_file(&text, 0, &mut Vec::new());
             if let Some(decl) = ast.sheets.iter().find(|t| t.name == name) {
-                text = Grid::of(decl).write(decl, &text);
+                let mut grid = Grid::of(decl);
+                if let Some(old) = before_ast.sheets.iter().find(|t| t.name == name) {
+                    for (slot, was) in grid.col_style.iter_mut().zip(&old.col_styles) {
+                        slot.width = was.width;
+                    }
+                }
+                text = grid.write(decl, &text);
             }
         }
         self.commit(text);
@@ -4228,6 +4390,9 @@ impl Document {
         }
         if let Some(why) = self.no_cells(sheet) {
             return Err(why);
+        }
+        if self.has_blocks(sheet) {
+            return Err(BLOCKS_NO_SORT.into());
         }
         let Some(snap) = self.snapshot.sheets.get(sheet) else {
             return Err("there is no such sheet".into());
@@ -4877,6 +5042,7 @@ impl Document {
             }
         }
         grid.header.push(name.clone());
+        grid.col_style.push(CellStyle::default());
         grid.formula.push(true);
         for (_, row) in &mut grid.rows {
             row.push(FORMULA_CELL.to_string());
@@ -5677,6 +5843,12 @@ impl Document {
                         ) => u.to_string(),
                         _ => String::new(),
                     },
+                    style: decl
+                        .and_then(|d| {
+                            let k = d.header.iter().position(|h| h.0 == col.name)?;
+                            d.col_styles.get(k).copied()
+                        })
+                        .unwrap_or_default(),
                 });
                 column_spans.push(computed.map(|ce| ce.expr_span));
                 column_errors_here.push(computed.and_then(|ce| within(ce.expr_span)));
@@ -5758,6 +5930,27 @@ impl Document {
                 }
                 rows.push(row);
             }
+            // A rollup's key columns are shown as one, the first: each row
+            // says only its own level's name, and the grid indents it. The
+            // other key columns stay in the sheet, for formulas and export.
+            let tree = match &sheet.group {
+                Some(keys) if sheet.rollup && keys.len() > 1 && !paged => keys.len(),
+                _ => 0,
+            };
+            if tree > 1 {
+                let levels = engine.roll_styles(t);
+                for (r, row) in rows.iter_mut().enumerate() {
+                    let level = levels.get(r).map_or(0, |s| s.level as usize);
+                    let own = (if level > 0 { level } else { tree }).min(tree) - 1;
+                    if own > 0 && own < row.len() {
+                        row[0] = row[own].clone();
+                    }
+                    // The summary of a block is marked with a sigma after its name.
+                    if levels.get(r).is_some_and(|s| s.summary) {
+                        row[0].display = format!("{} \u{3A3}", row[0].display);
+                    }
+                }
+            }
             // A column of addresses says so in its header, where the file
             // leaves its type to the cells. It stays undeclared, so it is
             // shown muted and nothing holds its cells to it.
@@ -5836,10 +6029,32 @@ impl Document {
                 _ => rows,
             };
             column_errors.push(column_errors_here);
+            let row_styles: Vec<CellStyle> = if sheet.rollup {
+                engine.roll_styles(t)
+            } else {
+                decl.filter(|d| d.source.is_none() && d.formula.is_none())
+                    .map(|d| d.row_styles.clone())
+                    .unwrap_or_default()
+            };
+            let rows_out = outline(
+                &row_styles.iter().map(|s| s.level).collect::<Vec<_>>(),
+                &row_styles.iter().map(|s| s.summary).collect::<Vec<_>>(),
+            );
+            let (row_outline, row_owner) = (rows_out.blocks, rows_out.owner);
+            let cols_out = outline(
+                &columns.iter().map(|c| c.style.level).collect::<Vec<_>>(),
+                &columns.iter().map(|c| c.style.summary).collect::<Vec<_>>(),
+            );
+            let (col_outline, col_owner) = (cols_out.blocks, cols_out.owner);
             snapshot.sheets.push(SheetSnap {
                 name: sheet.name.clone(),
                 columns,
                 nrows: sheet.nrows,
+                row_styles,
+                row_outline,
+                col_outline,
+                row_owner,
+                col_owner,
                 paged,
                 rows,
                 source: sheet.source.as_ref().map(|s| s.path.clone()),
@@ -5850,6 +6065,7 @@ impl Document {
                         .to_string()
                 }),
                 grouped: sheet.group.is_some() || sheet.join.is_some(),
+                tree,
                 sampled: sheet.source.as_ref().is_some_and(|s| {
                     let path = self
                         .base
@@ -8251,7 +8467,7 @@ mod tests {
             let offered = format_suggestions(ty, unit);
             assert!(offered.len() >= at_least, "{ty}: only {offered:?}");
         }
-        assert!(format_suggestions("String", "").is_empty());
+        assert!(format_suggestions("Complex", "").is_empty());
         assert!(!format_suggestions("Quantity", "").is_empty());
         // And Apply takes every one of them.
         let src = "sheet S\n\nDue : Date\n\n| Due |\n| --- |\n| 2025-01-31 |\n";
@@ -8311,6 +8527,24 @@ mod tests {
         assert!(doc.set_column_types(0, &[2], Some("Integer")));
         assert!(doc.text().contains("Cost : Integer\n"));
         assert!(doc.snapshot().problems.is_empty());
+    }
+
+    #[test]
+    fn a_text_column_is_set_clipped_or_wrapped() {
+        let src = "sheet T\n\nName | N\nlong text | 1\n";
+        let mut doc = Document::from_text(src);
+        assert!(doc.set_column_format(0, &[0], Some("wrap")).is_ok());
+        assert!(doc.text().contains("Name : String[wrap]\n"));
+        assert!(doc.snapshot().problems.is_empty());
+        assert_eq!(doc.snapshot().sheets[0].columns[0].format.as_deref(), Some("wrap"));
+        assert!(doc.set_column_format(0, &[0], Some("clip")).is_ok());
+        assert!(doc.text().contains("Name : String[clip]\n"));
+        // Nothing said is to spill, and a number takes neither.
+        assert!(doc.set_column_format(0, &[0], None).is_ok());
+        assert!(doc.text().contains("Name : String\n"));
+        assert!(doc.set_column_format(0, &[0], Some("fit")).is_err());
+        assert!(doc.set_column_format(0, &[1], Some("wrap")).is_err());
+        assert_eq!(format_suggestions("String", "").len(), 2);
     }
 
     #[test]
@@ -8393,7 +8627,7 @@ mod tests {
         assert!(doc.set_column_format(0, &[1], Some("q")).is_err());
         assert_eq!(
             doc.set_column_format(0, &[0], Some("d")),
-            Err("Month takes no format".to_string())
+            Err("a text format is `clip` or `wrap`".to_string())
         );
         assert_eq!(doc.text(), SALES);
         // An undeclared column is declared as the type its cells give it.
@@ -9092,6 +9326,7 @@ mod tests {
             "Duration: a timespan, e.g. 2.0ms or +2:00:00"
         );
         assert_eq!(entry_hint(&us, ""), "");
+        assert_eq!(entry_hint(&us, "Decimal[2]"), entry_hint(&us, "Decimal"));
         assert_eq!(
             entry_hint(&us, "Currency"),
             "Currency, an amount, e.g. $4, €5, £6 or 7BTC"
@@ -9993,5 +10228,119 @@ mod tests {
         doc.set_cell(0, 0, 0, "1");
         doc.set_cell(0, 0, 1, "= A + 1");
         assert_eq!(doc.snapshot().sheets[0].rows[0][1].display, "2");
+    }
+
+    #[test]
+    fn styles_are_set_from_the_grid() {
+        let mut doc = Document::from_text(STYLED);
+        let bold = CellStyle { bold: true, ..CellStyle::default() };
+        let centre = CellStyle { align: omasheet_omx::style::Align::Center, level: 2, ..CellStyle::default() };
+        assert!(doc.set_column_style(0, 1, centre));
+        assert!(doc.set_row_style(0, 0, 1, bold));
+        assert!(doc.set_row_style(0, 1, 1, CellStyle::default()));
+        let t = doc.text();
+        assert!(t.contains("| ## B "), "{t}");
+        assert!(t.contains(":-:") || t.contains(":--:"), "{t}");
+        assert!(t.contains("| **x** |"), "{t}");
+        assert!(t.contains("| y "), "{t}");
+    }
+
+    const STYLED: &str = "sheet T\n\n| **A** | _B_ |\n| :---- | --: |\n| x     | 1   |\n| **y** | 2   |\n";
+
+    #[test]
+    fn a_width_is_the_length_of_the_rule() {
+        let mut doc = Document::from_text(STYLED);
+        // A rule as wide as the cells need says no width.
+        assert_eq!(doc.snapshot().sheets[0].columns[0].style.width, 0);
+        assert!(doc.set_columns_width(0, 0, 1, 12));
+        assert!(doc.text().contains("| :----------- |"), "{}", doc.text());
+        assert!(doc.text().contains("| x            |"), "{}", doc.text());
+        assert_eq!(doc.snapshot().sheets[0].columns[0].style.width, 12);
+        // A style set afterwards keeps it, and a width of 0 fits the cells again.
+        assert!(doc.set_column_style(0, 0, CellStyle::default()));
+        assert_eq!(doc.snapshot().sheets[0].columns[0].style.width, 12);
+        assert!(doc.set_columns_width(0, 0, 1, 0));
+        assert_eq!(doc.snapshot().sheets[0].columns[0].style.width, 0);
+    }
+
+    #[test]
+    fn styles_survive_edits() {
+        let mut doc = Document::from_text(STYLED);
+        // The names and values are clean of their markers.
+        assert_eq!(doc.snapshot().sheets[0].columns[0].name, "A");
+        assert_eq!(doc.snapshot().sheets[0].rows[1][0].display, "y");
+        // An edit keeps the row's and the column's markers and the rule.
+        assert!(doc.set_cells(0, &[(1, 0, "z".into()), (1, 1, "5".into())]));
+        assert!(doc.text().contains("| **z** | 5"), "{}", doc.text());
+        assert!(doc.text().contains("| **A**"), "{}", doc.text());
+        assert!(doc.text().contains("| :----"), "{}", doc.text());
+        assert!(doc.text().contains("--: |"), "{}", doc.text());
+        // A new row is plain, and a row removed takes its style with it.
+        assert!(doc.insert_rows(0, 0, 1));
+        assert!(doc.text().contains("| **z**"), "{}", doc.text());
+    }
+
+    #[test]
+    fn headings_make_blocks_that_fold() {
+        let mut doc = Document::from_text(
+            "sheet T\n\n| ## A | ## X | ### Y |\n| --- | --- | --- |\n| ## g | 1 | 2 |\n| a | 3 | 4 |\n| b | 5 | 6 |\n| ## h | 7 | 8 |\n",
+        );
+        let t = &doc.snapshot().sheets[0];
+        assert_eq!(t.row_outline.len(), 1);
+        assert_eq!((t.row_outline[0].head, t.row_outline[0].end), (0, 3));
+        // `## X` runs to the end of its level, and takes `### Y`.
+        assert_eq!((t.col_outline[0].head, t.col_outline[0].end), (1, 3));
+        assert_eq!(doc.unfolded_rows(0, &[0]), vec![0, 3]);
+        assert_eq!(doc.unfolded_rows(0, &[]), vec![0, 1, 2, 3]);
+        // Not a head, so nothing folds.
+        assert_eq!(doc.unfolded_rows(0, &[1]), vec![0, 1, 2, 3]);
+        assert!(doc.has_blocks(0));
+        assert!(doc.sort_rows(0, 1, true).is_err());
+    }
+
+    #[test]
+    fn block_totals_what_a_heading_row_heads() {
+        let doc = Document::from_text(
+            "sheet T\n\n| P | N | Tot |\n| --- | --- | --- |\n| # a | | * |\n| ## b | | * |\n| x | 2 | * |\n| y | 3 | * |\n| ## c | | * |\n| z | 4 | * |\n\nTot := if [N; block].count() > 0 then [N; block].sum() else N\n",
+        );
+        let shown: Vec<_> = doc.snapshot().sheets[0]
+            .rows
+            .iter()
+            .map(|r| r[2].display.clone())
+            .collect();
+        assert_eq!(shown, ["9", "5", "2", "3", "4", "4"]);
+    }
+
+    #[test]
+    fn summary_rows_close_blocks_and_stay_when_folded() {
+        let doc = Document::from_text(
+            "sheet T\n\n| P | N |\n| --- | --- |\n| ## a | |\n| x | 2 |\n| y | 3 |\n| ^ sum | = [N; block].sum() |\n| ^ max | = [N; block].max() |\n| ## b | |\n| z | 4 |\n| ^ ## sum | = [N; block].sum() |\n",
+        );
+        let shown: Vec<_> = doc.snapshot().sheets[0].rows.iter().map(|r| r[1].display.clone()).collect();
+        assert_eq!(shown, ["", "2", "3", "5", "3", "", "4", "4"]);
+        assert!(doc.has_blocks(0));
+        // Closing a hides its summary rows too; its head shows them.
+        assert_eq!(doc.unfolded_rows(0, &[0]), [0, 5, 6, 7]);
+        assert_eq!(doc.unfolded_rows(0, &[0, 5]), [0, 5]);
+    }
+
+    #[test]
+    fn a_rollup_is_a_sheet_of_blocks() {
+        let doc = Document::from_text(
+            "sheet S\n\n| R | C | V |\n| --- | --- | --- |\n| a | x | 1 |\n| a | y | 2 |\n| b | z | 4 |\n\nsheet T := S |> rollup(R, C) |> agg(V.sum())\n",
+        );
+        let t = &doc.snapshot().sheets[1];
+        let shown: Vec<_> = t.rows.iter().map(|r| format!("{}/{}/{}", r[0].display, r[1].display, r[2].display)).collect();
+        // The first column says each row's own name once, the keys beside
+        // it are as they were.
+        assert_eq!(t.tree, 2);
+        assert_eq!(shown, ["a//", "x/x/1", "y/y/2", "a \u{3A3}//3", "b//", "z/z/4", "b \u{3A3}//4"]);
+        assert_eq!(t.row_styles.iter().map(|s| (s.level, s.summary)).collect::<Vec<_>>(),
+            [(1, false), (0, false), (0, false), (1, true), (1, false), (0, false), (1, true)]);
+        assert_eq!(t.row_outline.len(), 2);
+        // Closed, the head shows what the summary does and the rest goes.
+        assert_eq!(doc.unfolded_rows(1, &[0]), [0, 4, 5, 6]);
+        // With the head taken away, its summary shows in its place.
+        assert_eq!(doc.unfolded_rows_without(1, &[0], &[0]), [0, 3, 4, 5, 6]);
     }
 }

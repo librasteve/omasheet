@@ -17,6 +17,7 @@ Passengers |> filter(Survived == 1) |> sort(Age) |> select(Name, Age) |> head(5)
 | `sort(columns)` | the rows in order, ascending, or descending with `desc` as the last word: `sort(Fare, desc)` |
 | `head(n)`, `tail(n)` | the first or last `n` rows |
 | `group_by(keys) \|> agg(aggregates)` | a row for each value of the key columns, with the aggregates worked out over the group |
+| `rollup(keys) \|> agg(aggregates)` | the same as blocks: a head row for each group of the outer keys, the groups inside it, and a summary row at its foot |
 | `group_by(keys) \|> apply(Fn)` | calls the function `Fn` on the rows of each group |
 | `join(Other, keys)` | a row for every pair of rows whose key columns are equal; `join(Other, keys, left)` keeps a left row that matches nothing |
 

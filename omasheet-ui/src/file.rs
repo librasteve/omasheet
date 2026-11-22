@@ -10,11 +10,12 @@ use cxx_qt_lib::{QString, QUrl};
 use omasheet_engine::datefmt::Names;
 use omasheet_engine::doc::{BLANK, PAGED_ROWS, entry_hint, format_suggestions, unit_spec};
 use omasheet_engine::omx::date::Style;
+use omasheet_engine::omx::style::{Align, Style as CellStyle};
 use omasheet_engine::{Document, Options, locale};
 use omasheet_interop::parquet;
 use omasheet_interop::{Exported, Imported};
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -215,6 +216,16 @@ pub mod qobject {
         fn insert_rows(self: Pin<&mut File>, sheet: i32, at: i32, count: i32);
         #[qinvokable]
         fn delete_rows(self: Pin<&mut File>, sheet: i32, first: i32, count: i32);
+        // Style a column from its header cell, and rows from their leftmost
+        // cells. `bits` is bold, italic and the heading level, as the
+        // snapshot gives them; `align` is `l`, `c`, `r` or empty.
+        #[qinvokable]
+        fn set_column_style(self: Pin<&mut File>, sheet: i32, col: i32, align: &QString, bits: i32);
+        #[qinvokable]
+        fn set_row_style(self: Pin<&mut File>, sheet: i32, first: i32, count: i32, bits: i32);
+        // A column's width in characters, the length of its `---`; 0 for auto.
+        #[qinvokable]
+        fn set_columns_width(self: Pin<&mut File>, sheet: i32, first: i32, count: i32, width: i32);
 
         // These return an error message, or an empty string on success.
         #[qinvokable]
@@ -295,6 +306,17 @@ pub mod qobject {
         /// Why the last filter failed, as `Column: why`.
         #[qinvokable]
         fn filter_problem(self: &File) -> QString;
+
+        // Close the blocks of rows headed by the rows in `heads` (numbers
+        // with commas between), as `filter_rows` hides rows: the count of
+        // the rows left, or -1 while every row shows.
+        #[qinvokable]
+        fn fold_rows(self: &File, sheet: i32, heads: &QString) -> i32;
+        /// Take the rows in `rows` (numbers with commas between) out of
+        /// sheet `sheet`'s grid, as the reader hid them; the next
+        /// `filter_rows` or `fold_rows` applies it.
+        #[qinvokable]
+        fn hide_rows(self: &File, sheet: i32, rows: &QString);
         /// What is wrong with `expr` as a filter of column `col` of sheet
         /// `sheet`, or nothing: checked as it is typed, and no row read.
         #[qinvokable]
@@ -586,6 +608,9 @@ pub struct FileRust {
     /// The rows the filter in force shows, and each row's place among them;
     /// `None` while every row shows. See [`qobject::File::filter_rows`].
     shown: RefCell<Option<Shown>>,
+    /// The rows the reader hid, by sheet: out of the grid like a filtered
+    /// row, and still in the file.
+    reader_hidden: RefCell<HashMap<i32, Vec<usize>>>,
     /// The tables' files being read whole on a worker (D157).
     reading: HashSet<PathBuf>,
     /// The CSV files being copied to Parquet on a worker (open-a-big-csv
@@ -636,6 +661,7 @@ impl Default for FileRust {
             clip: Clip::default(),
             filter_problem: RefCell::new(String::new()),
             shown: RefCell::new(None),
+            reader_hidden: RefCell::new(HashMap::new()),
             reading: HashSet::new(),
             converting: HashSet::new(),
             filter_asked: std::cell::Cell::new(0),
@@ -676,6 +702,17 @@ fn document(text: &str) -> Document {
     static NAMES: OnceLock<Names> = OnceLock::new();
     let names = NAMES.get_or_init(locale::os_names);
     Document::on_screen(text, style(), names.clone())
+}
+
+/// Bold, italic and a heading level from the number the snapshot gives.
+fn style_of(bits: i32) -> CellStyle {
+    CellStyle {
+        bold: bits & 1 != 0,
+        italic: bits & 2 != 0,
+        level: ((bits >> 2) & 7).min(6) as u8,
+        summary: bits & 32 != 0,
+        ..CellStyle::default()
+    }
 }
 
 fn index(n: i32) -> usize {
@@ -1250,6 +1287,31 @@ impl qobject::File {
         });
     }
 
+    fn set_column_style(self: Pin<&mut Self>, sheet: i32, col: i32, align: &QString, bits: i32) {
+        let align = match align.to_string().as_str() {
+            "l" => Align::Left,
+            "c" => Align::Center,
+            "r" => Align::Right,
+            _ => Align::Auto,
+        };
+        let style = CellStyle { align, ..style_of(bits) };
+        self.edit_sheet(sheet, |doc| {
+            doc.set_column_style(index(sheet), index(col), style)
+        });
+    }
+
+    fn set_columns_width(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, width: i32) {
+        self.edit_sheet(sheet, |doc| {
+            doc.set_columns_width(index(sheet), index(first), index(count), width.clamp(0, 200) as u16)
+        });
+    }
+
+    fn set_row_style(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32, bits: i32) {
+        self.edit_sheet(sheet, |doc| {
+            doc.set_row_style(index(sheet), index(first), index(count), style_of(bits))
+        });
+    }
+
     fn delete_rows(self: Pin<&mut Self>, sheet: i32, first: i32, count: i32) {
         self.edit_sheet(sheet, |doc| {
             doc.delete_rows(index(sheet), index(first), index(count))
@@ -1363,8 +1425,7 @@ impl qobject::File {
         let asked = rust.filter_asked.get() + 1;
         rust.filter_asked.set(asked);
         if filters.is_empty() {
-            *rust.shown.borrow_mut() = None;
-            return -1;
+            return self.all_rows(sheet);
         }
         let job = match rust.doc.filter_job(index(sheet), &filters) {
             Ok(job) => job,
@@ -1398,9 +1459,31 @@ impl qobject::File {
         }
     }
 
-    /// Keep `rows` as the rows the filter shows, and give their count.
-    fn show_rows(&self, sheet: i32, rows: Vec<usize>) -> i32 {
+    /// Every row but the ones the reader hid: -1 where none is.
+    fn all_rows(&self, sheet: i32) -> i32 {
         let rust = self.rust();
+        let hidden = rust.reader_hidden.borrow().get(&sheet).map_or(0, |h| h.len());
+        if hidden == 0 {
+            *rust.shown.borrow_mut() = None;
+            return -1;
+        }
+        let n = rust.doc.row_count(index(sheet));
+        self.show_rows(sheet, (0..n).collect())
+    }
+
+    /// The rows the reader hid in sheet `sheet`, numbers with commas
+    /// between; the next filter or fold leaves them out.
+    fn hide_rows(&self, sheet: i32, rows: &QString) {
+        let rows: Vec<usize> = rows.to_string().split(',').filter_map(|r| r.trim().parse().ok()).collect();
+        self.rust().reader_hidden.borrow_mut().insert(sheet, rows);
+    }
+
+    /// Keep `rows` as the rows the filter shows, and give their count.
+    fn show_rows(&self, sheet: i32, mut rows: Vec<usize>) -> i32 {
+        let rust = self.rust();
+        if let Some(hidden) = rust.reader_hidden.borrow().get(&sheet) {
+            rows.retain(|r| !hidden.contains(r));
+        }
         let n = rust.doc.row_count(index(sheet));
         let mut pos = vec![-1; n];
         for (k, &r) in rows.iter().enumerate() {
@@ -1411,6 +1494,22 @@ impl qobject::File {
         let count = rows.len() as i32;
         *rust.shown.borrow_mut() = Some(Shown { rows, pos });
         count
+    }
+
+    fn fold_rows(&self, sheet: i32, heads: &QString) -> i32 {
+        let heads: Vec<usize> = heads
+            .to_string()
+            .split(',')
+            .filter_map(|h| h.trim().parse().ok())
+            .collect();
+        let rust = self.rust();
+        let n = rust.doc.row_count(index(sheet));
+        let away: Vec<usize> = rust.reader_hidden.borrow().get(&sheet).cloned().unwrap_or_default();
+        let rows = rust.doc.unfolded_rows_without(index(sheet), &heads, &away);
+        if rows.len() == n {
+            return self.all_rows(sheet);
+        }
+        self.show_rows(sheet, rows)
     }
 
     fn filter_problem(&self) -> QString {

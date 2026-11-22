@@ -112,6 +112,10 @@ pub fn snapshot(snap: &Snapshot) -> String {
             field(out, "format", c.format.as_deref().unwrap_or(""));
             out.push(',');
             field(out, "unit", &c.unit);
+            out.push(',');
+            field(out, "align", c.style.align_letter());
+            out.push_str(&format!(",\"width\":{}", c.style.width));
+            out.push_str(&format!(",\"style\":{}", c.style.bits()));
             out.push_str(&format!(",\"lifted\":{}", c.lifted));
             out.push_str(&format!(
                 ",\"computed\":{},\"declared\":{}}}",
@@ -120,9 +124,22 @@ pub fn snapshot(snap: &Snapshot) -> String {
             ));
         });
         out.push_str(&format!(
-            ",\"nrows\":{},\"paged\":{},\"sampled\":{}",
-            t.nrows, t.paged, t.sampled
+            ",\"nrows\":{},\"paged\":{},\"sampled\":{},\"tree\":{}",
+            t.nrows, t.paged, t.sampled, t.tree
         ));
+        for (key, blocks) in [("rowBlocks", &t.row_outline), ("colBlocks", &t.col_outline)] {
+            out.push_str(&format!(",\"{key}\":"));
+            list(out, blocks, |out, b| {
+                out.push_str(&format!("[{},{},{}]", b.head, b.end, b.depth))
+            });
+        }
+        // The block each summary row or column closes, by its head, or -1.
+        for (key, owners) in [("rowOwners", &t.row_owner), ("colOwners", &t.col_owner)] {
+            out.push_str(&format!(",\"{key}\":"));
+            list(out, owners, |out, o| out.push_str(&o.map_or(-1, |h| h as i64).to_string()));
+        }
+        out.push_str(",\"rowStyles\":");
+        list(out, &t.row_styles, |out, s| out.push_str(&s.bits().to_string()));
         out.push_str(",\"rows\":");
         cell_rows(out, &t.rows);
         out.push('}');
@@ -223,7 +240,7 @@ mod tests {
         ));
         assert!(json.contains("\"d\":\"say \\\"hi\\\"\""), "{json}");
         assert!(json.contains(
-            "\"formula\":\"B * 2\",\"format\":\"\",\"unit\":\"\",\"lifted\":false,\"computed\":true,\"declared\":false"
+            "\"formula\":\"B * 2\",\"format\":\"\",\"unit\":\"\",\"align\":\"\",\"width\":0,\"style\":0,\"lifted\":false,\"computed\":true,\"declared\":false"
         ));
         assert!(json.contains("\"d\":\"4\""));
         // The built-in constants are listed, none of them the file's own.

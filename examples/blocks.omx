@@ -1,0 +1,18 @@
+// Blocks: a heading level in the leftmost cell or a header cell declares a
+// block of rows or columns, which the app can fold.
+
+sheet Sales
+
+| Region     | ## Y2025 | ### Q1 | ### Q2 | ## Y2026 |
+| :--------- | -------: | -----: | -----: | -------: |
+| ## EMEA    | 30       | 10     | 20     | 40       |
+| ### UK     | 10       | 4      | 6      | 15       |
+| ### France | 20       | 6      | 14     | 25       |
+| ## APAC    | 5        | 2      | 3      | 8        |
+
+sheet Summary
+
+| Label | Value                  |
+| ----- | ---------------------- |
+| EMEA  | = Sales.Y2025[0]       |
+| Rows  | = Sales.Q1.sum()       |

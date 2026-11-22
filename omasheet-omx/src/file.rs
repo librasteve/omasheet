@@ -26,6 +26,7 @@ use crate::ast::Expr;
 use crate::colfmt::{Format, closing};
 use crate::diag::{Diagnostic, Span};
 use crate::parser::parse_expr;
+use crate::style::Style;
 use crate::types::{MAX_DECIMAL_SCALE, S};
 
 #[derive(Debug, Default)]
@@ -88,6 +89,12 @@ pub struct SheetDecl {
     /// (without line endings), for tools that rewrite a sheet in place.
     pub header_line: Span,
     pub separator_line: Option<Span>,
+    /// Each column's style, in the header's order: the alignment its rule
+    /// line says, and the markers of its header cell.
+    pub col_styles: Vec<Style>,
+    /// Each row's style, in the rows' order: the markers of its leftmost
+    /// cell, which are not in the cell's text.
+    pub row_styles: Vec<Style>,
     pub row_lines: Vec<Span>,
     pub computed: Vec<ComputedDecl>,
 }
@@ -327,6 +334,7 @@ fn read_format(text: &str, ty: S, span: Span, diags: &mut Vec<Diagnostic>) -> Op
         | Format::Scientific(_)
         | Format::Quantity(_)
         | Format::Boolean(_)
+        | Format::Text(_)
         | Format::Duration(_) => span,
     };
     diags.push(
@@ -407,7 +415,10 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             let n = ident_len(rest);
             let tail = rest[n..].trim_start();
             if n > 0 && tail.starts_with(":=") {
-                ast.sheets.extend(sheet.take());
+                ast.sheets.extend(sheet.take().map(|mut t| {
+                    t.settle_widths();
+                    t
+                }));
                 let name_at = at + (trimmed.len() - rest.len());
                 let expr_at = at + (trimmed.len() - tail.len()) + 2;
                 let (expr, expr_span) = expression(&mut i, expr_at, diags);
@@ -420,6 +431,8 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                     header: Vec::new(),
                     header_line: Span::default(),
                     separator_line: None,
+                    col_styles: Vec::new(),
+                    row_styles: Vec::new(),
                     row_lines: Vec::new(),
                     rows: Vec::new(),
                     computed: Vec::new(),
@@ -435,7 +448,10 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
         if let Some(rest) = after_keyword(trimmed, "sheet") {
             let n = ident_len(rest);
             if n > 0 && rest[n..].trim().is_empty() {
-                ast.sheets.extend(sheet.take());
+                ast.sheets.extend(sheet.take().map(|mut t| {
+                    t.settle_widths();
+                    t
+                }));
                 let name_at = at + (trimmed.len() - rest.len());
                 sheet = Some(SheetDecl {
                     name: rest[..n].to_string(),
@@ -446,6 +462,8 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                     header: Vec::new(),
                     header_line: Span::default(),
                     separator_line: None,
+                    col_styles: Vec::new(),
+                    row_styles: Vec::new(),
                     row_lines: Vec::new(),
                     rows: Vec::new(),
                     computed: Vec::new(),
@@ -462,7 +480,10 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             let n = ident_len(rest);
             let tail = rest[n..].trim_start();
             if n > 0 && tail.starts_with(":=") {
-                ast.sheets.extend(sheet.take());
+                ast.sheets.extend(sheet.take().map(|mut t| {
+                    t.settle_widths();
+                    t
+                }));
                 let name_at = at + (trimmed.len() - rest.len());
                 let expr_at = at + (trimmed.len() - tail.len()) + 2;
                 let (expr, expr_span) = expression(&mut i, expr_at, diags);
@@ -475,6 +496,8 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                     header: Vec::new(),
                     header_line: Span::default(),
                     separator_line: None,
+                    col_styles: Vec::new(),
+                    row_styles: Vec::new(),
                     row_lines: Vec::new(),
                     rows: Vec::new(),
                     computed: Vec::new(),
@@ -519,7 +542,10 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
             let n = ident_len(rest);
             let tail = rest[n..].trim_start();
             if n > 0 && tail.starts_with('=') && !tail.starts_with("==") {
-                ast.sheets.extend(sheet.take());
+                ast.sheets.extend(sheet.take().map(|mut t| {
+                    t.settle_widths();
+                    t
+                }));
                 let name_at = at + (trimmed.len() - rest.len());
                 let expr_at = at + (trimmed.len() - tail.len()) + 1;
                 let (expr, expr_span) = expression(&mut i, expr_at, diags);
@@ -568,7 +594,10 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                     i += 1;
                     continue;
                 }
-                ast.sheets.extend(sheet.take());
+                ast.sheets.extend(sheet.take().map(|mut t| {
+                    t.settle_widths();
+                    t
+                }));
                 let expr_at = line.start + line.text.len() - tail.len() + 1;
                 let (expr, expr_span) = expression(&mut i, expr_at, diags);
                 ast.funcs.push(FuncDecl {
@@ -815,8 +844,15 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
         if !in_body {
             // The header row.
             for cell in split_cells(cells_text, line.start + inside, src) {
-                if ident_len(&cell.text) == cell.text.len() && !cell.text.is_empty() {
-                    t.header.push((cell.text, cell.span));
+                let (style, name) = Style::strip(&cell.text);
+                if ident_len(name) == name.len() && !name.is_empty() {
+                    // The span is the name's alone, so that renaming a
+                    // column keeps its markers.
+                    let at = cell.span.start as usize
+                        + (name.as_ptr() as usize - cell.text.as_ptr() as usize);
+                    let span = Span::new(src, at, at + name.len());
+                    t.col_styles.push(style);
+                    t.header.push((name.to_string(), span));
                 } else {
                     diags.push(
                         Diagnostic::new(
@@ -825,6 +861,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                         )
                         .with_help("column names use letters, digits and `_`"),
                     );
+                    t.col_styles.push(Style::default());
                     t.header.push((format!("_{}", t.header.len()), cell.span));
                 }
             }
@@ -837,6 +874,16 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
 
         if after_header && is_separator(trimmed) {
             t.separator_line = Some(Span::new(src, line.start, line.start + line.text.len()));
+            let rule = split_cells(cells_text, line.start + inside, src);
+            for (style, cell) in t.col_styles.iter_mut().zip(&rule) {
+                style.align = Style::align_of_rule(&cell.text);
+                // A `---` longer than four says a width, in a table with
+                // outer pipes; `settle_widths` drops one that only pads.
+                let dashes = cell.text.trim().chars().count();
+                if outer && dashes >= 4 {
+                    style.width = dashes.min(u16::MAX as usize) as u16;
+                }
+            }
             after_header = false;
             i += 1;
             continue;
@@ -857,14 +904,65 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                 ),
             ));
         } else {
+            let mut cells = cells;
+            let mut style = Style::default();
+            if let Some(first) = cells.first_mut() {
+                let (st, text) = Style::strip(&first.text);
+                style = st;
+                if !st.is_plain() {
+                    let at = first.span.start as usize
+                        + (text.as_ptr() as usize - first.text.as_ptr() as usize);
+                    first.span = Span::new(src, at, at + text.len());
+                    first.text = text.to_string();
+                }
+            }
+            t.row_styles.push(style);
             t.rows.push(cells);
             t.row_lines
                 .push(Span::new(src, line.start, line.start + line.text.len()));
         }
         i += 1;
     }
-    ast.sheets.extend(sheet.take());
+    ast.sheets.extend(sheet.take().map(|mut t| {
+        t.settle_widths();
+        t
+    }));
     ast
+}
+
+impl SheetDecl {
+    /// A column whose rule line is as wide as its cells needs is aligned,
+    /// not set to a width: its `width` is 0, so that it fits its cells.
+    fn settle_widths(&mut self) {
+        for k in 0..self.header.len() {
+            let Some(style) = self.col_styles.get(k).copied() else {
+                continue;
+            };
+            if style.width == 0 {
+                continue;
+            }
+            let mut natural = style.wrap(&self.header[k].0).chars().count().max(3);
+            for (i, row) in self.rows.iter().enumerate() {
+                let Some(cell) = row.get(k) else { continue };
+                let text = &cell.text;
+                let rs = self.row_styles.get(i).copied().unwrap_or_default();
+                let n = if k == 0
+                    && !rs.is_plain()
+                    && !text.is_empty()
+                    && text != "*"
+                    && !text.starts_with('=')
+                {
+                    rs.wrap(text).chars().count()
+                } else {
+                    text.chars().count()
+                };
+                natural = natural.max(n);
+            }
+            if style.width as usize == natural {
+                self.col_styles[k].width = 0;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -99,6 +99,22 @@ enum Rows {
 type GroupRows = (usize, Rc<Vec<usize>>);
 /// The rows of each group of a grouped sheet, a row of it each.
 type Groups = Vec<Rc<Vec<usize>>>;
+
+/// The rows of a `rollup` sheet: for each, how many of the keys it covers
+/// and whether it heads a group, is one of the innermost groups, or sums
+/// up a group of the outer keys.
+#[derive(Debug, Default)]
+struct Roll {
+    depth: Vec<usize>,
+    kind: Vec<RollKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RollKind {
+    Head,
+    Leaf,
+    Summary,
+}
 /// The values of an aggregate of a grouped sheet Polars took, one a group.
 type AggValues = Rc<Vec<Value>>;
 /// The rows of a sheet in partitions, one for each value of key columns:
@@ -209,6 +225,8 @@ pub struct Engine<'p> {
     /// sheet its view groups, once the view has been evaluated: one entry a
     /// row of the grouped sheet.
     groups: RefCell<Vec<Option<Rc<Groups>>>>,
+    /// What each row of a `rollup` sheet is, once its view has been evaluated.
+    rolls: RefCell<Vec<Option<Rc<Roll>>>>,
     /// The group an aggregate of `agg` is being worked out for, innermost
     /// last: the sheet grouped and the rows of the group.
     grouping: RefCell<Vec<GroupRows>>,
@@ -517,6 +535,7 @@ impl<'p> Engine<'p> {
             ),
             views: RefCell::new(vec![Slot::Pending; prog.sheets.len()]),
             groups: RefCell::new(vec![None; prog.sheets.len()]),
+            rolls: RefCell::new(vec![None; prog.sheets.len()]),
             grouping: RefCell::new(Vec::new()),
             joined: RefCell::new(vec![None; prog.sheets.len()]),
             apply_paired: RefCell::new(None),
@@ -2357,6 +2376,9 @@ impl<'p> Engine<'p> {
             // keeps: nothing of it is stored here (D91).
             (None, ColKind::View(source)) => match self.view(t) {
                 Ok(view) => match view.rows.get(r) {
+                    // A rollup's head and summary rows name only the keys
+                    // they cover.
+                    Some(_) if self.rolled_blank(t, *source, r) => Ok(Value::Null),
                     Some(&row) => self.cell(view.sheet, *source, row),
                     None => Ok(Value::Null),
                 },
@@ -2364,6 +2386,9 @@ impl<'p> Engine<'p> {
             },
             // An aggregate is worked out over the rows of its group, which
             // the names of the grouped sheet's columns read.
+            (None, ColKind::Agg(_)) if self.view(t).is_ok() && self.roll_kind(t, r) == Some(RollKind::Head) => {
+                Ok(Value::Null)
+            }
             (None, ColKind::Agg(node)) => match self.group(t, r) {
                 // Taken by Polars with the groups.
                 Ok(Some(_)) if self.agg_held.borrow()[t][c].is_some() => {
@@ -2868,6 +2893,20 @@ impl<'p> Engine<'p> {
         // where its key columns read, and the groups are kept for its
         // aggregates.
         let value = match (value, &self.prog.sheets[t].group) {
+            (Value::Sheet(view), Some(keys)) if self.prog.sheets[t].rollup => {
+                match self.rolled(&view, keys, node.span) {
+                    Ok((firsts, groups, roll)) => {
+                        self.groups.borrow_mut()[t] = Some(Rc::new(groups));
+                        self.rolls.borrow_mut()[t] = Some(Rc::new(roll));
+                        Value::Sheet(firsts)
+                    }
+                    Err(Fail::Diag(d)) => {
+                        self.diags.borrow_mut().push(d);
+                        Value::Error
+                    }
+                    Err(Fail::Poison) => Value::Error,
+                }
+            }
             (Value::Sheet(view), Some(keys)) => match self.grouped(t, &view, keys, node.span) {
                 Ok((firsts, groups)) => {
                     self.groups.borrow_mut()[t] = Some(Rc::new(groups));
@@ -2987,6 +3026,103 @@ impl<'p> Engine<'p> {
         }
         let groups = self.plain_groups(view, keys, span)?;
         Ok((firsts(&groups), groups))
+    }
+
+    /// The groups of a `rollup` by `keys`: for each group of the outer keys
+    /// a head row, then the groups inside it, then a summary row over all of
+    /// its rows; the innermost groups are the rows between. Given back with
+    /// the view of each row's first row of its group.
+    fn rolled(
+        &self,
+        view: &crate::value::View,
+        keys: &[usize],
+        span: Span,
+    ) -> Result<(crate::value::View, Groups, Roll), Fail> {
+        let leaves = self.plain_groups(view, keys, span)?;
+        let mut key_of: Vec<Vec<Value>> = Vec::with_capacity(leaves.len());
+        for g in &leaves {
+            let mut row = Vec::with_capacity(keys.len());
+            for &c in keys {
+                row.push(self.cell(view.sheet, c, g[0])?);
+            }
+            key_of.push(row);
+        }
+        let n = keys.len();
+        let same = |a: &Value, b: &Value| matches!(sort_order(a, b), Ok(Ordering::Equal));
+        let mut groups: Groups = Vec::new();
+        let mut firsts: Vec<usize> = Vec::new();
+        let mut roll = Roll::default();
+        // Where the open group of each outer key began, as a leaf's number.
+        let mut open: Vec<usize> = vec![0; n.saturating_sub(1)];
+        let close = |p: usize,
+                     from: usize,
+                     to: usize,
+                     groups: &mut Groups,
+                     firsts: &mut Vec<usize>,
+                     roll: &mut Roll| {
+            let rows: Vec<usize> = leaves[from..to].iter().flat_map(|g| g.iter().copied()).collect();
+            firsts.push(rows[0]);
+            groups.push(Rc::new(rows));
+            roll.depth.push(p + 1);
+            roll.kind.push(RollKind::Summary);
+        };
+        for i in 0..leaves.len() {
+            // The outermost key that has a new value here.
+            let changed = if i == 0 {
+                0
+            } else {
+                (0..n).find(|&p| !same(&key_of[i][p], &key_of[i - 1][p])).unwrap_or(n)
+            };
+            if i > 0 {
+                for p in (changed..n.saturating_sub(1)).rev() {
+                    close(p, open[p], i, &mut groups, &mut firsts, &mut roll);
+                }
+            }
+            for p in changed..n.saturating_sub(1) {
+                open[p] = i;
+                firsts.push(leaves[i][0]);
+                groups.push(Rc::new(Vec::new()));
+                roll.depth.push(p + 1);
+                roll.kind.push(RollKind::Head);
+            }
+            firsts.push(leaves[i][0]);
+            groups.push(leaves[i].clone());
+            roll.depth.push(n);
+            roll.kind.push(RollKind::Leaf);
+        }
+        if !leaves.is_empty() {
+            for p in (0..n.saturating_sub(1)).rev() {
+                close(p, open[p], leaves.len(), &mut groups, &mut firsts, &mut roll);
+            }
+        }
+        let firsts = crate::value::View {
+            sheet: view.sheet,
+            rows: Rc::new(firsts),
+            cols: Rc::new(keys.to_vec()),
+        };
+        Ok((firsts, groups, roll))
+    }
+
+    /// The style of each row of a `rollup` sheet: a heading level for the
+    /// rows of the outer keys, and `^` for their summaries. Empty for any
+    /// other sheet.
+    pub fn roll_styles(&self, t: usize) -> Vec<omasheet_omx::style::Style> {
+        if !self.prog.sheets.get(t).is_some_and(|s| s.rollup) || self.view(t).is_err() {
+            return Vec::new();
+        }
+        let rolls = self.rolls.borrow();
+        let Some(roll) = rolls[t].as_ref() else {
+            return Vec::new();
+        };
+        roll.kind
+            .iter()
+            .zip(&roll.depth)
+            .map(|(kind, &depth)| omasheet_omx::style::Style {
+                level: if *kind == RollKind::Leaf { 0 } else { depth.min(6) as u8 },
+                summary: *kind == RollKind::Summary,
+                ..Default::default()
+            })
+            .collect()
     }
 
     /// The rows of `view` in groups by the key columns `keys`, each group's
@@ -3154,6 +3290,27 @@ impl<'p> Engine<'p> {
             self.partitions.borrow_mut().insert(key, part.clone());
         }
         Ok(part)
+    }
+
+    fn roll_kind(&self, t: usize, r: usize) -> Option<RollKind> {
+        self.rolls.borrow().get(t)?.as_ref()?.kind.get(r).copied()
+    }
+
+    /// Whether key column `source` of rollup sheet `t` is left empty in row
+    /// `r`, which covers fewer keys than the column is.
+    fn rolled_blank(&self, t: usize, source: usize, r: usize) -> bool {
+        let Some(keys) = &self.prog.sheets[t].group else {
+            return false;
+        };
+        let Some(at) = keys.iter().position(|&k| k == source) else {
+            return false;
+        };
+        self.rolls
+            .borrow()
+            .get(t)
+            .and_then(|r| r.as_ref())
+            .and_then(|roll| roll.depth.get(r).copied())
+            .is_some_and(|depth| at >= depth)
     }
 
     /// The sheet grouped and the rows of group `r` of grouped sheet `t`, or
@@ -5167,6 +5324,31 @@ impl<'p> Engine<'p> {
                 }
                 Rows::Many(keep)
             }
+            RowSel::Block { levels, summary } => {
+                let at = cursor(fr)?.max(0) as usize;
+                let out = omasheet_omx::style::outline(levels, summary);
+                // A head, or the summary row that closes a block.
+                let Some(b) = out.blocks.iter().find(|b| {
+                    b.head == at || out.owner.get(at).copied().flatten() == Some(b.head)
+                }) else {
+                    return Ok(Rows::Many(Vec::new()));
+                };
+                let leaf = |r: usize| {
+                    levels.get(r).copied().unwrap_or(0) == 0
+                        && !summary.get(r).copied().unwrap_or(false)
+                };
+                let (head, end) = (b.head, b.end);
+                let keep = match sheet {
+                    Some((_, file_rows)) => file_rows
+                        .iter()
+                        .enumerate()
+                        .filter(|&(_, &r)| r > head && r < end && leaf(r))
+                        .map(|(p, _)| p)
+                        .collect(),
+                    None => (head + 1..end).filter(|&p| leaf(p)).collect(),
+                };
+                Rows::Many(keep)
+            }
             RowSel::Order { keys, desc } => {
                 let Some((t, file_rows)) = sheet else {
                     return fail(span, "`sort` needs a sheet to order");
@@ -5348,7 +5530,8 @@ impl<'p> Engine<'p> {
             Some(Format::Date(f)) => self
                 .moment(v)
                 .and_then(|m| format_date(&m, f, &self.options.names)),
-            None => None,
+            // How text flows is for the grid to draw; the text is as it is.
+            Some(Format::Text(_)) | None => None,
         };
         shown.unwrap_or_else(|| self.show(v, quoted))
     }

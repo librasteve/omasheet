@@ -129,6 +129,14 @@ pub enum RowSel {
         after: bool,
         exclusive: bool,
     },
+    /// `block`: the rows that the current row heads, the ones under it
+    /// with no heading level of their own, up to the end of its block.
+    /// `levels` are the sheet's rows' heading levels, 0 for none. Empty for
+    /// a row that heads no block.
+    Block {
+        levels: Vec<u8>,
+        summary: Vec<bool>,
+    },
     /// A range value, such as a constant bound to `2..100`.
     RangeVal(Box<Node>),
     /// A condition evaluated for each candidate row.

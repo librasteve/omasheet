@@ -65,6 +65,9 @@ pub struct Sheet {
     /// sheet [`Sheet::view`] gives: that sheet's rows are then grouped, one
     /// row a group, and the view keeps the first row of each (D81, D82).
     pub group: Option<Vec<usize>>,
+    /// The sheet's groups are a `rollup`: a head row for each group of the
+    /// outer keys, its rows, and a summary row.
+    pub rollup: bool,
     /// What a sheet computed by `join` joins the sheet [`Sheet::view`]
     /// gives to (D85).
     pub join: Option<Join>,
@@ -441,6 +444,7 @@ struct Checker<'a> {
     view_state: Vec<St<Ty>>,
     view_out: Vec<Option<Node>>,
     group_out: Vec<Option<Vec<usize>>>,
+    rollup_out: Vec<bool>,
     join_out: Vec<Option<Join>>,
     paired_out: Vec<bool>,
     view_deps: Vec<Vec<(DepNode, DepKind)>>,
@@ -998,7 +1002,7 @@ fn monthly_step(seeds: &[Expr]) -> Option<Rule> {
 /// The base, keys and aggregates of `Base |> group_by(Keys) |> agg(Aggs)`,
 /// or the base, keys and function of `... |> apply(Fn)`, and whether it is
 /// the second.
-fn grouped(e: &Expr) -> Option<(&Expr, &[Expr], &[Expr], bool)> {
+fn grouped(e: &Expr) -> Option<(&Expr, &[Expr], &[Expr], bool, bool)> {
     let ExprKind::Call(name, _, args) = &e.kind else {
         return None;
     };
@@ -1011,11 +1015,11 @@ fn grouped(e: &Expr) -> Option<(&Expr, &[Expr], &[Expr], bool)> {
     let ExprKind::Call(name, _, args) = &inner.kind else {
         return None;
     };
-    if name != "group_by" {
+    if name != "group_by" && name != "rollup" {
         return None;
     }
     let (base, keys) = args.split_first()?;
-    Some((base, keys, aggs, apply))
+    Some((base, keys, aggs, apply, name == "rollup"))
 }
 
 /// The name an aggregate's column takes from the expression, when it is a
@@ -1120,6 +1124,7 @@ impl<'a> Checker<'a> {
             view_state: Vec::new(),
             view_out: Vec::new(),
             group_out: Vec::new(),
+            rollup_out: Vec::new(),
             join_out: Vec::new(),
             paired_out: Vec::new(),
             view_deps: Vec::new(),
@@ -1142,6 +1147,7 @@ impl<'a> Checker<'a> {
             ck.view_state.push(St::Done(Ty::Any));
             ck.view_out.push(None);
             ck.group_out.push(None);
+            ck.rollup_out.push(false);
             ck.join_out.push(None);
             ck.paired_out.push(false);
             ck.view_deps.push(Vec::new());
@@ -1378,6 +1384,7 @@ impl<'a> Checker<'a> {
             });
             ck.view_out.push(None);
             ck.group_out.push(None);
+            ck.rollup_out.push(false);
             ck.join_out.push(None);
             ck.paired_out.push(false);
             ck.view_deps.push(Vec::new());
@@ -1623,8 +1630,11 @@ impl<'a> Checker<'a> {
             return;
         };
         let made = formula.expr.as_ref().and_then(|e| {
-            if let Some((base, keys, aggs, apply)) = grouped(e) {
-                Some(self.lower_group(t, base, keys, aggs, apply, e.span))
+            if let Some((base, keys, aggs, apply, roll)) = grouped(e) {
+                let made = self.lower_group(t, base, keys, aggs, apply, e.span);
+                // A rollup is a grouping with heads and summaries between.
+                self.rollup_out[t] = roll && !apply && self.group_out[t].is_some();
+                Some(made)
             } else if let ExprKind::Call(name, _, args) = &e.kind
                 && name == "join"
             {
@@ -4287,7 +4297,10 @@ impl<'a> Checker<'a> {
         if args.len() != 2 {
             self.err_help(
                 span,
-                format!("`fmt` takes a value and a format, found {} arguments", args.len()),
+                format!(
+                    "`fmt` takes a value and a format, found {} arguments",
+                    args.len()
+                ),
                 "usage: `Sales.Price.fmt('.2f')`".to_string(),
             );
             return fail;
@@ -4297,10 +4310,14 @@ impl<'a> Checker<'a> {
         if matches!(val.kind, Ir::Error) || matches!(spec.kind, Ir::Error) {
             return fail;
         }
-        if !matches!(&sty, Ty::Any) && !matches!(&sty, Ty::Scalar(s) if *s == S::Any || s.is_text()) {
+        if !matches!(&sty, Ty::Any) && !matches!(&sty, Ty::Scalar(s) if *s == S::Any || s.is_text())
+        {
             self.err_help(
                 args[1].span,
-                format!("`fmt` needs a format as text, but this is {}", sty.describe()),
+                format!(
+                    "`fmt` needs a format as text, but this is {}",
+                    sty.describe()
+                ),
                 "usage: `Sales.Price.fmt('.2f')`".to_string(),
             );
             return fail;
@@ -4312,7 +4329,10 @@ impl<'a> Checker<'a> {
             other => {
                 self.err(
                     args[0].span,
-                    format!("`fmt` needs a value or a column, but this is {}", other.describe()),
+                    format!(
+                        "`fmt` needs a value or a column, but this is {}",
+                        other.describe()
+                    ),
                 );
                 return fail;
             }
@@ -4834,7 +4854,10 @@ impl<'a> Checker<'a> {
                         if !matches!(arg.kind, Ir::Error) {
                             self.err(
                                 args[0].span,
-                                format!("`{name}` takes from a column, but this is {}", other.describe()),
+                                format!(
+                                    "`{name}` takes from a column, but this is {}",
+                                    other.describe()
+                                ),
                             );
                         }
                         return fail;
@@ -4847,7 +4870,10 @@ impl<'a> Checker<'a> {
                         if !matches!(count.kind, Ir::Error) {
                             self.err(
                                 n.span,
-                                format!("`{name}` needs a whole number to take, but this is {}", nty.describe()),
+                                format!(
+                                    "`{name}` needs a whole number to take, but this is {}",
+                                    nty.describe()
+                                ),
                             );
                         }
                         return fail;
@@ -4859,7 +4885,11 @@ impl<'a> Checker<'a> {
                 } else {
                     Ty::Scalar(s)
                 };
-                let func = if name == "roll" { Func::Roll } else { Func::Pick };
+                let func = if name == "roll" {
+                    Func::Roll
+                } else {
+                    Func::Pick
+                };
                 (Node::new(Ir::Call(func, nodes), span), ty)
             }
             "cum_sum" | "cum_min" | "cum_max" | "cum_prod" | "cum_count" | "diff"
@@ -5553,7 +5583,7 @@ impl<'a> Checker<'a> {
             }
             // `group_by`, `agg` and `join` make a sheet of new rows, so
             // they are the whole of a sheet's formula and are read there.
-            "group_by" | "agg" | "apply" | "join" => {
+            "group_by" | "rollup" | "agg" | "apply" | "join" => {
                 let example = match name {
                     "join" => "sheet Both := Sales |> join(Targets, Month)",
                     "apply" => "sheet ByRegion := Sales |> group_by(Region) |> apply(Worth)",
@@ -6058,6 +6088,34 @@ impl<'a> Checker<'a> {
             }
         }
 
+        // `block`: the rows under the row that heads a block, or above a
+        // summary row that closes one.
+        if let ExprKind::Name(name) = &e.kind
+            && name == "block"
+            && let Some(t) = sheet
+            && self.find_col(t, "block").is_none()
+        {
+            if !need_row(self, e) {
+                return RowPick::all(nrows);
+            }
+            self.aligns_with(sheet, sc);
+            let styles = self
+                .ast
+                .and_then(|ast| ast.sheets.get(self.sheets[t].decl))
+                .map(|d| d.row_styles.clone())
+                .unwrap_or_default();
+            let levels = styles.iter().map(|s| s.level).collect();
+            let summary = styles.iter().map(|s| s.summary).collect();
+            // A summary row reads the rows of its own column that it sums,
+            // which is a cycle only if one of those reads it: found when run.
+            return RowPick {
+                sel: RowSel::Block { levels, summary },
+                one: false,
+                len: None,
+                kind: DepKind::Fixed,
+            };
+        }
+
         if has_cursor(e) {
             self.err_help(
                 e.span,
@@ -6479,6 +6537,7 @@ impl<'a> Checker<'a> {
             }
             let view = self.view_out[t].take();
             let group = self.group_out[t].take();
+            let rollup = self.rollup_out[t];
             let join = self.join_out[t].take();
             let paired = self.paired_out[t];
             let view_of = match &self.view_state[t] {
@@ -6494,6 +6553,7 @@ impl<'a> Checker<'a> {
                 view,
                 view_of,
                 group,
+                rollup,
                 join,
                 paired,
             });

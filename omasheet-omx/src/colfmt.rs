@@ -18,9 +18,40 @@ pub enum Format {
     Scientific(SciFormat),
     Quantity(QuantityFormat),
     Boolean(BoolFormat),
+    /// How a column of text that is wider than its column is shown.
+    Text(TextFlow),
     /// How a `Duration` column shows its values other than as a number of a
     /// unit, which is a [`Format::Quantity`]: `iso` or `%H:%M:%S`.
     Duration(DurationStyle),
+}
+
+/// What a column of text does where a cell is wider than the column. Not
+/// said, the text spills over the empty cells to its right.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextFlow {
+    /// Cut off at the edge of the column.
+    Clip,
+    /// Carried on to more lines inside the column.
+    Wrap,
+}
+
+impl TextFlow {
+    fn parse(text: &str) -> Option<TextFlow> {
+        match text.trim() {
+            "clip" => Some(TextFlow::Clip),
+            "wrap" => Some(TextFlow::Wrap),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for TextFlow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            TextFlow::Clip => "clip",
+            TextFlow::Wrap => "wrap",
+        })
+    }
 }
 
 /// A `Duration` shown as a whole, rather than as a number in a unit.
@@ -611,6 +642,13 @@ impl Format {
             },
             S::Date | S::Time | S::Datetime => DateFormat::parse(text).map(Format::Date),
             S::Boolean => BoolFormat::parse(text).map(Format::Boolean),
+            S::String | S::Email | S::Url => TextFlow::parse(text).map(Format::Text).ok_or(
+                FormatError {
+                    at: 0,
+                    len: text.len().max(1),
+                    message: "a text format is `clip` or `wrap`".to_string(),
+                },
+            ),
             _ => NumFormat::parse(text).map(Format::Number),
         }
     }
@@ -621,12 +659,14 @@ impl Format {
         let Some(takes) = Format::conversions_of(ty) else {
             return Err(format!("{ty} does not take a format"));
         };
-        let f = Format::parse(text, ty)
-            .map_err(|e| format!("{} ({})", e.message, Format::help(ty)))?;
+        let f =
+            Format::parse(text, ty).map_err(|e| format!("{} ({})", e.message, Format::help(ty)))?;
         if f.takes(ty) {
             Ok(f)
         } else {
-            Err(format!("{ty} does not take the format `{f}`: it takes {takes}"))
+            Err(format!(
+                "{ty} does not take the format `{f}`: it takes {takes}"
+            ))
         }
     }
 
@@ -637,6 +677,7 @@ impl Format {
             Format::Date(f) => f.takes(ty),
             Format::Scientific(_) => ty == S::Scientific,
             Format::Boolean(_) => ty == S::Boolean,
+            Format::Text(_) => matches!(ty, S::String | S::Email | S::Url),
             Format::Duration(_) => ty == S::Duration,
             Format::Quantity(q) => match ty {
                 S::Duration => q
@@ -664,6 +705,7 @@ impl Format {
             ),
             S::Date => Some("the conversions of a date, as `%d %b %Y`"),
             S::Boolean => Some("two different characters, as `10`, `xo` or `✓✗`"),
+            S::String | S::Email | S::Url => Some("`clip` or `wrap`"),
             S::Time => Some("the conversions of a time, as `%H:%M`"),
             S::Datetime => Some("the conversions of a date and a time, as `%d %b %Y %H:%M`"),
             _ => NumFormat::conversions_of(ty),
@@ -684,6 +726,9 @@ impl Format {
             }
             S::Boolean => {
                 "a `Boolean` format is two different characters: the symbol for true, then for false, as `xo` or `✓✗`"
+            }
+            S::String | S::Email | S::Url => {
+                "a text format is `clip`, to cut a long cell off at its column, or `wrap`, to carry it on to more lines; with neither it spills over the empty cells to its right"
             }
             S::Date | S::Time | S::Datetime => {
                 "a date or time format is a C `strftime` format, as `%d %b %Y`"
@@ -719,6 +764,7 @@ impl fmt::Display for Format {
             Format::Duration(d) => d.fmt(f),
             Format::Quantity(q) => q.fmt(f),
             Format::Boolean(b) => b.fmt(f),
+            Format::Text(t) => t.fmt(f),
         }
     }
 }
@@ -732,10 +778,7 @@ pub fn pretty_unit(unit: &str) -> String {
     let mut i = 0;
     while i < chars.len() {
         match chars[i] {
-            '.' if i > 0
-                && chars[i - 1] != '.'
-                && chars.get(i + 1).is_some_and(|&n| n != '.') =>
-            {
+            '.' if i > 0 && chars[i - 1] != '.' && chars.get(i + 1).is_some_and(|&n| n != '.') => {
                 out.push('⋅');
             }
             '^' if chars
@@ -971,7 +1014,9 @@ mod tests {
         assert!(!f.lifts(true));
         assert_eq!(f.to_string(), "EUR; $");
         assert_eq!(
-            QuantityFormat::parse("USD; $'.2f", money).unwrap().to_string(),
+            QuantityFormat::parse("USD; $'.2f", money)
+                .unwrap()
+                .to_string(),
             "USD; $'.2f"
         );
         // With no unit, each value by its own sign.
@@ -1006,7 +1051,9 @@ mod tests {
         assert!(!f.lifts(true));
         assert_eq!(f.to_string(), "*m");
         assert_eq!(
-            QuantityFormat::parse("*m; .2f", length).unwrap().to_string(),
+            QuantityFormat::parse("*m; .2f", length)
+                .unwrap()
+                .to_string(),
             "*m; .2f"
         );
         // A bare star of a kind is its preferred unit.

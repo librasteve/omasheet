@@ -636,6 +636,14 @@ pub fn export(
             page.set_name(title).map_err(fail)?;
             for (c, col) in sheet.cols.iter().enumerate() {
                 page.write_string(0, c as u16, &col.name).map_err(fail)?;
+                // Text carried on to more lines is a workbook's wrapped text.
+                if let Some(omasheet_engine::omx::colfmt::Format::Text(
+                    omasheet_engine::omx::colfmt::TextFlow::Wrap,
+                )) = col.shown_format().as_deref()
+                {
+                    page.set_column_format(c as u16, &Format::new().set_text_wrap())
+                        .map_err(fail)?;
+                }
             }
             // Money is written as numbers of its currency, in the column's unit,
             // with a number format that shows its sign or its code, so that a

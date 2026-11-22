@@ -4094,8 +4094,9 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // and `units.omx`'s four columns of durations shown four ways. The money
     // of the budget, the ledger, the orders and the rest is `Currency`, a
     // quantity, which is worked out a cell at a time: two fewer, and one more
-    // for the filled price of `windows.omx`.
-    assert_eq!(taken, 86, "the columns taken at once");
+    // for the filled price of `windows.omx`, and one more for the column of
+    // `blocks.omx` that reads a whole column.
+    assert_eq!(taken, 87, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read
