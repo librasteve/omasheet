@@ -201,11 +201,19 @@ once, and undo and save work from either. Each window has its own sheet,
 cursor and text size. Cells cut or copied in one can be pasted in the other.
 
 Closing one window leaves the file open in the other; the last one asks
-about unsaved changes. Opening another file, or a new file, changes every
-window.
+about unsaved changes.
 
-Starting the app twice on the same file is not the same thing: those are two
-separate copies, and the one saved last overwrites the other.
+A new file (Ctrl+N), or another file opened (Ctrl+O), is a document of its
+own, in a window of its own, in the same running app, and leaves the windows
+you have as they are. Opening a file that is already open brings its window
+forward rather than opening it twice. Quitting the app (Cmd+Q on a Mac)
+closes every window, each asking about its own unsaved changes.
+
+The app runs once to a user. On a Mac that is the system's doing; on Windows
+and Linux a second launch, a double click on another `.omx` file, say, hands
+its file to the app that is running and ends, and the file opens there in a
+new window. A launch with no file brings the running app forward. Set
+`OMASHEET_NEW_INSTANCE` to start a separate copy regardless.
 
 ## The command line
 

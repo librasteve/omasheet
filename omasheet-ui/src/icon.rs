@@ -20,6 +20,10 @@ mod ffi {
 
         type QQmlApplicationEngine = cxx_qt_lib::QQmlApplicationEngine;
         fn forward_open_events(engine: Pin<&mut QQmlApplicationEngine>);
+
+        type QString = cxx_qt_lib::QString;
+        fn hand_over(path: &QString) -> bool;
+        fn listen_for_launches(engine: Pin<&mut QQmlApplicationEngine>);
     }
 }
 
@@ -35,4 +39,25 @@ pub fn set() {
 /// object, once its windows are up.
 pub fn forward_open(engine: Pin<&mut QQmlApplicationEngine>) {
     ffi::forward_open_events(engine);
+}
+
+/// On Windows and Linux, where an app runs once to a user: if it is running
+/// already, give it the file this launch names (the first argument), or
+/// none, and say so. The caller then exits. `OMASHEET_NEW_INSTANCE` starts
+/// another regardless, as does the snapshot a development run takes.
+pub fn hand_over(path: &str) -> bool {
+    if cfg!(target_os = "macos")
+        || std::env::var_os("OMASHEET_NEW_INSTANCE").is_some()
+        || std::env::var_os("OMASHEET_UI_SNAPSHOT").is_some()
+    {
+        return false;
+    }
+    ffi::hand_over(&cxx_qt_lib::QString::from(path))
+}
+
+/// Listen for the launches that `hand_over` sends, once the windows are up.
+pub fn listen_for_launches(engine: Pin<&mut QQmlApplicationEngine>) {
+    if !cfg!(target_os = "macos") {
+        ffi::listen_for_launches(engine);
+    }
 }

@@ -56,12 +56,18 @@ fn app() -> ExitCode {
             .set_organization_domain(&QString::from("omacom.io"));
     }
 
+    // One app to a user: a launch while it runs gives it the file and ends.
+    if icon::hand_over(&std::env::args().nth(1).unwrap_or_default()) {
+        return ExitCode::SUCCESS;
+    }
+
     let mut engine = QQmlApplicationEngine::new();
     if let Some(mut engine) = engine.as_mut() {
         engine
             .as_mut()
             .load(&QUrl::from("qrc:/qt/qml/io/omacom/omasheet/qml/App.qml"));
-        icon::forward_open(engine);
+        icon::forward_open(engine.as_mut());
+        icon::listen_for_launches(engine);
     }
     match app.as_mut() {
         Some(app) => std::process::exit(app.exec()),

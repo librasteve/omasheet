@@ -17,14 +17,14 @@ The keys below work on the cell cursor and the selection. Ctrl+/ shows this list
 | Ctrl+Shift+F | Paste format |
 | Delete | Clear |
 | Ctrl+Delete | Delete |
-| Ctrl+O / S | Open (in a new instance of the app, in a window of its own) / save |
+| Ctrl+O / S | Open (in a window of its own) / save |
 | Ctrl+Shift+S | Save as |
 | Ctrl+E | Export |
 | Ctrl+K | New constant |
 | Ctrl+D | Duplicate sheet |
 | Ctrl+Alt+N | New sheet |
 | Ctrl+Shift+N | New window |
-| Ctrl+N | New file |
+| Ctrl+N | New file, in a window of its own (this file is left as it is) |
 | Ctrl+W | Close window |
 | Ctrl+Enter | Insert row/col after |
 | Ctrl+Shift+Enter | Insert row/col before |

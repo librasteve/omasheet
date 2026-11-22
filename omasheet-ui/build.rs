@@ -18,6 +18,7 @@ fn main() {
         )
         .qt_module("Quick")
         .qt_module("QuickControls2")
+        .qt_module("Network")
         .file("src/file.rs")
         .file("src/icon.rs")
         .cpp_file("src/icon.cpp")

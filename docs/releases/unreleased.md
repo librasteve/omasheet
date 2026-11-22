@@ -2,6 +2,10 @@
 
 Notes for the release after 0.1.12, kept here until it is cut. The items marked **Breaking** need a line in the release notes of their own.
 
+## App
+
+- **One app, many files.** A new file (Ctrl+N) or an opened one (Ctrl+O) is a window of its own in the running app, as in most apps, and Cmd+Q on a Mac closes them all. On Windows and Linux a second launch hands its file to the running app, which opens it in a new window; `OMASHEET_NEW_INSTANCE` starts a separate copy. A file already open is brought forward. On Windows and macOS there is a File menu.
+
 ## Breaking
 
 - **`Duration` is a kind of `Quantity`, for time.** A bare `Duration` column now shows seconds, `Duration[s]`, in its head with numbers in its cells (`5400`), where it showed `PT1H30M`. Ask for the old look with `Duration[iso]`. `Duration[h; .2f]`, `Duration[min]` and `Duration[%H:%M:%S]` are new.

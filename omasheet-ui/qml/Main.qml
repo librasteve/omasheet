@@ -174,6 +174,9 @@ ApplicationWindow {
     property bool alone: true
     // Asks for another window on the same file, showing the sheet `tab`.
     signal newWindow(int tab)
+    // A new file, or one chosen to open, each a document and a window of its own.
+    signal newFile()
+    signal openFile(url where)
     // The window has closed for good.
     signal dismissed()
 
@@ -3983,7 +3986,7 @@ ApplicationWindow {
         id: fileBar
         Menu {
             title: "File"
-            Action { text: "New"; onTriggered: file.newInstance() }
+            Action { text: "New"; onTriggered: win.newFile() }
             Action { text: "Open…"; onTriggered: openDialog.show() }
             MenuSeparator {}
             Action { text: "Save"; onTriggered: win.save() }
@@ -4004,7 +4007,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Alt+Shift+Right"; enabled: !win.typing; onActivated: win.moveShownSheet(1) }
     Shortcut { sequence: "Ctrl+K"; enabled: !win.typing; onActivated: promptDialog.ask("const") }
     Shortcut { sequence: "Ctrl+Shift+N"; onActivated: win.newWindow(win.tab) }
-    Shortcut { sequence: "Ctrl+N"; onActivated: file.newInstance() }
+    Shortcut { sequence: "Ctrl+N"; onActivated: win.newFile() }
     // Cmd+W on a Mac (Qt reads Cmd as Ctrl there); the unsaved-changes check
     // in onClosing still applies.
     Shortcut { sequence: "Ctrl+W"; onActivated: win.close() }
@@ -9184,8 +9187,8 @@ ApplicationWindow {
             }
             open();
         }
-        // The file opens in a new instance of the app, in a window of its own.
-        onAccepted: file.openInNewInstance(selectedFile)
+        // The file opens as a document of its own, in a window of its own.
+        onAccepted: win.openFile(selectedFile)
     }
 
     Dialogs.FileDialog {

@@ -21,7 +21,7 @@ Ctrl+K               New constant
 Ctrl+D               Duplicate sheet
 Ctrl+Alt+N           New sheet
 Ctrl+Shift+N         New window
-Ctrl+N               New file
+Ctrl+N               New file, in a new window
 Ctrl+W               Close window
 
 Ctrl+Enter           Insert row/col after
