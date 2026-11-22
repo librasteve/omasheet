@@ -31,6 +31,22 @@ pub fn find<'a>(program: &'a Program, name: &str) -> Option<&'a Plot> {
     program.plots.iter().find(|p| p.name == name)
 }
 
+/// The names of the columns of the sheet a plot is drawn from, once the
+/// engine has run; none where its `data` does not give a sheet.
+pub fn columns(engine: &Engine, program: &Program, plot: &Plot) -> Vec<String> {
+    match engine.eval_top(&plot.data) {
+        Some(Value::Sheet(view)) => view
+            .cols
+            .iter()
+            .map(|&c| program.sheets[view.sheet].cols[c].name.clone())
+            .collect(),
+        _ => {
+            engine.take_diags();
+            Vec::new()
+        }
+    }
+}
+
 /// The SVG of a plot of the program, once the engine has run. `size` is the
 /// width and height to draw at, in place of the plot's own.
 pub fn svg(

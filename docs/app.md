@@ -71,7 +71,8 @@ rewrites the text, and saving writes exactly that.
   To copy a formula as text, select it in the box at the top.
 - F3 shows the source of the whole file, to read or to edit. An edit is
   taken when the source is left, saved or closed, and undone as one step.
-- F7, or the `plot` button in the footer, shows the plot pane beside the sheet: the plots the file declares ([Plots](format.md#plots)), one at a time, with a button for each when there are several. They are drawn in the theme's colours and again after each edit, and the pane's edge can be dragged to change its width. Whether it is shown is remembered. A plot is written in the source view (F3); the pane says how when the file has none.
+- F7, or the bars button in the footer, shows the plot pane beside the sheet: the plots the file declares ([Plots](format.md#plots)), one at a time, with a button for each. They are drawn in the theme's colours and again after each edit, and the pane's edge can be dragged to change its width. Whether it is shown is remembered.
+- `+ Plot`, in the footer and in the pane, makes a plot: a name, a kind (`line`, `bar`, `pie` or `candle`) and the data, a sheet or an expression that gives one, which is the sheet on view to begin with. Under the plot's name the pane has a button for each of its controls: `type` picks the kind, `data` edits the expression, `x` picks the column of labels, `y` ticks the columns of values (none ticked is all the others), and `title` sets the title. The `⋯` button renames or deletes the plot. A change that would make the file wrong is refused, with why. Each is one step to undo, and a plot's `width`, `height` and `k` are written in the source view (F3).
 - Selecting several cells shows their count, sum and average in the footer.
 - Beside that box is the selection, written as a formula would write it:
 

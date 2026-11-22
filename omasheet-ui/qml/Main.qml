@@ -375,18 +375,44 @@ ApplicationWindow {
     property int plotIndex: 0
     onPlotIndexChanged: plotTimer.restart()
     property string plotSvg: ""
+    // What the pane shows of the plot it is on: its controls as written, and
+    // the columns of its data; and why the last change to it was refused.
+    property var plotInfo: ({ controls: {}, columns: [] })
+    property string plotProblem: ""
+    // A plot to go to once the list of them is read again: the new one.
+    property string plotWant: ""
     function drawPlot() {
         var names = [];
         try { names = JSON.parse(file.plotsJson()); } catch (e) { names = []; }
         plotNames = names;
+        if (plotWant.length > 0) {
+            var at = names.indexOf(plotWant);
+            if (at >= 0) plotIndex = at;
+            plotWant = "";
+        }
         if (plotIndex >= names.length) plotIndex = 0;
-        if (!showPlot || names.length === 0) {
+        if (names.length === 0) {
+            plotSvg = "";
+            plotInfo = { controls: {}, columns: [] };
+            return;
+        }
+        try { plotInfo = JSON.parse(file.plotInfoJson(names[plotIndex])); } catch (e) { }
+        if (!showPlot) {
             plotSvg = "";
             return;
         }
         var w = Math.max(100, plotPane.width - 24);
-        var h = Math.max(100, plotPane.height - fontSize * 2 - 24);
-        plotSvg = file.plotSvg(names[plotIndex], Math.round(w), Math.round(h));
+        var h = Math.max(100, plotPane.height - plotHeader.height - 36);
+        plotSvg = file.plotSvg(names[plotIndex], Math.round(w), Math.round(h), win.font.family);
+    }
+    // Set a control of the plot the pane is on; false, and why, if refused.
+    function setPlot(key, value) {
+        plotProblem = file.setPlotControl(plotNames[plotIndex], key, value);
+        return plotProblem.length === 0;
+    }
+    function shortened(text) {
+        text = text || "";
+        return text.length > 28 ? text.substring(0, 27) + "\u2026" : text;
     }
     Timer { id: plotTimer; interval: 150; onTriggered: win.drawPlot() }
     Connections {
@@ -6205,6 +6231,7 @@ ApplicationWindow {
                         FooterButton { label: "+ Row"; quiet: true; visible: footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.appendRow() }
                         FooterButton { label: "+ Column"; quiet: true; visible: footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
                         FooterButton { label: "+ Constant"; quiet: true; visible: footerBar.narrow; onClicked: promptDialog.ask("const") }
+                        FooterButton { label: "+ Plot"; quiet: true; visible: footerBar.narrow; enabled: win.snap.sheets.length > 0; onClicked: promptDialog.ask("plot") }
                     }
                 }
                 FooterButton {
@@ -6221,8 +6248,9 @@ ApplicationWindow {
                 FooterButton { id: addRowButton; label: "+ Row"; quiet: true; visible: !footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.appendRow() }
                 FooterButton { id: addColumnButton; label: "+ Column"; quiet: true; visible: !footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
                 FooterButton { id: addConstantButton; label: "+ Constant"; quiet: true; visible: !footerBar.narrow; onClicked: promptDialog.ask("const") }
+                FooterButton { id: addPlotButton; label: "+ Plot"; quiet: true; visible: !footerBar.narrow; enabled: win.snap.sheets.length > 0; onClicked: promptDialog.ask("plot") }
                 FooterButton { id: fnButton; label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
-                FooterButton { id: plotButton; label: "plot"; quiet: true; active: win.showPlot; tip: "Show the plots of the file (F7)"; onClicked: win.showPlot = !win.showPlot }
+                FooterButton { id: plotButton; label: "plot"; bars: true; quiet: true; active: win.showPlot; tip: "Show the plots of the file (F7)"; onClicked: win.showPlot = !win.showPlot }
                 FooterButton { id: sourceButton; label: "</>"; quiet: true; active: win.showSource; onClicked: win.viewSource(!win.showSource) }
                 FooterButton { id: helpButton; label: "?"; quiet: true; onClicked: helpDialog.open() }
             }
@@ -6462,19 +6490,18 @@ ApplicationWindow {
             }
         }
 
-        // Which plot, where there is more than one.
-        Flickable {
-            id: plotPicker
-            visible: win.plotNames.length > 1
+        // Which plot, and what it is made of: a button for each plot, then
+        // for each control. Each opens what changes it.
+        Column {
+            id: plotHeader
             x: 8
             y: 6
             width: parent.width - 16
-            height: win.fontSize * 2
-            contentWidth: plotChoices.width
-            clip: true
-            interactive: contentWidth > width
-            Row {
-                id: plotChoices
+            spacing: 4
+            onHeightChanged: plotTimer.restart()
+
+            Flow {
+                width: parent.width
                 spacing: 2
                 Repeater {
                     model: win.plotNames
@@ -6483,7 +6510,136 @@ ApplicationWindow {
                         required property string modelData
                         label: modelData
                         active: index === win.plotIndex
-                        onClicked: win.plotIndex = index
+                        onClicked: {
+                            win.plotProblem = "";
+                            win.plotIndex = index;
+                        }
+                    }
+                }
+                FooterButton { label: "+ Plot"; quiet: true; enabled: win.snap.sheets.length > 0; onClicked: promptDialog.ask("plot") }
+            }
+            Flow {
+                id: plotControls
+                visible: win.plotNames.length > 0
+                width: parent.width
+                spacing: 2
+                FooterButton {
+                    id: plotTypeButton
+                    label: "type: " + (win.plotInfo.controls.type || "")
+                    quiet: true
+                    tip: "The kind of plot"
+                    onClicked: plotChoice.openAt(plotTypeButton, "type", false, ["line", "bar", "pie", "candle"], [win.plotInfo.controls.type || ""])
+                }
+                FooterButton {
+                    label: "data: " + win.shortened(win.plotInfo.controls.data)
+                    quiet: true
+                    tip: win.plotInfo.controls.data || ""
+                    onClicked: promptDialog.ask("plotData")
+                }
+                FooterButton {
+                    id: plotXButton
+                    label: "x: " + (win.plotInfo.controls.x || "first column")
+                    quiet: true
+                    tip: "The column of labels"
+                    onClicked: plotChoice.openAt(plotXButton, "x", false, ["(first column)"].concat(win.plotInfo.columns), [win.plotInfo.controls.x || "(first column)"])
+                }
+                FooterButton {
+                    id: plotYButton
+                    label: "y: " + win.shortened(win.plotInfo.controls.y || "all others")
+                    quiet: true
+                    tip: "The columns of values"
+                    onClicked: plotChoice.openAt(plotYButton, "y", true, win.plotInfo.columns.filter(function(c) { return c !== (win.plotInfo.controls.x || win.plotInfo.columns[0]); }),
+                        (win.plotInfo.controls.y || "").split(",").map(function(c) { return c.trim(); }))
+                }
+                FooterButton {
+                    label: "title: " + win.shortened(win.plotInfo.controls.title || "none")
+                    quiet: true
+                    onClicked: promptDialog.ask("plotTitle")
+                }
+                FooterButton {
+                    id: plotMoreButton
+                    label: "\u22ef"
+                    quiet: true
+                    tip: "Rename or delete the plot"
+                    onClicked: plotMenu.popup(plotMoreButton, 0, plotMoreButton.height)
+                }
+            }
+            // Why a change was refused.
+            Text {
+                visible: win.plotProblem.length > 0
+                width: parent.width
+                wrapMode: Text.Wrap
+                color: win.errorColor
+                font.family: win.font.family
+                font.pixelSize: win.smallSize
+                text: win.plotProblem
+            }
+        }
+
+        Menu {
+            id: plotMenu
+            MenuItem { text: "Rename plot\u2026"; onTriggered: promptDialog.ask("renamePlot") }
+            MenuItem {
+                text: "Delete plot"
+                onTriggered: {
+                    win.plotProblem = file.deletePlot(win.plotNames[win.plotIndex]);
+                    win.plotIndex = Math.max(0, win.plotIndex - 1);
+                }
+            }
+        }
+
+        // The choices of a control: one to pick, or any number to tick. A
+        // choice is made as it is clicked, and shows in the plot at once.
+        Popup {
+            id: plotChoice
+            padding: 4
+            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+            property string key: ""
+            property bool multi: false
+            property var options: []
+            property var chosen: []
+            function openAt(item, key, multi, options, chosen) {
+                plotChoice.key = key;
+                plotChoice.multi = multi;
+                plotChoice.options = options;
+                plotChoice.chosen = chosen;
+                var at = item.mapToItem(plotPane, 0, item.height);
+                plotChoice.x = Math.max(0, Math.min(at.x, plotPane.width - plotChoice.implicitWidth));
+                plotChoice.y = at.y;
+                plotChoice.open();
+            }
+            function choose(option) {
+                var next;
+                if (multi) {
+                    next = options.filter(function(o) {
+                        return o === option ? chosen.indexOf(o) < 0 : chosen.indexOf(o) >= 0;
+                    });
+                } else {
+                    next = option.charAt(0) === "(" ? [] : [option];
+                }
+                if (win.setPlot(key, next.join(", "))) {
+                    chosen = multi ? next : [option];
+                    if (!multi)
+                        close();
+                }
+            }
+            background: Rectangle {
+                color: win.pageColor
+                border.color: win.lineColor
+                radius: 4
+            }
+            contentItem: Column {
+                Repeater {
+                    model: plotChoice.options
+                    ItemDelegate {
+                        required property string modelData
+                        readonly property bool on: plotChoice.chosen.indexOf(modelData) >= 0
+                        height: win.fontSize * 2
+                        text: (on ? "\u2713  " : "     ") + modelData
+                        font.family: win.font.family
+                        font.features: win.font.features
+                        font.pixelSize: win.smallSize
+                        onClicked: plotChoice.choose(modelData)
                     }
                 }
             }
@@ -6492,7 +6648,7 @@ ApplicationWindow {
         Image {
             visible: win.plotSvg.indexOf("<svg") === 0
             x: 12
-            y: (plotPicker.visible ? plotPicker.height + 12 : 12)
+            y: plotHeader.y + plotHeader.height + 8
             width: parent.width - 24
             height: parent.height - y - 12
             fillMode: Image.PreserveAspectFit
@@ -6507,14 +6663,14 @@ ApplicationWindow {
         Text {
             visible: win.plotSvg.indexOf("<svg") !== 0
             x: 16
-            y: 16
+            y: plotHeader.y + plotHeader.height + 12
             width: parent.width - 32
             wrapMode: Text.Wrap
             color: win.plotNames.length > 0 ? win.errorColor : win.mutedColor
             font.family: win.font.family
             font.pixelSize: win.smallSize
             text: win.plotNames.length > 0 ? win.plotSvg
-                : "This file has no plots. Write one in the source view (F3):\n\nplot Trend\ntype: line\ndata: " + (win.tabs.length > 0 ? win.tabs[0].name : "Sheet1")
+                : "This file has no plots yet. Press + Plot to make one."
         }
     }
 
@@ -6761,13 +6917,15 @@ ApplicationWindow {
         property string label
         property bool active: false
         property bool quiet: false
+        // Three bars drawn in place of the label: a chart, for the plot pane.
+        property bool bars: false
         property color textColor: win.textColor
         // Said in the footer while the pointer is on it, where there is anything to say.
         property string tip: ""
         signal clicked()
         signal rightClicked()
         signal doubleClicked()
-        implicitWidth: buttonText.implicitWidth + 22
+        implicitWidth: bars ? win.fontSize * 2 + 8 : buttonText.implicitWidth + 22
         implicitHeight: win.fontSize * 2
         // In the footer's row these keep their width: the tabs, which can
         // scroll, are what gives way when there is not room for everything.
@@ -6777,8 +6935,25 @@ ApplicationWindow {
         opacity: enabled ? 1 : 0.35
         color: active ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.22)
             : area.containsMouse ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.08) : "transparent"
+        Row {
+            visible: button.bars
+            anchors.centerIn: parent
+            spacing: Math.max(1, Math.round(win.fontSize * 0.12))
+            Repeater {
+                model: [0.45, 0.95, 0.7]
+                Rectangle {
+                    required property real modelData
+                    width: Math.max(3, Math.round(win.fontSize * 0.28))
+                    height: Math.round(win.fontSize * modelData)
+                    y: Math.round(win.fontSize * (0.95 - modelData))
+                    radius: 1
+                    color: button.active ? win.accentColor : button.quiet ? win.mutedColor : button.textColor
+                }
+            }
+        }
         Text {
             id: buttonText
+            visible: !button.bars
             anchors.centerIn: parent
             text: button.label
             color: button.quiet ? win.mutedColor : button.textColor
@@ -9783,8 +9958,13 @@ ApplicationWindow {
         readonly property bool formulaOnly: (kind === "column" || kind === "computed")
             && !win.sheet.isConsts && !win.sheet.view && (win.sheet.why || "").length > 0
         readonly property bool needsExpr: kind === "computed" || kind === "const" || kind === "setFormula" || kind === "function"
+            || kind === "plot" || kind === "plotData"
             || (kind === "sheet" && formulaBox.checked)
         title: kind === "sheet" ? "New sheet"
+             : kind === "plot" ? "New plot"
+             : kind === "plotData" ? "Data of plot " + (win.plotNames[win.plotIndex] || "")
+             : kind === "plotTitle" ? "Title of plot " + (win.plotNames[win.plotIndex] || "")
+             : kind === "renamePlot" ? "Rename plot " + (win.plotNames[win.plotIndex] || "")
              : kind === "rows" ? "Insert rows in " + win.sheet.name
              : kind === "columns" ? "Insert columns in " + win.sheet.name
              : kind === "renameSheet" ? "Rename sheet " + win.sheet.name
@@ -9805,6 +9985,29 @@ ApplicationWindow {
 
         // The name a new sheet is offered: `Sheet1`, or the first after it
         // that no sheet or constant has.
+        // The name a new plot is offered: `Plot1`, or the first after it that
+        // no plot, sheet or constant has.
+        function freePlotName() {
+            var taken = {};
+            for (var t = 0; t < win.snap.sheets.length; t++)
+                taken[win.snap.sheets[t].name] = true;
+            for (var c = 0; c < win.snap.consts.length; c++)
+                taken[win.snap.consts[c].name] = true;
+            for (var p = 0; p < win.plotNames.length; p++)
+                taken[win.plotNames[p]] = true;
+            var n = 1;
+            while (taken["Plot" + n])
+                n++;
+            return "Plot" + n;
+        }
+
+        // The sheet a new plot is first offered: the one on view.
+        function plotSheet() {
+            if (win.tabs.length > 0 && !win.sheet.isConsts)
+                return win.sheet.name;
+            return win.snap.sheets.length > 0 ? win.snap.sheets[0].name : "";
+        }
+
         function freeSheetName() {
             var taken = {};
             for (var t = 0; t < win.snap.sheets.length; t++)
@@ -9827,8 +10030,14 @@ ApplicationWindow {
                 : what === "sheet" ? freeSheetName()
                 : what === "renameSheet" ? win.sheet.name
                 : what === "column" ? win.suggestedColumnName(at)
+                : what === "plot" ? freePlotName()
+                : what === "renamePlot" ? (win.plotNames[win.plotIndex] || "")
+                : what === "plotTitle" ? (win.plotInfo.controls.title || "")
                 : "";
-            exprField.text = "";
+            exprField.text = what === "plot" ? plotSheet()
+                : what === "plotData" ? (win.plotInfo.controls.data || "")
+                : "";
+            plotKindRow.value = "line";
             if (what === "column" && !win.sheet.isConsts && !win.sheet.view && (win.sheet.why || "").length > 0)
                 kind = "computed";
             formulaBox.checked = kind === "computed";
@@ -9844,7 +10053,7 @@ ApplicationWindow {
         onOpened: takeFocus()
         function takeFocus() {
             forceActiveFocus();
-            if (kind === "setFormula") {
+            if (kind === "setFormula" || kind === "plotData") {
                 exprField.forceActiveFocus();
             } else if (counted) {
                 countBox.forceActiveFocus();
@@ -9911,6 +10120,23 @@ ApplicationWindow {
                 message = addRows();
             } else if (kind === "columns") {
                 message = addLetterColumns();
+            } else if (kind === "plot" || kind === "plotData" || kind === "plotTitle" || kind === "renamePlot") {
+                var plot = win.plotNames[win.plotIndex] || "";
+                if (kind === "plot") {
+                    message = file.addPlot(nameField.text, plotKindRow.value, exprField.text);
+                    if (message.length === 0) win.plotWant = nameField.text.trim();
+                } else if (kind === "plotData") {
+                    message = file.setPlotControl(plot, "data", exprField.text);
+                } else if (kind === "plotTitle") {
+                    message = file.setPlotControl(plot, "title", nameField.text);
+                } else {
+                    message = file.renamePlot(plot, nameField.text);
+                    if (message.length === 0) win.plotWant = nameField.text.trim();
+                }
+                if (message.length === 0) {
+                    win.plotProblem = "";
+                    if (kind === "plot") win.showPlot = true;
+                }
             } else if (kind === "sheet") {
                 // A new sheet renumbers the tabs, so nothing stays marked.
                 var formula = formulaBox.checked ? exprField.text : "";
@@ -9992,14 +10218,34 @@ ApplicationWindow {
             }
             TextField {
                 id: nameField
-                visible: !promptDialog.counted
+                visible: !promptDialog.counted && promptDialog.kind !== "plotData"
                 focus: true
                 Layout.fillWidth: true
-                placeholderText: promptDialog.kind === "function" ? "Name(a, b)" : "Name"
+                placeholderText: promptDialog.kind === "function" ? "Name(a, b)"
+                    : promptDialog.kind === "plotTitle" ? "Title" : "Name"
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.dialogSize
                 onAccepted: promptDialog.needsExpr ? exprField.forceActiveFocus() : promptDialog.tryAccept()
+            }
+            // A plot is of a kind.
+            Row {
+                id: plotKindRow
+                visible: promptDialog.kind === "plot"
+                property string value: "line"
+                spacing: 4
+                Repeater {
+                    model: ["line", "bar", "pie", "candle"]
+                    RadioButton {
+                        required property string modelData
+                        text: modelData
+                        checked: plotKindRow.value === modelData
+                        onClicked: plotKindRow.value = modelData
+                        font.family: win.font.family
+                        font.features: win.font.features
+                        font.pixelSize: win.dialogSize
+                    }
+                }
             }
             // A column is of data, or of a formula: the one prompt asks
             // for either.
@@ -10067,6 +10313,7 @@ ApplicationWindow {
                 visible: promptDialog.needsExpr
                 placeholderText: promptDialog.kind === "computed" || promptDialog.kind === "setFormula" ? "Formula, e.g. = Revenue - Cost"
                     : promptDialog.kind === "sheet" ? "Expression, e.g. Sales |> head(3)"
+                    : promptDialog.kind === "plot" || promptDialog.kind === "plotData" ? "Data: a sheet, e.g. Sales |> select(Month, Revenue)"
                     : promptDialog.kind === "function" ? "Expression, e.g. (a - b) / a"
                     : "Expression, e.g. 20%"
                 font.family: win.font.family

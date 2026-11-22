@@ -18,7 +18,10 @@ use crate::value::{Value, arith, delocalised, format_exact, format_styled};
 use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use omasheet_omx::colfmt::{Format, closing};
 use omasheet_omx::date::{self, Style};
-use omasheet_omx::file::{FileAst, SchemaLine, SheetDecl, ident_len, parse_file, split_cells};
+use omasheet_omx::file::{
+    FileAst, PLOT_KEYS, PLOT_KINDS, PlotDecl, SchemaLine, SheetDecl, ident_len, parse_file,
+    split_cells,
+};
 use omasheet_omx::parser::parse_expr;
 use omasheet_omx::style::{Block as Outline, Style as CellStyle, outline};
 use omasheet_omx::types::Base;
@@ -1137,6 +1140,11 @@ fn formulas(ast: &FileAst) -> Vec<(Place, Expr)> {
     for f in &ast.funcs {
         out.extend(f.expr.clone().map(|e| (nowhere, e)));
     }
+    for p in &ast.plots {
+        for c in &p.controls {
+            out.extend(c.expr.clone().map(|e| (nowhere, e)));
+        }
+    }
     for (t, decl) in ast.sheets.iter().enumerate() {
         for (r, row) in decl.rows.iter().enumerate() {
             for (c, cell) in row.iter().enumerate() {
@@ -2040,6 +2048,21 @@ fn plain_identifier(raw: &str) -> String {
         id.insert(0, '_');
     }
     id
+}
+
+/// Whether `value` can be written as plot control `key`: one line, and for
+/// `type` a kind.
+fn plot_control_ok(key: &str, value: &str) -> Result<(), String> {
+    if !PLOT_KEYS.split(", ").any(|k| k == key) {
+        return Err(format!("`{key}` is not a control of a plot"));
+    }
+    if value.is_empty() || value.contains('\n') {
+        return Err(format!("`{key}` is one line"));
+    }
+    if key == "type" && !PLOT_KINDS.split(", ").any(|k| k == value) {
+        return Err(format!("`{value}` is not a kind of plot: the types are {PLOT_KINDS}"));
+    }
+    Ok(())
 }
 
 fn valid_name(name: &str) -> Result<&str, String> {
@@ -5204,9 +5227,7 @@ impl Document {
         if expr.is_empty() {
             return Err("a constant needs an expression".into());
         }
-        let taken = self.snapshot.consts.iter().any(|c| c.name == name)
-            || self.snapshot.sheets.iter().any(|t| t.name == name);
-        if taken {
+        if self.name_taken(&name) {
             return Err(format!("the name `{name}` is already used"));
         }
         // Constants go first, before the first sheet.
@@ -5442,9 +5463,7 @@ impl Document {
     }
 
     fn insert_block(&mut self, at: usize, name: &str, block: String) -> Result<(), String> {
-        let taken = self.snapshot.consts.iter().any(|c| c.name == name)
-            || self.snapshot.sheets.iter().any(|t| t.name == name);
-        if taken {
+        if self.name_taken(name) {
             return Err(format!("the name `{name}` is already used"));
         }
         let ast = self.ast();
@@ -5468,6 +5487,165 @@ impl Document {
                 text + &block
             }
         };
+        self.commit(text);
+        Ok(())
+    }
+
+    /// Whether a constant, a sheet or a plot has the name.
+    fn name_taken(&self, name: &str) -> bool {
+        self.snapshot.consts.iter().any(|c| c.name == name)
+            || self.snapshot.sheets.iter().any(|t| t.name == name)
+            || self.ast().plots.iter().any(|p| p.name == name)
+    }
+
+    /// Put a plot at the end of the file: its kind, one of
+    /// `line, bar, pie, candle`, and the expression that gives its sheet.
+    pub fn add_plot(&mut self, name: &str, kind: &str, data: &str) -> Result<(), String> {
+        let name = valid_name(name)?.to_string();
+        let (kind, data) = (kind.trim(), data.trim());
+        plot_control_ok("type", kind)?;
+        plot_control_ok("data", data)?;
+        let block = format!("plot {name}\ntype: {kind}\ndata: {data}\n");
+        // A `data` that does not give a sheet is not kept.
+        let before = compile(&self.text, 0).1.len();
+        let candidate = format!("{}\n\n{block}", self.text.trim_end());
+        let (_, after) = compile(&candidate, 0);
+        if after.len() > before {
+            return Err(after.first().map_or_else(String::new, |d| d.message.clone()));
+        }
+        self.insert_block(usize::MAX, &name, block)
+    }
+
+    /// The lines of a plot: from the one with its name to the end of its
+    /// last, and with the comment lines above it.
+    fn plot_lines(&self, decl: &PlotDecl) -> (usize, usize) {
+        let (mut start, end) = self.line_span(decl.span.start as usize, decl.end.min(self.text.len()));
+        while start > 0 {
+            let above = self.line_start(start - 1);
+            if !self.text[above..start].starts_with("//") {
+                break;
+            }
+            start = above;
+        }
+        (start, end)
+    }
+
+    /// The controls of plot `name`, as written: each key and its value.
+    pub fn plot_controls(&self, name: &str) -> Option<Vec<(String, String)>> {
+        let ast = self.ast();
+        let decl = ast.plots.iter().find(|p| p.name == name)?;
+        Some(
+            decl.controls
+                .iter()
+                .map(|c| (c.key.clone(), c.value.clone()))
+                .collect(),
+        )
+    }
+
+    /// The columns of the sheet plot `name` is drawn from.
+    pub fn plot_columns(&self, name: &str) -> Vec<String> {
+        let Some(engine) = self.engine.as_ref() else {
+            return Vec::new();
+        };
+        let program = engine.program();
+        crate::plot::find(program, name)
+            .map(|p| crate::plot::columns(engine, program, p))
+            .unwrap_or_default()
+    }
+
+    /// Set control `key` of plot `name` to `value`, or take it out with
+    /// `None` or an empty one. A value that makes the file worse is refused,
+    /// with why.
+    pub fn set_plot_control(&mut self, name: &str, key: &str, value: Option<&str>) -> Result<(), String> {
+        let value = value.map(str::trim).filter(|v| !v.is_empty());
+        if let Some(v) = value {
+            plot_control_ok(key, v)?;
+        } else if matches!(key, "type" | "data") {
+            return Err(format!("a plot needs a `{key}`"));
+        } else if !PLOT_KEYS.split(", ").any(|k| k == key) {
+            return Err(format!("`{key}` is not a control of a plot"));
+        }
+        let ast = self.ast();
+        let Some(decl) = ast.plots.iter().find(|p| p.name == name) else {
+            return Err(format!("there is no plot `{name}`"));
+        };
+        let mut text = self.text.clone();
+        match (decl.controls.iter().find(|c| c.key == key), value) {
+            (Some(c), Some(v)) => {
+                text.replace_range(c.value_span.start as usize..c.value_span.end as usize, v)
+            }
+            (Some(c), None) => {
+                let (a, b) = self.line_span(c.key_span.start as usize, c.value_span.end as usize);
+                text.replace_range(a..b, "");
+            }
+            (None, Some(v)) => {
+                let last = decl
+                    .controls
+                    .last()
+                    .map_or(decl.span.end as usize, |c| c.value_span.end as usize)
+                    .max(decl.span.end as usize);
+                let at = self.text[last..]
+                    .find('\n')
+                    .map_or(self.text.len(), |i| last + i + 1);
+                let line = format!("{key}: {v}\n");
+                if at == self.text.len() && !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                text.insert_str(at.min(text.len()), &line);
+            }
+            (None, None) => return Ok(()),
+        }
+        let before = compile(&self.text, 0).1.len();
+        let (_, after) = compile(&text, 0);
+        if after.len() > before {
+            return Err(after
+                .first()
+                .map_or_else(|| "that is not a plot".to_string(), |d| d.message.clone()));
+        }
+        self.commit(text);
+        Ok(())
+    }
+
+    /// Give plot `old` the name `new`.
+    pub fn rename_plot(&mut self, old: &str, new: &str) -> Result<(), String> {
+        let new = valid_name(new)?.to_string();
+        if new == old {
+            return Ok(());
+        }
+        let ast = self.ast();
+        let Some(decl) = ast.plots.iter().find(|p| p.name == old) else {
+            return Err(format!("there is no plot `{old}`"));
+        };
+        if self.name_taken(&new) {
+            return Err(format!("the name `{new}` is already used"));
+        }
+        let mut text = self.text.clone();
+        text.replace_range(decl.span.start as usize..decl.span.end as usize, &new);
+        self.commit(text);
+        Ok(())
+    }
+
+    /// Take plot `name` out of the file.
+    pub fn delete_plot(&mut self, name: &str) -> Result<(), String> {
+        let ast = self.ast();
+        let Some(decl) = ast.plots.iter().find(|p| p.name == name) else {
+            return Err(format!("there is no plot `{name}`"));
+        };
+        let (start, end) = self.plot_lines(decl);
+        let mut text = self.text.clone();
+        text.replace_range(start..end, "");
+        // The blank lines left standing where it was, and none at the end.
+        if text[..start].is_empty() || text[..start].ends_with("\n\n") {
+            let blank = text[start..].len() - text[start..].trim_start_matches(['\n', '\r']).len();
+            text.replace_range(start..start + blank, "");
+        }
+        if start >= text.len() {
+            let kept = text.trim_end().len();
+            text.truncate(kept);
+            if !text.is_empty() {
+                text.push('\n');
+            }
+        }
         self.commit(text);
         Ok(())
     }
@@ -5525,9 +5703,7 @@ impl Document {
         if new == old {
             return Ok(());
         }
-        let taken = self.snapshot.consts.iter().any(|c| c.name == new)
-            || self.snapshot.sheets.iter().any(|t| t.name == new);
-        if taken {
+        if self.name_taken(&new) {
             return Err(format!("the name `{new}` is already used"));
         }
         let mut spans = vec![decl.span];

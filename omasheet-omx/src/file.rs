@@ -51,6 +51,9 @@ pub struct PlotDecl {
     pub name: String,
     pub span: Span,
     pub controls: Vec<PlotControl>,
+    /// Where its last line ends: the declaration is the lines from the one
+    /// with its name to here.
+    pub end: usize,
 }
 
 /// One `key: value` line of a plot.
@@ -581,6 +584,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                     name: rest[..n].to_string(),
                     span: Span::new(src, name_at, name_at + n),
                     controls: Vec::new(),
+                    end: 0,
                 };
                 while i + 1 < lines.len() && !lines[i + 1].text.trim().is_empty() {
                     i += 1;
@@ -623,6 +627,7 @@ pub fn parse_file(text: &str, src: u32, diags: &mut Vec<Diagnostic>) -> FileAst 
                         expr,
                     });
                 }
+                plot.end = lines[i].start + lines[i].text.len();
                 ast.plots.push(plot);
                 i += 1;
                 continue;

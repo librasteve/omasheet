@@ -64,11 +64,30 @@ pub mod qobject {
         /// The names of the file's plots, as a JSON list of strings.
         #[qinvokable]
         fn plots_json(self: &File) -> QString;
-        /// The SVG of plot `name` for a pane `width` by `height` pixels, in
-        /// the theme's foreground colour; or, where it cannot be drawn, the
-        /// reason, which does not start with `<svg`.
+        /// What the pane shows of plot `name`, as JSON: its `controls` as
+        /// written, and the `columns` of its data.
         #[qinvokable]
-        fn plot_svg(self: &File, name: &QString, width: i32, height: i32) -> QString;
+        fn plot_info_json(self: &File, name: &QString) -> QString;
+        /// Put a plot of the sheet `data` gives at the end of the file. The
+        /// problem, or empty.
+        #[qinvokable]
+        fn add_plot(self: Pin<&mut File>, name: &QString, kind: &QString, data: &QString) -> QString;
+        /// Set control `key` of plot `name`; an empty `value` takes the
+        /// control out. The problem, or empty.
+        #[qinvokable]
+        fn set_plot_control(self: Pin<&mut File>, name: &QString, key: &QString, value: &QString) -> QString;
+        /// Give plot `name` the name `renamed`. The problem, or empty.
+        #[qinvokable]
+        fn rename_plot(self: Pin<&mut File>, name: &QString, renamed: &QString) -> QString;
+        /// Take plot `name` out of the file. The problem, or empty.
+        #[qinvokable]
+        fn delete_plot(self: Pin<&mut File>, name: &QString) -> QString;
+        /// The SVG of plot `name` for a pane `width` by `height` pixels, in
+        /// the theme's foreground colour and the font family `family`; or,
+        /// where it cannot be drawn, the reason, which does not start with
+        /// `<svg`.
+        #[qinvokable]
+        fn plot_svg(self: &File, name: &QString, width: i32, height: i32, family: &QString) -> QString;
         /// `count` rows of sheet `sheet` from row `from`, as JSON in the
         /// shape of a sheet's `rows`: how the grid reads a paged sheet,
         /// whose rows the snapshot does not hold.
@@ -805,12 +824,50 @@ impl qobject::File {
         QString::from(&json::strings(&self.rust().doc.plots()))
     }
 
-    fn plot_svg(&self, name: &QString, width: i32, height: i32) -> QString {
+    fn plot_info_json(&self, name: &QString) -> QString {
+        let name = name.to_string();
+        let doc = &self.rust().doc;
+        let controls = doc.plot_controls(&name).unwrap_or_default();
+        QString::from(&json::plot_info(&controls, &doc.plot_columns(&name)))
+    }
+
+    fn add_plot(self: Pin<&mut Self>, name: &QString, kind: &QString, data: &QString) -> QString {
+        let (name, kind, data) = (name.to_string(), kind.to_string(), data.to_string());
+        self.try_edit(|doc| doc.add_plot(&name, &kind, &data))
+    }
+
+    fn set_plot_control(self: Pin<&mut Self>, name: &QString, key: &QString, value: &QString) -> QString {
+        let (name, key, value) = (name.to_string(), key.to_string(), value.to_string());
+        self.try_edit(|doc| doc.set_plot_control(&name, &key, Some(&value)))
+    }
+
+    fn rename_plot(self: Pin<&mut Self>, name: &QString, renamed: &QString) -> QString {
+        let (name, renamed) = (name.to_string(), renamed.to_string());
+        self.try_edit(|doc| doc.rename_plot(&name, &renamed))
+    }
+
+    fn delete_plot(self: Pin<&mut Self>, name: &QString) -> QString {
+        let name = name.to_string();
+        self.try_edit(|doc| doc.delete_plot(&name))
+    }
+
+    fn plot_svg(&self, name: &QString, width: i32, height: i32, family: &QString) -> QString {
         let size = (width.clamp(100, 4000) as u32, height.clamp(100, 4000) as u32);
         let shown = match self.rust().doc.plot_svg(&name.to_string(), size) {
             // The ink follows the theme: Qt's `Image` does not resolve
             // `currentColor`.
-            Ok(svg) => svg.replace("currentColor", &self.theme_foreground().to_string()),
+            // And the app's own font: the SVG's `sans-serif` is looked up by
+            // Qt as a family of that name, which is not there, and finding
+            // that out costs the window a moment.
+            Ok(svg) => {
+                let family: String = family
+                    .to_string()
+                    .chars()
+                    .filter(|c| !matches!(c, '\'' | '"' | '<' | '>' | '&'))
+                    .collect();
+                svg.replace("currentColor", &self.theme_foreground().to_string())
+                    .replace("font-family=\"sans-serif\"", &format!("font-family=\"{family}\""))
+            }
             Err(why) => why,
         };
         QString::from(&shown)
