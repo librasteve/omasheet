@@ -297,3 +297,21 @@ Written     : Quantity[m.s^-1; ^]
 | ----------- | ------- |
 | 9.81m.s^-1  | 9.81m.s^-1 |
 | 3m⋅s⁻¹      | 3m⋅s⁻¹  |
+
+// A few words are scales too, and need no dot, as none is a unit: `5ppm` is
+// the number 0.000005, exact and with no dimension, so a sum or a product of
+// them is a plain number. They are listed in siquant's `scales.yaml`. A
+// column shows them by a scale in its format, after a `;`: `Decimal[.1f; ppm]`
+// shows 0.000005 as `5.0ppm`. It is only how the number is shown.
+sheet Scales
+
+Lead  : Decimal[.1f; ppm]
+Limit : Decimal[.0f; ppm]
+
+| Sample | Lead    | Limit | Over |
+| ------ | ------- | ----- | ---- |
+| A      | 5ppm    | 10ppm | *    |
+| B      | 12.5ppm | 10ppm | *    |
+| C      | 0.5ppm  | 10ppm | *    |
+
+Over := Lead > Limit

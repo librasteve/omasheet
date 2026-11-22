@@ -164,3 +164,11 @@ Recommended [m⋅s⁻¹] | Written [m.s^-1]
 --------------------|-----------------
 9.81                | 9.81
 3                   | 3
+
+sheet Scales
+
+Sample | Lead    | Limit | Over
+-------|---------|-------|------
+A      |  5.0ppm | 10ppm | false
+B      | 12.5ppm | 10ppm | true
+C      |  0.5ppm | 10ppm | false

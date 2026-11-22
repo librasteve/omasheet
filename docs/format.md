@@ -516,7 +516,7 @@ rules: `'.2f` shows `12345.678` as `12,345.68`, with as many digits as it
 takes and none cut. The value is unchanged, and the file and the cell
 editor still hold it in full. The point is your locale's, and `'` groups
 the whole part by your locale's separator. The app, `omasheet print` and a
-rendered document all show it so: in a document, `{{ Sales.Price[0] }}`
+rendered document all show it so (a scale word after a `;`, as `Decimal[.1f; ppm]`, shows 0.000005 as `5.0ppm`; see `docs/expressions.md`): in a document, `{{ Sales.Price[0] }}`
 and `{{ Sales.Price }}` are shown by the column's format, and
 `{{ Sales.Price.sum() }}`, being worked out from it, is not. See
 `examples/formats.omx`.

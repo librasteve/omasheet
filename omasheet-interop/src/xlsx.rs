@@ -439,7 +439,15 @@ fn money_column(col: &omasheet_engine::omx::check::Column) -> Option<(siquant::U
         0 => "#,##0".to_string(),
         n => format!("#,##0.{}", "0".repeat(n as usize)),
     };
+    let after = match col.shown_format().as_deref() {
+        Some(omasheet_engine::omx::colfmt::Format::Quantity(q)) => q.number.filter(|n| n.sign_after),
+        _ => None,
+    };
     let pattern = match reg.currency_sign(&code) {
+        Some(sign) if after.is_some() => {
+            let gap = if after.is_some_and(|n| n.gap) { " " } else { "" };
+            format!("{digits}\"{gap}{sign}\";-{digits}\"{gap}{sign}\"")
+        }
         Some(sign) => format!("\"{sign}\"{digits};-\"{sign}\"{digits}"),
         None => format!("{digits}\" {code}\";-{digits}\" {code}\""),
     };

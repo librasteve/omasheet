@@ -64,8 +64,36 @@ pub fn format_number(v: &Value, f: &NumFormat, style: &Style) -> Option<String> 
         Value::Float(x) => (x.is_sign_negative(), Size::Float(x.abs())),
         _ => return None,
     };
+    // A scale shows the number as so many of it, `ppm` as millionths, and
+    // names it after the number.
+    let (size, word) = match f.scale {
+        Some(sc) => (in_scale(size, sc)?, sc.symbol.as_str()),
+        None => (size, ""),
+    };
     let body = places(size, f)?;
-    Some(laid_out(f, sign(negative, f), "", &body, style))
+    Some(format!(
+        "{}{word}",
+        laid_out(f, sign(negative, f), "", &body, style)
+    ))
+}
+
+/// `size` counted in `scale`: divided by its power of ten.
+fn in_scale(size: Size, scale: &siquant::Scale) -> Option<Size> {
+    let exp = i32::from(scale.exp);
+    let base = f64::from(scale.base);
+    Some(match size {
+        Size::Float(x) => Size::Float(x / base.powi(exp)),
+        Size::Exact(d) if scale.base == 10 => {
+            // One over the power: a hundred for `-2`, a hundredth for `2`.
+            let one = if exp <= 0 {
+                Dec::from_i64(10_i64.checked_pow((-exp).try_into().ok()?)?)
+            } else {
+                Dec::new(1, exp)?
+            };
+            Size::Exact(d.checked_mul(one)?)
+        }
+        Size::Exact(d) => Size::Float(d.to_f64() / base.powi(exp)),
+    })
 }
 
 /// The sign C writes before a number: `-`, and for one that is not negative
@@ -403,6 +431,16 @@ mod tests {
     }
 
     const FLAGS: [&str; 8] = ["", "+", " ", "-", "0", "#", "+0", "-+#"];
+
+    #[test]
+    fn a_scale_shows_so_many_of_it_and_its_word() {
+        let style = Style::default();
+        let shown = |d: Dec, text: &str| format_number(&Value::Decimal(d), &fmt(text), &style);
+        let five = Dec::new(5, 6).unwrap();
+        assert_eq!(shown(five, ".1f; ppm").as_deref(), Some("5.0ppm"));
+        assert_eq!(shown(Dec::new(-5, 6).unwrap(), ".0f; ppm").as_deref(), Some("-5ppm"));
+        assert_eq!(shown(five, ".1f").as_deref(), Some("0.0"));
+    }
 
     #[test]
     fn floats_are_shown_as_c_shows_them() {

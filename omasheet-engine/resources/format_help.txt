@@ -39,6 +39,9 @@ e | a mantissa and an exponent | .3e → 1.050e1
 e-3 | the same exponent for every cell, here 10^-3 | .1e-3 → 10500.0e-3
 g | whichever of f and e reads better | .3g → 10.5
 
+== Scale | Number
+; | then a scale word: the number is shown as so many of it, and the word follows | .1f; ppm → 5.0ppm
+
 == Uncertainty | Scientific Quantity
 (nothing) | the value with its uncertainty in brackets | .2f → 10.50(30)
 ± | value ± uncertainty | ±.2f → 10.50 ± 0.30
@@ -64,6 +67,7 @@ _ | with v, * or $, a space before the unit | g; v_.1f → 10.5 g
 
 == Money | Money
 $ | its sign before the number in each row, its code after where it has none | EUR; $ → €4.55
+$> | its sign after the number; with _, a space between | JPY; $>.0f → 144¥
 
 == Date | Date
 %Y %y | year: 2025 or 25 | %Y → 2025

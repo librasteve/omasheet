@@ -60,4 +60,4 @@ The app fetches by itself while a file with money in it is open, and says `rates
 
 ## A column of euros
 
-`Price : Currency[EUR]` shows and holds euros, reads a bare number in them, and shows two places, or more for a unit worth more. The format can give places, `Currency[EUR; .4f]`, and `$` in the format puts each amount down by its sign, `Currency[EUR; $]` being `€4.50`, or by its code where it has no sign, `3.00CHF`.
+`Price : Currency[EUR]` shows and holds euros, reads a bare number in them, and shows two places, or more for a unit worth more. The format can give places, `Currency[EUR; .4f]`, and `$` in the format puts each amount down by its sign, `Currency[EUR; $]` being `€4.50`, or by its code where it has no sign, `3.00CHF`. `$>` puts the sign after the amount instead, `Currency[JPY; $>.0f]` being `144¥`, and `$>_` sets it apart by a space, `144 ¥`.

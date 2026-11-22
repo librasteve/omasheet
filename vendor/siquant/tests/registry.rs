@@ -660,3 +660,18 @@ fn rates_set_what_a_currency_is_worth() {
     );
     assert_eq!(reg.rates_as_of(), "2030-01-01");
 }
+
+#[test]
+fn a_scale_is_a_word_for_a_power_of_ten_and_no_unit() {
+    use siquant::{Scope, Unit, scale_word, scales};
+    let ppm = scale_word("ppm").unwrap();
+    assert_eq!((ppm.base, ppm.exp), (10, -6));
+    assert!(scale_word("m").is_none());
+    for s in scales() {
+        assert!(
+            Unit::parse(&s.symbol, Scope::Live).is_err(),
+            "`{}` is a unit",
+            s.symbol
+        );
+    }
+}

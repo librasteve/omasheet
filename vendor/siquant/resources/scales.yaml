@@ -1,0 +1,5 @@
+# Scales: a word written after a number that stands for a power of ten, and
+# is not a unit, `5ppm` is the number 0.000005. A scale has no dimension, so
+# it never makes a quantity, and a column shows its numbers by one in a
+# format, `Decimal[.1f; ppm]`. A symbol must be no unit and no prefix and unit.
+- {symbol: ppm, name: part per million, base: 10, exp: -6}

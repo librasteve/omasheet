@@ -378,6 +378,9 @@ pub struct SciFormat {
     /// in the column's head. It puts the unit down, as `v` does, and a
     /// currency format takes it.
     pub sign: bool,
+    /// `$>`: as `$`, with the sign after the number, `144¥`; `_` then sets it
+    /// apart by a space, `144 ¥`.
+    pub sign_after: bool,
     /// `-`: on the left of its width, rather than the right.
     pub left: bool,
     /// `+`: a sign on every number, `+` on one that is not negative.
@@ -451,6 +454,10 @@ impl SciFormat {
             f.unit_down = true;
             f.sign = true;
             i += 1;
+            if chars.get(i) == Some(&'>') {
+                f.sign_after = true;
+                i += 1;
+            }
         }
         if chars.get(i) == Some(&'_') {
             f.gap = true;
@@ -570,6 +577,9 @@ impl fmt::Display for SciFormat {
         }
         if self.sign {
             f.write_str("$")?;
+            if self.sign_after {
+                f.write_str(">")?;
+            }
         } else if self.unit_down {
             f.write_str("v")?;
         }
@@ -1013,6 +1023,9 @@ mod tests {
         // The sign is in each row, so the head holds no unit.
         assert!(!f.lifts(true));
         assert_eq!(f.to_string(), "EUR; $");
+        let after = QuantityFormat::parse("JPY; $>_.0f", money).unwrap();
+        assert!(after.number.unwrap().sign_after);
+        assert_eq!(after.to_string(), "JPY; $>_.0f");
         assert_eq!(
             QuantityFormat::parse("USD; $'.2f", money)
                 .unwrap()

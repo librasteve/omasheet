@@ -85,6 +85,9 @@ pub struct NumFormat {
     pub width: Option<usize>,
     pub precision: Option<usize>,
     pub conv: Conv,
+    /// `; ppm`: the number shown in a scale, as that many of it, then its
+    /// word: `Decimal[.1f; ppm]` shows 0.000005 as `5.0ppm`.
+    pub scale: Option<&'static siquant::Scale>,
     /// The format as it was written, to write it back the same.
     text: String,
 }
@@ -110,7 +113,21 @@ impl NumFormat {
     /// precision and a conversion. What C leaves undefined is refused, as
     /// are the parts that have no meaning for the one number a cell holds:
     /// `*`, a length (`l`, `h`) and a position (`1$`).
-    pub fn parse(text: &str) -> Result<NumFormat, FormatError> {
+    pub fn parse(whole: &str) -> Result<NumFormat, FormatError> {
+        let (text, scale) = match whole.split_once(';') {
+            Some((spec, word)) => {
+                let word = word.trim();
+                let Some(sc) = siquant::scale_word(word) else {
+                    return Err(error(
+                        spec.len() + 1,
+                        word.len().max(1),
+                        format!("`{word}` is not a scale, as `ppm` is"),
+                    ));
+                };
+                (spec, Some(sc))
+            }
+            None => (whole, None),
+        };
         let bytes = text.as_bytes();
         let mut k = 0;
         let mut f = NumFormat {
@@ -123,7 +140,8 @@ impl NumFormat {
             width: None,
             precision: None,
             conv: Conv::Dec,
-            text: text.to_string(),
+            scale,
+            text: whole.to_string(),
         };
         if text.is_empty() {
             return Err(error(0, 0, "empty"));
@@ -187,6 +205,9 @@ impl NumFormat {
             ));
         }
         // Undefined in C, and so refused rather than given a meaning.
+        if f.scale.is_some() && f.conv.is_integer() {
+            return Err(error(0, k, "a scale needs a number with places, as `.1f`"));
+        }
         if f.alt && f.conv == Conv::Dec {
             return Err(error(0, k, "`#` means nothing for `d` or `i`"));
         }
@@ -202,7 +223,8 @@ impl NumFormat {
     pub fn takes(&self, ty: S) -> bool {
         match ty {
             s if s.is_int() => self.conv.is_integer(),
-            S::Decimal(_) | S::Float | S::Percent => !self.conv.is_integer(),
+            S::Percent => !self.conv.is_integer() && self.scale.is_none(),
+            S::Decimal(_) | S::Float => !self.conv.is_integer(),
             _ => false,
         }
     }
@@ -234,6 +256,16 @@ mod tests {
 
     fn refused(text: &str) -> String {
         NumFormat::parse(text).expect_err(text).message
+    }
+
+    #[test]
+    fn a_scale_follows_a_semicolon() {
+        let f = read(".1f; ppm");
+        assert_eq!(f.scale.map(|s| s.symbol.as_str()), Some("ppm"));
+        assert_eq!(f.to_string(), ".1f; ppm");
+        assert!(refused(".1f; foo").contains("not a scale"));
+        assert!(refused("d; ppm").contains("places"));
+        assert!(!read(".1f; ppm").takes(S::Percent));
     }
 
     #[test]

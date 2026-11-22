@@ -46,19 +46,24 @@ sheet Conversions
 // read in that unit. Money is shown to the places it is spent in, two for the
 // dollar, the euro and the yen and more for a coin worth more, unless a number
 // format says otherwise. A `$` in the format shows each amount by its sign,
-// `€4.50`, and by its code where a currency has none, `3.00CHF`. This sheet
+// `€4.50`, and by its code where a currency has none, `3.00CHF`; `$>` puts it
+// after the amount, `144¥`, and `$>_` apart by a space, `144 ¥`. This sheet
 // keeps each column to its own currency, so what it shows does not move with
 // the rates.
 sheet Prices
 
 Item    : String
-Dollars : Currency[USD]
+Dollars : Currency[USD; $]
 Euros   : Currency[EUR; $]
+Pounds : Currency[GBP; $]
+Aussie : Currency[AUD; $]
 Swiss   : Currency[CHF; $]
 Coin    : Currency[BTC]
 Yen     : Currency[JPY; $.0f]
+YenAfter : Currency[JPY; $>.0f]
+EuroSpaced : Currency[EUR; $>_]
 
-| Item | Dollars | Euros | Swiss   | Coin     | Yen   |
-| ---- | ------- | ----- | ------- | -------- | ----- |
-| tea  | $5      | €4.5  | 3CHF    | 0.001BTC | ¥480  |
-| mug  | 12.5    | -€2   | 7.25CHF | 0.25BTC  | 1_250 |
+| Item | Dollars | Euros | Pounds | Aussie | Swiss   | Coin     | Yen   | YenAfter | EuroSpaced |
+| ---- | ------- | ----- | ------ | ------ | ------- | -------- | ----- | -------- | ---------- |
+| tea  | $5      | €4.5  | £4.5   | €4.5   | 3CHF    | 0.001BTC | ¥480  | 144¥     | €4.5       |
+| mug  | 12.5    | -€2   | -£2    | -€2    | 7.25CHF | 0.25BTC  | 1_250 | 1_250    | -€2        |

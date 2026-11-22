@@ -23,6 +23,7 @@ mod error;
 mod parse;
 mod quantity;
 mod registry;
+mod scale;
 mod unit;
 
 pub use dim::{Base, Dim, NUM_BASES};
@@ -31,4 +32,5 @@ pub use quantity::{Quantity, QuantityType};
 pub use registry::{
     INFERRED, PrefixId, PrefixInfo, PrefixKind, Prefixable, Registry, Scope, UnitId, UnitInfo,
 };
+pub use scale::{Scale, scale_word, scales};
 pub use unit::{Term, Unit};

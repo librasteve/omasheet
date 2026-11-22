@@ -122,6 +122,22 @@ pub fn tail(text: &str, at: usize) -> Option<(Tail, usize)> {
         return None;
     }
 
+    // A scale word, `ppm`, is a scale as it stands: no `.` after it.
+    if let Some(sc) = siquant::scale_word(&rest[..first])
+        && !rest[first..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    {
+        return Some((
+            Tail::Scale {
+                base: sc.base,
+                exp: sc.exp,
+            },
+            at + first,
+        ));
+    }
+
     // A prefix and a `.` on their own is a scale, unless something that
     // could continue a word, a call, a range or a unit follows the dot.
     if let Some(after) = rest[first..].strip_prefix('.') {
@@ -380,6 +396,15 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    #[test]
+    fn a_scale_word_is_a_scale_with_no_dot() {
+        assert_eq!(
+            tail("ppm", 0),
+            Some((Tail::Scale { base: 10, exp: -6 }, 3))
+        );
+        assert!(!matches!(tail("ppmx", 0), Some((Tail::Scale { .. }, _))));
     }
 
     #[test]

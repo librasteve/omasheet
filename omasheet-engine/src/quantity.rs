@@ -721,12 +721,14 @@ fn render_money(q: &Quantity, code: &str, f: &SciFormat, style: &Style) -> Strin
     if q.sigma() == 0.0 && !f.plus_minus {
         number = number.replacen("(0)", "", 1);
     }
+    let gap = if f.gap { " " } else { "" };
     match Registry::builtin().currency_sign(code) {
+        Some(sign) if f.sign_after => format!("{number}{gap}{sign}"),
         Some(sign) => match number.strip_prefix('-') {
             Some(digits) => format!("-{sign}{digits}"),
             None => format!("{sign}{number}"),
         },
-        None => format!("{number}{code}"),
+        None => format!("{number}{gap}{code}"),
     }
 }
 
