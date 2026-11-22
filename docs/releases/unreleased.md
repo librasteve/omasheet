@@ -5,6 +5,7 @@ Notes for the release after 0.1.12, kept here until it is cut. The items marked 
 ## App
 
 - **One app, many files.** A new file (Ctrl+N) or an opened one (Ctrl+O) is a window of its own in the running app, as in most apps, and Cmd+Q on a Mac closes them all. On Windows and Linux a second launch hands its file to the running app, which opens it in a new window; `OMASHEET_NEW_INSTANCE` starts a separate copy. A file already open is brought forward. On Windows and macOS there is a File menu.
+- **Copy sheet, Paste sheet:** in a sheet tab's right-click menu. A sheet goes on the clipboard as its own text and is pasted, as one undo step, into another file or the same one, as `Name_001` where the name is taken; a footer warning names the constants, functions and sheets its formulas use that the file lacks.
 
 ## Breaking
 

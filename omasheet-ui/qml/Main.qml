@@ -895,7 +895,12 @@ ApplicationWindow {
         onTriggered: win.styleWarning = ""
     }
     function warnStyle() {
-        styleWarning = "Styles may only be applied to whole columns or rows";
+        warn("Styles may only be applied to whole columns or rows", 4000);
+    }
+    // Amber in the footer for `ms`.
+    function warn(text, ms) {
+        styleWarning = text;
+        styleWarningTimer.interval = ms;
         styleWarningTimer.restart();
     }
     readonly property var rowHeads: headsOf(rowBlockList)
@@ -3971,6 +3976,17 @@ ApplicationWindow {
             clipboard.text = "";
             clipboard.paste();
             return file.clipIn(clipboard.text);
+        }
+        // A sheet goes as its own text, to this file, another, or an editor.
+        function putSheet(text) {
+            clipboard.text = text;
+            clipboard.selectAll();
+            clipboard.copy();
+        }
+        function takeSheet() {
+            clipboard.text = "";
+            clipboard.paste();
+            return clipboard.text;
         }
     }
 
@@ -9099,6 +9115,9 @@ ApplicationWindow {
         property int index: 0
         // The constants are a sheet of their own, which is not edited here.
         readonly property bool isSheet: index < win.tabs.length && !win.tabs[index].isConsts
+        // Whether the clipboard holds a sheet, looked at as the menu opens.
+        property bool sheetOnClipboard: false
+        onAboutToShow: sheetOnClipboard = file.isSheetText(clipboard.takeSheet())
         // An entry may have opened a dialog, which keeps the keyboard.
         onClosed: {
             if (promptDialog.visible)
@@ -9117,6 +9136,36 @@ ApplicationWindow {
             visible: tabMenu.isSheet
             enabled: visible
             onTriggered: { win.goToSheet(tabMenu.index); win.newSheet(true); }
+        }
+        // A sheet to another file, or back into this one, by the clipboard.
+        MenuEntry {
+            text: "Copy sheet"
+            visible: tabMenu.isSheet
+            enabled: visible
+            onTriggered: {
+                var text = file.sheetText(tabMenu.index);
+                if (text.length > 0) {
+                    clipboard.putSheet(text);
+                    win.warn("Copied sheet " + win.tabs[tabMenu.index].name, 2500);
+                }
+            }
+        }
+        MenuEntry {
+            text: "Paste sheet"
+            visible: tabMenu.isSheet
+            enabled: visible && tabMenu.sheetOnClipboard
+            onTriggered: {
+                win.goToSheet(tabMenu.index);
+                var said = file.pasteSheetText(clipboard.takeSheet(), tabMenu.index);
+                if (said.indexOf("warning:") === 0) {
+                    win.switchTab(tabMenu.index + 1);
+                    win.warn("Pasted; this file has no " + said.substring(8) + ", which its formulas use", 9000);
+                } else if (said.length > 0) {
+                    errorDialog.say(said);
+                } else {
+                    win.switchTab(tabMenu.index + 1);
+                }
+            }
         }
         MenuEntry {
             text: "Duplicate sheet"

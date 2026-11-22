@@ -401,6 +401,18 @@ pub mod qobject {
         /// Sheet `to` made a copy of sheet `from`, under its name copied.
         #[qinvokable]
         fn paste_sheet(self: Pin<&mut File>, from: i32, to: i32) -> QString;
+        /// The whole text of a sheet, for the clipboard, to be pasted into
+        /// this file or another; empty if there is no such sheet.
+        #[qinvokable]
+        fn sheet_text(self: &File, sheet: i32) -> QString;
+        /// Whether `text` is one sheet, as `sheet_text` gives it.
+        #[qinvokable]
+        fn is_sheet_text(self: &File, text: &QString) -> bool;
+        /// Add the sheet written in `text` after sheet `after`. Empty on
+        /// success; `warning:` and what its formulas need that this file lacks,
+        /// if it lacks any; or what went wrong.
+        #[qinvokable]
+        fn paste_sheet_text(self: Pin<&mut File>, text: &QString, after: i32) -> QString;
         #[qinvokable]
         fn add_const(self: Pin<&mut File>, name: &QString, expr: &QString) -> QString;
         #[qinvokable]
@@ -1708,6 +1720,32 @@ impl qobject::File {
 
     fn duplicate_sheet(self: Pin<&mut Self>, sheet: i32) -> QString {
         self.try_edit(|doc| doc.duplicate_sheet(index(sheet)).map(|_| ()))
+    }
+
+    fn sheet_text(&self, sheet: i32) -> QString {
+        QString::from(&self.rust().doc.sheet_block(index(sheet)).unwrap_or_default())
+    }
+
+    fn is_sheet_text(&self, text: &QString) -> bool {
+        let text = text.to_string();
+        let mut diags = Vec::new();
+        let ast = omasheet_engine::omx::file::parse_file(&text, 0, &mut diags);
+        ast.sheets.len() == 1 && ast.consts.is_empty() && ast.funcs.is_empty()
+            && !text.trim_start().starts_with('|')
+    }
+
+    fn paste_sheet_text(mut self: Pin<&mut Self>, text: &QString, after: i32) -> QString {
+        let text = text.to_string();
+        let mut missing = Vec::new();
+        let said = self.as_mut().try_edit(|doc| {
+            let (_, names) = doc.paste_sheet_block(&text, index(after))?;
+            missing = names;
+            Ok(())
+        });
+        if said.is_empty() && !missing.is_empty() {
+            return QString::from(&format!("warning:{}", missing.join(", ")));
+        }
+        said
     }
 
     fn paste_sheet(self: Pin<&mut Self>, from: i32, to: i32) -> QString {

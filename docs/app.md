@@ -187,6 +187,12 @@ Press F2 on a cell holding a formula, or type one, and each thing it reads is li
 
 Click a column's header to select it, then drag the header to move it: a mark shows where it will land, and the drop is one step to undo. Held near either edge, the grid scrolls sideways to reach a column off screen. Select several columns first (drag along the headers, or Shift-click) and drag one of them to move them together. Dragging from a header that is not selected selects along the headers instead. The circle at the right of a header opens its popup instead, and does not drag.
 
+### A sheet to another file
+
+Right-click a sheet's tab and choose **Copy sheet**; in the tab of a sheet in another file, or the same one, choose **Paste sheet**. The sheet goes on the clipboard as its own text, the `sheet` line, its column types, its rows and its formula lines, so it can also be pasted into a text editor, or from one. The pasted sheet is added after the one whose tab you used, as one step to undo, under its own name, or `Name_001`, `Name_002` and so on if a sheet, a constant or a function of that name is there already.
+
+Only the sheet comes: a formula that uses a constant, a function or another sheet of the first file cannot be worked out in a file that lacks it. The footer then says so in amber, `Pasted; this file has no VatRate, Orders, which its formulas use`, and the cells that need them show `#ERROR` until you add them. A `view` sheet reads its data file from a path relative to the file it was in.
+
 ### Two sheets side by side
 
 1. Open the file and go to the first sheet.

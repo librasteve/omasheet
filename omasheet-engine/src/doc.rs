@@ -5722,6 +5722,100 @@ impl Document {
         Ok(name)
     }
 
+    /// Sheet `from` as it is written, its whole block of text, to carry to
+    /// another file: see [`Document::paste_sheet_block`].
+    pub fn sheet_block(&self, from: usize) -> Result<String, String> {
+        let ast = self.ast();
+        let Some(decl) = self.sheet_decl(&ast, from) else {
+            return Err("there is no such sheet".into());
+        };
+        let (s0, s1) = self.sheet_lines(decl);
+        Ok(self.text[s0..s1].to_string())
+    }
+
+    /// Add the sheet written in `block`, as `sheet_block` of another file
+    /// gives it, after sheet `after`, as one undoable step. It keeps its name
+    /// unless a sheet, a constant or a function has it already, and is then
+    /// `Name_001`, `Name_002`... Gives the name it has, and the names it uses
+    /// that this file does not have, a constant or a sheet or a function
+    /// (as `Orders` or `Gross()`), which its formulas cannot be worked out
+    /// without.
+    pub fn paste_sheet_block(
+        &mut self,
+        block: &str,
+        after: usize,
+    ) -> Result<(String, Vec<String>), String> {
+        let mut diags = Vec::new();
+        let pasted = parse_file(block, 0, &mut diags);
+        let one = pasted.sheets.len() == 1 && pasted.consts.is_empty() && pasted.funcs.is_empty();
+        if !one || block.trim_start().starts_with('|') {
+            return Err("what is copied is not one sheet".into());
+        }
+        let decl = &pasted.sheets[0];
+        let taken = |name: &str| {
+            self.snapshot.consts.iter().any(|c| c.name == name)
+                || self.snapshot.sheets.iter().any(|t| t.name == name)
+                || self.snapshot.funcs.iter().any(|f| f.name == name)
+        };
+        let mut name = decl.name.clone();
+        if taken(&name) {
+            let base = copy_base(&decl.name).to_string();
+            name = (1..)
+                .map(|n| format!("{base}_{n:03}"))
+                .find(|name| !taken(name))
+                .unwrap_or_default();
+        }
+        let at = decl.span.start as usize;
+        let Some(k) = block[at..].find(&decl.name).map(|k| at + k) else {
+            return Err("the sheet's name was not found".into());
+        };
+        let mut block = block.to_string();
+        block.replace_range(k..k + decl.name.len(), &name);
+        if !block.ends_with('\n') {
+            block.push('\n');
+        }
+        // After the sheet asked for, or at the end if the file has none.
+        let ast = self.ast();
+        let end = match self.sheet_decl(&ast, after) {
+            Some(target) => self.sheet_lines(target).1,
+            None => self.text.len(),
+        };
+        let lead = if self.text[..end].ends_with("\n\n") || end == 0 {
+            ""
+        } else if self.text[..end].ends_with('\n') {
+            "\n"
+        } else {
+            "\n\n"
+        };
+        let text = format!("{}{lead}{block}{}", &self.text[..end], &self.text[end..]);
+        // What the block names that this file does not have.
+        let (from, to) = (end + lead.len(), end + lead.len() + block.len());
+        let mut missing: Vec<String> = Vec::new();
+        for d in compile(&text, 0).1 {
+            let (start, stop) = (d.span.start as usize, d.span.end as usize);
+            if start < from || stop > to {
+                continue;
+            }
+            let said = ["unknown name `", "unknown function `"]
+                .iter()
+                .find_map(|lead| d.message.strip_prefix(lead).map(|rest| (lead, rest)));
+            if let Some((lead, rest)) = said
+                && let Some(word) = rest.strip_suffix('`')
+            {
+                let word = if lead.contains("function") {
+                    format!("{word}()")
+                } else {
+                    word.to_string()
+                };
+                if !missing.contains(&word) {
+                    missing.push(word);
+                }
+            }
+        }
+        self.commit(text);
+        Ok((name, missing))
+    }
+
     fn rebuild(&mut self) {
         self.const_format = const_format_in(&self.text);
         let mut sources = Sources::new();
@@ -9915,6 +10009,36 @@ mod tests {
         assert_eq!(doc.duplicate_sheet(0), Ok("T_002".to_string()));
         assert!(doc.snapshot().problems.is_empty());
         assert!(doc.text().contains("// Kept\nsheet U"), "{}", doc.text());
+    }
+
+    #[test]
+    fn a_sheet_goes_from_one_file_to_another_as_its_block_of_text() {
+        let from = Document::from_text(
+            "const VatRate = 20%\n\nsheet Orders\n\n| Net | Gross |\n| --- | ----- |\n| 10  | *     |\n\nGross := Net * (1 + VatRate)\n",
+        );
+        let block = from.sheet_block(0).unwrap();
+        assert!(block.starts_with("sheet Orders\n") && !block.contains("const"));
+        // A file without the constant: pasted, and told what it lacks.
+        let mut to = Document::from_text("sheet Other\n\n| X |\n| - |\n| 9 |\n");
+        let (name, missing) = to.paste_sheet_block(&block, 0).unwrap();
+        assert_eq!((name.as_str(), missing), ("Orders", vec!["VatRate".to_string()]));
+        let names: Vec<_> = to.snapshot().sheets.iter().map(|t| t.name.clone()).collect();
+        assert_eq!(names, ["Other", "Orders"]);
+        // Pasted again, it is `Orders_001`; and it is one step to undo.
+        let (again, _) = to.paste_sheet_block(&block, 1).unwrap();
+        assert_eq!(again, "Orders_001");
+        assert!(to.undo() && to.undo());
+        assert_eq!(to.snapshot().sheets.len(), 1);
+        // A file with the constant is told of nothing, and a constant of
+        // the name moves the sheet's out of the way.
+        let mut with = Document::from_text("const VatRate = 20%\nconst Orders = 1\n\nsheet O\n\n| X |\n| - |\n| 9 |\n");
+        let (name, missing) = with.paste_sheet_block(&block, 0).unwrap();
+        assert_eq!(name, "Orders_001");
+        assert!(missing.is_empty(), "{missing:?}");
+        assert!(with.snapshot().problems.is_empty());
+        // What is not a sheet is refused.
+        assert!(with.paste_sheet_block("just some text", 0).is_err());
+        assert!(with.paste_sheet_block("| A |\n| - |\n| 1 |\n", 0).is_err());
     }
 
     #[test]
