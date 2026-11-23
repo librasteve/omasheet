@@ -7,6 +7,9 @@
 
 sheet Oscillator
 
+Time : Duration[s; .1f]
+Amplitude : Length[mm]
+
 | Time | Amplitude |
 | ---- | --------- |
 | 0.0  | *         |
@@ -35,15 +38,18 @@ sheet Oscillator
 | 11.5 | *         |
 | 12.0 | *         |
 
-Amplitude := exp(-Time / 4) * cos(2 * Time)
+Amplitude := Length(exp(-Time.value() / 4) * cos(2 * Time.value()), 'mm')
 
 // A line at numbers along x, not at equal steps.
 plot Damped
 type: line
 data: Oscillator
-title: Damped oscillation
+title: Damped oscillation, amplitude (mm) over time (s)
 
 sheet Calibration
+
+Current : Current[A]
+Voltage : Voltage[V]
 
 | Current | Voltage   |
 | ------- | --------- |
@@ -63,9 +69,12 @@ sheet Calibration
 plot Ohm
 type: scatter
 data: Calibration
-title: Voltage against current
+title: Voltage (V) against current (A)
 
 sheet Readings
+
+Before : Mass[kg]
+After : Mass[kg]
 
 | Before | After |
 | ------ | ----- |
@@ -156,9 +165,14 @@ type: histogram
 data: Readings
 y: Before, After
 bins: 14
-title: Readings before and after
+title: Body mass before and after, counts per bin of kg
 
 sheet Trials
+
+Run : Integer
+Control : Duration[s; .1f]
+DoseA : Duration[s; .1f]
+DoseB : Duration[s; .1f]
 
 | Run | Control | DoseA | DoseB |
 | --- | ------- | ----- | ----- |
@@ -185,7 +199,7 @@ plot Groups
 type: box
 data: Trials
 y: Control, DoseA, DoseB
-title: Response by treatment
+title: Response time (s) by treatment
 
 sheet Field
 
@@ -206,9 +220,11 @@ plot Intensity
 type: heatmap
 data: Field
 x: Row
-title: Intensity of the field
+title: Relative intensity of the field (1 = peak)
 
 sheet Cash
+
+Change : Currency[GBP]
 
 | Item     | Change |
 | -------- | ------ |
@@ -224,9 +240,13 @@ sheet Cash
 plot Bridge
 type: waterfall
 data: Cash
-title: From opening cash to closing
+title: From opening cash to closing (£)
 
 sheet Planets
+
+Distance : Length[au]
+Period : Decimal
+Mass : Decimal
 
 | Planet  | Distance | Period | Mass  |
 | ------- | -------- | ------ | ----- |
@@ -243,9 +263,11 @@ type: bubble
 data: Planets
 x: Distance
 y: Period, Mass
-title: Period against distance (AU, years), sized by mass
+title: Period (years) against distance (au), sized by mass (Earth = 1)
 
 sheet Air
+
+Percent : Percent[.2f]
 
 | Gas            | Percent |
 | -------------- | ------- |
@@ -257,9 +279,15 @@ sheet Air
 plot Atmosphere
 type: donut
 data: Air
-title: Dry air by volume
+title: Dry air by volume (%)
 
 sheet Energy
+
+Year : Integer
+Coal : Energy[TWh]
+Gas : Energy[TWh]
+Wind : Energy[TWh]
+Solar : Energy[TWh]
 
 | Year | Coal | Gas | Wind | Solar |
 | ---- | ---- | --- | ---- | ----- |
@@ -274,9 +302,11 @@ sheet Energy
 plot Mix
 type: stacked
 data: Energy
-title: Electricity by source (TWh)
+title: Electricity by source (TWh) by year
 
 sheet Rainfall
+
+Rain : Length[mm]
 
 | Month | Rain | Total |
 | ----- | ---- | ----- |
@@ -300,9 +330,12 @@ plot Season
 type: area
 data: Rainfall
 y: Total
-title: Rainfall so far this year (mm)
+title: Cumulative rainfall (mm) by month
 
 sheet Tariff
+
+Hour : Time
+Pence : Decimal[0]
 
 | Hour | Pence |
 | ---- | ----- |
@@ -335,9 +368,11 @@ sheet Tariff
 plot Day
 type: step
 data: Tariff
-title: Electricity price by hour (p/kWh)
+title: Electricity price (p/kWh) by time of day
 
 sheet Gravity
+
+G : Acceleration[m.s^-2]
 
 | Lab        | G          |
 | ---------- | ---------- |
@@ -352,4 +387,4 @@ sheet Gravity
 plot Labs
 type: candle
 data: Gravity
-title: Local g, m/s²
+title: Local gravity g (m/s²) by lab

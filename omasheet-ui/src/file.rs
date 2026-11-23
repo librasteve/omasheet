@@ -581,6 +581,12 @@ pub mod qobject {
         /// Keep whether the plot pane is shown, for the next launch.
         #[qinvokable]
         fn save_plot_pane(self: &File, shown: bool);
+        /// Whether the plot settings pane is shown: unless it was put away.
+        #[qinvokable]
+        fn saved_plot_settings(self: &File) -> bool;
+        /// Keep whether the plot settings pane is shown.
+        #[qinvokable]
+        fn save_plot_settings(self: &File, shown: bool);
         /// The file last opened or saved, if it is still there; empty if not.
         #[qinvokable]
         fn last_file(self: &File) -> QString;
@@ -1973,6 +1979,14 @@ impl qobject::File {
 
     fn save_plot_pane(&self, shown: bool) {
         crate::theme::write_config("plot-pane", if shown { "1" } else { "" });
+    }
+
+    fn saved_plot_settings(&self) -> bool {
+        crate::theme::read_config("plot-settings").trim() != "0"
+    }
+
+    fn save_plot_settings(&self, shown: bool) {
+        crate::theme::write_config("plot-settings", if shown { "1" } else { "0" });
     }
 
     fn last_file(&self) -> QString {
