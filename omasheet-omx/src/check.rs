@@ -1753,7 +1753,7 @@ impl<'a> Checker<'a> {
             self.err_help(
                 decl.span,
                 format!("plot `{name}` needs a `data:`"),
-                "write the sheet to plot, such as `data: Sales`",
+                "write the sheet to plot, such as `data: Readings`",
             );
         }
         // The sheet it gives, and the columns of it that are named.
@@ -1793,7 +1793,7 @@ impl<'a> Checker<'a> {
                     self.err_help(
                         *span,
                         format!("`data` gives {d}, and a plot needs a sheet"),
-                        "give a sheet, or a sheet piped through stages, such as `Sales |> select(Month, Revenue)`",
+                        "give a sheet, or a sheet piped through stages, such as `Readings |> select(Time, Value)`",
                     );
                 }
             }

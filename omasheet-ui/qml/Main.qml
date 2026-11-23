@@ -10335,7 +10335,7 @@ ApplicationWindow {
                 visible: promptDialog.needsExpr
                 placeholderText: promptDialog.kind === "computed" || promptDialog.kind === "setFormula" ? "Formula, e.g. = Revenue - Cost"
                     : promptDialog.kind === "sheet" ? "Expression, e.g. Sales |> head(3)"
-                    : promptDialog.kind === "plot" || promptDialog.kind === "plotData" ? "Data: a sheet, e.g. Sales |> select(Month, Revenue)"
+                    : promptDialog.kind === "plot" || promptDialog.kind === "plotData" ? "Data: a sheet, e.g. Readings |> select(Time, Value)"
                     : promptDialog.kind === "function" ? "Expression, e.g. (a - b) / a"
                     : "Expression, e.g. 20%"
                 font.family: win.font.family

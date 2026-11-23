@@ -618,14 +618,14 @@ accepts them in your locale's form.
 ```omx
 plot Trend
 type: line
-data: Sales |> select(Month, Revenue, Cost)
-title: Revenue and cost
+data: Readings |> select(Time, Value, Limit)
+title: Value and limit
 ```
 
 | Control | Meaning |
 |---|---|
 | `type` | `line`, `bar`, `pie`, `candle`, `scatter`, `area`, `stacked`, `step`, `histogram`, `box`, `heatmap`, `waterfall`, `bubble` or `donut`. Required |
-| `data` | An expression that gives a sheet: `Sales`, or `Sales \|> filter(Region == 'North') \|> select(Month, Revenue)`. On one line. Required |
+| `data` | An expression that gives a sheet: `Readings`, or `Readings \|> filter(Site == 'North') \|> select(Time, Value)`. On one line. Required |
 | `x` | The column of labels. The first column of `data` if left out |
 | `y` | The columns of values, `Revenue, Cost`. All the others if left out |
 | `title` | A title above the plot |
