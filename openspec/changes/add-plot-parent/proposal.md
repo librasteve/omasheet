@@ -9,7 +9,7 @@ A file has sheets and plots, and a plot belongs with the sheet it reads. The for
 ## What Changes
 
 - **engine** — ADDED: `Plot.sheet`, the sheet its `data` is a view of, and `Document::plot_parents`. It follows a sheet's rename, as `data` does.
-- **app** — MODIFIED: the pane lists the plots that read the sheet on view; an `all` chip shows every plot, and `+ Plot` shows the new one wherever it is from. Changing sheet goes to that sheet's first plot.
+- **app** — MODIFIED: the pane lists the plots that read the sheet on view; the constants have none; and `+ Plot` shows the new one wherever it is from. Changing sheet goes to that sheet's first plot.
 
 ## Impact
 

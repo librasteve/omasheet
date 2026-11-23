@@ -376,15 +376,13 @@ ApplicationWindow {
     // is dragged, and kept as the window is resized.
     property real plotShare: 0.5
     readonly property int plotPaneWidth: Math.max(fontSize * 18, Math.min(plotShare * width, width * 0.7))
-    // The plots the pane lists: those that read the sheet on view, or all of
-    // them. And the sheet each of all of them reads.
+    // The plots the pane lists: those that read the sheet on view. And every
+    // plot of the file, with the sheet each reads.
     property var plotNames: []
     property var plotAllNames: []
     property var plotParents: []
-    property bool plotAll: false
     property int plotIndex: 0
     onPlotIndexChanged: plotTimer.restart()
-    onPlotAllChanged: plotTimer.restart()
     property string plotSvg: ""
     // What the pane shows of the plot it is on: its controls as written, and
     // the columns of its data; and why the last change to it was refused.
@@ -399,9 +397,11 @@ ApplicationWindow {
         plotParents = parents;
         // The plot just made or renamed is shown wherever it is from.
         var names = [];
-        var here = tabs.length > 0 && !sheet.isConsts ? sheet.name : "";
-        for (var i = 0; i < all.length; i++)
-            if (plotAll || here.length === 0 || parents[i] === here || all[i] === plotWant)
+        // The constants have no plots.
+        var consts = tabs.length > 0 && sheet.isConsts;
+        var here = tabs.length > 0 && !consts ? sheet.name : "";
+        for (var i = 0; i < all.length && !consts; i++)
+            if (here.length === 0 || parents[i] === here || all[i] === plotWant)
                 names.push(all[i]);
         plotNames = names;
         if (plotWant.length > 0) {
@@ -6250,14 +6250,7 @@ ApplicationWindow {
                         FooterButton { label: "+ Row"; quiet: true; visible: footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.appendRow() }
                         FooterButton { label: "+ Column"; quiet: true; visible: footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
                         FooterButton { label: "+ Constant"; quiet: true; visible: footerBar.narrow; onClicked: promptDialog.ask("const") }
-                        FooterButton {
-                    visible: win.plotAllNames.length > win.plotNames.length || win.plotAll
-                    label: win.plotAll ? "this sheet" : "all (" + win.plotAllNames.length + ")"
-                    quiet: true
-                    tip: win.plotAll ? "Only the plots of the sheet on view" : "Every plot of the file"
-                    onClicked: win.plotAll = !win.plotAll
-                }
-                FooterButton { label: "+ Plot"; quiet: true; visible: footerBar.narrow; enabled: win.snap.sheets.length > 0; onClicked: promptDialog.ask("plot") }
+                        FooterButton { label: "+ Plot"; quiet: true; visible: footerBar.narrow; enabled: win.snap.sheets.length > 0 && !win.sheet.isConsts; onClicked: promptDialog.ask("plot") }
                     }
                 }
                 FooterButton {
@@ -6274,7 +6267,7 @@ ApplicationWindow {
                 FooterButton { id: addRowButton; label: "+ Row"; quiet: true; visible: !footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.appendRow() }
                 FooterButton { id: addColumnButton; label: "+ Column"; quiet: true; visible: !footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
                 FooterButton { id: addConstantButton; label: "+ Constant"; quiet: true; visible: !footerBar.narrow; onClicked: promptDialog.ask("const") }
-                FooterButton { id: addPlotButton; label: "+ Plot"; quiet: true; visible: !footerBar.narrow; enabled: win.snap.sheets.length > 0; onClicked: promptDialog.ask("plot") }
+                FooterButton { id: addPlotButton; label: "+ Plot"; quiet: true; visible: !footerBar.narrow; enabled: win.snap.sheets.length > 0 && !win.sheet.isConsts; onClicked: promptDialog.ask("plot") }
                 FooterButton { id: fnButton; label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
                 FooterButton { id: plotButton; label: "plot"; bars: true; quiet: true; active: win.showPlot; tip: "Show the plots of the file (F7)"; onClicked: win.showPlot = !win.showPlot }
                 FooterButton { id: sourceButton; label: "</>"; quiet: true; active: win.showSource; onClicked: win.viewSource(!win.showSource) }
@@ -6542,7 +6535,6 @@ ApplicationWindow {
                         }
                     }
                 }
-                FooterButton { label: "+ Plot"; quiet: true; enabled: win.snap.sheets.length > 0; onClicked: promptDialog.ask("plot") }
             }
             Flow {
                 id: plotControls
@@ -6696,7 +6688,8 @@ ApplicationWindow {
             font.family: win.font.family
             font.pixelSize: win.smallSize
             text: win.plotNames.length > 0 ? win.plotSvg
-                : win.plotAllNames.length > 0 ? "No plot reads this sheet. Press + Plot to make one, or all to see the others."
+                : win.sheet.isConsts ? "The constants have no plots. Go to a sheet to see or make its plots."
+                : win.plotAllNames.length > 0 ? "No plot reads this sheet. Press + Plot to make one."
                 : "This file has no plots yet. Press + Plot to make one."
         }
     }
