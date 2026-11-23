@@ -369,8 +369,10 @@ ApplicationWindow {
         file.savePlotPane(showPlot);
         plotTimer.restart();
     }
-    property int plotWidth: 440
-    readonly property int plotPaneWidth: Math.max(fontSize * 18, Math.min(plotWidth, width * 0.7))
+    // The share of the window the plot pane takes: half until the divider
+    // is dragged, and kept as the window is resized.
+    property real plotShare: 0.5
+    readonly property int plotPaneWidth: Math.max(fontSize * 18, Math.min(plotShare * width, width * 0.7))
     property var plotNames: []
     property int plotIndex: 0
     onPlotIndexChanged: plotTimer.restart()
@@ -6486,7 +6488,7 @@ ApplicationWindow {
             }
             onPositionChanged: function(mouse) {
                 if (pressed)
-                    win.plotWidth = startWidth - (mapToItem(root, mouse.x, 0).x - startX);
+                    win.plotShare = Math.max(0.1, (startWidth - (mapToItem(root, mouse.x, 0).x - startX)) / win.width);
             }
         }
 
