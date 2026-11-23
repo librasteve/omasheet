@@ -5636,7 +5636,7 @@ impl<'a> Checker<'a> {
                     self.err_help(
                         span,
                         "`select` needs a sheet and at least one column",
-                        "usage: `Sales |> select(Month, Revenue)`",
+                        "usage: `Readings |> select(Time, Value)`",
                     );
                     return fail;
                 }
