@@ -60,6 +60,8 @@ pub struct Plot {
     pub height: Option<u32>,
     pub k: Option<f64>,
     pub bins: Option<usize>,
+    /// The sheet its `data` is a view of, where it is known: its parent.
+    pub sheet: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -1756,6 +1758,7 @@ impl<'a> Checker<'a> {
         }
         // The sheet it gives, and the columns of it that are named.
         let mut shown = None;
+        let mut parent = None;
         if let Some((_, ty, span)) = &data {
             match ty {
                 Ty::Sheet(shape) => {
@@ -1782,6 +1785,7 @@ impl<'a> Checker<'a> {
                         self.err(*span, "`data` has no column of values besides `x`");
                     }
                     shown = Some(());
+                    parent = Some(shape.sheet);
                 }
                 Ty::Any => shown = Some(()),
                 other => {
@@ -1811,6 +1815,7 @@ impl<'a> Checker<'a> {
                 height,
                 k,
                 bins,
+                sheet: parent,
             });
         }
     }

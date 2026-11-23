@@ -64,6 +64,9 @@ pub mod qobject {
         /// The names of the file's plots, as a JSON list of strings.
         #[qinvokable]
         fn plots_json(self: &File) -> QString;
+        /// The sheet each of those reads, in the same order, as a JSON list.
+        #[qinvokable]
+        fn plot_parents_json(self: &File) -> QString;
         /// What the pane shows of plot `name`, as JSON: its `controls` as
         /// written, and the `columns` of its data.
         #[qinvokable]
@@ -822,6 +825,10 @@ impl qobject::File {
 
     fn plots_json(&self) -> QString {
         QString::from(&json::strings(&self.rust().doc.plots()))
+    }
+
+    fn plot_parents_json(&self) -> QString {
+        QString::from(&json::strings(&self.rust().doc.plot_parents()))
     }
 
     fn plot_info_json(&self, name: &QString) -> QString {

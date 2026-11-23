@@ -192,6 +192,9 @@ ApplicationWindow {
         formulaOpen = false;
         grid.forceActiveFocus();
         resetBox();
+        // The pane follows the sheet.
+        plotIndex = 0;
+        plotTimer.restart();
     }
     readonly property var sheet: tab < tabs.length ? tabs[tab] : emptySheet
     readonly property var emptySheet: ({ name: "", columns: [], rows: [], nrows: 0, paged: false, sampled: false, isConsts: false })
@@ -373,9 +376,15 @@ ApplicationWindow {
     // is dragged, and kept as the window is resized.
     property real plotShare: 0.5
     readonly property int plotPaneWidth: Math.max(fontSize * 18, Math.min(plotShare * width, width * 0.7))
+    // The plots the pane lists: those that read the sheet on view, or all of
+    // them. And the sheet each of all of them reads.
     property var plotNames: []
+    property var plotAllNames: []
+    property var plotParents: []
+    property bool plotAll: false
     property int plotIndex: 0
     onPlotIndexChanged: plotTimer.restart()
+    onPlotAllChanged: plotTimer.restart()
     property string plotSvg: ""
     // What the pane shows of the plot it is on: its controls as written, and
     // the columns of its data; and why the last change to it was refused.
@@ -384,8 +393,16 @@ ApplicationWindow {
     // A plot to go to once the list of them is read again: the new one.
     property string plotWant: ""
     function drawPlot() {
+        var all = [], parents = [];
+        try { all = JSON.parse(file.plotsJson()); parents = JSON.parse(file.plotParentsJson()); } catch (e) { all = []; }
+        plotAllNames = all;
+        plotParents = parents;
+        // The plot just made or renamed is shown wherever it is from.
         var names = [];
-        try { names = JSON.parse(file.plotsJson()); } catch (e) { names = []; }
+        var here = tabs.length > 0 && !sheet.isConsts ? sheet.name : "";
+        for (var i = 0; i < all.length; i++)
+            if (plotAll || here.length === 0 || parents[i] === here || all[i] === plotWant)
+                names.push(all[i]);
         plotNames = names;
         if (plotWant.length > 0) {
             var at = names.indexOf(plotWant);
@@ -6233,7 +6250,14 @@ ApplicationWindow {
                         FooterButton { label: "+ Row"; quiet: true; visible: footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.appendRow() }
                         FooterButton { label: "+ Column"; quiet: true; visible: footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
                         FooterButton { label: "+ Constant"; quiet: true; visible: footerBar.narrow; onClicked: promptDialog.ask("const") }
-                        FooterButton { label: "+ Plot"; quiet: true; visible: footerBar.narrow; enabled: win.snap.sheets.length > 0; onClicked: promptDialog.ask("plot") }
+                        FooterButton {
+                    visible: win.plotAllNames.length > win.plotNames.length || win.plotAll
+                    label: win.plotAll ? "this sheet" : "all (" + win.plotAllNames.length + ")"
+                    quiet: true
+                    tip: win.plotAll ? "Only the plots of the sheet on view" : "Every plot of the file"
+                    onClicked: win.plotAll = !win.plotAll
+                }
+                FooterButton { label: "+ Plot"; quiet: true; visible: footerBar.narrow; enabled: win.snap.sheets.length > 0; onClicked: promptDialog.ask("plot") }
                     }
                 }
                 FooterButton {
@@ -6672,6 +6696,7 @@ ApplicationWindow {
             font.family: win.font.family
             font.pixelSize: win.smallSize
             text: win.plotNames.length > 0 ? win.plotSvg
+                : win.plotAllNames.length > 0 ? "No plot reads this sheet. Press + Plot to make one, or all to see the others."
                 : "This file has no plots yet. Press + Plot to make one."
         }
     }

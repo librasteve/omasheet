@@ -2826,6 +2826,22 @@ impl Document {
             .unwrap_or_default()
     }
 
+    /// The name of the sheet each plot reads, in the order of `plots`: empty
+    /// where `data` does not say.
+    pub fn plot_parents(&self) -> Vec<String> {
+        self.engine
+            .as_ref()
+            .map(|e| {
+                let program = e.program();
+                program
+                    .plots
+                    .iter()
+                    .map(|p| p.sheet.map_or_else(String::new, |s| program.sheets[s].name.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// The SVG of the plot `name`, drawn `size` pixels wide and high, or why
     /// it cannot be. Its ink is `currentColor`.
     pub fn plot_svg(&self, name: &str, size: (u32, u32)) -> Result<String, String> {

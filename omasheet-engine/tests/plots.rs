@@ -128,3 +128,14 @@ fn every_kind_of_plot_draws_from_the_example() {
     doc.add_plot("P", "scatter", "S").unwrap();
     assert!(doc.plot_svg("P", (400, 300)).unwrap_err().contains("numbers in `x`"));
 }
+
+#[test]
+fn a_plot_has_the_sheet_its_data_reads_as_its_parent() {
+    let mut doc = Document::from_text(
+        "sheet A\n\nM | V\na | 1\n\nsheet B\n\nM | V\nb | 2\n\nplot P\ntype: line\ndata: A |> select(M, V)\n",
+    );
+    doc.add_plot("Q", "bar", "B").unwrap();
+    assert_eq!(doc.plot_parents(), ["A", "B"]);
+    doc.rename_sheet(0, "Alpha").unwrap();
+    assert_eq!(doc.plot_parents(), ["Alpha", "B"]);
+}
