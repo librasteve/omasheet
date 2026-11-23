@@ -901,10 +901,27 @@ fn cartesian(
     match kind {
         Kind::Line | Kind::Step | Kind::Area | Kind::Scatter => {
             for (si, s) in series.iter().enumerate() {
+                let mut last: Option<(usize, f64, f64)> = None;
                 for (i, v) in s.values.iter().enumerate() {
-                    if let (Some(v), true) = (v, xat(i).is_finite()) {
-                        hits.push(dot(&chart, xat(i), *v, i, si));
+                    let (Some(v), true) = (v, xat(i).is_finite()) else {
+                        last = None;
+                        continue;
+                    };
+                    let (a, b) = px(&chart, xat(i), *v);
+                    // The line between two points is a mark too, as the row
+                    // of the nearer one: a point every few pixels along it.
+                    if let (Some((j, ax, ay)), false) = (last, kind == Kind::Scatter) {
+                        let len = ((a - ax).powi(2) + (b - ay).powi(2)).sqrt();
+                        let steps = (len / 8.0).ceil() as usize;
+                        for k in 1..steps {
+                            let t = k as f64 / steps as f64;
+                            let row = if t < 0.5 { j } else { i };
+                            let (x, y) = (ax + (a - ax) * t, ay + (b - ay) * t);
+                            hits.push(Hit { x: x - 6.0, y: y - 6.0, w: 12.0, h: 12.0, row, series: si });
+                        }
                     }
+                    hits.push(dot(&chart, xat(i), *v, i, si));
+                    last = Some((i, a, b));
                 }
             }
         }

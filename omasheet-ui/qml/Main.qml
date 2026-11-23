@@ -6682,7 +6682,7 @@ ApplicationWindow {
             sourceSize.height: height * Screen.devicePixelRatio
             source: visible ? "data:image/svg+xml;utf8," + encodeURIComponent(win.plotSvg) : ""
 
-            // A click on a mark selects the cell it stands for.
+            // A click on a mark lights up the row it stands for.
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
@@ -6697,7 +6697,11 @@ ApplicationWindow {
                     var at = JSON.parse(found);
                     if (at.sheet !== win.sheet.name)
                         return;
-                    win.selectCell(at.row, at.col, false);
+                    // The row lights up; of a heatmap, the cell.
+                    if (win.plotInfo.controls.type === "heatmap")
+                        win.selectCell(at.row, at.col, false);
+                    else
+                        win.selectLine(true, at.row, false);
                     grid.forceActiveFocus();
                 }
             }
