@@ -4096,8 +4096,9 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // quantity, which is worked out a cell at a time: two fewer, and one more
     // for the filled price of `windows.omx`, and one more for the column of
     // `blocks.omx` that reads a whole column, and one more for the net of
-    // `styles.omx`, a whole number times a decimal.
-    assert_eq!(taken, 88, "the columns taken at once");
+    // `styles.omx`, a whole number times a decimal, and one more for the
+    // running total of `plots2.omx`.
+    assert_eq!(taken, 89, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read
