@@ -67,6 +67,10 @@ pub mod qobject {
         /// The sheet each of those reads, in the same order, as a JSON list.
         #[qinvokable]
         fn plot_parents_json(self: &File) -> QString;
+        /// The cell the mark of plot `name` at pixel (`x`, `y`) stands for, as
+        /// JSON `{"sheet", "row", "col"}`, or empty where there is no mark.
+        #[qinvokable]
+        fn plot_cell_at(self: &File, name: &QString, width: i32, height: i32, x: f64, y: f64) -> QString;
         /// What the pane shows of plot `name`, as JSON: its `controls` as
         /// written, and the `columns` of its data.
         #[qinvokable]
@@ -825,6 +829,19 @@ impl qobject::File {
 
     fn plots_json(&self) -> QString {
         QString::from(&json::strings(&self.rust().doc.plots()))
+    }
+
+    fn plot_cell_at(&self, name: &QString, width: i32, height: i32, x: f64, y: f64) -> QString {
+        let size = (width.clamp(100, 4000) as u32, height.clamp(100, 4000) as u32);
+        match self.rust().doc.plot_cell_at(&name.to_string(), size, x, y) {
+            Some((sheet, row, col)) => {
+                let mut out = String::from("{\"sheet\":");
+                json::string(&mut out, &sheet);
+                out.push_str(&format!(",\"row\":{row},\"col\":{col}}}"));
+                QString::from(&out)
+            }
+            None => QString::default(),
+        }
     }
 
     fn plot_parents_json(&self) -> QString {

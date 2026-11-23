@@ -69,6 +69,26 @@ impl Kind {
     }
 }
 
+/// A mark of a plot as it is drawn, for a click on it: a rectangle in the
+/// pixels of the drawing, and the row (and column of values) it stands for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hit {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    pub row: usize,
+    /// Which column of values, counting from the first.
+    pub series: usize,
+}
+
+/// The mark under pixel (`x`, `y`): of those that hold it, the smallest.
+pub fn hit_at(hits: &[Hit], x: f64, y: f64) -> Option<&Hit> {
+    hits.iter()
+        .filter(|h| x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h)
+        .min_by(|a, b| (a.w * a.h).total_cmp(&(b.w * b.h)))
+}
+
 /// How a plot is drawn.
 #[derive(Clone, Debug)]
 pub struct Spec {
@@ -175,6 +195,11 @@ type Chart<'a> = ChartContext<'a, SVGBackend<'a>, Cartesian2d<RangedCoordf64, Ra
 
 /// The SVG of a plot, or why there is none.
 pub fn render(spec: &Spec, table: &Table) -> Result<String, String> {
+    render_hits(spec, table).map(|(svg, _)| svg)
+}
+
+/// The SVG of a plot, and where its marks are.
+pub fn render_hits(spec: &Spec, table: &Table) -> Result<(String, Vec<Hit>), String> {
     if table.labels.is_empty() {
         return Err("there are no rows to plot".to_string());
     }
@@ -184,15 +209,16 @@ pub fn render(spec: &Spec, table: &Table) -> Result<String, String> {
     let (w, h) = (spec.width.max(120), spec.height.max(90));
     let mut buf = String::new();
     let mut text = String::new();
+    let mut hits = Vec::new();
     {
         let root = SVGBackend::with_string(&mut buf, (w, h)).into_drawing_area();
         match spec.kind {
             Kind::Pie => pie(spec, table, 0.0, &mut text)?,
             Kind::Donut => pie(spec, table, 0.55, &mut text)?,
-            Kind::Heatmap => heatmap(spec, table, &mut text)?,
+            Kind::Heatmap => heatmap(spec, table, &mut text, &mut hits)?,
             _ => {
                 let prep = prepare(spec, table)?;
-                cartesian(spec, &prep, &root, &mut text)?;
+                cartesian(spec, &prep, &root, &mut text, &mut hits)?;
             }
         }
         root.present().map_err(|e| e.to_string())?;
@@ -215,12 +241,13 @@ pub fn render(spec: &Spec, table: &Table) -> Result<String, String> {
     // Ink follows the page; and no blank line, which would end an HTML
     // block in Markdown.
     let out = out.replace("#000000", "currentColor");
-    Ok(out
+    let svg = out
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect::<Vec<_>>()
-        .join("\n"))
+        .join("\n");
+    Ok((svg, hits))
 }
 
 /// The legend: a swatch and a name for each, along the top.
@@ -396,6 +423,7 @@ fn cartesian(
     prep: &Prep,
     root: &DrawingArea<SVGBackend, Shift>,
     text: &mut String,
+    hits: &mut Vec<Hit>,
 ) -> Result<(), String> {
     let e = |e: &dyn std::fmt::Display| e.to_string();
     let kind = spec.kind;
@@ -686,10 +714,11 @@ fn cartesian(
                 }
                 let frac = if smax > smin { ((sz - smin) / (smax - smin)).sqrt() } else { 0.5 };
                 let (x, y) = px(&chart, xat(i), v);
+                let r = 4.0 + (reach - 4.0) * frac;
+                hits.push(Hit { x: x - r, y: y - r, w: 2.0 * r, h: 2.0 * r, row: i, series: 0 });
                 let _ = writeln!(
                     text,
-                    "<circle cx=\"{x:.1}\" cy=\"{y:.1}\" r=\"{:.1}\" fill=\"{}\" fill-opacity=\"0.55\" stroke=\"{}\"/>",
-                    4.0 + (reach - 4.0) * frac,
+                    "<circle cx=\"{x:.1}\" cy=\"{y:.1}\" r=\"{r:.1}\" fill=\"{}\" fill-opacity=\"0.55\" stroke=\"{}\"/>",
                     hex(0),
                     hex(0)
                 );
@@ -853,6 +882,84 @@ fn cartesian(
         Kind::Pie | Kind::Donut | Kind::Heatmap => unreachable!("not drawn on axes"),
     }
 
+    // Where the marks are, for a click on one.
+    let cell = |chart: &Chart, xa: f64, ya: f64, xb: f64, yb: f64, row: usize, series: usize| {
+        let (p, q) = (px(chart, xa, ya), px(chart, xb, yb));
+        Hit {
+            x: p.0.min(q.0),
+            y: p.1.min(q.1),
+            w: (p.0 - q.0).abs().max(1.0),
+            h: (p.1 - q.1).abs().max(1.0),
+            row,
+            series,
+        }
+    };
+    let dot = |chart: &Chart, x: f64, y: f64, row: usize, series: usize| {
+        let (a, b) = px(chart, x, y);
+        Hit { x: a - 8.0, y: b - 8.0, w: 16.0, h: 16.0, row, series }
+    };
+    match kind {
+        Kind::Line | Kind::Step | Kind::Area | Kind::Scatter => {
+            for (si, s) in series.iter().enumerate() {
+                for (i, v) in s.values.iter().enumerate() {
+                    if let (Some(v), true) = (v, xat(i).is_finite()) {
+                        hits.push(dot(&chart, xat(i), *v, i, si));
+                    }
+                }
+            }
+        }
+        Kind::Bar => {
+            let slot = 0.8 / series.len() as f64;
+            for (si, s) in series.iter().enumerate() {
+                for (i, v) in s.values.iter().enumerate() {
+                    if let Some(v) = v {
+                        let c = i as f64 - 0.4 + (si as f64 + 0.5) * slot;
+                        hits.push(cell(&chart, c - slot * 0.44, 0.0, c + slot * 0.44, *v, i, si));
+                    }
+                }
+            }
+        }
+        Kind::Stacked => {
+            for i in 0..n {
+                let (mut up, mut down) = (0.0, 0.0);
+                for (si, s) in series.iter().enumerate() {
+                    let v = s.values.get(i).copied().flatten().unwrap_or(0.0);
+                    let (from, to) = if v >= 0.0 {
+                        up += v;
+                        (up - v, up)
+                    } else {
+                        down += v;
+                        (down - v, down)
+                    };
+                    if s.values.get(i).copied().flatten().is_some() {
+                        hits.push(cell(&chart, i as f64 - 0.4, from, i as f64 + 0.4, to, i, si));
+                    }
+                }
+            }
+        }
+        Kind::Candle => {
+            for i in 0..n {
+                let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+                for s in series {
+                    if let Some(v) = s.values.get(i).copied().flatten() {
+                        let reach = if ohlc { 0.0 } else { 2.0 * spec.k * s.sigma.get(i).copied().unwrap_or(0.0) };
+                        lo = lo.min(v - reach);
+                        hi = hi.max(v + reach);
+                    }
+                }
+                if lo.is_finite() {
+                    hits.push(cell(&chart, i as f64 - 0.3, lo, i as f64 + 0.3, hi, i, 0));
+                }
+            }
+        }
+        Kind::Waterfall => {
+            for (i, (from, to)) in prep.bars.iter().enumerate().take(prep.bars.len() - 1) {
+                hits.push(cell(&chart, i as f64 - 0.35, *from, i as f64 + 0.35, *to, i, 0));
+            }
+        }
+        _ => {}
+    }
+
     if multi {
         let names: Vec<(String, String)> = series
             .iter()
@@ -926,7 +1033,7 @@ fn short(v: f64) -> String {
 
 /// A cell for each value, a row for each row of the sheet and a column for
 /// each column of values, as dark as the value is large.
-fn heatmap(spec: &Spec, table: &Table, text: &mut String) -> Result<(), String> {
+fn heatmap(spec: &Spec, table: &Table, text: &mut String, hits: &mut Vec<Hit>) -> Result<(), String> {
     let all: Vec<f64> = table
         .series
         .iter()
@@ -985,6 +1092,7 @@ fn heatmap(spec: &Spec, table: &Table, text: &mut String) -> Result<(), String> 
             };
             let f = frac(v);
             let x = left + j as f64 * cw;
+            hits.push(Hit { x, y, w: cw, h: ch, row: i, series: j });
             let _ = writeln!(
                 text,
                 "<rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{cw:.1}\" height=\"{ch:.1}\" fill=\"{}\" fill-opacity=\"{:.2}\" stroke=\"#ffffff\" stroke-opacity=\"0.25\"/>",

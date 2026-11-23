@@ -47,6 +47,19 @@ pub fn columns(engine: &Engine, program: &Program, plot: &Plot) -> Vec<String> {
     }
 }
 
+/// A mark of a drawn plot, in its pixels, and the cell it stands for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlotHit {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    /// The sheet, the row of it and the column.
+    pub sheet: usize,
+    pub row: usize,
+    pub col: usize,
+}
+
 /// The SVG of a plot of the program, once the engine has run. `size` is the
 /// width and height to draw at, in place of the plot's own.
 pub fn svg(
@@ -55,6 +68,16 @@ pub fn svg(
     plot: &Plot,
     size: Option<(u32, u32)>,
 ) -> Result<String, Vec<Diagnostic>> {
+    draw(engine, program, plot, size).map(|(svg, _)| svg)
+}
+
+/// The SVG of a plot, and the cell each of its marks stands for.
+pub fn draw(
+    engine: &Engine,
+    program: &Program,
+    plot: &Plot,
+    size: Option<(u32, u32)>,
+) -> Result<(String, Vec<PlotHit>), Vec<Diagnostic>> {
     let one = |span, message: String| vec![Diagnostic::new(span, message)];
     let view: View = match engine.eval_top(&plot.data) {
         Some(Value::Sheet(view)) => view,
@@ -154,5 +177,20 @@ pub fn svg(
         }
         table.series.push(series);
     }
-    omasheet_plot::render(&spec, &table).map_err(|why| one(plot.span, why))
+    let (svg, hits) = omasheet_plot::render_hits(&spec, &table).map_err(|why| one(plot.span, why))?;
+    let hits = hits
+        .into_iter()
+        .filter_map(|h| {
+            Some(PlotHit {
+                x: h.x,
+                y: h.y,
+                w: h.w,
+                h: h.h,
+                sheet: view.sheet,
+                row: *view.rows.get(h.row)?,
+                col: *y_cols.get(h.series).or(y_cols.first())?,
+            })
+        })
+        .collect();
+    Ok((svg, hits))
 }

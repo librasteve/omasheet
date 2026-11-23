@@ -384,6 +384,9 @@ ApplicationWindow {
     property int plotIndex: 0
     onPlotIndexChanged: plotTimer.restart()
     property string plotSvg: ""
+    // The size the plot was drawn at, in the pixels its marks are found in.
+    property int plotDrawW: 0
+    property int plotDrawH: 0
     // What the pane shows of the plot it is on: its controls as written, and
     // the columns of its data; and why the last change to it was refused.
     property var plotInfo: ({ controls: {}, columns: [] })
@@ -422,7 +425,9 @@ ApplicationWindow {
         }
         var w = Math.max(100, plotPane.width - 24);
         var h = Math.max(100, plotPane.height - plotHeader.height - 36);
-        plotSvg = file.plotSvg(names[plotIndex], Math.round(w), Math.round(h), win.font.family);
+        plotDrawW = Math.round(w);
+        plotDrawH = Math.round(h);
+        plotSvg = file.plotSvg(names[plotIndex], plotDrawW, plotDrawH, win.font.family);
     }
     // Set a control of the plot the pane is on; false, and why, if refused.
     function setPlot(key, value) {
@@ -6664,6 +6669,7 @@ ApplicationWindow {
         }
 
         Image {
+            id: plotImage
             visible: win.plotSvg.indexOf("<svg") === 0
             x: 12
             y: plotHeader.y + plotHeader.height + 8
@@ -6675,6 +6681,26 @@ ApplicationWindow {
             sourceSize.width: width * Screen.devicePixelRatio
             sourceSize.height: height * Screen.devicePixelRatio
             source: visible ? "data:image/svg+xml;utf8," + encodeURIComponent(win.plotSvg) : ""
+
+            // A click on a mark selects the cell it stands for.
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: function(mouse) {
+                    if (plotImage.paintedWidth <= 0 || win.plotNames.length === 0)
+                        return;
+                    var u = (mouse.x - (plotImage.width - plotImage.paintedWidth) / 2) / plotImage.paintedWidth * win.plotDrawW;
+                    var v = mouse.y / plotImage.paintedHeight * win.plotDrawH;
+                    var found = file.plotCellAt(win.plotNames[win.plotIndex], win.plotDrawW, win.plotDrawH, u, v);
+                    if (found.length === 0)
+                        return;
+                    var at = JSON.parse(found);
+                    if (at.sheet !== win.sheet.name)
+                        return;
+                    win.selectCell(at.row, at.col, false);
+                    grid.forceActiveFocus();
+                }
+            }
         }
 
         // Nothing to draw: there is none, or it could not be.

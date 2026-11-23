@@ -2858,6 +2858,20 @@ impl Document {
         })
     }
 
+    /// The cell plot `name`, drawn `size` pixels wide and high, stands for at
+    /// pixel (`x`, `y`): the name of its sheet, the row and the column.
+    pub fn plot_cell_at(&self, name: &str, size: (u32, u32), x: f64, y: f64) -> Option<(String, usize, usize)> {
+        let engine = self.engine.as_ref()?;
+        let program = engine.program();
+        let plot = crate::plot::find(program, name)?;
+        let (_, hits) = crate::plot::draw(engine, program, plot, Some(size)).ok()?;
+        let hit = hits
+            .iter()
+            .filter(|h| x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h)
+            .min_by(|a, b| (a.w * a.h).total_cmp(&(b.w * b.h)))?;
+        Some((program.sheets[hit.sheet].name.clone(), hit.row, hit.col))
+    }
+
     /// What the document's cache of whole columns has done and holds.
     pub fn column_cache(&self) -> crate::table::CacheStats {
         self.columns.stats()

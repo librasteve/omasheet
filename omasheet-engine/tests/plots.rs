@@ -139,3 +139,23 @@ fn a_plot_has_the_sheet_its_data_reads_as_its_parent() {
     doc.rename_sheet(0, "Alpha").unwrap();
     assert_eq!(doc.plot_parents(), ["Alpha", "B"]);
 }
+
+#[test]
+fn a_click_on_a_mark_finds_its_cell() {
+    let doc = doc();
+    // Somewhere in the middle of a small line plot there is a point; scan
+    // for it, and check it is a cell of Sales.
+    let mut found = None;
+    'scan: for y in (0..300).step_by(4) {
+        for x in (0..400).step_by(4) {
+            if let Some(cell) = doc.plot_cell_at("Trend", (400, 300), x as f64, y as f64) {
+                found = Some(cell);
+                break 'scan;
+            }
+        }
+    }
+    let (sheet, row, col) = found.expect("a mark");
+    assert_eq!(sheet, "Sales");
+    assert!(row < 2 && col < 3);
+    assert!(doc.plot_cell_at("Trend", (400, 300), 1.0, 1.0).is_none());
+}

@@ -5,7 +5,7 @@
 use omasheet_engine::doc::{CellSnap, FuncSnap, Snapshot, read_only_why};
 use omasheet_engine::omx::funcs::FuncDoc;
 
-fn string(out: &mut String, s: &str) {
+pub fn string(out: &mut String, s: &str) {
     out.push('"');
     for c in s.chars() {
         match c {
