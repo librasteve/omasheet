@@ -624,19 +624,27 @@ title: Revenue and cost
 
 | Control | Meaning |
 |---|---|
-| `type` | `line`, `bar`, `pie` or `candle`. Required |
+| `type` | `line`, `bar`, `pie`, `candle`, `scatter`, `area`, `stacked`, `step`, `histogram`, `box`, `heatmap`, `waterfall`, `bubble` or `donut`. Required |
 | `data` | An expression that gives a sheet: `Sales`, or `Sales \|> filter(Region == 'North') \|> select(Month, Revenue)`. On one line. Required |
 | `x` | The column of labels. The first column of `data` if left out |
 | `y` | The columns of values, `Revenue, Cost`. All the others if left out |
 | `title` | A title above the plot |
 | `width`, `height` | In pixels, 100 to 4000; 640 and 360 if left out |
+| `bins` | For `histogram`: how many bins, 1 to 200. From the number of values if left out |
 | `k` | For `candle`: how many standard deviations the body covers (1). The wick is twice as far |
 
 - A plot has a name of its own: not that of a sheet, a constant or another plot. It may come before or after the sheet it reads.
 - `data` gives a sheet: a sheet by name, or one piped through stages. A grouping or a join is the whole of a `sheet Name :=` formula, so plot that sheet by name.
 - A **line** has a line for each `y` column and a key if there is more than one; an empty cell breaks the line. A **bar** plot groups the columns' bars. A **pie** takes one `y` column of values that are not negative, and shows each slice's share.
 - A **candle** is for uncertainty. One `Scientific` column, `10.5(3)`, is drawn as a body of the value ± `k`σ and a wick of ± 2`k`σ, with a white tick at the value. Four columns are read as open, high, low and close.
-- Line and bar plots draw an error bar for a value that has an uncertainty.
+- Line, scatter and bar plots draw an error bar for a value that has an uncertainty.
+- Where every `x` is a number, a **line**, **step** or **area** is drawn at them, with a numeric axis, and a **scatter** or **bubble** plot needs them.
+- A **scatter** is a point for each value of each `y` column. A **bubble** is a point for each row: its height is the first `y` column and its size the second.
+- An **area** fills under its lines, a **step** holds each value until the next row, and **stacked** puts the columns' bars one on another.
+- A **histogram** counts the values of each `y` column in bins that are the same for all of them, `bins` of them.
+- A **box** is a box for each `y` column: the quartiles, a line at the median, whiskers to the furthest values within 1.5 times the range between the quartiles, and a circle for each beyond them.
+- A **heatmap** is a cell for each value, a row for each row of `data` (named by `x`) and a column for each `y` column, as dark as the value is large, with a scale.
+- A **waterfall** takes one `y` column of changes, draws each from where the last ended, and ends with a bar for the total. A **donut** is a pie with a hole.
 - Numbers, percentages, quantities (in the column's unit) and durations (in seconds) are plotted; a column of text or dates in `y` is an error. Dates and text in `x` are labels, in the order of the rows.
 - `omasheet lint` reports a control that is not one, a `type` that is not a kind, a `data` that is not a sheet, and an `x` or `y` that is not a column of it. `omasheet print` does not list plots.
 - A report draws a plot ([Reports](reports.md#plots)) and the app shows the file's plots in a pane beside the sheet.

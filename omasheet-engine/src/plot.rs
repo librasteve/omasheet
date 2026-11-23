@@ -106,6 +106,7 @@ pub fn svg(
         spec.height = plot.height.unwrap_or(spec.height);
     }
     spec.k = plot.k.unwrap_or(spec.k);
+    spec.bins = plot.bins;
 
     let mut table = Table {
         labels: view
@@ -117,7 +118,20 @@ pub fn svg(
             })
             .collect(),
         series: Vec::new(),
+        xs: None,
     };
+    // The labels are numbers where every filled one is.
+    let xs: Vec<Option<f64>> = view
+        .rows
+        .iter()
+        .map(|&r| number(&engine.cell_shown(view.sheet, x_col, r)).ok().flatten().map(|n| n.0))
+        .collect();
+    let numeric = view.rows.iter().zip(&xs).all(|(&r, x)| {
+        x.is_some() || matches!(engine.cell_shown(view.sheet, x_col, r), Value::Null)
+    });
+    if numeric && xs.iter().any(Option::is_some) {
+        table.xs = Some(xs);
+    }
     for &c in &y_cols {
         let mut series = Series {
             name: cols[c].name.clone(),

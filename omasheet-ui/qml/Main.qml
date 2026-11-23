@@ -6528,7 +6528,7 @@ ApplicationWindow {
                     label: "type: " + (win.plotInfo.controls.type || "")
                     quiet: true
                     tip: "The kind of plot"
-                    onClicked: plotChoice.openAt(plotTypeButton, "type", false, ["line", "bar", "pie", "candle"], [win.plotInfo.controls.type || ""])
+                    onClicked: plotChoice.openAt(plotTypeButton, "type", false, ["line", "bar", "pie", "candle", "scatter", "area", "stacked", "step", "histogram", "box", "heatmap", "waterfall", "bubble", "donut"], [win.plotInfo.controls.type || ""])
                 }
                 FooterButton {
                     label: "data: " + win.shortened(win.plotInfo.controls.data)
@@ -10229,13 +10229,15 @@ ApplicationWindow {
                 onAccepted: promptDialog.needsExpr ? exprField.forceActiveFocus() : promptDialog.tryAccept()
             }
             // A plot is of a kind.
-            Row {
+            Flow {
                 id: plotKindRow
                 visible: promptDialog.kind === "plot"
+                Layout.fillWidth: true
+                Layout.maximumWidth: 480
                 property string value: "line"
                 spacing: 4
                 Repeater {
-                    model: ["line", "bar", "pie", "candle"]
+                    model: ["line", "bar", "pie", "candle", "scatter", "area", "stacked", "step", "histogram", "box", "heatmap", "waterfall", "bubble", "donut"]
                     RadioButton {
                         required property string modelData
                         text: modelData

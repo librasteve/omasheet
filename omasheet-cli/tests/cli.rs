@@ -731,3 +731,12 @@ fn render_reports_where_in_the_document() {
         stderr(&out)
     );
 }
+
+#[test]
+fn render_matches_the_expected_other_plots() {
+    let out = omasheet(&["render", "examples/plots2-report.md"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let expected = std::fs::read_to_string(root().join("examples/plots2-report.expected")).unwrap();
+    assert_eq!(stdout(&out), expected);
+    assert_eq!(expected.matches("<svg").count(), 12);
+}

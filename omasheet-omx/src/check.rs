@@ -59,6 +59,7 @@ pub struct Plot {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub k: Option<f64>,
+    pub bins: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -1659,7 +1660,7 @@ impl<'a> Checker<'a> {
         let mut kind = None;
         let mut data: Option<(Node, Ty, Span)> = None;
         let (mut x, mut y, mut title) = (None, Vec::new(), None);
-        let (mut width, mut height, mut k) = (None, None, None);
+        let (mut width, mut height, mut k, mut bins) = (None, None, None, None);
         let mut seen: Vec<&str> = Vec::new();
         for c in &decl.controls {
             if !PLOT_KEYS.split(", ").any(|key| key == c.key) {
@@ -1728,6 +1729,10 @@ impl<'a> Checker<'a> {
                         c.value_span,
                         format!("`{}` is a whole number of pixels, 100 to 4000", c.key),
                     ),
+                },
+                "bins" => match c.value.parse::<usize>() {
+                    Ok(n) if (1..=200).contains(&n) => bins = Some(n),
+                    _ => self.err(c.value_span, "`bins` is a whole number, 1 to 200"),
                 },
                 _ => match c.value.parse::<f64>() {
                     Ok(n) if n > 0.0 && n.is_finite() => k = Some(n),
@@ -1805,6 +1810,7 @@ impl<'a> Checker<'a> {
                 width,
                 height,
                 k,
+                bins,
             });
         }
     }

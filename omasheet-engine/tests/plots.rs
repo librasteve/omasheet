@@ -112,3 +112,19 @@ fn a_plot_between_sheets_is_deleted_with_its_comment() {
     doc.delete_plot("P").unwrap();
     assert_eq!(doc.text(), "sheet A\n\nX\n1\n\nsheet B\n\nY\n2\n");
 }
+
+#[test]
+fn every_kind_of_plot_draws_from_the_example() {
+    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/plots2.omx")).unwrap();
+    let doc = Document::from_text(&text);
+    let names = doc.plots();
+    assert_eq!(names.len(), 12);
+    for name in names {
+        let svg = doc.plot_svg(&name, (640, 360)).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert!(svg.starts_with("<svg") && !svg.contains("\n\n"), "{name}");
+    }
+    // A scatter needs numbers along `x`.
+    let mut doc = Document::from_text("sheet S\n\nMonth | V\nJan | 1\nFeb | 2\n");
+    doc.add_plot("P", "scatter", "S").unwrap();
+    assert!(doc.plot_svg("P", (400, 300)).unwrap_err().contains("numbers in `x`"));
+}

@@ -40,10 +40,10 @@ pub struct FileAst {
 }
 
 /// The controls a `plot` takes.
-pub const PLOT_KEYS: &str = "type, data, x, y, title, width, height, k";
+pub const PLOT_KEYS: &str = "type, data, x, y, title, width, height, k, bins";
 
 /// The kinds of plot.
-pub const PLOT_KINDS: &str = "line, bar, pie, candle";
+pub const PLOT_KINDS: &str = "line, bar, pie, candle, scatter, area, stacked, step, histogram, box, heatmap, waterfall, bubble, donut";
 
 /// `plot <Name>` and its `key: value` lines, to the next blank line.
 #[derive(Debug)]
