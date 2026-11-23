@@ -376,21 +376,19 @@ ApplicationWindow {
     // is dragged, and kept as the window is resized.
     property real plotShare: 0.5
     // The settings pane beside it, of a width of its own, and shown unless
-    // it was put away.
+    // it was put away. It is made of the plots' width, not added to it.
     property bool showPlotSettings: file.savedPlotSettings()
     onShowPlotSettingsChanged: {
         file.savePlotSettings(showPlotSettings);
         plotTimer.restart();
     }
     readonly property int plotSettingsWidth: showPlotSettings ? Math.round(fontSize * 22) : 0
-    // The plot takes its share of what the settings leave.
-    readonly property int plotPaneWidth: {
-        var room = width - plotSettingsWidth;
-        return Math.max(fontSize * 18, Math.min(plotShare * room, room * 0.7));
-    }
-    // The plots the pane lists: those that read the sheet on view. And every
-    // plot of the file, with the sheet each reads.
+    // What the plots take of the window, settings and all: the divider is
+    // here, and it does not move as the settings come and go.
+    readonly property int plotTotalWidth: Math.max(fontSize * 18 + plotSettingsWidth, Math.min(plotShare * width, width * 0.7))
+    readonly property int plotPaneWidth: plotTotalWidth - plotSettingsWidth
     property var plotNames: []
+    readonly property var plotKinds: ["line", "bar", "pie", "candle", "scatter", "area", "stacked", "step", "histogram", "box", "heatmap", "waterfall", "bubble", "donut"]
     property var plotAllNames: []
     property var plotParents: []
     property int plotIndex: 0
@@ -4596,7 +4594,7 @@ ApplicationWindow {
             Layout.fillHeight: true
             visible: !win.showSource
             // The plot pane takes the right of it.
-            Layout.rightMargin: win.showPlot ? win.plotPaneWidth + win.plotSettingsWidth : 0
+            Layout.rightMargin: win.showPlot ? win.plotTotalWidth : 0
             focus: true
 
             Keys.onPressed: function(event) {
@@ -6495,7 +6493,7 @@ ApplicationWindow {
         id: plotPane
         parent: root
         visible: win.showPlot && !win.showSource
-        x: root.width - win.plotSettingsWidth - width
+        x: root.width - win.plotTotalWidth
         y: grid.y
         width: win.plotPaneWidth
         height: grid.height
@@ -6518,21 +6516,47 @@ ApplicationWindow {
             property int startWidth: 0
             onPressed: function(mouse) {
                 startX = mapToItem(root, mouse.x, 0).x;
-                startWidth = win.plotPaneWidth;
+                startWidth = win.plotTotalWidth;
             }
             onPositionChanged: function(mouse) {
                 if (pressed)
-                    win.plotShare = Math.max(0.1, (startWidth - (mapToItem(root, mouse.x, 0).x - startX)) / (win.width - win.plotSettingsWidth));
+                    win.plotShare = Math.max(0.1, (startWidth - (mapToItem(root, mouse.x, 0).x - startX)) / win.width);
             }
         }
 
         // Which plot, and what it is made of: a button for each plot, then
         // for each control. Each opens what changes it.
+        // The settings, at the top right.
+        Rectangle {
+            id: gearButton
+            x: parent.width - width - 8
+            y: 6
+            width: win.fontSize * 2
+            height: win.fontSize * 2
+            radius: 4
+            color: win.showPlotSettings ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.22)
+                : gearArea.containsMouse ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.08) : "transparent"
+            GearIcon {
+                anchors.centerIn: parent
+                width: parent.width - 8
+                height: parent.height - 8
+                ink: win.showPlotSettings ? win.accentColor : win.mutedColor
+            }
+            MouseArea {
+                id: gearArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: win.showPlotSettings = !win.showPlotSettings
+                onContainsMouseChanged: win.hover(gearButton, containsMouse ? "The settings of the plot" : "", false)
+            }
+        }
+
         Column {
             id: plotHeader
             x: 8
             y: 6
-            width: parent.width - 16
+            width: parent.width - 16 - gearButton.width
             spacing: 4
             onHeightChanged: plotTimer.restart()
 
@@ -6551,13 +6575,6 @@ ApplicationWindow {
                             win.plotIndex = index;
                         }
                     }
-                }
-                FooterButton {
-                    label: "\u2699"
-                    quiet: true
-                    active: win.showPlotSettings
-                    tip: "The settings of the plot"
-                    onClicked: win.showPlotSettings = !win.showPlotSettings
                 }
             }
             // Why a change was refused, when the settings are not there to say.
@@ -6751,48 +6768,79 @@ ApplicationWindow {
                     width: parent.width
                     spacing: 6
                     SettingsLabel { text: "Type" }
-                    Flow {
-                        id: kindTiles
+                    Flickable {
+                        id: tilesFlick
                         width: parent.width
-                        spacing: 6
-                        readonly property real tile: Math.floor((width - 12) / 3)
-                        Repeater {
-                            model: ["line", "bar", "pie", "candle", "scatter", "area", "stacked", "step", "histogram", "box", "heatmap", "waterfall", "bubble", "donut"]
-                            Rectangle {
-                                id: tileBox
-                                required property string modelData
-                                readonly property bool on: (win.plotInfo.controls.type || "") === modelData
-                                width: kindTiles.tile
-                                height: kindTiles.tile * 0.82
-                                radius: 8
-                                color: on ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.2)
-                                    : tileArea.containsMouse ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.09) : win.panelColor
-                                border.width: on ? 2 : 1
-                                border.color: on ? win.accentColor : win.lineColor
-                                Behavior on color { ColorAnimation { duration: 120 } }
-                                KindIcon {
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    y: 7
-                                    width: parent.width - 20
-                                    height: parent.height - 28
-                                    kind: tileBox.modelData
-                                    ink: tileBox.on ? win.accentColor : win.textColor
-                                }
-                                Text {
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    anchors.bottom: parent.bottom
-                                    anchors.bottomMargin: 5
-                                    color: tileBox.on ? win.accentColor : win.mutedColor
-                                    font.family: win.font.family
-                                    font.pixelSize: win.smallSize - 1
-                                    text: tileBox.modelData
-                                }
-                                MouseArea {
-                                    id: tileArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: win.setPlot("type", tileBox.modelData)
+                        readonly property real tile: Math.floor((width - 10 - 12) / 3)
+                        readonly property real tileH: tile * 0.82
+                        // A row and a third, so that there is more to find.
+                        height: tileH * 1.3 + 2
+                        contentHeight: kindTiles.height
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn; width: 8 }
+                        // Bring the plot's own kind into view.
+                        function showCurrent() {
+                            var at = win.plotKinds.indexOf(win.plotInfo.controls.type || "");
+                            if (at < 0 || tileH <= 0)
+                                return;
+                            var top = Math.floor(at / 3) * (tileH + 6);
+                            if (top < contentY)
+                                contentY = top;
+                            else if (top + tileH > contentY + height)
+                                contentY = Math.min(top, contentHeight - height);
+                        }
+                        Connections {
+                            target: win
+                            function onPlotInfoChanged() { tilesFlick.showCurrent(); }
+                        }
+                        Flow {
+                            id: kindTiles
+                            width: tilesFlick.width - 10
+                            spacing: 6
+                            Repeater {
+                                model: win.plotKinds
+                                Rectangle {
+                                    id: tileBox
+                                    required property string modelData
+                                    readonly property bool on: (win.plotInfo.controls.type || "") === modelData
+                                    // Why the data does not suit this kind, if it does not.
+                                    readonly property string why: (win.plotInfo.fit && win.plotInfo.fit[modelData]) || ""
+                                    width: tilesFlick.tile
+                                    height: tilesFlick.tileH
+                                    radius: 8
+                                    opacity: why.length > 0 ? 0.35 : 1
+                                    color: on ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.2)
+                                        : tileArea.containsMouse && why.length === 0 ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.09) : win.panelColor
+                                    border.width: on ? 2 : 1
+                                    border.color: on ? win.accentColor : win.lineColor
+                                    Behavior on color { ColorAnimation { duration: 120 } }
+                                    KindIcon {
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        y: 7
+                                        width: parent.width - 20
+                                        height: parent.height - 28
+                                        kind: tileBox.modelData
+                                        ink: tileBox.on ? win.accentColor : win.textColor
+                                    }
+                                    Text {
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        anchors.bottom: parent.bottom
+                                        anchors.bottomMargin: 5
+                                        color: tileBox.on ? win.accentColor : win.mutedColor
+                                        font.family: win.font.family
+                                        font.pixelSize: win.smallSize - 1
+                                        text: tileBox.modelData
+                                    }
+                                    MouseArea {
+                                        id: tileArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: tileBox.why.length > 0 ? Qt.ArrowCursor : Qt.PointingHandCursor
+                                        onClicked: if (tileBox.why.length === 0) win.setPlot("type", tileBox.modelData)
+                                        // A kind the data does not suit says why in the bar below.
+                                        onContainsMouseChanged: win.hover(tileBox, containsMouse && tileBox.why.length > 0 ? tileBox.modelData + ": " + tileBox.why : "", true)
+                                    }
                                 }
                             }
                         }
@@ -6986,6 +7034,44 @@ ApplicationWindow {
         }
     }
 
+    // A gear, in one ink: eight teeth round a hole.
+    component GearIcon: Canvas {
+        id: gear
+        property color ink: win.textColor
+        onInkChanged: requestPaint()
+        onWidthChanged: requestPaint()
+        onHeightChanged: requestPaint()
+        onPaint: {
+            var c = getContext("2d");
+            c.reset();
+            if (width < 4 || height < 4)
+                return;
+            var cx = width / 2, cy = height / 2, m = Math.min(width, height) / 2;
+            c.strokeStyle = ink;
+            c.lineWidth = Math.max(1.4, m * 0.14);
+            c.lineJoin = "round";
+            c.beginPath();
+            var teeth = 8, rad = Math.PI / 180;
+            for (var k = 0; k < teeth; k++) {
+                var a = k * 360 / teeth;
+                var steps = [[a - 17, 0.68], [a - 11, 0.98], [a + 11, 0.98], [a + 17, 0.68]];
+                for (var i = 0; i < steps.length; i++) {
+                    var x = cx + m * 0.94 * steps[i][1] * Math.cos(steps[i][0] * rad);
+                    var y = cy + m * 0.94 * steps[i][1] * Math.sin(steps[i][0] * rad);
+                    if (k === 0 && i === 0)
+                        c.moveTo(x, y);
+                    else
+                        c.lineTo(x, y);
+                }
+            }
+            c.closePath();
+            c.stroke();
+            c.beginPath();
+            c.arc(cx, cy, m * 0.3, 0, 2 * Math.PI);
+            c.stroke();
+        }
+    }
+
     // A picture of a kind of plot, in one ink.
     component KindIcon: Canvas {
         id: icon
@@ -6999,6 +7085,8 @@ ApplicationWindow {
             var c = getContext("2d");
             c.reset();
             var w = width, h = height;
+            if (w < 4 || h < 4)
+                return;
             c.strokeStyle = ink;
             c.fillStyle = ink;
             c.lineWidth = 1.8;

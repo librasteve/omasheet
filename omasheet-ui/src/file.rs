@@ -858,7 +858,7 @@ impl qobject::File {
         let name = name.to_string();
         let doc = &self.rust().doc;
         let controls = doc.plot_controls(&name).unwrap_or_default();
-        QString::from(&json::plot_info(&controls, &doc.plot_columns(&name)))
+        QString::from(&json::plot_info(&controls, &doc.plot_columns(&name), &doc.plot_fit(&name)))
     }
 
     fn add_plot(self: Pin<&mut Self>, name: &QString, kind: &QString, data: &QString) -> QString {

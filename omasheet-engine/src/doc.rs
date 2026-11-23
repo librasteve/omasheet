@@ -2872,6 +2872,28 @@ impl Document {
         Some((program.sheets[hit.sheet].name.clone(), hit.row, hit.col))
     }
 
+    /// Each kind of plot, and why plot `name`'s data does not suit it: empty
+    /// where it does.
+    pub fn plot_fit(&self, name: &str) -> Vec<(String, String)> {
+        let Some(engine) = self.engine.as_ref() else {
+            return Vec::new();
+        };
+        let program = engine.program();
+        let Some(plot) = crate::plot::find(program, name) else {
+            return Vec::new();
+        };
+        omasheet_plot::Kind::NAMES
+            .split(", ")
+            .map(|kind| {
+                let why = match crate::plot::draw_as(engine, program, plot, kind, Some((160, 100))) {
+                    Ok(_) => String::new(),
+                    Err(diags) => diags.first().map(|d| d.message.clone()).unwrap_or_default(),
+                };
+                (kind.to_string(), why)
+            })
+            .collect()
+    }
+
     /// What the document's cache of whole columns has done and holds.
     pub fn column_cache(&self) -> crate::table::CacheStats {
         self.columns.stats()

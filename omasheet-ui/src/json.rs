@@ -23,7 +23,7 @@ pub fn string(out: &mut String, s: &str) {
 
 /// What the pane needs of a plot: its controls as written, and the names
 /// of the columns of its data.
-pub fn plot_info(controls: &[(String, String)], columns: &[String]) -> String {
+pub fn plot_info(controls: &[(String, String)], columns: &[String], fit: &[(String, String)]) -> String {
     let mut out = String::from("{\"controls\":{");
     for (i, (key, value)) in controls.iter().enumerate() {
         if i > 0 {
@@ -33,7 +33,14 @@ pub fn plot_info(controls: &[(String, String)], columns: &[String]) -> String {
     }
     out.push_str("},\"columns\":");
     out.push_str(&strings(columns));
-    out.push('}');
+    out.push_str(",\"fit\":{");
+    for (i, (kind, why)) in fit.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        field(&mut out, kind, why);
+    }
+    out.push_str("}}");
     out
 }
 

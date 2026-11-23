@@ -78,6 +78,18 @@ pub fn draw(
     plot: &Plot,
     size: Option<(u32, u32)>,
 ) -> Result<(String, Vec<PlotHit>), Vec<Diagnostic>> {
+    draw_as(engine, program, plot, &plot.kind, size)
+}
+
+/// As [`draw`], of kind `kind` in place of the plot's own: to find which kinds
+/// its data suits.
+pub fn draw_as(
+    engine: &Engine,
+    program: &Program,
+    plot: &Plot,
+    kind: &str,
+    size: Option<(u32, u32)>,
+) -> Result<(String, Vec<PlotHit>), Vec<Diagnostic>> {
     let one = |span, message: String| vec![Diagnostic::new(span, message)];
     let view: View = match engine.eval_top(&plot.data) {
         Some(Value::Sheet(view)) => view,
@@ -119,7 +131,7 @@ pub fn draw(
     }
 
     let mut spec = Spec::new(
-        Kind::parse(&plot.kind).ok_or_else(|| one(plot.span, format!("`{}` is not a kind of plot", plot.kind)))?,
+        Kind::parse(kind).ok_or_else(|| one(plot.span, format!("`{kind}` is not a kind of plot")))?,
     );
     spec.title = plot.title.clone();
     if let Some((w, h)) = size {
